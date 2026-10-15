@@ -110,7 +110,7 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     }
     qa_json_document *doc = NULL; qa_buffer path = {0};
     uint32_t version = 0, pointer_bytes = 0, source_abi = 0;
-    bool ok = qa_json_parse(bytes, &doc, error);
+    bool ok = qa_json_parse(QA_JSON_STRICT, bytes, &doc, error);
     qa_json_id root = doc ? qa_json_root(doc) : QA_JSON_NONE;
     ok = ok && u32(doc, qa_json_get(doc, root, "version"), &version, error) && version == 1 &&
         qa_json_string_equal(doc, qa_json_get(doc, root, "profile"), "q3-vmMain") &&

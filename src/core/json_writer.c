@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -126,6 +127,11 @@ void qa_json_writer_string(qa_json_writer *w, const char *text) {
 void qa_json_writer_number(qa_json_writer *w, double number) {
     if (!value(w))
         return;
+    if (w->special_floats && !isfinite(number)) {
+        const char *text=isnan(number) ? "NaN" : signbit(number) ? "-Infinity" : "Infinity";
+        append(w,text,strlen(text));
+        return;
+    }
     char text[32];
     if (!qa_format_number(number, text, &w->failure)) {
         w->failed = true;

@@ -239,7 +239,7 @@ bool qa_unified_composition_create(qa_bytes json, qa_unified_composition *out, q
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"invalid composition destination or size"); return false;
     }
     qa_json_document *d=NULL;
-    if (!qa_json_parse(json,&d,error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, json,&d,error)) return false;
     qa_unified_builder b={.maximum=32u*1024u*1024u};
     qa_json_id root=qa_json_root(d);
     double version;

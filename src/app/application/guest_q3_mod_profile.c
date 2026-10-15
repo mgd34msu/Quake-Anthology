@@ -597,7 +597,7 @@ bool application_q3_mod_profile_create(qa_qvm_image *image, qa_qvm_abi abi, cons
     p->declaration.data=malloc(declaration.size);
     if (!p->declaration.data) { application_q3_mod_profile_destroy(p); return q3mod_fail(e,QA_ERROR_MEMORY,"Retaining authentic generic source declaration"); }
     memcpy(p->declaration.data,declaration.data,declaration.size); p->declaration.size=declaration.size;
-    bool ok=qa_json_parse(declaration,&d,e);
+    bool ok=qa_json_parse(QA_JSON_STRICT, declaration,&d,e);
     if (ok) {
         qa_json_id root=qa_json_root(d), program=qa_json_get(d,root,"program"); uint32_t version;
         char *declared_path=NULL, *normalized_path=NULL;
@@ -639,7 +639,7 @@ bool application_q3_mod_call_create(application_q3_mod_profile *p, qa_bytes byte
     if (!p || !out || *out) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Declared call requires its retained source profile");
     qa_json_document *document=NULL; mod_call *value=calloc(1,sizeof(*value));
     if (!value) return q3mod_fail(e,QA_ERROR_MEMORY,"Owning qualified lifecycle call");
-    bool ok=qa_json_parse(bytes,&document,e) && call(document,qa_json_root(document),p,value,e) && available(value,mask,p->clients,e);
+    bool ok=qa_json_parse(QA_JSON_STRICT, bytes,&document,e) && call(document,qa_json_root(document),p,value,e) && available(value,mask,p->clients,e);
     qa_json_destroy(document);
     if (!ok) { call_free(value); free(value); return false; }
     *out=value; return true;

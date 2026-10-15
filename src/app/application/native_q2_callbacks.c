@@ -1284,7 +1284,7 @@ bool application_native_q2_callbacks_prepare(struct application_native_q2 *n,qa_
     n->callbacks=o; o->engine=n; o->declaration=n->declaration; o->module=n->provider->state.native.module;
     o->active_call=QA_JSON_NONE;
     o->target=qa_native_module_describe(o->module).image.target;
-    return qa_json_parse(bytes,&o->document,e)&&record_nodes_bind(o,e);
+    return qa_json_parse(QA_JSON_STRICT, bytes,&o->document,e)&&record_nodes_bind(o,e);
 }
 static bool address_shape(application_native_q2_callbacks *o,qa_json_id address,bool nullable,qa_error *e)
 {

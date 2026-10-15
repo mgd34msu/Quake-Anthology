@@ -859,7 +859,7 @@ bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
             if (!path) continue;
             qa_buffer bytes = {0}; qa_json_document *doc = NULL;
             if (!qa_file_read_all(path, &bytes, error)) goto done;
-            if (!qa_json_parse((qa_bytes){bytes.data, bytes.size}, &doc, error)) { qa_buffer_free(&bytes); goto done; }
+            if (!qa_json_parse(QA_JSON_STRICT, (qa_bytes){bytes.data, bytes.size}, &doc, error)) { qa_buffer_free(&bytes); goto done; }
             qa_json_id title = qa_json_get(doc, qa_json_root(doc), "title");
             if (qa_json_type(doc, title) == QA_JSON_STRING) p->view.title = catalog_json_string(c, doc, title, NULL, error);
             qa_json_destroy(doc); qa_buffer_free(&bytes);

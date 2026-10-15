@@ -136,7 +136,7 @@ static bool canonical_load(frontend_shared_storage *owner,qa_error *e)
     qa_resource *file=NULL; bool found=false;
     if (!qa_settings_read(owner->user,canonical_path,&file,&found,e)) return false;
     if (!found) return true;
-    qa_json_document *d=NULL; bool ok=qa_json_parse(qa_resource_bytes(file),&d,e);
+    qa_json_document *d=NULL; bool ok=qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(file),&d,e);
     qa_json_id root=ok?qa_json_root(d):QA_JSON_NONE; double version=0;
     qa_json_id players=ok?qa_json_get(d,root,"players"):QA_JSON_NONE;
     if (ok) ok=qa_json_type(d,root)==QA_JSON_OBJECT && number(d,root,"version",&version,e) && version==1 &&
@@ -212,7 +212,7 @@ static bool audio_load(frontend_shared_storage *owner,qa_error *e)
     qa_resource *file=NULL; bool found=false;
     if (!qa_settings_read(owner->input,"audio.json",&file,&found,e)) return false;
     if (!found) return true;
-    qa_json_document *d=NULL; bool ok=qa_json_parse(qa_resource_bytes(file),&d,e);
+    qa_json_document *d=NULL; bool ok=qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(file),&d,e);
     qa_json_id root=ok?qa_json_root(d):QA_JSON_NONE;
     double version=0;
     frontend_shared_audio_preferences value={.format={48000,2,16},.present=true};
@@ -256,7 +256,7 @@ static bool view_load(frontend_shared_storage *owner,qa_error *e)
     if (!qa_settings_read(owner->input,"view.json",&file,&found,e)) return false;
     if (!found) return true;
     qa_json_document *document=NULL;
-    bool ok=qa_json_parse(qa_resource_bytes(file),&document,e);
+    bool ok=qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(file),&document,e);
     qa_json_id root=ok?qa_json_root(document):QA_JSON_NONE;
     double version=0;
     frontend_shared_view_preferences view={.present=true};

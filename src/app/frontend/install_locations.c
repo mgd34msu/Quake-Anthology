@@ -77,7 +77,7 @@ static bool read_settings(qa_fs_root *root,char ***paths,size_t *count,qa_error 
     qa_fs_file *file=NULL; qa_buffer bytes={0}; qa_json_document *doc=NULL;
     bool ok=qa_fs_root_file_open(root,settings_file,&file,&identity,error) &&
         qa_fs_file_read_snapshot(file,&identity,&bytes,error) &&
-        qa_json_parse((qa_bytes){bytes.data,bytes.size},&doc,error);
+        qa_json_parse(QA_JSON_STRICT, (qa_bytes){bytes.data,bytes.size},&doc,error);
     qa_fs_file_close(file);
     if (ok) {
         qa_json_id object=qa_json_root(doc),list=qa_json_get(doc,object,"paths"); uint64_t version=0;

@@ -152,7 +152,7 @@ static bool declaration(const qa_qvm_image *image, qa_bytes bytes,
     application_q3_body_profile *profile, qa_error *error)
 {
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc);
     int64_t version = 0;
     qa_buffer path = {0}; char *normalized = NULL;

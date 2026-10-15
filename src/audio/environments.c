@@ -271,7 +271,7 @@ bool qa_audio_environments_parse_ex(qa_bytes json, qa_strings *strings, qa_audio
         return false;
     }
     qa_json_document *document = NULL;
-    if (!qa_json_parse(json, &document, error))
+    if (!qa_json_parse(QA_JSON_STRICT, json, &document, error))
         return false;
     qa_json_id root = qa_json_root(document);
     qa_json_id groups = qa_json_get(document, root, "environments");

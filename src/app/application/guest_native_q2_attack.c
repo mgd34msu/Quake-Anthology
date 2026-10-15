@@ -235,7 +235,7 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
             qa_actors_capacity(registry), sizeof(attack_factor), _Alignof(attack_factor), error) ||
         !qa_pool_reserve_pages(&p->projectile_pool, &p->projectile_storage,
             qa_actors_capacity(registry), sizeof(attack_projectile), _Alignof(attack_projectile), error)) return false;
-    if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
     const qa_json_document *doc = p->document;
     qa_json_id root = qa_json_root(doc), commands = qa_json_get(doc, root, "commands"),
         weapons = qa_json_get(doc, root, "weapons"), client = qa_json_get(doc, commands, "client"),

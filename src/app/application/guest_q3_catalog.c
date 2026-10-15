@@ -379,10 +379,10 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
         }
     }
     qa_json_document *doc = NULL; bool ok = true;
-    if (declared.size) ok = qa_json_parse(declared, &doc, e) && primary(c, doc, e);
+    if (declared.size) ok = qa_json_parse(QA_JSON_STRICT, declared, &doc, e) && primary(c, doc, e);
     else if (items.size) {
         uint32_t version;
-        ok = qa_json_parse(items, &doc, e) &&
+        ok = qa_json_parse(QA_JSON_STRICT, items, &doc, e) &&
             word(doc, qa_json_get(doc, qa_json_root(doc), "version"), &version, e) && version == 1;
         if (ok) ok = layout(c, doc, qa_json_get(doc, qa_json_root(doc), "items"), e) && !c->live;
         if (!ok && (!e || !e->code)) fail(e, QA_ERROR_FORMAT,

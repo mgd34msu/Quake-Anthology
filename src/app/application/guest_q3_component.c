@@ -65,7 +65,7 @@ static bool leave(void *context,void **scope,bool ok,int32_t result,qa_error *e)
 }
 static bool source_metadata(application_q3_component *c,qa_error *e)
 {
-    qa_json_document *d=NULL; if(!qa_json_parse(application_q3_mod_declaration(c->profile),&d,e)) return false;
+    qa_json_document *d=NULL; if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(c->profile),&d,e)) return false;
     qa_json_id source=qa_json_get(d,qa_json_root(d),"sourceActors"); c->has_source=source!=QA_JSON_NONE;
     bool ok=true;
     if(c->has_source) {
@@ -91,7 +91,7 @@ bool application_q3_component_create(const application_q3_component_options *o,b
     qa_resource_retain(o->program); qa_resource_retain(o->declaration); qa_qvm_image_retain(o->image);
     if(!application_q3_mod_profile_create(o->image,o->abi,o->program_path,qa_resource_bytes(o->declaration),qa_session_strings(o->host.session),&c->profile,e)) return false;
     qa_json_document *declaration=NULL;
-    if(!qa_json_parse(application_q3_mod_declaration(c->profile),&declaration,e)) return false;
+    if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(c->profile),&declaration,e)) return false;
     c->scene=qa_json_string_equal(declaration,qa_json_get(declaration,qa_json_get(declaration,qa_json_root(declaration),"presentation"),"runtime"),"qvm-scene");
     qa_json_destroy(declaration);
     application_q3_component_source_options source={.session=o->host.session,.application=o->application,.owner=o->host.owner,.generation=o->generation,.image=o->image,.abi=o->abi,.context=c,.current=publication_current,.information=information,.visibility=o->visibility,.scene=c->scene};

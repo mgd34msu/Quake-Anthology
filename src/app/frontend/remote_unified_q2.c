@@ -896,7 +896,7 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
         }
         if (!admitted || !mod || !product) return frontend_unified_fail(e,QA_ERROR_FORMAT,"Native Q2 component differs from its admitted recipe identity");
         qa_json_document *declaration=NULL;
-        if (!qa_json_parse(qa_resource_bytes(admitted->declaration),&declaration,e)) return false;
+        if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(admitted->declaration),&declaration,e)) return false;
         qa_json_id policy=get(declaration,qa_json_root(declaration),"clientPresentation");
         qa_unified_component_hud hud=qa_json_string_equal(declaration,get(declaration,policy,"hud"),"replace-status")?QA_UNIFIED_COMPONENT_HUD_REPLACE:
             qa_json_string_equal(declaration,get(declaration,policy,"hud"),"layout-overlay")?QA_UNIFIED_COMPONENT_HUD_OVERLAY:QA_UNIFIED_COMPONENT_HUD_NONE;

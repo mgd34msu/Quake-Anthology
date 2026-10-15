@@ -722,7 +722,7 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
         qa_resource *declaration = NULL; qa_vfs_acquisition acquisition = {0};
         qa_json_document *document = NULL; qa_buffer path = {0}; char *normalized = NULL;
         bool ok = !found || (qa_vfs_acquire_receipt(provider->launch->content, "cgame-weapon-models.json",
-            &declaration, &acquisition, error) && qa_json_parse(qa_resource_bytes(declaration), &document, error) &&
+            &declaration, &acquisition, error) && qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(declaration), &document, error) &&
             qa_json_string(document, qa_json_get(document, qa_json_root(document), "artifactPath"), &path, error));
         if (ok && found && memchr(path.data, 0, path.size))
             ok = application_fail(error, QA_ERROR_FORMAT, "Arsenal CG declaration path contains a NUL");

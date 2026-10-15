@@ -111,7 +111,7 @@ bool application_q3_component_records_create(const application_q3_component_reco
         if(!application_q3_mod_record(o->profile,i,&row->id,&row->address,&row->stride,&row->capacity)) return q3records_fail(e,QA_ERROR_FORMAT,"Missing component record metadata");
         row->client=application_q3_mod_record_is_client(o->profile,i);
     }
-    qa_json_document *d=NULL; if(!qa_json_parse(application_q3_mod_declaration(o->profile),&d,e)) return false;
+    qa_json_document *d=NULL; if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(o->profile),&d,e)) return false;
     qa_json_id root=qa_json_root(d),rows=qa_json_get(d,root,"actorRecords"); bool ok=qa_json_size(d,rows)==r->record_count;
     for(size_t i=0;ok&&i<r->record_count;++i) ok=fields(r,r->records+i,d,qa_json_get(d,qa_json_at(d,rows,i),"fields"),e);
     qa_json_id entity=qa_json_get(d,root,"entityRecord");

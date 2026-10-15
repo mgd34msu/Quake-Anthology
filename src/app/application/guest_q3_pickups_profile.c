@@ -77,7 +77,7 @@ static bool evaluation(const qa_json_document *d,qa_json_id id,application_q3_pi
 }
 static bool declared(q3g_role *role,qa_bytes bytes,application_q3_pickup_profile *p,qa_error *e)
 {
-    qa_json_document *d=NULL;if(!qa_json_parse(bytes,&d,e))return false;
+    qa_json_document *d=NULL;if(!qa_json_parse(QA_JSON_STRICT, bytes,&d,e))return false;
     qa_json_id root=qa_json_root(d),at=qa_json_get(d,root,"pickups");
     if(at==QA_JSON_NONE||qa_json_type(d,at)==QA_JSON_NULL){qa_json_destroy(d);return true;}
     p->present=true;qa_json_id fields=qa_json_get(d,at,"fields"),gate=qa_json_get(d,at,"gate"),items=qa_json_get(d,at,"items");

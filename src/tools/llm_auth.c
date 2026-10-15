@@ -115,7 +115,7 @@ bool llm_subscription_account(const char *token, qa_buffer *out, qa_error *error
         value = (value << 6) | (unsigned)x; bits += 6;
         if (bits >= 8) { bits -= 8; uint8_t byte = (uint8_t)(value >> bits); if (!llm_text_add(&decoded, (qa_bytes){&byte, 1}, error)) goto done; }
     }
-    if (!qa_json_parse((qa_bytes){decoded.buffer.data, decoded.buffer.size}, &d, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, (qa_bytes){decoded.buffer.data, decoded.buffer.size}, &d, error)) goto done;
     qa_json_id auth = qa_json_get(d, qa_json_root(d), "https://api.openai.com/auth");
     qa_buffer account = {0};
     if (!qa_json_string(d, qa_json_get(d, auth, "chatgpt_account_id"), &account, error)) goto done;
@@ -303,7 +303,7 @@ static bool token_text(const qa_json_document *d, qa_json_id root, const char *k
 }
 static bool commit_token(llm_auth *a, qa_error *error) {
     qa_llm *s = a->owner; qa_json_document *d = NULL; llm_credentials next = {0}; bool ok = false;
-    if (!qa_json_parse((qa_bytes){a->response.buffer.data, a->response.buffer.size}, &d, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, (qa_bytes){a->response.buffer.data, a->response.buffer.size}, &d, error)) goto done;
     qa_json_id root = qa_json_root(d); double expires, now = llm_wall_milliseconds(s);
     if (qa_json_type(d, root) != QA_JSON_OBJECT || !qa_json_number(d, qa_json_get(d, root, "expires_in"), &expires, error) || !isfinite(expires) || expires <= 0 || !isfinite(now + expires * 1000)) goto done;
     if (!llm_credentials_load(s, &next, error)) goto done;

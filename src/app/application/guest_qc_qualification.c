@@ -594,7 +594,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QC qualification owner");
     if (!provider->launch->declaration) return true;
     qa_json_document *doc;
-    if (!qa_json_parse(qa_resource_bytes(provider->launch->declaration), &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(provider->launch->declaration), &doc, error)) return false;
     struct application_qc_profile *profile = calloc(1, sizeof(*profile));
     if (!profile) { qa_json_destroy(doc); return application_fail(error, QA_ERROR_MEMORY, "Allocating QC qualification"); }
     provider->state.qc.qualified = profile;

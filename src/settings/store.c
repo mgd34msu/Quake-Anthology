@@ -81,7 +81,7 @@ bool qa_settings_load_routing(qa_settings_store store, const char *path, int *se
         return true;
     }
     qa_json_document *d;
-    bool ok = qa_json_parse(qa_resource_bytes(resource), &d, e);
+    bool ok = qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(resource), &d, e);
     int result = -1;
     if (ok) {
         qa_json_id root = qa_json_root(d), value = qa_json_get(d, root, "keyboardSeat");
@@ -254,7 +254,7 @@ bool qa_settings_load_cvars(qa_settings_store store, const char *const *owner, s
     }
     qa_json_document *d = NULL;
     qa_cvar_archive result = {0};
-    if (!qa_json_parse(qa_resource_bytes(resource), &d, e)) {
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(resource), &d, e)) {
         qa_resource_release(resource);
         return false;
     }

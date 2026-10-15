@@ -69,7 +69,7 @@ bool application_native_q2_publication_create(struct application_native_q2 *n,
     *out = p; p->engine = n; p->metadata = m;
     if (!qa_launch_instance_retain_metadata(d, &p->lease, e) || !identity(p, e)) return false;
     qa_json_document *json = NULL;
-    if (!qa_json_parse(qa_resource_bytes(d->declaration), &json, e)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(d->declaration), &json, e)) return false;
     qa_json_id presentation = qa_json_get(json, qa_json_root(json), "clientPresentation");
     bool ok = true;
     if (presentation != QA_JSON_NONE) {

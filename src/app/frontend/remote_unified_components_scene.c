@@ -218,7 +218,7 @@ bool q3remote_component_open(remote_component *r,qa_error *e)
     if(!domain||!product||!qa_executable_recipe_content(o->recipe,product->identity,&files,&product,e)) return false;
     bool ok=true;
     if(!r->profile) {
-    qa_json_document *d=NULL; if(!qa_json_parse(r->state.mod->declaration,&d,e)) return false;
+    qa_json_document *d=NULL; if(!qa_json_parse(QA_JSON_STRICT, r->state.mod->declaration,&d,e)) return false;
     qa_json_id presentation=qa_json_get(d,qa_json_root(d),"presentation"); qa_buffer path={0};
     ok=qa_json_string_equal(d,qa_json_get(d,presentation,"runtime"),r->state.player_events?"qvm-player-events":"qvm-scene")&&
         qa_json_string(d,qa_json_get(d,qa_json_get(d,presentation,"cgame"),"path"),&path,e)&&!memchr(path.data,0,path.size)&&

@@ -135,7 +135,7 @@ bool application_q3_mod_items_profile_create(application_q3_mod_profile *source,
 {
     if(!source||!strings||!out||*out) return q3mod_fail(e,QA_ERROR_ARGUMENT,"Items require the actual retained generic profile");
     qa_json_document *d=NULL;
-    if(!qa_json_parse(application_q3_mod_declaration(source),&d,e)) return false;
+    if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(source),&d,e)) return false;
     qa_json_id items=qa_json_get(d,qa_json_root(d),"items");
     if(items==QA_JSON_NONE) {qa_json_destroy(d);return true;}
     application_q3_mod_items_profile *p=calloc(1,sizeof(*p));

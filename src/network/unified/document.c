@@ -113,7 +113,7 @@ static bool create_document(qa_unified_document_kind kind, qa_buffer source,
     qa_unified_document *d=calloc(1,sizeof(*d));
     if (!d) { qa_buffer_free(&source); qa_error_set(error,QA_ERROR_MEMORY,0,"allocating unified document"); return false; }
     d->references=1; d->kind=kind; d->source=source; d->bytes=source.size;
-    if (!qa_json_parse((qa_bytes){d->source.data,d->source.size},&d->json,error) ||
+    if (!qa_json_parse(QA_JSON_STRICT, (qa_bytes){d->source.data,d->source.size},&d->json,error) ||
         !qa_unified_tag_check(d->json,qa_json_root(d->json),0,error) ||
         !qa_unified_schema_check(kind,d->json,error)) {
         qa_unified_document_destroy(d); return false;

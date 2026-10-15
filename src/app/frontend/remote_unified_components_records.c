@@ -19,7 +19,7 @@ bool q3remote_component_player_finite(const qa_q3_player *p)
 static bool runtime_qualify(remote_component_state *s,qa_error *e)
 {
     qa_json_document *d=NULL;
-    if(!qa_json_parse(s->mod->declaration,&d,e)) return false;
+    if(!qa_json_parse(QA_JSON_STRICT, s->mod->declaration,&d,e)) return false;
     qa_json_id runtime=qa_json_get(d,qa_json_get(d,qa_json_root(d),"presentation"),"runtime");
     bool ok=qa_json_string_equal(d,runtime,s->player_events?"qvm-player-events":"qvm-scene");
     qa_json_destroy(d);

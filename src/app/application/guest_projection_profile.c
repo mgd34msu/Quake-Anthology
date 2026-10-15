@@ -210,7 +210,7 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
         return true;
     }
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(primary, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
     bool ok = word(doc, qa_json_get(doc, input, "entityStride"), &p->entity_stride, error) &&
         word(doc, qa_json_get(doc, input, "clientStride"), &p->client_stride, error) &&

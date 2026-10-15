@@ -102,7 +102,7 @@ static int name_compare(const void *a, const void *b) {
 }
 bool llm_catalog_parse(qa_llm_provider provider, qa_bytes bytes, llm_catalog *out, qa_error *error) {
     if (!llm_provider_valid(provider) || !out) return llm_fail(error, "invalid model catalog provider");
-    qa_json_document *d = NULL; if (!qa_json_parse(bytes, &d, error)) return llm_fail(error, "service returned an invalid model list response");
+    qa_json_document *d = NULL; if (!qa_json_parse(QA_JSON_STRICT, bytes, &d, error)) return llm_fail(error, "service returned an invalid model list response");
     llm_catalog next = {0}; bool ok = false; qa_json_id root = qa_json_root(d);
     if (!object(d, root, error)) goto done;
     qa_json_id array = qa_json_get(d, root, provider == QA_LLM_SUBSCRIPTION ? "models" : "data");

@@ -144,7 +144,7 @@ static bool dispatch(llm_stream *s, qa_error *error) {
         return true;
     }
     qa_json_document *d = NULL;
-    if (!qa_json_parse((qa_bytes){s->data.buffer.data, s->data.buffer.size}, &d, error)) return llm_fail(error, "Invalid LLM response stream data");
+    if (!qa_json_parse(QA_JSON_STRICT, (qa_bytes){s->data.buffer.data, s->data.buffer.size}, &d, error)) return llm_fail(error, "Invalid LLM response stream data");
     qa_json_id root = qa_json_root(d);
     bool ok = object(d, root, error) && (s->provider == QA_LLM_OTHER_API ? completions(s, d, root, error) : responses(s, d, root, error));
     qa_json_destroy(d); return ok;

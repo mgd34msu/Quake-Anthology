@@ -14,7 +14,7 @@ static bool word(const qa_json_document *d,qa_json_id id,uint32_t *out,qa_error 
 bool q3component_bootstrap_profile(application_q3_component *c,qa_error *e)
 {
     qa_json_document *d=NULL;
-    if(!qa_json_parse(application_q3_mod_declaration(c->profile),&d,e)) return false;
+    if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(c->profile),&d,e)) return false;
     qa_json_id stores=qa_json_get(d,qa_json_get(d,qa_json_root(d),"sourceActors"),"initialStores");
     c->initial_store_count=qa_json_size(d,stores);
     c->initial_stores=c->initial_store_count?calloc(c->initial_store_count,sizeof(*c->initial_stores)):NULL;
@@ -42,7 +42,7 @@ bool q3component_bootstrap_profile(application_q3_component *c,qa_error *e)
 }
 bool q3component_frame_profile(application_q3_component *c,qa_error *e)
 {
-    qa_json_document *d=NULL; if(!qa_json_parse(application_q3_mod_declaration(c->profile),&d,e)) return false;
+    qa_json_document *d=NULL; if(!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(c->profile),&d,e)) return false;
     qa_json_id source=qa_json_get(d,qa_json_root(d),"sourceActors"),frame=qa_json_get(d,source,"frame"); bool ok=true;
     c->has_actor_frame=frame!=QA_JSON_NONE;
     if(c->has_actor_frame) {

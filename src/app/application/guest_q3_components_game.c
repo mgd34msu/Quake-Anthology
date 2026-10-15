@@ -82,7 +82,7 @@ static bool damage_context(void *context,qa_damage_request *request,qa_error *e)
 bool q3components_create_game(component_game_row *row,qa_error *e)
 {
     application_q3_components_options *options=&row->roster->options;
-    qa_json_document *d=NULL; if(!qa_json_parse(qa_resource_bytes(row->declaration),&d,e)) return false;
+    qa_json_document *d=NULL; if(!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(row->declaration),&d,e)) return false;
     qa_json_id abi=qa_json_get(d,qa_json_root(d),"abiProfile"); qa_qvm_abi layout=QA_QVM_Q3_MODERN;
     qa_json_id runtime=qa_json_get(d,qa_json_get(d,qa_json_root(d),"presentation"),"runtime");
     if(runtime!=QA_JSON_NONE) {

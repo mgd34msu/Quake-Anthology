@@ -552,7 +552,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         !qa_id_index_reserve(&o->selection_index.retained, capacity, e)) return false;
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     o->abi = info.image.target.abi; o->pointer_bytes = info.image.target.pointer_bytes;
-    if (!qa_json_parse(qa_native_declaration_primary(o->declaration), &o->document, e)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(o->declaration), &o->document, e)) return false;
     const qa_json_document *d = o->document; qa_json_id root = qa_json_root(d), inventory = qa_json_get(d, root, "inventory");
     qa_json_id items = qa_json_get(d, qa_json_get(d, root, "commands"), "items"); int64_t empty;
     if (!word(d, inventory, "client", &o->client_pointer, e) || !word(d, inventory, "inventory", &o->inventory, e) ||

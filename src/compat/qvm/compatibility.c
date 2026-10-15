@@ -61,7 +61,7 @@ bool qa_qvm_compatibility_parse(qa_bytes json, const char *artifact_path,
     qa_qvm_compatibility selected = {0};
     bool success = false;
     if (!folded_path((qa_bytes){(const uint8_t *)artifact_path,strlen(artifact_path)},&selected_path,error)
-        || !qa_json_parse(json,&document,error)) goto finished;
+        || !qa_json_parse(QA_JSON_STRICT, json,&document,error)) goto finished;
     qa_json_id root = qa_json_root(document), modules = qa_json_get(document,root,"modules");
     int64_t version;
     if (qa_json_type(document,root) != QA_JSON_OBJECT

@@ -109,7 +109,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
     p->target = qa_native_module_describe(engine->provider->state.native.module).image.target;
     if ((p->kex && p->target.pointer_bytes != 8) || (!p->kex && p->target.pointer_bytes != 4))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native primary combat requires its qualified classic32 or KEX64 artifact");
-    if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
     const qa_json_document *doc = p->document;
     qa_json_id root = qa_json_root(doc); p->world = qa_json_get(doc, root, "world");
     qa_json_id client = qa_json_get(doc, p->world, "client"),

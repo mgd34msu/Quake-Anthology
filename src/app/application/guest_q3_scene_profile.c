@@ -173,7 +173,7 @@ bool application_q3_scene_profile_create(qa_qvm_image *image, qa_qvm_abi abi,
     if (!image || !gameplay || !path || !gameplay_path || !out || *out || (unsigned)abi > QA_QVM_Q3_116N)
         return fail(e, QA_ERROR_ARGUMENT, "Component scene requires both held executables");
     qa_json_document *d = NULL;
-    if (!qa_json_parse(bytes, &d, e)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &d, e)) return false;
     application_q3_scene_profile *p = calloc(1, sizeof(*p));
     if (!p) { qa_json_destroy(d); return fail(e, QA_ERROR_MEMORY, "Owning component scene profile"); }
     p->image = image; qa_qvm_image_retain(image); p->abi = abi;

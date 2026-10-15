@@ -146,7 +146,7 @@ static bool status_rows(const qa_json_document *doc, qa_json_id object,
 static bool declared(qa_bytes bytes, application_q3_equipment_profile *profile, qa_error *error)
 {
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), view = qa_json_get(doc, root, "view"),
         warning = qa_json_get(doc, root, "warning"), states = qa_json_get(doc, warning, "states"),
         held = qa_json_get(doc, root, "held");

@@ -102,7 +102,9 @@ static double value_number(const q2_original_field *field, const void *value)
 static bool value_store(q2_original_record_io *io, const q2_original_field *field,
     void *value, double number)
 {
-    if (!isfinite(number)) return fail(io, field->offset, "Nonfinite Q2 original field");
+    if (!isfinite(number) &&
+        !(io->edition == QA_RULESET_Q2_RERELEASE && field->kind == Q2_ORIGINAL_F32))
+        return fail(io, field->offset, "Nonfinite Q2 original field");
     switch (field->kind) {
     case Q2_ORIGINAL_I32:
     case Q2_ORIGINAL_I16:
@@ -135,7 +137,7 @@ static bool value_store(q2_original_record_io *io, const q2_original_field *fiel
         return true;
     }
     default:
-        if (number > FLT_MAX || number < -FLT_MAX)
+        if (isfinite(number) && (number > FLT_MAX || number < -FLT_MAX))
             return fail(io, field->offset, "Q2 original float exceeds its Source field");
         *(float *)value = (float)number;
         return true;
@@ -171,7 +173,7 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
                 double number;
                 if (!qa_json_number(io->document, qa_json_at(io->document, id, i), &number, io->error))
                     return false;
-                if (!isfinite(number) || number < -FLT_MAX || number > FLT_MAX)
+                if (isfinite(number) && (number < -FLT_MAX || number > FLT_MAX))
                     return fail(io, i, "Q2 original vector exceeds its Source field");
                 *components[i] = (float)number;
             }
@@ -210,6 +212,8 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
     if (field->kind == Q2_ORIGINAL_WEAPON_PHASE && (number < 0 || number > 3))
         return fail(io, field->offset, "Unknown Q2 Source weapon phase");
     if (io->reading) return value_store(io, field, value, number);
+    if (!isfinite(number) && field->kind != Q2_ORIGINAL_F32)
+        return fail(io, field->offset, "Nonfinite Q2 original field");
     qa_json_writer_number(io->writer, number);
     return written(io);
 }
@@ -1083,7 +1087,7 @@ bool q2_original_game_open(qa_q2_game *g, qa_bytes bytes,
     *io = (q2_original_record_io){.edition = g->options.rules, .product = g->options.product,
         .reading = true, .error = error};
     if (io->edition == QA_RULESET_Q2_RERELEASE) {
-        if (!qa_json_parse(bytes, document, error)) return false;
+        if (!qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, document, error)) return false;
         io->document = *document;
         qa_json_id root = qa_json_root(*document);
         io->object = qa_json_get(*document, root, "game");
@@ -1314,7 +1318,7 @@ bool q2_original_write_game(qa_q2_game *g, bool autosave,
     q2_original_record_io io = {.edition = g->options.rules, .product = g->options.product,
         .error = error};
     qa_buffer encoded = {0};
-    qa_json_writer writer = {0};
+    qa_json_writer writer = {.special_floats = g->options.rules == QA_RULESET_Q2_RERELEASE};
     if (io.edition == QA_RULESET_Q2_CLASSIC) {
         size_t stride = q2_original_client_size(g->options.product);
         if (!stride) return fail(&io, 0, "Actual Q2 product has no original classic client ABI");

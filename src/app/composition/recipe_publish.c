@@ -393,7 +393,7 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
     qa_executable_recipe r = {.catalog = qa_launch_snapshot_catalog(launch), .pool = qa_application_resources(app)};
     qa_buffer identity = {0}; qa_json_document *json = NULL; qa_json_writer w = {0}, offer = {0}; qa_buffer body = {0}, encoded = {0}; qa_unified_composition canonical = {0};
     bool ok = qa_launch_identity_encode(launch, qa_session_actors(qa_application_session(app)), &identity, error) &&
-        qa_json_parse((qa_bytes){identity.data, identity.size}, &json, error);
+        qa_json_parse(QA_JSON_STRICT, (qa_bytes){identity.data, identity.size}, &json, error);
     qa_vfs *main = ok ? qa_vfs_clone(qa_launch_snapshot_mounts(launch), error) : NULL;
     if (ok) { ok = main && recipe_view_add(&r, "main", r.catalog, main, true, NULL, error); if (!ok) qa_vfs_destroy(main); }
     for (size_t i = 0; ok && i < qa_launch_snapshot_instance_count(launch); ++i) {
@@ -453,7 +453,7 @@ bool qa_application_unified_offer(qa_application *app, uint32_t epoch, const cha
     qa_json_writer_key(&w, "sidecars"); if (ok) ok = sidecars_write(&w, r.catalog, sidecars, sidecar_count, error); qa_json_writer_end(&w);
     if (ok) ok = qa_json_writer_finish(&w, &body, error) && qa_unified_composition_create((qa_bytes){body.data, body.size}, &canonical, error);
     if (ok) {
-        qa_json_document *composition = NULL; ok = qa_json_parse((qa_bytes){canonical.canonical.data, canonical.canonical.size}, &composition, error);
+        qa_json_document *composition = NULL; ok = qa_json_parse(QA_JSON_STRICT, (qa_bytes){canonical.canonical.data, canonical.canonical.size}, &composition, error);
         qa_json_writer_object(&offer); qa_json_writer_key(&offer, "schema"); qa_json_writer_string(&offer, "qts-control");
         qa_json_writer_key(&offer, "version"); qa_json_writer_number(&offer, 1); qa_json_writer_key(&offer, "value"); qa_json_writer_object(&offer);
         qa_json_writer_key(&offer, "kind"); qa_json_writer_string(&offer, "offer"); qa_json_writer_key(&offer, "epoch"); qa_json_writer_number(&offer, epoch);

@@ -358,7 +358,7 @@ static bool game_name(const addon_package *package, char **out, char **unavailab
 static bool catalog_parse(addon_library *library, qa_bytes bytes, qa_error *error)
 {
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc);
     bool okay = qa_json_type(doc, root) == QA_JSON_ARRAY;
     if (!okay) frontend_fail(error, QA_ERROR_FORMAT, "Invalid Quaddicted catalog");
@@ -485,7 +485,7 @@ static bool installed_load(frontend_content_library_services *owner, qa_error *e
         if (okay && kind == QA_FS_REGULAR) {
             qa_error metadata = {0};
             bool valid = root_read(library->root, path, &bytes, &metadata) &&
-                qa_json_parse((qa_bytes){bytes.data, bytes.size}, &doc, &metadata);
+                qa_json_parse(QA_JSON_STRICT, (qa_bytes){bytes.data, bytes.size}, &doc, &metadata);
             qa_json_id row = valid ? qa_json_root(doc) : QA_JSON_NONE;
             qa_json_id package_id = valid ? qa_json_get(doc, row, "id") : QA_JSON_NONE;
             if (valid && package_id == QA_JSON_NONE) package_id = qa_json_get(doc, row, "sha256");
@@ -909,7 +909,7 @@ static bool install_plan(frontend_content_library_services *owner, qa_error *err
         if (okay) {
             qa_error existing = {0};
             bool admitted = root_read(library->root, path, &bytes, &existing) &&
-                qa_json_parse((qa_bytes){bytes.data, bytes.size}, &doc, &existing) &&
+                qa_json_parse(QA_JSON_STRICT, (qa_bytes){bytes.data, bytes.size}, &doc, &existing) &&
                 (qa_json_string_equal(doc, qa_json_get(doc, qa_json_root(doc), "id"), selected->id) ||
                  qa_json_string_equal(doc, qa_json_get(doc, qa_json_root(doc), "sha256"), selected->id));
             already = admitted;

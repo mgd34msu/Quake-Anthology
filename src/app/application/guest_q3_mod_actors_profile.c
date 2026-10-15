@@ -69,7 +69,7 @@ static bool globals(application_q3_mod_actors *o,const qa_json_document *d,qa_js
 bool q3mod_actors_profile(application_q3_mod_actors *o,qa_error *e)
 {
     qa_json_document *d=NULL;
-    if (!qa_json_parse(application_q3_mod_declaration(o->options.profile),&d,e)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, application_q3_mod_declaration(o->options.profile),&d,e)) return false;
     qa_json_id root=qa_json_root(d),source=qa_json_get(d,root,"sourceActors"),combat=qa_json_get(d,root,"combat"),callbacks=qa_json_get(d,source,"callbacks");
     o->present=callbacks!=QA_JSON_NONE||combat!=QA_JSON_NONE;
     o->combat=combat!=QA_JSON_NONE; o->entity_record=o->options.profile->entity_record;

@@ -102,7 +102,7 @@ bool application_q3_weapon_models_profile_read(const qa_qvm_image *image, qa_qvm
     profile.artifact_path = qa_vfs_normalize_path(path, error);
     if (!profile.artifact_path) return false;
     qa_json_document *doc = NULL;
-    bool ok = !bytes || qa_json_parse(*bytes, &doc, error);
+    bool ok = !bytes || qa_json_parse(QA_JSON_STRICT, *bytes, &doc, error);
     if (ok && bytes) {
         qa_json_id root = qa_json_root(doc), table = qa_json_get(doc, root, "table"),
             models = qa_json_get(doc, table, "models");

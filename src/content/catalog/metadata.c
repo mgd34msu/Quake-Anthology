@@ -53,7 +53,7 @@ static bool component(qa_catalog *c, qa_vfs *view, const qa_json_document *doc,
     mod->declaration_resource = declaration;
     mod->declaration = qa_resource_bytes(declaration);
     qa_json_document *decl;
-    if (!qa_json_parse(mod->declaration, &decl, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, mod->declaration, &decl, error)) return false;
     bool ok = false;
     qa_json_id root = qa_json_root(decl), runtime = qa_json_get(decl, root, "runtime");
     if (qa_json_string_equal(decl, runtime, "quakec")) mod->runtime = QA_PROGRAM_QUAKEC;
@@ -91,7 +91,7 @@ bool catalog_read_mods(qa_catalog *c, catalog_product *p, qa_error *error)
     if (!qa_catalog_open(c, p->view.id, &view, error)) { qa_resource_release(resource); return false; }
     qa_json_document *doc = NULL;
     bool ok = false;
-    if (!qa_json_parse(qa_resource_bytes(resource), &doc, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(resource), &doc, error)) goto done;
     qa_json_id root = qa_json_root(doc), components = qa_json_get(doc, root, "components");
     uint64_t version;
     if (!qa_json_u64(doc, qa_json_get(doc, root, "version"), &version, error)) goto done;
@@ -152,7 +152,7 @@ bool catalog_read_starts(qa_catalog *c, catalog_product *p, qa_error *error)
     qa_vfs_destroy(view);
     if (!resource) return true;
     qa_json_document *doc = NULL; bool ok = false;
-    if (!qa_json_parse(qa_resource_bytes(resource), &doc, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(resource), &doc, error)) goto done;
     qa_json_id root = qa_json_root(doc), episodes = qa_json_get(doc, root, "episodes"), maps = qa_json_get(doc, root, "maps");
     if ((episodes != QA_JSON_NONE && qa_json_type(doc, episodes) != QA_JSON_ARRAY) ||
         (maps != QA_JSON_NONE && qa_json_type(doc, maps) != QA_JSON_ARRAY)) {

@@ -34,7 +34,7 @@ bool frontend_equipment_icon_load(qa_bytes declaration,qa_game_family family,qa_
 {
     if(!declaration.size||!files||!images||!library||!out||*out||!source||*source)return false;
     qa_json_document *doc=NULL;char *path=NULL,*lump=NULL,*name=NULL,*material_key=NULL;
-    bool okay=qa_json_parse(declaration,&doc,error);
+    bool okay=qa_json_parse(QA_JSON_STRICT, declaration,&doc,error);
     qa_json_id root=okay?qa_json_root(doc):QA_JSON_NONE;
     qa_json_id kind=okay?qa_json_get(doc,root,"kind"):QA_JSON_NONE;
     bool shader=okay&&qa_json_string_equal(doc,kind,"shader");

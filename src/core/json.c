@@ -1,6 +1,7 @@
 #include "qa/json.h"
 #include "qa/text.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,6 +10,7 @@ typedef struct json_node {
     size_t members;
     qa_json_id first, next;
     qa_json_kind kind;
+    bool special_float;
 } json_node;
 
 typedef struct json_key {
@@ -34,6 +36,7 @@ typedef struct json_parser {
     qa_json_document *document;
     size_t cursor;
     qa_error *error;
+    qa_json_policy policy;
 } json_parser;
 
 static bool fail(json_parser *parser, const char *message) {
@@ -250,6 +253,18 @@ static bool value(json_parser *parser, qa_json_id *out) {
             return fail(parser,"invalid JSON literal");
         parser->cursor+=length;
         node.kind=c=='n' ? QA_JSON_NULL : QA_JSON_BOOL;
+    } else if (parser->policy==QA_JSON_SPECIAL_FLOATS &&
+        (c=='N' || c=='I' || ((c=='-' || c=='+') &&
+         source.size-parser->cursor>1 && source.data[parser->cursor+1]=='I'))) {
+        const char *literal=c=='N' ? "NaN" : c=='I' ? "Infinity" :
+            c=='-' ? "-Infinity" : "+Infinity";
+        size_t length=c=='N' ? 3u : c=='I' ? 8u : 9u;
+        if (source.size-parser->cursor<length ||
+            memcmp(source.data+parser->cursor,literal,length))
+            return fail(parser,"invalid JSON number");
+        parser->cursor+=length;
+        node.kind=QA_JSON_NUMBER;
+        node.special_float=true;
     } else {
         node.kind=QA_JSON_NUMBER;
         if (c=='-') ++parser->cursor;
@@ -287,14 +302,14 @@ static bool push_frame(json_parser *parser, json_frame **frames, size_t *count,
     return true;
 }
 
-bool qa_json_parse(qa_bytes source, qa_json_document **out, qa_error *error) {
+bool qa_json_parse(qa_json_policy policy, qa_bytes source, qa_json_document **out, qa_error *error) {
     if (!out || (!source.data && source.size)) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"invalid JSON input"); return false;
     }
     qa_json_document *document=calloc(1,sizeof(*document));
     if (!document) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating JSON document"); return false; }
     document->source=source;
-    json_parser parser={document,0,error};
+    json_parser parser={.document=document,.error=error,.policy=policy};
     json_frame *frames=NULL;
     size_t count=0, capacity=0;
     qa_json_id root;
@@ -425,10 +440,16 @@ bool qa_json_bool(const qa_json_document *document, qa_json_id id, bool *out, qa
 }
 bool qa_json_number(const qa_json_document *document, qa_json_id id, double *out, qa_error *error) {
     if (!require_kind(document,id,QA_JSON_NUMBER,out,error)) return false;
-    if (!qa_parse_number(qa_json_source(document,id),out,error)) {
+    double number;
+    if (!qa_parse_number(qa_json_source(document,id),&number,error)) {
         if (error) error->offset=document->nodes[id].start;
         return false;
     }
+    if (!isfinite(number) && !document->nodes[id].special_float) {
+        qa_error_set(error,QA_ERROR_FORMAT,document->nodes[id].start,"JSON number exceeds its finite representation");
+        return false;
+    }
+    *out=number;
     return true;
 }
 

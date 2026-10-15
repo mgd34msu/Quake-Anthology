@@ -68,7 +68,7 @@ invalid:
 bool progress_decode(qa_bytes bytes, progress_data *out, qa_error *error) {
     progress_data data = {0};
     qa_json_document *document = NULL;
-    if (!qa_json_parse(bytes, &document, error))
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &document, error))
         return false;
     qa_json_id root = qa_json_root(document);
     qa_json_id events = qa_json_get(document, root, "events");

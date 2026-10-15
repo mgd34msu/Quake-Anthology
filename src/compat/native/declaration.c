@@ -365,7 +365,7 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         memcpy(declaration->json, json.data, json.size);
     declaration->json_size = json.size;
     qa_bytes owned_json = {declaration->json, declaration->json_size};
-    if (!qa_json_parse(owned_json, &declaration->document, error)) {
+    if (!qa_json_parse(QA_JSON_STRICT, owned_json, &declaration->document, error)) {
         free(selected_path);
         qa_native_declaration_destroy(declaration);
         return false;

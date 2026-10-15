@@ -242,7 +242,7 @@ bool qa_server_profile_parse(qa_bytes bytes, qa_server_setting_selection selecti
     qa_server_setting_catalog catalog;
     if (!qa_server_setting_definitions(selection, &catalog, error)) return false;
     qa_json_document *document;
-    if (!qa_json_parse(bytes, &document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &document, error)) return false;
     qa_json_id root = qa_json_root(document), overrides = qa_json_get(document, root, "overrides");
     qa_server_profile *profile = NULL;
     bool ok = profile_version(document, root, error) &&

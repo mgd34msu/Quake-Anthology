@@ -108,7 +108,7 @@ bool frontend_held_attachment_read(qa_bytes bytes, frontend_held_attachment *out
 {
     if (!out) return fail(error, QA_ERROR_ARGUMENT, "Carrier attachment requires output");
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     frontend_held_attachment result = {0};
     qa_json_id root = qa_json_root(doc), kind = qa_json_get(doc, root, "kind");
     qa_json_id version = qa_json_get(doc, root, "version");
@@ -165,7 +165,7 @@ static bool declaration_read(qa_bytes bytes,bool file, frontend_held_declaration
 {
     if (!out) return fail(error, QA_ERROR_ARGUMENT, "Held declaration requires output");
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     frontend_held_declaration result = {0};
     qa_json_id root = qa_json_root(doc), kind = qa_json_get(doc, root, "kind");
     uint32_t version;

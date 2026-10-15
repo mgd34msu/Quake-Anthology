@@ -9,7 +9,7 @@ typedef struct qa_json_writer {
     qa_buffer bytes;
     size_t capacity, depth;
     qa_json_writer_scope scopes[128];
-    bool root, failed;
+    bool root, failed, special_floats;
     qa_error failure;
 } qa_json_writer;
 /* Zero initialization is valid. Writes retain the first error. Finish transfers

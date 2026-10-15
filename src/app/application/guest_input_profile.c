@@ -91,7 +91,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         *out = p; return true;
     }
     qa_json_document *doc;
-    if (!qa_json_parse(primary, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
     qa_json_id entries = qa_json_get(doc, input, "entries");
     uint32_t entity_stride, client_stride, client_pointer, move, slice;

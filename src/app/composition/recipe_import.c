@@ -523,7 +523,7 @@ bool qa_executable_recipe_prepare(const qa_unified_document *offer, qa_catalog *
 bool recipe_metadata_restore(qa_executable_recipe *r, qa_error *error)
 {
     qa_json_document *json = NULL;
-    if (!r || !qa_json_parse((qa_bytes){r->composition.data, r->composition.size}, &json, error)) return false;
+    if (!r || !qa_json_parse(QA_JSON_STRICT, (qa_bytes){r->composition.data, r->composition.size}, &json, error)) return false;
     qa_json_id composition = qa_json_root(json), recipe = qa_json_get(json, composition, "recipe");
     uint32_t schema = 0;
     bool okay = qa_json_type(json, composition) == QA_JSON_OBJECT && qa_json_size(json, composition) == 5 &&

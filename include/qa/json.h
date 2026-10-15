@@ -11,11 +11,15 @@ typedef enum qa_json_kind {
     QA_JSON_NULL, QA_JSON_BOOL, QA_JSON_NUMBER, QA_JSON_STRING,
     QA_JSON_ARRAY, QA_JSON_OBJECT, QA_JSON_INVALID
 } qa_json_kind;
+typedef enum qa_json_policy {
+    QA_JSON_STRICT,
+    QA_JSON_SPECIAL_FLOATS
+} qa_json_policy;
 
 /* The document owns its index and borrows source bytes until destruction.
  * Parsing checks the complete document, including UTF-8 and escaped Unicode.
  * Failed calls leave outputs unchanged. No document mutation after parsing. */
-bool qa_json_parse(qa_bytes source, qa_json_document **out, qa_error *error);
+bool qa_json_parse(qa_json_policy, qa_bytes source, qa_json_document **out, qa_error *error);
 void qa_json_destroy(qa_json_document *document);
 qa_json_id qa_json_root(const qa_json_document *document);
 qa_json_kind qa_json_type(const qa_json_document *document, qa_json_id id);

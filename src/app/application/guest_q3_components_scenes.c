@@ -90,7 +90,7 @@ static bool open_scene(component_scene_row *row,qa_error *e)
     component_game_row *game=row->game; application_q3_components_options *options=&game->roster->options;
     if(!row->profile) {
     qa_json_document *document=NULL;
-    if(!qa_json_parse(qa_resource_bytes(game->declaration),&document,e)) return false;
+    if(!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(game->declaration),&document,e)) return false;
     qa_json_id presentation=qa_json_get(document,qa_json_root(document),"presentation");
     if((!qa_json_string_equal(document,qa_json_get(document,presentation,"runtime"),"qvm-scene")&&!qa_json_string_equal(document,qa_json_get(document,presentation,"runtime"),"qvm-player-events"))) {
         qa_json_destroy(document); return application_fail(e,QA_ERROR_UNSUPPORTED,"Component has no declared original scene presentation");

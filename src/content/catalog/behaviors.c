@@ -32,7 +32,7 @@ static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
     *found = resource != NULL;
     if (!resource) return true;
     qa_json_document *doc = NULL; bool ok = false;
-    if (!qa_json_parse(qa_resource_bytes(resource), &doc, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(resource), &doc, error)) goto done;
     qa_json_id root = qa_json_root(doc), entries = qa_json_get(doc, root, runtime == QA_PROGRAM_QUAKEC ? "behaviors" : "profiles");
     uint64_t version;
     if (!qa_json_u64(doc, qa_json_get(doc, root, "version"), &version, error)) goto done;

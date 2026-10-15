@@ -152,7 +152,7 @@ void application_q3_weapon_profile_free(application_q3_weapon_profile *p)
 static bool declared(q3g_role *role, qa_bytes bytes, application_q3_weapon_profile *p, qa_error *error)
 {
     qa_json_document *doc = NULL;
-    if (!qa_json_parse(bytes, &doc, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &doc, error)) return false;
     qa_json_id root = qa_json_get(doc, qa_json_root(doc), "weapons"), stage = qa_json_get(doc, root, "stage"),
         dispatcher = qa_json_get(doc, stage, "dispatcher"), actor = qa_json_get(doc, dispatcher, "actor"),
         pointer = qa_json_get(doc, actor, "pointer"), selection = qa_json_get(doc, stage, "selection"),

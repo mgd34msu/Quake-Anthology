@@ -80,7 +80,7 @@ bool application_native_q2_inventory_prepare(struct application_native_q2 *engin
     struct application_native_q2_inventory *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 source inventory");
     engine->primary_inventory = p;
-    if (!qa_json_parse(qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
     const qa_json_document *doc = p->document;
     qa_json_id root = qa_json_root(doc), inventory = qa_json_get(doc, root, "inventory");
     p->world = qa_json_get(doc, root, "world");

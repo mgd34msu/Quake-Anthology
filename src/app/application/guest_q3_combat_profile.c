@@ -330,7 +330,7 @@ bool application_q3_combat_profile_create(qa_qvm_image *image, qa_qvm_role role,
     if (!p->path) { application_q3_combat_profile_destroy(p); return fail(error, QA_ERROR_MEMORY, "Retaining original combat artifact path"); }
     memcpy(p->path, path, length);
     qa_json_document *doc = NULL; bool found = true;
-    bool ok = primary.size ? qa_json_parse(primary, &doc, error) && parse(p, doc, strings, error) :
+    bool ok = primary.size ? qa_json_parse(QA_JSON_STRICT, primary, &doc, error) && parse(p, doc, strings, error) :
         builtin(p, strings, &found, error);
     qa_json_destroy(doc);
     if (!ok) { application_q3_combat_profile_destroy(p); return false; }

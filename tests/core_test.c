@@ -23,6 +23,7 @@
 #include "qa/settings.h"
 #include "qa/binary.h"
 #include "qa/json.h"
+#include "qa/json_writer.h"
 #include "qa/campaign.h"
 #include "qa/arena_progress.h"
 #include "qa/recovery.h"
@@ -76,6 +77,7 @@
 
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -862,7 +864,7 @@ static void test_json_caller_storage(void)
         uint8_t json[6]={'"'};
         memcpy(json+1,bytes.data,bytes.size);json[bytes.size+1]='"';
         qa_json_document *invalid=NULL;
-        CHECK(!qa_json_parse((qa_bytes){json,bytes.size+2},&invalid,&failure) && !invalid);
+        CHECK(!qa_json_parse(QA_JSON_STRICT,(qa_bytes){json,bytes.size+2},&invalid,&failure) && !invalid);
     }
     const uint8_t valid[]={0xef,0xbf,0xbd,0xf4,0x8f,0xbf,0xbf};
     size_t cursor=0;uint32_t scalar=0;
@@ -871,7 +873,7 @@ static void test_json_caller_storage(void)
     const char source[]="\"A\\u0000B\\ud83d\\ude00\\n\"";
     const uint8_t expected[]={'A',0,'B',0xf0,0x9f,0x98,0x80,'\n',0};
     qa_json_document *document=NULL; qa_error error={0};
-    CHECK(qa_json_parse((qa_bytes){(const uint8_t *)source,sizeof(source)-1},&document,&error));
+    CHECK(qa_json_parse(QA_JSON_STRICT,(qa_bytes){(const uint8_t *)source,sizeof(source)-1},&document,&error));
     uint8_t storage[sizeof(source)]; qa_bytes decoded={0};
     CHECK(qa_json_string_into(document,qa_json_root(document),storage,sizeof(storage),&decoded,&error));
     CHECK(decoded.data==storage && decoded.size==sizeof(expected)-1);
@@ -884,6 +886,70 @@ static void test_json_caller_storage(void)
     CHECK(qa_json_string(document,qa_json_root(document),&owned,&error));
     CHECK(owned.size==decoded.size && !memcmp(owned.data,expected,sizeof(expected)));
     qa_buffer_free(&owned); qa_json_destroy(document);
+
+    const char *special[]={"NaN","Infinity","+Infinity","-Infinity"};
+    for (size_t i=0;i<sizeof(special)/sizeof(*special);++i) {
+        qa_bytes bytes={(const uint8_t *)special[i],strlen(special[i])};
+        document=NULL;
+        CHECK(!qa_json_parse(QA_JSON_STRICT,bytes,&document,&error) && !document);
+        CHECK(qa_json_parse(QA_JSON_SPECIAL_FLOATS,bytes,&document,&error));
+        double number=0;
+        CHECK(qa_json_number(document,qa_json_root(document),&number,&error));
+        CHECK(i==0 ? isnan(number) : isinf(number) && (signbit(number)!=0)==(i==3));
+        int64_t signed_value=17; uint64_t unsigned_value=19;
+        CHECK(!qa_json_i64(document,qa_json_root(document),&signed_value,&error) && signed_value==17);
+        CHECK(!qa_json_u64(document,qa_json_root(document),&unsigned_value,&error) && unsigned_value==19);
+        qa_json_destroy(document);
+        qa_json_writer writer={0}; qa_buffer output={0};
+        qa_json_writer_number(&writer,number);
+        CHECK(!qa_json_writer_finish(&writer,&output,&error) && !output.data);
+        qa_json_writer_destroy(&writer);
+    }
+    const char *invalid_special[]={"-NaN","+NaN","nan","inf","-inf","NaNx","Infinityx"};
+    for (size_t i=0;i<sizeof(invalid_special)/sizeof(*invalid_special);++i) {
+        qa_bytes bytes={(const uint8_t *)invalid_special[i],strlen(invalid_special[i])};
+        document=NULL;
+        CHECK(!qa_json_parse(QA_JSON_SPECIAL_FLOATS,bytes,&document,&error) && !document);
+    }
+    const char *overflow[]={"1e999","-1e999"};
+    const qa_json_policy policies[]={QA_JSON_STRICT,QA_JSON_SPECIAL_FLOATS};
+    for (size_t policy=0;policy<sizeof(policies)/sizeof(*policies);++policy)
+        for (size_t i=0;i<sizeof(overflow)/sizeof(*overflow);++i) {
+            qa_bytes bytes={(const uint8_t *)overflow[i],strlen(overflow[i])};
+            document=NULL;
+            CHECK(qa_json_parse(policies[policy],bytes,&document,&error));
+            double number=23;
+            CHECK(!qa_json_number(document,qa_json_root(document),&number,&error) && number==23);
+            qa_json_destroy(document);
+        }
+    qa_json_writer writer={.special_floats=true}; qa_buffer output={0};
+    const double numbers[]={NAN,INFINITY,-INFINITY,-0.0,3.5};
+    qa_json_writer_object(&writer);
+    qa_json_writer_key(&writer,"values"); qa_json_writer_array(&writer);
+    for (size_t i=0;i<sizeof(numbers)/sizeof(*numbers);++i)
+        qa_json_writer_number(&writer,numbers[i]);
+    qa_json_writer_end(&writer);
+    qa_json_writer_key(&writer,"integer"); qa_json_writer_u64(&writer,7);
+    qa_json_writer_end(&writer);
+    CHECK(qa_json_writer_finish(&writer,&output,&error));
+    document=NULL;
+    CHECK(!qa_json_parse(QA_JSON_STRICT,(qa_bytes){output.data,output.size},&document,&error) && !document);
+    CHECK(qa_json_parse(QA_JSON_SPECIAL_FLOATS,(qa_bytes){output.data,output.size},&document,&error));
+    qa_json_id root=qa_json_root(document), array=qa_json_get(document,root,"values");
+    CHECK(qa_json_size(document,array)==sizeof(numbers)/sizeof(*numbers));
+    for (size_t i=0;i<sizeof(numbers)/sizeof(*numbers);++i) {
+        qa_json_id id=qa_json_at(document,array,i); double number=0;
+        CHECK(qa_json_number(document,id,&number,&error));
+        CHECK(isnan(numbers[i]) ? isnan(number) : number==numbers[i] && (signbit(number)!=0)==(signbit(numbers[i])!=0));
+        if (i<3) {
+            const char *literal=i==0 ? "NaN" : i==1 ? "Infinity" : "-Infinity";
+            qa_bytes token=qa_json_source(document,id);
+            CHECK(token.size==strlen(literal) && !memcmp(token.data,literal,token.size));
+        }
+    }
+    uint64_t integer=0;
+    CHECK(qa_json_u64(document,qa_json_get(document,root,"integer"),&integer,&error) && integer==7);
+    qa_json_destroy(document); qa_buffer_free(&output); qa_json_writer_destroy(&writer);
 }
 static bool capture_lightstyle(void *context, const qa_builtin_event *event, qa_error *error)
 {

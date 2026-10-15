@@ -94,7 +94,7 @@ bool q2_original_level_open(qa_q2_game *game, qa_bytes bytes,
     size_t capacity = 0;
     bool okay = true;
     if (io.edition == QA_RULESET_Q2_RERELEASE) {
-        okay = qa_json_parse(bytes, &file.document, error);
+        okay = qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, &file.document, error);
         if (!okay) goto done;
         qa_json_id root = qa_json_root(file.document);
         file.level_object = qa_json_get(file.document, root, "level");
@@ -576,7 +576,7 @@ static bool write_level(qa_q2_game *g, bool transition,
 {
     q2_original_record_io io = {.edition = g->options.rules, .product = g->options.product, .error = error};
     q2_save_io raw = {.game = g, .error = error};
-    qa_json_writer writer = {0};
+    qa_json_writer writer = {.special_floats = g->options.rules == QA_RULESET_Q2_RERELEASE};
     qa_buffer fields = {0};
     bool okay = true;
     if (io.edition == QA_RULESET_Q2_CLASSIC) {

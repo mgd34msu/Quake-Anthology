@@ -342,7 +342,7 @@ bool qa_seat_settings_parse(qa_bytes bytes, qa_seat_settings *out, qa_error *e) 
     if (!out)
         return settings_fail(e, "Missing seat settings output");
     qa_json_document *d;
-    if (!qa_json_parse(bytes, &d, e))
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &d, e))
         return false;
     qa_json_id root = qa_json_root(d), bindings = qa_json_get(d, root, "bindings"),
                history = qa_json_get(d, root, "history");
@@ -502,7 +502,7 @@ bool qa_gyro_profile_parse(qa_bytes bytes, qa_gyro_profile *out, qa_error *e) {
     if (!out || bytes.size > 8192)
         return settings_fail(e, "Invalid gyro profile size");
     qa_json_document *d;
-    if (!qa_json_parse(bytes, &d, e))
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &d, e))
         return false;
     qa_gyro_profile result = {0};
     qa_json_id root = qa_json_root(d), identity = qa_json_get(d, root, "identity"),

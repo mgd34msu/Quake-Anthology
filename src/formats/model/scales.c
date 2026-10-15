@@ -23,7 +23,7 @@ bool qa_model_animation_scale_json(qa_model_animation *a, qa_bytes json,
     }
     qa_json_document *doc = NULL;
     qa_error json_error = {0};
-    if (!qa_json_parse(json, &doc, &json_error)) {
+    if (!qa_json_parse(QA_JSON_STRICT, json, &doc, &json_error)) {
         if (json_error.code == QA_ERROR_MEMORY) {
             if (error)
                 *error = json_error;

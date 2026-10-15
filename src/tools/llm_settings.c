@@ -87,7 +87,7 @@ bool llm_preferences_load(qa_llm *service, llm_preferences *out, qa_error *error
     qa_resource *file = NULL; bool found; qa_json_document *d = NULL; bool ok = false;
     if (!load_file(service, "llm.json", &file, &found, error)) goto done;
     if (!found) { ok = true; goto done; }
-    if (!qa_json_parse(qa_resource_bytes(file), &d, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(file), &d, error)) goto done;
     qa_json_id root = qa_json_root(d), models = qa_json_get(d, root, "models"), efforts = qa_json_get(d, root, "reasoningEfforts");
     if (!version(d, root, error) || !object(d, models, error)) goto done;
     qa_json_id provider = qa_json_get(d, root, "provider"); bool known = false;
@@ -128,7 +128,7 @@ bool llm_credentials_load(qa_llm *service, llm_credentials *out, qa_error *error
     if (!found) { ok = true; goto done; }
     qa_bytes bytes = llm_trim(qa_resource_bytes(file));
     if (!bytes.size || bytes.data[0] != '{') { ok = llm_api_key_text(&next.storage, qa_resource_bytes(file), &next.api_key, error); goto done; }
-    if (!qa_json_parse(bytes, &d, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &d, error)) goto done;
     qa_json_id root = qa_json_root(d);
     if (!version(d, root, error)) goto done;
     qa_json_id key = qa_json_get(d, root, "apiKey"), subscription = qa_json_get(d, root, "subscription");
@@ -165,7 +165,7 @@ bool llm_other_load(qa_llm *service, llm_other *out, qa_error *error) {
     llm_other next = {.base_url = "", .model = ""}; qa_resource *file = NULL; bool found; qa_json_document *d = NULL; bool ok = false;
     if (!load_file(service, "other.service", &file, &found, error)) goto done;
     if (!found) { ok = true; goto done; }
-    if (!qa_json_parse(qa_resource_bytes(file), &d, error)) goto done;
+    if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(file), &d, error)) goto done;
     qa_json_id root = qa_json_root(d); const char *url;
     if (!object(d, root, error) || !qa_json_string_equal(d, qa_json_get(d, root, "transport"), "openai-chat-completions")) { llm_fail(error, "Other API requires an OpenAI Chat Completions compatible service"); goto done; }
     if (!json_text(d, qa_json_get(d, root, "baseUrl"), &next.storage, &url, false, error) || !base_url(&next.storage, url, &next.base_url, error) ||

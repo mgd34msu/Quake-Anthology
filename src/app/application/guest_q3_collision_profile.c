@@ -25,7 +25,7 @@ bool application_q3_collision_profile_read(const qa_qvm_image *image, qa_qvm_rol
         return application_fail(error, QA_ERROR_ARGUMENT, "CG collision profile needs its actual artifact");
     if (!declaration.size) { *out = (qa_q3_host_collision_profile){0}; return true; }
     qa_json_document *document = NULL;
-    if (!qa_json_parse(declaration, &document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, declaration, &document, error)) return false;
     qa_json_id root = qa_json_root(document);
     qa_q3_host_collision_profile profile = {.present = true};
     uint32_t version;

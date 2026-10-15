@@ -404,7 +404,7 @@ bool qa_launch_mode_identity_decode(qa_bytes bytes, qa_arena *arena,
     qa_launch_mode *out, qa_error *error)
 {
     qa_json_document *document = NULL;
-    if (!qa_json_parse(bytes, &document, error)) return false;
+    if (!qa_json_parse(QA_JSON_STRICT, bytes, &document, error)) return false;
     identity_reader reader = {.document = document, .arena = arena, .error = error};
     bool ok = record(&reader, qa_json_root(document), 7);
     qa_launch_mode mode = ok ? read_mode(&reader, NULL) : (qa_launch_mode){0};
@@ -452,7 +452,7 @@ static bool metadata(identity_reader *r, qa_json_id root)
 static bool identity_open(qa_bytes bytes, qa_json_document **out, qa_error *error)
 {
     if (bytes.size > IDENTITY_MAX_BYTES) return fail(error, "Invalid portable launch identity input");
-    qa_json_document *document = NULL; if (!qa_json_parse(bytes, &document, error)) return false;
+    qa_json_document *document = NULL; if (!qa_json_parse(QA_JSON_STRICT, bytes, &document, error)) return false;
     qa_json_id root = qa_json_root(document);
     if (qa_json_type(document, root) != QA_JSON_OBJECT || qa_json_size(document, root) != 13 ||
         !qa_json_string_equal(document, qa_json_get(document, root, "schema"), "qa-launch-identity")) {
