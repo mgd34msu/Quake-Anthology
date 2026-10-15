@@ -15,7 +15,7 @@ typedef struct qa_bot_source_movement {
 } qa_bot_source_movement;
 typedef struct qa_bot_source_skill {
     qa_string_id name;
-    bool allow_combat, lead_targets;
+    bool allow_combat, allow_melee, lead_targets;
     qa_bot_senses senses;
     qa_bot_weapon_senses weapons;
     qa_bot_aiming aiming;
@@ -41,6 +41,16 @@ typedef struct qa_bot_source_document {
     const qa_bot_source_block *blocks;
     size_t block_count;
 } qa_bot_source_document;
+typedef struct qa_bot_source_weapon {
+    float ideal_fov, priority, min_range, max_range, min_height, max_height, min_ammo;
+    size_t ordinal;
+    bool melee, electric, needs_ammo;
+} qa_bot_source_weapon;
+typedef struct qa_bot_source_weapon_policy {
+    const qa_bot_source_knowledge *knowledge;
+    float range, height_delta;
+    bool allow_melee, in_water, has_protection, target_in_water;
+} qa_bot_source_weapon_policy;
 /* Load once from the selected mounted scope. Views borrow the knowledge owner;
  * strings belong to the caller's session table. Missing settings return found=false. */
 typedef bool (*qa_bot_source_weapon_resolve)(void *, qa_string_id authored_name,
@@ -51,7 +61,7 @@ bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id,
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *);
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *, size_t);
-float qa_bot_source_weapon_fov(const qa_bot_source_knowledge *, qa_item_id);
+const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *, qa_item_id);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
 
@@ -118,7 +128,8 @@ qa_bot_weapon_tactics qa_bot_weapon_tactics_for(const qa_bot_weapon_knowledge *)
 bool qa_bot_knowledge_choose(qa_bot_runtime *,uint32_t weapon_state,
                               const qa_bot_weapon_knowledge *,size_t,
                               qa_bot_inventory_bytes inventory,
-                              int32_t scratch[QA_BOT_INVENTORY_SIZE],int32_t *,qa_error *);
+                              int32_t scratch[QA_BOT_INVENTORY_SIZE],
+                              const qa_bot_source_weapon_policy *,int32_t *,qa_error *);
 int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *,size_t,
                                     qa_bot_inventory_bytes inventory,bool team_arena);
 int32_t qa_bot_knowledge_travel(const qa_bot_weapon_knowledge *,size_t,

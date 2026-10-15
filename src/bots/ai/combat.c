@@ -151,6 +151,26 @@ static bool arsenal(qa_bots *b, bot_ai_state *s, const qa_bot_weapon_knowledge *
     }
     return true;
 }
+static bool source_weapon_policy(qa_bots *b,bot_ai_state *s,qa_actor_id target,
+    qa_bot_source_weapon_policy *out,qa_error *e)
+{
+    qa_body_state body;qa_combat_state combat;
+    if(!qa_world_body_read(b->services.shared.world,target,&body,e) ||
+       !qa_combat_read(b->services.shared.combat,s->view.actor,&combat,e)) return false;
+    qa_vec3 delta=qa_vec_sub(body.origin,bot_ai_origin(s));
+    *out=(qa_bot_source_weapon_policy){.knowledge=b->services.source_knowledge,
+        .range=qa_vec_length(delta),.height_delta=delta.z,.has_protection=combat.invulnerable,
+        .allow_melee=s->source_settings->allow_melee};
+    qa_physics *physics=b->services.shared.physics;
+    if(physics && physics->services.read) {
+        qa_physics_properties properties;
+        if(physics->services.read(physics->services.context,s->view.actor,&properties))
+            out->in_water=properties.water_level>=2;
+        if(physics->services.read(physics->services.context,target,&properties))
+            out->target_in_water=properties.water_level>=2;
+    }
+    return true;
+}
 bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     /* Q3 raising/dropping are source states 1 and 2. Providers project their
      * selected weapon phase instead of exposing another arsenal's numbering. */
@@ -158,12 +178,19 @@ bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_source_player_word(b,s,BOT_PS_WEAPON_STATE,&weapon_state,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if (weapon_state == 1 || weapon_state == 2) return bot_ai_source_action_weapon(b,s,e);
+    qa_bot_source_weapon_policy policy;
+    if(s->source_settings) {
+        qa_actor_id target=bot_ai_enemy_actor(b,s);
+        if(!bot_ai_live(b,target)) return bot_ai_source_action_weapon(b,s,e);
+        if(!source_weapon_policy(b,s,target,&policy,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,target)) return true;
+    }
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
     int32_t choice = bot_ai_weapon_number(s);
     bool ok = s->retired || !bot_ai_live(b, s->view.actor) ||
         qa_bot_knowledge_choose(b->runtime, s->weapons, weapons, count,
-            bot_ai_inventory(s), b->inventory_scratch, &choice, e);
+            bot_ai_inventory(s), b->inventory_scratch,s->source_settings?&policy:NULL,&choice,e);
     b->services.arsenal_end(b->services.context, lease);
     if (ok && !s->retired && bot_ai_live(b, s->view.actor)) {
         if (bot_ai_weapon_number(s) != choice) bot_ai_weapon_change_time_set(s,b->time);
@@ -632,9 +659,10 @@ static bool selected_hit_safe(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_kno
     return true;
 }
 static bool selected_fire_path(qa_bots *b,bot_ai_state *s,const qa_bot_weapon_knowledge *weapon,
-                                qa_actor_id enemy,bool source,bool *clear,qa_error *e) {
+                                qa_actor_id enemy,bool source,bool allow_discharge,bool *clear,qa_error *e) {
     *clear=false;
-    if(!weapon->available || weapon->grapple || weapon->discharge) return true;
+    if(!weapon->available || weapon->grapple) return true;
+    if(weapon->discharge) {*clear=allow_discharge;return true;}
     unsigned muzzles=weapon->muzzle_count?weapon->muzzle_count:1;
     for(unsigned muzzle_index=0;muzzle_index<muzzles;++muzzle_index) {
         qa_vec3 start=weapon->muzzle_count?
@@ -706,7 +734,18 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
     for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {selected=weapons[i];exists=true;break;}
     b->services.arsenal_end(b->services.context,lease);
     if(!exists || s->retired || !bot_ai_live(b,s->view.actor)) return true;
-    if(selected.launch_velocity && (!selected.available || selected.grapple || selected.discharge)) return true;
+    if(selected.launch_velocity && (!selected.available || selected.grapple)) return true;
+    bool allow_discharge=false;
+    if(selected.discharge) {
+        if(!s->source_settings) return true;
+        qa_bot_source_weapon_policy policy;
+        if(!source_weapon_policy(b,s,enemy,&policy,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
+        const qa_bot_source_weapon *source=qa_bot_source_weapon_read(policy.knowledge,selected.supply_weapon);
+        allow_discharge=source && source->electric && policy.in_water &&
+            policy.has_protection && policy.target_in_water;
+        if(!allow_discharge) return true;
+    }
     qa_bot_weapon_tactics tactics=qa_bot_weapon_tactics_for(&selected);
     float accuracy,skill,reaction,throttle;
     if(!bot_ai_character_float(b,s,tactics.accuracy_characteristic<0?BOT_C_ACCURACY:(uint32_t)tactics.accuracy_characteristic,0,1,&accuracy,e) ||
@@ -845,7 +884,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) return true;
     }
     if(selected.launch_velocity) {
-        if(!selected_fire_path(b,s,&selected,enemy,false,&allowed,e)) return false;
+        if(!selected_fire_path(b,s,&selected,enemy,false,allow_discharge,&allowed,e)) return false;
         if(!allowed) return true;
     } else {
         qa_vec3 forward;
@@ -1220,7 +1259,7 @@ bool bot_ai_source_check_attack(qa_bots *b,bot_ai_state *s,qa_error *e) {
     SOURCE_ATTACK_CALL(source_weapon(b,s,&selected,&exists,e));
     if(!exists) return true;
     if(selected.launch_velocity) {
-        SOURCE_ATTACK_CALL(selected_fire_path(b,s,&selected,bot_ai_enemy_actor(b,s),true,&allowed,e));
+        SOURCE_ATTACK_CALL(selected_fire_path(b,s,&selected,bot_ai_enemy_actor(b,s),true,false,&allowed,e));
         if(!allowed) return true;
     } else {
         int32_t view_height;

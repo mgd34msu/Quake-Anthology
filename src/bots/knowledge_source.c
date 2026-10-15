@@ -15,7 +15,7 @@ struct qa_bot_source_knowledge {
     qa_bot_source_skill *skills;
     size_t skill_count,skill_capacity;
     qa_id_index weapon_items;
-    float *weapon_fov;
+    qa_bot_source_weapon *weapons;
 };
 static void *reserve(qa_bot_source_knowledge *knowledge,void *old,size_t *capacity,
     size_t needed,size_t stride,size_t alignment,qa_error *error) {
@@ -141,6 +141,7 @@ typedef struct setting_field {const char *name;size_t offset;bool boolean;} sett
 #define BOOL(name,field) {name,offsetof(qa_bot_source_skill,field),true}
 static const setting_field setting_fields[]={
     BOOL("behaviors.allow_combat",allow_combat),
+    BOOL("behaviors.allow_melee",allow_melee),
     BOOL("aiming.lead_targets",lead_targets),
     FLOAT("aiming.max_acceleration",aiming.maximum_speed),FLOAT("aiming.spring_stiffness",aiming.spring_stiffness),
     FLOAT("aiming.damping",aiming.damping),FLOAT("aiming.velocity_offset",aiming.velocity_offset),
@@ -200,31 +201,60 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
 {
     knowledge->weapon_items.storage=&knowledge->storage;
     if(!qa_id_index_reserve(&knowledge->weapon_items,document->block_count,error)) return false;
-    knowledge->weapon_fov=document->block_count?qa_arena_alloc(&knowledge->storage,
-        document->block_count*sizeof(float),_Alignof(float),error):NULL;
-    if(document->block_count && !knowledge->weapon_fov) return false;
-    qa_string_id name_key,fov_key,number_key;
+    knowledge->weapons=document->block_count?qa_arena_alloc(&knowledge->storage,
+        document->block_count*sizeof(*knowledge->weapons),_Alignof(qa_bot_source_weapon),error):NULL;
+    if(document->block_count && !knowledge->weapons) return false;
+    static const struct {const char *name;size_t offset;} numbers[]={
+        {"ideal_fov",offsetof(qa_bot_source_weapon,ideal_fov)},
+        {"priority",offsetof(qa_bot_source_weapon,priority)},
+        {"min_range",offsetof(qa_bot_source_weapon,min_range)},
+        {"max_range",offsetof(qa_bot_source_weapon,max_range)},
+        {"min_height",offsetof(qa_bot_source_weapon,min_height)},
+        {"max_height",offsetof(qa_bot_source_weapon,max_height)},
+        {"min_ammo",offsetof(qa_bot_source_weapon,min_ammo)}};
+    qa_string_id name_key,number_key,flags_key,ammo_key,melee,electric,none;
+    qa_string_id keys[sizeof(numbers)/sizeof(*numbers)];
     if(!qa_strings_intern_cstr(knowledge->strings,"name",&name_key,error) ||
-       !qa_strings_intern_cstr(knowledge->strings,"ideal_fov",&fov_key,error) ||
-       !qa_strings_intern_cstr(knowledge->strings,"number",&number_key,error)) return false;
+       !qa_strings_intern_cstr(knowledge->strings,"number",&number_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"flags",&flags_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,rules==QA_RULESET_NETQUAKE?"ammo":"ammo_name",&ammo_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"melee",&melee,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"electric",&electric,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"none",&none,error)) return false;
+    for(size_t i=0;i<sizeof(keys)/sizeof(*keys);++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,numbers[i].name,keys+i,error)) return false;
     for(size_t i=0;i<document->block_count;++i) {
-        qa_string_id name=0;float fov=0;uint32_t number=0;
+        qa_string_id name=0;uint32_t number=0;
+        qa_bot_source_weapon *weapon=knowledge->weapons+i;
+        *weapon=(qa_bot_source_weapon){.ordinal=i};
         const qa_bot_source_block *block=document->blocks+i;
         for(size_t j=0;j<block->field_count;++j) {
             const qa_bot_source_field *field=block->fields+j;
+            if(field->key==flags_key) {
+                weapon->melee=weapon->electric=false;
+                for(size_t k=0;k<field->count;++k) {
+                    weapon->melee|=field->values[k]==melee;
+                    weapon->electric|=field->values[k]==electric;
+                }
+                continue;
+            }
             if(field->count!=1) continue;
             if(field->key==name_key) name=field->values[0];
+            else if(field->key==ammo_key)
+                weapon->needs_ammo=field->values[0]!=none &&
+                    qa_strings_text(knowledge->strings,field->values[0]).size!=0;
             else if(field->key==number_key) {
                 double value;
                 if(qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) &&
                    isfinite(value) && value>=0 && value<=UINT32_MAX && trunc(value)==value) number=(uint32_t)value;
-            } else if(field->key==fov_key) {
+            } else for(size_t k=0;k<sizeof(keys)/sizeof(*keys);++k) if(field->key==keys[k]) {
                 double value;
                 if(qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) &&
-                   isfinite(value) && value>=-FLT_MAX && value<=FLT_MAX) fov=(float)value;
+                   isfinite(value) && value>=-FLT_MAX && value<=FLT_MAX)
+                    *(float *)((uint8_t *)weapon+numbers[k].offset)=(float)value;
+                break;
             }
         }
-        knowledge->weapon_fov[i]=fov;
         qa_item_id key=0;
         if(resolve) {
             if(!resolve(context,name,number,&key,error)) return false;
@@ -298,11 +328,11 @@ failed:
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *knowledge) {
     if(knowledge) {qa_id_index_destroy(&knowledge->weapon_items);qa_arena_destroy(&knowledge->storage);free(knowledge);}
 }
-float qa_bot_source_weapon_fov(const qa_bot_source_knowledge *knowledge,qa_item_id item)
+const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *knowledge,qa_item_id item)
 {
-    if(!knowledge) return 0;
+    if(!knowledge) return NULL;
     qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->weapon_items,item,0);size_t at;
-    return qa_id_index_next(&knowledge->weapon_items,&cursor,&at)?knowledge->weapon_fov[at]:0;
+    return qa_id_index_next(&knowledge->weapon_items,&cursor,&at)?knowledge->weapons+at:NULL;
 }
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *knowledge) {return knowledge?knowledge->skill_count:0;}
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *knowledge,size_t index) {

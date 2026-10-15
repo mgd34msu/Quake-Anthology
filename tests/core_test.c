@@ -177,6 +177,11 @@ static void test_bot_authored_aim(void)
     qa_bot_aim_step(&wrapped,qa_v3(1,0,0),&settings,.1f,5);
     CHECK(fabsf(qa_angle_subtract(wrapped.yaw,0))<1);
 }
+static qa_vec3 bot_weapon_fixture_launch(const qa_bot_weapon_knowledge *weapon,qa_vec3 angles)
+{
+    qa_vec3 forward;qa_angle_vectors(angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
+    return qa_vec_scale(forward,weapon->weapon.speed);
+}
 static void test_bot_source_knowledge(void)
 {
     qa_error error={0};
@@ -189,11 +194,18 @@ static void test_bot_source_knowledge(void)
     CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,true,&mount,&error));
     qa_strings *strings=NULL;CHECK(qa_strings_create(&strings,&error));
     const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n"
-        " name weapon_blaster\n number 4096\n ideal_fov 25\n}\n\0\0";
+        " name weapon_blaster\n number 4096\n ideal_fov 25\n priority 5\n"
+        " min_range 10\n max_range 500\n min_height 50\n max_height 60\n min_ammo 5\n"
+        " ammo cells\n ammo_name ammo_cells\n}\n"
+        "weapon rail {\n name weapon_railgun\n number 1\n priority 5\n ammo_name none\n}\n"
+        "weapon electric {\n name weapon_hyperblaster\n number 2\n priority 9\n flags electric\n"
+        " ammo_name ammo_cells\n min_ammo 2\n}\n"
+        "weapon disabled {\n name weapon_bfg\n priority 0\n ammo_name none\n}\n\0\0";
     const char settings[]="// A source skill may put its opening brace on the next line.\n"
         "skill \"practice\"\n{ // retained source order\n"
         " movement.walk_only false\n movement.walk_only true\n"
         " behaviors.allow_combat true\n"
+        " behaviors.allow_melee true\n"
         " aiming.lead_targets true\n"
         " movement.allow_jumping_in_combat true\n movement.allow_rocket_jumping false\n"
         " movement.jump_chance 37.5\n movement.jump_cooldown 2.25\n"
@@ -222,7 +234,8 @@ static void test_bot_source_knowledge(void)
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
-        practice->allow_combat && practice->lead_targets && practice->movement.walk_only && practice->movement.allow_combat_jumping &&
+        practice->allow_combat && practice->allow_melee && practice->lead_targets &&
+        practice->movement.walk_only && practice->movement.allow_combat_jumping &&
         !practice->movement.allow_rocket_jumping && practice->movement.jump_chance==37.5f &&
         practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
         practice->aiming.spring_stiffness==48 && practice->senses.fov_angle==110 &&
@@ -232,28 +245,74 @@ static void test_bot_source_knowledge(void)
         !hard->movement.walk_only && hard->movement.allow_rocket_jumping);
     const qa_bot_source_document *document=qa_bot_source_document_at(knowledge,0);
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
-        !memcmp(document->source.data,weapons,document->source.size) && document->block_count==1);
+        !memcmp(document->source.data,weapons,document->source.size) && document->block_count==4);
     const qa_bot_source_block *block=document->blocks;
-    CHECK(block->header_count==2 && block->field_count==5 && block->fields[0].count==3 &&
+    CHECK(block->header_count==2 && block->field_count==13 && block->fields[0].count==3 &&
         block->fields[1].count==10);
     qa_item_id lava_nailgun;
     CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
-    CHECK(qa_bot_source_weapon_fov(knowledge,lava_nailgun)==25);
+    const qa_bot_source_weapon *bound=qa_bot_source_weapon_read(knowledge,lava_nailgun);
+    CHECK(bound && bound->ideal_fov==25 && bound->ordinal==0 && bound->melee && bound->needs_ammo);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
-    CHECK(block->field_count==16 && block->fields[0].key==block->fields[1].key &&
-        block->fields[14].key==block->fields[15].key && block->fields[14].count==2);
-    const qa_bytes byte_name=qa_strings_text(strings,block->fields[14].values[1]);
+    CHECK(block->field_count==17 && block->fields[0].key==block->fields[1].key &&
+        block->fields[15].key==block->fields[16].key && block->fields[15].count==2);
+    const qa_bytes byte_name=qa_strings_text(strings,block->fields[15].values[1]);
     CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&
-        !strcmp(qa_strings_cstr(strings,block->fields[14].values[0]),"a//b"));
+        !strcmp(qa_strings_cstr(strings,block->fields[15].values[0]),"a//b"));
     document=qa_bot_source_document_at(knowledge,2);
     const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
     CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
     qa_bot_source_knowledge *pc=NULL;
     CHECK(qa_vfs_write(files,mount,"bots/settings_PC.txt",contents[1],&error));
     CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&pc,&found,&error) && found);
-    qa_string_id blaster;
-    CHECK(qa_strings_intern_cstr(strings,"q2:weapon_blaster",&blaster,&error));
-    CHECK(qa_bot_source_weapon_fov(pc,blaster)==25 && qa_bot_source_weapon_fov(pc,QA_STRING_NONE)==0);
+    qa_string_id blaster,rail,electric,disabled;
+    CHECK(qa_strings_intern_cstr(strings,"q2:weapon_blaster",&blaster,&error) &&
+        qa_strings_intern_cstr(strings,"q2:weapon_railgun",&rail,&error) &&
+        qa_strings_intern_cstr(strings,"q2:weapon_hyperblaster",&electric,&error) &&
+        qa_strings_intern_cstr(strings,"q2:weapon_bfg",&disabled,&error));
+    bound=qa_bot_source_weapon_read(pc,blaster);
+    CHECK(bound && bound->ideal_fov==25 && !qa_bot_source_weapon_read(pc,QA_STRING_NONE));
+    uint8_t inventory[QA_BOT_INVENTORY_SIZE*4]={0};int32_t scratch[QA_BOT_INVENTORY_SIZE];
+    qa_store_u32le(inventory+10*4,6);
+    qa_bot_weapon_knowledge choices[]={
+        {.weapon={.valid=true,.number=7},.personality_role=-1,.has_supply=true,
+            .owned=true,.available=true,.supply_weapon=rail},
+        {.weapon={.valid=true,.number=8,.ammo_inventory=10,.ammo_amount=1},.personality_role=-1,
+            .has_supply=true,.owned=true,.available=true,.supply_weapon=blaster},
+        {.weapon={.valid=true,.number=9,.ammo_inventory=10,.ammo_amount=1},.personality_role=-1,
+            .has_supply=true,.owned=true,.available=true,.supply_weapon=electric,.supply_ammo=1,
+            .launch_velocity=bot_weapon_fixture_launch}};
+    qa_bot_source_weapon_policy policy={.knowledge=pc,.range=100,.allow_melee=true,.in_water=true};
+    qa_bot_inventory_bytes bytes={inventory,QA_BOT_INVENTORY_SIZE};int32_t choice=42;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==8);
+    policy.allow_melee=false;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    policy.allow_melee=true;qa_store_u32le(inventory+10*4,4);
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    qa_store_u32le(inventory+10*4,6);policy.range=5;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    policy.range=501;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    policy.range=100;policy.height_delta=61;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    policy.height_delta=-51;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==7);
+    policy.height_delta=0;policy.has_protection=true;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==8);
+    policy.target_in_water=true;choices[2].discharge=true;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==9);
+    policy.in_water=false;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==8);
+    policy.in_water=true;policy.has_protection=false;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==8);
+    choices[0].owned=choices[1].owned=false;choice=42;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==42);
+    qa_bot_weapon_knowledge never={.weapon={.valid=true,.number=10,.weapon_inventory=10},
+        .personality_role=-1,.has_supply=true,.owned=true,.available=true,.supply_weapon=disabled};
+    CHECK(qa_bot_knowledge_choose(NULL,0,&never,1,bytes,scratch,&policy,&choice,&error) && choice==42);
+    policy.has_protection=true;policy.knowledge=NULL;
+    choices[2].requires_release=true;choices[2].ammo_reserved=true;
+    CHECK(qa_bot_knowledge_choose(NULL,0,choices,3,bytes,scratch,&policy,&choice,&error) && choice==9);
     qa_bot_source_knowledge_destroy(pc);
     qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
     CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));

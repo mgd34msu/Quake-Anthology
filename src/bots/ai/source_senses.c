@@ -104,7 +104,8 @@ float bot_ai_senses_weapon_cone(qa_bots *b,bot_ai_state *s,qa_item_id weapon)
 {
     const qa_bot_source_skill *settings=s->source_settings;
     if(settings->weapon_fov_scalar<=0) return settings->weapons.fov_angle;
-    float ideal=qa_bot_source_weapon_fov(b->services.source_knowledge,weapon);
+    const qa_bot_source_weapon *source=qa_bot_source_weapon_read(b->services.source_knowledge,weapon);
+    float ideal=source?source->ideal_fov:0;
     return (ideal>0?ideal:settings->senses.fov_angle)*settings->weapon_fov_scalar;
 }
 typedef struct hearing_visit {qa_bots *bots;bot_ai_state *state;} hearing_visit;

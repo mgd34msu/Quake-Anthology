@@ -134,23 +134,44 @@ static bool source_inventory_read(void *context,int32_t index,int32_t *out,qa_er
 bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
                               const qa_bot_weapon_knowledge *candidates,size_t count,
                               qa_bot_inventory_bytes inventory,
-                              int32_t scratch[QA_BOT_INVENTORY_SIZE],int32_t *out,qa_error *e)
+                              int32_t scratch[QA_BOT_INVENTORY_SIZE],
+                              const qa_bot_source_weapon_policy *policy,int32_t *out,qa_error *e)
 {
-    if (!runtime || !inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE ||
+    if ((!runtime && !policy) || !inventory.data || inventory.count!=QA_BOT_INVENTORY_SIZE ||
         !scratch || !out || (count && !candidates)) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid bot arsenal choice input"); return false;
     }
-    float best=0; double best_rate=0;
-    int32_t choice=0,best_role=-1;
+    float best=0,authored_best=0; double best_rate=0;
+    int32_t choice=policy?*out:0,best_role=-1,authored_choice=0;size_t best_order=SIZE_MAX;
     for (size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *c=candidates+i;
         int32_t role=qa_bot_weapon_role(c);
         qa_bot_inventory_view observed={.count=inventory.count,.context=&inventory,.read=source_inventory_read};
-        if (!c->weapon.valid || (c->launch_velocity && (!c->available || c->discharge || c->grapple))) continue;
+        if (!c->weapon.valid || (c->launch_velocity && (!c->available ||
+            (c->discharge && !policy) || c->grapple))) continue;
         /* An actual charged hand reservation survives its last inventory
          * grenade. Complete that release; do not manufacture fuzzy ammo. */
         if(c->launch_velocity && c->requires_release && c->has_supply && c->supply_ammo &&
            c->ammo_reserved) {*out=c->weapon.number;return true;}
+        const qa_bot_source_weapon *source=policy?
+            qa_bot_source_weapon_read(policy->knowledge,c->supply_weapon):NULL;
+        if(source) {
+            if(source->priority<=0 || (source->melee && !policy->allow_melee) ||
+               (c->has_supply?(!c->owned || !c->available):!owned(c,inventory))) continue;
+            if(source->needs_ammo && ammunition(c,inventory)<fmaxf(1,source->min_ammo)) continue;
+            if(policy->range<source->min_range || (source->max_range>0 && policy->range>source->max_range) ||
+               (c->ranged_limit && policy->range>c->maximum_range)) continue;
+            if((source->max_height>0 && policy->height_delta>source->max_height) ||
+               (source->min_height>0 && -policy->height_delta>source->min_height)) continue;
+            if((source->electric && policy->in_water && !(policy->has_protection && policy->target_in_water)) ||
+               (c->discharge && (!source->electric || !policy->in_water ||
+                   !policy->has_protection || !policy->target_in_water))) continue;
+            if(source->priority>authored_best || (source->priority==authored_best && source->ordinal<best_order)) {
+                authored_best=source->priority;best_order=source->ordinal;authored_choice=c->weapon.number;
+            }
+            continue;
+        }
+        if(policy && c->discharge) continue;
         const role_profile *p=profile(role);
         if (!p) continue;
         bool projection=c->personality_role<0;
@@ -183,7 +204,7 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
             best=weight; choice=c->weapon.number; best_role=role; best_rate=rate;
         }
     }
-    *out=choice;
+    *out=authored_best>0?authored_choice:choice;
     return true;
 }
 int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,size_t count,
