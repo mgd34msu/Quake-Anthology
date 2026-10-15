@@ -1725,12 +1725,15 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
   if (!living || !q2m_alive(context))
     return true;
   float distance = q2m_distance(context, candidate);
+  uint64_t hostile = traits.player
+                         ? alert_hostile_until(context->game->monster_runtime,
+                                               candidate)
+                         : traits.hostile_until_ns;
   if (context->game->options.rules == QA_RULESET_Q2_RERELEASE) {
     if (distance > 940.0f)
       return true;
     if ((context->monster->spawnflags & 1u) == 0 && distance <= 440.0f &&
-        alert_hostile_until(context->game->monster_runtime, candidate) >=
-            context->game->now_ns) {
+        hostile >= context->game->now_ns) {
       *accepted = true;
       return true;
     }
@@ -1750,10 +1753,6 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
     return false;
   if (!q2m_alive(context) || !visible)
     return true;
-  uint64_t hostile = traits.player
-                         ? alert_hostile_until(context->game->monster_runtime,
-                                               candidate)
-                         : traits.hostile_until_ns;
   if (distance >= 80.0f && distance < 500.0f &&
       hostile < context->game->now_ns && !in_front(context, candidate))
     return true;
@@ -1950,6 +1949,7 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   if (context->game->options.rules == QA_RULESET_Q2_CLASSIC &&
       selected.player && selected.has_light_level && selected.light_level <= 5)
     return true;
+  qa_actor_id observer = candidate;
   if (selected.monster && candidate.slot < context->game->capacity &&
       context->game->actors[candidate.slot] != NULL &&
       qa_actor_id_equal(context->game->actors[candidate.slot]->id, candidate) &&
@@ -1963,9 +1963,10 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   if (!runtime_targetable(context->game, candidate, &target_traits))
     return true;
   bool accepted;
-  if (!visual_candidate(context, candidate, &accepted, error))
+  if (!visual_candidate(context, observer, &accepted, error))
     return false;
-  if (!q2m_alive(context) || !accepted)
+  if (!q2m_alive(context) || !accepted || !q2_actor_live(context->game, observer) ||
+      !q2_actor_live(context->game, candidate))
     return true;
   if (monster->hint_path) {
     attack_enemy(context, candidate);
