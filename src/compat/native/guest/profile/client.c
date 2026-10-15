@@ -21,6 +21,7 @@ typedef struct profile_scope {
     size_t mapping_count;
     guest_profile_guard_callback *callbacks;
     size_t callback_count;
+    uint64_t callback_first, callback_last;
     guest_profile_interest *interests;
     size_t interest_count;
     profile_store *pending;
@@ -169,8 +170,11 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
             m->bytes <= UINT64_MAX - m->base && m->bytes <= UINT64_MAX - m->backing_offset && !(m->permissions & ~7u);
     }
     for (size_t i = 0; okay && i < row->callback_count; ++i) {
-        okay = row->callbacks[i].id && row->callbacks[i].address &&
-            scope_range(row, row->callbacks[i].address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
+        uint64_t address = row->callbacks[i].address;
+        okay = row->callbacks[i].id && address &&
+            scope_range(row, address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
+        if (!i || address < row->callback_first) row->callback_first = address;
+        if (address > row->callback_last) row->callback_last = address;
     }
     for (size_t i = 0; okay && i < row->interest_count; ++i) {
         const guest_profile_interest *interest = row->interests + i;
@@ -202,20 +206,25 @@ static bool synthetic_callback(uint64_t address)
     byte trap;
     return copy_from_app((void *)(ptr_uint_t)address, &trap, 1) && trap == 0xcc;
 }
+static const guest_profile_guard_callback *scope_callback(const profile_scope *row, uint64_t address)
+{
+    if (!row || !row->callback_count || address < row->callback_first || address > row->callback_last)
+        return NULL;
+    for (size_t i = 0; i < row->callback_count; ++i)
+        if (row->callbacks[i].address == address) return row->callbacks + i;
+    return NULL;
+}
 static bool scope_synthetic_callback(const profile_scope *row, app_pc pc)
 {
     uint64_t address = (uint64_t)(ptr_uint_t)pc;
-    if (row) for (size_t i = 0; i < row->callback_count; ++i)
-        if (row->callbacks[i].address == address) return synthetic_callback(address);
-    return false;
+    return scope_callback(row, address) && synthetic_callback(address);
 }
 static bool scope_point(const profile_scope *row, app_pc pc)
 {
     uint64_t address = (uint64_t)(ptr_uint_t)pc;
     if (!row) return false;
     if (address == row->entry || address == row->stop) return true;
-    for (size_t i = 0; i < row->callback_count; ++i)
-        if (row->callbacks[i].address == address && !synthetic_callback(address)) return true;
+    if (scope_callback(row, address) && !synthetic_callback(address)) return true;
     for (size_t i = 0; i < row->interest_count; ++i)
         if (row->interests[i].kind == GUEST_PROFILE_INTEREST_INSTRUCTION &&
             row->interests[i].address == address) return true;
@@ -493,14 +502,17 @@ static void clean(ptr_uint_t encoded)
     }
     scope->pending_count = 0; scope->pending_at = 0;
     uint64_t bad;
-    for (size_t i = 0; i < scope->callback_count; ++i) if (scope->callbacks[i].address == (uint64_t)(ptr_uint_t)pc) {
+    const guest_profile_guard_callback *callback = scope_callback(scope, (uint64_t)(ptr_uint_t)pc);
+    if (callback) {
         if (!range((uint64_t)(ptr_uint_t)pc, 1, QA_NATIVE_GUEST_EXECUTE, &bad))
             reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, bad, 1);
-        if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
-        guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
-            scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc, 1, (uint64_t)(ptr_uint_t)pc};
-        if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
-        redirect(&cpu, fp, import_entry);
+        if (callback->id == scope->bypass) scope->bypass = 0;
+        else {
+            guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
+                scope->id, (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc, 1, (uint64_t)(ptr_uint_t)pc};
+            if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
+            redirect(&cpu, fp, import_entry);
+        }
     }
     bool bypass_boundary = scope->boundary_bypass == (uint64_t)(ptr_uint_t)pc;
     scope->boundary_bypass = 0;
@@ -665,9 +677,10 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
         uint64_t trap = (uint64_t)(ptr_uint_t)(information->mcontext->xip - 1);
         if (scope->phase == PROFILE_ACTIVE ||
             (scope->phase == PROFILE_ARMED && trap == scope->entry)) {
-            for (size_t i = 0; i < scope->callback_count; ++i)
-                if (scope->callbacks[i].address == trap && synthetic_callback(trap)) {
-                    if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
+            const guest_profile_guard_callback *callback = scope_callback(scope, trap);
+            if (callback && synthetic_callback(trap)) {
+                if (callback->id == scope->bypass) scope->bypass = 0;
+                else {
                     guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
                         scope->id, trap, trap, 1, trap};
                     if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
@@ -675,6 +688,7 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
                     information->mcontext->xip = import_entry;
                     return DR_SIGNAL_REDIRECT;
                 }
+            }
         }
     }
     /* DR's decoder can forge SIGILL before presenting an invalid first
@@ -698,16 +712,18 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
             information->mcontext->xip = import_entry;
             return DR_SIGNAL_REDIRECT;
         }
-        for (size_t i = 0; i < scope->callback_count; ++i) if (scope->callbacks[i].address == pc &&
-            range(pc, 1, QA_NATIVE_GUEST_EXECUTE, NULL)) {
-            if (scope->callbacks[i].id == scope->bypass) { scope->bypass = 0; break; }
-            if (dr_get_thread_id(context) != owner_thread) dr_abort();
-            guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
-                scope->id, pc, pc, 1, pc};
-            if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
-            scope->phase = PROFILE_ACTIVE;
-            information->mcontext->xip = import_entry;
-            return DR_SIGNAL_REDIRECT;
+        const guest_profile_guard_callback *callback = scope_callback(scope, pc);
+        if (callback && range(pc, 1, QA_NATIVE_GUEST_EXECUTE, NULL)) {
+            if (callback->id == scope->bypass) scope->bypass = 0;
+            else {
+                if (dr_get_thread_id(context) != owner_thread) dr_abort();
+                guest_profile_guard_fault entry = {GUEST_PROFILE_GUARD_ENTRY, 0, 0,
+                    scope->id, pc, pc, 1, pc};
+                if (!copy_to_app(scope->fault, &entry, sizeof(entry))) dr_abort();
+                scope->phase = PROFILE_ACTIVE;
+                information->mcontext->xip = import_entry;
+                return DR_SIGNAL_REDIRECT;
+            }
         }
     }
     /* An unrelated ignored asynchronous signal must not turn off the active
