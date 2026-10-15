@@ -59,6 +59,7 @@
 #include "qa/scene.h"
 #include "qa/render_cpu.h"
 #include "../src/render/resource_index_private.h"
+#include "../src/render/controls_private.h"
 #include "../src/render/scene/world/internal.h"
 #include "../src/render/scene/world/legacy/internal.h"
 #include "../src/render/scene/world/q3/patch.h"
@@ -4413,6 +4414,48 @@ static void test_cached_world_surface(void)
         }
         else for (size_t i = 0; i < sizeof(reference); ++i)
             CHECK(abs((int)pixels.data[i] - reference[i]) <= 1);
+        if (pass == 2) {
+            qa_render_controls *controls = qa_cpu_render_controls(renderer);
+            controls->attributes.color_array = true;
+            for (size_t unit = 0; unit < 2; ++unit) {
+                controls->attributes.coordinate_array[unit] = true;
+                controls->attributes.coordinate_kind[unit] = MATERIAL_SOURCE_COORDINATES_DRAW;
+                controls->attributes.coordinate_bank[unit] = (uint32_t)unit;
+                controls->attributes.texture_enabled[unit] = true;
+            }
+            controls->attributes.environment[1] = QA_TEXTURE_MODULATE;
+            qa_scene_draw source = draw;
+            source.brush = batch;
+            source.source_arrays = source.source_primitives = true;
+            source.source_vertex_storage = 4;
+            for (unsigned stage = 0; stage < 3; ++stage) {
+                qa_scene_frame_reset(&frame, 10 + stage);
+                CHECK(qa_scene_frame_emit(&frame, &view, &error));
+                if (stage < 2) {
+                    controls->attributes.texture_unit = 1;
+                    controls->attributes.texture_enabled[1] = true;
+                } else {
+                    source.brush = (qa_scene_brush_surface){0};
+                    source.texture_count = 1; source.textures[1] = NULL;
+                    source.state.depth_test = QA_DEPTH_ALWAYS;
+                    source.state.depth_write = false;
+                }
+                CHECK(qa_scene_frame_draw(&frame, &source, &error));
+                CHECK(qa_cpu_execute(renderer, &frame, &error));
+                pixels = qa_cpu_pixels(renderer);
+                const uint8_t *center = pixels.data + (32 * 64 + 32) * 4;
+                CHECK(center[0] == (stage < 2 ? 32 : 64));
+                CHECK(center[1] == (stage < 2 ? 64 : 128));
+                CHECK(center[2] == (stage < 2 ? 96 : 192));
+                CHECK(controls->attributes.texture_enabled[0]);
+                if (stage < 2) {
+                    CHECK(controls->attributes.texture_unit == 1);
+                    CHECK(controls->attributes.texture_enabled[1]);
+                    controls->attributes.texture_enabled[controls->attributes.texture_unit] = false;
+                    controls->attributes.texture_unit = 0;
+                } else CHECK(!controls->attributes.texture_enabled[1]);
+            }
+        }
     }
     qa_cpu_statistics statistics;
     CHECK(qa_cpu_statistics_read(renderer, &statistics, &error));

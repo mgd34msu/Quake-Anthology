@@ -1442,6 +1442,74 @@ static bool raster_queue(cpu_raster_job *job) {
   pool->commands[pool->command_count++] = command;
   return true;
 }
+static bool cpu_draw_resolved(qa_cpu_renderer *renderer, const qa_scene_draw *draw,
+    const cpu_sampler samplers[2], qa_render_primitive_mode mode, bool queued,
+    bool batchable, qa_error *error) {
+  for (size_t i = 0; i < draw->mesh.index_count; ++i)
+    if (draw->mesh.indices[i] >= (draw->source_vertex_storage ? draw->source_vertex_storage : draw->mesh.vertex_count)) {
+      qa_error_set(error, QA_ERROR_ARGUMENT, i,
+                   "CPU draw index is outside vertex storage");
+      return false;
+    }
+  if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
+  if (draw->brush.present && draw->brush.chain) {
+    for (const qa_scene_brush_surface *brush = draw->brush.chain; brush; brush = brush->next) {
+      qa_scene_draw part = *draw;
+      part.brush = *brush; part.brush.chain = part.brush.next = NULL;
+      part.mesh = brush->mesh;
+      /* The boundary has resolved the stage to explicit state and bindings.
+       * Retained world views no longer depend on mutable client arrays. */
+      part.source_arrays = part.source_primitives = part.source_stage_state = false;
+      part.source_retain_depth_range = part.source_retain_polygon_offset = false;
+      part.source_vertex_storage = 0;
+      part.retain_texture[0] = part.retain_texture[1] = false;
+      if (!draw_valid(&part, error) ||
+          !cpu_draw_resolved(renderer, &part, samplers, QA_RENDER_PRIMITIVES_INDEXED,
+              queued, batchable, error)) return false;
+    }
+    return true;
+  }
+  if (draw->brush.present && draw->brush.part_count) {
+    for (size_t i = 0; i < draw->brush.part_count; ++i) {
+      qa_scene_draw part = *draw;
+      part.brush = draw->brush.parts[i];
+      part.mesh.indices = part.brush.polygon_indices;
+      part.mesh.index_count = part.brush.polygon_vertices;
+      if (!draw_valid(&part, error) ||
+          !cpu_draw_resolved(renderer, &part, samplers, mode, queued, batchable, error)) return false;
+    }
+    return true;
+  }
+  CPU_STATS_ADD(renderer, draws, 1);
+  bool brush_handled = false;
+  if (draw->brush.present && mode == QA_RENDER_PRIMITIVES_INDEXED) {
+    if (!cpu_brush_draw_queued(renderer, draw, error, &brush_handled)) return false;
+  }
+  if (!brush_handled) {
+    if (!cpu_brush_flush(renderer, error)) return false;
+    if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
+    cpu_raster_job job = {.renderer = renderer, .draw = draw,
+        .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
+        .mode = mode, .bounds = scissor(renderer), .rounding = fegetround()};
+    for (size_t i = 0; batchable && i < draw->texture_count; ++i)
+      if (draw->textures[i] && samplers[i].target == renderer->current)
+        batchable = false;
+    if (draw->shadow_atlas &&
+        cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
+      batchable = false;
+    if (!batchable) {
+      cpu_raster_flush(renderer);
+      raster_draw(&job);
+    } else if (!raster_queue(&job)) {
+      cpu_raster_flush(renderer);
+      raster_prepared_draw(&job);
+    }
+  } else if (!queued) {
+    if (!cpu_brush_flush(renderer, error)) return false;
+    cpu_raster_flush(renderer);
+  }
+  return true;
+}
 static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                          qa_error *error, bool queued) {
   if (!cpu_raster_acquire(renderer, error)) return false;
@@ -1491,12 +1559,6 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
                  "CPU stencil draw requires stencil storage");
     return false;
   }
-  for (size_t i = 0; i < draw->mesh.index_count; ++i)
-    if (draw->mesh.indices[i] >= (draw->source_vertex_storage ? draw->source_vertex_storage : draw->mesh.vertex_count)) {
-      qa_error_set(error, QA_ERROR_ARGUMENT, i,
-                   "CPU draw index is outside vertex storage");
-      return false;
-    }
   renderer->pipeline=draw->state;
   if (draw->source_arrays && draw->mesh.primitive==QA_SCENE_TRIANGLES && !draw->state.wireframe)
     renderer->controls.counters.total_indexes+=draw->mesh.index_count;
@@ -1517,60 +1579,8 @@ static bool cpu_draw_impl(qa_cpu_renderer *renderer, const qa_scene_draw *input,
     resolved.state.depth_write = true;
     renderer->pipeline = resolved.state;
   }
+  if (!cpu_draw_resolved(renderer, draw, samplers, mode, queued, batchable, error)) return false;
   if (mode == QA_RENDER_PRIMITIVES_NONE) return true;
-  if (draw->brush.present && draw->brush.chain) {
-    for (const qa_scene_brush_surface *brush = draw->brush.chain; brush; brush = brush->next) {
-      qa_scene_draw part = *draw;
-      part.brush = *brush; part.brush.chain = part.brush.next = NULL;
-      part.mesh = brush->mesh;
-      /* The boundary has resolved the stage to explicit state and bindings.
-       * Retained world views no longer depend on mutable client arrays. */
-      part.source_arrays = part.source_primitives = part.source_stage_state = false;
-      part.source_retain_depth_range = part.source_retain_polygon_offset = false;
-      part.source_vertex_storage = 0;
-      part.retain_texture[0] = part.retain_texture[1] = false;
-      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
-    }
-    return true;
-  }
-  if (draw->brush.present && draw->brush.part_count) {
-    for (size_t i = 0; i < draw->brush.part_count; ++i) {
-      qa_scene_draw part = *draw;
-      part.brush = draw->brush.parts[i];
-      part.mesh.indices = part.brush.polygon_indices;
-      part.mesh.index_count = part.brush.polygon_vertices;
-      if (!cpu_draw_impl(renderer, &part, error, queued)) return false;
-    }
-    return true;
-  }
-  CPU_STATS_ADD(renderer, draws, 1);
-  bool brush_handled = false;
-  if (draw->brush.present && mode == QA_RENDER_PRIMITIVES_INDEXED) {
-    if (!cpu_brush_draw_queued(renderer, draw, error, &brush_handled)) return false;
-  }
-  if (!brush_handled) {
-    if (!cpu_brush_flush(renderer, error)) return false;
-    if (draw->mesh.index_count && !transform(renderer, draw, mode, error)) return false;
-    cpu_raster_job job = {.renderer = renderer, .draw = draw,
-        .samplers = samplers, .kernel = cpu_fragment_select(renderer, draw),
-        .mode = mode, .bounds = scissor(renderer), .rounding = fegetround()};
-    for (size_t i = 0; batchable && i < draw->texture_count; ++i)
-      if (draw->textures[i] && samplers[i].target == renderer->current)
-        batchable = false;
-    if (draw->shadow_atlas &&
-        cpu_target_find(renderer, draw->shadow_atlas) == renderer->current)
-      batchable = false;
-    if (!batchable) {
-      cpu_raster_flush(renderer);
-      raster_draw(&job);
-    } else if (!raster_queue(&job)) {
-      cpu_raster_flush(renderer);
-      raster_prepared_draw(&job);
-    }
-  } else if (!queued) {
-    if (!cpu_brush_flush(renderer, error)) return false;
-    cpu_raster_flush(renderer);
-  }
   if (mode == QA_RENDER_PRIMITIVES_ARRAY_STRIPS || mode == QA_RENDER_PRIMITIVES_DISCRETE_STRIPS) {
     qa_render_source_attributes_finish(&renderer->controls,draw,mode);
     return true;
