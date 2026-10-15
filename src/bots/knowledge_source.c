@@ -525,18 +525,16 @@ static bool chats_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_d
         const char *raw=name?qa_strings_cstr(knowledge->strings,name):"";
         const char *key=*raw=='$'?raw+1:raw;
         qa_string_id variants[64];size_t count=0;
-        if(rules==QA_RULESET_NETQUAKE) {
-            size_t length=strlen(key);
-            char *numbered=qa_arena_alloc(&knowledge->storage,length+5,1,error);
-            if(!numbered) {okay=false;break;}
-            for(size_t j=0;j<64;++j) {
-                snprintf(numbered,length+5,"%s_%zu",key,j);
-                if(!qa_localization_find(catalog,numbered)) break;
-                if(!chat_text(knowledge,catalog,numbered,numbered,variants+count,error)) {okay=false;break;}
-                ++count;
-            }
-            chat->random_text=count!=0;
+        size_t length=strlen(key);
+        char *numbered=qa_arena_alloc(&knowledge->storage,length+5,1,error);
+        if(!numbered) {okay=false;break;}
+        for(size_t j=0;j<64;++j) {
+            snprintf(numbered,length+5,"%s_%zu",key,j);
+            if(!qa_localization_find(catalog,numbered)) break;
+            if(!chat_text(knowledge,catalog,numbered,numbered,variants+count,error)) {okay=false;break;}
+            ++count;
         }
+        chat->random_text=count!=0;
         if(okay && !count) {
             okay=chat_text(knowledge,catalog,key,rules==QA_RULESET_NETQUAKE?key:raw,variants,error);
             count=1;

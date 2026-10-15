@@ -569,7 +569,7 @@ static void test_bot_source_knowledge(void)
         "{\n name item_quad\n flags powerup\n}\n"
         "{\n name item_flag_team1\n flags objective\n team 5\n}\n"
         "{\n name item_armor\n flags health\n flags armor\n}\n\0\0";
-    const char chats_text[]="{\n type connected\n locstring $greeting\n time 500\n chance 100\n}\n"
+    const char chats_text[]="{\n type connected\n locstring greeting\n time 500\n chance 100\n}\n"
         "{\n type connected\n locstring $discard\n chance 0\n}\n"
         "{\n type match_start\n locstring $starting\n time 100\n chance 100\n team true\n}\n"
         "{\n type ctf_on_defense\n locstring $single\n time 100\n chance 100\n}\n"
@@ -689,10 +689,11 @@ static void test_bot_source_knowledge(void)
     CHECK(!qa_bot_source_item_read(knowledge,0));
     qa_bot_source_knowledge *pc=NULL;
     CHECK(qa_vfs_write(files,mount,"bots/settings_PC.txt",contents[1],&error));
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,"english",NULL,NULL,&pc,&found,&error) && found);
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,"french",NULL,NULL,&pc,&found,&error) && found);
     chat=qa_bot_source_chat_at(pc,connected,0);
-    CHECK(chat && !chat->random_text && chat->text_count==1 &&
-        !strcmp(qa_strings_cstr(strings,chat->texts[0]),"plain hello"));
+    CHECK(chat && chat->random_text && chat->text_count==2 &&
+        !strcmp(qa_strings_cstr(strings,chat->texts[0]),"hello") &&
+        !strcmp(qa_strings_cstr(strings,chat->texts[1]),"salut"));
     qa_string_id offense=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"ctf_on_offense",14});
     chat=qa_bot_source_chat_at(pc,offense,0);
     CHECK(chat && !strcmp(qa_strings_cstr(strings,chat->texts[0]),"$raw_missing"));
