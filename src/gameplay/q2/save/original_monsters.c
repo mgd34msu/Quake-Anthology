@@ -885,6 +885,9 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
         (selected == 16 && m->definition->species != Q2M_BOSS5) ||
         (selected == 17 && m->definition->species != Q2M_WIDOW2))
         return monster_error(io, "think", "Schedule belongs to a different Source actor");
+    /* Triggered start clears nextthink but retains walk/fly/swim/stationary
+     * start_go. Its use callback, rather than that completed think, owns dormancy. */
+    if (!due && ((selected >= 1 && selected <= 3) || selected == 14)) selected = 9;
     m->turret_attached = selected == 12 || selected == 13;
     m->death_ns = selected >= 15 && selected <= 17 ? due : 0;
     m->start_phase = (selected >= 1 && selected <= 3) || selected == 14 ? Q2M_START_PENDING :
