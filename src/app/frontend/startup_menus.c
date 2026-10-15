@@ -474,8 +474,9 @@ bool frontend_startup_launch_client_admitted(qa_frontend *f,uint32_t physical,
         const qa_launch_seat *seat=selected->seats+i;
         if (seat->id!=logical || !seat->local || seat->bot || seat->spectator) continue;
         if (!seat->team || !seat->team[0]) return true;
-        const char *text=qa_text_ascii_equal(seat->team,"red")?"team Red\n":
-            qa_text_ascii_equal(seat->team,"blue")?"team Blue\n":NULL;
+        /* Admission can precede cgame's forwarded-name declarations. */
+        const char *text=qa_text_ascii_equal(seat->team,"red")?"cmd team Red\n":
+            qa_text_ascii_equal(seat->team,"blue")?"cmd team Blue\n":NULL;
         return !text || qa_console_append(console,command,text,error);
     }
     return true;
