@@ -484,6 +484,7 @@ static void test_aas_geometry_compaction(void)
 
 typedef struct navigation_step_fixture {
     qa_vec3 points[2];
+    qa_actor_id actor;
     size_t admitted, rejected;
 } navigation_step_fixture;
 typedef struct canonical_goal_fixture {
@@ -555,7 +556,7 @@ static void test_bot_canonical_goal_without_weights(qa_bot_navigation *navigatio
 }
 static bool navigation_step_begin(void *context,qa_actor_id actor,void **lease,qa_error *error)
 {
-    (void)actor;(void)error;*lease=context;return true;
+    (void)error;((navigation_step_fixture *)context)->actor=actor;*lease=context;return true;
 }
 static void navigation_step_end(void *context,void *lease)
 {
@@ -623,6 +624,24 @@ static void test_native_navigation_first_step(void)
     CHECK(qa_bot_navigation_create(runtime,world,(qa_actor_id){0},NULL,&navigation,&error));
     CHECK(qa_bot_navigation_fuzzy(navigation,qa_v3(0,0,40),&area,&error));
     CHECK(area==2);
+    CHECK(!fixture.admitted && !fixture.rejected);
+    qa_actor_id walker;
+    CHECK(qa_actors_allocate(actors,1,1,&walker,&error));
+    CHECK(qa_world_body_create(world,walker,&(qa_body_state){
+        .origin={0,0,40},.bounds=profile.shape.bounds},&error));
+    CHECK(qa_navigation_nearest(runtime,walker,qa_v3(0,0,40),512,&area,&found,&error));
+    CHECK(found && area==0 && fixture.admitted==1 &&
+        qa_actor_id_equal(fixture.actor,walker));
+    qa_bot_navigation *walking=NULL;
+    CHECK(qa_bot_navigation_create(runtime,world,walker,NULL,&walking,&error));
+    CHECK(qa_bot_navigation_fuzzy(walking,qa_v3(0,0,40),&area,&error));
+    CHECK(area==1 && fixture.admitted==2 && qa_actor_id_equal(fixture.actor,walker));
+    qa_bot_navigation_destroy(walking);
+    CHECK(qa_navigation_area(runtime,walker,qa_v3(0,0,40),&area,&found,&error));
+    CHECK(found && area==0 && fixture.admitted==2);
+    CHECK(qa_navigation_nearest(runtime,(qa_actor_id){0},qa_v3(0,0,40),512,&area,&found,&error));
+    CHECK(found && area==1 && fixture.admitted==2 && !fixture.rejected);
+    fixture.admitted=0;
     qa_nav_workspace *workspace=NULL;
     CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
     CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
