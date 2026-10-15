@@ -1,6 +1,7 @@
 #include "source_prompt.h"
 #include "internal.h"
 #include "qa/application_q1_composition.h"
+#include "inventory_menu.h"
 
 static bool scores(frontend_seat *seat, const qa_q2_player_event *event,
     uint64_t id, qa_error *error)
@@ -31,6 +32,7 @@ static void help_line(frontend_seat *seat, unsigned slot, qa_string_id name)
 }
 void frontend_player_retire(frontend_seat *seat)
 {
+    frontend_inventory_menu_clear(seat,seat);
     seat->light_level_known = false;
     qa_font_library_destroy(seat->q2_hud_fonts);
     seat->q2_hud_fonts = NULL; seat->q2_hud_classic = NULL;
@@ -111,13 +113,26 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                     actor, QA_ROLE_CHARACTER);
                 if (!character || character != observed.provider) break;
                 seat->q2_view = event->view; seat->q2_view_ready = true;
+                if(!(event->view.layouts&2)) {
+                    seat->q2_inventory=false;frontend_inventory_menu_clear(seat,seat);
+                } else if(seat->q2_inventory)
+                    frontend_inventory_menu_player(seat,actor,event->view.selected_item,true);
                 if (event->view.hit_marker_damage > 0)
                     qa_hud_q2_marker_hit(&seat->q2_hit_marker,observed.time_ns,observed.time_ns);
                 break;
             }
-            case QA_Q2_PLAYER_SCOREBOARD: if (!scores(seat, event, range.id, error)) return false; break;
-            case QA_Q2_PLAYER_INVENTORY: seat->q2_inventory = event->visible; break;
-            case QA_Q2_PLAYER_HELP: seat->q2_help = event->visible; break;
+            case QA_Q2_PLAYER_SCOREBOARD:
+                if (!scores(seat, event, range.id, error)) return false;
+                seat->q2_inventory=false;frontend_inventory_menu_clear(seat,seat);break;
+            case QA_Q2_PLAYER_INVENTORY:
+                seat->q2_inventory = event->visible;
+                frontend_inventory_menu_player(seat,actor,event->selected_item,event->visible);break;
+            case QA_Q2_PLAYER_HELP:
+                seat->q2_help = event->visible;
+                if(event->visible) {
+                    seat->q2_inventory=false;frontend_inventory_menu_clear(seat,seat);
+                }
+                break;
             case QA_Q2_PLAYER_PRINT:
                 if (event->text && !qa_hud_notify(seat->hud, event->text, event->level == 3,
                         frontend->time_ns, UINT64_C(4000000000), error)) return false;
@@ -157,6 +172,9 @@ bool frontend_player_events(qa_frontend *frontend, qa_error *error)
                 help_line(seat, (unsigned)event->slot - 1, event->text);
             } else if (event->kind == QA_Q2_MAP_HELP_COMPUTER) {
                 seat->q2_help = event->visible;
+                if(event->visible) {
+                    seat->q2_inventory=false;frontend_inventory_menu_clear(seat,seat);
+                }
                 help_line(seat, 0, event->text); help_line(seat, 1, event->resource);
             } else if (event->kind == QA_Q2_MAP_STORY && text &&
                 !qa_hud_center_print(seat->hud, text, frontend->time_ns, UINT64_C(6000000000),(qa_hud_center_policy){.instant=false,.character_ns=UINT64_C(50000000)}, error)) return false;

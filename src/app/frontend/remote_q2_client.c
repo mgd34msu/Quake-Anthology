@@ -10,6 +10,7 @@
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
 #include "capture.h"
+#include "inventory_menu.h"
 #include "remote_q2_effects.h"
 #include "remote_q2_effects_bridge.h"
 #include "remote_q2_footsteps.h"
@@ -153,6 +154,7 @@ static void events_retire(frontend_remote_q2 *row)
 
 static bool content_clear(frontend_remote_q2 *row, qa_error *error)
 {
+    frontend_inventory_menu_clear(row->frontend->seats+row->options.domain.physical_seat,row);
     events_retire(row);
     if (!remote_q2_media_clear(row, error)) return false;
     if (!remote_q2_download_clear(row, error)) return false;

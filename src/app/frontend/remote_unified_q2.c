@@ -8,6 +8,7 @@
 #include "remote_unified_save.h"
 #include "remote_q2_footsteps.h"
 #include "ui_features.h"
+#include "inventory_menu.h"
 #include "received_music.h"
 #include "material_movies.h"
 #include "legacy_render_policy.h"
@@ -705,19 +706,22 @@ static bool achievement(frontend_unified_q2 *o,const qa_unified_presentation_eve
         .value.award={(const uint8_t *)award,award_size}};bool inserted;okay=qa_player_progress_record(store,&event,&inserted,e);}
     free(identity);return okay;
 }
+static bool inventory_rows(frontend_unified_q2 *o,const qa_hud_frame *frame,qa_hud_data *out,qa_error *e)
+{
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+    const qa_unified_player_ui empty={0};
+    const qa_unified_player_ui *source=received && received->player?&received->player->ui:&empty;
+    return frontend_hud_inventory_rows(o->frontend->seats+d->physical_seat,frame,o->items,o->item_count,
+        o->selected_item,source,o->replica->strings,out,e);
+}
 static bool hud_read(void *ctx,const qa_hud_frame *frame,qa_hud_data *out,qa_error *e)
 {
     frontend_unified_q2 *o=ctx;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (!o->busy || frame->seat!=d->physical_seat) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 message HUD lost its CLIENT seat");
     *out=(qa_hud_data){.source_vitals=true};
-    if(frame->show_inventory) {
-        const qa_unified_frame *received=qa_unified_document_frame(o->frame);
-        const qa_unified_player_ui empty={0};
-        const qa_unified_player_ui *source=received && received->player?&received->player->ui:&empty;
-        if(!frontend_hud_inventory_rows(o->frontend->seats+d->physical_seat,frame,o->items,o->item_count,
-            o->selected_item,source,o->replica->strings,out,e))return false;
-    }
+    if(frame->show_inventory && !inventory_rows(o,frame,out,e))return false;
     if (o->help_visible) {
         out->help_title="Help computer";
         if (o->help_text[0] && o->help_text[1]) { out->help_lines=(const char *const *)o->help_text; out->help_count=2; }
@@ -829,11 +833,11 @@ static bool native_font(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     }
     v->font=v->bank->native_font;return true;
 }
-static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
+static bool native_hud_bind(q2_native *v,const qa_unified_document *document,qa_error *e)
 {
     q2_bank *b=v->bank;
     const void *source=v->configuration?(const void *)v->configuration:(const void *)v->config_source;
-    const qa_unified_document *document=v->configuration?o->status_metadata:v->config_document;
+    if(!v->configuration) document=v->config_document;
     if (b->hud_name_source==source && b->hud_name_document==document) return true;
     if (!qa_hud_q2_names_configure(&b->hud_names,v->protocol,NULL,e) ||
         !qa_hud_q2_names_prepare_images(&b->hud_names,&b->hud_names,b->images,&b->picture_names,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
@@ -849,6 +853,48 @@ static bool native_hud_bind(frontend_unified_q2 *o,q2_native *v,qa_error *e)
     qa_unified_document_destroy(b->hud_name_document);
     b->hud_name_document=retained;b->hud_name_source=source;
     return true;
+}
+static q2_native *inventory_native(frontend_unified_q2 *o,const qa_unified_native_hud **hud,
+    const int32_t **counts)
+{
+    const qa_unified_frame *frame=qa_unified_document_frame(o->frame);
+    if(!frame) return NULL;
+    if(o->status.hud && frame->player && frame->player->has_q2_hud &&
+        (frame->player->q2_hud.frame.stats[13]&2)) {
+        *hud=&frame->player->q2_hud.frame;*counts=o->inventory;return &o->status;
+    }
+    const qa_unified_frame_components *components=frame->components;
+    for(size_t i=0;components && i<components->native_count;++i) {
+        const qa_unified_native_component *row=components->native+i;
+        if(!row->hud || !(row->hud->stats[13]&2)) continue;
+        for(size_t j=0;j<o->native_count;++j) if(o->native[j].provider_name==row->provider) {
+            *hud=row->hud;*counts=o->native[j].inventory;return o->native+j;
+        }
+    }
+    return NULL;
+}
+static bool inventory_menu_read(void *context,qa_hud_data *out,qa_strings **strings,qa_error *e)
+{
+    frontend_unified_q2 *o=context;
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    *strings=o->replica->strings;
+    if(o->inventory_visible) {
+        qa_actor_id player={0};uint32_t source_number;
+        if(!frontend_remote_unified_player(o->replica,&player,&source_number)) return true;
+        return inventory_rows(o,&(qa_hud_frame){.seat=d->physical_seat,.actor=player},out,e);
+    }
+    const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
+    q2_native *native=inventory_native(o,&hud,&counts);
+    return !native || frontend_inventory_menu_wire_rows(o->frontend->seats+d->physical_seat,
+        &native->bank->hud_names,counts,256,hud->stats[12],out,e);
+}
+static void inventory_menu_sync(frontend_unified_q2 *o)
+{
+    const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
+    bool overlay=o->help_visible || o->score_visible || frontend_unified_q2_rr_help_visible(o->rr_hud);
+    bool visible=!overlay && (o->inventory_visible || inventory_native(o,&hud,&counts)!=NULL);
+    frontend_inventory_menu_source(o->frontend->seats+d->physical_seat,o,inventory_menu_read,visible);
 }
 static bool native_configs(const qa_unified_component_q2 *row,const qa_unified_document *document,
     const q2_native *old,q2_native *v,qa_error *e)
@@ -918,7 +964,8 @@ static bool native_read(frontend_unified_q2 *o,const qa_unified_component_q2 *ro
     v->player_number=row->player_number;
     for (size_t i=0;i<256;++i) v->inventory[i]=row->inventory[i];
     if (!okay) return false;
-    return qa_hud_q2_program_update(v->layout_program,v->layout,v->bank->hud_names.rerelease,e)&&native_font(o,v,e);
+    return qa_hud_q2_program_update(v->layout_program,v->layout,v->bank->hud_names.rerelease,e) &&
+        native_font(o,v,e) && native_hud_bind(v,NULL,e);
 }
 bool frontend_unified_q2_components_control(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1000,7 +1047,8 @@ static bool status_prepare(frontend_unified_q2 *o,const qa_unified_frame *frame,
     if (!bank_name(o,selected->hud.content,NULL,selected->hud.provider,
         qa_product_ruleset(product,QA_GAME_Q2),
         false,&status->bank,e)) return false;
-    return native_font(o,status,e) && qa_unified_document_retain(document,&o->prepared_status_metadata,e);
+    return native_font(o,status,e) && native_hud_bind(status,document,e) &&
+        qa_unified_document_retain(document,&o->prepared_status_metadata,e);
 }
 bool frontend_unified_q2_status_replacement(const frontend_unified_q2 *o,bool *out,qa_error *e)
 {
@@ -1425,7 +1473,7 @@ bool frontend_unified_q2_simulation_validate(frontend_unified_q2 *o,const qa_uni
     default:return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q2 simulation message has no installed state transition");
     }
 }
-bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
+static bool presentation_apply(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
 {
     if (!o || !row || !mirrored || !current(o,e))return false;
     *mirrored=false;
@@ -1460,6 +1508,12 @@ bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_pr
     case QA_UNIFIED_PRESENTATION_OWNER:return frontend_unified_q2_owner_retire(o,row,e);
     default:return frontend_unified_fail(e,QA_ERROR_UNSUPPORTED,"Q2 presentation belongs to another family");
     }
+}
+bool frontend_unified_q2_presentation(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
+{
+    bool okay=presentation_apply(o,row,mirrored,e);
+    if(okay) inventory_menu_sync(o);
+    return okay;
 }
 bool frontend_unified_q2_simulation(frontend_unified_q2 *o,const qa_unified_simulation_event *row,qa_error *e)
 {
@@ -1505,6 +1559,7 @@ void frontend_unified_q2_frame_commit(frontend_unified_q2 *o)
     qa_unified_document_destroy(o->status_metadata);
     o->status_metadata=o->prepared_status_metadata;o->prepared_status_metadata=NULL;
     frontend_unified_q2_rr_frame_commit(o->rr_hud);
+    inventory_menu_sync(o);
 }
 bool frontend_unified_q2_frame_ready(frontend_unified_q2 *o,const qa_unified_document *d,qa_error *e)
 {
@@ -1851,7 +1906,7 @@ static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_nat
     qa_scene_rect viewport,qa_scene_frame *frame,qa_error *e)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
-    if (!native_hud_bind(o,v,e) || !qa_hud_q2_program_prepare_images((qa_hud_q2_program *)layout,
+    if (!qa_hud_q2_program_prepare_images((qa_hud_q2_program *)layout,
         v->bank->images,v->bank->hud_names.rerelease,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
     qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
@@ -1933,6 +1988,8 @@ bool frontend_unified_q2_destroy(frontend_unified_q2 **slot,qa_error *e)
     if (!slot || !*slot) return true;
     frontend_unified_q2 *o=*slot;
     if (!frontend_unified_q2_idle(o)) return frontend_unified_fail(e,QA_ERROR_ARGUMENT,"Q2 CLIENT still has callback custody");
+    const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
+    frontend_inventory_menu_clear(o->frontend->seats+domain->physical_seat,o);
     if (!frontend_unified_q2_rr_destroy(&o->rr_hud,e)) return false;
     o->music_retiring=true;
     for (q2_bank *b=o->banks;b;b=b->next) if (!frontend_received_music_destroy(&b->music,e)) { o->music_retiring=false; return false; }

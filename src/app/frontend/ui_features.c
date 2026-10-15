@@ -11,6 +11,7 @@
 #include "qa/application_q1_composition.h"
 #include "qa/game_q1_source_obituary.h"
 #include "music_sources.h"
+#include "inventory_menu.h"
 #include <limits.h>
 #include <math.h>
 
@@ -75,6 +76,7 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"UI features retain an active presentation or caption child");
     frontend_ui_cinematic_destroy(f);
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
+        frontend_inventory_menu_destroy(&owner->seats[i].inventory);
         qa_sound_captions_destroy(owner->seats[i].captions);
         qa_localization_release(owner->seats[i].localization);
         qa_save_slot_listing_free(&owner->seats[i].saves);
@@ -403,6 +405,7 @@ bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)
     const qa_ui_preference_handles *handles=qa_application_ui_preference_handles(f->application);
     uint64_t identity=qa_cvars_view_identity(cvars);
     for (unsigned i = 0; !f->options.dedicated && i < f->options.seats; ++i) {
+        if(!frontend_inventory_menu_sync(f->seats+i,error)) return false;
         qa_ui_preferences preferences;
         if (!qa_ui_preferences_read(cvars,handles, i, &preferences, error) ||
             !qa_sound_captions_prepare(owner->seats[i].captions, preferences.language, (int64_t)frame, error)) return false;

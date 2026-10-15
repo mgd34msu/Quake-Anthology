@@ -8,6 +8,7 @@
 #include "qa/application_ui_names.h"
 #include "qa/scene_effects.h"
 #include "qa/game_q2.h"
+#include "inventory_menu.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -251,6 +252,16 @@ static bool sound(frontend_remote_q2 *row, const qa_q2_kex_sound *event, qa_erro
     ok = qa_audio_engine_play(row->frontend->audio, &play, (int32_t)(row->sample_ns / 1000000), error);
     qa_audio_asset_release(asset); return ok;
 }
+static bool inventory_items(void *context,qa_hud_data *out,qa_strings **strings,qa_error *error)
+{
+    frontend_remote_q2 *row=context;uint32_t seat;
+    *strings=row->hud_names.strings;
+    if(!frontend_remote_q2_wire_seat(row,&seat,error)) return false;
+    int32_t selected=row->frame.valid && seat<row->frame.player_count?
+        row->frame.players[seat].player.stats[12]:-1;
+    return frontend_inventory_menu_wire_rows(row->frontend->seats+row->options.domain.physical_seat,
+        &row->hud_names,row->inventory,256,selected,out,error);
+}
 bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *records, size_t count,
     bool *waiting, qa_error *error)
 {
@@ -265,6 +276,9 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
         switch (event->kind) {
         case QA_Q2_SVC_FRAME:
             if (!remote_q2_frame_present(row, event->data.frame, error)) return false;
+            if(row->frame.valid && remote_index<row->frame.player_count)
+                frontend_inventory_menu_source(row->frontend->seats+row->options.domain.physical_seat,row,
+                    inventory_items,(row->frame.players[remote_index].player.stats[13]&2)!=0);
             break;
         case QA_Q2_SVC_COMMAND: {
             qa_network_q2_state state;
@@ -282,6 +296,7 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
             if (event->data.inventory.count > 256) return remote_q2_fail(error, QA_ERROR_FORMAT, "Q2 inventory leaves its source item table");
             memset(row->inventory, 0, sizeof(row->inventory));
             for (size_t j = 0; j < event->data.inventory.count; ++j) row->inventory[j] = event->data.inventory.counts[j];
+            frontend_inventory_menu_source(row->frontend->seats+row->options.domain.physical_seat,row,inventory_items,true);
             break;
         case QA_Q2_SVC_LAYOUT: {
             const char *text = event->data.print.text; if (!text) return false;

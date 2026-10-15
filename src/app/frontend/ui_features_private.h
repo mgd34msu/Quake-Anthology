@@ -4,6 +4,7 @@
 #include "qa/persistence_slots.h"
 typedef struct frontend_cinematic_captions frontend_cinematic_captions;
 typedef struct frontend_shared_ui frontend_shared_ui;
+typedef struct frontend_inventory_menu frontend_inventory_menu;
 enum {
     FRONTEND_GRAPH_DEBUG, FRONTEND_GRAPH_TIME, FRONTEND_GRAPH_NETWORK,
     FRONTEND_GRAPH_HEIGHT, FRONTEND_GRAPH_SCALE, FRONTEND_GRAPH_SHIFT,
@@ -24,6 +25,7 @@ typedef struct frontend_caption_collection {
 void frontend_caption_count(void *,const qa_active_caption *);
 void frontend_caption_collect(void *,const qa_active_caption *);
 typedef struct frontend_ui_seat_features {
+    frontend_inventory_menu *inventory;
     qa_sound_captions *captions;
     qa_localization *localization;
     qa_cvar_handle language_handle;

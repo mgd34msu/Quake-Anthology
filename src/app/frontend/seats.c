@@ -20,6 +20,7 @@
 #include "ui_features.h"
 #include "campaign_menu.h"
 #include "campaign_cinematic.h"
+#include "inventory_menu.h"
 #include "network_recipient.h"
 #include "network_session.h"
 #include "native_q3_client.h"
@@ -295,18 +296,9 @@ bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
 
 static bool hud_inventory_data(frontend_seat *seat,const qa_hud_frame *frame,qa_hud_data *out,qa_error *error)
 {
-    qa_inventory *inventory=qa_application_inventory(seat->frontend->application);
-    size_t count=0;
-    if(!qa_inventory_entries(inventory,frame->actor,NULL,0,&count,error))return false;
-    if(count>SIZE_MAX/sizeof(qa_inventory_entry))
-        return frontend_fail(error,QA_ERROR_MEMORY,"HUD inventory storage overflow");
-    qa_inventory_entry *entries=count?qa_arena_alloc(&seat->frontend->frame.storage,
-        count*sizeof(*entries),_Alignof(qa_inventory_entry),error):NULL;
-    if(count && (!entries || !qa_inventory_entries(inventory,frame->actor,entries,count,&count,error)))return false;
     qa_item_id selected=seat->q2_view_ready && qa_actor_id_equal(frame->actor,seat->q2_actor)?
         seat->q2_view.selected_item:out->selected_weapon;
-    return frontend_hud_inventory_rows(seat,frame,entries,count,selected,NULL,
-        qa_session_strings(qa_application_session(seat->frontend->application)),out,error);
+    return frontend_inventory_rows_read(seat,frame->actor,selected,out,error);
 }
 static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_scene_frame *scene, qa_error *error)
@@ -962,7 +954,8 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
             !frontend_startup_rotation_create(seat,205,&seat->rotation_menu,error) ||
             !frontend_source_prompt_create(seat,206,&seat->source_prompt,error)) return false;
         if (!frontend_bindings_create(seat, error) || !frontend_accessibility_create(seat, error) ||
-            !frontend_save_menu_create(seat, error) || !frontend_campaign_menu_create(seat,error)) return false;
+            !frontend_save_menu_create(seat, error) || !frontend_campaign_menu_create(seat,error) ||
+            !frontend_inventory_menu_create(seat,error)) return false;
         bool library = qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
             players, frontend->options.seats, &seat->library, error);
         if (!library || !frontend_startup_menus_create(seat, error) ||
@@ -1004,6 +997,7 @@ bool frontend_seats_destroy_range(qa_frontend *frontend, unsigned first, unsigne
         seat->rankings = NULL;
         if (!qa_ui_llm_destroy(seat->assistance,(double)frontend->time_ns/1000000.0,error)) return false;
         seat->assistance=NULL;
+        frontend_inventory_menu_clear(seat,NULL);
         if (!qa_ui_destroy(seat->ui, 0, error)) return false;
         seat->ui = NULL;
         seat->player_sources_registered=false;
