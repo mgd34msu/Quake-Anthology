@@ -1133,6 +1133,12 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
 bool q2m_stand_state(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_move_id move = monster->definition->stand_move;
+  if (monster->definition->species == Q2M_WIDOW) {
+    if (!q2m_sound(context, QA_Q2_SFX_WIDOW_LAUGH, 1, 1.0f, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
   bool floater = monster->definition->species == Q2M_FLOATER;
   if (floater) {
     if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
@@ -1745,6 +1751,10 @@ static bool sight_reaction(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
   bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  if (species == Q2M_STALKER)
+    return q2m_sound(context, QA_Q2_SFX_STALKER_SIGHT,
+        monster->definition->source_rules == QA_RULESET_Q2_RERELEASE ? 2 : 1,
+        1.0f, error);
   if (species == Q2M_INFANTRY) {
     q2_runtime_name sound = QA_Q2_SFX_INFANTRY_INFSGHT1;
     if (rerelease && q2_random_bounded(context->game, 2) != 0)

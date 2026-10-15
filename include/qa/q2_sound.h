@@ -483,6 +483,8 @@
 #define QA_Q2_SOUND_WORLD_STP_WATR "world/stp_watr.wav"
 #define QA_Q2_SOUND_WORLD_X_ALARM "world/x_alarm.wav"
 #define QA_Q2_SOUND_ZORTEMP_STEP "zortemp/step.wav"
+#define QA_Q2_SOUND_WIDOW_LAUGH "widow/laugh.wav"
+#define QA_Q2_SOUND_STALKER_SIGHT "stalker/sight.wav"
 
 #define QA_Q2_SOUND_LIST(X) \
     X(_DEATH1) \
@@ -963,7 +965,9 @@
     X(WEAPONS_PHALOOP) \
     X(FLOATER_FLTSRCH1) \
     X(FLYER_FLYIDLE1) \
-    X(GUNCMDR_GCDRDEATH1)
+    X(GUNCMDR_GCDRDEATH1) \
+    X(WIDOW_LAUGH) \
+    X(STALKER_SIGHT)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,
