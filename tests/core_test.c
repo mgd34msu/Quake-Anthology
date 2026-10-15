@@ -482,6 +482,97 @@ static void test_aas_geometry_compaction(void)
     qa_nav_asset_release(decoded);qa_nav_asset_release(optimized);qa_buffer_free(&packed);
 }
 
+static void test_aas_clustering(void)
+{
+    qa_error error={0};
+    qa_aas_area areas[9]={0};
+    for(size_t i=0;i<9;++i) areas[i].number=(int32_t)i;
+    qa_aas_setting settings[9]={
+        {0}, {.reach_count=3,.first_reach=0},
+        {.contents=512,.reach_count=2,.first_reach=3},
+        {.reach_count=1,.first_reach=5}, {0},
+        {.reach_count=1,.first_reach=6}, {.reach_count=1,.first_reach=7},
+        {.contents=8,.reach_count=1,.first_reach=8}, {.reach_count=1,.first_reach=9}
+    };
+    qa_aas_reach reaches[]={
+        {.area=2},{.area=4},{.area=7},{.area=1},{.area=3},
+        {.area=2},{.area=6},{.area=5},{.area=1},{.area=4}
+    };
+    qa_aas_view source={.version=5,.bsp_checksum=71,
+        .count={[QA_AAS_AREAS]=9,[QA_AAS_SETTINGS]=9,[QA_AAS_REACHABILITY]=10},
+        .areas=areas,.settings=settings,.reachability=reaches};
+    qa_buffer before={0},after={0},packed={0};
+    qa_nav_asset *asset=NULL,*decoded=NULL;
+    CHECK(qa_aas_write(&source,&before,&error));
+    CHECK(qa_aas_cluster_rebuild(&source,&asset,&error));
+    const qa_aas_view *view=qa_nav_asset_aas(asset);
+    CHECK(view && view->count[QA_AAS_CLUSTERS]==4 && view->count[QA_AAS_PORTALS]==2 &&
+        view->count[QA_AAS_PORTAL_INDEX]==2);
+    CHECK(view->portals[1].area==2 && view->portals[1].front_cluster==1 &&
+        view->portals[1].back_cluster==2);
+    CHECK(view->settings[1].cluster==1 && view->settings[3].cluster==2 &&
+        view->settings[5].cluster==3 && view->settings[6].cluster==3);
+    CHECK(view->settings[4].cluster==1 && view->settings[7].cluster==1 && view->settings[8].cluster==1);
+    CHECK(view->settings[2].cluster==-1 && view->settings[4].cluster_area==4 &&
+        view->portals[1].cluster_areas[0]==3 && view->portals[1].cluster_areas[1]==1);
+    CHECK(view->clusters[1].area_count==5 && view->clusters[1].reachable_area_count==4 &&
+        view->clusters[2].area_count==2 && view->clusters[2].reachable_area_count==2);
+    CHECK((view->settings[2].contents&520)==520 &&
+        !(view->settings[7].contents&8) && (view->settings[7].contents&512));
+    CHECK(qa_aas_write(&source,&after,&error));
+    CHECK(before.size==after.size && !memcmp(before.data,after.data,before.size));
+    CHECK(qa_aas_write(view,&packed,&error));
+    CHECK(qa_nav_asset_read((qa_bytes){packed.data,packed.size},&source.bsp_checksum,&decoded,&error));
+    CHECK(qa_nav_asset_aas(decoded)->count[QA_AAS_CLUSTERS]==4 &&
+        qa_nav_asset_aas(decoded)->settings[8].cluster==1);
+    qa_nav_asset_release(decoded);qa_nav_asset_release(asset);asset=NULL;
+    qa_buffer_free(&before);qa_buffer_free(&after);qa_buffer_free(&packed);
+    reaches[6].area=2;
+    CHECK(qa_aas_cluster_rebuild(&source,&asset,&error));view=qa_nav_asset_aas(asset);
+    CHECK(view->count[QA_AAS_PORTALS]==1 && view->count[QA_AAS_CLUSTERS]==2);
+    for(size_t i=1;i<9;++i) CHECK(view->settings[i].cluster==1);
+    CHECK(!(view->settings[2].contents&8) && (view->settings[2].contents&512));
+    qa_nav_asset_release(asset);asset=NULL;
+
+    const qa_aas_plane planes[]={{{1,0,0},0,0},{{-1,0,0},0,0},{{1,0,0},16,0},{{-1,0,0},-16,0}};
+    qa_aas_face faces[]={{0},{.plane=0,.front_area=2,.back_area=1},
+        {.plane=2,.front_area=2,.back_area=3}};
+    const int32_t face_index[]={1,1,2,2};
+    qa_aas_area passage[]={
+        {0}, {.number=1,.face_count=1,.first_face=0},
+        {.number=2,.face_count=2,.first_face=1}, {.number=3,.face_count=1,.first_face=3}
+    };
+    qa_aas_setting passage_settings[]={
+        {0},{.presence=3,.first_reach=0,.reach_count=1},
+        {.flags=1,.presence=3,.first_reach=1,.reach_count=2},
+        {.presence=3,.first_reach=3,.reach_count=1}
+    };
+    const qa_aas_reach passage_reaches[]={{.area=2},{.area=1},{.area=3},{.area=2}};
+    source=(qa_aas_view){.version=5,.bsp_checksum=72,
+        .count={[QA_AAS_PLANES]=4,[QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=4,
+            [QA_AAS_AREAS]=4,[QA_AAS_SETTINGS]=4,[QA_AAS_REACHABILITY]=4},
+        .planes=planes,.faces=faces,.face_index=face_index,.areas=passage,
+        .settings=passage_settings,.reachability=passage_reaches};
+    CHECK(qa_aas_cluster_rebuild(&source,&asset,&error));view=qa_nav_asset_aas(asset);
+    CHECK(view->count[QA_AAS_PORTALS]==2 && view->count[QA_AAS_CLUSTERS]==3 &&
+        view->portals[1].area==2 && (view->settings[2].contents&552)==552);
+    qa_nav_asset_release(asset);asset=NULL;
+    const qa_vec3 vertices[]={{0,0,0},{0,1,0}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}}};
+    const int32_t edge_index[]={1,1};
+    source.count[QA_AAS_VERTICES]=2;source.count[QA_AAS_EDGES]=2;source.count[QA_AAS_EDGE_INDEX]=2;
+    source.vertices=vertices;source.edges=edges;source.edge_index=edge_index;
+    faces[1].edge_count=faces[2].edge_count=1;faces[2].first_edge=1;
+    CHECK(qa_aas_cluster_rebuild(&source,&asset,&error));view=qa_nav_asset_aas(asset);
+    CHECK(view->count[QA_AAS_PORTALS]==1 && view->count[QA_AAS_CLUSTERS]==2 &&
+        !(view->settings[2].contents&8));
+    qa_nav_asset_release(asset);asset=NULL;
+    const qa_aas_view empty={.version=5,.bsp_checksum=73};
+    CHECK(qa_aas_cluster_rebuild(&empty,&asset,&error));view=qa_nav_asset_aas(asset);
+    CHECK(view->version==5 && view->bsp_checksum==73 && !view->count[QA_AAS_CLUSTERS]);
+    qa_nav_asset_release(asset);
+}
+
 typedef struct navigation_step_fixture {
     qa_vec3 points[2];
     qa_actor_id actor;
@@ -6932,6 +7023,7 @@ int main(int argc, char **argv)
     test_bot_authored_aim();
     test_bot_source_knowledge();
     test_aas_geometry_compaction();
+    test_aas_clustering();
     test_native_navigation_first_step();
     test_prediction_continuations();
     test_field_completion();

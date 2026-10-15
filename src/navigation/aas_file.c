@@ -7,6 +7,19 @@ static const size_t native_stride[QA_AAS_LUMP_COUNT] = {
     sizeof(int32_t),        sizeof(qa_aas_face),   sizeof(int32_t),      sizeof(qa_aas_area),
     sizeof(qa_aas_setting), sizeof(qa_aas_reach),  sizeof(qa_aas_node),  sizeof(qa_aas_portal),
     sizeof(int32_t),        sizeof(qa_aas_cluster)};
+void nav_aas_copy_records(const qa_aas_view *source, qa_aas_view *target, uint32_t skip_lumps) {
+    const void *input[] = {source->boxes, source->vertices, source->planes, source->edges,
+        source->edge_index, source->faces, source->face_index, source->areas, source->settings,
+        source->reachability, source->nodes, source->portals, source->portal_index, source->clusters};
+    const void *output[] = {target->boxes, target->vertices, target->planes, target->edges,
+        target->edge_index, target->faces, target->face_index, target->areas, target->settings,
+        target->reachability, target->nodes, target->portals, target->portal_index, target->clusters};
+    target->version = source->version; target->bsp_checksum = source->bsp_checksum;
+    for (unsigned i = 0; i < QA_AAS_LUMP_COUNT; ++i) {
+        if ((skip_lumps & (UINT32_C(1) << i)) || !source->count[i]) continue;
+        memcpy((void *)output[i], input[i], source->count[i] * native_stride[i]);
+    }
+}
 bool nav_aas_allocate(const size_t counts[QA_AAS_LUMP_COUNT], qa_nav_asset **out, qa_error *error) {
     size_t offsets[QA_AAS_LUMP_COUNT], size = 0;
     for (unsigned i = 0; i < QA_AAS_LUMP_COUNT; ++i)

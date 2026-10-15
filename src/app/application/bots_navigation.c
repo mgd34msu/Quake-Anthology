@@ -650,6 +650,14 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         uint32_t checksum_word=qa_collision_map_checksum(bots->application->geometry);int32_t checksum;
         memcpy(&checksum,&checksum_word,sizeof(checksum));
         ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
+        const qa_aas_view *aas=ok?qa_nav_asset_aas(asset):NULL;
+        const qa_cvar_view *force=qa_cvars_find(bots->application->cvars,"bot_forceclustering");
+        const qa_cvar_view *reach=qa_cvars_find(bots->application->cvars,"bot_forcereachability");
+        if(aas && aas->count[QA_AAS_CLUSTERS] && ((force && force->integer) || (reach && reach->integer))) {
+            qa_nav_asset *clustered=NULL;
+            ok=qa_aas_cluster_rebuild(aas,&clustered,error);
+            if(ok) {qa_nav_asset_release(asset);asset=clustered;}
+        }
         if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,NULL,&graph->graph,error);
         qa_nav_asset_release(asset);
     } else {

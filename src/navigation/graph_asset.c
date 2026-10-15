@@ -154,11 +154,19 @@ bool qa_nav_graph_from_asset(const qa_nav_map *map, qa_nav_asset *asset,
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing navigation graph asset/output");
         return false;
     }
+    qa_nav_asset *clustered = NULL;
+    if (asset->kind == QA_NAV_AAS && !asset->aas.count[QA_AAS_CLUSTERS]) {
+        if (!qa_aas_cluster_rebuild(&asset->aas, &clustered, e)) return false;
+        asset = clustered;
+    }
     qa_nav_graph *g;
-    if (!nav_graph_new(map, profile, source, &g, e))
+    if (!nav_graph_new(map, profile, source, &g, e)) {
+        qa_nav_asset_release(clustered);
         return false;
+    }
     qa_nav_asset_retain(asset);
     g->view.asset = asset;
+    qa_nav_asset_release(clustered);
     bool ok = asset->kind == QA_NAV_AAS ? from_aas(g, &asset->aas, services, e)
                                         : from_kex(g, &asset->kex, services, e);
     if (!ok || !nav_graph_finish(g, e)) {

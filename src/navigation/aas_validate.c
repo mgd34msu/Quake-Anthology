@@ -2,7 +2,7 @@
 
 static bool index_valid(int32_t value, size_t count) { return value >= 0 && (size_t)value < count; }
 static bool oriented_valid(int32_t value, size_t count) {
-    return (uint64_t)(value < 0 ? -(int64_t)value : value) < count;
+    return nav_aas_oriented_index(value) < count;
 }
 static bool span_valid(int32_t first, int32_t count, size_t length) {
     return first >= 0 && count >= 0 && (size_t)first <= length &&

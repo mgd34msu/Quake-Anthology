@@ -122,6 +122,7 @@ const qa_nav_source_view *qa_nav_asset_kex(const qa_nav_asset *);
 bool qa_aas_write(const qa_aas_view *, qa_buffer *, qa_error *);
 /* Cold authoring transform; returns a new owned asset without changing source. */
 bool qa_aas_optimize(const qa_aas_view *, qa_nav_asset **, qa_error *);
+bool qa_aas_cluster_rebuild(const qa_aas_view *, qa_nav_asset **, qa_error *);
 bool qa_aas_validate(const qa_aas_view *, qa_error *);
 typedef struct qa_aas_query qa_aas_query;
 typedef struct qa_aas_crossing {

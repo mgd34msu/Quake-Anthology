@@ -8,9 +8,6 @@ typedef struct aas_optimization {
     size_t vertex_count, edge_count, face_count, edge_indexes, face_indexes;
 } aas_optimization;
 
-static size_t oriented_index(int32_t value) {
-    return (size_t)(value<0?-(int64_t)value:value);
-}
 static int32_t oriented(int32_t value,int32_t mapped) {
     return value<0?-mapped:mapped;
 }
@@ -22,8 +19,8 @@ static bool reach_indices(const qa_aas_view *view,qa_error *error) {
     for(size_t i=0;i<view->count[QA_AAS_REACHABILITY];++i) {
         const qa_aas_reach *reach=view->reachability+i;
         if(ordinary_reach(reach) &&
-           ((reach->face && oriented_index(reach->face)>=view->count[QA_AAS_FACES]) ||
-            (reach->edge && oriented_index(reach->edge)>=view->count[QA_AAS_EDGES]))) {
+           ((reach->face && nav_aas_oriented_index(reach->face)>=view->count[QA_AAS_FACES]) ||
+            (reach->edge && nav_aas_oriented_index(reach->edge)>=view->count[QA_AAS_EDGES]))) {
             qa_error_set(error,QA_ERROR_FORMAT,i,"Invalid AAS reachability geometry index");
             return false;
         }
@@ -45,7 +42,7 @@ static int32_t vertex(aas_optimization *work,int32_t number) {
     return mapped;
 }
 static int32_t edge(aas_optimization *work,int32_t number) {
-    size_t index=oriented_index(number);
+    size_t index=nav_aas_oriented_index(number);
     int32_t mapped=work->edges[index];
     if(!mapped) {
         mapped=(int32_t)work->edge_count++;
@@ -57,7 +54,7 @@ static int32_t edge(aas_optimization *work,int32_t number) {
     return number>0?mapped:-mapped;
 }
 static int32_t face(aas_optimization *work,int32_t number) {
-    size_t index=oriented_index(number);
+    size_t index=nav_aas_oriented_index(number);
     const qa_aas_face *source=work->source->faces+index;
     if(!(source->flags&2)) return 0;
     int32_t mapped=work->faces[index];
@@ -99,22 +96,6 @@ static bool geometry(aas_optimization *work,qa_error *error) {
     }
     return true;
 }
-static void metadata(const qa_aas_view *source,qa_aas_view *target,bool copy_geometry) {
-    target->version=source->version;target->bsp_checksum=source->bsp_checksum;
-#define COPY(field,lump) do { \
-    size_t bytes=source->count[lump]*sizeof(*source->field); \
-    if(bytes) memcpy((void *)target->field,source->field,bytes); \
-} while(0)
-    COPY(boxes,QA_AAS_BOXES);COPY(planes,QA_AAS_PLANES);COPY(areas,QA_AAS_AREAS);
-    COPY(settings,QA_AAS_SETTINGS);COPY(reachability,QA_AAS_REACHABILITY);
-    COPY(nodes,QA_AAS_NODES);COPY(portals,QA_AAS_PORTALS);
-    COPY(portal_index,QA_AAS_PORTAL_INDEX);COPY(clusters,QA_AAS_CLUSTERS);
-    if(copy_geometry) {
-        COPY(vertices,QA_AAS_VERTICES);COPY(edges,QA_AAS_EDGES);COPY(edge_index,QA_AAS_EDGE_INDEX);
-        COPY(faces,QA_AAS_FACES);COPY(face_index,QA_AAS_FACE_INDEX);
-    }
-#undef COPY
-}
 bool qa_aas_optimize(const qa_aas_view *source,qa_nav_asset **out,qa_error *error) {
     if(!out) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Missing optimized AAS output");
@@ -125,7 +106,7 @@ bool qa_aas_optimize(const qa_aas_view *source,qa_nav_asset **out,qa_error *erro
     if(!source->count[QA_AAS_FACES] || !source->count[QA_AAS_AREAS]) {
         qa_nav_asset *copy=NULL;
         if(!nav_aas_allocate(counts,&copy,error)) return false;
-        metadata(source,&copy->aas,true);*out=copy;return true;
+        nav_aas_copy_records(source,&copy->aas,0);*out=copy;return true;
     }
     qa_arena scratch={0};aas_optimization work={.source=source};
 #define MAP(field,lump) do { \
@@ -145,7 +126,10 @@ bool qa_aas_optimize(const qa_aas_view *source,qa_nav_asset **out,qa_error *erro
     counts[QA_AAS_FACE_INDEX]=work.face_indexes;
     qa_nav_asset *asset=NULL;
     if(!nav_aas_allocate(counts,&asset,error)) goto failed;
-    metadata(source,&asset->aas,false);work.output=&asset->aas;
+    uint32_t compacted = (UINT32_C(1) << QA_AAS_VERTICES) | (UINT32_C(1) << QA_AAS_EDGES) |
+        (UINT32_C(1) << QA_AAS_EDGE_INDEX) | (UINT32_C(1) << QA_AAS_FACES) |
+        (UINT32_C(1) << QA_AAS_FACE_INDEX);
+    nav_aas_copy_records(source,&asset->aas,compacted);work.output=&asset->aas;
     if(!geometry(&work,error)) {qa_nav_asset_release(asset);goto failed;}
     if(source->count[QA_AAS_AREAS]) {
         qa_aas_area *zero=(qa_aas_area *)asset->aas.areas;
@@ -154,9 +138,9 @@ bool qa_aas_optimize(const qa_aas_view *source,qa_nav_asset **out,qa_error *erro
     qa_aas_reach *reaches=(qa_aas_reach *)asset->aas.reachability;
     for(size_t i=0;i<counts[QA_AAS_REACHABILITY];++i) if(ordinary_reach(reaches+i)) {
         reaches[i].face=source->reachability[i].face?
-            oriented(reaches[i].face,work.faces[oriented_index(reaches[i].face)]):0;
+            oriented(reaches[i].face,work.faces[nav_aas_oriented_index(reaches[i].face)]):0;
         reaches[i].edge=source->reachability[i].edge?
-            oriented(reaches[i].edge,work.edges[oriented_index(reaches[i].edge)]):0;
+            oriented(reaches[i].edge,work.edges[nav_aas_oriented_index(reaches[i].edge)]):0;
     }
     if(!qa_aas_validate(&asset->aas,error)) {qa_nav_asset_release(asset);goto failed;}
     qa_arena_destroy(&scratch);*out=asset;return true;

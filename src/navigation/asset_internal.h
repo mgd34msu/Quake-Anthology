@@ -12,6 +12,10 @@ static inline void nav_arena_init(qa_arena *arena, const qa_arena *source) {
     else *arena = (qa_arena){0};
 }
 
+static inline size_t nav_aas_oriented_index(int32_t value) {
+    return (size_t)(value < 0 ? -(int64_t)value : value);
+}
+
 struct qa_nav_asset {
     atomic_uint references;
     qa_nav_asset_kind kind;
@@ -22,6 +26,7 @@ struct qa_nav_asset {
 bool nav_aas_read(qa_bytes, const int32_t *, qa_nav_asset **, qa_error *);
 bool nav_kex_read(qa_bytes, qa_nav_asset **, qa_error *);
 bool nav_aas_allocate(const size_t counts[QA_AAS_LUMP_COUNT], qa_nav_asset **, qa_error *);
+void nav_aas_copy_records(const qa_aas_view *, qa_aas_view *, uint32_t skip_lumps);
 static inline qa_vec3 nav_vector(const uint8_t *p) {
     return qa_v3(qa_load_f32le(p), qa_load_f32le(p + 4), qa_load_f32le(p + 8));
 }
