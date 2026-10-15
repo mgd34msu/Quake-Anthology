@@ -384,6 +384,7 @@ static bool menu_preferences_fields(qa_source_save_io *,frontend_network_menu_pr
 static bool menu_preferences_load(qa_frontend_network *,qa_error *);
 static uint32_t random_rotation(void *);
 static uint16_t menu_port(qa_net_protocol_id);
+static bool menu_resolve(const char *,uint16_t,qa_net_address *,qa_error *);
 static bool menu_preferences_master(qa_frontend_network *,qa_net_protocol_id,const char *,qa_error *);
 static bool menu_preferences_direct(qa_frontend_network *,qa_net_protocol_id,const char *,const qa_net_address *,qa_error *);
 static bool client_native_media_read(void *, frontend_q3_content_native_receipt *,
@@ -4340,7 +4341,66 @@ static bool browser_command_current(void *context, qa_error *error)
     return browser_owner_current(n, error) && n->primary_client &&
         client_configuration_view(&n->primary_client->q3, &configuration, error);
 }
-
+static bool ping_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
+{
+    if(call->argc>2) { emit(call,"usage: ping [server]\n"); return true; }
+    qa_frontend *f=n->frontend;
+    frontend_client_connection *row=n->primary_client;
+    uint32_t physical;
+    if(frontend_command_seat_read(f,&call->context,&physical)) row=n->clients+physical;
+    const qa_net_client *connection=NULL;
+    frontend_network_client_recipient recipient={0}; bool present=false;
+    if(row && row->runtime) {
+        if(!frontend_network_client_recipient_read(f,row->physical,&recipient,&present,error)) return false;
+        if(present && recipient.source.client.owner)
+            connection=qa_net_connections_get(qa_network_connections(row->runtime),recipient.source.client);
+        if(!connection && row->q3.q3_client_attached)
+            connection=qa_net_connections_get(qa_network_connections(row->runtime),row->q3.q3_client);
+    }
+    qa_net_protocol_id protocol=connection?connection->protocol:f->options.network_protocol;
+    qa_net_address address;
+    if(call->argc==1) {
+        bool player_pings=q1_client_protocol(protocol) ||
+            (protocol.kind==QA_NET_UNIFIED_1 && present &&
+             (recipient.source.context.command.dialect==QA_RULESET_NETQUAKE ||
+              recipient.source.context.command.dialect==QA_RULESET_QUAKEWORLD));
+        qa_command_result result=QA_COMMAND_UNHANDLED;
+        if(connection && player_pings && present && recipient.ready)
+            result=qa_console_forward_source(call->console,call,&recipient.source.context.command,
+                recipient.source.context.receiver,error);
+        if(result==QA_COMMAND_UNHANDLED) result=qa_application_host_command(f->application,call,error);
+        if(result!=QA_COMMAND_UNHANDLED) return result==QA_COMMAND_HANDLED;
+        if(!connection) { emit(call,"No server connected.\nUsage: ping [server]\n"); return true; }
+        if(connection->endpoint.kind==QA_NET_LOOPBACK) { emit(call,"0 ms (local server)\n"); return true; }
+        address=connection->endpoint;
+    } else if(!menu_resolve(call->argv[1],menu_port(protocol),&address,error)) return false;
+    qa_server_entry entry={0}; bool found=false;
+    bool connected_address=connection && qa_net_address_equal(&connection->endpoint,&address,true);
+    size_t total=qa_server_browser_count(n->browser),count=0;
+    uint32_t *indices=total?qa_arena_alloc(&f->frame.storage,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
+    if(total && !indices) return false;
+    qa_browser_filter filter={.sort=QA_BROWSER_NAME};
+    if(!qa_server_browser_list(n->browser,&filter,&f->frame.storage,indices,total,&count,error)) return false;
+    for(size_t i=0;i<count;++i) {
+        qa_server_entry candidate;
+        if(!qa_server_browser_at(n->browser,indices[i],&candidate) ||
+            !qa_net_address_equal(&candidate.address,&address,true)) continue;
+        bool same_protocol=candidate.protocol.kind==protocol.kind && candidate.protocol.revision==protocol.revision &&
+            candidate.protocol.flags==protocol.flags;
+        if(connected_address && !same_protocol) continue;
+        if(!found) { entry=candidate; found=true; }
+        if(same_protocol) { entry=candidate; break; }
+    }
+    if(found) protocol=entry.protocol;
+    if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
+        UINT64_C(5000000000),error)) return false;
+    char target[256],text[320];
+    if(!qa_net_address_format(&address,target,sizeof(target),error)) return false;
+    if(found && entry.has_ping)
+        snprintf(text,sizeof(text),"%s %.0f ms (previous reply); querying\n",target,(double)entry.ping_ns/1000000.0);
+    else snprintf(text,sizeof(text),"Querying %s\n",target);
+    emit(call,text); return true;
+}
 static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical; frontend_remote_config_view configuration;
@@ -4369,10 +4429,6 @@ static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocati
         bool ok = frontend_q3_browser_master(n->q3_browser, qa_parse_decimal_i32(call->argv[1],QA_DECIMAL_LOCALE_CLAMP) == 1 ? 1 : 2,
             master->value, qa_parse_decimal_i32(call->argv[2],QA_DECIMAL_LOCALE_CLAMP), keywords, count, error);
         free(keywords); return ok;
-    }
-    if (!strcmp(name, "ping")) {
-        if (call->argc != 2) { emit(call, "usage: ping [server]\n"); return true; }
-        return frontend_q3_browser_ping(&access, call->argv[1], error);
     }
     const char *server = call->argc == 2 ? call->argv[1] : primary->q3.q3_client_active ? n->client_server : NULL;
     if (!server) { emit(call, "Not connected to a server.\nUsage: serverstatus [server]\n"); return true; }
@@ -4563,7 +4619,8 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         return frontend_demo_dispatch_gtv_disconnect(n->frontend->demos,call);
     if (!strcmp(name, "connect") || !strcmp(name, "reconnect") || !strcmp(name, "disconnect"))
         return client_attempt_queue(n, call, error);
-    if (!strcmp(name, "localservers") || !strcmp(name, "globalservers") || !strcmp(name, "ping") || !strcmp(name, "serverstatus"))
+    if (!strcmp(name,"ping")) return ping_command(n,call,error);
+    if (!strcmp(name, "localservers") || !strcmp(name, "globalservers") || !strcmp(name, "serverstatus"))
         return q3_browser_command(n, call, error);
     if (!strcmp(name, "serverlist")) {
         uint32_t indices[2048]; size_t count;

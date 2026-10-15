@@ -420,32 +420,6 @@ static bool update_pings(void *ctx, int32_t source, bool *active, qa_error *e)
     }
     return true;
 }
-static bool manual_ping(frontend_q3_browser_access *a, const char *remote, qa_error *e)
-{
-    if (!a || !access_current(a, e)) return false;
-    qa_net_address address; bool present;
-    if (!resolve(a->browser, remote, 27960, &address, &present, e) || !access_current(a, e)) return false;
-    if (!present) return true;
-    uint64_t now = a->browser->options.now_ns(a->browser->options.context);
-    browser_ping *chosen = NULL;
-    for (size_t i = 0; i < 32; ++i) {
-        browser_ping *slot = &a->browser->pings[i];
-        if (!slot->addressed) { chosen = slot; break; }
-        double measured;
-        if (!ping_time(a->browser, slot, &measured, e) || !access_current(a, e)) return false;
-        if (measured == 0) {
-            if (elapsed(now, slot->start) >= 500) { chosen = slot; break; }
-        } else {
-            if (!ping_time(a->browser, slot, &measured, e) || !access_current(a, e)) return false;
-            if (measured >= 500) { chosen = slot; break; }
-        }
-    }
-    if (!chosen) {
-        chosen = &a->browser->pings[0];
-        for (size_t i = 1; i < 32; ++i) if (a->browser->pings[i].start < chosen->start) chosen = &a->browser->pings[i];
-    }
-    return start_ping(a->browser, chosen, &address, e) && publish_ping(a->browser, &address, 0, e);
-}
 static browser_status *status_slot(frontend_q3_browser *b, const qa_net_address *address)
 {
     for (size_t i = 0; i < 16; ++i) if (b->statuses[i].addressed && same(&b->statuses[i].address, address)) return &b->statuses[i];
@@ -1032,11 +1006,6 @@ bool frontend_q3_browser_master(frontend_q3_browser *b, int32_t source, const ch
 {
     if (!enter_owner(b, e)) return false;
     bool ok = browser_master(b, source, remote, protocol, keywords, count, e); return leave_owner(b, ok, e);
-}
-bool frontend_q3_browser_ping(frontend_q3_browser_access *a, const char *remote, qa_error *e)
-{
-    if (!enter_access(a, e)) return false;
-    bool ok = manual_ping(a, remote, e); return leave_access(a, ok, e);
 }
 bool frontend_q3_browser_status_command(frontend_q3_browser_access *a, const char *remote, qa_error *e)
 {
