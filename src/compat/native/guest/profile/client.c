@@ -585,7 +585,9 @@ static dr_emit_flags_t app2app(void *context, void *tag, instrlist_t *list, bool
 {
     (void)trace; (void)translating;
     if (scope_store_code(scope, (app_pc)tag) && !drutil_expand_rep_string(context, list)) dr_abort();
-    return DR_EMIT_DEFAULT;
+    /* Store the emitted address map instead of replaying scope-dependent
+     * instrumentation while translating a signal context. */
+    return DR_EMIT_STORE_TRANSLATIONS;
 }
 static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, instr_t *where,
     bool trace, bool translating, void *user)
