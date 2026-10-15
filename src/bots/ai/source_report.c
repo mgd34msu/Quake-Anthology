@@ -51,6 +51,12 @@ static bool carrying(qa_bots *bots,bot_ai_state *state,int32_t client,char out[3
 static bool action(qa_bots *bots,bot_ai_state *state,char out[512],qa_error *error)
 {
     int32_t type,teammate;char name[256];const char *prefix=NULL,*description=NULL;
+    if(state->cooperative.goal==BOT_COOP_HUNT) {
+        strcpy(out,"hunting monster");return true;
+    }
+    if(state->cooperative.goal==BOT_COOP_REGROUP) {
+        strcpy(out,"regrouping");return true;
+    }
     qa_bot_goal goal;
     if(!integer(bots,state,QA_BOT_SOURCE_LTG_TYPE,&type,error)) return false;
     switch(type) {
@@ -80,7 +86,7 @@ static bool action(qa_bots *bots,bot_ai_state *state,char out[512],qa_error *err
         int32_t handle;bool found;
         if(!integer(bots,state,QA_BOT_SOURCE_GOALS,&handle,error) ||
            !qa_bot_goals_top(qa_bot_runtime_goals(bots->runtime),(uint32_t)handle,false,&goal,&found,error)) return false;
-        if(!found) return bot_ai_fail(error,"BotSetInfoConfigString reads an uninitialized source goal when the goal stack is empty");
+        if(!found) {description="idle";break;}
         prefix="roaming ";
         if(!qa_bot_goals_name_read(qa_bot_runtime_goals(bots->runtime),goal.number,&description,error)) return false;
         break;
