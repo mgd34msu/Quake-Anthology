@@ -621,7 +621,7 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
         if ((live || native_rendered || remote_rendered || source.source_world) && !ui.fullscreen && game_focus) {
             qa_bytes palette = {0};
             (void)qa_scene_resources_palette_read(frontend->images, QA_GAME_Q2, &palette);
-            if (!frontend_ui_graph_draw(frontend, &frontend->frame, view.viewport, palette, error)) return false;
+            if (!frontend_ui_graph_draw(frontend, i, &frontend->frame, view.viewport, palette, error)) return false;
         }
         if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale,
             preferences.high_contrast, !(live || native_rendered || remote_rendered || source.source_world), error)) return false;

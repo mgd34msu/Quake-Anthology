@@ -136,14 +136,20 @@ static qa_vec4 graph_color(qa_bytes palette, int32_t index)
     float gray = (float)color / 255.0f;
     return (qa_vec4){gray, gray, gray, 1};
 }
-bool frontend_ui_graph_draw(qa_frontend *f, qa_scene_frame *frame,
+bool frontend_ui_graph_draw(qa_frontend *f, uint32_t physical_seat, qa_scene_frame *frame,
     qa_scene_rect viewport, qa_bytes palette, qa_error *error)
 {
     frontend_ui_features *owner = f->ui_features;
-    if (!owner || !viewport.width || !viewport.height ||
-        (graph_value(owner, FRONTEND_GRAPH_DEBUG, 0) == 0 &&
-         graph_value(owner, FRONTEND_GRAPH_TIME, 0) == 0 &&
-         graph_value(owner, FRONTEND_GRAPH_NETWORK, 0) == 0)) return true;
+    if (!owner || !viewport.width || !viewport.height) return true;
+    qa_console *console;
+    qa_cvars *cvars;
+    qa_command_context command;
+    /* netgraph aliases cg_lagometer, whose Q3 presentation is owned by CGAME. */
+    bool network_graph = qa_input_seat_recipient_read(f->seats[physical_seat].input,
+        &console, &cvars, &command) && qa_cvars_dialect(cvars) != QA_RULESET_Q3 &&
+        graph_value(owner, FRONTEND_GRAPH_NETWORK, 0) != 0;
+    if (graph_value(owner, FRONTEND_GRAPH_DEBUG, 0) == 0 &&
+        graph_value(owner, FRONTEND_GRAPH_TIME, 0) == 0 && !network_graph) return true;
     float raw_height = graph_value(owner, FRONTEND_GRAPH_HEIGHT, 32);
     if (!isfinite(raw_height) || raw_height < 1 || (double)raw_height > INT32_MAX) return true;
     int32_t height = (int32_t)raw_height;
