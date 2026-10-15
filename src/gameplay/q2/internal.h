@@ -336,7 +336,10 @@
     X(RR_INSUFFICIENT_AMMO, "$g_not_enough_ammo") \
     X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon") \
     X(FUNC_DOOR, "func_door") \
-    X(MONSTER_BOSS3_STAND, "monster_boss3_stand")
+    X(MONSTER_BOSS3_STAND, "monster_boss3_stand") \
+    X(MISC_NUKE, "misc_nuke") \
+    X(MISC_NUKE_CORE, "misc_nuke_core") \
+    X(RESOURCE_MODELS_OBJECTS_CORE_TRIS_MD2, "models/objects/core/tris.md2")
 
 typedef uint32_t q2_runtime_name;
 enum {

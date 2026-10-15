@@ -104,7 +104,8 @@ static const original_entity_class entity_classes[] = {
     SCENERY("func_object_repair", Q2S_REPAIR, NULL, NULL, NULL),
     SCENERY("misc_viper_missile", Q2S_MISSILE, "misc_viper_missile_use", NULL, NULL),
     SCENERY("misc_amb4", Q2S_AMBIENCE, NULL, NULL, NULL),
-    SCENERY("misc_nuke", Q2S_NUKE, "misc_nuke_core_use", NULL, NULL),
+    SCENERY("misc_nuke", Q2S_NUKE, "use_nuke", NULL, NULL),
+    SCENERY("misc_nuke_core", Q2S_NUKE, "misc_nuke_core_use", NULL, NULL),
     SCENERY("target_mal_laser", Q2S_MAL_LASER, "target_mal_laser_use", NULL, NULL),
     CLASS("misc_flare", Q2E_FLARE, "misc_flare_use", NULL, NULL, NULL),
     CLASS("info_world_text", Q2E_WORLD_TEXT, "info_world_text_use", NULL, NULL, NULL),
@@ -141,6 +142,11 @@ static bool entity_error(q2_original_record_io *io, size_t field, const char *me
 
 static const original_entity_class *entity_class(qa_q2_game *g, const q2_entity_state *s)
 {
+    static const original_entity_class rerelease_nuke = {
+        "misc_nuke", Q2E_KILLPLAYERS, Q2S_NONE, "target_killplayers_use", NULL, NULL, NULL};
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
+        s->classname == g->runtime_names[Q2_NAME_MISC_NUKE])
+        return &rerelease_nuke;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
     if (q2_entity_makron_torso(s))
         name = qa_strings_cstr(qa_session_strings(g->services.session),

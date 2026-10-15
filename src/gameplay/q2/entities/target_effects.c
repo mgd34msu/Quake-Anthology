@@ -257,6 +257,10 @@ static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
 bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
+    bool nuke = g->options.rules == QA_RULESET_Q2_RERELEASE &&
+        s->classname == g->runtime_names[Q2_NAME_MISC_NUKE];
+    if (nuke)
+        name = "target_killplayers";
     *handled = true;
     static const struct {
         const char *name;
@@ -285,7 +289,7 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
         return true;
     }
     s->usable = true;
-    s->visual.visible = false;
+    s->visual.visible = nuke;
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;

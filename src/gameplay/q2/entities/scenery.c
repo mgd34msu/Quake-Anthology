@@ -413,6 +413,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                  {"misc_viper_missile", Q2S_MISSILE},
                  {"misc_amb4", Q2S_AMBIENCE},
                  {"misc_nuke", Q2S_NUKE},
+                 {"misc_nuke_core", Q2S_NUKE},
                  {"target_mal_laser", Q2S_MAL_LASER}};
     *handled = s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND];
     if (*handled)
@@ -606,8 +607,14 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_solid(g, a, QA_PHYSICS_BRUSH, e) &&
                (!q2_actor_live(g, a->id) || q2_entity_show(g, a, e));
     case Q2S_STRING:
+        s->usable = true;
+        return true;
     case Q2S_NUKE:
         s->usable = true;
+        if (s->classname == g->runtime_names[Q2_NAME_MISC_NUKE_CORE])
+            return model_resource(g, a,
+                g->runtime_names[Q2_NAME_RESOURCE_MODELS_OBJECTS_CORE_TRIS_MD2],
+                (qa_bounds){0}, QA_PHYSICS_NOT_SOLID, e);
         return true;
     case Q2S_CLOCK:
         if (!s->target || ((s->spawnflags & 2) && !s->count))
@@ -862,6 +869,10 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_FREE, .1f);
     }
     case Q2S_NUKE:
+        if (s->classname == g->runtime_names[Q2_NAME_MISC_NUKE_CORE]) {
+            s->visual.visible = !s->visual.visible;
+            return q2_entity_show(g, a, e);
+        }
         return nuke(g, a, e);
     case Q2S_ROTATING_LIGHT:
         if (s->spawnflags & 1) {

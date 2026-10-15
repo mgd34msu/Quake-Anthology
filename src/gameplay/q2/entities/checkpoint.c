@@ -214,6 +214,12 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
     q2_entity_state *s = q2_entity_state_take(g, e);
     if (!s) return false;
     *s = saved->value;
+    if (g->options.rules == QA_RULESET_Q2_RERELEASE &&
+        s->classname == g->runtime_names[Q2_NAME_MISC_NUKE] &&
+        s->kind == Q2E_SCENERY && s->scenery == Q2S_NUKE) {
+        s->kind = Q2E_KILLPLAYERS;
+        s->scenery = Q2S_NONE;
+    }
     if (!copy_arrays(g, &saved->value, s, true, e) ||
         !qa_q2_item_authored_bind(g, q2_field_id(s, g->field_keys[QA_TARGET_KEY_ITEM]), e))
         goto fail;
