@@ -2108,7 +2108,7 @@ static bool presentation_check(const qa_unified_presentation_event *row, qa_erro
     }
     case QA_UNIFIED_PRESENTATION_Q2_MAP: {
         const qa_q2_map_event *event=&payload->value.q2_map;
-        okay=event->kind>=QA_Q2_MAP_HELP && event->kind<=QA_Q2_MAP_HELP_COMPUTER &&
+        okay=event->kind>=QA_Q2_MAP_HELP && event->kind<=QA_Q2_MAP_IMAGE &&
             message_arguments_check(event->arguments,event->argument_count);
         break;
     }

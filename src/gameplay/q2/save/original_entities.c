@@ -1001,6 +1001,9 @@ static bool entity_effects(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
                 UINT16_MAX, UINT16_MAX, 996, &s->multicast_origin)) return false;
     }
     bool speaker = s->kind == Q2E_SPEAKER;
+    bool poi = s->kind == Q2E_POI;
+    if (poi && !q2_original_resource(g, io, engine, "noise_index", 576, 576, 576, 544,
+            &s->noise)) return false;
     if (s->kind == Q2E_ROTATING &&
         !q2_original_resource(g, io, engine, "moveinfo.sound_middle", 704, 704, 704, 288,
             &s->noise)) return false;
@@ -1017,7 +1020,7 @@ static bool entity_effects(qa_q2_game *g, q2_original_record_io *io, q2_entity_s
             } else s->spawnflags &= ~1u;
         }
     }
-    if (!silent_relay && (speaker || s->kind == Q2E_SOUND_FX || s->kind == Q2E_EARTHQUAKE ||
+    if (!poi && !silent_relay && (speaker || s->kind == Q2E_SOUND_FX || s->kind == Q2E_EARTHQUAKE ||
         s->message || s->kind == Q2E_MULTI || s->kind == Q2E_RELAY ||
         (s->kind == Q2E_SCENERY && s->scenery == Q2S_EXPLOSIVE)))
         if (!q2_original_resource(g, io, engine, "noise_index", 576, 576, 576, 288, &s->noise))

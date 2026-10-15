@@ -43,7 +43,8 @@ typedef enum qa_q2_map_event_kind {
     QA_Q2_MAP_DYNAMIC_LIGHT,
     QA_Q2_MAP_MISSION_STATUS,
     QA_Q2_MAP_MISSION_OBJECTIVE,
-    QA_Q2_MAP_HELP_COMPUTER
+    QA_Q2_MAP_HELP_COMPUTER,
+    QA_Q2_MAP_IMAGE
 } qa_q2_map_event_kind;
 #define QA_Q2_CAMPAIGN_LEVEL_LIMIT 8
 typedef struct qa_q2_campaign_level {

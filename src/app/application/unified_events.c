@@ -672,7 +672,7 @@ bool application_unified_event_append(qa_application *app,
     return true;
 }
 
-typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW, PERSIST_Q3_COMMAND, PERSIST_FOG } persistent_domain;
+typedef enum persistent_domain { PERSIST_NONE, PERSIST_UNIQUE, PERSIST_SOUND, PERSIST_STYLE, PERSIST_MUSIC, PERSIST_FINALE, PERSIST_SKY, PERSIST_SHADOW, PERSIST_Q3_COMMAND, PERSIST_FOG, PERSIST_IMAGE } persistent_domain;
 void application_q3_command_key(const qa_application_q3_command_event *command,application_persistent_key *key)
 {
     *key=(application_persistent_key){.domain=PERSIST_Q3_COMMAND,.generation=command->stream,
@@ -716,6 +716,7 @@ void application_unified_persistent_key(qa_application *app, const application_u
         if (v->kind == QA_Q2_MAP_LIGHTSTYLE) { key.domain = PERSIST_STYLE; key.selector = (uint32_t)v->style; }
         else if (v->kind == QA_Q2_MAP_MUSIC) key.domain = PERSIST_MUSIC;
         else if (v->kind == QA_Q2_MAP_SKY) key.domain = PERSIST_SKY;
+        else if (v->kind == QA_Q2_MAP_IMAGE) { key.domain = PERSIST_IMAGE; key.selector = v->resource; }
         else if (v->kind == QA_Q2_MAP_DYNAMIC_LIGHT && (v->flags&QA_Q2_MAP_LIGHT_SHADOW)) {
             key.domain=PERSIST_SHADOW;key.selector=(uint32_t)v->slot;
         }

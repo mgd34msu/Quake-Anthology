@@ -507,7 +507,8 @@ static bool q2_map_capacity(application_provider *provider, const qa_q2_map_even
                 protocol_channels(provider), error);
         return application_event_stream_close_subscribers(app, write, protocol_channels(provider),
             event->kind == QA_Q2_MAP_MUSIC || event->kind == QA_Q2_MAP_LIGHTSTYLE ||
-            event->kind == QA_Q2_MAP_SKY || event->kind == QA_Q2_MAP_WORLD_TEXT, error);
+            event->kind == QA_Q2_MAP_SKY || event->kind == QA_Q2_MAP_WORLD_TEXT ||
+            event->kind == QA_Q2_MAP_IMAGE, error);
     }
 }
 
@@ -518,7 +519,7 @@ bool application_emit_q2_map(application_provider *provider,
         provider == NULL ? NULL : provider->application;
     if (application == NULL || event == NULL ||
         application->destroy_requested || application->session == NULL ||
-        (unsigned)event->kind > QA_Q2_MAP_HELP_COMPUTER ||
+        (unsigned)event->kind > QA_Q2_MAP_IMAGE ||
         !valid_string(application, event->text) ||
         !valid_string(application, event->resource) ||
         !qa_vec_finite(event->origin) || !qa_vec_finite(event->direction) ||

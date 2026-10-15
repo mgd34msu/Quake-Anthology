@@ -731,6 +731,10 @@ static bool initialize_builtin(qa_application_network_q2 *owner, qa_error *error
 static bool map_config_event(qa_application_network_q2 *owner,const qa_q2_map_event *event,qa_error *error)
 {
     switch(event->kind) {
+    case QA_Q2_MAP_IMAGE: {
+        uint32_t index;
+        return application_network_q2_resource_id(owner,2,event->resource,&index,error);
+    }
     case QA_Q2_MAP_MUSIC:
         return application_network_q2_config_id(owner,1,event->resource?event->resource:event->text,error);
     case QA_Q2_MAP_LIGHTSTYLE:

@@ -254,6 +254,11 @@ out:
     q2_scratch_release(g, &frame);
     return okay;
 }
+static qa_string_id poi_image(qa_q2_game *g, const q2_entity_state *s) {
+    qa_string_id image = q2_field_id(s, g->field_keys[QA_TARGET_KEY_IMAGE]);
+    return image ? image : g->runtime_names[Q2_NAME_RESOURCE_FRIEND];
+}
+
 bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa_error *e) {
     q2_entities *r = g->entity_runtime;
     q2_entity_state *s = source->entity;
@@ -351,8 +356,7 @@ bool q2_rerelease_poi(qa_q2_game *g, q2_actor *source, qa_actor_id activator, qa
                 r->poi_dynamic = m->id;
                 break;
             }
-    r->poi_image = q2_field_id(v, g->field_keys[QA_TARGET_KEY_IMAGE]);
-    if (!r->poi_image) r->poi_image=g->runtime_names[Q2_NAME_RESOURCE_FRIEND];
+    r->poi_image = v->kind == Q2E_POI ? v->noise : poi_image(g, v);
     return true;
 }
 static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -542,7 +546,10 @@ bool q2_rerelease_entity_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_err
         s->usable = true;
         return true;
     case Q2E_POI:
-        return q2_entity_schedule(g, a, Q2ET_POI, .001f);
+        s->noise = poi_image(g, s);
+        if (!q2_map_event(g, &(qa_q2_map_event){
+                .kind = QA_Q2_MAP_IMAGE, .resource = s->noise}, e)) return false;
+        return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_POI, .001f);
     case Q2E_CROSS_UNIT_TARGET:
         s->usable = false;
         if (s->delay == 0)

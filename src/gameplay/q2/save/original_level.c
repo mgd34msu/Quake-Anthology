@@ -723,7 +723,8 @@ bool qa_q2_game_original_capture(qa_q2_game *game, bool autosave, bool transitio
     bool okay = true;
     if (!autosave) for (q2_actor *actor = game->first_actor; okay && actor; actor = actor->live_next) {
         const q2_entity_state *entity = actor->entity;
-        if (entity && (entity->message || entity->kind == Q2E_MULTI || entity->kind == Q2E_RELAY) &&
+        if (entity && entity->kind != Q2E_POI &&
+            (entity->message || entity->kind == Q2E_MULTI || entity->kind == Q2E_RELAY) &&
             !(game->options.rules == QA_RULESET_Q2_RERELEASE && entity->kind == Q2E_RELAY &&
               (entity->spawnflags & 1u)))
             okay = q2_original_sound_admit(game, engine, entity->noise, error);

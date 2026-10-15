@@ -92,7 +92,7 @@ static bool fog_fields(qa_source_save_io *io, qa_q2_fog *fog)
 bool frontend_save_q2_event(qa_source_save_io *io, qa_q2_map_event *event)
 {
     uint32_t kind = event->kind;
-    bool ok = !event->argument_count && qa_source_save_u32(io, &kind) && kind <= QA_Q2_MAP_HELP_COMPUTER &&
+    bool ok = !event->argument_count && qa_source_save_u32(io, &kind) && kind <= QA_Q2_MAP_IMAGE &&
         qa_source_save_actor(io, &event->actor) && qa_source_save_actor(io, &event->recipient) && qa_source_save_actor(io, &event->target) &&
         qa_source_save_string(io, &event->text) && qa_source_save_string(io, &event->resource) &&
         qa_source_save_vec3(io, &event->origin) && qa_source_save_vec3(io, &event->direction) && qa_source_save_vec3(io, &event->color) &&
