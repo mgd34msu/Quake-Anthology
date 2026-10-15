@@ -337,10 +337,6 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     input.command.light_level = bytes[43];
     input.command.has_light_level = true;
     input.snap_initial = qa_load_i32le(bytes + 44) != 0;
-    input.current_bounds = (qa_bounds){load_vec3(bytes, layout->pmove.mins),
-                                      load_vec3(bytes, layout->pmove.maxs)};
-    input.has_current_bounds = true;
-    input.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = input.current_bounds};
     input.trace_policy = qa_collision_default_policy(QA_GAME_Q2);
     input.has_trace_policy = true;
     input.view_offset = (qa_vec3){0, 0, load_f32(bytes, layout->pmove.view_height)};
