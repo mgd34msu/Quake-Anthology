@@ -1,4 +1,5 @@
 #include "qa/q2_sound.h"
+#include "qa/text.h"
 #include "internal.h"
 
 bool q2_client_sphere_camera(qa_q2_game *g, qa_actor_id id, qa_actor_id sphere, qa_vec3 origin,
@@ -136,6 +137,23 @@ bool q2_client_item_action(qa_q2_game *g, qa_actor_id id, bool flashlight, bool 
                                                                !g->player_runtime->intermission &&
                                                                combat.health > 0},
                               e);
+    }
+    if (g->options.rules == QA_RULESET_Q2_CLASSIC && g->options.product == QA_Q2_ROGUE) {
+        qa_body_state body;
+        qa_q2_player_movement movement;
+        if (!qa_world_body_read(g->services.world, id, &body, e) ||
+            !q2_player_observe(g, a, &movement, e))
+            return false;
+        if (!q2_actor_live(g, id))
+            return true;
+        int32_t yaw = qa_source_to_i32(movement.view_angles.y);
+        if (yaw < 0)
+            yaw += 360;
+        char text[192];
+        snprintf(text, sizeof(text), "Origin: %0.0f,%0.0f,%0.0f    Dir: %d\n", body.origin.x,
+                 body.origin.y, body.origin.z, (int)yaw);
+        *used = true;
+        return q2_player_print(g, id, 2, text, e);
     }
     bool present;
     if (!q2_map_poi(g, id, &s->rule.help_location, &s->rule.help_image, &present, e))
