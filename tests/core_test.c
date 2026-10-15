@@ -4922,6 +4922,9 @@ static void test_actor_index_lifetimes(void)
 {
     qa_error error={0}; qa_actor_registry *registry=NULL; qa_actor_index index={0};
     qa_id_index candidates = {0}; size_t retained;
+    size_t capacity = qa_id_index_capacity_for(129);
+    CHECK(capacity >= 129 && !(capacity & (capacity - 1)));
+    CHECK(!qa_id_index_capacity_for(SIZE_MAX));
     uint64_t identity = UINT64_C(0x100000007), other_identity = UINT64_C(0x200000007);
     CHECK(qa_id_index_reserve(&candidates, 4, &error));
     qa_id_index_insert(&candidates, 1, identity, 10);

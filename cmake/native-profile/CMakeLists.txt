@@ -10,6 +10,7 @@ find_package(DynamoRIO CONFIG REQUIRED
     PATHS "${QA_DYNAMORIO_SDK}/cmake" NO_DEFAULT_PATH)
 set(DynamoRIO_RPATH OFF)
 add_library(qa-native-profile SHARED
+    "${QA_SOURCE_ROOT}/src/core/id_index_lookup.c"
     "${QA_SOURCE_ROOT}/src/compat/native/guest/profile/client.c"
     "${QA_SOURCE_ROOT}/src/compat/native/guest/profile/instruction.c")
 target_include_directories(qa-native-profile PRIVATE "${QA_SOURCE_ROOT}/include")

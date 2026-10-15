@@ -20,6 +20,8 @@ typedef struct qa_id_index_cursor {
     size_t next;
 } qa_id_index_cursor;
 
+/* Capacity for fixed caller-owned storage; zero means the count overflows. */
+size_t qa_id_index_capacity_for(size_t required);
 bool qa_id_index_reserve(qa_id_index *, size_t additional, qa_error *);
 /* Reserve before inserting. Duplicate keys retain all values for iteration. */
 void qa_id_index_insert(qa_id_index *, qa_string_id, uint64_t discriminator, size_t value);

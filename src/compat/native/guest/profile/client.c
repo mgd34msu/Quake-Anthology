@@ -6,6 +6,7 @@
 #error The source instruction monitor requires the actual Linux x64 DynamoRIO SDK.
 #endif
 #include "guard.h"
+#include "qa/id_index.h"
 #include <cpuid.h>
 #include <signal.h>
 #include <string.h>
@@ -21,7 +22,7 @@ typedef struct profile_scope {
     size_t mapping_count;
     guest_profile_guard_callback *callbacks;
     size_t callback_count;
-    uint64_t callback_first, callback_last;
+    qa_id_index callback_addresses;
     guest_profile_interest *interests;
     size_t interest_count;
     profile_store *pending;
@@ -59,6 +60,10 @@ static void scope_free(profile_scope *row)
 {
     if (row->mappings) dr_global_free(row->mappings, row->mapping_count * sizeof(*row->mappings));
     if (row->callbacks) dr_global_free(row->callbacks, row->callback_count * sizeof(*row->callbacks));
+    if (row->callback_addresses.entries) dr_global_free(row->callback_addresses.entries,
+        row->callback_addresses.capacity * sizeof(*row->callback_addresses.entries));
+    if (row->callback_addresses.buckets) dr_global_free(row->callback_addresses.buckets,
+        row->callback_addresses.capacity * 2 * sizeof(*row->callback_addresses.buckets));
     if (row->interests) dr_global_free(row->interests, row->interest_count * sizeof(*row->interests));
     if (row->pending) dr_global_free(row->pending, row->pending_capacity * sizeof(*row->pending));
     dr_global_free(row, sizeof(*row));
@@ -157,6 +162,15 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
     profile_scope *row = dr_global_alloc(sizeof(*row));
     if (!row) return NULL;
     *row = initial;
+    if (row->callback_count) {
+        qa_id_index *index = &row->callback_addresses;
+        index->capacity = qa_id_index_capacity_for(row->callback_count);
+        if (!index->capacity) { scope_free(row); return NULL; }
+        index->entries = dr_global_alloc(index->capacity * sizeof(*index->entries));
+        index->buckets = dr_global_alloc(index->capacity * 2 * sizeof(*index->buckets));
+        if (!index->entries || !index->buckets) { scope_free(row); return NULL; }
+        qa_id_index_clear(index);
+    }
     row->mappings = dr_global_alloc(row->mapping_count * sizeof(*row->mappings));
     row->callbacks = row->callback_count ? dr_global_alloc(row->callback_count * sizeof(*row->callbacks)) : NULL;
     row->interests = row->interest_count ? dr_global_alloc(row->interest_count * sizeof(*row->interests)) : NULL;
@@ -169,12 +183,12 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
         okay = m->id && m->backing && m->base && m->bytes && !(m->base & 4095) && !(m->bytes & 4095) &&
             m->bytes <= UINT64_MAX - m->base && m->bytes <= UINT64_MAX - m->backing_offset && !(m->permissions & ~7u);
     }
-    for (size_t i = 0; okay && i < row->callback_count; ++i) {
+    for (size_t i = row->callback_count; okay && i; ) {
+        --i;
         uint64_t address = row->callbacks[i].address;
         okay = row->callbacks[i].id && address &&
             scope_range(row, address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
-        if (!i || address < row->callback_first) row->callback_first = address;
-        if (address > row->callback_last) row->callback_last = address;
+        if (okay) qa_id_index_insert(&row->callback_addresses, (qa_string_id)(address >> 4), address, i);
     }
     for (size_t i = 0; okay && i < row->interest_count; ++i) {
         const guest_profile_interest *interest = row->interests + i;
@@ -208,11 +222,10 @@ static bool synthetic_callback(uint64_t address)
 }
 static const guest_profile_guard_callback *scope_callback(const profile_scope *row, uint64_t address)
 {
-    if (!row || !row->callback_count || address < row->callback_first || address > row->callback_last)
-        return NULL;
-    for (size_t i = 0; i < row->callback_count; ++i)
-        if (row->callbacks[i].address == address) return row->callbacks + i;
-    return NULL;
+    if (!row) return NULL;
+    qa_id_index_cursor cursor = qa_id_index_begin(&row->callback_addresses, (qa_string_id)(address >> 4), address);
+    size_t index;
+    return qa_id_index_next(&row->callback_addresses, &cursor, &index) ? row->callbacks + index : NULL;
 }
 static bool scope_synthetic_callback(const profile_scope *row, app_pc pc)
 {

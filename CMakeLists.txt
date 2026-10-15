@@ -52,6 +52,7 @@ add_library(qa_core STATIC
     src/core/player_feedback.c
     src/core/player_names.c
     src/core/id_index.c
+    src/core/id_index_lookup.c
     src/core/tokenizer.c
     src/core/command_lexer.c
     src/core/normals.c
