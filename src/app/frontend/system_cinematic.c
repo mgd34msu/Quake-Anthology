@@ -4,6 +4,7 @@
 #include "ui_features.h"
 #include "shared_render_controls.h"
 #include "q3_render_policy.h"
+#include "qa/text.h"
 #include <ctype.h>
 #include <math.h>
 
@@ -315,8 +316,8 @@ bool frontend_system_cinematic_command(qa_frontend *f,const qa_command_invocatio
     if (!f || !command || !command->argc || !command->argv || !handled)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Invalid system cinematic command");
     *handled=false;
-    bool stop=!strcmp(command->argv[0],"stopcinematic");
-    if (!stop && strcmp(command->argv[0],"cinematicpause")) return true;
+    bool stop=qa_text_ascii_equal(command->argv[0],"stopcinematic");
+    if (!stop && !qa_text_ascii_equal(command->argv[0],"cinematicpause")) return true;
     frontend_system_cinematic *row=screen(f);
     if (!row) return true;
     *handled=true;

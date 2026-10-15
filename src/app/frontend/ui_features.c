@@ -237,10 +237,10 @@ bool frontend_sound_command(qa_frontend *f, const qa_command_invocation *call,
     bool *handled, qa_error *error)
 {
     const char *name = call->argv[0];
-    bool info = !strcmp(name, "soundinfo") || !strcmp(name, "s_info");
-    bool list = !strcmp(name, "soundlist") || !strcmp(name, "s_list");
-    bool stop = !strcmp(name, "stopsound") || !strcmp(name, "s_stop");
-    bool play = !strcmp(name, "play");
+    bool info = qa_text_ascii_equal(name, "soundinfo") || qa_text_ascii_equal(name, "s_info");
+    bool list = qa_text_ascii_equal(name, "soundlist") || qa_text_ascii_equal(name, "s_list");
+    bool stop = qa_text_ascii_equal(name, "stopsound") || qa_text_ascii_equal(name, "s_stop");
+    bool play = qa_text_ascii_equal(name, "play");
     *handled = info || list || stop || play;
     if (!*handled) return true;
     if (info) {

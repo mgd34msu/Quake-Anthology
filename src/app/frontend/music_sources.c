@@ -657,12 +657,12 @@ static bool absent_command(frontend_music_sources *owner, const qa_command_invoc
         !qa_application_command_context_active(owner->application, &call->context))
         return fail(e, "Music command lacks its actual captured console origin");
     for (size_t i = 0; i < call->argc; ++i) if (!call->argv[i]) return fail(e, "Music command has an absent source token");
-    if (!strcmp(call->argv[0], "music")) {
+    if (qa_text_ascii_equal(call->argv[0], "music")) {
         bool valid = call->argc >= 2 && call->argc <= 3 && nonempty(call->argv[1]) &&
             (call->argc != 3 || nonempty(call->argv[2]));
         return command_print(owner, call, valid ? "No soundtrack source selected.\n" : "music <intro> [loop]\n", e);
     }
-    if (strcmp(call->argv[0], "cd")) return fail(e, "That invocation is not an application music command");
+    if (!qa_text_ascii_equal(call->argv[0], "cd")) return fail(e, "That invocation is not an application music command");
     if (call->argc == 1) return true;
     qa_buffer lowered = {0};
     if (!qa_utf8_lower((qa_bytes){(const uint8_t *)call->argv[1], strlen(call->argv[1])}, &lowered, e)) return false;

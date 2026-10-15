@@ -216,23 +216,23 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         }
         return world_command(frontend,&source,invocation,&handled,error) && handled;
     }
-    if (!strcmp(name,"cinematic") || !strcmp(name,"cinematicpause") || !strcmp(name,"stopcinematic")) {
+    if (client_name(name,"cinematic") || client_name(name,"cinematicpause") || client_name(name,"stopcinematic")) {
         bool handled;
         if (!frontend_system_cinematic_command(frontend,invocation,&handled,error)) return false;
         return handled || frontend_cinematic_command(frontend,invocation,error);
     }
-    if (!strcmp(name,"save") || !strcmp(name,"load"))
+    if (client_name(name,"save") || client_name(name,"load"))
         return frontend_save_commands_queue(frontend,invocation,error);
-    if (!strcmp(name,"cd") || !strcmp(name,"music"))
+    if (client_name(name,"cd") || client_name(name,"music"))
         return frontend_music_sources_command(frontend->music_sources,invocation,error);
-    if (!strcmp(name,"sky")) {
+    if (client_name(name,"sky")) {
         if (invocation->argc>2) { frontend_print(frontend,"usage: sky <skyname>\n"); return true; }
         if (invocation->argc==2) return frontend_q1_sky_command(frontend->q1_sky,invocation->argv[1],error);
         const char *selected;
         if (!frontend_q1_sky_name(frontend->q1_sky,invocation->context.actor,&selected,error)) return false;
         char text[1200]; snprintf(text,sizeof(text),"\"sky\" is \"%s\"\n",selected); frontend_print(frontend,text); return true;
     }
-    if (!strcmp(name,"actualimagegrid")) {
+    if (client_name(name,"actualimagegrid")) {
         if (invocation->argc>2) { frontend_print(frontend,"usage: actualimagegrid [0|1|2]\n"); return true; }
         int32_t mode=1;
         if (invocation->argc==2) {
@@ -244,26 +244,26 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         return qa_cvars_set(qa_application_cvars(frontend->application),"r_showImages",value,true,error) &&
             (mode==0 || frontend_source_renderer_image_grid(frontend,mode,error));
     }
-    if (!strcmp(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
+    if (client_name(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
     uint32_t slot;
     if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "command requires a local player");
     frontend_seat *seat = &frontend->seats[slot];
-    if (!strcmp(name,"clear")) {
+    if (client_name(name,"clear")) {
         qa_console_buffer_clear(qa_seat_console_buffer(seat->console));
         return true;
     }
-    if (!strcmp(name,"help"))return menu_command(seat,&invocation->context,FRONTEND_Q1_HELP,false,error);
-    if (!strcmp(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
-    if (!strcmp(name, "menu") || !strcmp(name,"togglemenu"))
+    if (client_name(name,"help"))return menu_command(seat,&invocation->context,FRONTEND_Q1_HELP,false,error);
+    if (client_name(name, "toggleconsole")) return qa_seat_console_toggle(seat->console, false, false, error);
+    if (client_name(name, "menu") || client_name(name,"togglemenu"))
         return menu_command(seat,&invocation->context,FRONTEND_HOME,true,error);
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (unsigned i = 0; i < sizeof(menus) / sizeof(*menus); ++i)
-        if (!strcmp(name, menus[i])) return menu_command(seat,&invocation->context,menu_destinations[i],false,error);
-    if (!strcmp(name, "weapnext") || !strcmp(name, "weapprev"))
-        return qa_hud_wheel_cycle(seat->wheel, !strcmp(name, "weapnext") ? 1 : -1, frontend->time_ns, error);
-    if (!strcmp(name, "messagemode") || !strcmp(name, "messagemode2"))
-        return qa_seat_console_message(seat->console, !strcmp(name, "messagemode2"), false, 0, error);
+        if (client_name(name, menus[i])) return menu_command(seat,&invocation->context,menu_destinations[i],false,error);
+    if (client_name(name, "weapnext") || client_name(name, "weapprev"))
+        return qa_hud_wheel_cycle(seat->wheel, client_name(name, "weapnext") ? 1 : -1, frontend->time_ns, error);
+    if (client_name(name, "messagemode") || client_name(name, "messagemode2"))
+        return qa_seat_console_message(seat->console, client_name(name, "messagemode2"), false, 0, error);
     return false;
 }
 bool frontend_commands(qa_frontend *frontend, qa_error *error)

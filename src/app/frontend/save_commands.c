@@ -17,6 +17,7 @@
 #include "qa/recovery.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_client_prepare.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 typedef struct save_command_request {
@@ -281,8 +282,8 @@ bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *c
     if (owner->pending || owner->original || owner->draining || cleanup_pending(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Another save operation is in progress");
     save_command_request request = {0};
-    request.load = !strcmp(command->argv[0], "load");
-    if (!request.load && strcmp(command->argv[0], "save"))
+    request.load = qa_text_ascii_equal(command->argv[0], "load");
+    if (!request.load && !qa_text_ascii_equal(command->argv[0], "save"))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Unknown save command");
     if (!qa_application_capture_command_context(f->application, &command->context, &request.context, error)) return false;
     request.name = slot_name(owner, command->argv[1], request.load, error);

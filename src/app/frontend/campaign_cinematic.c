@@ -10,6 +10,7 @@
 #include "shared_render_controls.h"
 #include "qa/source_save.h"
 #include "qa/q3_cinematic_handles.h"
+#include "qa/text.h"
 #include "cinematic_roles.h"
 #include "material_movies.h"
 #include <ctype.h>
@@ -225,18 +226,18 @@ bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *comm
     frontend_cinematic *owner=f->cinematic;
     if ((owner && owner->busy) || !frontend_ui_features_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic callback or retained UI child is active");
-    if (!strcmp(command->argv[0],"cinematicpause")) {
+    if (qa_text_ascii_equal(command->argv[0],"cinematicpause")) {
         if (!owner || !owner->movie || !current(owner)) return frontend_fail(error,QA_ERROR_ARGUMENT,"No cinematic is playing");
         bool paused=owner->focus_paused || qa_cinematic_status(owner->movie)!=QA_MEDIA_PAUSED;
         if (!qa_cinematic_pause(owner->movie,paused,error)) return false;
         owner->focus_paused=false;
         return true;
     }
-    if (!strcmp(command->argv[0],"stopcinematic")) {
+    if (qa_text_ascii_equal(command->argv[0],"stopcinematic")) {
         if (!owner || (!owner->movie && !owner->pending)) return frontend_fail(error,QA_ERROR_ARGUMENT,"No cinematic is playing");
         owner->stopping=true; return true;
     }
-    if (strcmp(command->argv[0],"cinematic") || command->argc<2)
+    if (!qa_text_ascii_equal(command->argv[0],"cinematic") || command->argc<2)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Usage: cinematic <name> [loop|hold]");
     cinematic_request request={0};
     if (!qa_application_capture_command_context(f->application,&command->context,&request.command,error)) return false;

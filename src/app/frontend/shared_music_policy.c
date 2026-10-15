@@ -853,11 +853,11 @@ bool frontend_music_policy_manual_start(const frontend_music_policy *owner, cons
     for (size_t i = 0; i < call->argc; ++i) if (!call->argv[i]) return false;
     *out = false;
     qa_audio_music_state player; if (!qa_audio_music_state_read(owner->music, &player)) return false;
-    if (!strcmp(call->argv[0], "music")) {
+    if (qa_text_ascii_equal(call->argv[0], "music")) {
         *out = player.enabled && call->argc >= 2 && call->argc <= 3 && nonempty(call->argv[1]) &&
             (call->argc != 3 || nonempty(call->argv[2])); return true;
     }
-    if (strcmp(call->argv[0], "cd") || call->argc < 2) return true;
+    if (!qa_text_ascii_equal(call->argv[0], "cd") || call->argc < 2) return true;
     qa_buffer lowered = {0}; qa_error ignored = {0};
     if (!qa_utf8_lower((qa_bytes){(const uint8_t *)call->argv[1], strlen(call->argv[1])}, &lowered, &ignored)) return false;
     const char *command = (const char *)lowered.data; unsigned track;
@@ -893,7 +893,7 @@ bool frontend_music_policy_command(frontend_music_policy *owner, const qa_comman
         !command_current(owner, call)) return fail(e, "Music command requires its idle soundtrack and genuine captured invocation");
     for (size_t i = 0; i < call->argc; ++i) if (!call->argv[i]) return fail(e, "Music command has an absent source token");
     owner->busy = true; bool ok = true;
-    if (!strcmp(call->argv[0], "music")) {
+    if (qa_text_ascii_equal(call->argv[0], "music")) {
         if (call->argc < 2 || call->argc > 3 || !nonempty(call->argv[1]) || (call->argc == 3 && !nonempty(call->argv[2])))
             ok = print(owner, call, "music <intro> [loop]\n", e);
         else {
@@ -905,7 +905,7 @@ bool frontend_music_policy_command(frontend_music_policy *owner, const qa_comman
                     call->argc == 3 ? " " : "", second ? "\"" : "", call->argc == 3 ? call->argv[2] : "", second ? "\"" : "");
                 ok = manual_track(owner, call, cue, call->argc == 3, false, e); free(cue); }
         }
-    } else if (!strcmp(call->argv[0], "cd") && call->argc > 1) {
+    } else if (qa_text_ascii_equal(call->argv[0], "cd") && call->argc > 1) {
         qa_buffer lowered = {0};
         if (!qa_utf8_lower((qa_bytes){(const uint8_t *)call->argv[1], strlen(call->argv[1])}, &lowered, e)) {
             owner->busy = false; return false;
@@ -955,7 +955,7 @@ bool frontend_music_policy_command(frontend_music_policy *owner, const qa_comman
             if (!text) ok = frontend_fail(e, QA_ERROR_MEMORY, "Retaining unknown CD command output");
             else { snprintf(text, n, "Unknown cd command: %s.\n", command); ok = print(owner, call, text, e); free(text); } }
         qa_buffer_free(&lowered);
-    } else if (strcmp(call->argv[0], "cd")) ok = fail(e, "That invocation is not an application music command");
+    } else if (!qa_text_ascii_equal(call->argv[0], "cd")) ok = fail(e, "That invocation is not an application music command");
     owner->busy = false; return ok && command_current(owner, call);
 }
 size_t frontend_music_policy_bank_count(const frontend_music_policy *owner) {
