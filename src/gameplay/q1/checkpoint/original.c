@@ -382,6 +382,7 @@ static const original_think_callback think_callbacks[] = {
     {Q1_THINK_MULTI_SPLIT, "MultiGrenadeThink"}, {Q1_THINK_MINI_EXPLODE, "MiniGrenadeExplode"},
     {Q1_THINK_MULTI_EXPLODE, "MultiGrenadeExplode"}, {Q1_THINK_MULTI_ACQUIRE, "MultiRocketThink"},
     {Q1_THINK_MULTI_HOME, "MultiRocketThink"}, {Q1_THINK_PLASMA_LAUNCH, "PlasmaThink"},
+    {Q1_THINK_HAMMER_BOLT, "HIP_LightningThink"},
     {Q1_THINK_TELEPORT_FOG, "SUB_Remove"}
 };
 static const char *entity_think(const q1_actor *entity) {
@@ -672,6 +673,13 @@ static const original_field proximity_fields[] = {
     {"delay", ORIGINAL_DOUBLE, offsetof(q1_projectile, expires)},
     {"state", ORIGINAL_U32, offsetof(q1_projectile, count)}
 };
+static const original_field hammer_base_fields[] = {
+    {"movedir", ORIGINAL_VECTOR, offsetof(q1_projectile, movedir)}
+};
+static const original_field hammer_bolt_fields[] = {
+    {"state", ORIGINAL_U32, offsetof(q1_projectile, count)},
+    {"v_angle", ORIGINAL_VECTOR, offsetof(q1_projectile, launch_angles)}
+};
 static const original_projectile projectiles[] = {
     {Q1_SPIKE,"spike","spike_touch",QA_Q1_NAILGUN,"spike"},
     {Q1_SUPERSPIKE,"spike","superspike_touch",QA_Q1_SUPER_NAILGUN,"superspike"},
@@ -883,6 +891,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
     qa_q1_game *game = receipt->operation.game; qa_body_state body; qa_combat_state combat;
     qa_actor_id id = player ? player->id : entity->id;
+    bool hammer_base = entity && game->options.program == QA_Q1_HIPNOTIC &&
+        entity->kind == Q1_TIMER &&
+        entity->classname == game->runtime_names[Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_BASE];
+    bool hammer_bolt = entity && game->options.program == QA_Q1_HIPNOTIC &&
+        entity->kind == Q1_TIMER && entity->think == Q1_THINK_HAMMER_BOLT;
     qa_physics_properties physics;
     if (entity) physics = entity->physics;
     else if (!game->services.physics || !game->services.physics->services.read ||
@@ -913,6 +926,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && !entity->map)) source_entity.classname = 0;
         if (entity->think == Q1_THINK_BUBBLE || entity->think == Q1_THINK_DEATH_BUBBLES) source_entity.count = 0;
         if (entity->think == Q1_THINK_SCOURGE_TRIGGER) source_entity.delay = 0;
+        if (hammer_base || hammer_bolt) source_entity.classname = 0;
+        if (hammer_bolt) {
+            source_entity.delay = (float)entity->state.projectile.expires;
+            physics.enemy = entity->state.projectile.enemy;
+        }
     }
     if ((entity && !FIELDS(receipt, record, &source_entity, entity_fields, error)) ||
         !FIELDS(receipt, record, &body, body_fields, error) || !FIELDS(receipt, record, &physics, physics_fields, error) ||
@@ -944,6 +962,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         !number(record, "takedamage", combat.can_take_damage ? player || entity->aimed_damage ? 2 : 1 : 0, false, error) ||
         !vector(record, "size", entity && entity->map && entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE
             ? entity->map->particle_size : qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
+    if (game->options.program == QA_Q1_HIPNOTIC &&
+        !number(record, "struck_by_mjolnir", hammer_base || q1_hipnotic_lightning_claimed(game,id), false,error)) return false;
     if (player) {
         qa_q1_wire_player wire;
         q1_player source_player = *player;
@@ -989,6 +1009,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     if (entity->think != Q1_THINK_NONE && !think)
         return fail(error, "Original native think has no exact Source callback projection");
     if (!callback(record, "think", think, error) || !number(record, "nextthink", entity->next_think, false, error)) return false;
+    if (hammer_base && !FIELDS(receipt,record,&entity->state.projectile,hammer_base_fields,error)) return false;
+    if (hammer_bolt &&
+        (!FIELDS(receipt,record,&entity->state.projectile,hammer_bolt_fields,error) ||
+         !actor(receipt,record,"lastvictim",entity->owner,false,error) ||
+         !number(record,"distance",350,false,error))) return false;
     if ((entity->think == Q1_THINK_SPRITE || sprite_remove(game,entity)) && entity->kind != Q1_PROJECTILE &&
         !callback(record,"touch","SUB_Null",error)) return false;
     if (entity->think == Q1_THINK_WIZARD &&
@@ -1427,6 +1452,7 @@ typedef struct original_class {
     const original_projectile *projectile;
     q1_map_kind map;
     q1_entity_kind kind;
+    bool hammer_base;
 } original_class;
 static bool original_classify(const qa_q1_save_record *record, original_class *out, qa_error *error) {
     const char *name = saved(record, "classname");
@@ -1434,6 +1460,9 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     const char *touch = saved(record, "touch"), *use = saved(record,"use");
     const char *model = saved(record, "model");
     bool explosion = think && !strcmp(think,"SUB_Remove") && model && !strcmp(model,"progs/s_explod.spr");
+    bool hammer_bolt = think && !strcmp(think,"HIP_LightningThink");
+    bool hammer_base = (!name || !*name) && think && !strcmp(think,"SUB_Remove") &&
+        saved_number(record,"struck_by_mjolnir") == 1 && (!model || !*model);
     const q1_species *species = name ? q1_species_find(name) : NULL;
     const original_projectile *projectile = saved_projectile(record);
     q1_map_kind map = name ? q1_map_classify(name) : Q1_MAP_FIELDS;
@@ -1456,11 +1485,13 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
         map != Q1_MAP_FIELDS ? Q1_MAP : Q1_ENTITY;
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
-    if (explosion) kind = Q1_TIMER;
+    if (explosion || hammer_base || hammer_bolt) kind = Q1_TIMER;
     if (pickup_record_kind(record)!=UINT32_MAX) kind=Q1_PICKUP;
     if (projectile) name = projectile->native_classname;
     if (!name || !*name) {
-        if (kind == Q1_PICKUP && touch && !strcmp(touch,"BackpackTouch")) name = "item_backpack";
+        if (hammer_bolt) name = q1_runtime_name_text(Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_LIGHTNING);
+        else if (hammer_base) name = q1_runtime_name_text(Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_BASE);
+        else if (kind == Q1_PICKUP && touch && !strcmp(touch,"BackpackTouch")) name = "item_backpack";
         else if (think && !strcmp(think,"bubble_bob")) name = "bubble";
         else if (think && !strcmp(think,"DeathBubblesSpawn")) name = "death_bubbles";
         else if (think && !strcmp(think,"Wiz_FastFire")) name = "wizard_fastfire";
@@ -1473,7 +1504,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
         else return fail(error, "Original anonymous edict has no actual Source discriminator");
     }
-    *out = (original_class){name, species, projectile, map, kind}; return true;
+    *out = (original_class){name, species, projectile, map, kind, hammer_base}; return true;
 }
 static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     uint32_t slot, q1_actor **out, qa_error *error) {
@@ -1882,6 +1913,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     float damage=saved_number(record,"takedamage");
     if (damage!=0 && damage!=1 && damage!=2) return unsupported(error,"Source damage policy has no native state");
     admitted_key(admission,"takedamage");
+    if (program==QA_Q1_HIPNOTIC &&
+        !admit_number(admission,"struck_by_mjolnir",saved_number(record,"struck_by_mjolnir")!=0,error)) return false;
     qa_q1_save_record callbacks={0};q1_map_kind defaults=Q1_MAP_FIELDS;bool okay=false;
     if (slot==1) {
         q1_player player={0};qa_nq_movement_state movement={0};
@@ -2031,6 +2064,21 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 (source.map==Q1_MAP_DOOR || source.map==Q1_MAP_BUTTON || source.map==Q1_MAP_SECRET_DOOR))
                 defaults=source.map;
             if (!map_functions(admission->strings,&entity,damage!=0,&callbacks,error)) goto done;
+        } else if (program==QA_Q1_HIPNOTIC && (source.hammer_base || entity.think==Q1_THINK_HAMMER_BOLT)) {
+            if (source.hammer_base) {
+                if (!ADMIT_FIELDS(admission,&entity.state.projectile,hammer_base_fields,error)) goto done;
+            } else {
+                uint32_t owner,previous;
+                const char *last=saved(record,"lastvictim"),*own=saved(record,"owner");
+                if (!ADMIT_FIELDS(admission,&entity.state.projectile,hammer_bolt_fields,error) ||
+                    !admit_number(admission,"distance",350,error) ||
+                    !qa_q1_save_entity_decode(last?last:"0",&previous,error) ||
+                    !qa_q1_save_entity_decode(own?own:"0",&owner,error)) goto done;
+                if (previous!=owner) {
+                    unsupported(error,"Original Mjolnir lightning uses a distinct chain source");goto done;
+                }
+                admitted_key(admission,"lastvictim");
+            }
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
             projectile_touch_restore(&entity.state.projectile, saved(record, "touch"));
@@ -2190,6 +2238,18 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
     const char *source_touch = saved(record,"touch");
     entity->touch_disabled = !source_touch || !strcmp(source_touch,"SUB_Null");
     if (!restore_think(game, entity, record, error)) return false;
+    if (game->options.program==QA_Q1_HIPNOTIC && entity->kind==Q1_TIMER) {
+        if (entity->classname==game->runtime_names[Q1_NAME_CLASS_HIPNOTIC_MJOLNIR_BASE]) {
+            if (!RESTORE_FIELDS(game,record,&entity->state.projectile,hammer_base_fields,slots,count,error)) return false;
+            entity->state.projectile.weapon=QA_Q1_MJOLNIR;
+        } else if (entity->think==Q1_THINK_HAMMER_BOLT) {
+            if (!RESTORE_FIELDS(game,record,&entity->state.projectile,hammer_bolt_fields,slots,count,error)) return false;
+            entity->state.projectile.expires=entity->delay;
+            entity->state.projectile.enemy=entity->physics.enemy;
+            entity->state.projectile.weapon=QA_Q1_MJOLNIR;
+            entity->delay=0;entity->physics.enemy=(q1_ref){0};
+        }
+    }
     const char *source_think = saved(record,"think");
     if (source_think && !strcmp(source_think,"Wiz_FastFire") &&
         (!saved_ref(game,saved(record,"enemy"),count,&entity->state.projectile.enemy,error) ||
@@ -2592,6 +2652,12 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     }
     if (okay) okay=q1_body_queue_validate(game,error);
     if (okay) okay=restore_groups(game,save,slots,error);
+    for (size_t slot=2;okay && slot<save->entity_count;++slot) {
+        q1_actor *bolt=q1_entity(game,slots[slot]);
+        if (!bolt || bolt->think!=Q1_THINK_HAMMER_BOLT) continue;
+        q1_actor *base=q1_entity(game,q1_ref_actor(game,bolt->owner));
+        bolt->state.projectile.activator=base?base->owner:(q1_ref){0};
+    }
     for (size_t slot=0; okay && slot<save->entity_count; ++slot) {
         if (!save->entities[slot].count) continue;
         q1_actor *entity=q1_entity(game,slots[slot]);
