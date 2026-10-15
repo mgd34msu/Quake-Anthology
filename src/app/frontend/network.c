@@ -3046,12 +3046,15 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
     const qa_cvar_view *scale = qa_cvars_read(role.cvars, n->frontend->engine_cvars.timescale);
     if (scale) options.timescale = scale->number;
     if (nudge) options.time_nudge = nudge->integer;
+    bool active=n->q3_client_active;
     if (!qa_q3_clock_advance(&n->q3_client_clock,
         (int32_t)((n->frontend->time_ns / UINT64_C(1000000)) & INT32_MAX), &options,
         &n->q3_client_active, &n->q3_client_time, error)) return false;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(n->runtime), n->q3_client);
     if (n->q3_client_active && (!n->q3_client_gamestate || !client ||
         (client->phase == QA_NET_PRIMED && !qa_network_phase(n->runtime, n->q3_client, QA_NET_ACTIVE, error)))) return false;
+    if (!active && n->q3_client_active && !frontend_startup_launch_client_admitted(n->frontend,
+        n->physical,role.console,&role.command_context,error)) return false;
     return client_project(n, error);
 }
 static const qa_q3_gamestate *service_gamestate(void *context)

@@ -9,6 +9,7 @@
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_metadata.h"
+#include "startup_menus.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -522,12 +523,17 @@ static bool control(void *context, qa_network_runtime *runtime, qa_net_client_id
     } else if (epoch != owner->epoch && !pending_disconnect) okay = true;
     else if (type==QA_UNIFIED_CONTROL_ADMITTED) {
         const qa_unified_admitted_control *admitted=packet?&packet->value.admitted:NULL;
+        bool first=!owner->admitted;
         okay=admitted && (!owner->admitted || qa_actor_id_equal(owner->wire_player,admitted->actor)) &&
             frontend_remote_unified_actor(owner,admitted->actor.slot,admitted->actor.generation,&owner->player,error);
         if (okay) {
             owner->wire_player=admitted->actor;
             owner->wire_client=(qa_saved_actor_id){.slot=admitted->client.slot,.generation=admitted->client.generation};
-            owner->source_entity=admitted->source_entity; owner->admitted=true; commit->applied=true;
+            owner->source_entity=admitted->source_entity;
+            if (first) okay=frontend_startup_launch_client_admitted(owner->frontend,
+                owner->options.domain.physical_seat,owner->options.domain.console,
+                &owner->options.domain.command_context,error);
+            if (okay) { owner->admitted=true; commit->applied=true; }
         }
     } else if (type==QA_UNIFIED_CONTROL_RESOURCES) {
         okay=owner->recipe && resources(owner,document,error);

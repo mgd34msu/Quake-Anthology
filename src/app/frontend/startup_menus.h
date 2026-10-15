@@ -21,6 +21,8 @@ bool frontend_local_seat_ordinal_read(const qa_launch_choices *,uint32_t logical
 /* Constructor-only observation of the queued genuine local-player draft. */
 bool frontend_startup_launch_seat_read(const qa_frontend *,unsigned physical,uint32_t *logical);
 bool frontend_startup_launch_complete(qa_frontend *,qa_error *);
+bool frontend_startup_launch_client_admitted(qa_frontend *,uint32_t physical,
+    qa_console *,const qa_command_context *,qa_error *);
 frontend_seats_resize_state *frontend_startup_launch_resize_state(qa_frontend *, unsigned next);
 bool frontend_startup_launch_settings(qa_frontend *, const qa_launch_snapshot *,
     const qa_application_startup_source *, qa_cvars *client, bool first_source, qa_error *);

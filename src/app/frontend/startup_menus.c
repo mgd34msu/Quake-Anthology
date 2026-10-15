@@ -14,6 +14,7 @@
 #include "qa/application_players.h"
 #include "qa/application_character_selection.h"
 #include "qa/application_q3_campaign.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 struct frontend_startup_launch {
@@ -452,6 +453,30 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
         if (end) frontend_local_lobby_end_complete(f->local_lobby);
         else frontend_local_lobby_launch_started(f->local_lobby);
     } else if (!end && !local_players) frontend_local_lobby_match_replaced(f->local_lobby);
+    return true;
+}
+bool frontend_startup_launch_client_admitted(qa_frontend *f,uint32_t physical,
+    qa_console *console,const qa_command_context *command,qa_error *error)
+{
+    if (f->source_restoring || f->options.dedicated || frontend_network_remote(f)) return true;
+    const qa_launch_choices *selected=qa_launch_snapshot_choices(qa_application_launch(f->application));
+    uint32_t logical;
+    if (!frontend_local_seat_read(selected,physical,&logical) || logical!=command->seat) return true;
+    bool team_match=false;
+    for (size_t i=0;i<selected->mode_count;++i) {
+        const qa_mode_rules *rules=&selected->modes[i].rules;
+        team_match|=rules->source==QA_MODE_TEAM_ARENA && rules->single_player_active &&
+            rules->kind>=QA_MODE_TEAM_DEATHMATCH && rules->kind<=QA_MODE_HARVESTER;
+    }
+    if (!team_match) return true;
+    for (size_t i=0;i<selected->seat_count;++i) {
+        const qa_launch_seat *seat=selected->seats+i;
+        if (seat->id!=logical || !seat->local || seat->bot || seat->spectator) continue;
+        if (!seat->team || !seat->team[0]) return true;
+        const char *text=qa_text_ascii_equal(seat->team,"red")?"team Red\n":
+            qa_text_ascii_equal(seat->team,"blue")?"team Blue\n":NULL;
+        return !text || qa_console_append(console,command,text,error);
+    }
     return true;
 }
 static bool desired_setting(void *context, const char *name, const char **out, qa_error *error)
