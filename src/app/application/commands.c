@@ -181,7 +181,7 @@ static qa_command_result q3_round_command(qa_application *application,
         ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 
-qa_command_result application_host_command(qa_application *application,
+qa_command_result qa_application_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
     qa_command_result round = q3_round_command(application, command, error);
@@ -548,7 +548,7 @@ static qa_command_result command_dispatch(qa_application *application,
     qa_command_result flight = application_native_engine_fly(application, invocation,
         &command.context, error);
     if (flight != QA_COMMAND_UNHANDLED) return flight;
-    qa_command_result host = application_host_command(application, &command, error);
+    qa_command_result host = qa_application_host_command(application, &command, error);
     if (host != QA_COMMAND_UNHANDLED) return host;
     bool handled = false;
     qa_actor_id actor = command.context.actor;

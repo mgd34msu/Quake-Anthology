@@ -600,7 +600,6 @@ bool application_guest_frontend_rebind_ready(application_provider *, const qa_sc
                                                void *, qa_error *);
 void application_guest_frontend_rebind(application_provider *, qa_scene_frame *, void *, void *);
 qa_command_result application_command_fallback(void *, const qa_command_invocation *, qa_error *);
-qa_command_result application_host_command(qa_application *, const qa_command_invocation *, qa_error *);
 bool application_mod_command(void *, const qa_command_invocation *, qa_error *);
 bool application_command_capture(void *, const qa_command_context *, qa_command_context *, qa_error *);
 bool application_command_active(void *, const qa_command_context *);

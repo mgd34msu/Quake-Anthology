@@ -359,11 +359,11 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
     if (!f->campaign || f->campaign->kind==CAMPAIGN_Q2) return true;
     qa_application_q3_campaign view;
     bool postgame=!strcmp(name,"postgame") || !strcmp(name,"spPostgame");
-    if (!qa_application_q3_campaign_read(application,f->campaign->source,&view,error) ||
-        (postgame && invocation->console!=view.console) ||
+    if (!qa_application_q3_campaign_read(application,f->campaign->source,&view,error)) return false;
+    if (!postgame && invocation->context.owner && invocation->context.owner!=view.source_owner) return true;
+    if ((postgame && invocation->console!=view.console) ||
         (postgame && !qa_application_q3_campaign_postgame_context(application,&view,&invocation->context,error)) ||
-        (!postgame && (!qa_application_command_context_active(application,&invocation->context) ||
-            (invocation->context.owner && invocation->context.owner!=view.source_owner)))) return false;
+        (!postgame && !qa_application_command_context_active(application,&invocation->context))) return false;
     /* The common console owns and orders the invocation; campaign has no private queue. */
     *handled = true;
     if (!strcmp(name,"arena-play") || !strcmp(name,"arena-retry") || !strcmp(name,"arena-next"))

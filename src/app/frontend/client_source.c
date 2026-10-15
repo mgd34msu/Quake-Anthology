@@ -203,6 +203,9 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
         s->options.command(s->options.context, invocation, error) : QA_COMMAND_UNHANDLED;
     if (result == QA_COMMAND_UNHANDLED && s->options.services.command)
         result = s->options.services.command(s->options.services.context, invocation, error);
+    if (result == QA_COMMAND_UNHANDLED && !frontend_network_client_only(s->frontend) &&
+        (invocation->context.origin == QA_COMMAND_LOCAL || invocation->context.origin == QA_COMMAND_SEAT))
+        result = qa_application_host_command(s->frontend->application, invocation, error);
     --s->calls;
     return result;
 }
