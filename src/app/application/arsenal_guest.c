@@ -1014,8 +1014,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     const application_control_context *context = application_control_frame_current(app, actor);
     if (context && context->unified_command && !request_pending &&
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == guest &&
-        ((context->unified_intent && !context->weapon) ||
-         (!context->unified_intent && command->kind != QA_RULESET_Q3))) {
+        command->kind != QA_RULESET_Q3 && (!context->unified_intent || !context->weapon)) {
         raw.weapon = (uint8_t)player.weapon;
     }
     if (context && context->unified_intent) {

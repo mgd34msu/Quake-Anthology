@@ -5,6 +5,7 @@
 #include "remote_unified_presentation.h"
 #include "neutral_config.h"
 #include "config_store.h"
+#include "network_session.h"
 #include "qa/input.h"
 #include "qa/unified_frame_player.h"
 #include "qa/unified_frame_prediction.h"
@@ -125,6 +126,17 @@ static bool frame_read(frontend_unified_input *p,double time,
         const qa_unified_weapon_state *weapon=predicted->prediction->weapon;
         if(weapon && weapon->kind==QA_GAME_Q3) frame.weapon=weapon->source_weapon;
         if(p->has_q3_values) { frame.weapon=p->q3_weapon; frame.sensitivity=p->q3_sensitivity; }
+        else {
+            const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(p->replica);
+            qa_actor_id actor;
+            if(frontend_network_unified_local_domain(p->frontend,domain) &&
+                qa_application_player_actor(domain->application,domain->command_context.seat,&actor)) {
+                uint8_t selected;float sensitivity;bool present;
+                if(!qa_application_q3_input_values_read(domain->application,domain->command_context.seat,actor,
+                    &selected,&sensitivity,&present,e)) return false;
+                if(present) { frame.weapon=selected;frame.sensitivity=sensitivity; }
+            }
+        }
     }
     *out=frame;return true;
 }
