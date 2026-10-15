@@ -146,6 +146,34 @@ static void test_bot_log_resume(void)
     free(saved_state);
 }
 
+static void q3_trace_test_print(void *context,const char *text)
+{
+    size_t *bytes=context;
+    *bytes+=strlen(text);
+}
+static void test_q3_trace_preserves_delta(void)
+{
+    uint8_t packet[4096];qa_error error={0};qa_q3_writer writer;
+    qa_q3_entity entity={.number=17,.modelindex=8,.origin={2,4,6},.event=13};
+    qa_q3_player player={.product=QA_Q3_ARENA,.commandTime=1234,.origin={8,16,24},
+        .stats={100,50},.ammo={0,9},.powerups={12345}};
+    qa_q3_writer_init(&writer,packet,sizeof(packet),false,&error);
+    CHECK(qa_q3_write_entity(&writer,NULL,&entity,true));
+    CHECK(qa_q3_write_player(&writer,NULL,&player));
+    const int32_t levels[]={0,1,2,3,4,-1,-2};
+    for(size_t i=0;i<sizeof(levels)/sizeof(*levels);++i) {
+        size_t printed=0;qa_q3_reader reader;qa_q3_entity actual_entity;qa_q3_player actual_player;
+        qa_q3_reader_init(&reader,(qa_bytes){packet,qa_q3_writer_size(&writer)},false,&error);
+        reader.diagnostics=(qa_q3_diagnostics){.context=&printed,.print=q3_trace_test_print,.level=levels[i]};
+        int32_t number=(int32_t)qa_q3_read_bits(&reader,10);
+        CHECK(qa_q3_read_entity(&reader,NULL,number,&actual_entity));
+        CHECK(qa_q3_read_player(&reader,NULL,QA_Q3_ARENA,&actual_player));
+        CHECK(!memcmp(&entity,&actual_entity,sizeof(entity)) && !memcmp(&player,&actual_player,sizeof(player)));
+        CHECK(printed>0 || levels[i]==0 || levels[i]==1);
+        CHECK(levels[i]!=0 || printed==0);
+    }
+}
+
 static void test_bot_awareness_storage(void)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -7323,6 +7351,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_bot_log_resume();
+    test_q3_trace_preserves_delta();
     test_bot_awareness_storage();
     test_bot_authored_aim();
     test_bot_source_knowledge();

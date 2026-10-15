@@ -45,6 +45,7 @@ void qa_q3_reader_init(qa_q3_reader *reader, qa_bytes bytes, bool oob, qa_error 
     if (reader == NULL) return;
     qa_net_reader_init(&reader->raw, bytes, error);
     reader->oob = oob;
+    reader->diagnostics = (qa_q3_diagnostics){0};
     if (bytes.size > QA_Q3_MESSAGE_BYTES)
         qa_net_reader_fail(&reader->raw, "Q3 message exceeds maximum length");
 }

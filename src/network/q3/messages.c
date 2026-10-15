@@ -1,5 +1,7 @@
 /* Protocol 68 operations ported from quake-typescript/src/network/q3. */
 #include "qa/network_q3.h"
+#include "diagnostics_private.h"
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +9,17 @@ static bool read_fail(qa_q3_reader *r, const char *s) { return qa_net_reader_fai
 static bool write_fail(qa_q3_writer *w, const char *s) { return qa_net_writer_fail(&w->raw, s); }
 static bool write8(qa_q3_writer *w, uint32_t x) { return qa_q3_write_bits(w, x, 8); }
 static bool write32(qa_q3_writer *w, int32_t x) { return qa_q3_write_bits(w, (uint32_t)x, 32); }
+
+static void diagnostic_section(const qa_q3_reader *reader,const char *label)
+{
+    if (q3_diagnostic_active(reader) && reader->diagnostics.level>=2)
+        q3_diagnostic_print(reader,"%3zu:%s\n",q3_diagnostic_read_count(reader)-1,label);
+}
+static void diagnostic_entity(const qa_q3_reader *reader,const char *label,int32_t number)
+{
+    if (q3_diagnostic_active(reader) && reader->diagnostics.level==3)
+        q3_diagnostic_print(reader,"%3zu:  %s: %" PRId32 "\n",q3_diagnostic_read_count(reader),label,number);
+}
 
 void qa_q3_gamestate_init(qa_q3_gamestate *g) {
     memset(g, 0, sizeof(*g));
@@ -193,8 +206,10 @@ static bool read_snapshot(qa_q3_reader *r, qa_q3_server_decode *context, qa_q3_s
     s->valid = *validity == QA_Q3_SNAPSHOT_VALID;
     s->area_bytes = (uint8_t)qa_q3_read_bits(r, 8);
     if (s->area_bytes > sizeof(s->area_mask)) return read_fail(r, "Q3 snapshot area mask exceeds 32 bytes");
-    if (!qa_q3_read_data(r, s->area_mask, s->area_bytes)
-        || !qa_q3_read_player(r, old ? &old->player : NULL, context->product, &s->player)) return false;
+    if (!qa_q3_read_data(r, s->area_mask, s->area_bytes)) return false;
+    diagnostic_section(r,"playerstate");
+    if (!qa_q3_read_player(r, old ? &old->player : NULL, context->product, &s->player)) return false;
+    diagnostic_section(r,"packet entities");
     size_t index = 0;
     for (;;) {
         int32_t number = (int32_t)qa_q3_read_bits(r, 10);
@@ -202,17 +217,25 @@ static bool read_snapshot(qa_q3_reader *r, qa_q3_server_decode *context, qa_q3_s
         if (number == QA_Q3_ENTITY_NONE) break;
         if (number < 0 || number >= QA_Q3_ENTITIES) return read_fail(r, "Invalid Q3 packet entity number");
         while (old && index < old->entity_count && old->entities[index].number < number) {
+            diagnostic_entity(r,"unchanged",old->entities[index].number);
             if (!append_entity(r, s, storage, capacity, owned, &old->entities[index++])) return false;
         }
         const qa_q3_entity *baseline;
-        if (old && index < old->entity_count && old->entities[index].number == number) baseline = &old->entities[index++];
-        else baseline = context->gamestate->baseline_present[number] ? &context->gamestate->baselines[number] : NULL;
+        if (old && index < old->entity_count && old->entities[index].number == number) {
+            diagnostic_entity(r,"delta",number);
+            baseline = &old->entities[index++];
+        } else {
+            diagnostic_entity(r,"baseline",number);
+            baseline = context->gamestate->baseline_present[number] ? &context->gamestate->baselines[number] : NULL;
+        }
         qa_q3_entity entity;
         if (!qa_q3_read_entity(r, baseline, number, &entity) ||
             !append_entity(r, s, storage, capacity, owned, &entity)) return false;
     }
-    while (old && index < old->entity_count)
+    while (old && index < old->entity_count) {
+        diagnostic_entity(r,"unchanged",old->entities[index].number);
         if (!append_entity(r, s, storage, capacity, owned, &old->entities[index++])) return false;
+    }
     if (s->entity_count > UINT64_MAX - context->parse_entities_number)
         return read_fail(r, "Q3 parse entity sequence exhausted");
     context->parse_entities_number += s->entity_count;
@@ -237,6 +260,7 @@ bool qa_q3_server_cursor_continue(qa_q3_server_cursor *cursor, qa_q3_server_deco
     *pending = false;
     cursor->reader.raw.error = error;
     qa_q3_reader *reader = &cursor->reader;
+    reader->diagnostics = context->diagnostics;
     qa_q3_snapshot snapshot;
     qa_q3_entity *storage = context->entity_scratch;
     size_t capacity = storage ? context->entity_scratch_capacity : 0;
@@ -246,6 +270,11 @@ bool qa_q3_server_cursor_continue(qa_q3_server_cursor *cursor, qa_q3_server_deco
     qa_q3_server_event event = {.kind = QA_Q3_EVENT_ACK};
     bool ok = true;
     if (cursor->phase == QA_Q3_SERVER_CURSOR_ACK) {
+        if (q3_diagnostic_active(reader)) {
+            if (reader->diagnostics.level==1)
+                q3_diagnostic_print(reader,"%zu ",reader->raw.bytes.size+reader->diagnostics.offset);
+            else if (reader->diagnostics.level>=2) q3_diagnostic_print(reader,"------------------\n");
+        }
         int32_t ack = (int32_t)qa_q3_read_bits(reader, 32);
         if ((int64_t)ack < (int64_t)context->reliable_sequence - QA_Q3_RELIABLE) ack = context->reliable_sequence;
         event.value.acknowledge = ack;
@@ -259,7 +288,17 @@ bool qa_q3_server_cursor_continue(qa_q3_server_cursor *cursor, qa_q3_server_deco
         else {
             opcode = qa_q3_read_bits(reader, 8);
             if (reader->raw.failed) { ok = false; break; }
-            if (opcode == 8) { cursor->phase = QA_Q3_SERVER_CURSOR_DONE; break; }
+            if (opcode == 8) {
+                diagnostic_section(reader,"END OF MESSAGE");
+                cursor->phase = QA_Q3_SERVER_CURSOR_DONE;
+                break;
+            }
+            if (q3_diagnostic_active(reader) && reader->diagnostics.level>=2) {
+                static const char *const names[]={"svc_bad","svc_nop","svc_gamestate","svc_configstring",
+                    "svc_baseline","svc_serverCommand","svc_download","svc_snapshot"};
+                if (opcode<sizeof(names)/sizeof(*names)) diagnostic_section(reader,names[opcode]);
+                else q3_diagnostic_print(reader,"%3zu:BAD CMD %u\n",q3_diagnostic_read_count(reader)-1,opcode);
+            }
             if (opcode == 1) continue;
             if (opcode == 2) cursor->phase = QA_Q3_SERVER_CURSOR_GAMESTATE;
             if (opcode == 6) cursor->phase = QA_Q3_SERVER_CURSOR_DOWNLOAD;

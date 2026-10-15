@@ -416,6 +416,7 @@ void frontend_engine_cvars_bind(qa_frontend *frontend)
     if (frontend->engine_cvars.view_identity==identity) return;
     frontend->engine_cvars=(frontend_engine_cvar_handles){.view_identity=identity,
         .timedemo=qa_cvars_resolve(registry,"timedemo"),
+        .cl_shownet=qa_cvars_resolve(registry,"cl_shownet"),
         .cl_avidemo=qa_cvars_resolve(registry,"cl_avidemo"),
         .cl_forceavidemo=qa_cvars_resolve(registry,"cl_forceavidemo"),
         .timescale=qa_cvars_resolve(registry,"timescale"),

@@ -184,12 +184,14 @@ static bool download_size(void *user, int32_t wire_size, int32_t *effective, qa_
 static bool receive_continue(qa_q3_client_peer *p, bool source_callbacks, qa_error *e) {
     if (p->receive_running) return fail(e, QA_ERROR_ARGUMENT, "Recursive Q3 server packet continuation");
     p->receive_running = true;
+    qa_q3_diagnostics diagnostics={.offset=4};
+    if (p->hooks.diagnostics) p->hooks.diagnostics(p->hooks.context,&diagnostics);
     qa_q3_server_decode decoder = {
         .product = p->product, .message_number = p->server_message_sequence, .reliable_sequence = p->reliable.sequence,
         .server_command_sequence = p->server_command_sequence, .parse_entities_number = p->parse_entities_number,
         .gamestate = &p->gamestate, .history = history, .history_context = p,
         .entity_scratch = p->scratch, .entity_scratch_capacity = QA_Q3_ENTITY_NONE,
-        .download_size = download_size, .download_context = p
+        .download_size = download_size, .download_context = p, .diagnostics=diagnostics
     };
     bool pending;
     bool ok = qa_q3_server_cursor_continue(&p->receive_cursor, &decoder, consume, p, source_callbacks, &pending, e);

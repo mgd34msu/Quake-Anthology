@@ -2703,6 +2703,21 @@ static bool client_snapshot(void *context, const qa_q3_snapshot *snapshot, int32
     frontend_q3_client *n = context; (void)ping; (void)error;
     qa_q3_clock_publish(&n->q3_client_clock, snapshot); return true;
 }
+static void client_diagnostic_print(void *context,const char *text)
+{
+    frontend_q3_client *client=context;
+    qa_command_context command={.owner=client->q3_cgame_owner,.seat=client->physical,
+        .dialect=QA_RULESET_Q3};
+    (void)qa_application_log_emit(client->frontend->application,&command,text,QA_APPLICATION_LOG_CONSOLE,NULL);
+}
+static void client_diagnostics(void *context,qa_q3_diagnostics *out)
+{
+    frontend_q3_client *client=context;
+    const qa_cvar_view *setting=qa_cvars_read(qa_application_cvars(client->frontend->application),
+        client->frontend->engine_cvars.cl_shownet);
+    out->level=setting?setting->integer:0;
+    out->context=client; out->print=client_diagnostic_print;
+}
 static bool client_download_size(void *context, int32_t size, int32_t *effective, qa_error *error)
 {
     frontend_q3_client *n = context;
@@ -2982,7 +2997,7 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
             .command = client_source_command, .map_restart = client_map_restart, .disconnect = client_disconnect,
             .command_received=client_command_received,
             .level_shot = client_level_shot, .local_server_running = client_local_server, .send = client_send_address,
-            .accepted_message=demo_q3_accepted,.defer_source = true};
+            .accepted_message=demo_q3_accepted,.defer_source = true,.diagnostics=client_diagnostics};
         qa_network_q3_client_policy policy = {n, remote_client_settings};
         if (!qa_network_attach_q3_client(n->runtime, &request, n->q3_client_product,
             n->q3_client_admission.challenge, n->q3_client_admission.qport, &hooks,
@@ -8820,7 +8835,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
         .download_size=client_download_size,.download=client_download,.command=client_source_command,
         .command_received=client_command_received,
         .map_restart=client_map_restart,.disconnect=client_disconnect,.level_shot=client_level_shot,
-        .local_server_running=client_local_server,.accepted_message=demo_q3_accepted,.defer_source=true};
+        .local_server_running=client_local_server,.accepted_message=demo_q3_accepted,.defer_source=true,.diagnostics=client_diagnostics};
     qa_network_q3_client_policy policy={n->q3_clients,remote_client_settings};
     return qa_network_attach_q3_demo(n->runtime,&request,n->q3_clients[0].q3_client_product,&hooks,&policy,
         f->wall_time_ns,&n->q3_clients[0].q3_client,error)&&(n->q3_clients[0].q3_client_attached=true)&&client_bind_attempt(&n->q3_clients[0],error);

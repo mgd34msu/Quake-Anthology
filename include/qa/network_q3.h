@@ -84,7 +84,17 @@ static inline void qa_usercmd_to_q3(const qa_usercmd *source, qa_q3_usercmd *out
 
 /* Static protocol Huffman and adaptive connect compression have separate state.
  * Cursors own no storage. Every failing operation sets a sticky error. */
-typedef struct qa_q3_reader { qa_net_reader raw; bool oob; } qa_q3_reader;
+typedef struct qa_q3_diagnostics {
+    void *context;
+    void (*print)(void *, const char *);
+    int32_t level;
+    size_t offset;
+} qa_q3_diagnostics;
+typedef struct qa_q3_reader {
+    qa_net_reader raw;
+    bool oob;
+    qa_q3_diagnostics diagnostics;
+} qa_q3_reader;
 typedef struct qa_q3_writer { qa_net_writer raw; bool oob; size_t size; } qa_q3_writer;
 void qa_q3_reader_init(qa_q3_reader *, qa_bytes, bool oob, qa_error *);
 void qa_q3_writer_init(qa_q3_writer *, void *, size_t, bool oob, qa_error *);
@@ -223,6 +233,7 @@ typedef struct qa_q3_server_decode {
     size_t entity_scratch_capacity;
     bool (*download_size)(void *, int32_t wire_size, int32_t *effective_size, qa_error *);
     void *download_context;
+    qa_q3_diagnostics diagnostics;
 } qa_q3_server_decode;
 typedef enum qa_q3_server_event_kind {
     QA_Q3_EVENT_ACK, QA_Q3_EVENT_GAMESTATE_START, QA_Q3_EVENT_GAMESTATE, QA_Q3_EVENT_COMMAND,
@@ -540,6 +551,7 @@ typedef struct qa_q3_client_hooks {
         bool recording_ready, qa_error *);
     /* The actual runtime resumes source operations outside its pump. */
     bool defer_source;
+    void (*diagnostics)(void *, qa_q3_diagnostics *);
 } qa_q3_client_hooks;
 typedef struct qa_q3_client_send {
     int32_t real_time;

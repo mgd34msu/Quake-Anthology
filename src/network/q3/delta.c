@@ -1,14 +1,16 @@
 #include "qa/network_q3.h"
+#include "diagnostics_private.h"
 
 #include <float.h>
 #include <limits.h>
+#include <inttypes.h>
 #include <string.h>
 
 _Static_assert(sizeof(float) == sizeof(uint32_t) && FLT_RADIX == 2 && FLT_MANT_DIG == 24,
                "Q3 state deltas require binary32 floats");
 
-typedef struct net_field { size_t offset; int bits; } net_field;
-#define ENTITY(field, width) { offsetof(qa_q3_entity, field), width }
+typedef struct net_field { size_t offset; int bits; const char *name; } net_field;
+#define ENTITY(field, width) { offsetof(qa_q3_entity, field), width, #field }
 static const net_field entity_fields[] = {
     ENTITY(pos.time, 32), ENTITY(pos.base[0], 0), ENTITY(pos.base[1], 0),
     ENTITY(pos.delta[0], 0), ENTITY(pos.delta[1], 0), ENTITY(pos.base[2], 0),
@@ -29,7 +31,7 @@ static const net_field entity_fields[] = {
     ENTITY(angles2[2], 0), ENTITY(constantLight, 32), ENTITY(frame, 16)
 };
 #undef ENTITY
-#define PLAYER(field, width) { offsetof(qa_q3_player, field), width }
+#define PLAYER(field, width) { offsetof(qa_q3_player, field), width, #field }
 static const net_field player_fields[] = {
     PLAYER(commandTime, 32), PLAYER(origin[0], 0), PLAYER(origin[1], 0),
     PLAYER(bobCycle, 8), PLAYER(velocity[0], 0), PLAYER(velocity[1], 0),
@@ -102,9 +104,10 @@ static bool write_field(qa_q3_writer *writer, const net_field *field,
                             compact ? 13 : 32);
 }
 
-static bool read_field(qa_q3_reader *reader, const net_field *field, void *state, bool entity)
+static bool read_field(qa_q3_reader *reader, const net_field *field, void *state, bool entity,bool *changed)
 {
-    if (qa_q3_read_bits(reader, 1) == 0) return !reader->raw.failed;
+    *changed=qa_q3_read_bits(reader, 1)!=0;
+    if (!*changed) return !reader->raw.failed;
     uint32_t value;
     if (entity && qa_q3_read_bits(reader, 1) == 0) value = 0;
     else if (field->bits != 0) value = qa_q3_read_bits(reader, field->bits);
@@ -115,6 +118,29 @@ static bool read_field(qa_q3_reader *reader, const net_field *field, void *state
     if (reader->raw.failed) return false;
     set_word(state, field, value);
     return true;
+}
+
+static void diagnostic_delta(const qa_q3_reader *reader,const net_field *fields,size_t count,
+    const void *state,uint64_t changes,int32_t number,size_t read_count,size_t start_bit,unsigned arrays)
+{
+    char text[4096]; size_t used=0;
+    if (number<0) q3_diagnostic_add(text,sizeof(text),&used,"%3zu: playerstate ",read_count);
+    else q3_diagnostic_add(text,sizeof(text),&used,"%3zu: #%-3" PRId32 " ",read_count,number);
+    for (size_t index=0;index<count;++index) {
+        if (!(changes & (UINT64_C(1)<<index))) continue;
+        uint32_t word=field_word(state,fields+index);
+        if (fields[index].bits) q3_diagnostic_add(text,sizeof(text),&used,"%s:%" PRId32 " ",
+            fields[index].name,qa_i32_from_u32(word));
+        else {
+            float value; memcpy(&value,&word,sizeof(value));
+            q3_diagnostic_add(text,sizeof(text),&used,"%s:%g ",fields[index].name,(double)value);
+        }
+    }
+    static const char *const names[]={"PS_STATS","PS_PERSISTANT","PS_AMMO","PS_POWERUPS"};
+    for (unsigned index=0;index<4;++index)
+        if (arrays & (1u<<index)) q3_diagnostic_add(text,sizeof(text),&used,"%s ",names[index]);
+    q3_diagnostic_add(text,sizeof(text),&used," (%zu bits)\n",reader->raw.bit-start_bit);
+    reader->diagnostics.print(reader->diagnostics.context,text);
 }
 
 static bool valid_entity(int32_t number)
@@ -157,13 +183,26 @@ bool qa_q3_read_entity(qa_q3_reader *reader, const qa_q3_entity *from,
         return qa_net_reader_fail(&reader->raw, "Invalid Q3 entity destination");
     qa_q3_entity result = from == NULL ? (qa_q3_entity){0} : *from;
     result.number = number;
-    if (qa_q3_read_bits(reader, 1) != 0) result = (qa_q3_entity){ .number = QA_Q3_ENTITY_NONE };
+    bool printing=q3_diagnostic_active(reader) &&
+        (reader->diagnostics.level>=2 || reader->diagnostics.level==-1);
+    size_t start_bit=reader->raw.bit;
+    if (qa_q3_read_bits(reader, 1) != 0) {
+        result = (qa_q3_entity){ .number = QA_Q3_ENTITY_NONE };
+        if (printing && !reader->raw.failed) q3_diagnostic_print(reader,"%3zu: #%-3" PRId32 " remove\n",
+            q3_diagnostic_read_count(reader),number);
+    }
     else if (qa_q3_read_bits(reader, 1) != 0) {
         size_t last = qa_q3_read_bits(reader, 8);
         if (last > ARRAY_COUNT(entity_fields))
             return qa_net_reader_fail(&reader->raw, "Invalid Q3 entity field count");
-        for (size_t index = 0; index < last; ++index)
-            if (!read_field(reader, &entity_fields[index], &result, true)) return false;
+        size_t read_count=printing?q3_diagnostic_read_count(reader):0;
+        uint64_t changes=0;
+        for (size_t index = 0; index < last; ++index) {
+            bool changed;
+            if (!read_field(reader, &entity_fields[index], &result, true,&changed)) return false;
+            if (printing && changed) changes|=UINT64_C(1)<<index;
+        }
+        if (printing) diagnostic_delta(reader,entity_fields,last,&result,changes,number,read_count,start_bit,0);
     }
     if (reader->raw.failed) return false;
     *out = result;
@@ -233,14 +272,23 @@ bool qa_q3_read_player(qa_q3_reader *reader, const qa_q3_player *from,
     if (out == NULL || !valid_product(product) || (from != NULL && from->product != product))
         return qa_net_reader_fail(&reader->raw, "Invalid Q3 player delta product");
     qa_q3_player result = from == NULL ? (qa_q3_player){ .product = product } : *from;
+    bool printing=q3_diagnostic_active(reader) &&
+        (reader->diagnostics.level>=2 || reader->diagnostics.level==-2);
+    size_t start_bit=reader->raw.bit,read_count=printing?q3_diagnostic_read_count(reader):0;
+    uint64_t changes=0;
+    unsigned arrays=0;
     size_t last = qa_q3_read_bits(reader, 8);
     if (last > ARRAY_COUNT(player_fields))
         return qa_net_reader_fail(&reader->raw, "Invalid Q3 player field count");
-    for (size_t index = 0; index < last; ++index)
-        if (!read_field(reader, &player_fields[index], &result, false)) return false;
+    for (size_t index = 0; index < last; ++index) {
+        bool changed;
+        if (!read_field(reader, &player_fields[index], &result, false,&changed)) return false;
+        if (printing && changed) changes|=UINT64_C(1)<<index;
+    }
     if (qa_q3_read_bits(reader, 1) != 0) {
         for (size_t index = 0; index < ARRAY_COUNT(slot_fields); ++index) {
             if (qa_q3_read_bits(reader, 1) == 0) continue;
+            if (printing && reader->diagnostics.level==4) arrays|=1u<<index;
             uint32_t mask = qa_q3_read_bits(reader, 16);
             int32_t *values = (int32_t *)((unsigned char *)&result + slot_fields[index].offset);
             for (unsigned slot = 0; slot < 16; ++slot) {
@@ -252,6 +300,7 @@ bool qa_q3_read_player(qa_q3_reader *reader, const qa_q3_player *from,
         }
     }
     if (reader->raw.failed) return false;
+    if (printing) diagnostic_delta(reader,player_fields,last,&result,changes,-1,read_count,start_bit,arrays);
     *out = result;
     return true;
 }
