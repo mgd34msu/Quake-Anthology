@@ -41,9 +41,12 @@ bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
     };
     for (size_t i = 0; i < FRONTEND_GRAPH_CVARS; ++i)
         owner->graph_cvars[i] = qa_cvars_resolve(qa_application_cvars(f->application), graph_names[i]);
-    owner->tracks = qa_caption_library_create(error); owner->catalogs = qa_localization_pool_create(error);
-    if (!owner->tracks || !owner->catalogs || !qa_audio_bank_create(f->ui_mounts, qa_session_strings(qa_application_session(f->application)), &owner->sounds, error)) return false;
-    for (unsigned i = 0; !f->options.dedicated && i < QA_INPUT_LOCAL_SEATS; ++i) {
+    owner->catalogs = qa_localization_pool_create(error);
+    if (!owner->catalogs) return false;
+    if (f->options.dedicated) return true;
+    owner->tracks = qa_caption_library_create(error);
+    if (!owner->tracks || !qa_audio_bank_create(f->ui_mounts, qa_session_strings(qa_application_session(f->application)), &owner->sounds, error)) return false;
+    for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         qa_sound_caption_options options = {.captions = {.seat = i, .kind = QA_CAPTION_SOUND,
             .tracks = owner->tracks, .catalogs = owner->catalogs,
             .localization = {.profile = QA_LOCALIZATION_Q1_RERELEASE}}, .context = f, .content_view = sound_view};
@@ -386,6 +389,7 @@ bool frontend_ui_features_sync(qa_frontend *f, qa_error *error)
 {
     if (!f || !f->ui_features || !frontend_ui_features_idle(f))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "UI feature preparation requires its idle actual owner");
+    if (f->options.dedicated) return true;
     frontend_ui_features *owner = f->ui_features;
     if (owner->audio_error.code != QA_OK) { if (error) *error = owner->audio_error; return false; }
     if (!frontend_accessibility_sync(f, error)) return false;
