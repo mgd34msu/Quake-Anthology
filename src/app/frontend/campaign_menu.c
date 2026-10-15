@@ -1,5 +1,6 @@
 #include "campaign_menu.h"
 #include "campaign_ui.h"
+#include "campaign_cinematic.h"
 #include "ui_features_private.h"
 #include "qa/text.h"
 #include "qa/ui_library.h"
@@ -169,7 +170,7 @@ bool frontend_campaign_menu_available(frontend_seat *seat,bool *available,qa_err
 }
 bool frontend_campaign_menu_sync(qa_frontend *f,qa_error *error)
 {
-    if (f->options.dedicated || !f->seats || !f->seats[0].ui) return true;
+    if (f->options.dedicated || !f->seats || !f->seats[0].ui || frontend_cinematic_running(f)) return true;
     for (unsigned i=0;i<f->options.seats;++i) {
         frontend_ui_seat_features *state=frontend_ui_features_seat(f->seats+i); frontend_campaign_ui_view view;
         if (!state || !frontend_campaign_ui_read(f,i,&view,error)) return false;

@@ -4,6 +4,7 @@
 #include "ui_features.h"
 #include "shared_render_controls.h"
 #include "q3_render_policy.h"
+#include "campaign_cinematic.h"
 #include "qa/text.h"
 #include <ctype.h>
 #include <math.h>
@@ -257,6 +258,8 @@ bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinemat
     if (ok && f->audio) ok=qa_audio_engine_stream_cut_prepare(f->audio,staging,
         source->identity.audio_bus,QA_AUDIO_WORLD,1,&cut,error);
     if (ok && cut) ok=frontend_system_cinematic_source_current(row) && qa_audio_engine_stream_cut_current(cut);
+    if (ok && !request->restore_state && !request->restore_playback)
+        ok=frontend_cinematic_activate_focus(f,error);
     if (ok) {
         if (cut) qa_audio_engine_stream_cut_publish(cut);
         qa_cinematic_audio_rebind(row->movie,f->audio,source->identity.audio_bus);

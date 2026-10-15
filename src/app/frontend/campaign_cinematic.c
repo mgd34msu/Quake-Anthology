@@ -299,12 +299,13 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
         ok=qa_audio_engine_stream_cut_prepare(f->audio,staging,QA_FRONTEND_COMMAND_OWNER,QA_AUDIO_WORLD,1,&cut,error);
         if (ok && (!current(owner) || !qa_audio_engine_stream_cut_current(cut)))
             ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic activation lost its actual prepared owners");
-        if (ok) {
-            qa_audio_engine_stream_cut_publish(cut);
-            qa_cinematic_audio_rebind(owner->movie,f->audio,QA_FRONTEND_COMMAND_OWNER);
-            qa_audio_device_clear(f->device);
-            frontend_source_audio_stopped(f); frontend_campaign_audio_stopped(f);
-        }
+    }
+    if (ok && !owner->request.restore) ok=frontend_cinematic_activate_focus(f,error);
+    if (ok && cut) {
+        qa_audio_engine_stream_cut_publish(cut);
+        qa_cinematic_audio_rebind(owner->movie,f->audio,QA_FRONTEND_COMMAND_OWNER);
+        qa_audio_device_clear(f->device);
+        frontend_source_audio_stopped(f); frontend_campaign_audio_stopped(f);
     }
     if (ok && !cut) qa_cinematic_audio_rebind(owner->movie,f->audio,QA_FRONTEND_COMMAND_OWNER);
     if (!ok) {
@@ -773,6 +774,15 @@ bool frontend_cinematic_view_read(qa_frontend *f,frontend_cinematic_view *out,bo
         .seat=owner->request.seat,.viewport={0,0,f->width,f->height},.status=qa_cinematic_status(owner->movie)};
     if (!qa_cinematic_time(owner->movie,&view.elapsed_ms,&view.source_ms,&view.loop,error)) return false;
     *out=view; *found=true; return true;
+}
+bool frontend_cinematic_activate_focus(qa_frontend *f,qa_error *error)
+{
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        frontend_seat *seat=f->seats+i;
+        if (!qa_ui_close_all(seat->ui,(double)f->time_ns/1000000.,error) ||
+            !qa_seat_console_open(seat->console,false,error)) return false;
+    }
+    return qa_input_platform_sync_focus(f->input,error);
 }
 bool frontend_cinematic_focus(qa_frontend *f,qa_cinematic *movie,bool *paused,bool *obscured,qa_error *error)
 {
