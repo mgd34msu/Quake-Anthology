@@ -29,7 +29,7 @@ typedef struct application_native_q2_inventory_row {
     qa_item_id item;
     const char *label;
     double count;
-    uint32_t source_index;
+    uint32_t source_index, drop_index;
     bool selected, presence_only;
     application_native_q2_inventory_presentation presentation;
 } application_native_q2_inventory_row;
@@ -40,7 +40,7 @@ typedef struct application_native_q2_inventory_scanner_options {
     size_t (*storage_bytes)(void *);
     bool (*rows)(void *, qa_actor_id, const application_native_q2_inventory_row **,
         size_t *, bool *present, qa_error *);
-    bool (*use)(void *, qa_actor_id, qa_item_id, qa_error *);
+    bool (*action)(void *, qa_actor_id, qa_item_id, qa_item_action, qa_error *);
     bool (*print)(void *, qa_actor_id, const char *, qa_error *);
 } application_native_q2_inventory_scanner_options;
 typedef struct application_native_q2_inventory_readout {

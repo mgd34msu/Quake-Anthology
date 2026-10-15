@@ -49,6 +49,8 @@ bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *erro
 bool qa_native_invoke_original(qa_native_entry_observer *binding,
                                const qa_native_value *arguments, size_t count,
                                qa_native_value *result, qa_error *error);
+/* Borrow the caller's actual return address while this entry is suspended. */
+bool qa_native_entry_caller(const qa_native_entry_observer *, qa_native_address *, qa_error *);
 typedef bool (*qa_native_entry_cancel_fn)(void *, const qa_error *);
 /* Exact emulated VOID original invocation. accepts runs only on a failed
  * application callback while CPU/journal/ABI ownership is still sound. An

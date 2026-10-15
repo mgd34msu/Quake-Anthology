@@ -28,7 +28,7 @@ typedef struct inventory_frame {
     struct inventory_frame *previous;
     qa_actor_id actor;
     int32_t flags;
-    bool named, has_named_row;
+    bool named, dropping, has_named_row;
     application_native_q2_inventory_row named_row;
     qa_buffer requested;
     qa_arena requested_storage;
@@ -57,9 +57,9 @@ struct application_native_q2_inventory_scanner {
     application_native_q2_inventory_scanner_options options;
     inventory_write_field *writes;
     size_t write_count;
-    inventory_entry entries[5];
-    inventory_region regions[6];
-    size_t region_count;
+    inventory_entry entries[8];
+    inventory_region *regions;
+    size_t entry_count, region_count;
     qa_arena readout_storage;
     qa_pool readout_pages;
     qa_arena selection_storage, selection_index_storage, name_storage;
@@ -72,6 +72,8 @@ struct application_native_q2_inventory_scanner {
     const qa_native_region_event *command_event;
     qa_actor_id command_actor;
     uint32_t inventory, count, cursor, client_pointer, item_table, item_stride, item_count;
+    uint32_t drop_weapon, drop_pending;
+    qa_native_address drop_lookup_return;
     int32_t empty;
     qa_native_abi abi;
     uint8_t pointer_bytes;
@@ -341,6 +343,39 @@ static bool navigate(application_native_q2_inventory_scanner *o, inventory_frame
     if (!source(o, frame->actor, &s, e) || !write_word(o, s.client + o->cursor, o->empty, e)) return false;
     application_native_q2_inventory_scanner_release(o, frame->actor); return true;
 }
+static void frame_row(inventory_frame *frame, const application_native_q2_inventory_row *row)
+{
+    frame->named_row = *row;
+    frame->named_row.label = NULL;
+    frame->named_row.presentation = (application_native_q2_inventory_presentation){0};
+    frame->has_named_row = true;
+}
+static bool project_drop(application_native_q2_inventory_scanner *o, inventory_frame *frame,
+    const application_native_q2_inventory_row *row, bool set_cursor,
+    qa_native_address *descriptor, qa_error *e)
+{
+    application_native_q2_inventory_source s;
+    uint32_t index = row->drop_index;
+    if (index >= o->item_count || index >= o->count)
+        return application_fail(e, QA_ERROR_FORMAT, "Native drop prototype leaves its item table");
+    qa_unified_frame_lease *storage = frame_storage(o, frame, e);
+    if (!storage || !source(o, frame->actor, &s, e) ||
+        !qa_native_rva(instance(o), (uint64_t)o->item_table + (uint64_t)index * o->item_stride,
+            o->item_stride, descriptor, e) ||
+        !save_bytes(o, storage, &s, o->inventory + index * 4, 4, &frame->restore, e) ||
+        !save_bytes(o, storage, &s, o->drop_weapon, o->pointer_bytes, &frame->restore, e) ||
+        !save_bytes(o, storage, &s, o->drop_pending, o->pointer_bytes, &frame->restore, e) ||
+        (set_cursor && !save_bytes(o, storage, &s, o->cursor, 4, &frame->restore, e))) return false;
+    uint8_t zero[8] = {0};
+    if (!count_write(o, s.client + o->inventory + (uint64_t)index * 4, row, e) ||
+        !qa_native_write(instance(o), s.client + o->drop_weapon, (qa_bytes){zero, o->pointer_bytes}, e) ||
+        !qa_native_write(instance(o), s.client + o->drop_pending, (qa_bytes){zero, o->pointer_bytes}, e) ||
+        (set_cursor && !write_word(o, s.client + o->cursor, (int32_t)index, e))) return false;
+    frame_row(frame, row);
+    return true;
+}
+static bool drop_lookup(application_native_q2_inventory_scanner *, inventory_entry *,
+    const qa_native_value *, size_t, qa_native_value *, qa_error *);
 static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *e)
 {
@@ -348,7 +383,9 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
     if (actual != instance(o) || binding != entry->binding || !current(o, e) || !count ||
         arguments[0].type != QA_NATIVE_ADDRESS || o->pending)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner entry lost its exact source invocation");
-    inventory_frame frame = {.previous = o->frame, .flags = -1, .named = entry->kind == 4};
+    if (entry->kind == 7) return drop_lookup(o, entry, arguments, count, result, e);
+    inventory_frame frame = {.previous = o->frame, .flags = -1,
+        .named = entry->kind == 4 || entry->kind == 5, .dropping = entry->kind >= 5};
     if (count > 1 && arguments[1].type == QA_NATIVE_I32) frame.flags = arguments[1].as.i32;
     if (arguments[0].as.address && !qa_native_host_source_actor(o->engine->provider->state.native.host,
         arguments[0].as.address, true, &frame.actor, e)) return false;
@@ -444,15 +481,9 @@ static bool named_choice(application_native_q2_inventory_scanner *o, inventory_f
     if (ok) ok = o->options.print(o->options.context, frame->actor, text, e);
     return ok;
 }
-static bool lookup_name(application_native_q2_inventory_scanner *o, const qa_native_region_event *event,
+static bool lookup_text(application_native_q2_inventory_scanner *o, qa_native_address name,
     inventory_frame *frame, qa_error *e)
 {
-    qa_native_address name;
-    if (o->pointer_bytes == 4) {
-        uint8_t bytes[4];
-        if (!qa_native_read(instance(o), (uint32_t)event->state.registers[QA_NATIVE_RSP], bytes, 4, e)) return false;
-        name = qa_load_u32le(bytes);
-    } else name = event->state.registers[QA_NATIVE_RCX];
     if (!name) return application_fail(e, QA_ERROR_ARGUMENT, "Original native item lookup has no actual name argument");
     qa_arena_reset(&frame->requested_storage); frame->requested = (qa_buffer){0};
     qa_bytes text;
@@ -464,6 +495,34 @@ static bool lookup_name(application_native_q2_inventory_scanner *o, const qa_nat
     }
     return normalized(text, &frame->requested_storage, &frame->requested, e);
 }
+static bool lookup_name(application_native_q2_inventory_scanner *o, const qa_native_region_event *event,
+    inventory_frame *frame, qa_error *e)
+{
+    qa_native_address name;
+    if (o->pointer_bytes == 4) {
+        uint8_t bytes[4];
+        if (!qa_native_read(instance(o), (uint32_t)event->state.registers[QA_NATIVE_RSP], bytes, 4, e)) return false;
+        name = qa_load_u32le(bytes);
+    } else name = event->state.registers[QA_NATIVE_RCX];
+    return lookup_text(o, name, frame, e);
+}
+static bool drop_lookup(application_native_q2_inventory_scanner *o, inventory_entry *entry,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *e)
+{
+    inventory_frame *frame = o->frame;
+    qa_native_address caller = 0;
+    bool selected = frame && frame->dropping && frame->named && frame->actor.registry && !o->evaluating;
+    if (selected && !qa_native_entry_caller(entry->binding, &caller, e)) return false;
+    if (!qa_native_invoke_original(entry->binding, arguments, count, result, e)) return false;
+    if (!selected || caller != o->drop_lookup_return) return true;
+    application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
+    bool ok = lookup_text(o, arguments[0].as.address, frame, e) && rows(o, frame->actor, true, &r, e);
+    if (ok && r.present) ok = named_choice(o, frame, &r, result->as.address, &chosen, e);
+    if (ok && chosen != SIZE_MAX && r.rows[chosen].selected)
+        ok = project_drop(o, frame, r.rows + chosen, false, &result->as.address, e);
+    application_native_q2_inventory_readout_free(&r);
+    return ok;
+}
 static bool region_call(void *opaque, qa_native_instance *actual, const qa_native_region_event *event,
     qa_native_region_decision *decision, qa_error *e)
 {
@@ -471,6 +530,17 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
     if (actual != instance(o) || event->region.id != region->id || !current(o, e)) return false;
     inventory_frame *frame = o->frame;
     if (!frame || !frame->actor.registry || o->evaluating) return true;
+    if (region->kind == 4) {
+        if (event->phase != QA_NATIVE_REGION_JOIN || !frame->dropping || frame->named) return true;
+        application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
+        bool ok = rows(o, frame->actor, true, &r, e);
+        if (ok && r.present) ok = cursor(o, frame->actor, &r, &chosen, e);
+        qa_native_address descriptor;
+        if (ok && chosen != SIZE_MAX && r.rows[chosen].selected)
+            ok = project_drop(o, frame, r.rows + chosen, true, &descriptor, e);
+        application_native_q2_inventory_readout_free(&r);
+        return ok;
+    }
     if (region->kind == 3 && frame->named) {
         if (event->phase == QA_NATIVE_REGION_ENTER) return lookup_name(o, event, frame, e);
         application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
@@ -486,8 +556,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
                 save_bytes(o, frame_storage(o, frame, e), &s, o->inventory + index * 4, 4, &frame->restore, e) &&
                 count_write(o, s.client + o->inventory + (uint64_t)index * 4, r.rows + chosen, e);
             if (ok) {
-                frame->named_row = r.rows[chosen]; frame->named_row.label = NULL;
-                frame->named_row.presentation = (application_native_q2_inventory_presentation){0}; frame->has_named_row = true;
+                frame_row(frame, r.rows + chosen);
                 decision->replace_state = true; decision->state = event->state; decision->state.registers[QA_NATIVE_RAX] = descriptor;
             }
         }
@@ -499,10 +568,13 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
     if (region->kind == 1) {
         ok = navigate(o, frame, &r, region->direction, event, e);
         if (ok) decision->action = QA_NATIVE_REGION_SKIP_TO_JOIN;
-    } else if (region->kind == 2) {
+    } else if (region->kind == 2 || region->kind == 5) {
+        if ((region->kind == 5) != frame->dropping) {
+            application_native_q2_inventory_readout_free(&r); return true;
+        }
         size_t chosen = SIZE_MAX;
-        if (!frame->named) ok = cursor(o, frame->actor, &r, &chosen, e);
-        const application_native_q2_inventory_row *row = frame->named ? frame->has_named_row ? &frame->named_row : NULL :
+        if (!frame->named && !frame->dropping) ok = cursor(o, frame->actor, &r, &chosen, e);
+        const application_native_q2_inventory_row *row = frame->named || frame->dropping ? frame->has_named_row ? &frame->named_row : NULL :
             chosen != SIZE_MAX ? r.rows + chosen : NULL;
         if (ok && row && row->selected) {
             ok = restore(o, &frame->restore, e);
@@ -510,7 +582,8 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
                 const qa_native_region_event *previous = o->command_event;
                 qa_actor_id previous_actor = o->command_actor;
                 o->command_event = event; o->command_actor = frame->actor;
-                ok = o->options.use(o->options.context, frame->actor, row->item, e);
+                ok = o->options.action(o->options.context, frame->actor, row->item,
+                    frame->dropping ? QA_ITEM_DROP : QA_ITEM_USE, e);
                 o->command_event = previous; o->command_actor = previous_actor;
             }
             if (ok) decision->action = QA_NATIVE_REGION_SKIP_TO_JOIN;
@@ -538,7 +611,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     application_native_q2_inventory_scanner **out, qa_error *e)
 {
     if (!out || !engine || !engine->declaration || !engine->primary_inventory || !options ||
-        !options->storage_bytes || !options->rows || !options->use || !options->print || !engine->provider->state.native.host)
+        !options->storage_bytes || !options->rows || !options->action || !options->print || !engine->provider->state.native.host)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native inventory scanner requires its actual primary profile and row services");
     *out = NULL;
     application_native_q2_inventory_scanner *o = calloc(1, sizeof(*o));
@@ -555,6 +628,17 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(o->declaration), &o->document, e)) return false;
     const qa_json_document *d = o->document; qa_json_id root = qa_json_root(d), inventory = qa_json_get(d, root, "inventory");
     qa_json_id items = qa_json_get(d, qa_json_get(d, root, "commands"), "items"); int64_t empty;
+    qa_json_id drop = qa_json_get(d, root, "drop"), callbacks = qa_json_get(d, drop, "callbacks");
+    bool drops = qa_json_get(d, drop, "named") != QA_JSON_NONE;
+    size_t callback_count = drops ? qa_json_size(d, callbacks) : 0;
+    if (drops && qa_json_type(d, callbacks) != QA_JSON_ARRAY)
+        return application_fail(e, QA_ERROR_FORMAT, "Native drop callbacks must be an array");
+    if (callback_count > SIZE_MAX / sizeof(*o->regions) - 7)
+        return application_fail(e, QA_ERROR_MEMORY, "Native drop region storage overflows");
+    o->regions = qa_arena_alloc(&o->selection_storage,
+        (7 + callback_count) * sizeof(*o->regions), _Alignof(inventory_region), e);
+    if (!o->regions) return false;
+    memset(o->regions, 0, (7 + callback_count) * sizeof(*o->regions));
     if (!word(d, inventory, "client", &o->client_pointer, e) || !word(d, inventory, "inventory", &o->inventory, e) ||
         !word(d, inventory, "count", &o->count, e) || !word(d, inventory, "cursor", &o->cursor, e) ||
         !qa_json_i64(d, qa_json_get(d, inventory, "empty"), &empty, e) || empty < INT32_MIN || empty > INT32_MAX ||
@@ -581,6 +665,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
             return application_fail(e, QA_ERROR_FORMAT, "Native scanner selection write leaves its declared client");
     }
     const char *names[] = {"next", "previous", "validate", "use", "namedUse"};
+    o->entry_count = drops ? 8 : 5;
     for (unsigned i = 0; i < 5; ++i) {
         inventory_entry *entry = o->entries + i; uint32_t rva;
         entry->owner = o; entry->kind = i;
@@ -596,6 +681,31 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
             .parameter_count = count, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
     }
+    if (drops) {
+        qa_json_id client = qa_json_get(d, drop, "client");
+        uint32_t pointer, inventory_offset, cursor_offset, lookup_return;
+        if (!word(d, client, "pointer", &pointer, e) ||
+            !word(d, client, "inventory", &inventory_offset, e) ||
+            !word(d, client, "cursor", &cursor_offset, e) ||
+            !word(d, client, "weapon", &o->drop_weapon, e) ||
+            !word(d, client, "pending", &o->drop_pending, e) ||
+            !word(d, drop, "lookupReturn", &lookup_return, e) ||
+            !address(o, lookup_return, &o->drop_lookup_return, e)) return false;
+        if (pointer != o->client_pointer || inventory_offset != o->inventory || cursor_offset != o->cursor ||
+            o->drop_weapon > client_bytes || o->pointer_bytes > client_bytes - o->drop_weapon ||
+            o->drop_pending > client_bytes || o->pointer_bytes > client_bytes - o->drop_pending)
+            return application_fail(e, QA_ERROR_FORMAT, "Native drop fields leave their declared client layout");
+        for (unsigned i = 5; i < 8; ++i) {
+            inventory_entry *entry = o->entries + i; uint32_t rva;
+            qa_json_id object = i == 6 ? qa_json_get(d, drop, "inventory") : drop;
+            const char *key = i == 5 ? "named" : i == 6 ? "entry" : "find";
+            entry->owner = o; entry->kind = i;
+            if (!word(d, object, key, &rva, e) || !address(o, rva, &entry->address, e)) return false;
+            entry->parameters[0] = (qa_native_type){.kind = QA_NATIVE_ADDRESS, .count = 1};
+            entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
+                .parameter_count = 1, .result = {.kind = i == 7 ? QA_NATIVE_ADDRESS : QA_NATIVE_VOID, .count = 1}};
+        }
+    }
     if (!region_profile(o, 0, "/inventory/next/scan", 1, 1, e) ||
         !region_profile(o, 1, "/inventory/previous/scan", 1, -1, e) ||
         !region_profile(o, 2, "/inventory/use/call", 2, 0, e) ||
@@ -606,6 +716,13 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     if (qa_json_type(d, validate) != QA_JSON_NULL) {
         if (!region_profile(o, 5, "/inventory/validate/scan", 1, 1, e)) return false;
         o->region_count = 6;
+    }
+    if (drops) {
+        if (!region_profile(o, o->region_count++, "/drop/inventory/admission", 4, 0, e)) return false;
+        for (size_t i = 0; i < callback_count; ++i) {
+            char path[64]; snprintf(path, sizeof(path), "/drop/callbacks/%zu", i);
+            if (!region_profile(o, o->region_count++, path, 5, 0, e)) return false;
+        }
     }
     return true;
 }
@@ -618,7 +735,7 @@ bool application_native_q2_inventory_scanner_activate(application_native_q2_inve
         size_t pages=bytes/stride+(bytes%stride!=0);
         if(!qa_pool_prepare(&o->readout_pages,&o->readout_storage,pages,stride,_Alignof(max_align_t),e)) return false;
     }
-    for (size_t i = 0; i < 5; ++i) if (!o->entries[i].binding && !qa_native_observe_entry(instance(o),
+    for (size_t i = 0; i < o->entry_count; ++i) if (!o->entries[i].binding && !qa_native_observe_entry(instance(o),
         o->entries[i].address, &o->entries[i].signature, entry_call, o->entries + i, &o->entries[i].binding, e)) return false;
     for (size_t i = 0; i < o->region_count; ++i) if (!o->regions[i].binding &&
         !qa_native_bind_region(instance(o), o->regions[i].id, region_call, o->regions + i, &o->regions[i].binding, e)) return false;
@@ -637,7 +754,7 @@ bool application_native_q2_inventory_scanner_suspend(application_native_q2_inven
         if (!qa_native_remove_region(o->regions[i - 1].binding, e)) return false;
         o->regions[i - 1].binding = NULL;
     }
-    for (size_t i = 5; i; --i) if (o->entries[i - 1].binding) {
+    for (size_t i = o->entry_count; i; --i) if (o->entries[i - 1].binding) {
         if (!qa_native_unobserve_entry(o->entries[i - 1].binding, e)) return false;
         o->entries[i - 1].binding = NULL;
     }

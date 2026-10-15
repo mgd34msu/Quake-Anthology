@@ -468,6 +468,23 @@ bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *erro
     return true;
 }
 
+bool qa_native_entry_caller(const qa_native_entry_observer *binding,
+    qa_native_address *out, qa_error *error)
+{
+    qa_native_instance *instance = binding ? binding->instance : NULL;
+    if (!out || !instance || !binding->active_calls || !instance->guest ||
+        native_active_instance != instance || !instance->callback_depth)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "Native caller requires its suspended entry");
+    qa_native_guest_cpu cpu;
+    uint8_t bytes[8];
+    uint8_t width = instance->module->info.image.target.pointer_bytes;
+    if (!qa_native_guest_cpu_read(instance->guest, &cpu, error)) return false;
+    qa_native_address stack = width == 4 ? (uint32_t)cpu.registers[QA_NATIVE_RSP] : cpu.registers[QA_NATIVE_RSP];
+    if (!qa_native_read(instance, stack, bytes, width, error)) return false;
+    *out = width == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
+    return true;
+}
+
 bool qa_native_invoke_original(qa_native_entry_observer *binding,
                                const qa_native_value *arguments, size_t count,
                                qa_native_value *result, qa_error *error) {

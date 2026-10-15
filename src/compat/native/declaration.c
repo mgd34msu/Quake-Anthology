@@ -264,11 +264,17 @@ static bool inventory_regions(qa_native_declaration *declaration, const qa_nativ
         previous = qa_json_get(declaration->document, inventory, "previous"),
         use = qa_json_get(declaration->document, inventory, "use"),
         named = qa_json_get(declaration->document, inventory, "namedUse");
-    return inventory_region(declaration, module, next, "scan", "join", "/inventory/next/scan", error) &&
+    bool ok = inventory_region(declaration, module, next, "scan", "join", "/inventory/next/scan", error) &&
         inventory_region(declaration, module, previous, "scan", "join", "/inventory/previous/scan", error) &&
         inventory_region(declaration, module, use, "call", "join", "/inventory/use/call", error) &&
         inventory_region(declaration, module, named, "call", "join", "/inventory/namedUse/call", error) &&
         inventory_region(declaration, module, named, "lookupCall", "lookupReturn", "/inventory/namedUse/lookup", error);
+    qa_json_id drop = qa_json_get(declaration->document, primary, "drop");
+    if (ok && qa_json_get(declaration->document, drop, "named") != QA_JSON_NONE)
+        ok = inventory_region(declaration, module,
+            qa_json_get(declaration->document, drop, "inventory"), "entry", "admitted",
+            "/drop/inventory/admission", error);
+    return ok;
 }
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,
                             qa_json_id value, const char *path, unsigned depth, qa_error *error) {

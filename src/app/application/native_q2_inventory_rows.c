@@ -35,7 +35,7 @@ struct application_native_q2_inventory_rows {
     const qa_json_document *document;
     original_slot *slots;
     size_t slot_count;
-    uint32_t prototypes[4];
+    uint32_t prototypes[6];
     qa_arena storage, commands;
     inventory_rows_cache caches[257];
     size_t storage_bytes;
@@ -181,10 +181,11 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
         qa_buffer_free(&name);
         qa_buffer_free(&icon);
     }
-    uint32_t prototypes[4] = {0};
-    static const char *const keys[] = {"weapon", "ammunition", "usable", "passive"};
+    uint32_t prototypes[6] = {0};
+    static const char *const keys[] = {"weapon", "ammunition", "usable", "passive", "droppable", "undroppable"};
     qa_json_id declarations = qa_json_get(doc, qa_json_get(doc, root, "inventory"), "prototypes");
-    for (size_t i = 0; okay && i < 4; ++i) {
+    bool drops = qa_json_get(doc, qa_json_get(doc, root, "drop"), "named") != QA_JSON_NONE;
+    for (size_t i = 0; okay && i < (drops ? 6u : 4u); ++i) {
         qa_buffer name = {0};
         okay = qa_json_string(doc, qa_json_get(doc, declarations, keys[i]), &name, error);
         qa_item_id item = okay ? qa_strings_find(qa_session_strings(owner->engine->provider->application->session),
@@ -374,6 +375,17 @@ static bool row_count(application_native_q2_inventory_rows *owner,
     uint64_t map_revision, uint64_t config_revision, application_native_q2_inventory_row *row,
     qa_arena *storage, application_native_q2_inventory_readout *out, qa_error *error) {
     qa_application *app = owner->engine->provider->application;
+    row->drop_index = row->source_index;
+    if (row->selected) {
+        row->drop_index = owner->prototypes[5];
+        qa_actor_owner item_owner;
+        if (qa_inventory_item_owner(app->inventory, source->actor, row->item, &item_owner, NULL)) {
+            qa_item_definition definition;
+            if (!qa_inventory_source_definition_read(app->inventory, source->actor,
+                item_owner, row->item, &definition, error)) return false;
+            if (definition.actions & QA_ITEM_DROP) row->drop_index = owner->prototypes[4];
+        }
+    }
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
         player_current(owner, source, arsenal, map_revision, config_revision, error) && append(storage, out, row, error);
 }
@@ -607,7 +619,7 @@ static bool rows(void *context, qa_actor_id actor,
     return true;
 }
 
-static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *error) {
+static bool action(void *context, qa_actor_id actor, qa_item_id item, qa_item_action action, qa_error *error) {
     application_native_q2_inventory_rows *owner = context;
     if (!owner_current(owner, error)) return false;
     qa_application *app = owner->engine->provider->application;
@@ -625,7 +637,7 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
     bool weapon = has_component && component.weapon;
     qa_arena_reset(&owner->commands);
     selected_catalog catalog = {.storage=&owner->commands};
-    if (okay && !weapon && arsenal != owner->engine->provider) {
+    if (okay && action == QA_ITEM_USE && !weapon && arsenal != owner->engine->provider) {
         if (arsenal->kind == APPLICATION_PROVIDER_QC || arsenal->kind == APPLICATION_PROVIDER_QVM ||
             (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine)) {
             qa_inventory_source_snapshot empty = {0};
@@ -641,11 +653,11 @@ static bool use(void *context, qa_actor_id actor, qa_item_id item, qa_error *err
         }
     }
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
-    if (okay && weapon) {
+    if (okay && action == QA_ITEM_USE && weapon) {
         bool accepted = false;
         okay = qa_application_equipment_request_weapon(app, actor,
             has_component ? component_owner : arsenal->owner, item, &accepted, error);
-    } else if (okay) okay = qa_inventory_item_action(app->inventory, actor, item, QA_ITEM_USE, error);
+    } else if (okay) okay = qa_inventory_item_action(app->inventory, actor, item, action, error);
     if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
     --owner->engine->calls; --owner->calls;
     return okay;
@@ -697,5 +709,5 @@ static size_t storage_bytes(void *context)
 application_native_q2_inventory_scanner_options application_native_q2_inventory_rows_options(
     application_native_q2_inventory_rows *owner) {
     return (application_native_q2_inventory_scanner_options){.context = owner,.storage_bytes=storage_bytes,
-        .rows = rows, .use = use, .print = print};
+        .rows = rows, .action = action, .print = print};
 }
