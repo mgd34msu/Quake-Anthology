@@ -90,6 +90,7 @@
 #include "../src/bots/runtime/internal.h"
 #include "../src/bots/ai/internal.h"
 #include "../src/bots/ai/source_view.h"
+#include "../src/bots/ai/source_timers.h"
 #include "qa/bot_observations_save.h"
 #include "qa/bot_knowledge.h"
 #include "qa/console_save.h"
@@ -363,6 +364,37 @@ static bool bot_authored_chat_client(void *context,int32_t client,uint32_t *out,
 {
     (void)context;(void)error;CHECK(client==0);*out=0;return true;
 }
+static void test_bot_authored_respawn_deadline(void)
+{
+    qa_error error={0};qa_session *session=NULL;qa_bot_actions *actions=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&session,&error));
+    CHECK(qa_bot_actions_create(1,&(qa_bot_action_services){0},&actions,&error));
+    qa_bot_runtime runtime={.actions=actions};
+    qa_bots bots={.runtime=&runtime,.time=10,.services={.shared={.session=session},
+        .source_action_client=bot_authored_chat_client}};
+    qa_bot_source_skill settings={0};uint8_t source[QA_BOT_STATE_SOURCE_BYTES]={0};
+    bot_ai_state state={.source_settings=&settings,.source_span={source,sizeof(source)},
+        .view={.decision=QA_BOT_RESPAWNING}};
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&state.view.actor,&error));
+    bot_ai_respawn_time_set(&state,10.5f);
+    qa_bot_input input={0};
+    CHECK(bot_ai_decide(&bots,&state,&error) && !bot_ai_respawn_wait(&state));
+    CHECK(qa_bot_actions_read(actions,0,&input,&error) && !(input.action_flags&QA_BOT_RESPAWN));
+    bots.time=10.5f;
+    CHECK(bot_ai_decide(&bots,&state,&error) && bot_ai_respawn_wait(&state));
+    CHECK(qa_bot_actions_read(actions,0,&input,&error) && (input.action_flags&QA_BOT_RESPAWN));
+    CHECK(bot_ai_respawn_time(&state)==10.5f);
+    CHECK(qa_bot_actions_reset(actions,0,&error));
+    bot_ai_respawn_wait_set(&state,false);state.source_settings=NULL;
+    CHECK(bot_ai_decide(&bots,&state,&error) && !bot_ai_respawn_wait(&state));
+    CHECK(qa_bot_actions_read(actions,0,&input,&error) && !(input.action_flags&QA_BOT_RESPAWN));
+    bots.time=10.75f;
+    CHECK(bot_ai_decide(&bots,&state,&error) && bot_ai_respawn_wait(&state));
+    CHECK(qa_bot_actions_read(actions,0,&input,&error) && (input.action_flags&QA_BOT_RESPAWN));
+    qa_bot_actions_destroy(actions);
+    CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
+    CHECK(qa_session_destroy(session,&error));
+}
 static void test_bot_authored_chat_delivery(qa_vfs *files)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -415,6 +447,7 @@ static void test_bot_authored_chat_delivery(qa_vfs *files)
 static void test_bot_source_knowledge(void)
 {
     test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
+    test_bot_authored_respawn_deadline();
     qa_error error={0};
     char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[5][160];
     CHECK(mkdtemp(directory));
@@ -451,7 +484,8 @@ static void test_bot_source_knowledge(void)
         " behaviors.combat.allow_grab_items true\n behaviors.allow_grab_power_items true\n"
         " behaviors.defer_power_items_to_humans true\n behaviors.combat.grab_weapons false\n"
         " behaviors.combat.max_item_dist 300\n behaviors.combat.min_health_pct 75\n"
-        " behaviors.combat.min_armor_pct 60\n behaviors.combat.min_ammo_pct 25\n}\n"
+        " behaviors.combat.min_armor_pct 60\n behaviors.combat.min_ammo_pct 25\n"
+        " behaviors.min_respawn_time 3\n behaviors.max_respawn_time 1\n}\n"
         "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n"
         "skill expert\n{\n behaviors.allow_combat true\n}\n\0\0";
     const char optional[]="{\n name \"\376\201\"\n}\n";
@@ -523,14 +557,16 @@ static void test_bot_source_knowledge(void)
         practice->items.allow_grab_items_in_combat && practice->items.allow_grab_power_items &&
         practice->items.defer_power_items_to_humans && !practice->items.combat_grab_weapons &&
         practice->items.combat_max_item_distance==300 && practice->items.combat_min_health_pct==75 &&
-        practice->items.combat_min_armor_pct==60 && practice->items.combat_min_ammo_pct==25);
+        practice->items.combat_min_armor_pct==60 && practice->items.combat_min_ammo_pct==25 &&
+        practice->min_respawn_time==3 && practice->max_respawn_time==1);
     CHECK(hard && !strcmp(qa_strings_cstr(strings,hard->name),"hard") &&
         !hard->movement.walk_only && hard->movement.allow_rocket_jumping && hard->best_aim_head &&
         qa_bot_source_skill_at(knowledge,2)->best_aim_head && !hard->items.allow_grab_items &&
         !hard->items.allow_grab_items_in_combat && !hard->items.allow_grab_power_items &&
         !hard->items.defer_power_items_to_humans && hard->items.combat_grab_weapons &&
         hard->items.combat_max_item_distance==512 && hard->items.combat_min_health_pct==100 &&
-        hard->items.combat_min_armor_pct==100 && hard->items.combat_min_ammo_pct==100);
+        hard->items.combat_min_armor_pct==100 && hard->items.combat_min_ammo_pct==100 &&
+        hard->min_respawn_time==0 && hard->max_respawn_time==0);
     const qa_bot_source_document *document=qa_bot_source_document_at(knowledge,0);
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
         !memcmp(document->source.data,weapons,document->source.size) && document->block_count==5);
@@ -544,7 +580,7 @@ static void test_bot_source_knowledge(void)
         bound->hold_and_release && bound->trigger_hold==.5f && bound->trigger_cooldown==.3f &&
         bound->aim_point==QA_BOT_AIM_BEST && bound->explosive && bound->maximum_ammo==100);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
-    CHECK(block->field_count==27 && block->fields[0].key==block->fields[1].key &&
+    CHECK(block->field_count==29 && block->fields[0].key==block->fields[1].key &&
         block->fields[15].key==block->fields[16].key && block->fields[15].count==2);
     const qa_bytes byte_name=qa_strings_text(strings,block->fields[15].values[1]);
     CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&

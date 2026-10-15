@@ -27,6 +27,7 @@ typedef struct qa_bot_source_skill {
     qa_bot_aiming aiming;
     qa_bot_source_movement movement;
     float weapon_fov_scalar;
+    float min_respawn_time, max_respawn_time;
     qa_bot_source_item_settings items;
 } qa_bot_source_skill;
 typedef struct qa_bot_source_field {

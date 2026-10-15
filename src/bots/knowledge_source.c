@@ -153,6 +153,8 @@ static const setting_field setting_fields[]={
     BOOL("behaviors.combat.allow_grab_items",items.allow_grab_items_in_combat),
     BOOL("behaviors.allow_grab_power_items",items.allow_grab_power_items),
     BOOL("behaviors.defer_power_items_to_humans",items.defer_power_items_to_humans),
+    FLOAT("behaviors.min_respawn_time",min_respawn_time),
+    FLOAT("behaviors.max_respawn_time",max_respawn_time),
     BOOL("behaviors.combat.grab_weapons",items.combat_grab_weapons),
     FLOAT("behaviors.combat.max_item_dist",items.combat_max_item_distance),
     FLOAT("behaviors.combat.min_health_pct",items.combat_min_health_pct),

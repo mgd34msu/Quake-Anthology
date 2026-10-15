@@ -782,7 +782,7 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
             DECISION_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&move_type,e));
             if(move_type!=3) ENTER(QA_BOT_SEEK_LONG_TERM);
             else {DECISION_CALL(bot_ai_source_action(b,s,QA_BOT_RESPAWN,e));}
-        } else if(bot_ai_respawn_time(s)<b->time) {
+        } else if(s->source_settings?bot_ai_respawn_time(s)<=b->time:bot_ai_respawn_time(s)<b->time) {
             bot_ai_respawn_wait_set(s,true);
             DECISION_CALL(bot_ai_source_action(b,s,QA_BOT_RESPAWN,e));
             if(bot_ai_respawn_chat_time(s)!=0) {
@@ -816,7 +816,15 @@ static bool lifecycle(qa_bots *b, bot_ai_state *s, bool *handled, qa_error *e) {
                 bot_ai_respawn_time_set(s,b->time+duration);bot_ai_respawn_chat_time_set(s,b->time);
             } else {
                 float random;DECISION_CALL(bot_ai_random(b,&random,e));
-                float base=b->time+1;bot_ai_respawn_time_set(s,base+random);bot_ai_respawn_chat_time_set(s,0);
+                if(s->source_settings) {
+                    double delay=(double)s->source_settings->min_respawn_time+
+                        (double)random*((double)s->source_settings->max_respawn_time-
+                            (double)s->source_settings->min_respawn_time);
+                    bot_ai_respawn_time_set(s,(float)((double)b->time+delay));
+                } else {
+                    float base=b->time+1;bot_ai_respawn_time_set(s,base+random);
+                }
+                bot_ai_respawn_chat_time_set(s,0);
             }
             bot_ai_respawn_wait_set(s,false);
         } else {
