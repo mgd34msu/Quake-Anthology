@@ -852,9 +852,15 @@ qa_cvars *qa_console_cvars(const qa_console *console)
     return console ? console->options.cvars : NULL;
 }
 
-#define COMMAND(n, d, u) {.name = n, .description = d, .engine_command = true, \
-    .documentation = &(const qa_console_documentation){.usage = u}}
-static const qa_console_entry builtin_entries[] = {
+typedef struct builtin_command {
+    qa_console_entry view;
+    bool host_forward;
+} builtin_command;
+#define COMMAND(n, d, u) {.view = {.name = n, .description = d, .engine_command = true, \
+    .documentation = &(const qa_console_documentation){.usage = u}}}
+#define HOST_COMMAND(n, d, u) {.view = {.name = n, .description = d, .engine_command = true, \
+    .documentation = &(const qa_console_documentation){.usage = u}}, .host_forward = true}
+static const builtin_command builtin_entries[] = {
     COMMAND("stuffcmds", "Execute startup commands", "stuffcmds"),
     COMMAND("exec", "Execute a content script", "exec <filename>"),
     COMMAND("echo", "Print console text", "echo <text>"),
@@ -873,18 +879,39 @@ static const qa_console_entry builtin_entries[] = {
     COMMAND("vstr", "Execute a variable as commands", "vstr <name>"),
     COMMAND("inc", "Increase a numeric variable", "inc <name> [amount]"),
     COMMAND("dec", "Decrease a numeric variable", "dec <name> [amount]"),
-    COMMAND("resetall", "Restore variable defaults", "resetall")
+    COMMAND("resetall", "Restore variable defaults", "resetall"),
+    HOST_COMMAND("god", "Toggle god mode at the source server", "god"),
+    HOST_COMMAND("notarget", "Toggle targeting immunity at the source server", "notarget"),
+    HOST_COMMAND("noclip", "Toggle collision at the source server", "noclip"),
+    HOST_COMMAND("give", "Grant an item at the source server", "give <item> [amount]"),
+    HOST_COMMAND("giveall", "Grant all equipment at the source server", "giveall"),
+    HOST_COMMAND("kill", "Suicide through the source player lifecycle", "kill"),
+    HOST_COMMAND("suicide", "Suicide through the source player lifecycle", "suicide"),
+    HOST_COMMAND("fly", "Toggle flying at the source server", "fly"),
+    HOST_COMMAND("pause", "Toggle source server pause", "pause"),
+    HOST_COMMAND("status", "Show the source map and connected players", "status"),
+    HOST_COMMAND("ping", "Show client round trip times", "ping")
 };
+#undef HOST_COMMAND
 #undef COMMAND
 
 const qa_console_entry *qac_console_builtin_at(size_t ordinal)
 {
     return ordinal < sizeof(builtin_entries) / sizeof(*builtin_entries)
-        ? &builtin_entries[ordinal] : NULL;
+        ? &builtin_entries[ordinal].view : NULL;
+}
+
+static const builtin_command *builtin_find(const char *name)
+{
+    for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(*builtin_entries); ++i)
+        if (qa_text_ascii_equal(name, builtin_entries[i].view.name)) return &builtin_entries[i];
+    return NULL;
 }
 
 static bool builtin_allowed(qa_ruleset_id dialect, const char *name)
 {
+    const builtin_command *entry = builtin_find(name);
+    if (entry && entry->host_forward) return qac_q1(dialect);
     if (strcmp(name, "alias") == 0) return dialect != QA_RULESET_Q3;
     if (strcmp(name, "stuffcmds") == 0) return qac_q1(dialect);
     if (strcmp(name, "cvar_restart") == 0) return dialect == QA_RULESET_Q3;
@@ -897,8 +924,8 @@ static bool is_builtin(const qa_console *console,const qa_command_context *conte
     const qa_console_options *options=options_for(console,context);
     if (!options || options->disable_builtins) return false;
     for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i)
-        if (qa_text_ascii_equal(name, builtin_entries[i].name) &&
-            builtin_allowed(context->dialect, builtin_entries[i].name)) return true;
+        if (!builtin_entries[i].host_forward && qa_text_ascii_equal(name, builtin_entries[i].view.name) &&
+            builtin_allowed(context->dialect, builtin_entries[i].view.name)) return true;
     return false;
 }
 
@@ -1121,7 +1148,8 @@ const qa_console_entry *qa_console_context_entry_at(const qa_console *console,
     const qa_console_options *options=options_for(console,context);
     if (options && !options->disable_builtins)
         for (size_t i=0; i<sizeof(builtin_entries)/sizeof(builtin_entries[0]); ++i)
-            if (builtin_allowed(context->dialect,builtin_entries[i].name) && ordinal-- == 0) return &builtin_entries[i];
+            if (qa_console_find(console, context, builtin_entries[i].view.name) == &builtin_entries[i].view &&
+                ordinal-- == 0) return &builtin_entries[i].view;
     return NULL;
 }
 
@@ -1338,8 +1366,9 @@ const qa_console_entry *qa_console_find(const qa_console *console,
     const qa_console_options *options=options_for(console,context);
     if (options && !options->disable_builtins)
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i)
-            if (qa_text_ascii_equal(name, builtin_entries[i].name) && builtin_allowed(context->dialect, builtin_entries[i].name))
-                return &builtin_entries[i];
+            if (qa_text_ascii_equal(name, builtin_entries[i].view.name) && builtin_allowed(context->dialect, builtin_entries[i].view.name) &&
+                (!builtin_entries[i].host_forward || !select_command(console, context, name)))
+                return &builtin_entries[i].view;
     const command_entry *entry = select_command(console, context, name);
     return entry == NULL ? NULL : &select_contribution(console,entry,context)->view;
 }
@@ -1354,6 +1383,13 @@ static bool dispatch_continuation(qa_console *console,const qa_command_context *
     if (!valid_context(console,context,error)) return false;
     command_entry *entry=select_command(console,context,command->argv[0]);
     command_contribution *part=select_contribution(console,entry,context);
+    const builtin_command *known = builtin_find(command->argv[0]);
+    if (!part && known && known->host_forward && qac_q1(context->dialect) &&
+        (context->origin == QA_COMMAND_LOCAL || context->origin == QA_COMMAND_SEAT)) {
+        result = fallback_call(console, options->forward, command, error);
+        return result == QA_COMMAND_UNHANDLED ? fallback(console, command, true, error) :
+            result == QA_COMMAND_HANDLED;
+    }
     bool success;
     if (part && qac_q1(context->dialect)) success=qac_fail(error,QA_ERROR_ARGUMENT,"Q1 command has no callback");
     else if (part && (qac_q2(context->dialect) ||
@@ -2001,6 +2037,11 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         return true;
     }
     if (qa_text_ascii_equal(name, "cmd")) return fallback_call(console, options->forward, command, error) != QA_COMMAND_FAILED;
+    const builtin_command *declaration = builtin_find(name);
+    if (declaration && declaration->host_forward && qac_q1(context->dialect)) {
+        *handled = false;
+        return true;
+    }
     if (qa_text_ascii_equal(name, "exec")) return execute_script(console, command, storage, error);
     if (qa_text_ascii_equal(name, "stuffcmds") && qac_q1(context->dialect))
         return options->startup_commands == NULL || qa_console_insert(console, context, options->startup_commands, error);
@@ -2034,8 +2075,8 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
         const char *pattern = context->dialect == QA_RULESET_Q3 && command->argc > 1 ? command->argv[1] : NULL;
         size_t count = 0;
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i) {
-            const char *entry_name = builtin_entries[i].name;
-            if (!builtin_allowed(context->dialect, entry_name) ||
+            const char *entry_name = builtin_entries[i].view.name;
+            if (qa_console_find(console, context, entry_name) != &builtin_entries[i].view ||
                 (pattern != NULL && !qa_command_filter(pattern, entry_name, false))) continue;
             output(console, context, entry_name); output(console, context, "\n");
             ++count;

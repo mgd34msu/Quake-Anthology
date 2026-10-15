@@ -700,7 +700,7 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
     command.context.dialect = qa_product_ruleset(source->product, QA_GAME_Q3);
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error);
     bool handled = false;
-    if (okay && !row->remote) {
+    if (okay) {
         qa_command_result host = qa_application_host_command(app, &command, error);
         okay = host != QA_COMMAND_FAILED;
         handled = host == QA_COMMAND_HANDLED;

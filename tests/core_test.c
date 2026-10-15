@@ -2670,6 +2670,40 @@ static void test_console_command_precedence(void)
     CHECK(qa_console_execute_now(console,&remote,"qa_unknown_remote_command",&error));
     CHECK(counts.printed_bytes==printed_bytes);
     qa_console_destroy(console);qa_cvars_destroy(cvars);
+
+    const qa_ruleset_id q1_dialects[]={QA_RULESET_NETQUAKE,QA_RULESET_QUAKEWORLD};
+    for(size_t i=0;i<sizeof(q1_dialects)/sizeof(*q1_dialects);++i) {
+        cvars=qa_cvars_create(&(qa_cvar_options){.dialect=q1_dialects[i]},&error);
+        CHECK(cvars);
+        context=(qa_command_context){.owner=1,.dialect=q1_dialects[i],.origin=QA_COMMAND_LOCAL,
+            .cvar_view=qa_cvars_view_identity(cvars)};
+        counts=(console_precedence_counts){.callback_result=QA_COMMAND_UNHANDLED,
+            .forward_result=QA_COMMAND_HANDLED};
+        console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,
+            .user=&counts,.source_command=console_precedence_callback,
+            .forward=console_precedence_forward,.print=console_precedence_print},&error);
+        CHECK(console && qa_console_find(console,&context,"status"));
+        CHECK(qa_console_execute_now(console,&context,"status",&error));
+        CHECK(counts.called==1 && counts.forwarded==1);
+        CHECK(qa_console_execute_now(console,&context,"qa_unknown_q1_host_word",&error));
+        CHECK(counts.called==2 && counts.forwarded==1);
+
+        release_command_counts host_handler={0};
+        CHECK(qa_console_register_context(console,&context,"status","",context.owner,
+            context.owner,true,release_count_command,&host_handler,&error));
+        CHECK(qa_console_find(console,&context,"status")->owner==context.owner);
+        CHECK(qa_console_execute_now(console,&context,"status",&error));
+        CHECK(host_handler.completed==1 && counts.called==2 && counts.forwarded==1);
+        server=context;server.origin=QA_COMMAND_SERVER;
+        CHECK(qa_console_execute_now(console,&server,"ping",&error));
+        CHECK(counts.called==3 && counts.forwarded==1);
+        CHECK(qa_console_execute_now(console,&server,"status",&error));
+        CHECK(host_handler.completed==2 && counts.called==3 && counts.forwarded==1);
+        counts.callback_result=QA_COMMAND_HANDLED;
+        CHECK(qa_console_execute_now(console,&context,"god",&error));
+        CHECK(counts.called==4 && counts.forwarded==1);
+        qa_console_destroy(console);qa_cvars_destroy(cvars);
+    }
 }
 
 static void test_shared_video_mode_recovery(void)

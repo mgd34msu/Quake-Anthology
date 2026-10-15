@@ -12,9 +12,12 @@
 #include "unified_q3_events.h"
 #include "qa/application_players.h"
 #include "qa/application_equipment.h"
+#include "qa/application_network.h"
+#include "qa/application_network_qw.h"
 #include "qa/command_lexer.h"
 #include "qa/text.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static application_provider *command_owner(const qa_application *application, uint64_t owner)
@@ -181,9 +184,86 @@ static qa_command_result q3_round_command(qa_application *application,
         ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 
+static bool host_reply(application_provider *source, const qa_command_invocation *command,
+    qa_actor_id recipient, const char *text, qa_error *error)
+{
+    return recipient.registry ? application_source_message(source, recipient, text, error) :
+        qa_application_log_emit(source->application, &command->context, text,
+            QA_APPLICATION_LOG_CONSOLE, error);
+}
+
+static qa_command_result q1_host_command(qa_application *application,
+    const qa_command_invocation *command, qa_error *error)
+{
+    const char *name = command->argv[0];
+    bool status = q3_command_named(name, "status"), ping = q3_command_named(name, "ping");
+    bool pause = q3_command_named(name, "pause");
+    if (!status && !ping && !pause) return QA_COMMAND_UNHANDLED;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!source || (source->kind != APPLICATION_PROVIDER_Q1 && source->kind != APPLICATION_PROVIDER_QC) ||
+        (command->context.owner && command->context.owner != source->owner)) return QA_COMMAND_UNHANDLED;
+    qa_actor_id actor = command->context.actor;
+    if (!actor.registry && command->context.origin != QA_COMMAND_SERVER) return QA_COMMAND_UNHANDLED;
+    if (command->argc != 1) {
+        char usage[32];
+        snprintf(usage, sizeof(usage), "Usage: %s\n", status ? "status" : ping ? "ping" : "pause");
+        return host_reply(source, command, actor, usage, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
+    if (pause) {
+        qa_buffer text = {0};
+        bool changed, okay;
+        if (actor.registry) {
+            uint8_t storage[QA_QW_PAUSE_ANNOUNCEMENT_BYTES];
+            qa_bytes announcement = {0};
+            if (source->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD) {
+                okay = qa_application_network_qw_pause(application, actor, storage, sizeof(storage),
+                    &announcement, &changed, error);
+            } else {
+                okay = qa_application_network_q1_pause(application, actor, &text, &changed, error);
+                announcement = (qa_bytes){text.data, text.size};
+            }
+            if (okay) okay = changed ? application_source_message(source, (qa_actor_id){0},
+                (const char *)announcement.data, error) : host_reply(source, command, actor,
+                (const char *)announcement.data, error);
+            qa_buffer_free(&text);
+        } else {
+            bool paused = !qa_application_q1_paused(application);
+            const char *announcement = paused ? "Server paused the game\n" : "Server unpaused the game\n";
+            okay = application_q1_pause_set(application, source, paused, error) &&
+                application_source_message(source, (qa_actor_id){0}, announcement, error) &&
+                host_reply(source, command, actor, announcement, error);
+        }
+        return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
+    qa_application_network_q1_world world;
+    qa_application_network_q1_status_player players[255];
+    size_t count;
+    if (!qa_application_network_q1_world_read(application, source->owner, &world, error) ||
+        !qa_application_network_q1_status(application, source->owner, players, &count, error))
+        return QA_COMMAND_FAILED;
+    size_t extent = strlen(world.map) + 128;
+    for (size_t i = 0; i < count; ++i) extent += strlen(players[i].name) + 32;
+    qa_arena storage = {0};
+    qa_console_command_arena(command->console, &storage);
+    char *text = qa_arena_alloc(&storage, extent, 1, error);
+    if (!text) { qa_arena_destroy(&storage); return QA_COMMAND_FAILED; }
+    size_t used = status ? (size_t)snprintf(text, extent,
+        "map: %s\nplayers: %zu active (%u max)\n", world.map, count, world.max_clients) :
+        (size_t)snprintf(text, extent, "Client ping times:\n");
+    for (size_t i = 0; i < count; ++i)
+        used += (size_t)snprintf(text + used, extent - used, status ? "#%u %s\n" : "%u %s\n",
+            status ? players[i].source_slot : 0, players[i].name);
+    bool okay = host_reply(source, command, actor, text, error);
+    qa_arena_destroy(&storage);
+    return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+}
+
 qa_command_result qa_application_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
+    qa_command_result q1 = q1_host_command(application, command, error);
+    if (q1 != QA_COMMAND_UNHANDLED) return q1;
+    if (command->context.origin == QA_COMMAND_REMOTE) return QA_COMMAND_UNHANDLED;
     qa_command_result round = q3_round_command(application, command, error);
     if (round != QA_COMMAND_UNHANDLED) return round;
     bool handled = false;
