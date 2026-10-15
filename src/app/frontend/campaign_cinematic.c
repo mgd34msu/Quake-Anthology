@@ -309,12 +309,16 @@ static bool prepare(frontend_cinematic *owner,qa_error *error)
     qa_audio_engine_stream_cut_destroy(cut); qa_audio_engine_destroy(staging);
     return ok;
 }
+static bool saved_position(qa_source_save_io *io,qa_cinematic_checkpoint *playback)
+{
+    return qa_source_save_f64(io,&playback->source_ms) && qa_source_save_u64(io,&playback->loop) &&
+        qa_source_save_bool(io,&playback->paused);
+}
 static bool saved_command(qa_source_save_io *io,cinematic_request *request,bool *present,bool *travel)
 {
     return qa_source_save_bool(io,present) && (!*present ||
         (qa_source_save_owned_text(io,&request->path) &&
-        qa_source_save_f64(io,&request->playback.source_ms) && qa_source_save_u64(io,&request->playback.loop) &&
-        qa_source_save_bool(io,&request->playback.paused) && qa_source_save_u32(io,&request->seat) &&
+        saved_position(io,&request->playback) && qa_source_save_u32(io,&request->seat) &&
         qa_source_save_bool(io,&request->loop) && qa_source_save_bool(io,&request->hold) &&
         qa_source_save_bool(io,&request->focus_paused) && qa_source_save_bool(io,travel)));
 }
@@ -334,8 +338,7 @@ static bool saved_slot(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slot)
         qa_source_save_f32(io,&slot->rect.x) && qa_source_save_f32(io,&slot->rect.y) &&
         qa_source_save_f32(io,&slot->rect.width) && qa_source_save_f32(io,&slot->rect.height) &&
         qa_source_save_u32(io,&slot->flags) && qa_source_save_bool(io,&slot->has_playback) &&
-        (!slot->has_playback || (qa_source_save_f64(io,&slot->playback.source_ms) &&
-            qa_source_save_u64(io,&slot->playback.loop) && qa_source_save_bool(io,&slot->playback.paused))) &&
+        (!slot->has_playback || saved_position(io,&slot->playback)) &&
         qa_source_save_bool(io,&slot->occupied) && qa_source_save_bool(io,&slot->selected) &&
         qa_source_save_bool(io,&slot->decoder) && qa_source_save_i32(io,&slot->status) &&
         qa_source_save_i32(io,&slot->play_on_walls);
@@ -352,12 +355,13 @@ static bool saved_system_state(qa_source_save_io *io,qa_q3_system_movie_state *s
     }
     return ok;
 }
-static bool saved_system_slots(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slots,size_t count)
+static bool saved_system_slots(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slots,size_t count,
+    bool continuation)
 {
     size_t expected=0;
     for (size_t i=0;i<count;++i) if (slots[i].flags&1u) ++expected;
     bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
-    if ((writing && !expected) || (!writing && io->offset==io->input.size && !expected)) return true;
+    if ((writing && !expected && !continuation) || (!writing && io->offset==io->input.size && !expected)) return true;
     size_t systems=expected;
     if (!qa_source_save_count(io,&systems,16) || systems!=expected)
         return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved System movie count differs from its slots");
@@ -376,6 +380,65 @@ static bool saved_system_slots(qa_source_save_io *io,qa_q3_cinematic_restore_slo
         seen[index]=true;
         if (!saved_system_state(io,&slots[index].system_state)) return false;
         next=index+1;
+    }
+    return true;
+}
+static bool saved_progress(qa_source_save_io *io,qa_cinematic_checkpoint *playback)
+{
+    int32_t kind=(int32_t)playback->progress_kind,status=(int32_t)playback->status;
+    if (!qa_source_save_i32(io,&kind) || kind!=QA_CINEMATIC_PROGRESS_ROQ ||
+        !qa_source_save_i32(io,&status) || status<QA_MEDIA_PLAYING || status>QA_MEDIA_STOPPED)
+        return frontend_fail(io->error,QA_ERROR_FORMAT,"Invalid saved cinematic progress");
+    playback->progress_kind=(qa_cinematic_progress_kind)kind;
+    playback->status=(qa_media_status)status;
+    qa_cinematic_roq_progress *roq=&playback->progress.roq;
+    qa_roq_prefix_cursor *cursor=&roq->cursor;
+    qa_cinematic_picture_progress *picture=&roq->picture;
+    return qa_source_save_u64(io,&cursor->position) && qa_source_save_u64(io,&cursor->played) &&
+        qa_source_save_u64(io,&cursor->buffer_offset) && qa_source_save_u32(io,&cursor->chunk_offset) &&
+        qa_source_save_u32(io,&cursor->buffered_length) && qa_source_save_u16(io,&cursor->packet_remaining) &&
+        qa_source_save_u8(io,&cursor->terminal) && qa_source_save_bool(io,&cursor->has_next) &&
+        qa_source_save_bool(io,&cursor->invalid) && qa_source_save_bool(io,&cursor->retained_eof) &&
+        qa_source_save_bool(io,&cursor->buffered_next) && qa_source_save_f64(io,&roq->clock_ms) &&
+        qa_source_save_u32(io,&roq->epoch_back_ms) && qa_source_save_u32(io,&roq->last_back_ms) &&
+        qa_source_save_i64(io,&roq->decoded) && qa_source_save_u64(io,&roq->source_sample) &&
+        qa_source_save_bool(io,&roq->pending_loop) && qa_source_save_bool(io,&picture->present) &&
+        (!picture->present || (qa_source_save_u64(io,&picture->index) &&
+            qa_source_save_u64(io,&picture->loop) && qa_source_save_f64(io,&picture->source_ms) &&
+            qa_source_save_f64(io,&picture->presentation_ms)));
+}
+static bool saved_progress_tail(qa_source_save_io *io,cinematic_request *command,bool present,
+    qa_q3_cinematic_restore_slot *slots,size_t count)
+{
+    bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
+    size_t records=present && command->playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
+    for (size_t i=0;i<count;++i)
+        if (slots[i].has_playback && slots[i].playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME) ++records;
+    if ((writing && !records) || (!writing && io->offset==io->input.size)) return true;
+    if (!qa_source_save_count(io,&records,17)) return false;
+    bool seen_command=false,seen[16]={0};
+    size_t next=0;
+    for (size_t i=0;i<records;++i) {
+        int32_t handle=-1;
+        if (writing && (seen_command || !present || command->playback.progress_kind==QA_CINEMATIC_PROGRESS_TIME)) {
+            while (next<count && (!slots[next].has_playback ||
+                slots[next].playback.progress_kind==QA_CINEMATIC_PROGRESS_TIME)) ++next;
+            handle=slots[next].handle;
+        }
+        if (!qa_source_save_i32(io,&handle)) return false;
+        qa_cinematic_checkpoint *playback=NULL;
+        if (handle==-1 && present && !seen_command) {
+            playback=&command->playback; seen_command=true;
+        } else if (handle>=0) {
+            size_t index=0;
+            while (index<count && slots[index].handle!=handle) ++index;
+            if (index<count && slots[index].has_playback && !seen[index]) {
+                playback=&slots[index].playback; seen[index]=true; next=index+1;
+            }
+        }
+        if (!playback)
+            return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved cinematic progress has no unique playback");
+        if (!saved_progress(io,playback)) return false;
     }
     return true;
 }
@@ -423,7 +486,10 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
             slot.system->state(slot.system->context,&saved->system_state,error);
         if (ok && saved->has_playback) ok=qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&saved->playback,error);
     }
-    if (ok && count) {
+    bool progress=present && request.playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
+    for (size_t i=0;i<count;++i)
+        if (slots[i].has_playback && slots[i].playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME) progress=true;
+    if (ok && (count || progress)) {
         /* One per-save association also covers owners not yet lazily created.
          * Runtime pointers qualify groups here but are never written. */
         for (size_t i=0;i<count;++i) {
@@ -435,7 +501,8 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         }
         ok=qa_source_save_count(&io,&count,16);
         for (size_t i=0;ok && i<count;++i) ok=saved_slot(&io,slots+i);
-        if (ok) ok=saved_system_slots(&io,slots,count);
+        if (ok) ok=saved_system_slots(&io,slots,count,progress);
+        if (ok) ok=saved_progress_tail(&io,&request,present,slots,count);
     }
     ok=ok && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
@@ -453,7 +520,8 @@ bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *err
     if (ok && io.offset<io.input.size) {
         ok=qa_source_save_count(&io,&saved->count,16);
         for (size_t i=0;ok && i<saved->count;++i) ok=saved_slot(&io,saved->slots+i);
-        if (ok) ok=saved_system_slots(&io,saved->slots,saved->count);
+        if (ok) ok=saved_system_slots(&io,saved->slots,saved->count,false);
+        if (ok) ok=saved_progress_tail(&io,&saved->command,saved->present,saved->slots,saved->count);
     }
     ok=ok && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);

@@ -1,4 +1,5 @@
 #include "roq_internal.h"
+#include "cinematic_internal.h"
 #include "qa/arena.h"
 
 #include <stdlib.h>
@@ -408,4 +409,14 @@ bool qa_roq_decoder_view(const qa_roq_decoder *decoder, size_t offset, size_t le
         return roq_fail(error, "RoQ upload exceeds physical image buffers");
     *out = (qa_bytes){decoder->scratch->frames + offset, length};
     return true;
+}
+
+void cinematic_roq_decoder_cursor(const qa_roq_decoder *decoder, qa_roq_prefix_cursor *out) {
+    const roq_stream_state *state = &decoder->stream.state;
+    *out = (qa_roq_prefix_cursor){
+        .position = state->position, .played = state->played,
+        .buffer_offset = state->buffer_offset, .chunk_offset = state->chunk_offset,
+        .buffered_length = state->buffered_length, .packet_remaining = state->packet_remaining,
+        .terminal = decoder->unknown, .has_next = state->has_next, .invalid = state->invalid,
+        .retained_eof = state->retained_eof, .buffered_next = state->buffered_next};
 }

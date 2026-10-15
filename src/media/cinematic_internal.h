@@ -17,7 +17,7 @@ struct qa_cinematic {
     } movie;
     double start_ms, paused_at, paused_duration, source_clock_offset;
     bool paused, dirty, completed, focus_paused, busy, faulted;
-    qa_media_status status, decoder_status;
+    qa_media_status status;
     qa_media_frame picture;
     bool has_picture;
     uint64_t revision, image_revision;
@@ -35,10 +35,11 @@ struct qa_cinematic {
 bool cinematic_fail(qa_error *, const char *);
 bool cinematic_elapsed(qa_cinematic *, double *, qa_error *);
 bool cinematic_cin_resume(qa_cin_playback *, double, uint64_t, double *, qa_media_status *, qa_error *);
-bool cinematic_roq_resume(qa_roq_playback *, double, uint64_t, double *, qa_media_status *, qa_error *);
+bool cinematic_roq_resume(qa_roq_playback *, const qa_cinematic_checkpoint *, double *, qa_media_status *, qa_error *);
 bool cinematic_ogv_resume(qa_ogv_playback *, double, uint64_t, double *, qa_media_status *, qa_error *);
 void cinematic_cin_position(const qa_cin_playback *, double, double *, uint64_t *);
-void cinematic_roq_position(const qa_roq_playback *, double, double *, uint64_t *);
+void cinematic_roq_decoder_cursor(const qa_roq_decoder *, qa_roq_prefix_cursor *);
+void cinematic_roq_position(const qa_roq_playback *, double, qa_cinematic_checkpoint *);
 void cinematic_ogv_position(const qa_ogv_playback *, double, double *, uint64_t *);
 
 #endif

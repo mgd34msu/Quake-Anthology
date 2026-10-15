@@ -69,11 +69,41 @@ typedef struct qa_cinematic_options {
     void (*diagnostic)(void *, const char *);
 } qa_cinematic_options;
 typedef struct qa_cinematic qa_cinematic;
+typedef enum qa_cinematic_progress_kind {
+    QA_CINEMATIC_PROGRESS_TIME,
+    QA_CINEMATIC_PROGRESS_ROQ
+} qa_cinematic_progress_kind;
+typedef struct qa_roq_prefix_cursor {
+    uint64_t position, played, buffer_offset;
+    uint32_t chunk_offset, buffered_length;
+    uint16_t packet_remaining;
+    uint8_t terminal;
+    bool has_next, invalid, retained_eof, buffered_next;
+} qa_roq_prefix_cursor;
+typedef struct qa_cinematic_picture_progress {
+    bool present;
+    uint64_t index, loop;
+    double source_ms, presentation_ms;
+} qa_cinematic_picture_progress;
+typedef struct qa_cinematic_roq_progress {
+    qa_roq_prefix_cursor cursor;
+    double clock_ms;
+    uint32_t epoch_back_ms, last_back_ms;
+    int64_t decoded;
+    uint64_t source_sample;
+    bool pending_loop;
+    qa_cinematic_picture_progress picture;
+} qa_cinematic_roq_progress;
 typedef struct qa_cinematic_checkpoint {
     const char *resource;
     double source_ms;
     uint64_t loop;
     bool paused;
+    qa_cinematic_progress_kind progress_kind;
+    qa_media_status status;
+    union {
+        qa_cinematic_roq_progress roq;
+    } progress;
 } qa_cinematic_checkpoint;
 bool qa_cinematic_checkpoint_read(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);
 bool qa_cinematic_restore(const qa_cinematic_source *, const qa_cinematic_options *,

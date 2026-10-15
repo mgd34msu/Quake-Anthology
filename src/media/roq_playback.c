@@ -283,48 +283,136 @@ bool qa_roq_playback_restart(qa_roq_playback *playback, qa_media_clock clock, bo
     return ok;
 }
 static double resume_clock(void *context) { return *(const double *)context; }
-bool cinematic_roq_resume(qa_roq_playback *playback, double source_ms, uint64_t loop,
+static bool resume_picture_audio(void *context, const qa_media_audio *sound, qa_error *error) {
+    (void)context; (void)sound; (void)error;
+    return true;
+}
+static bool same_prefix(const qa_roq_prefix_cursor *a, const qa_roq_prefix_cursor *b) {
+    return a->position == b->position && a->played == b->played &&
+        a->buffer_offset == b->buffer_offset && a->chunk_offset == b->chunk_offset &&
+        a->buffered_length == b->buffered_length && a->packet_remaining == b->packet_remaining &&
+        a->terminal == b->terminal && a->has_next == b->has_next && a->invalid == b->invalid &&
+        a->retained_eof == b->retained_eof && a->buffered_next == b->buffered_next;
+}
+bool cinematic_roq_resume(qa_roq_playback *playback, const qa_cinematic_checkpoint *checkpoint,
     double *elapsed_ms, qa_media_status *status, qa_error *error) {
-    double zero = 0;
-    qa_media_clock clock = {&zero, resume_clock};
+    double now = 0;
+    qa_media_clock clock = {&now, resume_clock};
     if (!qa_roq_playback_restart(playback, clock, true, error)) return false;
-    playback->loop = loop;
+    bool exact = checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_ROQ;
+    const qa_cinematic_roq_progress *progress = &checkpoint->progress.roq;
+    bool retained_picture = exact && progress->picture.present && progress->decoded <= 0 &&
+        progress->picture.loop >= checkpoint->loop;
+    qa_roq_playback_options options = playback->options;
+    if (retained_picture) {
+        playback->options.audio = resume_picture_audio;
+        playback->options.before_audio_reset = NULL;
+    }
+    if (!exact) playback->loop = checkpoint->loop;
     playback->busy = true;
     playback->clock = clock;
-    double wanted = trunc((double)(float)(source_ms * 3 / 100)) - 1;
+    double wanted = trunc((double)(float)(checkpoint->source_ms * 3 / 100)) - 1;
     qa_roq_decode_hooks hooks = {
         .context = playback, .before_stereo = before_stereo, .info = info, .audio = audio};
     bool ok = true;
-    while (ok && playback->status == QA_MEDIA_PLAYING &&
-        ((double)playback->decoded <= wanted ||
-        qa_roq_decoder_in_packet(playback->decoder))) {
+    for (;;) {
+        if (retained_picture) {
+            if (playback->has_frame && playback->frame.loop == progress->picture.loop &&
+                playback->frame.index == progress->picture.index) {
+                /* Explicit restart also retains its preceding picture while
+                 * resetting the pass number and decoded prefix. */
+                if (!reset(playback, clock, false, error)) { ok = false; break; }
+                playback->pending_loop = false;
+                playback->options = options;
+                retained_picture = false;
+                continue;
+            }
+        } else if (exact) {
+            qa_roq_prefix_cursor cursor;
+            cinematic_roq_decoder_cursor(playback->decoder, &cursor);
+            if (playback->loop == checkpoint->loop && same_prefix(&cursor, &progress->cursor) &&
+                playback->decoded == progress->decoded && playback->source_sample == progress->source_sample)
+                break;
+        } else if (playback->status != QA_MEDIA_PLAYING ||
+            ((double)playback->decoded > wanted && !qa_roq_decoder_in_packet(playback->decoder)))
+            break;
         qa_roq_event event;
-        ok = qa_roq_decoder_chunk(playback->decoder, &hooks, &event, error);
-        if (!ok) break;
-        if (event.kind == QA_ROQ_FRAME) ok = publish(playback, &event, error);
-        else if (event.kind == QA_ROQ_END)
-            playback->status = playback->options.hold && !qa_roq_decoder_invalid(playback->decoder) ?
-                QA_MEDIA_HELD : QA_MEDIA_ENDED;
+        if (!qa_roq_decoder_chunk(playback->decoder, &hooks, &event, error)) { ok = false; break; }
+        if (event.kind == QA_ROQ_FRAME && !publish(playback, &event, error)) { ok = false; break; }
+        if (event.kind != QA_ROQ_END) continue;
+        if (exact) {
+            qa_roq_prefix_cursor cursor;
+            cinematic_roq_decoder_cursor(playback->decoder, &cursor);
+            if (!retained_picture && playback->loop == checkpoint->loop && same_prefix(&cursor, &progress->cursor) &&
+                playback->decoded == progress->decoded && playback->source_sample == progress->source_sample)
+                break;
+            uint64_t wanted_loop = retained_picture ? progress->picture.loop : checkpoint->loop;
+            if (playback->loop < wanted_loop) {
+                /* Rewind retains the preceding pass's books and reference
+                 * pictures, just as the ordinary loop boundary does. */
+                if (!reset(playback, clock, true, error)) { ok = false; break; }
+                playback->pending_loop = false;
+                continue;
+            }
+            ok = roq_fail(error, "Saved RoQ prefix is not present in its resource");
+            break;
+        }
+        playback->status = playback->options.hold && !qa_roq_decoder_invalid(playback->decoder) ?
+            QA_MEDIA_HELD : QA_MEDIA_ENDED;
     }
     if (ok) {
-        *elapsed_ms = source_ms;
+        *elapsed_ms = exact ? progress->clock_ms : checkpoint->source_ms;
         double checked = 0;
         ok = clock_sample((qa_media_clock){elapsed_ms, resume_clock}, &checked, error);
-        if (ok) {
+        if (ok && exact && playback->has_frame != progress->picture.present)
+            ok = roq_fail(error, "Saved RoQ picture is not present at its prefix");
+        if (ok && exact) {
+            uint32_t anchor = (uint32_t)(float)checked;
+            playback->epoch = anchor - progress->epoch_back_ms;
+            playback->last = anchor - progress->last_back_ms;
+            playback->pending_loop = progress->pending_loop;
+            playback->status = checkpoint->status == QA_MEDIA_HELD || checkpoint->status == QA_MEDIA_ENDED ?
+                checkpoint->status : QA_MEDIA_PLAYING;
+            if (playback->has_frame) {
+                playback->frame.index = progress->picture.index;
+                playback->frame.loop = progress->picture.loop;
+                playback->frame.source_ms = progress->picture.source_ms;
+                playback->frame.presentation_ms = progress->picture.presentation_ms;
+            }
+            *status = checkpoint->status;
+        } else if (ok) {
             playback->last = (uint32_t)(float)checked;
             playback->pending_loop = false;
             *status = playback->status;
         }
     }
+    playback->options = options;
     playback->clock = (qa_media_clock){0};
     playback->busy = false;
     playback->faulted = !ok;
     return ok;
 }
 void cinematic_roq_position(const qa_roq_playback *playback, double elapsed_ms,
-    double *source_ms, uint64_t *loop) {
-    *source_ms = fmax(0, elapsed_ms - playback->epoch);
-    *loop = playback->loop;
+    qa_cinematic_checkpoint *out) {
+    out->source_ms = fmax(0, elapsed_ms - playback->epoch);
+    out->loop = playback->loop;
+    out->progress_kind = QA_CINEMATIC_PROGRESS_ROQ;
+    qa_cinematic_roq_progress *progress = &out->progress.roq;
+    cinematic_roq_decoder_cursor(playback->decoder, &progress->cursor);
+    uint32_t anchor = (uint32_t)(float)elapsed_ms;
+    progress->clock_ms = elapsed_ms;
+    progress->epoch_back_ms = anchor - playback->epoch;
+    progress->last_back_ms = anchor - playback->last;
+    progress->decoded = playback->decoded;
+    progress->source_sample = playback->source_sample;
+    progress->pending_loop = playback->pending_loop;
+    progress->picture = (qa_cinematic_picture_progress){.present = playback->has_frame};
+    if (playback->has_frame) {
+        progress->picture.index = playback->frame.index;
+        progress->picture.loop = playback->frame.loop;
+        progress->picture.source_ms = playback->frame.source_ms;
+        progress->picture.presentation_ms = playback->frame.presentation_ms;
+    }
 }
 const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *playback) {
     return playback->has_frame ? &playback->frame : NULL;

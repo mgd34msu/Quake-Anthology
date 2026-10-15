@@ -35,6 +35,7 @@
 #include "qa/hud_q2.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
+#include "qa/cinematic.h"
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
 #include "qa/q1_save.h"
@@ -2213,6 +2214,127 @@ static void test_shared_effect_cursor(void)
     application_event_stream_dispose(&app);
     CHECK(!first.application);
     free(app.unified_persistent);
+}
+
+static double cinematic_test_clock(void *context) { return *(const double *)context; }
+static void cinematic_test_complete(void *context,qa_cinematic_target target,qa_cinematic_end reason)
+{
+    (void)target; (void)reason; ++*(unsigned *)context;
+}
+static void test_roq_prefix_checkpoint(void)
+{
+    /* INFO, one solid codebook frame, one skip frame, and EOF lookahead. */
+    static const uint8_t bytes[]={
+        0x84,0x10,0xff,0xff,0xff,0xff,30,0,
+        0x01,0x10,8,0,0,0,0,0, 8,0,8,0,8,0,4,0,
+        0x02,0x10,10,0,0,0,1,1, 100,100,100,100,128,128,0,0,0,0,
+        0x11,0x10,3,0,0,0,0,0, 0,0x80,0,
+        0x11,0x10,2,0,0,0,0,0, 0,0,
+        0x12,0x10,0,0,0,0,0,0};
+    qa_error error={0}; qa_media_input *input=NULL;
+    CHECK(qa_media_input_memory((qa_bytes){bytes,sizeof(bytes)},NULL,NULL,&input,&error));
+    qa_cinematic_source source={.name="prefix.roq",.format=QA_CINEMATIC_ROQ,.data.roq=input};
+    for (unsigned shared=0;shared<2;++shared) {
+        qa_roq_scratch *scratch=NULL;
+        if (shared) CHECK(qa_roq_scratch_create(&scratch,&error));
+        double now=shared?500:0,origin=now;
+        qa_cinematic_options options={.clock={&now,cinematic_test_clock},.roq_scratch=scratch,
+            .target={.kind=QA_CINEMATIC_SEAT},.loop=true,.silent=true};
+        qa_cinematic *movie=NULL,*restored=NULL; qa_cinematic_checkpoint saved,copy;
+        qa_media_tick tick;
+        CHECK(qa_cinematic_create(&source,&options,&movie,&error));
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.progress_kind==QA_CINEMATIC_PROGRESS_ROQ && saved.progress.roq.decoded==-1 &&
+            !saved.progress.roq.picture.present && saved.progress.roq.cursor.position==16);
+        double later=10000;
+        qa_cinematic_options resumed=options; resumed.clock.context=&later;
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error));
+        CHECK(copy.progress.roq.decoded==-1 && copy.progress.roq.clock_ms==saved.progress.roq.clock_ms &&
+            copy.progress.roq.cursor.position==16 && !qa_cinematic_frame(restored));
+        qa_cinematic_destroy(restored); restored=NULL;
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && !tick.frame);
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.progress.roq.decoded==0 && saved.progress.roq.cursor.position==32);
+        now=origin+34; /* The clock advances without another decode. */
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(!qa_cinematic_frame(restored));
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error));
+        CHECK(copy.progress.roq.decoded==0 && copy.progress.roq.clock_ms==origin+34);
+        CHECK(qa_cinematic_tick(restored,&tick,&error) && tick.frame && tick.frame->index==0);
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.frame && tick.frame->index==0);
+        CHECK(tick.frame->rgba.size==256 &&
+            qa_load_u32le(tick.frame->rgba.data)==qa_roq_yuv_rgba(100,128,128));
+        CHECK(!memcmp(tick.frame->rgba.data,qa_cinematic_frame(restored)->rgba.data,256));
+        qa_cinematic_destroy(restored); restored=NULL;
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        qa_cinematic_checkpoint legacy=saved; legacy.progress_kind=QA_CINEMATIC_PROGRESS_TIME;
+        CHECK(qa_cinematic_restore(&source,&resumed,&legacy,&restored,&error));
+        CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==0);
+        qa_cinematic_destroy(restored); restored=NULL;
+        CHECK(qa_cinematic_pause(movie,true,&error)); now+=80;
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.status==QA_MEDIA_PAUSED && saved.progress.roq.clock_ms==origin+34);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        later+=80;
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error));
+        CHECK(copy.progress.roq.clock_ms==saved.progress.roq.clock_ms && copy.status==QA_MEDIA_PAUSED);
+        qa_cinematic_destroy(restored); restored=NULL;
+        CHECK(qa_cinematic_pause(movie,false,&error));
+        now=origin+80+67;
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.frame && tick.frame->index==1);
+        now=origin+80+100;
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.looped && tick.frame);
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.loop==1 && saved.progress.roq.decoded==-1 && saved.progress.roq.picture.present &&
+            saved.progress.roq.picture.loop==0 && saved.progress.roq.picture.index==1);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        const qa_media_frame *frame=qa_cinematic_frame(restored);
+        CHECK(frame && frame->index==1 && frame->loop==0 &&
+            frame->presentation_ms==saved.progress.roq.picture.presentation_ms &&
+            !memcmp(frame->rgba.data,tick.frame->rgba.data,frame->rgba.size));
+        CHECK(qa_cinematic_tick(restored,&tick,&error) && !tick.looped && tick.frame && tick.frame->index==1);
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error) && copy.loop==1 && copy.progress.roq.decoded==0);
+        qa_cinematic_destroy(restored); restored=NULL;
+        if (shared) {
+            CHECK(qa_cinematic_roq_restart(movie,&error));
+            CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+            CHECK(saved.loop==0 && saved.progress.roq.decoded==-1 && saved.progress.roq.pending_loop &&
+                saved.progress.roq.picture.present);
+            CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+            CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==1);
+            CHECK(qa_cinematic_tick(restored,&tick,&error) && tick.looped);
+            CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error) && copy.progress.roq.decoded==-1 &&
+                !copy.progress.roq.pending_loop);
+            qa_cinematic_destroy(restored);
+        }
+        qa_cinematic_destroy(movie); qa_roq_scratch_release(scratch);
+    }
+    double now=0; unsigned completions=0;
+    qa_cinematic_options options={.clock={&now,cinematic_test_clock},
+        .target={.kind=QA_CINEMATIC_SEAT},.silent=true,.context=&completions,.complete=cinematic_test_complete};
+    qa_cinematic *movie=NULL,*restored=NULL; qa_cinematic_checkpoint saved;
+    qa_media_tick tick;
+    CHECK(qa_cinematic_create(&source,&options,&movie,&error));
+    CHECK(qa_cinematic_tick(movie,&tick,&error)); now=100;
+    CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.status==QA_MEDIA_ENDED && completions==1);
+    CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+    now=20000;
+    CHECK(qa_cinematic_restore(&source,&options,&saved,&restored,&error));
+    CHECK(qa_cinematic_status(restored)==QA_MEDIA_ENDED && completions==1);
+    CHECK(qa_cinematic_tick(restored,&tick,&error) && tick.status==QA_MEDIA_ENDED && completions==1);
+    qa_cinematic_destroy(restored); qa_cinematic_destroy(movie);
+    CHECK(completions==1);
+    CHECK(qa_cinematic_create(&source,&options,&movie,&error));
+    CHECK(qa_cinematic_tick(movie,&tick,&error));
+    CHECK(qa_cinematic_end_playback(movie,QA_CINEMATIC_STOPPED,&error) && completions==2);
+    CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+    CHECK(qa_cinematic_restore(&source,&options,&saved,&restored,&error));
+    CHECK(qa_cinematic_status(restored)==QA_MEDIA_STOPPED && completions==2);
+    qa_cinematic_destroy(restored); qa_cinematic_destroy(movie);
+    CHECK(completions==2);
+    qa_media_input_release(input);
 }
 
 static void test_raw_audio_custody(void)
@@ -5204,6 +5326,7 @@ int main(int argc, char **argv)
     test_q1_muzzle_projection();
     test_connection_request_cursor();
     test_shared_effect_cursor();
+    test_roq_prefix_checkpoint();
     test_raw_audio_custody();
     test_shared_audio_preparation();
     test_retained_movement_result();
