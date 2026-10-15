@@ -4,6 +4,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
+#include "qa/tools.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -548,9 +549,77 @@ static bool advisory_scope(application_bots_npc *owner,npc_advisory_query **out,
     ++owner->advisory_depth;*out=query;return true;
 }
 
+typedef struct npc_path_debug {
+    qa_arena shapes;
+    qa_arena *storage;
+    qa_debug_line *lines;
+    size_t count,capacity;
+} npc_path_debug;
+
+static bool advisory_debug_shape(npc_path_debug *debug,const qa_debug_shape *shape,
+    qa_vec4 color,qa_error *error)
+{
+    const qa_debug_line *lines;size_t count;
+    if(!qa_debug_shape_lines(shape,color,false,&debug->shapes,&lines,&count,error)) return false;
+    if(count>SIZE_MAX-debug->count || debug->count+count>SIZE_MAX/sizeof(*lines))
+        return application_fail(error,QA_ERROR_MEMORY,"Advisory debug geometry size overflow");
+    size_t needed=debug->count+count;
+    if(needed>debug->capacity) {
+        size_t capacity=debug->capacity?debug->capacity:count;
+        while(capacity<needed)
+            capacity=capacity>SIZE_MAX/2?needed:capacity*2;
+        if(capacity>SIZE_MAX/sizeof(*lines)) capacity=needed;
+        qa_debug_line *grown=qa_arena_grow(debug->storage,debug->lines,
+            debug->count*sizeof(*lines),capacity*sizeof(*lines),_Alignof(qa_debug_line),error);
+        if(!grown) return false;
+        debug->lines=grown;debug->capacity=capacity;
+    }
+    if(count) memcpy(debug->lines+debug->count,lines,count*sizeof(*lines));
+    debug->count=needed;qa_arena_reset(&debug->shapes);return true;
+}
+
+static bool advisory_debug(application_provider *source,const qa_native_host_q2_path_request *request,
+    const qa_nav_route *route,const qa_navigation *navigation,size_t begin,
+    const qa_native_host_q2_path_info *info,qa_error *error)
+{
+    if(request->draw_time<=0) return true;
+    qa_application *app=source->application;qa_clock_state clock;
+    if(!qa_session_clock(app->session,source->owner,&clock)) return true;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(app,error);
+    if(!storage) return false;
+    npc_path_debug debug={.storage=qa_unified_frame_lease_arena(storage)};
+    qa_arena_init_pool(&debug.shapes,debug.storage->pages);
+    qa_vec4 red={1,0,0,64.0f/255},yellow={1,1,0,64.0f/255};
+    qa_debug_shape sphere={.kind=QA_DEBUG_SPHERE,
+        .data.round={.origin=request->start,.radius=8}};
+    bool okay=advisory_debug_shape(&debug,&sphere,red,error);
+    sphere.data.round.origin=request->goal;
+    if(okay) okay=advisory_debug_shape(&debug,&sphere,red,error);
+    qa_debug_shape arrow={.kind=QA_DEBUG_ARROW,
+        .data.arrow={.start=request->start,.size=8,.cap_color=yellow}};
+    for(size_t i=begin;okay && route && i<route->node_count;++i) {
+        arrow.data.arrow.end=qa_navigation_node(navigation,route->nodes[i])->origin;
+        okay=advisory_debug_shape(&debug,&arrow,yellow,error);
+        arrow.data.arrow.start=arrow.data.arrow.end;
+    }
+    arrow.data.arrow.end=request->goal;
+    if(okay) okay=advisory_debug_shape(&debug,&arrow,yellow,error);
+    sphere.data.round.origin=info->first;sphere.data.round.radius=16;
+    if(okay) okay=advisory_debug_shape(&debug,&sphere,red,error);
+    arrow.data.arrow.start=info->first;arrow.data.arrow.end=info->second;
+    arrow.data.arrow.size=16;arrow.data.arrow.cap_color=red;
+    if(okay) okay=advisory_debug_shape(&debug,&arrow,red,error);
+    long double nanoseconds=(long double)request->draw_time*1000000000.0L;
+    uint64_t lifetime=nanoseconds>=UINT64_MAX?UINT64_MAX:(uint64_t)nanoseconds;
+    if(okay) okay=qa_application_debug_emit(app,&(qa_application_debug_event){
+        .provider=source->owner,.time_ns=clock.frame.time_ns,
+        .lines=debug.lines,.count=debug.count,.lifetime_ns=lifetime},error);
+    qa_arena_destroy(&debug.shapes);qa_unified_frame_lease_release(storage);return okay;
+}
+
 static bool advisory_result(const qa_native_host_q2_path_request *request,
     const qa_nav_route *route,const qa_navigation *navigation,qa_native_host_q2_path_info *info,
-    qa_error *error)
+    size_t *first_point,qa_error *error)
 {
     const qa_nav_edge *edge=route->edge_count?qa_navigation_edge(navigation,route->edges[0]):NULL;
     const qa_nav_node *first=qa_navigation_node(navigation,route->nodes[0]);
@@ -594,6 +663,7 @@ static bool advisory_result(const qa_native_host_q2_path_request *request,
     }
     info->link_type=!edge?0:edge->mode==QA_NAV_DROP?1:edge->mode==QA_NAV_JUMP?
         (edge->source_travel_type==5?3:2):edge->mode==QA_NAV_MOVER?4:0;
+    *first_point=begin;
     return true;
 }
 
@@ -602,7 +672,7 @@ bool application_bots_npc_path(void *opaque,const qa_native_host_q2_path_request
 {
     application_provider *source=opaque;
     *info=(qa_native_host_q2_path_info){.return_code=8};
-    if(!source->application->map_resource || !source->application->world) return true;
+    if(!source->application->map_resource || !source->application->world) goto done;
     if(source->bots_npc && source->bots_npc->map_resource!=source->application->map_resource) {
         if(!application_bots_npc_idle(source))
             return application_fail(error,QA_ERROR_ARGUMENT,"Advisory map changed inside a query");
@@ -612,16 +682,16 @@ bool application_bots_npc_path(void *opaque,const qa_native_host_q2_path_request
     application_bots_npc *owner=source->bots_npc;
     if(!application_npc_current(owner,error) || !advisory_prepare(owner,error)) return false;
     const qa_nav_graph_view *graph=qa_navigation_graph(owner->advisory_navigation);
-    if(!graph || !graph->node_count) return true;
-    if(!(request->flags&3)) {info->return_code=12;return true;}
+    if(!graph || !graph->node_count) goto done;
+    if(!(request->flags&3)) {info->return_code=12;goto done;}
     npc_path_filter filter={.request=request,.graph=graph,.navigation=owner->advisory_navigation};
     const qa_nav_node *start,*goal;
     if(!advisory_nearest(owner,&filter,request->start,&start,error)) return false;
-    if(!start) {info->return_code=9;return true;}
+    if(!start) {info->return_code=9;goto done;}
     if(!advisory_nearest(owner,&filter,request->goal,&goal,error)) return false;
-    if(!goal) {info->return_code=10;return true;}
+    if(!goal) {info->return_code=10;goto done;}
     if(start==goal || qa_vec_length(qa_vec_sub(request->start,goal->origin))<=request->move_distance) {
-        info->return_code=0;return true;
+        info->return_code=0;goto done;
     }
     if(!request->ignore_node_flags) {
         const qa_vec3 points[]={request->start,request->goal};
@@ -630,7 +700,7 @@ bool application_bots_npc_path(void *opaque,const qa_native_host_q2_path_request
             qa_point_query query={.point=points[i],.policy=advisory_policy()};
             if(!qa_world_point_contents(owner->world,&query,&contents,error)) return false;
             if(qa_collision_bits_overlap(contents.merged,qa_collision_contents_mask(3,QA_GAME_Q2))) {
-                info->return_code=(int32_t)(6+i);return true;
+                info->return_code=(int32_t)(6+i);goto done;
             }
         }
     }
@@ -640,12 +710,16 @@ bool application_bots_npc_path(void *opaque,const qa_native_host_q2_path_request
         .start_node=start->id,.goal_node=goal->id,.context=&filter,.edge_filter=advisory_edge,
         .node_filter=advisory_node,.edge_cost=advisory_cost,.advisory=true};
     bool okay=qa_navigation_route(owner->advisory_navigation,query->workspace,&path,&query->route,error);
-    info->return_code=11;
+    info->return_code=11;size_t first_point=0;
     if(okay && query->route.found)
-        okay=advisory_result(request,&query->route,owner->advisory_navigation,info,error);
+        okay=advisory_result(request,&query->route,owner->advisory_navigation,info,&first_point,error);
+    if(okay) okay=advisory_debug(source,request,query->route.found?&query->route:NULL,
+        owner->advisory_navigation,first_point,info,error);
     qa_nav_route_reset(&query->route);--owner->advisory_depth;
     qa_pool_release(&owner->advisory_queries,slot);
     return okay;
+done:
+    return advisory_debug(source,request,NULL,NULL,0,info,error);
 }
 bool application_npc_actor_create(application_bots_npc *owner,qa_actor_id id,npc_graph *graph,
     npc_actor **out,qa_error *error)
