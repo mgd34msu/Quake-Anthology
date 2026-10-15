@@ -4,6 +4,7 @@
 #include "medic.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_combat.h"
+#include "qa/text.h"
 #include "../entities/internal.h"
 
 typedef struct q2m_transition {
@@ -589,12 +590,16 @@ static bool fire_bullet_exact(q2m_context *context, int flash, qa_vec3 start,
 static bool fire_rocket_exact(q2m_context *context, q2m_attack_kind kind,
                               int flash, qa_vec3 start, qa_vec3 direction,
                               float damage, float speed, float radius,
-                              float radius_damage, qa_error *error) {
+                              float radius_damage, const float *turn_fraction,
+                              qa_error *error) {
   q2m_fire_spec spec =
       q2m_fire_default(context, kind, damage, flash, start, direction);
   exact_projectile_speed(&spec, speed);
   spec.radius = radius;
   spec.radius_damage = radius_damage;
+  spec.has_turn_fraction = turn_fraction != NULL;
+  if (turn_fraction != NULL)
+    spec.turn_fraction = *turn_fraction;
   return q2m_fire(context, &spec, error);
 }
 
@@ -1454,7 +1459,7 @@ static bool carrier_rocket(q2m_context *context, qa_error *error) {
     }
     if (!fire_rocket_exact(context, Q2M_ATTACK_ROCKET, flash, start, direction,
                            50.0f, predictive ? 750.0f : 500.0f, 70.0f,
-                           50.0f, error))
+                           50.0f, NULL, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -3236,7 +3241,7 @@ static bool boss2_rockets(q2m_context *context, bool force_predictive,
     }
     if (!fire_rocket_exact(context, Q2M_ATTACK_ROCKET, flash, start, direction,
                            50.0f, predictive ? 750.0f : 500.0f, 70.0f,
-                           50.0f, error))
+                           50.0f, NULL, error))
       return false;
     if (!q2m_alive(context))
       return true;
@@ -3275,7 +3280,7 @@ static bool boss2_rocket64(q2m_context *context, qa_error *error) {
   }
   qa_vec3 direction = qa_vec_normalize(qa_vec_sub(point, start));
   return fire_rocket_exact(context, Q2M_ATTACK_ROCKET, 78, start, direction,
-                           35.0f, 750.0f, 55.0f, 35.0f, error);
+                           35.0f, 750.0f, 55.0f, 35.0f, NULL, error);
 }
 
 static bool boss2_hyperblaster(q2m_context *context, qa_error *error) {
@@ -3427,14 +3432,14 @@ static bool supertank_rocket(q2m_context *context, qa_error *error) {
     eye.z += traits.view_height;
     direction = qa_vec_normalize(qa_vec_sub(eye, start));
     return fire_rocket_exact(context, Q2M_ATTACK_HEAT, flash, start, direction,
-                             40.0f, 500.0f, 60.0f, 40.0f, error);
+                             40.0f, 500.0f, 60.0f, 40.0f, NULL, error);
   }
   if (!q2m_predict_from(context, start, 750.0f, false, 0.0f, NULL,
                         &direction, &available, error))
     return false;
   return !available || !q2m_alive(context) ||
          fire_rocket_exact(context, Q2M_ATTACK_ROCKET, flash, start, direction,
-                           50.0f, 750.0f, 70.0f, 50.0f, error);
+                           50.0f, 750.0f, 70.0f, 50.0f, NULL, error);
 }
 
 static bool blind_direction(q2m_context *context, qa_vec3 start,
@@ -4303,7 +4308,7 @@ static bool supertank_grenade(q2m_context *context, qa_error *error) {
 static bool tank_rocket(q2m_context *context, qa_error *error) {
   int frame = context->monster->frame;
   int flash = frame == 138 ? 23 : frame == 141 ? 24 : 25;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
   bool rogue = !rerelease && context->game->options.product == QA_Q2_ROGUE;
   if (!rerelease && !rogue)
     return fire_source_exact(context, Q2M_ATTACK_ROCKET, 50.0f, flash, 0.0f,
@@ -4382,11 +4387,13 @@ static bool tank_rocket(q2m_context *context, qa_error *error) {
     }
     int emitted_flash = blind ? flash : 57;
     return fire_rocket_exact(context, Q2M_ATTACK_ROCKET, emitted_flash, start,
-                             direction, 50.0f, speed, 70.0f, 50.0f, error);
+                             direction, 50.0f, speed, 70.0f, 50.0f, NULL, error);
   }
 
   bool heat = (context->monster->spawnflags & UINT32_C(16)) != 0;
-  float speed = heat ? 500.0f : 650.0f;
+  const q2_entity_state *entity = context->actor->entity;
+  float speed = entity && entity->speed != 0
+      ? (float)qa_source_to_i32(entity->speed) : heat ? 500.0f : 650.0f;
   qa_vec3 point = context->monster->blind_fire_target;
   if (!blind) {
     bool eye = q2m_random(context->game) < 0.66f ||
@@ -4424,10 +4431,12 @@ static bool tank_rocket(q2m_context *context, qa_error *error) {
          trace_hit_brush(context, &trace)))
       return true;
   }
+  entity = context->actor->entity;
+  float turn_fraction = entity && entity->accel != 0 ? entity->accel : .075f;
   return fire_rocket_exact(context,
                            heat ? Q2M_ATTACK_HEAT : Q2M_ATTACK_ROCKET, flash,
                            start, direction, 50.0f, speed, 70.0f, 50.0f,
-                           error);
+                           heat ? &turn_fraction : NULL, error);
 }
 
 static bool heavy_weapon_callback(q2m_context *context, q2m_callback_id callback,
