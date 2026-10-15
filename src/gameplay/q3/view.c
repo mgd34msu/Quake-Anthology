@@ -115,10 +115,7 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
             return q3_fail(error, "Q3 authored presentation owner changed during observation");
         view.kind = map->linked ? QA_Q3_ENTITY_MOVER : QA_Q3_ENTITY_HIDDEN;
         view.alpha = map->alpha;
-        q3_map_mover_presentation(game, actor, &view.model, &view.secondary_model,
-                                  &view.constant_light);
-        view.has_inline_model = map->has_inline_model;
-        view.inline_model = map->inline_model;
+        q3_map_mover_presentation(game, actor, &view);
         *out = view;
         return true;
     }
@@ -202,8 +199,7 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.position = entry->state.mover.state.position;
         view.angular = entry->state.mover.state.angular;
         view.loop_sound = entry->state.mover.loop_sound;
-        q3_map_mover_presentation(game, actor, &view.model, &view.secondary_model,
-                                  &view.constant_light);
+        q3_map_mover_presentation(game, actor, &view);
         break;
     case Q3_ACTOR_PORTAL:
         view.kind = QA_Q3_ENTITY_PORTAL;

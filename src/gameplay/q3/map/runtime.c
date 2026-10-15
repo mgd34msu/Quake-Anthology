@@ -625,23 +625,21 @@ void q3_map_actor_released(qa_q3_game *game, qa_actor_record record) {
 }
 
 void q3_map_mover_presentation(const qa_q3_game *game, qa_actor_id actor,
-                               qa_string_id *model, qa_string_id *secondary,
-                               uint32_t *constant_light) {
+                               qa_q3_entity_view *view) {
     const qa_q3_map_actor_state *state = q3_map_const(game, actor);
-    if (model)
-        *model = state ? state->model : 0;
-    if (secondary)
-        *secondary = state ? state->model2 : 0;
-    if (constant_light)
-        *constant_light = 0;
-    if (!state || (!state->has_light && !state->has_color) || !constant_light)
+    view->model = state ? state->model : 0;
+    view->secondary_model = state ? state->model2 : 0;
+    view->has_inline_model = state && state->has_inline_model;
+    view->inline_model = state ? state->inline_model : 0;
+    view->constant_light = 0;
+    if (!state || (!state->has_light && !state->has_color))
         return;
     int32_t red = qa_source_to_i32(fminf(255, state->color.x * 255.0f));
     int32_t green = qa_source_to_i32(fminf(255, state->color.y * 255.0f));
     int32_t blue = qa_source_to_i32(fminf(255, state->color.z * 255.0f));
     int32_t intensity = qa_source_to_i32(fminf(255, state->light / 4.0f));
-    *constant_light = (uint32_t)red | ((uint32_t)green << 8) |
-                      ((uint32_t)blue << 16) | ((uint32_t)intensity << 24);
+    view->constant_light = (uint32_t)red | ((uint32_t)green << 8) |
+                          ((uint32_t)blue << 16) | ((uint32_t)intensity << 24);
 }
 
 void q3_map_destroy(qa_q3_game *game) {
