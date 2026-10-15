@@ -434,7 +434,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     campaign_player players[8]={0}; int32_t count=campaign_number(request,0),player=campaign_number(request,1);
     size_t player_count=count<=0?0:count>=8?8:(size_t)count;
     for (size_t i=0;i<player_count;++i) {
-        int32_t rank=campaign_word(((uint32_t)campaign_number(request,9+i*3)&~UINT32_C(64))+1u);
+        int32_t rank=campaign_word(((uint32_t)campaign_number(request,9+i*3)&~UINT32_C(0x4000))+1u);
         players[i]=(campaign_player){campaign_number(request,8+i*3),rank,campaign_number(request,10+i*3)};
         if (players[i].client==player) game.rank=rank;
     }
