@@ -517,6 +517,12 @@ typedef struct mode_objective {
     X(QC_LOST_TOKEN, "$qc_lost_token") \
     X(QC_HAS_TOKEN, "$qc_has_token") \
     X(QC_GOT_QUAD, "$qc_got_quad") \
+    X(HORDE_COUNTDOWN_3, "3") \
+    X(HORDE_COUNTDOWN_2, "2") \
+    X(HORDE_COUNTDOWN_1, "1") \
+    X(QC_HORDE_FIGHT, "$qc_horde_fight") \
+    X(QC_HORDE_BOSS_WAVE, "$qc_horde_boss_wave") \
+    X(SOUND_MISC_TALK_WAV, "misc/talk.wav") \
     X(BODYQUE, "bodyque") \
     X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
     X(INFO_PLAYER_START, "info_player_start") \

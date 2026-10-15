@@ -11,7 +11,7 @@ typedef struct horde_state {
     size_t point_count;
     horde_monster *monsters;
     horde_loot *loot;
-    bool prepared, checking, finishing, wave_check_active;
+    bool prepared, checking, finishing, wave_check_active, fight_pending;
 } horde_state;
 typedef struct squad_member {
     mode_name classname;
@@ -498,6 +498,7 @@ static bool prepare(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) 
     h->checking = false;
     h->value.spawning = true;
     h->value.countdown = 3;
+    h->fight_pending = false;
     for (size_t i = 0; i < h->point_count; ++i)
         if (h->points[i].kind == QA_HORDE_ITEM && !h->points[i].occupied)
             h->points[i].next_ns =
@@ -930,6 +931,10 @@ bool qa_modes_horde_loot_touch(qa_modes *m, qa_actor_id item, qa_actor_id player
         return mode_fail(e, "invalid Horde loot service");
     return MODE_CALLBACK(m, loot_touch(m, item, player, handled, accepted, e));
 }
+static bool centerprint(qa_modes *m, mode_instance *v, mode_name text, qa_error *e) {
+    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .text = m->runtime_names[text]};
+    return mode_builtin_emit(m, v, &event, e);
+}
 bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error *e) {
     horde_state *h = v->horde;
     if (!h || v->value.rules.paused)
@@ -1022,11 +1027,25 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         return true;
     if (h->value.countdown > 0) {
         int count = h->value.countdown--;
+        if (count == 1)
+            h->fight_pending = true;
         h->value.next_ns = v->value.time_ns + MODE_SECOND;
+        const mode_name text[] = {MODE_NAME_HORDE_COUNTDOWN_1, MODE_NAME_HORDE_COUNTDOWN_2,
+                                  MODE_NAME_HORDE_COUNTDOWN_3};
         return mode_event(m, v, QA_MODE_HORDE_COUNTDOWN, (qa_actor_id){0}, (qa_actor_id){0},
-                          h->options.manager, 0, count, 0, e);
+                          h->options.manager, 0, count, 0, e) &&
+               centerprint(m, v, text[count - 1], e) &&
+               mode_sound_full(m, v, h->options.manager, m->runtime_names[MODE_NAME_SOUND_MISC_TALK_WAV],
+                               2, 1, 0, e);
     }
-    return spawn_squad(m, v, h, e);
+    bool fight = h->fight_pending;
+    h->fight_pending = false;
+    if (fight && !centerprint(m, v, h->value.wave % 3 == 0 ? MODE_NAME_QC_HORDE_BOSS_WAVE :
+                                MODE_NAME_QC_HORDE_FIGHT, e))
+        return false;
+    return spawn_squad(m, v, h, e) &&
+           (!fight || mode_sound_full(m, v, h->options.manager, m->runtime_names[MODE_NAME_SOUND_MISC_TALK_WAV],
+                                       2, 1, 0, e));
 }
 bool qa_modes_horde_finish(qa_modes *m, qa_mode_id id, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -1087,6 +1106,8 @@ bool mode_horde_capture(qa_modes *m, mode_instance *v, qa_horde_checkpoint **out
     }
     saved->options = h->options;
     saved->value = h->value;
+    if (h->fight_pending)
+        saved->value.countdown = -1;
     saved->point_count = h->point_count;
     saved->prepared = h->prepared;
     saved->checking = h->checking;
@@ -1121,7 +1142,7 @@ bool mode_horde_restore(qa_modes *m, mode_instance *v, const qa_horde_checkpoint
     if (saved->monster_count > m->actor_capacity || saved->loot_count > m->actor_capacity ||
         (saved->monster_count && !saved->monsters) || (saved->loot_count && !saved->loot) ||
         !isfinite(saved->value.powerup_chance) || saved->value.powerup_chance < 0 ||
-        saved->value.silver_keys < 0 || saved->value.gold_keys < 0 || saved->value.countdown < 0 ||
+        saved->value.silver_keys < 0 || saved->value.gold_keys < 0 || saved->value.countdown < -1 ||
         saved->value.countdown > 3)
         return mode_fail(e, "invalid Horde checkpoint");
     uint64_t random = m->random;
@@ -1130,6 +1151,9 @@ bool mode_horde_restore(qa_modes *m, mode_instance *v, const qa_horde_checkpoint
     m->random = random;
     horde_state *h = v->horde;
     h->value = saved->value;
+    h->fight_pending = h->value.countdown == -1;
+    if (h->fight_pending)
+        h->value.countdown = 0;
     h->prepared = saved->prepared;
     h->checking = saved->checking;
     h->finishing = saved->finishing;
