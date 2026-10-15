@@ -366,8 +366,7 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
     uint8_t magic[4] = {'Q','I','P','L'};
     uint32_t callbacks = services(&p->options);
     bool success = qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &callbacks) &&
-        callbacks == services(&p->options) && blob(io, native_cut);
+        qa_source_save_u32(io, &callbacks) && blob(io, native_cut);
     if (success && routes) routes->native_window_offset = io->offset - native_cut->size;
     success = success && state_fields(io, p, native, refs,
         routes ? &routes->logical_window_offset : NULL) && blob(io, haptic);

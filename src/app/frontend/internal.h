@@ -354,6 +354,7 @@ struct qa_frontend {
     frontend_restart *restart;
     frontend_input_settings *input_settings;
     struct frontend_settings_devices *settings_devices;
+    struct frontend_gyro_profiles *gyro_profiles;
     struct frontend_startup_launch *startup_launch;
     qa_lobbies *lobbies;
     struct frontend_local_lobby *local_lobby;

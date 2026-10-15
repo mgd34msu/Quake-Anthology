@@ -6,6 +6,152 @@
 #include "shared_settings.h"
 #include "config_store.h"
 #include "global_settings_storage.h"
+#include "qa/text.h"
+#include <stdio.h>
+
+enum { GYRO_SERIAL_BYTES=256, GYRO_PATH_BYTES=640 };
+typedef struct frontend_gyro_profile {
+    qa_input_seat *input;
+    int32_t instance;
+    qa_gyro_profile fallback, identity;
+    char serial[GYRO_SERIAL_BYTES+1];
+    qa_error failure;
+    bool saved;
+} frontend_gyro_profile;
+struct frontend_gyro_profiles {
+    frontend_gyro_profile seats[QA_INPUT_LOCAL_SEATS];
+    unsigned dirty;
+};
+
+static qa_gyro_profile gyro_tuning(const qa_gamepad_tuning *pad)
+{
+    return (qa_gyro_profile){.enabled=pad->gyro_enabled,.yaw_axis=pad->gyro_yaw_axis,
+        .yaw_sensitivity=pad->gyro_yaw_sensitivity,.pitch_sensitivity=pad->gyro_pitch_sensitivity};
+}
+bool frontend_settings_gyro_prepare(qa_frontend *f,qa_error *error)
+{
+    if (f->gyro_profiles) return true;
+    struct frontend_gyro_profiles *profiles=calloc(1,sizeof(*profiles));
+    if (!profiles) return frontend_fail(error,QA_ERROR_MEMORY,"Preparing controller gyro settings");
+    for (unsigned slot=0;slot<f->options.seats;++slot) {
+        profiles->seats[slot].instance=INT32_MIN;
+        profiles->seats[slot].fallback=gyro_tuning(qa_input_seat_gamepad_tuning(f->seats[slot].input));
+        profiles->dirty|=1u<<slot;
+    }
+    f->gyro_profiles=profiles; return true;
+}
+void frontend_settings_gyro_assignment_changed(void *context,unsigned slot,int32_t previous,int32_t instance)
+{
+    if (previous==instance) return;
+    qa_frontend *f=context;
+    if (f->gyro_profiles && slot<QA_INPUT_LOCAL_SEATS) f->gyro_profiles->dirty|=1u<<slot;
+}
+void frontend_settings_gyro_configuration_published(qa_frontend *f)
+{
+    if (!f->gyro_profiles) return;
+    for (unsigned slot=0;slot<f->options.seats;++slot) {
+        frontend_gyro_profile *row=f->gyro_profiles->seats+slot;
+        row->fallback=gyro_tuning(qa_input_seat_gamepad_tuning(f->seats[slot].input));
+        row->input=NULL;
+        f->gyro_profiles->dirty|=1u<<slot;
+    }
+}
+const char *frontend_settings_gyro_message(const qa_frontend *f,unsigned slot)
+{
+    if (!f->gyro_profiles || slot>=f->options.seats) return "Connect a controller with a gyroscope.";
+    if (f->gyro_profiles->dirty&(1u<<slot)) return "Loading settings...";
+    const frontend_gyro_profile *row=f->gyro_profiles->seats+slot;
+    if (row->failure.code!=QA_OK) return row->failure.message;
+    if (row->identity.device)
+        return row->saved?"Saved for this controller and seat.":"Settings for this controller and seat.";
+    return row->saved?"Saved for this seat.":"Settings for this seat.";
+}
+static void gyro_path(unsigned slot,const qa_gyro_profile *identity,char path[GYRO_PATH_BYTES])
+{
+    if (!identity->device) {
+        snprintf(path,GYRO_PATH_BYTES,"controllers/seat-%u/seat.json",slot+1); return;
+    }
+    size_t at=(size_t)snprintf(path,GYRO_PATH_BYTES,"controllers/seat-%u/%s/serial",slot+1,identity->guid);
+    static const char hex[]="0123456789abcdef";
+    size_t index=0;
+    for (const unsigned char *serial=(const unsigned char *)identity->serial;*serial;++serial,++index) {
+        if (!(index%32u)) path[at++]='/';
+        path[at++]=hex[*serial>>4]; path[at++]=hex[*serial&15u];
+    }
+    memcpy(path+at,"/gyro.json",sizeof("/gyro.json"));
+}
+static void gyro_failure(qa_frontend *f,frontend_gyro_profile *row,const qa_error *error)
+{
+    row->failure=*error;
+    char message[sizeof(error->message)+2];
+    snprintf(message,sizeof(message),"%s\n",error->message); frontend_print(f,message);
+}
+static void gyro_profiles_load(qa_frontend *f)
+{
+    struct frontend_gyro_profiles *profiles=f->gyro_profiles;
+    if (!profiles || f->input_settings) return;
+    unsigned dirty=profiles->dirty; profiles->dirty=0;
+    qa_settings_store store=frontend_global_settings_storage_user_store(f->global_settings_storage);
+    for (unsigned slot=0;slot<f->options.seats;++slot) if (dirty&(1u<<slot)) {
+        frontend_gyro_profile *row=profiles->seats+slot;
+        qa_input_seat *input=f->seats[slot].input;
+        int32_t instance=qa_input_platform_controller(f->input,slot);
+        if (row->input==input && row->instance==instance) continue;
+        row->input=input; row->instance=instance; row->failure=(qa_error){0}; row->saved=false;
+        row->identity=(qa_gyro_profile){0};
+        qa_controller_info device={0}; bool connected=frontend_settings_controller_read(f,slot,&device);
+        if (connected && *device.guid && device.serial && *device.serial && strlen(device.serial)<=GYRO_SERIAL_BYTES) {
+            row->identity.device=true;
+            for (size_t i=0;i<sizeof(row->identity.guid);++i)
+                row->identity.guid[i]=(char)qa_text_ascii_lower((uint8_t)device.guid[i]);
+            memcpy(row->serial,device.serial,strlen(device.serial)+1); row->identity.serial=row->serial;
+        }
+        char path[GYRO_PATH_BYTES]; gyro_path(slot,&row->identity,path);
+        qa_gyro_profile saved={0}; bool found=false; qa_error error={0};
+        bool device_profile=row->identity.device;
+        bool ok=qa_settings_load_gyro(store,path,&saved,&found,&error);
+        if (ok && !found && device_profile) {
+            qa_gyro_profile seat_identity={0}; gyro_path(slot,&seat_identity,path);
+            device_profile=false;
+            ok=qa_settings_load_gyro(store,path,&saved,&found,&error);
+        }
+        if (ok && found && (saved.device!=device_profile ||
+            (saved.device && (!qa_text_ascii_equal(saved.guid,row->identity.guid) || strcmp(saved.serial,row->identity.serial))))) {
+            qa_error_set(&error,QA_ERROR_FORMAT,0,"Gyro settings belong to another controller"); ok=false;
+        }
+        qa_gyro_profile tuning=ok && found?saved:row->fallback;
+        if (ok && found && !device_profile) row->fallback=tuning;
+        qa_gamepad_tuning *pad=qa_input_seat_gamepad_tuning(input);
+        pad->gyro_yaw_sensitivity=tuning.yaw_sensitivity; pad->gyro_pitch_sensitivity=tuning.pitch_sensitivity;
+        pad->gyro_yaw_axis=tuning.yaw_axis; pad->gyro_enabled=false;
+        if (connected && device.sensors[SDL_SENSOR_GYRO] &&
+            !qa_input_platform_gyro(f->input,slot,tuning.enabled,&error)) ok=false;
+        row->saved=ok && found && (!row->identity.device || device_profile);
+        qa_gyro_profile_free(&saved);
+        if (!ok) gyro_failure(f,row,&error);
+    }
+}
+static void gyro_profiles_save(qa_frontend *f)
+{
+    if (!f->gyro_profiles) return;
+    qa_settings_store store=frontend_global_settings_storage_user_store(f->global_settings_storage);
+    for (unsigned slot=0;slot<f->options.seats;++slot) {
+        frontend_gyro_profile *row=f->gyro_profiles->seats+slot;
+        qa_controller_info device={0}; bool capable=frontend_settings_controller_read(f,slot,&device) &&
+            device.instance==row->instance && device.sensors[SDL_SENSOR_GYRO];
+        if (!capable) continue;
+        qa_gyro_profile profile=gyro_tuning(qa_input_seat_gamepad_tuning(f->seats[slot].input));
+        profile.device=row->identity.device; memcpy(profile.guid,row->identity.guid,sizeof(profile.guid));
+        profile.serial=row->identity.serial;
+        char path[GYRO_PATH_BYTES]; gyro_path(slot,&profile,path);
+        qa_error error={0};
+        if (!qa_settings_save_gyro(store,path,&profile,&error)) gyro_failure(f,row,&error);
+        else {
+            row->failure=(qa_error){0}; row->saved=true;
+            if (!profile.device) row->fallback=gyro_tuning(qa_input_seat_gamepad_tuning(f->seats[slot].input));
+        }
+    }
+}
 
 enum device_request_kind { DEVICE_KEYBOARD, DEVICE_CONTROLLER, DEVICE_AUDIO, DEVICE_SAVE };
 struct frontend_settings_devices {
@@ -83,6 +229,13 @@ bool frontend_settings_controller_select(qa_frontend *f,unsigned slot,
     pending->selection.serial=pending->text;
     f->settings_devices=pending; return true;
 }
+bool frontend_settings_controller_read(const qa_frontend *f,unsigned slot,qa_controller_info *device)
+{
+    int32_t instance=qa_input_platform_controller(f->input,slot);
+    for (size_t i=0;i<qa_input_platform_device_count(f->input);++i)
+        if (qa_input_platform_device(f->input,i,device) && device->instance==instance) return true;
+    return false;
+}
 bool frontend_settings_audio_select(qa_frontend *f,const char *name,qa_error *error)
 {
     if (!f || !f->device) return fail(error,"Audio selection requires the actual native output");
@@ -91,7 +244,7 @@ bool frontend_settings_audio_select(qa_frontend *f,const char *name,qa_error *er
     f->settings_devices=pending; return true;
 }
 bool frontend_settings_devices_pending(const qa_frontend *f)
-{ return f && f->settings_devices; }
+{ return f && (f->settings_devices || (f->gyro_profiles && f->gyro_profiles->dirty)); }
 bool frontend_settings_devices_save(qa_frontend *f,qa_error *error)
 {
     if (f && f->settings_devices) {
@@ -183,6 +336,7 @@ bool frontend_settings_devices_drain(qa_frontend *f,bool *complete,qa_error *err
         f->shutdown || !frontend_seat_callbacks_returned(f))
         return fail(error,"Device selection must advance after actual frontend callbacks return");
     *complete=false;
+    gyro_profiles_load(f);
     struct frontend_settings_devices *pending=f->settings_devices;
     if (!pending) { *complete=true; return true; }
     if (pending->failure.code!=QA_OK) {
@@ -203,6 +357,7 @@ bool frontend_settings_devices_drain(qa_frontend *f,bool *complete,qa_error *err
             frontend_config_store_save(f->config_store,&failure);
         if (!ok && failure.code==QA_OK)
             fail(&failure,"Device settings lost their actual keyboard route");
+        if (ok && pending->kind==DEVICE_SAVE) gyro_profiles_save(f);
     }
     if (!ok) {
         *complete=false;
@@ -217,10 +372,11 @@ bool frontend_settings_devices_destroy(qa_frontend *f,qa_error *error)
 {
     if (!f) return true;
     struct frontend_settings_devices *pending=f->settings_devices;
-    if (!pending) return true;
+    if (!pending) { free(f->gyro_profiles); f->gyro_profiles=NULL; return true; }
     if (pending->started && (pending->kind==DEVICE_KEYBOARD || pending->kind==DEVICE_CONTROLLER) && f->input_settings)
         return fail(error,"Device selection still retains its actual input-release owner");
     if (pending->audio && !qa_audio_device_selection_abort(pending->audio,error)) return false;
     free(pending->text); free(pending); f->settings_devices=NULL;
+    free(f->gyro_profiles); f->gyro_profiles=NULL;
     return true;
 }

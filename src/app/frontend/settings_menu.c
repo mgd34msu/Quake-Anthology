@@ -20,7 +20,7 @@ typedef enum setting_operation {
     SET_MOUSE_AXIS, SET_MOUSE_INVERT, SET_GAMEPAD_FLOAT, SET_GAMEPAD_BOOL, SET_CURVE,
     SET_RUMBLE, SET_RUMBLE_STRENGTH, SET_KEYBOARD, SET_CONTROLLER_SEAT,
     SET_CONTROLLER, SET_AUDIO_DEVICE, SET_GYRO_ENABLE, SET_GYRO_CALIBRATE,
-    SET_GYRO_CANCEL, SET_GYRO_RESET, SET_LANGUAGE, SET_DOPPLER, SET_ENVIRONMENT,
+    SET_GYRO_CANCEL, SET_GYRO_RESET, SET_GYRO_AXIS, SET_GYRO_SAVE, SET_LANGUAGE, SET_DOPPLER, SET_ENVIRONMENT,
     SET_PACKED_COLOR, SET_PREFERENCE, SET_PREFERENCES_RESET, SET_GAMEPLAY_RESET,
     SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND, SET_LOCAL_JOIN, SET_LOCAL_DROP
 } setting_operation;
@@ -354,6 +354,12 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
         return event->kind!=QA_UI_ACTIVATE || qa_input_platform_calibrate(seat->frontend->input,seat->id,error);
     case SET_GYRO_CANCEL: case SET_GYRO_RESET:
         return event->kind!=QA_UI_ACTIVATE || qa_input_platform_calibration_cancel(seat->frontend->input,seat->id,binding->operation==SET_GYRO_RESET,error);
+    case SET_GYRO_AXIS:
+        if (event->kind!=QA_UI_SELECT) return true;
+        tuning.gyro_yaw_axis=(qa_gyro_yaw_axis)event->value.row;
+        break;
+    case SET_GYRO_SAVE:
+        return event->kind!=QA_UI_ACTIVATE || frontend_settings_devices_save(seat->frontend,error);
     case SET_GAMEPAD_FLOAT:
         if (event->kind!=QA_UI_CHANGE_NUMBER) return true;
         *(float *)((char *)&tuning+binding->offset)=(float)value;
@@ -972,10 +978,7 @@ static bool gyro(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
 {
     frontend_seat *seat=context; (void)id; begin(seat);
     qa_frontend *f=seat->frontend; frontend_settings_menu *owner=seat->settings_menu;
-    int32_t instance=qa_input_platform_controller(f->input,seat->id);
-    qa_controller_info device={0}; bool found=false;
-    for(size_t i=0;i<qa_input_platform_device_count(f->input);++i)
-        if(qa_input_platform_device(f->input,i,&device) && device.instance==instance) { found=true; break; }
+    qa_controller_info device={0}; bool found=frontend_settings_controller_read(f,seat->id,&device);
     bool capable=found && device.sensors[SDL_SENSOR_GYRO], enabled=capable;
     qa_gyro_status status=qa_gamepad_calibration_status(qa_input_seat_gamepad(seat->input));
     qa_gamepad_tuning *pad=qa_input_seat_gamepad_tuning(seat->input);
@@ -995,6 +998,10 @@ static bool gyro(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     item->enabled=enabled; binding_of(item)->offset=offsetof(qa_gamepad_tuning,gyro_yaw_sensitivity);
     item=slider(seat,"Gyro pitch sensitivity",pad->gyro_pitch_sensitivity,0,10,.1,SET_GAMEPAD_FLOAT);
     item->enabled=enabled; binding_of(item)->offset=offsetof(qa_gamepad_tuning,gyro_pitch_sensitivity);
+    static const char *const axes[]={"Y","Z"};
+    item=choice(seat,"Gyro yaw axis",axes,axes,2,pad->gyro_yaw_axis,SET_GYRO_AXIS); item->enabled=enabled;
+    item=button(seat,"Save gyro settings",SET_GYRO_SAVE); item->enabled=enabled;
+    item=button(seat,copy_text(owner,frontend_settings_gyro_message(f,seat->id)),SET_CLOSE); item->enabled=false;
     return finish(seat,FRONTEND_GYRO,"Gyro controls",out,error,false);
 }
 static void close_gyro(void *context,uint32_t id)
