@@ -418,6 +418,7 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
     }
     if (wire->clients[slot].admitted)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 source client is already connected");
+    if (!qa_application_q3_output_drain(provider->application, error)) return false;
     native_q3_wire_client *client = &wire->clients[slot];
     if(!userinfo_replace(wire,client,userinfo,error)) return false;
     char *copy=client->userinfo;

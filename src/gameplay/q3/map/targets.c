@@ -635,7 +635,7 @@ static bool laser(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *erro
                     trace.end, direction, error);
 }
 
-static bool link_locations(qa_q3_game *game, qa_error *error) {
+bool q3_map_locations_link(qa_q3_game *game, qa_error *error) {
     if (game->map->locations_linked)
         return true;
     game->map->locations_linked = true;
@@ -664,6 +664,8 @@ static bool link_locations(qa_q3_game *game, qa_error *error) {
         if (location && location->kind == QA_Q3_MAP_TARGET_LOCATION) {
             location->path_next = game->map->location_head;
             game->map->location_head = location->actor;
+            if (location->think == QA_Q3_MAP_THINK_LOCATIONS)
+                location->due_ms = 0;
         }
     }
     return true;
@@ -685,7 +687,7 @@ bool q3_map_target_think(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
     case QA_Q3_MAP_THINK_LOCATIONS:
         state->due_ms = 0;
-        return link_locations(game, error);
+        return q3_map_locations_link(game, error);
     default:
         return true;
     }

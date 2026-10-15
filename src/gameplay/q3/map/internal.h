@@ -81,6 +81,7 @@ bool q3_map_misc_use(qa_q3_game *, qa_q3_map_actor_state *, qa_actor_id, qa_acto
 bool q3_map_trigger_touch(qa_q3_game *, qa_q3_map_actor_state *, const qa_touch_contact *,
                           qa_error *);
 bool q3_map_target_think(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
+bool q3_map_locations_link(qa_q3_game *, qa_error *);
 bool q3_map_trigger_think(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
 bool q3_map_misc_think(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
 bool q3_map_item_think(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);

@@ -610,9 +610,14 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     if (!game || !game->map || !game->map->world_spawned || game->map->post_spawned)
         return q3_map_fail(error, "invalid Q3 map post-spawn phase");
     size_t count = 0;
-    for (uint32_t i = 0; i < game->source_count; ++i)
-        if (q3_map_get(game, q3_source_actor(game, i)))
+    bool locations = false;
+    for (uint32_t i = 0; i < game->source_count; ++i) {
+        const qa_q3_map_actor_state *state = q3_map_get(game, q3_source_actor(game, i));
+        if (state) {
             ++count;
+            locations |= state->kind == QA_Q3_MAP_TARGET_LOCATION;
+        }
+    }
     qa_q3_map_actor_state **ordered = count ? malloc(count * sizeof(*ordered)) : NULL;
     if (count && !ordered) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 map source-order view");
@@ -656,6 +661,8 @@ static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     game->map->post_spawned = true;
     if (qa_game_type_is_team(game->options.rules.game_type) && game->options.hooks.source_team_items &&
         !game->options.hooks.source_team_items(game->options.hooks.context, error))
+        return false;
+    if (locations && !q3_map_locations_link(game, error))
         return false;
     size_t item_count;
     (void)qa_q3_items(game->options.product, &item_count);
