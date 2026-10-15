@@ -6,7 +6,8 @@ typedef struct frontend_campaign_podium_player { int32_t client, rank, score; } 
 typedef struct frontend_campaign_ui_view {
     bool installed, team, result, team_score_recorded, action_pending;
     qa_application_q3_campaign source;
-    qa_application_q3_client_context client;
+    qa_application_client_source client;
+    uint32_t source_client;
     const qa_base_arena_catalog *catalog;
     const qa_arena_progress *progression;
     int32_t selection, skill;
@@ -20,7 +21,7 @@ typedef struct frontend_campaign_ui_view {
     const qa_cvar_view *result_fields[3];
     const char *demo_path;
 } frontend_campaign_ui_view;
-/* Borrows the actual published local CGAME recipient and its physical GAME.
+/* Borrows the actual published local CLIENT recipient and its physical GAME.
  * Missing campaigns or recipients succeed with installed=false. All catalog
  * and progression borrows expire when their source owner changes. */
 bool frontend_campaign_ui_read(qa_frontend *,uint32_t,frontend_campaign_ui_view *,qa_error *);

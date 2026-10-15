@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_Q3_CAMPAIGN_H
 #define QA_APPLICATION_Q3_CAMPAIGN_H
 #include "qa/application_q3_client.h"
+#include "qa/application_client.h"
 #include "qa/filesystem.h"
 
 typedef struct qa_application_q3_campaign {
@@ -69,8 +70,7 @@ bool qa_application_q3_campaign_local_seat(qa_application *,
  * source bytes plus NUL. A missing or retired binding fails without a label. */
 bool qa_application_q3_campaign_player_name(qa_application *,
     const qa_application_q3_campaign *, uint32_t source_client, char name[80], qa_error *);
-/* MENU's actual local CGAME recipient must name this exact physical GAME and
- * live source actor; CGAME cvars never replace the returned GAME registry. */
-bool qa_application_q3_campaign_menu_read(qa_application *, qa_actor_owner receiver,
-    uint32_t seat, qa_application_q3_campaign *, qa_application_q3_client_context *, qa_error *);
+/* Read the local GAME campaign through its common physical CLIENT binding. */
+bool qa_application_q3_campaign_menu_read(qa_application *, const qa_application_client_source *,
+    qa_application_q3_campaign *, uint32_t *source_client, qa_error *);
 #endif

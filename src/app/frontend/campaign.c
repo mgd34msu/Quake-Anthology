@@ -6,6 +6,7 @@
 #include "ui_features.h"
 #include "content_library_services.h"
 #include "startup_menus.h"
+#include "network_recipient.h"
 #include "../application/control_frame.h"
 #include "qa/settings.h"
 #include "qa/player_progress.h"
@@ -586,12 +587,14 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     if (qa_application_startup_pending(f->application)) return true;
     frontend_campaign *owner=f->campaign;
     if (!owner || owner->kind==CAMPAIGN_Q2 || owner->draining || frontend_network_remote(f)) return true;
-    qa_actor_owner receiver=0;
-    if (!frontend_source_cgame_recipient(f,seat,&receiver,error)) return false;
-    if (!receiver) return true;
+    frontend_network_client_recipient recipient;
+    bool present=false;
+    if (!frontend_network_client_recipient_read(f,seat,&recipient,&present,error)) return false;
+    if (!present || !recipient.ready) return true;
     uint32_t launch_seat;
     if (!frontend_seat_launch_id_read(f,seat,&launch_seat)) return true;
-    if (!qa_application_q3_campaign_menu_read(f->application,receiver,launch_seat,&out->source,&out->client,error) ||
+    out->client=recipient.source;
+    if (!qa_application_q3_campaign_menu_read(f->application,&out->client,&out->source,&out->source_client,error) ||
         !campaign_source_matches(owner,&out->source)) return false;
     const qa_cvar_view *skill=qa_cvars_read(owner->cvars,owner->skill);
     double raw=skill?skill->number:2;
@@ -641,7 +644,7 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
             out->players[i]=(frontend_campaign_podium_player){owner->players[i].client,owner->players[i].rank,owner->players[i].score};
     }
     return qa_application_q3_campaign_current(f->application,&out->source) &&
-        qa_application_q3_client_context_current(f->application,&out->client);
+        qa_application_client_current(f->application,&out->client);
 }
 bool frontend_campaign_postgame_frame(qa_frontend *f,uint32_t seat,
     frontend_campaign_ui_view *view,qa_error *error)
@@ -651,14 +654,14 @@ bool frontend_campaign_postgame_frame(qa_frontend *f,uint32_t seat,
     if (view->team) {
         if (owner->result) {
             qa_error lookup={0};
-            if (!campaign_team_demo(owner,&view->source,&view->client.command_context,&lookup) && lookup.code!=QA_OK)
+            if (!campaign_team_demo(owner,&view->source,&view->client.context.command,&lookup) && lookup.code!=QA_OK)
                 qa_application_feature_report(f->application,"postgame demo",&lookup);
             if (owner->demo_path!=QA_STRING_NONE)
                 view->demo_path=qa_strings_cstr(qa_session_strings(view->source.session),owner->demo_path);
         }
         return true;
     }
-    if (owner->player_client<0 || view->client.source_client!=(uint32_t)owner->player_client) return true;
+    if (owner->player_client<0 || view->source_client!=(uint32_t)owner->player_client) return true;
     uint64_t elapsed=f->wall_time_ns>=owner->result_at_ns?
         (f->wall_time_ns-owner->result_at_ns)/UINT64_C(1000000):0;
     if (!owner->announced && elapsed>=1000) {
@@ -680,7 +683,7 @@ bool frontend_campaign_postgame_frame(qa_frontend *f,uint32_t seat,
         }
         if (available && f->audio) {
             qa_audio_bank *bank;
-            if (!frontend_event_sounds(f,view->client.receiver,QA_GAME_Q3,&bank,error) ||
+            if (!frontend_event_sounds(f,view->source.source_owner,QA_GAME_Q3,&bank,error) ||
                 !frontend_ui_local_sound(f->seats+seat,bank,QA_GAME_Q3,path,7,NULL,error)) return false;
         }
         owner->announced=true;
@@ -693,7 +696,7 @@ bool frontend_campaign_postgame_frame(qa_frontend *f,uint32_t seat,
         if (catalog->final>=0 && owner->base_result.completed_tier==catalog->regular_levels/4+1)
             strcpy(text,"cinematic end.RoQ\n");
         else snprintf(text,sizeof(text),"cinematic tier%" PRId32 ".RoQ\n",owner->base_result.unlocked_movie);
-        if (!qa_console_append(view->client.console,&view->client.command_context,text,error)) return false;
+        if (!qa_console_append(view->client.context.console,&view->client.context.command,text,error)) return false;
         owner->movie_played=true;
     }
     return true;

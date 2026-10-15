@@ -201,21 +201,24 @@ bool qa_application_q3_campaign_player_name(qa_application *app,
     memcpy(out, name, sizeof(name));
     return true;
 }
-bool qa_application_q3_campaign_menu_read(qa_application *app, qa_actor_owner receiver,
-    uint32_t seat, qa_application_q3_campaign *source,
-    qa_application_q3_client_context *client, qa_error *error)
+bool qa_application_q3_campaign_menu_read(qa_application *app,
+    const qa_application_client_source *client,qa_application_q3_campaign *source,
+    uint32_t *source_client,qa_error *error)
 {
-    if (!source || !client)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Campaign menu requires source and actual CGAME recipient outputs");
-    qa_application_q3_campaign view; qa_application_q3_client_context recipient;
+    if (!source || !source_client || !client || !qa_application_client_current(app,client))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Campaign menu requires its actual CLIENT recipient and GAME outputs");
+    qa_application_q3_campaign view;
+    qa_actor_id local_actor;
+    const application_player_record *record=qa_application_player_actor(app,client->context.seat,&local_actor)?
+        application_player_record_live(app->players,local_actor):NULL;
+    if (!record)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign CLIENT has no bound local GAME player");
     bool found; uint32_t actual_seat; qa_actor_id actor;
     if (!qa_application_q3_campaign_read(app, 0, &view, error) ||
-        !qa_application_q3_client_context_read(app, receiver, seat, &recipient, error) ||
-        recipient.native_source != view.native_source || recipient.source_owner != view.source_owner || recipient.source_cvars != view.cvars ||
-        !qa_application_q3_campaign_local_seat(app, &view, recipient.source_client, &found, &actual_seat, &actor, error) ||
-        !found || actual_seat != seat || !qa_actor_id_equal(actor, recipient.source_actor) ||
-        !qa_application_q3_client_context_current(app, &recipient) || !qa_application_q3_campaign_current(app, &view))
+        !qa_application_q3_campaign_local_seat(app, &view, record->client_slot, &found, &actual_seat, &actor, error) ||
+        !found || actual_seat != client->context.seat || !qa_actor_id_equal(actor,record->actor) ||
+        !qa_application_q3_campaign_current(app, &view))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign menu recipient differs from its actual local GAME client");
-    *source = view; *client = recipient;
+    *source = view; *source_client = record->client_slot;
     return true;
 }
