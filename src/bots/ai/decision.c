@@ -220,8 +220,8 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     b->services.arsenal_end(b->services.context,lease);
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(b->controls.grapple && grapple) bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)|0x4000);
-    if(b->controls.rocket_jump && s->view.decision!=QA_BOT_RETREATING &&
-       (s->view.decision!=QA_BOT_BATTLE_NEARBY || bot_ai_source_enemy(b,s)) && (rocket || bfg) &&
+    if(b->controls.rocket_jump && s->view.decision!=QA_BOT_ACTIVATING &&
+       s->view.decision!=QA_BOT_RETREATING && (rocket || bfg) &&
        !bot_ai_inventory_value(s,QA_BOT_INV_QUAD) && bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=60 &&
        (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=90 || bot_ai_inventory_value(s,QA_BOT_INV_ARMOR)>=40)) {
         float propensity;
