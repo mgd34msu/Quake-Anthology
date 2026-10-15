@@ -3,6 +3,7 @@
 #include "capture.h"
 #include "campaign_ui.h"
 #include "campaign_cinematic.h"
+#include "ui_features.h"
 #include "content_library_services.h"
 #include "startup_menus.h"
 #include "../application/control_frame.h"
@@ -13,6 +14,7 @@
 #include "qa/application_startup_prepare.h"
 #include "qa/application_network_q2.h"
 #include "qa/game_q2_bots.h"
+#include "qa/text.h"
 #include <SDL.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -40,6 +42,7 @@ struct frontend_campaign {
     qa_team_arena_progress *team;
     qa_arena_result base_game;
     qa_arena_postgame base_result;
+    uint64_t result_at_ns;
     campaign_player players[8];
     size_t player_count;
     int32_t player_client;
@@ -442,6 +445,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     (void)snprintf(round,length+32,"%s:%" PRId32,identity,view->match_start_time);
     qa_arena_postgame result={.rank=game.rank,.completed_tier=-1,.unlocked_movie=-1,.next_level=-1};
     bool duplicate=!strcmp(campaign_value(view->cvars,owner->archive[7]),round),ok=true;
+    if (duplicate && owner->result) { free(round); return true; }
     if (duplicate) ok=qa_arena_progress_tier(&owner->progression,arena->number,&result.completed_tier,error) &&
         qa_arena_progress_current(&owner->progression,&result.next_level,error);
     bool local=false; uint32_t seat=0; qa_actor_id actor={0};
@@ -469,6 +473,7 @@ static bool campaign_base_complete(qa_frontend *f,const qa_application_q3_campai
     if (!ok) return false;
     owner->base_game=game; owner->base_result=result; memcpy(owner->players,players,sizeof(players));
     owner->player_count=player_count; owner->player_client=player; owner->result=true;
+    owner->result_at_ns=f->wall_time_ns;
     owner->announced=duplicate; owner->movie_played=duplicate;
     return duplicate || campaign_music(f,view,result.rank==1?"music/win":"music/loss",error);
 }
@@ -599,13 +604,8 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
         for(size_t i=0;i<3;++i) out->result_fields[i]=qa_cvars_read(owner->cvars,owner->result_fields[i]);
         if (!qa_application_q3_campaign_result_read(f->application,&out->source,launch_seat,
             &out->team_live,&out->result,error)) return false;
-        if (owner->result && out->result) {
-            qa_error lookup={0};
-            if (!campaign_team_demo(owner,&out->source,&out->client.command_context,&lookup) && lookup.code!=QA_OK)
-                qa_application_feature_report(f->application,"postgame demo",&lookup);
-            if (owner->demo_path!=QA_STRING_NONE)
-                out->demo_path=qa_strings_cstr(qa_session_strings(out->source.session),owner->demo_path);
-        }
+        if (owner->result && out->result && owner->demo_path!=QA_STRING_NONE)
+            out->demo_path=qa_strings_cstr(qa_session_strings(out->source.session),owner->demo_path);
     }
     else {
         out->catalog=owner->catalog; out->progression=&owner->progression;
@@ -642,6 +642,61 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
     }
     return qa_application_q3_campaign_current(f->application,&out->source) &&
         qa_application_q3_client_context_current(f->application,&out->client);
+}
+bool frontend_campaign_postgame_frame(qa_frontend *f,uint32_t seat,
+    frontend_campaign_ui_view *view,qa_error *error)
+{
+    frontend_campaign *owner=f->campaign;
+    if (!owner || !view->installed || !view->result) return true;
+    if (view->team) {
+        if (owner->result) {
+            qa_error lookup={0};
+            if (!campaign_team_demo(owner,&view->source,&view->client.command_context,&lookup) && lookup.code!=QA_OK)
+                qa_application_feature_report(f->application,"postgame demo",&lookup);
+            if (owner->demo_path!=QA_STRING_NONE)
+                view->demo_path=qa_strings_cstr(qa_session_strings(view->source.session),owner->demo_path);
+        }
+        return true;
+    }
+    if (owner->player_client<0 || view->client.source_client!=(uint32_t)owner->player_client) return true;
+    uint64_t elapsed=f->wall_time_ns>=owner->result_at_ns?
+        (f->wall_time_ns-owner->result_at_ns)/UINT64_C(1000000):0;
+    if (!owner->announced && elapsed>=1000) {
+        char path[128]="sound/player/announce/youwin.wav";
+        bool available=owner->base_result.rank==1;
+        if (!available && owner->player_count && owner->players[0].client>=0) {
+            char name[80];
+            if (!qa_application_q3_campaign_player_name(f->application,&view->source,
+                    (uint32_t)owner->players[0].client,name,error)) return false;
+            size_t size=0;
+            for (size_t at=0;name[at];++at) {
+                uint8_t color=0;
+                if (qa_text_q3_color_escape((uint8_t)name[at],(uint8_t)name[at+1],&color)) { ++at; continue; }
+                name[size++]=(char)qa_text_ascii_lower((uint8_t)name[at]);
+            }
+            name[size]=0;
+            available=size!=0;
+            snprintf(path,sizeof(path),"sound/player/announce/%s_wins.wav",name);
+        }
+        if (available && f->audio) {
+            qa_audio_bank *bank;
+            if (!frontend_event_sounds(f,view->client.receiver,QA_GAME_Q3,&bank,error) ||
+                !frontend_ui_local_sound(f->seats+seat,bank,QA_GAME_Q3,path,7,NULL,error)) return false;
+        }
+        owner->announced=true;
+    }
+    uint64_t awards=(uint64_t)owner->base_result.award_count*2000;
+    if (!owner->movie_played && owner->base_result.unlocked_movie>=0 &&
+        elapsed>=5000+(awards>5000?awards:5000)) {
+        const qa_arena_catalog *catalog=&owner->progression.catalog;
+        char text[64];
+        if (catalog->final>=0 && owner->base_result.completed_tier==catalog->regular_levels/4+1)
+            strcpy(text,"cinematic end.RoQ\n");
+        else snprintf(text,sizeof(text),"cinematic tier%" PRId32 ".RoQ\n",owner->base_result.unlocked_movie);
+        if (!qa_console_append(view->client.console,&view->client.command_context,text,error)) return false;
+        owner->movie_played=true;
+    }
+    return true;
 }
 bool frontend_campaign_ui_stage(qa_frontend *f,uint32_t seat,frontend_campaign_ui_action action,
     int32_t arena,int32_t skill,qa_error *error)

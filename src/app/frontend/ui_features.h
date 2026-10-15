@@ -13,6 +13,8 @@ bool frontend_ui_audio_prepare_sound(qa_frontend *, qa_audio_bank *, const char 
 bool frontend_ui_audio_prepare_q2_source(qa_frontend *, qa_audio_bank *, qa_actor_owner, qa_error *);
 bool frontend_ui_audio_prepare_asset(qa_frontend *, qa_audio_asset *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
+bool frontend_ui_local_sound(frontend_seat *, qa_audio_bank *, qa_game_family,
+    const char *, int32_t channel, bool *found, qa_error *);
 void frontend_ui_sound(void *, uint32_t, qa_ui_sound);
 bool frontend_sound_command(qa_frontend *, const qa_command_invocation *, bool *, qa_error *);
 void frontend_ui_graph_sample(qa_frontend *, float, int32_t);

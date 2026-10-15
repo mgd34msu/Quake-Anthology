@@ -198,8 +198,12 @@ static bool sound_bank(frontend_seat *seat, qa_audio_bank **out,
     }
     return true;
 }
-static bool local_sound(frontend_seat *seat, qa_audio_bank *bank,
-    qa_game_family family, const char *name, bool *found, qa_error *error)
+static int32_t local_channel(qa_game_family family)
+{
+    return family == QA_GAME_Q1 ? -1 : family == QA_GAME_Q3 ? 6 : 0;
+}
+bool frontend_ui_local_sound(frontend_seat *seat, qa_audio_bank *bank,
+    qa_game_family family, const char *name, int32_t channel, bool *found, qa_error *error)
 {
     qa_frontend *f = seat->frontend;
     qa_audio_asset *asset = NULL;
@@ -209,7 +213,7 @@ static bool local_sound(frontend_seat *seat, qa_audio_bank *bank,
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
         .name = qa_audio_asset_name(asset), .family = family, .actor = QA_AUDIO_NO_ACTOR,
         .owner = QA_AUDIO_NO_OWNER, .audience = seat->id, .origin_kind = QA_AUDIO_LOCAL,
-        .channel = family == QA_GAME_Q1 ? -1 : family == QA_GAME_Q3 ? 6 : 0,
+        .channel = channel,
         .volume = 1, .attenuation = 0};
     bool okay = frontend_audio_event(f, &(qa_audio_event){.kind = QA_AUDIO_EVENT_PLAY,
         .sound = sound, .milliseconds = (int32_t)((f->time_ns / 1000000) & INT32_MAX)}, error);
@@ -235,7 +239,7 @@ void frontend_ui_sound(void *context, uint32_t physical, qa_ui_sound event)
         name = event == QA_UI_OPEN ? "misc/menu1.wav" :
             event == QA_UI_CLOSE ? "misc/menu3.wav" :
             family == QA_GAME_Q3 && event == QA_UI_REJECT ? "misc/menu4.wav" : "misc/menu2.wav";
-    (void)local_sound(seat, bank, family, name, NULL, &error);
+    (void)frontend_ui_local_sound(seat, bank, family, name, local_channel(family), NULL, &error);
 }
 bool frontend_sound_command(qa_frontend *f, const qa_command_invocation *call,
     bool *handled, qa_error *error)
@@ -309,7 +313,7 @@ bool frontend_sound_command(qa_frontend *f, const qa_command_invocation *call,
             path = extended;
         }
         bool found;
-        if (!local_sound(seat, bank, family, path, &found, error)) return false;
+        if (!frontend_ui_local_sound(seat, bank, family, path, local_channel(family), &found, error)) return false;
         if (!found) {
             frontend_console_print(f, &call->context, "Couldn't load sound ");
             frontend_console_print(f, &call->context, path);

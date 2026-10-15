@@ -24,6 +24,7 @@ typedef struct frontend_campaign_ui_view {
  * Missing campaigns or recipients succeed with installed=false. All catalog
  * and progression borrows expire when their source owner changes. */
 bool frontend_campaign_ui_read(qa_frontend *,uint32_t,frontend_campaign_ui_view *,qa_error *);
+bool frontend_campaign_postgame_frame(qa_frontend *,uint32_t,frontend_campaign_ui_view *,qa_error *);
 typedef enum frontend_campaign_ui_action {
     FRONTEND_CAMPAIGN_PLAY, FRONTEND_CAMPAIGN_RETRY, FRONTEND_CAMPAIGN_NEXT,
     FRONTEND_CAMPAIGN_RESET, FRONTEND_CAMPAIGN_DEMO, FRONTEND_CAMPAIGN_QUIT

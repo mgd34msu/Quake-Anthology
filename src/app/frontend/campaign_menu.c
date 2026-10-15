@@ -175,6 +175,7 @@ bool frontend_campaign_menu_sync(qa_frontend *f,qa_error *error)
         if (!state || !frontend_campaign_ui_read(f,i,&view,error)) return false;
         if (view.action_pending) continue;
         if (!view.installed || !view.result) { state->shown_result=false; continue; }
+        if (!frontend_campaign_postgame_frame(f,i,&view,error)) return false;
         int32_t intermission=view.team?view.team_live.intermission_time_ms:0;
         if (state->shown_result && identity(f,view.source.source_owner,state->shown_instance) &&
             state->shown_generation==view.source.publication_generation && state->shown_map_revision==view.source.map_revision &&
