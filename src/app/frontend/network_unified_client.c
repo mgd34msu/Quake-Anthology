@@ -152,7 +152,11 @@ static qa_command_result forward(void *context,const qa_command_invocation *call
     frontend_client_source_view source;
     if (!o->replica || !frontend_client_source_read(o->physical,&source,e)) return QA_COMMAND_UNHANDLED;
     if (!connection(o,&source.source) || call->console!=source.source.context.console) return QA_COMMAND_FAILED;
-    return frontend_remote_unified_command(o->replica,call->argv[0],call->argv+1,call->argc-1,e)?
+    const char *text; bool explicit_command;
+    if (!qa_console_forward_text(call,&text,&explicit_command,e)) return QA_COMMAND_FAILED;
+    size_t first=explicit_command?1:0;
+    if (call->argc==first) return QA_COMMAND_HANDLED;
+    return frontend_remote_unified_command(o->replica,call->argv[first],call->argv+first+1,call->argc-first-1,e)?
         QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }
 static bool allow(void *context,const qa_command_invocation *call)

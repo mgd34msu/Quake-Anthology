@@ -1219,7 +1219,8 @@ static bool cvar_command(qa_console *console, const qa_command_invocation *comma
     return true;
 }
 
-static bool fallback(qa_console *console, const qa_command_invocation *command, qa_error *error)
+static bool fallback(qa_console *console, const qa_command_invocation *command,
+    bool already_forwarded, qa_error *error)
 {
     const qa_console_options *options=options_for(console,&command->context);
     if (!options) return qac_fail(error,QA_ERROR_ARGUMENT,"command Source callbacks have retired");
@@ -1236,8 +1237,10 @@ static bool fallback(qa_console *console, const qa_command_invocation *command, 
     bool local = command->context.direct &&
         (command->context.origin == QA_COMMAND_LOCAL || command->context.origin == QA_COMMAND_SEAT);
     if (!qac_q1(command->context.dialect)) {
-        qa_command_result result = fallback_call(console, options->forward, command, error);
-        if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
+        if (!already_forwarded) {
+            qa_command_result result = fallback_call(console, options->forward, command, error);
+            if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
+        }
         if (!local) return true;
     }
     bool warn = local || command->context.dialect != QA_RULESET_QUAKEWORLD;
@@ -1289,10 +1292,12 @@ static bool dispatch_continuation(qa_console *console,const qa_command_context *
     command_contribution *part=select_contribution(console,entry,context);
     bool success;
     if (part && qac_q1(context->dialect)) success=qac_fail(error,QA_ERROR_ARGUMENT,"Q1 command has no callback");
-    else if (part && qac_q2(context->dialect)) {
+    else if (part && (qac_q2(context->dialect) ||
+        (context->dialect==QA_RULESET_Q3 && !part->handler && !part->callback))) {
         result=fallback_call(console,options->forward,command,error);
-        success=result!=QA_COMMAND_FAILED;
-    } else success=fallback(console,command,error);
+        success=result==QA_COMMAND_UNHANDLED && context->dialect==QA_RULESET_Q3 ?
+            fallback(console,command,true,error) : result!=QA_COMMAND_FAILED;
+    } else success=fallback(console,command,false,error);
 
     return success;
 }
@@ -1400,7 +1405,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         }
     }
     command_contribution *part = select_contribution(console,entry,context);
-    if (!part || (context->dialect == QA_RULESET_Q3 && !part->handler)) {
+    if (!part) {
         success = cvar_command(console, &command, &handled, error);
         if (!success || handled) goto done;
     }

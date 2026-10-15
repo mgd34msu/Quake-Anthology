@@ -518,6 +518,66 @@ static void test_console_failed_release(void)
     CHECK(qa_console_destroy_ready(console));qa_console_destroy(console);
 }
 
+typedef struct console_precedence_counts {
+    size_t forwarded, called;
+    qa_command_result forward_result, callback_result;
+} console_precedence_counts;
+static qa_command_result console_precedence_forward(void *user,
+    const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;(void)error;
+    console_precedence_counts *counts=user;
+    ++counts->forwarded;return counts->forward_result;
+}
+static qa_command_result console_precedence_callback(void *user,
+    const qa_command_invocation *command,qa_error *error)
+{
+    (void)command;(void)error;
+    console_precedence_counts *counts=user;
+    ++counts->called;return counts->callback_result;
+}
+static void test_console_command_precedence(void)
+{
+    qa_error error={0};
+    qa_cvars *cvars=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_Q3},&error);
+    CHECK(cvars);
+    CHECK(qa_cvars_register(cvars,"qa_forward_collision","original",0,1,"",&error));
+    CHECK(qa_cvars_register(cvars,"qa_callback_collision","original",0,1,"",&error));
+    CHECK(qa_cvars_register(cvars,"qa_plain_cvar","original",0,1,"",&error));
+    qa_command_context context={.owner=1,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL,
+        .cvar_view=qa_cvars_view_identity(cvars)};
+    console_precedence_counts counts={.forward_result=QA_COMMAND_HANDLED,.callback_result=QA_COMMAND_HANDLED};
+    qa_console *console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,
+        .user=&counts,.forward=console_precedence_forward},&error);
+    CHECK(console);
+    CHECK(qa_console_register(console,"qa_forward_collision","",1,false,NULL,NULL,&error));
+    CHECK(qa_console_register(console,"qa_forward_only","",1,false,NULL,NULL,&error));
+    qa_console_contribution contribution={.receiver=1,.lifetime_owner=2,.cvar_view=context.cvar_view,
+        .callback=console_precedence_callback,.user=&counts};
+    CHECK(qa_console_contribute(console,"qa_callback_collision",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&context,"qa_forward_collision sent",&error));
+    CHECK(counts.forwarded==1 && !counts.called);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_forward_collision")->value,"original"));
+    counts.forward_result=QA_COMMAND_UNHANDLED;
+    CHECK(qa_console_execute_now(console,&context,"qa_forward_collision fallback",&error));
+    CHECK(counts.forwarded==2 && !counts.called);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_forward_collision")->value,"fallback"));
+    CHECK(qa_console_execute_now(console,&context,"qa_callback_collision sent",&error));
+    CHECK(counts.forwarded==2 && counts.called==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_callback_collision")->value,"original"));
+    counts.callback_result=QA_COMMAND_UNHANDLED;
+    CHECK(qa_console_execute_now(console,&context,"qa_callback_collision fallback",&error));
+    CHECK(counts.forwarded==2 && counts.called==2);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_callback_collision")->value,"fallback"));
+    CHECK(qa_console_execute_now(console,&context,"qa_plain_cvar changed",&error));
+    CHECK(counts.forwarded==2 && counts.called==2);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_plain_cvar")->value,"changed"));
+    CHECK(qa_console_execute_now(console,&context,"qa_forward_only declined",&error));
+    CHECK(counts.forwarded==3 && counts.called==2);
+    CHECK(!qa_cvars_find(cvars,"qa_forward_only"));
+    qa_console_destroy(console);qa_cvars_destroy(cvars);
+}
+
 static void test_shared_video_mode_recovery(void)
 {
     qa_error error={0};qa_cvar_video_mode mode;
@@ -6051,6 +6111,7 @@ int main(int argc, char **argv)
     test_module_observation_storage();
     test_console_restore_pages();
     test_console_failed_release();
+    test_console_command_precedence();
     test_shared_video_mode_recovery();
     test_chat_initial_aliases();
     test_physical_prediction_command();
