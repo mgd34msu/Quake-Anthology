@@ -75,6 +75,7 @@ typedef struct application_bots {
     struct application_bot_transport *transport;
     qa_vfs *files;
     qa_ruleset_id behavior;
+    qa_bot_source_knowledge *source_knowledge;
     float walk_speed;
     application_bot_script_file *script_files;
     qa_vfs *navigation_files;

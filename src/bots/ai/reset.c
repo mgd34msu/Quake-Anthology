@@ -32,6 +32,7 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
     fresh.player.carrying_objective=false;
     bot_ai_source_order_init(&fresh.source_order);
     *s = fresh;
+    bot_ai_source_settings_bind(b,s);
     return (!s->movement || qa_bot_moves_reset(qa_bot_runtime_moves(b->runtime), s->movement, e)) &&
         qa_bot_goals_reset(qa_bot_runtime_goals(b->runtime), s->goals, e) &&
         qa_bot_runtime_weapon_reset(b->runtime, s->weapons, e) &&

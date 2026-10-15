@@ -83,6 +83,7 @@ typedef struct qa_bot_admission {
     bool restart;
 } qa_bot_admission;
 typedef struct qa_bot_view {
+    const qa_bot_source_skill *source_settings;
     qa_actor_id actor, enemy;
     uint32_t client;
     uint32_t movement;
@@ -114,6 +115,7 @@ typedef struct qa_bot_services {
     void *context;
     qa_bot_source_memory memory;
     const qa_ruleset_descriptor *behavior;
+    const qa_bot_source_knowledge *source_knowledge;
     bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;

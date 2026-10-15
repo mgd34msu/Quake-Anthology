@@ -87,6 +87,7 @@ typedef struct bot_ai_state {
     bot_cooperative_state cooperative;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
+    const qa_bot_source_skill *source_settings;
     char *admitted_character;
     char *admitted_name;
     float state_time;
@@ -135,6 +136,7 @@ struct qa_bots {
     qa_actor_id shutdown_actor;
 };
 bool bot_ai_fail(qa_error *, const char *);
+void bot_ai_source_settings_bind(qa_bots *,bot_ai_state *);
 static inline bool bot_ai_rerelease_behavior(const qa_bots *bots) {
     return bots->services.behavior==qa_ruleset_read(QA_RULESET_NETQUAKE) ||
         bots->services.behavior==qa_ruleset_read(QA_RULESET_Q2_RERELEASE);

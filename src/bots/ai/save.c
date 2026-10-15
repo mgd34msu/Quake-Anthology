@@ -468,6 +468,8 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     if(ok) ok=bot_ai_source_orders_rebase(&scratch.source_orders,&scratch.source_orders,&bots->source_orders,error);
     if (ok) {
         bot_ai_source_match_bind(&scratch);bot_ai_map_script_bind(&scratch);
+        for(size_t i=0;i<64;++i) if(scratch.source_cells[i])
+            bot_ai_source_settings_bind(&scratch,scratch.source_cells[i]);
         qa_bots old = *bots; *bots = scratch;
         if(bots->cooperative_actors.retained.storage)
             bots->cooperative_actors.retained.storage=&bots->observation_storage;

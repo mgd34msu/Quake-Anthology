@@ -368,6 +368,14 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHAT_FILE);
     return bot_ai_source_setup_gender(b,s,e);
 }
+void bot_ai_source_settings_bind(qa_bots *b,bot_ai_state *s) {
+    size_t count=qa_bot_source_skill_count(b->services.source_knowledge);
+    s->source_settings=NULL;
+    if(!count || !bot_ai_rerelease_behavior(b)) return;
+    float selected=truncf(s->admitted_skill);
+    size_t index=selected<=0?0:selected>=(float)count?count-1:(size_t)selected;
+    s->source_settings=qa_bot_source_skill_at(b->services.source_knowledge,index);
+}
 static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
     if (!a || !a->character_file || !a->name || !isfinite(a->skill) ||
@@ -435,6 +443,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     s->view=(bot_ai_view){.actor=a->actor,.client=a->client,.entity=a->entity,
         .source_client=source_client,.mode=a->mode,.decision=QA_BOT_SEEK_LONG_TERM};
     s->team_arena=a->team_arena;s->admitted_skill=a->skill;
+    bot_ai_source_settings_bind(b,s);
     free(s->admitted_character);free(s->admitted_name);
     s->admitted_character=character_request;s->admitted_name=admission_name;
     size_t name_size = strlen(a->name);
@@ -502,7 +511,7 @@ bool qa_bots_read(const qa_bots *b, qa_actor_id actor, qa_bot_view *out, qa_erro
     *out=(qa_bot_view){.actor=s->view.actor,.enemy=s->view.enemy,.client=s->view.client,
         .source_client=s->view.source_client,.entity=s->view.entity,.weapon=bot_ai_weapon_number(s),
         .mode=s->view.mode,.decision=s->view.decision,.order=s->view.order,.movement=s->movement,.paused=b->controls.paused,
-        .enter_time=bot_ai_enter_time(s),.think_time=bot_ai_think_time(s)};
+        .enter_time=bot_ai_enter_time(s),.think_time=bot_ai_think_time(s),.source_settings=s->source_settings};
     out->enemy=bot_ai_enemy_actor(b,s);
     return true;
 }

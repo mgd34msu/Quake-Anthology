@@ -310,6 +310,7 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             const bot_checkpoint_record *record=&checkpoint->records[i];
             bot_ai_state *state=b->source_cells[record->state.acquired_source_client];
             free(state->admitted_character);free(state->admitted_name);*state=record->state;
+            bot_ai_source_settings_bind(b,state);
             state->activation_visits=&b->activation_scratch[record->state.acquired_source_client].visits;
             state->source_span=prepared[i].source_span;
             state->source_order=prepared[i].source_order;

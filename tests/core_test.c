@@ -80,6 +80,7 @@
 #include "../src/network/unified/frame_internal.h"
 #include "../src/bots/runtime/internal.h"
 #include "qa/bot_observations_save.h"
+#include "qa/bot_knowledge.h"
 #include "qa/console_save.h"
 #include "../src/console/commands_private.h"
 #include "../src/bots/chat/internal.h"
@@ -99,6 +100,80 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+static void test_bot_source_knowledge(void)
+{
+    qa_error error={0};
+    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[3][160];
+    CHECK(mkdtemp(directory));
+    CHECK(snprintf(folder,sizeof(folder),"%s/bots",directory)>0 && mkdir(folder,0700)==0);
+    qa_resource_pool *pool=qa_resource_pool_create(&error);CHECK(pool);
+    qa_vfs *files=qa_vfs_create(pool,&error);CHECK(files);
+    qa_mount_id mount;
+    CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,true,&mount,&error));
+    qa_strings *strings=NULL;CHECK(qa_strings_create(&strings,&error));
+    const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n}\n\0\0";
+    const char settings[]="// A source skill may put its opening brace on the next line.\n"
+        "skill \"practice\"\n{ // retained source order\n"
+        " movement.walk_only false\n movement.walk_only true\n"
+        " movement.allow_jumping_in_combat true\n movement.allow_rocket_jumping false\n"
+        " movement.jump_chance 37.5\n movement.jump_cooldown 2.25\n"
+        " aiming.max_acceleration 360\n aiming.spring_stiffness 48\n"
+        " senses.fov_angle 110\n senses.sound_range 1000\n"
+        " weapons.fov_angle 15\n weapons.fov_scalar 0.75\n"
+        " custom.value \"a//b\" \"\377\200\"\n custom.value second\n}\n"
+        "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n\0\0";
+    const char optional[]="{\n name \"\376\201\"\n}\n";
+    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt"};
+    const qa_bytes contents[]={
+        {(const uint8_t *)weapons,sizeof(weapons)-1},
+        {(const uint8_t *)settings,sizeof(settings)-1},
+        {(const uint8_t *)optional,sizeof(optional)-1}};
+    for(size_t i=0;i<3;++i) {
+        CHECK(snprintf(paths[i],sizeof(paths[i]),"bots/%s",names[i])>0);
+        CHECK(qa_vfs_write(files,mount,paths[i],contents[i],&error));
+    }
+    qa_bot_source_knowledge *knowledge=NULL;bool found=true;
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,&knowledge,&found,&error));
+    CHECK(!found && !knowledge); /* Q2 reads PC settings only. */
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,&knowledge,&found,&error));
+    CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==2 &&
+        qa_bot_source_document_count(knowledge)==3);
+    const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
+        *hard=qa_bot_source_skill_at(knowledge,1);
+    CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
+        practice->movement.walk_only && practice->movement.allow_combat_jumping &&
+        !practice->movement.allow_rocket_jumping && practice->movement.jump_chance==37.5f &&
+        practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
+        practice->aiming.spring_stiffness==48 && practice->senses.fov_angle==110 &&
+        practice->senses.sound_range==1000 && practice->weapons.fov_angle==15 &&
+        practice->weapon_fov_scalar==.75f);
+    CHECK(hard && !strcmp(qa_strings_cstr(strings,hard->name),"hard") &&
+        !hard->movement.walk_only && hard->movement.allow_rocket_jumping);
+    const qa_bot_source_document *document=qa_bot_source_document_at(knowledge,0);
+    CHECK(document && document->source.size==sizeof(weapons)-3 &&
+        !memcmp(document->source.data,weapons,document->source.size) && document->block_count==1);
+    const qa_bot_source_block *block=document->blocks;
+    CHECK(block->header_count==2 && block->field_count==2 && block->fields[0].count==3 &&
+        block->fields[1].count==10);
+    document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
+    CHECK(block->field_count==14 && block->fields[0].key==block->fields[1].key &&
+        block->fields[12].key==block->fields[13].key && block->fields[12].count==2);
+    const qa_bytes byte_name=qa_strings_text(strings,block->fields[12].values[1]);
+    CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&
+        !strcmp(qa_strings_cstr(strings,block->fields[12].values[0]),"a//b"));
+    document=qa_bot_source_document_at(knowledge,2);
+    const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
+    CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
+    qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
+    CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));
+    qa_bot_source_knowledge_destroy(knowledge);qa_strings_destroy(strings);
+    for(size_t i=0;i<3;++i) {
+        char path[256];CHECK(snprintf(path,sizeof(path),"%s/%s",directory,paths[i])>0);
+        CHECK(unlink(path)==0);
+    }
+    CHECK(rmdir(folder)==0 && rmdir(directory)==0);
+}
 
 static void test_aas_geometry_compaction(void)
 {
@@ -6217,6 +6292,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_bot_source_knowledge();
     test_aas_geometry_compaction();
     test_prediction_continuations();
     test_field_completion();

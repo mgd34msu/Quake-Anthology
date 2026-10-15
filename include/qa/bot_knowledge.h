@@ -4,6 +4,51 @@
 #include "qa/bot_runtime.h"
 #include "qa/inventory.h"
 #include "qa/bots_inventory.h"
+#include "qa/bot_perception.h"
+#include "qa/ruleset.h"
+#include "qa/vfs.h"
+
+typedef struct qa_bot_source_knowledge qa_bot_source_knowledge;
+typedef struct qa_bot_source_movement {
+    bool allow_combat_jumping, walk_only, allow_rocket_jumping;
+    float jump_chance, jump_cooldown;
+} qa_bot_source_movement;
+typedef struct qa_bot_source_skill {
+    qa_string_id name;
+    qa_bot_senses senses;
+    qa_bot_weapon_senses weapons;
+    qa_bot_aiming aiming;
+    qa_bot_source_movement movement;
+    float weapon_fov_scalar;
+} qa_bot_source_skill;
+typedef struct qa_bot_source_field {
+    qa_string_id key;
+    const qa_string_id *values;
+    size_t count;
+    uint32_t line;
+} qa_bot_source_field;
+typedef struct qa_bot_source_block {
+    const qa_string_id *header;
+    size_t header_count;
+    const qa_bot_source_field *fields;
+    size_t field_count;
+    uint32_t line;
+} qa_bot_source_block;
+typedef struct qa_bot_source_document {
+    qa_string_id path;
+    qa_bytes source;
+    const qa_bot_source_block *blocks;
+    size_t block_count;
+} qa_bot_source_document;
+/* Load once from the selected mounted scope. Views borrow the knowledge owner;
+ * strings belong to the caller's session table. Missing settings return found=false. */
+bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id,
+    qa_bot_source_knowledge **, bool *found, qa_error *);
+void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
+size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *);
+const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *, size_t);
+size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
+const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
 
 #define QA_BOT_INVENTORY_SIZE 256
 enum {

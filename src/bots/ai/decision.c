@@ -200,6 +200,10 @@ bool bot_ai_source_item_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, boo
 }
 static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     bot_ai_travel_flags_set(s,BOT_DEFAULT_TRAVEL);
+    if(s->source_settings && s->source_settings->movement.walk_only &&
+       !s->source_settings->movement.allow_combat_jumping)
+        bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)&
+            ~(qa_nav_aas_travel_flag(4)|qa_nav_aas_travel_flag(5)));
     int32_t contents;
     if(!qa_bot_navigation_contents(navigation(b,s),qa_vec_add(bot_ai_origin(s),qa_v3(0,0,-23)),&contents,e)) return false;
     if((uint32_t)contents&((1u<<QA_CONTENT_LAVA)|(1u<<QA_CONTENT_SLIME)))
@@ -220,7 +224,8 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
     b->services.arsenal_end(b->services.context,lease);
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(b->controls.grapple && grapple) bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)|0x4000);
-    if(b->controls.rocket_jump && s->view.decision!=QA_BOT_ACTIVATING &&
+    if(b->controls.rocket_jump && (!s->source_settings || s->source_settings->movement.allow_rocket_jumping) &&
+       s->view.decision!=QA_BOT_ACTIVATING &&
        s->view.decision!=QA_BOT_RETREATING && (rocket || bfg) &&
        !bot_ai_inventory_value(s,QA_BOT_INV_QUAD) && bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=60 &&
        (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=90 || bot_ai_inventory_value(s,QA_BOT_INV_ARMOR)>=40)) {

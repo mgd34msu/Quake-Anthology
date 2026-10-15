@@ -681,6 +681,7 @@ add_library(qa_bots STATIC
     src/bots/goals/source_weights.c
     src/bots/goals/source_state.c
     src/bots/knowledge.c
+    src/bots/knowledge_source.c
     src/bots/library/bsp.c
     src/bots/library/character.c
     src/bots/library/character_log.c

@@ -852,6 +852,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
         application_bot_script_file *file=bots->script_files;bots->script_files=file->next;
         qa_resource_release(file->resource);qa_vfs_acquisition_dispose(&file->acquisition);free(file);
     }
+    qa_bot_source_knowledge_destroy(bots->source_knowledge);
     qa_resource_release(bots->source_map_resource);qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
     qa_vfs_destroy(bots->navigation_files);
     qa_bots_save_requirements_free(&bots->saved_requirements);
@@ -959,7 +960,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
     return (qa_bot_services){.context=bots,
         .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
             .borrow_span=application_bots_memory_span},
-        .behavior=qa_ruleset_read(bots->behavior),
+        .behavior=qa_ruleset_read(bots->behavior),.source_knowledge=bots->source_knowledge,
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
             (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .shared=application_builtin_services(application,application->world,application->physics),
@@ -993,21 +994,25 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     application_provider *source=application_bot_source(bots);
     if(!source || !source->product) return true;
     qa_game_family family=source->product->family;
-    bool found=false;uint64_t size=0;
+    qa_ruleset_id behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
+    qa_bot_source_knowledge *knowledge=NULL;bool found=false;
+    qa_strings *strings=qa_session_strings(bots->application->session);
     if(source->launch && source->launch->content &&
-       !qa_vfs_probe(source->launch->content,"bots/weapons.txt",&found,&size,error)) return false;
+       !qa_bot_source_knowledge_load(source->launch->content,strings,behavior,&knowledge,&found,error)) return false;
     if(!found && family!=QA_GAME_Q3) {
         const qa_product *sibling=qa_catalog_find(bots->application->catalog,
             family==QA_GAME_Q1?"q1-rerelease-id1":"q2-rerelease-baseq2");
         if(sibling && sibling->availability==QA_CONTENT_INSTALLED) {
             qa_vfs *files=NULL;
             if(!qa_catalog_open(bots->application->catalog,sibling->id,&files,error)) return false;
-            bool okay=qa_vfs_probe(files,"bots/weapons.txt",&found,&size,error);
+            bool okay=qa_bot_source_knowledge_load(files,strings,behavior,&knowledge,&found,error);
             qa_vfs_destroy(files);
             if(!okay) return false;
         }
     }
-    if(found) bots->behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
+    qa_bot_source_knowledge_destroy(bots->source_knowledge);
+    bots->source_knowledge=knowledge;
+    if(found) bots->behavior=behavior;
     return true;
 }
 static bool prepare_bots(qa_application *application,const qa_launch_choices *choices,

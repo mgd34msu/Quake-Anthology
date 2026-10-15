@@ -496,7 +496,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, uint32_t travel_flags,
     if (!bot_ai_character_float(b,s,BOT_C_ATTACK,0,1,&skill,e) ||
         !bot_ai_character_float(b,s,BOT_C_JUMPER,0,1,&jumper,e) ||
         !bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&croucher,e)) return false;
-    if (skill < .2f) return true;
+    if (!s->source_settings && skill < .2f) return true;
     if (!bot_ai_move_setup(b,s,e)) return false;
     qa_bot_entity_info info;bool observed;
     if(!qa_bot_runtime_entity(b->runtime,source?attack_entity:bot_ai_enemy_number(s),&info,&observed,e)) return false;
@@ -504,18 +504,27 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, uint32_t travel_flags,
     float distance=qa_vec_length(toward);
     qa_vec3 forward=qa_vec_normalize(toward),backward=qa_vec_scale(forward,-1);
     uint32_t type=QA_BOT_DIRECTION_WALK;
-    if (bot_ai_attack_crouch_time(s) < b->time-1) {
-        float random;if(!bot_ai_random(b,&random,e)) return false;
-        if (random<jumper) type=QA_BOT_DIRECTION_JUMP;
-        else if(!source || bot_ai_attack_crouch_time(s)<b->time-1) {
-            if(!bot_ai_random(b,&random,e)) return false;
-            if(random<croucher) bot_ai_attack_crouch_time_set(s,b->time+croucher*5);
+    if(s->source_settings) {
+        const qa_bot_source_movement *movement=&s->source_settings->movement;
+        if(movement->allow_combat_jumping && s->player.grounded && bot_ai_attack_jump_time(s)<=b->time) {
+            bot_ai_attack_jump_time_set(s,b->time+movement->jump_cooldown);
+            float random;if(!bot_ai_random(b,&random,e)) return false;
+            if(random*100<movement->jump_chance) type=QA_BOT_DIRECTION_JUMP;
         }
-    }
-    if (bot_ai_attack_crouch_time(s)>b->time) type=QA_BOT_DIRECTION_CROUCH;
-    if (type==QA_BOT_DIRECTION_JUMP) {
-        if (bot_ai_attack_jump_time(s)>b->time) type=QA_BOT_DIRECTION_WALK;
-        else bot_ai_attack_jump_time_set(s,b->time+1);
+    } else {
+        if (bot_ai_attack_crouch_time(s) < b->time-1) {
+            float random;if(!bot_ai_random(b,&random,e)) return false;
+            if (random<jumper) type=QA_BOT_DIRECTION_JUMP;
+            else if(!source || bot_ai_attack_crouch_time(s)<b->time-1) {
+                if(!bot_ai_random(b,&random,e)) return false;
+                if(random<croucher) bot_ai_attack_crouch_time_set(s,b->time+croucher*5);
+            }
+        }
+        if (bot_ai_attack_crouch_time(s)>b->time) type=QA_BOT_DIRECTION_CROUCH;
+        if (type==QA_BOT_DIRECTION_JUMP) {
+            if (bot_ai_attack_jump_time(s)>b->time) type=QA_BOT_DIRECTION_WALK;
+            else bot_ai_attack_jump_time_set(s,b->time+1);
+        }
     }
     int32_t held=bot_ai_weapon_number(s);
     if(source && !bot_ai_source_player_word(b,s,BOT_PS_WEAPON,&held,e)) return false;
