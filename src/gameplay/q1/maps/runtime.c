@@ -1348,9 +1348,23 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         return false;
     switch (kind) {
     case Q1_MAP_WORLD: {
+        qa_actor_id world = entity->id;
         entity->physics.motion = QA_PHYSICS_PUSH;
         entity->physics.solid = QA_PHYSICS_BRUSH;
-        g->maps->world_actor = entity->id;
+        g->maps->world_actor = world;
+        qa_bytes map = qa_strings_text(qa_session_strings(g->services.session),
+                                      g->maps->options.current_map);
+        float gravity = map.size == sizeof("e1m8") - 1 &&
+                        !memcmp(map.data, "e1m8", sizeof("e1m8") - 1) ? 100 : 800;
+        const qa_cvar_view *source_gravity = g->host.cvars
+            ? qa_q1_source_read(g, QA_Q1_SOURCE_GRAVITY) : NULL;
+        if (source_gravity &&
+            !qa_cvars_set_number(g->host.cvars, source_gravity->name, gravity, error))
+            return false;
+        if (!q1_alive(g, world))
+            return true;
+        g->options.gravity = gravity;
+        g->services.physics->gravity = gravity;
         qa_q1_fog_state *fog = &g->maps->world_fog;
         *fog = (qa_q1_fog_state){.color = {.3f, .3f, .3f}, .sky_factor = .5f,
             .initialized = true};
