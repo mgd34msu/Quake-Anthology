@@ -344,6 +344,8 @@ typedef struct qa_nav_prediction_query {
     bool on_ground, world_only;
     /* Final-state consumers do not need a retained path of predicted points. */
     bool omit_trajectory;
+    /* Optional canonical environment for detached movement predictions. */
+    const qa_movement_environment *environment;
 } qa_nav_prediction_query;
 typedef struct qa_nav_prediction_result {
     qa_vec3 end, velocity;

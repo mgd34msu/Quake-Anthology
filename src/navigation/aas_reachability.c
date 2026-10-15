@@ -34,7 +34,8 @@ static bool generated_type(int32_t type) {
     /* Authored restriction bits belong to the existing link until a generator
      * can reconstruct their source rule. */
     switch (type) {
-    case AAS_REACH_WALK: case AAS_REACH_BARRIER: case AAS_REACH_LEDGE:
+    case AAS_REACH_WALK: case AAS_REACH_JUMP: case AAS_REACH_BARRIER:
+    case AAS_REACH_LADDER: case AAS_REACH_LEDGE:
     case AAS_REACH_SWIM: case AAS_REACH_WATERJUMP:
         return true;
     default:
@@ -52,7 +53,10 @@ static bool prepare(aas_reach_build *work, qa_error *error) {
     memset(work->heads, 0, areas * sizeof(*work->heads));
     memcpy(work->settings, work->source->settings, areas * sizeof(*work->settings));
     if (!qa_aas_query_create(&work->storage, &work->query, error) ||
-        !qa_aas_query_prepare(work->query, work->source->count[QA_AAS_NODES], areas, error))
+        !qa_aas_query_prepare(work->query, work->source->count[QA_AAS_NODES], areas, error) ||
+        !qa_nav_workspace_create(&work->storage, &work->workspace, error) ||
+        !qa_nav_workspace_prepare(work->workspace,
+            qa_nav_workspace_limits_read(&work->navigation->graph->view), error))
         return false;
     for (size_t area = 0; area < areas; ++area) {
         const qa_aas_setting *setting = work->source->settings + area;
@@ -130,7 +134,15 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     READ(fall_delta10, "phys_falldelta10", 60);
     READ(fall_damage5, "rs_falldamage5", 300);
     READ(fall_damage10, "rs_falldamage10", 500);
+    READ(max_velocity, "phys_maxvelocity", 320);
+    READ(max_walk_velocity, "phys_maxwalkvelocity", 320);
+    READ(jump_velocity, "phys_jumpvel", 270);
+    READ(max_jump_fall_height, "rs_maxjumpfallheight", 450);
+    READ(start_jump, "rs_startjump", 300);
 #undef READ
+    work.environment = qa_movement_environment_default();
+    work.environment.gravity_multiplier = work.movement.gravity / 800;
+    work.environment.speed_multiplier = work.movement.max_velocity / 320;
     bool okay = prepare(&work, error);
     for (uint32_t from = 1; okay && from < source->count[QA_AAS_AREAS]; ++from) {
         uint32_t contents = (uint32_t)work.settings[from].contents;
@@ -147,6 +159,8 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
         if (!(work.settings[area].contents & AAS_REACH_JUMPPAD))
             okay = aas_reach_walk_ledge(&work, area, error);
     if (okay) okay = finish(&work, out, error);
+    qa_nav_prediction_result_free(&work.prediction);
+    qa_nav_workspace_destroy(work.workspace);
     qa_aas_query_destroy(work.query);
     qa_arena_destroy(&work.storage);
     return okay;

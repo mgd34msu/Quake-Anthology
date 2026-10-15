@@ -3,16 +3,18 @@
 #include "internal.h"
 
 enum {
-    AAS_REACH_GROUNDED = 1, AAS_REACH_SWIMMING = 4,
-    AAS_REACH_FACE_SOLID = 1, AAS_REACH_FACE_GROUND = 4,
+    AAS_REACH_GROUNDED = 1, AAS_REACH_LADDER_AREA = 2, AAS_REACH_SWIMMING = 4,
+    AAS_REACH_FACE_SOLID = 1, AAS_REACH_FACE_LADDER = 2, AAS_REACH_FACE_GROUND = 4,
     AAS_REACH_TELEPORT = 64, AAS_REACH_JUMPPAD = 128,
-    AAS_REACH_WALK = 2, AAS_REACH_BARRIER = 5, AAS_REACH_LEDGE = 7,
+    AAS_REACH_WALK = 2, AAS_REACH_JUMP = 4, AAS_REACH_BARRIER = 5,
+    AAS_REACH_LADDER = 6, AAS_REACH_LEDGE = 7,
     AAS_REACH_SWIM = 8, AAS_REACH_WATERJUMP = 9
 };
 typedef struct aas_reach_settings {
     float gravity, max_step, max_water_jump, max_barrier, start_crouch,
         water_jump, barrier_jump, start_ledge, max_fall_height,
-        fall_delta5, fall_delta10, fall_damage5, fall_damage10;
+        fall_delta5, fall_delta10, fall_damage5, fall_damage10,
+        max_velocity, max_walk_velocity, jump_velocity, max_jump_fall_height, start_jump;
 } aas_reach_settings;
 typedef struct aas_reach_link {
     qa_aas_reach reach;
@@ -23,6 +25,9 @@ typedef struct aas_reach_build {
     const qa_aas_view *source;
     qa_arena storage;
     qa_aas_query *query;
+    qa_nav_workspace *workspace;
+    qa_nav_prediction_result prediction;
+    qa_movement_environment environment;
     qa_aas_setting *settings;
     aas_reach_link **heads;
     size_t link_count;

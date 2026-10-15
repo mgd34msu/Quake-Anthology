@@ -306,6 +306,284 @@ static bool step(aas_reach_build *work, uint32_t from, uint32_t to, bool *found,
     return add(work, from, to, ground.edge, ground.start, ground_end, AAS_REACH_LEDGE,
         time, found, error);
 }
+
+typedef struct closest_edges {
+    qa_vec3 start[2], end[2];
+    float distance;
+    bool found;
+} closest_edges;
+
+static qa_vec3 edge_projection(qa_vec3 point, qa_vec3 origin, qa_vec3 direction,
+    const qa_aas_plane *plane) {
+    qa_vec3 flat;
+    if (direction.x != 0) {
+        float a = direction.y / direction.x, b = origin.y - a * origin.x;
+        float x = (qa_vec_dot(point, direction) - (a * direction.x + b * direction.y)) / direction.x;
+        flat = qa_v3(x, a * x + b, 0);
+    } else flat = qa_v3(origin.x, point.y, 0);
+    flat.z = (plane->distance - qa_vec_dot(plane->normal, flat)) / plane->normal.z;
+    return flat;
+}
+static bool between(qa_vec3 point, qa_vec3 a, qa_vec3 b) {
+    return qa_vec_dot(qa_vec_sub(point, a), qa_vec_sub(point, b)) <= 0;
+}
+static void closest_update(closest_edges *best, qa_vec3 start, qa_vec3 end, bool range) {
+    float distance = qa_vec_length(qa_vec_sub(end, start));
+    if (range && best->found && distance > best->distance - .5f && distance < best->distance + .5f) {
+        float first = qa_vec_length(qa_vec_sub(best->start[0], start)),
+            second = qa_vec_length(qa_vec_sub(best->start[1], start));
+        float prior = qa_vec_length(qa_vec_sub(best->start[0], best->start[1]));
+        if (first > second) {
+            if (first > prior) best->start[1] = start;
+        } else if (second > prior) best->start[0] = start;
+        first = qa_vec_length(qa_vec_sub(best->end[0], end));
+        second = qa_vec_length(qa_vec_sub(best->end[1], end));
+        prior = qa_vec_length(qa_vec_sub(best->end[0], best->end[1]));
+        if (first > second) {
+            if (first > prior) best->end[1] = end;
+        } else if (second > prior) best->end[0] = end;
+    } else if (distance < best->distance) {
+        best->distance = distance;
+        best->start[0] = best->start[1] = start;
+        best->end[0] = best->end[1] = end;
+        best->found = true;
+    }
+}
+static void closest_edge_points(qa_vec3 v1, qa_vec3 v2, qa_vec3 v3, qa_vec3 v4,
+    const qa_aas_plane *plane1, const qa_aas_plane *plane2, closest_edges *best) {
+    qa_vec3 direction1 = qa_vec_sub(v2, v1), direction2 = qa_vec_sub(v4, v3);
+    direction1.z = direction2.z = 0;
+    qa_vec3 p1 = edge_projection(v1, v3, direction2, plane2),
+        p2 = edge_projection(v2, v3, direction2, plane2),
+        p3 = edge_projection(v3, v1, direction1, plane1),
+        p4 = edge_projection(v4, v1, direction1, plane1);
+    bool projected = false;
+    if (between(p1, v3, v4)) { closest_update(best, v1, p1, true); projected = true; }
+    if (between(p2, v3, v4)) { closest_update(best, v2, p2, true); projected = true; }
+    if (between(p3, v1, v2)) { closest_update(best, p3, v3, true); projected = true; }
+    if (between(p4, v1, v2)) { closest_update(best, p4, v4, true); projected = true; }
+    if (!projected) {
+        closest_update(best, v1, v3, false); closest_update(best, v1, v4, false);
+        closest_update(best, v2, v3, false); closest_update(best, v2, v4, false);
+    }
+}
+static float max_jump_height(const aas_reach_build *work) {
+    float time = work->movement.jump_velocity / work->movement.gravity;
+    return (float)(.5 * work->movement.gravity * time * time);
+}
+static bool horizontal_jump_speed(const aas_reach_build *work, float z_velocity,
+    qa_vec3 start, qa_vec3 end, float *speed) {
+    float gravity = work->movement.gravity, ascent = z_velocity / gravity;
+    float maximum = (float)(.5 * gravity * ascent * ascent);
+    float height = (start.z + maximum) - end.z;
+    if (height < 0) return false;
+    float time = (float)sqrt(height / (.5 * gravity)), denominator = time + ascent;
+    if (denominator == 0) return false;
+    qa_vec3 direction = qa_vec_sub(end, start); direction.z = 0;
+    *speed = qa_vec_length(direction) / denominator;
+    return *speed <= work->movement.max_velocity;
+}
+static bool jump(aas_reach_build *work, uint32_t from, uint32_t to,
+    bool *found, qa_error *error) {
+    if (!aas_reach_grounded(work, from) || !aas_reach_grounded(work, to) ||
+        aas_reach_crouched(work, from) || aas_reach_crouched(work, to)) return true;
+    const qa_aas_view *world = work->source;
+    const qa_aas_area *area1 = world->areas + from, *area2 = world->areas + to;
+    const aas_reach_settings *settings = &work->movement;
+    float fall_time = (float)sqrt(settings->max_jump_fall_height / (.5 * settings->gravity));
+    float maximum_distance = 2 * (settings->max_velocity *
+        (fall_time + settings->jump_velocity / settings->gravity));
+    if (area1->bounds.mins.x > area2->bounds.maxs.x + maximum_distance ||
+        area1->bounds.maxs.x < area2->bounds.mins.x - maximum_distance ||
+        area1->bounds.mins.y > area2->bounds.maxs.y + maximum_distance ||
+        area1->bounds.maxs.y < area2->bounds.mins.y - maximum_distance ||
+        area2->bounds.mins.z > area1->bounds.maxs.z + max_jump_height(work)) return true;
+    closest_edges closest = {.distance = 999999};
+    for (int32_t i = 0; i < area1->face_count; ++i) {
+        const qa_aas_face *face1 = area_face(world, area1, i, NULL);
+        if (!(face1->flags & AAS_REACH_FACE_GROUND)) continue;
+        for (int32_t j = 0; j < area2->face_count; ++j) {
+            const qa_aas_face *face2 = area_face(world, area2, j, NULL);
+            if (!(face2->flags & AAS_REACH_FACE_GROUND)) continue;
+            for (int32_t k = 0; k < face1->edge_count; ++k) {
+                const qa_aas_edge *first = face_edge(world, face1, k, NULL);
+                for (int32_t l = 0; l < face2->edge_count; ++l) {
+                    const qa_aas_edge *second = face_edge(world, face2, l, NULL);
+                    closest_edge_points(world->vertices[first->vertices[0]], world->vertices[first->vertices[1]],
+                        world->vertices[second->vertices[0]], world->vertices[second->vertices[1]],
+                        world->planes + face1->plane, world->planes + face2->plane, &closest);
+                }
+            }
+        }
+    }
+    if (!closest.found || !(closest.distance > 4 && closest.distance < maximum_distance)) return true;
+    qa_vec3 start = qa_vec_scale(qa_vec_add(closest.start[0], closest.start[1]), .5f),
+        end = qa_vec_scale(qa_vec_add(closest.end[0], closest.end[1]), .5f);
+    int32_t type; float speed;
+    if (closest.distance <= 48 && fabsf(start.z - end.z) < 8) {
+        speed = 400; type = AAS_REACH_LEDGE;
+    } else if (horizontal_jump_speed(work, 0, start, end, &speed)) {
+        speed *= 1.2f; type = AAS_REACH_LEDGE;
+    } else {
+        if (!horizontal_jump_speed(work, settings->jump_velocity, start, end, &speed)) return true;
+        speed *= 1.05f; type = AAS_REACH_JUMP;
+        qa_vec3 horizontal = qa_vec_sub(end, start); horizontal.z = 0;
+        if (qa_vec_length(horizontal) < 10) return true;
+    }
+    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(end, start));
+    for (unsigned i = 0; i < 2; ++i) {
+        qa_vec3 test = i ? qa_vec_ma(end, -1, direction) : qa_vec_ma(start, 1, direction);
+        qa_vec3 below = test; below.z -= 100;
+        qa_aas_presence_trace trace;
+        if (!qa_aas_trace_presence(world, work->query, test, below, 2, &trace, error)) return false;
+        if (trace.start_solid) return true;
+        if (trace.fraction < 1 && world->planes[trace.plane].normal.z >= .7f &&
+            test.z - trace.end.z <= settings->max_barrier) {
+            uint32_t contents;
+            if (!nav_contents(&work->navigation->services, &work->navigation->graph->view.profile,
+                (qa_actor_id){0}, trace.end, true, &contents, error)) return false;
+            if (!(contents & (QA_NAV_SLIME | QA_NAV_LAVA))) return true;
+        }
+    }
+    direction = qa_vec_sub(end, start); direction.z = 0; direction = qa_vec_normalize(direction);
+    qa_vec3 sideways = qa_vec_cross(direction, qa_v3(0, 0, 1));
+    uint32_t stops = 1 | 4 | 8 | 16 | 32;
+    if (!(work->settings[from].contents & 8) && !(work->settings[to].contents & 8)) stops |= 4096;
+    bool arrived = false;
+    for (unsigned i = 0; i < 3; ++i) {
+        qa_vec3 test_end = i == 1 ? qa_vec_add(end, sideways) : i == 2 ? qa_vec_sub(end, sideways) : end;
+        direction = qa_vec_sub(test_end, start); direction.z = 0; direction = qa_vec_normalize(direction);
+        qa_nav_prediction_query query = {.origin = start, .velocity = qa_vec_scale(direction, speed),
+            .command_move = {0, 0, type == AAS_REACH_JUMP ? settings->jump_velocity : 0},
+            .presence = 2, .command_frames = 3, .maximum_frames = 30, .frame_ms = 100,
+            .stop_events = stops, .stop_area = QA_NAV_NO_INDEX, .on_ground = true,
+            .world_only = true, .omit_trajectory = true, .environment = &work->environment};
+        if (!qa_navigation_predict(work->navigation, work->workspace, &query, &work->prediction, error)) return false;
+        const qa_nav_prediction_result *move = &work->prediction;
+        uint32_t frames = move->frames - (move->stop_event && move->frames ? 1u : 0u);
+        if (frames >= 30 || (move->stop_event & (8 | 16 | 4096))) return true;
+        qa_vec3 back = qa_vec_ma(move->end, -64, direction); back.z += 1;
+        qa_aas_crossing crossings[10]; size_t count;
+        if (!qa_aas_trace_areas(world, work->query, move->end, back, crossings, 10, &count, error)) return false;
+        for (size_t j = 0; j < count; ++j) if (crossings[j].area == to) { arrived = true; break; }
+        if (arrived) break;
+    }
+    if (!arrived) return true;
+    qa_vec3 delta = qa_vec_sub(end, start), horizontal = delta; horizontal.z = 0;
+    float time = type == AAS_REACH_LEDGE && delta.z > qa_vec_length(horizontal) ?
+        settings->start_ledge + delta.z * 50 / settings->gravity :
+        settings->start_jump + qa_vec_length(delta) * 240 / settings->max_walk_velocity;
+    uint16_t travel_time;
+    if (!aas_reach_time(time, &travel_time, error)) return false;
+    if (!(work->settings[to].contents & AAS_REACH_JUMPPAD)) {
+        float fall = aas_reach_fall_delta(work, start.z - end.z);
+        if (fall > settings->fall_delta5) {
+            if (!aas_reach_time(travel_time + settings->fall_damage5, &travel_time, error)) return false;
+        } else if (fall > settings->fall_delta10 &&
+            !aas_reach_time(travel_time + settings->fall_damage10, &travel_time, error)) return false;
+    }
+    return add(work, from, to, 0, start, end, type, travel_time, found, error);
+}
+
+static bool ladder_link(aas_reach_build *work, uint32_t from, uint32_t to, int32_t face,
+    int32_t edge, qa_vec3 start, qa_vec3 end, int32_t type, qa_error *error) {
+    return aas_reach_add(work, from, (qa_aas_reach){.area = (int32_t)to, .face = face,
+        .edge = edge, .start = start, .end = end, .travel_type = type, .travel_time = 10}, error);
+}
+static bool ladder(aas_reach_build *work, uint32_t from, uint32_t to,
+    bool *found, qa_error *error) {
+    if (!(work->settings[from].flags & AAS_REACH_LADDER_AREA) ||
+        !(work->settings[to].flags & AAS_REACH_LADDER_AREA)) return true;
+    const qa_aas_view *world = work->source;
+    const qa_aas_area *area1 = world->areas + from, *area2 = world->areas + to;
+    const qa_aas_face *first = NULL, *second = NULL;
+    int32_t number1 = 0, number2 = 0, edge_number = 0;
+    float area1_best = -9999, area2_best = -9999;
+    for (int32_t i = 0; i < area1->face_count; ++i) {
+        int32_t signed1;
+        const qa_aas_face *face1 = area_face(world, area1, i, &signed1);
+        if (!(face1->flags & AAS_REACH_FACE_LADDER)) continue;
+        for (int32_t j = 0; j < area2->face_count; ++j) {
+            int32_t signed2;
+            const qa_aas_face *face2 = area_face(world, area2, j, &signed2);
+            if (!(face2->flags & AAS_REACH_FACE_LADDER)) continue;
+            bool shared = false;
+            for (int32_t k = 0; k < face1->edge_count && !shared; ++k) {
+                int32_t index = world->edge_index[face1->first_edge + k];
+                for (int32_t l = 0; l < face2->edge_count; ++l) {
+                    if (nav_aas_oriented_index(index) !=
+                        nav_aas_oriented_index(world->edge_index[face2->first_edge + l])) continue;
+                    float surface1 = face_area(world, face1), surface2 = face_area(world, face2);
+                    if (surface1 > area1_best && surface2 > area2_best) {
+                        first = face1; second = face2; number1 = signed1; number2 = signed2;
+                        edge_number = index; area1_best = surface1; area2_best = surface2;
+                    }
+                    shared = true; break;
+                }
+            }
+        }
+    }
+    if (!first) return true;
+    const qa_aas_edge *edge = world->edges + nav_aas_oriented_index(edge_number);
+    qa_vec3 v1 = world->vertices[edge->vertices[edge_number < 0 ? 1 : 0]],
+        v2 = world->vertices[edge->vertices[edge_number < 0 ? 0 : 1]],
+        midpoint = qa_vec_scale(qa_vec_add(v1, v2), .5f), shared = qa_vec_sub(v2, v1);
+    const qa_aas_plane *plane1 = world->planes + (first->plane ^ (number1 < 0)),
+        *plane2 = world->planes + (second->plane ^ (number2 < 0));
+    qa_vec3 direction = qa_vec_normalize(qa_vec_cross(plane1->normal, shared));
+    qa_vec3 point1 = qa_vec_ma(midpoint, -32, direction), point2 = qa_vec_ma(midpoint, 32, direction);
+    /* Source abs() takes an int even though these dot products are floats. */
+    bool vertical1 = fabsf(truncf(plane1->normal.z)) < .1f,
+        vertical2 = fabsf(truncf(plane2->normal.z)) < .1f;
+    if (!vertical1 && !vertical2) return true;
+    int32_t unsigned_edge = (int32_t)nav_aas_oriented_index(edge_number);
+    if (vertical1 && vertical2 && qa_vec_dot(plane1->normal, plane2->normal) > .7f &&
+        fabsf(truncf(shared.z)) < .7f) {
+        if (!ladder_link(work, from, to, number1, unsigned_edge, point1,
+            qa_vec_ma(point2, -3, plane1->normal), AAS_REACH_LADDER, error) ||
+            !ladder_link(work, to, from, number2, unsigned_edge, point2,
+                qa_vec_ma(point1, -3, plane1->normal), AAS_REACH_LADDER, error)) return false;
+        *found = true; return true;
+    }
+    if (vertical1 && (second->flags & AAS_REACH_FACE_GROUND)) {
+        qa_vec3 end = point2; end.z += 16;
+        if (!ladder_link(work, from, to, number1, unsigned_edge, point1,
+            qa_vec_ma(end, -15, plane1->normal), AAS_REACH_LADDER, error) ||
+            !ladder_link(work, to, from, number2, unsigned_edge, point2, point1,
+                AAS_REACH_LEDGE, error)) return false;
+        *found = true; return true;
+    }
+    if (!vertical1) return true;
+    qa_vec3 lowest = {0}; float lowest_z = 99999; int32_t lowest_edge = 0;
+    for (int32_t i = 0; i < first->edge_count; ++i) {
+        int32_t number;
+        const qa_aas_edge *current = face_edge(world, first, i, &number);
+        qa_vec3 point = qa_vec_scale(qa_vec_add(world->vertices[current->vertices[0]],
+            world->vertices[current->vertices[1]]), .5f);
+        if (point.z < lowest_z) { lowest = point; lowest_z = point.z;
+            lowest_edge = (int32_t)nav_aas_oriented_index(number); }
+    }
+    plane1 = world->planes + first->plane;
+    qa_vec3 start = qa_vec_ma(lowest, 5, plane1->normal), end = start;
+    start.z += 5; end.z -= 100;
+    qa_aas_presence_trace trace;
+    if (!qa_aas_trace_presence(world, work->query, start, end, 2, &trace, error)) return false;
+    qa_vec3 trace_end = trace.end; trace_end.z += 1; uint32_t destination;
+    if (!qa_aas_point_area(world, trace_end, &destination, error)) return false;
+    const qa_aas_area *destination_area = world->areas + destination;
+    for (int32_t i = 0; i < destination_area->face_count; ++i) {
+        const qa_aas_face *face = area_face(world, destination_area, i, NULL);
+        if ((face->flags & AAS_REACH_FACE_LADDER) &&
+            fabsf(truncf(world->planes[face->plane].normal.z)) < .1f) return true;
+    }
+    if (destination == from || aas_reach_exists(work, from, destination) ||
+        aas_reach_exists(work, destination, from) || !(start.z - trace_end.z < max_jump_height(work))) return true;
+    qa_vec3 back = qa_vec_ma(lowest, -5, plane1->normal); back.z += 10;
+    if (!ladder_link(work, from, destination, number1, lowest_edge, lowest, trace_end, AAS_REACH_LADDER, error) ||
+        !ladder_link(work, destination, from, number1, lowest_edge, trace_end, back, AAS_REACH_JUMP, error)) return false;
+    *found = true;
+    return true;
+}
 bool aas_reach_geometry(aas_reach_build *work, uint32_t from, uint32_t to,
     bool *found, qa_error *error) {
     *found = false;
@@ -313,7 +591,11 @@ bool aas_reach_geometry(aas_reach_build *work, uint32_t from, uint32_t to,
     if (*found) return true;
     if (!equal_floor(work, from, to, found, error)) return false;
     if (*found) return true;
-    return step(work, from, to, found, error);
+    if (!step(work, from, to, found, error)) return false;
+    if (*found) return true;
+    if (!ladder(work, from, to, found, error)) return false;
+    if (*found) return true;
+    return jump(work, from, to, found, error);
 }
 
 bool aas_reach_walk_ledge(aas_reach_build *work, uint32_t area_number, qa_error *error) {

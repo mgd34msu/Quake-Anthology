@@ -357,6 +357,7 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
         nav_prediction_close(&p);
         return false;
     }
+    if (q->environment) p.input.environment = *q->environment;
     bool ok = qa_movement_set_velocity(&p.input.state, q->velocity, e);
     if (p.input.state.kind == QA_RULESET_Q3)
         p.input.state.data.q3.movement_flags =

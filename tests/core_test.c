@@ -739,6 +739,22 @@ static void aas_reachability_generate(const qa_aas_view *source, bool water,
     CHECK(qa_nav_graph_from_asset(&(qa_nav_map){.format=QA_BSP_29},asset,&profile,
         &services,NULL,&graph,&error));
     CHECK(qa_navigation_create(graph,&services,NULL,&navigation,&error));
+    if(!water && source->count[QA_AAS_AREAS]) {
+        qa_nav_workspace *workspace=NULL;
+        CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
+        CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
+        qa_nav_prediction_query query={.origin={-16,0,512},.presence=2,.maximum_frames=1,
+            .frame_ms=100,.stop_area=QA_NAV_NO_INDEX,.world_only=true,.omit_trajectory=true};
+        qa_nav_prediction_result normal={0},scaled={0};
+        CHECK(qa_navigation_predict(navigation,workspace,&query,&normal,&error));
+        qa_movement_environment environment=qa_movement_environment_default();
+        environment.gravity_multiplier=.5f;query.environment=&environment;
+        CHECK(qa_navigation_predict(navigation,workspace,&query,&scaled,&error));
+        CHECK(fabsf(normal.velocity.z+80)<.001f && fabsf(scaled.velocity.z+40)<.001f &&
+            scaled.end.z>normal.end.z);
+        qa_nav_prediction_result_free(&normal);qa_nav_prediction_result_free(&scaled);
+        qa_nav_workspace_destroy(workspace);
+    }
     CHECK(qa_navigation_aas_reachability_build(navigation,NULL,NULL,NULL,out,&error));
     qa_navigation_destroy(navigation);qa_nav_graph_release(graph);qa_nav_asset_release(asset);
     qa_buffer_free(&bytes);
@@ -872,6 +888,104 @@ static void test_aas_reachability(void)
     const qa_aas_view empty={.version=5,.bsp_checksum=95};
     aas_reachability_generate(&empty,false,&generated);view=qa_nav_asset_aas(generated);
     CHECK(view->version==5 && view->bsp_checksum==95 && !view->count[QA_AAS_REACHABILITY]);
+    qa_nav_asset_release(generated);
+}
+
+static void test_aas_jump_ladder(void)
+{
+    qa_vec3 vertices[]={{0,-16,24},{0,16,24},{-32,-16,24},{-32,16,24},
+        {64,-16,24},{64,16,24},{96,-16,24},{96,16,24}};
+    const qa_aas_plane planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{1,0,0},0,0},{{-1,0,0},0,0},{{1,0,0},64,0},{{-1,0,0},-64,0}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}},{{0,2}},{{2,3}},{{3,1}},
+        {{4,5}},{{5,7}},{{7,6}},{{6,4}}};
+    const int32_t edge_index[]={2,3,4,-1,5,6,7,8},face_index[]={1,2};
+    const qa_aas_face faces[]={{0},
+        {.plane=0,.flags=5,.edge_count=4,.first_edge=0,.front_area=1},
+        {.plane=0,.flags=5,.edge_count=4,.first_edge=4,.front_area=2}};
+    const qa_aas_area areas[]={{0},
+        {.number=1,.face_count=1,.first_face=0,.bounds={{-32,-16,24},{0,16,80}},.center={-16,0,48}},
+        {.number=2,.face_count=1,.first_face=1,.bounds={{64,-16,24},{96,16,80}},.center={80,0,48}},
+        {.number=3,.bounds={{0,-16,-128},{64,16,80}},.center={32,0,40}}};
+    qa_aas_setting settings[]={{0},{.flags=1,.presence=6},{.flags=1,.presence=6},{.presence=6}};
+    const qa_aas_node nodes[]={{0},{.plane=2,.children={2,4}},
+        {.plane=4,.children={3,-3}},{.plane=0,.children={-2,0}},{.plane=0,.children={-1,0}}};
+    qa_aas_view source={.version=5,.bsp_checksum=96,
+        .count={[QA_AAS_VERTICES]=8,[QA_AAS_PLANES]=6,[QA_AAS_EDGES]=9,
+            [QA_AAS_EDGE_INDEX]=8,[QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=2,
+            [QA_AAS_AREAS]=4,[QA_AAS_SETTINGS]=4,[QA_AAS_NODES]=5},
+        .vertices=vertices,.planes=planes,.edges=edges,.edge_index=edge_index,
+        .faces=faces,.face_index=face_index,.areas=areas,.settings=settings,.nodes=nodes};
+    qa_nav_asset *generated=NULL;
+    aas_reachability_generate(&source,false,&generated);
+    const qa_aas_view *view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *forward=aas_reachability_to(view,1,2),*reverse=aas_reachability_to(view,2,1);
+    CHECK(forward && reverse && forward->travel_type==4 && reverse->travel_type==4 &&
+        forward->edge==0 && reverse->edge==0 && forward->travel_time==348 && reverse->travel_time==348);
+    CHECK(forward->start.x==0 && forward->end.x==64 && reverse->start.x==64 && reverse->end.x==0);
+    qa_nav_asset_release(generated);generated=NULL;
+    settings[2].presence=4;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    CHECK(!aas_reachability_to(view,1,2) && !aas_reachability_to(view,2,1));
+    qa_nav_asset_release(generated);generated=NULL;
+
+    qa_vec3 ladder_vertices[]={{0,-16,24},{0,16,24},{0,-16,88},{0,16,88},
+        {0,-16,152},{0,16,152}};
+    qa_aas_plane ladder_planes[]={{{1,0,0},0,0},{{-1,0,0},0,0},
+        {{0,0,1},88,2},{{0,0,-1},-88,2}};
+    const qa_aas_edge ladder_edges[]={{{0,0}},{{2,3}},{{0,1}},{{1,3}},{{2,0}},
+        {{3,5}},{{5,4}},{{4,2}}};
+    const int32_t ladder_edge_index[]={1,-3,-2,-4,-1,-7,-6,-5};
+    qa_aas_face ladder_faces[]={{0},
+        {.plane=0,.flags=2,.edge_count=4,.first_edge=0,.front_area=1},
+        {.plane=0,.flags=2,.edge_count=4,.first_edge=4,.front_area=2}};
+    qa_aas_area ladder_areas[]={{0},
+        {.number=1,.face_count=1,.bounds={{-32,-16,24},{32,16,88}},.center={16,0,56}},
+        {.number=2,.face_count=1,.first_face=1,.bounds={{-32,-16,88},{32,16,152}},.center={16,0,120}}};
+    qa_aas_setting ladder_settings[]={{0},{.flags=2,.presence=6},{.flags=2,.presence=6}};
+    const qa_aas_node ladder_nodes[]={{0},{.plane=2,.children={-2,-1}}};
+    source=(qa_aas_view){.version=5,.bsp_checksum=97,
+        .count={[QA_AAS_VERTICES]=6,[QA_AAS_PLANES]=4,[QA_AAS_EDGES]=8,
+            [QA_AAS_EDGE_INDEX]=8,[QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=2,
+            [QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3,[QA_AAS_NODES]=2},
+        .vertices=ladder_vertices,.planes=ladder_planes,.edges=ladder_edges,.edge_index=ladder_edge_index,
+        .faces=ladder_faces,.face_index=face_index,.areas=ladder_areas,.settings=ladder_settings,.nodes=ladder_nodes};
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
+    CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==6 &&
+        forward->face==1 && reverse->face==2 && forward->edge==1 && reverse->edge==1 &&
+        forward->travel_time==10 && reverse->travel_time==10);
+    CHECK(forward->start.z==56 && forward->end.z==120 && forward->end.x==-3 &&
+        reverse->start.z==120 && reverse->end.z==56 && reverse->end.x==-3);
+    qa_nav_asset_release(generated);generated=NULL;
+    ladder_vertices[4]=qa_v3(32,-16,88);ladder_vertices[5]=qa_v3(32,16,88);
+    ladder_faces[2].plane=2;ladder_faces[2].flags=6;ladder_settings[2].flags=3;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
+    CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==7 &&
+        forward->end.z==136 && forward->end.x==-15 && reverse->end.z==56);
+    qa_nav_asset_release(generated);generated=NULL;
+    ladder_vertices[0].z=ladder_vertices[1].z=48;
+    ladder_vertices[4]=qa_v3(0,-16,152);ladder_vertices[5]=qa_v3(0,16,152);
+    ladder_faces[2].plane=1;ladder_faces[2].flags=2;
+    const qa_aas_plane bottom_planes[]={{{1,0,0},0,0},{{-1,0,0},0,0},
+        {{0,0,1},88,2},{{0,0,-1},-88,2},{{0,0,1},48,2},{{0,0,-1},-48,2},
+        {{0,0,1},24,2},{{0,0,-1},-24,2}};
+    qa_aas_area bottom_areas[4]={0};memcpy(bottom_areas,ladder_areas,sizeof(ladder_areas));
+    bottom_areas[1].bounds.mins.z=48;
+    bottom_areas[3]=(qa_aas_area){.number=3,.bounds={{-32,-16,24},{32,16,48}},.center={16,0,36}};
+    const qa_aas_setting bottom_settings[]={{0},{.flags=2,.presence=6},
+        {.flags=2,.presence=6},{.flags=1,.presence=6}};
+    const qa_aas_node bottom_nodes[]={{0},{.plane=2,.children={-2,2}},
+        {.plane=4,.children={-1,3}},{.plane=6,.children={-3,0}}};
+    source.planes=bottom_planes;source.areas=bottom_areas;source.settings=bottom_settings;source.nodes=bottom_nodes;
+    source.count[QA_AAS_PLANES]=8;source.count[QA_AAS_AREAS]=source.count[QA_AAS_SETTINGS]=4;
+    source.count[QA_AAS_NODES]=4;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_to(view,1,3);reverse=aas_reachability_to(view,3,1);
+    CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==4 &&
+        forward->face==1 && reverse->face==1 && forward->edge==2 && reverse->edge==2 &&
+        forward->start.z==48 && forward->end.z==25.25f && reverse->end.z==58);
     qa_nav_asset_release(generated);
 }
 
@@ -7524,6 +7638,7 @@ int main(int argc, char **argv)
     test_aas_geometry_compaction();
     test_aas_clustering();
     test_aas_reachability();
+    test_aas_jump_ladder();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
     test_prediction_continuations();
