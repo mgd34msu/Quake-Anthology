@@ -458,7 +458,8 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
 bool frontend_startup_launch_client_admitted(qa_frontend *f,uint32_t physical,
     qa_console *console,const qa_command_context *command,qa_error *error)
 {
-    if (f->source_restoring || f->options.dedicated || frontend_network_remote(f)) return true;
+    if (f->source_restoring || f->options.dedicated || f->options.network_connect ||
+        frontend_network_remote(f)) return true;
     const qa_launch_choices *selected=qa_launch_snapshot_choices(qa_application_launch(f->application));
     uint32_t logical;
     if (!frontend_local_seat_read(selected,physical,&logical) || logical!=command->seat) return true;
