@@ -42,6 +42,8 @@ bool frontend_network_unified_step_ready(frontend_network_unified *, bool *ready
 bool frontend_network_unified_pre_frame(frontend_network_unified *, qa_error *);
 bool frontend_network_unified_publish(frontend_network_unified *,
     const application_unified_output_external *, qa_error *);
+/* Same-world resets replace players; reoffer them at the returned frame. */
+void frontend_network_unified_restart(frontend_network_unified *);
 bool frontend_network_unified_travel(frontend_network_unified *,
     const qa_recipe_sidecar *, size_t, qa_error *);
 bool frontend_network_unified_client(const frontend_network_unified *,

@@ -27,7 +27,7 @@ struct frontend_network_unified {
     uint32_t epoch;
     uint64_t frame_before;
     unsigned calls;
-    bool closing, traveling, frame_boundary, restore_pending, lower_restored, imported;
+    bool closing, traveling, frame_boundary, restart_pending, restore_pending, lower_restored, imported;
 };
 bool frontend_network_unified_import_admit(frontend_network_unified *, const qa_net_connect *, qa_error *);
 qa_unified_bootstrap_hooks frontend_network_unified_bootstrap_hooks(frontend_network_unified *);

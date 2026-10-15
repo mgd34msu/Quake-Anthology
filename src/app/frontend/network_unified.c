@@ -361,6 +361,7 @@ bool frontend_network_unified_step_ready(frontend_network_unified *owner, bool *
     if (!ready || !parent(owner) || !frontend_network_unified_idle(owner))
         return fail(error, "Unified Source step admission requires its returned Network and publication owners");
     *ready = true;
+    if (owner->restart_pending && !frontend_network_unified_publish(owner, NULL, error)) return false;
     if (owner->options.server) {
         ++owner->calls;
         bool okay = true;
@@ -383,6 +384,9 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
 {
     if (!parent(owner) || !frontend_network_unified_idle(owner)) return fail(error, "Unified publication requires returned actual Source output");
     if (!owner->options.server) return true;
+    if (owner->options.frontend->round) return true;
+    if (!frontend_network_unified_travel(owner, owner->options.sidecars,
+        owner->options.sidecar_count, error)) return false;
     if (owner->traveling) return true;
     application_unified_source source;
     if (!application_unified_source_read(owner->options.frontend->application, &source, error) ||
@@ -432,6 +436,10 @@ bool frontend_network_unified_publish(frontend_network_unified *owner,
     if (okay) owner->frame_boundary = false;
     --owner->calls; return okay;
 }
+void frontend_network_unified_restart(frontend_network_unified *owner)
+{
+    if (owner && owner->options.server) owner->restart_pending = true;
+}
 bool frontend_network_unified_travel(frontend_network_unified *owner,
     const qa_recipe_sidecar *sidecars, size_t count, qa_error *error)
 {
@@ -439,10 +447,11 @@ bool frontend_network_unified_travel(frontend_network_unified *owner,
         (count && !sidecars)) return fail(error, "Unified travel lacks its returned new Source publication");
     application_unified_source source;
     if (!application_unified_source_read(owner->options.frontend->application, &source, error)) return false;
-    if (!owner->traveling && same_source(&source, &owner->source)) return true;
+    if (!owner->traveling && !owner->restart_pending && same_source(&source, &owner->source)) return true;
     if (!owner->traveling) {
         if (owner->epoch == UINT32_MAX) return fail(error, "Unified Source epoch is exhausted");
         ++owner->epoch; owner->travel_source = source; owner->traveling = true; owner->frame_boundary = false;
+        owner->restart_pending = false;
         owner->travel_cursor = 0;
         if (sidecars != owner->restored_sidecars) { free(owner->restored_sidecars); owner->restored_sidecars = NULL; }
         owner->options.sidecars = sidecars; owner->options.sidecar_count = count;

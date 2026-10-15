@@ -242,7 +242,7 @@ static bool prepare(void *context, qa_application *app, qa_actor_owner source,
     size_t peer_count = frontend_network_q3_round_clients(cut->network, &peers), remote_count = 0;
     if (ok && cut->network && frontend_network_q3_round_source_owner(cut->network) != source)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Q3 round frontend and retained network name different sources");
-    for (size_t i = 0; ok && i < count; ++i) {
+    for (size_t i = 0; ok && cut->network && i < count; ++i) {
         if (!clients[i].remote) continue;
         ++remote_count; bool found = false;
         for (size_t j = 0; j < peer_count; ++j)
@@ -338,7 +338,7 @@ static bool admit_client(qa_application_q3_round_cut *cut,
         actor.registry != client->previous_actor.registry || qa_actor_id_equal(actor, client->previous_actor))
         return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round admission lacks its real fresh source actor generation");
     if (client->remote) {
-        if (!frontend_network_q3_round_activate_client(cut->network, client->remote_client, error)) return false;
+        if (cut->network && !frontend_network_q3_round_activate_client(cut->network, client->remote_client, error)) return false;
     } else if (!client->bot && !cut->frontend->options.dedicated) {
         uint32_t ordinal;
         if (!frontend_seat_ordinal_read(cut->frontend,client->seat,&ordinal))
@@ -363,7 +363,7 @@ static bool reject_client(qa_application_q3_round_cut *cut,
     size_t i;
     if (!reason || !client_index(cut, client, &i, error)) return false;
     if (client->remote) {
-        if (!frontend_network_q3_round_reject_client(cut->network, client->remote_client, reason, error)) return false;
+        if (!frontend_network_q3_round_reject_client(cut->frontend, cut->network, client->remote_client, reason, error)) return false;
     } else if (!client->bot && !cut->frontend->options.dedicated)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source rejected its retained local input client");
     cut->resolved[i] = true; return true;
@@ -374,7 +374,7 @@ static bool finish(qa_application_q3_round_cut *cut, qa_error *error)
     for (size_t i = 0; i < cut->count; ++i)
         if (!cut->resolved[i]) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 frontend round left an unresolved real client");
     if (!frontend_network_publish(cut->frontend, error) ||
-        !frontend_network_q3_round_finish(cut->network, error)) return false;
+        !frontend_network_q3_round_finish(cut->frontend, cut->network, error)) return false;
     cut->phase = FRONTEND_ROUND_FINISHED; return true;
 }
 const qa_application_q3_round_services *frontend_q3_round_services(void)

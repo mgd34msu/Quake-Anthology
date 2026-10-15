@@ -239,7 +239,6 @@ struct qa_frontend_network {
     uint32_t q2_record_server_count;
     frontend_network_unified *unified;
     frontend_network_unified_client_service *unified_client_service;
-    uint64_t unified_map_revision;
     frontend_q3_packages *q3_packages;
     frontend_q3_peer q3_peers[64];
     uint64_t q3_generation;
@@ -668,10 +667,7 @@ static bool local_clients_prepare(qa_frontend_network *n, qa_error *error)
         !qa_application_map_read(f->application, &map)) return true;
     if (!local_server_prepare(n, error)) return false;
     if (f->options.network_protocol.kind == QA_NET_UNIFIED_1 && !n->unified) {
-        application_unified_source source;
-        if (!application_unified_source_read(f->application, &source, error)) return false;
         n->composition = qa_application_configuration_generation(f->application);
-        n->unified_map_revision = source.map_revision;
         frontend_network_unified_options server = {.frontend = f, .runtime = n->runtime, .server = true,
             .seat_owner = NETWORK_OWNER, .remote_seat_base = 256, .context = n,
             .current = unified_current, .local_seat = local_server_seat};
@@ -4551,7 +4547,6 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         if(!application_unified_source_read(f->application,&source,error) ||
             !source.max_clients || source.max_clients>256) goto failed;
         clients=source.max_clients+8;
-        n->unified_map_revision=source.map_revision;
     }
     qa_network_options options = {.owner = NETWORK_OWNER, .clients = clients, .packets_per_pump = 256,
         .timeout_ns = f->options.network_connect ? UINT64_C(120000000000) :
@@ -6699,14 +6694,6 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     if (!f->network) return true;
     qa_frontend_network *n = f->network;
     if(n->unified) {
-        if(f->options.network_host) {
-            application_unified_source source;
-            if(!application_unified_source_read(f->application,&source,error)) return false;
-            if(source.map_revision!=n->unified_map_revision) {
-                if(!frontend_network_unified_travel(n->unified,NULL,0,error)) return false;
-                n->unified_map_revision=source.map_revision;
-            }
-        }
         return frontend_network_unified_publish(n->unified,NULL,error);
     }
     if(frontend_network_client_only(f) && (n->q1_client_owner || n->q2_client_owner))
@@ -6971,18 +6958,23 @@ bool frontend_network_q3_round_activate_client(qa_network_q3_round *cut, qa_net_
     if (!round_bind_world(cut, false, error) || !qa_network_q3_round_activate(cut->network->runtime, client, error)) return false;
     cut->resolved[i] = true; return true;
 }
-bool frontend_network_q3_round_reject_client(qa_network_q3_round *cut, qa_net_client_id client,
+bool frontend_network_q3_round_reject_client(qa_frontend *f, qa_network_q3_round *cut, qa_net_client_id client,
     const char *reason, qa_error *error)
 {
+    if (!cut && f && f->network && f->network->unified)
+        return frontend_network_unified_close(f->network->unified, client, reason, error);
     size_t i; frontend_q3_peer *peer;
     if (!cut || !reason || !round_client(cut, client, &i, &peer, error)) return false;
     if (!qa_network_q3_disconnect(cut->network->runtime, client, &peer->rate, cut->network->q3_server_bit, reason, error)) return false;
     if (!q3_drop(peer, reason, error)) return false;
     cut->resolved[i] = true; return true;
 }
-bool frontend_network_q3_round_finish(qa_network_q3_round *cut, qa_error *error)
+bool frontend_network_q3_round_finish(qa_frontend *f, qa_network_q3_round *cut, qa_error *error)
 {
-    if (!cut) return true;
+    if (!cut) {
+        if (f && f->network) frontend_network_unified_restart(f->network->unified);
+        return true;
+    }
     if(!frontend_network_output_drain(cut->frontend,error)) return false;
     if (!round_idle(cut, error) || !cut->bound || cut->finished)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has no complete bound network scope");

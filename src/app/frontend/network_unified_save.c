@@ -148,8 +148,7 @@ bool frontend_network_unified_qualified(const frontend_network_unified *owner,
              source.session != owner->source.session || source.world != owner->source.world ||
              source.publication != owner->source.publication || source.map_revision != owner->source.map_revision ||
              source.max_clients != owner->source.max_clients)) ||
-        (owner->traveling && (!application_unified_save_source_obsolete(&source, &owner->source) ||
-            application_unified_save_source_obsolete(&source, &owner->travel_source) ||
+        (owner->traveling && (application_unified_save_source_obsolete(&source, &owner->travel_source) ||
             source.owner != owner->travel_source.owner || source.launch != owner->travel_source.launch ||
             source.session != owner->travel_source.session || source.world != owner->travel_source.world ||
             source.publication != owner->travel_source.publication || source.map_revision != owner->travel_source.map_revision ||

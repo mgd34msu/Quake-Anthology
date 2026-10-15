@@ -33,9 +33,9 @@ bool frontend_network_q3_round_bind(qa_network_q3_round *, qa_error *);
 /* Queue the real map_restart reliable command before this client's source
  * reconnect. Activate only after canonical source admission/ClientBegin. */
 bool frontend_network_q3_round_activate_client(qa_network_q3_round *, qa_net_client_id, qa_error *);
-bool frontend_network_q3_round_reject_client(qa_network_q3_round *, qa_net_client_id,
+bool frontend_network_q3_round_reject_client(qa_frontend *, qa_network_q3_round *, qa_net_client_id,
                                             const char *reason, qa_error *);
-bool frontend_network_q3_round_finish(qa_network_q3_round *, qa_error *);
+bool frontend_network_q3_round_finish(qa_frontend *, qa_network_q3_round *, qa_error *);
 void frontend_network_q3_round_dispose(qa_network_q3_round *);
 
 #endif
