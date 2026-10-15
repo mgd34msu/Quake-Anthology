@@ -193,6 +193,8 @@ const qa_cvar_view *qa_q1_source_read(const qa_q1_game *, qa_q1_source_setting);
 typedef struct qa_q1_host {
     void *context;
     const qa_cvars *cvars;
+    uint32_t *server_flags;
+    bool (*set_skill)(void *,int32_t,qa_error *);
     qa_monster_missions missions;
     bool (*monster_admit)(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
     /* Read the admitted source client's current selected attack input. */

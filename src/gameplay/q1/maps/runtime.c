@@ -637,7 +637,11 @@ qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
     return g && g->maps ? g->maps->options.current_map : QA_STRING_NONE;
 }
 uint32_t qa_q1_game_campaign_flags(const qa_q1_game *g) {
-    return g && g->maps ? *g->maps->options.server_flags : 0;
+    const uint32_t *flags = q1_campaign_flags_owner(g);
+    return flags ? *flags : 0;
+}
+uint32_t *q1_campaign_flags_owner(const qa_q1_game *g) {
+    return g ? (g->maps ? g->maps->options.server_flags : g->host.server_flags) : NULL;
 }
 q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->map)

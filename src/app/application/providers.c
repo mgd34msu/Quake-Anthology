@@ -592,6 +592,8 @@ static bool construct_q1(qa_application *application,
     qa_targets_monsters_configure(application->targets, application, application_monster_mission);
     qa_q1_host host = {.context = provider,
                        .cvars = application_native_q1_console_registry(provider),
+                       .server_flags = &provider->q1_server_flags,
+                       .set_skill = application_native_q1_set_skill,
                        .source_console_print = application_native_q1_source_console_print,
                        .source_logfrag_write = application_native_q1_source_logfrag_write,
                        .world_info = application_native_q1_world_info,

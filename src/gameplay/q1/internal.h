@@ -51,6 +51,13 @@
     X(RESOURCE_PROGS_PLAYHAM_MDL, "progs/playham.mdl") \
     X(RESOURCE_MISC_FLYS_WAV, "misc/flys.wav") \
     X(ACH_FIND_SECRET, "ACH_FIND_SECRET") \
+    X(ACH_FIND_MG3_SECRET, "ACH_FIND_MG3_SECRET") \
+    X(CLASS_ITEM_HEAD_HELLKNIGHT, "item_head_hellknight") \
+    X(CLASS_ITEM_HEALTH, "item_health") \
+    X(RESOURCE_PROGS_ITEM_H_HELLKN_MDL, "progs/item_h_hellkn.mdl") \
+    X(RESOURCE_PROGS_G_BUNNY_MDL, "progs/g_bunny.mdl") \
+    X(MG3_NEWGAMEPLUS_ITEM, "$mg3_qc_newgameplus_item") \
+    X(MG3_SELECTED_BLOODY_NIGHTMARE, "$mg3_selected_bloody_nightmare") \
     X(RUNE_RESISTANCE, "resistance") \
     X(RUNE_STRENGTH, "strength") \
     X(RUNE_HASTE, "haste") \
@@ -1288,6 +1295,29 @@ typedef enum q1_drop_kind {
     Q1_DROP_CTF_WEAPON,
     Q1_DROP_ROGUE_WEAPON
 } q1_drop_kind;
+enum q1_pickup_kind {
+    Q1_ITEM_HEALTH,
+    Q1_ITEM_ARMOR,
+    Q1_ITEM_AMMO,
+    Q1_ITEM_WEAPON,
+    Q1_ITEM_KEY,
+    Q1_ITEM_POWER,
+    Q1_ITEM_BACKPACK,
+    Q1_ITEM_HORN,
+    Q1_ITEM_SPHERE,
+    Q1_ITEM_MG3_SHARD,
+    Q1_ITEM_MG3_UPGRADE,
+    Q1_ITEM_MG3_BLOODY,
+    Q1_ITEM_MG3_HEAD
+};
+#define Q1_MG3_TETTE UINT32_C(512)
+uint32_t *q1_campaign_flags_owner(const qa_q1_game *);
+static inline q1_runtime_name q1_mg3_head_model(bool bunny) {
+    return bunny ? Q1_NAME_RESOURCE_PROGS_G_BUNNY_MDL : Q1_NAME_RESOURCE_PROGS_ITEM_H_HELLKN_MDL;
+}
+static inline q1_runtime_name q1_mg3_head_sound(bool bunny) {
+    return bunny ? Q1_NAME_RESOURCE_MISC_SECRET_WAV : Q1_NAME_RESOURCE_PLAYER_TORNOFF2_WAV;
+}
 typedef struct q1_pickup {
     qa_item_id item;
     qa_string_id original_model, sound;
