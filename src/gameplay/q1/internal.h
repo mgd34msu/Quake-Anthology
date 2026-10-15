@@ -1796,7 +1796,7 @@ bool q1_electric_rays(qa_q1_game *, qa_actor_id attacker, qa_actor_id inflictor,
                       const char *cause, qa_error *);
 bool q1_hipnotic_lightning_claimed(const qa_q1_game *, qa_actor_id);
 bool q1_axe_strike(qa_q1_game *, q1_actor *, qa_error *);
-bool q1_projectile_spawn(qa_q1_game *, qa_actor_id, qa_q1_weapon, q1_projectile_kind, qa_vec3,
+bool q1_projectile_spawn(qa_q1_game *, qa_actor_id, qa_q1_weapon, q1_projectile_kind, bool source_newmis, qa_vec3,
                          qa_vec3, q1_actor **, qa_error *);
 bool q1_projectile_touch(qa_q1_game *, q1_actor *, qa_actor_id, const qa_touch_contact *,
                          qa_error *);

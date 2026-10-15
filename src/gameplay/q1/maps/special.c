@@ -301,7 +301,9 @@ static bool shooter_fire(qa_q1_game *g, q1_actor *entity, bool continuous, qa_er
         body.origin = qa_vec_add(body.origin, qa_vec_scale(direction, 8));
     }
     q1_actor *missile;
-    if (!q1_projectile_spawn(g, id, QA_Q1_WEAPON_COUNT, kind, body.origin,
+    bool source_newmis = kind == Q1_SPIKE || kind == Q1_SUPERSPIKE || kind == Q1_ENFORCER_LASER ||
+        kind == Q1_LAVA_SPIKE || (hipnotic && kind == Q1_ROCKET);
+    if (!q1_projectile_spawn(g, id, QA_Q1_WEAPON_COUNT, kind, source_newmis, body.origin,
                              qa_vec_scale(direction, speed), &missile, error))
         return false;
     if (kind == Q1_ENFORCER_LASER && (hipnotic || rogue)) {
@@ -442,11 +444,30 @@ bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
         entity = q1_entity(g, id);
         return !entity || !entity->map || q1_link(g, entity, error);
     }
-    case Q1_MAP_SHOOTER_FIRE:
-        return (g->options.program == QA_Q1_HIPNOTIC && entity->map->field_state == 0
-                    ? true : shooter_fire(g, entity, true, error)) &&
-               (!q1_alive(g, entity->id) ||
-                q1_map_schedule(g, entity, entity->wait, Q1_MAP_SHOOTER_FIRE, error));
+    case Q1_MAP_SHOOTER_FIRE: {
+        qa_actor_id id = entity->id;
+        qa_vec3 movedir = entity->map->movedir;
+        if (!(g->options.program == QA_Q1_HIPNOTIC && entity->map->field_state == 0) &&
+            !shooter_fire(g, entity, true, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (entity && entity->map &&
+            !q1_map_schedule(g, entity, entity->wait, Q1_MAP_SHOOTER_FIRE, error))
+            return false;
+        if (g->options.program != QA_Q1_ROGUE)
+            return true;
+        qa_actor_id shot = q1_ref_actor(g, g->newmis);
+        if (!q1_ref_present(g->newmis))
+            shot = g->maps && g->maps->world_actor.registry ? g->maps->world_actor
+                : g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
+        if (!q1_alive(g, shot))
+            return true;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, shot, &body, error))
+            return false;
+        body.velocity = qa_vec_scale(movedir, 500);
+        return qa_world_body_write(g->services.world, shot, &body, error);
+    }
     case Q1_MAP_FIREBALL_FLY:
         return fireball_fly(g, entity, error);
     case Q1_MAP_BUBBLES_MAKE: {

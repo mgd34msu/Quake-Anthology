@@ -121,7 +121,7 @@ static bool split_grenade(qa_q1_game *g, q1_actor *grenade, qa_error *error) {
         if (!qa_world_body_read(g->services.world, grenade->id, &body, error))
             return false;
         q1_actor *mini;
-        if (!q1_projectile_spawn(g, q1_ref_actor(g, grenade->owner), QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE,
+        if (!q1_projectile_spawn(g, q1_ref_actor(g, grenade->owner), QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE, false,
                                  body.origin, velocity, &mini, error))
             return false;
         mini->classname = g->runtime_names[Q1_NAME_MINI_GRENADE];
@@ -271,7 +271,7 @@ bool q1_rogue_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error
 bool q1_rogue_launch_plasma(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction,
                             q1_actor **out, qa_error *error) {
     q1_actor *projectile;
-    if (!q1_projectile_spawn(g, owner, QA_Q1_PLASMA, Q1_PLASMA, origin,
+    if (!q1_projectile_spawn(g, owner, QA_Q1_PLASMA, Q1_PLASMA, false, origin,
                              qa_vec_scale(direction, 0.01f), &projectile, error))
         return false;
     projectile->physics.angular_velocity = qa_v3(300, 300, 300);
@@ -307,7 +307,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             !q1_aim(g, player->id, g->forward, &direction, error) ||
             !q1_projectile_spawn(
                 g, player->id, powered ? QA_Q1_LAVA_SUPER_NAILGUN : QA_Q1_LAVA_NAILGUN,
-                Q1_LAVA_SPIKE, origin, qa_vec_scale(direction,q1_weapon_shape(player->weapon)->speed),
+                Q1_LAVA_SPIKE, true, origin, qa_vec_scale(direction,q1_weapon_shape(player->weapon)->speed),
                 &projectile, error))
             return false;
         projectile->state.projectile.count = powered ? 1 : 0;
@@ -320,7 +320,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         qa_vec3 velocity;
         if (!q1_consume(g, player->id, QA_Q1_MULTI_ROCKETS, 1, error) ||
             !q1_grenade_velocity(g, player, &velocity, error) ||
-            !q1_projectile_spawn(g, player->id, QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE, body.origin,
+            !q1_projectile_spawn(g, player->id, QA_Q1_MULTI_GRENADE, Q1_MULTI_GRENADE, false, body.origin,
                                  velocity, &projectile, error))
             return false;
         projectile->physics.motion = QA_PHYSICS_BOUNCE;
@@ -353,7 +353,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             } else
                 velocity = qa_vec_sub(qa_vec_scale(g->forward, shape->speed),
                                       qa_vec_scale(g->right, offsets[i] * 8));
-            if (!q1_projectile_spawn(g, player->id, QA_Q1_MULTI_ROCKET, Q1_MULTI_ROCKET, origin,
+            if (!q1_projectile_spawn(g, player->id, QA_Q1_MULTI_ROCKET, Q1_MULTI_ROCKET, false, origin,
                                      velocity, &projectile, error))
                 return false;
             projectile->frame = frames[i];

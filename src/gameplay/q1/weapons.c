@@ -1361,7 +1361,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
             !q1_sound_resource(g, player->id, super ? g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
             !nail_fire(g, player, error) ||
-            !q1_projectile_spawn(g, player->id, weapon, super ? Q1_SUPERSPIKE : Q1_SPIKE, origin,
+            !q1_projectile_spawn(g, player->id, weapon, super ? Q1_SUPERSPIKE : Q1_SPIKE, true, origin,
                                  qa_vec_scale(direction, parameters.nail_speed), &projectile,
                                  error))
             return false;
@@ -1383,7 +1383,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
         }
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
             !q1_sound_resource(g, player->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error) ||
-            !q1_projectile_spawn(g, player->id, weapon, Q1_GRENADE, body.origin, velocity,
+            !q1_projectile_spawn(g, player->id, weapon, Q1_GRENADE, g->options.rules == QA_RULESET_QUAKEWORLD, body.origin, velocity,
                                  &projectile, error))
             return false;
         break;
@@ -1394,6 +1394,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, bool *fired, qa_error 
             !q1_aim(g, player->id, forward, &direction, error) ||
             !q1_projectile_spawn(
                 g, player->id, weapon, Q1_ROCKET,
+                g->options.program == QA_Q1_HIPNOTIC || g->options.rules == QA_RULESET_QUAKEWORLD,
                 qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(forward, 8)), qa_v3(0, 0, 16)),
                 qa_vec_scale(direction, q1_weapon_shape(weapon)->speed), &projectile, error))
             return false;

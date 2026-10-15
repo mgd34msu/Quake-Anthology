@@ -212,6 +212,8 @@ bool qa_q1_grapple_fire(qa_q1_game *g, qa_actor_id actor, bool ctf, const qa_q1_
     q1_actor *hook;
     if (!q1_create(g, ctf ? g->runtime_names[Q1_NAME_CLASS_CTF_HOOK] : g->runtime_names[Q1_NAME_CLASS_HOOK], Q1_PROJECTILE, actor, &hook, error))
         return false;
+    if (!ctf)
+        g->newmis = q1_ref_from(g, hook->id);
     player->hook = q1_ref_from(g, hook->id);
     hook->state.projectile.kind = ctf ? Q1_CTF_HOOK : Q1_ROGUE_HOOK;
     hook->state.projectile.weapon = ctf ? QA_Q1_CTF_GRAPPLE : QA_Q1_ROGUE_GRAPPLE;

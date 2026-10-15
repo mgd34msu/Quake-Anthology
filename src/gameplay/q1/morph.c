@@ -93,7 +93,7 @@ static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 static bool laser(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_vec3 direction,
                   qa_error *error) {
     q1_actor *shot;
-    return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ENFORCER_LASER, origin,
+    return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ENFORCER_LASER, true, origin,
                                qa_vec_scale(qa_vec_normalize(direction), 600), &shot, error);
 }
 static bool attack(qa_q1_game *g, q1_actor *entity, bool stab, qa_error *error) {

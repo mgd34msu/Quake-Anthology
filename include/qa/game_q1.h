@@ -529,6 +529,7 @@ bool qa_q1_player_prethink(qa_q1_game *, qa_actor_id, qa_error *);
 /* Selected arsenal frame: weapon animation only, without player services. */
 bool qa_q1_player_weapon_frame(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_postthink(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_game_run_newmis(qa_q1_game *, qa_error *);
 bool qa_q1_player_environment(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_attach(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_frame(qa_q1_game *, qa_actor_id, const qa_q1_character_input *, qa_error *);

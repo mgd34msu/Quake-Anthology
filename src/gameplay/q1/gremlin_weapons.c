@@ -166,7 +166,7 @@ bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error 
     q1_actor *shot;
     return laser ? q1_hipnotic_launch_laser(g, entity->id, QA_Q1_LASER, origin, direction, false,
                                             error)
-                 : q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin,
+                 : q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, true, origin,
                                        qa_vec_scale(direction, 1000), &shot, error);
 }
 static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error *error) {
@@ -225,7 +225,7 @@ static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *e
     qa_vec3 origin =
         qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, 8), qa_v3(0, 0, 16)));
     q1_actor *shot;
-    return q1_projectile_spawn(g, entity->id, QA_Q1_ROCKET, Q1_ROCKET, origin,
+    return q1_projectile_spawn(g, entity->id, QA_Q1_ROCKET, Q1_ROCKET, false, origin,
                                qa_vec_scale(direction, 1000), &shot, error);
 }
 bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {

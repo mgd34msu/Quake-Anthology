@@ -129,7 +129,7 @@ static bool launch(qa_q1_game *g, q1_actor *entity, float offset, unsigned turn_
                                         error);
     q1_actor *shot;
     return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error) &&
-           q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, origin,
+           q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, false, origin,
                                qa_vec_scale(direction, 1000), &shot, error);
 }
 static bool walking_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {

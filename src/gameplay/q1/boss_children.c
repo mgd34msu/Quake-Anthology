@@ -261,6 +261,7 @@ static bool spammer(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_actor *shot;
     if (!q1_boss_child_create(g, g->runtime_names[Q1_NAME_CLASS_SPAM], Q1_CHILD_SPAM, q1_ref_actor(g, e->owner), &shot, error))
         return false;
+    g->newmis = q1_ref_from(g, shot->id);
     shot->physics.solid = QA_PHYSICS_BOX;
     shot->physics.motion = QA_PHYSICS_TOSS;
     shot->effects = 64;

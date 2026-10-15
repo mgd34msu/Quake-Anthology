@@ -332,7 +332,7 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
             qa_vec_normalize(qa_vec_add(direction, qa_vec_add(qa_vec_scale(g->right, horizontal),
                                                               qa_vec_scale(g->up, vertical))));
         q1_actor *shot;
-        if (!q1_projectile_spawn(g, e->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE,
+        if (!q1_projectile_spawn(g, e->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, true,
                                  qa_vec_add(origin, qa_vec_scale(aim, 8)), qa_vec_scale(aim, 1000),
                                  &shot, error))
             return false;
@@ -450,7 +450,7 @@ static bool shub_grenade(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error *e
     qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(enemy_origin(g, e), origin)), 600);
     velocity.z = 200;
     q1_actor *shot;
-    if (!q1_projectile_spawn(g, e->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, origin, velocity,
+    if (!q1_projectile_spawn(g, e->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, false, origin, velocity,
                              &shot, error))
         return false;
     shot->classname = 0;
@@ -724,7 +724,7 @@ bool q1_spawn_homing_flame(qa_q1_game *g, q1_actor *source, qa_actor_id *out, qa
     (void)qa_world_body_read(g->services.world, q1_ref_actor(g, enemy), &target, NULL);
     qa_vec3 origin = qa_vec_add(value.origin, qa_v3(0, 0, 4));
     q1_actor *flame;
-    if (!q1_projectile_spawn(g, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin,
+    if (!q1_projectile_spawn(g, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT, Q1_SPIKE, false, origin,
                              qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, origin)), 400),
                              &flame, error))
         return false;

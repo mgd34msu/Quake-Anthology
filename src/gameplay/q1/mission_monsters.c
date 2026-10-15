@@ -114,7 +114,7 @@ static bool mummy_fire(qa_q1_game *g, q1_actor *entity, qa_vec3 offset, qa_error
     qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, origin)), 600);
     velocity.z = 200;
     q1_actor *grenade;
-    if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, origin, velocity,
+    if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, false, origin, velocity,
                              &grenade, error))
         return false;
     grenade->classname=g->runtime_names[Q1_NAME_MUMMY_GRENADE];

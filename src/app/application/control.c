@@ -3258,6 +3258,21 @@ bool application_control_group_post(qa_application *app, qa_actor_id actor, qa_e
     }
     if (live(app, actor)) { record->player.state = input.state; record->player.bounds = input.shape.bounds; }
 finished:
+    if (ok) {
+        application_provider *sources[] = {
+            application_world_provider(app, QA_ROLE_ENTITIES, ""),
+            application_provider_for(app, actor, QA_ROLE_ARSENAL, ""),
+            control_execution(app, actor)};
+        for (size_t i = 0; ok && i < sizeof(sources) / sizeof(*sources); ++i) {
+            application_provider *source = sources[i];
+            if (!source || source->kind != APPLICATION_PROVIDER_Q1 ||
+                source->component.clock.kind != QA_RULESET_QUAKEWORLD)
+                continue;
+            bool previous = false;
+            for (size_t j = 0; j < i; ++j) previous |= sources[j] == source;
+            if (!previous) ok = qa_q1_game_run_newmis(source->state.q1, error);
+        }
+    }
     application_control_frames_state(app, actor, NULL);
     return ok;
 }

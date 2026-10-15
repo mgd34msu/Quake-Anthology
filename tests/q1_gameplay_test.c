@@ -171,7 +171,7 @@ static bool released(void *context, qa_session *session, qa_actor_record actor, 
 }
 
 static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
-    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch)
+    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch, qa_ruleset_id rules)
 {
     qa_error error = {0};
     *fixture = (q1_fixture){0};
@@ -197,7 +197,7 @@ static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uin
         .actor_traits = actor_traits, .motion_changed = unexpected_motion};
     qa_q1_options options = {.provider = fixture->owner, .combat_provider = fixture->owner,
         .inventory_provider = fixture->owner, .program = program, .edition = edition,
-        .rules = QA_RULESET_NETQUAKE,
+        .rules = rules,
         .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1,
         .coop = coop, .deathmatch = deathmatch};
     qa_q1_host host = {.context = fixture, .check_client = check_client,
@@ -216,7 +216,7 @@ static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uin
 static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
     bool native_world, qa_q1_program program)
 {
-    fixture_create_rules(fixture, edition, skill, native_world, program, false, 0);
+    fixture_create_rules(fixture, edition, skill, native_world, program, false, 0, QA_RULESET_NETQUAKE);
 }
 
 static void fixture_destroy(q1_fixture *fixture)
@@ -1024,7 +1024,7 @@ static void addon_spawn_multiplayer(qa_q1_program program, bool coop)
 {
     qa_error error = {0};
     q1_fixture fixture;
-    fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, program, coop, coop ? 0 : 1);
+    fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, program, coop, coop ? 0 : 1, QA_RULESET_NETQUAKE);
     fixture_bind_maps(&fixture);
     qa_actor_id hub;
     GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
@@ -1262,6 +1262,75 @@ static void rogue_shooter(uint32_t flags, uint8_t skill, bool continuous)
     fixture_destroy(&fixture);
 }
 
+static void rogue_shooter_newmis(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, true, QA_Q1_ROGUE);
+    fixture_bind_maps(&fixture);
+    qa_actor_id laser, dragon;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trap_spikeshooter", .origin = {0, 0, 64}, .spawnflags = 2}, &laser, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trap_shooter", .origin = {0, 64, 64}, .angles = {0, 90, 0},
+        .spawnflags = 32}, &dragon, &error));
+    GAME_CHECK(qa_q1_wire_freeze(fixture.game, &error));
+    GAME_CHECK(qa_q1_game_use(fixture.game, laser, (qa_actor_id){0}, &error));
+    qa_actor_id previous = shooter_projectile(&fixture, "enforcer_laser");
+    uint32_t source_slot;
+    GAME_CHECK(previous.registry && qa_q1_wire_emission_slot(fixture.game, previous, &source_slot));
+    advance(&fixture, 1);
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture.world, previous, &body, &error));
+    GAME_CHECK(fabsf(body.velocity.x) < .001f && body.velocity.y == 500);
+    qa_actor_id fireball = shooter_projectile(&fixture, "fireball");
+    GAME_CHECK(fireball.registry && qa_world_body_read(fixture.world, fireball, &body, &error));
+    GAME_CHECK(qa_vec_length(body.velocity) >= 900 && qa_vec_length(body.velocity) < 1200);
+    GAME_CHECK(qa_session_release(fixture.session, previous, &error));
+    qa_actor_id replacement;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_teleport_destination", .targetname = "replacement",
+        .origin = {0, 0, 128}}, &replacement, &error));
+    GAME_CHECK(!qa_actor_id_equal(previous, replacement));
+    uint32_t replacement_slot;
+    GAME_CHECK(qa_q1_wire_emission_slot(fixture.game, replacement, &replacement_slot) &&
+        replacement_slot == source_slot);
+    advance(&fixture, 10);
+    GAME_CHECK(qa_world_body_read(fixture.world, replacement, &body, &error));
+    GAME_CHECK(fabsf(body.velocity.x) < .001f && body.velocity.y == 500);
+    fixture_destroy(&fixture);
+}
+
+static void qw_shooter_newmis(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create_rules(&fixture, QA_Q1_CLASSIC, 1, true, QA_Q1_ID1, false, 0, QA_RULESET_QUAKEWORLD);
+    fixture_bind_maps(&fixture);
+    qa_actor_id shooter;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trap_spikeshooter", .origin = {0, 0, 64}}, &shooter, &error));
+    GAME_CHECK(qa_q1_wire_freeze(fixture.game, &error));
+    GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+    qa_actor_id shot = shooter_projectile(&fixture, "spike");
+    GAME_CHECK(shot.registry);
+    GAME_CHECK(qa_q1_game_run_newmis(fixture.game, &error));
+    GAME_CHECK(qa_q1_game_run_newmis(fixture.game, &error));
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture.world, shot, &body, &error));
+    GAME_CHECK(body.origin.x == 25);
+    advance(&fixture, 1);
+    GAME_CHECK(qa_world_body_read(fixture.world, shot, &body, &error));
+    GAME_CHECK(body.origin.x == 75 && body.velocity.x == 500);
+    uint64_t time;
+    double elapsed;
+    qa_clock_state clock;
+    GAME_CHECK(qa_q1_game_clock_read(fixture.game, &time, &elapsed));
+    GAME_CHECK(elapsed == .1 && qa_session_clock(fixture.session, fixture.owner, &clock));
+    GAME_CHECK(clock.elapsed_ns == UINT64_C(100000000) && clock.frame_number == 1);
+    fixture_destroy(&fixture);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
@@ -1283,6 +1352,8 @@ void test_q1_gameplay(void)
     rogue_shooter(16, 2, false);
     rogue_shooter(2, 1, true);
     rogue_shooter(32, 1, false);
+    rogue_shooter_newmis();
+    qw_shooter_newmis();
     draught_ring(false, 0, false);
     draught_ring(true, 0, true);
     draught_ring(false, 128, false);
