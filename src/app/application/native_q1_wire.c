@@ -477,7 +477,7 @@ static bool source_current(application_native_q1_wire_source *source, qa_ruleset
         p->kind != APPLICATION_PROVIDER_Q1 || !p->constructed || !p->attached ||
         p->close_pending || !p->launch || p->launch->selection.clock.kind != dialect ||
         application_world_provider(app, QA_ROLE_ENTITIES, "") != p ||
-        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
         !qa_q1_wire_receipt_current(&source->receipt) || source->receipt.operation.game != p->state.q1)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Original native Q1 wire requires its installed primary source owner");
