@@ -101,6 +101,7 @@ bool q3nm_begin(q3n_mission_hud *o, const q3n_frame *f, qa_error *e, q3menu_cont
 {
     if (!o || o->busy || !o->hud || !q3nm_current(o, f, e)) return false;
     o->busy = true; o->frame = f; o->commands = f->server_commands ? q3n_server_commands_state(f->server_commands) : NULL;
+    o->display.realTime = f->time;
     o->menus->error = e; o->menus->failed = false; *previous = q3menu_enter(o->menus);
     o->settings.draw_status = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawStatus) != 0;
     o->settings.draw_icons = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawIcons) != 0;
@@ -138,6 +139,10 @@ static int model(const char *path)
 static int sound(const char *path,qboolean compressed)
 { q3n_mission_hud *o=q3nm_active(); int h=0; if(o->menus->failed)return 0; q3nm_result(qa_q3_register_sound(o->options.assets,path,compressed!=0,&h,o->menus->error)&&q3nm_current(o,o->frame,o->menus->error)); return h; }
 static void color(const float c[4]) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(q3nh_color(&o->draw,c)); }
+static qboolean overstrike(void)
+{ return qa_text_field_overstrike(q3nm_active()->options.console_field)?qtrue:qfalse; }
+static void set_overstrike(qboolean value)
+{ qa_text_field_set_overstrike(q3nm_active()->options.console_field,value!=0); }
 static void picture(float x,float y,float w,float h,int asset) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(q3nh_picture(&o->draw,x,y,w,h,asset)); }
 static void stretch(float x,float y,float w,float h,float s,float t,float s2,float t2,int asset)
 { q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return;
@@ -204,8 +209,6 @@ static void set_cvar(const char *name,const char *value) { q3nm_result(q3nm_set(
 static void script(char **text) { (void)text; }
 static void team_color(float (*out)[4]) { const qa_q3_player *p=q3nm_require_player(q3nm_active()); if(!p)return;
     int team=p->persistant[3]; (*out)[0]=team==1?1:0; (*out)[1]=team==1||team==2?0:0.17f; (*out)[2]=team==2?1:0; (*out)[3]=0.25f; }
-static void cursor_text(float x,float y,float scale,float c[4],const char *text,int position,char cursor,int limit,int style)
-{ (void)position; (void)cursor; q3nm_text(x,y,scale,c,text,0,limit,style); }
 static void local_sound(int h,int channel) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(qa_q3_presentation_sound(o->frame->presentation,h,NULL,(int)o->frame->viewing_client,channel,true,o->menus->error)); }
 static qboolean owner_key(int id,int flags,float *special,int key) { (void)id; (void)flags; (void)special; (void)key; return qfalse; }
 static void music(const char *intro,const char *loop) { q3n_mission_hud *o=q3nm_active(); if(!o->menus->failed)q3nm_result(qa_q3_presentation_music(o->frame->presentation,intro,loop,o->menus->error)); }
@@ -304,7 +307,9 @@ static bool allocate(const q3n_mission_hud_options *options,const qa_native_q3_c
         .fillRect=fill,.drawRect=rectangle,.drawSides=sides,.drawTopBottom=top_bottom,.clearScene=clear_scene,.addRefEntityToScene=entity,
         .renderScene=render,.registerFont=font,.ownerDrawItem=q3nm_owner,.getValue=q3nm_value,.ownerDrawVisible=q3nm_visible,
         .runScript=script,.getTeamColor=team_color,.setCVar=set_cvar,
-        .drawTextWithCursor=cursor_text,.startLocalSound=local_sound,.ownerDrawHandleKey=owner_key,.feederCount=feeder_count,
+        .getOverstrikeMode=options->console_field?overstrike:NULL,
+        .setOverstrikeMode=options->console_field?set_overstrike:NULL,
+        .drawTextWithCursor=q3nm_cursor_text,.startLocalSound=local_sound,.ownerDrawHandleKey=owner_key,.feederCount=feeder_count,
         .feederItemText=feeder_text,.feederItemImage=feeder_image,.feederSelection=feeder_select,.Error=q3menu_error,.Print=print,
         .ownerDrawWidth=q3nm_owner_width,.registerSound=sound,.startBackgroundTrack=music,.stopBackgroundTrack=music_stop,
         .playCinematic=movie,.stopCinematic=movie_stop,.drawCinematic=movie_draw,.runCinematicFrame=movie_run};

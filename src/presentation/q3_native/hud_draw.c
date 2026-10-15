@@ -66,7 +66,7 @@ bool q3nh_text(q3n_hud_draw *d,float x,float y,const char *text,float w,float h,
 {
     if(!text || !c)return false;
     bool handled;
-    if(!q3nh_font_text(d,x,y,text,h,c,force,shadow,limit,QA_FONT_ALIGN_LEFT,false,&handled))return false;
+    if(!q3nh_font_text(d,x,y,text,h,c,force,shadow,limit,QA_FONT_ALIGN_LEFT,false,NULL,&handled))return false;
     if(handled)return true;
     w=(w * d->frame->preferences.text_scale); h=(h * d->frame->preferences.text_scale);
     float selected[4]; memcpy(selected,c,sizeof(selected));

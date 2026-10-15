@@ -823,6 +823,7 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
             .recipient=basis.client,.content=basis.content,.assets=r->assets,.presentation=o->children.presentation,
             .fonts=r->fonts,.font_save_root=qa_catalog_product_write_root(qa_launch_instance_catalog(basis.descriptor),
                 basis.descriptor->selection.product),
+            .console_field=qa_seat_console_field(f->seats[r->physical_seat].console,false),
             .seat=basis.client.seat,.context=o,.milliseconds=milliseconds,.print=print,.key_catcher=key_catcher};
         if(!q3n_mission_hud_create_remote(&mission,&o->children.mission,e) ||
            !q3n_mission_hud_bind(o->children.mission,o->children.hud,e))return false;

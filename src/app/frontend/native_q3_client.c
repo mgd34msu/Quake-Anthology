@@ -883,6 +883,7 @@ bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_applicati
                 .assets=row->view.assets,.presentation=row->view.presentation,.fonts=row->view.fonts,
                 .font_save_root=qa_catalog_product_write_root(qa_launch_instance_catalog(row->view.source_launch),
                     row->view.source_launch->selection.product),
+                .console_field=qa_seat_console_field(row->frontend->seats[row->view.seat].console,false),
                 .seat=row->view.launch_seat,.context=row,
                 .milliseconds=milliseconds,.print=print_row,.key_catcher=key_catcher};
             if(!q3n_mission_hud_create(&options,&row->view.mission,e) || !q3n_mission_hud_bind(row->view.mission,owners.hud,e))return false;

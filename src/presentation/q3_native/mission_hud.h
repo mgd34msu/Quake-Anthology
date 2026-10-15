@@ -1,6 +1,7 @@
 #ifndef QA_Q3_NATIVE_MISSION_HUD_H
 #define QA_Q3_NATIVE_MISSION_HUD_H
 #include "hud.h"
+#include "qa/field.h"
 #include "qa/font.h"
 typedef struct q3n_mission_hud q3n_mission_hud;
 typedef struct q3n_mission_hud_options {
@@ -22,6 +23,7 @@ typedef struct q3n_mission_hud_options {
     qa_q3_presentation *presentation;
     qa_font_library *fonts;
     qa_fs_root *font_save_root;
+    qa_text_field *console_field;
     uint32_t seat;
     void *context;
     int32_t (*milliseconds)(void *);

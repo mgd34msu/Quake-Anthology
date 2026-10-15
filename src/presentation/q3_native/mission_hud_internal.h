@@ -47,6 +47,7 @@ bool q3nm_set(q3n_mission_hud *, const char *, const char *);
 int q3nm_width(const char *, float, int);
 int q3nm_height(const char *, float, int);
 void q3nm_text(float, float, float, float color[4], const char *, float, int, int);
+void q3nm_cursor_text(float, float, float, float color[4], const char *, int, char, int, int);
 float q3nm_limit(const char *, float, float, float, const float[4], float, int);
 void q3nm_owner(float, float, float, float, float, float, int, int, int, float, float, float[4], int, int);
 qboolean q3nm_visible(int);

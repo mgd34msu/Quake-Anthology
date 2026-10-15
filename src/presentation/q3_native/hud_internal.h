@@ -35,8 +35,12 @@ qa_scene_rect_f q3nh_rect(const q3n_hud_draw *,qa_scene_rect_f);
 void q3nh_palette(const q3n_hud_draw *,const float input[4],float output[4]);
 bool q3nh_font_metric(q3n_hud_draw *,const char *,float height,int32_t limit,
     float *width,float *out_height,bool *handled);
+typedef struct q3n_hud_text_cursor {
+    int32_t position;
+    uint8_t character;
+} q3n_hud_text_cursor;
 bool q3nh_font_text(q3n_hud_draw *,float x,float y,const char *,float height,const float color[4],
-    bool force,bool shadow,int32_t limit,qa_font_alignment,bool baseline,bool *handled);
+    bool force,bool shadow,int32_t limit,qa_font_alignment,bool baseline,const q3n_hud_text_cursor *,bool *handled);
 bool q3nh_width(q3n_hud_draw *,const char *,float width,float height,int32_t limit,float *);
 bool q3nh_current(q3n_hud *,const q3n_frame *,qa_error *);
 size_t q3nh_strlen(const char *);

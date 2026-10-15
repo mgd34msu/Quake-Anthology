@@ -54,11 +54,16 @@ static bool alternate(const q3n_hud_draw *d,const char *text)
         return qa_utf8_valid((qa_bytes){(const uint8_t *)text,strlen(text)});
     return false;
 }
-static bool layout(q3n_hud_draw *d,const char *text,float height,const float color[4],bool force,int32_t limit,
-    qa_font_layout *out)
+static qa_font_selection selected_fonts(const q3n_hud_draw *d)
 {
     qa_font_selection fonts=d->typography.fonts;
     if(d->frame->preferences.typeface==QA_UI_TYPEFACE_STANDARD)fonts.primary=NULL;
+    return fonts;
+}
+static bool layout(q3n_hud_draw *d,const char *text,float height,const float color[4],bool force,int32_t limit,
+    qa_font_layout *out)
+{
+    qa_font_selection fonts=selected_fonts(d);
     qa_font_layout_options options={.text={(const uint8_t *)text,strlen(text)},
         .scale=height*d->typography.text_scale/8,.color={color[0],color[1],color[2],color[3]},
         .color_codes=QA_FONT_COLOR_Q3,.force_color=force || d->frame->preferences.color_mode!=QA_UI_COLOR_STANDARD,
@@ -77,20 +82,65 @@ bool q3nh_font_metric(q3n_hud_draw *d,const char *text,float height,int32_t limi
     return true;
 }
 bool q3nh_font_text(q3n_hud_draw *d,float x,float y,const char *text,float height,const float color[4],
-    bool force,bool shadow,int32_t limit,qa_font_alignment alignment,bool baseline,bool *handled)
+    bool force,bool shadow,int32_t limit,qa_font_alignment alignment,bool baseline,
+    const q3n_hud_text_cursor *cursor,bool *handled)
 {
     if(!text || !color || !handled)return false;
     *handled=alternate(d,text); if(!*handled)return true;
     float selected[4]; q3nh_palette(d,color,selected);
     if(d->frame->preferences.high_contrast) { selected[0]=selected[1]=selected[2]=1; force=true; shadow=true; }
+    bool with_cursor=cursor && cursor->position>=0;
+    const char *painted=text;
+    size_t maximum=0;
+    if(with_cursor && d->scene) {
+        maximum=strlen(text);
+        char *extended=qa_arena_alloc(&d->scene->storage,maximum+2,1,d->error);
+        if(!extended)return false;
+        memcpy(extended,text,maximum);
+        /* A final literal caret cannot form a new color escape, including
+         * when the authored text itself ends in a caret. */
+        extended[maximum]='^'; extended[maximum+1]=0; painted=extended;
+    }
     qa_font_layout value;
-    if(!layout(d,text,height,selected,force,limit,&value))return false;
+    if(!layout(d,painted,height,selected,force,with_cursor?0:limit,&value))return false;
     qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)value.glyphs;
+    qa_font_positioned_glyph *caret=NULL;
+    size_t before_cursor=0;
+    if(with_cursor) {
+        bool limited=limit>0 && maximum>(size_t)limit;
+        if(limit>0 && maximum>(size_t)limit)maximum=(size_t)limit;
+        size_t available=value.glyph_count-1,visible=available<maximum?available:maximum;
+        size_t position=(size_t)cursor->position;
+        bool inside=position<visible,end=position==maximum;
+        if(inside || end) {
+            const qa_font_positioned_glyph *anchor=glyphs+(inside?position:visible);
+            qa_font_info from,to;
+            qa_font_glyph cursor_glyph;
+            qa_font_selection fonts=selected_fonts(d);
+            if(!qa_font_describe(anchor->glyph.font,&from) ||
+               !qa_font_resolve(&fonts,cursor->character,false,&cursor_glyph) ||
+               !qa_font_describe(cursor_glyph.font,&to))return false;
+            float from_scale=value.line_height/fmaxf(1,from.line_height);
+            float to_scale=value.line_height/fmaxf(1,to.line_height);
+            float pen=anchor->rect.x-anchor->glyph.bearing_x*from_scale;
+            float row=anchor->rect.y-(from.ascent-anchor->glyph.bearing_y)*from_scale;
+            qa_vec4 tint=anchor->color;
+            if(end && limited && visible==maximum && visible)tint=glyphs[visible-1].color;
+            if(cursor_glyph.baked_color)tint=(qa_vec4){1,1,1,tint.w};
+            caret=glyphs+available;
+            *caret=(qa_font_positioned_glyph){.glyph=cursor_glyph,.color=tint,
+                .rect={pen+cursor_glyph.bearing_x*to_scale,row+(to.ascent-cursor_glyph.bearing_y)*to_scale,
+                    cursor_glyph.width*to_scale,cursor_glyph.height*to_scale}};
+            before_cursor=inside?position+1:visible;
+        }
+        value.glyph_count=visible;
+    }
     for(size_t row=0;row<value.line_count;++row) {
         const qa_font_line *line=value.lines+row;
         float offset=alignment==QA_FONT_ALIGN_CENTER?line->width*0.5f:alignment==QA_FONT_ALIGN_RIGHT?line->width:0;
         for(size_t i=0;i<line->glyph_count;++i) {
             qa_font_positioned_glyph *g=&glyphs[line->first_glyph+i];
+            if(with_cursor && line->first_glyph+i>=value.glyph_count && g!=caret)continue;
             float ascent=0;
             if(baseline) {
                 qa_font_info info;
@@ -104,7 +154,18 @@ bool q3nh_font_text(q3n_hud_draw *d,float x,float y,const char *text,float heigh
     }
     qa_font_draw_options options={.seat=d->owner->options.presentation_seat,.target=d->viewport,.space=QA_FONT_PIXELS,
         .shadow_offset=shadow?2*d->frame->preferences.hud_scale*fminf((float)d->viewport.width/640,(float)d->viewport.height/480):0};
-    return qa_font_draw_layout(d->scene,&value,&options,d->error) && q3nh_current(d->owner,d->frame,d->error);
+    bool ok;
+    if(caret) {
+        qa_font_layout prefix=value,suffix=value,mark=value;
+        prefix.glyph_count=before_cursor;
+        suffix.glyphs+=before_cursor; suffix.glyph_count-=before_cursor;
+        mark.glyphs=caret; mark.glyph_count=1; mark.lines=NULL; mark.line_count=0;
+        qa_font_draw_options cursor_options=options; cursor_options.shadow_offset=0;
+        ok=qa_font_draw_layout(d->scene,&prefix,&options,d->error) &&
+            qa_font_draw_layout(d->scene,&mark,&cursor_options,d->error) &&
+            qa_font_draw_layout(d->scene,&suffix,&options,d->error);
+    } else ok=qa_font_draw_layout(d->scene,&value,&options,d->error);
+    return ok && q3nh_current(d->owner,d->frame,d->error);
 }
 bool q3nh_width(q3n_hud_draw *d,const char *text,float width,float height,int32_t limit,float *out)
 {

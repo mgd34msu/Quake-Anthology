@@ -39,14 +39,15 @@ static void colored(unsigned char code,float alpha,float out[4])
     static const float rgb[8][3]={{0,0,0},{1,0,0},{0,1,0},{1,1,0},{0,0,1},{0,1,1},{1,0,1},{1,1,1}};
     unsigned index=(code-'0')&7; memcpy(out,rgb[index],3*sizeof(float)); out[3]=alpha;
 }
-void q3nm_text(float x,float y,float scale,float input[4],const char *text,float adjust,int limit,int style)
+static void paint(float x,float y,float scale,float input[4],const char *text,float adjust,int limit,int style,
+    const q3n_hud_text_cursor *cursor)
 {
     q3n_mission_hud *o=q3nm_active(); if(o->menus->failed)return;
     fontInfo_t *font=selected_font(scale); float nominal=line_height(font,scale),color[4]; memcpy(color,input,sizeof(color));
     bool force=o->frame->preferences.high_contrast||o->frame->preferences.color_mode!=QA_UI_COLOR_STANDARD;
     if(o->frame->preferences.high_contrast) { color[0]=color[1]=color[2]=1; style=6; }
     if(nominal>0) { bool handled; q3nm_result(q3nh_font_text(&o->draw,x,y,text?text:"",nominal,color,force,
-        style==3||style==6,limit,QA_FONT_ALIGN_LEFT,true,&handled)); if(handled)o->text_policy_active=true;
+        style==3||style==6,limit,QA_FONT_ALIGN_LEFT,true,cursor,&handled)); if(handled)o->text_policy_active=true;
         if(handled||o->menus->failed)return; }
     scale*=font->glyphScale*o->frame->preferences.text_scale; adjust*=o->frame->preferences.text_scale;
     int count=0; q3nm_result(q3nh_color(&o->draw,color));
@@ -57,9 +58,25 @@ void q3nm_text(float x,float y,float scale,float input[4],const char *text,float
             float black[4]={0,0,0,color[3]},offset=style==3?1:2;
             q3nm_result(q3nh_color(&o->draw,black)); glyph(g,x+offset,y+offset,scale); q3nm_result(q3nh_color(&o->draw,color));
         }
-        glyph(g,x,y,scale); x+=(float)g->xSkip*scale+adjust; ++count;
+        glyph(g,x,y,scale);
+        if(cursor && count==cursor->position)glyph(&font->glyphs[cursor->character],x,y,scale);
+        x+=(float)g->xSkip*scale+adjust; ++count;
+    }
+    if(cursor && cursor->position>=0) {
+        size_t maximum=text?strlen(text):0;
+        if(limit>0 && maximum>(size_t)limit)maximum=(size_t)limit;
+        if((size_t)cursor->position==maximum)glyph(&font->glyphs[cursor->character],x,y,scale);
     }
     q3nm_result(q3nh_color(&o->draw,NULL));
+}
+void q3nm_text(float x,float y,float scale,float input[4],const char *text,float adjust,int limit,int style)
+{ paint(x,y,scale,input,text,adjust,limit,style,NULL); }
+void q3nm_cursor_text(float x,float y,float scale,float input[4],const char *text,int position,char character,int limit,int style)
+{
+    if(!text)return;
+    q3n_mission_hud *o=q3nm_active();
+    q3n_hud_text_cursor cursor={.position=position,.character=(uint8_t)(unsigned char)character};
+    paint(x,y,scale,input,text,0,limit,style,((o->display.realTime/200)&1)?NULL:&cursor);
 }
 float q3nm_limit(const char *text,float x,float y,float scale,const float input[4],float max_x,int limit)
 {
