@@ -105,10 +105,11 @@ bool qa_q2_save_select_product(const qa_catalog *catalog,const qa_q2_save_data *
         if (!strcmp(save->server.cvars[i].name,"game"))
             game=*save->server.cvars[i].value?basename(save->server.cvars[i].value):"baseq2";
     const qa_product *selected=NULL,*preferred_match=NULL;
+    qa_product_edition edition=save->server.rerelease?QA_EDITION_RERELEASE:QA_EDITION_CLASSIC;
     size_t count=0;
     for (size_t i=0;i<qa_catalog_count(catalog);++i) {
         const qa_product *product=qa_catalog_at(catalog,i);
-        if (!product || product->family!=QA_GAME_Q2 || product->edition!=QA_EDITION_CLASSIC ||
+        if (!product || product->family!=QA_GAME_Q2 || product->edition!=edition ||
             product->availability!=QA_CONTENT_INSTALLED || !product->directory) continue;
         const char *directory=basename(product->directory);
         if (!equal(game,strlen(game),directory,strlen(directory))) continue;

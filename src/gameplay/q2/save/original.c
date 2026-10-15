@@ -1161,10 +1161,17 @@ bool qa_q2_game_original_builtin_game(qa_bytes bytes)
     if (q2_original_json_input(bytes)) {
         qa_json_document *document = NULL;
         if (!qa_json_parse(QA_JSON_SPECIAL_FLOATS, bytes, &document, NULL)) return false;
-        bool donor = qa_json_string_equal(document,
-            qa_json_get(document, qa_json_root(document), "stamp"), "quake-2-ts:g_save:v1");
+        qa_json_id root = qa_json_root(document);
+        qa_json_id stamp = qa_json_get(document, root, "stamp");
+        uint64_t version = 0;
+        bool supported = stamp != QA_JSON_NONE ?
+            qa_json_string_equal(document, stamp, "quake-2-ts:g_save:v1") :
+            qa_json_u64(document, qa_json_get(document, root, "save_version"), &version, NULL) &&
+            version == 1 &&
+            qa_json_type(document, qa_json_get(document, root, "game")) == QA_JSON_OBJECT &&
+            qa_json_type(document, qa_json_get(document, root, "clients")) == QA_JSON_ARRAY;
         qa_json_destroy(document);
-        return donor;
+        return supported;
     }
     return false;
 }

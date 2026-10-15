@@ -9,6 +9,7 @@
 #include "network_session.h"
 #include "qa/application_q1_save.h"
 #include "qa/application_q2_save.h"
+#include "qa/network_q2.h"
 #include <SDL.h>
 
 struct qa_frontend_original_restore {
@@ -67,7 +68,8 @@ static bool original_create(qa_frontend_original_restore *operation,qa_error *er
     options.mods=NULL; options.mod_count=0; options.startup=NULL; options.startup_count=0;
     options.seats=1; options.menu=false;
     options.network_host=NULL; options.network_connect=NULL; options.network_port=0;
-    options.network_protocol=(qa_net_protocol_id){operation->save.family==QA_GAME_Q1?QA_NET_NQ15:QA_NET_Q2_34,0,0};
+    options.network_protocol=operation->save.family==QA_GAME_Q1?
+        (qa_net_protocol_id){QA_NET_NQ15,0,0}:qa_q2_default_protocol(operation->save.state.q2->server.rerelease);
     options.application.player_profile_root=NULL;
     options.application.actor_capacity=qa_actors_capacity(
         qa_session_actors(qa_application_session(active->application)));

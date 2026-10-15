@@ -927,6 +927,10 @@ static void test_q2_donor_save_metadata(void)
     CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)game,sizeof(game)-1}));
     const char unknown[]="{\"stamp\":\"unsupported-source\",\"clients\":[]}";
     CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)unknown,sizeof(unknown)-1}));
+    const char rerelease[]=" \n{\"save_version\":1,\"game\":{\"maxclients\":1,\"maxentities\":8192,\"autosaved\":true},\"clients\":[{}]}";
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)rerelease,sizeof(rerelease)-1}));
+    const char future[]="{\"save_version\":2,\"game\":{},\"clients\":[]}";
+    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)future,sizeof(future)-1}));
     qa_error error={0};
     size_t configs=(size_t)QA_Q2_SAVE_CONFIGSTRINGS*QA_Q2_SAVE_CONFIGSTRING_BYTES;
     qa_buffer donor={.size=configs+QA_Q2_SAVE_AREA_PORTALS};

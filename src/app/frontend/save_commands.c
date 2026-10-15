@@ -668,7 +668,8 @@ static bool write_game(qa_frontend *f,qa_fs_root *root,const char *name,
         written=(!f->qc_messages || frontend_qc_messages_drain(f->qc_messages,error)) &&
             qa_application_q1_save_capture(f->application,source,error) &&
             qa_q1_save_write(root,name,*source,nonce,error);
-    } else if (product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_CLASSIC) {
+    } else if (product && product->family==QA_GAME_Q2 &&
+        (product->edition==QA_EDITION_CLASSIC || product->edition==QA_EDITION_RERELEASE)) {
         original=true;
         const qa_q2_config_entry *configs=NULL;size_t count=0;
         written=frontend_network_q2_configs(f,&configs,&count,error) &&
@@ -735,7 +736,8 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     owner->draining=true;
     const qa_product *product=qa_application_save_original_product(f->application);
     bool ok;
-    if (product && product->family==QA_GAME_Q2 && product->edition==QA_EDITION_CLASSIC) {
+    if (product && product->family==QA_GAME_Q2 &&
+        (product->edition==QA_EDITION_CLASSIC || product->edition==QA_EDITION_RERELEASE)) {
         const qa_q2_config_entry *configs=NULL;size_t count=0;
         ok=frontend_network_q2_configs(f,&configs,&count,error) &&
             qa_application_q2_save_capture(f->application,QA_SAVE_TRANSITION,configs,count,&original,error) &&

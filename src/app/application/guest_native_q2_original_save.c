@@ -21,6 +21,12 @@ struct application_q2_original_save {
     bool prepared, game_read, level_read, failed;
 };
 
+static bool original_product(const qa_product *product)
+{
+    return product && product->family==QA_GAME_Q2 &&
+        (product->edition==QA_EDITION_CLASSIC || product->edition==QA_EDITION_RERELEASE);
+}
+
 static bool copy_bytes(qa_bytes source, qa_buffer *out, qa_error *error)
 {
     if (source.size && !source.data)
@@ -158,12 +164,13 @@ static bool capture_server(qa_application *app,application_provider *source,
     }
     const char *name=map;
     for (size_t i=0;i<count;++i) if (!configs[i].index) {name=configs[i].value;break;}
+    size_t comment_capacity=out->rerelease?sizeof(out->comment):QA_Q2_SAVE_COMMENT_BYTES;
     if (ok && purpose==QA_SAVE_LEVEL_ENTRY)
-        (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"ENTERING %s",name?name:"");
+        (void)snprintf(out->comment,comment_capacity,"ENTERING %s",name?name:"");
     else if (ok) {
         qa_platform_calendar_fields local;
         ok=qa_platform_calendar(app->utc_ms,true,&local,error);
-        if (ok) (void)snprintf(out->comment,QA_Q2_SAVE_COMMENT_BYTES,"%2i:%02i %2i/%2i  %s",
+        if (ok) (void)snprintf(out->comment,comment_capacity,"%2i:%02i %2i/%2i  %s",
             local.hour,local.minute,local.month,local.day,name?name:"");
     }
     size_t text_size=0;
@@ -204,17 +211,23 @@ bool qa_application_q2_save_capture(qa_application *app,qa_save_purpose purpose,
 {
     const qa_product *product=qa_application_save_original_product(app);
     application_provider *source=app?application_world_provider(app,QA_ROLE_ENTITIES,""):NULL;
-    if (!out || (count && !configs) || !product || product->family!=QA_GAME_Q2 || product->edition!=QA_EDITION_CLASSIC ||
+    bool rerelease=product && product->edition==QA_EDITION_RERELEASE;
+    if (!out || (count && !configs) || !original_product(product) ||
         !source || (source->kind!=APPLICATION_PROVIDER_Q2 &&
             !(source->kind==APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
-                source->state.native.q2_engine->profile==QA_NATIVE_Q2_GAME_API3)) ||
+                source->state.native.q2_engine->profile==
+                    (rerelease?QA_NATIVE_Q2_GAME_API2023:QA_NATIVE_Q2_GAME_API3))) ||
         app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_RUNNING ||
         !app->world || !app->geometry || !application_guests_idle(app) ||
         !qa_world_idle(app->world) || !qa_session_safe(app->session) ||
         (purpose!=QA_SAVE_MANUAL && purpose!=QA_SAVE_LEVEL_ENTRY && purpose!=QA_SAVE_TRANSITION))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 capture requires its actual idle classic GAME");
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 capture requires its actual idle GAME");
     qa_q2_save_data *save=calloc(1,sizeof(*save));
     if (!save) return application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 save files");
+    save->server.rerelease=rerelease;
+    save->server.autosave=purpose==QA_SAVE_LEVEL_ENTRY;
+    save->server.save_kind=save->server.autosave?1:0;
+    if (rerelease) save->server.timestamp=(uint64_t)(app->utc_ms/1000);
     qa_campaign_unit_checkpoint visits={0}; qa_buffer level={0};
     bool ok=purpose==QA_SAVE_TRANSITION ||
         (qa_campaign_unit_capture(app->campaign_unit,&visits,error) &&
@@ -229,11 +242,12 @@ bool qa_application_q2_save_capture(qa_application *app,qa_save_purpose purpose,
     }
     if (ok) {
         qa_q2_save_level *current=save->levels;
+        current->rerelease=rerelease;
         save->level_count=1;
         const char *name=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
         ok=name && fixed_text(current->name,sizeof(current->name),name,error) &&
-            capture_configs(current,configs,count,error) &&
             (purpose==QA_SAVE_LEVEL_ENTRY || capture_portals(app,current,error)) &&
+            capture_configs(current,configs,count,error) &&
             capture_files(source,purpose,current,&save->game,&level,error);
         if (ok && ((purpose!=QA_SAVE_TRANSITION && (!save->game.data || !save->game.size)) ||
             (purpose!=QA_SAVE_LEVEL_ENTRY && (!level.data || !level.size))))
@@ -265,8 +279,7 @@ void application_q2_original_dispose(qa_application *app)
 
 bool application_q2_original_source(const application_provider *provider)
 {
-    if (!provider || !provider->application || !provider->launch || !provider->product ||
-        provider->product->family!=QA_GAME_Q2 || provider->product->edition!=QA_EDITION_CLASSIC ||
+    if (!provider || !provider->application || !provider->launch || !original_product(provider->product) ||
         strcmp(provider->launch->selection.instance,"native:primary")) return false;
     qa_application *app=provider->application;
     const struct application_q2_original_save *stage=app->q2_original_save;
@@ -312,7 +325,8 @@ static bool native_file(application_provider *provider, qa_bytes bytes,
 {
     struct application_native_q2 *engine=provider->state.native.q2_engine;
     qa_native_module_info module=qa_native_module_describe(provider->state.native.module);
-    qa_native_checkpoint value={.kind=QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
+    qa_native_checkpoint value={.kind=engine->profile==QA_NATIVE_Q2_GAME_API2023?
+            QA_NATIVE_CHECKPOINT_Q2_RERELEASE:QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
         .profile=module.profile,.q3_role=QA_QVM_GAME,.image=module.image,
         .source={(uint8_t *)module.source,strlen(module.source)},
         .has_declaration=engine->declaration!=NULL};
@@ -341,7 +355,8 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
     qa_application *app=provider->application;
     if (provider->kind==APPLICATION_PROVIDER_NATIVE) {
         struct application_native_q2 *engine=provider->state.native.q2_engine;
-        if (!engine || engine->profile!=QA_NATIVE_Q2_GAME_API3 || engine->hud_names.layout.max_configs!=QA_Q2_SAVE_CONFIGSTRINGS)
+        if (!engine || engine->profile!=(level->rerelease?QA_NATIVE_Q2_GAME_API2023:QA_NATIVE_Q2_GAME_API3) ||
+            engine->hud_names.layout.max_configs!=qa_q2_save_configstring_count(level))
             return application_fail(error,QA_ERROR_FORMAT,"Original Q2 level differs from its real engine table");
         for (uint32_t i=0;i<qa_q2_save_configstring_count(level);++i) {
             const char *text=qa_q2_save_configstring(level,i);
@@ -411,7 +426,8 @@ bool application_q2_original_configure(qa_application_network_q2 *owner,qa_error
     struct application_q2_original_save *stage=app?app->q2_original_save:NULL;
     if (!stage) return true;
     if (!stage->game_read || !stage->level_read || stage->failed ||
-        app->state!=QA_APPLICATION_RUNNING || owner->config_count!=QA_Q2_SAVE_CONFIGSTRINGS)
+        app->state!=QA_APPLICATION_RUNNING || owner->config_count!=
+            (stage->save->server.rerelease?QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS:QA_Q2_SAVE_CONFIGSTRINGS))
         return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 namespace lost its actual completed GAME/LEVEL");
     const qa_q2_save_level *level=current_level(stage);
     if (level && owner->host.source.kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
@@ -442,10 +458,11 @@ static const qa_product *admit(const qa_application *app,const qa_q2_save_data *
     const char *key,qa_error *error)
 {
     const qa_product *product=app && app->catalog && key?qa_catalog_find(app->catalog,key):NULL;
-    if (!product || product->family!=QA_GAME_Q2 || product->availability!=QA_CONTENT_INSTALLED ||
-        product->edition!=QA_EDITION_CLASSIC || !save || !save->game.data || !save->game.size ||
+    if (!original_product(product) || product->availability!=QA_CONTENT_INSTALLED ||
+        !save || save->server.rerelease!=(product->edition==QA_EDITION_RERELEASE) ||
+        !save->game.data || !save->game.size ||
         (save->level_count && !save->levels) || (save->server.cvar_count && !save->server.cvars)) {
-        application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 save requires its selected installed classic GAME"); return NULL;
+        application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 save requires its selected installed GAME"); return NULL;
     }
     qa_buffer header={0};
     bool ok=qa_q2_save_server_encode(&save->server,&header,error); qa_buffer_free(&header);
