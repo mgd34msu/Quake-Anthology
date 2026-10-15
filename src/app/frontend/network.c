@@ -202,6 +202,7 @@ struct qa_frontend_network {
     qa_net_loopback *loopback;
     qa_net_address loopback_server;
     frontend_client_connection clients[QA_NETWORK_MAX_SEATS];
+    frontend_client_connection *primary_client;
     qa_network_runtime *runtime;
     qa_server_browser *browser;
     qa_net_interfaces *interfaces;
@@ -780,6 +781,7 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
         if (!qa_network_create(transport, &options, &local->runtime, error)) {
             qa_net_transport_close(transport); return false;
         }
+        if (!n->primary_client) n->primary_client=local;
         qa_product_id selected = local_client_selection(f, authored, actor);
         if (q1_client_protocol(f->options.network_protocol)) {
             if (!client_connection_q1_create(local, &n->loopback_server, f->options.network_protocol,
@@ -838,6 +840,7 @@ static bool client_connection_destroy(frontend_client_connection *client,qa_erro
         !frontend_network_q2_client_destroy(&client->q2,error) ||
         (client->q3.q3_client_requested && !q3_client_destroy(&client->q3,error))) return false;
     if(client->runtime && client->runtime!=network->runtime) qa_network_destroy(client->runtime);
+    if(network->primary_client==client) network->primary_client=NULL;
     client_connection_initialize(client,network,physical);
     return true;
 }
@@ -874,7 +877,8 @@ static bool client_target_selected(const qa_frontend_network *n)
 {
     const qa_frontend *f=n?n->frontend:NULL;
     return f && f->options.network_connect && !f->options.dedicated && f->options.seats==1 &&
-        (n->clients[0].q3.q3_client_requested || remote_client_protocol(f->options.network_protocol));
+        ((n->primary_client && n->primary_client->q3.q3_client_requested) ||
+         remote_client_protocol(f->options.network_protocol));
 }
 static bool q1_service_message(qa_frontend_network *n,const qa_application_client_source *source,
     const qa_nq_message *message,qa_error *error)
@@ -2205,9 +2209,9 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *f)
     const qa_frontend_network *n = f ? f->network : NULL;
     if (!n) return QA_SAVE_OFFLINE;
     bool unified_server = frontend_network_unified_server(n->unified);
-    const frontend_client_connection *main_client=client_connection_runtime(n,n->runtime);
+    const frontend_client_connection *primary=n->primary_client;
     if (frontend_network_remote(f) || frontend_network_client_only(f) ||
-        (main_client && main_client->unified)) return QA_SAVE_REMOTE;
+        (primary && primary->unified && !unified_server)) return QA_SAVE_REMOTE;
     if (n->loopback && !f->options.network_host && !f->options.network_connect && !f->options.dedicated)
         return QA_SAVE_OFFLINE;
     return n->q3_admission || n->nq_host || n->qw_host || unified_server ||
@@ -2261,21 +2265,26 @@ bool frontend_network_client_only(const qa_frontend *f)
     const qa_frontend_network *n=f?f->network:NULL;
     if(n&&n->frontend==f&&n->demo_playback)return true;
     return n && n->frontend==f && f->options.network_connect && !f->options.network_host &&
-        (n->clients[0].q3.q3_client_requested || q1_client_protocol(f->options.network_protocol) ||
+        ((n->primary_client && n->primary_client->q3.q3_client_requested) || q1_client_protocol(f->options.network_protocol) ||
          q2_host_protocol(f->options.network_protocol) || f->options.network_protocol.kind==QA_NET_UNIFIED_1);
 }
 bool frontend_network_client_ready(const qa_frontend *f)
 {
-    const frontend_q3_client *n = q3_client_physical(f, 0);
+    const frontend_client_connection *primary=f&&f->network?f->network->primary_client:NULL;
+    const frontend_q3_client *n=primary?&primary->q3:NULL;
     const qa_net_client *client = n ? qa_net_connections_get(qa_network_connections(n->runtime), n->q3_client) : NULL;
     return n && n->q3_client_requested && n->q3_client_attached && n->q3_client_active && !n->q3_client_retiring &&
         !n->q3_client_closed && client && client->phase == QA_NET_ACTIVE && qa_network_q3_client_live(n->runtime, n->q3_client);
 }
 uint32_t frontend_network_client_time(const qa_frontend *f)
-{ return f && f->network ? (uint32_t)f->network->clients[0].q3.q3_client_time : 0; }
+{
+    const frontend_client_connection *primary=f&&f->network?f->network->primary_client:NULL;
+    return primary?(uint32_t)primary->q3.q3_client_time:0;
+}
 static const qa_q3_client_peer *remote_view(const qa_frontend *f)
 {
-    return q3_view(q3_client_physical(f, 0));
+    const frontend_client_connection *primary=f&&f->network?f->network->primary_client:NULL;
+    return q3_view(primary?&primary->q3:NULL);
 }
 static bool remote_client_settings(void *context, const qa_net_client *client,
     qa_q3_client_readiness *ready, qa_q3_client_send *send, qa_error *error)
@@ -3851,40 +3860,42 @@ bool frontend_network_client_frame_time_read(const qa_frontend *f,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Invalid CLIENT time registry observation");
     *out = NULL; *present = false;
     const qa_frontend_network *n = f->network;
-    const frontend_client_connection *main_client=client_connection_runtime(n,n?n->runtime:NULL);
-    if(main_client && main_client->service) {
-        if(frontend_network_unified_client_retired(main_client->service)) return true;
+    const frontend_client_connection *primary=n?n->primary_client:NULL;
+    const frontend_client_connection *client=primary &&
+        (primary->runtime==n->runtime || frontend_network_client_only(f)) ? primary : NULL;
+    if(client && client->service) {
+        if(frontend_network_unified_client_retired(client->service)) return true;
         frontend_client_source_view physical;
-        if(!frontend_network_unified_client_source_read(main_client->service,&physical,error)) return false;
+        if(!frontend_network_unified_client_source_read(client->service,&physical,error)) return false;
         if(!physical.ready) return true;
         if(!frontend_client_source_current(&physical))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Unified CLIENT timing lost its actual physical configuration");
         *out=physical.frame_time; *present=true; return true;
     }
-    if(main_client && main_client->q1) {
-        if(frontend_network_q1_client_retired(main_client->q1)) return true;
+    if(client && client->q1) {
+        if(frontend_network_q1_client_retired(client->q1)) return true;
         frontend_network_q1_client_view held;
-        if(!frontend_network_q1_client_metadata_read(main_client->q1,&held,error)) return false;
+        if(!frontend_network_q1_client_metadata_read(client->q1,&held,error)) return false;
         if(!held.physical.ready) return true;
         if(!frontend_client_source_current(&held.physical))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q1 CLIENT timing lost its actual physical configuration");
         *out=held.physical.frame_time; *present=true; return true;
     }
-    if(main_client && main_client->q2) {
-        if(frontend_network_q2_client_retired(main_client->q2)) return true;
+    if(client && client->q2) {
+        if(frontend_network_q2_client_retired(client->q2)) return true;
         qa_application_client_source held; bool ready;
-        if(!frontend_network_q2_client_configuration_read(main_client->q2,&held,&ready,error)) return false;
+        if(!frontend_network_q2_client_configuration_read(client->q2,&held,&ready,error)) return false;
         if(!ready) return true;
-        *out=frontend_network_q2_client_frame_time(main_client->q2); *present=true; return true;
+        *out=frontend_network_q2_client_frame_time(client->q2); *present=true; return true;
     }
-    if (!n || !n->clients[0].q3.q3_client_requested || !n->clients[0].q3.q3_cgame_owner) return true;
-    if(n->clients[0].q3.physical_source) {
+    if (!primary || !primary->q3.q3_client_requested || !primary->q3.q3_cgame_owner) return true;
+    if(primary->q3.physical_source) {
         frontend_client_source_view physical;
-        if(!frontend_client_source_metadata_read(n->clients[0].q3.physical_source,&physical,error)) return false;
+        if(!frontend_client_source_metadata_read(primary->q3.physical_source,&physical,error)) return false;
         if(!physical.ready) return true;
     }
     frontend_remote_config_view view;
-    if(!client_configuration_view(&n->clients[0].q3,&view,error)) return false;
+    if(!client_configuration_view(&primary->q3,&view,error)) return false;
     *out = view.frame_time; *present = true; return true;
 }
 bool frontend_network_client_map_read(const qa_frontend *f, qa_application *application,
@@ -4305,15 +4316,17 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
 static bool browser_command_current(void *context, qa_error *error)
 {
     qa_frontend_network *n = context; frontend_remote_config_view configuration;
-    return browser_owner_current(n, error) && client_configuration_view(&n->clients[0].q3, &configuration, error);
+    return browser_owner_current(n, error) && n->primary_client &&
+        client_configuration_view(&n->primary_client->q3, &configuration, error);
 }
 
 static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical; frontend_remote_config_view configuration;
-    if (!n->clients[0].q3.q3_client_requested || call->context.origin == QA_COMMAND_REMOTE || call->context.origin == QA_COMMAND_SERVER ||
-        !frontend_command_seat_read(n->frontend, &call->context, &physical) || physical != 0 ||
-        !client_configuration_view(&n->clients[0].q3, &configuration, error))
+    frontend_client_connection *primary=n->primary_client;
+    if (!primary || !primary->q3.q3_client_requested || call->context.origin == QA_COMMAND_REMOTE || call->context.origin == QA_COMMAND_SERVER ||
+        !frontend_command_seat_read(n->frontend, &call->context, &physical) || physical != primary->physical ||
+        !client_configuration_view(&primary->q3, &configuration, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 browser command requires the actual local CLIENT owner");
     frontend_q3_browser_access access = {.browser = n->q3_browser, .cvars = configuration.cvars,
         .context = n, .current = browser_command_current};
@@ -4340,7 +4353,7 @@ static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocati
         if (call->argc != 2) { emit(call, "usage: ping [server]\n"); return true; }
         return frontend_q3_browser_ping(&access, call->argv[1], error);
     }
-    const char *server = call->argc == 2 ? call->argv[1] : n->clients[0].q3.q3_client_active ? n->client_server : NULL;
+    const char *server = call->argc == 2 ? call->argv[1] : primary->q3.q3_client_active ? n->client_server : NULL;
     if (!server) { emit(call, "Not connected to a server.\nUsage: serverstatus [server]\n"); return true; }
     return frontend_q3_browser_status_command(&access, server, error);
 }
@@ -4608,6 +4621,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
     n->frontend = f; n->detached_transport=active!=NULL; n->nonce = qa_platform_time_ns();
     for (uint32_t i=0;i<f->options.seats;++i)
         client_connection_initialize(n->clients+i,n,i);
+    if(f->options.network_connect) n->primary_client=n->clients;
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;
     n->clients[0].q3.q3_client_requested = frontend_network_remote(f); n->clients[0].q3.q3_sensitivity = 1;
     if (client_target_selected(n)) {
@@ -6564,7 +6578,8 @@ bool frontend_network_maintenance(qa_frontend *f,qa_error *error)
         unified_tick(n,error) && clients_tick(n,error) &&
         (!n->q2_host || frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) &&
         (!n->q3_admission || q3_retire(n, error)) &&
-        (!frontend_network_remote(f) || client_drain(&n->clients[0].q3, false, error)) &&
+        (!frontend_network_remote(f) || !n->primary_client ||
+            client_drain(&n->primary_client->q3, false, error)) &&
         frontend_nq_prepare(n->nq_host, error) && frontend_qw_pump(n->qw_host, error);
 }
 static bool client_predictor_initial(frontend_q3_client *, bool *, qa_error *);
@@ -6874,16 +6889,16 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     if(!frontend_network_output_drain(f,error)) return false;
     if (!f->network) return true;
     qa_frontend_network *n = f->network;
-    const frontend_client_connection *main_client=client_connection_runtime(n,n?n->runtime:NULL);
+    frontend_client_connection *primary=n->primary_client;
     if(n->unified) return frontend_network_unified_publish(n->unified,NULL,error);
-    if(main_client && main_client->unified)
-        return frontend_network_unified_publish(main_client->unified,NULL,error);
-    if(frontend_network_client_only(f) && main_client && (main_client->q1 || main_client->q2))
-        return frontend_network_q1_client_idle(main_client->q1) && frontend_network_q2_client_idle(main_client->q2);
+    if(primary && primary->unified)
+        return frontend_network_unified_publish(primary->unified,NULL,error);
+    if(frontend_network_client_only(f) && primary && (primary->q1 || primary->q2))
+        return frontend_network_q1_client_idle(primary->q1) && frontend_network_q2_client_idle(primary->q2);
     if(n->q2_host) return frontend_network_q2_host_publish(n->q2_host,f->wall_time_ns,error);
     if (n->nq_host) return frontend_nq_publish(n->nq_host, error);
     if (n->qw_host) return frontend_qw_publish(n->qw_host, error);
-    if (frontend_network_remote(f)) return client_drain(&n->clients[0].q3, false, error);
+    if (frontend_network_remote(f)) return !primary || client_drain(&primary->q3, false, error);
     if (n->q3_admission) {
         if (n->round) return round_publish(n->round, error);
         if (!q3_prepare(n, error)) return false;
@@ -8800,6 +8815,7 @@ static bool playback_q2_create(qa_frontend_network *n,qa_net_protocol_id wire,
     frontend_client_connection *receiver=n->clients+physical;
     receiver->network=n; receiver->runtime=n->runtime; receiver->physical=physical;
     receiver->client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
+    n->primary_client=receiver;
     return client_connection_q2_create(receiver,options,error) &&
         frontend_network_q2_client_demo_playback(receiver->q2,&n->demo_source,error);
 }
@@ -8997,6 +9013,7 @@ bool frontend_network_demo_playback(qa_frontend *f,const qa_command_context *sou
         qa_net_protocol_id wire={format==FRONTEND_DEMO_QW?QA_NET_QW28:QA_NET_NQ15,0,0};
         frontend_client_connection *client=n->clients+physical;
         client->runtime=n->runtime;client->client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
+        n->primary_client=client;
         return client_connection_q1_create(client,&local,wire,frontend_product_current(f)->id,
             (uint16_t)n->rotation_random,true,error)&&
             frontend_network_q1_client_demo_playback(n->clients[physical].q1,reader,&n->demo_source,error);
