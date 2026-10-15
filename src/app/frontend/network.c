@@ -216,6 +216,11 @@ struct qa_frontend_network {
     frontend_network_menu_preferences menu_preferences[4];
     frontend_network_menu_status browser_status;
     uint64_t browser_receipt, browser_expired[4];
+    struct {
+        qa_net_address address;
+        uint64_t deadline;
+        bool active, details;
+    } browser_queries[16];
     uint64_t input_serial;
     uint64_t output_failures_seen;
     uint64_t nonce;
@@ -410,7 +415,7 @@ static void server_cvars_bind(qa_frontend_network *n,const qa_cvars *cvars)
     n->reconnect_limit=qa_cvars_resolve(cvars,"sv_reconnectlimit");
     n->min_ping=qa_cvars_resolve(cvars,"sv_minPing");
     n->max_ping=qa_cvars_resolve(cvars,"sv_maxPing");
-    n->hostname=qa_cvars_resolve(cvars,"sv_hostname");
+    n->hostname=qa_cvars_resolve(qa_application_cvars(n->frontend->application),"sv_hostname");
     n->map_name=qa_cvars_resolve(cvars,"mapname");
     n->pure=qa_cvars_resolve(cvars,"sv_pure");
     n->game_directory=qa_cvars_resolve(cvars,"fs_game");
@@ -1164,11 +1169,47 @@ static void browser_status_set(qa_frontend_network *n,const char *text)
     n->browser_status.receipt=++n->browser_receipt;
     snprintf(n->browser_status.text,sizeof(n->browser_status.text),"%s",text);
 }
+static void browser_console_reply(qa_frontend_network *n,const qa_server_entry *entry)
+{
+    bool requested=false, details=false;
+    for(size_t i=0;i<sizeof(n->browser_queries)/sizeof(*n->browser_queries);++i) {
+        if(!n->browser_queries[i].active ||
+            !qa_net_address_equal(&n->browser_queries[i].address,&entry->address,true)) continue;
+        details|=n->browser_queries[i].details; requested=true; n->browser_queries[i].active=false;
+    }
+    if(!requested) return;
+    char address[256],line[16416]; qa_error error={0};
+    if(!qa_net_address_format(&entry->address,address,sizeof(address),&error)) return;
+    snprintf(line,sizeof(line),"%s %.0f ms %s %s\n",address,(double)entry->ping_ns/1000000.0,entry->name,entry->map);
+    frontend_console_print(n->frontend,NULL,line);
+    if(!details) return;
+    qa_server_browser_details view={0};
+    if(!qa_server_browser_details_read_arena(n->browser,&entry->address,entry->protocol,
+        &n->frontend->frame.storage,&view,&error)) {
+        qa_application_feature_report(n->frontend->application,"Server status",&error); return;
+    }
+    frontend_console_print(n->frontend,NULL,"Server settings:\n");
+    for(size_t i=0;i<view.rule_count;++i) {
+        const qa_server_browser_rule *rule=view.rules+i;
+        snprintf(line,sizeof(line),"%-24.*s%.*s\n",(int)rule->name.size,(const char *)rule->name.data,
+            (int)rule->value.size,(const char *)rule->value.data);
+        frontend_console_print(n->frontend,NULL,line);
+    }
+    frontend_console_print(n->frontend,NULL,"\nPlayers:\nnum: score: ping: name:\n");
+    for(size_t i=0;i<view.player_count;++i) {
+        const qa_server_browser_player *player=view.players+i;
+        snprintf(line,sizeof(line),"%zu %d %d \"%.*s\"\n",i,player->score,player->ping,
+            (int)player->name.size,(const char *)player->name.data);
+        frontend_console_print(n->frontend,NULL,line);
+    }
+}
 static void browser_changed(void *context,const qa_server_entry *entry,qa_browser_change change)
 {
     qa_frontend_network *n=context;
-    if(change==QA_BROWSER_STATUS_RECEIVED)
+    if(change==QA_BROWSER_STATUS_RECEIVED) {
         browser_status_set(n,"Server updated");
+        browser_console_reply(n,entry);
+    }
     if(change==QA_BROWSER_QUERY_EXPIRED) {
         int family=menu_family(entry->protocol);
         if(family>=0)n->browser_expired[family]=++n->browser_receipt;
@@ -1986,17 +2027,18 @@ static bool q3_query(void *context, const qa_net_address *address, const qa_q3_c
     const qa_cvar_view *mode = qa_cvars_read(cvars, n->game_type), *single = qa_cvars_read(cvars, n->single_player);
     if ((mode && mode->number == 2) || (!status && single && single->number != 0)) return true;
     qa_buffer fields = {0}; char info[1024] = {0};
-    if (status && !qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &fields, error)) return false;
-    if (fields.data) { memcpy(info, fields.data, fields.size + 1); qa_buffer_free(&fields); }
     uint32_t capacity;
     if (!qa_application_network_q3_host_capacity(n->frontend->application, owner, &capacity, error)) return false;
+    if (status && !qa_application_network_server_info(n->frontend->application,cvars,n->hostname,
+        capacity,QA_RULESET_Q3,sizeof(info),&fields,error)) return false;
+    if (fields.data) { memcpy(info, fields.data, fields.size + 1); qa_buffer_free(&fields); }
     const qa_cvar_view *private_clients = qa_cvars_read(cvars, n->private_clients);
     int32_t private_count = private_clients ? private_clients->integer : 0;
     size_t public_count = 0;
     for (size_t i = 0; i < count; ++i)
         if ((int64_t)players[i].slot >= private_count && players[i].slot < capacity) ++public_count;
     char clients[32]; snprintf(clients, sizeof(clients), "%zu", public_count);
-    const qa_cvar_view *hostname = qa_cvars_read(cvars, n->hostname);
+    const qa_cvar_view *hostname = qa_cvars_read(qa_application_cvars(n->frontend->application), n->hostname);
     const qa_cvar_view *map = qa_cvars_read(cvars, n->map_name);
     if (!q3_query_field(n, info, "challenge", qa_q3_token(&packet->tokens, 1), error)) return false;
     if (!status && (!q3_query_field(n, info, "protocol", "68", error) ||
@@ -4338,12 +4380,6 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
     (void)error;
     return true;
 }
-static bool browser_command_current(void *context, qa_error *error)
-{
-    qa_frontend_network *n = context; frontend_remote_config_view configuration;
-    return browser_owner_current(n, error) && n->primary_client &&
-        client_configuration_view(&n->primary_client->q3, &configuration, error);
-}
 static bool browser_endpoint(qa_frontend_network *n,const qa_net_client *connection,
     const char *remote,qa_net_address *address,qa_net_protocol_id *protocol,bool *known,qa_error *error)
 {
@@ -4367,9 +4403,10 @@ static bool browser_endpoint(qa_frontend_network *n,const qa_net_client *connect
     }
     return true;
 }
-static bool ping_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
+static bool browser_query_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
 {
-    if(call->argc>2) { emit(call,"usage: ping [server]\n"); return true; }
+    bool details=!strcmp(call->argv[0],"serverstatus");
+    if(call->argc>2) { emit(call,details?"usage: serverstatus [server]\n":"usage: ping [server]\n"); return true; }
     qa_frontend *f=n->frontend;
     frontend_client_connection *row=n->primary_client;
     uint32_t physical;
@@ -4385,7 +4422,7 @@ static bool ping_command(qa_frontend_network *n,const qa_command_invocation *cal
     }
     qa_net_protocol_id protocol=connection?connection->protocol:f->options.network_protocol;
     qa_net_address address;
-    if(call->argc==1) {
+    if(call->argc==1 && !details) {
         bool player_pings=q1_client_protocol(protocol) ||
             (protocol.kind==QA_NET_UNIFIED_1 && present &&
              (recipient.source.context.command.dialect==QA_RULESET_NETQUAKE ||
@@ -4400,49 +4437,55 @@ static bool ping_command(qa_frontend_network *n,const qa_command_invocation *cal
         if(!connection) { emit(call,"No server connected.\nUsage: ping [server]\n"); return true; }
         if(connection->endpoint.kind==QA_NET_LOOPBACK) { emit(call,"0 ms (local server)\n"); return true; }
     }
+    if(call->argc==1 && details && (!connection || connection->endpoint.kind==QA_NET_LOOPBACK)) {
+        if(!connection) { emit(call,"No server connected.\nUsage: serverstatus [server]\n"); return true; }
+        return qa_console_append(call->console,&call->context,"status\n",error);
+    }
     bool known=false;
     if(!browser_endpoint(n,connection,call->argc==2?call->argv[1]:NULL,&address,&protocol,&known,error)) return false;
     if(known) {
         if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
             UINT64_C(5000000000),error)) return false;
     } else if(!qa_server_browser_probe(n->browser,&address,f->wall_time_ns,UINT64_C(5000000000),error)) return false;
+    size_t slot=0;
+    for(size_t i=0;i<sizeof(n->browser_queries)/sizeof(*n->browser_queries);++i) {
+        if(!n->browser_queries[i].active || qa_net_address_equal(&n->browser_queries[i].address,&address,true)) {
+            slot=i; break;
+        }
+        if(n->browser_queries[i].deadline<n->browser_queries[slot].deadline) slot=i;
+    }
+    bool retained_details=n->browser_queries[slot].active && n->browser_queries[slot].details &&
+        qa_net_address_equal(&n->browser_queries[slot].address,&address,true);
+    n->browser_queries[slot].address=address;
+    n->browser_queries[slot].deadline=f->wall_time_ns+UINT64_C(5000000000);
+    n->browser_queries[slot].active=true; n->browser_queries[slot].details=details||retained_details;
     char target[256],text[320];
     if(!qa_net_address_format(&address,target,sizeof(target),error)) return false;
     snprintf(text,sizeof(text),"Querying %s\n",target);
     emit(call,text); return true;
 }
-static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
+static bool browser_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
 {
-    uint32_t physical; frontend_remote_config_view configuration;
-    frontend_client_connection *primary=n->primary_client;
-    if (!primary || !primary->q3.q3_client_requested || call->context.origin == QA_COMMAND_REMOTE || call->context.origin == QA_COMMAND_SERVER ||
-        !frontend_command_seat_read(n->frontend, &call->context, &physical) || physical != primary->physical ||
-        !client_configuration_view(&primary->q3, &configuration, error))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 browser command requires the actual local CLIENT owner");
-    frontend_q3_browser_access access = {.browser = n->q3_browser, .cvars = configuration.cvars,
-        .context = n, .current = browser_command_current};
+    const qa_cvars *cvars=qa_application_cvars(n->frontend->application);
     const char *name = call->argv[0];
     if (!strcmp(name, "localservers")) {
         emit(call, "Scanning for servers on the local network...\n"); return frontend_q3_browser_scan(n->q3_browser, error);
     }
     if (!strcmp(name, "globalservers")) {
         if (call->argc < 3) { emit(call, "usage: globalservers <master# 0-1> <protocol> [keywords]\n"); return true; }
-        const qa_cvar_view *master = qa_cvars_find(configuration.cvars, "sv_master1");
-        const qa_cvar_view *restricted = qa_cvars_find(configuration.cvars, "fs_restrict");
-        if (!master || !restricted) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 CLIENT browser policy registry is incomplete");
-        size_t count = call->argc - 3; bool demo = restricted->number != 0;
-        const char **keywords = calloc(count + 1, sizeof(*keywords));
-        if (!keywords) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual browser command keywords");
+        const qa_cvar_view *master = qa_cvars_find(cvars, "sv_master1");
+        const qa_cvar_view *restricted = qa_cvars_find(cvars, "fs_restrict");
+        if (!master || !*master->value) { emit(call,"No master server configured.\n"); return true; }
+        size_t count = call->argc - 3; bool demo = restricted && restricted->number != 0;
+        const char **keywords = qa_arena_alloc(&n->frontend->frame.storage,(count+1)*sizeof(*keywords),_Alignof(const char *),error);
+        if (!keywords) return false;
         for (size_t i = 0; i < count; ++i) keywords[i] = call->argv[i + 3];
         if (demo) keywords[count++] = "demo";
         emit(call, "Requesting servers from the master...\n");
-        bool ok = frontend_q3_browser_master(n->q3_browser, qa_parse_decimal_i32(call->argv[1],QA_DECIMAL_LOCALE_CLAMP) == 1 ? 1 : 2,
+        return frontend_q3_browser_master(n->q3_browser, qa_parse_decimal_i32(call->argv[1],QA_DECIMAL_LOCALE_CLAMP) == 1 ? 1 : 2,
             master->value, qa_parse_decimal_i32(call->argv[2],QA_DECIMAL_LOCALE_CLAMP), keywords, count, error);
-        free(keywords); return ok;
     }
-    const char *server = call->argc == 2 ? call->argv[1] : primary->q3.q3_client_active ? n->client_server : NULL;
-    if (!server) { emit(call, "Not connected to a server.\nUsage: serverstatus [server]\n"); return true; }
-    return frontend_q3_browser_status_command(&access, server, error);
+    return true;
 }
 static bool operator_print(void *context,const char *text,qa_error *error)
 {
@@ -4629,9 +4672,9 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         return frontend_demo_dispatch_gtv_disconnect(n->frontend->demos,call);
     if (!strcmp(name, "connect") || !strcmp(name, "reconnect") || !strcmp(name, "disconnect"))
         return client_attempt_queue(n, call, error);
-    if (!strcmp(name,"ping")) return ping_command(n,call,error);
-    if (!strcmp(name, "localservers") || !strcmp(name, "globalservers") || !strcmp(name, "serverstatus"))
-        return q3_browser_command(n, call, error);
+    if (!strcmp(name,"ping") || !strcmp(name,"serverstatus")) return browser_query_command(n,call,error);
+    if (!strcmp(name, "localservers") || !strcmp(name, "globalservers"))
+        return browser_command(n,call,error);
     if (!strcmp(name, "serverlist")) {
         uint32_t indices[2048]; size_t count;
         qa_browser_filter filter = {.text = call->argc > 1 ? call->argv[1] : NULL, .sort = QA_BROWSER_PING};
@@ -6485,6 +6528,15 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
             !qa_server_admin_refresh_masters(n->admin,source.cvars,error)) return false;
     }
     qa_server_browser_expire(n->browser, f->wall_time_ns);
+    for(size_t i=0;i<sizeof(n->browser_queries)/sizeof(*n->browser_queries);++i) {
+        if(!n->browser_queries[i].active || f->wall_time_ns<n->browser_queries[i].deadline) continue;
+        char address[256],text[320];
+        n->browser_queries[i].active=false;
+        if(qa_net_address_format(&n->browser_queries[i].address,address,sizeof(address),NULL)) {
+            snprintf(text,sizeof(text),"No response from %s\n",address);
+            frontend_console_print(f,NULL,text);
+        }
+    }
     return true;
 }
 static bool transport_collect(void *context,uint64_t now,qa_net_transport_event *out,qa_error *error)

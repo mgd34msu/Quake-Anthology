@@ -28,8 +28,28 @@
 #include "qa/physics.h"
 #include "qa/text.h"
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool qa_application_network_server_info(qa_application *app,const qa_cvars *game,
+    qa_cvar_handle hostname,uint32_t maximum,qa_ruleset_id rules,size_t capacity,
+    qa_buffer *out,qa_error *error)
+{
+    qa_buffer info={0};
+    if(!qa_cvars_info(game,QA_CVAR_SERVERINFO,capacity,&info,error)) return false;
+    const qa_cvar_view *name=qa_cvars_read(qa_application_cvars(app),hostname);
+    const char *map=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
+    char count[16]; snprintf(count,sizeof(count),"%u",maximum);
+    if(!qa_q3_info_set((char *)info.data,capacity,rules==QA_RULESET_Q3?"sv_hostname":"hostname",
+            name?name->value:"",QA_Q3_INFO_STRICT,NULL,error) ||
+        !qa_q3_info_set((char *)info.data,capacity,"mapname",map?map:"",QA_Q3_INFO_STRICT,NULL,error) ||
+        !qa_q3_info_set((char *)info.data,capacity,rules==QA_RULESET_Q3?"sv_maxclients":"maxclients",
+            count,QA_Q3_INFO_STRICT,NULL,error)) {
+        qa_buffer_free(&info); return false;
+    }
+    info.size=strlen((const char *)info.data); *out=info; return true;
+}
 
 static qa_bytes selected_arsenal(qa_application *application, qa_actor_id actor)
 {

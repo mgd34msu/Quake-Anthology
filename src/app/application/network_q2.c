@@ -1,8 +1,8 @@
 #include "map_players_private.h"
 #include "network_q2_private.h"
+#include "qa/application_network.h"
 #include "guest_native_q2_original_save.h"
 #include "qa/text.h"
-#include "qa/network_q3.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -613,16 +613,9 @@ bool qa_application_network_q2_status(qa_application_network_q2 *owner, qa_q2_st
 {
     if (!out || !application_network_q2_current(owner, error)) return false;
     qa_buffer info = {0};
-    if (!qa_cvars_info(owner->host.cvars, QA_CVAR_SERVERINFO, 8192, &info, error)) return false;
-    const qa_cvar_view *hostname = qa_cvars_read(qa_application_cvars(owner->app), owner->hostname);
-    const char *map = qa_strings_cstr(qa_session_strings(owner->app->session), owner->app->current_map);
-    char maximum[16]; snprintf(maximum, sizeof(maximum), "%u", owner->host.client_slots);
-    if (!qa_q3_info_set((char *)info.data, 8192, "hostname", hostname ? hostname->value : "", QA_Q3_INFO_STRICT, NULL, error) ||
-        !qa_q3_info_set((char *)info.data, 8192, "mapname", map ? map : "", QA_Q3_INFO_STRICT, NULL, error) ||
-        !qa_q3_info_set((char *)info.data, 8192, "maxclients", maximum, QA_Q3_INFO_STRICT, NULL, error)) {
-        qa_buffer_free(&info); return false;
-    }
-    info.size = strlen((const char *)info.data);
+    if (!qa_application_network_server_info(owner->app,owner->host.cvars,owner->hostname,
+        owner->host.client_slots,owner->host.source.edition,
+        8192,&info,error)) return false;
     size_t count = 0;
     struct application_player_roster *roster = owner->app->players;
     for (size_t i = 0; roster && i < roster->count; ++i) {

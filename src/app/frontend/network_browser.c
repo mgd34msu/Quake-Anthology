@@ -28,7 +28,7 @@ typedef struct browser_status {
     qa_net_address address;
     qa_browser_q3_request_id request;
     uint64_t start;
-    bool addressed, retrieved, print;
+    bool addressed, retrieved;
 } browser_status;
 struct frontend_q3_browser {
     frontend_q3_browser_options options;
@@ -447,7 +447,7 @@ static bool server_status(void *ctx, const char *remote, int32_t capacity,
         for (size_t i = 0; i < 16; ++i) {
             browser_status *slot = &a->browser->statuses[i];
             if (!qa_server_browser_q3_release(a->browser->options.browser, slot->request, e)) return false;
-            slot->request = 0; slot->addressed = false; slot->retrieved = true; slot->print = false;
+            slot->request = 0; slot->addressed = false; slot->retrieved = true;
         }
         return true;
     }
@@ -459,7 +459,7 @@ static bool server_status(void *ctx, const char *remote, int32_t capacity,
             browser_status *slot = &a->browser->statuses[i];
             if (slot->addressed && same(&slot->address, &address)) {
                 if (!qa_server_browser_q3_release(a->browser->options.browser, slot->request, e)) return false;
-                slot->request = 0; slot->addressed = false; slot->retrieved = true; slot->print = false;
+                slot->request = 0; slot->addressed = false; slot->retrieved = true;
             }
         }
         return true;
@@ -478,19 +478,9 @@ static bool server_status(void *ctx, const char *remote, int32_t capacity,
     double interval = resend ? resend->number : 0;
     double duration = (double)a->browser->options.now_ns(a->browser->options.context) / 1000000.0 - (double)slot->start / 1000000.0;
     if (!matching || !slot->request || duration > interval) {
-        slot->print = false; if (!start_status(a->browser, slot, &address, e)) return false;
+        if (!start_status(a->browser, slot, &address, e)) return false;
     }
     return true;
-}
-static bool browser_status_command(frontend_q3_browser_access *a, const char *remote, qa_error *e)
-{
-    if (!access_current(a, e)) return false;
-    qa_net_address address; bool present;
-    if (!resolve(a->browser, remote, 27960, &address, &present, e) || !access_current(a, e)) return false;
-    if (!present) return true;
-    browser_status *slot = status_slot(a->browser, &address);
-    if (!start_status(a->browser, slot, &address, e)) return false;
-    slot->print = true; return true;
 }
 static int compare_text(const char *a, const char *b)
 {
@@ -593,28 +583,6 @@ static bool browser_poll(frontend_q3_browser *b, qa_error *e)
             slot->published = true;
         }
     }
-    for (size_t i = 0; i < 16; ++i) {
-        browser_status *slot = &b->statuses[i]; if (!slot->addressed || !slot->request || !slot->print) continue;
-        const qa_browser_q3_result *result;
-        if (!qa_server_browser_q3_result(b->options.browser, slot->request, &result, e)) return false;
-        if (!result->completed) continue;
-        if (!b->options.print(b->options.context, "Server settings:\n", e)) return false;
-        const char *p = result->entry.rules;
-        qa_bytes key, value;
-        while (qa_info_next(&p, &key, &value)) {
-            char line[16416]; (void)snprintf(line, sizeof(line), "%-24.*s%.*s\n",
-                (int)key.size, (const char *)key.data, (int)value.size, (const char *)value.data);
-            if (!b->options.print(b->options.context, line, e)) return false;
-        }
-        if (!b->options.print(b->options.context, "\nPlayers:\nnum: score: ping: name:\n", e)) return false;
-        for (uint32_t j = 0; j < result->player_count; ++j) {
-            const qa_browser_q3_player *player = &result->players[j];
-            char line[16416]; (void)snprintf(line, sizeof(line), "%-2u   %-3" PRId32 "    %-3" PRId32 "   \"%s\"\n",
-                j, player->score, player->ping, result->names + player->name);
-            if (!b->options.print(b->options.context, line, e)) return false;
-        }
-        slot->print = false; slot->retrieved = true;
-    }
     return current(b, e);
 }
 static bool address_valid(const qa_net_address *address)
@@ -711,7 +679,7 @@ bool frontend_q3_browser_checkpoint(const frontend_q3_browser *owner, qa_buffer 
     for (size_t i = 0; ok && i < 16; ++i) {
         const browser_status *p = &b->statuses[i];
         ok = q3_save_address(&w, &p->address) && qa_net_write_u64(&w, p->request) && qa_net_write_u64(&w, p->start) &&
-            qa_net_write_u8(&w, p->addressed) && qa_net_write_u8(&w, p->retrieved) && qa_net_write_u8(&w, p->print);
+            qa_net_write_u8(&w, p->addressed) && qa_net_write_u8(&w, p->retrieved) && qa_net_write_u8(&w, 0);
     }
     if (!ok || w.failed) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
@@ -746,7 +714,7 @@ bool frontend_q3_browser_restore(const frontend_q3_browser_options *options, qa_
     for (size_t i = 0; ok && i < 16; ++i) {
         browser_status *p = &b->statuses[i];
         ok = q3_restore_address(&r, &p->address); p->request = qa_net_read_u64(&r); p->start = qa_net_read_u64(&r);
-        p->addressed = q3_save_bool(&r); p->retrieved = q3_save_bool(&r); p->print = q3_save_bool(&r);
+        p->addressed = q3_save_bool(&r); p->retrieved = q3_save_bool(&r); (void)q3_save_bool(&r);
     }
     if (!ok || !qa_net_reader_finish(&r) || !view_valid(b, e)) {
         /* An invalid candidate has never acquired the imported request leases. */
@@ -1006,9 +974,4 @@ bool frontend_q3_browser_master(frontend_q3_browser *b, int32_t source, const ch
 {
     if (!enter_owner(b, e)) return false;
     bool ok = browser_master(b, source, remote, protocol, keywords, count, e); return leave_owner(b, ok, e);
-}
-bool frontend_q3_browser_status_command(frontend_q3_browser_access *a, const char *remote, qa_error *e)
-{
-    if (!enter_access(a, e)) return false;
-    bool ok = browser_status_command(a, remote, e); return leave_access(a, ok, e);
 }

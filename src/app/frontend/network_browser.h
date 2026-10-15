@@ -33,7 +33,6 @@ bool frontend_q3_browser_scan(frontend_q3_browser *, qa_error *);
 bool frontend_q3_browser_load_cache(frontend_q3_browser *, qa_error *);
 bool frontend_q3_browser_master(frontend_q3_browser *, int32_t source, const char *remote,
     int32_t protocol, const char *const *keywords, size_t count, qa_error *);
-bool frontend_q3_browser_status_command(frontend_q3_browser_access *, const char *, qa_error *);
 bool frontend_q3_browser_checkpoint(const frontend_q3_browser *, qa_buffer *empty, qa_error *);
 bool frontend_q3_browser_restore(const frontend_q3_browser_options *, qa_bytes,
     frontend_q3_browser **empty, qa_error *);

@@ -7,6 +7,10 @@
 
 #define QA_NETWORK_COMMAND_OWNER UINT64_C(0x71616e6574770001)
 bool qa_application_network_command_owner_bound(const qa_application *);
+/* Project GAME rules and the common engine hostname/map/capacity into the
+ * original protocol's serverinfo keys. Hostname is resolved once at binding. */
+bool qa_application_network_server_info(qa_application *, const qa_cvars *, qa_cvar_handle hostname,
+    uint32_t maximum, qa_ruleset_id, size_t capacity, qa_buffer *, qa_error *);
 bool qa_application_network_local_bind(qa_application *, const qa_net_client *,
     qa_net_seat_id, uint32_t application_seat, qa_error *);
 
