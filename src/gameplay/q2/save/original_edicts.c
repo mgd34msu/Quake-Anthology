@@ -72,6 +72,28 @@ bool q2_original_function(qa_q2_game *game, q2_original_record_io *io,
         q2_original_scalar(io, field, Q2_ORIGINAL_I32, offset, offset, offset, &code);
 }
 
+static unsigned rerelease_skin_callback(const char *name, size_t size)
+{
+    /* g_save.cpp registers functions by pointer, so identical-code folding can
+     * save any Source name in the same group. These are the two identical
+     * health-half setskin bodies; Gekk and Shambler have different rules. */
+    static const struct { const char *name; unsigned group; } callbacks[] = {
+        {"actor_setskin", 1}, {"berserk_setskin", 1}, {"boss2_setskin", 1},
+        {"jorg_setskin", 1}, {"makron_setskin", 1}, {"brain_setskin", 1},
+        {"flipper_setskin", 1}, {"floater_setskin", 1}, {"flyer_setskin", 1},
+        {"gunner_setskin", 1}, {"infantry_setskin", 1}, {"mutant_setskin", 1},
+        {"parasite_setskin", 1}, {"carrier_setskin", 1}, {"stalker_setskin", 1},
+        {"widow_setskin", 1}, {"widow2_setskin", 1},
+        {"chick_setpain", 2}, {"gladiator_setskin", 2}, {"guncmdr_setskin", 2},
+        {"hover_setskin", 2}, {"medic_setskin", 2}, {"soldier_setskin", 2},
+        {"supertank_setskin", 2}, {"tank_setskin", 2}
+    };
+    for (size_t i = 0; i < sizeof(callbacks) / sizeof(*callbacks); ++i)
+        if (strlen(callbacks[i].name) == size && !memcmp(callbacks[i].name, name, size))
+            return callbacks[i].group;
+    return 0;
+}
+
 bool q2_original_function_matches(qa_q2_game *game, q2_original_record_io *io,
     const char *field, uint16_t offset, const char *name, bool *matches)
 {
@@ -84,7 +106,14 @@ bool q2_original_function_matches(qa_q2_game *game, q2_original_record_io *io,
         }
         qa_buffer text = {0};
         bool okay = qa_json_string(io->document, id, &text, io->error);
-        if (okay) *matches = name && text.size == strlen(name) && !memcmp(text.data, name, text.size);
+        if (okay) {
+            *matches = name && text.size == strlen(name) && !memcmp(text.data, name, text.size);
+            if (!*matches && name && io->edition == QA_RULESET_Q2_RERELEASE &&
+                !strcmp(field, "monsterinfo.setskin")) {
+                unsigned group = rerelease_skin_callback(name, strlen(name));
+                *matches = group && group == rerelease_skin_callback((const char *)text.data, text.size);
+            }
+        }
         qa_buffer_free(&text);
         return okay;
     }
