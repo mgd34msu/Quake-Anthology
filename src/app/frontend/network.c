@@ -3305,7 +3305,7 @@ static bool client_character_cvars(qa_application *application, qa_actor_owner o
 {
     qa_application_character_declaration declaration; bool found;
     if (!qa_application_character_constructor_read(application, owner, seat, &declaration, &found, error)) return false;
-    if (!found) return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 client lacks its actual selected CHARACTER declaration");
+    if (!found) return true;
     const qa_native_q3_character_declaration *appearance = &declaration.appearance;
     const char *models[] = {appearance->model, *appearance->head_model ? appearance->head_model : appearance->model};
     const char *skins[] = {appearance->skin, appearance->head_skin};

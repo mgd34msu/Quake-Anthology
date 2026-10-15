@@ -1,4 +1,5 @@
 #include "character_selection.h"
+#include "qa/application_client.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/game_q2_preferences.h"
 #include "qa/network_q3.h"
@@ -309,6 +310,12 @@ bool qa_application_character_constructor_read(qa_application *app, qa_actor_own
     const qa_launch_snapshot *snapshot;
     if (!out || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Character constructor requires declaration output");
+    application_provider *provider = application_provider_lookup(app, receiver, APPLICATION_PROVIDER_LIVE);
+    if (provider && provider->client_only_owned) {
+        *out = (qa_application_character_declaration){0};
+        *found = false;
+        return true;
+    }
     if (!constructor_choices(app, receiver, &snapshot, error)) return false;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     *found = false;
@@ -325,6 +332,13 @@ bool qa_application_constructor_seat_ordinal(qa_application *app, qa_actor_owner
     const qa_launch_snapshot *snapshot;
     if (!physical_ordinal)
         return application_fail(error, QA_ERROR_ARGUMENT, "Constructor seat requires physical ordinal output");
+    application_provider *provider = application_provider_lookup(app, receiver, APPLICATION_PROVIDER_LIVE);
+    if (provider && provider->client_only_owned) {
+        qa_application_client_source client;
+        if (!qa_application_client_physical_read(app, receiver, id, &client, error)) return false;
+        *physical_ordinal = client.context.physical_seat;
+        return true;
+    }
     if (!constructor_choices(app, receiver, &snapshot, error)) return false;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     for (size_t i = 0; i < choices->seat_count; ++i)
