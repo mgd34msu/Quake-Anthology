@@ -1252,6 +1252,10 @@ static bool campaign_record(qa_q2_game *g, q2_original_record_io *io,
         q2_original_record_io row = *io;
         if (io->reading) {
             row.object = qa_json_at(io->document, list, i);
+            if (qa_json_type(io->document, row.object) == QA_JSON_NULL) {
+                *level = empty;
+                continue;
+            }
             if (qa_json_type(io->document, row.object) != QA_JSON_OBJECT)
                 return fail(io, row.object, "Original Q2 campaign level requires an object");
         } else qa_json_writer_object(io->writer);
