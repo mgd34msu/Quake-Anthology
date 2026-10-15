@@ -383,6 +383,7 @@ struct qa_frontend {
     frontend_client_registry *client_registries;
     frontend_client_registry_import *client_registry_import;
     frontend_cinematic *cinematic;
+    struct frontend_cinematic_restore *cinematic_restore;
     frontend_system_cinematic *system_cinematics;
     frontend_equipment_events *gear_events;
     qa_catalog *input_catalog;

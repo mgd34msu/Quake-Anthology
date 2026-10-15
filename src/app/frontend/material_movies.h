@@ -39,7 +39,8 @@ bool frontend_material_movies_current(const frontend_material_movies *);
 /* Original Q3 shaders share the actual numeric guest handle/scratch pool.
  * The constructor supplies its genuine physical seat and audio namespace. */
 bool frontend_material_movies_cinematic_attach(frontend_material_movies *,
-    qa_q3_cinematic_handles *, uint32_t seat, uint64_t audio_bus, qa_error *);
+    qa_q3_cinematic_handles *, uint32_t seat, uint64_t audio_bus,
+    const char *instance,const char *content,qa_error *);
 bool frontend_material_movies_cinematic_read(const frontend_material_movies *,
     qa_q3_cinematic_source **, qa_error *);
 bool frontend_material_movies_cinematic_retained(const frontend_material_movies *);

@@ -765,10 +765,13 @@ bool frontend_component_scene_prepare(void *context,const application_q3_compone
     if (!request->restoring) {
         frontend_material_movie_source movie={.frontend=f,.files=owner->files,.images=owner->images,.materials=owner->materials,
             .media=owner->media,.context=owner,.current=movie_current};
+        const qa_launch_provider *movie_provider=request->descriptor?&request->descriptor->selection:
+            &request->recipe_provider->selection;
         if (!frontend_q3_material_profile_initialize(f,owner->materials,e) ||
             !frontend_material_movies_create(&movie,&owner->movies,e) ||
             !frontend_source_cinematics_ensure(f,owner->images,e) ||
-            !frontend_material_movies_cinematic_attach(owner->movies,f->source_cinematics,request->physical_seat,owner->identity,e) ||
+            !frontend_material_movies_cinematic_attach(owner->movies,f->source_cinematics,request->physical_seat,owner->identity,
+                movie_provider->instance,request->component?request->component->id:NULL,e) ||
             !qa_material_library_load_scripts(owner->materials,owner->files,&images,e) ||
             !qa_material_library_source_shaders_initialize(owner->materials,&images,e)) return false;
     }

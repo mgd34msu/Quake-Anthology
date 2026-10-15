@@ -139,7 +139,8 @@ bool frontend_cinematic_roles_prune(qa_frontend *f, qa_error *error)
 bool frontend_cinematic_roles_restore_add(qa_frontend *f,
     const frontend_material_movie_source *source, uint32_t seat, size_t index, qa_error *error)
 {
-    if (!f || !f->source_restoring || !source_structure(f, source) || seat >= f->options.seats)
+    if (!f || (!f->source_restoring && !f->cinematic_restore) ||
+        !source_structure(f, source) || seat >= f->options.seats)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Detached role namespace import requires its actual candidate provider");
     cinematic_role *existing = at(f, index);
     if (existing)
@@ -154,16 +155,20 @@ bool frontend_cinematic_roles_restore_add(qa_frontend *f,
     append(f, row); return true;
 }
 bool frontend_cinematic_roles_restore_bind(qa_frontend *f, size_t index,
-    frontend_material_movies *parent, qa_error *error)
+    frontend_material_movies *parent,const char *instance,const char *content,int32_t role,
+    uint32_t launch_seat,uint32_t source_group,qa_error *error)
 {
     cinematic_role *row = at(f, index);
     uint32_t seat = 0; uint64_t bus = 0; bool numeric = false;
-    if (!f || !f->source_restoring || !row || !parent || !source_equal(&row->view.source, &parent->source) ||
+    if (!f || (!f->source_restoring && !f->cinematic_restore) || !row || !parent ||
+        !source_equal(&row->view.source, &parent->source) ||
         !frontend_material_movies_cinematic_namespace_read(parent, &seat, &bus, &numeric, error) ||
         !numeric || seat != row->view.seat)
         return frontend_fail(error, QA_ERROR_FORMAT, "Detached role import has no exact reconstructed provider source");
-    if (row->view.cinematics) return row->view.parent == parent;
-    if (!qa_q3_cinematic_source_create_role(parent->cinematic_source, row->view.seat,
-        row->view.bus, &row->view.cinematics, error)) return false;
-    row->view.parent = parent; return true;
+    if (row->view.parent && row->view.parent!=parent) return false;
+    row->view.parent=parent;
+    if (!row->view.cinematics && !qa_q3_cinematic_source_create_role(parent->cinematic_source,row->view.seat,
+        row->view.bus,&row->view.cinematics,error)) return false;
+    return qa_q3_cinematic_source_restore_bind(row->view.cinematics,instance,content,role,
+        launch_seat,source_group,error) && qa_q3_cinematic_source_restore_finish(row->view.cinematics,NULL,NULL,error);
 }

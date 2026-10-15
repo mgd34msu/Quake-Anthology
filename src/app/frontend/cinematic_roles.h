@@ -29,5 +29,6 @@ bool frontend_cinematic_roles_prune(qa_frontend *, qa_error *);
 bool frontend_cinematic_roles_restore_add(qa_frontend *,
     const frontend_material_movie_source *, uint32_t seat, size_t index, qa_error *);
 bool frontend_cinematic_roles_restore_bind(qa_frontend *, size_t,
-    frontend_material_movies *, qa_error *);
+    frontend_material_movies *,const char *instance,const char *content,int32_t role,
+    uint32_t launch_seat,uint32_t source_group,qa_error *);
 #endif

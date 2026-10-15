@@ -1,5 +1,6 @@
 #include "material_movies_private.h"
 #include "cinematic_roles.h"
+#include "campaign_cinematic.h"
 #include <ctype.h>
 #include <math.h>
 
@@ -167,7 +168,8 @@ static bool cinematic_current(void *context, const qa_q3_cinematic_source_option
         !options->print && options->current==cinematic_current;
 }
 bool frontend_material_movies_cinematic_attach(frontend_material_movies *owner,
-    qa_q3_cinematic_handles *pool, uint32_t seat, uint64_t bus, qa_error *error)
+    qa_q3_cinematic_handles *pool,uint32_t seat,uint64_t bus,
+    const char *instance,const char *content,qa_error *error)
 {
     if (!frontend_material_movies_idle(owner) || !frontend_material_movies_current(owner) ||
         owner->cinematic_source || owner->count || qa_material_movies_count(owner->registry) ||
@@ -184,7 +186,10 @@ bool frontend_material_movies_cinematic_attach(frontend_material_movies *owner,
         .clock={owner,cinematic_clock},.audio=owner->source.frontend->audio,
         .seat=seat,.context=owner,.audio_bus=cinematic_bus,.in_game_video=cinematic_in_game_video,.current=cinematic_current};
     if (!qa_q3_cinematic_source_create(pool,&options,&owner->cinematic_source,error)) return false;
-    owner->cinematic_mode=true; return true;
+    owner->cinematic_mode=true;
+    return qa_q3_cinematic_source_restore_bind(owner->cinematic_source,instance,content,-1,seat,UINT32_MAX,error) &&
+        frontend_cinematic_save_parent_bind(owner->source.frontend,owner,instance,content,seat,error) &&
+        qa_q3_cinematic_source_restore_finish(owner->cinematic_source,NULL,NULL,error);
 }
 bool frontend_material_movies_cinematic_read(const frontend_material_movies *owner,
     qa_q3_cinematic_source **out, qa_error *error)

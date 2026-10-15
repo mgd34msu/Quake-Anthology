@@ -68,14 +68,19 @@ bool qa_q3_cinematic_handles_stage_shader(qa_q3_cinematic_handles_stage *stage,
         source->handles!=stage->owner || !media || qa_media_library_stage_source(media)!=source->options.media ||
         !path || !handle || !out || !source->options.current(source->options.context,&source->options))
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared videoMap requires its actual Source and prepared media ticket");
-    bool occupied[16];
-    for (size_t i=0;i<16;++i) occupied[i]=stage->movies[i].occupied;
+    bool occupied[16],reserved[16];
+    for (size_t i=0;i<16;++i) {
+        occupied[i]=stage->movies[i].occupied; reserved[i]=stage->movies[i].restore_pending;
+    }
     stage->busy=true;
     bool ok=q3cin_play_into(source,stage->movies,qa_media_library_stage_destination(media),stage->decoder_scratch,
         &stage->selected_handle,&stage->decoder_handle,path,
         (qa_scene_rect_f){0,0,256,256},2u|8u|16u,NULL,NULL,handle,error);
-    for (size_t i=0;i<16;++i) if (!occupied[i] && stage->movies[i].occupied) stage->added[i]=true;
-    if (ok && (*handle<0 || !occupied[*handle])) stage->decoder_changed=true;
+    for (size_t i=0;i<16;++i)
+        if ((!occupied[i] && stage->movies[i].occupied) || (reserved[i] && !stage->movies[i].restore_pending))
+            stage->added[i]=true;
+    if (ok && (*handle<0 || !occupied[*handle] ||
+        (reserved[*handle] && !stage->movies[*handle].restore_pending))) stage->decoder_changed=true;
     if (ok) *out=*handle>=0?qa_scene_source_q3_scratch(stage->destination,(size_t)*handle):NULL;
     if (ok && *handle>=0 && !*out) ok=q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared shader handle lacks its actual destination scratch slot");
     if (ok && !source->options.current(source->options.context,&source->options))
@@ -88,8 +93,8 @@ bool qa_q3_cinematic_handles_stage_ready_is(const qa_q3_cinematic_handles_stage 
     for (size_t i=0;i<16;++i) {
         const q3cin_movie *movie=&stage->movies[i];
         if (!stage->scratch[i] || (stage->added[i] && (!movie->source || movie->source->handles!=stage->owner ||
-            movie->pending || movie->flags!=(2u|8u|16u) ||
-            (!movie->playback && movie->status!=0)))) return false;
+            movie->pending || (movie->flags&1u) ||
+            (!movie->playback && movie->status!=0 && !movie->restore.path)))) return false;
     }
     return true;
 }
@@ -113,6 +118,7 @@ void qa_q3_cinematic_handles_stage_publish(qa_q3_cinematic_handles_stage *stage)
     /* Banks/media publish first. These are retained real destination versions;
      * no parser, frame upload, clock sample or playback callback runs here. */
     if (stage->decoder_changed) {
+        if (stage->owner->restoring && stage->owner->restore_published) stage->owner->restore_superseded=true;
         for (size_t i=0;i<16;++i) {
             q3cin_movie *movie=&stage->movies[i];
             qa_cinematic *decoder=movie->playback?movie->playback:
@@ -148,6 +154,7 @@ static bool dispose(qa_q3_cinematic_handles_stage **slot,bool published,qa_error
         if (!published && stage->added[i]) {
             qa_cinematic_destroy(stage->movies[i].playback);
             qa_cinematic_asset_release(stage->movies[i].asset); free(stage->movies[i].path);
+            q3cin_restore_dispose(stage->movies+i);
         }
         qa_scene_image_release(stage->scratch[i]);
     }

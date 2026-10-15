@@ -29,6 +29,16 @@ bool frontend_cinematic_idle(const qa_frontend *);
 /* Playback is captured only after command and decoder callbacks return. */
 bool frontend_cinematic_capture_ready(const qa_frontend *);
 bool frontend_cinematic_save_capture(qa_frontend *,qa_buffer *,qa_error *);
+/* Decode once before Source/shader construction; reserve numeric slots when
+ * the actual first image owner constructs its shared cinematic bank. */
+bool frontend_cinematic_save_prepare(qa_frontend *,qa_bytes,qa_error *);
+bool frontend_cinematic_save_reserve(qa_frontend *,qa_error *);
+struct frontend_material_movies;
+bool frontend_cinematic_save_parent_bind(qa_frontend *,struct frontend_material_movies *,
+    const char *instance,const char *content,uint32_t seat,qa_error *);
+bool frontend_cinematic_saved_state(const qa_frontend *);
+void frontend_cinematic_save_discard(qa_frontend *);
+void frontend_cinematic_save_published(qa_frontend *);
 bool frontend_cinematic_save_restore(qa_frontend *,qa_bytes,qa_error *);
 bool frontend_cinematic_destroy(qa_frontend *,qa_error *);
 #endif
