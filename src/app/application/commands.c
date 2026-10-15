@@ -180,6 +180,21 @@ static qa_command_result q3_round_command(qa_application *application,
         ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 
+qa_command_result application_host_command(qa_application *application,
+    const qa_command_invocation *command, qa_error *error)
+{
+    qa_command_result round = q3_round_command(application, command, error);
+    if (round != QA_COMMAND_UNHANDLED) return round;
+    bool handled = false;
+    if (!application_bots_catalog_console(application, command, &handled, error))
+        return QA_COMMAND_FAILED;
+    if (handled) return QA_COMMAND_HANDLED;
+    if (application->q3_campaign_command &&
+        !application->q3_campaign_command(application->guest_context, application,
+            command, &handled, error)) return QA_COMMAND_FAILED;
+    return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+}
+
 bool qa_application_command_context_active(const qa_application *application,
                                            const qa_command_context *context)
 {
@@ -515,20 +530,9 @@ static qa_command_result command_dispatch(qa_application *application,
     qa_command_result flight = application_native_engine_fly(application, invocation,
         &command.context, error);
     if (flight != QA_COMMAND_UNHANDLED) return flight;
-    qa_command_result round = q3_round_command(application, &command, error);
-    if (round != QA_COMMAND_UNHANDLED)
-        return round;
+    qa_command_result host = application_host_command(application, &command, error);
+    if (host != QA_COMMAND_UNHANDLED) return host;
     bool handled = false;
-    if (!application_bots_catalog_console(application, &command, &handled, error))
-        return QA_COMMAND_FAILED;
-    if (handled) return QA_COMMAND_HANDLED;
-    if (application->q3_campaign_command) {
-        if (!application->q3_campaign_command(
-                application->guest_context, application, &command,
-                &handled, error))
-            return QA_COMMAND_FAILED;
-        if (handled) return QA_COMMAND_HANDLED;
-    }
     qa_actor_id actor = command.context.actor;
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
     uint32_t source_slot;

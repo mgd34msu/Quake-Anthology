@@ -682,9 +682,6 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
     if (!name || !name[0] || count > 128 || (count && !arguments) ||
         !application_unified_player_read(app, client, seat, &player, error)) return false;
     application_provider *source = primary(app);
-    if (source->kind == APPLICATION_PROVIDER_QC && strcmp(name, "kill") && strcmp(name, "suicide"))
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Unified QC command requires its actual Source host command boundary");
     const char *words[129]; words[0] = name;
     size_t extent = 0;
     for (size_t i = 0; i < count; ++i) {
@@ -703,7 +700,16 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
     command.context.dialect = qa_product_ruleset(source->product, QA_GAME_Q3);
     bool okay = qa_application_capture_command_context(app, &command.context, &command.context, error);
     bool handled = false;
-    if (okay && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {
+    if (okay && !row->remote) {
+        qa_command_result host = application_host_command(app, &command, error);
+        okay = host != QA_COMMAND_FAILED;
+        handled = host == QA_COMMAND_HANDLED;
+    }
+    if (okay && !handled && source->kind == APPLICATION_PROVIDER_QC &&
+        strcmp(name, "kill") && strcmp(name, "suicide"))
+        okay = application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Unified QC command requires its actual Source host command boundary");
+    if (okay && !handled && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {
         const char *value = count ? arguments[0] : "unconnected";
         char declared_name[46]; q1_name(value,declared_name);
         okay = qa_q1_source_client_name(source->state.q1, player.actor, declared_name, error); handled = true;
