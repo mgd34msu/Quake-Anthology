@@ -494,10 +494,15 @@ static bool q2_local_groups_prepare(qa_frontend_network *n,qa_error *error)
 static bool unified_current(void *context,const frontend_network_unified *owner)
 {
     qa_frontend_network *n=context;
-    const frontend_client_connection *receiver=client_connection_runtime(n,n?n->runtime:NULL);
-    return n && n->frontend && n->frontend->network==n &&
-        (n->unified==owner || (receiver && receiver->unified==owner)) &&
+    return n && n->frontend && n->frontend->network==n && n->unified==owner &&
         (!n->detached_transport || frontend_network_unified_imported(owner));
+}
+static bool client_unified_current(void *context,const frontend_network_unified *owner)
+{
+    const frontend_client_connection *client=context;
+    const qa_frontend_network *n=client->network;
+    return n->frontend->network==n && client->unified==owner &&
+        (client->runtime!=n->runtime || !n->detached_transport || frontend_network_unified_imported(owner));
 }
 static bool client_service_current(void *context,const frontend_network_unified_client_service *service)
 {
@@ -521,29 +526,29 @@ static bool unified_source_input(void *context,qa_net_client_id client,qa_net_se
     return n && n->runtime && n->unified && epoch==qa_network_epoch(n->runtime,client) &&
         application_unified_player_input(n->frontend->application,client,seat,actor,input,error);
 }
-static bool unified_tick(qa_frontend_network *n,qa_error *error)
+static bool client_connection_unified_tick(frontend_client_connection *receiver,bool *ready,qa_error *error)
 {
-    bool waiting=false;
-    if(n->unified && !frontend_network_unified_tick(n->unified,n->frontend->wall_time_ns,&waiting,error)) return false;
-    const frontend_client_connection *main=client_connection_runtime(n,n->runtime);
-    if(!main) return true;
-    frontend_client_connection *receiver=n->clients+main->physical;
-    if(receiver->service && !receiver->unified &&
-        !frontend_network_unified_client_retired(receiver->service)) {
-        bool ready=false;
-        if(!frontend_network_unified_client_advance(receiver->service,&ready,error)) return false;
-        if(!ready) return true;
+    qa_frontend_network *n=receiver->network;
+    *ready=true;
+    if(!receiver->service) return true;
+    if(!receiver->unified && !frontend_network_unified_client_retired(receiver->service)) {
+        *ready=false;
+        if(!frontend_network_unified_client_advance(receiver->service,ready,error)) return false;
+        if(!*ready) return true;
         frontend_remote_unified_options client;
         if(!frontend_network_unified_client_options_read(receiver->service,&client,error)) return false;
         frontend_network_unified_client_view physical;
         if(!frontend_network_unified_client_metadata_read(receiver->service,&physical,error)) return false;
         frontend_network_unified_options options={.frontend=n->frontend,.runtime=receiver->runtime,
-            .seat_owner=QA_NETWORK_COMMAND_OWNER,.remote=physical.remote,.context=n,.current=unified_current,
+            .seat_owner=receiver->client_seat.owner,.remote=physical.remote,.context=receiver,
+            .current=client_unified_current,
             .client=client,.client_service=receiver->service};
         if(!frontend_network_unified_create(&options,&receiver->unified,error)) return false;
     }
+    bool waiting=false;
     if(receiver->unified && !frontend_network_unified_tick(receiver->unified,n->frontend->wall_time_ns,&waiting,error)) return false;
-    if(receiver->service && frontend_network_unified_client_retired(receiver->service)) {
+    if(frontend_network_unified_client_retired(receiver->service)) {
+        if(receiver->runtime!=n->runtime) return true;
         frontend_network_unified_client_view held;
         if(!frontend_network_unified_client_metadata_read(receiver->service,&held,error)) return false;
         if(qa_net_connections_get(qa_network_connections(receiver->runtime),held.physical.source.client)) return true;
@@ -556,13 +561,16 @@ static bool unified_tick(qa_frontend_network *n,qa_error *error)
         return true;
     }
     size_t executed=0;
-    return !receiver->service || !receiver->unified ||
+    return !receiver->unified ||
         frontend_network_unified_client_drain(receiver->service,1024,&executed,error);
 }
-static bool local_unified_current(void *context, const frontend_network_unified *owner)
+static bool unified_tick(qa_frontend_network *n,qa_error *error)
 {
-    const frontend_client_connection *local = context;
-    return local->network->frontend->network == local->network && local->unified == owner;
+    bool waiting=false;
+    if(n->unified && !frontend_network_unified_tick(n->unified,n->frontend->wall_time_ns,&waiting,error)) return false;
+    const frontend_client_connection *main=client_connection_runtime(n,n->runtime);
+    bool ready=false;
+    return !main || client_connection_unified_tick(n->clients+main->physical,&ready,error);
 }
 static bool local_admit(void *context, const qa_net_connect *request, qa_error *error)
 {
@@ -803,27 +811,9 @@ static bool clients_tick(qa_frontend_network *n, qa_error *error)
         if (local->q1 && !frontend_network_q1_client_tick(local->q1, n->frontend->wall_time_ns, error)) return false;
         if (local->q2 && !frontend_network_q2_client_tick(local->q2, n->frontend->wall_time_ns, error)) return false;
         if (local->q3.q3_client_requested && !client_drain(&local->q3, false, error)) return false;
-        if (!local->service) {
-            if (!qa_network_tick(local->runtime, n->frontend->wall_time_ns, error)) return false;
-            continue;
-        }
-        if (!local->unified && !frontend_network_unified_client_retired(local->service)) {
-            bool ready = false;
-            if (!frontend_network_unified_client_advance(local->service, &ready, error)) return false;
-            if (!ready) continue;
-            frontend_remote_unified_options consumer;
-            if (!frontend_network_unified_client_options_read(local->service, &consumer, error)) return false;
-            frontend_network_unified_options client = {.frontend = n->frontend, .runtime = local->runtime,
-                .seat_owner = local->client_seat.owner, .remote = n->loopback_server, .context = local,
-                .current = local_unified_current, .client = consumer, .client_service = local->service};
-            if (!frontend_network_unified_create(&client, &local->unified, error)) return false;
-        }
-        bool waiting = false;
-        if (local->unified && !frontend_network_unified_tick(local->unified,
-            n->frontend->wall_time_ns, &waiting, error)) return false;
-        size_t executed = 0;
-        if (local->unified && !frontend_network_unified_client_retired(local->service) &&
-            !frontend_network_unified_client_drain(local->service, 1024, &executed, error)) return false;
+        bool ready=false;
+        if (!client_connection_unified_tick(local, &ready, error)) return false;
+        if (!ready) continue;
         if (!qa_network_tick(local->runtime, n->frontend->wall_time_ns, error)) return false;
     }
     return true;
