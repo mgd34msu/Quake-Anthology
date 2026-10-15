@@ -48,6 +48,7 @@
 #include "qa/q3_cinematic_handles.h"
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
+#include "qa/navigation_asset.h"
 #include "qa/q1_save.h"
 #include "qa/q1_text.h"
 #include "qa/campaign_q1.h"
@@ -98,6 +99,87 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+static void test_aas_geometry_compaction(void)
+{
+    qa_error error={0};
+    const qa_vec3 vertices[]={{0,0,0},{1,0,0},{2,0,0},{2,1,0},{2,0,1},{99,99,99}};
+    const qa_aas_plane planes[]={{{1,0,0},5,0}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}},{{1,2}},{{2,0}},{{2,3}},{{3,4}},{{4,2}}};
+    const int32_t edge_index[]={1,2,3,-4,5,6},face_index[]={1,-2,2};
+    const qa_aas_face faces[]={
+        {0},
+        {.plane=0,.flags=0,.edge_count=3,.first_edge=0,.front_area=1,.back_area=2},
+        {.plane=0,.flags=2,.edge_count=3,.first_edge=3,.front_area=1,.back_area=2}
+    };
+    const qa_aas_area areas[]={
+        {0},
+        {.number=1,.face_count=2,.first_face=0,.bounds={{0,0,0},{10,10,10}},.center={7,5,5}},
+        {.number=2,.face_count=1,.first_face=2,.bounds={{0,0,0},{10,10,10}},.center={3,5,5}}
+    };
+    const qa_aas_setting settings[]={{0},{.contents=8,.reach_count=5},{.contents=16}};
+    const qa_aas_node nodes[]={{0},{.plane=0,.children={-1,-2}}};
+    const qa_aas_reach reaches[]={
+        {.area=2,.face=-2,.edge=-4,.start={2,0,0},.end={3,0,0},.travel_type=1,.travel_time=10},
+        {.area=2,.face=1,.edge=1,.travel_type=1,.travel_time=20},
+        {.area=2,.face=0x12345678,.edge=-1234,.travel_type=0x1000000|11,.travel_time=30},
+        {.area=2,.face=123456,.edge=-654321,.travel_type=18,.travel_time=40},
+        {.area=2,.face=INT32_MIN,.edge=INT32_MAX,.travel_type=19,.travel_time=50}
+    };
+    qa_aas_view source={.version=5,.bsp_checksum=123,
+        .count={[QA_AAS_VERTICES]=6,[QA_AAS_PLANES]=1,[QA_AAS_EDGES]=7,
+            [QA_AAS_EDGE_INDEX]=6,[QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=3,
+            [QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3,[QA_AAS_REACHABILITY]=5,[QA_AAS_NODES]=2},
+        .vertices=vertices,.planes=planes,.edges=edges,.edge_index=edge_index,.faces=faces,
+        .face_index=face_index,.areas=areas,.settings=settings,.reachability=reaches,.nodes=nodes};
+    qa_nav_asset *optimized=NULL,*decoded=NULL;
+    qa_buffer original={0},unchanged={0},packed={0},roundtrip={0};
+    CHECK(qa_aas_write(&source,&original,&error));
+    CHECK(qa_aas_optimize(&source,&optimized,&error));
+    const qa_aas_view *view=qa_nav_asset_aas(optimized);
+    CHECK(view && view->count[QA_AAS_VERTICES]==4 && view->count[QA_AAS_EDGES]==4 &&
+        view->count[QA_AAS_FACES]==2 && view->count[QA_AAS_EDGE_INDEX]==3 &&
+        view->count[QA_AAS_FACE_INDEX]==2);
+    CHECK(view->face_index[0]==-1 && view->face_index[1]==1 &&
+        view->edge_index[0]==-1 && view->edge_index[1]==2 && view->edge_index[2]==3);
+    CHECK(view->faces[1].flags==2 && view->faces[1].first_edge==0 && view->faces[1].edge_count==3);
+    CHECK(view->areas[1].number==1 && view->areas[1].first_face==0 && view->areas[1].face_count==1 &&
+        view->areas[2].number==2 && view->areas[2].first_face==1 && view->areas[2].face_count==1);
+    CHECK(view->reachability[0].face==-1 && view->reachability[0].edge==-1 &&
+        view->reachability[1].face==0 && view->reachability[1].edge==0);
+    CHECK(!memcmp(view->reachability+2,reaches+2,3*sizeof(*reaches)));
+    CHECK(view->reachability[0].area==reaches[0].area &&
+        qa_vec_equal(view->reachability[0].start,reaches[0].start) &&
+        qa_vec_equal(view->reachability[0].end,reaches[0].end) &&
+        view->reachability[0].travel_time==reaches[0].travel_time);
+    CHECK(!memcmp(view->settings,settings,sizeof(settings)) && !memcmp(view->nodes,nodes,sizeof(nodes)) &&
+        !memcmp(view->planes,planes,sizeof(planes)));
+    for(unsigned i=0;i<2;++i) {
+        qa_vec3 point={i?7.0f:3.0f,5,5};uint32_t before,after;
+        CHECK(qa_aas_point_area(&source,point,&before,&error));
+        CHECK(qa_aas_point_area(view,point,&after,&error) && before==after && before==2-i);
+    }
+    CHECK(qa_aas_write(&source,&unchanged,&error));
+    CHECK(original.size==unchanged.size && !memcmp(original.data,unchanged.data,original.size));
+    CHECK(qa_aas_write(view,&packed,&error));
+    CHECK(qa_nav_asset_read((qa_bytes){packed.data,packed.size},&source.bsp_checksum,&decoded,&error));
+    CHECK(qa_aas_write(qa_nav_asset_aas(decoded),&roundtrip,&error));
+    CHECK(packed.size==roundtrip.size && !memcmp(packed.data,roundtrip.data,packed.size));
+    qa_nav_asset_release(decoded);qa_nav_asset_release(optimized);
+    qa_buffer_free(&original);qa_buffer_free(&unchanged);qa_buffer_free(&packed);qa_buffer_free(&roundtrip);
+    qa_aas_reach invalid_reaches[5];memcpy(invalid_reaches,reaches,sizeof(reaches));
+    invalid_reaches[0].face=99;qa_aas_view invalid=source;invalid.reachability=invalid_reaches;
+    optimized=NULL;
+    CHECK(!qa_aas_optimize(&invalid,&optimized,&error) && !optimized && error.code==QA_ERROR_FORMAT);
+    const qa_aas_view empty={.version=5,.bsp_checksum=99};
+    CHECK(qa_aas_optimize(&empty,&optimized,&error));view=qa_nav_asset_aas(optimized);
+    CHECK(view && view->version==empty.version && view->bsp_checksum==empty.bsp_checksum);
+    for(unsigned i=0;i<QA_AAS_LUMP_COUNT;++i) CHECK(!view->count[i]);
+    CHECK(qa_aas_write(view,&packed,&error));decoded=NULL;
+    CHECK(qa_nav_asset_read((qa_bytes){packed.data,packed.size},&empty.bsp_checksum,&decoded,&error));
+    CHECK(qa_nav_asset_aas(decoded)->count[QA_AAS_FACES]==0);
+    qa_nav_asset_release(decoded);qa_nav_asset_release(optimized);qa_buffer_free(&packed);
+}
 
 static void test_typewriter_centers(void)
 {
@@ -6108,6 +6190,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_aas_geometry_compaction();
     test_prediction_continuations();
     test_field_completion();
     test_source_text();

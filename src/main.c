@@ -4,9 +4,11 @@
 #include "qa/archive.h"
 #include "qa/bsp.h"
 #include "qa/frontend.h"
+#include "qa/filesystem.h"
 #include "qa/hash.h"
 #include "qa/json_writer.h"
 #include "qa/navigation.h"
+#include "qa/platform_services.h"
 #include "qa/native_process_platform.h"
 #include "compat/native/guest/host_child.h"
 
@@ -24,6 +26,8 @@ static void usage(FILE *stream)
           "       quake-anthology --inspect-bsp ARCHIVE MEMBER\n"
           "       quake-anthology --inspect-nav FILE\n"
           "       quake-anthology --inspect-nav ARCHIVE MEMBER [BSP_MEMBER]\n"
+          "       quake-anthology --optimize-aas FILE OUTPUT\n"
+          "       quake-anthology --optimize-aas ARCHIVE MEMBER OUTPUT\n"
           "\n"
           "  --content-root PATH      Primary data root, default executable folder\n"
           "  --game-path PATH         Additional install folder, repeatable\n"
@@ -158,6 +162,52 @@ static int inspect_archive(const char *path, const char *member,
     } else result = inspect_member(archive, path, member, inspect, context);
     qa_archive_close(archive);
     return result;
+}
+
+static int optimize_aas(const inspection_input *input, void *context)
+{
+    const char *output = context;
+    const char *name = input->member ? input->member : input->path;
+    qa_error error = {0};
+    qa_nav_asset *source = NULL, *optimized = NULL;
+    qa_buffer bytes = {0};
+    if (!qa_nav_asset_read(input->bytes, NULL, &source, &error))
+        return report_error(name, &error);
+    const qa_aas_view *aas = qa_nav_asset_aas(source);
+    bool okay = aas != NULL;
+    if (!okay) qa_error_set(&error, QA_ERROR_UNSUPPORTED, 0, "Navigation input is not an AAS file");
+    if (okay) okay = qa_aas_optimize(aas, &optimized, &error) &&
+        qa_aas_write(qa_nav_asset_aas(optimized), &bytes, &error);
+    qa_fs_root *root = NULL;
+    char *parent = NULL;
+    const char *separator = strrchr(output, '/');
+#ifdef _WIN32
+    const char *backslash = strrchr(output, '\\');
+    if (backslash && (!separator || backslash > separator)) separator = backslash;
+#endif
+    const char *leaf = separator ? separator + 1 : output;
+    if (okay && separator) {
+        size_t length = (size_t)(separator - output) + 1;
+        parent = malloc(length + 1);
+        if (!parent) {
+            qa_error_set(&error, QA_ERROR_MEMORY, 0, "Allocating output directory path");
+            okay = false;
+        } else {
+            memcpy(parent, output, length);
+            parent[length] = 0;
+        }
+    }
+    uint64_t nonce = 0;
+    if (okay) okay = qa_fs_root_open(parent ? parent : ".", &root, &error) &&
+        qa_platform_entropy_u64(&nonce, &error) &&
+        qa_fs_root_replace(root, leaf, (qa_bytes){bytes.data, bytes.size}, nonce, &error);
+    if (okay) printf("%s: %zu -> %zu bytes\n", output, input->bytes.size, bytes.size);
+    qa_fs_root_close(root);
+    free(parent);
+    qa_buffer_free(&bytes);
+    qa_nav_asset_release(optimized);
+    qa_nav_asset_release(source);
+    return okay ? 0 : report_error(output, &error);
 }
 
 static int inspect_bsp_checksum(const inspection_input *input, void *context)
@@ -297,6 +347,11 @@ int main(int argc, char **argv)
         if (argc == 3) return inspect_file(argv[2], inspect_nav, NULL);
         if (argc == 4 || argc == 5)
             return inspect_archive(argv[2], argv[3], inspect_nav, argc == 5 ? argv[4] : NULL);
+        usage(stderr); return 2;
+    }
+    if (argc > 1 && strcmp(argv[1], "--optimize-aas") == 0) {
+        if (argc == 4) return inspect_file(argv[2], optimize_aas, argv[3]);
+        if (argc == 5) return inspect_archive(argv[2], argv[3], optimize_aas, argv[4]);
         usage(stderr); return 2;
     }
     qa_frontend_options options;

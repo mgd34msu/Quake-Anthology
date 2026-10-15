@@ -139,6 +139,7 @@ target_link_libraries(qa_content PUBLIC qa_core PRIVATE
 add_library(qa_navigation_assets STATIC
     src/navigation/asset.c
     src/navigation/aas_file.c
+    src/navigation/aas_optimize.c
     src/navigation/aas_validate.c
     src/navigation/aas_sample.c
     src/navigation/nav_file.c)
