@@ -499,8 +499,7 @@ static bool source_current(application_native_q1_wire_source *source, qa_ruleset
 static bool source_begin(qa_application *app, qa_actor_owner owner, qa_ruleset_id dialect,
     bool packet, application_native_q1_wire_source *out, qa_error *error) {
     application_provider *p = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
-    if (!out || !p || !p->native_q1_wire || (owner && p->owner != owner) ||
-        !application_native_q1_console_idle(p))
+    if (!out || !p || !p->native_q1_wire || (owner && p->owner != owner))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Original native Q1 wire requires its installed primary source owner");
     if (p->native_q1_wire->readers == SIZE_MAX)
