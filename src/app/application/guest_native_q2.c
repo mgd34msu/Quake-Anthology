@@ -691,15 +691,18 @@ static bool prepare_map_admission(application_provider *provider, const qa_bsp_v
     qa_string_id name, qa_string_id spawn, qa_error *error)
 {
     struct application_native_q2 *engine = provider->state.native.q2_engine;
-    if (engine->map_admission_prepared) return true;
     char *copy = NULL;
-    if (!application_native_q2_entity_text(map, &copy, error)) return false;
+    if (!engine->map_admission_prepared &&
+        !application_native_q2_entity_text(map, &copy, error)) return false;
     if (!engine->world_actor.registry && !qa_session_allocate(provider->application->session,
             provider->owner, engine->definition, true, 0, &engine->world_actor, error)) { free(copy); return false; }
-    free(engine->entity_text); engine->entity_text = copy;
-    engine->map_name = name; engine->spawn_point = spawn;
+    if (!engine->map_admission_prepared) {
+        free(engine->entity_text); engine->entity_text = copy;
+        engine->map_name = name; engine->spawn_point = spawn;
+    }
     if (!load_host(engine, error)) return false;
     if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
+    if (engine->map_admission_prepared) return true;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     if (!application_native_q2_config_clear(engine,error)) return false;
     if (provider->attached) provider->application->physics->world_actor = engine->world_actor;
