@@ -261,6 +261,18 @@ typedef struct qa_entities {
 /* Tokens borrow text. Only compact entity/property tables are allocated.
  * Ordered duplicate keys are retained; lookup returns the last value. */
 bool qa_entities_parse(qa_bytes text, qa_entity_syntax syntax, qa_entities *out, qa_error *error);
+typedef struct qa_entity_class_alias { const char *from, *to; } qa_entity_class_alias;
+typedef struct qa_entity_prepare_options {
+    const qa_entity_class_alias *aliases;
+    size_t alias_count;
+    const char *required_class;
+    const char *const *fallback_classes;
+    size_t fallback_count;
+} qa_entity_prepare_options;
+/* Preserves ordered fields and duplicate keys. Appends renamed fallback spawns
+ * only when required_class is absent. Output is NUL-terminated; size excludes it. */
+bool qa_entities_prepare_text(qa_bytes, qa_entity_syntax, const qa_entity_prepare_options *,
+    qa_buffer *, qa_error *);
 void qa_entities_free(qa_entities *entities);
 bool qa_entity_value(const qa_entities *, size_t entity, const char *key, qa_bytes *out);
 /* Original botlib epair conversion consumes at most 127 bytes. */

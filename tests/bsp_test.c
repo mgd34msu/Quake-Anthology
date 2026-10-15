@@ -490,6 +490,59 @@ static void entities(void)
         QA_ENTITY_Q1,&result,&error));
     CHECK(qa_entities_parse((qa_bytes){NULL,0}, QA_ENTITY_Q1, &result, &error) && result.count == 0);
     qa_entities_free(&result);
+
+    const char *foreign =
+        "{ classname worldspawn key old key new path \"a\\n\" }\n"
+        "{ classname old classname team_CTF_redspawn origin \"1 2 3\" custom keep }\n"
+        "{ classname team_CTF_redflag }\n"
+        "{ classname info_player_start origin \"4 5 6\" }\n";
+    const qa_entity_class_alias aliases[] = {
+        {"team_CTF_redspawn", "info_player_team1"}, {"team_CTF_redflag", "item_flag_team1"}
+    };
+    const char *fallbacks[] = {"info_player_start", "info_player_team1"};
+    qa_entity_prepare_options preparation = {.aliases = aliases, .alias_count = 2,
+        .required_class = "info_player_deathmatch", .fallback_classes = fallbacks, .fallback_count = 2};
+    qa_buffer prepared = {0};
+    CHECK(qa_entities_prepare_text((qa_bytes){(const uint8_t *)foreign, strlen(foreign)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(prepared.data[prepared.size] == 0);
+    CHECK(qa_entities_parse((qa_bytes){prepared.data, prepared.size}, QA_ENTITY_Q2_CLASSIC, &result, &error));
+    CHECK(result.count == 6 && result.records[0].property_count == 4 && result.records[1].property_count == 4);
+    CHECK(equal_text(result.properties[1].value, "old") && equal_text(result.properties[2].value, "new"));
+    CHECK(qa_entity_value(&result, 0, "path", &value) && equal_text(value, "a\\n"));
+    CHECK(qa_entity_value(&result, 1, "classname", &value) && equal_text(value, "info_player_team1"));
+    CHECK(equal_text(result.properties[result.records[1].first_property].value, "info_player_team1"));
+    CHECK(qa_entity_value(&result, 2, "classname", &value) && equal_text(value, "item_flag_team1"));
+    CHECK(qa_entity_value(&result, 4, "classname", &value) && equal_text(value, "info_player_deathmatch"));
+    CHECK(qa_entity_value(&result, 4, "origin", &value) && equal_text(value, "1 2 3"));
+    CHECK(qa_entity_value(&result, 4, "custom", &value) && equal_text(value, "keep"));
+    CHECK(qa_entity_value(&result, 5, "origin", &value) && equal_text(value, "4 5 6"));
+    qa_entities_free(&result);
+    qa_buffer_free(&prepared);
+
+    const char *existing = "{ classname info_player_deathmatch } { classname team_CTF_redspawn }";
+    CHECK(qa_entities_prepare_text((qa_bytes){(const uint8_t *)existing, strlen(existing)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(qa_entities_parse((qa_bytes){prepared.data, prepared.size}, QA_ENTITY_Q2_RERELEASE, &result, &error));
+    CHECK(result.count == 2);
+    qa_entities_free(&result);
+    qa_buffer_free(&prepared);
+
+    const char *ordinary[] = {"info_player_deathmatch"};
+    preparation = (qa_entity_prepare_options){.required_class = "info_player_start",
+        .fallback_classes = ordinary, .fallback_count = 1};
+    const char *deathmatch = "{ classname info_player_deathmatch origin \"4 5 6\" angle 90 }";
+    CHECK(qa_entities_prepare_text((qa_bytes){(const uint8_t *)deathmatch, strlen(deathmatch)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(qa_entities_parse((qa_bytes){prepared.data, prepared.size}, QA_ENTITY_Q2_CLASSIC, &result, &error));
+    CHECK(result.count == 2 && qa_entity_value(&result, 1, "classname", &value) && equal_text(value, "info_player_start"));
+    CHECK(qa_entity_value(&result, 1, "angle", &value) && equal_text(value, "90"));
+    qa_entities_free(&result);
+    qa_buffer_free(&prepared);
+    const char *unquotable = "{ key unquoted\"value }";
+    CHECK(!qa_entities_prepare_text((qa_bytes){(const uint8_t *)unquotable, strlen(unquotable)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(prepared.data == NULL && error.code == QA_ERROR_FORMAT);
 }
 
 static void visibility(void)

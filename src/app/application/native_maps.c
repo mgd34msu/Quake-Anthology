@@ -103,10 +103,6 @@ bool application_source_map_path(application_provider *source, const char *name,
     bool allowed = qa_vfs_acquire(source->launch->content, path, &resource, NULL, error);
     qa_bsp_view map;
     if (allowed) allowed = qa_bsp_open(qa_resource_bytes(resource), &map, error);
-    if (allowed && !((source->product->family == QA_GAME_Q1 && map.family == QA_BSP_Q1) ||
-                     (source->product->family == QA_GAME_Q2 && map.family == QA_BSP_Q2) ||
-                     (source->product->family == QA_GAME_Q3 && map.family == QA_BSP_Q3)))
-        allowed = application_fail(error, QA_ERROR_FORMAT, "map BSP does not match its source product");
     if (allowed) allowed = qa_bsp_validate(&map, error);
     qa_resource_release(resource);
     if (!allowed) { free(path); return false; }

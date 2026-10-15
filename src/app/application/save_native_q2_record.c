@@ -180,20 +180,20 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
         ok = application_native_q2_activate(engine, error) &&
             application_native_q2_prepare_restore(provider, error);
     }
-    if (ok) {
-        qa_bsp_view map;
-        char *entities = NULL;
-        ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
-            qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
-            application_native_q2_entity_text(&map, &entities, error);
-        if (ok) { free(engine->entity_text); engine->entity_text = entities; }
-    }
     if (ok)
         ok = qa_native_host_restore_cvars(provider->state.native.host,
                 snapshot.transition ? (qa_bytes){game.host.data, game.host.size} :
                     (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
             application_startup_source_restore(provider, engine->console, engine->cvars,
                 &engine->command_context, error);
+    if (ok) {
+        qa_bsp_view map;
+        char *entities = NULL;
+        ok = qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error) &&
+            qa_map_sidecars_apply_entities(app->map_sidecars, &map, error) &&
+            application_native_q2_entity_text(provider, &map, &entities, error);
+        if (ok) { free(engine->entity_text); engine->entity_text = entities; }
+    }
     if (ok) {
         ++engine->calls;
         /* SDK Init creates provisional source storage. Saved HOST slot bindings

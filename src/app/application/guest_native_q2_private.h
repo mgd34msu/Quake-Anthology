@@ -148,7 +148,7 @@ bool application_native_q2_loading_cancel(application_provider *, qa_error *);
 bool application_native_q2_loading_idle(const application_provider *);
 bool application_native_q2_initialize_primary_advance(application_provider *, const qa_bsp_view *,
     qa_string_id, qa_string_id, const qa_clock_state *, size_t, bool *, qa_error *);
-bool application_native_q2_entity_text(const qa_bsp_view *, char **, qa_error *);
+bool application_native_q2_entity_text(application_provider *, const qa_bsp_view *, char **, qa_error *);
 bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *,
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_native_q2_retire_map(application_provider *, qa_error *);

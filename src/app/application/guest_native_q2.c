@@ -675,9 +675,37 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
         application_native_q2_publication_activate(engine->publication,error);
 }
 
-bool application_native_q2_entity_text(const qa_bsp_view *map, char **out, qa_error *error)
+bool application_native_q2_entity_text(application_provider *provider, const qa_bsp_view *map,
+    char **out, qa_error *error)
 {
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    size_t maximum = engine->profile == QA_NATIVE_Q2_GAME_API2023 ? 8190 : 255;
+    if (qa_bsp_record_count(map, QA_BSP_MODELS) > maximum)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 map exceeds source inline-model capacity");
     qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
+    if (map->family != QA_BSP_Q2) {
+        static const qa_entity_class_alias aliases[] = {
+            {"team_CTF_redflag", "item_flag_team1"}, {"team_CTF_blueflag", "item_flag_team2"},
+            {"team_CTF_redplayer", "info_player_team1"}, {"team_CTF_redspawn", "info_player_team1"},
+            {"team_CTF_blueplayer", "info_player_team2"}, {"team_CTF_bluespawn", "info_player_team2"}
+        };
+        static const char *const deathmatch_spawns[] = {
+            "info_player_start", "info_player_coop", "info_player_team1", "info_player_team2"
+        };
+        static const char *const ordinary_spawns[] = {"info_player_deathmatch"};
+        const qa_cvar_view *mode = qa_cvars_read(engine->cvars, qa_cvars_resolve(engine->cvars, "deathmatch"));
+        bool deathmatch = mode && mode->number != 0;
+        qa_entity_prepare_options options = {.aliases = aliases,
+            .alias_count = map->family == QA_BSP_Q3 ? sizeof(aliases) / sizeof(*aliases) : 0,
+            .required_class = deathmatch ? "info_player_deathmatch" : "info_player_start",
+            .fallback_classes = deathmatch ? deathmatch_spawns : ordinary_spawns,
+            .fallback_count = deathmatch ? sizeof(deathmatch_spawns) / sizeof(*deathmatch_spawns) :
+                sizeof(ordinary_spawns) / sizeof(*ordinary_spawns)};
+        qa_buffer prepared = {0};
+        if (!qa_entities_prepare_text(text, QA_ENTITY_Q1, &options, &prepared, error)) return false;
+        *out = (char *)prepared.data;
+        return true;
+    }
     if (text.size == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Native Q2 entity text extent overflow");
     char *copy = malloc(text.size + 1);
     if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 entity text");
@@ -693,7 +721,7 @@ static bool prepare_map_admission(application_provider *provider, const qa_bsp_v
     struct application_native_q2 *engine = provider->state.native.q2_engine;
     char *copy = NULL;
     if (!engine->map_admission_prepared &&
-        !application_native_q2_entity_text(map, &copy, error)) return false;
+        !application_native_q2_entity_text(provider, map, &copy, error)) return false;
     if (!engine->world_actor.registry && !qa_session_allocate(provider->application->session,
             provider->owner, engine->definition, true, 0, &engine->world_actor, error)) { free(copy); return false; }
     if (!engine->map_admission_prepared) {

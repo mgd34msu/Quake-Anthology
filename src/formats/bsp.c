@@ -969,6 +969,115 @@ bool qa_entity_value(const qa_entities *entities, size_t entity, const char *key
     return false;
 }
 
+typedef struct entity_text_output { uint8_t *data; size_t size; } entity_text_output;
+
+static bool entity_text_append(entity_text_output *out, qa_bytes text, qa_error *error)
+{
+    if (text.size > SIZE_MAX - out->size)
+        return fail(error, QA_ERROR_MEMORY, 0, "prepared entity text exceeds address space");
+    if (out->data && text.size) memcpy(out->data + out->size, text.data, text.size);
+    out->size += text.size;
+    return true;
+}
+
+static bool entity_text_literal(entity_text_output *out, const char *text, qa_error *error)
+{
+    return entity_text_append(out, (qa_bytes){(const uint8_t *)text, strlen(text)}, error);
+}
+
+static bool entity_text_quote(entity_text_output *out, qa_bytes text, qa_error *error)
+{
+    if (text.size && (memchr(text.data, '"', text.size) || memchr(text.data, 0, text.size)))
+        return fail(error, QA_ERROR_FORMAT, 0, "entity field cannot be represented in quoted source text");
+    return entity_text_literal(out, "\"", error) && entity_text_append(out, text, error) &&
+        entity_text_literal(out, "\"", error);
+}
+
+static qa_bytes entity_prepared_class(const qa_entities *entities, size_t index,
+    const qa_entity_prepare_options *options, bool *renamed)
+{
+    qa_bytes name = {0};
+    *renamed = false;
+    (void)qa_entity_value(entities, index, "classname", &name);
+    for (size_t i = 0; i < options->alias_count; ++i) {
+        const qa_entity_class_alias *alias = options->aliases + i;
+        if (same_bytes(name, (qa_bytes){(const uint8_t *)alias->from, strlen(alias->from)})) {
+            *renamed = true;
+            return (qa_bytes){(const uint8_t *)alias->to, strlen(alias->to)};
+        }
+    }
+    return name;
+}
+
+static bool entity_text_record(entity_text_output *out, const qa_entities *entities,
+    size_t index, const qa_bytes *classname, qa_error *error)
+{
+    qa_entity_record record = entities->records[index];
+    static const uint8_t class_key[] = "classname";
+    if (!entity_text_literal(out, "{\n", error)) return false;
+    for (size_t i = 0; i < record.property_count; ++i) {
+        qa_entity_property property = entities->properties[record.first_property + i];
+        if (classname && same_bytes(property.key, (qa_bytes){class_key, sizeof(class_key) - 1}))
+            property.value = *classname;
+        if (!entity_text_quote(out, property.key, error) || !entity_text_literal(out, " ", error) ||
+            !entity_text_quote(out, property.value, error) || !entity_text_literal(out, "\n", error)) return false;
+    }
+    return entity_text_literal(out, "}\n", error);
+}
+
+static bool entity_text_prepare(entity_text_output *out, const qa_entities *entities,
+    const qa_entity_prepare_options *options, qa_error *error)
+{
+    qa_bytes required = options->required_class ?
+        (qa_bytes){(const uint8_t *)options->required_class, strlen(options->required_class)} : (qa_bytes){0};
+    bool present = false;
+    for (size_t i = 0; i < entities->count; ++i) {
+        bool renamed;
+        qa_bytes name = entity_prepared_class(entities, i, options, &renamed);
+        present |= same_bytes(name, required);
+        if (!entity_text_record(out, entities, i, renamed ? &name : NULL, error)) return false;
+    }
+    if (!options->required_class || present) return true;
+    for (size_t i = 0; i < entities->count; ++i) {
+        bool renamed;
+        qa_bytes name = entity_prepared_class(entities, i, options, &renamed);
+        for (size_t j = 0; j < options->fallback_count; ++j) {
+            const char *fallback = options->fallback_classes[j];
+            if (!same_bytes(name, (qa_bytes){(const uint8_t *)fallback, strlen(fallback)})) continue;
+            if (!entity_text_record(out, entities, i, &required, error)) return false;
+            break;
+        }
+    }
+    return true;
+}
+
+bool qa_entities_prepare_text(qa_bytes text, qa_entity_syntax syntax,
+    const qa_entity_prepare_options *options, qa_buffer *out, qa_error *error)
+{
+    if (!options || !out || (options->alias_count && !options->aliases) ||
+        (options->fallback_count && (!options->fallback_classes || !options->required_class)))
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity text preparation options");
+    qa_entities entities = {0};
+    entity_text_output output = {0};
+    bool ok = qa_entities_parse(text, syntax, &entities, error) &&
+        entity_text_prepare(&output, &entities, options, error);
+    if (ok && output.size == SIZE_MAX)
+        ok = fail(error, QA_ERROR_MEMORY, 0, "prepared entity text has no terminator space");
+    if (ok) {
+        output.data = malloc(output.size + 1);
+        if (!output.data) ok = fail(error, QA_ERROR_MEMORY, 0, "allocating prepared entity text");
+    }
+    if (ok) {
+        output.size = 0;
+        ok = entity_text_prepare(&output, &entities, options, error);
+    }
+    qa_entities_free(&entities);
+    if (!ok) { free(output.data); return false; }
+    output.data[output.size] = 0;
+    *out = (qa_buffer){output.data, output.size};
+    return true;
+}
+
 bool qa_bsp_texture_count(const qa_bsp_view *map, size_t *out, qa_error *error)
 {
     if (map == NULL || out == NULL || map->family != QA_BSP_Q1)
