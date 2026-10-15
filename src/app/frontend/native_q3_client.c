@@ -1136,6 +1136,11 @@ bool frontend_native_q3_sync(qa_frontend *f,const frontend_native_q3_factory *fa
     if(!f || f->capture || f->source_restoring || !factory || !factory->compose)
         return frontend_fail(e,QA_ERROR_ARGUMENT,"Native recipient synchronization requires its actual published constructor factory");
     if(f->options.dedicated)return true;
+    for(frontend_native_q3 *row=f->native_q3;row;) {
+        frontend_native_q3 *next=row->next;
+        if(frontend_network_local_input_owned(f,row->view.seat) && !row_destroy(row,e))return false;
+        row=next;
+    }
     qa_application_native_q3_presentation source; bool found;
     if(!qa_application_native_q3_presentation_selected(f->application,&source,&found,e))return false;
     if(!found)return true;
@@ -1145,7 +1150,7 @@ bool frontend_native_q3_sync(qa_frontend *f,const frontend_native_q3_factory *fa
     for(size_t i=0;i<choices->seat_count;++i) {
         uint32_t seat=choices->seats[i].id,ordinal,physical; qa_actor_id actor; qa_q3_player player;
         if(!qa_application_constructor_seat_ordinal(f->application,source.source_owner,seat,&ordinal,e))return false;
-        if(ordinal>=f->options.seats)continue;
+        if(ordinal>=f->options.seats || frontend_network_local_input_owned(f,ordinal))continue;
         qa_actor_owner original;
         if(!frontend_source_cgame_recipient(f,ordinal,&original,e))return false;
         if(original)continue;
