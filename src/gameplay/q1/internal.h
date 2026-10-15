@@ -1460,6 +1460,7 @@ typedef struct q1_player {
     qa_q1_weapon weapon;
     int32_t weapon_frame, animation_base, nail_side;
     float current_ammo;
+    qa_string_id source_noise;
     double attack_finished, next_weapon_frame, animation_at, lightning_sound_at;
     double hostile_until, mega_rot_at, air_finished, drown_at, hazard_at;
     double power_expires[QA_Q1_POWER_COUNT];

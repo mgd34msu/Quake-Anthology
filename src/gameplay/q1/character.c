@@ -340,6 +340,7 @@ static bool pain(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outc
         else {
             static const q1_runtime_name pains[] = {Q1_NAME_RESOURCE_PLAYER_PAIN1_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN2_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN3_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN4_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN5_WAV, Q1_NAME_RESOURCE_PLAYER_PAIN6_WAV};
             sound = g->runtime_names[pains[(int)floorf(q1_random(g) * 5 + 1.5f) - 1]];
+            player->source_noise = sound;
         }
     }
     if (sound && !q1_sound_resource(g, actor, sound, 2, attenuation, 1, error))
@@ -428,6 +429,7 @@ static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outco
     } else {
         static const q1_runtime_name deaths[] = {Q1_NAME_RESOURCE_PLAYER_DEATH1_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH2_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH3_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH4_WAV, Q1_NAME_RESOURCE_PLAYER_DEATH5_WAV};
         qa_string_id sound = g->runtime_names[deaths[(int)floorf(q1_random(g) * 4 + 1.5f) - 1]];
+        player->source_noise = sound;
         if (!q1_sound_resource(g, actor, sound, 2, 0, 1, error))
             return false;
     }

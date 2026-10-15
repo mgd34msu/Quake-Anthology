@@ -100,6 +100,7 @@ static const original_field movement_fields[] = {
 static const original_field player_fields[] = {
     FIELD(q1_player, weapon_frame, "weaponframe", I32),
     FIELD(q1_player, current_ammo, "currentammo", FLOAT),
+    FIELD(q1_player, source_noise, "noise", STRING),
     FIELD(q1_player, punch, "punchangle", VECTOR),
     FIELD(q1_player, input.view_angles, "v_angle", VECTOR),
     FIELD(q1_player, input.attack, "button0", BOOL),
