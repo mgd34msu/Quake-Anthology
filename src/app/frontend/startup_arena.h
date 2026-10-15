@@ -20,6 +20,8 @@ bool frontend_startup_arena_select(void *, qa_ui_library *, qa_ui_library_field,
  * until its next launch or destruction; campaign_start copies them. */
 bool frontend_startup_arena_launch(frontend_startup_arena *, qa_launch_draft *,
     const char *arena_map, int32_t bot_skill, qa_error *);
+bool frontend_startup_arena_relaunch(frontend_startup_arena *,qa_launch_draft *,
+    const qa_application_q3_campaign *,bool advance,qa_error *);
 bool frontend_startup_arena_settings(const frontend_startup_arena *,
     const qa_application_q3_setting **, size_t *, qa_error *);
 bool frontend_startup_arena_client_settings(const frontend_startup_arena *,

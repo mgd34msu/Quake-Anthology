@@ -2,11 +2,13 @@
 #define QA_FRONTEND_STARTUP_MENUS_H
 #include "internal.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_q3_campaign.h"
 #include "seats_resize.h"
 #include "host_menu.h"
 bool frontend_startup_menus_create(frontend_seat *, qa_error *);
 bool frontend_startup_menus_destroy(frontend_seat *, qa_error *);
 bool frontend_startup_launch_drain(qa_frontend *, qa_error *);
+bool frontend_startup_campaign_stage(frontend_seat *,const qa_application_q3_campaign *,bool advance,qa_error *);
 void frontend_startup_launch_discard(qa_frontend *);
 bool frontend_startup_end_stage(frontend_seat *, qa_error *);
 bool frontend_startup_local_players_read(frontend_seat *,bool *join,bool *drop,qa_error *);

@@ -3,6 +3,7 @@
 #include "capture.h"
 #include "campaign_ui.h"
 #include "campaign_cinematic.h"
+#include "startup_menus.h"
 #include "qa/settings.h"
 #include "qa/player_progress.h"
 #include "qa/q3_product_policy.h"
@@ -594,7 +595,7 @@ bool frontend_campaign_ui_stage(qa_frontend *f,uint32_t seat,frontend_campaign_u
     if (action>FRONTEND_CAMPAIGN_QUIT || action<FRONTEND_CAMPAIGN_PLAY ||
         !frontend_campaign_ui_read(f,seat,&view,error) || !view.installed || !frontend_campaign_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action requires its idle installed local recipient");
-    if (view.team && action!=FRONTEND_CAMPAIGN_QUIT)
+    if (view.team && action!=FRONTEND_CAMPAIGN_QUIT && action!=FRONTEND_CAMPAIGN_RETRY && action!=FRONTEND_CAMPAIGN_NEXT)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Base Arena action requires its actual Base Arena campaign");
     if (action==FRONTEND_CAMPAIGN_PLAY || action==FRONTEND_CAMPAIGN_RETRY || action==FRONTEND_CAMPAIGN_NEXT) {
         qa_q3_product_policy policy;
@@ -623,9 +624,17 @@ static bool campaign_launch_action(qa_frontend *f, const qa_application_q3_campa
     const qa_command_invocation *command, qa_error *error)
 {
     frontend_campaign *owner = f->campaign;
-    if (owner->kind != CAMPAIGN_BASE) return true;
     bool play = !strcmp(command->argv[0], "arena-play");
     bool retry = !strcmp(command->argv[0], "arena-retry");
+    if(owner->kind==CAMPAIGN_TEAM) {
+        if(play)return true;
+        if(!owner->result)return frontend_fail(error,QA_ERROR_ARGUMENT,"Team Arena match has not finished");
+        uint32_t physical;
+        if(!frontend_seat_ordinal_read(f,command->context.seat,&physical))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Team Arena continuation requires its local recipient");
+        return frontend_startup_campaign_stage(f->seats+physical,view,!retry,error);
+    }
+    if (owner->kind != CAMPAIGN_BASE) return true;
     int32_t number = play ? campaign_number(command, 0) : 0;
     int32_t skill = play ? campaign_number(command, 1) : 0;
     const qa_base_arena *arena=NULL;

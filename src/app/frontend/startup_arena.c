@@ -218,11 +218,13 @@ static bool mode_set(qa_launch_draft *draft,qa_mode_kind kind,bool team,const qa
     return qa_launch_set_mode(draft,&mode,error);
 }
 
-static bool team_launch(frontend_startup_arena *owner,qa_launch_draft *draft,int32_t skill,qa_error *error)
+static bool team_launch(frontend_startup_arena *owner,qa_launch_draft *draft,int32_t skill,
+    const qa_team_arena_cursor *cursor,const char *player_team,const char *opponent_team,qa_error *error)
 {
     qa_team_arena_skirmish *plan=NULL;
-    if (!qa_team_arena_campaign_plan(owner->team,NULL,(uint32_t)skill,
-        owner->teams[owner->player_team].id,owner->teams[owner->opponent_team].id,&plan,error)) return false;
+    if (!qa_team_arena_campaign_plan(owner->team,cursor,(uint32_t)skill,
+        player_team?player_team:owner->teams[owner->player_team].id,
+        opponent_team?opponent_team:owner->teams[owner->opponent_team].id,&plan,error)) return false;
     const qa_team_arena_skirmish_view *view=qa_team_arena_skirmish_read(plan);
     qa_launch_world world=qa_launch_draft_choices(draft)->world;
     world.map=view->map; world.start_command=NULL; world.spawn_point=NULL; world.explicit_spawn_point=false; world.skill=1;
@@ -271,7 +273,7 @@ bool frontend_startup_arena_select(void *context,qa_ui_library *library,qa_ui_li
     if (index==owner->team_count) return fail(error,QA_ERROR_ARGUMENT,"Unknown authored Team Arena team");
     size_t *side=field==QA_UI_LIBRARY_TEAM_PLAYER?&owner->player_team:&owner->opponent_team;
     size_t previous=*side; *side=index;
-    if (team_launch(owner,draft,2,error)) return true;
+    if (team_launch(owner,draft,2,NULL,NULL,NULL,error)) return true;
     *side=previous; return false;
 }
 
@@ -283,7 +285,7 @@ bool frontend_startup_arena_launch(frontend_startup_arena *owner,qa_launch_draft
     owner->source_count=owner->client_count=0;
     if (owner->team) {
         if (map) return fail(error,QA_ERROR_ARGUMENT,"Base Arena map selection cannot override Team Arena's authored skirmish");
-        return team_launch(owner,draft,skill,error);
+        return team_launch(owner,draft,skill,NULL,NULL,NULL,error);
     }
     if (!progress(owner,draft,false,error)) return false;
     const qa_base_arena *arena=map?qa_base_arena_catalog_find(owner->base,map):NULL;
@@ -305,6 +307,23 @@ bool frontend_startup_arena_launch(frontend_startup_arena *owner,qa_launch_draft
     const qa_application_q3_setting settings[]={ {"g_gametype","2"},{"sv_cheats","0"},
         {"g_doWarmup","0"},{"sv_maxclients","8"},{"g_spSkill",owner->skill} };
     memcpy(owner->source_settings,settings,sizeof(settings)); owner->source_count=5; return true;
+}
+bool frontend_startup_arena_relaunch(frontend_startup_arena *owner,qa_launch_draft *draft,
+    const qa_application_q3_campaign *source,bool advance,qa_error *error)
+{
+    if(!load(owner,draft,error))return false;
+    qa_team_arena_cursor cursor;
+    if(!owner->team || !qa_team_arena_campaign_current(owner->team,source->map,
+        (uint32_t)source->game_type,&cursor,error))return false;
+    if(advance && !qa_team_arena_campaign_next(owner->team,cursor,&cursor,error))return false;
+    const qa_cvar_view *skill=qa_cvars_find(source->cvars,"g_spSkill");
+    const qa_cvar_view *player=qa_cvars_find(source->cvars,"ui_teamName");
+    const qa_cvar_view *opponent=qa_cvars_find(source->cvars,"ui_opponentName");
+    if(!skill || skill->number<1 || skill->number>5 || skill->number!=(double)skill->integer)
+        return fail(error,QA_ERROR_ARGUMENT,"Team Arena source difficulty does not identify an authored match");
+    owner->source_count=owner->client_count=0;
+    return team_launch(owner,draft,skill->integer,&cursor,player?player->value:NULL,
+        opponent?opponent->value:NULL,error);
 }
 
 bool frontend_startup_arena_settings(const frontend_startup_arena *owner,

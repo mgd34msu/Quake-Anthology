@@ -99,14 +99,13 @@ static bool arenas(void *context, qa_ui_library *library,
 { return frontend_startup_arena_arenas(((frontend_seat *)context)->startup_arena, library, catalog, progress, error); }
 static const char *hosting_label(void *context)
 { return frontend_host_menu_label(((frontend_seat *)context)->host_menu); }
-static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft, bool authored,
-    const char *arena_map, int32_t bot_skill, qa_error *error)
+static bool stage_selection(frontend_seat *seat,qa_ui_library *library,qa_launch_draft *draft,bool authored,
+    const char *arena_map,int32_t bot_skill,const qa_application_q3_campaign *previous,bool advance,qa_error *error)
 {
-    frontend_seat *seat = context;
     qa_frontend *f = seat->frontend;
     if (f->startup_launch || qa_application_startup_pending(f->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "A game is already loading");
-    if (draft == qa_ui_library_draft(library) &&
+    if (library && draft == qa_ui_library_draft(library) &&
         !frontend_startup_selection_complete(library, error)) return false;
     struct frontend_startup_launch *request = calloc(1, sizeof(*request));
     if (!request) return frontend_fail(error, QA_ERROR_MEMORY, "Preparing game selection");
@@ -115,15 +114,16 @@ static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft,
         frontend_host_menu_read(seat->host_menu, draft, &request->hosting, error);
     const qa_launch_choices *selected = qa_launch_draft_choices(draft);
     const qa_product *product = qa_catalog_product(qa_launch_draft_catalog(draft), selected->world.preset);
-    request->arena = authored && product && product->family == QA_GAME_Q3;
+    request->arena = previous || (authored && product && product->family == QA_GAME_Q3);
     if (ok && request->arena) {
         const qa_application_q3_setting *settings = NULL, *client_settings = NULL;
         size_t count = 0, client_count = 0;
-        ok = frontend_startup_arena_launch(seat->startup_arena, request->draft, arena_map, bot_skill, error) &&
+        ok = (previous?frontend_startup_arena_relaunch(seat->startup_arena,request->draft,previous,advance,error):
+            frontend_startup_arena_launch(seat->startup_arena, request->draft, arena_map, bot_skill, error)) &&
             frontend_startup_arena_settings(seat->startup_arena, &settings, &count, error) &&
             frontend_startup_arena_client_settings(seat->startup_arena, &client_settings, &client_count, error);
         request->source_setting_count = count;
-        request->team = !strcmp(product->campaign, "missionpack");
+        request->team = previous?previous->product==QA_Q3_TEAM_ARENA:!strcmp(product->campaign, "missionpack");
         if (ok && count + client_count) {
             request->settings = calloc(count + client_count, sizeof(*request->settings));
             if (!request->settings) ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing authored arena settings");
@@ -139,9 +139,22 @@ static bool stage(void *context, qa_ui_library *library, qa_launch_draft *draft,
     if (ok) ok = frontend_startup_server_profile_capture(
         frontend_global_settings_storage_user_store(f->global_settings_storage),seat->server_profile_path,
         request->draft,&request->server_profile,error);
+    if(ok && previous && !qa_application_q3_campaign_current(f->application,previous))
+        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign source changed while preparing its next match");
     if (!ok) { launch_free(request); return false; }
     f->startup_launch = request;
     return true;
+}
+static bool stage(void *context,qa_ui_library *library,qa_launch_draft *draft,bool authored,
+    const char *arena_map,int32_t bot_skill,qa_error *error)
+{ return stage_selection(context,library,draft,authored,arena_map,bot_skill,NULL,false,error); }
+bool frontend_startup_campaign_stage(frontend_seat *seat,const qa_application_q3_campaign *source,
+    bool advance,qa_error *error)
+{
+    qa_launch_draft *draft=NULL;
+    bool ok=qa_launch_snapshot_draft_copy(source->publication,&draft,error) &&
+        stage_selection(seat,NULL,draft,true,NULL,0,source,advance,error);
+    qa_launch_draft_destroy(draft);return ok;
 }
 bool frontend_startup_lobby_host_stage(frontend_seat *seat, qa_lobby_session *session,
     const char *name, uint32_t capacity, uint32_t local, qa_error *error)
