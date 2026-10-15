@@ -294,7 +294,7 @@ static bool changed(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
                                        .hold_ns = hold};
     return g->services.motion_changed(g->services.context, actor, &motion, error);
 }
-static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+bool q1_map_teleport_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (q1_map_text(g, entity->targetname) && entity->next_think < g->time)
         return true;
     bool player = q1_map_player(g, other);
@@ -307,7 +307,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
                      physics.solid != QA_PHYSICS_BOX)))
         return true;
     qa_actor_id target;
-    if (!qa_targets_first(g->maps->options.targets, entity->target, &target))
+    if (!qa_targets_first(g->targets, entity->target, &target))
         return q1_map_fail(error, "Q1 teleport target is missing");
     qa_body_state body, destination;
     if (!qa_world_body_read(g->services.world, other, &body, error))
@@ -322,8 +322,8 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
         return true;
     if (!qa_world_body_read(g->services.world, target, &destination, error))
         return false;
-    const q1_actor *native = q1_entity_const(g, target);
-    qa_vec3 angles = native && native->map ? native->map->mangle : destination.angles;
+    qa_vec3 angles = destination.angles;
+    (void)qa_targets_vector(g->targets, target, g->field_keys[QA_TARGET_KEY_MANGLE], &angles);
     qa_vec3 forward = q1_map_direction(angles);
     if (!qa_q1_spawn_teleport_fog(g, qa_vec_add(destination.origin, qa_vec_scale(forward, 32)),
                                   NULL, error))
@@ -454,7 +454,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             return true;
         return q1_map_multi_fire(g, entity, other, error);
     case Q1_MAP_TELEPORT:
-        return teleport(g, entity, other, error);
+        return q1_map_teleport_touch(g, entity, other, error);
     case Q1_MAP_CHANGELEVEL:
         return changelevel(g, entity, other, error);
     case Q1_MAP_PATH:

@@ -262,6 +262,57 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     return ok && (!e || (remaining ? q1_map_schedule(g, e, 0, Q1_MAP_ADDON_FADE_TICK, error)
                                    : q1_remove(g, e, error)));
 }
+bool q1_map_draught_fx(qa_q1_game *g, q1_actor *ring, bool ambient, qa_error *error) {
+    if (ring->count)
+        return true;
+    ring->count = 1;
+    qa_actor_id source = ring->id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return false;
+    if (!q1_alive(g, source))
+        return true;
+    qa_vec3 origin = qa_vec_add(body.origin, qa_v3(0, 0, 8));
+    if (ambient) {
+        qa_builtin_event sound = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q1,
+            .provider = g->options.provider, .time_ns = g->time_ns,
+            .resource = g->runtime_names[Q1_NAME_RESOURCE_AMBIENCE_HUM1_WAV],
+            .origin = origin, .flags = 1, .volume = .7f, .attenuation = 3};
+        if (!qa_builtin_emit(&g->services, &sound, error))
+            return false;
+        if (!q1_alive(g, source))
+            return true;
+    }
+    q1_actor *particle;
+    if (!q1_create(g, g->runtime_names[Q1_NAME_CLASS_PARTICLE_TELE], Q1_MAP,
+                   (qa_actor_id){0}, &particle, error))
+        return false;
+    particle->classname = QA_STRING_NONE;
+    qa_actor_id id = particle->id;
+    q1_map_state *state = q1_map_allocate(g, particle, error);
+    if (!state)
+        goto failure;
+    state->kind = Q1_MAP_ADDON_PARTICLE_TELE;
+    state->particle_size = qa_v3(24, 24, 0);
+    state->distance = 48;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        goto failure;
+    if (!q1_alive(g, id))
+        return true;
+    body.origin = origin;
+    if (!qa_world_body_write(g->services.world, id, &body, error))
+        goto failure;
+    particle = q1_entity(g, id);
+    if (!particle)
+        return true;
+    if (q1_map_addon_effect_spawn(g, particle, error))
+        return true;
+failure:
+    particle = q1_entity(g, id);
+    if (particle)
+        (void)q1_remove(g, particle, NULL);
+    return false;
+}
 bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     q1_map_kind kind = e->map->kind;
@@ -295,9 +346,11 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     e->map->use_enabled = kind == Q1_MAP_ADDON_FOUNTAIN && (e->spawnflags & 1);
     e->delay = e->delay != 0 ? e->delay : .1f;
-    if (kind == Q1_MAP_ADDON_PARTICLE_TELE)
+    if (kind == Q1_MAP_ADDON_PARTICLE_TELE) {
         e->map->distance = e->map->distance != 0 ? e->map->distance : 64;
-    else {
+        if (qa_vec_dot(e->map->particle_size, e->map->particle_size) == 0)
+            e->map->particle_size = qa_v3(128, 128, 0);
+    } else {
         e->wait = e->wait != 0 ? e->wait : .05f;
         bool tall = kind == Q1_MAP_ADDON_EMBERS_TALL;
         if (qa_vec_dot(e->map->particle_size, e->map->particle_size) == 0)

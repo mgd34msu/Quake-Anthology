@@ -1,5 +1,6 @@
 #include "gameplay_fixture.h"
 #include "qa/game_q1.h"
+#include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_wire.h"
 #include "qa/game_q1_maps.h"
 #include "qa/game_q1_bots.h"
@@ -19,6 +20,12 @@ typedef struct q1_fixture {
     qa_actor_owner owner;
     uint64_t sequence;
     unsigned pain_sounds;
+    qa_actor_id teleport_player;
+    unsigned hum_sounds, particle_events, teleport_fogs, teleport_moves, retouches;
+    bool hum_static;
+    int32_t particle_color, particle_count;
+    qa_vec3 hum_origin, particle_origin, fog_origin, player_at_fog;
+    qa_builtin_motion_change teleport_motion;
 } q1_fixture;
 
 static bool emitted(void *context, const qa_builtin_event *event, qa_error *error)
@@ -30,6 +37,26 @@ static bool emitted(void *context, const qa_builtin_event *event, qa_error *erro
         const char *pain = "knight/khurt.wav";
         if (sound.size == strlen(pain) && !memcmp(sound.data, pain, sound.size))
             ++fixture->pain_sounds;
+        const char *hum = "ambience/hum1.wav";
+        if (sound.size == strlen(hum) && !memcmp(sound.data, hum, sound.size)) {
+            ++fixture->hum_sounds;
+            fixture->hum_origin = event->origin;
+            fixture->hum_static = event->volume == .7f && event->attenuation == 3 && (event->flags & 1u);
+        }
+    }
+    if (event->kind == QA_BUILTIN_PARTICLES) {
+        ++fixture->particle_events;
+        fixture->particle_origin = event->origin;
+        fixture->particle_color = event->code;
+        fixture->particle_count = event->count;
+    }
+    if (event->kind == QA_BUILTIN_TELEPORT && fixture->teleport_player.registry) {
+        qa_body_state body;
+        if (!qa_world_body_read(fixture->world, fixture->teleport_player, &body, error))
+            return false;
+        ++fixture->teleport_fogs;
+        fixture->fog_origin = event->origin;
+        fixture->player_at_fog = body.origin;
     }
     return true;
 }
@@ -59,15 +86,32 @@ static bool physics_write(void *context, qa_actor_id actor,
 
 static bool actor_traits(void *context, qa_actor_id actor, qa_builtin_actor_traits *traits)
 {
-    return qa_q1_game_actor_traits(((q1_fixture *)context)->game, actor, traits);
+    q1_fixture *fixture = context;
+    if (qa_actor_id_equal(actor, fixture->teleport_player) && actor.registry) {
+        *traits = (qa_builtin_actor_traits){.player = true, .view_height = 22, .max_health = 100};
+        return true;
+    }
+    return qa_q1_game_actor_traits(fixture->game, actor, traits);
 }
 
 static bool unexpected_motion(void *context, qa_actor_id actor,
     const qa_builtin_motion_change *change, qa_error *error)
 {
-    (void)context; (void)actor; (void)change;
+    q1_fixture *fixture = context;
+    if (qa_actor_id_equal(actor, fixture->teleport_player) && actor.registry) {
+        ++fixture->teleport_moves;
+        fixture->teleport_motion = *change;
+        return true;
+    }
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unexpected movement in dormant trigger fixture");
     return false;
+}
+static bool force_retouch(void *context, uint32_t frames, qa_error *error)
+{
+    (void)error;
+    q1_fixture *fixture = context;
+    fixture->retouches += frames;
+    return true;
 }
 
 static bool client_eye(void *context, qa_actor_id actor, qa_vec3 *eye, qa_error *error)
@@ -146,7 +190,8 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
         .inventory_provider = fixture->owner, .program = program, .edition = edition,
         .rules = QA_RULESET_NETQUAKE,
         .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1};
-    qa_q1_host host = {.context = fixture, .check_client = check_client};
+    qa_q1_host host = {.context = fixture, .check_client = check_client,
+        .force_retouch = force_retouch};
     GAME_CHECK(qa_q1_game_create(&services, &options, &host, &fixture->game, &error));
     qa_component component;
     GAME_CHECK(qa_q1_game_component(fixture->game, &component, &error));
@@ -785,9 +830,123 @@ static void retained_external_brush(void)
     qa_collision_destroy(map.geometry);
 }
 
+static void draught_player(q1_fixture *fixture)
+{
+    qa_error error = {0};
+    qa_builtin_services services = {.session = fixture->session, .world = fixture->world,
+        .combat = fixture->combat, .inventory = fixture->inventory};
+    qa_combat_state combat = {.health = 100, .can_take_damage = true};
+    qa_string_id definition;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session),
+        "test:q1-ring-player", &definition, &error));
+    qa_builtin_spawn spawn = {.owner = fixture->owner, .definition = definition,
+        .body = {.origin = {128, 0, 1500}, .angles = {10, 20, 30}, .velocity = {11, 22, 33},
+                 .bounds = {{-16, -16, -24}, {16, 16, 32}}}, .combat = &combat, .link = true};
+    GAME_CHECK(qa_builtin_spawn_actor(&services, &spawn, &fixture->teleport_player, &error));
+}
+
+static void draught_ring(bool stupor, float authored_height, bool spawned)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG3);
+    qa_actor_id ring;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = stupor ? "item_draught_stupor" : "item_draught_insight",
+        .origin = {0, 0, 64}, .spawnflags = spawned ? 65536u | 4u : 0,
+        .map_fields = &(qa_q1_map_fields){.height = authored_height}}, &ring, &error));
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture.world, ring, &body, &error));
+    GAME_CHECK(body.bounds.mins.x == -16 && body.bounds.mins.y == -16 && body.bounds.mins.z == -24);
+    GAME_CHECK(body.bounds.maxs.x == 16 && body.bounds.maxs.y == 16 && body.bounds.maxs.z == 32);
+    qa_combat_state health;
+    GAME_CHECK(qa_combat_read(fixture.combat, ring, &health, &error) && health.health == 1);
+    qa_target_binding binding;
+    qa_target_field field;
+    qa_string_id height_key;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session), "height", &height_key, &error));
+    GAME_CHECK(qa_q1_game_target_binding(fixture.game, ring, &binding, &error));
+    GAME_CHECK(binding.field(binding.context, ring, height_key, &field));
+    float height = authored_height != 0 ? authored_height : stupor ? 2048 : -2048;
+    GAME_CHECK(field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == height);
+    GAME_CHECK(fixture.hum_sounds == (spawned ? 0u : 1u));
+    if (!spawned) {
+        GAME_CHECK(fixture.hum_static && fixture.hum_origin.z == 72);
+    }
+    advance(&fixture, 3);
+    qa_q1_presentation visual;
+    qa_physics_properties physics;
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, ring, &visual));
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, ring, &physics));
+    if (spawned) {
+        GAME_CHECK(visual.visual.models[0] == QA_STRING_NONE && physics.solid == QA_PHYSICS_NOT_SOLID);
+        GAME_CHECK(fixture.particle_events == 0);
+        GAME_CHECK(qa_world_body_read(fixture.world, ring, &body, &error) && body.origin.z == 70);
+        uint32_t before = qa_actors_count(qa_session_actor_registry(fixture.session));
+        GAME_CHECK(qa_q1_game_use(fixture.game, ring, (qa_actor_id){0}, &error));
+        GAME_CHECK(qa_actors_count(qa_session_actor_registry(fixture.session)) == before + 1);
+        GAME_CHECK(qa_q1_game_use(fixture.game, ring, (qa_actor_id){0}, &error));
+        GAME_CHECK(qa_actors_count(qa_session_actor_registry(fixture.session)) == before + 1);
+        GAME_CHECK(fixture.hum_sounds == 0);
+        advance(&fixture, 1);
+    }
+    GAME_CHECK(fixture.particle_events > 0);
+    GAME_CHECK(fixture.particle_color == 3 && fixture.particle_count == 3);
+    qa_vec3 offset = qa_vec_sub(fixture.particle_origin, qa_v3(0, 0, spawned ? 78 : 72));
+    GAME_CHECK(fabsf(qa_vec_dot(offset, offset) - 48 * 48) < .02f);
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, ring, &visual) && visual.visual.models[0] != QA_STRING_NONE);
+    draught_player(&fixture);
+    GAME_CHECK(qa_q1_game_touch(fixture.game,
+        &(qa_touch_contact){.self = ring, .other = fixture.teleport_player}, &error));
+    GAME_CHECK(qa_world_body_read(fixture.world, fixture.teleport_player, &body, &error));
+    float destination = 1500 + height;
+    if (height < 0) destination += 1;
+    GAME_CHECK(body.origin.x == 128 && body.origin.y == 0 && body.origin.z == destination);
+    GAME_CHECK(body.angles.x == 10 && body.angles.y == 20 && body.angles.z == 30);
+    GAME_CHECK(body.velocity.x == 11 && body.velocity.y == 22 && body.velocity.z == 33);
+    GAME_CHECK(fixture.teleport_fogs == 1 && fixture.fog_origin.z == destination &&
+        fixture.player_at_fog.z == destination);
+    GAME_CHECK(fixture.teleport_moves == 1 && !fixture.teleport_motion.force_view_angles &&
+        fixture.teleport_motion.hold_ns == 0);
+    GAME_CHECK(fixture.retouches == 2);
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, ring, &visual) && visual.visual.models[0] != QA_STRING_NONE);
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, ring, &physics) && physics.solid == QA_PHYSICS_TRIGGER);
+    fixture_destroy(&fixture);
+}
+
+static void draught_target(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG3);
+    fixture_bind_maps(&fixture);
+    qa_actor_id destination, ring;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_teleport_destination", .targetname = "ring-destination",
+        .origin = {300, 0, 64}, .angles = {0, 90, 0}}, &destination, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "item_draught_insight", .target = "ring-destination",
+        .origin = {0, 0, 64}, .spawnflags = 1}, &ring, &error));
+    advance(&fixture, 3);
+    draught_player(&fixture);
+    GAME_CHECK(qa_q1_game_touch(fixture.game,
+        &(qa_touch_contact){.self = ring, .other = fixture.teleport_player}, &error));
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture.world, fixture.teleport_player, &body, &error));
+    GAME_CHECK(body.origin.x == 300 && body.origin.y == 0 && body.origin.z == 91);
+    GAME_CHECK(body.angles.y == 90 && fabsf(body.velocity.x) < .001f && fabsf(body.velocity.y - 300) < .001f);
+    GAME_CHECK(fixture.teleport_fogs == 2 && fixture.retouches == 2 && fixture.teleport_moves == 1);
+    GAME_CHECK(fixture.teleport_motion.force_view_angles && fixture.teleport_motion.hold_ns == UINT64_C(700000000));
+    fixture_destroy(&fixture);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    draught_ring(false, 0, false);
+    draught_ring(true, 0, true);
+    draught_ring(false, 128, false);
+    draught_target();
     thin_brush_bounds();
     dormant_trigger_activation();
     nonsolid_inline_appearance();

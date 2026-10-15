@@ -56,6 +56,8 @@
     X(CLASS_ITEM_HEALTH, "item_health") \
     X(RESOURCE_PROGS_ITEM_H_HELLKN_MDL, "progs/item_h_hellkn.mdl") \
     X(RESOURCE_PROGS_G_BUNNY_MDL, "progs/g_bunny.mdl") \
+    X(RESOURCE_PROGS_GOLD_RING_MDL, "progs/gold_ring.mdl") \
+    X(RESOURCE_PROGS_ONYX_RING_MDL, "progs/onyx_ring.mdl") \
     X(MG3_NEWGAMEPLUS_ITEM, "$mg3_qc_newgameplus_item") \
     X(MG3_SELECTED_BLOODY_NIGHTMARE, "$mg3_selected_bloody_nightmare") \
     X(RUNE_RESISTANCE, "resistance") \
@@ -99,6 +101,8 @@
     X(QC_ANTIGRAV_FAILING, "$qc_antigrav_failing") \
     X(QC_ANTIGRAV_LOST, "$qc_antigrav_lost") \
     X(MG3_LAVASUIT_WEARING_OUT, "$mg3_qc_lavasuit_wearing_out") \
+    X(MG3_RING_OF_INSIGHT, "$mg3_qc_ring_of_insight") \
+    X(MG3_RING_OF_OBLIVION, "$mg3_qc_ring_of_oblivion") \
     X(QC_DENIED_VENGEANCE, "$qc_you_are_denied_vengeance") \
     X(QC_VENGEANCE_LOST, "$qc_vengeance_lost") \
     X(TOSS_ORIGIN, "_toss_origin") \
@@ -659,6 +663,9 @@
     X(CLASS_HIP_RUBBLE, "hip_rubble") \
     X(CLASS_HOOK, "hook") \
     X(CLASS_ITEM_BACKPACK, "item_backpack") \
+    X(CLASS_ITEM_DRAUGHT_INSIGHT, "item_draught_insight") \
+    X(CLASS_ITEM_DRAUGHT_STUPOR, "item_draught_stupor") \
+    X(CLASS_PARTICLE_TELE, "particle_tele") \
     X(CLASS_ITEM_FLAGBASE, "item_flagbase") \
     X(CLASS_ITEM_FLAGBASE_TEAM1, "item_flagbase_team1") \
     X(CLASS_ITEM_FLAGBASE_TEAM2, "item_flagbase_team2") \
@@ -1308,8 +1315,13 @@ enum q1_pickup_kind {
     Q1_ITEM_MG3_SHARD,
     Q1_ITEM_MG3_UPGRADE,
     Q1_ITEM_MG3_BLOODY,
-    Q1_ITEM_MG3_HEAD
+    Q1_ITEM_MG3_HEAD,
+    Q1_ITEM_MG3_RING
 };
+enum { Q1_MG3_RING_STUPOR = 1, Q1_MG3_RING_TARGET = 2 };
+static inline q1_runtime_name q1_mg3_ring_model(bool stupor) {
+    return stupor ? Q1_NAME_RESOURCE_PROGS_ONYX_RING_MDL : Q1_NAME_RESOURCE_PROGS_GOLD_RING_MDL;
+}
 #define Q1_MG3_TETTE UINT32_C(512)
 uint32_t *q1_campaign_flags_owner(const qa_q1_game *);
 static inline q1_runtime_name q1_mg3_head_model(bool bunny) {

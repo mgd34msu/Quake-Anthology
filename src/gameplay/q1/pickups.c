@@ -21,6 +21,11 @@ static bool mg3_head_named(const qa_q1_game *g, const q1_actor *entity) {
     return g->options.program == QA_Q1_MG3 &&
            entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_HEAD_HELLKNIGHT];
 }
+static bool mg3_ring_named(const qa_q1_game *g, const q1_actor *entity) {
+    return g->options.program == QA_Q1_MG3 &&
+        (entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_DRAUGHT_INSIGHT] ||
+         entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR]);
+}
 
 int q1_weapon_rank(const qa_q1_game *g, qa_q1_weapon weapon) {
     static const qa_q1_weapon rank[] = {
@@ -601,7 +606,22 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
     }
     if (!model && g->options.program == QA_Q1_MG3) {
         bounds = 1;
-        if (mg3_head_named(g, entity)) {
+        if (mg3_ring_named(g, entity)) {
+            bool stupor = entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR];
+            item->kind = Q1_ITEM_MG3_RING;
+            item->upgrade = (item->upgrade & Q1_MG3_RING_TARGET) |
+                (stupor ? Q1_MG3_RING_STUPOR : 0);
+            item->respawn = 0;
+            bounds = 2;
+            model = q1_runtime_name_text(q1_mg3_ring_model(stupor));
+            q1_map_state *state = q1_map_allocate(g, entity, error);
+            if (!state)
+                return false;
+            if (!state->height)
+                state->height = stupor ? 2048 : -2048;
+            state->netname = g->runtime_names[stupor ? Q1_NAME_MG3_RING_OF_OBLIVION :
+                                                     Q1_NAME_MG3_RING_OF_INSIGHT];
+        } else if (mg3_head_named(g, entity)) {
             item->kind = Q1_ITEM_MG3_HEAD;
             bounds = 5;
             model = q1_runtime_name_text(q1_mg3_head_model(item->upgrade != 0));
@@ -661,7 +681,7 @@ static bool pickup_define(qa_q1_game *g, q1_actor *entity, bool *recognized,
                      "Q1 classname has no native pickup definition");
         return false;
     }
-    if (mjolnir_teleport(g, entity) && g->maps) {
+    if (mjolnir_teleport(g, entity)) {
         q1_map_state *state = q1_map_allocate(g, entity, error);
         if (!state)
             return false;
@@ -756,6 +776,23 @@ bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error
     if (g->options.deathmatch == 0 &&
         (item_name(g, entity, "item_sphere") || item_name(g, entity, "item_random_powerup")))
         return q1_remove(g, entity, error);
+    if (mg3_ring_named(g, entity)) {
+        entity->state.pickup.upgrade = (entity->spawnflags & 1u) && q1_map_text(g, entity->target)
+            ? Q1_MG3_RING_TARGET : 0;
+        if (g->wire && g->wire->loading) {
+            qa_actor_id actor = entity->id;
+            bool stupor = entity->classname == g->runtime_names[Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR];
+            if (!qa_q1_wire_declare_sound(g,
+                q1_runtime_name_text(Q1_NAME_RESOURCE_AMBIENCE_HUM1_WAV), error))
+                return false;
+            if (!q1_alive(g, actor))
+                return true;
+            if (!qa_q1_wire_declare_model(g, q1_runtime_name_text(q1_mg3_ring_model(stupor)), error))
+                return false;
+            if (!q1_alive(g, actor))
+                return true;
+        }
+    }
     if (mg3_head_named(g, entity)) {
         qa_actor_id actor = entity->id;
         qa_body_state body;
@@ -772,6 +809,19 @@ bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error
     }
     if (!pickup_define(g, entity, recognized, error))
         return false;
+    if (entity->state.pickup.kind == Q1_ITEM_MG3_RING) {
+        qa_actor_id actor = entity->id;
+        if (!qa_combat_set_health(g->services.combat, actor, 1, error) ||
+            (!(entity->spawnflags & 4u) && !q1_map_draught_fx(g, entity, true, error)))
+            return false;
+        entity = q1_entity(g, actor);
+        if (!entity)
+            return true;
+        if (q1_map_coop_inhibited(g, entity, true) ||
+            (entity->spawnflags & (UINT32_C(262144) <<
+                qa_q1_mg3_rune_count(qa_q1_game_campaign_flags(g)))))
+            return q1_remove(g, entity, error);
+    }
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     if (entity->state.pickup.kind != Q1_ITEM_BACKPACK) {
@@ -1264,6 +1314,11 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     *accepted = false;
     if (entity->physics.solid != QA_PHYSICS_TRIGGER)
         return true;
+    if (entity->state.pickup.kind == Q1_ITEM_MG3_RING) {
+        if (entity->state.pickup.upgrade & Q1_MG3_RING_TARGET)
+            return q1_map_teleport_touch(g, entity, recipient, error);
+        return q1_map_height_teleport(g, recipient, entity->map->height, true, error);
+    }
     if (entity->state.pickup.kind == Q1_ITEM_MG3_HEAD)
         return mg3_head_touch(g, entity, recipient, external, accepted, error);
     bool teleport = mjolnir_teleport(g, entity);
@@ -1302,7 +1357,7 @@ static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     entity = q1_entity(g, pickup);
     if (entity && entity->map)
         height = entity->map->height;
-    return q1_map_silent_teleport(g, recipient, height, error);
+    return q1_map_height_teleport(g, recipient, height, false, error);
 }
 static bool mg3_upgrade_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient,
     q1_player *player, qa_error *error) {
@@ -1465,6 +1520,23 @@ bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const 
     qa_q1_game_operation_end(&operation);
     return okay;
 }
+static bool pickup_regenerate(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    q1_pickup *item = &entity->state.pickup;
+    if (item->random && !q1_pickup_define(g, entity, error))
+        return false;
+    entity->model = item->original_model;
+    entity->physics.solid = QA_PHYSICS_TRIGGER;
+    item->hidden = false;
+    qa_actor_id actor = entity->id;
+    if (!q1_sound_resource(g, actor, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error))
+        return false;
+    entity = q1_entity(g, actor);
+    if (!entity || !q1_link(g, entity, error))
+        return !entity;
+    entity = q1_entity(g, actor);
+    return !entity || entity->state.pickup.kind != Q1_ITEM_MG3_RING ||
+        q1_map_draught_fx(g, entity, false, error);
+}
 bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
     q1_think_kind kind = entity->think;
@@ -1509,16 +1581,11 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return !respawn || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
     }
     if (kind == Q1_THINK_RESPAWN) {
-        if (item->random && !q1_pickup_define(g, entity, error))
-            return false;
-        entity->model = item->original_model;
-        entity->physics.solid = QA_PHYSICS_TRIGGER;
-        item->hidden = false;
-        return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error) &&
-               q1_link(g, entity, error);
+        return pickup_regenerate(g, entity, error);
     }
     if (kind == Q1_THINK_ITEM_PLACE) {
         item->original_model = entity->model;
+        bool fixed = g->options.program == QA_Q1_MG3 && (entity->spawnflags & 65536u);
         qa_body_state body;
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
@@ -1528,16 +1595,17 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                 .policy = qa_collision_default_policy(QA_GAME_Q1)};
         query.end = qa_vec_add(query.start, qa_v3(0, 0, -256));
         qa_trace_result trace;
-        if (!qa_world_trace(g->services.world, &query, &trace, error))
+        if (!fixed && !qa_world_trace(g->services.world, &query, &trace, error))
             return false;
-        if (trace.all_solid || trace.fraction == 1)
+        if (!fixed && (trace.all_solid || trace.fraction == 1))
             return q1_remove(g, entity, error);
-        body.origin = trace.end;
+        body.origin = fixed ? query.start : trace.end;
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = trace.hit == QA_TRACE_HIT_WORLD ? qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
+        body.ground = fixed ? (qa_actor_reference){0} : trace.hit == QA_TRACE_HIT_WORLD ?
+            qa_actor_reference_source(g->options.provider, 0) : q1_ref_from(g, trace.actor);
         entity->physics.solid = QA_PHYSICS_TRIGGER;
-        entity->physics.motion = QA_PHYSICS_TOSS;
-        entity->physics.flags = QA_PHYSICS_KILL_VELOCITY | QA_PHYSICS_ONGROUND;
+        entity->physics.motion = fixed ? QA_PHYSICS_STATIONARY : QA_PHYSICS_TOSS;
+        entity->physics.flags = QA_PHYSICS_KILL_VELOCITY | (fixed ? 0 : QA_PHYSICS_ONGROUND);
         entity->source_movement_flags = UINT32_C(256);
         if (mg3_special(item) && (entity->spawnflags & 4)) {
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
@@ -1554,11 +1622,7 @@ bool q1_pickup_use(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_pickup *item = &entity->state.pickup;
     if (item->external || !mg3_special(item) || !(entity->spawnflags & 4))
         return true;
-    entity->model = item->original_model;
-    entity->physics.solid = QA_PHYSICS_TRIGGER;
-    item->hidden = false;
-    return q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ITEMS_ITEMBK2_WAV], 2, 1, 1, error) &&
-           (!q1_alive(g, entity->id) || q1_link(g, entity, error));
+    return pickup_regenerate(g, entity, error);
 }
 bool q1_drop_backpack(qa_q1_game *g, q1_actor *source, qa_q1_weapon weapon,
                       const float ammo[QA_Q1_AMMO_COUNT], qa_error *error) {
@@ -1828,6 +1892,8 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
     case Q1_ITEM_MG3_HEAD:
         *accepted = item->kind == Q1_ITEM_HORN || player != NULL;
         *utility = *accepted ? 1 : 0;
+        return true;
+    case Q1_ITEM_MG3_RING:
         return true;
     default:
         break;

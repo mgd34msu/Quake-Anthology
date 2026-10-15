@@ -286,7 +286,8 @@ bool q1_map_addon_control_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
     default: return true;
     }
 }
-bool q1_map_silent_teleport(qa_q1_game *g, qa_actor_id other, float height, qa_error *error) {
+bool q1_map_height_teleport(qa_q1_game *g, qa_actor_id other, float height, bool fog,
+                           qa_error *error) {
     qa_q1_target target;
     if (!q1_alive(g, other) || !q1_target(g, other, &target) || !target.player ||
         !q1_alive(g, other))
@@ -297,39 +298,59 @@ bool q1_map_silent_teleport(qa_q1_game *g, qa_actor_id other, float height, qa_e
     if (!q1_alive(g, other))
         return true;
     qa_vec3 destination = body.origin;
-    destination.z += height + (height < 0 ? 1 : 0);
+    destination.z += height;
+    if (height < 0)
+        destination.z += 1;
     if (!qa_vec_finite(destination))
         return q1_map_fail(error, "Q1 silent teleport destination exceeds native coordinates");
+    if (fog) {
+        body.origin = destination;
+        if (!qa_world_body_write(g->services.world, other, &body, error) ||
+            !qa_world_link(g->services.world, other, NULL, error))
+            return false;
+        if (!q1_alive(g, other))
+            return true;
+        if (!qa_q1_spawn_teleport_fog(g, destination, NULL, error))
+            return false;
+        if (!q1_alive(g, other))
+            return true;
+    }
     qa_actor_id death;
-    if (!q1_spawn_teledeath(g, destination, other, .2, false, &death, error))
-        return false;
-    qa_bounds box = {qa_vec_add(destination, qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1))),
-                     qa_vec_add(destination, qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1)))};
-    qa_world_actor_snapshot victims;
-    if (!qa_world_snapshot_capture(g->services.world, box, QA_COLLISION_BOTH,
-                                  QA_WORLD_ORDER_ACTOR_SLOT, &victims, error))
+    if (!q1_spawn_teledeath(g, destination, other, .2, fog, &death, error))
         return false;
     bool ok = true;
-    for (size_t i = 0; ok && i < victims.count && q1_alive(g, other) && q1_alive(g, death); ++i) {
-        qa_actor_id victim = victims.actors[i];
-        if (!q1_alive(g, victim))
-            continue;
-        qa_body_state state;
-        if (!qa_world_body_read(g->services.world, victim, &state, error)) {
-            ok = false;
-            break;
+    if (!fog) {
+        qa_bounds box = {qa_vec_add(destination, qa_vec_sub(body.bounds.mins, qa_v3(1, 1, 1))),
+                         qa_vec_add(destination, qa_vec_add(body.bounds.maxs, qa_v3(1, 1, 1)))};
+        qa_world_actor_snapshot victims;
+        if (!qa_world_snapshot_capture(g->services.world, box, QA_COLLISION_BOTH,
+                                      QA_WORLD_ORDER_ACTOR_SLOT, &victims, error))
+            return false;
+        for (size_t i = 0; ok && i < victims.count && q1_alive(g, other) && q1_alive(g, death); ++i) {
+            qa_actor_id victim = victims.actors[i];
+            if (!q1_alive(g, victim))
+                continue;
+            qa_body_state state;
+            if (!qa_world_body_read(g->services.world, victim, &state, error)) {
+                ok = false;
+                break;
+            }
+            q1_actor *helper = q1_entity(g, death);
+            qa_bounds bounds = {qa_vec_add(state.origin, state.bounds.mins),
+                                qa_vec_add(state.origin, state.bounds.maxs)};
+            if (q1_alive(g, other) && helper && q1_alive(g, victim) && qa_bounds_overlap(box, bounds))
+                ok = q1_teledeath_touch(g, helper, victim, error);
         }
-        q1_actor *helper = q1_entity(g, death);
-        qa_bounds bounds = {qa_vec_add(state.origin, state.bounds.mins),
-                            qa_vec_add(state.origin, state.bounds.maxs)};
-        if (q1_alive(g, other) && helper && q1_alive(g, victim) && qa_bounds_overlap(box, bounds))
-            ok = q1_teledeath_touch(g, helper, victim, error);
+        qa_world_snapshot_release(&victims);
     }
-    qa_world_snapshot_release(&victims);
     if (!ok || !q1_alive(g, other))
         return ok;
     body.origin = destination;
-    if (!qa_world_body_write(g->services.world, other, &body, error))
+    if (!fog && !qa_world_body_write(g->services.world, other, &body, error))
+        return false;
+    if (!q1_alive(g, other))
+        return true;
+    if (fog && !qa_world_body_read(g->services.world, other, &body, error))
         return false;
     if (!q1_alive(g, other))
         return true;
@@ -337,7 +358,7 @@ bool q1_map_silent_teleport(qa_q1_game *g, qa_actor_id other, float height, qa_e
         !g->services.motion_changed(g->services.context, other,
               &(qa_builtin_motion_change){.reason = QA_BUILTIN_MOTION_TELEPORT, .body = body}, error))
         return false;
-    return !q1_alive(g, other) || qa_world_link(g->services.world, other, NULL, error);
+    return !q1_alive(g, other) || fog || qa_world_link(g->services.world, other, NULL, error);
 }
 static bool cutscene(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
@@ -434,7 +455,7 @@ bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
         return !e || q1_link(g, e, error);
     }
     if (kind == Q1_MAP_ADDON_SILENT_TELEPORT)
-        return q1_map_silent_teleport(g, other, e->map->height, error);
+        return q1_map_height_teleport(g, other, e->map->height, false, error);
     if (kind == Q1_MAP_ADDON_CUTSCENE)
         return cutscene(g, e, error);
     return true;
