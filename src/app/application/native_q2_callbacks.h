@@ -12,6 +12,10 @@ struct application_native_q2_records;
 struct application_native_q2_items;
 typedef struct application_native_q2_callbacks application_native_q2_callbacks;
 typedef struct application_native_q2_scratch application_native_q2_scratch;
+typedef struct application_native_q2_protection_declaration {
+    qa_json_id source;
+    qa_protection_channel channel;
+} application_native_q2_protection_declaration;
 typedef struct application_native_callback_inputs {
     const application_q3_mod_value *values;
     qa_bytes user_command;
@@ -111,6 +115,8 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *, qa_er
 bool application_native_q2_callbacks_drain(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_drain_application(struct qa_application *, qa_error *);
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *);
+const application_native_q2_protection_declaration *application_native_q2_callbacks_protections(
+    const application_native_q2_callbacks *, size_t *count);
 bool application_native_q2_callbacks_source_before(void *, qa_error *);
 bool application_native_q2_callbacks_source_after(void *, qa_error *);
 bool application_native_q2_callbacks_release_actor(struct application_native_q2 *, qa_actor_id, qa_error *);

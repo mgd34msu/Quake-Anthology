@@ -179,18 +179,14 @@ static bool create_layout(const application_native_q2_protection_options *option
     o->options=*options; *out=o;
     if(!qa_actor_index_create(&o->actor_index,qa_session_actors(options->session),&o->actor_storage,e)) return false;
     const qa_json_document *d=application_native_q2_callbacks_document(options->callbacks);
-    qa_json_id rows=qa_json_get(d,qa_json_root(d),"protection");
-    if(rows==QA_JSON_NONE) return storage_prepare(o,e);
-    if(qa_json_type(d,rows)!=QA_JSON_ARRAY) return fail(e,"Native protection declarations require their authored array");
-    o->count=qa_json_size(d,rows); o->definitions=o->count?calloc(o->count,sizeof(*o->definitions)):NULL;
+    const application_native_q2_protection_declaration *rows=
+        application_native_q2_callbacks_protections(options->callbacks,&o->count);
+    o->definitions=o->count?calloc(o->count,sizeof(*o->definitions)):NULL;
     if(o->count&&!o->definitions) { qa_error_set(e,QA_ERROR_MEMORY,0,"Owning native protection channels"); return false; }
     for(size_t i=0;i<o->count;++i) {
-        protection_definition *definition=o->definitions+i; qa_json_id row=qa_json_at(d,rows,i);
-        definition->source=row; definition->claim.owner=options->owner;
+        protection_definition *definition=o->definitions+i; qa_json_id row=rows[i].source;
+        definition->source=row; definition->channel=rows[i].channel; definition->claim.owner=options->owner;
         if(!identity(o,qa_json_get(d,row,"id"),&definition->claim.rule,e)) return false;
-        if(qa_json_string_equal(d,qa_json_get(d,row,"channel"),"regular")) definition->channel=QA_PROTECTION_REGULAR;
-        else if(qa_json_string_equal(d,qa_json_get(d,row,"channel"),"powered")) definition->channel=QA_PROTECTION_POWERED;
-        else return fail(e,"Native protection channel is undeclared");
         for(size_t j=0;j<i;++j) if(o->definitions[j].claim.rule==definition->claim.rule||o->definitions[j].channel==definition->channel)
             return fail(e,"Native protection claim identity or channel repeats");
         qa_json_id admission=qa_json_get(d,row,"admission");

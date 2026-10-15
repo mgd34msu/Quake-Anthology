@@ -204,9 +204,11 @@ static bool parse_definition(application_native_q2_pickups *o,size_t index,qa_js
             if(qa_json_string_equal(d,channel,"regular")) out->resource.channel=QA_PROTECTION_REGULAR;
             else if(qa_json_string_equal(d,channel,"powered")) out->resource.channel=QA_PROTECTION_POWERED;
             else return fail(e,QA_ERROR_FORMAT,"Native pickup names unknown protection channel");
-            bool found=false; qa_json_id protections=qa_json_get(d,qa_json_root(d),"protection");
-            for(size_t j=0;j<qa_json_size(d,protections);++j)
-                if(qa_json_string_equal(d,qa_json_get(d,qa_json_at(d,protections,j),"channel"),out->resource.channel==QA_PROTECTION_REGULAR?"regular":"powered")) found=true;
+            bool found=false; size_t protection_count;
+            const application_native_q2_protection_declaration *protections=
+                application_native_q2_callbacks_protections(o->options.callbacks,&protection_count);
+            for(size_t j=0;j<protection_count;++j)
+                if(protections[j].channel==out->resource.channel) found=true;
             if(!found||!o->options.protection) return fail(e,QA_ERROR_FORMAT,"Native pickup has no actual protection owner");
         } else if(qa_json_string_equal(d,kind,"inventory")) {
             out->resource.kind=QA_PICKUP_INVENTORY; qa_json_id item_id=qa_json_get(d,w,"item"),f=qa_json_get(d,w,"fields");

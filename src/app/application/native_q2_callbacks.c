@@ -147,6 +147,8 @@ struct application_native_q2_callbacks {
     native_address_descriptor *addresses;
     native_call_descriptor *call_descriptors;
     native_protection_descriptor *protection_descriptors;
+    application_native_q2_protection_declaration *protection_rows;
+    size_t protection_count;
     struct { qa_json_id *calls; size_t count; } stages[NATIVE_CALLBACK_STAGE_COUNT];
     bool descriptors_bound;
     qa_arena storage;
@@ -1274,6 +1276,51 @@ static bool record_nodes_bind(application_native_q2_callbacks *o, qa_error *e)
     for(size_t i=0;i<count;++i) qa_buffer_free(names+i);
     free(names); return okay;
 }
+static bool protection_layout_bind(application_native_q2_callbacks *o, qa_error *e)
+{
+    const qa_json_document *d=o->document;
+    qa_json_id root=qa_json_root(d),rows=qa_json_get(d,root,"protection"),
+        legacy=qa_json_get(d,root,"poweredProtection");
+    if(rows!=QA_JSON_NONE && legacy!=QA_JSON_NONE) {
+        qa_error_set(e,QA_ERROR_FORMAT,0,"Protection declarations cannot mix legacy and current layouts");
+        return false;
+    }
+    if(rows==QA_JSON_NONE && legacy==QA_JSON_NONE) return true;
+    bool old=legacy!=QA_JSON_NONE;
+    if(qa_json_type(d,old?legacy:rows)!=(old?QA_JSON_OBJECT:QA_JSON_ARRAY)) {
+        qa_error_set(e,QA_ERROR_FORMAT,0,"Native protection requires an array or a legacy powered object");
+        return false;
+    }
+    o->protection_count=old?1:qa_json_size(d,rows);
+    o->protection_rows=o->protection_count?calloc(o->protection_count,sizeof(*o->protection_rows)):NULL;
+    if(o->protection_count&&!o->protection_rows)
+        return application_fail(e,QA_ERROR_MEMORY,"Binding native protection declarations");
+    for(size_t i=0;i<o->protection_count;++i) {
+        application_native_q2_protection_declaration *row=o->protection_rows+i;
+        row->source=old?legacy:qa_json_at(d,rows,i);
+        qa_json_id channel=qa_json_get(d,row->source,"channel"),
+            abi=qa_json_get(d,qa_json_get(d,row->source,"absorb"),"abi");
+        if(old||qa_json_string_equal(d,channel,"powered")) row->channel=QA_PROTECTION_POWERED;
+        else if(qa_json_string_equal(d,channel,"regular")) row->channel=QA_PROTECTION_REGULAR;
+        else {
+            qa_error_set(e,QA_ERROR_FORMAT,i,"Native protection channel is undeclared");
+            return false;
+        }
+        bool source=qa_json_string_equal(d,abi,"source-call")||qa_json_string_equal(d,abi,"source-region");
+        if((old&&source)||(!source&&!qa_json_string_equal(d,abi,
+            row->channel==QA_PROTECTION_REGULAR?"q2-check-armor":"q2-check-power-armor"))) {
+            qa_error_set(e,QA_ERROR_FORMAT,i,"Native protection absorption ABI differs from its channel");
+            return false;
+        }
+    }
+    return true;
+}
+const application_native_q2_protection_declaration *application_native_q2_callbacks_protections(
+    const application_native_q2_callbacks *o, size_t *count)
+{
+    *count=o?o->protection_count:0;
+    return o?o->protection_rows:NULL;
+}
 bool application_native_q2_callbacks_prepare(struct application_native_q2 *n,qa_error *e)
 {
     qa_bytes bytes=qa_native_declaration_callbacks(n?n->declaration:NULL);
@@ -1284,7 +1331,8 @@ bool application_native_q2_callbacks_prepare(struct application_native_q2 *n,qa_
     n->callbacks=o; o->engine=n; o->declaration=n->declaration; o->module=n->provider->state.native.module;
     o->active_call=QA_JSON_NONE;
     o->target=qa_native_module_describe(o->module).image.target;
-    return qa_json_parse(QA_JSON_STRICT, bytes,&o->document,e)&&record_nodes_bind(o,e);
+    return qa_json_parse(QA_JSON_STRICT, bytes,&o->document,e)&&
+        protection_layout_bind(o,e)&&record_nodes_bind(o,e);
 }
 static bool address_shape(application_native_q2_callbacks *o,qa_json_id address,bool nullable,qa_error *e)
 {
@@ -1594,11 +1642,10 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
         if(!application_native_q2_callback_region_prepare(instance(o),o->declaration,d,node,&signature,call->entry,
             &o->call_descriptors[i].region_recipe,e)) return false;
     }
-    qa_json_id protection=qa_json_get(d,qa_json_root(d),"protection");
-    for(size_t i=0;i<qa_json_size(d,protection);++i) {
-        qa_json_id node=qa_json_at(d,protection,i),absorb=qa_json_get(d,node,"absorb"),abi=qa_json_get(d,absorb,"abi");
+    for(size_t i=0;i<o->protection_count;++i) {
+        qa_json_id node=o->protection_rows[i].source,absorb=qa_json_get(d,node,"absorb"),abi=qa_json_get(d,absorb,"abi");
         native_protection_descriptor *p=o->protection_descriptors+node;
-        p->regular=qa_json_string_equal(d,qa_json_get(d,node,"channel"),"regular");
+        p->regular=o->protection_rows[i].channel==QA_PROTECTION_REGULAR;
         bool source=qa_json_string_equal(d,abi,"source-call"),region=qa_json_string_equal(d,abi,"source-region");
         p->check=o->call_descriptors[absorb].armor||o->call_descriptors[absorb].power_armor;
         if(!source&&!region&&!p->check) return fail(e,"Native protection has no declared source absorption ABI");
@@ -1667,7 +1714,7 @@ static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
             .inventory=app->inventory,.pickups=app->pickups,.owner=n->provider->owner};
         if(!application_native_q2_items_create(&options,&o->items,e)) return false;
     }
-    if(!o->protection&&qa_json_size(o->document,qa_json_get(o->document,qa_json_root(o->document),"protection"))) {
+    if(!o->protection&&o->protection_count) {
         application_native_q2_protection_options options={o,app->session,app->combat,app->inventory,n->provider->owner};
         if(!application_native_q2_protection_create(&options,&o->protection,e)) return false;
     }
@@ -1781,7 +1828,8 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     o->scratch_tail=NULL;qa_arena_destroy(&o->storage);
     application_native_q2_source_invocation_destroy(n);
     descriptors_clear(o);
-    free(o->registrations); free(o->record_nodes); free(o->input_nodes); qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
+    free(o->registrations); free(o->record_nodes); free(o->input_nodes); free(o->protection_rows);
+    qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
 }
 const qa_json_document *application_native_q2_callbacks_document(const application_native_q2_callbacks *o)
 { return o?o->document:NULL; }
@@ -1877,7 +1925,7 @@ bool application_native_q2_callbacks_observation_required(const application_nati
                 return true;
     }
     return qa_json_size(o->document,qa_json_get(o->document,root,"pickups"))!=0||
-        qa_json_size(o->document,qa_json_get(o->document,root,"protection"))!=0||
+        o->protection_count!=0||
         qa_json_size(o->document,qa_json_get(o->document,root,"sourceActors"))!=0||
         qa_json_size(o->document,qa_json_get(o->document,qa_json_get(o->document,root,"items"),"storage"))!=0;
 }

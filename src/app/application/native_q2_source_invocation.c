@@ -39,11 +39,12 @@ bool application_native_q2_source_invocation_prepare(struct application_native_q
     struct application_native_q2_source_storage *storage = calloc(1, sizeof(*storage));
     if (!storage) return application_fail(e, QA_ERROR_MEMORY, "Preparing native invocation storage");
     const qa_json_document *d = application_native_q2_callbacks_document(n->callbacks);
-    qa_json_id rows = qa_json_get(d, qa_json_root(d), "protection");
-    size_t regions = qa_json_size(d, rows);
+    size_t regions;
+    const application_native_q2_protection_declaration *rows=
+        application_native_q2_callbacks_protections(n->callbacks,&regions);
     for (size_t i = 0; i < regions; ++i)
         storage->declared |= qa_json_string_equal(d,
-            qa_json_get(d, qa_json_get(d, qa_json_at(d, rows, i), "absorb"), "abi"), "source-region");
+            qa_json_get(d, qa_json_get(d, rows[i].source, "absorb"), "abi"), "source-region");
     qa_arena_init(&storage->arena, 0);
     if (!qa_pool_prepare(&storage->scopes, &storage->arena, storage->declared ? 1 : 0,
             sizeof(struct application_native_q2_source_invocation), _Alignof(struct application_native_q2_source_invocation), e) ||
