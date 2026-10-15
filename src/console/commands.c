@@ -1238,14 +1238,15 @@ static bool fallback(qa_console *console, const qa_command_invocation *command,
     }
     bool local = command->context.direct &&
         (command->context.origin == QA_COMMAND_LOCAL || command->context.origin == QA_COMMAND_SEAT);
+    bool server = command->context.origin == QA_COMMAND_SERVER;
     if (!qac_q1(command->context.dialect)) {
         if (!already_forwarded) {
             qa_command_result result = fallback_call(console, options->forward, command, error);
             if (result != QA_COMMAND_UNHANDLED) return result == QA_COMMAND_HANDLED;
         }
-        if (!local) return true;
+        if (!local && !server) return true;
     }
-    bool warn = local || command->context.dialect != QA_RULESET_QUAKEWORLD;
+    bool warn = local || server || command->context.dialect != QA_RULESET_QUAKEWORLD;
     if (!warn) {
         const qa_cvar_view *warncmd=NULL,*developer=NULL;
         if (!qa_console_cvar_read(console,&command->context,"cl_warncmd",&warncmd,error) ||

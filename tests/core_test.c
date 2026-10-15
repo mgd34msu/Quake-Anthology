@@ -767,7 +767,7 @@ static void test_console_failed_release(void)
 }
 
 typedef struct console_precedence_counts {
-    size_t forwarded, called;
+    size_t forwarded, called, printed_bytes;
     qa_command_result forward_result, callback_result;
 } console_precedence_counts;
 static qa_command_result console_precedence_forward(void *user,
@@ -783,6 +783,13 @@ static qa_command_result console_precedence_callback(void *user,
     (void)command;(void)error;
     console_precedence_counts *counts=user;
     ++counts->called;return counts->callback_result;
+}
+static void console_precedence_print(void *user,const qa_command_context *context,
+    const char *text)
+{
+    (void)context;
+    console_precedence_counts *counts=user;
+    counts->printed_bytes+=strlen(text);
 }
 static void test_console_command_precedence(void)
 {
@@ -862,6 +869,20 @@ static void test_console_command_precedence(void)
     CHECK(qa_console_execute_now(console,&remote,"team spectator",&error));
     CHECK(counts.called==2 && counts.forwarded==1);
     CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"spectator"));
+    qa_console_destroy(console);
+
+    counts=(console_precedence_counts){.callback_result=QA_COMMAND_UNHANDLED};
+    console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,
+        .user=&counts,.source_command=console_precedence_callback,
+        .print=console_precedence_print},&error);
+    CHECK(console);
+    qa_command_context server=context;
+    server.origin=QA_COMMAND_SERVER;
+    CHECK(qa_console_execute_now(console,&server,"qa_unknown_operator_command",&error));
+    CHECK(counts.printed_bytes>0);
+    size_t printed_bytes=counts.printed_bytes;
+    CHECK(qa_console_execute_now(console,&remote,"qa_unknown_remote_command",&error));
+    CHECK(counts.printed_bytes==printed_bytes);
     qa_console_destroy(console);qa_cvars_destroy(cvars);
 }
 

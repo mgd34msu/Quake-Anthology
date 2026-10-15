@@ -1016,10 +1016,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == guest &&
         ((context->unified_intent && !context->weapon) ||
          (!context->unified_intent && command->kind != QA_RULESET_Q3))) {
-        application_q3_weapon_prediction current_weapon;
-        if (!input->weapons || !application_q3_weapons_prediction_read(input->weapons,
-                actor, &current_weapon, error)) return false;
-        raw.weapon = (uint8_t)current_weapon.source_weapon;
+        raw.weapon = (uint8_t)player.weapon;
     }
     if (context && context->unified_intent) {
         application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
