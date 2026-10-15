@@ -52,8 +52,7 @@ static float q2_height(const q2_classic_move *pm, float source)
         (pm->character.maxs.z - pm->character.mins.z);
 }
 
-static bool q2_trace_bounds(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
-                            qa_bounds bounds, qa_trace_result *trace)
+static qa_collision_bits q2_mask(const q2_classic_move *pm)
 {
     uint32_t mask = Q2_MASK_PLAYER;
     if (pm->state->wide_coordinates) {
@@ -61,8 +60,13 @@ static bool q2_trace_bounds(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
             mask &= ~(UINT32_C(1) << 25);
         if (!(pm->state->flags & (UINT32_C(1) << 7))) mask |= UINT32_C(1) << 30;
     }
-    return qa_move_trace(pm->context, start, end, bounds, qa_collision_contents_mask(mask,QA_GAME_Q2),
-                         false, trace);
+    return qa_collision_contents_mask(mask, QA_GAME_Q2);
+}
+
+static bool q2_trace_bounds(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
+                            qa_bounds bounds, qa_trace_result *trace)
+{
+    return qa_move_trace(pm->context, start, end, bounds, q2_mask(pm), false, trace);
 }
 
 static bool q2_trace(q2_classic_move *pm, qa_vec3 start, qa_vec3 end,
@@ -399,6 +403,8 @@ static bool q2_fly_move(q2_classic_move *pm, bool collide)
 static bool q2_check_duck(q2_classic_move *pm)
 {
     const qa_movement_input *input = pm->context->input;
+    const qa_movement_environment *env = &input->environment;
+    bool requested = env->has_body_bounds && !env->fixed_pose;
     uint32_t previous_duck = pm->state->flags & Q2_DUCKED;
     pm->bounds = pm->character;
     if (pm->state->type == Q2_GIB) {
@@ -414,22 +420,20 @@ static bool q2_check_duck(q2_classic_move *pm)
     } else if (pm->state->flags & Q2_DUCKED) {
         pm->bounds.maxs.z = q2_height(pm, 32);
         qa_trace_result trace;
-        if (!q2_trace_bounds(pm, pm->origin, pm->origin, pm->bounds, &trace)) return false;
+        if (!q2_trace_bounds(pm, pm->origin, pm->origin,
+            requested ? env->body_bounds : pm->bounds, &trace)) return false;
         if (!trace.all_solid) pm->state->flags &= ~(uint32_t)Q2_DUCKED;
     }
     bool ducked = (pm->state->flags & Q2_DUCKED) != 0;
     pm->bounds.maxs.z = q2_height(pm, ducked ? 4.0f : 32.0f);
     pm->view_height = q2_height(pm, ducked ? -2.0f : 22.0f);
     qa_bounds previous = input->has_current_bounds ? input->current_bounds : pm->character;
-    if (qa_bounds_expands(previous, pm->bounds)) {
-        qa_trace_result trace;
-        if (!q2_trace_bounds(pm, pm->origin, pm->origin, pm->bounds, &trace)) return false;
-        if (trace.all_solid) {
-            pm->bounds = previous;
-            pm->state->flags = (pm->state->flags & ~(uint32_t)Q2_DUCKED) | previous_duck;
-            pm->view_height = q2_height(pm, previous_duck ? -2.0f : 22.0f);
-            return true;
-        }
+    qa_bounds candidate = requested ? env->body_bounds : pm->bounds;
+    if (!qa_move_bounds(pm->context, pm->origin, previous, candidate, q2_mask(pm), false, &pm->bounds))
+        return false;
+    if (!qa_bounds_equal(pm->bounds, candidate)) {
+        pm->state->flags = (pm->state->flags & ~(uint32_t)Q2_DUCKED) | previous_duck;
+        pm->view_height = q2_height(pm, previous_duck ? -2.0f : 22.0f);
     }
     return true;
 }

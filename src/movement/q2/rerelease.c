@@ -52,6 +52,17 @@ static bool rr_grounded(const rr_move *p)
     return p->result->ground.hit != QA_TRACE_HIT_NONE;
 }
 
+static qa_collision_bits rr_mask(const rr_move *p, uint32_t mask)
+{
+    if (p->state->type == RR_SPECTATOR) mask = RR_MASK_SOLID;
+    else if (mask == 0) {
+        mask = p->state->type == RR_DEAD || p->state->type == RR_GIB
+            ? RR_MASK_DEAD : RR_MASK_PLAYER;
+        if (p->state->flags & RR_IGNORE_PLAYERS) mask &= ~(uint32_t)RR_PLAYER;
+    }
+    return qa_collision_contents_mask(mask, QA_GAME_Q2);
+}
+
 static qa_trace_result rr_trace(rr_move *p, qa_vec3 start, qa_vec3 end,
                                 qa_bounds bounds, uint32_t mask)
 {
@@ -70,13 +81,7 @@ static qa_trace_result rr_trace(rr_move *p, qa_vec3 start, qa_vec3 end,
         return trace;
     }
     bool world_only = p->state->type == RR_SPECTATOR;
-    if (world_only) mask = RR_MASK_SOLID;
-    else if (mask == 0) {
-        mask = p->state->type == RR_DEAD || p->state->type == RR_GIB
-            ? RR_MASK_DEAD : RR_MASK_PLAYER;
-        if (p->state->flags & RR_IGNORE_PLAYERS) mask &= ~(uint32_t)RR_PLAYER;
-    }
-    qa_move_trace(p->move, start, end, bounds, qa_collision_contents_mask(mask,QA_GAME_Q2), world_only, &trace);
+    qa_move_trace(p->move, start, end, bounds, rr_mask(p, mask), world_only, &trace);
     return trace;
 }
 
@@ -573,6 +578,7 @@ static float rr_height(const rr_move *p, float source)
 
 static void rr_dimensions(rr_move *p)
 {
+    const qa_movement_environment *env = &p->move->input->environment;
     p->bounds = p->character;
     if (p->state->type == RR_GIB) {
         p->bounds.mins.z = rr_height(p, 0.0f);
@@ -588,13 +594,13 @@ static void rr_dimensions(rr_move *p)
         p->bounds.maxs.z = rr_height(p, 32.0f);
         p->state->view_height = rr_height(p, 22.0f);
     }
-    if (qa_bounds_expands(p->accepted_bounds, p->bounds)) {
-        qa_trace_result trace = rr_trace(p, *p->origin, *p->origin, p->bounds, 0);
-        if (trace.all_solid) {
-            p->bounds = p->accepted_bounds;
-            p->state->flags = (p->state->flags & ~(uint32_t)RR_DUCKED) | p->accepted_duck;
-            p->state->view_height = p->accepted_height;
-        }
+    qa_bounds requested = env->has_body_bounds && !env->fixed_pose ? env->body_bounds : p->bounds;
+    if (!qa_move_bounds(p->move, *p->origin, p->accepted_bounds, requested, rr_mask(p, 0),
+        p->state->type == RR_SPECTATOR, &p->bounds))
+        return;
+    if (!qa_bounds_equal(p->bounds, requested)) {
+        p->state->flags = (p->state->flags & ~(uint32_t)RR_DUCKED) | p->accepted_duck;
+        p->state->view_height = p->accepted_height;
     }
     p->accepted_bounds = p->bounds;
     p->accepted_duck = p->state->flags & RR_DUCKED;
@@ -623,6 +629,8 @@ static bool rr_duck(rr_move *p)
         if (crouch != ((p->state->flags & RR_DUCKED) != 0)) {
             qa_bounds bounds = p->bounds;
             bounds.maxs.z = crouch ? rr_height(p, 4.0f) : p->character.maxs.z;
+            const qa_movement_environment *env = &p->move->input->environment;
+            if (env->has_body_bounds && !env->fixed_pose) bounds = env->body_bounds;
             qa_trace_result trace = rr_trace(p, *p->origin, *p->origin, bounds, 0);
             if (!trace.all_solid) {
                 if (crouch) p->state->flags |= RR_DUCKED;
@@ -791,6 +799,7 @@ bool qa_move_q2r(qa_move_context *move)
     p.character = p.bounds = character;
     p.accepted_bounds = input->has_current_bounds ? input->current_bounds : character;
     p.accepted_duck = state->flags & RR_DUCKED;
+    p.accepted_height = state->view_height;
     p.dt = (float)move->command.milliseconds * 0.001f;
     p.speed = env->speed_multiplier;
     p.max_speed = 300.0f * p.speed;

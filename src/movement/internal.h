@@ -58,7 +58,8 @@ bool qa_move_contact_seen(const qa_movement_result *, const qa_trace_result *, s
 bool qa_move_touch(qa_move_context *, const qa_trace_result *);
 bool qa_move_event(qa_move_context *, int32_t event, int32_t parameter);
 bool qa_move_animation(qa_move_context *, qa_movement_animation_kind, int32_t value, bool force, bool backwards);
-bool qa_move_bounds(qa_move_context *, qa_bounds requested, qa_collision_bits mask, qa_bounds *);
+bool qa_move_bounds(qa_move_context *, qa_vec3 origin, qa_bounds previous,
+                    qa_bounds requested, qa_collision_bits mask, bool world_only, qa_bounds *);
 bool qa_move_apply_stance(qa_move_context *);
 int32_t qa_move_mode_type(qa_ruleset_id, qa_movement_mode);
 qa_vec3 qa_move_clip(qa_vec3 velocity, qa_vec3 normal, float overbounce, float stop_epsilon);

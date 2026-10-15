@@ -439,6 +439,11 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     qa_body_state body;
     if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
     input->current_bounds = body.bounds; input->has_current_bounds = true;
+    application_client_outputs outputs;
+    if (!application_control_outputs(app, actor, &outputs, error) ||
+        !application_control_body_request(app, actor, body.bounds, &outputs, error)) return false;
+    input->environment.has_body_bounds = outputs.has_body_bounds;
+    if (outputs.has_body_bounds) input->environment.body_bounds = outputs.body_bounds;
     /* Whole GAME already chose its public pm_type. Private health is only
      * needed when another gameplay provider supplies movement overrides. */
     if (!application_native_q2_whole_source(engine, actor)) {

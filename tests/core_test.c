@@ -1908,6 +1908,124 @@ static void test_retained_movement_result(void)
     qa_movement_result_free(&out); CHECK(!out.contacts && !out.contact_capacity);
 }
 
+typedef struct movement_body_test {
+    qa_bounds watched;
+    qa_vec3 first_probe;
+    size_t probes, horizontal_traces;
+    bool blocked, start_solid;
+} movement_body_test;
+
+static bool movement_body_trace(void *context, const qa_trace_query *query,
+    qa_trace_result *out, qa_error *error)
+{
+    (void)error;
+    movement_body_test *test = context;
+    *out = (qa_trace_result){.family = QA_GAME_Q2, .fraction = 1, .end = query->end};
+    if (qa_bounds_equal(query->shape.bounds, test->watched)) {
+        if (qa_vec_equal(query->start, query->end)) {
+            if (!test->probes) test->first_probe = query->start;
+            ++test->probes;
+        } else if (query->start.x != query->end.x || query->start.y != query->end.y) {
+            ++test->horizontal_traces;
+        }
+        out->start_solid = test->start_solid || test->blocked;
+        if (test->blocked) {
+            out->all_solid = true;
+            out->fraction = 0;
+            out->end = query->start;
+        }
+    }
+    return true;
+}
+
+static bool movement_body_contents(void *context, const qa_point_query *query,
+    qa_point_contents *out, qa_error *error)
+{
+    (void)context; (void)query; (void)error;
+    *out = (qa_point_contents){.family = QA_GAME_Q2};
+    return true;
+}
+
+static void test_q2_requested_body(void)
+{
+    const qa_bounds requested = { {-7, -9, -20}, {8, 10, 12} };
+    const qa_bounds larger = { {-32, -33, -40}, {34, 35, 64} };
+    const qa_vec3 origin = {40, 60, 80};
+    for (qa_ruleset_id kind = QA_RULESET_Q2_CLASSIC; kind <= QA_RULESET_Q2_RERELEASE; ++kind) {
+        qa_error error = {0};
+        qa_movement_input input = qa_movement_input_default(kind, (qa_actor_id){0});
+        CHECK(qa_movement_set_origin(&input.state, origin, &error));
+        if (kind == QA_RULESET_Q2_CLASSIC) input.state.data.q2.gravity = 0;
+        else input.state.data.q2r.gravity = 0;
+        input.command.milliseconds = 50;
+        input.command.forward_move = 200;
+        input.environment.has_body_bounds = true;
+        input.environment.body_bounds = requested;
+        qa_bounds reference = input.shape.bounds;
+        movement_body_test test = {.watched = requested};
+        qa_movement_services services = {.context = &test,
+            .trace = movement_body_trace, .point_contents = movement_body_contents};
+        qa_movement_result result = {0};
+        CHECK(qa_movement_move(&input, &services, &result, &error));
+        CHECK(qa_bounds_equal(result.bounds, requested));
+        CHECK(test.horizontal_traces && qa_movement_origin(&result.state).x > origin.x);
+        CHECK(result.view_height == 22 && qa_bounds_equal(input.shape.bounds, reference));
+
+        /* Removing a request restores the character posture, rather than
+         * treating the previously accepted physical hull as its reference. */
+        input.state = result.state;
+        input.current_bounds = result.bounds;
+        input.has_current_bounds = true;
+        input.environment.has_body_bounds = false;
+        test = (movement_body_test){.watched = reference};
+        CHECK(qa_movement_move(&input, &services, &result, &error));
+        CHECK(qa_bounds_equal(result.bounds, reference) && result.view_height == 22);
+
+        for (unsigned ducked = 0; ducked < 2; ++ducked) {
+            input.state = qa_movement_state_default(kind, origin);
+            input.current_bounds = requested;
+            input.environment.has_body_bounds = true;
+            input.environment.body_bounds = larger;
+            input.command.forward_move = 0;
+            input.command.up_move = ducked ? 0 : -1;
+            input.command.buttons = ducked ? 0 : 16;
+            float prior_height = ducked ? -2 : 19;
+            if (kind == QA_RULESET_Q2_CLASSIC) {
+                input.state.data.q2.gravity = 0;
+                input.state.data.q2.flags = ducked ? 1 : 4;
+            } else {
+                input.state.data.q2r.gravity = 0;
+                input.state.data.q2r.flags = ducked;
+                input.state.data.q2r.view_height = prior_height;
+            }
+            test = (movement_body_test){.watched = larger, .blocked = true};
+            CHECK(qa_movement_move(&input, &services, &result, &error));
+            CHECK(qa_bounds_equal(result.bounds, requested));
+            uint32_t flags = kind == QA_RULESET_Q2_CLASSIC
+                ? result.state.data.q2.flags : result.state.data.q2r.flags;
+            CHECK((flags & 1u) == ducked);
+            float expected_height = kind == QA_RULESET_Q2_CLASSIC
+                ? (ducked ? -2 : 22) : prior_height;
+            CHECK(result.view_height == expected_height);
+            CHECK(test.probes && qa_vec_equal(test.first_probe, origin));
+        }
+
+        /* Original Q2 clearance rejects allsolid, not startsolid alone. */
+        input.state = qa_movement_state_default(kind, origin);
+        input.command.up_move = 0;
+        input.command.buttons = 0;
+        test = (movement_body_test){.watched = larger, .start_solid = true};
+        CHECK(qa_movement_move(&input, &services, &result, &error));
+        CHECK(qa_bounds_equal(result.bounds, larger) && result.view_height == 22);
+
+        input.environment.fixed_pose = true;
+        input.environment.pose = (qa_movement_posture){requested, 13};
+        CHECK(qa_movement_move(&input, &services, &result, &error));
+        CHECK(qa_bounds_equal(result.bounds, requested) && result.view_height == 13);
+        qa_movement_result_free(&result);
+    }
+}
+
 typedef struct audio_notification_counts { size_t starts, stops; } audio_notification_counts;
 static void count_audio_notification(void *context, const qa_audio_voice_event *event)
 {
@@ -5089,6 +5207,7 @@ int main(int argc, char **argv)
     test_raw_audio_custody();
     test_shared_audio_preparation();
     test_retained_movement_result();
+    test_q2_requested_body();
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();

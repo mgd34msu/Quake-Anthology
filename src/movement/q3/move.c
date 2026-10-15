@@ -398,7 +398,7 @@ static void q3_duck(qa_q3_step *step) {
     if (environment->has_body_bounds) requested = environment->body_bounds;
     context->result->bounds = previous_bounds;
     qa_bounds accepted;
-    if (!qa_move_bounds(context, requested, step->mask, &accepted)) return;
+    if (!qa_move_bounds(context, state->origin, previous_bounds, requested, step->mask, false, &accepted)) return;
     context->result->bounds = accepted;
     if (!qa_bounds_equal(accepted, requested)) {
         state->movement_flags = (state->movement_flags & ~(uint32_t)Q3_DUCKED) | previous_duck;

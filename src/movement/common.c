@@ -302,14 +302,14 @@ bool qa_move_contact(qa_move_context *c, const qa_trace_result *trace, bool touc
     if (c->state->kind==QA_RULESET_Q3) return qa_move_emit(c,(qa_movement_effect){.kind=QA_MOVE_EFFECT_TOUCH,.trace=trace});
     return true;
 }
-bool qa_move_bounds(qa_move_context *c, qa_bounds requested, qa_collision_bits mask, qa_bounds *out) {
-    qa_bounds previous=c->result->bounds;
+bool qa_move_bounds(qa_move_context *c, qa_vec3 origin, qa_bounds previous,
+                    qa_bounds requested, qa_collision_bits mask, bool world_only, qa_bounds *out) {
     bool expands = qa_bounds_expands(previous,requested);
     if (!qa_bounds_valid(requested)) return fail(c,"Invalid requested movement bounds");
     if (expands) {
-        qa_vec3 origin=qa_movement_origin(c->state); qa_trace_result trace;
-        if (!qa_move_trace(c,origin,origin,requested,mask,false,&trace)) return false;
-        if (trace.all_solid||(c->state->kind!=QA_RULESET_Q3&&trace.start_solid)) { *out=previous; return true; }
+        qa_trace_result trace;
+        if (!qa_move_trace(c,origin,origin,requested,mask,world_only,&trace)) return false;
+        if (trace.all_solid||(c->state->kind<=QA_RULESET_QUAKEWORLD&&trace.start_solid)) { *out=previous; return true; }
     }
     *out=requested; return true;
 }
