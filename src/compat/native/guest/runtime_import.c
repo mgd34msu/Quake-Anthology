@@ -133,6 +133,18 @@ static import_function *function_address(const guest_runtime_imports *o, uint64_
     size_t row;
     return qa_id_index_next(&o->identities, &cursor, &row) ? &o->functions[row] : NULL;
 }
+static void sync_function(const guest_runtime_imports *o, import_function *f)
+{
+    if (!o->guest || !o->guest->child || f->descriptor.readonly == GUEST_READONLY_NONE) return;
+    uint64_t reached = guest_host_child_reached(o->guest->child, f->descriptor.id);
+    if (reached > f->reached) f->reached = reached;
+}
+static void sync_reached(const guest_runtime_imports *o)
+{
+    if (!o || !o->guest || !o->guest->child) return;
+    for (size_t i = 0; i < o->function_count; ++i)
+        if (o->functions[i].descriptor.readonly != GUEST_READONLY_NONE) sync_function(o, o->functions + i);
+}
 static import_row *first_row(const guest_runtime_imports *o, uint64_t id)
 {
     qa_id_index_cursor cursor = qa_id_index_begin(&o->identities, IMPORT_FIRST_ROW, id);
@@ -192,6 +204,7 @@ size_t guest_runtime_imports_count(const guest_runtime_imports *o)
 static bool dispatch(void *context, qa_native_guest *guest, uint64_t id, qa_error *e)
 {
     guest_runtime_imports *o = context;
+    sync_reached(o);
     import_function *f = function_at(o, id);
     qa_native_guest_cpu cpu;
     if (!o || guest != o->guest || o->detached || o->closing || !f || !f->bound ||
@@ -274,6 +287,22 @@ static bool dispatch(void *context, qa_native_guest *guest, uint64_t id, qa_erro
     return okay;
 }
 
+static bool native_admit(qa_native_guest *guest, const import_function *f, qa_error *error)
+{
+    guest_abi_scalar_call scalar;
+    guest_readonly_kind kind = f->descriptor.readonly;
+    if (!guest->child || kind == GUEST_READONLY_NONE || !guest_abi_scalar_plan(f->plan, &scalar)) return true;
+    if (!((kind == GUEST_READONLY_COMPARE && scalar.count == 3 && scalar.result_bytes == 4) ||
+        (kind == GUEST_READONLY_LENGTH && scalar.count == 1 && scalar.result_bytes == 8))) return true;
+    return guest_host_child_bind(guest->child, f->descriptor.id, f->descriptor.address,
+        kind, &scalar, f->reached, error);
+}
+static bool bind_function(guest_runtime_imports *o, const import_function *f, qa_error *error)
+{
+    qa_native_guest_callback callback = {f->descriptor.id, f->descriptor.address, dispatch, o};
+    return qa_native_guest_bind(o->guest, &callback, error) && native_admit(o->guest, f, error);
+}
+
 bool guest_runtime_imports_create(qa_native_guest *guest, guest_runtime_imports **out, qa_error *e)
 {
     if (!qa_native_guest_idle(guest) || !out || *out)
@@ -332,8 +361,7 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
             okay = qa_native_guest_unbind(o->guest, occupied->descriptor.id, e);
             if (okay) occupied->bound = false;
         }
-        qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
-        if (okay) okay = qa_native_guest_bind(o->guest, &callback, e);
+        if (okay) okay = bind_function(o, &replacement, e);
         if (!okay) {
             signature_free(&replacement.descriptor.signature); guest_abi_plan_destroy(replacement.plan);
             return false;
@@ -359,10 +387,11 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
             previous->descriptor.address != d->address || previous->descriptor.variadic_id != d->variadic_id ||
             !same_signature(&previous->descriptor.signature, &d->signature))
             return guest_fail(e, QA_ERROR_ARGUMENT, d->id, "import rebind changed its retained declaration");
-        qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
-        if (!qa_native_guest_bind(o->guest, &callback, e)) return false;
+        import_function binding = *previous; binding.descriptor.readonly = d->readonly;
+        if (!bind_function(o, &binding, e)) return false;
         previous->descriptor.invoke = d->invoke; previous->descriptor.variadic = d->variadic;
-        previous->descriptor.context = d->context; previous->bound = true; return true;
+        previous->descriptor.context = d->context; previous->descriptor.readonly = d->readonly;
+        previous->bound = true; return true;
     }
     if (occupied)
         return guest_fail(e, QA_ERROR_ARGUMENT, d->address, "import trap slot already belongs to another function");
@@ -373,8 +402,7 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
         guest_abi_plan_create(&f.descriptor.signature, NULL, 0, NULL, &f.plan, e) &&
         guest_grow((void **)&o->functions, &o->function_capacity, o->function_count + 1, sizeof(*o->functions), e) &&
         qa_id_index_reserve(&o->identities, 3, e);
-    qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
-    if (okay) okay = qa_native_guest_bind(o->guest, &callback, e);
+    if (okay) okay = bind_function(o, &f, e);
     if (!okay) { key_free(&row.key); signature_free(&f.descriptor.signature); guest_abi_plan_destroy(f.plan); return false; }
     function_append(o, f); row_append(o, row); return true;
 }
@@ -437,6 +465,7 @@ bool guest_runtime_imports_unbind(guest_runtime_imports *o, uint64_t id, qa_erro
 {
     import_function *f = function_at(o, id);
     if (!guest_runtime_imports_idle(o) || !f) return guest_fail(e, QA_ERROR_ARGUMENT, id, "import unbind requires its idle retained function");
+    sync_function(o, f);
     if (f->bound && !qa_native_guest_unbind(o->guest, id, e)) return false;
     f->bound = false; f->descriptor.invoke = NULL; f->descriptor.context = NULL; f->descriptor.variadic = NULL; return true;
 }
@@ -446,6 +475,7 @@ static void view(const guest_runtime_imports *o, const import_row *row, guest_ru
     *out = (guest_runtime_import_view){row->key, row->kind, row->id, row->address, row->bytes, 0, 0, true, QA_OK, NULL};
     if (row->kind != GUEST_RUNTIME_IMPORT_DATA) {
         import_function *f = function_at(o, row->id);
+        sync_function(o, f);
         out->reached = f->reached; out->failed = f->failed; out->bound = f->bound; out->last_failure = f->last_failure;
         out->last_failure_detail = f->failed ? f->last_failure_detail : NULL;
     }
@@ -486,6 +516,7 @@ bool guest_runtime_imports_destroy(guest_runtime_imports **owner, qa_error *e)
         guest_runtime_imports_abandon(owner); return true;
     }
     if (o->calls || !qa_native_guest_idle(o->guest)) return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import destruction requires idle lower ownership");
+    sync_reached(o);
     o->closing = true;
     for (size_t i = 0; i < o->function_count; ++i) if (o->functions[i].bound) {
         if (!qa_native_guest_unbind(o->guest, o->functions[i].descriptor.id, e)) return false;
@@ -632,6 +663,7 @@ bool guest_runtime_imports_checkpoint(const guest_runtime_imports *owner, qa_buf
     if (!guest_runtime_imports_idle(owner) || !out || out->data || out->size || !current(owner, owner->guest, e))
         return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import checkpoint requires its idle current lower owner and empty output");
     guest_runtime_imports *o = (guest_runtime_imports *)owner;
+    sync_reached(o);
     codec c = {.e = e}; uint8_t magic[4] = {'Q','G','I','M'};
     unsigned os = o->target.os, arch = o->target.arch, abi = o->target.abi, word = o->target.pointer_bytes;
     bool okay = blob(&c, magic, 4) && enumeration(&c, &os, QA_NATIVE_OS_LINUX) &&
@@ -744,6 +776,7 @@ bool guest_runtime_imports_decode(qa_bytes bytes, const qa_native_target *target
             (f->descriptor.signature.variadic ? d.variadic != NULL : d.variadic == NULL) &&
             same_signature(&f->descriptor.signature, &d.signature);
         if (okay) okay = guest_abi_plan_create(&f->descriptor.signature, NULL, 0, NULL, &f->plan, e);
+        if (okay) f->descriptor.readonly = d.readonly;
         if (okay && f->bound) {
             f->descriptor.invoke = d.invoke; f->descriptor.variadic = d.variadic; f->descriptor.context = d.context;
         }
@@ -775,5 +808,8 @@ bool guest_runtime_imports_attach(guest_runtime_imports *o, qa_native_guest *gue
 {
     if (!o || !o->detached || o->guest || o->calls || !qa_native_guest_idle(guest) || !current(o, guest, e))
         return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import attach requires the same completed lower candidate and actual saved bindings");
+    for (size_t i = 0; i < o->function_count; ++i)
+        if (o->functions[i].bound && !o->functions[i].unresolved &&
+            !native_admit(guest, o->functions + i, e)) return false;
     o->guest = guest; o->detached = false; return true;
 }

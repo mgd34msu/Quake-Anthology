@@ -33,6 +33,23 @@ typedef struct guest_abi_signature {
 typedef struct guest_abi_plan guest_abi_plan;
 typedef struct guest_abi_call guest_abi_call;
 
+typedef enum guest_readonly_kind {
+    GUEST_READONLY_NONE, GUEST_READONLY_COMPARE, GUEST_READONLY_LENGTH
+} guest_readonly_kind;
+typedef struct guest_abi_scalar_call {
+    uint8_t count, arguments[3], result, result_bytes;
+} guest_abi_scalar_call;
+/* Lower only fixed Win64 integer-register calls; unsupported plans stay brokered. */
+bool guest_abi_scalar_plan(const guest_abi_plan *, guest_abi_scalar_call *);
+void guest_abi_scalar_arguments(const guest_abi_scalar_call *, const uint64_t[16], uint64_t[3]);
+void guest_abi_integer_register(uint64_t[16], unsigned, size_t, uint64_t);
+void guest_abi_scalar_result(const guest_abi_scalar_call *, uint64_t[16], uint64_t);
+bool guest_readonly_apply(guest_readonly_kind, qa_bytes, qa_bytes, uint64_t, uint64_t *);
+typedef bool (*guest_abi_read_fn)(void *, uint64_t, void *, size_t, qa_error *);
+typedef bool (*guest_abi_access_fn)(void *, uint64_t, size_t, uint32_t, qa_error *);
+bool guest_abi_return_address(unsigned, size_t, uint64_t, guest_abi_read_fn,
+    guest_abi_access_fn, void *, uint64_t *, uint64_t *, qa_error *);
+
 /* NULL arena owns load-time layout/field/location storage; a supplied arena
  * owns call-scoped plans until reset. Extra variadic layouts are supplied
  * by the actual API descriptor; this layer never guesses stack argument types.

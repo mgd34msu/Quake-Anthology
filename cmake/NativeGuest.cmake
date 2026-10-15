@@ -147,6 +147,7 @@ function(qa_native_guest_dependency)
         "${guest_root}/cpu.c"
         "${guest_root}/cpu_clock.c"
         "${guest_root}/abi.c"
+        "${guest_root}/scalar.c"
         "${guest_root}/host_memory.c"
         "${guest_root}/host_x86_64.c"
         "${guest_root}/host_child.c"

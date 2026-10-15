@@ -31,6 +31,7 @@ typedef struct guest_runtime_function {
     guest_runtime_variadic_fn variadic;
     guest_runtime_import_fn invoke;
     void *context;
+    guest_readonly_kind readonly;
 } guest_runtime_function;
 typedef bool (*guest_runtime_function_resolve_fn)(void *, uint64_t,
     guest_runtime_function *, qa_error *);

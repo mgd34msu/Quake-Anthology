@@ -75,7 +75,9 @@ bool guest_host_child_backing_remove(guest_host_child *, uint64_t, qa_error *);
 bool guest_host_child_map(guest_host_child *, const qa_native_guest_mapping *, qa_error *);
 bool guest_host_child_change(guest_host_child *, const qa_native_guest_mapping *, uint32_t,
     bool, qa_error *);
-bool guest_host_child_bind(guest_host_child *, uint64_t, uint64_t, qa_error *);
+bool guest_host_child_bind(guest_host_child *, uint64_t, uint64_t, guest_readonly_kind,
+    const guest_abi_scalar_call *, uint64_t, qa_error *);
+uint64_t guest_host_child_reached(const guest_host_child *, uint64_t);
 bool guest_host_child_unbind(guest_host_child *, uint64_t, qa_error *);
 bool guest_host_child_interest(guest_host_child *, const guest_profile_interest *, bool, qa_error *);
 bool guest_host_child_cpu_read(const guest_host_child *, guest_host_x86_64_state *, qa_error *);

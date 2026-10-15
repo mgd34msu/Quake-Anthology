@@ -2,6 +2,7 @@
 #define QA_NATIVE_GUEST_PROFILE_GUARD_H
 
 #include "instruction.h"
+#include "../abi.h"
 
 typedef struct guest_profile_guard_launch {
     const char *runner, *client; /* Actual configured SDK runner/client paths. */
@@ -15,7 +16,12 @@ typedef struct guest_profile_guard_mapping {
     bool file;
     uint64_t accessible_bytes; /* Actual backing's accessible EOF prefix. */
 } guest_profile_guard_mapping;
-typedef struct guest_profile_guard_callback { uint64_t id, address; } guest_profile_guard_callback;
+typedef struct guest_profile_guard_callback {
+    uint64_t id, address;
+    guest_readonly_kind readonly;
+    guest_abi_scalar_call scalar;
+    uint64_t reached;
+} guest_profile_guard_callback;
 typedef enum guest_profile_interest_kind {
     GUEST_PROFILE_INTEREST_STORE, GUEST_PROFILE_INTEREST_INSTRUCTION
 } guest_profile_interest_kind;

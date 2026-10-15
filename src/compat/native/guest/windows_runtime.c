@@ -348,7 +348,9 @@ bool windows_service_add(guest_windows *owner, uint64_t id, uint8_t family, uint
     service->function = (guest_runtime_function){.id = id,
         .signature = {.abi = owner->target.abi, .convention = convention,
             .parameters = service->parameters, .parameter_count = count, .result = layout(owner, result)},
-        .invoke = service_invoke, .context = service};
+        .invoke = service_invoke, .context = service,
+        .readonly = family == 2 && owner->target.abi == QA_NATIVE_ABI_MICROSOFT_X64 ?
+            windows_crt_readonly_kind(operation) : GUEST_READONLY_NONE};
     owner->services[owner->service_count++] = service;
     if (!bind) return true;
     return bind_service(owner, service, error);

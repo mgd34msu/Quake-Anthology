@@ -287,7 +287,8 @@ static bool restore_callbacks(qa_source_save_io *io, qa_native_guest *guest,
         if (callback.id != id || callback.address != address || !callback.invoke)
             return guest_fail(io->error, QA_ERROR_FORMAT, io->offset, "native guest callback resolver changed saved identity");
         if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
-            !guest_native_result(guest, guest_host_child_bind(guest->child, id, address, io->error), io->error)) return false;
+            !guest_native_result(guest, guest_host_child_bind(guest->child, id, address,
+                GUEST_READONLY_NONE, NULL, 0, io->error), io->error)) return false;
         guest_callback_append(guest, callback);
     }
     return true;

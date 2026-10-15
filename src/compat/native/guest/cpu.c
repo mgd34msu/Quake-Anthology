@@ -311,7 +311,7 @@ bool qa_native_guest_bind(qa_native_guest *guest, const qa_native_guest_callback
     if (!guest_callbacks_reserve(guest, 1, error)) return false;
     if (guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64 &&
         !guest_native_result(guest, guest_host_child_bind(guest->child,
-            callback->id, callback->address, error), error)) return false;
+            callback->id, callback->address, GUEST_READONLY_NONE, NULL, 0, error), error)) return false;
     guest_callback_append(guest, *callback);
     return true;
 }

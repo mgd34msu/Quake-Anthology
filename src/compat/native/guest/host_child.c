@@ -146,7 +146,7 @@ static bool output_prepare(qa_arena *storage,
 {
     /* HOST_STOP has the largest envelope; every XSAVE component comes from
      * the actual child capability admitted before its first invocation. */
-    size_t bytes=(size_t)capability->xsave_bytes+188+84;
+    size_t bytes=(size_t)capability->xsave_bytes+188+92;
     qa_arena_init(storage,bytes);
     if(!qa_arena_reserve(storage,bytes,error))return false;
     qa_arena_seal(storage);return true;
@@ -156,12 +156,42 @@ static bool input_prepare(qa_arena *storage,
 {
     /* Commands carry fixed metadata or XSAVE, not module/import bytes. Keep
      * the entire largest packet and one separately aligned decoded state. */
-    size_t packet=(size_t)capability->xsave_bytes+188+84;
+    size_t packet=(size_t)capability->xsave_bytes+188+92;
     if(packet<sizeof(((qa_error *)0)->message))packet=sizeof(((qa_error *)0)->message);
     size_t bytes=packet+capability->xsave_bytes+63;
     qa_arena_init(storage,bytes);
     if(!qa_arena_reserve(storage,bytes,error))return false;
     qa_arena_seal(storage);return true;
+}
+static bool callback_storage(qa_arena *storage,
+    const guest_host_x86_64_capabilities *capability,size_t count)
+{
+    size_t fixed=2*(size_t)capability->xsave_bytes+188+92+63;
+    if(fixed>UINT32_MAX || count>(UINT32_MAX-fixed)/16)return false;
+    qa_error ignored={0};storage->sealed=false;
+    bool okay=qa_arena_reserve(storage,fixed+count*16,&ignored);
+    qa_arena_seal(storage);return okay;
+}
+static void callback_encode(uint8_t data[40],const host_callback *callback)
+{
+    memset(data,0,40);qa_store_u64le(data,callback->id);qa_store_u64le(data+8,callback->address);
+    qa_store_u32le(data+16,(uint32_t)callback->readonly);data[20]=callback->scalar.count;
+    for(size_t i=0;i<3;++i)data[21+i]=callback->scalar.arguments[i];
+    data[24]=callback->scalar.result;data[25]=callback->scalar.result_bytes;
+    qa_store_u64le(data+32,callback->reached);
+}
+static host_callback callback_decode(const uint8_t data[40])
+{
+    host_callback callback={.id=qa_load_u64le(data),.address=qa_load_u64le(data+8),
+        .readonly=(guest_readonly_kind)qa_load_u32le(data+16),.reached=qa_load_u64le(data+32),
+        .scalar={.count=data[20],.result=data[24],.result_bytes=data[25]}};
+    for(size_t i=0;i<3;++i)callback.scalar.arguments[i]=data[21+i];
+    bool supported=(callback.readonly==GUEST_READONLY_COMPARE && callback.scalar.count==3 && callback.scalar.result_bytes==4) ||
+        (callback.readonly==GUEST_READONLY_LENGTH && callback.scalar.count==1 && callback.scalar.result_bytes==8);
+    if(callback.scalar.result>=16)supported=false;
+    for(size_t i=0;i<3;++i)if(callback.scalar.arguments[i]>=16)supported=false;
+    if(!supported)callback.readonly=GUEST_READONLY_NONE;
+    return callback;
 }
 static bool state_encode(const guest_host_x86_64_state *state,qa_arena *storage,
     size_t prefix,qa_buffer *out,qa_error *error)
@@ -286,6 +316,72 @@ static bool server_profile(host_server *server,guest_profile_guard_operation ope
     if(okay && operation==GUEST_PROFILE_GUARD_PROBE)server->profile=control.installed;
     return okay;
 }
+static bool server_span(host_server *server,uint64_t address,size_t bytes,uint32_t rights,qa_bytes *out)
+{
+    if(!bytes){*out=(qa_bytes){0};return true;}
+    for(size_t i=0;i<server->mapping_count;++i) {
+        const guest_profile_guard_mapping *row=server->mappings+i;
+        const qa_native_guest_mapping *mapping=&row->mapping;
+        if(address<mapping->base || address-mapping->base>=mapping->bytes)continue;
+        uint64_t within=address-mapping->base,available=mapping->bytes-within;
+        if((mapping->permissions&rights)!=rights || bytes>available)return false;
+        if(row->file && (mapping->backing_offset>row->accessible_bytes ||
+            within>row->accessible_bytes-mapping->backing_offset ||
+            bytes>row->accessible_bytes-mapping->backing_offset-within))return false;
+        *out=(qa_bytes){(const uint8_t *)(uintptr_t)address,bytes};return true;
+    }
+    return false;
+}
+static bool server_read(void *context,uint64_t address,void *out,size_t bytes,qa_error *error)
+{
+    (void)error;qa_bytes span;
+    if(!server_span(context,address,bytes,QA_NATIVE_GUEST_READ,&span))return false;
+    if(bytes)memcpy(out,span.data,bytes);
+    return true;
+}
+static bool server_access(void *context,uint64_t address,size_t bytes,uint32_t rights,qa_error *error)
+{(void)error;qa_bytes span;return server_span(context,address,bytes,rights,&span);}
+static bool server_readonly(host_server *server,host_callback *callback,guest_host_x86_64_state *state)
+{
+    if(callback->readonly==GUEST_READONLY_NONE || callback->reached==UINT64_MAX)return false;
+    for(size_t i=0;i<server->interest_count;++i)
+        if(server->interests[i].kind==GUEST_PROFILE_INTEREST_INSTRUCTION &&
+            server->interests[i].address==state->instruction)return false;
+    uint8_t trap[16];
+    if(!server_read(server,state->instruction,trap,sizeof(trap),NULL))return false;
+    for(size_t i=0;i<sizeof(trap);++i)if(trap[i]!=0xcc)return false;
+    uint64_t args[3]={0},value=0,next_sp=0,instruction=0;
+    guest_abi_scalar_arguments(&callback->scalar,state->registers,args);
+    qa_bytes left={0},right={0};
+    if(callback->readonly==GUEST_READONLY_COMPARE) {
+        if(args[2]>0x10000000 ||
+            !server_span(server,args[0],(size_t)args[2],QA_NATIVE_GUEST_READ,&left) ||
+            !server_span(server,args[1],(size_t)args[2],QA_NATIVE_GUEST_READ,&right))return false;
+    } else {
+        for(size_t i=0;i<server->mapping_count;++i) {
+            const guest_profile_guard_mapping *row=server->mappings+i;
+            const qa_native_guest_mapping *mapping=&row->mapping;
+            if(args[0]<mapping->base || args[0]-mapping->base>=mapping->bytes)continue;
+            uint64_t within=args[0]-mapping->base,available=mapping->bytes-within;
+            if(row->file) {
+                if(mapping->backing_offset>row->accessible_bytes ||
+                    within>=row->accessible_bytes-mapping->backing_offset)return false;
+                uint64_t file_bytes=row->accessible_bytes-mapping->backing_offset-within;
+                if(available>file_bytes)available=file_bytes;
+            }
+            size_t bytes=available<1048576?(size_t)available:1048576;
+            if(!server_span(server,args[0],bytes,QA_NATIVE_GUEST_READ,&left))return false;
+            break;
+        }
+    }
+    if(!guest_readonly_apply(callback->readonly,left,right,args[2],&value))return false;
+    qa_error ignored={0};
+    if(!guest_abi_return_address(8,0,state->registers[QA_NATIVE_RSP],server_read,
+        server_access,server,&next_sp,&instruction,&ignored))return false;
+    guest_abi_scalar_result(&callback->scalar,state->registers,value);
+    state->registers[QA_NATIVE_RSP]=next_sp;state->instruction=instruction;
+    ++callback->reached;return true;
+}
 static bool server_dispatch(host_server *,host_packet *,bool *,qa_error *);
 static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_state *state,bool *resume,qa_error *error)
 {
@@ -341,9 +437,22 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
             kind=GUEST_HOST_STOP_IMPORT;id=server->callbacks[i].id;address=entry;state->instruction=entry;break;
         }
     }
+    host_callback *local=NULL;
+    if(kind==GUEST_HOST_STOP_IMPORT)for(size_t i=0;i<server->callback_count;++i)
+        if(server->callbacks[i].id==id && server->callbacks[i].address==address) {
+            local=server->callbacks+i;break;
+        }
+    if(local && server_readonly(server,local,state)) {
+        if(!guest_profile_cpu_current(&server->domain,&server->capability,state,error) ||
+            !server_profile(server,GUEST_PROFILE_GUARD_RESUME,state,error) ||
+            !state_commit(state,&server->capability,&server->state,error))return false;
+        *resume=true;return true;
+    }
     if(!state_commit(state,&server->capability,&server->state,error))return false;
+    size_t counters=0;
+    for(size_t i=0;i<server->callback_count;++i)if(server->callbacks[i].readonly!=GUEST_READONLY_NONE)++counters;
     qa_buffer body={0};
-    if(!state_encode(state,&server->output_storage,84,&body,error))return false;
+    if(!state_encode(state,&server->output_storage,92+counters*16,&body,error))return false;
     qa_store_u32le(body.data,(uint32_t)kind);qa_store_u32le(body.data+4,(uint32_t)number);
     qa_store_u32le(body.data+8,(uint32_t)information->si_code);
     uint32_t access=0;
@@ -360,6 +469,11 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
     qa_store_u64le(body.data+44,server->profile_fault.scope);qa_store_u64le(body.data+52,server->profile_fault.instruction);
     qa_store_u64le(body.data+60,server->profile_fault.address);qa_store_u64le(body.data+68,server->profile_fault.bytes);
     qa_store_u64le(body.data+76,server->profile_fault.continuation);
+    qa_store_u64le(body.data+84,counters);size_t counter_at=92;
+    for(size_t i=0;i<server->callback_count;++i)if(server->callbacks[i].readonly!=GUEST_READONLY_NONE) {
+        qa_store_u64le(body.data+counter_at,server->callbacks[i].id);
+        qa_store_u64le(body.data+counter_at+8,server->callbacks[i].reached);counter_at+=16;
+    }
     bool okay=packet_send(server->descriptor,HOST_STOP,0,server->run_sequence,(qa_bytes){body.data,body.size},-1,error);
     if(!okay)return false;
     if(kind==GUEST_HOST_STOP_FAULT) {server->failed=true;*resume=false;return true;}
@@ -383,7 +497,14 @@ static bool server_stop(void *context,int number,void *opaque,guest_host_x86_64_
             if(okay)okay=guest_profile_cpu_current(&server->domain,&server->capability,&next,error);
             if(okay)okay=server_profile(server,GUEST_PROFILE_GUARD_RESUME,&next,error);
             if(okay)okay=state_commit(&next,&server->capability,state,error);
-            if(okay) {*resume=true;server->stopped=false;return true;}
+            if(okay) {
+                /* A successful broker resume completed one attempted import.
+                 * Failed broker attempts stay counted by their parent owner. */
+                if(kind==GUEST_HOST_STOP_IMPORT)for(size_t i=0;i<server->callback_count;++i)
+                    if(server->callbacks[i].id==id && server->callbacks[i].readonly!=GUEST_READONLY_NONE &&
+                        server->callbacks[i].reached!=UINT64_MAX)++server->callbacks[i].reached;
+                *resume=true;server->stopped=false;return true;
+            }
             break;
         }
         if(packet.operation==HOST_CANCEL) {
@@ -472,12 +593,19 @@ static bool server_dispatch(host_server *server,host_packet *packet,bool *comple
         break;
     }
     case HOST_BIND: {
-        if(bytes!=16 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child callback binding is invalid");break;}
-        host_callback callback={qa_load_u64le(data),qa_load_u64le(data+8)};
+        if(bytes!=40 || packet->descriptor>=0) {okay=fail(&failure,QA_ERROR_FORMAT,0,"child callback binding is invalid");break;}
+        host_callback callback=callback_decode(data);size_t occupied=server->callback_count;
         if(!callback.id || !callback.address) {okay=false;break;}
-        for(size_t i=0;i<server->callback_count;++i) if(server->callbacks[i].id==callback.id || server->callbacks[i].address==callback.address) okay=false;
-        if(!okay || !grow((void **)&server->callbacks,&server->callback_capacity,server->callback_count+1,sizeof(callback),&failure)) {okay=false;break;}
-        server->callbacks[server->callback_count++]=callback;server->inventory_sequence=packet->sequence;break;
+        for(size_t i=0;i<server->callback_count;++i)if(server->callbacks[i].id==callback.id || server->callbacks[i].address==callback.address)occupied=i;
+        if(occupied<server->callback_count) {
+            if(callback.readonly==GUEST_READONLY_NONE || server->callbacks[occupied].readonly!=GUEST_READONLY_NONE ||
+                server->callbacks[occupied].id!=callback.id || server->callbacks[occupied].address!=callback.address) {okay=false;break;}
+        } else if(!grow((void **)&server->callbacks,&server->callback_capacity,server->callback_count+1,sizeof(callback),&failure)) {okay=false;break;}
+        if(callback.readonly!=GUEST_READONLY_NONE &&
+            !callback_storage(&server->output_storage,&server->capability,server->callback_count+1))callback.readonly=GUEST_READONLY_NONE;
+        server->callbacks[occupied]=callback;
+        if(occupied==server->callback_count)++server->callback_count;
+        server->inventory_sequence=packet->sequence;break;
     }
     case HOST_UNBIND: {
         if(bytes!=8 || packet->descriptor>=0) {okay=false;break;}
@@ -754,15 +882,36 @@ bool guest_host_child_change(guest_host_child *child,const qa_native_guest_mappi
     if(!request(child,HOST_CHANGE,(qa_bytes){data,sizeof(data)},-1,error))return false;
     if(!guest_host_memory_change(child->memory,mapping,rights,remove,error)){child->failed=true;return false;}return true;
 }
-bool guest_host_child_bind(guest_host_child *child,uint64_t id,uint64_t address,qa_error *error)
+bool guest_host_child_bind(guest_host_child *child,uint64_t id,uint64_t address,
+    guest_readonly_kind readonly,const guest_abi_scalar_call *scalar,uint64_t reached,qa_error *error)
 {
     if(!usable(child) || !id || !guest_host_memory_check(child->memory,address,1,QA_NATIVE_GUEST_EXECUTE,error))
         return fail(error,QA_ERROR_ARGUMENT,address,"native callback requires its actual owned executable entry");
-    for(size_t i=0;i<child->callback_count;++i)if(child->callbacks[i].id==id || child->callbacks[i].address==address)return fail(error,QA_ERROR_ARGUMENT,id,"native callback repeats physical identity");
-    if(!grow((void **)&child->callbacks,&child->callback_capacity,child->callback_count+1,sizeof(*child->callbacks),error))return false;
-    uint8_t data[16];qa_store_u64le(data,id);qa_store_u64le(data+8,address);
-    if(!request(child,HOST_BIND,(qa_bytes){data,16},-1,error))return false;
-    child->callbacks[child->callback_count++]=(host_callback){id,address};return true;
+    size_t occupied=child->callback_count;
+    for(size_t i=0;i<child->callback_count;++i)if(child->callbacks[i].id==id || child->callbacks[i].address==address)occupied=i;
+    if(occupied<child->callback_count) {
+        if(readonly==GUEST_READONLY_NONE || !scalar || child->callbacks[occupied].readonly!=GUEST_READONLY_NONE ||
+            child->callbacks[occupied].id!=id || child->callbacks[occupied].address!=address)
+            return fail(error,QA_ERROR_ARGUMENT,id,"native callback repeats physical identity");
+    } else if(!grow((void **)&child->callbacks,&child->callback_capacity,child->callback_count+1,sizeof(*child->callbacks),error))return false;
+    host_callback callback={.id=id,.address=address,.readonly=readonly,.reached=reached};
+    if(scalar)callback.scalar=*scalar;
+    if(readonly!=GUEST_READONLY_NONE &&
+        !callback_storage(&child->input_storage,&child->capability,child->callback_count+1)) {
+        if(occupied<child->callback_count)return true;
+        callback.readonly=GUEST_READONLY_NONE;
+    }
+    uint8_t data[40];callback_encode(data,&callback);
+    if(!request(child,HOST_BIND,(qa_bytes){data,sizeof(data)},-1,error))return false;
+    child->callbacks[occupied]=callback;
+    if(occupied==child->callback_count)++child->callback_count;
+    return true;
+}
+uint64_t guest_host_child_reached(const guest_host_child *child,uint64_t id)
+{
+    for(size_t i=0;child && i<child->callback_count;++i)
+        if(child->callbacks[i].id==id)return child->callbacks[i].reached;
+    return 0;
 }
 bool guest_host_child_unbind(guest_host_child *child,uint64_t id,qa_error *error)
 {
@@ -841,7 +990,22 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             }
             packet_free(&packet);break;
         }
-        if(returned || packet.operation!=HOST_STOP || packet.status || packet.body.size<84) {packet_free(&packet);okay=fail(error,QA_ERROR_FORMAT,sequence,"native execution produced an invalid stopped receipt");break;}
+        if(returned || packet.operation!=HOST_STOP || packet.status || packet.body.size<92) {packet_free(&packet);okay=fail(error,QA_ERROR_FORMAT,sequence,"native execution produced an invalid stopped receipt");break;}
+        uint64_t counters=qa_load_u64le(packet.body.data+84);
+        if(counters>child->callback_count || counters>(packet.body.size-92)/16) {
+            packet_free(&packet);okay=fail(error,QA_ERROR_FORMAT,sequence,"native stopped counters exceed their admitted bindings");break;
+        }
+        size_t state_at=92+(size_t)counters*16;
+        for(size_t i=0;okay && i<(size_t)counters;++i) {
+            uint64_t id=qa_load_u64le(packet.body.data+92+i*16),reached=qa_load_u64le(packet.body.data+100+i*16);
+            bool found=false;
+            for(size_t j=0;j<child->callback_count;++j)if(child->callbacks[j].id==id && child->callbacks[j].readonly!=GUEST_READONLY_NONE) {
+                if(reached>child->callbacks[j].reached)child->callbacks[j].reached=reached;
+                found=true;break;
+            }
+            if(!found)okay=fail(error,QA_ERROR_FORMAT,id,"native stopped counter has no admitted local binding");
+        }
+        if(!okay){packet_free(&packet);break;}
         guest_host_stop receipt={.kind=(guest_host_stop_kind)qa_load_u32le(packet.body.data),.signal_number=(int)qa_load_u32le(packet.body.data+4),
             .signal_code=(int)qa_load_u32le(packet.body.data+8),.access=qa_load_u32le(packet.body.data+12),
             .callback_id=qa_load_u64le(packet.body.data+16),.address=qa_load_u64le(packet.body.data+24),
@@ -861,7 +1025,7 @@ static bool child_run(guest_host_child *child,uint64_t start,uint64_t stop,
             (receipt.kind!=GUEST_HOST_STOP_SYSCALL || (syscall && receipt.profile.kind==GUEST_PROFILE_GUARD_SYSCALL &&
                 receipt.profile.bytes==2 && receipt.profile.instruction<=UINT64_MAX-2 &&
                 receipt.address==receipt.profile.instruction+2 && !receipt.callback_id)) &&
-            state_decode((qa_bytes){packet.body.data+84,packet.body.size-84},&child->capability,&child->input_storage,&receipt.state,error) &&
+            state_decode((qa_bytes){packet.body.data+state_at,packet.body.size-state_at},&child->capability,&child->input_storage,&receipt.state,error) &&
             guest_profile_cpu_current(&child->domain,&child->capability,&receipt.state,error);
         packet_free(&packet);if(!okay)break;
         if(!state_commit(&receipt.state,&child->capability,&child->state,error)){okay=false;break;}
@@ -1013,7 +1177,8 @@ HOST_UNAVAILABLE(guest_host_child_backing_at,(const guest_host_child *c,size_t i
 HOST_UNAVAILABLE(guest_host_child_backing_remove,(guest_host_child *c,uint64_t i,qa_error *error),(void)c;(void)i)
 HOST_UNAVAILABLE(guest_host_child_map,(guest_host_child *c,const qa_native_guest_mapping *m,qa_error *error),(void)c;(void)m)
 HOST_UNAVAILABLE(guest_host_child_change,(guest_host_child *c,const qa_native_guest_mapping *m,uint32_t p,bool r,qa_error *error),(void)c;(void)m;(void)p;(void)r)
-HOST_UNAVAILABLE(guest_host_child_bind,(guest_host_child *c,uint64_t i,uint64_t a,qa_error *error),(void)c;(void)i;(void)a)
+HOST_UNAVAILABLE(guest_host_child_bind,(guest_host_child *c,uint64_t i,uint64_t a,guest_readonly_kind k,const guest_abi_scalar_call *s,uint64_t n,qa_error *error),(void)c;(void)i;(void)a;(void)k;(void)s;(void)n)
+uint64_t guest_host_child_reached(const guest_host_child *child,uint64_t id){(void)child;(void)id;return 0;}
 HOST_UNAVAILABLE(guest_host_child_unbind,(guest_host_child *c,uint64_t i,qa_error *error),(void)c;(void)i)
 HOST_UNAVAILABLE(guest_host_child_interest,(guest_host_child *c,const guest_profile_interest *i,bool r,qa_error *error),(void)c;(void)i;(void)r)
 HOST_UNAVAILABLE(guest_host_child_cpu_read,(const guest_host_child *c,guest_host_x86_64_state *s,qa_error *error),(void)c;(void)s)

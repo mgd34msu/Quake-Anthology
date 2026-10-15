@@ -84,6 +84,25 @@ size_t guest_abi_format_plan_bytes(size_t arguments)
 size_t guest_abi_result_bytes(const guest_abi_plan *plan)
 { return plan ? plan->result.layout.bytes : 0; }
 
+bool guest_abi_scalar_plan(const guest_abi_plan *plan, guest_abi_scalar_call *out)
+{
+    if (!plan || !out || plan->abi != QA_NATIVE_ABI_MICROSOFT_X64 || plan->word != 8 ||
+        plan->variadic || plan->memory_result || plan->x87_result || plan->callee_pop ||
+        !plan->count || plan->count > 3 || plan->result.location_count != 1) return false;
+    const location *result = plan->result.locations;
+    if (result->kind != INTEGER || result->offset || (result->bytes != 4 && result->bytes != 8)) return false;
+    guest_abi_scalar_call scalar = {.count = (uint8_t)plan->count,
+        .result = (uint8_t)result->reg, .result_bytes = (uint8_t)result->bytes};
+    for (size_t i = 0; i < plan->count; ++i) {
+        const argument *arg = plan->arguments + i;
+        const location *loc = arg->locations;
+        if (arg->indirect || arg->location_count != 1 || loc->kind != INTEGER ||
+            loc->offset || loc->bytes != 8) return false;
+        scalar.arguments[i] = (uint8_t)loc->reg;
+    }
+    *out = scalar; return true;
+}
+
 static bool align_size(size_t size, size_t alignment, size_t *out, qa_error *error)
 {
     if (!alignment || alignment & (alignment - 1) || size > SIZE_MAX - (alignment - 1)) {
@@ -518,7 +537,8 @@ static void write_registers(const argument *arg, const uint8_t *data, qa_native_
 {
     for (size_t i = 0; i < arg->location_count; ++i) {
         const location *loc = &arg->locations[i];
-        if (loc->kind == INTEGER) cpu->registers[loc->reg] = load_integer(data + loc->offset, loc->bytes);
+        if (loc->kind == INTEGER) guest_abi_integer_register(cpu->registers, loc->reg, loc->bytes,
+            load_integer(data + loc->offset, loc->bytes));
         else if (loc->kind == VECTOR) {
             uint64_t mask = loc->bytes == 8 ? UINT64_MAX : (UINT64_C(1) << (loc->bytes * 8)) - 1;
             cpu->xmm[loc->reg][0] = (cpu->xmm[loc->reg][0] & ~mask) | load_integer(data + loc->offset, loc->bytes);
@@ -592,6 +612,11 @@ static bool floating_result(const guest_abi_plan *plan, qa_native_guest *guest,
     return true;
 }
 
+static bool return_read(void *context, uint64_t address, void *out, size_t bytes, qa_error *error)
+{ return qa_native_guest_read(context, address, out, bytes, error); }
+static bool return_access(void *context, uint64_t address, size_t bytes, uint32_t access, qa_error *error)
+{ return guest_range(context, address, bytes, access, error); }
+
 bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
     const qa_native_value *result, qa_error *error)
 {
@@ -602,16 +627,12 @@ bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
     uint8_t *data = abi_storage(&scratch, bytes, _Alignof(max_align_t), error);
     if (!data) { qa_arena_destroy(&scratch); return false; }
     bool okay = encode_value(layout, result, data, error);
-    qa_native_guest_cpu cpu; uint8_t address[8] = {0}, hidden[8] = {0}; uint64_t destination = 0;
+    qa_native_guest_cpu cpu; uint8_t hidden[8] = {0}; uint64_t destination = 0;
     if (okay) okay = qa_native_guest_cpu_read(guest, &cpu, error);
     uint64_t sp = okay ? cpu.registers[QA_NATIVE_RSP] : 0;
-    size_t pop = plan->word + plan->callee_pop;
-    if (okay && (pop < plan->word || sp > UINT64_MAX - pop ||
-        (plan->word == 4 && sp + pop > UINT32_MAX)))
-        okay = guest_fail(error, QA_ERROR_ARGUMENT, sp, "guest ABI callback return stack overflows");
-    if (okay) okay = qa_native_guest_read(guest, sp, address, plan->word, error);
-    uint64_t instruction = load_integer(address, plan->word);
-    if (okay) okay = guest_range(guest, instruction, 1, QA_NATIVE_GUEST_EXECUTE, error);
+    uint64_t next_sp = 0, instruction = 0;
+    if (okay) okay = guest_abi_return_address(plan->word, plan->callee_pop, sp,
+        return_read, return_access, guest, &next_sp, &instruction, error);
     if (okay && plan->memory_result) {
         okay = read_locations(&plan->hidden, guest, &cpu, hidden, error);
         destination = load_integer(hidden, plan->word);
@@ -631,7 +652,7 @@ bool guest_abi_return(const guest_abi_plan *plan, qa_native_guest *guest,
     if (okay) {
         if (plan->memory_result) cpu.registers[QA_NATIVE_RAX] = destination;
         else if (!plan->x87_result) write_registers(&plan->result, data, &cpu);
-        cpu.registers[QA_NATIVE_RSP] = sp + pop; cpu.instruction = instruction;
+        cpu.registers[QA_NATIVE_RSP] = next_sp; cpu.instruction = instruction;
         effected = true; okay = qa_native_guest_cpu_write(guest, &cpu, error);
     }
     if (!okay && effected && !guest_callback_cancelled(guest,error)) guest->failed = true;

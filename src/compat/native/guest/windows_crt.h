@@ -15,6 +15,7 @@ struct guest_windows_crt {
     bool has_file_opener;
 };
 bool windows_crt_descriptors(guest_windows *, bool, qa_error *);
+guest_readonly_kind windows_crt_readonly_kind(uint32_t);
 bool windows_crt_initialize(guest_windows *, qa_error *);
 bool windows_crt_invoke(windows_service *, const qa_native_value *, size_t, qa_native_value *, qa_error *);
 bool windows_crt_validate(guest_windows *, qa_error *);

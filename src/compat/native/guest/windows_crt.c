@@ -75,6 +75,13 @@ static const crt_descriptor descriptors[] = {
     D("stdio","_fileno",WST_FILENO,I,1,P),
     D("stdio","__stdio_common_vsnprintf_s",C_PRINTF_S,I,7,QA_NATIVE_U64,P,Z,Z,P,P,P)
 };
+
+guest_readonly_kind windows_crt_readonly_kind(uint32_t operation)
+{
+    return operation == C_COMPARE ? GUEST_READONLY_COMPARE :
+        operation == C_LENGTH ? GUEST_READONLY_LENGTH : GUEST_READONLY_NONE;
+}
+
 #undef D
 #undef P
 #undef I
@@ -363,17 +370,28 @@ static bool crt_invoke(windows_service *service, const qa_native_value *args,
         if (!first || !qa_native_guest_read(owner->guest, a, first, bytes, error)) return false;
         uint8_t *second = operation == C_COMPARE ? qa_arena_alloc(scratch, bytes, 1, error) : NULL;
         if (operation == C_COMPARE && (!second || !qa_native_guest_read(owner->guest, b, second, bytes, error))) return false;
+        if (operation == C_COMPARE) {
+            (void)guest_readonly_apply(GUEST_READONLY_COMPARE, (qa_bytes){first, bytes},
+                (qa_bytes){second, bytes}, bytes, &value);
+            result(out, type, value); return true;
+        }
         for (size_t i = 0; i < bytes; ++i) {
-            if (operation == C_FIND) { if (first[i] == (b & 255)) { result(out, type, a + i); return true; } }
-            else if (first[i] != second[i]) { result(out, type, (uint64_t)((int)first[i] - (int)second[i])); return true; }
+            if (first[i] == (b & 255)) { result(out, type, a + i); return true; }
         }
         return true;
     }
-    case C_LENGTH: case C_STRCHR: case C_STRSTR: {
+    case C_LENGTH: {
+        qa_buffer source = {0}; bool terminated;
+        if (!guest_string_read(owner->guest, a, 1, 1048576, scratch, &source, &terminated, error)) return false;
+        if (!terminated) return guest_fail(error, QA_ERROR_FORMAT, a, "Windows string exceeds source read limit");
+        (void)guest_readonly_apply(GUEST_READONLY_LENGTH, (qa_bytes){source.data, source.size + 1},
+            (qa_bytes){0}, 0, &value);
+        result(out, type, value); return true;
+    }
+    case C_STRCHR: case C_STRSTR: {
         char *source = NULL, *search = NULL;
         if (!text(owner, a, scratch, &source, error)) return false;
-        if (operation == C_LENGTH) value = strlen(source);
-        else if (operation == C_STRCHR) { char *found = strchr(source, (uint8_t)b); value = found ? a + (size_t)(found - source) : 0; }
+        if (operation == C_STRCHR) { char *found = strchr(source, (uint8_t)b); value = found ? a + (size_t)(found - source) : 0; }
         else {
             if (!text(owner, b, scratch, &search, error)) return false;
             char *found = strstr(source, search); value = found ? a + (size_t)(found - source) : 0;
