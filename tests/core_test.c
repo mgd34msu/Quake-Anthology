@@ -82,6 +82,7 @@
 #include "../src/app/frontend/shared_video.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
+#include "../src/app/application/bots_log.h"
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
 #include "../src/network/unified/frame_internal.h"
@@ -109,6 +110,41 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+static void test_bot_log_resume(void)
+{
+    char directory[]="/tmp/qa-bot-log-XXXXXX",path[160];
+    CHECK(mkdtemp(directory));
+    const char *state=getenv("XDG_STATE_HOME");
+    char *saved_state=state?strdup(state):NULL;
+    CHECK(!state || saved_state);
+    CHECK(setenv("XDG_STATE_HOME",directory,1)==0);
+    qa_bot_log_services services=application_bots_log_services(NULL);
+    qa_bot_log_stream log={0};qa_error error={0};uint64_t position=0;
+    CHECK(services.open(NULL,"resume.log",false,0,&log,&error));
+    CHECK(log.write(log.context,(qa_bytes){(const uint8_t *)"before-tail",11},&error));
+    CHECK(log.checkpoint(log.context,&position,&error) && position==11);
+    CHECK(log.close(log.context,&error));
+    CHECK(services.open(NULL,"resume.log",true,7,&log,&error));
+    CHECK(log.checkpoint(log.context,&position,&error) && position==7);
+    CHECK(log.write(log.context,(qa_bytes){(const uint8_t *)"new",3},&error));
+    CHECK(log.checkpoint(log.context,&position,&error) && position==10);
+    CHECK(log.close(log.context,&error));
+    CHECK(snprintf(path,sizeof(path),"%s/quake-anthology/bots/resume.log",directory)>0);
+    qa_buffer bytes={0};
+    CHECK(qa_file_read_all(path,&bytes,&error));
+    CHECK(bytes.size==11 && !memcmp(bytes.data,"before-newl",11));
+    qa_buffer_free(&bytes);
+    CHECK(!services.open(NULL,"resume.log",true,12,&log,&error));
+    CHECK(unlink(path)==0);
+    CHECK(!services.open(NULL,"resume.log",true,0,&log,&error));
+    CHECK(access(path,F_OK)!=0);
+    CHECK(snprintf(path,sizeof(path),"%s/quake-anthology/bots",directory)>0 && rmdir(path)==0);
+    CHECK(snprintf(path,sizeof(path),"%s/quake-anthology",directory)>0 && rmdir(path)==0);
+    CHECK(rmdir(directory)==0);
+    CHECK(saved_state?setenv("XDG_STATE_HOME",saved_state,1)==0:unsetenv("XDG_STATE_HOME")==0);
+    free(saved_state);
+}
 
 static void test_bot_awareness_storage(void)
 {
@@ -7286,6 +7322,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_bot_log_resume();
     test_bot_awareness_storage();
     test_bot_authored_aim();
     test_bot_source_knowledge();

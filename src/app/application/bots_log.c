@@ -66,7 +66,7 @@ static char *directory(qa_error *error)
 static bool open_stream(void *context,const char *filename,bool resume,uint64_t position,
     qa_bot_log_stream *out,qa_error *error)
 {
-    (void)context; (void)position;
+    (void)context;
     if(!filename || !out)
         return application_fail(error,QA_ERROR_ARGUMENT,"Bot log open has invalid source filename or saved position");
     const char *name=filename;
@@ -82,9 +82,11 @@ static bool open_stream(void *context,const char *filename,bool resume,uint64_t 
     bool okay=qa_fs_path_create_directory(path,error) && qa_fs_root_open(path,&stream->root,error);
     free(path);uint64_t size;
     if(okay) okay=qa_fs_root_stream_open(stream->root,name,
-        resume?QA_FS_STREAM_APPEND:QA_FS_STREAM_WRITE,resume,&stream->file,&size,error);
+        QA_FS_STREAM_WRITE,resume,&stream->file,&size,error);
+    if(okay && resume && position>size)
+        okay=application_fail(error,QA_ERROR_IO,"Saved bot log position exceeds the retained file");
     if(!okay) {qa_fs_stream_close(stream->file);qa_fs_root_close(stream->root);free(stream);return false;}
-    stream->position=size;
+    stream->position=resume?position:0;
     *out=(qa_bot_log_stream){.context=stream,.write=write_stream,.flush=flush,.close=close_stream,.checkpoint=checkpoint};
     return true;
 }
