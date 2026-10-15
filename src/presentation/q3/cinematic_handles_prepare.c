@@ -5,12 +5,11 @@ struct qa_q3_cinematic_handles_stage {
     qa_q3_cinematic_handles *owner;
     qa_scene_resource_policy *bank;
     qa_scene_resources *destination;
-    qa_roq_scratch *decoder_scratch;
     int32_t selected_handle,decoder_handle;
     q3cin_movie movies[16];
     const qa_scene_image *scratch[16];
     bool added[16];
-    bool restart,decoder_changed;
+    bool restart,selection_changed;
     bool busy,sealed,published;
 };
 bool q3cin_stage_retains_source(const qa_q3_cinematic_handles_stage *stage,const qa_q3_cinematic_source *source)
@@ -41,20 +40,15 @@ bool qa_q3_cinematic_handles_stage_prepare(qa_q3_cinematic_handles *owner,
     if (!stage) return q3cin_fail(error,QA_ERROR_MEMORY,"Preparing global cinematic slot custody");
     stage->owner=owner; stage->bank=bank; stage->destination=qa_scene_resource_policy_destination(bank);
     stage->selected_handle=owner->selected_handle; stage->decoder_handle=owner->decoder_handle;
-    if (!qa_roq_scratch_create(&stage->decoder_scratch,error)) { free(stage); return false; }
-    qa_buffer shared={0};
-    bool copied=qa_roq_scratch_capture(owner->decoder_scratch,&shared,error) &&
-        qa_roq_scratch_restore(stage->decoder_scratch,(qa_bytes){shared.data,shared.size},error);
-    qa_buffer_free(&shared);
-    if (!copied) { qa_roq_scratch_release(stage->decoder_scratch); free(stage); return false; }
     qa_q3_image_upload_options restart;
     stage->restart=qa_scene_resource_policy_source_restart_read(bank,&restart);
+    /* Existing rows remain borrowed; added[] owns only staged replacements. */
     memcpy(stage->movies,owner->movies,sizeof(stage->movies));
     for (size_t i=0;i<16;++i) {
         qa_scene_image *mapped=NULL;
         if (!qa_scene_resource_policy_image(bank,owner->scratch[i],&mapped,error)) {
             for (size_t j=0;j<i;++j) qa_scene_image_release(stage->scratch[j]);
-            qa_roq_scratch_release(stage->decoder_scratch); free(stage); return false;
+            free(stage); return false;
         }
         stage->scratch[i]=mapped;
     }
@@ -73,14 +67,14 @@ bool qa_q3_cinematic_handles_stage_shader(qa_q3_cinematic_handles_stage *stage,
         occupied[i]=stage->movies[i].occupied; reserved[i]=stage->movies[i].restore_pending;
     }
     stage->busy=true;
-    bool ok=q3cin_play_into(source,stage->movies,qa_media_library_stage_destination(media),stage->decoder_scratch,
-        &stage->selected_handle,&stage->decoder_handle,path,
+    bool ok=q3cin_play_into(source,stage->movies,qa_media_library_stage_destination(media),
+        stage->added,&stage->selected_handle,&stage->decoder_handle,path,
         (qa_scene_rect_f){0,0,256,256},2u|8u|16u,NULL,NULL,handle,error);
     for (size_t i=0;i<16;++i)
         if ((!occupied[i] && stage->movies[i].occupied) || (reserved[i] && !stage->movies[i].restore_pending))
             stage->added[i]=true;
-    if (ok && (*handle<0 || !occupied[*handle] ||
-        (reserved[*handle] && !stage->movies[*handle].restore_pending))) stage->decoder_changed=true;
+    if (ok && *handle>=0 && (!occupied[*handle] ||
+        (reserved[*handle] && !stage->movies[*handle].restore_pending))) stage->selection_changed=true;
     if (ok) *out=*handle>=0?qa_scene_source_q3_scratch(stage->destination,(size_t)*handle):NULL;
     if (ok && *handle>=0 && !*out) ok=q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared shader handle lacks its actual destination scratch slot");
     if (ok && !source->options.current(source->options.context,&source->options))
@@ -102,12 +96,6 @@ bool qa_q3_cinematic_handles_stage_ready(qa_q3_cinematic_handles_stage *stage,qa
 {
     if (!held(stage) || stage->busy || stage->published)
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared cinematic slots lost their actual global claim");
-    if (stage->decoder_changed) for (size_t i=0;i<16;++i) {
-        q3cin_movie *movie=&stage->movies[i];
-        qa_cinematic *decoder=movie->playback?movie->playback:
-            movie->system.playback?movie->system.playback(movie->system.context):NULL;
-        if (decoder && !qa_cinematic_roq_scratch_rebind_ready(decoder,stage->decoder_scratch,error)) return false;
-    }
     stage->sealed=true;
     return qa_q3_cinematic_handles_stage_ready_is(stage) ||
         q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared cinematic slot ownership is incomplete");
@@ -117,16 +105,8 @@ void qa_q3_cinematic_handles_stage_publish(qa_q3_cinematic_handles_stage *stage)
     if (!stage || !stage->sealed || stage->published || stage->busy || stage->owner->stage!=stage) return;
     /* Banks/media publish first. These are retained real destination versions;
      * no parser, frame upload, clock sample or playback callback runs here. */
-    if (stage->decoder_changed) {
+    if (stage->selection_changed) {
         if (stage->owner->restoring && stage->owner->restore_published) stage->owner->restore_superseded=true;
-        for (size_t i=0;i<16;++i) {
-            q3cin_movie *movie=&stage->movies[i];
-            qa_cinematic *decoder=movie->playback?movie->playback:
-                movie->system.playback?movie->system.playback(movie->system.context):NULL;
-            if (decoder) qa_cinematic_roq_scratch_rebind(decoder,stage->decoder_scratch);
-        }
-        qa_roq_scratch_release(stage->owner->decoder_scratch);
-        stage->owner->decoder_scratch=stage->decoder_scratch; stage->decoder_scratch=NULL;
         stage->owner->selected_handle=stage->selected_handle;
         stage->owner->decoder_handle=stage->decoder_handle;
     }
@@ -152,13 +132,10 @@ static bool dispose(qa_q3_cinematic_handles_stage **slot,bool published,qa_error
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Prepared cinematic disposal lost its retained claim");
     for (size_t i=0;i<16;++i) {
         if (!published && stage->added[i]) {
-            qa_cinematic_destroy(stage->movies[i].playback);
-            qa_cinematic_asset_release(stage->movies[i].asset); free(stage->movies[i].path);
-            q3cin_restore_dispose(stage->movies+i);
+            q3cin_movie_dispose(stage->movies+i);
         }
         qa_scene_image_release(stage->scratch[i]);
     }
-    qa_roq_scratch_release(stage->decoder_scratch);
     stage->owner->stage=NULL; free(stage); *slot=NULL; return true;
 }
 bool qa_q3_cinematic_handles_stage_finish(qa_q3_cinematic_handles_stage **slot,qa_error *error)

@@ -65,7 +65,7 @@ bool qa_q3_cinematic_handles_source_at(const qa_q3_cinematic_handles *,size_t,qa
 bool qa_q3_cinematic_source_audio_rebind_ready(qa_q3_cinematic_source *,qa_audio_engine *,uint64_t,qa_error *);
 void qa_q3_cinematic_source_audio_rebind(qa_q3_cinematic_source *,qa_audio_engine *,uint64_t);
 qa_q3_cinematic_handles *qa_q3_cinematic_source_handles(const qa_q3_cinematic_source *);
-qa_roq_scratch *qa_q3_cinematic_source_decoder_scratch(const qa_q3_cinematic_source *);
+qa_roq_scratch *qa_q3_cinematic_source_decoder_scratch(const qa_q3_cinematic_source *, int32_t handle);
 bool qa_q3_cinematic_system_select(qa_q3_cinematic_source *,int32_t,qa_cinematic *,qa_error *);
 bool qa_q3_cinematic_system_fullscreen(qa_q3_cinematic_source *,int32_t,qa_scene_rect,qa_scene_frame *,bool *,qa_error *);
 bool qa_q3_cinematic_play(qa_q3_cinematic_source *,const char *,qa_scene_rect_f,uint32_t,

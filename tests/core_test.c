@@ -42,6 +42,7 @@
 #include "qa/audio.h"
 #include "qa/audio_save.h"
 #include "qa/cinematic.h"
+#include "qa/q3_cinematic_handles.h"
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
 #include "qa/q1_save.h"
@@ -2423,18 +2424,18 @@ static void cinematic_test_complete(void *context,qa_cinematic_target target,qa_
 {
     (void)target; (void)reason; ++*(unsigned *)context;
 }
+/* INFO, one solid codebook frame, one skip frame, and EOF lookahead. */
+static const uint8_t cinematic_test_roq[]={
+    0x84,0x10,0xff,0xff,0xff,0xff,30,0,
+    0x01,0x10,8,0,0,0,0,0, 8,0,8,0,8,0,4,0,
+    0x02,0x10,10,0,0,0,1,1, 100,100,100,100,128,128,0,0,0,0,
+    0x11,0x10,3,0,0,0,0,0, 0,0x80,0,
+    0x11,0x10,2,0,0,0,0,0, 0,0,
+    0x12,0x10,0,0,0,0,0,0};
 static void test_roq_prefix_checkpoint(void)
 {
-    /* INFO, one solid codebook frame, one skip frame, and EOF lookahead. */
-    static const uint8_t bytes[]={
-        0x84,0x10,0xff,0xff,0xff,0xff,30,0,
-        0x01,0x10,8,0,0,0,0,0, 8,0,8,0,8,0,4,0,
-        0x02,0x10,10,0,0,0,1,1, 100,100,100,100,128,128,0,0,0,0,
-        0x11,0x10,3,0,0,0,0,0, 0,0x80,0,
-        0x11,0x10,2,0,0,0,0,0, 0,0,
-        0x12,0x10,0,0,0,0,0,0};
     qa_error error={0}; qa_media_input *input=NULL;
-    CHECK(qa_media_input_memory((qa_bytes){bytes,sizeof(bytes)},NULL,NULL,&input,&error));
+    CHECK(qa_media_input_memory((qa_bytes){cinematic_test_roq,sizeof(cinematic_test_roq)},NULL,NULL,&input,&error));
     qa_cinematic_source source={.name="prefix.roq",.format=QA_CINEMATIC_ROQ,.data.roq=input};
     for (unsigned shared=0;shared<2;++shared) {
         qa_roq_scratch *scratch=NULL;
@@ -2538,6 +2539,134 @@ static void test_roq_prefix_checkpoint(void)
     qa_cinematic_destroy(restored); qa_cinematic_destroy(movie);
     CHECK(completions==2);
     qa_media_input_release(input);
+}
+
+static bool cinematic_bank_test_limits(void *context,bool *limited,qa_error *error)
+{ (void)context; (void)error; *limited=false; return true; }
+static bool cinematic_bank_test_upload(void *context,const qa_scene_image *registered,
+    const qa_scene_image *version,bool redefine,bool dirty,qa_error *error)
+{
+    (void)context; (void)registered; (void)version; (void)redefine; (void)dirty; (void)error;
+    return true;
+}
+static uint64_t cinematic_bank_test_bus(void *context) { return *(const uint64_t *)context; }
+static bool cinematic_bank_test_video(void *context,int32_t *value,qa_error *error)
+{ (void)context; (void)error; *value=1; return true; }
+static bool cinematic_bank_test_current(void *context,const qa_q3_cinematic_source_options *options)
+{ return options && options->context==context; }
+static void test_roq_handle_checkpoints(void)
+{
+    qa_error error={0};
+    char directory[]="/tmp/qa-core-roq-XXXXXX",folder[128];
+    CHECK(mkdtemp(directory));
+    CHECK(snprintf(folder,sizeof(folder),"%s/video",directory)>0 && mkdir(folder,0700)==0);
+    qa_resource_pool *pool=qa_resource_pool_create(&error); CHECK(pool);
+    qa_vfs *files=qa_vfs_create(pool,&error); CHECK(files);
+    qa_mount_id mount;
+    CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,true,&mount,&error));
+    const char *paths[]={"video/first.roq","video/second.roq"};
+    uint8_t second[sizeof(cinematic_test_roq)];
+    memcpy(second,cinematic_test_roq,sizeof(second));
+    memset(second+32,180,4); /* The second movie's four codebook luma values. */
+    CHECK(qa_vfs_write(files,mount,paths[0],(qa_bytes){cinematic_test_roq,sizeof(cinematic_test_roq)},&error));
+    CHECK(qa_vfs_write(files,mount,paths[1],(qa_bytes){second,sizeof(second)},&error));
+    qa_scene_resources *images=qa_scene_resources_create(files,&error); CHECK(images);
+    qa_q3_image_upload_options upload={.color={.device={.color_bits=24},.gamma=1,.intensity=1}};
+    CHECK(qa_scene_resources_source_q3_initialize(images,&upload,&error));
+    qa_media_library *media=qa_media_library_create(images,&error); CHECK(media);
+    qa_q3_cinematic_handles_options bank_options={.images=images,
+        .ui_limits=cinematic_bank_test_limits,.upload=cinematic_bank_test_upload};
+    qa_q3_cinematic_handles *banks[2]={0};
+    qa_q3_cinematic_source *sources[2][2]={{0}};
+    int32_t handles[2]={-1,-1};
+    const char *instances[]={"first-movie","second-movie"};
+    uint64_t buses[]={101,102};
+    double now[]={0,10000};
+    qa_q3_cinematic_restore_slot rows[2]={0};
+    uint8_t pixels[2][8*8*4];
+    for (unsigned pass=0;pass<2;++pass) {
+        CHECK(qa_q3_cinematic_handles_create(&bank_options,banks+pass,&error));
+        if (pass) CHECK(qa_q3_cinematic_handles_restore_reserve(banks[pass],rows,2,&error));
+        for (unsigned i=0;i<2;++i) {
+            qa_q3_cinematic_source_options options={.files=files,.media=media,
+                .clock={now+pass,cinematic_test_clock},.context=buses+i,.audio_bus=cinematic_bank_test_bus,
+                .in_game_video=cinematic_bank_test_video,.current=cinematic_bank_test_current};
+            CHECK(qa_q3_cinematic_source_create(banks[pass],&options,&sources[pass][i],&error));
+            CHECK(qa_q3_cinematic_source_restore_bind(sources[pass][i],instances[i],"core-roq",0,0,UINT32_MAX,&error));
+            if (!pass) CHECK(qa_q3_cinematic_play(sources[pass][i],paths[i],(qa_scene_rect_f){0,0,8,8},
+                2u|8u,NULL,NULL,handles+i,&error) && handles[i]>=0);
+        }
+        if (!pass) {
+            const double times[]={0,34,67};
+            for (unsigned step=0;step<3;++step) {
+                now[pass]=times[step];
+                for (unsigned i=0;i<2;++i) {
+                    int32_t status;
+                    CHECK(qa_q3_cinematic_run(sources[pass][i],handles[i],&status,&error) && status==1);
+                    qa_q3_cinematic_slot slot;
+                    CHECK(qa_q3_cinematic_handles_at(banks[pass],(uint32_t)handles[i],&slot) && slot.playback);
+                    const qa_media_frame *picture=qa_cinematic_frame(slot.playback);
+                    CHECK(step?picture && picture->index==step-1:!picture);
+                }
+            }
+        } else {
+            bool complete=false;
+            CHECK(qa_q3_cinematic_handles_restore_finish(banks[pass],&complete,&error) && complete);
+        }
+        qa_roq_scratch *first_scratch=qa_q3_cinematic_source_decoder_scratch(sources[pass][0],handles[0]);
+        qa_roq_scratch *second_scratch=qa_q3_cinematic_source_decoder_scratch(sources[pass][1],handles[1]);
+        CHECK(first_scratch && second_scratch && first_scratch!=second_scratch);
+        for (unsigned i=0;i<2;++i) {
+            qa_q3_cinematic_slot slot;
+            CHECK(qa_q3_cinematic_handles_at(banks[pass],(uint32_t)handles[i],&slot) && slot.playback);
+            const qa_media_frame *picture=qa_cinematic_frame(slot.playback);
+            CHECK(picture && picture->index==1 && picture->loop==0 && picture->rgba.size==sizeof(pixels[i]));
+            CHECK(qa_load_u32le(picture->rgba.data)==qa_roq_yuv_rgba(i?180:100,128,128));
+            if (pass) CHECK(!memcmp(pixels[i],picture->rgba.data,sizeof(pixels[i])));
+            else {
+                memcpy(pixels[i],picture->rgba.data,sizeof(pixels[i]));
+                rows[i]=(qa_q3_cinematic_restore_slot){.handle=handles[i],.instance=slot.instance,.content=slot.content,
+                    .role=slot.role,.seat=slot.seat,.source_group=slot.source_group,.path=slot.path,.rect=slot.rect,
+                    .flags=slot.flags,.has_playback=true,.occupied=slot.occupied,.selected=slot.selected,
+                    .decoder=slot.decoder,.status=slot.status,.play_on_walls=slot.play_on_walls};
+                CHECK(qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&rows[i].playback,&error));
+            }
+        }
+    }
+    now[0]=100; now[1]+=33;
+    for (unsigned i=0;i<2;++i) {
+        qa_cinematic_checkpoint progress[2];
+        for (unsigned pass=0;pass<2;++pass) {
+            int32_t status;
+            CHECK(qa_q3_cinematic_run(sources[pass][i],handles[i],&status,&error) && status==5);
+            qa_q3_cinematic_slot slot;
+            CHECK(qa_q3_cinematic_handles_at(banks[pass],(uint32_t)handles[i],&slot) && slot.playback);
+            CHECK(qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,progress+pass,&error));
+            const qa_media_frame *picture=qa_cinematic_frame(slot.playback);
+            CHECK(picture && picture->index==1 && picture->loop==0 &&
+                !memcmp(pixels[i],picture->rgba.data,sizeof(pixels[i])));
+        }
+        CHECK(progress[0].loop==1 && progress[1].loop==progress[0].loop &&
+            progress[1].progress.roq.decoded==progress[0].progress.roq.decoded &&
+            progress[1].progress.roq.cursor.position==progress[0].progress.roq.cursor.position);
+    }
+    qa_q3_cinematic_slot survivor;
+    CHECK(qa_q3_cinematic_handles_at(banks[0],(uint32_t)handles[1],&survivor) && survivor.playback);
+    qa_cinematic_checkpoint before,after;
+    CHECK(qa_cinematic_checkpoint_read((qa_cinematic *)survivor.playback,&before,&error));
+    CHECK(qa_q3_cinematic_source_destroy(&sources[0][0],&error));
+    CHECK(qa_cinematic_checkpoint_read((qa_cinematic *)survivor.playback,&after,&error));
+    CHECK(after.loop==before.loop && after.progress.roq.decoded==before.progress.roq.decoded &&
+        after.progress.roq.cursor.position==before.progress.roq.cursor.position &&
+        !memcmp(pixels[1],qa_cinematic_frame(survivor.playback)->rgba.data,sizeof(pixels[1])));
+    for (unsigned pass=0;pass<2;++pass) {
+        for (unsigned i=0;i<2;++i) CHECK(qa_q3_cinematic_source_destroy(&sources[pass][i],&error));
+        CHECK(qa_q3_cinematic_handles_destroy(banks+pass,&error));
+    }
+    qa_media_library_destroy(media); qa_scene_resources_destroy(images);
+    for (unsigned i=0;i<2;++i) CHECK(qa_vfs_remove(files,mount,paths[i],&error));
+    qa_vfs_destroy(files); qa_resource_pool_destroy(pool);
+    CHECK(rmdir(folder)==0 && rmdir(directory)==0);
 }
 
 static void test_raw_audio_custody(void)
@@ -5800,6 +5929,7 @@ int main(int argc, char **argv)
     test_connection_request_cursor();
     test_shared_effect_cursor();
     test_roq_prefix_checkpoint();
+    test_roq_handle_checkpoints();
     test_raw_audio_custody();
     test_raw_audio_scalar_cursor();
     test_roq_audio_cursor();

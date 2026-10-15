@@ -95,7 +95,7 @@ qa_cinematic_options frontend_system_cinematic_options(frontend_system_cinematic
         .audio_bus=row->source.identity.audio_bus,.gain=1,
         .audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},.context=source?numeric.context:row,
         .diagnostic=source?numeric.print:diagnostic,
-        .roq_scratch=source?qa_q3_cinematic_source_decoder_scratch(row->numeric_source):NULL};
+        .roq_scratch=source?qa_q3_cinematic_source_decoder_scratch(row->numeric_source,row->numeric_handle):NULL};
 }
 static bool finish(frontend_system_cinematic *row,qa_cinematic_end reason,qa_error *error)
 {
