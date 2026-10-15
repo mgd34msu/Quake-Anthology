@@ -1379,7 +1379,7 @@ bool application_native_q3_match_bots_end(application_provider *provider,qa_erro
 bool application_bots_test_aas(application_provider *provider,qa_vec3 origin,qa_error *error) {
     application_bots *bots=provider && provider->application?provider->application->bots:NULL;
     if(!bots || bot_source(bots)!=provider || provider->kind!=APPLICATION_PROVIDER_Q3 ||
-       !bots->population || bots->restoring || bots->calls || bots->producing || provider->close_pending)
+       !bots->population || bots->restoring || provider->close_pending)
         return application_fail(error,QA_ERROR_ARGUMENT,"BotTestAAS requires its real initialized source bot owner");
     ++bots->calls;bool okay=qa_bots_test_aas(bots->population,origin,error);--bots->calls;return okay;
 }

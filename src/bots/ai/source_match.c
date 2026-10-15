@@ -382,13 +382,10 @@ bool qa_bots_interbreed_end_match(qa_bots *bots, qa_error *error)
 
 bool qa_bots_test_aas(qa_bots *bots, qa_vec3 origin, qa_error *error)
 {
-    if (!bot_ai_mutable(bots, error)) return false;
-    if (bots->checking_spawn)
-        return bot_ai_fail(error, "BotTestAAS reentered its source spawn callback");
+    if (!bots || bots->restore_pending || bots->shutting_down || qa_bot_runtime_closed(bots->runtime))
+        return bot_ai_fail(error, "BotTestAAS requires an initialized navigation owner");
     if (!qa_bot_runtime_lease_begin(bots->runtime, error)) return false;
-    bots->busy = true;
     bool okay = bot_ai_source_test_aas(bots, origin, error);
-    bots->busy = false;
     qa_bot_runtime_lease_end(bots->runtime);
     return okay;
 }
