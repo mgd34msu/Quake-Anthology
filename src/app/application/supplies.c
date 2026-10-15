@@ -1657,11 +1657,13 @@ static bool q1_source_preference(supply_pair *pair, qa_actor_id actor,
     *out = value;
     return true;
 }
-static bool ammo_granted(void *context, qa_actor_id actor,
-    const qa_pickup_receipt *receipts, size_t count, bool auto_switch, qa_error *error) {
-    supply_pair *pair = context;
+static bool ammo_apply(supply_pair *pair, qa_actor_id actor,
+    const qa_pickup_receipt *receipts, size_t count, bool auto_switch, bool refresh, qa_error *error) {
     if (!supply_current(pair, actor, error)) return false;
     if (pair->arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        if (refresh)
+            return qa_q1_selected_ammo_refresh(pair->arsenal->state.q1, actor, error) &&
+                supply_current(pair, actor, error);
         qa_q1_auto_switch value;
         const qa_q1_auto_switch *preference;
         return q1_source_preference(pair, actor, &value, &preference, error) &&
@@ -1693,6 +1695,40 @@ static bool ammo_granted(void *context, qa_actor_id actor,
              supply_current(pair, actor, error));
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Pickup receipt has no native selected arsenal");
+}
+static bool ammo_granted(void *context, qa_actor_id actor,
+    const qa_pickup_receipt *receipts, size_t count, bool auto_switch, qa_error *error) {
+    return ammo_apply(context, actor, receipts, count, auto_switch, false, error);
+}
+bool application_supplies_horde_ammo(application_supplies *owner, application_provider *source,
+    qa_actor_id actor, qa_horde_pickup_action action, qa_pickup_grant grant,
+    bool *accepted, qa_error *error) {
+    *accepted = false;
+    application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
+    if (!arsenal) return true;
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Horde ammunition lost its admitted supply pair");
+    ++owner->calls;
+    bool ok;
+    if (action == QA_HORDE_AMMO_PRESELECT) {
+        ok = ammo_apply(pair, actor, NULL, 0, true, false, error);
+        if (ok) *accepted = true;
+    } else {
+        qa_supply *selected;
+        ok = qa_q1_player_supply(source->state.q1, actor, &selected, error);
+        qa_supply_offer offer = {.kind = QA_SUPPLY_AMMO, .ammo = &grant, .ammo_count = 1};
+        if (action == QA_HORDE_AMMO_PREVIEW) {
+            qa_supply_preview_result result = {0};
+            if (ok) ok = qa_supply_preview(selected, actor, &offer, false, &result, error);
+            if (ok) *accepted = result.accepted;
+            qa_supply_preview_free(&result);
+        } else {
+            if (ok) ok = qa_supply_ammo(selected, actor, grant, false, accepted, error) &&
+                ammo_apply(pair, actor, NULL, 0, false, true, error);
+        }
+    }
+    supplies_leave(owner);
+    return ok;
 }
 static bool weapon_granted(void *context, qa_actor_id actor,
     const qa_item_id *items, size_t count, qa_pickup_selection_mode selection, qa_error *error) {

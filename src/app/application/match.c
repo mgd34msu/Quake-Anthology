@@ -399,6 +399,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .spawn_monster = application_native_horde_spawn_monster,
                             .spawn_loot = application_native_horde_spawn_loot,
                             .grant_loot = application_native_horde_grant_loot,
+                            .horde_pickup_state = application_native_horde_pickup_state,
                             .horde_head = application_native_horde_head,
                             .loot_alpha = application_native_horde_alpha,
                             .source_random = application_native_horde_random,

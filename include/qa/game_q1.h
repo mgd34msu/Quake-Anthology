@@ -507,6 +507,7 @@ bool qa_q1_grapple_weapon_read(const qa_q1_game *, qa_actor_id, qa_q1_grapple_we
 bool qa_q1_horde_spawn(qa_q1_game *, const char *classname, qa_vec3 origin, qa_vec3 angles,
                        qa_actor_id manager, qa_actor_id enemy, qa_actor_id *, qa_error *);
 bool qa_q1_horde_after_death(qa_q1_game *, qa_actor_id, bool enabled, qa_error *);
+bool qa_q1_horde_health_received(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_horde_axe_chain(qa_q1_game *, qa_actor_id, uint32_t hits, double expires, qa_error *);
 bool qa_q1_monster_charm(qa_q1_game *, qa_actor_id monster, qa_actor_id charmer, qa_error *);
 bool qa_q1_grapple_pulling(const qa_q1_game *, qa_actor_id);

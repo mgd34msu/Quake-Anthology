@@ -148,7 +148,8 @@ bool qa_modes_horde_configure(qa_modes *m, qa_mode_id id, const qa_horde_options
         (count && !points) || options->skill < 0 || options->skill > 3 ||
         count > SIZE_MAX / sizeof(*points) || !mode_live(m, options->manager) ||
         !m->options.hooks.spawn_monster || !m->options.hooks.spawn_loot ||
-        !m->options.hooks.grant_loot || !m->options.hooks.horde_head)
+        !m->options.hooks.grant_loot || !m->options.hooks.horde_pickup_state ||
+        !m->options.hooks.horde_head)
         return mode_fail(e, "invalid Horde admission");
     for (size_t i = 0; i < count; ++i)
         if (points[i].kind < QA_HORDE_NORMAL || points[i].kind > QA_HORDE_KEY ||
@@ -896,10 +897,13 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
         if (!player || !mode_alive(m, actor) || !mode_member_get(m, v, actor))
             return true;
         if (loot->kind == HORDE_AMMO) {
-            double current;
-            if (!mode_count(m, actor, loot->item, &current, e))
+            qa_pickup_grant grant = {loot->item, loot->amount};
+            bool supplied;
+            if (!MODE_CALLBACK(m, m->options.hooks.horde_pickup_state(m->options.hooks.context,
+                v->id, actor, QA_HORDE_AMMO_PREVIEW, grant, &supplied, e)))
                 return false;
-            if (current >= loot->capacity)
+            if (!supplied || !mode_live(m, actor) || !mode_live(m, item_actor) ||
+                !qa_actor_id_equal(loot->actor, item_actor))
                 return true;
             mode_name label = loot->item == m->runtime_names[MODE_NAME_Q1_AMMO_SHELLS] ? MODE_NAME_QC_SHELLS :
                               loot->item == m->runtime_names[MODE_NAME_Q1_AMMO_NAILS] ? MODE_NAME_QC_NAILS :
@@ -912,31 +916,23 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
                 return false;
             if (!mode_live(m, actor) || !mode_live(m, item_actor) || !qa_actor_id_equal(loot->actor, item_actor))
                 return true;
+            if (!MODE_CALLBACK(m, m->options.hooks.horde_pickup_state(m->options.hooks.context,
+                v->id, actor, QA_HORDE_AMMO_PRESELECT, grant, &supplied, e)))
+                return false;
+            if (!mode_live(m, actor) || !mode_live(m, item_actor) ||
+                !qa_actor_id_equal(loot->actor, item_actor))
+                return true;
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
                 uint32_t i = m->players_order.actors[ordinal].slot;
                 mode_member *p = &v->members[i];
                 if (!p->joined || !mode_alive(m, p->actor))
                     continue;
-                qa_inventory_entry entry;
-                qa_error local = {0};
-                if (!qa_inventory_entry_read(m->options.services.inventory, p->actor, loot->item,
-                                             &entry, &local)) {
-                    if (local.code != QA_ERROR_NOT_FOUND) {
-                        if (e)
-                            *e = local;
-                        return false;
-                    }
-                    entry = (qa_inventory_entry){.item = loot->item,
-                                                 .capacity = loot->capacity,
-                                                 .policy = QA_COUNT_SOURCE_FLOAT};
-                    if (!qa_inventory_configure(m->options.services.inventory, p->actor, &entry,
-                                                NULL, NULL, e))
-                        return false;
-                }
-                double given;
-                if (!qa_inventory_give(m->options.services.inventory, p->actor, loot->item,
-                                       loot->amount, &given, e))
+                qa_actor_id recipient = p->actor;
+                if (!MODE_CALLBACK(m, m->options.hooks.horde_pickup_state(m->options.hooks.context,
+                    v->id, recipient, QA_HORDE_AMMO_GRANT, grant, &supplied, e)))
                     return false;
+                if (!mode_live(m, item_actor) || !qa_actor_id_equal(loot->actor, item_actor))
+                    return true;
             }
         } else if (loot->kind == HORDE_HEALTH) {
             qa_combat_state state;
@@ -952,6 +948,13 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
             if (!qa_combat_set_health(m->options.services.combat, actor,
                                       fminf(maximum, health + loot->amount), e))
                 return false;
+            bool received;
+            if (!MODE_CALLBACK(m, m->options.hooks.horde_pickup_state(m->options.hooks.context,
+                v->id, actor, QA_HORDE_HEALTH_RECEIVED, (qa_pickup_grant){0}, &received, e)))
+                return false;
+            if (!mode_live(m, actor) || !mode_live(m, item_actor) ||
+                !qa_actor_id_equal(loot->actor, item_actor))
+                return true;
             qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
                 .value.number = loot->amount};
             if (!pickup_feedback(m, v, loot, actor, MODE_NAME_QC_ITEM_HEALTH, &argument, 1,

@@ -42,6 +42,12 @@ bool q1_map_addon_hunger(qa_q1_game *g, qa_actor_id id, float value, qa_error *e
     row->has_hunger = true;
     return true;
 }
+bool qa_q1_horde_health_received(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    if (!g->maps || (g->options.program != QA_Q1_MG1 && g->options.program != QA_Q1_DOPA) ||
+        !(qa_q1_game_campaign_flags(g) & 2u) || !q1_alive(g, actor))
+        return true;
+    return q1_map_addon_hunger(g, actor, (float)(g->time + 10), error);
+}
 bool q1_map_addon_lore_admit(qa_q1_game *g, qa_actor_id id, bool *admitted, qa_error *error) {
     *admitted = false;
     q1_addon_contact *row = q1_map_addon_contact(g, id, true, error);

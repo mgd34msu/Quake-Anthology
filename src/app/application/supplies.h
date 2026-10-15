@@ -21,6 +21,8 @@ bool application_supplies_spawn(application_supplies *, application_provider *so
 void application_supplies_actor_released(application_supplies *, qa_actor_record);
 bool application_supplies_for(application_supplies *, application_provider *source,
                                qa_actor_id, qa_supply **, qa_error *);
+bool application_supplies_horde_ammo(application_supplies *, application_provider *source,
+    qa_actor_id, qa_horde_pickup_action, qa_pickup_grant, bool *accepted, qa_error *);
 bool application_supplies_weapon_sources(application_supplies *, application_provider *source,
     qa_actor_id, const qa_supply_weapon *selected, size_t selected_count,
     const qa_supply_weapon *original, size_t original_count, qa_arena *, qa_item_id *, qa_error *);

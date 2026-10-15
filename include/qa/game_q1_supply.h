@@ -16,6 +16,8 @@ bool qa_q1_selected_arsenal_spawn(qa_q1_game *, qa_actor_id, qa_q1_weapon,
 bool qa_q1_selected_pickup_ammo(qa_q1_game *, qa_actor_id,
     const qa_pickup_receipt *, size_t, bool auto_switch,
     const qa_q1_auto_switch *source_preference, qa_error *);
+bool qa_q1_selected_ammo_refresh(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_player_supply(qa_q1_game *, qa_actor_id, qa_supply **, qa_error *);
 bool qa_q1_selected_pickup_weapons(qa_q1_game *, qa_actor_id,
     const qa_item_id *, size_t, qa_pickup_selection_mode,
     const qa_q1_auto_switch *source_preference, qa_error *);

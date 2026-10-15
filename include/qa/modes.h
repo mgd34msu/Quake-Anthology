@@ -335,6 +335,12 @@ typedef struct qa_mode_loot_spawn {
     uint32_t spawnflags;
     bool bounce;
 } qa_mode_loot_spawn;
+typedef enum qa_horde_pickup_action {
+    QA_HORDE_AMMO_PREVIEW,
+    QA_HORDE_AMMO_PRESELECT,
+    QA_HORDE_AMMO_GRANT,
+    QA_HORDE_HEALTH_RECEIVED
+} qa_horde_pickup_action;
 typedef struct qa_mode_source_settings {
     const char *referee_password, *rcon_password;
     const char *admin_password, *warp_list, *level_name;
@@ -411,6 +417,8 @@ typedef struct qa_modes_hooks {
     bool (*spawn_loot)(void *, qa_mode_id, const qa_mode_loot_spawn *, qa_actor_id *out,
                        qa_error *);
     bool (*grant_loot)(void *, qa_actor_id item, qa_actor_id player, bool *accepted, qa_error *);
+    bool (*horde_pickup_state)(void *, qa_mode_id, qa_actor_id, qa_horde_pickup_action,
+                                qa_pickup_grant, bool *accepted, qa_error *);
     bool (*loot_alpha)(void *, qa_actor_id, float, qa_error *);
     bool (*horde_head)(void *, qa_actor_id, bool enabled, qa_error *);
     /* The source owner returns its next RNG draw in [0,1). An absent hook uses

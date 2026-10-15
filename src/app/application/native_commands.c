@@ -7,6 +7,7 @@
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
 #include "native_q1_powers.h"
+#include "supplies.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_clients.h"
 
@@ -360,6 +361,35 @@ bool application_native_horde_grant_loot(void *opaque, qa_actor_id item,
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
     bool okay = qa_q1_pickup_grant_external(provider->state.q1, item, player, accepted, error);
+    return native_horde_finish(&operation, okay, error);
+}
+
+bool application_native_horde_pickup_state(void *opaque, qa_mode_id mode, qa_actor_id actor,
+    qa_horde_pickup_action action, qa_pickup_grant grant, bool *accepted, qa_error *error)
+{
+    qa_application *application = opaque;
+    application_provider *provider = application_mode_provider(application, mode);
+    *accepted = false;
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q1)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Horde pickup has no native source owner");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(provider->state.q1, &operation, error)) return false;
+    bool okay;
+    switch (action) {
+    case QA_HORDE_AMMO_PREVIEW:
+    case QA_HORDE_AMMO_PRESELECT:
+    case QA_HORDE_AMMO_GRANT:
+        okay = application_supplies_horde_ammo(application->supplies, provider, actor,
+            action, grant, accepted, error);
+        break;
+    case QA_HORDE_HEALTH_RECEIVED:
+        okay = qa_q1_horde_health_received(provider->state.q1, actor, error);
+        if (okay) *accepted = true;
+        break;
+    default:
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "Unknown Horde pickup state action");
+        break;
+    }
     return native_horde_finish(&operation, okay, error);
 }
 

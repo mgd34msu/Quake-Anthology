@@ -478,6 +478,8 @@ bool application_native_horde_spawn_loot(void *, qa_mode_id,
     const qa_mode_loot_spawn *, qa_actor_id *, qa_error *);
 bool application_native_horde_grant_loot(void *, qa_actor_id, qa_actor_id,
     bool *, qa_error *);
+bool application_native_horde_pickup_state(void *, qa_mode_id, qa_actor_id,
+    qa_horde_pickup_action, qa_pickup_grant, bool *, qa_error *);
 bool application_native_horde_head(void *, qa_actor_id, bool, qa_error *);
 bool application_native_horde_alpha(void *, qa_actor_id, float, qa_error *);
 float application_native_horde_random(void *, qa_mode_id);
