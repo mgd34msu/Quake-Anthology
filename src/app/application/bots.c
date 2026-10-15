@@ -1069,9 +1069,12 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     qa_ruleset_id behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
     qa_bot_source_knowledge *knowledge=NULL;bool found=false;
     qa_strings *strings=qa_session_strings(bots->application->session);
+    const qa_cvar_view *language=qa_cvars_read(bots->application->cvars,
+        bots->application->ui_preference_handles.seats[0][QA_UI_PREF_LANGUAGE]);
+    const char *locale=language && language->value[0]?language->value:"english";
     qa_bot_source_weapon_resolve resolve=family==QA_GAME_Q1?bot_weapon_resolve:NULL;
     if(source->launch && source->launch->content &&
-       !qa_bot_source_knowledge_load(source->launch->content,strings,behavior,resolve,source,
+       !qa_bot_source_knowledge_load(source->launch->content,strings,behavior,locale,resolve,source,
            &knowledge,&found,error)) return false;
     if(!found && family!=QA_GAME_Q3) {
         const qa_product *sibling=qa_catalog_find(bots->application->catalog,
@@ -1079,7 +1082,7 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
         if(sibling && sibling->availability==QA_CONTENT_INSTALLED) {
             qa_vfs *files=NULL;
             if(!qa_catalog_open(bots->application->catalog,sibling->id,&files,error)) return false;
-            bool okay=qa_bot_source_knowledge_load(files,strings,behavior,resolve,source,&knowledge,&found,error);
+            bool okay=qa_bot_source_knowledge_load(files,strings,behavior,locale,resolve,source,&knowledge,&found,error);
             qa_vfs_destroy(files);
             if(!okay) return false;
         }

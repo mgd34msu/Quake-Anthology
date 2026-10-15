@@ -27,6 +27,7 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
         .entity = s->view.entity, .mode = s->view.mode, .decision = QA_BOT_SEEK_LONG_TERM}, .player = s->player,
         .character = s->character, .goals = s->goals, .weapons = s->weapons,
         .chat = s->chat, .movement = s->movement, .team_arena = s->team_arena,
+        .authored_chat = s->authored_chat,
         .command_sequence = s->command_sequence, .admitted_skill=s->admitted_skill,
         .admitted_character=s->admitted_character,.admitted_name=s->admitted_name,
         .source_setup=s->source_setup,.inuse=s->inuse,.counted=s->counted};
@@ -53,6 +54,7 @@ bool qa_bots_level_reset(qa_bots *b, qa_error *e) {
         if (!s || !s->inuse || s->retired) continue;
         ok = bot_ai_reset(b, s, e);
         if (ok) {
+            bot_ai_authored_chat_level_reset(s);
             int32_t setup_count=4;
             ok=bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&setup_count,true,e);
         }

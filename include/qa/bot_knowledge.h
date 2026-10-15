@@ -48,6 +48,14 @@ typedef struct qa_bot_source_document {
     const qa_bot_source_block *blocks;
     size_t block_count;
 } qa_bot_source_document;
+typedef struct qa_bot_source_chat {
+    qa_string_id type;
+    const qa_string_id *texts;
+    size_t text_count;
+    double delay_ms;
+    float chance;
+    bool team_only, random_text;
+} qa_bot_source_chat;
 typedef enum qa_bot_aim_point {
     QA_BOT_AIM_CENTER, QA_BOT_AIM_HEAD, QA_BOT_AIM_FEET, QA_BOT_AIM_BEST
 } qa_bot_aim_point;
@@ -104,7 +112,7 @@ typedef struct qa_bot_source_weapon_policy {
  * strings belong to the caller's session table. Missing settings return found=false. */
 typedef bool (*qa_bot_source_weapon_resolve)(void *, qa_string_id authored_name,
     uint32_t authored_number, qa_item_id *, qa_error *);
-bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id,
+bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id, const char *language,
     qa_bot_source_weapon_resolve, void *,
     qa_bot_source_knowledge **, bool *found, qa_error *);
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
@@ -114,6 +122,8 @@ const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowle
 const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge *, qa_string_id classname);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
+size_t qa_bot_source_chat_count(const qa_bot_source_knowledge *, qa_string_id type);
+const qa_bot_source_chat *qa_bot_source_chat_at(const qa_bot_source_knowledge *, qa_string_id type, size_t);
 
 #define QA_BOT_INVENTORY_SIZE 256
 enum {

@@ -890,6 +890,10 @@ static bool seek_ctf(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if((double)bot_ai_own_decision_time(s)<(double)b->time) {
             int32_t carrier;if(!bot_ai_source_flag_carrier(b,s,false,true,false,&carrier,e)) return false;
             if(!alive(b,s)) return true;
+            if(carrier>=0 && s->source_settings) {
+                if(!bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_ATTACKING,e)) return false;
+                if(!alive(b,s)) return true;
+            }
             if(bot_ai_long_term_goal(s)!=BOT_LTG_GET_FLAG && bot_ai_long_term_goal(s)!=BOT_LTG_RETURN_FLAG && !protect_order(bot_ai_long_term_goal(s))) {
                 if(!refuse_order(b,s,e) || !own_decision(b,s,e)) return false;
                 if(!alive(b,s)) return true;

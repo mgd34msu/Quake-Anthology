@@ -97,6 +97,7 @@ typedef struct bot_ai_state {
     bot_ai_view view;
     bot_ai_player player;
     bot_cooperative_state cooperative;
+    bot_authored_chat_state authored_chat;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
     const qa_bot_source_skill *source_settings;
@@ -142,6 +143,7 @@ struct qa_bots {
     bot_source_team_policy_globals source_team_policy;
     bot_source_events_globals source_event_globals;
     bot_source_chat_globals source_chat;
+    qa_string_id authored_chat_types[BOT_CHAT_COUNT];
     bot_source_match_globals source_match;
     qa_cvar_handle source_match_handles[BOT_SOURCE_MATCH_CVARS];
     qa_cvar_handle source_max_clients;

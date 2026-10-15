@@ -69,6 +69,7 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
     if (!b) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating native bot population"); return false; }
     b->runtime = runtime;
     b->services = *services;
+    bot_ai_authored_chat_bind(b);
     b->client_capacity = client_capacity;
     b->actor_save_capacity = qa_actors_capacity(qa_session_actors(services->shared.session));
     b->clients = calloc(b->client_capacity, sizeof(*b->clients));
@@ -443,6 +444,8 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     }
     bot_ai_senses_clear_client(b,(uint32_t)source_client,true);
     s->cooperative=(bot_cooperative_state){0};
+    s->authored_chat=(bot_authored_chat_state){
+        .emitted=a->restart?1u<<BOT_CHAT_CONNECTED:0};
     s->acquired_source_client=(uint32_t)source_client;
     s->view=(bot_ai_view){.actor=a->actor,.client=a->client,.entity=a->entity,
         .source_client=source_client,.mode=a->mode,.decision=QA_BOT_SEEK_LONG_TERM};

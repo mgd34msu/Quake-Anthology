@@ -2,10 +2,12 @@
 #include "qa/common_parse.h"
 #include "qa/text.h"
 #include "qa/id_index.h"
+#include "qa/localization.h"
 #include <float.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 struct qa_bot_source_knowledge {
     qa_arena storage;
@@ -18,6 +20,8 @@ struct qa_bot_source_knowledge {
     qa_bot_source_weapon *weapons;
     qa_id_index item_names;
     qa_bot_source_item *items;
+    qa_id_index chat_types;
+    qa_bot_source_chat *chats;
 };
 static void *reserve(qa_bot_source_knowledge *knowledge,void *old,size_t *capacity,
     size_t needed,size_t stride,size_t alignment,qa_error *error) {
@@ -425,6 +429,85 @@ static bool items_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_d
     }
     return true;
 }
+static bool chat_text(qa_bot_source_knowledge *knowledge,const qa_localization *catalog,
+    const char *key,const char *fallback,qa_string_id *out,qa_error *error)
+{
+    if(!qa_localization_find(catalog,key))
+        return qa_strings_intern_cstr(knowledge->strings,fallback,out,error);
+    size_t length=strlen(key);
+    char *base=qa_arena_alloc(&knowledge->storage,length+2,1,error);
+    if(!base) return false;
+    base[0]='$';memcpy(base+1,key,length+1);
+    qa_buffer text={0};
+    return qa_localize_presentation_arena(catalog,base,NULL,0,false,&knowledge->storage,&text,error) &&
+        qa_strings_intern(knowledge->strings,(qa_bytes){text.data,text.size},out,error);
+}
+static bool chats_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
+    qa_vfs *files,qa_ruleset_id rules,const char *language,qa_error *error)
+{
+    qa_localization_pool *pool=qa_localization_pool_create(error);
+    if(!pool) return false;
+    qa_localization *catalog=NULL;
+    bool okay=qa_localization_acquire(pool,files,language && *language?language:"english",
+        &(qa_localization_options){.profile=rules==QA_RULESET_NETQUAKE?
+            QA_LOCALIZATION_Q1_RERELEASE:QA_LOCALIZATION_Q2_RERELEASE},&catalog,error);
+    qa_string_id keys[5],yes;
+    const char *const names[]={"type","locstring","time","chance","team"};
+    for(size_t i=0;okay && i<5;++i)
+        okay=qa_strings_intern_cstr(knowledge->strings,names[i],keys+i,error);
+    if(okay) okay=qa_strings_intern_cstr(knowledge->strings,"true",&yes,error);
+    knowledge->chat_types.storage=&knowledge->storage;
+    if(okay) okay=qa_id_index_reserve(&knowledge->chat_types,document->block_count,error);
+    if(okay && document->block_count) {
+        knowledge->chats=qa_arena_alloc(&knowledge->storage,document->block_count*sizeof(*knowledge->chats),
+            _Alignof(qa_bot_source_chat),error);
+        okay=knowledge->chats!=NULL;
+    }
+    for(size_t i=0;okay && i<document->block_count;++i) {
+        const qa_bot_source_block *block=document->blocks+i;
+        qa_bot_source_chat *chat=knowledge->chats+i;*chat=(qa_bot_source_chat){0};
+        qa_string_id name=0;
+        for(size_t j=0;j<block->field_count;++j) {
+            const qa_bot_source_field *field=block->fields+j;
+            if(field->count!=1) continue;
+            if(field->key==keys[0]) chat->type=field->values[0];
+            else if(field->key==keys[1]) name=field->values[0];
+            else if(field->key==keys[4]) chat->team_only=field->values[0]==yes;
+            else {
+                double value;
+                if(!qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) ||
+                    !isfinite(value)) continue;
+                if(field->key==keys[2]) chat->delay_ms=value;
+                else if(field->key==keys[3] && value>=-FLT_MAX && value<=FLT_MAX) chat->chance=(float)value;
+            }
+        }
+        const char *raw=name?qa_strings_cstr(knowledge->strings,name):"";
+        const char *key=*raw=='$'?raw+1:raw;
+        qa_string_id variants[64];size_t count=0;
+        if(rules==QA_RULESET_NETQUAKE) {
+            size_t length=strlen(key);
+            char *numbered=qa_arena_alloc(&knowledge->storage,length+5,1,error);
+            if(!numbered) {okay=false;break;}
+            for(size_t j=0;j<64;++j) {
+                snprintf(numbered,length+5,"%s_%zu",key,j);
+                if(!qa_localization_find(catalog,numbered)) break;
+                if(!chat_text(knowledge,catalog,numbered,numbered,variants+count,error)) {okay=false;break;}
+                ++count;
+            }
+            chat->random_text=count!=0;
+        }
+        if(okay && !count) {
+            okay=chat_text(knowledge,catalog,key,rules==QA_RULESET_NETQUAKE?key:raw,variants,error);
+            count=1;
+        }
+        if(okay) {
+            chat->texts=copy_ids(knowledge,variants,count,error);chat->text_count=count;
+            okay=chat->texts!=NULL;
+        }
+        if(okay && chat->type) qa_id_index_insert(&knowledge->chat_types,chat->type,0,i);
+    }
+    qa_localization_release(catalog);qa_localization_pool_destroy(pool);return okay;
+}
 static bool document_load(qa_bot_source_knowledge *knowledge,qa_vfs *files,const char *path,
     bool *found,qa_error *error) {
     *found=false;qa_resource *resource=NULL;qa_error local={0};
@@ -447,7 +530,7 @@ static bool document_load(qa_bot_source_knowledge *knowledge,qa_vfs *files,const
     if(okay) {++knowledge->document_count;*found=true;}
     return okay;
 }
-bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_id rules,
+bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_id rules,const char *language,
     qa_bot_source_weapon_resolve resolve,void *context,
     qa_bot_source_knowledge **out,bool *found,qa_error *error) {
     if(!files || !strings || !out || !found) {
@@ -474,6 +557,8 @@ bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_i
         if(!document_load(knowledge,files,optional[i],&present,error)) goto failed;
         if(present && i==1 && !items_parse(knowledge,knowledge->documents+knowledge->document_count-1,
             rules,bindings,knowledge->documents[0].block_count,error)) goto failed;
+        if(present && i==6 && !chats_parse(knowledge,knowledge->documents+knowledge->document_count-1,
+            files,rules,language,error)) goto failed;
     }
     qa_arena_destroy(&binding_storage);
     qa_arena_seal(&knowledge->storage);*out=knowledge;*found=true;return true;
@@ -484,6 +569,7 @@ failed:
 }
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *knowledge) {
     if(knowledge) {qa_id_index_destroy(&knowledge->weapon_items);qa_id_index_destroy(&knowledge->item_names);
+        qa_id_index_destroy(&knowledge->chat_types);
         qa_arena_destroy(&knowledge->storage);free(knowledge);}
 }
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *knowledge,qa_item_id item)
@@ -497,6 +583,24 @@ const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge 
     if(!knowledge) return NULL;
     qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->item_names,classname,0);size_t at;
     return qa_id_index_next(&knowledge->item_names,&cursor,&at)?knowledge->items+at:NULL;
+}
+size_t qa_bot_source_chat_count(const qa_bot_source_knowledge *knowledge,qa_string_id type)
+{
+    if(!knowledge) return 0;
+    qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->chat_types,type,0);size_t at,count=0;
+    while(qa_id_index_next(&knowledge->chat_types,&cursor,&at)) ++count;
+    return count;
+}
+const qa_bot_source_chat *qa_bot_source_chat_at(const qa_bot_source_knowledge *knowledge,
+    qa_string_id type,size_t index)
+{
+    size_t count=qa_bot_source_chat_count(knowledge,type);
+    if(index>=count) return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->chat_types,type,0);size_t at;
+    /* Bucket chains run newest first; callers observe authored admission order. */
+    for(size_t reverse=count-1;qa_id_index_next(&knowledge->chat_types,&cursor,&at);--reverse)
+        if(reverse==index) return knowledge->chats+at;
+    return NULL;
 }
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *knowledge) {return knowledge?knowledge->skill_count:0;}
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *knowledge,size_t index) {

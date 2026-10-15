@@ -344,11 +344,79 @@ static void test_bot_authored_item_value(void)
     context.team=0;CHECK(qa_bot_source_item_value(&item,&context)==900);
     item.flags=QA_BOT_SOURCE_ITEM_RUNE;CHECK(qa_bot_source_item_value(&item,&context)==900);
 }
+typedef struct bot_authored_chat_output {
+    size_t draws, count;
+    char commands[8][1024];
+} bot_authored_chat_output;
+static bool bot_authored_chat_random(void *context,float *out,qa_error *error)
+{
+    (void)error;bot_authored_chat_output *output=context;
+    *out=output->draws++<4?0:.75f;return true;
+}
+static bool bot_authored_chat_command(void *context,int32_t client,const char *text,qa_error *error)
+{
+    (void)error;bot_authored_chat_output *output=context;
+    CHECK(client==0 && output->count<8 && strlen(text)<sizeof(output->commands[0]));
+    strcpy(output->commands[output->count++],text);return true;
+}
+static bool bot_authored_chat_client(void *context,int32_t client,uint32_t *out,qa_error *error)
+{
+    (void)context;(void)error;CHECK(client==0);*out=0;return true;
+}
+static void test_bot_authored_chat_delivery(qa_vfs *files)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&session,&error));
+    qa_bot_source_knowledge *knowledge=NULL;bool found=false;
+    CHECK(qa_bot_source_knowledge_load(files,qa_session_strings(session),QA_RULESET_NETQUAKE,
+        "french",NULL,NULL,&knowledge,&found,&error) && found);
+    bot_authored_chat_output output={0};qa_bot_actions *actions=NULL;
+    CHECK(qa_bot_actions_create(1,&(qa_bot_action_services){.context=&output,
+        .command=bot_authored_chat_command},&actions,&error));
+    qa_bot_runtime runtime={.actions=actions};
+    qa_bots bots={.runtime=&runtime,.time=10,.services={.context=&output,
+        .shared={.session=session},.source_knowledge=knowledge,.random=bot_authored_chat_random,
+        .source_action_client=bot_authored_chat_client}};
+    bot_ai_state state={.source_settings=qa_bot_source_skill_at(knowledge,0)};
+    uint8_t source[QA_BOT_STATE_SOURCE_BYTES]={0};
+    state.source_span=(qa_bot_source_span){source,sizeof(source)};
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&state.view.actor,&error));
+    bot_ai_authored_chat_bind(&bots);
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CONNECTED,&error));
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_MATCH_START,&error));
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CTF_DEFENSE,&error));
+    CHECK(output.draws==3 && !output.count);
+    CHECK(bot_ai_authored_chat_deliver(&bots,&state,&error) && !output.count);
+    bots.time=10.2f;
+    CHECK(bot_ai_authored_chat_deliver(&bots,&state,&error));
+    CHECK(output.count==2 && !strcmp(output.commands[0],"say_team depart") &&
+        !strcmp(output.commands[1],"say seul") && output.draws==4);
+    bots.time=10.6f;
+    CHECK(bot_ai_authored_chat_deliver(&bots,&state,&error));
+    CHECK(output.count==3 && !strcmp(output.commands[2],"say salut") && output.draws==5);
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CONNECTED,&error) && output.draws==5);
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CTF_OFFENSE,&error));
+    CHECK(bot_ai_authored_chat_deliver(&bots,&state,&error));
+    CHECK(output.count==4 && !strcmp(output.commands[3],"say raw_missing") && output.draws==6);
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CTF_CAMPING,&error));
+    CHECK(!state.authored_chat.pending[BOT_CHAT_CTF_CAMPING].row && output.draws==8);
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CTF_RETURNING,&error));
+    CHECK(!state.authored_chat.pending[BOT_CHAT_CTF_RETURNING].row && output.draws==9);
+    bot_ai_authored_chat_level_reset(&state);
+    CHECK(state.authored_chat.emitted==(1u<<BOT_CHAT_CONNECTED) && !state.authored_chat.next_order);
+    for(size_t i=0;i<BOT_CHAT_COUNT;++i) CHECK(!state.authored_chat.pending[i].row);
+    state.source_settings=NULL;
+    CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_MATCH_START,&error) && output.draws==9);
+    qa_bot_actions_destroy(actions);
+    qa_bot_source_knowledge_destroy(knowledge);
+    CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
+    CHECK(qa_session_destroy(session,&error));
+}
 static void test_bot_source_knowledge(void)
 {
     test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
     qa_error error={0};
-    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[4][160];
+    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[5][160];
     CHECK(mkdtemp(directory));
     CHECK(snprintf(folder,sizeof(folder),"%s/bots",directory)>0 && mkdir(folder,0700)==0);
     qa_resource_pool *pool=qa_resource_pool_create(&error);CHECK(pool);
@@ -395,23 +463,53 @@ static void test_bot_source_knowledge(void)
         "{\n name item_quad\n flags powerup\n}\n"
         "{\n name item_flag_team1\n flags objective\n team 5\n}\n"
         "{\n name item_armor\n flags health\n flags armor\n}\n\0\0";
-    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt","items.txt"};
+    const char chats_text[]="{\n type connected\n locstring $greeting\n time 500\n chance 100\n}\n"
+        "{\n type connected\n locstring $discard\n chance 0\n}\n"
+        "{\n type match_start\n locstring $starting\n time 100\n chance 100\n team true\n}\n"
+        "{\n type ctf_on_defense\n locstring $single\n time 100\n chance 100\n}\n"
+        "{\n type ctf_on_offense\n locstring $raw_missing\n chance 100\n}\n"
+        "{\n type ctf_camping_enemy_base\n locstring $unused\n chance 25\n}\n"
+        "{\n type ctf_returning_dropped_flag\n locstring $unused\n}\n"
+        "{\n type placeholder\n locstring $placeholder\n}\n";
+    const char english[]="greeting = \"plain hello\"\ngreeting_0 = \"hello\"\ngreeting_1 = \"hi\"\n"
+        "greeting_3 = \"past gap\"\nstarting = \"begin\"\nsingle_0 = \"one\"\n"
+        "placeholder = \"hello {0}\"\n";
+    const char french[]="greeting_1 = \"salut\"\nstarting = \"depart\"\nsingle_0 = \"seul\"\n";
+    char locale_folder[160];
+    CHECK(snprintf(locale_folder,sizeof(locale_folder),"%s/localization",directory)>0 && mkdir(locale_folder,0700)==0);
+    CHECK(qa_vfs_write(files,mount,"localization/loc_english.txt",
+        (qa_bytes){(const uint8_t *)english,sizeof(english)-1},&error));
+    CHECK(qa_vfs_write(files,mount,"localization/loc_french.txt",
+        (qa_bytes){(const uint8_t *)french,sizeof(french)-1},&error));
+    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt","items.txt","chats.txt"};
     const qa_bytes contents[]={
         {(const uint8_t *)weapons,sizeof(weapons)-1},
         {(const uint8_t *)settings,sizeof(settings)-1},
         {(const uint8_t *)optional,sizeof(optional)-1},
-        {(const uint8_t *)items_text,sizeof(items_text)-1}};
-    for(size_t i=0;i<4;++i) {
+        {(const uint8_t *)items_text,sizeof(items_text)-1},
+        {(const uint8_t *)chats_text,sizeof(chats_text)-1}};
+    for(size_t i=0;i<5;++i) {
         CHECK(snprintf(paths[i],sizeof(paths[i]),"bots/%s",names[i])>0);
         CHECK(qa_vfs_write(files,mount,paths[i],contents[i],&error));
     }
     qa_bot_source_knowledge *knowledge=NULL;bool found=true;
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&knowledge,&found,&error));
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,"english",NULL,NULL,&knowledge,&found,&error));
     CHECK(!found && !knowledge); /* Q2 reads PC settings only. */
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,bot_source_fixture_weapon,strings,
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,"english",bot_source_fixture_weapon,strings,
         &knowledge,&found,&error));
     CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==3 &&
-        qa_bot_source_document_count(knowledge)==4);
+        qa_bot_source_document_count(knowledge)==5);
+    qa_string_id connected=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"connected",9});
+    CHECK(qa_bot_source_chat_count(knowledge,connected)==2);
+    const qa_bot_source_chat *chat=qa_bot_source_chat_at(knowledge,connected,0);
+    CHECK(chat && chat->random_text && chat->text_count==2 && chat->delay_ms==500 && chat->chance==100 &&
+        !strcmp(qa_strings_cstr(strings,chat->texts[0]),"hello") &&
+        !strcmp(qa_strings_cstr(strings,chat->texts[1]),"hi"));
+    CHECK(qa_bot_source_chat_at(knowledge,connected,1)->chance==0 &&
+        !qa_bot_source_chat_at(knowledge,connected,2));
+    qa_string_id placeholder=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"placeholder",11});
+    chat=qa_bot_source_chat_at(knowledge,placeholder,0);
+    CHECK(chat && !strcmp(qa_strings_cstr(strings,chat->texts[0]),"placeholder"));
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
@@ -474,7 +572,14 @@ static void test_bot_source_knowledge(void)
     CHECK(!qa_bot_source_item_read(knowledge,0));
     qa_bot_source_knowledge *pc=NULL;
     CHECK(qa_vfs_write(files,mount,"bots/settings_PC.txt",contents[1],&error));
-    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&pc,&found,&error) && found);
+    CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,"english",NULL,NULL,&pc,&found,&error) && found);
+    chat=qa_bot_source_chat_at(pc,connected,0);
+    CHECK(chat && !chat->random_text && chat->text_count==1 &&
+        !strcmp(qa_strings_cstr(strings,chat->texts[0]),"plain hello"));
+    qa_string_id offense=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"ctf_on_offense",14});
+    chat=qa_bot_source_chat_at(pc,offense,0);
+    CHECK(chat && !strcmp(qa_strings_cstr(strings,chat->texts[0]),"$raw_missing"));
+    test_bot_authored_chat_delivery(files);
     qa_string_id blaster,rail,electric,disabled;
     CHECK(qa_strings_intern_cstr(strings,"q2:weapon_blaster",&blaster,&error) &&
         qa_strings_intern_cstr(strings,"q2:weapon_railgun",&rail,&error) &&
@@ -530,12 +635,15 @@ static void test_bot_source_knowledge(void)
     qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
     CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));
     qa_bot_source_knowledge_destroy(knowledge);qa_strings_destroy(strings);
-    for(size_t i=0;i<4;++i) {
+    for(size_t i=0;i<5;++i) {
         char path[256];CHECK(snprintf(path,sizeof(path),"%s/%s",directory,paths[i])>0);
         CHECK(unlink(path)==0);
     }
     char pc_path[256];CHECK(snprintf(pc_path,sizeof(pc_path),"%s/bots/settings_PC.txt",directory)>0);
-    CHECK(unlink(pc_path)==0 && rmdir(folder)==0 && rmdir(directory)==0);
+    CHECK(unlink(pc_path)==0 && rmdir(folder)==0);
+    CHECK(snprintf(pc_path,sizeof(pc_path),"%s/localization/loc_english.txt",directory)>0 && unlink(pc_path)==0);
+    CHECK(snprintf(pc_path,sizeof(pc_path),"%s/localization/loc_french.txt",directory)>0 && unlink(pc_path)==0);
+    CHECK(rmdir(locale_folder)==0 && rmdir(directory)==0);
 }
 
 static void test_aas_geometry_compaction(void)

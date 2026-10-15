@@ -26,6 +26,100 @@ static bool live(qa_bots *b,bot_ai_state *s) {
 }
 #define CHAT_CALL(call) do { if(!(call)) return false; if(!live(b,s)) return true; } while(0)
 
+void bot_ai_authored_chat_bind(qa_bots *b)
+{
+    static const char *const types[]={"connected","match_start","ctf_on_defense","ctf_on_offense",
+        "ctf_camping_enemy_base","ctf_delivering_flag","ctf_returning_dropped_flag","ctf_attacking_enemy_carrier"};
+    qa_strings *strings=qa_session_strings(b->services.shared.session);
+    for(size_t i=0;i<BOT_CHAT_COUNT;++i)
+        b->authored_chat_types[i]=qa_strings_find(strings,(qa_bytes){(const uint8_t *)types[i],strlen(types[i])});
+}
+void bot_ai_authored_chat_level_reset(bot_ai_state *s)
+{
+    s->authored_chat=(bot_authored_chat_state){
+        .emitted=s->authored_chat.emitted&(1u<<BOT_CHAT_CONNECTED)};
+}
+bool bot_ai_authored_chat_emit(qa_bots *b,bot_ai_state *s,bot_authored_chat_kind kind,qa_error *e)
+{
+    if(!s->source_settings || (s->authored_chat.emitted&(1u<<kind))) return true;
+    s->authored_chat.emitted|=1u<<kind;
+    size_t count=qa_bot_source_chat_count(b->services.source_knowledge,b->authored_chat_types[kind]);
+    if(!count || b->controls.no_chat) return true;
+    float random;CHAT_CALL(bot_ai_random(b,&random,e));
+    size_t index=(size_t)((double)random*(double)count);if(index>=count) index=count-1;
+    const qa_bot_source_chat *chat=qa_bot_source_chat_at(b->services.source_knowledge,
+        b->authored_chat_types[kind],index);
+    if(chat->chance<=0) return true;
+    if(chat->chance<100) {
+        CHAT_CALL(bot_ai_random(b,&random,e));if(random*100>=chat->chance) return true;
+    }
+    s->authored_chat.pending[kind]=(bot_authored_chat_pending){.row=index+1,
+        .due=(double)b->time+chat->delay_ms/1000,.order=++s->authored_chat.next_order};
+    return true;
+}
+bool bot_ai_authored_chat_deliver(qa_bots *b,bot_ai_state *s,qa_error *e)
+{
+    if(!s->source_settings) return true;
+    for(;;) {
+        size_t next=BOT_CHAT_COUNT;uint32_t order=UINT32_MAX;
+        for(size_t i=0;i<BOT_CHAT_COUNT;++i) {
+            const bot_authored_chat_pending *pending=s->authored_chat.pending+i;
+            if(pending->row && pending->due<=(double)b->time && pending->order<order) {
+                next=i;order=pending->order;
+            }
+        }
+        if(next==BOT_CHAT_COUNT) return true;
+        bot_authored_chat_pending pending=s->authored_chat.pending[next];
+        s->authored_chat.pending[next]=(bot_authored_chat_pending){0};
+        if(b->controls.no_chat) continue;
+        const qa_bot_source_chat *chat=qa_bot_source_chat_at(b->services.source_knowledge,
+            b->authored_chat_types[next],pending.row-1);
+        size_t variant=0;
+        if(chat->random_text) {
+            float random;CHAT_CALL(bot_ai_random(b,&random,e));
+            variant=(size_t)((double)random*(double)chat->text_count);
+            if(variant>=chat->text_count) variant=chat->text_count-1;
+        }
+        const char *text=qa_strings_cstr(qa_session_strings(b->services.shared.session),chat->texts[variant]);
+        CHAT_CALL(bot_ai_source_action_text(b,s,chat->team_only?QA_BOT_SAY_TEAM:QA_BOT_SAY,0,text?text:"",e));
+    }
+}
+static bool authored_ctf(qa_bots *b,bot_ai_state *s,qa_error *e)
+{
+    if(b->source_goals.game_type!=4 || !b->source_goals.red_flag.area || !b->source_goals.blue_flag.area ||
+        s->player.dead || s->player.observer) return true;
+    int32_t self,team;
+    CHAT_CALL(bot_ai_source_client(b,s,&self,e));CHAT_CALL(bot_ai_source_team(b,self,&team,e));
+    if(team!=1 && team!=2) return true;
+    int32_t goal=bot_ai_long_term_goal(s);
+    uint32_t roles=(1u<<BOT_CHAT_CTF_DEFENSE)|(1u<<BOT_CHAT_CTF_OFFENSE);
+    if(!(s->authored_chat.emitted&roles)) {
+        if(goal==BOT_LTG_DEFEND) CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_DEFENSE,e));
+        else if(goal==BOT_LTG_GET_FLAG || goal==BOT_LTG_RUSH_BASE || goal==BOT_LTG_RETURN_FLAG ||
+            goal==BOT_LTG_ATTACK_BASE) CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_OFFENSE,e));
+    }
+    bool offense=(s->authored_chat.emitted&(1u<<BOT_CHAT_CTF_OFFENSE))!=0;
+    const qa_bot_goal *enemy=team==1?&b->source_goals.blue_flag:&b->source_goals.red_flag;
+    if(offense && b->time>0 && qa_vec_length(qa_vec_sub(bot_ai_origin(s),enemy->origin))<384)
+        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_CAMPING,e));
+    if(s->player.carrying_objective)
+        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_DELIVERING,e));
+    int32_t own_status=team==1?bot_ai_red_flag_status(s):bot_ai_blue_flag_status(s);
+    if(goal==BOT_LTG_RETURN_FLAG && own_status==2)
+        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_RETURNING,e));
+    if(offense && s->view.enemy.registry) {
+        const qa_actor_player *target=qa_actors_player(qa_session_actors(b->services.shared.session),s->view.enemy);
+        if(target && target->present)
+            CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_ATTACKING,e));
+    }
+    return true;
+}
+bool bot_ai_authored_chat_step(qa_bots *b,bot_ai_state *s,qa_error *e)
+{
+    CHAT_CALL(authored_ctf(b,s,e));
+    return bot_ai_authored_chat_deliver(b,s,e);
+}
+
 void bot_ai_source_chat_globals_init(bot_source_chat_globals *state) {
     *state=(bot_source_chat_globals){0};
 }
@@ -211,7 +305,7 @@ bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_e
 }
 static bool unavailable(qa_bots *b,bot_ai_state *s) {
     float before=b->time-25.0f;
-    return b->controls.no_chat || bot_ai_last_chat_time(s)>before;
+    return s->source_settings || b->controls.no_chat || bot_ai_last_chat_time(s)>before;
 }
 static bool characteristic(qa_bots *b,bot_ai_state *s,uint32_t index,float *out,qa_error *e) {
     return bot_ai_character_float(b,s,index,0,1,out,e);
@@ -251,7 +345,7 @@ bool bot_ai_source_chat_exit_game(qa_bots *b,bot_ai_state *s,bool *out,qa_error 
     return game_chat(b,s,false,out,e);
 }
 static bool level_available(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
-    *out=false;if(b->controls.no_chat) return true;
+    *out=false;if(s->source_settings || b->controls.no_chat) return true;
     bool watching;CHAT_CALL(observer(b,s,&watching,e));if(watching) return true;
     float before=b->time-25.0f;*out=!(bot_ai_last_chat_time(s)>before);return true;
 }

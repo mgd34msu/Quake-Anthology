@@ -483,6 +483,49 @@ static bool aim_fields(qa_source_save_io *io,qa_bots *bots)
     }
     return true;
 }
+static bool authored_chat_fields(qa_source_save_io *io,qa_bots *bots)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    size_t count=0,next=0;
+    if(!reading) for(size_t i=0;i<64;++i)
+        if(bots->source_cells[i] && bots->source_cells[i]->authored_chat.emitted) ++count;
+    if(!qa_source_save_count(io,&count,64)) return false;
+    for(size_t i=0;i<count;++i) {
+        uint32_t client=0;
+        if(!reading) {
+            while(next<64 && (!bots->source_cells[next] || !bots->source_cells[next]->authored_chat.emitted)) ++next;
+            client=(uint32_t)next++;
+        }
+        U(client);
+        if(client>=64 || !bots->source_cells[client]) return false;
+        bot_authored_chat_state *state=&bots->source_cells[client]->authored_chat;
+        U(state->emitted);U(state->next_order);
+        if(state->emitted>=(1u<<BOT_CHAT_COUNT) || state->next_order>BOT_CHAT_COUNT) return false;
+        size_t pending_count=0,kind=0;
+        if(!reading) for(size_t j=0;j<BOT_CHAT_COUNT;++j) if(state->pending[j].row) ++pending_count;
+        if(!qa_source_save_count(io,&pending_count,BOT_CHAT_COUNT)) return false;
+        uint32_t seen=0,orders=0;
+        for(size_t j=0;j<pending_count;++j) {
+            uint32_t current=0;bot_authored_chat_pending value={0};
+            if(!reading) {
+                while(kind<BOT_CHAT_COUNT && !state->pending[kind].row) ++kind;
+                current=(uint32_t)kind;value=state->pending[kind++];
+            }
+            U(current);
+            if(current>=BOT_CHAT_COUNT || (seen&(1u<<current))) return false;
+            seen|=1u<<current;
+            size_t maximum=qa_bot_source_chat_count(bots->services.source_knowledge,bots->authored_chat_types[current]);
+            if(!qa_source_save_count(io,&value.row,maximum)) return false;
+            FIELD(f64,value.due);U(value.order);
+            if(!value.row || !isfinite(value.due) || !(state->emitted&(1u<<current)) ||
+                !value.order || value.order>state->next_order || (orders&(1u<<(value.order-1)))) return false;
+            orders|=1u<<(value.order-1);
+            if(reading) state->pending[current]=value;
+        }
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -491,6 +534,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
         cooperative_fields(&io,&view) && awareness_fields(&io,&view) && aim_fields(&io,&view) &&
+        authored_chat_fields(&io,&view) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -504,10 +548,12 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared bot population already owns continuation records"); return false;
     }
     qa_bots scratch = {.runtime = bots->runtime, .services = bots->services}; qa_source_save_io io = {0};
+    bot_ai_authored_chat_bind(&scratch);
     bool ok = bot_ai_observations_prepare(&scratch,error) &&
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
         cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && aim_fields(&io,&scratch) &&
+        authored_chat_fields(&io,&scratch) &&
         scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])

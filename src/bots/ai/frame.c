@@ -172,6 +172,9 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+    if(ok && s->source_settings) ok=bot_ai_authored_chat_emit(b,s,BOT_CHAT_CONNECTED,e);
+    if(ok && s->source_settings && !s->retired && bot_ai_live(b,s->view.actor))
+        ok=bot_ai_authored_chat_emit(b,s,BOT_CHAT_MATCH_START,e);
     if(ok) bot_ai_flag_set(s,BOT_AI_IDEAL_VIEW_SET,false);
     if (ok) {
         bool intermission,observer;
@@ -235,6 +238,8 @@ finished:
         ok = bot_ai_source_action_weapon(b,s,e);
     if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
         ok=bot_ai_trigger(b,s,e);
+    if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
+        ok=bot_ai_authored_chat_step(b,s,e);
     if(!ok) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!delta_angles(b,s,delta,e)) return false;
