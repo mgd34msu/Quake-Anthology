@@ -2408,11 +2408,11 @@ bool frontend_network_q3_client_context_read(const qa_frontend *f, qa_actor_owne
 {
     frontend_q3_client *n = q3_client_seat(f, receiver, seat);
     const qa_q3_client_peer *peer = n ? q3_view(n) : NULL;
-    if (!n || !n->q3_client_requested || n->q3_client_retiring || seat != n->q3_client_launch_seat || receiver != n->q3_cgame_owner || !peer ||
+    if (!n || !n->q3_client_requested || n->q3_client_retiring || seat != n->q3_client_launch_seat || receiver != n->q3_cgame_owner ||
         !qa_application_q3_remote_context_read(f->application, receiver, seat, out, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context lost its actual connection and CGAME role");
     if (n->q3_client_decoded) {
-        const qa_q3_gamestate *state = qa_q3_client_peer_gamestate(peer);
+        const qa_q3_gamestate *state = peer ? qa_q3_client_peer_gamestate(peer) : NULL;
         if (!state || state->client_number < 0 || state->client_number >= 64)
             return frontend_fail(error, QA_ERROR_FORMAT, "Remote Q3 context has no admitted physical client ordinal");
         out->source_client = (uint32_t)state->client_number;
@@ -2425,7 +2425,8 @@ bool frontend_network_q3_client_context_current(const qa_frontend *f,
 {
     frontend_q3_client *n = q3_client_receiver(f, context);
     const qa_q3_client_peer *peer = n ? q3_view(n) : NULL;
-    if (!n || !context || !n->q3_client_requested || n->q3_client_retiring || !peer || context->seat != n->q3_client_launch_seat ||
+    if (!n || !context || !n->q3_client_requested || n->q3_client_retiring ||
+        (n->q3_client_decoded && !peer) || context->seat != n->q3_client_launch_seat ||
         context->receiver != n->q3_cgame_owner || !qa_application_q3_remote_context_current(f->application, context)) return false;
     const qa_q3_gamestate *state = n->q3_client_decoded ? qa_q3_client_peer_gamestate(peer) : NULL;
     return context->source_client == (state && state->client_number >= 0 ? (uint32_t)state->client_number : UINT32_MAX);
