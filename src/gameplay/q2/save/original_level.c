@@ -284,7 +284,13 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             live_level = okay;
         }
     }
-    if (okay) {
+    /* ClientConnect initializes pers when no saved body exists and the GAME
+     * was not autosaved or has no weapon. PutClientInServer also initializes
+     * dead pers and deathmatch clients. Admission already ran that initializer. */
+    bool fresh_persistent = !live_level && game->options.rules == QA_RULESET_Q2_CLASSIC &&
+        (game->options.deathmatch || !globals.autosave ||
+         client.persistent.weapon == QA_Q2_WEAPON_NONE || client.persistent.health <= 0);
+    if (okay && !fresh_persistent) {
         const q2_client_state *current = source->client;
         /* Client admission owns the current seat, character and service bindings.
          * The original file owns the player's gameplay fields and inventory. */
