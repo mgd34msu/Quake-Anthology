@@ -22,7 +22,6 @@ static const q2m_transition transitions[Q2M_CALLBACK_COUNT] = {
     [Q2M_CALLBACK_flyer_loop_melee]={ Q2M_MOVE_flyer_move_loop_melee},
     [Q2M_CALLBACK_gekk_chant]={ Q2M_MOVE_gekk_move_chant},
     [Q2M_CALLBACK_gekk_face]={ Q2M_MOVE_gekk_move_run},
-    [Q2M_CALLBACK_gekk_run_start]={ Q2M_MOVE_gekk_move_run_start},
     [Q2M_CALLBACK_guardian_atk1_finish]={ Q2M_MOVE_guardian_atk1_out},
     [Q2M_CALLBACK_guardian_atk2]={ Q2M_MOVE_guardian_move_atk2_fire},
     [Q2M_CALLBACK_guardian_atk2_out]={ Q2M_MOVE_guardian_move_atk2_out},
@@ -79,7 +78,7 @@ static bool gekk_locomotion(q2m_context *context, q2m_move_id move,
                             qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   bool swimming = move != Q2M_MOVE_gekk_move_leapatk2;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
   if (swimming)
     context->actor->physics.flags |= QA_PHYSICS_SWIMMING;
   else
@@ -2428,6 +2427,16 @@ static bool tank_run(q2m_context *context, qa_error *error) {
 
 static bool end_transition(q2m_context *context, q2m_callback_id callback,
                            bool *handled, qa_error *error) {
+  if (callback == Q2M_CALLBACK_gekk_run || callback == Q2M_CALLBACK_gekk_run_start) {
+    *handled = true;
+    q2m_move_id move = q2m_gekk_in_water(context, true)
+        ? Q2M_MOVE_gekk_move_swim_start
+        : callback == Q2M_CALLBACK_gekk_run_start
+            ? Q2M_MOVE_gekk_move_run_start
+            : context->monster->stand_ground ? Q2M_MOVE_gekk_move_stand
+                                             : Q2M_MOVE_gekk_move_run;
+    return q2m_set_move(context, move, true, error);
+  }
   if (callback == Q2M_CALLBACK_guncmdr_fire_chain) {
     *handled = true;
     q2m_move_id move;
@@ -5081,12 +5090,8 @@ static bool callback_berserk_high_gravity_43(q2m_context *context, q2m_callback_
 static bool callback_gekk_check_underwater_44(q2m_context *context, q2m_callback_id callback,
                                               qa_error *error) {
     (void)callback;
-    struct qa_q2_monster *monster = context->monster;
-    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
-    bool water = rerelease
-        ? !(monster->spawnflags & 32u) && context->actor->physics.water_level >= 2
-        : context->actor->physics.water_level != 0;
-    return !water || gekk_locomotion(context, Q2M_MOVE_gekk_move_swim_start, error);
+    return !q2m_gekk_in_water(context, true) ||
+        gekk_locomotion(context, Q2M_MOVE_gekk_move_swim_start, error);
 }
 
 static bool callback_gekk_stop_skid_45(q2m_context *context, q2m_callback_id callback,
@@ -5339,7 +5344,9 @@ static bool callback_gekk_idle_loop_73(q2m_context *context, q2m_callback_id cal
     (void)callback;
     (void)error;
     struct qa_q2_monster *monster = context->monster;
-    if (q2m_random(context->game) > 0.75f && context->combat.health < monster->max_health)
+    float draw = monster->definition->source_rules == QA_RULESET_Q2_RERELEASE
+        ? q2_rerelease_float(context->game, 0, 1) : q2m_random(context->game);
+    if (draw > 0.75f && context->combat.health < monster->max_health)
         monster->next_frame = 203;
     return true;
 }
@@ -5565,7 +5572,7 @@ static bool callback_widow2_finaldeath_93(q2m_context *context, q2m_callback_id 
 static bool callback_gekk_search_94(q2m_context *context, q2m_callback_id callback,
                                     qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
-    bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+    bool rerelease = monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
     if (callback == Q2M_CALLBACK_gekk_swim) {
         bool selected = true;
         if (rerelease && !q2m_gekk_check_attack(context, &selected, error))

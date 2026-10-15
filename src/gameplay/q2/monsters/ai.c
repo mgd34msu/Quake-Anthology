@@ -1130,9 +1130,29 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
   return q2m_change_yaw(context, error);
 }
 
+bool q2m_gekk_in_water(const q2m_context *context, bool respect_no_swim) {
+  if (context->monster->definition->source_rules == QA_RULESET_Q2_RERELEASE)
+    return context->actor->physics.water_level >= 2 &&
+           (!respect_no_swim || !(context->monster->spawnflags & 32u));
+  return context->actor->physics.water_level != 0;
+}
+
 bool q2m_stand_state(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2m_move_id move = monster->definition->stand_move;
+  if (monster->definition->species == Q2M_GEKK) {
+    bool rerelease = monster->definition->source_rules == QA_RULESET_Q2_RERELEASE;
+    if (q2m_gekk_in_water(context, false)) {
+      if (rerelease) {
+        context->actor->physics.flags |= QA_PHYSICS_SWIMMING;
+        monster->alternate_fly = true;
+      }
+      return q2m_set_move(context, Q2M_MOVE_gekk_move_standunderwater, true, error);
+    }
+    if (rerelease && monster->move && monster->move->id == Q2M_MOVE_gekk_move_chant)
+      return true;
+    return q2m_set_move(context, move, true, error);
+  }
   if (monster->definition->species == Q2M_WIDOW) {
     if (!q2m_sound(context, QA_Q2_SFX_WIDOW_LAUGH, 1, 1.0f, error))
       return false;
@@ -1152,6 +1172,8 @@ bool q2m_stand_state(q2m_context *context, qa_error *error) {
 }
 
 bool q2m_run_state(q2m_context *context, qa_error *error) {
+    if (context->monster->definition->species == Q2M_GEKK)
+      return q2m_callback_run(context, Q2M_CALLBACK_gekk_run_start, error);
     if (context->monster->definition->species == Q2M_FLOATER) {
       q2m_move_id move = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
           context->monster->move &&
@@ -1199,7 +1221,8 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
     return true;
   context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
   if (animate_state &&
-      !(context->monster->definition->species == Q2M_FLOATER &&
+      !((context->monster->definition->species == Q2M_FLOATER ||
+         context->monster->definition->species == Q2M_GEKK) &&
                 context->monster->stand_ground
             ? q2m_stand_state(context, error)
             : q2m_run_state(context, error)))
@@ -1657,7 +1680,8 @@ static bool hear_target(q2m_context *context, bool *found, qa_error *error) {
   context->actor->physics.enemy = qa_actor_reference_lifetime(noise.owner);
   context->actor->physics.goal = qa_actor_reference_lifetime(noise.owner);
   *found = true;
-  if (monster->definition->species == Q2M_FLOATER)
+  if (monster->definition->species == Q2M_FLOATER ||
+      monster->definition->species == Q2M_GEKK)
     return monster->stand_ground ? q2m_stand_state(context, error)
                                  : q2m_run_state(context, error);
   return q2m_set_move(context,
@@ -4147,7 +4171,8 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
   q2m_callback_id callback = Q2M_CALLBACK_NONE;
   int channel = 2;
   float attenuation = search ? 1.0f : 2.0f;
-  bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+  bool rerelease = (species == Q2M_GEKK ? monster->definition->source_rules
+                                      : context->game->options.rules) == QA_RULESET_Q2_RERELEASE;
   bool empty_search = false;
 
   switch (species) {
@@ -4194,9 +4219,7 @@ static bool idle_search(q2m_context *context, bool search, qa_error *error) {
     if (search) {
       callback = Q2M_CALLBACK_gekk_search;
     } else {
-      bool swimming = rerelease
-          ? !(monster->spawnflags & 32u) && context->actor->physics.water_level >= 2
-          : context->actor->physics.water_level != 0;
+      bool swimming = q2m_gekk_in_water(context, true);
       move = swimming ? Q2M_MOVE_gekk_move_swim_start : Q2M_MOVE_gekk_move_idle;
     }
     break;
@@ -4331,7 +4354,8 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       if (context->body.angles.y != monster->ideal_yaw && monster->temporary_stand_ground) {
         monster->stand_ground = false;
         monster->temporary_stand_ground = false;
-        if (!(monster->definition->species == Q2M_FLOATER
+        if (!((monster->definition->species == Q2M_FLOATER ||
+               monster->definition->species == Q2M_GEKK)
                   ? q2m_run_state(context, error)
                   : q2m_set_move(context, monster->definition->run_move, false, error)))
           return false;

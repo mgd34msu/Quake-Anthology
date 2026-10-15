@@ -445,6 +445,7 @@ bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);
 bool q2m_check_attack(q2m_context *, bool *selected, bool *started, bool *visible, qa_error *);
 bool q2m_stand_state(q2m_context *, qa_error *);
 bool q2m_run_state(q2m_context *, qa_error *);
+bool q2m_gekk_in_water(const q2m_context *, bool respect_no_swim);
 bool q2m_gekk_check_jump(q2m_context *, const qa_body_state *);
 bool q2m_gekk_check_attack(q2m_context *, bool *selected, qa_error *);
 bool q2m_run_ai(q2m_context *, q2m_ai_kind, float, qa_error *);

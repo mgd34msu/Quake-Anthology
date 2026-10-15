@@ -533,7 +533,9 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
             monster->goal = monster->move_target = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(route.goal));
             monster->pause_ns = 0;
             *routed = true;
-            return !found_target || (monster->definition->species == Q2M_FLOATER
+            return !found_target ||
+                ((monster->definition->species == Q2M_FLOATER ||
+                  monster->definition->species == Q2M_GEKK)
                 ? q2m_run_state(context, error)
                 : q2m_set_move(context, monster->definition->run_move, false, error));
         }
@@ -564,7 +566,8 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
             return true;
     }
     *routed = true;
-    return monster->definition->species == Q2M_FLOATER
+    return (monster->definition->species == Q2M_FLOATER ||
+            monster->definition->species == Q2M_GEKK)
         ? q2m_run_state(context, error)
         : q2m_set_move(context, monster->definition->run_move, false, error);
 }

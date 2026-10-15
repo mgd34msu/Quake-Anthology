@@ -2180,6 +2180,9 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   if (automatic)
     monster->frame += (int)fminf((float)(frame_count - 1),
                                 floorf(q2m_random(game) * (float)frame_count));
+  if (definition->species == Q2M_GEKK && (monster->spawnflags & 8u) &&
+      !q2m_set_move(&context, Q2M_MOVE_gekk_move_chant, true, error))
+    return false;
   monster->next_frame_ns = q2m_after(game->now_ns, 0.1);
   if (!q2m_link(&context, error)) {
     if (q2m_alive(&context)) {
