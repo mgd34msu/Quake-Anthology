@@ -649,6 +649,64 @@ bool q3_map_mover_sync_state(qa_q3_game *game, qa_q3_map_actor_state *state,
     return true;
 }
 
+bool qa_q3_map_mover_read(qa_q3_game *game, qa_actor_id actor,
+    qa_nav_entity_state *out, qa_q3_map_kind *kind, bool *found, qa_error *error) {
+    if (!game || !out || !kind || !found)
+        return q3_map_fail(error, "Q3 mover observation requires its game and outputs");
+    *found = false;
+    const qa_q3_map_actor_state *state = q3_map_const(game, actor);
+    q3_actor *native = q3_actor_get(game, actor);
+    if (!state || state->kind < QA_Q3_MAP_MOVER_DOOR ||
+        state->kind > QA_Q3_MAP_MOVER_PENDULUM || !native || native->kind != Q3_ACTOR_MOVER)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+    qa_linked_body linked;
+    bool enabled = qa_world_linked(game->options.services.world, actor, &linked);
+    qa_nav_entity_state view = {.actor = actor, .enabled = enabled,
+        .bounds = enabled ? linked.absolute_bounds : qa_bounds_translate(body.bounds, body.origin),
+        .velocity = body.velocity, .kind = QA_NAV_ENTITY_GENERIC};
+    const qa_q3_mover_definition *motion = &native->state.mover;
+    if (motion->state_index == 2 || motion->state_index == 3) {
+        view.has_destination = true;
+        view.destination = motion->state_index == 2 ? motion->second : motion->first;
+    }
+    qa_actor_id master_actor = state->team_master.registry ? state->team_master : actor;
+    const qa_q3_map_actor_state *master = q3_map_const(game, master_actor);
+    const q3_actor *master_native = q3_actor_get(game, master_actor);
+    if (master && master_native && master_native->kind == Q3_ACTOR_MOVER &&
+        master_native->state.mover.state_index == 0) {
+        if (state->kind == QA_Q3_MAP_MOVER_DOOR) {
+            view.locked = true;
+            qa_world_actor_snapshot triggers = {0};
+            if (!qa_world_snapshot_capture(game->options.services.world, view.bounds,
+                    QA_COLLISION_TRIGGER, QA_WORLD_ORDER_SPATIAL, &triggers, error))
+                return false;
+            for (size_t i = 0; i < triggers.count; ++i) {
+                const qa_q3_map_actor_state *trigger = q3_map_const(game, triggers.actors[i]);
+                if (trigger && trigger->kind == QA_Q3_MAP_MOVER_DOOR_TRIGGER &&
+                    trigger->touchable && qa_actor_id_equal(trigger->parent, master_actor)) {
+                    view.locked = false;
+                    break;
+                }
+            }
+            qa_world_snapshot_release(&triggers);
+        } else if (state->kind == QA_Q3_MAP_MOVER_PLAT)
+            view.locked = q3_map_text(game, master->targetname);
+    }
+    if (state->kind == QA_Q3_MAP_MOVER_PLAT) {
+        static const qa_nav_mover_phase phases[] = {
+            QA_NAV_MOVER_BOTTOM, QA_NAV_MOVER_TOP, QA_NAV_MOVER_UP, QA_NAV_MOVER_DOWN};
+        view.kind = QA_NAV_ENTITY_ELEVATOR;
+        view.data.elevator.origin = body.origin;
+        view.data.elevator.bottom = motion->first;
+        view.data.elevator.top = motion->second;
+        view.data.elevator.phase = phases[motion->state_index];
+    }
+    *out = view; *kind = state->kind; *found = true;
+    return true;
+}
+
 bool q3_map_mover_post_spawn(qa_q3_game *game, qa_error *error) {
     for (uint32_t i = 0; i < game->map->capacity; ++i) {
         qa_q3_map_actor_state *state = &game->map->actors[i];

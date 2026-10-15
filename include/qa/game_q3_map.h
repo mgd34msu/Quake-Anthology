@@ -3,6 +3,7 @@
 
 #include "qa/bsp.h"
 #include "qa/game_q3.h"
+#include "qa/navigation.h"
 #include "qa/targets.h"
 
 typedef struct qa_q3_map_fields {
@@ -205,6 +206,8 @@ bool qa_q3_map_team_location_read(qa_q3_game *, qa_actor_id source_client,
                                   qa_q3_map_team_location *, bool *found, qa_error *);
 bool qa_q3_map_location_count_set(qa_q3_game *, qa_actor_id, int32_t, qa_error *);
 bool qa_q3_map_actor_capture(const qa_q3_game *, qa_actor_id, qa_q3_map_actor_state *);
+bool qa_q3_map_mover_read(qa_q3_game *, qa_actor_id, qa_nav_entity_state *,
+    qa_q3_map_kind *, bool *found, qa_error *);
 bool qa_q3_map_actor_restore(qa_q3_game *, const qa_q3_map_actor_state *, qa_error *);
 bool qa_q3_map_checkpoint_capture(const qa_q3_game *, qa_q3_map_checkpoint *, qa_error *);
 bool qa_q3_map_checkpoint_restore(qa_q3_game *, const qa_q3_map_checkpoint *, qa_error *);

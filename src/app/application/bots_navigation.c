@@ -127,7 +127,8 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,qa_actor_id tr
         application->routing_providers?APPLICATION_PROVIDER_ROUTING:APPLICATION_PROVIDER_PUBLISHED);
     application_provider *provider;
     while((provider=application_provider_lookup_next(application,&cursor))) {
-        if(provider->kind!=APPLICATION_PROVIDER_Q1 && provider->kind!=APPLICATION_PROVIDER_Q2) continue;
+        if(provider->kind!=APPLICATION_PROVIDER_Q1 && provider->kind!=APPLICATION_PROVIDER_Q2 &&
+           provider->kind!=APPLICATION_PROVIDER_Q3) continue;
         if(bots->mover_borrowed)
             return application_fail(error,QA_ERROR_ARGUMENT,"bot mover observation is already borrowed");
         size_t capacity=qa_actors_capacity(qa_session_actors(application->session));
@@ -143,7 +144,7 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,qa_actor_id tr
                     view.kind==QA_Q1_MOVER_DOOR?QA_BOT_MODEL_DOOR:QA_BOT_MODEL_STATIC,
                 .inline_model=view.inline_model,.has_inline_model=view.has_inline_model,
                 .shootable=view.shootable,.useable=view.useable};
-        } else {
+        } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
             qa_q2_map_mover_view view;
             ok=qa_q2_entity_mover_read(provider->state.q2,actor,&view,bots->train_stops,bots->train_capacity,&stops,found,error);
             if(ok && *found) *out=(application_bot_mover){.activation=view.activation,.navigation=view.navigation,
@@ -151,6 +152,20 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,qa_actor_id tr
                     view.kind==QA_Q2_MOVER_TRAIN?QA_BOT_MODEL_TRAIN:view.kind==QA_Q2_MOVER_DOOR?QA_BOT_MODEL_DOOR:QA_BOT_MODEL_STATIC,
                 .inline_model=view.inline_model,.has_inline_model=view.has_inline_model,
                 .shootable=view.shootable,.useable=view.useable};
+        } else {
+            qa_nav_entity_state view; qa_q3_map_kind kind;
+            ok=qa_q3_map_mover_read(provider->state.q3,actor,&view,&kind,found,error);
+            if(ok && *found) {
+                qa_actor_collision collision;
+                bool has_collision=qa_world_get_collision(application->world,actor,&collision,NULL);
+                *out=(application_bot_mover){.navigation=view,
+                    .kind=kind==QA_Q3_MAP_MOVER_PLAT?QA_BOT_MODEL_ELEVATOR:
+                        kind==QA_Q3_MAP_MOVER_TRAIN?QA_BOT_MODEL_TRAIN:
+                        kind==QA_Q3_MAP_MOVER_BOBBING?QA_BOT_MODEL_BOBBING:
+                        kind==QA_Q3_MAP_MOVER_DOOR?QA_BOT_MODEL_DOOR:QA_BOT_MODEL_STATIC,
+                    .inline_model=has_collision?collision.model:0,
+                    .has_inline_model=has_collision && collision.inline_model};
+            }
         }
         bots->mover_borrowed=false;
         if(!qa_actors_get(qa_session_actors(application->session),actor)) *found=false;
