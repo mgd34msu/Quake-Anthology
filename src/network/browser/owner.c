@@ -198,15 +198,11 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
     if (!browser || browser->callback || !address || !timeout || !browser->next_query ||
         (broadcast && !browser->hooks.local) ||
         !qa_net_protocol_valid(protocol, error)) return qa_browser_fail(error, "Invalid browser query");
-    /* Challenge-less native dialects have one pending query per endpoint. */
-    if (!broadcast) for (uint32_t i = 0; i < browser->capacity; ++i) {
-        if (browser->records[i].occupied && browser->records[i].entry.pending &&
-            qa_net_address_equal(&browser->records[i].entry.address, address, true)) {
-            if (protocol.kind == QA_NET_Q3_68 && browser->records[i].entry.protocol.kind == QA_NET_Q3_68)
-                browser->records[i].entry.pending = false;
-            else return qa_browser_fail(error, "Endpoint already has a pending discovery query");
-        }
-    }
+    /* Repeated UI/console requests share the outstanding measurement. Different
+     * dialects can probe one endpoint; receive selects the decoder that fits. */
+    browser_record *pending = broadcast ? NULL : qa_browser_find(browser, address, protocol);
+    if (pending && pending->entry.pending && now >= pending->sent_ns &&
+        now - pending->sent_ns < pending->timeout_ns) return true;
     uint64_t query = browser->next_query++;
     uint8_t bytes[256]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     if (!qa_browser_query_encode(protocol, query, &writer)) return false;
@@ -224,6 +220,16 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
         record->entry.pending = true; record->entry.timed_out = false;
         record->query = query; record->sent_ns = now; record->timeout_ns = timeout;
     }
+    return true;
+}
+bool qa_server_browser_probe(qa_server_browser *browser, const qa_net_address *address,
+    uint64_t now, uint64_t timeout, qa_error *error) {
+    static const qa_net_protocol protocols[] = {
+        QA_NET_NQ15, QA_NET_QW28, QA_NET_Q2_34, QA_NET_Q2KEX_2023, QA_NET_Q3_68
+    };
+    for (size_t i = 0; i < sizeof(protocols) / sizeof(*protocols); ++i)
+        if (!qa_server_browser_query(browser, address, (qa_net_protocol_id){.kind = protocols[i]},
+            false, now, timeout, error)) return false;
     return true;
 }
 void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
@@ -282,20 +288,29 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     if (!qa_browser_q3_receive(browser, packet, recognized, error)) return false;
     if (*recognized) return true;
     browser_record *target = NULL;
-    for (uint32_t i = 0; i < browser->capacity; ++i)
-        if (browser->records[i].occupied && browser->records[i].entry.pending &&
-            qa_net_address_equal(&browser->records[i].entry.address, &packet->from, true)) { target = &browser->records[i]; break; }
-    qa_net_protocol_id protocol;
-    uint64_t sent, timeout, query;
-    if (target) { protocol = target->entry.protocol; sent = target->sent_ns; timeout = target->timeout_ns; query = target->query; }
-    else if (browser->broadcasting) {
+    qa_net_protocol_id protocol = {0};
+    uint64_t sent = 0;
+    qa_server_entry decoded; uint64_t challenge;
+    for (uint32_t i = 0; i < browser->capacity; ++i) {
+        browser_record *candidate = browser->records + i;
+        if (!candidate->occupied || !candidate->entry.pending ||
+            !qa_net_address_equal(&candidate->entry.address, &packet->from, true) ||
+            packet->received_ns < candidate->sent_ns ||
+            packet->received_ns - candidate->sent_ns >= candidate->timeout_ns) continue;
+        qa_error ignored = {0};
+        if (!qa_browser_status_decode(browser, packet->payload, candidate->entry.protocol,
+            &decoded, &challenge, &ignored) ||
+            (candidate->entry.protocol.kind == QA_NET_Q3_68 && challenge != candidate->query)) continue;
+        target = candidate; protocol = candidate->entry.protocol; sent = candidate->sent_ns; break;
+    }
+    if (!target) {
+        if (!browser->broadcasting || packet->received_ns < browser->broadcast_sent ||
+            packet->received_ns - browser->broadcast_sent >= browser->broadcast_timeout) return true;
+        qa_error ignored = {0};
         protocol = browser->broadcast_protocol; sent = browser->broadcast_sent;
-        timeout = browser->broadcast_timeout; query = browser->broadcast_query;
-    } else return true;
-    if (packet->received_ns < sent || packet->received_ns - sent >= timeout) return true;
-    qa_server_entry decoded; uint64_t challenge; qa_error ignored = {0};
-    if (!qa_browser_status_decode(browser, packet->payload, protocol, &decoded, &challenge, &ignored)) return true;
-    if (protocol.kind == QA_NET_Q3_68 && challenge != query) return true;
+        if (!qa_browser_status_decode(browser, packet->payload, protocol, &decoded, &challenge, &ignored) ||
+            (protocol.kind == QA_NET_Q3_68 && challenge != browser->broadcast_query)) return true;
+    }
     if (!target) {
         browser->callback = true;
         bool local = browser->hooks.local && browser->hooks.local(browser->hooks.context, &packet->from);

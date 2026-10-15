@@ -71,6 +71,7 @@
 #include "qa/network_q3.h"
 #include "../src/network/q3/event_detect.h"
 #include "qa/network_q3_save.h"
+#include "qa/server_browser.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_qw_source.h"
@@ -8418,6 +8419,73 @@ static void test_gtv_output_reuse(void)
     qa_q2_mvd_framer_destroy(framer); qa_gtv_server_stream_destroy(server); free(bytes);
 }
 
+typedef struct browser_probe_capture {
+    size_t sends;
+    char challenge[32];
+} browser_probe_capture;
+static bool browser_probe_send(void *context, const qa_net_address *address, qa_bytes bytes, qa_error *error)
+{
+    browser_probe_capture *capture = context;
+    (void)address; (void)error;
+    ++capture->sends;
+    qa_q3_connectionless command; qa_error ignored = {0};
+    if (qa_q3_connectionless_decode(bytes, QA_Q3_SERVER, &command, &ignored) &&
+        !strcmp(qa_q3_token(&command.tokens, 0), "getstatus"))
+        snprintf(capture->challenge, sizeof(capture->challenge), "%s", qa_q3_token(&command.tokens, 1));
+    return true;
+}
+static void test_browser_endpoint_probe(void)
+{
+    qa_error error = {0}; qa_http *http = NULL; qa_server_browser *browser = NULL;
+    browser_probe_capture capture = {0};
+    qa_browser_hooks hooks = {.context = &capture, .send = browser_probe_send};
+    qa_net_address address = {.kind = QA_NET_IPV4, .port = 27910, .host.ipv4 = {127,0,0,1}};
+    CHECK(qa_http_create(NULL, &http, &error));
+    CHECK(qa_server_browser_create(http, 16, &hooks, &browser, &error));
+    CHECK(qa_server_browser_probe(browser, &address, 100, 1000, &error));
+    size_t sends = capture.sends;
+    CHECK(sends > 1 && capture.challenge[0]);
+    CHECK(qa_server_browser_probe(browser, &address, 150, 1000, &error) && capture.sends == sends);
+    CHECK(qa_server_browser_query(browser, &address, (qa_net_protocol_id){.kind = QA_NET_Q2_34},
+        false, 160, 1000, &error) && capture.sends == sends);
+
+    uint8_t bytes[1024]; qa_net_writer writer;
+    qa_q2_status_player player = {.score = 1, .ping = 4, .name = "player"};
+    qa_q2_status status = {.server_info = "\\hostname\\fixture\\mapname\\base1\\sv_maxclients\\8",
+        .players = &player, .player_count = 1};
+    qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+    CHECK(qa_q2_oob_write(&writer, "print\nordinary console output\n"));
+    qa_net_datagram packet = {.kind = QA_NET_POLL_PACKET, .from = address,
+        .payload = {bytes, qa_net_writer_size(&writer)}, .received_ns = 190};
+    bool recognized = false;
+    CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && !recognized);
+    qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+    CHECK(qa_q2_status_write(&writer, &status, "print\n", sizeof(bytes) - 4));
+    packet.payload = (qa_bytes){bytes, qa_net_writer_size(&writer)}; packet.received_ns = 200;
+    CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized);
+    qa_arena scratch = {0}; uint32_t indices[16]; size_t count = 0;
+    qa_browser_filter filter = {.text = "base1"};
+    CHECK(qa_server_browser_list(browser, &filter, &scratch, indices, 16, &count, &error) && count == 1);
+    qa_server_entry entry;
+    CHECK(qa_server_browser_at(browser, indices[0], &entry) && entry.protocol.kind == QA_NET_Q2_34 &&
+        entry.available && !entry.pending && entry.has_ping && entry.ping_ns == 100 &&
+        entry.players == 1 && entry.maximum_players == 8);
+
+    char response[256];
+    snprintf(response, sizeof(response), "statusResponse\n\\challenge\\%s\\sv_hostname\\fixture"
+        "\\mapname\\q3dm1\\sv_maxclients\\8\n1 4 \"player\"\n", capture.challenge);
+    qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+    CHECK(qa_q2_oob_write(&writer, response));
+    packet.payload = (qa_bytes){bytes, qa_net_writer_size(&writer)}; packet.received_ns = 300;
+    CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized);
+    filter.text = "q3dm1";
+    CHECK(qa_server_browser_list(browser, &filter, &scratch, indices, 16, &count, &error) && count == 1);
+    CHECK(qa_server_browser_at(browser, indices[0], &entry) && entry.protocol.kind == QA_NET_Q3_68 &&
+        entry.available && !entry.pending && entry.has_ping && entry.ping_ns == 200);
+    qa_arena_destroy(&scratch); qa_server_browser_destroy(browser);
+    CHECK(qa_http_destroy(http, &error));
+}
+
 int main(int argc, char **argv)
 {
     if(!player_feedback_test()) return 1;
@@ -8477,6 +8545,7 @@ int main(int argc, char **argv)
     test_platform_event_retirement();
     test_q2_command_angles();
     test_loopback_admission();
+    test_browser_endpoint_probe();
     test_dosbox_loopback();
     test_loopback_nq_signon();
     test_kex_send_admission();

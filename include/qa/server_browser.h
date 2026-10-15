@@ -47,6 +47,10 @@ bool qa_server_browser_remove_source(qa_server_browser *, const qa_net_address *
                                       qa_net_protocol_id, uint32_t source, qa_error *);
 bool qa_server_browser_query(qa_server_browser *, const qa_net_address *, qa_net_protocol_id,
                               bool broadcast, uint64_t now_ns, uint64_t timeout_ns, qa_error *);
+/* Discover an endpoint whose protocol is not yet known. Uses the same query
+ * encoders, retained records and receive owner as protocol-selected queries. */
+bool qa_server_browser_probe(qa_server_browser *, const qa_net_address *,
+                              uint64_t now_ns, uint64_t timeout_ns, qa_error *);
 bool qa_server_browser_receive(qa_server_browser *, const qa_net_datagram *, bool *recognized, qa_error *);
 void qa_server_browser_expire(qa_server_browser *, uint64_t now_ns);
 bool qa_server_browser_master_udp(qa_server_browser *, const qa_net_address *, qa_net_protocol_id,
