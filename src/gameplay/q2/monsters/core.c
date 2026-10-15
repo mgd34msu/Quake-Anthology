@@ -2568,8 +2568,9 @@ bool q2_monster_reaction(qa_q2_game *game, const qa_damage_outcome *outcome,
     monster->pending_kick += outcome->result.has_feedback ? outcome->result.knockback :
                                                           outcome->request.knockback;
   }
-  if (dying && game->options.rules == QA_RULESET_Q2_RERELEASE &&
-      monster->definition->species == Q2M_INFANTRY) {
+  if (dying && (monster->definition->species == Q2M_GUN_COMMANDER ||
+                (game->options.rules == QA_RULESET_Q2_RERELEASE &&
+                 monster->definition->species == Q2M_INFANTRY))) {
     qa_body_state inflictor;
     qa_error ignored = {0};
     monster->inflictor_origin = qa_v3(0, 0, 0);

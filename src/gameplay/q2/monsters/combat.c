@@ -2610,16 +2610,16 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
                       error);
 }
 
-static bool infantry_sever_head(q2m_context *context, qa_error *error) {
+static bool sever_head(q2m_context *context, q2_runtime_name model, float height,
+                        qa_error *error) {
   qa_q2_game *game = context->game;
   qa_actor_id head;
   float scale = context->monster->entity_scale != 0 ? context->monster->entity_scale : 1;
   float damage = (float)qa_source_to_i32(context->monster->pending_damage);
   qa_vec3 inflictor_origin = context->monster->has_inflictor_origin
                                 ? context->monster->inflictor_origin : qa_v3(0, 0, 0);
-  if (!q2_spawn_gib(game, context->actor->id,
-                     Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2,
-                     damage, 0, 0, scale, &head, error))
+  if (!q2_spawn_gib(game, context->actor->id, model, damage, 0, 0, scale,
+                     &head, error))
     return false;
   if (!q2m_alive(context) || head.registry == 0)
     return true;
@@ -2630,7 +2630,7 @@ static bool infantry_sever_head(q2m_context *context, qa_error *error) {
   if (!qa_world_body_read(game->services.world, head, &body, error))
     return false;
   body.angles = context->body.angles;
-  body.origin = qa_vec_add(context->body.origin, qa_v3(0, 0, 32));
+  body.origin = qa_vec_add(context->body.origin, qa_v3(0, 0, height));
   qa_vec3 direction = qa_vec_sub(context->body.origin, inflictor_origin);
   float length = qa_vec_length(direction);
   if (length != 0)
@@ -2644,8 +2644,7 @@ static bool infantry_sever_head(q2m_context *context, qa_error *error) {
       !qa_world_link(game->services.world, head, NULL, error))
     return false;
   return !q2_actor_live(game, head) ||
-         q2_projectile_event(game, head, QA_BUILTIN_ANIMATION,
-             game->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2],
+         q2_projectile_event(game, head, QA_BUILTIN_ANIMATION, game->runtime_names[model],
              0, body.origin, body.angles, error);
 }
 
@@ -2876,7 +2875,42 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   q2_runtime_name sound = death_sound(species);
   bool soldier_ground_death = false;
   bool infantry_head = false;
+  bool commander_head = false;
+  bool keep_move = false;
   switch (species) {
+  case Q2M_GUN_COMMANDER: {
+    sound = QA_Q2_SFX_GUNCMDR_GCDRDEATH1;
+    bool pain5 = monster->move->id == Q2M_MOVE_guncmdr_move_pain5;
+    bool pain6 = monster->move->id == Q2M_MOVE_guncmdr_move_pain6;
+    if ((pain5 && monster->frame < monster->move->first_frame + 7) ||
+        (pain6 && monster->frame < monster->move->first_frame + 6)) {
+      keep_move = true;
+      break;
+    }
+    if (fabsf(context->body.origin.z + monster->view_height -
+              monster->last_damage_point.z) <= 4 && context->body.velocity.z < 65) {
+      move = Q2M_MOVE_guncmdr_move_death5;
+      commander_head = true;
+      break;
+    }
+    qa_vec3 inflictor_origin = monster->has_inflictor_origin
+        ? monster->inflictor_origin : qa_v3(0, 0, 0);
+    qa_vec3 difference = qa_vec_sub(inflictor_origin, context->body.origin);
+    difference.z = 0;
+    qa_vec3 forward;
+    qa_angle_vectors(context->body.angles, &forward, NULL, NULL, QA_ANGLE_FLOAT_MATH);
+    if (qa_vec_dot(qa_vec_normalize(difference), forward) < -.4f) {
+      unsigned choice = q2_random_bounded(context->game, pain6 ? 2u : 3u);
+      move = choice == 0 ? Q2M_MOVE_guncmdr_move_death3
+             : choice == 1 ? Q2M_MOVE_guncmdr_move_death7
+                           : Q2M_MOVE_guncmdr_move_pain6;
+    } else {
+      unsigned choice = q2_random_bounded(context->game, pain5 ? 1u : 2u);
+      move = choice == 0 ? Q2M_MOVE_guncmdr_move_death4
+                         : Q2M_MOVE_guncmdr_move_pain5;
+    }
+    break;
+  }
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER: {
     unsigned choice = context->game->options.rules == QA_RULESET_Q2_RERELEASE
@@ -3026,6 +3060,8 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
+  if (keep_move)
+    return true;
 
   if (species == Q2M_FLOATER || species == Q2M_FLYER || species == Q2M_FIXBOT ||
       species == Q2M_KAMIKAZE) {
@@ -3043,8 +3079,12 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return true;
   if (species == Q2M_MAKRON)
     return makron_torso(context, error);
+  if (commander_head)
+    return sever_head(context, Q2_NAME_RESOURCE_MODELS_MONSTERS_GUNNER_GIBS_HEAD_MD2,
+                       24, error);
   if (infantry_head && q2m_random(context->game) <= .25f)
-    return infantry_sever_head(context, error);
+    return sever_head(context, Q2_NAME_RESOURCE_MODELS_MONSTERS_INFANTRY_GIBS_HEAD_MD2,
+                       32, error);
   if (soldier_ground_death) {
     context->monster->next_frame = context->monster->move->first_frame + 12;
     return q2m_callback_run(context, Q2M_CALLBACK_soldier_death_shrink, error);

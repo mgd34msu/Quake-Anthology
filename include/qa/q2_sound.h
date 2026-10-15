@@ -142,6 +142,7 @@
 #define QA_Q2_SOUND_GUNCMDR_GCDRIDLE1 "guncmdr/gcdridle1.wav"
 #define QA_Q2_SOUND_GUNCMDR_GCDRPAIN1 "guncmdr/gcdrpain1.wav"
 #define QA_Q2_SOUND_GUNCMDR_GCDRPAIN2 "guncmdr/gcdrpain2.wav"
+#define QA_Q2_SOUND_GUNCMDR_GCDRDEATH1 "guncmdr/gcdrdeath1.wav"
 #define QA_Q2_SOUND_GUNNER_DEATH1 "gunner/death1.wav"
 #define QA_Q2_SOUND_GUNNER_GUNATCK1 "gunner/gunatck1.wav"
 #define QA_Q2_SOUND_GUNNER_GUNATCK2 "gunner/gunatck2.wav"
@@ -961,7 +962,8 @@
     X(GEK_GEK_HIGH) \
     X(WEAPONS_PHALOOP) \
     X(FLOATER_FLTSRCH1) \
-    X(FLYER_FLYIDLE1)
+    X(FLYER_FLYIDLE1) \
+    X(GUNCMDR_GCDRDEATH1)
 
 typedef enum qa_q2_sound_index {
     QA_Q2_SFX_NONE,
