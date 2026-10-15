@@ -3451,6 +3451,14 @@ static void test_q3_font_export(const char *executable)
     qa_image_free(&atlas); qa_buffer_free(&bytes);
     save.root=NULL;
     CHECK(qa_font_q3_export(font,font_export_image,NULL,&save,record,&error) && warnings==1);
+    qa_font_q3_options unavailable={.point_size=17,.truetype_path="missing-font.ttf",
+        .generate_if_missing=true,.context=&warnings,.warning=font_export_warning};
+    const qa_font *missing=font;
+    CHECK(qa_font_q3_register(fonts,&unavailable,&missing,&error) && !missing && warnings==2);
+    unavailable.truetype_path="LICENSE-DejaVu.txt";
+    missing=font;
+    CHECK(qa_font_q3_register(fonts,&unavailable,&missing,&error) && !missing && warnings==3);
+    CHECK(qa_font_find_glyph(font,'A',&glyph) && glyph.visible);
     qa_font_library_destroy(fonts); qa_scene_resources_destroy(images);
     qa_vfs_destroy(files); qa_resource_pool_destroy(pool);
     CHECK(qa_fs_root_temporary_dispose(&root,&error));

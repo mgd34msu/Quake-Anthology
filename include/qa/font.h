@@ -70,6 +70,8 @@ typedef struct qa_font_q3_options {
     /* Used only when fonts/fontImage_<size>.dat is absent. */
     const char *truetype_path;
     bool generate_if_missing;
+    void *context;
+    void (*warning)(void *, const char *);
 } qa_font_q3_options;
 
 /* The library borrows the VFS and scene resources. It owns all returned fonts,
@@ -103,6 +105,8 @@ bool qa_font_atlas_create(qa_font_library *, const char *name, const qa_scene_im
 bool qa_font_kfont_load(qa_font_library *, const char *path, const qa_font **out, qa_error *);
 bool qa_font_truetype_load(qa_font_library *, const qa_font_truetype_options *, const qa_font **out,
                            qa_error *);
+/* An unavailable optional font returns success with *out == NULL, leaving the
+ * caller's font record unchanged. The warning callback reports the reason. */
 bool qa_font_q3_register(qa_font_library *, const qa_font_q3_options *, const qa_font **out,
                          qa_error *);
 bool qa_font_describe(const qa_font *, qa_font_info *out);

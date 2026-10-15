@@ -238,12 +238,16 @@ static bool font(q3_call *call, qa_error *error)
     if (!q3_string(call, call->arguments[0], &path, error))
         return false;
     qa_font_q3_options options = {.point_size = q3_integer(call, 1),
-        .truetype_path = (const char *)path.data, .generate_if_missing = true};
-    const qa_font *registered;
+        .truetype_path = (const char *)path.data, .generate_if_missing = true,
+        .context = call->host->options.common.context,
+        .warning = call->host->options.common.print};
+    const qa_font *registered = NULL;
     bool ok = qa_font_q3_register(services->fonts, &options, &registered, error);
 
     if (!ok)
         return false;
+    if (!registered)
+        return true;
     uint8_t *record = qa_arena_alloc(&call->host->scratch, QA_Q3_FONT_RECORD_BYTES, 1, error);
     font_images images = {.assets = qa_q3_presentation_resources(services->seat)};
     const qa_cvar_view *save_font = qa_cvars_find(call->host->options.cvars, "r_saveFontData");

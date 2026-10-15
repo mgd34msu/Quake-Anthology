@@ -169,6 +169,17 @@ typedef struct q3_bitmap {
     int32_t width, height, pitch, top, bottom, x_skip;
 } q3_bitmap;
 
+static void q3_warning(qa_font_library *library, const qa_font_q3_options *options,
+                         const qa_error *error) {
+    if (!options->warning)
+        return;
+    char message[512];
+    snprintf(message, sizeof(message), "RE_RegisterFont: %s\n", error->message);
+    ++library->callbacks;
+    options->warning(options->context, message);
+    --library->callbacks;
+}
+
 static int64_t floor_26_6(int64_t value) {
     int64_t quotient = value / 64, remainder = value % 64;
     if (remainder < 0)
@@ -191,8 +202,10 @@ static void q3_bitmap_free(q3_bitmap *bitmap) {
 static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_bitmap *out,
                             qa_error *error) {
     FT_UInt index = FT_Get_Char_Index(face, code);
-    if (FT_Load_Glyph(face, index, FT_LOAD_DEFAULT))
-        return qa_font_fail(error, QA_ERROR_FORMAT, code, "FreeType cannot load Q3 glyph");
+    FT_Error status = FT_Load_Glyph(face, index, FT_LOAD_DEFAULT);
+    if (status)
+        return qa_font_fail(error, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
+                            code, "FreeType cannot load Q3 glyph");
     FT_GlyphSlot slot = face->glyph;
     if (slot->format != FT_GLYPH_FORMAT_OUTLINE)
         return qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
@@ -207,8 +220,12 @@ static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_
         (metric_height > 0 && bearing_y < INT64_MIN + metric_height))
         return qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
                             "Q3 glyph metric arithmetic overflows");
+    int64_t metric_right = bearing_x + metric_width;
+    if (metric_right > INT64_MAX - 63 || bearing_y > INT64_MAX - 63)
+        return qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
+                            "Q3 glyph metric rounding overflows");
     int64_t left = floor_26_6(bearing_x);
-    int64_t right = ceil_26_6(bearing_x + metric_width);
+    int64_t right = ceil_26_6(metric_right);
     int64_t top = ceil_26_6(bearing_y);
     int64_t bottom = floor_26_6(bearing_y - metric_height);
     if (left < INT32_MIN || left > INT32_MAX || right < INT32_MIN || right > INT32_MAX ||
@@ -225,6 +242,9 @@ static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_
         x_skip > INT32_MAX || (height && (uint64_t)pitch > SIZE_MAX / (uint64_t)height))
         return qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
                             "Q3 glyph metrics exceed native storage");
+    if (pitch + 1 >= 255 || height + 1 >= 255)
+        return qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
+                            "Q3 glyph cannot fit a 256 pixel atlas");
     size_t bytes = (size_t)pitch * (size_t)height;
     uint8_t *pixels = bytes ? calloc(bytes, 1) : NULL;
     if (bytes && !pixels)
@@ -238,9 +258,10 @@ static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_
         target.num_grays = 256;
         target.pixel_mode = FT_PIXEL_MODE_GRAY;
         FT_Outline_Translate(&slot->outline, (FT_Pos)-left, (FT_Pos)-bottom);
-        if (FT_Outline_Get_Bitmap(library, &slot->outline, &target)) {
+        status = FT_Outline_Get_Bitmap(library, &slot->outline, &target);
+        if (status) {
             free(pixels);
-            return qa_font_fail(error, QA_ERROR_FORMAT, code,
+            return qa_font_fail(error, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT, code,
                                 "FreeType cannot rasterize Q3 outline");
         }
     }
@@ -251,7 +272,8 @@ static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_
 }
 
 static bool q3_page(qa_font *font, int32_t point_size, uint32_t page, uint32_t first, uint32_t end,
-                    const uint8_t gray[65536], const qa_scene_image **glyph_images,
+                    const uint8_t gray[65536], const bool available[QA_Q3_FONT_GLYPHS],
+                    const qa_scene_image **glyph_images,
                     qa_error *error) {
     uint8_t maximum = 0;
     for (size_t i = 0; i < 65536; ++i) {
@@ -285,6 +307,8 @@ static bool q3_page(qa_font *font, int32_t point_size, uint32_t page, uint32_t f
     if (!qa_font_internal_take_image(font, image, error))
         return false;
     for (uint32_t code = first; code < end; ++code) {
+        if (!available[code])
+            continue;
         glyph_images[code] = image;
         set_name(font->q3_record.glyphs[code].shader_name,
                  sizeof(font->q3_record.glyphs[code].shader_name), name);
@@ -292,19 +316,32 @@ static bool q3_page(qa_font *font, int32_t point_size, uint32_t page, uint32_t f
     return true;
 }
 
-static bool generate_q3(qa_font_library *library, const char *cache_name, const char *path,
+static bool generate_q3(qa_font_library *library, const char *cache_name,
+                        const qa_font_q3_options *options,
                         int32_t point_size, const qa_font **out, qa_error *error) {
-    if (!path || !path[0])
-        return qa_font_fail(error, QA_ERROR_NOT_FOUND, 0,
-                            "Q3 font DAT is absent and no TrueType source was supplied");
+    const char *path = options->truetype_path;
+    qa_error unavailable = {0};
+    if (!path || !path[0]) {
+        qa_error_set(&unavailable, QA_ERROR_NOT_FOUND, 0, "Unable to read font file");
+        q3_warning(library, options, &unavailable);
+        *out = NULL;
+        return true;
+    }
 #if LONG_MAX / 64 < INT32_MAX
     if (point_size > LONG_MAX / 64)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0,
                             "Q3 point size exceeds FreeType 26.6 range");
 #endif
     qa_resource *source = NULL;
-    if (!qa_vfs_acquire(library->vfs, path, &source, NULL, error))
-        return false;
+    if (!qa_vfs_acquire(library->vfs, path, &source, NULL, &unavailable)) {
+        if (unavailable.code == QA_ERROR_MEMORY || unavailable.code == QA_ERROR_CAPACITY) {
+            if (error) *error = unavailable;
+            return false;
+        }
+        q3_warning(library, options, &unavailable);
+        *out = NULL;
+        return true;
+    }
     qa_font *font = qa_font_internal_create(library, QA_FONT_Q3, cache_name, error);
     if (!font) {
         qa_resource_release(source);
@@ -320,46 +357,67 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
 
     FT_Library freetype;
     FT_Face face = NULL;
+    FT_Error status;
     qa_bytes bytes = qa_resource_bytes(source);
-    bool success = qa_font_internal_freetype(library, &freetype, error);
-    if (success && (bytes.size > LONG_MAX ||
-                    FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
-        success = qa_font_fail(error, QA_ERROR_FORMAT, 0, "FreeType cannot open Q3 font face");
-    if (success && FT_Select_Charmap(face, FT_ENCODING_UNICODE))
-        success =
-            qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 TrueType face has no Unicode charmap");
-    if (success &&
-        FT_Set_Char_Size(face, (FT_F26Dot6)point_size * 64, (FT_F26Dot6)point_size * 64, 72, 72))
-        success =
-            qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "FreeType cannot select Q3 point size");
+    bool success = qa_font_internal_freetype(library, &freetype, &unavailable);
+    if (success && bytes.size > LONG_MAX)
+        success = qa_font_fail(&unavailable, QA_ERROR_FORMAT, 0, "FreeType cannot open Q3 font face");
+    if (success && (status = FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
+        success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
+                               0, "FreeType cannot open Q3 font face");
+    if (success && (status = FT_Select_Charmap(face, FT_ENCODING_UNICODE)))
+        success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_UNSUPPORTED,
+                               0, "Q3 TrueType face has no Unicode charmap");
+    if (success && (status = FT_Set_Char_Size(face, (FT_F26Dot6)point_size * 64,
+                                           (FT_F26Dot6)point_size * 64, 72, 72)))
+        success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_UNSUPPORTED,
+                               0, "FreeType cannot select Q3 point size");
+    if (!success) {
+        if (face)
+            FT_Done_Face(face);
+        qa_font_internal_destroy(font);
+        if (unavailable.code == QA_ERROR_MEMORY || unavailable.code == QA_ERROR_CAPACITY ||
+            unavailable.code == QA_ERROR_ARGUMENT) {
+            if (error) *error = unavailable;
+            return false;
+        }
+        q3_warning(library, options, &unavailable);
+        *out = NULL;
+        return true;
+    }
 
     int32_t max_height = 0;
     for (uint32_t code = 0; success && code < 255u; ++code) {
         q3_bitmap bitmap = {0};
-        success = render_q3_glyph(freetype, face, code, &bitmap, error);
-        if (success && bitmap.height > max_height)
+        qa_error glyph_error = {0};
+        bool available = render_q3_glyph(freetype, face, code, &bitmap, &glyph_error);
+        if (!available && glyph_error.code == QA_ERROR_MEMORY) {
+            if (error) *error = glyph_error;
+            success = false;
+        }
+        if (available && bitmap.height > max_height)
             max_height = bitmap.height;
         q3_bitmap_free(&bitmap);
     }
-    if (success && (max_height <= 0 || max_height >= 254))
-        success = qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                               "Q3 glyph height cannot fit a 256 pixel atlas");
 
     uint8_t *gray = success ? calloc(65536, 1) : NULL;
     if (success && !gray)
         success = qa_font_fail(error, QA_ERROR_MEMORY, 0, "Allocating Q3 grayscale atlas");
     const qa_scene_image *glyph_images[QA_Q3_FONT_GLYPHS] = {0};
+    bool available[QA_Q3_FONT_GLYPHS] = {0};
     uint32_t x = 0, y = 0, page = 0, page_start = 0;
     for (uint32_t code = 0; success && code < 255u; ++code) {
         q3_bitmap bitmap = {0};
-        success = render_q3_glyph(freetype, face, code, &bitmap, error);
-        if (!success)
-            break;
-        if ((uint32_t)bitmap.pitch + 1u >= 255u) {
-            success = qa_font_fail(error, QA_ERROR_UNSUPPORTED, code,
-                                   "Q3 glyph width cannot fit a 256 pixel atlas");
+        qa_error glyph_error = {0};
+        if (!render_q3_glyph(freetype, face, code, &bitmap, &glyph_error)) {
             q3_bitmap_free(&bitmap);
-            break;
+            if (glyph_error.code == QA_ERROR_MEMORY) {
+                if (error) *error = glyph_error;
+                success = false;
+                break;
+            }
+            q3_warning(library, options, &glyph_error);
+            continue;
         }
         if ((uint64_t)x + (uint32_t)bitmap.pitch + 1u >= 255u) {
             x = 0;
@@ -367,7 +425,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
         }
         if ((uint64_t)y + (uint32_t)max_height + 1u >= 255u) {
             success =
-                q3_page(font, point_size, page++, page_start, code, gray, glyph_images, error);
+                q3_page(font, point_size, page++, page_start, code, gray, available, glyph_images, error);
             memset(gray, 0, 65536);
             x = y = 0;
             page_start = code;
@@ -391,11 +449,12 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
         record->t = (float)y / 256.0f;
         record->s2 = (float)(x + (uint32_t)bitmap.pitch) / 256.0f;
         record->t2 = (float)(y + (uint32_t)bitmap.height) / 256.0f;
+        available[code] = true;
         x += (uint32_t)bitmap.pitch + 1u;
         q3_bitmap_free(&bitmap);
     }
     if (success)
-        success = q3_page(font, point_size, page, page_start, 255u, gray, glyph_images, error);
+        success = q3_page(font, point_size, page, page_start, 255u, gray, available, glyph_images, error);
     free(gray);
     if (face)
         FT_Done_Face(face);
@@ -448,7 +507,7 @@ bool qa_font_q3_register(qa_font_library *library, const qa_font_q3_options *opt
             qa_font_fail(error, QA_ERROR_FORMAT, 0, "Q3 font DAT has the wrong size");
         return false;
     }
-    return generate_q3(library, cache_name, options->truetype_path, point_size, out, error);
+    return generate_q3(library, cache_name, options, point_size, out, error);
 }
 
 static void save_warning(const qa_font_q3_save_options *save, const char *path,
