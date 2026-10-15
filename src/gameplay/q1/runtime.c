@@ -319,11 +319,11 @@ static bool record_pool_prepare(qa_q1_game *g, qa_pool *pool, size_t size,
     return true;
 }
 bool q1_records_prepare(qa_q1_game *g, qa_error *error) {
+    if (!g->map_records.stride)
+        g->retired_maps = NULL;
     return record_pool_prepare(g, &g->actor_records, sizeof(q1_actor), _Alignof(q1_actor), error) &&
-        record_pool_prepare(g, &g->player_records, sizeof(q1_player), _Alignof(q1_player), error);
-}
-bool q1_map_records_prepare(qa_q1_game *g, qa_error *error) {
-    return record_pool_prepare(g, &g->map_records, sizeof(q1_map_state), _Alignof(q1_map_state), error) &&
+        record_pool_prepare(g, &g->player_records, sizeof(q1_player), _Alignof(q1_player), error) &&
+        record_pool_prepare(g, &g->map_records, sizeof(q1_map_state), _Alignof(q1_map_state), error) &&
         record_pool_prepare(g, &g->door_records, sizeof(q1_door_group), _Alignof(q1_door_group), error);
 }
 void *q1_record_take(qa_q1_game *g, qa_pool *pool, size_t size, size_t *slot, qa_error *error) {
@@ -365,6 +365,7 @@ void q1_records_reset(qa_q1_game *g) {
     qa_pool_reset(&g->door_records);
     g->retired_actors = NULL;
     g->retired_players = NULL;
+    g->retired_maps = NULL;
 }
 void q1_records_destroy(qa_q1_game *g) {
     for (size_t i = 0; i < g->player_records.capacity; ++i)
@@ -376,6 +377,7 @@ void q1_records_destroy(qa_q1_game *g) {
     g->door_records = (qa_pool){0};
     g->retired_actors = NULL;
     g->retired_players = NULL;
+    g->retired_maps = NULL;
 }
 q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);

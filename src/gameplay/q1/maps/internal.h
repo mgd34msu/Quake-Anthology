@@ -432,7 +432,6 @@ struct q1_map_state {
 };
 struct q1_map_runtime {
     qa_q1_map_options options;
-    q1_map_state *retired;
     q1_door_group *door_groups;
     q1_rotate_target *rotated_targets;
     qa_actor_id *frame_ticks;

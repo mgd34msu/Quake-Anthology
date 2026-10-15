@@ -1512,6 +1512,7 @@ struct qa_q1_game {
     struct q1_wire_state *wire;
     q1_actor **actors, *retired_actors;
     q1_player **players, *retired_players;
+    q1_map_state *retired_maps;
     qa_arena record_storage;
     qa_pool actor_records, player_records, map_records, door_records;
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
@@ -1579,7 +1580,6 @@ bool q1_source_value(const qa_q1_game *, qa_q1_source_setting, float fallback, f
 
 extern const q1_frame q1_frames[];
 bool q1_records_prepare(qa_q1_game *, qa_error *);
-bool q1_map_records_prepare(qa_q1_game *, qa_error *);
 void q1_records_reset(qa_q1_game *);
 void q1_records_destroy(qa_q1_game *);
 void *q1_record_take(qa_q1_game *, qa_pool *, size_t, size_t *, qa_error *);
