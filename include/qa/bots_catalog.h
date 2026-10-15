@@ -4,6 +4,7 @@
 #include "qa/vfs.h"
 
 typedef struct qa_bot_catalog qa_bot_catalog;
+struct qa_bot_source_knowledge;
 typedef struct qa_bot_catalog_clock {
     int32_t time,start_time,intermission_time,game_type,max_clients;
 } qa_bot_catalog_clock;
@@ -23,6 +24,7 @@ typedef struct qa_bot_catalog_services {
     void *context;
     qa_session *session;
     qa_vfs *files;
+    const struct qa_bot_source_knowledge *source_knowledge;
     qa_bot_source_memory memory;
     bool (*print)(void *,const char *,qa_error *);
     qa_cvars *cvars;

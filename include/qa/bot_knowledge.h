@@ -30,6 +30,10 @@ typedef struct qa_bot_source_skill {
     float min_respawn_time, max_respawn_time;
     qa_bot_source_item_settings items;
 } qa_bot_source_skill;
+typedef struct qa_bot_source_character {
+    qa_string_id fun_name, name, skin, dogtag;
+    float shirt_color, pants_color;
+} qa_bot_source_character;
 typedef struct qa_bot_source_field {
     qa_string_id key;
     const qa_string_id *values;
@@ -119,6 +123,8 @@ bool qa_bot_source_knowledge_load(qa_vfs *, qa_strings *, qa_ruleset_id, const c
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *);
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *, size_t);
+size_t qa_bot_source_character_count(const qa_bot_source_knowledge *);
+const qa_bot_source_character *qa_bot_source_character_at(const qa_bot_source_knowledge *, size_t);
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *, qa_item_id);
 const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge *, qa_string_id classname);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);

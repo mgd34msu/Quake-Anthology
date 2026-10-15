@@ -488,7 +488,8 @@ static void test_bot_source_knowledge(void)
         " behaviors.min_respawn_time 3\n behaviors.max_respawn_time 1\n}\n"
         "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n"
         "skill expert\n{\n behaviors.allow_combat true\n}\n\0\0";
-    const char optional[]="{\n name \"\376\201\"\n}\n";
+    const char optional[]="{\n name \"\376\201\"\n fun_name \"Friendly\"\n"
+        " skin male/grunt\n dogtag tags/bot\n shirt_color 6\n pants_color 13\n}\n";
     const char items_text[]="{\n name item_health\n flags health\n spawnflags 1 = other\n"
         " spawnflags 2 = mega_item\n spawnflags 4 = mega_item\n sight_dist 128\n}\n"
         "{\n name ammo_cells\n flags ammo | cells\n}\n"
@@ -588,6 +589,14 @@ static void test_bot_source_knowledge(void)
     document=qa_bot_source_document_at(knowledge,2);
     const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
     CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
+    const qa_bot_source_character *character=qa_bot_source_character_at(knowledge,0);
+    CHECK(qa_bot_source_character_count(knowledge)==1 && character &&
+        character->name==document->blocks[0].fields[0].values[0] &&
+        !strcmp(qa_strings_cstr(strings,character->fun_name),"Friendly") &&
+        !strcmp(qa_strings_cstr(strings,character->skin),"male/grunt") &&
+        !strcmp(qa_strings_cstr(strings,character->dogtag),"tags/bot") &&
+        character->shirt_color==6 && character->pants_color==13 &&
+        !qa_bot_source_character_at(knowledge,1));
     qa_string_id health_class,cells_class,weapon_class,super_class,flag_class,armor_class;
     CHECK(qa_strings_intern_cstr(strings,"item_health",&health_class,&error) &&
         qa_strings_intern_cstr(strings,"ammo_cells",&cells_class,&error) &&

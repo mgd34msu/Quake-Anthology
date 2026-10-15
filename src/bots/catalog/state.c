@@ -45,6 +45,16 @@ bool bot_catalog_minimum_update(qa_bot_catalog *c,qa_error *e) {
     c->minimum_integer=actual->integer;c->minimum_modification=actual->modification_count;
     c->minimum_registered=true;return true;
 }
+static bool store_info(qa_bot_catalog *c,bot_catalog_infos *destination,uint32_t index,
+    const char *info,qa_error *e)
+{
+    uint32_t length=(uint32_t)strlen(info)+10,offset;
+    if(!c->services.memory.allocate(c->services.memory.context,length,&offset,e)) return false;
+    qa_bot_source_record record={offset,length};
+    destination->records[index]=record;
+    if(destination->extent<=index) destination->extent=index+1;
+    return bot_catalog_write(c,record,info,e);
+}
 static bool parse_infos(qa_bot_catalog *c,qa_common_cursor *cursor,bot_catalog_infos *destination,qa_error *e) {
     uint32_t parsed=0,maximum=BOT_CATALOG_INFOS-destination->count;
     for(;;) {
@@ -70,13 +80,8 @@ static bool parse_infos(qa_bot_catalog *c,qa_common_cursor *cursor,bot_catalog_i
             if(!qa_common_parse(&c->parser,cursor,false,e) ||
                !bot_catalog_info_set(c,info,key,c->parser.token_length?c->parser.token:"<NULL>",e)) return false;
         }
-        uint32_t length=(uint32_t)strlen(info)+10,offset;
-        if(!c->services.memory.allocate(c->services.memory.context,length,&offset,e)) return false;
-        qa_bot_source_record record={offset,length};
         uint32_t index=destination->count+parsed;
-        destination->records[index]=record;
-        if(destination->extent<=index) destination->extent=index+1;
-        if(!bot_catalog_write(c,record,info,e)) return false;
+        if(!store_info(c,destination,index,info,e)) return false;
         ++parsed;
     }
     destination->count+=parsed;return true;
@@ -100,6 +105,36 @@ static bool load_file(qa_bot_catalog *c,const char *path,bot_catalog_infos *dest
         okay=qa_common_cursor_init(&cursor,bytes,QA_COMMON_TERMINATED,e) && parse_infos(c,&cursor,destination,e);
     }
     qa_resource_release(resource);return okay;
+}
+static bool load_characters(qa_bot_catalog *c,qa_error *e)
+{
+    const qa_bot_source_knowledge *knowledge=c->services.source_knowledge;
+    qa_strings *strings=qa_session_strings(c->services.session);
+    size_t count=qa_bot_source_character_count(knowledge);
+    c->bots.count=0;
+    if(count>BOT_CATALOG_INFOS) {
+        if(!c->services.print(c->services.context,"Max infos exceeded\n",e)) return false;
+        count=BOT_CATALOG_INFOS;
+    }
+    for(size_t i=0;i<count;++i) {
+        const qa_bot_source_character *character=qa_bot_source_character_at(knowledge,i);
+        const struct {const char *key;qa_string_id value;} fields[]={
+            {"name",character->name},{"funname",character->fun_name},
+            {"skin",character->skin},{"dogtag",character->dogtag}};
+        char info[1024]={0},number[64];
+        for(size_t j=0;j<sizeof(fields)/sizeof(*fields);++j) {
+            const char *text=fields[j].value?qa_strings_cstr(strings,fields[j].value):"";
+            if(!bot_catalog_info_set(c,info,fields[j].key,text,e)) return false;
+        }
+        snprintf(number,sizeof(number),"%.9g",(double)character->shirt_color);
+        if(!bot_catalog_info_set(c,info,"topcolor",number,e)) return false;
+        snprintf(number,sizeof(number),"%.9g",(double)character->pants_color);
+        if(!bot_catalog_info_set(c,info,"bottomcolor",number,e) ||
+           !bot_catalog_info_set(c,info,"aifile","bots/default_c.c",e) ||
+           !store_info(c,&c->bots,c->bots.count,info,e)) return false;
+        ++c->bots.count;
+    }
+    return true;
 }
 static bool load_catalog(qa_bot_catalog *c,bool bots,qa_error *e) {
     bot_catalog_infos *destination=bots?&c->bots:&c->arenas;
@@ -149,7 +184,7 @@ static bool load_catalog(qa_bot_catalog *c,bool bots,qa_error *e) {
 bool qa_bot_catalog_initialize(qa_bot_catalog *c,bool restart,qa_error *e) {
     if(!bot_catalog_enter(c,e)) return false;
     int32_t enabled;bool okay=bot_catalog_cvar(c,"bot_enable",NULL,0,&enabled,e);
-    if(okay && enabled) okay=load_catalog(c,true,e);
+    if(okay && enabled) okay=bot_catalog_authored(c)?load_characters(c,e):load_catalog(c,true,e);
     if(okay) okay=load_catalog(c,false,e);
     for(uint32_t i=0;okay && i<c->arenas.count;++i) {
         qa_buffer original={0};char info[1024],number[32];

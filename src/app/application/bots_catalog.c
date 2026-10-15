@@ -10,7 +10,10 @@
 #include "native_q3_settings.h"
 #include "native_q3_wire_state.h"
 #include "unified_q3_events.h"
+#include "guest_qc_internal.h"
+#include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
+#include "qa/text.h"
 #include <limits.h>
 #include <string.h>
 
@@ -97,10 +100,46 @@ static bool allocate_client(void *context,int32_t *out,qa_error *error) {
         return application_fail(error,QA_ERROR_ARGUMENT,"bot allocation lacks its actual catalogue admission");
     return application_players_bot_allocate(bots->application,desired,out,error);
 }
+static bool actor_read(application_bots *bots,int32_t number,qa_actor_id *out,qa_error *error)
+{
+    if(bots->shared_world) {
+        *out=application_bot_transport_actor(bots->transport,(uint32_t)number);return true;
+    }
+    qa_q3_source_binding binding;
+    if(!qa_q3_source_binding_read(application_bot_source(bots)->state.q3,(uint32_t)number,&binding,error)) return false;
+    *out=binding.actor;return true;
+}
+static bool team_mode(const qa_mode_view *mode)
+{
+    return (mode->rules.kind>=QA_MODE_TEAM_DEATHMATCH && mode->rules.kind<=QA_MODE_HARVESTER) ||
+        mode->rules.kind==QA_MODE_DEATHBALL || mode->rules.teamplay!=0;
+}
+static bool authored_cosmetics(application_bots *bots,qa_mode_view *mode,bool *apply,qa_error *error)
+{
+    qa_application *app=bots->application;
+    *mode=(qa_mode_view){0};*apply=false;
+    if(!qa_bot_source_character_count(bots->source_knowledge)) return true;
+    if(app->primary_mode_ready && !qa_modes_read(app->modes,app->primary_mode,mode,error)) return false;
+    *apply=!team_mode(mode) && mode->rules.kind!=QA_MODE_COOPERATIVE &&
+        mode->rules.kind!=QA_MODE_SINGLE_PLAYER && mode->rules.kind!=QA_MODE_HORDE;
+    return true;
+}
 static bool choose_team(void *context,int32_t ignored,int32_t *out,qa_error *error) {
     application_bots *bots=context;application_provider *actual;
     if(!source(bots,&actual,error)) return false;
-    if(bots->shared_world) {*out=0;return true;}
+    if(bots->shared_world) {
+        qa_application *app=bots->application;qa_mode_view mode;
+        *out=0;
+        if(!app->primary_mode_ready) return true;
+        if(!qa_modes_read(app->modes,app->primary_mode,&mode,error)) return false;
+        if(!team_mode(&mode)) return true;
+        qa_actor_id actor;
+        if(!actor_read(bots,ignored,&actor,error)) return false;
+        qa_team_id team;
+        if(!qa_modes_choose_team(app->modes,app->primary_mode,actor,&team,error)) return false;
+        *out=team==mode.rules.teams[0]?1:team==mode.rules.teams[1]?2:0;
+        return true;
+    }
     return application_native_q3_client_pick_team(actual,ignored,out,error);
 }
 static bool activate(void *context,int32_t number,qa_error *error) {
@@ -120,7 +159,37 @@ static bool userinfo(void *context,int32_t number,char *out,size_t capacity,qa_e
 }
 static bool set_userinfo(void *context,int32_t number,const char *text,qa_error *error) {
     application_bots *bots=context;
-    return number>=0 && application_players_bot_userinfo(bots->application,(uint32_t)number,text,error);
+    if(number<0) return false;
+    if(!qa_bot_source_character_count(bots->source_knowledge))
+        return application_players_bot_userinfo(bots->application,(uint32_t)number,text,error);
+    qa_application *app=bots->application;
+    qa_actor_id actor;
+    if(!actor_read(bots,number,&actor,error)) return false;
+    const application_player_record *player=application_player_record_find(app->players,actor);
+    if(!player) return false;
+    qa_mode_view mode;bool cosmetic;
+    if(!authored_cosmetics(bots,&mode,&cosmetic,error)) return false;
+    application_provider *body=application_provider_for(app,actor,QA_ROLE_BODY,"");
+    bool q2_skin=cosmetic && body && body->product && body->product->family==QA_GAME_Q2;
+    bool q1_colors=cosmetic && bots->behavior==QA_RULESET_NETQUAKE && body && body->product &&
+        body->product->family==QA_GAME_Q1 && (player->character->kind==APPLICATION_PROVIDER_Q1 ||
+            player->character->kind==APPLICATION_PROVIDER_QC);
+    char info[1024],skin[1024],team[1024];
+    memcpy(info,text,strlen(text)+1);
+    qa_q3_client_info_value(info,"skin",skin,sizeof(skin));
+    const char *appearance=q2_skin && *skin?skin:application_player_skin(player);
+    if(!qa_q3_info_set(info,sizeof(info),"model",appearance,QA_Q3_INFO_STRICT,NULL,error) ||
+       !qa_q3_info_set(info,sizeof(info),"skin",appearance,QA_Q3_INFO_STRICT,NULL,error)) return false;
+    if(!q1_colors && (!qa_q3_info_set(info,sizeof(info),"topcolor","",QA_Q3_INFO_STRICT,NULL,error) ||
+        !qa_q3_info_set(info,sizeof(info),"bottomcolor","",QA_Q3_INFO_STRICT,NULL,error))) return false;
+    qa_q3_client_info_value(info,"team",team,sizeof(team));
+    if(team_mode(&mode)) {
+        qa_team_id selected=!strcmp(team,"red")?mode.rules.teams[0]:
+            !strcmp(team,"blue")?mode.rules.teams[1]:0;
+        if(selected && !qa_q3_info_set(info,sizeof(info),"team",
+            qa_strings_cstr(qa_session_strings(app->session),selected),QA_Q3_INFO_STRICT,NULL,error)) return false;
+    }
+    return application_players_bot_userinfo(app,(uint32_t)number,info,error);
 }
 static bool connect_client(void *context,int32_t number,bool first,bool bot,bool *accepted,qa_error *error) {
     application_bots *bots=context;
@@ -128,7 +197,30 @@ static bool connect_client(void *context,int32_t number,bool first,bool bot,bool
 }
 static bool begin_client(void *context,int32_t number,qa_error *error) {
     application_bots *bots=context;
-    return number>=0 && application_players_bot_begin(bots->application,(uint32_t)number,error);
+    if(number<0 || !application_players_bot_begin(bots->application,(uint32_t)number,error)) return false;
+    qa_mode_view mode;bool cosmetic;
+    if(!authored_cosmetics(bots,&mode,&cosmetic,error)) return false;
+    if(!cosmetic || bots->behavior!=QA_RULESET_NETQUAKE) return true;
+    qa_application *app=bots->application;
+    qa_actor_id actor;
+    if(!actor_read(bots,number,&actor,error)) return false;
+    application_provider *character=application_provider_for(app,actor,QA_ROLE_CHARACTER,"");
+    application_provider *body=application_provider_for(app,actor,QA_ROLE_BODY,"");
+    if(!character || !body || !body->product || body->product->family!=QA_GAME_Q1) return true;
+    char info[1024],top[64],bottom[64];
+    if(!userinfo(bots,number,info,sizeof(info),error)) return false;
+    qa_q3_client_info_value(info,"topcolor",top,sizeof(top));
+    qa_q3_client_info_value(info,"bottomcolor",bottom,sizeof(bottom));
+    double shirt=0,pants=0;
+    qa_parse_number((qa_bytes){(const uint8_t *)top,strlen(top)},&shirt,NULL);
+    qa_parse_number((qa_bytes){(const uint8_t *)bottom,strlen(bottom)},&pants,NULL);
+    int32_t shirt_color=shirt<=0?0:shirt>=13?13:(int32_t)shirt;
+    int32_t pants_color=pants<=0?0:pants>=13?13:(int32_t)pants;
+    if(character->kind==APPLICATION_PROVIDER_Q1)
+        return qa_q1_source_client_colors(character->state.q1,actor,shirt_color,pants_color,error);
+    if(character->kind==APPLICATION_PROVIDER_QC)
+        return application_qc_client_colors(character,actor,shirt_color,pants_color,error);
+    return true;
 }
 static bool reset_podium(void *context,qa_error *error) {
     application_bots *bots=context;application_provider *actual;
@@ -162,6 +254,7 @@ bool application_bots_catalog_create(application_bots *bots,qa_error *error) {
     if(!bots || bots->catalogue || !source(bots,&actual,error)) return false;
     qa_bot_services ai=application_bots_services(bots);
     qa_bot_catalog_services services={.context=bots,.session=bots->application->session,.files=bots->files,
+        .source_knowledge=bots->source_knowledge,
         .memory=ai.memory,.print=print,.cvars=registry(bots,NULL),.register_cvar=register_cvar,.set_cvar=set_cvar,
         .server_info=server_info,.clock=clock_read,.client=client_read,.allocate_client=allocate_client,
         .choose_team=choose_team,.activate=activate,.userinfo=userinfo,.set_userinfo=set_userinfo,
@@ -217,7 +310,19 @@ bool application_bots_catalog_console(qa_application *app,const qa_command_invoc
     }
     if(bots->restoring || bots->calls || bots->producing || bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot catalogue command requires its idle source map");
-    *handled=true;return qa_bot_catalog_console(bots->catalogue,invocation->argv,invocation->argc,error);
+    *handled=true;
+    qa_arena storage={0};size_t count=invocation->argc;
+    const char **arguments=count?qa_arena_alloc(&storage,count*sizeof(*arguments),_Alignof(const char *),error):NULL;
+    bool okay=!count || arguments;
+    for(size_t i=0;okay && i<count;++i) {
+        size_t length=strlen(invocation->argv[i]),written;
+        uint8_t *text=qa_arena_alloc(&storage,length+1,1,error);
+        okay=text && qa_text_to_source_bytes((qa_bytes){(const uint8_t *)invocation->argv[i],length},
+            text,length+1,&written,error);
+        if(okay) arguments[i]=(const char *)text;
+    }
+    if(okay) okay=qa_bot_catalog_console(bots->catalogue,arguments,count,error);
+    qa_arena_destroy(&storage);return okay;
 }
 bool application_bots_catalog_add(qa_application *app,const qa_bot_catalog_add_request *request,qa_error *error) {
     if(app && (!app->bots || !app->bots->population) && !application_bots_requested(app,error)) return false;

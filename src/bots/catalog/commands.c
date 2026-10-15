@@ -26,6 +26,28 @@ static bool floating(float value,unsigned digits,unsigned width,char *out,size_t
 static bool fixed(float value,unsigned digits,char *out,size_t capacity,qa_error *e) {
     return floating(value,digits,0,out,capacity,e);
 }
+static float authored_skill(qa_bot_catalog *c,const char *text)
+{
+    const qa_bot_source_knowledge *knowledge=c->services.source_knowledge;
+    size_t count=qa_bot_source_skill_count(knowledge);
+    if(!count) return 0;
+    double value;
+    if(!text) {
+        const qa_cvar_view *skill=qa_cvars_find(c->services.cvars,"g_spSkill");
+        value=skill?skill->number:2;
+    } else if(!*text) {
+        value=0;
+    } else if(!qa_parse_number((qa_bytes){(const uint8_t *)text,strlen(text)},&value,NULL) || !isfinite(value)) {
+        qa_strings *strings=qa_session_strings(c->services.session);
+        size_t selected=0;
+        for(size_t i=0;i<count;++i) {
+            const qa_bot_source_skill *skill=qa_bot_source_skill_at(knowledge,i);
+            if(!strcmp(qa_strings_cstr(strings,skill->name),text)) selected=i;
+        }
+        return (float)selected;
+    }
+    return value<=0?0:value>=(double)count?(float)(count-1):(float)trunc(value);
+}
 bool bot_catalog_spawn_list(qa_bot_catalog *c,const char *list,int32_t delay,qa_error *e) {
     if(!c->services.reset_podium(c->services.context,e)) return false;
     char value[128],skill_text[64];
@@ -63,23 +85,31 @@ static bool add_bot(qa_bot_catalog *c,const char *name,float skill,const char *r
         char message[1200];snprintf(message,sizeof(message),"^1Error: Bot '%s' not defined\n",name);
         return c->services.print(c->services.context,message,e);
     }
+    bool authored=bot_catalog_authored(c);
     char userinfo[1024]={0},value[8192],model[8192],headmodel[8192],character[8192],team[1024],skill_text[64];
-    bool okay=bot_catalog_info_value((char *)info.data,"funname",value,sizeof(value),e);
+    bool okay=bot_catalog_info_value((char *)info.data,authored?"name":"funname",value,sizeof(value),e);
     if(okay && !*alternate_name && !*value) okay=bot_catalog_info_value((char *)info.data,"name",value,sizeof(value),e);
     if(okay) okay=bot_catalog_info_set(c,userinfo,"name",*alternate_name?alternate_name:value,e) &&
         bot_catalog_info_set(c,userinfo,"rate","25000",e) && bot_catalog_info_set(c,userinfo,"snaps","20",e) &&
         fixed(skill,2,skill_text,sizeof(skill_text),e) && bot_catalog_info_set(c,userinfo,"skill",skill_text,e);
-    if(okay && skill>=1 && skill<4)
+    if(okay && !authored && skill>=1 && skill<4)
         okay=bot_catalog_info_set(c,userinfo,"handicap",skill<2?"50":skill<3?"70":"90",e);
-    if(okay) okay=bot_catalog_info_value((char *)info.data,"model",model,sizeof(model),e);
-    if(okay && !*model) strcpy(model,"visor/default");
-    if(okay) okay=bot_catalog_info_set(c,userinfo,"model",model,e) && bot_catalog_info_set(c,userinfo,"team_model",model,e) &&
-        bot_catalog_info_value((char *)info.data,"headmodel",headmodel,sizeof(headmodel),e);
-    if(okay && !*headmodel) strcpy(headmodel,model);
-    if(okay) okay=bot_catalog_info_set(c,userinfo,"headmodel",headmodel,e) &&
-        bot_catalog_info_set(c,userinfo,"team_headmodel",headmodel,e);
+    if(authored) {
+        const char *const fields[]={"skin","dogtag","topcolor","bottomcolor"};
+        for(size_t i=0;okay && i<sizeof(fields)/sizeof(*fields);++i)
+            okay=bot_catalog_info_value((char *)info.data,fields[i],value,sizeof(value),e) &&
+                bot_catalog_info_set(c,userinfo,fields[i],value,e);
+    } else {
+        if(okay) okay=bot_catalog_info_value((char *)info.data,"model",model,sizeof(model),e);
+        if(okay && !*model) strcpy(model,"visor/default");
+        if(okay) okay=bot_catalog_info_set(c,userinfo,"model",model,e) && bot_catalog_info_set(c,userinfo,"team_model",model,e) &&
+            bot_catalog_info_value((char *)info.data,"headmodel",headmodel,sizeof(headmodel),e);
+        if(okay && !*headmodel) strcpy(headmodel,model);
+        if(okay) okay=bot_catalog_info_set(c,userinfo,"headmodel",headmodel,e) &&
+            bot_catalog_info_set(c,userinfo,"team_headmodel",headmodel,e);
+    }
     const struct {const char *key,*fallback;} fields[]={{"gender","male"},{"color1","4"},{"color2","5"}};
-    for(size_t i=0;okay && i<3;++i) {
+    for(size_t i=0;okay && !authored && i<3;++i) {
         okay=bot_catalog_info_value((char *)info.data,fields[i].key,value,sizeof(value),e) &&
             bot_catalog_info_set(c,userinfo,i?fields[i].key:"sex",*value?value:fields[i].fallback,e);
     }
@@ -92,13 +122,13 @@ static bool add_bot(qa_bot_catalog *c,const char *name,float skill,const char *r
         c->services.print(c->services.context,"^1Start server with more 'open' slots (or check setting of sv_maxclients cvar).\n",e);
     size_t length=strlen(requested_team);if(length>=sizeof(team)) length=sizeof(team)-1;
     memcpy(team,requested_team,length);team[length]=0;
-    if(!*team) {
+    if(!*team || (authored && (bot_catalog_equal(team,"free") || bot_catalog_equal(team,"auto")))) {
         qa_bot_catalog_clock clock;int32_t chosen;
         if(!clock_read(c,&clock,e)) return false;
-        if(qa_game_type_is_team(clock.game_type)) {
+        if(authored || qa_game_type_is_team(clock.game_type)) {
             if(!c->services.choose_team(c->services.context,client,&chosen,e)) return false;
-            strcpy(team,chosen==1?"red":"blue");
-        } else strcpy(team,"red");
+            strcpy(team,authored && !chosen?"":chosen==1?"red":"blue");
+        } else strcpy(team,authored?"":"red");
     }
     char padded[72];if(!floating(skill,2,5,padded,sizeof(padded),e)) return false;
     if(!bot_catalog_info_set(c,userinfo,"characterfile",character,e) ||
@@ -110,7 +140,8 @@ static bool add_bot(qa_bot_catalog *c,const char *name,float skill,const char *r
     return delay?queue_begin(c,client,delay,e):c->services.begin(c->services.context,client,e);
 }
 static bool list_bots(qa_bot_catalog *c,qa_error *e) {
-    if(!c->services.print(c->services.context,"^1name             model            aifile              funname\n",e)) return false;
+    bool authored=bot_catalog_authored(c);
+    if(!authored && !c->services.print(c->services.context,"^1name             model            aifile              funname\n",e)) return false;
     for(uint32_t i=0;i<c->bots.count;++i) {
         qa_buffer info={0};char name[8192],model[8192],file[8192],funname[8192];
         if(!bot_catalog_text(c,c->bots.records[i],&info,e)) return false;
@@ -119,8 +150,9 @@ static bool list_bots(qa_bot_catalog *c,qa_error *e) {
             bot_catalog_info_value((char *)info.data,"aifile",file,sizeof(file),e) &&
             bot_catalog_info_value((char *)info.data,"funname",funname,sizeof(funname),e);
         qa_buffer_free(&info);if(!okay) return false;
-        char text[32768];int length=snprintf(text,sizeof(text),"%-16s %-16s %-20s %-20s\n",
-            *name?name:"UnnamedPlayer",*model?model:"visor/default",*file?file:"bots/default_c.c",funname);
+        char text[32768];int length=authored?snprintf(text,sizeof(text),"%s\n",name):
+            snprintf(text,sizeof(text),"%-16s %-16s %-20s %-20s\n",
+                *name?name:"UnnamedPlayer",*model?model:"visor/default",*file?file:"bots/default_c.c",funname);
         if(length<0 || (size_t)length>=sizeof(text)) return bot_catalog_fail(e,QA_ERROR_FORMAT,"source bot list overflows formatter storage");
         if(!c->services.print(c->services.context,text,e)) return false;
     }
@@ -151,6 +183,7 @@ bool qa_bot_catalog_add_utf8(qa_bot_catalog *c,const qa_bot_catalog_add_request 
     for(size_t i=0;i<3;++i) free(source[i]);
     return okay;
 }
+static bool count_players(qa_bot_catalog *,int32_t,bool,const qa_bot_catalog_clock *,int32_t *,qa_error *);
 bool qa_bot_catalog_console(qa_bot_catalog *c,const char *const *argv,size_t argc,qa_error *e) {
     if((argc && !argv) || !bot_catalog_enter(c,e)) return false;
     const char *command=argc?argv[0]:"";bool okay=true;
@@ -163,10 +196,20 @@ bool qa_bot_catalog_console(qa_bot_catalog *c,const char *const *argv,size_t arg
                 const char *value=i+1<argc?argv[i+1]:"";size_t length=strlen(value);if(length>1023) length=1023;
                 memcpy(arguments[i],value,length);arguments[i][length]=0;
             }
-            if(!*arguments[0]) okay=c->services.print(c->services.context,
+            bool authored=bot_catalog_authored(c);
+            if(authored && !*arguments[0]) {
+                qa_bot_catalog_clock clock;int32_t count;qa_buffer info={0};
+                okay=clock_read(c,&clock,e) && count_players(c,-1,true,&clock,&count,e);
+                if(okay) okay=bot_catalog_text(c,c->bots.records[(uint32_t)count%c->bots.count],&info,e) &&
+                    bot_catalog_info_value((char *)info.data,"name",arguments[0],sizeof(arguments[0]),e);
+                qa_buffer_free(&info);
+            }
+            if(okay && !*arguments[0]) okay=c->services.print(c->services.context,
                 "Usage: Addbot <botname> [skill 1-5] [team] [msec delay] [altname]\n",e);
-            else {
-                okay=add_bot(c,arguments[0],*arguments[1]?bot_catalog_atof(arguments[1]):4,arguments[2],
+            else if(okay) {
+                float skill=authored?authored_skill(c,argc>2?arguments[1]:NULL):
+                    *arguments[1]?bot_catalog_atof(arguments[1]):4;
+                okay=add_bot(c,arguments[0],skill,arguments[2],
                     *arguments[3]?bot_catalog_atoi(arguments[3]):0,arguments[4],e);
                 qa_bot_catalog_clock clock;int32_t running;
                 if(okay) okay=clock_read(c,&clock,e) && bot_catalog_cvar(c,"cl_running",NULL,0,&running,e);

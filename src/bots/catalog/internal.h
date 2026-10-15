@@ -1,6 +1,7 @@
 #ifndef QA_BOT_CATALOG_INTERNAL_H
 #define QA_BOT_CATALOG_INTERNAL_H
 #include "qa/bots_catalog.h"
+#include "qa/bot_knowledge.h"
 #include "qa/common_parse.h"
 #include "qa/text.h"
 #include <math.h>
@@ -27,6 +28,9 @@ struct qa_bot_catalog {
     bool minimum_registered;
     size_t calls;
 };
+static inline bool bot_catalog_authored(const qa_bot_catalog *c) {
+    return qa_bot_source_character_count(c->services.source_knowledge)!=0;
+}
 bool bot_catalog_fail(qa_error *,qa_status,const char *);
 bool bot_catalog_enter(qa_bot_catalog *,qa_error *);
 bool bot_catalog_equal(const char *,const char *);

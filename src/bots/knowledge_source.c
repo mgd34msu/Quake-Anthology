@@ -16,6 +16,8 @@ struct qa_bot_source_knowledge {
     size_t document_count;
     qa_bot_source_skill *skills;
     size_t skill_count,skill_capacity;
+    qa_bot_source_character *characters;
+    size_t character_count;
     qa_id_index weapon_items;
     qa_bot_source_weapon *weapons;
     qa_id_index item_names;
@@ -216,6 +218,43 @@ static bool skills_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_
     }
     for(size_t i=0;i<knowledge->skill_count;++i)
         knowledge->skills[i].best_aim_head=i+2>=knowledge->skill_count;
+    return true;
+}
+static bool characters_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
+    qa_error *error)
+{
+    static const struct {const char *name;size_t offset;} texts[]={
+        {"fun_name",offsetof(qa_bot_source_character,fun_name)},
+        {"name",offsetof(qa_bot_source_character,name)},
+        {"skin",offsetof(qa_bot_source_character,skin)},
+        {"dogtag",offsetof(qa_bot_source_character,dogtag)}};
+    qa_string_id keys[sizeof(texts)/sizeof(*texts)],shirt,pants;
+    for(size_t i=0;i<sizeof(keys)/sizeof(*keys);++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,texts[i].name,keys+i,error)) return false;
+    if(!qa_strings_intern_cstr(knowledge->strings,"shirt_color",&shirt,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"pants_color",&pants,error)) return false;
+    size_t count=document->block_count;
+    knowledge->characters=count?qa_arena_alloc(&knowledge->storage,
+        count*sizeof(*knowledge->characters),_Alignof(qa_bot_source_character),error):NULL;
+    if(count && !knowledge->characters) return false;
+    knowledge->character_count=count;
+    for(size_t i=0;i<count;++i) {
+        qa_bot_source_character *character=knowledge->characters+i;
+        *character=(qa_bot_source_character){0};
+        const qa_bot_source_block *block=document->blocks+i;
+        for(size_t j=0;j<block->field_count;++j) {
+            const qa_bot_source_field *field=block->fields+j;
+            if(field->count!=1) continue;
+            for(size_t k=0;k<sizeof(keys)/sizeof(*keys);++k) if(field->key==keys[k])
+                *(qa_string_id *)((uint8_t *)character+texts[k].offset)=field->values[0];
+            if(field->key==shirt || field->key==pants) {
+                double value;
+                if(qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) &&
+                   isfinite(value) && value>=-FLT_MAX && value<=FLT_MAX)
+                    *(field->key==shirt?&character->shirt_color:&character->pants_color)=(float)value;
+            }
+        }
+    }
     return true;
 }
 typedef struct source_item_weapon {
@@ -557,6 +596,8 @@ bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_i
         "bots/game_rules.txt","bots/teams.txt","bots/chats.txt","bots/dangers.txt"};
     for(size_t i=0;i<sizeof(optional)/sizeof(*optional);++i) {
         if(!document_load(knowledge,files,optional[i],&present,error)) goto failed;
+        if(present && i==0 && !characters_parse(knowledge,knowledge->documents+knowledge->document_count-1,
+            error)) goto failed;
         if(present && i==1 && !items_parse(knowledge,knowledge->documents+knowledge->document_count-1,
             rules,bindings,knowledge->documents[0].block_count,error)) goto failed;
         if(present && i==6 && !chats_parse(knowledge,knowledge->documents+knowledge->document_count-1,
@@ -607,6 +648,12 @@ const qa_bot_source_chat *qa_bot_source_chat_at(const qa_bot_source_knowledge *k
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *knowledge) {return knowledge?knowledge->skill_count:0;}
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *knowledge,size_t index) {
     return knowledge && index<knowledge->skill_count?knowledge->skills+index:NULL;
+}
+size_t qa_bot_source_character_count(const qa_bot_source_knowledge *knowledge) {
+    return knowledge?knowledge->character_count:0;
+}
+const qa_bot_source_character *qa_bot_source_character_at(const qa_bot_source_knowledge *knowledge,size_t index) {
+    return knowledge && index<knowledge->character_count?knowledge->characters+index:NULL;
 }
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *knowledge) {return knowledge?knowledge->document_count:0;}
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *knowledge,size_t index) {
