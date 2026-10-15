@@ -192,6 +192,10 @@ static const original_field map_fields[] = {
     FIELD(q1_map_state, style, "style", I32),
     FIELD(q1_map_state, color_map, "colormap", I32)
 };
+static const original_field particle_tele_fields[] = {
+    FIELD(q1_map_state, particle_size, "size", VECTOR),
+    FIELD(q1_map_state, distance, "distance", FLOAT)
+};
 static const original_field mover_fields[] = {
     FIELD(q1_map_movement, pos1, "pos1", VECTOR),
     FIELD(q1_map_movement, pos2, "pos2", VECTOR),
@@ -348,7 +352,8 @@ static const original_map_callback map_callbacks[] = {
     {Q1_MAP_TRAIN_WAIT, "train_wait"}, {Q1_MAP_SIGIL_PLACE, "StartItem"},
     {Q1_MAP_SHOOTER_FIRE, "shooter_think"}, {Q1_MAP_FIREBALL_FLY, "fire_fly"},
     {Q1_MAP_BUBBLES_MAKE, "make_bubbles"}, {Q1_MAP_NOISE_REPEAT, "noise_think"},
-    {Q1_MAP_LIGHTNING_FIRE, "lightning_fire"}
+    {Q1_MAP_LIGHTNING_FIRE, "lightning_fire"},
+    {Q1_MAP_ADDON_PARTICLE_TICK, "particle_tele_think"}
 };
 static const char *map_think(q1_map_action action) {
     if (action == Q1_MAP_IDLE) return NULL;
@@ -682,11 +687,14 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
 static const char *const pickup_touches[] = {
     "health_touch", "armor_touch", "ammo_touch", "weapon_touch",
     "key_touch", "powerup_touch", "BackpackTouch",
-    [Q1_ITEM_MG3_HEAD] = "touch_hellknight_head"
+    [Q1_ITEM_MG3_HEAD] = "touch_hellknight_head",
+    [Q1_ITEM_MG3_RING] = "touch_ring"
 };
 static const char *pickup_touch(const q1_pickup *item) {
     if (item->kind == Q1_ITEM_MG3_HEAD && item->upgrade)
         return "hug_tette";
+    if (item->kind == Q1_ITEM_MG3_RING && (item->upgrade & Q1_MG3_RING_TARGET))
+        return "teleport_touch";
     return item->kind < sizeof(pickup_touches) / sizeof(*pickup_touches)
         ? pickup_touches[item->kind] : NULL;
 }
@@ -699,6 +707,15 @@ static uint32_t pickup_kind(const char *touch) {
     for (uint32_t i=0; i<sizeof(pickup_touches)/sizeof(*pickup_touches); ++i)
         if (touch && pickup_touches[i] && !strcmp(touch,pickup_touches[i])) return i;
     return UINT32_MAX;
+}
+static const char *saved(const qa_q1_save_record *, const char *);
+static uint32_t pickup_record_kind(const qa_q1_save_record *record) {
+    const char *name = saved(record, "classname"), *touch = saved(record, "touch");
+    if (touch && !strcmp(touch, "teleport_touch") && name &&
+        (!strcmp(name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_DRAUGHT_INSIGHT)) ||
+         !strcmp(name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR))))
+        return Q1_ITEM_MG3_RING;
+    return pickup_kind(touch);
 }
 static bool pickup_mutable_noise(uint32_t kind) {
     return kind==0 || kind==4 || kind==5;
@@ -756,8 +773,11 @@ static bool pickup_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     if (!callback(record,"touch",touch,error) ||
         !FIELDS(receipt,record,&source,pickup_model_fields,error) ||
         (pickup_mutable_noise(p->kind) && !FIELDS(receipt,record,p,pickup_sound_fields,error))) return false;
-    if (p->kind == Q1_ITEM_MG3_HEAD && (entity->spawnflags & 4u) &&
+    if ((p->kind == Q1_ITEM_MG3_HEAD || p->kind == Q1_ITEM_MG3_RING) && (entity->spawnflags & 4u) &&
         !callback(record, "use", "SUB_regen", error)) return false;
+    if (p->kind == Q1_ITEM_MG3_RING &&
+        !text(record, "netname", qa_strings_cstr(qa_session_strings(receipt->operation.game->services.session),
+            entity->map->netname), QA_Q1_SAVE_STRING, error)) return false;
     if (p->kind==0 && (!FIELDS(receipt,record,p,pickup_health_fields,error) ||
         !number(record,"healtype",p->mega?2:p->count==25?1:0,false,error))) return false;
     if (p->kind==2 && !FIELDS(receipt,record,p,pickup_ammo_fields,error)) return false;
@@ -887,7 +907,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         !number(record, "flags", flags, false, error) || !number(record, "modelindex", model, false, error) ||
         !FIELDS(receipt, record, &combat, combat_fields, error) ||
         !number(record, "takedamage", combat.can_take_damage ? player || entity->aimed_damage ? 2 : 1 : 0, false, error) ||
-        !vector(record, "size", qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
+        !vector(record, "size", entity && entity->map && entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE
+            ? entity->map->particle_size : qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
     if (player) {
         qa_q1_wire_player wire;
         q1_player source_player = *player;
@@ -965,6 +986,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
             !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE &&
+            !FIELDS(receipt, record, entity->map, particle_tele_fields, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
@@ -1374,6 +1397,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     const q1_species *species = name ? q1_species_find(name) : NULL;
     const original_projectile *projectile = saved_projectile(record);
     q1_map_kind map = name ? q1_map_classify(name) : Q1_MAP_FIELDS;
+    if (think && !strcmp(think, "particle_tele_think")) map = Q1_MAP_ADDON_PARTICLE_TELE;
     if (name && !strcmp(name,"door")) {
         if (use && !strcmp(use,"door_use")) { map = Q1_MAP_DOOR; name = "func_door"; }
         else if (use && !strcmp(use,"fd_secret_use")) { map = Q1_MAP_SECRET_DOOR; name = "func_door_secret"; }
@@ -1393,7 +1417,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
     if (explosion) kind = Q1_TIMER;
-    if (pickup_kind(touch)!=UINT32_MAX) kind=Q1_PICKUP;
+    if (pickup_record_kind(record)!=UINT32_MAX) kind=Q1_PICKUP;
     if (projectile) name = projectile->native_classname;
     if (!name || !*name) {
         if (kind == Q1_PICKUP && touch && !strcmp(touch,"BackpackTouch")) name = "item_backpack";
@@ -1403,6 +1427,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
         else if (think && !strcmp(think,"ScourgeTriggerThink")) name = "scourge_trigger";
         else if (explosion || (think && !strncmp(think,"s_explode",9))) name = "explosion";
         else if (think && !strcmp(think,"DelayThink")) { name = "delayed_use"; map = Q1_MAP_DELAY; kind = Q1_MAP; }
+        else if (map == Q1_MAP_ADDON_PARTICLE_TELE) name = "particle_tele";
         else if (map == Q1_MAP_DOOR_TRIGGER) name = "door_trigger";
         else if (map == Q1_MAP_PLAT_TRIGGER) name = "plat_trigger";
         else if (think && !strcmp(think,"SUB_Remove")) name = "gib";
@@ -1433,6 +1458,8 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
         const char *touch = saved(record, "touch");
         if (pickup_kind(touch) == Q1_ITEM_MG3_HEAD)
             entity->state.pickup.upgrade = pickup_bunny(touch);
+        else if (pickup_record_kind(record) == Q1_ITEM_MG3_RING)
+            entity->state.pickup.upgrade = touch && !strcmp(touch, "teleport_touch") ? Q1_MG3_RING_TARGET : 0;
         if (!q1_pickup_define(game, entity, error)) return false;
     }
     if (projectile) {
@@ -1681,11 +1708,17 @@ static bool admit_pickup(original_admission *admission,qa_q1_program program,
     q1_actor *entity,qa_q1_save_record *callbacks,qa_error *error) {
     q1_pickup *item=&entity->state.pickup;
     const char *touch = saved(admission->record, "touch");
-    item->kind=pickup_kind(touch);
+    item->kind=pickup_record_kind(admission->record);
     if (item->kind == Q1_ITEM_MG3_HEAD) {
         if (program != QA_Q1_MG3)
             return unsupported(error, "Bloody Nightmare pickup has no MG3 native rule");
         item->upgrade = pickup_bunny(touch);
+    }
+    if (item->kind == Q1_ITEM_MG3_RING) {
+        if (program != QA_Q1_MG3)
+            return unsupported(error, "Draught ring has no MG3 native rule");
+        item->upgrade = touch && !strcmp(touch, "teleport_touch") ? Q1_MG3_RING_TARGET : 0;
+        if (!ADMIT_FIELDS(admission, entity->map, map_fields, error)) return false;
     }
     if (item->kind==UINT32_MAX || !ADMIT_FIELDS(admission,item,pickup_model_fields,error) ||
         !admit_string(admission,"noise",error)) return false;
@@ -1725,7 +1758,7 @@ static bool admit_pickup(original_admission *admission,qa_q1_program program,
         }
     }
     return callback(callbacks,"touch",pickup_touch(item),error) &&
-        (item->kind != Q1_ITEM_MG3_HEAD || !(entity->spawnflags & 4u) ||
+        ((item->kind != Q1_ITEM_MG3_HEAD && item->kind != Q1_ITEM_MG3_RING) || !(entity->spawnflags & 4u) ||
          callback(callbacks, "use", "SUB_regen", error));
 }
 static bool original_map_supported(q1_map_kind kind) {
@@ -1738,6 +1771,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
     case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
     case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
+    case Q1_MAP_ADDON_PARTICLE_TELE:
         return true;
     default:
         return false;
@@ -1757,6 +1791,7 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_PLAT: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_PLAT_DOWN;
     case Q1_MAP_FIREBALL_SOURCE: return action==Q1_MAP_FIREBALL_FLY;
     case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
+    case Q1_MAP_ADDON_PARTICLE_TELE: return action==Q1_MAP_ADDON_PARTICLE_TICK;
     default: return false;
     }
 }
@@ -1783,7 +1818,10 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     if (!admit_word(admission,"flags",error) || !admit_word(admission,"movetype",error) ||
         !admit_word(admission,"solid",error)) return false;
     if (!admit_word(admission,"modelindex",error)) return false;
-    if (saved(record,"size") && !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
+    const char *source_think = saved(record, "think");
+    bool particle_tele = source_think && !strcmp(source_think, "particle_tele_think");
+    if (saved(record,"size") && !particle_tele &&
+        !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
     admitted_key(admission,"size");
     static const char *const link_bounds[] = {"absmin", "absmax"};
     for (size_t i = 0; i < sizeof(link_bounds) / sizeof(*link_bounds); ++i) {
@@ -1867,7 +1905,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         }
         q1_actor entity={.kind=source.kind,.physics=physics};q1_map_state map={.kind=source.map};
         if (!ADMIT_FIELDS(admission,&entity,entity_fields,error)) goto done;
-        if (source.map!=Q1_MAP_FIELDS) entity.map=&map;
+        if (source.map!=Q1_MAP_FIELDS || pickup_record_kind(record) == Q1_ITEM_MG3_RING) entity.map=&map;
         if (!restore_think(NULL,&entity,record,error)) goto done;
         admitted_key(admission,"think");admitted_key(admission,"nextthink");
         if (entity.kind==Q1_MONSTER) {
@@ -1890,6 +1928,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         } else if (entity.map) {
             if (!ADMIT_FIELDS(admission,&map,map_fields,error) ||
                 !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
+            if (source.map == Q1_MAP_ADDON_PARTICLE_TELE &&
+                !ADMIT_FIELDS(admission, &map, particle_tele_fields, error)) goto done;
             if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
                 unsupported(error,"Source platform helper has an unrepresented independent owner");goto done;
             }
@@ -2128,6 +2168,8 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (!RESTORE_FIELDS(game,record,entity->map,map_fields,slots,count,error) ||
             !restore_map(qa_session_strings(game->services.session),game->options.provider,
                 record,entity,slots,count,error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE &&
+            !RESTORE_FIELDS(game, record, entity->map, particle_tele_fields, slots, count, error)) return false;
         if (entity->map->kind==Q1_MAP_WORLD &&
             !RESTORE_FIELDS(game,record,&game->options,world_fields,slots,count,error)) return false;
     }
@@ -2138,6 +2180,12 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
         if (item->kind == Q1_ITEM_MG3_HEAD) {
             item->upgrade = pickup_bunny(source_touch);
             item->sound = game->runtime_names[q1_mg3_head_sound(item->upgrade != 0)];
+        }
+        if (item->kind == Q1_ITEM_MG3_RING) {
+            item->upgrade = (item->upgrade & Q1_MG3_RING_STUPOR) |
+                (source_touch && !strcmp(source_touch, "teleport_touch") ? Q1_MG3_RING_TARGET : 0);
+            entity->map->netname = entity->source_netname;
+            entity->source_netname = 0;
         }
         if (!RESTORE_FIELDS(game,record,item,pickup_model_fields,slots,count,error) ||
             (pickup_mutable_noise(item->kind) &&
@@ -2249,7 +2297,7 @@ static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
     const qa_strings *strings=qa_session_strings(game->services.session);
     for (size_t slot=2; slot<save->entity_count; ++slot) {
         const qa_q1_save_record *record=save->entities+slot;
-        if (!record->count || pickup_kind(saved(record,"touch"))==UINT32_MAX) continue;
+        if (!record->count || pickup_record_kind(record)==UINT32_MAX) continue;
         original_class source;qa_actor_id id;
         if (slot>UINT32_MAX) return unsupported(error,"Original pickup leaves its physical Source ordinals");
         if (!original_classify(record,&source,error)) return false;
@@ -2263,6 +2311,18 @@ static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
             bool bunny = pickup_bunny(saved(record, "touch"));
             head = (q1_pickup){.kind = Q1_ITEM_MG3_HEAD, .upgrade = bunny,
                 .original_model = game->runtime_names[q1_mg3_head_model(bunny)]};
+            item = &head;
+            visible_model = head.original_model;
+        } else if (game->options.program == QA_Q1_MG3 &&
+            pickup_record_kind(record) == Q1_ITEM_MG3_RING &&
+            (!strcmp(source.name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_DRAUGHT_INSIGHT)) ||
+             !strcmp(source.name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR)))) {
+            bool stupor = !strcmp(source.name, q1_runtime_name_text(Q1_NAME_CLASS_ITEM_DRAUGHT_STUPOR));
+            const char *touch = saved(record, "touch");
+            head = (q1_pickup){.kind = Q1_ITEM_MG3_RING,
+                .upgrade = (stupor ? Q1_MG3_RING_STUPOR : 0) |
+                    (touch && !strcmp(touch, "teleport_touch") ? Q1_MG3_RING_TARGET : 0),
+                .original_model = game->runtime_names[q1_mg3_ring_model(stupor)]};
             item = &head;
             visible_model = head.original_model;
         } else {

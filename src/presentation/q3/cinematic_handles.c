@@ -25,9 +25,12 @@ static char *text_copy(const char *text,qa_error *error)
     if (!copy) { q3cin_fail(error,QA_ERROR_MEMORY,"Retaining cinematic resource name"); return NULL; }
     memcpy(copy,text,bytes); return copy;
 }
+static bool same_name(const char *a,const char *b)
+{ return a==b || (a && b && !strcmp(a,b)); }
 void q3cin_restore_dispose(q3cin_movie *movie)
 {
     free((char *)movie->restore.instance); free((char *)movie->restore.content);
+    free((char *)movie->restore.parent_instance); free((char *)movie->restore.parent_content);
     free((char *)movie->restore.path); movie->restore=(qa_q3_cinematic_restore_slot){0};
     movie->restore_pending=false;
 }
@@ -93,19 +96,32 @@ bool qa_q3_cinematic_handles_restore_reserve(qa_q3_cinematic_handles *owner,
         if (row->handle<0 || row->handle>=16 || candidate[row->handle].restore_pending ||
             owner->movies[row->handle].source || owner->movies[row->handle].path ||
             (!row->instance && !row->content) || !row->path || (row->flags&1u) ||
+            (row->detached && (!row->parent_instance && !row->parent_content)) ||
+            (row->detached && row->source_group==UINT32_MAX) ||
             !isfinite(row->rect.x) || !isfinite(row->rect.y) || !isfinite(row->rect.width) ||
             !isfinite(row->rect.height) || (row->has_playback &&
             (!isfinite(row->playback.source_ms) || row->playback.source_ms<0)) ||
             (row->selected && selected>=0) || (row->decoder && decoder>=0)) {
             ok=q3cin_fail(error,QA_ERROR_FORMAT,"Invalid saved cinematic slot"); break;
         }
+        for (size_t j=0;ok && j<i;++j) if (rows[j].source_group==row->source_group &&
+            (!same_name(rows[j].instance,row->instance) || !same_name(rows[j].content,row->content) ||
+            !same_name(rows[j].parent_instance,row->parent_instance) ||
+            !same_name(rows[j].parent_content,row->parent_content) || rows[j].role!=row->role ||
+            rows[j].seat!=row->seat || rows[j].parent_seat!=row->parent_seat || rows[j].detached!=row->detached))
+            ok=q3cin_fail(error,QA_ERROR_FORMAT,"Saved cinematic source group has conflicting names");
+        if (!ok) break;
         q3cin_movie *movie=candidate+row->handle;
         movie->restore=*row;
         movie->restore.instance=text_copy(row->instance,error);
         movie->restore.content=text_copy(row->content,error);
+        movie->restore.parent_instance=text_copy(row->parent_instance,error);
+        movie->restore.parent_content=text_copy(row->parent_content,error);
         movie->restore.path=text_copy(row->path,error);
         movie->path=text_copy(row->path,error);
         ok=(!row->instance || movie->restore.instance) && (!row->content || movie->restore.content) &&
+            (!row->parent_instance || movie->restore.parent_instance) &&
+            (!row->parent_content || movie->restore.parent_content) &&
             movie->restore.path && movie->path;
         movie->restore.playback.resource=movie->restore.path;
         movie->rect=row->rect; movie->flags=row->flags;
@@ -120,16 +136,17 @@ bool qa_q3_cinematic_handles_restore_reserve(qa_q3_cinematic_handles *owner,
         }
         owner->restore_selected=selected; owner->restore_decoder=decoder;
         owner->restoring=count!=0;
+        owner->restore_published=owner->restore_superseded=false;
     }
     for (size_t i=0;i<16;++i) {
         free(candidate[i].path); q3cin_restore_dispose(candidate+i);
     }
     return ok;
 }
-static bool same_name(const char *a,const char *b)
-{ return a==b || (a && b && !strcmp(a,b)); }
+void qa_q3_cinematic_handles_restore_published(qa_q3_cinematic_handles *owner)
+{ if (owner && owner->restoring) owner->restore_published=true; }
 bool qa_q3_cinematic_source_restore_bind(qa_q3_cinematic_source *source,const char *instance,
-    const char *content,int32_t role,uint32_t seat,qa_error *error)
+    const char *content,int32_t role,uint32_t seat,uint32_t source_group,qa_error *error)
 {
     if (!source || !qa_q3_cinematic_handles_idle(source->handles)) return false;
     char *instance_copy=text_copy(instance,error),*content_copy=text_copy(content,error);
@@ -138,11 +155,16 @@ bool qa_q3_cinematic_source_restore_bind(qa_q3_cinematic_source *source,const ch
     }
     free(source->instance); free(source->content);
     source->instance=instance_copy; source->content=content_copy; source->role=role; source->seat=seat;
+    source->detached=source_group!=UINT32_MAX;
+    uint32_t group=source_group;
     for (size_t i=0;i<16;++i) {
         q3cin_movie *movie=source->handles->movies+i;
         const qa_q3_cinematic_restore_slot *saved=&movie->restore;
-        if (movie->restore_pending && !movie->source && saved->role==role && saved->seat==seat &&
-            same_name(saved->instance,instance) && same_name(saved->content,content)) movie->source=source;
+        if (!movie->restore_pending || movie->source || saved->detached!=source->detached ||
+            saved->role!=role || saved->seat!=seat || !same_name(saved->instance,instance) ||
+            !same_name(saved->content,content)) continue;
+        if (group==UINT32_MAX) group=saved->source_group;
+        if (group==saved->source_group) movie->source=source;
     }
     return true;
 }
@@ -266,6 +288,7 @@ bool qa_q3_cinematic_source_role_detach(qa_q3_cinematic_source *source,void *con
             return q3cin_fail(error,QA_ERROR_ARGUMENT,"Detached cinematic role retains a real fullscreen lease on its retiring owner");
     }
     source->diagnostic_context=NULL; source->diagnostic_print=NULL; source->diagnostic_current=NULL;
+    source->detached=true;
     source->options.print=source->parent->options.print?role_print:NULL;
     return true;
 }
@@ -379,6 +402,7 @@ bool qa_q3_cinematic_system_select(qa_q3_cinematic_source *source,int32_t handle
         movie->system.playback && movie->system.playback(movie->system.context)==playback;
     if (!ok) q3cin_fail(error,QA_ERROR_ARGUMENT,"Fullscreen decoder lost its actual global cinematic slot");
     if (ok && movie->status==2) return returned(source,true,error);
+    if (ok && owner->restoring && owner->restore_published) owner->restore_superseded=true;
     if (ok && owner->decoder_handle!=handle) ok=qa_cinematic_roq_restart(playback,error);
     if (ok) owner->selected_handle=owner->decoder_handle=handle;
     return returned(source,ok,error);
@@ -420,6 +444,23 @@ static bool dimensions(qa_q3_cinematic_handles *owner,q3cin_movie *movie,
             "HACK: approxmimating cinematic for Rage Pro or Voodoo\n");
     return true;
 }
+static bool playback_create(qa_q3_cinematic_source *source,q3cin_movie *movie,qa_roq_scratch *scratch,
+    const qa_cinematic_checkpoint *checkpoint,qa_error *error)
+{
+    qa_cinematic_source asset=qa_cinematic_asset_source(movie->asset); asset.name=movie->path;
+    movie->bus=source->options.audio_bus(source->options.context);
+    qa_cinematic_options options=q3cin_options(source,movie->flags,movie->bus);
+    options.roq_scratch=scratch;
+    return checkpoint?qa_cinematic_restore(&asset,&options,checkpoint,&movie->playback,error):
+        qa_cinematic_create(&asset,&options,&movie->playback,error);
+}
+static bool restore_system_active(const qa_q3_cinematic_handles *owner)
+{
+    if (!owner->restoring || !owner->restore_published || !owner->restore_superseded ||
+        owner->decoder_handle<0 || owner->decoder_handle>=16) return false;
+    const q3cin_movie *movie=owner->movies+owner->decoder_handle;
+    return (movie->flags&1u) && movie->system.playback && movie->system.playback(movie->system.context);
+}
 bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_media_library *media,
     qa_roq_scratch *scratch,int32_t *selected,int32_t *decoder,
     const char *request,qa_scene_rect_f rect,uint32_t flags,
@@ -431,6 +472,9 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
     uint32_t restored=16;
     for (uint32_t i=0;i<16;++i) if (slots[i].restore_pending && slots[i].source==source &&
         slots[i].path && !strcmp(slots[i].path,path)) { restored=i; break; }
+    if (restored<16 && slots==source->handles->movies && restore_system_active(source->handles)) {
+        free(path); *out=(int32_t)restored; return true;
+    }
     if (!(flags&1u)) for (uint32_t i=0;i<16;++i) if ((slots[i].occupied ||
         (source->handles->restoring && slots[i].restore.path)) && slots[i].path &&
         !slots[i].restore_pending && slots[i].source && restored==16 &&
@@ -443,14 +487,20 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
     if (index==16) { free(path); return q3cin_fail(error,QA_ERROR_FORMAT,"CIN_HandleForVideo: none free"); }
     qa_q3_cinematic_restore_slot saved={0};
     bool restore=restored!=16, actual=slots==source->handles->movies;
+    if (!restore && actual && source->handles->restoring && source->handles->restore_published)
+        source->handles->restore_superseded=true;
     if (restore) {
         saved=slots[index].restore;
         if (!actual) {
             saved.instance=text_copy(slots[index].restore.instance,error);
             saved.content=text_copy(slots[index].restore.content,error);
+            saved.parent_instance=text_copy(slots[index].restore.parent_instance,error);
+            saved.parent_content=text_copy(slots[index].restore.parent_content,error);
             saved.path=text_copy(slots[index].restore.path,error);
             if ((slots[index].restore.instance && !saved.instance) ||
-                (slots[index].restore.content && !saved.content) || !saved.path) {
+                (slots[index].restore.content && !saved.content) ||
+                (slots[index].restore.parent_instance && !saved.parent_instance) ||
+                (slots[index].restore.parent_content && !saved.parent_content) || !saved.path) {
                 q3cin_movie failed={.restore=saved}; q3cin_restore_dispose(&failed); free(path); return false;
             }
         } else slots[index].restore=(qa_q3_cinematic_restore_slot){0};
@@ -503,12 +553,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
                 qa_cinematic_asset_release(movie->asset); free(movie->path); q3cin_restore_dispose(movie);
                 *movie=(q3cin_movie){0}; return false;
             }
-            qa_cinematic_source asset=qa_cinematic_asset_source(movie->asset); asset.name=path;
-            movie->bus=source->options.audio_bus(source->options.context);
-            qa_cinematic_options options=q3cin_options(source,flags,movie->bus);
-            options.roq_scratch=scratch;
-            ok=restore?qa_cinematic_restore(&asset,&options,&saved.playback,&movie->playback,&local):
-                qa_cinematic_create(&asset,&options,&movie->playback,&local);
+            ok=playback_create(source,movie,scratch,restore?&saved.playback:NULL,&local);
             if (!ok && local.code==QA_ERROR_FORMAT) {
                 qa_cinematic_destroy(movie->playback); movie->playback=NULL;
                 movie->pending=false; movie->status=0; *out=-1; return true;
@@ -540,8 +585,17 @@ bool qa_q3_cinematic_source_restore_finish(qa_q3_cinematic_source *source,
     qa_error *error)
 {
     if (!source || !source->handles->restoring) return true;
-    if (!q3cin_enter(source,error)) return false;
     qa_q3_cinematic_handles *owner=source->handles;
+    bool needed=false;
+    for (size_t i=0;i<16;++i) if (owner->movies[i].restore_pending && owner->movies[i].source==source) needed=true;
+    if (!needed || restore_system_active(owner)) return true;
+    if (!q3cin_enter(source,error)) return false;
+    int32_t selected=owner->selected_handle,decoder=owner->decoder_handle;
+    q3cin_movie *active=owner->restore_published && owner->restore_superseded &&
+        decoder>=0 && decoder<16 && owner->movies[decoder].playback?owner->movies+decoder:NULL;
+    qa_cinematic_checkpoint checkpoint={0};
+    if (active && !qa_cinematic_checkpoint_read(active->playback,&checkpoint,error)) return returned(source,false,error);
+    if (active) checkpoint.resource=active->path;
     bool ok=true;
     for (uint32_t i=0;ok && i<16;++i) {
         q3cin_movie *movie=owner->movies+i;
@@ -551,17 +605,24 @@ bool qa_q3_cinematic_source_restore_finish(qa_q3_cinematic_source *source,
             &owner->selected_handle,&owner->decoder_handle,movie->path,movie->rect,movie->flags,
             open,context,&handle,error);
     }
+    if (ok && active) {
+        qa_cinematic_destroy(active->playback); active->playback=NULL;
+        qa_roq_scratch_clear(owner->decoder_scratch,false);
+        ok=playback_create(active->source,active,owner->decoder_scratch,&checkpoint,error) &&
+            dimensions(owner,active,qa_cinematic_frame(active->playback),false,error);
+        if (ok) { owner->selected_handle=selected; owner->decoder_handle=decoder; }
+    }
     return returned(source,ok,error);
 }
-bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *owner,qa_error *error)
+bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *owner,bool *complete,qa_error *error)
 {
-    if (!owner || !owner->restoring) return true;
+    *complete=!owner || !owner->restoring;
+    if (*complete) return true;
     for (qa_q3_cinematic_source *source=owner->sources;source;source=source->next)
         if (!qa_q3_cinematic_source_restore_finish(source,NULL,NULL,error)) return false;
-    for (size_t i=0;i<16;++i) if (owner->movies[i].restore_pending)
-        return q3cin_fail(error,QA_ERROR_UNSUPPORTED,"Saved cinematic source namespace is unavailable");
+    for (size_t i=0;i<16;++i) if (owner->movies[i].restore_pending) return true;
     int32_t decoder=owner->restore_decoder;
-    if (decoder>=0 && owner->movies[decoder].restore.path) {
+    if (!owner->restore_superseded && decoder>=0 && owner->movies[decoder].restore.path) {
         q3cin_movie *movie=owner->movies+decoder;
         qa_q3_cinematic_source *source=movie->source;
         if (!q3cin_enter(source,error)) return false;
@@ -572,10 +633,12 @@ bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *owner,qa_er
             NULL,NULL,&handle,error);
         if (!returned(source,ok,error)) return false;
     }
-    owner->selected_handle=owner->restore_selected; owner->decoder_handle=decoder;
+    if (!owner->restore_superseded) {
+        owner->selected_handle=owner->restore_selected; owner->decoder_handle=decoder;
+    }
     owner->restoring=false;
     for (size_t i=0;i<16;++i) q3cin_restore_dispose(owner->movies+i);
-    return true;
+    *complete=true; return true;
 }
 bool qa_q3_cinematic_play(qa_q3_cinematic_source *source,const char *path,qa_scene_rect_f rect,uint32_t flags,
     bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),void *context,int32_t *out,qa_error *error)
@@ -590,12 +653,14 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
 {
     *out=2;
     if (handle<0 || handle>=16) return true;
+    q3cin_movie *movie=&owner->movies[handle];
+    if (movie->restore_pending) { *out=0; return true; }
     if (!owner->movies[handle].source) {
         if (owner->decoder_handle!=handle)
             return q3cin_fail(error,QA_ERROR_FORMAT,"Cannot reset an uninitialized cinematic without its retained file");
         *out=0; return true;
     }
-    q3cin_movie *movie=&owner->movies[handle];
+    if (owner->restoring && owner->restore_published) owner->restore_superseded=true;
     if (movie->pending || !movie->source->options.current(movie->source->options.context,&movie->source->options))
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Cinematic handle retains an unavailable physical source");
     if (movie->status==2) return true;
@@ -653,6 +718,8 @@ bool qa_q3_cinematic_run(qa_q3_cinematic_source *source,int32_t handle,int32_t *
 bool qa_q3_cinematic_stop(qa_q3_cinematic_source *source,int32_t handle,bool skip,qa_error *error)
 {
     if (!q3cin_enter(source,error)) return false;
+    if (source->handles->restoring && source->handles->restore_published)
+        source->handles->restore_superseded=true;
     if (handle>=0 && handle<16) {
         q3cin_movie *movie=&source->handles->movies[handle];
         qa_cinematic *system=movie->system.playback?movie->system.playback(movie->system.context):NULL;
@@ -679,6 +746,8 @@ bool qa_q3_cinematic_extents(qa_q3_cinematic_source *source,int32_t handle,qa_sc
         qa_cinematic *decoder=movie->playback?movie->playback:
             movie->system.playback?movie->system.playback(movie->system.context):NULL;
         if (decoder && movie->status!=2) {
+            if (source->handles->restoring && source->handles->restore_published)
+                source->handles->restore_superseded=true;
             movie->rect=rect; movie->dirty=true;
         }
     }
@@ -838,13 +907,25 @@ bool qa_q3_cinematic_handles_at(const qa_q3_cinematic_handles *owner,uint32_t in
 {
     if (!owner || owner->busy || index>=16 || !out) return false;
     const q3cin_movie *movie=&owner->movies[index];
+    const qa_q3_cinematic_source *parent=movie->source?movie->source->parent:NULL;
+    uint32_t group=movie->restore.source_group;
+    if (movie->source) {
+        group=index;
+        for (uint32_t i=0;i<index;++i) if (owner->movies[i].source==movie->source) { group=i; break; }
+    }
     *out=(qa_q3_cinematic_slot){.handle=(int32_t)index,.source=movie->source,
         .instance=movie->source?movie->source->instance:movie->restore.instance,
         .content=movie->source?movie->source->content:movie->restore.content,
+        .parent_instance=parent?parent->instance:movie->restore.parent_instance,
+        .parent_content=parent?parent->content:movie->restore.parent_content,
+        .parent_seat=parent?parent->seat:movie->restore.parent_seat,.source_group=group,
+        .detached=movie->source?movie->source->detached:movie->restore.detached,
         .role=movie->source?movie->source->role:movie->restore.role,
         .seat=movie->source?movie->source->seat:movie->restore.seat,
-        .occupied=movie->occupied,.selected=owner->selected_handle==(int32_t)index,
-        .decoder=owner->decoder_handle==(int32_t)index,.path=movie->path,.asset=movie->asset,
+        .occupied=movie->occupied,
+        .selected=(owner->restoring && !owner->restore_superseded?owner->restore_selected:owner->selected_handle)==(int32_t)index,
+        .decoder=(owner->restoring && !owner->restore_superseded?owner->restore_decoder:owner->decoder_handle)==(int32_t)index,
+        .restore_pending=movie->restore_pending,.path=movie->path,.asset=movie->asset,
         .playback=movie->playback,.scratch=owner->scratch[index],
         .system=movie->flags&1u?&movie->system:NULL,.flags=movie->flags,
         .rect=movie->rect,.status=movie->status,.play_on_walls=movie->play_on_walls}; return true;

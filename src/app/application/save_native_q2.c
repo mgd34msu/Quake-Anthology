@@ -137,6 +137,9 @@ bool application_source_baseline_prepare(application_provider *target,
     if (!qa_session_add(app->session, &scratch->source->component, error)) return false;
     scratch->source->component_attached = true;
     scratch->source->attached = true;
+    if (target_q3 && target_q3->game &&
+        !application_bots_prepare(app, qa_launch_snapshot_choices(snapshot), &map, NULL, error))
+        return false;
     return true;
 }
 

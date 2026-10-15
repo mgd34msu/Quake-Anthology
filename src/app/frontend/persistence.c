@@ -272,6 +272,7 @@ static void publish(void *context,qa_application *active,qa_application *candida
     if (operation->native.device) qa_audio_device_handoff(operation->native.device);
     frontend_equipment_events_rebind(f->gear_events,f);
     frontend_view_bindings_restore_published(f);
+    frontend_cinematic_save_published(f);
     operation->active->archive_enabled=false;
     f->archive_enabled=true; f->archive_saved=false;
     f->sdl_subsystems=operation->active->sdl_subsystems; operation->active->sdl_subsystems=0;

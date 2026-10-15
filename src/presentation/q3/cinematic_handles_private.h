@@ -39,6 +39,7 @@ struct qa_q3_cinematic_source {
     char *instance, *content;
     int32_t role;
     uint32_t seat;
+    bool detached;
 };
 struct qa_q3_cinematic_handles {
     qa_q3_cinematic_handles_options options;
@@ -49,7 +50,7 @@ struct qa_q3_cinematic_handles {
     qa_roq_scratch *decoder_scratch;
     int32_t selected_handle,decoder_handle;
     int32_t restore_selected,restore_decoder;
-    bool restoring;
+    bool restoring,restore_published,restore_superseded;
     bool busy;
 };
 bool q3cin_fail(qa_error *,qa_status,const char *);

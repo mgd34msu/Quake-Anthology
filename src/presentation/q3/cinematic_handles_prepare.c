@@ -117,6 +117,7 @@ void qa_q3_cinematic_handles_stage_publish(qa_q3_cinematic_handles_stage *stage)
     /* Banks/media publish first. These are retained real destination versions;
      * no parser, frame upload, clock sample or playback callback runs here. */
     if (stage->decoder_changed) {
+        if (stage->owner->restoring && stage->owner->restore_published) stage->owner->restore_superseded=true;
         for (size_t i=0;i<16;++i) {
             q3cin_movie *movie=&stage->movies[i];
             qa_cinematic *decoder=movie->playback?movie->playback:

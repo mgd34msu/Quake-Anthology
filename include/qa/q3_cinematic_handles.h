@@ -85,9 +85,10 @@ typedef struct qa_q3_cinematic_slot {
     int32_t handle;
     const qa_q3_cinematic_source *source;
     const char *instance, *content;
+    const char *parent_instance, *parent_content;
     int32_t role;
-    uint32_t seat;
-    bool occupied, selected, decoder;
+    uint32_t seat, parent_seat, source_group;
+    bool occupied, selected, decoder, detached, restore_pending;
     const char *path;
     const qa_cinematic_asset *asset;
     const qa_cinematic *playback;
@@ -101,23 +102,25 @@ bool qa_q3_cinematic_handles_at(const qa_q3_cinematic_handles *,uint32_t,qa_q3_c
 typedef struct qa_q3_cinematic_restore_slot {
     int32_t handle;
     const char *instance, *content;
+    const char *parent_instance, *parent_content;
     int32_t role;
-    uint32_t seat;
+    uint32_t seat, parent_seat, source_group;
     const char *path;
     qa_scene_rect_f rect;
     uint32_t flags;
     qa_cinematic_checkpoint playback;
     bool has_playback;
-    bool occupied, selected, decoder;
+    bool occupied, selected, decoder, detached;
     int32_t status, play_on_walls;
 } qa_q3_cinematic_restore_slot;
 bool qa_q3_cinematic_handles_restore_reserve(qa_q3_cinematic_handles *,
     const qa_q3_cinematic_restore_slot *,size_t,qa_error *);
 bool qa_q3_cinematic_source_restore_bind(qa_q3_cinematic_source *,const char *instance,
-    const char *content,int32_t role,uint32_t seat,qa_error *);
+    const char *content,int32_t role,uint32_t seat,uint32_t source_group,qa_error *);
 bool qa_q3_cinematic_source_restore_finish(qa_q3_cinematic_source *,
     bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),void *,qa_error *);
-bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *,qa_error *);
+bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *,bool *complete,qa_error *);
+void qa_q3_cinematic_handles_restore_published(qa_q3_cinematic_handles *);
 /* One global slot claim is held while all actual Source material libraries
  * prepare. New movies and allocations stay private until the banks publish. */
 bool qa_q3_cinematic_handles_stage_prepare(qa_q3_cinematic_handles *,qa_scene_resource_policy *,qa_q3_cinematic_handles_stage **,qa_error *);

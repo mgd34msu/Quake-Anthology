@@ -6085,6 +6085,7 @@ bool frontend_network_retire_connections(qa_frontend *f, bool *complete, qa_erro
                  * displaced HOST's Source claims before its roster retires. */
                 if(!frontend_network_q2_host_destroy(&n->q2_host,error)) return false;
             }
+            if(!frontend_network_unified_destroy(&n->unified,error)) return false;
         } else if(!frontend_network_q2_host_stop(n->q2_host,f->wall_time_ns,complete,error)) return false;
     }
     if (!*complete) return true;

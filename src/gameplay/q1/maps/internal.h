@@ -569,7 +569,9 @@ bool q1_map_addon_control_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *)
 bool q1_map_addon_control_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_addon_control_think(qa_q1_game *, q1_actor *, qa_error *);
 #define Q1_SILENT_TELEPORT_HEIGHT (-2048.0f)
-bool q1_map_silent_teleport(qa_q1_game *, qa_actor_id, float height, qa_error *);
+bool q1_map_height_teleport(qa_q1_game *, qa_actor_id, float height, bool fog, qa_error *);
+bool q1_map_teleport_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_draught_fx(qa_q1_game *, q1_actor *, bool ambient, qa_error *);
 static inline bool q1_map_is_addon_effect(q1_map_kind kind) {
     return kind >= Q1_MAP_ADDON_SHAKE && kind <= Q1_MAP_ADDON_FOUNTAIN;
 }

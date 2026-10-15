@@ -562,10 +562,12 @@ static bool outputs_create(qa_frontend *frontend,frontend_shared_settings *prepa
             (frontend->gl && prepared && !qa_display_set_swap_interval(frontend->display,swap_interval,error))) return false;
         if (!frontend_resources(frontend, error) || !frontend_seats_create(frontend, error)) return false;
         qa_input_platform_options input = {.cvars = qa_application_cvars(frontend->application),
-            .user = frontend, .render_size=input_render_size, .print = frontend_print};
+            .user = frontend, .render_size=input_render_size, .print = frontend_print,
+            .assignment_changed = frontend_settings_gyro_assignment_changed};
         frontend->input = active?qa_input_platform_create_detached(&input,error):
             prepared?qa_input_platform_create_prepared(&input,edit,&input_settings,error):qa_input_platform_create(&input,error);
         if (!frontend->input) return false;
+        if (!frontend_settings_gyro_prepare(frontend, error)) return false;
         qa_input_seat *seats[4] = {0};
         qa_controller_selection controllers[4] = {0};
         for (unsigned i = 0; i < options->seats; ++i) seats[i] = frontend->seats[i].input;

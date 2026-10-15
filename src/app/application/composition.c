@@ -150,8 +150,11 @@ bool application_composition_destroy(qa_application *application,
     if (!application_publication_retry_cleanup(application, error)) return false;
     if (application->configuration == NULL) return true;
     qa_configuration *configuration = application->configuration;
-    if (!qa_configuration_destroy(configuration, error))
-        return false;
+    application_operation previous = application->operation;
+    application->operation = APPLICATION_DESTROYING;
+    bool destroyed = qa_configuration_destroy(configuration, error);
+    application->operation = previous;
+    if (!destroyed) return false;
     application->configuration = NULL;
     return true;
 }

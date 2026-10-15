@@ -1,5 +1,6 @@
 #include "input_settings.h"
 #include "capture.h"
+#include "settings_devices.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/application_engine_shutdown.h"
 #include "qa/application_client_prepare.h"
@@ -363,6 +364,7 @@ void frontend_input_settings_publish(frontend_input_settings *owner)
 {
     qa_input_platform_settings_publish(owner->native);
     finish_releases(owner,false);
+    frontend_settings_gyro_configuration_published(owner->frontend);
 }
 bool frontend_input_settings_abort(frontend_input_settings *owner,qa_error *error)
 {

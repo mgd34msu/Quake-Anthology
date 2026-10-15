@@ -718,7 +718,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         qa_q3_cinematic_source_role_diagnostic_bind(lease->cinematics, lease, cinematic_print,
             cinematic_diagnostic_current, error) &&
         qa_q3_cinematic_source_restore_bind(lease->cinematics,source(owner)->descriptor->selection.instance,
-            NULL,(int32_t)lease->role,source(owner)->receiver.seat,error) &&
+            NULL,(int32_t)lease->role,source(owner)->receiver.seat,UINT32_MAX,error) &&
         qa_q3_cinematic_source_restore_finish(lease->cinematics,NULL,NULL,error);
     qa_q3_presentation_options backend = {.assets = assets(owner), .audio = f->audio, .audio_event=frontend_audio_event,.audio_event_context=f,
         .cinematics = lease->cinematics,

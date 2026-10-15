@@ -10,6 +10,8 @@
 #include "shared_render_controls.h"
 #include "qa/source_save.h"
 #include "qa/q3_cinematic_handles.h"
+#include "cinematic_roles.h"
+#include "material_movies.h"
 #include <ctype.h>
 
 typedef struct cinematic_request {
@@ -35,7 +37,7 @@ struct frontend_cinematic_restore {
     cinematic_request command;
     qa_q3_cinematic_restore_slot slots[16];
     size_t count;
-    bool present,travel,reserved;
+    bool present,travel,reserved,command_restored,published;
 };
 static char *copy_text(const char *text,qa_error *error)
 {
@@ -91,6 +93,7 @@ void frontend_cinematic_save_discard(qa_frontend *f)
     request_free(&saved->command);
     for (size_t i=0;i<saved->count;++i) {
         free((char *)saved->slots[i].instance); free((char *)saved->slots[i].content);
+        free((char *)saved->slots[i].parent_instance); free((char *)saved->slots[i].parent_content);
         free((char *)saved->slots[i].path);
     }
     free(saved); f->cinematic_restore=NULL;
@@ -148,6 +151,7 @@ bool frontend_cinematic_capture_ready(const qa_frontend *f)
 bool frontend_cinematic_saved_state(const qa_frontend *f)
 {
     if (frontend_cinematic_running(f)) return true;
+    if (f && f->cinematic_restore && f->cinematic_restore->count) return true;
     if (!f || !f->source_cinematics) return false;
     for (uint32_t i=0;i<16;++i) {
         qa_q3_cinematic_slot slot;
@@ -323,8 +327,10 @@ static bool saved_text(qa_source_save_io *io,const char **value)
 static bool saved_slot(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slot)
 {
     return qa_source_save_i32(io,&slot->handle) && saved_text(io,&slot->instance) &&
-        saved_text(io,&slot->content) && qa_source_save_i32(io,&slot->role) &&
-        qa_source_save_u32(io,&slot->seat) && saved_text(io,&slot->path) &&
+        saved_text(io,&slot->content) && saved_text(io,&slot->parent_instance) &&
+        saved_text(io,&slot->parent_content) && qa_source_save_u32(io,&slot->parent_seat) &&
+        qa_source_save_u32(io,&slot->source_group) && qa_source_save_bool(io,&slot->detached) &&
+        qa_source_save_i32(io,&slot->role) && qa_source_save_u32(io,&slot->seat) && saved_text(io,&slot->path) &&
         qa_source_save_f32(io,&slot->rect.x) && qa_source_save_f32(io,&slot->rect.y) &&
         qa_source_save_f32(io,&slot->rect.width) && qa_source_save_f32(io,&slot->rect.height) &&
         qa_source_save_u32(io,&slot->flags) && qa_source_save_bool(io,&slot->has_playback) &&
@@ -347,18 +353,44 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=saved_command(&io,&request,&present,&travel);
     qa_q3_cinematic_restore_slot slots[16]; size_t count=0;
-    for (uint32_t i=0;ok && f->source_cinematics && i<16;++i) {
-        qa_q3_cinematic_slot slot;
-        ok=qa_q3_cinematic_handles_at(f->source_cinematics,i,&slot);
-        if (!ok || !slot.source || !slot.path || (slot.flags&1u)) continue;
+    const qa_q3_cinematic_source *sources[16]={0};
+    uint32_t groups[16]={0};
+    for (uint32_t i=0;ok && i<16;++i) {
+        qa_q3_cinematic_slot slot={0};
+        if (f->source_cinematics) ok=qa_q3_cinematic_handles_at(f->source_cinematics,i,&slot);
+        if (!ok) break;
+        if (!slot.source || !slot.path || slot.restore_pending) {
+            const struct frontend_cinematic_restore *pending=f->cinematic_restore;
+            for (size_t j=0;pending && j<pending->count;++j) if (pending->slots[j].handle==(int32_t)i) {
+                slots[count]=pending->slots[j]; groups[count]=slots[count].source_group;
+                if (f->source_cinematics) {
+                    slots[count].selected=slot.selected; slots[count].decoder=slot.decoder;
+                }
+                ++count; break;
+            }
+            continue;
+        }
+        if (slot.flags&1u) continue;
         qa_q3_cinematic_restore_slot *saved=slots+count++;
+        sources[count-1]=slot.source; groups[count-1]=slot.source_group;
         *saved=(qa_q3_cinematic_restore_slot){.handle=slot.handle,.instance=slot.instance,.content=slot.content,
+            .parent_instance=slot.parent_instance,.parent_content=slot.parent_content,
+            .parent_seat=slot.parent_seat,.source_group=slot.source_group,.detached=slot.detached,
             .role=slot.role,.seat=slot.seat,.path=slot.path,.rect=slot.rect,.flags=slot.flags,
             .has_playback=slot.playback!=NULL,.occupied=slot.occupied,.selected=slot.selected,
             .decoder=slot.decoder,.status=slot.status,.play_on_walls=slot.play_on_walls};
         if (saved->has_playback) ok=qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&saved->playback,error);
     }
     if (ok && count) {
+        /* One per-save association also covers owners not yet lazily created.
+         * Runtime pointers qualify groups here but are never written. */
+        for (size_t i=0;i<count;++i) {
+            slots[i].source_group=(uint32_t)i;
+            for (size_t j=0;j<i;++j) if ((sources[i] && sources[i]==sources[j]) ||
+                (!sources[i] && !sources[j] && groups[i]==groups[j])) {
+                slots[i].source_group=slots[j].source_group; break;
+            }
+        }
         ok=qa_source_save_count(&io,&count,16);
         for (size_t i=0;ok && i<count;++i) ok=saved_slot(&io,slots+i);
     }
@@ -396,7 +428,38 @@ bool frontend_cinematic_save_reserve(qa_frontend *f,qa_error *error)
     struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
     if (!saved || saved->reserved || !saved->count || !f->source_cinematics) return true;
     if (!qa_q3_cinematic_handles_restore_reserve(f->source_cinematics,saved->slots,saved->count,error)) return false;
-    saved->reserved=true; return true;
+    saved->reserved=true;
+    if (saved->published) qa_q3_cinematic_handles_restore_published(f->source_cinematics);
+    return true;
+}
+void frontend_cinematic_save_published(qa_frontend *f)
+{
+    if (!f || !f->cinematic_restore) return;
+    f->cinematic_restore->published=true;
+    if (f->cinematic_restore->reserved) qa_q3_cinematic_handles_restore_published(f->source_cinematics);
+}
+static bool saved_name_equal(const char *a,const char *b)
+{ return a==b || (a && b && !strcmp(a,b)); }
+bool frontend_cinematic_save_parent_bind(qa_frontend *f,frontend_material_movies *parent,
+    const char *instance,const char *content,uint32_t seat,qa_error *error)
+{
+    struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
+    if (!saved || !saved->reserved) return true;
+    for (size_t i=0;i<saved->count;++i) {
+        const qa_q3_cinematic_restore_slot *row=saved->slots+i;
+        if (!row->detached || row->parent_seat!=seat ||
+            !saved_name_equal(row->parent_instance,instance) || !saved_name_equal(row->parent_content,content)) continue;
+        qa_q3_cinematic_slot slot;
+        if (!qa_q3_cinematic_handles_at(f->source_cinematics,(uint32_t)row->handle,&slot)) return false;
+        if (slot.source) continue;
+        frontend_material_movie_source source;
+        if (!frontend_material_movies_source_read(parent,&source,error)) return false;
+        size_t index=frontend_cinematic_roles_count(f);
+        if (!frontend_cinematic_roles_restore_add(f,&source,seat,index,error) ||
+            !frontend_cinematic_roles_restore_bind(f,index,parent,row->instance,row->content,row->role,
+                row->seat,row->source_group,error)) return false;
+    }
+    return true;
 }
 static bool restore_command(qa_frontend *f,cinematic_request *request,bool travel,qa_error *error)
 {
@@ -431,7 +494,24 @@ static bool restore_command(qa_frontend *f,cinematic_request *request,bool trave
     if (ok && files) request->files=qa_vfs_clone(files,error);
     if (!ok || !request->files) return frontend_fail(error,QA_ERROR_FORMAT,"Saved cinematic content route is unavailable");
     request->playback.resource=request->path;
-    return queue_request(f,request,error) && frontend_cinematic_drain(f,error);
+    return queue_request(f,request,error);
+}
+static bool restore_drain(qa_frontend *f,qa_error *error)
+{
+    struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
+    if (!saved || !saved->command_restored) return true;
+    if (!saved->count) { frontend_cinematic_save_discard(f); return true; }
+    if (!f->source_cinematics || !qa_q3_cinematic_handles_idle(f->source_cinematics)) return true;
+    if (!frontend_cinematic_save_reserve(f,error)) return false;
+    for (size_t i=0;i<saved->count;++i) {
+        qa_q3_cinematic_slot slot;
+        if (!qa_q3_cinematic_handles_at(f->source_cinematics,(uint32_t)saved->slots[i].handle,&slot)) return false;
+        if (!slot.source) return true;
+    }
+    bool complete=false;
+    if (!qa_q3_cinematic_handles_restore_finish(f->source_cinematics,&complete,error)) return false;
+    if (complete) frontend_cinematic_save_discard(f);
+    return true;
 }
 bool frontend_cinematic_save_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)
 {
@@ -439,19 +519,11 @@ bool frontend_cinematic_save_restore(qa_frontend *f,qa_bytes bytes,qa_error *err
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic restore requires its local rebuilt frontend");
     if (!f->cinematic_restore && !frontend_cinematic_save_prepare(f,bytes,error)) return false;
     struct frontend_cinematic_restore *saved=f->cinematic_restore;
-    if (!frontend_cinematic_save_reserve(f,error)) return false;
-    if (saved->count) {
-        if (!saved->reserved) return frontend_fail(error,QA_ERROR_FORMAT,"Saved cinematic content bank is unavailable");
-        if (!qa_q3_cinematic_handles_restore_finish(f->source_cinematics,error)) return false;
-        for (size_t i=0;i<saved->count;++i) {
-            qa_q3_cinematic_slot slot;
-            if (!qa_q3_cinematic_handles_at(f->source_cinematics,(uint32_t)saved->slots[i].handle,&slot) || !slot.source)
-                return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Saved cinematic source namespace is unavailable");
-        }
+    if (!saved->command_restored) {
+        if (saved->present && !restore_command(f,&saved->command,saved->travel,error)) return false;
+        saved->command_restored=true;
     }
-    bool ok=!saved->present || restore_command(f,&saved->command,saved->travel,error);
-    if (ok) frontend_cinematic_save_discard(f);
-    return ok;
+    return frontend_cinematic_drain(f,error);
 }
 static bool finish(frontend_cinematic *owner,qa_error *error)
 {
@@ -493,7 +565,7 @@ static bool finish(frontend_cinematic *owner,qa_error *error)
 bool frontend_cinematic_drain(qa_frontend *f,qa_error *error)
 {
     if (f && !frontend_system_cinematic_drain(f,error)) return false;
-    if (!f || !f->cinematic) return true;
+    if (!f || !f->cinematic) return restore_drain(f,error);
     frontend_cinematic *owner=f->cinematic;
     if (owner->busy || f->capture || f->preparing || f->round || !frontend_ui_features_idle(f) ||
         (f->audio && !qa_audio_engine_round_ready(f->audio,error)))
@@ -511,8 +583,8 @@ bool frontend_cinematic_drain(qa_frontend *f,qa_error *error)
         release_playback(owner);
     } else if (owner->complete) { ok=finish(owner,error); if (ok) release_playback(owner); }
     owner->busy=false;
-    if (ok && !owner->movie && !owner->pending) return frontend_cinematic_destroy(f,error);
-    return ok;
+    if (ok && !owner->movie && !owner->pending) ok=frontend_cinematic_destroy(f,error);
+    return ok && restore_drain(f,error);
 }
 bool frontend_cinematic_input(qa_frontend *f,uint32_t seat,qa_input_focus focus,
     const qa_input_event *event,bool *handled,qa_error *error)
