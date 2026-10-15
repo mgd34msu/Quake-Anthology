@@ -18,6 +18,34 @@ static bool model(qa_q2_game *g, q2_actor *a, const char *name, qa_bounds bounds
     return qa_builtin_resource(&g->services, name, &resource, e) &&
            model_resource(g, a, resource, bounds, solid, e);
 }
+static bool light_orb(const qa_q2_game *g, const q2_entity_state *s) {
+    return s->classname == g->runtime_names[Q2_NAME_TARGET_BLACKLIGHT] ||
+           s->classname == g->runtime_names[Q2_NAME_TARGET_ORB];
+}
+static bool light_orb_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, a->id, &body, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    if (rerelease) {
+        body.angles.x += q2_rerelease_float(g, 0, 10);
+        body.angles.y += q2_rerelease_float(g, 0, 10);
+        body.angles.z += q2_rerelease_float(g, 0, 10);
+    } else {
+        body.angles.x = (float)(qa_builtin_random_integer(&g->random) % 360u);
+        body.angles.y = (float)(qa_builtin_random_integer(&g->random) % 360u);
+        body.angles.z = (float)(qa_builtin_random_integer(&g->random) % 360u);
+    }
+    if (!q2_entity_body(g, a, &body, false, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    return q2_entity_show(g, a, e) &&
+           (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY,
+               rerelease ? (float)g->frame_ns / Q2_NS : .1f));
+}
 static bool health(qa_q2_game *g, q2_actor *a, double value, double mass, bool damageable,
                    bool invulnerable, qa_error *e) {
     return qa_combat_create_actor(g->services.combat, a->id,
@@ -415,7 +443,7 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                  {"misc_nuke", Q2S_NUKE},
                  {"misc_nuke_core", Q2S_NUKE},
                  {"target_mal_laser", Q2S_MAL_LASER}};
-    *handled = s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND];
+    *handled = s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND] || light_orb(g, s);
     if (*handled)
         s->scenery = Q2S_ANIMATION;
     for (size_t i = 0; !*handled && i < sizeof(names) / sizeof(*names); i++)
@@ -549,6 +577,28 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return false;
         return !q2_actor_live(g, a->id) || animate(g, a, 0, 19, .2f, e);
     case Q2S_ANIMATION:
+        if (light_orb(g, s)) {
+            if (g->options.deathmatch)
+                return qa_session_release(g->services.session, a->id, e);
+            bool orb = s->classname == g->runtime_names[Q2_NAME_TARGET_ORB];
+            bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+            s->visual.effects |= orb ? UINT64_C(0x10000000) : UINT64_C(0x84000000);
+            if (rerelease) {
+                s->visual.skin = orb ? 1 : 0;
+                s->visual.scale = orb ? 8 : 6;
+                if (orb)
+                    s->visual.frame = 2;
+            } else {
+                s->visual.frame = orb ? 2 : 1;
+            }
+            if (!model_resource(g, a, g->runtime_names[rerelease
+                    ? Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO3_TRIS_MD2
+                    : Q2_NAME_RESOURCE_MODELS_ITEMS_SPAWNGRO2_TRIS_MD2],
+                    (qa_bounds){0}, QA_PHYSICS_NOT_SOLID, e))
+                return false;
+            return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY,
+                rerelease && !orb ? (float)g->frame_ns / Q2_NS : .1f);
+        }
         if (s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND]) {
             if (g->options.deathmatch)
                 return qa_session_release(g->services.session, a->id, e);
@@ -904,6 +954,8 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                (!q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY, .1f));
     case Q2S_BLACKHOLE:
     case Q2S_ANIMATION: {
+        if (light_orb(g, s))
+            return light_orb_think(g, a, e);
         bool torso = q2_entity_makron_torso(s);
         s->visual.frame++;
         if (s->visual.frame >= s->animation_end)

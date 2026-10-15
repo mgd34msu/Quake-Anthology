@@ -106,6 +106,8 @@ static const original_entity_class entity_classes[] = {
     SCENERY("misc_amb4", Q2S_AMBIENCE, NULL, NULL, NULL),
     SCENERY("misc_nuke", Q2S_NUKE, "use_nuke", NULL, NULL),
     SCENERY("misc_nuke_core", Q2S_NUKE, "misc_nuke_core_use", NULL, NULL),
+    SCENERY("target_blacklight", Q2S_ANIMATION, NULL, NULL, NULL),
+    SCENERY("target_orb", Q2S_ANIMATION, NULL, NULL, NULL),
     SCENERY("target_mal_laser", Q2S_MAL_LASER, "target_mal_laser_use", NULL, NULL),
     CLASS("misc_flare", Q2E_FLARE, "misc_flare_use", NULL, NULL, NULL),
     CLASS("info_world_text", Q2E_WORLD_TEXT, "info_world_text_use", NULL, NULL, NULL),
@@ -474,6 +476,8 @@ static const original_entity_think entity_thinks[] = {
     ANIM("TH_viewthing", Q2S_ANIMATION, -1),
     ANIM("makron_torso_think", Q2S_ANIMATION, -1),
     ANIM("Think_Boss3Stand", Q2S_ANIMATION, -1),
+    ANIM("blacklight_think", Q2S_ANIMATION, -1),
+    ANIM("orb_think", Q2S_ANIMATION, -1),
     ANIM("misc_eastertank_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick_think", Q2S_ANIMATION, -1),
     ANIM("misc_easterchick2_think", Q2S_ANIMATION, -1),
@@ -533,6 +537,10 @@ static const char *scenery_think(qa_q2_game *g, const q2_entity_state *s)
     case Q2S_SATELLITE: return "misc_satellite_dish_think";
     case Q2S_BLACKHOLE: return "misc_blackhole_think";
     case Q2S_ANIMATION:
+        if (s->classname == g->runtime_names[Q2_NAME_TARGET_BLACKLIGHT])
+            return "blacklight_think";
+        if (s->classname == g->runtime_names[Q2_NAME_TARGET_ORB])
+            return g->options.rules == QA_RULESET_Q2_RERELEASE ? "blacklight_think" : "orb_think";
         if (q2_entity_makron_torso(s))
             return "makron_torso_think";
         if (q2_entity_boss3_stand(s))
