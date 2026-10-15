@@ -599,14 +599,27 @@ static bool player_model_named(const qa_strings *strings, qa_string_id model, co
     const char *actual = qa_strings_cstr(strings, model);
     return actual && !strcmp(actual, name);
 }
+static const original_player_animation *player_stopped_animation(qa_q1_program program,
+    const qa_strings *strings, const q1_player *player) {
+    const q1_character *c = &player->character_state;
+    if (c->life < QA_Q1_DEAD || !(c->next_animation <= 0) || c->pose.custom_model ||
+        (program == QA_Q1_HIPNOTIC && player->weapon == QA_Q1_MJOLNIR) ||
+        !player_model_named(strings,c->model,"progs/player.mdl")) return NULL;
+    for (size_t i=0;i<sizeof(player_animations)/sizeof(*player_animations);++i) {
+        const original_player_animation *a=player_animations+i;
+        if (a->death && !a->hammer && c->frame==a->first+a->count-1) return a;
+    }
+    return NULL;
+}
 static bool player_functions(qa_q1_program program, const qa_strings *strings,
     const q1_player *player, qa_q1_save_record *record, qa_error *error) {
     const q1_character *c = &player->character_state;
     const char *think = c->locomotion == 2 ? "player_run" : "player_stand1";
     char name[48]; double next = c->next_animation;
     bool hammer = program == QA_Q1_HIPNOTIC && player->weapon == QA_Q1_MJOLNIR;
-    bool head = program == QA_Q1_HIPNOTIC && c->life != QA_Q1_ALIVE &&
+    bool head = c->life >= QA_Q1_DEAD &&
         player_model_named(strings, c->model, "progs/h_player.mdl");
+    const original_player_animation *stopped=player_stopped_animation(program,strings,player);
     if (c->pose.custom_model && (!hammer ||
         !player_model_named(strings, c->pose.model, "progs/playham.mdl") ||
         c->pose.stand.first != 6 || c->pose.stand.count != 12 ||
@@ -615,14 +628,23 @@ static bool player_functions(qa_q1_program program, const qa_strings *strings,
         c->pose.death.first != 24 || c->pose.death.count != 8))
         return fail(error, "Original player model has no compiled Source pose");
     if (head) {
-        think = "HeadThink";
-        next = c->head_fly_ns ? (double)c->head_fly_ns / 1000000000.0 : -1;
-        if (!number(record, "gorging", 1, false, error)) return false;
+        if (program == QA_Q1_HIPNOTIC) {
+            think = "HeadThink";
+            next = c->head_fly_ns ? (double)c->head_fly_ns / 1000000000.0 : -1;
+            if (!number(record, "gorging", 1, false, error)) return false;
+        } else {
+            if (c->frame != 0 || !(next <= 0))
+                return fail(error, "Original gib head has no stopped Source continuation");
+            think = "player_stand1";
+        }
+    } else if (stopped) {
+        snprintf(name,sizeof(name),"%s%u",stopped->prefix,(unsigned)stopped->count);
+        think=name;
     }
     bool animation_found = false;
     for (size_t i = 0; i < sizeof(player_animations) / sizeof(*player_animations); ++i) {
         const original_player_animation *a = player_animations + i;
-        if (head || a->hammer != hammer || a->death != c->death_animation) continue;
+        if (head || stopped || a->hammer != hammer || a->death != c->death_animation) continue;
         bool source_attack = a->hammer && a->attack && c->life == QA_Q1_ALIVE &&
             c->pose.source_frame && c->pose.frame >= a->first && c->pose.frame < a->first + a->count;
         if (!source_attack && ((!c->animation.count && !a->death) || c->animation.first != a->first)) continue;
@@ -648,7 +670,7 @@ static bool player_functions(qa_q1_program program, const qa_strings *strings,
         animation_found = true;
         break;
     }
-    if (c->life != QA_Q1_ALIVE && !head && !animation_found)
+    if (c->life != QA_Q1_ALIVE && !head && !stopped && !animation_found)
         return fail(error, "Original dead player has no compiled Source animation");
     return callback(record, "think", think, error) && number(record, "nextthink", next, false, error) &&
         callback(record, "th_pain", "player_pain", error) && callback(record, "th_die", "PlayerDie", error) &&
@@ -1375,10 +1397,16 @@ static bool restore_player(qa_q1_program program, qa_strings *strings, q1_player
     player->continuous = false; player->animation_at = -1;
     player->animation_base = 1; player->next_weapon_frame = c->next_animation;
     bool hammer = program == QA_Q1_HIPNOTIC && player->weapon == QA_Q1_MJOLNIR;
-    bool head = program == QA_Q1_HIPNOTIC && c->life != QA_Q1_ALIVE &&
+    bool head = c->life >= QA_Q1_DEAD &&
         player_model_named(strings, c->model, "progs/h_player.mdl");
     if (head) {
         double next = c->next_animation;
+        if (program != QA_Q1_HIPNOTIC) {
+            if (c->frame != 0 || !(next <= 0))
+                return fail(error,"Original gib head has no stopped Source continuation");
+            c->next_animation=-1;
+            return true;
+        }
         if (!think || strcmp(think, "HeadThink") || (next != -1 &&
             (!isfinite(next) || next <= 0 || next >= 18446744073.709551616)))
             return fail(error, "Original head has no compiled Source think time");
@@ -1386,6 +1414,14 @@ static bool restore_player(qa_q1_program program, qa_strings *strings, q1_player
         c->head_fly_ns = next > 0 ? (uint64_t)(next * 1000000000.0) : 0;
         c->head_fly_epoch = c->head_fly_ns ? c->birth_epoch : 0;
         c->next_animation = next;
+        return true;
+    }
+    const original_player_animation *stopped=player_stopped_animation(program,strings,player);
+    if (stopped) {
+        c->animation=(qa_q1_frame_range){stopped->first,0};
+        c->animation_frame=stopped->count-1;
+        c->death_animation=true;
+        c->next_animation=-1;
         return true;
     }
     if (hammer) {
@@ -1966,7 +2002,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         admitted_key(admission,"movedir");
         if (!restore_player(program,admission->strings,&player,record,error) ||
             !player_functions(program,admission->strings,&player,&callbacks,error) ||
-            strcmp(saved(record,"think")?saved(record,"think"):"",saved(&callbacks,"think")?saved(&callbacks,"think"):"")) {
+            ((player.character_state.life < QA_Q1_DEAD || !(player.character_state.next_animation <= 0)) &&
+             strcmp(saved(record,"think")?saved(record,"think"):"",saved(&callbacks,"think")?saved(&callbacks,"think"):""))) {
             unsupported(error,"Source player animation is not preserved by the native inverse");goto done;
         }
         if (!admit_number(admission,"deadflag",(float)player.character_state.life,error)) goto done;

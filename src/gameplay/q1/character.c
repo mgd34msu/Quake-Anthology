@@ -499,11 +499,13 @@ bool qa_q1_character_suicide_pose(qa_q1_game *g, qa_actor_id actor, qa_error *er
     if (!player)
         return false;
     q1_character *c = &player->character_state;
+    if (c->model != g->player_model)
+        return true;
     c->frame = 60;
     c->life = QA_Q1_DEAD;
     c->animation.count = 0;
     c->attack_animation = false;
-    c->next_animation = INFINITY;
+    c->next_animation = -1;
     return true;
 }
 bool qa_q1_character_disconnect_pose(qa_q1_game *g, qa_actor_id actor, bool *applied,
