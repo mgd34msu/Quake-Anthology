@@ -266,7 +266,8 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     }
     case Q1_ENFORCER_LASER: {
         qa_vec3 hit = qa_vec_sub(body.origin, qa_vec_scale(qa_vec_normalize(body.velocity), 8));
-        if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV], 1, 3, 1, error))
+        if (!(g->options.program == QA_Q1_HIPNOTIC && (entity->spawnflags & 16u)) &&
+            !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFSTOP_WAV], 1, 3, 1, error))
             return false;
         if (q1_health(g, other) != 0) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, hit, 15, 1, error) ||

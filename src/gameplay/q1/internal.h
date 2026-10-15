@@ -617,6 +617,7 @@
     X(TELEDEATH2, "teledeath2") \
     X(CTF_GRAPPLE, "ctf:grapple") \
     X(TRAP_SHOOTER, "trap_shooter") \
+    X(TRAP_SWITCHED_SHOOTER, "trap_switched_shooter") \
     X(TRAP_SPIKE_MINE, "trap_spike_mine") \
     X(TRAP_SPIKESHOOTER, "trap_spikeshooter") \
     X(TRIGGER_BOSS_TELEPORT, "trigger_boss_teleport") \
@@ -642,6 +643,9 @@
     X(CLASS_BUBBLE, "bubble") \
     X(CLASS_CHARMED_GOAL, "charmed_goal") \
     X(CLASS_CHTHON_LAVABALL, "chthon_lavaball") \
+    X(CLASS_TRAP_LAVABALL, "lavaball") \
+    X(RESOURCE_PROGS_LAVAROCK_MDL, "progs/lavarock.mdl") \
+    X(RESOURCE_MISC_SPIKE_WAV, "misc/spike.wav") \
     X(CLASS_CTF_BACKPACK, "ctf_backpack") \
     X(CLASS_CTF_HOOK, "ctf_hook") \
     X(CLASS_CTF_HOOK_ANIMATION, "ctf_hook_animation") \

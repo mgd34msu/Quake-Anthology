@@ -20,6 +20,9 @@ typedef struct q1_fixture {
     qa_actor_owner owner;
     uint64_t sequence;
     unsigned pain_sounds;
+    unsigned shot_sounds, impacts;
+    int32_t sound_channel;
+    float impact_value;
     qa_actor_id teleport_player;
     unsigned hum_sounds, particle_events, teleport_fogs, teleport_moves, retouches;
     bool hum_static;
@@ -33,6 +36,8 @@ static bool emitted(void *context, const qa_builtin_event *event, qa_error *erro
     (void)error;
     q1_fixture *fixture = context;
     if (event->kind == QA_BUILTIN_SOUND) {
+        ++fixture->shot_sounds;
+        fixture->sound_channel = event->channel;
         qa_bytes sound = qa_strings_text(qa_session_strings(fixture->session), event->resource);
         const char *pain = "knight/khurt.wav";
         if (sound.size == strlen(pain) && !memcmp(sound.data, pain, sound.size))
@@ -43,6 +48,10 @@ static bool emitted(void *context, const qa_builtin_event *event, qa_error *erro
             fixture->hum_origin = event->origin;
             fixture->hum_static = event->volume == .7f && event->attenuation == 3 && (event->flags & 1u);
         }
+    }
+    if (event->kind == QA_BUILTIN_IMPACT) {
+        ++fixture->impacts;
+        fixture->impact_value = event->value;
     }
     if (event->kind == QA_BUILTIN_PARTICLES) {
         ++fixture->particle_events;
@@ -1081,6 +1090,157 @@ static void mg3_spawn(void)
     fixture_destroy(&fixture);
 }
 
+static qa_actor_id shooter_projectile(q1_fixture *fixture, const char *definition)
+{
+    uint32_t cursor = 0;
+    const qa_actor_record *record;
+    qa_actor_id found = {0};
+    while (qa_actors_next(qa_session_actors(fixture->session), &cursor, &record)) {
+        const char *name = qa_strings_cstr(qa_session_strings(fixture->session), record->definition);
+        if (name && !strcmp(name, definition))
+            found = record->id;
+    }
+    return found;
+}
+
+static void shooter_resource(q1_fixture *fixture, const char *path, bool model)
+{
+    qa_error error = {0};
+    qa_string_id name = qa_strings_find(qa_session_strings(fixture->session),
+        (qa_bytes){(const uint8_t *)path, strlen(path)});
+    uint32_t index;
+    GAME_CHECK(name && qa_q1_wire_emission_index(fixture->game, model, name, &index));
+}
+
+static void mission_shooter_switch(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, true, QA_Q1_HIPNOTIC);
+    fixture_bind_maps(&fixture);
+    qa_actor_id shooter;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trap_switched_shooter", .origin = {0, 0, 64}, .wait = .25f,
+        .map_fields = &(qa_q1_map_fields){.next_think_seconds = 1.25f,
+            .local_time_seconds = .25f}}, &shooter, &error));
+    shooter_resource(&fixture, "weapons/spike2.wav", false);
+    GAME_CHECK(qa_q1_wire_freeze(fixture.game, &error));
+    qa_target_binding binding;
+    qa_target_field field;
+    qa_string_id state;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session), "state", &state, &error));
+    GAME_CHECK(qa_q1_game_target_binding(fixture.game, shooter, &binding, &error));
+    advance(&fixture, 8);
+    GAME_CHECK(fixture.shot_sounds == 0 && !shooter_projectile(&fixture, "spike").registry);
+    GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+    GAME_CHECK(binding.field(binding.context, shooter, state, &field) &&
+        field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == 1);
+    advance(&fixture, 3);
+    GAME_CHECK(fixture.shot_sounds == 1 && shooter_projectile(&fixture, "spike").registry);
+    GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+    GAME_CHECK(binding.field(binding.context, shooter, state, &field) &&
+        field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == 0);
+    advance(&fixture, 3);
+    GAME_CHECK(fixture.shot_sounds == 1);
+    fixture_destroy(&fixture);
+}
+
+static void hipnotic_shooter(uint32_t flags)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, true, QA_Q1_HIPNOTIC);
+    fixture_bind_maps(&fixture);
+    qa_actor_id shooter;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trap_spikeshooter", .origin = {0, 0, 64}, .spawnflags = flags}, &shooter, &error));
+    shooter_resource(&fixture, flags & 2u ? "progs/laser.mdl" : flags & 4u ?
+        "progs/lavarock.mdl" : "progs/missile.mdl", true);
+    shooter_resource(&fixture, flags & 2u ? "enforcer/enfstop.wav" : flags & 4u ?
+        "misc/spike.wav" : "weapons/sgun1.wav", false);
+    GAME_CHECK(qa_q1_wire_freeze(fixture.game, &error));
+    GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+    const char *definition = flags & 2u ? "enforcer_laser" : flags & 4u ? "chthon_lavaball" : "missile";
+    qa_actor_id shot = shooter_projectile(&fixture, definition);
+    GAME_CHECK(shot.registry);
+    qa_body_state body;
+    qa_physics_properties physics;
+    qa_q1_presentation visible;
+    GAME_CHECK(qa_world_body_read(fixture.world, shot, &body, &error));
+    GAME_CHECK(qa_q1_game_physics_read(fixture.game, shot, &physics));
+    GAME_CHECK(qa_q1_game_presentation(fixture.game, shot, &visible));
+    const char *model = qa_strings_cstr(qa_session_strings(fixture.session), visible.visual.models[0]);
+    if (flags & 2u) {
+        GAME_CHECK(body.velocity.x == 600 && physics.motion == QA_PHYSICS_FLY);
+        GAME_CHECK(model && !strcmp(model, "progs/laser.mdl"));
+        unsigned sounds = fixture.shot_sounds;
+        GAME_CHECK(sounds == ((flags & 16u) ? 0u : 1u));
+        GAME_CHECK(qa_q1_game_touch(fixture.game, &(qa_touch_contact){.self = shot}, &error));
+        GAME_CHECK(fixture.shot_sounds == sounds + ((flags & 16u) ? 0u : 1u));
+        GAME_CHECK(fixture.impacts == 1 && fixture.impact_value == 1);
+        GAME_CHECK(!qa_actors_get(qa_session_actors(fixture.session), shot));
+    } else if (flags & 4u) {
+        GAME_CHECK(body.velocity.x == 300 && physics.angular_velocity.z == 400);
+        GAME_CHECK(body.bounds.mins.x == -4 && body.bounds.maxs.x == 4);
+        GAME_CHECK(model && !strcmp(model, "progs/lavarock.mdl"));
+        GAME_CHECK(fixture.shot_sounds == ((flags & 16u) ? 0u : 1u));
+        advance(&fixture, 49);
+        GAME_CHECK(qa_actors_get(qa_session_actors(fixture.session), shot));
+        advance(&fixture, 2);
+        GAME_CHECK(!qa_actors_get(qa_session_actors(fixture.session), shot));
+    } else {
+        GAME_CHECK(body.velocity.x == 1000 && body.origin.x == 8);
+        GAME_CHECK(model && !strcmp(model, "progs/missile.mdl"));
+        GAME_CHECK(fixture.shot_sounds == ((flags & 16u) ? 1u : 2u) && fixture.sound_channel == 1);
+    }
+    fixture_destroy(&fixture);
+}
+
+static void rogue_shooter(uint32_t flags, uint8_t skill, bool continuous)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, skill, true, QA_Q1_ROGUE);
+    fixture_bind_maps(&fixture);
+    qa_actor_id target = {0};
+    if (!(flags & (2u | 32u))) {
+        GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+            .classname = "monster_knight", .origin = {100, 0, 64}}, &target, &error));
+        advance(&fixture, 6);
+    }
+    qa_actor_id shooter;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = continuous ? "trap_shooter" : "trap_spikeshooter",
+        .origin = {0, 0, 64}, .spawnflags = flags}, &shooter, &error));
+    shooter_resource(&fixture, flags & 2u ? "progs/laser.mdl" : flags & 32u ?
+        "progs/fireball.mdl" : "progs/lspike.mdl", true);
+    GAME_CHECK(qa_q1_wire_freeze(fixture.game, &error));
+    if (continuous)
+        advance(&fixture, 11);
+    else
+        GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+    const char *definition = flags & 2u ? "enforcer_laser" : flags & 32u ? "fireball" : "lava_spike";
+    qa_actor_id shot = shooter_projectile(&fixture, definition);
+    GAME_CHECK(shot.registry);
+    qa_body_state body;
+    GAME_CHECK(qa_world_body_read(fixture.world, shot, &body, &error));
+    if (flags & 2u)
+        GAME_CHECK(body.velocity.x == (continuous ? 500 : 600));
+    else if (flags & 32u)
+        GAME_CHECK(body.velocity.x >= 900 && body.velocity.x < 1200 && fixture.shot_sounds == 0);
+    else {
+        GAME_CHECK(body.velocity.x == 500);
+        qa_combat_state before, after;
+        GAME_CHECK(qa_combat_read(fixture.combat, target, &before, &error));
+        GAME_CHECK(before.can_take_damage);
+        GAME_CHECK(qa_q1_game_touch(fixture.game, &(qa_touch_contact){.self = shot, .other = target}, &error));
+        GAME_CHECK(qa_combat_read(fixture.combat, target, &after, &error));
+        bool powered = (flags & 8u) || ((flags & 16u) && skill > 1);
+        GAME_CHECK(before.health - after.health == (powered ? 30 : 15));
+    }
+    fixture_destroy(&fixture);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
@@ -1091,6 +1251,17 @@ void test_q1_gameplay(void)
     addon_spawn_multiplayer(QA_Q1_MG3, true);
     addon_spawn_multiplayer(QA_Q1_MG3, false);
     mg3_spawn();
+    mission_shooter_switch();
+    hipnotic_shooter(2);
+    hipnotic_shooter(2 | 16);
+    hipnotic_shooter(4 | 16);
+    hipnotic_shooter(8 | 16);
+    rogue_shooter(4, 1, false);
+    rogue_shooter(8, 1, false);
+    rogue_shooter(16, 1, false);
+    rogue_shooter(16, 2, false);
+    rogue_shooter(2, 1, true);
+    rogue_shooter(32, 1, false);
     draught_ring(false, 0, false);
     draught_ring(true, 0, true);
     draught_ring(false, 128, false);

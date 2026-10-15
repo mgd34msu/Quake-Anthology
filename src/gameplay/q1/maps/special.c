@@ -206,7 +206,15 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         body.angles = qa_v3(0, 0, 0);
         if (!q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRAP_SPIKESHOOTER])) {
             entity->wait = entity->wait != 0 ? entity->wait : 1;
-            if (!q1_map_schedule(g, entity, state->initial_think + entity->wait,
+            if (g->options.program == QA_Q1_HIPNOTIC &&
+                q1_classnamed(g, id, g->runtime_names[Q1_NAME_TRAP_SHOOTER]))
+                state->field_state = 1;
+            double delay = state->initial_think + entity->wait;
+            if (g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE) {
+                float due = (float)delay + (float)entity->physics.q1_pusher.local_seconds;
+                delay = (double)due - g->time;
+            }
+            if (!q1_map_schedule(g, entity, delay,
                                  Q1_MAP_SHOOTER_FIRE, error))
                 return false;
         }
@@ -231,24 +239,77 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return qa_world_body_write(g->services.world, entity->id, &body, error) &&
            q1_link(g, entity, error);
 }
-static bool shooter_fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    bool laser = (entity->spawnflags & 2) != 0;
-    if (!q1_sound_resource(g, entity->id, laser ? g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV] : g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV], 2, 1, 1, error))
+static bool shooter_fire(qa_q1_game *g, q1_actor *entity, bool continuous, qa_error *error) {
+    qa_actor_id id = entity->id;
+    uint32_t flags = entity->spawnflags;
+    bool hipnotic = g->options.program == QA_Q1_HIPNOTIC;
+    bool rogue = g->options.program == QA_Q1_ROGUE;
+    q1_projectile_kind kind = flags & 2u ? Q1_ENFORCER_LASER
+                              : flags & 1u ? Q1_SUPERSPIKE : Q1_SPIKE;
+    if (hipnotic && kind != Q1_ENFORCER_LASER) {
+        if (flags & 4u) kind = Q1_LAVA_BALL;
+        else if (flags & 8u) kind = Q1_ROCKET;
+    } else if (rogue) {
+        if ((flags & 1u) || !flags) kind = flags & 1u ? Q1_SUPERSPIKE : Q1_SPIKE;
+        else if (flags & 2u) kind = Q1_ENFORCER_LASER;
+        else if (flags & 32u) kind = Q1_DRAGON_FIREBALL;
+        else kind = Q1_LAVA_SPIKE;
+    }
+    q1_runtime_name sound = kind == Q1_ENFORCER_LASER ? Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV
+                            : kind == Q1_LAVA_BALL ? Q1_NAME_RESOURCE_MISC_SPIKE_WAV
+                            : kind == Q1_ROCKET ? Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV
+                            : Q1_NAME_RESOURCE_WEAPONS_SPIKE2_WAV;
+    if (kind != Q1_DRAGON_FIREBALL && !(hipnotic && (flags & 16u)) &&
+        !q1_sound_resource(g, id, g->runtime_names[sound], 2, 1, 1, error))
         return false;
-    if (!q1_alive(g, entity->id))
+    if (!q1_alive(g, id))
+        return true;
+    if (hipnotic && kind == Q1_ROCKET &&
+        !q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
         return true;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
-    float speed = laser && !q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRAP_SHOOTER]) ? 600 : 500;
-    qa_vec3 direction = laser ? qa_vec_normalize(entity->map->movedir) : entity->map->movedir;
+    qa_vec3 direction = entity->map->movedir;
+    if (kind == Q1_DRAGON_FIREBALL)
+        return q1_dragon_launch_fireball(g, id, body.origin, direction, error);
+    float speed = 500;
+    if (kind == Q1_ENFORCER_LASER) {
+        direction = qa_vec_normalize(direction);
+        speed = hipnotic || (rogue ? !continuous
+            : !q1_classnamed(g, id, g->runtime_names[Q1_NAME_TRAP_SHOOTER])) ? 600 : 500;
+    } else if (kind == Q1_LAVA_BALL)
+        speed = 300;
+    else if (kind == Q1_ROCKET) {
+        speed = 1000;
+        body.origin = qa_vec_add(body.origin, qa_vec_scale(direction, 8));
+    }
     q1_actor *missile;
-    q1_projectile_kind kind = laser                    ? Q1_ENFORCER_LASER
-                              : entity->spawnflags & 1 ? Q1_SUPERSPIKE
-                                                       : Q1_SPIKE;
-    if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, kind, body.origin,
+    if (!q1_projectile_spawn(g, id, QA_Q1_WEAPON_COUNT, kind, body.origin,
                              qa_vec_scale(direction, speed), &missile, error))
         return false;
+    if (kind == Q1_ENFORCER_LASER && (hipnotic || rogue)) {
+        missile->physics.motion = QA_PHYSICS_FLY;
+        if (hipnotic) missile->spawnflags = flags;
+    } else if (kind == Q1_LAVA_BALL && hipnotic) {
+        qa_actor_id child = missile->id;
+        missile->classname = g->runtime_names[Q1_NAME_CLASS_TRAP_LAVABALL];
+        missile->physics.angular_velocity = qa_v3(0, 0, 400);
+        body.bounds = (qa_bounds){{-4, -4, -4}, {4, 4, 4}};
+        body.velocity = qa_vec_scale(direction, speed);
+        body.angles = qa_vec_angles(body.velocity, QA_DIRECTION_FLOAT, QA_VECTOR_WRAP_YAW);
+        if (!q1_model(g, missile, g->runtime_names[Q1_NAME_RESOURCE_PROGS_LAVAROCK_MDL], error) ||
+            !qa_world_body_write(g->services.world, missile->id, &body, error) ||
+            !q1_schedule(g, missile, 5, Q1_THINK_REMOVE, error) || !q1_link(g, missile, error)) {
+            missile = q1_entity(g, child);
+            if (missile) (void)q1_remove(g, missile, NULL);
+            return false;
+        }
+    } else if (kind == Q1_LAVA_SPIKE)
+        missile->state.projectile.count = (flags & 8u) || ((flags & 16u) && g->options.skill > 1);
     return kind != Q1_SUPERSPIKE || q1_model(g, missile, g->runtime_names[Q1_NAME_RESOURCE_PROGS_SPIKE_MDL], error);
 }
 bool q1_map_special_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
@@ -258,7 +319,14 @@ bool q1_map_special_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
         entity->frame = 1 - entity->frame;
         return true;
     }
-    return entity->map->kind != Q1_MAP_SHOOTER || shooter_fire(g, entity, error);
+    if (entity->map->kind != Q1_MAP_SHOOTER)
+        return true;
+    if (g->options.program == QA_Q1_HIPNOTIC &&
+        q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_TRAP_SWITCHED_SHOOTER])) {
+        entity->map->field_state = 1 - entity->map->field_state;
+        return true;
+    }
+    return shooter_fire(g, entity, false, error);
 }
 bool q1_map_special_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (entity->map->kind == Q1_MAP_SIGIL &&
@@ -362,7 +430,8 @@ bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
         return !entity || !entity->map || q1_link(g, entity, error);
     }
     case Q1_MAP_SHOOTER_FIRE:
-        return shooter_fire(g, entity, error) &&
+        return (g->options.program == QA_Q1_HIPNOTIC && entity->map->field_state == 0
+                    ? true : shooter_fire(g, entity, true, error)) &&
                (!q1_alive(g, entity->id) ||
                 q1_map_schedule(g, entity, entity->wait, Q1_MAP_SHOOTER_FIRE, error));
     case Q1_MAP_FIREBALL_FLY:

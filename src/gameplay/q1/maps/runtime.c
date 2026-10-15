@@ -1045,6 +1045,7 @@ q1_map_kind q1_map_classify(const char *name) {
                    {"trigger_fog_transition", Q1_MAP_FOG_TRANSITION},
                    {"trap_spikeshooter", Q1_MAP_SHOOTER},
                    {"trap_shooter", Q1_MAP_SHOOTER},
+                   {"trap_switched_shooter", Q1_MAP_SHOOTER},
                    {"misc_fireball", Q1_MAP_FIREBALL_SOURCE},
                    {"air_bubbles", Q1_MAP_BUBBLES},
                    {"light_globe", Q1_MAP_STATIC},
@@ -1247,6 +1248,9 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
          kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER || q1_map_is_hip_trigger(kind) ||
          q1_map_is_hip_hazard(kind) || q1_map_is_rotation(kind) ||
          kind == Q1_MAP_HIP_FINALE || kind == Q1_MAP_START_ENDTEXT))
+        kind = Q1_MAP_FIELDS;
+    if (g->options.program != QA_Q1_HIPNOTIC &&
+        !strcmp(spawn->classname, "trap_switched_shooter"))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields && !entity->map)
