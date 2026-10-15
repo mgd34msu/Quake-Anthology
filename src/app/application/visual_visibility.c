@@ -57,7 +57,9 @@ bool application_q2_visibility_recipient_prepare(qa_application *app, qa_actor_i
     qa_leaf_list fat;
     qa_bounds bounds = {qa_vec_sub(origin, qa_v3(8, 8, 8)), qa_vec_add(origin, qa_v3(8, 8, 8))};
     if (!qa_collision_box_leaves(app->geometry, qa_world_trace_scratch(app->world,app->geometry), bounds, fat_leaves, 64, &fat, error)) return false;
-    if (!fat.count) return application_fail(error, QA_ERROR_FORMAT, "Q2 Source fat PVS has no geometry leaf");
+    /* A foreign BSP may exclude its solid leaf from box membership. The eye's
+     * point leaf still supplies the geometry's visibility rule while spawning. */
+    if (!fat.count) value.clusters[value.cluster_count++] = (int32_t)value.leaf.cluster;
     for (size_t j = 0; j < fat.count; ++j) {
         qa_collision_leaf leaf;
         if (!qa_collision_leaf_at(app->geometry, fat_leaves[j], &leaf, error)) return false;
