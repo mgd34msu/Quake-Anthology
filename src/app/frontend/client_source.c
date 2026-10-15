@@ -489,7 +489,7 @@ bool frontend_client_source_current(const frontend_client_source_view *view)
 bool frontend_client_source_bind(frontend_client_source *s, qa_net_client_id client,
     qa_net_seat_id seat, uint64_t epoch, qa_error *error)
 {
-    if (!frontend_client_source_idle(s) || s->closing || s->retiring || !s->ready || !s->app_attached || s->application.client.owner ||
+    if (!frontend_client_source_idle(s) || s->closing || s->retiring || !s->ready || !s->app_attached ||
         s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT bind requires its completed pending constructor");
     qa_application_client_source actual;
@@ -504,6 +504,47 @@ bool frontend_client_source_epoch_adopt(frontend_client_source *s,uint64_t epoch
     qa_application_client_source actual;
     if(!qa_application_client_epoch_adopt(s->frontend->application,&s->application,epoch,&actual,error)) return false;
     s->application=actual; return true;
+}
+bool frontend_client_source_content_adopt(frontend_client_source *s,const qa_launch_instance *content,
+    uint64_t generation,qa_error *error)
+{
+    if(!frontend_client_source_idle(s) || s->closing || s->retiring || !s->ready || !s->app_attached ||
+        s->frontend->resource_inventory || s->frontend->capture || s->frontend->source_restoring)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT content handoff requires its returned physical owner");
+    if(frontend_client_source_descriptor_equal(descriptor(s),content) && s->configuration_generation==generation)
+        return true;
+    const qa_product *previous=qa_catalog_product(s->options.metadata.catalog,s->options.metadata.profile);
+    qa_catalog *catalog=qa_launch_instance_catalog(content);
+    const qa_product *profile=previous?qa_catalog_find(catalog,previous->key):NULL;
+    if(!profile) return frontend_fail(error,QA_ERROR_NOT_FOUND,"Admitted CLIENT content lacks its compiled profile");
+    qa_command_context command;
+    if(!qa_application_capture_command_context(s->frontend->application,&s->command,&command,error)) return false;
+    qa_launch_instance_lease *metadata=NULL,*registry_metadata=NULL;
+    if(!qa_launch_instance_retain_metadata(content,&metadata,error) ||
+        !qa_launch_instance_retain_metadata(content,&registry_metadata,error)) {
+        qa_launch_instance_lease_release(metadata); return false;
+    }
+    qa_launch_instance_lease *old=s->metadata;
+    qa_command_context old_command=s->command;
+    s->metadata=metadata; s->command=command;
+    frontend_client_registry_metadata_exchange(s->registry,&registry_metadata);
+    qa_application_client_source actual;
+    bool ok=qa_application_client_rebind(s->frontend->application,&s->application,descriptor(s),
+        &command,generation,&actual,error);
+    if(!ok) {
+        frontend_client_registry_metadata_exchange(s->registry,&registry_metadata);
+        s->metadata=old; s->command=old_command;
+        qa_launch_instance_lease_release(metadata);
+    } else {
+        s->application=actual; s->configuration_generation=generation;
+        s->options.metadata.catalog=catalog; s->options.metadata.profile=profile->id;
+        s->options.metadata.selected=descriptor(s)->selection.product;
+        s->options.metadata.instance=descriptor(s)->selection.instance;
+        s->options.metadata.prepared=descriptor(s)->content;
+        qa_launch_instance_lease_release(old);
+    }
+    qa_launch_instance_lease_release(registry_metadata);
+    return ok;
 }
 bool frontend_client_source_drain(frontend_client_source *s, size_t budget, size_t *executed, qa_error *error)
 {

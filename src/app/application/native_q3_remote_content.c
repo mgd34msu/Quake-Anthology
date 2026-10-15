@@ -7,7 +7,8 @@ static application_provider *admission_receiver(qa_application *app,
 {
     if (!app || !request || app->operation != APPLICATION_IDLE || app->frame_preparing ||
         app->q3_round_active || app->q3_world_restart || app->destroy_requested ||
-        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        (app->world && !qa_world_idle(app->world)) ||
         !request->previous.receiver.native_source || request->previous.receiver.initialized ||
         !request->connection_epoch || request->connection_epoch != request->previous.connection_epoch ||
         request->previous.configuration_generation == UINT64_MAX ||

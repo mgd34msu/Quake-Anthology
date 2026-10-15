@@ -41,6 +41,12 @@ bool frontend_client_registry_matches(const frontend_client_registry *owner,
         owner->view_identity==qa_cvars_view_identity(owner->cvars) && source && source->storage && retained &&
         retained->storage==source->storage && owner->launch_seat==seat;
 }
+void frontend_client_registry_metadata_exchange(frontend_client_registry *owner,
+    qa_launch_instance_lease **metadata)
+{
+    qa_launch_instance_lease *previous=owner->metadata;
+    owner->metadata=*metadata; *metadata=previous;
+}
 bool frontend_client_registry_create(qa_frontend *f,const qa_launch_instance *source,uint32_t seat,
     qa_cvars **owned,const frontend_client_registry_context *callback,
     frontend_client_registry **out,qa_error *error)

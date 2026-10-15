@@ -7,7 +7,8 @@ static struct application_native_q3_remote_role *source_row(qa_application *app,
 {
     if (!app || !source || app->operation != APPLICATION_IDLE || app->frame_preparing ||
         app->destroy_requested || app->q3_round_active || app->q3_world_restart ||
-        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        (app->world && !qa_world_idle(app->world)) ||
         !source->receiver.native_source || !qa_application_q3_remote_source_current(app, source)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT lifecycle requires its current idle physical source");
         return NULL;

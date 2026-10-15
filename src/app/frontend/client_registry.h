@@ -38,6 +38,9 @@ qa_cvars *frontend_client_registry_cvars(const frontend_client_registry *);
 const frontend_client_registry *frontend_client_registry_lookup(const qa_frontend *,const qa_cvars *);
 bool frontend_client_registry_source(const frontend_client_registry *,const qa_launch_instance **,uint32_t *launch_seat);
 bool frontend_client_registry_matches(const frontend_client_registry *,const qa_launch_instance *,uint32_t launch_seat);
+/* The physical owner retains both leases before staging a content handoff.
+ * Swapping again restores the previous metadata without allocating. */
+void frontend_client_registry_metadata_exchange(frontend_client_registry *,qa_launch_instance_lease **);
 size_t frontend_client_registry_count(const qa_frontend *);
 bool frontend_client_registry_read(const qa_frontend *,size_t,frontend_client_registry_view *,qa_error *);
 /* All actual manager/client references must have retired before the parent

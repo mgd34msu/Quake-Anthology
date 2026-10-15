@@ -2606,6 +2606,14 @@ static bool client_native_gamestate(frontend_q3_client *n, const qa_q3_gamestate
         .connection_epoch=n->q3_client_epoch,.producer=n,.prepared_current=client_native_prepared};
     qa_application_q3_remote_source published; qa_network_q3_client_init counters;
     if(!qa_application_native_q3_remote_content_admit(n->frontend->application,&admission,&published,error)) return false;
+    if(n->physical_source) {
+        frontend_client_source_view physical;
+        if(!frontend_client_source_content_adopt(n->physical_source,published.descriptor,
+                published.configuration_generation,error) ||
+            !frontend_client_source_metadata_read(n->physical_source,&physical,error) ||
+            !qa_application_q3_remote_source_from_client(n->frontend->application,&physical.source,
+                n->q3_client_epoch,&published,error)) return false;
+    }
     client_cvars_bind(n, published.receiver.cvars);
     frontend_q3_content_publication publication={published.descriptor,published.receiver,
         published.configuration_generation,published.connection_epoch};
@@ -2833,6 +2841,13 @@ static bool client_binding_current(void *context, uint64_t old_epoch, uint64_t n
 static bool client_bind_attempt(frontend_q3_client *n, qa_error *error)
 {
     if (!n->q3_client_rebind) return true;
+    if(n->physical_source) {
+        frontend_client_source_view source;
+        if(!frontend_client_source_metadata_read(n->physical_source,&source,error)) return false;
+        if((!qa_net_client_id_equal(source.source.client,n->q3_client) ||
+            source.source.connection_epoch!=n->q3_client_epoch) &&
+            !frontend_client_source_bind(n->physical_source,n->q3_client,n->seat,n->q3_client_epoch,error)) return false;
+    }
     qa_application_q3_remote_binding request = {.new_epoch = n->q3_client_epoch,
         .connection = n, .current = client_binding_current};
     qa_application_q3_remote_source rebound;
@@ -2984,11 +2999,18 @@ static bool client_physical_connection(void *context,const qa_application_client
 static bool client_physical_retirement(void *context,const qa_application_client_source *source)
 {
     frontend_q3_client *n=context;
-    return n && source && n->q3_client_retiring && source->runtime==n->runtime &&
-        qa_net_client_id_equal(source->client,n->q3_client) &&
-        source->connection_epoch==(source->client.owner?n->q3_client_epoch:0) &&
-        source->context.physical_seat==n->physical &&
-        (!source->client.owner || (source->network_seat.owner==n->seat.owner && source->network_seat.index==n->seat.index));
+    if(!n || !source || source->runtime!=n->runtime || source->context.physical_seat!=n->physical ||
+        (source->client.owner && (source->network_seat.owner!=n->seat.owner || source->network_seat.index!=n->seat.index)))
+        return false;
+    if(n->q3_client_retiring)
+        return qa_net_client_id_equal(source->client,n->q3_client) &&
+            source->connection_epoch==(source->client.owner?n->q3_client_epoch:0);
+    return n->q3_client_rebind && n->q3_client_attached && !n->q3_client_closed &&
+        qa_net_client_id_equal(source->client,n->q3_client_previous) &&
+        source->connection_epoch==n->q3_client_previous_epoch &&
+        source->connection_epoch<n->q3_client_epoch &&
+        !qa_net_client_id_equal(source->client,n->q3_client) &&
+        !qa_net_connections_get(qa_network_connections(n->runtime),source->client);
 }
 static bool client_snapshot_entity(const qa_q3_snapshot *snapshot,uint32_t number)
 {

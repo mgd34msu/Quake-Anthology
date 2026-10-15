@@ -71,6 +71,8 @@ bool frontend_client_source_preinstall_current(const frontend_client_source *,
     const qa_application_client_source *, qa_error *);
 bool frontend_client_source_current(const frontend_client_source_view *);
 bool frontend_client_source_bind(frontend_client_source *, qa_net_client_id, qa_net_seat_id, uint64_t epoch, qa_error *);
+/* Adopt admitted content while retaining the same console, cvars and history. */
+bool frontend_client_source_content_adopt(frontend_client_source *,const qa_launch_instance *,uint64_t generation,qa_error *);
 bool frontend_client_source_epoch_adopt(frontend_client_source *,uint64_t,qa_error *);
 bool frontend_client_source_drain(frontend_client_source *, size_t budget, size_t *, qa_error *);
 bool frontend_client_source_remote(frontend_client_source *,const qa_application_client_source *,const char *,qa_error *);

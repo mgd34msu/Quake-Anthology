@@ -282,7 +282,16 @@ bool application_native_q3_remote_role_client_adopt(application_provider *provid
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 services require their actual physical CLIENT");
     struct application_native_q3_remote_role *row =
         application_native_q3_remote_role_find(provider, client->context.seat);
-    if (row) return true;
+    if (row) {
+        const qa_launch_instance *held = qa_launch_instance_lease_view(row->descriptor);
+        if (held && held->storage == client->descriptor->storage && held->content == client->descriptor->content &&
+            held->identity == client->descriptor->identity &&
+            row->configuration_generation == client->configuration_generation) {
+            qa_launch_instance_lease_release(row->descriptor); row->descriptor = NULL;
+            row->configuration_generation = 0;
+        }
+        return true;
+    }
     if (!qa_id_index_reserve(&provider->native_q3_remote_seats, 1, error)) return false;
     row = calloc(1, sizeof(*row));
     if (!row) return application_fail(error, QA_ERROR_MEMORY, "Retaining remote Q3 CLIENT services");
@@ -521,7 +530,11 @@ bool application_native_q3_remote_role_product(application_provider *provider, u
     struct application_native_q3_remote_role *row = application_native_q3_remote_role_find(provider, seat);
     if (!native_receiver(provider) || !row || row->retiring || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT product lost its real compiled receiver");
-    const qa_launch_instance *descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) : provider->launch;
+    qa_application_client_source client;
+    if (provider->client_only_owned &&
+        !qa_application_client_physical_read(provider->application, provider->owner, seat, &client, error)) return false;
+    const qa_launch_instance *descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) :
+        provider->client_only_owned ? client.descriptor : provider->launch;
     const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(descriptor), descriptor->selection.product);
     *out = product && product->campaign_id == QA_CAMPAIGN_MISSIONPACK ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     return true;
@@ -650,7 +663,9 @@ bool application_native_q3_remote_role_modules_retained(application_provider *pr
         source->connection_epoch != row->connection_epoch ||
         source->configuration_generation != row->module_generation ||
         (row->descriptor && source->configuration_generation != row->configuration_generation)) return false;
-    const qa_launch_instance *descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) : provider->launch;
+    qa_application_q3_remote_source physical;
+    if (!application_native_q3_remote_role_source_read(provider, row->seat, row->connection_epoch, &physical, NULL)) return false;
+    const qa_launch_instance *descriptor = physical.descriptor;
     const qa_application_q3_client_context *receiver = &source->receiver;
     const qa_command_context *command = &receiver->command_context;
     qa_application_q3_client_context actual;

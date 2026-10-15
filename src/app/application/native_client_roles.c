@@ -311,9 +311,10 @@ bool qa_application_client_bind(qa_application *app, const qa_application_client
     qa_net_client_id client, qa_net_seat_id seat, uint64_t epoch, qa_application_client_source *out, qa_error *error)
 {
     struct application_native_client_role *r = pending ? row_read(provider_read(app, pending->context.receiver), pending->context.seat) : NULL;
-    if (!r || !out || r->calls || qa_application_client_prepare_holds(app,pending) ||
-        r->source.client.owner || !client.owner || !client.generation || !seat.owner || !epoch ||
-        !qa_application_client_current(app, pending))
+    if (!r || !out || r->calls || r->retiring || qa_application_client_prepare_holds(app,pending) ||
+        !client.owner || !client.generation || !seat.owner || !epoch ||
+        (r->source.client.owner ? !qa_application_client_retirement_current(app, pending) :
+            !qa_application_client_current(app, pending)))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT bind requires its pending row and genuine attach receipt");
     qa_application_client_source bound = r->source;
     bound.client = client; bound.network_seat = seat; bound.connection_epoch = epoch;
