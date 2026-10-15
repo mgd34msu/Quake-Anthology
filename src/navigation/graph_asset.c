@@ -44,6 +44,7 @@ qa_nav_edge nav_asset_kex_edge(const qa_nav_graph *g,const qa_nav_source_view *a
         edge.entity=(qa_nav_binding){.has_model=binding->has_model,.model=binding->model,.bounds=binding->bounds,
             .raw={binding->tail[0],binding->tail[1]},.raw_count=binding->tail_count};
         if(asset->kind==QA_NAV_NAV3) {
+            edge.entity.raw[0]=binding->model;edge.entity.raw_count=1;
             if(binding->model<=1 || binding->model==255) edge.entity.has_model=false;
             else edge.entity.model-=binding->model>255?2:1;
         }

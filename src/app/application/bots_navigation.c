@@ -87,26 +87,29 @@ static uint64_t revision(void *opaque) {
     application_bots *bots=opaque;
     return qa_session_elapsed(bots->application->session);
 }
-bool application_navigation_hazard(qa_application *application,qa_world *world,qa_bounds bounds) {
-    qa_world_actor_snapshot actors={0};qa_error error={0};
+bool application_navigation_hazard(qa_application *application,qa_world *world,qa_bounds bounds,
+    bool *hazardous,qa_error *error) {
+    qa_world_actor_snapshot actors={0};
     if(!qa_world_snapshot_capture(world,bounds,QA_COLLISION_BOTH,QA_WORLD_ORDER_SPATIAL,
-        &actors,&error)) return true;
+        &actors,error)) return false;
     qa_builtin_services services=application_builtin_services(application,world,application->physics);
-    bool hazardous=false;
+    *hazardous=false;
     for(size_t i=0;i<actors.count;++i) {
         qa_actor_id actor=actors.actors[i];qa_builtin_actor_traits traits={0};
         if(qa_actors_get(qa_world_actors(world),actor) &&
            services.actor_traits(services.context,actor,&traits) &&
            qa_actors_get(qa_world_actors(world),actor) && traits.navigation_hazard) {
-            hazardous=true;break;
+            *hazardous=true;break;
         }
     }
     qa_world_snapshot_release(&actors);
-    return hazardous;
+    for (size_t i=0;!*hazardous && i<application->provider_count;++i)
+        if (!application_bots_npc_native_hazard(application->providers[i],bounds,hazardous,error)) return false;
+    return true;
 }
-static bool hazard(void *opaque,qa_bounds bounds) {
+static bool hazard(void *opaque,qa_bounds bounds,bool *hazardous,qa_error *error) {
     application_bots *bots=opaque;
-    return application_navigation_hazard(bots->application,bots->application->world,bounds);
+    return application_navigation_hazard(bots->application,bots->application->world,bounds,hazardous,error);
 }
 typedef struct application_bot_mover {
     qa_actor_id activation;

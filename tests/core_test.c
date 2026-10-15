@@ -639,6 +639,13 @@ static void test_shared_bounds_and_transform(void)
     CHECK(qa_bounds_overlap(unit,contact) && !qa_bounds_overlap_strict(unit,contact));
     CHECK(qa_bounds_overlap_strict(unit,qa_bounds_translate(unit,qa_v3(.5f,0,0))));
     CHECK(!qa_bounds_overlap(unit,qa_bounds_translate(unit,qa_v3(2,0,0))));
+    qa_bounds centered={qa_v3(-1,-1,-1),qa_v3(1,1,1)};
+    CHECK(qa_bounds_intersects_segment(centered,qa_v3(-2,0,0),qa_v3(2,0,0)));
+    CHECK(qa_bounds_intersects_segment(centered,qa_v3(-2,0,0),qa_v3(0,2,0)));
+    CHECK(!qa_bounds_intersects_segment(centered,qa_v3(-2,.5f,0),qa_v3(.5f,2,0)));
+    CHECK(qa_bounds_intersects_segment(centered,qa_v3(1,1,1),qa_v3(1,1,1)));
+    CHECK(!qa_bounds_intersects_segment(centered,qa_v3(1.01f,1,1),qa_v3(1.01f,1,1)));
+    CHECK(qa_bounds_intersects_segment((qa_bounds){0},qa_v3(-1,0,0),qa_v3(1,0,0)));
     CHECK(!qa_bounds_expands(unit,unit));
     qa_bounds smaller={qa_v3(.25f,.25f,.25f),qa_v3(.75f,.75f,.75f)};
     CHECK(!qa_bounds_expands(unit,smaller) && qa_bounds_expands(smaller,unit));

@@ -1,5 +1,7 @@
 #include "internal.h"
 
+enum { NAV3_CONDITIONAL = 32 | 64 | 128 | 2048 | 4096 };
+
 bool nav_static_node(const qa_navigation *n, uint32_t index, const qa_nav_route_query *q) {
     const qa_nav_node *node = n->graph->nodes + index;
     qa_nav_profile p;
@@ -11,10 +13,13 @@ bool nav_static_node(const qa_navigation *n, uint32_t index, const qa_nav_route_
                 return false;
     if (node->source.kind == QA_NAV_ORIGIN_AAS && (node->flags & 8) != 0 && n->enabled[index] != 1)
         return false;
+    if (node->source.kind == QA_NAV_ORIGIN_NAV3 && (node->flags & 8192) != 0 &&
+        (node->flags & NAV3_CONDITIONAL) == 0)
+        return false;
     if (q && q->advisory) return true;
     if (!nav_node_profile(&n->graph->view.profile, node, &p)) return false;
     if (node->source.kind == QA_NAV_ORIGIN_NAV3 &&
-        ((node->flags & 8192) != 0 || (p.monster && (node->flags & 256) != 0) ||
+        ((p.monster && (node->flags & 256) != 0) ||
          ((node->flags & 512) != 0 && (p.capabilities & QA_NAV_CAPABILITY(QA_NAV_CROUCH)) == 0)))
         return false;
     return true;
@@ -62,8 +67,52 @@ bool nav_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t index,
     *allowed = false;
     if (!nav_static_node(n, index, q))
         return true;
-    if (q && q->advisory) { *allowed = true; return true; }
     const qa_nav_node *node = n->graph->nodes + index;
+    if (node->source.kind == QA_NAV_ORIGIN_NAV3 && (node->flags & NAV3_CONDITIONAL)) {
+        qa_nav_profile condition = n->graph->view.profile;
+        qa_vec3 origin = node->origin;
+        /* Graph origins include hull rise; conditionals use authored origin plus 24. */
+        origin.z += 24 + condition.shape.bounds.mins.z;
+        condition.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX,
+            .bounds = {qa_v3(-16, -16, -24), qa_v3(16, 16, (node->flags & 512) ? 4 : 32)}};
+        const uint32_t masks[] = {3, 56, 24};
+        const uint32_t flags[] = {128, 2048, 32};
+        for (size_t i = 0; i < 3; ++i) {
+            if (!(node->flags & flags[i])) continue;
+            condition.policy.contents_mask = qa_collision_contents_mask(masks[i], QA_GAME_Q2);
+            qa_trace_result trace;
+            if (!nav_trace(&n->services, &condition, actor, origin, origin, false, &trace, e))
+                return false;
+            bool inside = trace.start_solid || trace.all_solid;
+            if (i == 1 ? !inside : inside) return true;
+            if (i == 2 && n->services.hazard) {
+                bool hazardous;
+                if (!n->services.hazard(n->services.context,
+                    qa_bounds_translate(condition.shape.bounds, origin), &hazardous, e)) return false;
+                if (hazardous) return true;
+            }
+        }
+        if (node->flags & 64) {
+            condition.policy.contents_mask = qa_collision_contents_mask(3, QA_GAME_Q2);
+            condition.shape.bounds.mins.z = condition.shape.bounds.maxs.z = 0;
+            qa_vec3 end = origin;
+            end.z -= 96;
+            qa_trace_result trace;
+            if (!nav_trace(&n->services, &condition, actor, origin, end, false, &trace, e))
+                return false;
+            if (trace.fraction == 1) return true;
+        }
+        if (node->flags & 4096) {
+            for (uint32_t i = n->graph->first_out[index]; i < n->graph->first_out[index + 1]; ++i) {
+                const qa_nav_edge *edge = n->graph->edges + n->graph->outgoing[i];
+                qa_nav_entity_state source;
+                bool found;
+                if (!nav_entity(n, edge, &source, &found, e)) return false;
+                if (found && source.locked) return true;
+            }
+        }
+    }
+    if (q && q->advisory) { *allowed = true; return true; }
     qa_nav_profile p;
     if (!nav_node_profile(&n->graph->view.profile, node, &p))
         return true;
@@ -73,9 +122,12 @@ bool nav_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t index,
     if ((medium & (QA_NAV_SLIME | QA_NAV_LAVA)) != 0 ||
         ((medium & QA_NAV_WATER) != 0 && (p.capabilities & QA_NAV_CAPABILITY(QA_NAV_SWIM)) == 0))
         return true;
-    if (n->services.hazard != NULL &&
-        n->services.hazard(n->services.context, qa_bounds_translate(p.shape.bounds, node->origin)))
-        return true;
+    if (n->services.hazard != NULL) {
+        bool hazardous;
+        if (!n->services.hazard(n->services.context, qa_bounds_translate(p.shape.bounds, node->origin),
+            &hazardous, e)) return false;
+        if (hazardous) return true;
+    }
     if (!await_mover) {
         bool clear;
         if (!nav_clear(&n->services, &p, actor, node->origin, node->origin, false, &clear, e))
@@ -83,22 +135,18 @@ bool nav_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t index,
         if (!clear)
             return true;
     }
-    if (node->source.kind == QA_NAV_ORIGIN_NAV3 && (node->flags & 2048) != 0 && (medium & 7) == 0)
-        return true;
-    if (node->source.kind == QA_NAV_ORIGIN_NAV3 && (node->flags & 64) != 0) {
-        p.shape.kind = QA_SHAPE_BOX;
-        p.shape.bounds.mins.z = 0;
-        p.shape.bounds.maxs.z = 0;
-        qa_vec3 end = node->origin;
-        end.z -= 96;
-        qa_trace_result trace;
-        if (!nav_trace(&n->services, &p, actor, node->origin, end, false, &trace, e))
-            return false;
-        if (trace.fraction == 1 && !await_mover)
-            return true;
-    }
     *allowed = true;
     return true;
+}
+bool qa_navigation_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t node,
+    const qa_nav_route_query *q, bool *allowed, qa_error *e) {
+    uint32_t index = n ? nav_node_index(n->graph, node) : QA_NAV_NO_INDEX;
+    if (index == QA_NAV_NO_INDEX || !allowed || (q && q->disabled_count && !q->disabled_areas)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, node, "Unknown navigation node/output");
+        return false;
+    }
+    nav_refresh(n);
+    return nav_node_allowed(n, actor, index, q, false, allowed, e);
 }
 bool nav_entity(qa_navigation *n, const qa_nav_edge *edge, qa_nav_entity_state *out, bool *found,
                 qa_error *e) {
@@ -128,9 +176,19 @@ bool nav_edge_allowed(qa_navigation *n, qa_nav_workspace *w, qa_actor_id actor, 
     *allowed = false;
     if (!nav_static_edge(n, index, q))
         return true;
-    if (q && q->advisory) { *allowed = true; return true; }
     const qa_nav_edge *edge = n->graph->edges + index;
     uint32_t to = nav_node_index(n->graph, edge->to);
+    if (q && q->advisory) {
+        if (w && qa_stamp_set_test(&w->grounded_valid, to)) *allowed = w->grounded[to];
+        else {
+            if (!nav_node_allowed(n, actor, to, q, false, allowed, e)) return false;
+            if (w) {
+                w->grounded[to] = *allowed;
+                qa_stamp_set_mark(&w->grounded_valid, to);
+            }
+        }
+        return true;
+    }
     qa_nav_entity_state elevator, train, source;
     const qa_nav_edge *boarding;
     qa_nav_train_ride ride;

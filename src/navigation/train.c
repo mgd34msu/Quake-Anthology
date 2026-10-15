@@ -99,9 +99,12 @@ bool qa_navigation_train_step(qa_navigation *n, qa_nav_workspace *w, qa_actor_id
         !nav_static_edge(n, nav_edge_index(n->graph, edge_id), NULL) ||
         (!aboard && !state.data.train.running))
         return true;
-    if (n->services.hazard != NULL &&
-        n->services.hazard(n->services.context, qa_bounds_translate(p->shape.bounds, origin)))
-        return true;
+    bool hazardous=false;
+    if (n->services.hazard != NULL) {
+        if (!n->services.hazard(n->services.context, qa_bounds_translate(p->shape.bounds, origin), &hazardous, e))
+            return false;
+        if (hazardous) return true;
+    }
     bool arrived = nav_distance(state.data.train.origin, ride.arrival.origin) <= p->maximum_step;
     if (aboard && !arrived) {
         if (state.data.train.running)
@@ -116,9 +119,11 @@ bool qa_navigation_train_step(qa_navigation *n, qa_nav_workspace *w, qa_actor_id
         out->stage = QA_NAV_TRAIN_WAIT;
         return true;
     }
-    if (n->services.hazard != NULL &&
-        n->services.hazard(n->services.context, qa_bounds_translate(p->shape.bounds, target)))
-        return true;
+    if (n->services.hazard != NULL) {
+        if (!n->services.hazard(n->services.context, qa_bounds_translate(p->shape.bounds, target), &hazardous, e))
+            return false;
+        if (hazardous) return true;
+    }
     nav_prediction prediction = {.navigation = n};
     qa_nav_route route = {0}; nav_arena_init(&route.storage, &n->storage);
     bool admitted;

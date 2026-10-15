@@ -120,7 +120,7 @@ typedef struct qa_navigation_services {
     void *context;
     qa_world *world;
     uint64_t (*revision)(void *);
-    bool (*hazard)(void *, qa_bounds);
+    bool (*hazard)(void *, qa_bounds, bool *hazardous, qa_error *);
     bool (*entity)(void *, const qa_nav_binding *, qa_nav_entity_state *, bool *found, qa_error *);
     /* Read the actor's selected continuation for a detached prediction. The
      * navigation owner copies it; prediction never commits gameplay effects. */
@@ -266,6 +266,8 @@ typedef struct qa_nav_route_query {
     bool (*node_filter)(void *, const qa_nav_node *);
     float (*edge_cost)(void *, const qa_nav_node *, const qa_nav_edge *, const qa_nav_node *);
 } qa_nav_route_query;
+bool qa_navigation_node_allowed(qa_navigation *, qa_actor_id, uint32_t node,
+    const qa_nav_route_query *, bool *allowed, qa_error *);
 typedef struct qa_nav_route {
     qa_arena storage;
     qa_nav_graph *graph; /* Retained on success; released by route reset/free. */

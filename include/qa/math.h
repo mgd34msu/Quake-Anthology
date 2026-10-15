@@ -179,6 +179,19 @@ static inline bool qa_bounds_contains(qa_bounds b, qa_vec3 p) {
            p.y >= b.mins.y && p.y <= b.maxs.y &&
            p.z >= b.mins.z && p.z <= b.maxs.z;
 }
+static inline bool qa_bounds_intersects_segment(qa_bounds b, qa_vec3 start, qa_vec3 end) {
+    qa_vec3 center=qa_vec_scale(qa_vec_add(b.maxs,b.mins),.5f);
+    qa_vec3 extents=qa_vec_sub(b.maxs,center);
+    qa_vec3 half=qa_vec_scale(qa_vec_sub(end,start),.5f);
+    qa_vec3 offset=qa_vec_sub(qa_vec_add(half,start),center);
+    qa_vec3 absolute=qa_v3(fabsf(half.x),fabsf(half.y),fabsf(half.z));
+    if (fabsf(offset.x)>extents.x+absolute.x || fabsf(offset.y)>extents.y+absolute.y ||
+        fabsf(offset.z)>extents.z+absolute.z) return false;
+    qa_vec3 cross=qa_vec_cross(half,offset);
+    return fabsf(cross.x)<=extents.y*absolute.z+extents.z*absolute.y &&
+        fabsf(cross.y)<=extents.x*absolute.z+extents.z*absolute.x &&
+        fabsf(cross.z)<=extents.x*absolute.y+extents.y*absolute.x;
+}
 static inline qa_bounds qa_bounds_translate(qa_bounds b, qa_vec3 v) {
     return (qa_bounds){qa_vec_add(b.mins,v),qa_vec_add(b.maxs,v)};
 }

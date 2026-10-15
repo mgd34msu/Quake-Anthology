@@ -5,6 +5,7 @@
 #include "qa/binary.h"
 #include "qa/persistence_navigation.h"
 #include "qa/tools.h"
+#include "qa/native_host_q2_wire.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,65 @@ static bool native_source(const application_provider *source)
     const struct application_native_q2 *engine=source && source->kind==APPLICATION_PROVIDER_NATIVE?
         source->state.native.q2_engine:NULL;
     return engine && engine->provider==source && engine->profile==QA_NATIVE_Q2_GAME_API2023;
+}
+
+typedef struct npc_native_rows {
+    qa_native_host *host;
+    qa_native_instance *instance;
+    uint32_t cursor,end;
+    bool importing;
+} npc_native_rows;
+
+static bool native_rows_begin(application_provider *source,npc_native_rows *rows,qa_error *error)
+{
+    *rows=(npc_native_rows){.host=source->state.native.host,
+        .importing=source->state.native.q2_engine->calls!=0};
+    rows->instance=qa_native_host_instance(rows->host);
+    qa_native_entity_table table;
+    if(!qa_native_entity_table_get(rows->instance,&table,error)) return false;
+    rows->end=rows->importing?table.capacity:table.count;
+    return true;
+}
+
+static bool native_rows_next(npc_native_rows *rows,qa_native_host_q2_entity *out,
+    bool *found,qa_error *error)
+{
+    *found=false;
+    while(rows->cursor<rows->end) {
+        uint32_t slot=rows->cursor++;
+        qa_native_slot_binding binding;
+        if(!qa_native_slot(rows->instance,slot,&binding,error)) return false;
+        if(binding.kind==QA_NATIVE_SLOT_FREE) continue;
+        if(!(rows->importing?qa_native_host_q2_wire_entity_import(rows->host,slot,out,error):
+            qa_native_host_q2_bot_entity(rows->host,slot,out,error))) return false;
+        if(out->in_use) {*found=true;return true;}
+    }
+    return true;
+}
+
+bool application_bots_npc_native_hazard(application_provider *source,qa_bounds bounds,
+    bool *hazardous,qa_error *error)
+{
+    *hazardous=false;
+    if(!native_source(source)) return true;
+    const struct application_native_q2 *engine=source->state.native.q2_engine;
+    if(!source->state.native.host || !engine->prepared || engine->shutting_down ||
+        source->close_pending || (!(source->constructed && source->attached) && !engine->calls)) return true;
+    npc_native_rows rows;
+    if(!native_rows_begin(source,&rows,error)) return false;
+    for(;;) {
+        qa_native_host_q2_entity entity;bool found;
+        if(!native_rows_next(&rows,&entity,&found,error)) return false;
+        if(!found) return true;
+        if(!entity.bot.registered || !(entity.bot.flags&(UINT64_C(1)<<27))) continue;
+        if(entity.state.renderfx&128) {
+            if(entity.server_flags&1) continue;
+            qa_vec3 start=qa_v3(entity.state.origin[0],entity.state.origin[1],entity.state.origin[2]);
+            qa_vec3 end=qa_v3(entity.state.old_origin[0],entity.state.old_origin[1],entity.state.old_origin[2]);
+            *hazardous=qa_bounds_intersects_segment(bounds,start,end);
+        } else if(entity.solid==1) *hazardous=qa_bounds_overlap(bounds,entity.absolute_bounds);
+        if(*hazardous) return true;
+    }
 }
 
 bool application_npc_current(const application_bots_npc *owner,qa_error *error)
@@ -162,10 +222,10 @@ static uint64_t revision(void *opaque)
     application_bots_npc *owner=opaque;
     return qa_session_elapsed(owner->source->application->session)/UINT64_C(1000000);
 }
-static bool hazard(void *opaque,qa_bounds bounds)
+static bool hazard(void *opaque,qa_bounds bounds,bool *hazardous,qa_error *error)
 {
     application_bots_npc *owner=opaque;
-    return application_navigation_hazard(owner->source->application,owner->world,bounds);
+    return application_navigation_hazard(owner->source->application,owner->world,bounds,hazardous,error);
 }
 qa_navigation_services application_npc_services(application_bots_npc *owner)
 {
@@ -408,6 +468,37 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
     *out=graph;return true;
 }
 
+static bool advisory_entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_state *out,
+    bool *found,qa_error *error)
+{
+    application_bots_npc *owner=opaque;
+    *found=false;
+    const qa_nav_graph_view *graph=qa_nav_graph_read(owner->advisory_graph->graph);
+    const qa_nav_source_view *asset=qa_nav_asset_kex(graph->asset);
+    npc_native_rows rows;
+    if(!native_rows_begin(owner->source,&rows,error)) return false;
+    for(;;) {
+        qa_native_host_q2_entity entity;bool present;
+        if(!native_rows_next(&rows,&entity,&present,error)) return false;
+        if(!present) return true;
+        if(!entity.bot.classname) continue;
+        bool matches;
+        if(asset && asset->kind==QA_NAV_NAV3 && asset->version>=2 && binding->raw_count==1)
+            matches=entity.state.modelindex==(uint32_t)binding->raw[0];
+        else if(binding->has_model) {
+            qa_actor_collision collision;
+            matches=qa_world_get_collision(owner->world,entity.binding.actor,&collision,NULL) &&
+                collision.inline_model && collision.model==(uint32_t)binding->model;
+        } else matches=qa_bounds_overlap(binding->bounds,entity.absolute_bounds);
+        if(!matches) continue;
+        *out=(qa_nav_entity_state){.actor=entity.binding.actor,
+            .enabled=entity.linked && entity.solid==3,
+            .locked=(entity.bot.flags&(UINT64_C(1)<<24))!=0,
+            .bounds=entity.absolute_bounds,.velocity=entity.bot.velocity,.kind=QA_NAV_ENTITY_GENERIC};
+        *found=true;return true;
+    }
+}
+
 static bool advisory_prepare(application_bots_npc *owner,qa_error *error)
 {
     if(owner->advisory_loaded) return true;
@@ -424,7 +515,7 @@ static bool advisory_prepare(application_bots_npc *owner,qa_error *error)
                 .q1_hull=-1,.contents_mask=qa_collision_contents_mask(0x30003,QA_GAME_Q2)},
             .minimum_floor_normal=.7f,.capabilities=(UINT32_C(1)<<QA_NAV_TRAVEL_COUNT)-1};
         qa_navigation_services services={.context=owner,.world=owner->world,.revision=revision,
-            .topology_geometry_only=true};
+            .hazard=hazard,.entity=advisory_entity,.topology_geometry_only=true};
         if(okay) okay=qa_nav_graph_from_asset(&owner->map,asset,&profile,&services,
             &graph->storage,&graph->graph,error);
         services.topology_geometry_only=false;
@@ -447,7 +538,6 @@ static bool advisory_node(void *opaque,const qa_nav_node *node)
 {
     const qa_native_host_q2_path_request *request=((npc_path_filter *)opaque)->request;
     if(node->source.kind!=QA_NAV_ORIGIN_NAV3) return true;
-    if(node->flags&8192) return false;
     if(request->ignore_node_flags) return !(node->flags&1024);
     if(node->flags&(1|2|8|256|512)) return false;
     uint32_t medium=request->flags&3;
@@ -502,15 +592,17 @@ static bool advisory_nearest(application_bots_npc *owner,npc_path_filter *filter
     float best=request->radius>0?request->radius:512;
     float lower=point.z-(request->min_height>0?request->min_height:64);
     float upper=point.z+(request->max_height>0?request->max_height:64);
+    qa_nav_route_query eligibility={.context=filter,.node_filter=advisory_node,.advisory=true};
     *out=NULL;
     for(size_t i=0;i<filter->graph->node_count;++i) {
         const qa_nav_node *node=filter->graph->nodes+i;
-        bool enabled,overridden;
-        if(!qa_navigation_enabled(owner->advisory_navigation,node->id,&enabled,&overridden))
-            return application_fail(error,QA_ERROR_FORMAT,"Advisory node lost its shared runtime");
-        if(!enabled || !advisory_node(filter,node) || node->origin.z<lower || node->origin.z>upper) continue;
+        if(node->origin.z<lower || node->origin.z>upper) continue;
         float distance=hypotf(node->origin.x-point.x,node->origin.y-point.y);
         if(distance>best) continue;
+        bool allowed;
+        if(!qa_navigation_node_allowed(owner->advisory_navigation,(qa_actor_id){0},node->id,
+            &eligibility,&allowed,error)) return false;
+        if(!allowed) continue;
         qa_trace_query query={.start=point,.end=qa_vec_add(node->origin,qa_v3(0,0,32)),
             .shape={.kind=QA_SHAPE_POINT},.policy=advisory_policy()};
         qa_trace_result trace;

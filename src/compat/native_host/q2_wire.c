@@ -178,11 +178,12 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
         value.creation_present = true;
         memcpy(value.origins, lifetime->origins, sizeof(value.origins));
     }
-    if (!classic && slot < host->q2_lifetime_capacity &&
-        host->q2_lifetimes[slot].bot_registered &&
-        qa_actor_id_equal(host->q2_lifetimes[slot].actor, value.binding.actor)) {
+    if (!classic && value.in_use) {
+        bool registered = slot < host->q2_lifetime_capacity &&
+            host->q2_lifetimes[slot].bot_registered &&
+            qa_actor_id_equal(host->q2_lifetimes[slot].actor, value.binding.actor);
         const uint8_t *sv = bytes + NATIVE_Q2_RR_SV;
-        value.bot = (qa_native_host_q2_bot_state){.registered = true,
+        value.bot = (qa_native_host_q2_bot_state){.registered = registered,
             .player = qa_load_u64le(bytes + NATIVE_Q2_RR_CLIENT) != 0,
             .flags = qa_load_u64le(sv + 8), .item_id = qa_load_i32le(sv + 24),
             .armor = qa_load_i32le(sv + 32), .health = qa_load_i32le(sv + 36),
