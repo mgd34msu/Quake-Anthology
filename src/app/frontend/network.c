@@ -671,6 +671,30 @@ static qa_network_q1_client_policy q1_policy(qa_net_protocol_id protocol)
         .bytes_per_second = 2500, .nq_options = {.standard_quake = true},
         .nq_identity = {.name = "", .spawn_parameters = ""}};
 }
+static bool client_connection_content(qa_frontend *f,qa_ruleset_id rules,
+    qa_product_id *selected,qa_product_id *profile,qa_error *error)
+{
+    qa_catalog *catalog=qa_application_catalog(f->application);
+    const qa_product *product=qa_catalog_product(catalog,*selected);
+    if(!product || qa_product_ruleset(product,product->family)!=rules) {
+        const qa_ruleset_descriptor *descriptor=qa_ruleset_read(rules);
+        qa_campaign_id campaign=descriptor->family==QA_GAME_Q1?QA_CAMPAIGN_ID1:
+            descriptor->family==QA_GAME_Q2?QA_CAMPAIGN_BASEQ2:QA_CAMPAIGN_BASEQ3;
+        product=NULL;
+        for(size_t i=0;i<qa_catalog_count(catalog);++i) {
+            const qa_product *candidate=qa_catalog_at(catalog,i);
+            if(candidate->builtin && candidate->program_kind==QA_PROGRAM_BUILTIN &&
+                candidate->availability==QA_CONTENT_INSTALLED && candidate->campaign_id==campaign &&
+                candidate->family==descriptor->family && qa_product_ruleset(candidate,candidate->family)==rules) {
+                product=candidate; break;
+            }
+        }
+        if(!product) return frontend_fail(error,QA_ERROR_NOT_FOUND,
+            "The server protocol needs installed client content for its game");
+        *selected=product->id;
+    }
+    return frontend_config_store_client_profile(f->config_store,*selected,profile,error);
+}
 static bool client_connection_q1_create(frontend_client_connection *receiver,
     const qa_net_address *remote, qa_net_protocol_id protocol, qa_product_id selected,
     uint16_t qport, bool demo, qa_error *error)
@@ -689,7 +713,8 @@ static bool client_connection_q1_create(frontend_client_connection *receiver,
         .seat = receiver->client_seat, .demo_playback = demo, .policy = q1_policy(protocol),
         .context = receiver, .current = client_q1_current, .download_nonce = client_q1_download_nonce,
         .downloads = client_q1_downloads, .service = client_q1_service};
-    if (!frontend_config_store_client_profile(f->config_store, selected, &client.profile, error) ||
+    if (!client_connection_content(f,qa_q1_is_qw(protocol)?QA_RULESET_QUAKEWORLD:QA_RULESET_NETQUAKE,
+            &client.selected,&client.profile,error) ||
         !frontend_config_store_neutral_pending_options(f->config_store, receiver->physical,
             &client.configuration, error)) return false;
     if (frontend_network_q1_client_create(&client, &receiver->q1, error)) return true;
@@ -708,6 +733,9 @@ static bool client_connection_q2_create(frontend_client_connection *receiver,
     options.current = client_q2_current;
     options.download_stage = q2_download_stage;
     options.restore_stage = q2_restore_stage;
+    if(!client_connection_content(options.frontend,
+        qa_ruleset_q2_from_tag(qa_q2_protocol_rerelease(options.protocol)),
+        &options.selected,&options.profile,error)) return false;
     return frontend_network_q2_client_create(&options, &receiver->q2, error);
 }
 static bool client_connection_unified_create(frontend_client_connection *receiver,
@@ -798,12 +826,10 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
             if (!client_connection_unified_create(local, &n->loopback_server, selected, error)) return false;
             continue;
         }
-        qa_product_id profile;
-        if (!frontend_config_store_client_profile(f->config_store, selected, &profile, error)) return false;
         if (q2_host_protocol(f->options.network_protocol)) {
             frontend_network_q2_client_options client = {.remote = n->loopback_server,
                 .protocol = f->options.network_protocol, .qport = (uint16_t)(n->rotation_random + i),
-                .profile = profile, .selected = selected};
+                .selected = selected};
             if (!client_connection_q2_create(local, client, error)) return false;
         } else if (f->options.network_protocol.kind == QA_NET_Q3_68) {
             if (!local_q3_prepare(local, actor, error)) return false;
@@ -3136,11 +3162,12 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
 {
     qa_frontend *f=n->frontend;
     const qa_product *selected=frontend_product_current(f);
+    qa_product_id selected_id=selected?selected->id:QA_PRODUCT_NONE;
     qa_product_id profile_id=0; frontend_client_source_options options={0};
-    if(!selected || !frontend_config_store_client_profile(f->config_store,selected->id,&profile_id,error) ||
+    if(!client_connection_content(f,QA_RULESET_Q3,&selected_id,&profile_id,error) ||
         !frontend_config_store_neutral_pending_options(f->config_store,n->physical,&options,error)) return false;
     qa_catalog *catalog=qa_application_catalog(f->application); qa_vfs *prepared=NULL;
-    if(!qa_catalog_open(catalog,selected->id,&prepared,error)) {
+    if(!qa_catalog_open(catalog,selected_id,&prepared,error)) {
         (void)frontend_config_store_neutral_options_cancel(f->config_store,&options,NULL); return false;
     }
     options.runtime=n->runtime; options.physical_seat=n->physical;
@@ -3148,7 +3175,7 @@ static bool client_physical_create(frontend_q3_client *n,qa_error *error)
     options.input_origin.owner=0; options.input_origin.actor=(qa_actor_id){0}; options.input_origin.client=0;
     options.input_origin.registry=options.input_origin.generation=0; options.input_origin.script=NULL;
     options.input_origin.dialect=QA_RULESET_Q3;
-    options.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile_id,.selected=selected->id,
+    options.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile_id,.selected=selected_id,
         .prepared=prepared,.instance="remote-q3-client",.seat=options.input_origin.seat,.clock=QA_RULESET_Q3};
     options.services=(frontend_client_source_services){.context=n,.initialize=client_physical_initialize,
         .connection_current=client_physical_connection,.entity_current=client_physical_entity,
@@ -4972,8 +4999,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
             .selected=frontend_product_current(f)->id,
             .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
         n->clients[0].client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
-        if(!frontend_config_store_client_profile(f->config_store, client.selected, &client.profile, error) ||
-            !client_connection_q2_create(n->clients,client,error)) goto failed;
+        if(!client_connection_q2_create(n->clients,client,error)) goto failed;
     }
     if(f->options.network_connect && q1_client_protocol(f->options.network_protocol)) {
         n->clients[0].client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
