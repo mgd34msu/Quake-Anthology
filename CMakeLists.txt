@@ -249,6 +249,8 @@ add_library(qa_movement STATIC
 target_link_libraries(qa_movement PUBLIC qa_session)
 
 add_library(qa_navigation STATIC
+    src/navigation/aas_reachability.c
+    src/navigation/aas_reachability_geometry.c
     src/navigation/checkpoint.c
     src/navigation/construct.c
     src/navigation/eligibility.c

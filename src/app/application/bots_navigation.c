@@ -627,7 +627,12 @@ static bool navigation_resource(application_bots *bots,qa_resource **saved_resou
     }
     qa_arena_destroy(&storage);return ok;
 }
-static bool navigation_build(application_bots *bots,const application_bot_graph *graph,bool force,
+static float navigation_variable(void *context,const char *name,float fallback) {
+    const qa_bot_variable *value=context?qa_bot_library_variable(context,name):NULL;
+    return value?value->value:fallback;
+}
+static bool navigation_build(application_bots *bots,const application_bot_graph *graph,
+    bool force_clustering,bool force_reachability,qa_bot_library *library,
     qa_nav_graph **out_graph,qa_navigation **out_navigation,qa_error *error) {
     qa_nav_profile profile={.movement=graph->profile,.shape={QA_SHAPE_BOX,graph->bounds},
         .crouched_shape={QA_SHAPE_BOX,graph->bounds},.has_crouched_shape=true,
@@ -652,7 +657,20 @@ static bool navigation_build(application_bots *bots,const application_bot_graph 
         memcpy(&checksum,&checksum_word,sizeof(checksum));
         ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
         const qa_aas_view *aas=ok?qa_nav_asset_aas(asset):NULL;
-        if(aas && aas->count[QA_AAS_CLUSTERS] && force) {
+        bool has_reaches=false;
+        for(size_t area=1;aas && area<aas->count[QA_AAS_SETTINGS] && !has_reaches;++area)
+            has_reaches=aas->settings[area].reach_count>0;
+        if(aas && (force_reachability || !has_reaches)) {
+            qa_nav_graph *source_graph=NULL;qa_navigation *source_navigation=NULL;
+            qa_nav_asset *generated=NULL;
+            ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,NULL,&source_graph,error) &&
+                qa_navigation_create(source_graph,&services,NULL,&source_navigation,error) &&
+                qa_navigation_aas_reachability_build(source_navigation,&bots->geometry,
+                    navigation_variable,library,&generated,error);
+            qa_navigation_destroy(source_navigation);qa_nav_graph_release(source_graph);
+            if(ok) {qa_nav_asset_release(asset);asset=generated;aas=qa_nav_asset_aas(asset);}
+        }
+        if(ok && aas && aas->count[QA_AAS_CLUSTERS] && force_clustering) {
             qa_nav_asset *clustered=NULL;
             ok=qa_aas_cluster_rebuild(aas,&clustered,error);
             if(ok) {qa_nav_asset_release(asset);asset=clustered;}
@@ -678,7 +696,8 @@ static bool navigation_build(application_bots *bots,const application_bot_graph 
 bool application_bot_navigation_rebuild(application_bots *bots,application_bot_graph *graph,qa_error *error) {
     const qa_cvar_view *force=qa_cvars_find(bots->application->cvars,"bot_forceclustering");
     const qa_cvar_view *reach=qa_cvars_find(bots->application->cvars,"bot_forcereachability");
-    return navigation_build(bots,graph,(force && force->integer) || (reach && reach->integer),
+    qa_bot_library *library=bots->runtime?qa_bot_runtime_library(bots->runtime):NULL;
+    return navigation_build(bots,graph,force && force->integer,reach && reach->integer,library,
         &graph->graph,&graph->navigation,error);
 }
 static bool navigation_observer_bind(qa_bot_navigation *observer,qa_navigation *previous,
@@ -700,12 +719,13 @@ bool application_bot_navigation_load(void *context,qa_bot_runtime *requester,qa_
     qa_bot_library *library=qa_bot_runtime_library(requester);
     const qa_bot_variable *force=qa_bot_library_variable(library,"forceclustering");
     const qa_bot_variable *reach=qa_bot_library_variable(library,"forcereachability");
-    if(!(force && (force->value>=1 || force->value<=-1)) &&
-       !(reach && (reach->value>=1 || reach->value<=-1))) return true;
+    bool force_clustering=force && (force->value>=1 || force->value<=-1);
+    bool force_reachability=reach && (reach->value>=1 || reach->value<=-1);
+    if(!force_clustering && !force_reachability) return true;
     for(application_bot_graph *owner=bots->graphs;owner;owner=owner->next) {
         if(!qa_nav_asset_aas(qa_nav_graph_read(owner->graph)->asset)) continue;
         qa_nav_graph *graph=NULL;qa_navigation *navigation=NULL;
-        if(!navigation_build(bots,owner,true,&graph,&navigation,error)) return false;
+        if(!navigation_build(bots,owner,force_clustering,force_reachability,library,&graph,&navigation,error)) return false;
         qa_navigation *previous=owner->navigation;
         if(!navigation_observers_bind(bots,previous,navigation,error)) {
             /* Existing graph dimensions remain reserved, so a rollback only

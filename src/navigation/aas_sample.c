@@ -6,6 +6,7 @@ typedef struct aas_frame {
     int32_t node;
     uint32_t depth;
     qa_vec3 start, end;
+    uint32_t plane;
 } aas_frame;
 struct qa_aas_query {
     qa_arena owner_storage, storage;
@@ -150,7 +151,8 @@ static bool crossing_reserve(qa_nav_crossings *out, size_t count, qa_error *e) {
 }
 static bool trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
                         qa_aas_crossing *out, size_t capacity, size_t *count,
-                        qa_nav_crossings *collected, qa_error *e) {
+                        qa_nav_crossings *collected, uint32_t presence,
+                        qa_aas_presence_trace *hit, qa_error *e) {
     if (!prepared(q, v, e))
         return false;
     size_t used = 1, written = 0;
@@ -163,7 +165,22 @@ static bool trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa
                 qa_error_set(e, QA_ERROR_FORMAT, area, "Invalid AAS trace leaf");
                 return false;
             }
-            if (area != 0) {
+            if (hit && (area == 0 || !((uint32_t)v->settings[area].presence & presence))) {
+                hit->start_solid = qa_vec_equal(f.start, start);
+                qa_vec3 direction = hit->start_solid ? qa_v3(0, 0, 0) :
+                    qa_vec_normalize(qa_vec_sub(end, start));
+                hit->fraction = hit->start_solid ? 0 :
+                    qa_vec_length(qa_vec_sub(f.start, start)) / qa_vec_length(qa_vec_sub(end, start));
+                hit->end = hit->start_solid ? f.start : qa_vec_ma(f.start, -.125f, direction);
+                hit->area = (uint32_t)area;
+                hit->plane = f.plane;
+                if (qa_vec_dot(direction, v->planes[f.plane].normal) > 0)
+                    hit->plane ^= 1;
+                *count = written;
+                return true;
+            }
+            if (hit) hit->last_area = (uint32_t)area;
+            if (area != 0 && !hit) {
                 if (collected != NULL) {
                     if (!crossing_reserve(collected, written + 1, e))
                         return false;
@@ -179,18 +196,26 @@ static bool trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa
         const qa_aas_node *n = v->nodes + f.node;
         float front = distance(p, f.start), back = distance(p, f.end);
         ++f.depth;
-        if (front > 0 && back > 0) {
+        if (hit ? front >= 0 && back >= 0 : front > 0 && back > 0) {
             f.node = n->children[0];
             q->stack[used++] = f;
-        } else if (front <= 0 && back <= 0) {
+        } else if (hit ? front < 0 && back < 0 : front <= 0 && back <= 0) {
             f.node = n->children[1];
             q->stack[used++] = f;
         } else {
-            float fraction = fmaxf(0, fminf(1, front / (front - back)));
+            float fraction;
+            if (hit) {
+                if (front == back) front -= .001f;
+                fraction = (front < 0 ? front + .125f : front - .125f) / (front - back);
+                if (fraction < 0) fraction = .001f;
+                else if (fraction > 1) fraction = .999f;
+            } else fraction = fmaxf(0, fminf(1, front / (front - back)));
             qa_vec3 middle = qa_vec_lerp(f.start, f.end, fraction);
-            q->stack[used++] = (aas_frame){n->children[front < 0 ? 0 : 1], f.depth, middle, f.end};
+            q->stack[used++] = (aas_frame){.node = n->children[front < 0 ? 0 : 1],
+                .depth = f.depth, .start = middle, .end = f.end, .plane = (uint32_t)n->plane};
             q->stack[used++] =
-                (aas_frame){n->children[front < 0 ? 1 : 0], f.depth, f.start, middle};
+                (aas_frame){.node = n->children[front < 0 ? 1 : 0],
+                    .depth = f.depth, .start = f.start, .end = middle, .plane = f.plane};
         }
     }
     *count = written;
@@ -203,7 +228,17 @@ bool qa_aas_trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS line query");
         return false;
     }
-    return trace_areas(v, q, start, end, out, capacity, count, NULL, e);
+    return trace_areas(v, q, start, end, out, capacity, count, NULL, 0, NULL, e);
+}
+bool qa_aas_trace_presence(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start,
+    qa_vec3 end, uint32_t presence, qa_aas_presence_trace *out, qa_error *e) {
+    if (!v || !q || !out || !presence || !qa_vec_finite(start) || !qa_vec_finite(end)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS presence trace");
+        return false;
+    }
+    *out = (qa_aas_presence_trace){.fraction = 1, .end = end};
+    size_t count;
+    return trace_areas(v, q, start, end, NULL, SIZE_MAX, &count, NULL, presence, out, e);
 }
 bool qa_aas_trace_collect(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
                           size_t maximum, qa_nav_crossings *out, qa_error *e) {
@@ -213,7 +248,7 @@ bool qa_aas_trace_collect(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, 
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid retained AAS line query");
         return false;
     }
-    return trace_areas(v, q, start, end, NULL, maximum, &out->count, out, e);
+    return trace_areas(v, q, start, end, NULL, maximum, &out->count, out, 0, NULL, e);
 }
 bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, uint32_t *out,
                        size_t capacity, size_t *count, qa_error *e) {

@@ -125,6 +125,14 @@ bool qa_aas_optimize(const qa_aas_view *, qa_nav_asset **, qa_error *);
 bool qa_aas_cluster_rebuild(const qa_aas_view *, qa_nav_asset **, qa_error *);
 bool qa_aas_validate(const qa_aas_view *, qa_error *);
 typedef struct qa_aas_query qa_aas_query;
+typedef struct qa_aas_presence_trace {
+    bool start_solid;
+    float fraction;
+    qa_vec3 end;
+    uint32_t last_area, area, plane;
+} qa_aas_presence_trace;
+bool qa_aas_trace_presence(const qa_aas_view *, qa_aas_query *, qa_vec3 start, qa_vec3 end,
+    uint32_t presence, qa_aas_presence_trace *, qa_error *);
 typedef struct qa_aas_crossing {
     uint32_t area;
     qa_vec3 point;

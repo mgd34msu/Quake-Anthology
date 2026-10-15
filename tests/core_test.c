@@ -709,6 +709,172 @@ static void test_aas_clustering(void)
     qa_nav_asset_release(asset);
 }
 
+static void aas_reachability_generate(const qa_aas_view *source, bool water,
+    qa_nav_asset **out)
+{
+    qa_error error={0};gameplay_map map;gameplay_map_create(&map);
+    if(water) {
+        qa_collision_destroy(map.geometry);map.geometry=NULL;
+        uint32_t leaves=qa_load_u32le(map.bytes+4+10*8);
+        uint32_t clip=qa_load_u32le(map.bytes+4+9*8);
+        qa_store_u32le(map.bytes+leaves+28,UINT32_MAX-2);
+        qa_store_u16le(map.bytes+clip+4,UINT16_MAX-2);
+        qa_bsp_view bsp;
+        CHECK(qa_bsp_open((qa_bytes){map.bytes,sizeof(map.bytes)},&bsp,&error));
+        CHECK(qa_collision_create(&bsp,&map.geometry,&error));
+    }
+    qa_actor_registry *actors=NULL;qa_world *world=NULL;
+    CHECK(qa_actors_create(1,NULL,NULL,&actors,&error));
+    CHECK(qa_world_create(actors,map.geometry,NULL,0,&world,&error));
+    qa_buffer bytes={0};qa_nav_asset *asset=NULL;
+    CHECK(qa_aas_write(source,&bytes,&error));
+    CHECK(qa_nav_asset_read((qa_bytes){bytes.data,bytes.size},&source->bsp_checksum,&asset,&error));
+    qa_nav_profile profile={.movement={.kind=QA_RULESET_Q3},
+        .shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-24},{16,16,32}}},
+        .crouched_shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-24},{16,16,16}}},
+        .has_crouched_shape=true,.policy=qa_collision_ruleset_policy(QA_RULESET_Q3),
+        .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
+    qa_navigation_services services={.world=world,.topology_geometry_only=true};
+    qa_nav_graph *graph=NULL;qa_navigation *navigation=NULL;
+    CHECK(qa_nav_graph_from_asset(&(qa_nav_map){.format=QA_BSP_29},asset,&profile,
+        &services,NULL,&graph,&error));
+    CHECK(qa_navigation_create(graph,&services,NULL,&navigation,&error));
+    CHECK(qa_navigation_aas_reachability_build(navigation,NULL,NULL,NULL,out,&error));
+    qa_navigation_destroy(navigation);qa_nav_graph_release(graph);qa_nav_asset_release(asset);
+    qa_buffer_free(&bytes);
+    CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
+    qa_collision_destroy(map.geometry);
+}
+static const qa_aas_reach *aas_reachability_to(const qa_aas_view *view,uint32_t from,uint32_t to)
+{
+    const qa_aas_setting *setting=view->settings+from;
+    for(int32_t i=0;i<setting->reach_count;++i) {
+        const qa_aas_reach *reach=view->reachability+setting->first_reach+i;
+        if(reach->area==(int32_t)to) return reach;
+    }
+    return NULL;
+}
+static void test_aas_reachability(void)
+{
+    qa_error error={0};
+    qa_vec3 vertices[]={{0,-16,24},{0,16,24},{-32,-16,24},{-32,16,24},
+        {32,-16,24},{32,16,24},{0,-16,24},{0,16,24}};
+    qa_aas_plane planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{0,0,1},24,2},{{0,0,-1},-24,2},{{1,0,0},0,0},{{-1,0,0},0,0}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}},{{0,2}},{{2,3}},{{3,1}},
+        {{1,5}},{{5,4}},{{4,0}},{{6,7}},{{7,5}},{{4,6}}};
+    int32_t edge_index[]={2,3,4,-1,1,5,6,7};
+    int32_t face_index[]={1,2};
+    qa_aas_face faces[]={{0},
+        {.plane=0,.flags=5,.edge_count=4,.first_edge=0,.front_area=1},
+        {.plane=2,.flags=5,.edge_count=4,.first_edge=4,.front_area=2}};
+    qa_aas_area areas[]={{0},
+        {.number=1,.face_count=1,.first_face=0,.bounds={{-32,-16,24},{0,16,80}},.center={-16,0,48}},
+        {.number=2,.face_count=1,.first_face=1,.bounds={{0,-16,24},{32,16,80}},.center={16,0,48}}};
+    qa_aas_setting settings[]={{0},{.flags=1,.presence=6},{.flags=1,.presence=4}};
+    qa_aas_node nodes[]={{0},{.plane=4,.children={2,3}},
+        {.plane=2,.children={-2,0}},{.plane=0,.children={-1,0}}};
+    qa_aas_view source={.version=5,.bsp_checksum=94,
+        .count={[QA_AAS_VERTICES]=8,[QA_AAS_PLANES]=6,[QA_AAS_EDGES]=11,
+            [QA_AAS_EDGE_INDEX]=8,[QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=2,
+            [QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3,[QA_AAS_NODES]=4},
+        .vertices=vertices,.planes=planes,.edges=edges,.edge_index=edge_index,
+        .faces=faces,.face_index=face_index,.areas=areas,.settings=settings,.nodes=nodes};
+    qa_buffer original={0},after={0},packed={0},roundtrip={0};
+    CHECK(qa_aas_write(&source,&original,&error));
+    qa_nav_asset *generated=NULL,*decoded=NULL;
+    aas_reachability_generate(&source,false,&generated);
+    const qa_aas_view *view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *forward=aas_reachability_to(view,1,2),*reverse=aas_reachability_to(view,2,1);
+    CHECK(forward && reverse && forward->travel_type==2 && reverse->travel_type==2);
+    CHECK(forward->edge==-1 && reverse->edge==1 && forward->travel_time==301 && reverse->travel_time==1);
+    CHECK(forward->start.x==.1f && forward->end.x==5 && forward->end.z==24.125f &&
+        reverse->start.x==-.1f && reverse->end.x==-5);
+    CHECK(!view->count[QA_AAS_CLUSTERS] && !view->settings[1].cluster && !view->settings[2].cluster);
+    CHECK(qa_aas_write(&source,&after,&error));
+    CHECK(original.size==after.size && !memcmp(original.data,after.data,original.size));
+    CHECK(qa_aas_write(view,&packed,&error));
+    CHECK(qa_nav_asset_read((qa_bytes){packed.data,packed.size},&source.bsp_checksum,&decoded,&error));
+    CHECK(qa_aas_write(qa_nav_asset_aas(decoded),&roundtrip,&error));
+    CHECK(packed.size==roundtrip.size && !memcmp(packed.data,roundtrip.data,packed.size));
+    qa_nav_asset_release(decoded);qa_nav_asset_release(generated);generated=NULL;
+    qa_buffer_free(&original);qa_buffer_free(&after);qa_buffer_free(&packed);qa_buffer_free(&roundtrip);
+
+    settings[2].presence=6;
+    qa_aas_reach authored[]={{0},{.area=1,.face=0x12345678,.edge=INT32_MIN,
+        .start={-4,0,30},.end={-8,0,30},.travel_type=10,.travel_time=73,.padding=19}};
+    source.reachability=authored;source.count[QA_AAS_REACHABILITY]=2;
+    settings[1].first_reach=1;settings[1].reach_count=1;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *retained=aas_reachability_to(view,1,1);
+    CHECK(retained && !memcmp(retained,authored+1,sizeof(*retained)) && aas_reachability_to(view,1,2));
+    qa_nav_asset_release(generated);generated=NULL;
+    source.reachability=NULL;source.count[QA_AAS_REACHABILITY]=0;
+    settings[1].first_reach=settings[1].reach_count=0;
+
+    edge_index[4]=8;edge_index[5]=9;edge_index[7]=10;
+    const float rises[]={8,25,40};
+    for(size_t i=0;i<3;++i) {
+        float rise=rises[i];
+        for(size_t j=4;j<8;++j) vertices[j].z=24+rise;
+        planes[2].distance=24+rise;planes[3].distance=-24-rise;
+        areas[2].bounds.mins.z=24+rise;areas[2].bounds.maxs.z=80+rise;areas[2].center.z=48+rise;
+        aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+        forward=aas_reachability_to(view,1,2);
+        if(i<2) CHECK(forward && forward->travel_type==(i?5:2) && forward->travel_time==(i?100:0));
+        else CHECK(!forward);
+        reverse=aas_reachability_to(view,2,1);
+        CHECK(reverse && reverse->travel_type==(i?7:2));
+        qa_nav_asset_release(generated);generated=NULL;
+    }
+    settings[1].flags=4;faces[1].flags=0;face_index[0]=-1;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_to(view,1,2);
+    CHECK(forward && forward->travel_type==9 && forward->travel_time==400);
+    qa_nav_asset_release(generated);generated=NULL;
+
+    qa_vec3 wet_vertices[]={{0,-16,24},{0,16,24},{0,16,56},{0,-16,56}};
+    const qa_aas_edge wet_edges[]={{{0,0}},{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
+    const int32_t wet_edges_index[]={1,2,3,4},wet_faces_index[]={-1,1};
+    const qa_aas_face wet_faces[]={{0},{.plane=4,.edge_count=4,.front_area=2,.back_area=1}};
+    source.vertices=wet_vertices;source.edges=wet_edges;source.edge_index=wet_edges_index;
+    source.faces=wet_faces;source.face_index=wet_faces_index;
+    source.count[QA_AAS_VERTICES]=4;source.count[QA_AAS_EDGES]=5;source.count[QA_AAS_EDGE_INDEX]=4;
+    source.count[QA_AAS_FACES]=2;settings[2].flags=4;
+    planes[2].distance=24;planes[3].distance=-24;
+    areas[2].bounds.mins.z=24;areas[2].bounds.maxs.z=80;areas[2].center.z=48;
+    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    CHECK(!aas_reachability_to(view,1,2) && !aas_reachability_to(view,2,1));
+    qa_nav_asset_release(generated);generated=NULL;
+    aas_reachability_generate(&source,true,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
+    CHECK(forward && reverse && forward->travel_type==8 && reverse->travel_type==8 &&
+        forward->face==1 && reverse->face==1 && forward->travel_time==201 && reverse->travel_time==201);
+    CHECK(forward->end.x==2 && reverse->end.x==-2);
+    qa_nav_asset_release(generated);generated=NULL;
+
+    qa_aas_query *query=NULL;
+    CHECK(qa_aas_query_create(NULL,&query,&error));
+    CHECK(qa_aas_query_prepare(query,source.count[QA_AAS_NODES],source.count[QA_AAS_AREAS],&error));
+    settings[1].presence=6;settings[2].presence=4;
+    qa_aas_presence_trace trace;
+    CHECK(qa_aas_trace_presence(&source,query,qa_v3(-8,0,40),qa_v3(8,0,40),2,&trace,&error));
+    CHECK(!trace.start_solid && trace.last_area==1 && trace.area==2 && trace.plane==5 &&
+        trace.end.x==-.25f && trace.fraction==7.875f/16);
+    CHECK(qa_aas_trace_presence(&source,query,qa_v3(-8,0,40),qa_v3(8,0,40),4,&trace,&error));
+    CHECK(!trace.start_solid && trace.fraction==1 && trace.last_area==2 && trace.end.x==8);
+    CHECK(qa_aas_trace_presence(&source,query,qa_v3(8,0,40),qa_v3(-8,0,40),2,&trace,&error));
+    CHECK(trace.start_solid && trace.fraction==0 && trace.area==2);
+    qa_aas_crossing crossings[4];size_t count;
+    CHECK(qa_aas_trace_areas(&source,query,qa_v3(-8,0,40),qa_v3(8,0,40),crossings,4,&count,&error));
+    CHECK(count==2 && crossings[0].area==1 && crossings[1].area==2 && crossings[1].point.x==0);
+    qa_aas_query_destroy(query);
+    const qa_aas_view empty={.version=5,.bsp_checksum=95};
+    aas_reachability_generate(&empty,false,&generated);view=qa_nav_asset_aas(generated);
+    CHECK(view->version==5 && view->bsp_checksum==95 && !view->count[QA_AAS_REACHABILITY]);
+    qa_nav_asset_release(generated);
+}
+
 typedef struct navigation_step_fixture {
     qa_vec3 points[2];
     qa_actor_id actor;
@@ -7357,6 +7523,7 @@ int main(int argc, char **argv)
     test_bot_source_knowledge();
     test_aas_geometry_compaction();
     test_aas_clustering();
+    test_aas_reachability();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
     test_prediction_continuations();

@@ -98,6 +98,10 @@ static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a
 static inline qa_vec3 qa_vec_sub(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x-b.x, a.y-b.y, a.z-b.z); }
 static inline qa_vec3 qa_vec_scale(qa_vec3 a, float b) { return qa_v3(a.x*b, a.y*b, a.z*b); }
 static inline qa_vec3 qa_vec_ma(qa_vec3 a,float scale,qa_vec3 b) { return qa_vec_add(a,qa_vec_scale(b,scale)); }
+static inline qa_vec3 qa_vec_ma_wide(qa_vec3 a,double scale,qa_vec3 b) {
+    return qa_v3((float)((double)a.x+scale*b.x),(float)((double)a.y+scale*b.y),
+        (float)((double)a.z+scale*b.z));
+}
 static inline float qa_vec_dot(qa_vec3 a, qa_vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static inline double qa_vec_dot_wide(qa_vec3 a,qa_vec3 b) { return (double)a.x*b.x+(double)a.y*b.y+(double)a.z*b.z; }
 static inline qa_vec3 qa_vec_cross(qa_vec3 a, qa_vec3 b) {

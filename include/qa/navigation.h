@@ -186,6 +186,9 @@ typedef struct qa_nav_construction {
  * NULL uses the same arena primitive for standalone cold-load ownership. */
 bool qa_nav_graph_from_asset(const qa_nav_map *, qa_nav_asset *, const qa_nav_profile *,
                              const qa_navigation_services *, qa_arena *, qa_nav_graph **, qa_error *);
+typedef float (*qa_nav_variable_read)(void *, const char *name, float fallback);
+bool qa_navigation_aas_reachability_build(qa_navigation *, const qa_bsp_view *,
+    qa_nav_variable_read, void *context, qa_nav_asset **, qa_error *);
 bool qa_nav_graph_construct(const qa_nav_construction *, const qa_navigation_services *,
                             qa_arena *, qa_nav_graph **, qa_error *);
 void qa_nav_graph_retain(qa_nav_graph *);
