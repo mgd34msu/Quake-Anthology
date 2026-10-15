@@ -44,13 +44,14 @@ static bool write_value(qa_q3_game *game, uint32_t index, qa_string_id value,
     if (!value) value = game->runtime_names[Q3_NAME_EMPTY];
     if (prior == value) return true;
     bool changed = qa_strings_text(strings, prior).size || qa_strings_text(strings, value).size;
+    if (!changed) return true;
     if (game->configstring_revisions[index] == UINT64_MAX)
         return q3_fail(error, "Q3 configstring mutation identity exhausted");
     game->configstrings[index] = value;
     if (index > 288 && index < 544) ++game->sound_configstring_revision;
     const char *notice = qa_strings_cstr(strings, value);
     uint64_t revision = ++game->configstring_revisions[index];
-    if (changed) ++game->configstring_table_revision;
+    ++game->configstring_table_revision;
     bool okay = !game->options.hooks.configstring_changed || game->options.hooks.configstring_changed(
         game->options.hooks.context, index, notice, error);
     if (!okay) return false;
