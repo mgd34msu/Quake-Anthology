@@ -75,20 +75,29 @@ static bool fixed_text(char *out,size_t size,const char *text,qa_error *error)
     return true;
 }
 
-static bool capture_configs(qa_q2_save_level *level,const qa_q2_config_entry *configs,
-    size_t count,qa_error *error)
+static bool capture_configs(application_provider *source,qa_q2_save_level *level,
+    const qa_q2_config_entry *configs,size_t count,qa_error *error)
 {
-    if (count && !configs) return application_fail(error,QA_ERROR_ARGUMENT,
+    struct application_native_q2 *engine=source->kind==APPLICATION_PROVIDER_NATIVE?
+        source->state.native.q2_engine:NULL;
+    if (!engine && count && !configs) return application_fail(error,QA_ERROR_ARGUMENT,
         "Original Q2 capture requires the actual configstring owner");
     uint32_t rows=qa_q2_save_configstring_count(level), width=qa_q2_save_configstring_width(level);
+    if (engine && engine->hud_names.layout.max_configs!=rows)
+        return application_fail(error,QA_ERROR_FORMAT,"Original Q2 level differs from its real engine table");
     qa_buffer table={.size=(size_t)rows*width};
     table.data=calloc(1,table.size);
     if (!table.data) return application_fail(error,QA_ERROR_MEMORY,"Capturing original Q2 config rows");
     bool ok=true;
-    for (size_t i=0;ok && i<count;++i) {
-        uint32_t index=configs[i].index;
-        const char *text=configs[i].value;
-        if (index>=rows || !text || (i && configs[i-1].index>=index)) {
+    /* Native WriteGame/WriteLevel retain the module's original resource indices;
+     * the network publication assigns its own indices and cannot back them. */
+    size_t entries=engine?rows:count;
+    for (size_t i=0;ok && i<entries;++i) {
+        uint32_t index=engine?(uint32_t)i:configs[i].index;
+        qa_string_id name=engine?engine->hud_names.values[index]:QA_STRING_NONE;
+        const char *text=engine?(name?qa_strings_cstr(qa_session_strings(source->application->session),name):""):
+            configs[i].value;
+        if (index>=rows || !text || (!engine && i && configs[i-1].index>=index)) {
             ok=application_fail(error,QA_ERROR_FORMAT,"Original Q2 config rows leave their Source table"); break;
         }
         size_t size=strlen(text)+1, offset=(size_t)index*width;
@@ -246,9 +255,12 @@ bool qa_application_q2_save_capture(qa_application *app,qa_save_purpose purpose,
         save->level_count=1;
         const char *name=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
         ok=name && fixed_text(current->name,sizeof(current->name),name,error) &&
-            (purpose==QA_SAVE_LEVEL_ENTRY || capture_portals(app,current,error)) &&
-            capture_configs(current,configs,count,error) &&
-            capture_files(source,purpose,current,&save->game,&level,error);
+            (purpose==QA_SAVE_LEVEL_ENTRY || capture_portals(app,current,error));
+        if (ok && source->kind==APPLICATION_PROVIDER_Q2)
+            ok=capture_configs(source,current,configs,count,error);
+        if (ok) ok=capture_files(source,purpose,current,&save->game,&level,error);
+        if (ok && source->kind==APPLICATION_PROVIDER_NATIVE)
+            ok=capture_configs(source,current,configs,count,error);
         if (ok && ((purpose!=QA_SAVE_TRANSITION && (!save->game.data || !save->game.size)) ||
             (purpose!=QA_SAVE_LEVEL_ENTRY && (!level.data || !level.size))))
             ok=application_fail(error,QA_ERROR_FORMAT,"Original Q2 GAME did not produce its requested save file");
