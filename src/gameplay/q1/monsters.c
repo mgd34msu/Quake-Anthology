@@ -48,6 +48,37 @@ static bool eligible(qa_q1_game *g, qa_actor_id actor) {
     return q1_alive(g, actor) && q1_health(g, actor) > 0 && q1_target(g, actor, &target) &&
            !target.notarget;
 }
+static bool retarget_enemy(qa_q1_game *g, q1_actor *entity, bool interrupt_frame,
+                           bool *redirected, qa_error *error) {
+    q1_monster *m = &entity->state.monster;
+    *redirected = false;
+    if (interrupt_frame && (!(q1_health(g, entity->id) > 0) || !q1_ref_present(m->enemy) ||
+                            eligible(g, q1_ref_actor(g, m->enemy))))
+        return true;
+    if (q1_ref_present(m->charmer) &&
+        (!q1_ref_present(m->enemy) || q1_ref_equal(m->enemy, m->charmer) ||
+         q1_health(g, q1_ref_actor(g, m->enemy)) <= 0)) {
+        m->enemy = (q1_ref){0};
+        *redirected = true;
+        return q1_charmed_hunt(g, entity, false, error);
+    }
+    if (!interrupt_frame && eligible(g, q1_ref_actor(g, m->enemy)))
+        return true;
+    m->attack_state = 0;
+    uint16_t animation = m->species->run;
+    if (eligible(g, q1_ref_actor(g, m->old_enemy))) {
+        m->enemy = m->old_enemy;
+        m->old_enemy = (q1_ref){0};
+        if (!interrupt_frame)
+            return true;
+    } else {
+        m->enemy = (q1_ref){0};
+        m->old_enemy = (q1_ref){0};
+        animation = q1_monster_route(g, entity).registry ? m->species->walk : m->species->stand;
+    }
+    *redirected = true;
+    return q1_monster_play(g, entity, animation, error);
+}
 bool q1_monster_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id source = entity->id;
     qa_body_state self, target;
@@ -604,25 +635,11 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         }
         if (m->addon.enabled && g->options.program == QA_Q1_MG3)
             m->hostile_until = g->time + 1;
-        if (q1_ref_present(m->charmer) && (!q1_ref_present(m->enemy) || q1_ref_equal(m->enemy, m->charmer) ||
-                                    q1_health(g, q1_ref_actor(g, m->enemy)) <= 0)) {
-            m->enemy = (q1_ref){0};
-            return q1_charmed_hunt(g, entity, false, error);
-        }
-        if (!eligible(g, q1_ref_actor(g, m->enemy))) {
-            m->attack_state = 0;
-            if (eligible(g, q1_ref_actor(g, m->old_enemy))) {
-                m->enemy = m->old_enemy;
-                m->old_enemy = (q1_ref){0};
-            } else {
-                m->enemy = (q1_ref){0};
-                m->old_enemy = (q1_ref){0};
-                return q1_monster_play(g, entity,
-                                       q1_monster_route(g, entity).registry ? m->species->walk
-                                                                            : m->species->stand,
-                                       error);
-            }
-        }
+        bool redirected;
+        if (!retarget_enemy(g, entity, false, &redirected, error))
+            return false;
+        if (redirected)
+            return true;
         bool seen;
         if (!q1_monster_visible(g, entity, q1_ref_actor(g, m->enemy), &seen, error))
             return false;
@@ -816,6 +833,13 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (m->addon.boss == Q1_BOSS_SHUB_ZOMBIE)
         m->next_frame = q1_shub_zombie_frame(m->next_frame);
     const q1_frame *frame = &q1_frames[m->next_frame];
+    if (frame->frame != UINT16_MAX) {
+        bool redirected;
+        if (!retarget_enemy(g, entity, true, &redirected, error))
+            return false;
+        if (redirected)
+            return true;
+    }
     bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override((uint16_t)(frame - q1_frames));
     if (rocket_frame && ((uint16_t)(frame - q1_frames) == Q1_FRAME_ogre_stand5) &&
         !q1_rocket_ogre_frame(g, entity, (uint16_t)(frame - q1_frames), error))
