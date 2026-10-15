@@ -221,7 +221,7 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
 
 bool bot_ai_cooperative(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
-    if(!bot_ai_rerelease_behavior(b) || !b->services.modes || !s->view.mode.generation) return true;
+    if(!b->services.modes || !s->view.mode.generation) return true;
     qa_mode_view mode;
     SOURCE_CALL(qa_modes_read(b->services.modes,s->view.mode,&mode,e));
     *out=mode.rules.kind==QA_MODE_COOPERATIVE || mode.rules.kind==QA_MODE_HORDE;
@@ -267,6 +267,7 @@ void bot_ai_cooperative_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goa
 bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
     bool cooperative;
     *found=false;
+    if(!bot_ai_rerelease_behavior(b)) return true;
     SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
     if(!cooperative) return true;
     qa_vec3 human={0};bool has_human=false;float human_distance=INFINITY;

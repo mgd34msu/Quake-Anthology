@@ -127,7 +127,9 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
     if(!bot_ai_storage_bool(b,s,QA_BOT_SOURCE_MAP_RESTART,&s->source_setup.map_restart,false,e) ||
        !qa_bot_source_record_text_read(&b->services.memory,s->source_record,
             QA_BOT_SOURCE_TEAM,s->source_setup.team,sizeof(s->source_setup.team),e)) return false;
-    if(!s->source_setup.map_restart) {
+    bool cooperative;
+    if(!bot_ai_cooperative(b,s,&cooperative,e)) return false;
+    if(!cooperative && !s->source_setup.map_restart) {
         int32_t game_type;
         if(!b->services.source_game_type)
             return bot_ai_fail(e,"Bot setup requires its actual source GAME game type");
