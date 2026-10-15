@@ -34,6 +34,8 @@
 #include "qa/common_parse.h"
 #include "qa/q2_sound.h"
 #include "qa/hud_q2.h"
+#include "qa/hud.h"
+#include "../src/ui/internal.h"
 #include "qa/vfs.h"
 #include "qa/audio.h"
 #include "qa/audio_save.h"
@@ -90,6 +92,50 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+static void test_typewriter_centers(void)
+{
+    qa_error error = {0};
+    qa_application application = {0};
+    qa_ui ui = {0};
+    qa_hud *hud = NULL;
+    CHECK(qa_hud_create(&(qa_hud_options){.ui = &ui, .application = &application}, &hud, &error));
+    qa_hud_center_policy typewriter = {.character_ns = 10};
+    CHECK(qa_hud_center_print(hud, "A", 100, 20, typewriter, &error));
+    CHECK(qa_hud_center_print(hud, "\xc3\xa9\xe7\x8c\xab", 101, 20, typewriter, &error));
+    CHECK(qa_hud_center_print(hud, "third", 102, 20, typewriter, &error));
+    const qa_hud_center_state *center = qa_hud_center_read(hud, 129);
+    CHECK(center && !strcmp(center->text, "A") && center->starts_ns == 100 && center->duration_ns == 30);
+    center = qa_hud_center_read(hud, 130);
+    CHECK(center && center->starts_ns == 130 && center->duration_ns == 40);
+    CHECK(qa_hud_center_length(center, 139) == 0);
+    CHECK(qa_hud_center_length(center, 140) == 2);
+    CHECK(qa_hud_center_length(center, 150) == 5);
+    center = qa_hud_center_read(hud, 170);
+    CHECK(center && !strcmp(center->text, "third") && center->starts_ns == 170);
+    CHECK(qa_hud_center_print(hud, "later", 1000, 20, typewriter, &error));
+    center = qa_hud_center_read(hud, 999);
+    CHECK(center && !strcmp(center->text, "later") && center->starts_ns == 1000);
+    CHECK(qa_hud_center_alpha(center, 999, center->duration_ns) == 0);
+    CHECK(qa_hud_center_print(hud, "queued", 1001, 20, typewriter, &error));
+    CHECK(qa_hud_center_print(hud, "replacement", 1002, 20,
+        (qa_hud_center_policy){.instant = true}, &error));
+    center = qa_hud_center_read(hud, 2000);
+    CHECK(center && !strcmp(center->text, "replacement"));
+    CHECK(qa_hud_center_print(hud, "discarded", 2001, 20, typewriter, &error));
+    CHECK(qa_hud_clear_center(hud, &error));
+    CHECK(!qa_hud_center_read(hud, 3000));
+    CHECK(qa_hud_center_print(hud, "new map", 1, 20, typewriter, &error));
+    center = qa_hud_center_read(hud, 1);
+    CHECK(center && !strcmp(center->text, "new map") && center->starts_ns == 1);
+    CHECK(qa_hud_clear_center(hud, &error));
+    CHECK(qa_hud_center_print(hud, "", 100, 20, typewriter, &error));
+    CHECK(qa_hud_center_print(hud, "after blank", 101, 20, typewriter, &error));
+    CHECK(!qa_hud_center_read(hud, 119));
+    center = qa_hud_center_read(hud, 120);
+    CHECK(center && center->starts_ns == 120 && !strcmp(center->text, "after blank"));
+    CHECK(qa_hud_destroy(hud, &error));
+}
 
 static void test_unicast_claim_storage(void)
 {
@@ -5532,6 +5578,7 @@ int main(int argc, char **argv)
     test_source_text();
     test_shared_random();
     test_q2_hud_configuration();
+    test_typewriter_centers();
     test_compiled_sound_names();
     test_unicast_claim_storage();
     test_shared_team_values();

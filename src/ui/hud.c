@@ -13,6 +13,11 @@ typedef struct hud_message {
     bool chat;
 } hud_message;
 typedef struct hud_status_layout hud_status_layout;
+typedef struct hud_center_message {
+    struct hud_center_message *next;
+    qa_hud_center_state state;
+    size_t slot;
+} hud_center_message;
 struct qa_hud_content {
     qa_hud_options options;
     qa_hud_frame frame;
@@ -28,9 +33,11 @@ struct qa_hud_content {
 struct qa_hud {
     qa_hud_options options;
     qa_arena notice_storage;
-    qa_pool notice_records, notice_pages;
+    qa_pool notice_records, notice_pages, center_records;
     hud_message *notices, *notice_tail;
     qa_hud_center_state center;
+    hud_center_message *center_first, *center_tail;
+    bool center_present;
     qa_cvar_handle center_time;
     qa_hud_pickup_state pickup;
     char pickup_text[1024];
@@ -63,7 +70,9 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
     if (!qa_pool_prepare(&hud->notice_records, &hud->notice_storage, 256,
             sizeof(hud_message), _Alignof(hud_message), error) ||
         !qa_pool_prepare(&hud->notice_pages, &hud->notice_storage, 256,
-            4096, _Alignof(max_align_t), error)) {
+            4096, _Alignof(max_align_t), error) ||
+        !qa_pool_prepare(&hud->center_records, &hud->notice_storage, 256,
+            sizeof(hud_center_message), _Alignof(hud_center_message), error)) {
         qa_arena_destroy(&hud->notice_storage); free(hud); return false;
     }
     qa_arena_seal(&hud->notice_storage);
@@ -84,7 +93,14 @@ bool qa_hud_clear_notify(qa_hud *hud, qa_error *error) {
 bool qa_hud_clear_center(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
     if (hud->drawing) return ui_fail(error, "HUD callback is active");
+    while (hud->center_first) {
+        hud_center_message *message = hud->center_first;
+        hud->center_first = message->next;
+        qa_pool_release(&hud->center_records, message->slot);
+    }
+    hud->center_tail = NULL;
     hud->center = (qa_hud_center_state){0};
+    hud->center_present = false;
     return true;
 }
 bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
@@ -120,7 +136,7 @@ bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_
                           qa_hud_center_policy policy, qa_error *error) {
     if (!hud || hud->drawing) return ui_fail(error, "HUD center callback is active");
     if (!text) return ui_fail(error, "missing HUD text");
-    qa_hud_center_state *center = &hud->center;
+    qa_hud_center_state next = {0}, *center = &next;
     size_t length = 0;
     while (length + 1 < sizeof(center->text) && text[length]) ++length;
     memmove(center->text, text, length); center->text[length] = 0;
@@ -134,10 +150,43 @@ bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_
     if (policy.source_layout && !policy.columns) policy.columns = 50;
     center->starts_ns = starts; center->duration_ns = duration;
     center->policy = policy; center->lines = lines;
+    if (policy.instant) {
+        qa_hud_clear_center(hud, NULL);
+        hud->center = next;
+        hud->center_present = true;
+    } else if (!hud->center_present) {
+        hud->center = next;
+        hud->center_present = true;
+    } else {
+        const qa_hud_center_state *prior = hud->center_tail ?
+            &hud->center_tail->state : &hud->center;
+        uint64_t available = after(prior->starts_ns, prior->duration_ns);
+        if (next.starts_ns < available) next.starts_ns = available;
+        size_t slot;
+        hud_center_message *message = qa_pool_take(&hud->center_records, &slot);
+        if (!message) {
+            qa_error_set(error, QA_ERROR_CAPACITY, 0, "HUD center message storage is full");
+            return false;
+        }
+        *message = (hud_center_message){.state = next, .slot = slot};
+        if (hud->center_tail) hud->center_tail->next = message;
+        else hud->center_first = message;
+        hud->center_tail = message;
+    }
     return true;
 }
-const qa_hud_center_state *qa_hud_center_read(const qa_hud *hud)
-{ return hud && *hud->center.text ? &hud->center : NULL; }
+const qa_hud_center_state *qa_hud_center_read(qa_hud *hud, uint64_t now)
+{
+    if (!hud) return NULL;
+    while (hud->center_first && now >= after(hud->center.starts_ns, hud->center.duration_ns)) {
+        hud_center_message *message = hud->center_first;
+        hud->center = message->state;
+        hud->center_first = message->next;
+        if (!hud->center_first) hud->center_tail = NULL;
+        qa_pool_release(&hud->center_records, message->slot);
+    }
+    return *hud->center.text ? &hud->center : NULL;
+}
 size_t qa_hud_center_length(const qa_hud_center_state *center, uint64_t now) {
     if (!center || now < center->starts_ns) return 0;
     if (center->policy.instant || !center->policy.character_ns) return strlen(center->text);
@@ -1017,7 +1066,7 @@ static bool q1_status_draw(qa_hud *hud, const qa_hud_frame *frame, const qa_hud_
 }
 static bool center_draw(qa_hud *hud, const qa_hud_frame *frame,
     qa_scene_frame *scene, qa_scene_rect target, qa_error *error) {
-    const qa_hud_center_state *center = qa_hud_center_read(hud);
+    const qa_hud_center_state *center = qa_hud_center_read(hud, frame->time_ns);
     if (frame->center_owned || !center) return true;
     uint64_t duration = center->duration_ns;
     if (center->policy.source_layout) {

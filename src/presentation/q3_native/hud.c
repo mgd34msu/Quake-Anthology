@@ -94,9 +94,9 @@ void q3n_hud_disconnect_command(q3n_hud *o,int32_t time)
 { if(o && !o->busy) { o->oldest_command_time=time; o->has_oldest_command=true; } }
 static bool center_string(q3n_hud_draw *d)
 {
-    const qa_hud_center_state *center=qa_hud_center_read(d->owner->options.messages);
-    if(!center)return true;
     uint64_t time=(uint64_t)(uint32_t)d->frame->time*UINT64_C(1000000);
+    const qa_hud_center_state *center=qa_hud_center_read(d->owner->options.messages,time);
+    if(!center)return true;
     int32_t milliseconds=qa_source_to_i32((1000*d->settings->center_time));
     uint64_t duration=center->policy.source_layout?
         (uint64_t)(milliseconds>0?milliseconds:0)*UINT64_C(1000000):center->duration_ns;

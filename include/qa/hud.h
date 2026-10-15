@@ -140,13 +140,13 @@ typedef struct qa_hud_options {
 bool qa_hud_create(const qa_hud_options *, qa_hud **, qa_error *);
 bool qa_hud_idle(const qa_hud *);
 bool qa_hud_destroy(qa_hud *, qa_error *);
-/* One current center record per seat, replaced as SCR_CenterPrint/CG_CenterPrint.
- * The fixed source-sized text buffer retains no borrowed module memory. */
+/* Instant prints replace the seat's center messages; typewriter prints queue
+ * after the previous message. Text is retained in load-sized common pools. */
 bool qa_hud_notify(qa_hud *, const char *, bool chat, uint64_t starts_ns,
                     uint64_t duration_ns, qa_error *);
 bool qa_hud_center_print(qa_hud *, const char *, uint64_t starts_ns, uint64_t duration_ns,
                           qa_hud_center_policy, qa_error *);
-const qa_hud_center_state *qa_hud_center_read(const qa_hud *);
+const qa_hud_center_state *qa_hud_center_read(qa_hud *, uint64_t time_ns);
 size_t qa_hud_center_length(const qa_hud_center_state *, uint64_t time_ns);
 float qa_hud_center_alpha(const qa_hud_center_state *, uint64_t time_ns, uint64_t duration_ns);
 bool qa_hud_clear_notify(qa_hud *, qa_error *);
