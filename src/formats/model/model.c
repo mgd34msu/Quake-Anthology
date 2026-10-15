@@ -386,11 +386,31 @@ bool qa_model_bind_attachment_names(const qa_model *model, qa_strings *strings,
     }
     return true;
 }
-bool qa_model_lerp_tag(const qa_model *m, const qa_id_index *names, qa_string_id name,
+bool qa_model_lerp_tag(const qa_model *m, const qa_model_animation *animation,
+                       const qa_id_index *names, qa_string_id name,
                        uint32_t from, uint32_t to,
                        float fraction, qa_model_tag *out) {
-    if (!m || !names || !name || !out || !m->frame_count || !m->tag_count || !isfinite(fraction))
+    if (!m || !names || !name || !out || !isfinite(fraction))
         return false;
+    if (m->format==QA_MODEL_MD5) {
+        qa_id_index_cursor key=qa_id_index_begin(names,name,0);
+        size_t joint;
+        if (!qa_id_index_next(names,&key,&joint) || joint>=m->bone_count || !m->bind_pose) return false;
+        qa_model_pose pose=m->bind_pose[joint];
+        if (animation) {
+            if (!animation->frame_count || animation->joint_count!=m->bone_count || !animation->poses) return false;
+            const qa_model_pose *current=animation->poses+
+                (size_t)(to%animation->frame_count)*animation->joint_count+joint;
+            const qa_model_pose *previous=animation->poses+
+                (size_t)(from%animation->frame_count)*animation->joint_count+joint;
+            model_pose_lerp(current,previous,1-fraction,from==to,&pose);
+        }
+        qa_model_tag result={0};
+        memcpy(result.name,m->bones[joint].name,sizeof(result.name));
+        qa_model_joint_tag(&pose,&result);
+        *out=result; return true;
+    }
+    if (!m->frame_count || !m->tag_count) return false;
     if (from >= m->frame_count)
         from = m->frame_count - 1;
     if (to >= m->frame_count)

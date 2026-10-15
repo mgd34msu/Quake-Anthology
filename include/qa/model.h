@@ -153,9 +153,6 @@ bool qa_model_corner_uv(const qa_model *model, uint32_t mesh, uint32_t triangle,
 /* Load-time binding into an empty caller-owned index and retained name table.
  * MD3 keys include the frame; MD5 keys identify the first full joint name. */
 bool qa_model_bind_attachment_names(const qa_model *, qa_strings *, qa_id_index *, qa_error *);
-bool qa_model_lerp_tag(const qa_model *model, const qa_id_index *names, qa_string_id name,
-                       uint32_t from, uint32_t to,
-                       float fraction, qa_model_tag *out);
 bool qa_model_skin_md5(const qa_model *model, uint32_t mesh, const qa_model_pose *pose,
                        size_t joint_count, qa_model_vertex *vertices, size_t count,
                        qa_error *error);
@@ -183,6 +180,9 @@ typedef struct qa_model_scale {
     uint32_t frame, joint;
     float value;
 } qa_model_scale;
+bool qa_model_lerp_tag(const qa_model *model, const qa_model_animation *animation,
+                       const qa_id_index *names, qa_string_id name, uint32_t from, uint32_t to,
+                       float fraction, qa_model_tag *out);
 bool qa_model_animation_load(qa_bytes md5anim, qa_model_animation *out, qa_error *error);
 void qa_model_animation_free(qa_model_animation *animation);
 bool qa_model_animation_scales(qa_model_animation *animation, const qa_model_scale *scales,

@@ -470,8 +470,9 @@ bool qa_q3_presentation_model_has_tags(const qa_q3_presentation_assets *a, int32
 {
     const q3p_model *model;
     if (!out || !q3p_model_get(a, handle, &model, error)) return false;
-    const qa_model *source = model && model->has_lods ? q3p_model_source(model, 0) : NULL;
-    *out = source && source->format == QA_MODEL_MD3 && source->tag_count && source->frame_count;
+    const qa_model *source = q3p_model_source(model, 0);
+    *out = source && ((source->format == QA_MODEL_MD3 && source->tag_count && source->frame_count) ||
+        (source->format == QA_MODEL_MD5 && source->bone_count));
     return true;
 }
 
@@ -488,7 +489,7 @@ bool qa_q3_presentation_tag(const qa_q3_presentation_assets *a, int32_t handle, 
 {
     const q3p_model *model;
     if (!out || !found || !q3p_model_get(a, handle, &model, error)) return false;
-    const qa_model *source = model && model->has_lods ? q3p_model_source(model, 0) : NULL;
+    const qa_model *source = q3p_model_source(model, 0);
     bool match = source && name && first >= 0 && second >= 0 &&
         qa_scene_model_lerp_tag(model->scene[0], name,
             (uint32_t)first, (uint32_t)second, fraction, out);

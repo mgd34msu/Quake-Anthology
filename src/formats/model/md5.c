@@ -639,6 +639,34 @@ invalid:
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD5 scale table");
     return false;
 }
+void model_pose_lerp(const qa_model_pose *current,const qa_model_pose *old,
+    float back,bool same_frame,qa_model_pose *out) {
+    *out = *current;
+    if (back == 0 || same_frame) return;
+    for (unsigned k = 0; k < 3; ++k)
+        out->position[k] = old->position[k] * back + current->position[k] * (1 - back);
+    if (back <= 0) return;
+    if (back >= 1) {
+        memcpy(out->orientation, old->orientation, sizeof(out->orientation));
+        return;
+    }
+    float cosine = 0;
+    for (unsigned k = 0; k < 4; ++k)
+        cosine += old->orientation[k] * current->orientation[k];
+    float sign = cosine < 0 ? -1 : 1;
+    cosine *= sign;
+    float weight_old = back, weight_new = 1 - back;
+    if (cosine <= 0.9995f) {
+        float sine = sqrtf(fmaxf(0, 1 - cosine * cosine)), omega = atan2f(sine, cosine);
+        if (sine > 0) {
+            weight_old = sinf(back * omega) / sine;
+            weight_new = sinf((1 - back) * omega) / sine;
+        }
+    }
+    weight_new *= sign;
+    for (unsigned k = 0; k < 4; ++k)
+        out->orientation[k] = weight_old * old->orientation[k] + weight_new * current->orientation[k];
+}
 bool qa_model_animation_sample(const qa_model_animation *a, uint32_t frame, uint32_t previous,
                                float back, qa_model_pose *out, size_t count, qa_error *error) {
     if (!a || !a->frame_count || !out || count < a->joint_count || !isfinite(back)) {
@@ -647,36 +675,8 @@ bool qa_model_animation_sample(const qa_model_animation *a, uint32_t frame, uint
     }
     const qa_model_pose *current = a->poses + (size_t)(frame % a->frame_count) * a->joint_count;
     const qa_model_pose *old = a->poses + (size_t)(previous % a->frame_count) * a->joint_count;
-    for (uint32_t i = 0; i < a->joint_count; ++i) {
-        out[i] = current[i];
-        if (back == 0 || frame == previous)
-            continue;
-        for (unsigned k = 0; k < 3; ++k)
-            out[i].position[k] = old[i].position[k] * back + current[i].position[k] * (1 - back);
-        if (back <= 0)
-            continue;
-        if (back >= 1) {
-            memcpy(out[i].orientation, old[i].orientation, sizeof(out[i].orientation));
-            continue;
-        }
-        float cosine = 0;
-        for (unsigned k = 0; k < 4; ++k)
-            cosine += old[i].orientation[k] * current[i].orientation[k];
-        float sign = cosine < 0 ? -1 : 1;
-        cosine *= sign;
-        float weight_old = back, weight_new = 1 - back;
-        if (cosine <= 0.9995f) {
-            float sine = sqrtf(fmaxf(0, 1 - cosine * cosine)), omega = atan2f(sine, cosine);
-            if (sine > 0) {
-                weight_old = sinf(back * omega) / sine;
-                weight_new = sinf((1 - back) * omega) / sine;
-            }
-        }
-        weight_new *= sign;
-        for (unsigned k = 0; k < 4; ++k)
-            out[i].orientation[k] =
-                weight_old * old[i].orientation[k] + weight_new * current[i].orientation[k];
-    }
+    for (uint32_t i = 0; i < a->joint_count; ++i)
+        model_pose_lerp(&current[i],&old[i],back,frame==previous,&out[i]);
     return true;
 }
 void qa_model_joint_tag(const qa_model_pose *pose, qa_model_tag *tag) {

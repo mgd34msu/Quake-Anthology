@@ -375,7 +375,7 @@ static void attachment_names(void) {
     CHECK(qa_model_bind_attachment_names(&model, strings, &names, &error));
     qa_string_id weapon = qa_strings_find(strings, (qa_bytes){(const uint8_t *)"tag_weapon",10});
     qa_model_tag tag;
-    CHECK(qa_model_lerp_tag(&model, &names, weapon, 0, 999, .5f, &tag));
+    CHECK(qa_model_lerp_tag(&model, NULL, &names, weapon, 0, 999, .5f, &tag));
     CHECK(tag.origin[0] == 1 && tag.axes[1][1] == 1);
     CHECK(!qa_strings_find(strings, (qa_bytes){(const uint8_t *)"TAG_WEAPON",10}));
     qa_id_index_destroy(&names);
@@ -395,6 +395,49 @@ static void attachment_names(void) {
     CHECK(names.count == 2);
     qa_id_index_destroy(&names);
     qa_strings_destroy(strings);
+}
+
+static void skeletal_tags(void) {
+    static const char animation_text[]=
+        "MD5Version 10\ncommandline \"\"\nnumFrames 2\nnumJoints 2\nframeRate 24\nnumAnimatedComponents 2\n"
+        "hierarchy { \"origin\" -1 33 0 \"Weapon\" 0 0 2 }\n"
+        "bounds { ( -10 -10 -10 ) ( 10 10 10 ) ( -10 -10 -10 ) ( 10 10 10 ) }\n"
+        "baseframe { ( 1 0 0 ) ( 0 0 0 ) ( 2 0 0 ) ( 0 0 0 ) }\n"
+        "frame 0 { 1 0 }\nframe 1 { 5 -0.7071067811865475 }\n";
+    qa_error error={0};
+    qa_model_animation animation={0};
+    CHECK(qa_model_animation_load((qa_bytes){(const uint8_t *)animation_text,sizeof(animation_text)-1},
+        &animation,&error));
+    qa_model_bone bones[2]={{.name="origin",.parent=-1},{.name="Weapon",.parent=0}};
+    qa_model_pose bind_pose[2]={
+        {.position={1,0,0},.orientation={0,0,0,-1},.scale=1},
+        {.position={3,0,0},.orientation={0,0,0,-1},.scale=1}};
+    qa_model model={.format=QA_MODEL_MD5,.bone_count=2,.bones=bones,.bind_pose=bind_pose};
+    qa_strings *strings=NULL; qa_id_index names={0};
+    CHECK(qa_strings_create(&strings,&error));
+    CHECK(qa_model_bind_attachment_names(&model,strings,&names,&error));
+    qa_string_id weapon=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"Weapon",6});
+    qa_model_tag tag;
+    CHECK(qa_model_lerp_tag(&model,NULL,&names,weapon,0,999,.5f,&tag));
+    CHECK(tag.origin[0]==3 && tag.origin[1]==0 && tag.axes[0][0]==1);
+    CHECK(qa_model_lerp_tag(&model,&animation,&names,weapon,0,1,.5f,&tag));
+    CHECK(fabsf(tag.origin[0]-4)<.00001f && fabsf(tag.origin[1]-1)<.00001f);
+    CHECK(fabsf(tag.axes[0][0]-sqrtf(.5f))<.00001f && fabsf(tag.axes[0][1]-sqrtf(.5f))<.00001f);
+    CHECK(fabsf(tag.axes[1][0]+sqrtf(.5f))<.00001f && fabsf(tag.axes[1][1]-sqrtf(.5f))<.00001f);
+    CHECK(!qa_model_lerp_tag(&model,&animation,&names,QA_STRING_NONE,0,1,.5f,&tag));
+    CHECK(!qa_model_lerp_tag(&model,&animation,&names,weapon,0,1,NAN,&tag));
+    const float fractions[]={0,.25f,.5f,1};
+    for (size_t i=0;i<sizeof(fractions)/sizeof(*fractions);++i) {
+        qa_model_pose poses[2]; qa_model_tag expected={0};
+        CHECK(qa_model_animation_sample(&animation,3,2,1-fractions[i],poses,2,&error));
+        qa_model_joint_tag(&poses[1],&expected);
+        CHECK(qa_model_lerp_tag(&model,&animation,&names,weapon,2,3,fractions[i],&tag));
+        CHECK(!memcmp(tag.origin,expected.origin,sizeof(tag.origin)));
+        CHECK(!memcmp(tag.axes,expected.axes,sizeof(tag.axes)));
+    }
+    qa_model_animation invalid=animation; invalid.joint_count=1;
+    CHECK(!qa_model_lerp_tag(&model,&invalid,&names,weapon,0,1,.5f,&tag));
+    qa_id_index_destroy(&names); qa_strings_destroy(strings); qa_model_animation_free(&animation);
 }
 
 static void player_animations(void) {
@@ -432,6 +475,7 @@ static void player_animations(void) {
 int main(void) {
     player_animations();
     attachment_names();
+    skeletal_tags();
     skin_bindings();
     const float local[3] = {1, 2, 3};
     for (qa_angle_math_rule rule = QA_ANGLE_FLOAT_MATH; rule <= QA_ANGLE_FLOAT_NATIVE_MATH; ++rule) {
@@ -492,9 +536,9 @@ int main(void) {
     CHECK(qa_model_bind_attachment_names(&m, tag_strings, &tag_names, &e));
     qa_string_id weapon_tag = qa_strings_find(tag_strings,
         (qa_bytes){(const uint8_t *)"tag_weapon", 10});
-    CHECK(qa_model_lerp_tag(&m, &tag_names, weapon_tag, 0, 999, 0.5f, &tag));
+    CHECK(qa_model_lerp_tag(&m, NULL, &tag_names, weapon_tag, 0, 999, 0.5f, &tag));
     CHECK(tag.origin[0] == 1 && tag.axes[1][1] == 1);
-    CHECK(!qa_model_lerp_tag(&m, &tag_names, QA_STRING_NONE, 0, 1, 0.5f, &tag));
+    CHECK(!qa_model_lerp_tag(&m, NULL, &tag_names, QA_STRING_NONE, 0, 1, 0.5f, &tag));
     qa_id_index_destroy(&tag_names);
     qa_strings_destroy(tag_strings);
     CHECK(qa_model_sample_mesh(&m, 0, 1, 0, 0.5f, vertices, 3, &e));

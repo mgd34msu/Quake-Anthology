@@ -1548,7 +1548,8 @@ bool qa_scene_model_grip_defined(const qa_scene_model *model)
 
 bool qa_scene_model_lerp_tag(const qa_scene_model *model, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *out) {
-    return model && qa_model_lerp_tag(model->source, &model->attachment_names, name,
+    return model && qa_model_lerp_tag(model->source,
+        model->replacement_source?model->replacement_source->animation:NULL,&model->attachment_names,name,
         from, to, fraction, out);
 }
 
