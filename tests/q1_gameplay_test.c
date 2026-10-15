@@ -955,6 +955,39 @@ static void draught_ring(bool stupor, float authored_height, bool spawned)
     fixture_destroy(&fixture);
 }
 
+static void mg3_pickup_start_filters(void)
+{
+    qa_error error = {0};
+    for (unsigned coop = 0; coop < 2; ++coop) {
+        q1_fixture fixture;
+        fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG3,
+            coop != 0, 0, QA_RULESET_NETQUAKE);
+        fixture_bind_maps(&fixture);
+        const char *classes[] = {"item_head_hellknight", "item_health"};
+        for (unsigned kind = 0; kind < 2; ++kind) {
+            qa_actor_id item;
+            GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+                .classname = classes[kind], .origin = {0, 0, 64},
+                .spawnflags = coop ? 131072u : 32768u}, &item, &error));
+            GAME_CHECK(!qa_actors_get(qa_session_actors(fixture.session), item));
+            for (unsigned runes = 0; runes <= 4; ++runes) {
+                fixture.server_flags = (1u << runes) - 1u;
+                GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+                    .classname = classes[kind], .origin = {0, 0, 64},
+                    .spawnflags = 262144u << runes}, &item, &error));
+                GAME_CHECK(!qa_actors_get(qa_session_actors(fixture.session), item));
+            }
+        }
+        fixture.server_flags = QA_Q1_BLOODY_NIGHTMARE_ACTIVE;
+        qa_actor_id converted;
+        GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+            .classname = "item_head_hellknight", .origin = {0, 0, 64},
+            .spawnflags = coop ? 131072u : 32768u}, &converted, &error));
+        GAME_CHECK(qa_actors_get(qa_session_actors(fixture.session), converted));
+        fixture_destroy(&fixture);
+    }
+}
+
 static void draught_target(void)
 {
     qa_error error = {0};
@@ -1383,6 +1416,7 @@ void test_q1_gameplay(void)
     draught_ring(true, 0, true);
     draught_ring(false, 128, false);
     draught_target();
+    mg3_pickup_start_filters();
     thin_brush_bounds();
     dormant_trigger_activation();
     nonsolid_inline_appearance();

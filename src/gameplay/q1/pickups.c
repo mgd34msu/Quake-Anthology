@@ -781,6 +781,14 @@ static bool mg3_head_admit(qa_q1_game *g, q1_actor *entity, qa_body_state *body,
         entity->source_netname = g->runtime_names[Q1_NAME_MG3_NEWGAMEPLUS_ITEM];
     return true;
 }
+static bool pickup_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (g->options.program == QA_Q1_MG3 &&
+        (q1_map_coop_inhibited(g, entity, true) ||
+         (entity->spawnflags & (UINT32_C(262144) <<
+             qa_q1_mg3_rune_count(qa_q1_game_campaign_flags(g))))))
+        return q1_remove(g, entity, error);
+    return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
+}
 bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error *error) {
     if (recognized) *recognized = true;
     entity->kind = Q1_PICKUP;
@@ -828,18 +836,14 @@ bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, bool *recognized, qa_error
         entity = q1_entity(g, actor);
         if (!entity)
             return true;
-        if (q1_map_coop_inhibited(g, entity, true) ||
-            (entity->spawnflags & (UINT32_C(262144) <<
-                qa_q1_mg3_rune_count(qa_q1_game_campaign_flags(g)))))
-            return q1_remove(g, entity, error);
     }
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     if (entity->state.pickup.kind != Q1_ITEM_BACKPACK) {
         bool delayed = entity->state.pickup.kind == Q1_ITEM_MG3_UPGRADE ||
                        entity->state.pickup.kind == Q1_ITEM_MG3_BLOODY;
-        return q1_schedule(g, entity, delayed ? 0.5 : 0.2,
-                           delayed ? Q1_THINK_MG3_ITEM_START : Q1_THINK_ITEM_PLACE, error);
+        return delayed ? q1_schedule(g, entity, 0.5, Q1_THINK_MG3_ITEM_START, error)
+                       : pickup_start(g, entity, error);
     }
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
@@ -1624,7 +1628,7 @@ bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             }
             qa_world_snapshot_release(&snapshot);
         }
-        return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
+        return pickup_start(g, entity, error);
     }
     if (kind == Q1_THINK_MEGA_ROT) {
         qa_actor_id holder = q1_ref_actor(g, item->holder);
