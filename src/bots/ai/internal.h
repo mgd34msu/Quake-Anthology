@@ -166,6 +166,8 @@ static inline bool bot_ai_rerelease_behavior(const qa_bots *bots) {
         bots->services.behavior==qa_ruleset_read(QA_RULESET_Q2_RERELEASE);
 }
 bool bot_ai_cooperative(qa_bots *,bot_ai_state *,bool *,qa_error *);
+bool bot_ai_human_nearest(qa_bots *,bot_ai_state *,bool teammates_only,
+    qa_vec3 *,float *distance_squared,bool *found,qa_error *);
 bool bot_ai_cooperative_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
 void bot_ai_cooperative_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
 bool bot_ai_cooperative_cooldown_next(const qa_bots *,size_t *,bot_cooperative_cooldown *);

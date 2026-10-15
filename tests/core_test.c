@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
+#include <float.h>
 #include "qa/arena.h"
 #include "qa/native.h"
 #include "qa/native_guest.h"
@@ -251,11 +252,38 @@ static void test_bot_authored_aim_point(void)
     from.z=81.5f;
     CHECK(qa_vec_equal(qa_bot_weapon_aim_point(&weapon,false,origin,bounds,from),qa_v3(100,200,20)));
 }
+static void test_bot_authored_item_value(void)
+{
+    qa_bot_source_item item={.flags=QA_BOT_SOURCE_ITEM_HEALTH,.mega_spawnflag=2};
+    qa_bot_source_item_context context={.health=25,.max_health=100,.armor=50,.allow_power_items=true};
+    CHECK(qa_bot_source_item_value(&item,&context)==400);
+    context.health=100;CHECK(qa_bot_source_item_value(&item,&context)==0);
+    context.spawnflags=2;CHECK(qa_bot_source_item_value(&item,&context)==700);
+    context.allow_power_items=false;CHECK(qa_bot_source_item_value(&item,&context)==0);
+    item.flags=QA_BOT_SOURCE_ITEM_POWERUP;context.allow_power_items=true;
+    CHECK(qa_bot_source_item_value(&item,&context)==1000);
+    item=(qa_bot_source_item){.flags=QA_BOT_SOURCE_ITEM_WEAPON};context.weapon_priority=5;
+    CHECK(qa_bot_source_item_value(&item,&context)==650);
+    context.weapon_owned=true;CHECK(qa_bot_source_item_value(&item,&context)==200);
+    item.flags=QA_BOT_SOURCE_ITEM_ARMOR;CHECK(qa_bot_source_item_value(&item,&context)==450);
+    context.armor=200;CHECK(qa_bot_source_item_value(&item,&context)==0);
+    item.flags=QA_BOT_SOURCE_ITEM_AMMO;context.maximum_ammo=100;context.ammo_count=25;
+    CHECK(qa_bot_source_item_value(&item,&context)==112.5f);
+    context.weapon_owned=false;CHECK(qa_bot_source_item_value(&item,&context)==30);
+    context.ammo_count=100;CHECK(qa_bot_source_item_value(&item,&context)==0);
+    item.flags=QA_BOT_SOURCE_ITEM_BACKPACK;CHECK(qa_bot_source_item_value(&item,&context)==120);
+    item.flags=QA_BOT_SOURCE_ITEM_OBJECTIVE;context.team=5;context.item_team=5;context.objective_at_home=true;
+    CHECK(qa_bot_source_item_value(&item,&context)==0);
+    context.objective_at_home=false;CHECK(qa_bot_source_item_value(&item,&context)==950);
+    context.item_team=14;CHECK(qa_bot_source_item_value(&item,&context)==900);
+    context.team=0;CHECK(qa_bot_source_item_value(&item,&context)==900);
+    item.flags=QA_BOT_SOURCE_ITEM_RUNE;CHECK(qa_bot_source_item_value(&item,&context)==900);
+}
 static void test_bot_source_knowledge(void)
 {
-    test_bot_authored_trigger();test_bot_authored_aim_point();
+    test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
     qa_error error={0};
-    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[3][160];
+    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[4][160];
     CHECK(mkdtemp(directory));
     CHECK(snprintf(folder,sizeof(folder),"%s/bots",directory)>0 && mkdir(folder,0700)==0);
     qa_resource_pool *pool=qa_resource_pool_create(&error);CHECK(pool);
@@ -267,12 +295,13 @@ static void test_bot_source_knowledge(void)
         " name weapon_blaster\n number 4096\n ideal_fov 25\n priority 5\n"
         " trigger_type hold_and_release\n trigger_hold 0.5\n trigger_cooldown 0.3\n"
         " aim_point best\n"
-        " min_range 10\n max_range 500\n min_height 50\n max_height 60\n min_ammo 5\n"
+        " min_range 10\n max_range 500\n min_height 50\n max_height 60\n min_ammo 5\n max_ammo 100\n"
         " ammo cells\n ammo_name ammo_cells\n}\n"
         "weapon rail {\n name weapon_railgun\n number 1\n priority 5\n ammo_name none\n}\n"
         "weapon electric {\n name weapon_hyperblaster\n number 2\n priority 9\n flags electric\n"
         " ammo_name ammo_cells\n min_ammo 2\n}\n"
-        "weapon disabled {\n name weapon_bfg\n priority 0\n ammo_name none\n}\n\0\0";
+        "weapon disabled {\n name weapon_bfg\n priority 0\n ammo_name none\n}\n"
+        "weapon supershotgun {\n name super_shotgun\n number 2\n ammo cells\n ammo_name ammo_shells\n max_ammo 200\n}\n\0\0";
     const char settings[]="// A source skill may put its opening brace on the next line.\n"
         "skill \"practice\"\n{ // retained source order\n"
         " movement.walk_only false\n movement.walk_only true\n"
@@ -284,16 +313,30 @@ static void test_bot_source_knowledge(void)
         " aiming.max_acceleration 360\n aiming.spring_stiffness 48\n"
         " senses.fov_angle 110\n senses.sound_range 1000\n"
         " weapons.fov_angle 15\n weapons.fov_scalar 0.75\n"
-        " custom.value \"a//b\" \"\377\200\"\n custom.value second\n}\n"
+        " custom.value \"a//b\" \"\377\200\"\n custom.value second\n"
+        " behaviors.allow_grab_items true\n behaviors.allow_grab_items_in_combat false\n"
+        " behaviors.combat.allow_grab_items true\n behaviors.allow_grab_power_items true\n"
+        " behaviors.defer_power_items_to_humans true\n behaviors.combat.grab_weapons false\n"
+        " behaviors.combat.max_item_dist 300\n behaviors.combat.min_health_pct 75\n"
+        " behaviors.combat.min_armor_pct 60\n behaviors.combat.min_ammo_pct 25\n}\n"
         "skill hard {\n movement.walk_only false\n movement.allow_rocket_jumping true\n}\n"
         "skill expert\n{\n behaviors.allow_combat true\n}\n\0\0";
     const char optional[]="{\n name \"\376\201\"\n}\n";
-    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt"};
+    const char items_text[]="{\n name item_health\n flags health\n spawnflags 1 = other\n"
+        " spawnflags 2 = mega_item\n spawnflags 4 = mega_item\n sight_dist 128\n}\n"
+        "{\n name ammo_cells\n flags ammo | cells\n}\n"
+        "{\n name weapon_blaster\n flags weapon\n}\n"
+        "{\n name weapon_supershotgun\n flags weapon\n}\n"
+        "{\n name item_quad\n flags powerup\n}\n"
+        "{\n name item_flag_team1\n flags objective\n team 5\n}\n"
+        "{\n name item_armor\n flags health\n flags armor\n}\n\0\0";
+    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt","items.txt"};
     const qa_bytes contents[]={
         {(const uint8_t *)weapons,sizeof(weapons)-1},
         {(const uint8_t *)settings,sizeof(settings)-1},
-        {(const uint8_t *)optional,sizeof(optional)-1}};
-    for(size_t i=0;i<3;++i) {
+        {(const uint8_t *)optional,sizeof(optional)-1},
+        {(const uint8_t *)items_text,sizeof(items_text)-1}};
+    for(size_t i=0;i<4;++i) {
         CHECK(snprintf(paths[i],sizeof(paths[i]),"bots/%s",names[i])>0);
         CHECK(qa_vfs_write(files,mount,paths[i],contents[i],&error));
     }
@@ -303,7 +346,7 @@ static void test_bot_source_knowledge(void)
     CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,bot_source_fixture_weapon,strings,
         &knowledge,&found,&error));
     CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==3 &&
-        qa_bot_source_document_count(knowledge)==3);
+        qa_bot_source_document_count(knowledge)==4);
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
@@ -313,24 +356,32 @@ static void test_bot_source_knowledge(void)
         practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
         practice->aiming.spring_stiffness==48 && practice->senses.fov_angle==110 &&
         practice->senses.sound_range==1000 && practice->weapons.fov_angle==15 &&
-        practice->weapon_fov_scalar==.75f);
+        practice->weapon_fov_scalar==.75f && practice->items.allow_grab_items &&
+        practice->items.allow_grab_items_in_combat && practice->items.allow_grab_power_items &&
+        practice->items.defer_power_items_to_humans && !practice->items.combat_grab_weapons &&
+        practice->items.combat_max_item_distance==300 && practice->items.combat_min_health_pct==75 &&
+        practice->items.combat_min_armor_pct==60 && practice->items.combat_min_ammo_pct==25);
     CHECK(hard && !strcmp(qa_strings_cstr(strings,hard->name),"hard") &&
         !hard->movement.walk_only && hard->movement.allow_rocket_jumping && hard->best_aim_head &&
-        qa_bot_source_skill_at(knowledge,2)->best_aim_head);
+        qa_bot_source_skill_at(knowledge,2)->best_aim_head && !hard->items.allow_grab_items &&
+        !hard->items.allow_grab_items_in_combat && !hard->items.allow_grab_power_items &&
+        !hard->items.defer_power_items_to_humans && hard->items.combat_grab_weapons &&
+        hard->items.combat_max_item_distance==512 && hard->items.combat_min_health_pct==100 &&
+        hard->items.combat_min_armor_pct==100 && hard->items.combat_min_ammo_pct==100);
     const qa_bot_source_document *document=qa_bot_source_document_at(knowledge,0);
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
-        !memcmp(document->source.data,weapons,document->source.size) && document->block_count==4);
+        !memcmp(document->source.data,weapons,document->source.size) && document->block_count==5);
     const qa_bot_source_block *block=document->blocks;
-    CHECK(block->header_count==2 && block->field_count==17 && block->fields[0].count==5 &&
+    CHECK(block->header_count==2 && block->field_count==18 && block->fields[0].count==5 &&
         block->fields[1].count==10);
     qa_item_id lava_nailgun;
     CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
     const qa_bot_source_weapon *bound=qa_bot_source_weapon_read(knowledge,lava_nailgun);
     CHECK(bound && bound->ideal_fov==25 && bound->ordinal==0 && bound->melee && bound->needs_ammo &&
         bound->hold_and_release && bound->trigger_hold==.5f && bound->trigger_cooldown==.3f &&
-        bound->aim_point==QA_BOT_AIM_BEST && bound->explosive);
+        bound->aim_point==QA_BOT_AIM_BEST && bound->explosive && bound->maximum_ammo==100);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
-    CHECK(block->field_count==17 && block->fields[0].key==block->fields[1].key &&
+    CHECK(block->field_count==27 && block->fields[0].key==block->fields[1].key &&
         block->fields[15].key==block->fields[16].key && block->fields[15].count==2);
     const qa_bytes byte_name=qa_strings_text(strings,block->fields[15].values[1]);
     CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&
@@ -338,6 +389,24 @@ static void test_bot_source_knowledge(void)
     document=qa_bot_source_document_at(knowledge,2);
     const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
     CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
+    qa_string_id health_class,cells_class,weapon_class,super_class,flag_class,armor_class;
+    CHECK(qa_strings_intern_cstr(strings,"item_health",&health_class,&error) &&
+        qa_strings_intern_cstr(strings,"ammo_cells",&cells_class,&error) &&
+        qa_strings_intern_cstr(strings,"weapon_blaster",&weapon_class,&error) &&
+        qa_strings_intern_cstr(strings,"weapon_supershotgun",&super_class,&error) &&
+        qa_strings_intern_cstr(strings,"item_flag_team1",&flag_class,&error) &&
+        qa_strings_intern_cstr(strings,"item_armor",&armor_class,&error));
+    const qa_bot_source_item *item=qa_bot_source_item_read(knowledge,health_class);
+    CHECK(item && item->flags==QA_BOT_SOURCE_ITEM_HEALTH && item->mega_spawnflag==2 && item->sight_distance==128);
+    item=qa_bot_source_item_read(knowledge,cells_class);
+    CHECK(item && item->ammo_weapon_count==2 && item->ammo_weapons[0]==lava_nailgun && item->sight_distance==FLT_MAX);
+    item=qa_bot_source_item_read(knowledge,weapon_class);CHECK(item && item->weapon==lava_nailgun);
+    qa_item_id supershotgun;
+    CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_SUPER_SHOTGUN),&supershotgun,&error));
+    item=qa_bot_source_item_read(knowledge,super_class);CHECK(item && item->weapon==supershotgun);
+    item=qa_bot_source_item_read(knowledge,flag_class);CHECK(item && item->has_team && item->team==5);
+    item=qa_bot_source_item_read(knowledge,armor_class);CHECK(item && item->flags==QA_BOT_SOURCE_ITEM_ARMOR);
+    CHECK(!qa_bot_source_item_read(knowledge,0));
     qa_bot_source_knowledge *pc=NULL;
     CHECK(qa_vfs_write(files,mount,"bots/settings_PC.txt",contents[1],&error));
     CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_Q2_RERELEASE,NULL,NULL,&pc,&found,&error) && found);
@@ -348,6 +417,9 @@ static void test_bot_source_knowledge(void)
         qa_strings_intern_cstr(strings,"q2:weapon_bfg",&disabled,&error));
     bound=qa_bot_source_weapon_read(pc,blaster);
     CHECK(bound && bound->ideal_fov==25 && !qa_bot_source_weapon_read(pc,QA_STRING_NONE));
+    item=qa_bot_source_item_read(pc,cells_class);
+    CHECK(item && item->ammo_weapon_count==2 && item->ammo_weapons[0]==blaster && item->ammo_weapons[1]==electric);
+    item=qa_bot_source_item_read(pc,super_class);CHECK(item && !item->weapon);
     uint8_t inventory[QA_BOT_INVENTORY_SIZE*4]={0};int32_t scratch[QA_BOT_INVENTORY_SIZE];
     qa_store_u32le(inventory+10*4,6);
     qa_bot_weapon_knowledge choices[]={
@@ -393,7 +465,7 @@ static void test_bot_source_knowledge(void)
     qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
     CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));
     qa_bot_source_knowledge_destroy(knowledge);qa_strings_destroy(strings);
-    for(size_t i=0;i<3;++i) {
+    for(size_t i=0;i<4;++i) {
         char path[256];CHECK(snprintf(path,sizeof(path),"%s/%s",directory,paths[i])>0);
         CHECK(unlink(path)==0);
     }
@@ -583,6 +655,8 @@ typedef struct canonical_goal_fixture {
     qa_bot_pickup_goal pickup;
     qa_mt19937 random;
     bool available, borrowed;
+    bool ranked;
+    float rank_score;
 } canonical_goal_fixture;
 static uint32_t canonical_goal_random(void *context)
 {
@@ -610,6 +684,15 @@ static bool canonical_goal_read(void *context,int32_t client,qa_actor_id actor,
     canonical_goal_fixture *fixture=context;(void)client;(void)error;
     *found=fixture->available && qa_actor_id_equal(actor,fixture->pickup.actor);
     if(*found) *out=fixture->pickup;
+    return true;
+}
+static bool canonical_goal_rank(void *context,const qa_bot_pickup_goal *pickup,float *score,
+    bool *handled,qa_error *error)
+{
+    canonical_goal_fixture *fixture=context;(void)error;
+    CHECK(qa_actor_id_equal(pickup->actor,fixture->pickup.actor));
+    *handled=fixture->ranked;
+    if(*handled) *score=fixture->rank_score;
     return true;
 }
 typedef struct bot_navigation_load_fixture {
@@ -653,6 +736,13 @@ static void test_bot_canonical_goal_without_weights(qa_bot_navigation *navigatio
         (goal.flags&QA_BOT_GOAL_ITEM));
     CHECK(qa_bot_goals_empty(goals,handle,&error));
     CHECK(qa_bot_goals_reconfigure(goals,NULL,0,0,&error));
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
+    CHECK(qa_bot_goals_empty(goals,handle,&error));
+    query.rank_context=&fixture;query.rank_pickup=canonical_goal_rank;fixture.ranked=true;
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && !found && !fixture.borrowed);
+    fixture.rank_score=250;
+    CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
+    CHECK(qa_bot_goals_empty(goals,handle,&error));fixture.ranked=false;fixture.rank_score=0;
     CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
     CHECK(qa_bot_goals_empty(goals,handle,&error));fixture.available=false;
     CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && !found && !fixture.borrowed);

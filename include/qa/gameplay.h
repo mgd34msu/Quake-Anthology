@@ -423,6 +423,7 @@ typedef struct qa_pickup_offer {
     const qa_pickup_cargo *cargo;
     size_t cargo_count;
     qa_pickup_grant_kind grant;
+    uint32_t spawnflags;
 } qa_pickup_offer;
 typedef enum qa_pickup_outcome { QA_PICKUP_REFUSED, QA_PICKUP_ACCEPTED, QA_PICKUP_STALE } qa_pickup_outcome;
 typedef struct qa_pickup_execution qa_pickup_execution;
@@ -464,6 +465,7 @@ typedef struct qa_pickup_observation {
     qa_item_id item;
     float utility;
     bool available, dropped;
+    uint32_t spawnflags;
 } qa_pickup_observation;
 /* One live offer owner per world pickup. Rebinding retires the old lease;
  * retirement closes automatically and an explicit close is idempotent.

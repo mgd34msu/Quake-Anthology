@@ -206,6 +206,7 @@ qa_pickup_offer q2_item_offer(qa_q2_game *g, const q2_actor *a, qa_actor_id reci
                              .override_count = a->item->spawn.count != 0,
                              .count = a->item->spawn.count,
                              .dropped = (a->item->spawn.spawnflags & 0x30000) != 0,
+                             .spawnflags = a->item->spawn.spawnflags,
                              .time_ns = g->now_ns};
 }
 bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {

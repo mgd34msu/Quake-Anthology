@@ -2029,6 +2029,7 @@ static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
                                                        .channel = QA_PROTECTION_REGULAR};
     if (item.drop != Q1_DROP_NONE)
         q1_drop_offer(g, e, actor, offer, cargo);
+    offer->spawnflags = e->spawnflags;
     bool ok = true, eligible = false;
     qa_q1_target target;
     qa_builtin_actor_traits traits = {0};

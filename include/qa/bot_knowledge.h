@@ -13,6 +13,12 @@ typedef struct qa_bot_source_movement {
     bool allow_combat_jumping, walk_only, allow_rocket_jumping;
     float jump_chance, jump_cooldown;
 } qa_bot_source_movement;
+typedef struct qa_bot_source_item_settings {
+    bool allow_grab_items, allow_grab_items_in_combat, allow_grab_power_items;
+    bool defer_power_items_to_humans, combat_grab_weapons;
+    float combat_max_item_distance, combat_min_health_pct, combat_min_armor_pct;
+    float combat_min_ammo_pct;
+} qa_bot_source_item_settings;
 typedef struct qa_bot_source_skill {
     qa_string_id name;
     bool allow_combat, allow_melee, lead_targets, best_aim_head;
@@ -21,6 +27,7 @@ typedef struct qa_bot_source_skill {
     qa_bot_aiming aiming;
     qa_bot_source_movement movement;
     float weapon_fov_scalar;
+    qa_bot_source_item_settings items;
 } qa_bot_source_skill;
 typedef struct qa_bot_source_field {
     qa_string_id key;
@@ -50,7 +57,36 @@ typedef struct qa_bot_source_weapon {
     size_t ordinal;
     bool melee, electric, needs_ammo, hold_and_release, explosive;
     qa_bot_aim_point aim_point;
+    float maximum_ammo;
 } qa_bot_source_weapon;
+typedef enum qa_bot_source_item_flags {
+    QA_BOT_SOURCE_ITEM_HEALTH = 1u << 0,
+    QA_BOT_SOURCE_ITEM_ARMOR = 1u << 1,
+    QA_BOT_SOURCE_ITEM_AMMO = 1u << 2,
+    QA_BOT_SOURCE_ITEM_WEAPON = 1u << 3,
+    QA_BOT_SOURCE_ITEM_POWERUP = 1u << 4,
+    QA_BOT_SOURCE_ITEM_MEGA = 1u << 5,
+    QA_BOT_SOURCE_ITEM_BACKPACK = 1u << 6,
+    QA_BOT_SOURCE_ITEM_OBJECTIVE = 1u << 7,
+    QA_BOT_SOURCE_ITEM_RUNE = 1u << 8
+} qa_bot_source_item_flags;
+typedef struct qa_bot_source_item {
+    uint32_t flags, mega_spawnflag;
+    float sight_distance;
+    int32_t team;
+    bool has_team;
+    qa_item_id weapon;
+    const qa_item_id *ammo_weapons;
+    size_t ammo_weapon_count;
+} qa_bot_source_item;
+typedef struct qa_bot_source_item_context {
+    uint32_t spawnflags;
+    double health, max_health, armor, ammo_count;
+    float weapon_priority, maximum_ammo;
+    int32_t team, item_team;
+    bool weapon_owned, allow_power_items, objective_at_home;
+} qa_bot_source_item_context;
+float qa_bot_source_item_value(const qa_bot_source_item *, const qa_bot_source_item_context *);
 qa_vec3 qa_bot_weapon_aim_point(const qa_bot_source_weapon *, bool best_aim_head,
                                qa_vec3 origin, qa_bounds bounds, qa_vec3 from);
 typedef struct qa_bot_trigger_state {
@@ -75,6 +111,7 @@ void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *);
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *);
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *, size_t);
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *, qa_item_id);
+const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge *, qa_string_id classname);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
 

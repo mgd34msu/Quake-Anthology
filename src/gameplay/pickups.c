@@ -478,7 +478,8 @@ bool qa_pickups_inspect(qa_pickups *service,qa_actor_id pickup,qa_actor_id recip
     }
     if(ok && observation_current(service,owner,recipient)) {
         *out=(qa_pickup_observation){.pickup=pickup,.recipient=recipient,.source=owner->owner,
-            .item=offer.item,.utility=utility,.available=available,.dropped=offer.dropped};
+            .item=offer.item,.utility=utility,.available=available,.dropped=offer.dropped,
+            .spawnflags=offer.spawnflags};
         *found=true;
     }
     --service->observation_calls;--service->calls;sweep(service);return ok;

@@ -39,6 +39,9 @@ typedef struct qa_bot_pickup_goal {
     qa_bounds bounds;
     qa_string_id name;
     float utility;
+    qa_string_id classname;
+    uint32_t spawnflags;
+    bool dropped;
 } qa_bot_pickup_goal;
 typedef struct qa_bot_goal_services {
     void *context;
@@ -129,6 +132,11 @@ typedef struct qa_bot_goal_choice {
     bool nearby;
     const qa_bot_goal *long_term;
     float maximum_time;
+    void *rank_context;
+    /* A handled score already includes its policy's distance cost. The common
+     * chooser still applies reachability, avoidance and return-leg rules. */
+    bool (*rank_pickup)(void *, const qa_bot_pickup_goal *, float *score,
+                        bool *handled, qa_error *);
 } qa_bot_goal_choice;
 bool qa_bot_goals_choose(qa_bot_goals *, uint32_t, const qa_bot_goal_choice *, bool *, qa_error *);
 typedef enum qa_bot_source_goal_status {

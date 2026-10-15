@@ -16,6 +16,7 @@
 #include "source_flags.h"
 #include "source_command.h"
 #include "source_storage.h"
+#include <float.h>
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32,
        BOT_TRAVEL_FUNCBOB=0x01000000 };
@@ -109,14 +110,159 @@ bool bot_ai_source_reached_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *
     } else *done=touching || ((goal->flags&BOT_AIR_GOAL) && bot_ai_last_air_time(s)>b->time-1);
     return true;
 }
+typedef struct item_ranking {
+    qa_bots *bots;
+    bot_ai_state *state;
+    const qa_bot_weapon_knowledge *weapons;
+    size_t weapon_count;
+    qa_bot_source_item_context self;
+    qa_team_id mode_team;
+    bool combat,defer_power,skip_combat_ammo;
+} item_ranking;
+static const qa_bot_weapon_knowledge *item_weapon(const item_ranking *ranking,qa_item_id item)
+{
+    for(size_t i=0;i<ranking->weapon_count;++i)
+        if(ranking->weapons[i].supply_weapon==item) return ranking->weapons+i;
+    return NULL;
+}
+static bool item_ammunition(item_ranking *ranking,const qa_bot_weapon_knowledge *weapon,
+    const qa_bot_source_weapon *source,qa_bot_source_item_context *context,qa_error *e)
+{
+    context->weapon_owned=weapon->owned;
+    context->weapon_priority=source?source->priority:0;
+    context->maximum_ammo=source?source->maximum_ammo:0;
+    context->ammo_count=0;
+    return !weapon->supply_ammo || qa_inventory_count_read(ranking->bots->services.shared.inventory,
+        ranking->state->view.actor,weapon->supply_ammo,&context->ammo_count,e);
+}
+static bool rank_pickup(void *opaque,const qa_bot_pickup_goal *pickup,float *score,
+    bool *handled,qa_error *e)
+{
+    item_ranking *ranking=opaque;qa_bots *b=ranking->bots;bot_ai_state *s=ranking->state;
+    const qa_bot_source_item *item=qa_bot_source_item_read(b->services.source_knowledge,pickup->classname);
+    *handled=item!=NULL;
+    if(!item) return true;
+    if(item->flags&QA_BOT_SOURCE_ITEM_WEAPON) {
+        if(!item_weapon(ranking,item->weapon)) {*handled=false;return true;}
+    } else if(item->flags&QA_BOT_SOURCE_ITEM_AMMO) {
+        bool bound=false;
+        for(size_t i=0;i<item->ammo_weapon_count && !bound;++i)
+            bound=item_weapon(ranking,item->ammo_weapons[i])!=NULL;
+        if(!bound) {*handled=false;return true;}
+    }
+    *score=0;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    const qa_bot_source_item_settings *settings=&s->source_settings->items;
+    const bot_actor_memory *memory=bot_ai_memory_read(b,pickup->actor);
+    if(memory && memory->unreachable_until[s->acquired_source_client]>b->time) return true;
+    float distance=qa_vec_length(qa_vec_sub(pickup->origin,bot_ai_origin(s)));
+    if(distance>item->sight_distance) return true;
+    if(ranking->combat) {
+        if(!(distance<settings->combat_max_item_distance) ||
+           ((item->flags&QA_BOT_SOURCE_ITEM_WEAPON) && !settings->combat_grab_weapons) ||
+           ((item->flags&QA_BOT_SOURCE_ITEM_HEALTH) &&
+            ranking->self.health>=ranking->self.max_health*settings->combat_min_health_pct/100) ||
+           ((item->flags&QA_BOT_SOURCE_ITEM_ARMOR) &&
+            ranking->self.armor>=200*settings->combat_min_armor_pct/100) ||
+           ((item->flags&QA_BOT_SOURCE_ITEM_AMMO) && ranking->skip_combat_ammo)) return true;
+    }
+    if(ranking->defer_power && (item->flags&(QA_BOT_SOURCE_ITEM_POWERUP|QA_BOT_SOURCE_ITEM_MEGA))) return true;
+    qa_bot_source_item_context context=ranking->self;
+    context.spawnflags=pickup->spawnflags;context.item_team=item->has_team?item->team:0;
+    context.objective_at_home=!pickup->dropped;
+    if((item->flags&QA_BOT_SOURCE_ITEM_OBJECTIVE) && b->services.modes) {
+        qa_mode_object_view object;
+        if(qa_modes_object_read(b->services.modes,pickup->actor,&object)) {
+            context.objective_at_home=object.phase==QA_OBJECTIVE_HOME;
+            context.team=ranking->mode_team?1:0;
+            context.item_team=!object.team?0:object.team==ranking->mode_team?1:2;
+        }
+    }
+    float value=0;
+    bool ammo=(item->flags&QA_BOT_SOURCE_ITEM_AMMO) &&
+        !(item->flags&(QA_BOT_SOURCE_ITEM_POWERUP|QA_BOT_SOURCE_ITEM_MEGA|QA_BOT_SOURCE_ITEM_WEAPON|
+                      QA_BOT_SOURCE_ITEM_HEALTH|QA_BOT_SOURCE_ITEM_ARMOR)) &&
+        !(item->mega_spawnflag && (context.spawnflags&item->mega_spawnflag)==item->mega_spawnflag);
+    if(ammo) {
+        for(size_t i=0;i<item->ammo_weapon_count;++i) {
+            const qa_bot_weapon_knowledge *weapon=item_weapon(ranking,item->ammo_weapons[i]);
+            if(!weapon) continue;
+            const qa_bot_source_weapon *source=qa_bot_source_weapon_read(b->services.source_knowledge,weapon->supply_weapon);
+            if(!item_ammunition(ranking,weapon,source,&context,e)) return false;
+            if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+            value=fmaxf(value,qa_bot_source_item_value(item,&context));
+        }
+    } else {
+        const qa_bot_weapon_knowledge *weapon=item_weapon(ranking,item->weapon);
+        if(weapon) {
+            context.weapon_owned=weapon->owned;
+            const qa_bot_source_weapon *source=qa_bot_source_weapon_read(b->services.source_knowledge,item->weapon);
+            context.weapon_priority=source?source->priority:0;
+        }
+        value=qa_bot_source_item_value(item,&context);
+    }
+    *score=(float)fmin(FLT_MAX,(double)value*1024/fmax(64,distance));
+    return true;
+}
+static bool item_ranking_prepare(item_ranking *ranking,qa_error *e)
+{
+    qa_bots *b=ranking->bots;bot_ai_state *s=ranking->state;
+    qa_combat_state combat;
+    if(!qa_combat_read(b->services.shared.combat,s->view.actor,&combat,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    qa_builtin_actor_traits traits={0};
+    if(b->services.shared.actor_traits) b->services.shared.actor_traits(b->services.shared.context,s->view.actor,&traits);
+    ranking->self=(qa_bot_source_item_context){.health=combat.health,
+        .max_health=traits.max_health>0?traits.max_health:100,.armor=combat.armor.regular.points,
+        .allow_power_items=s->source_settings->items.allow_grab_power_items,
+        .team=combat.team.kind==QA_TEAM_NUMBER?combat.team.number.value:
+            qa_team_color_number(qa_session_strings(b->services.shared.session),combat.team,QA_TEAM_COLOR_ALIASES)};
+    if(b->services.modes && s->view.mode.generation &&
+       !qa_modes_team(b->services.modes,s->view.mode,s->view.actor,&ranking->mode_team,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    ranking->combat=bot_ai_live(b,bot_ai_enemy_actor(b,s));
+    if(s->source_settings->items.defer_power_items_to_humans) {
+        qa_vec3 human;float distance;bool found;
+        if(!bot_ai_human_nearest(b,s,true,&human,&distance,&found,e)) return false;
+        ranking->defer_power=found && distance<256*256;
+    }
+    if(ranking->combat) for(size_t i=0;i<ranking->weapon_count;++i) {
+        const qa_bot_weapon_knowledge *weapon=ranking->weapons+i;
+        if(weapon->weapon.number!=bot_ai_firing_weapon_number(s)) continue;
+        const qa_bot_source_weapon *source=qa_bot_source_weapon_read(b->services.source_knowledge,weapon->supply_weapon);
+        if(source) {
+            qa_bot_source_item_context context={0};
+            if(!item_ammunition(ranking,weapon,source,&context,e)) return false;
+            ranking->skip_combat_ammo=context.ammo_count>=source->maximum_ammo*s->source_settings->items.combat_min_ammo_pct/100;
+        }
+        break;
+    }
+    return true;
+}
 static bool choose(qa_bots *b, bot_ai_state *s, bool nearby, const qa_bot_goal *long_term,
                      float range, bool *found, qa_error *e) {
+    if(s->source_settings) {
+        const qa_bot_source_item_settings *settings=&s->source_settings->items;
+        bool combat=bot_ai_live(b,bot_ai_enemy_actor(b,s));
+        if(combat?!settings->allow_grab_items_in_combat:!settings->allow_grab_items) {
+            *found=false;return true;
+        }
+    }
     bot_source_inventory inventory={b,s};
     qa_bot_inventory_view source=bot_ai_source_inventory_view(&inventory);
     qa_bot_goal_choice query={.origin=bot_ai_origin(s),.inventory_source=&source,
         .travel_flags=bot_ai_travel_flags(s),
         .nearby=nearby,.long_term=long_term,.maximum_time=range};
-    return qa_bot_goals_choose(goals(b),s->goals,&query,found,e);
+    if(!s->source_settings) return qa_bot_goals_choose(goals(b),s->goals,&query,found,e);
+    item_ranking ranking={.bots=b,.state=s};void *lease;
+    if(!b->services.arsenal(b->services.context,s->view.actor,&ranking.weapons,&ranking.weapon_count,&lease,e)) return false;
+    bool okay=item_ranking_prepare(&ranking,e);
+    if(okay && !s->retired && bot_ai_live(b,s->view.actor)) {
+        query.rank_context=&ranking;query.rank_pickup=rank_pickup;
+        okay=qa_bot_goals_choose(goals(b),s->goals,&query,found,e);
+    } else *found=false;
+    b->services.arsenal_end(b->services.context,lease);
+    return okay;
 }
 bool bot_ai_source_go_for_air(qa_bots *b, bot_ai_state *s, const qa_bot_goal *long_term,
                      float range, bool *found, qa_error *e) {
@@ -986,6 +1132,15 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(!visible) {ENTER(chase?QA_BOT_CHASING:QA_BOT_SEEK_LONG_TERM);continue;}
                 DECISION_CALL(bot_ai_source_battle_items(b,s,e));
                 DECISION_CALL(travel(b,s,e));
+                if(s->source_settings && s->source_settings->items.allow_grab_items_in_combat) {
+                    bool item_found;
+                    DECISION_CALL(choose(b,s,false,NULL,0,&item_found,e));
+                    if(item_found) {
+                        bot_ai_nearby_until_set(s,b->time+1+s->source_settings->items.combat_max_item_distance/100);
+                        DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,true,e));
+                        ENTER(QA_BOT_BATTLE_NEARBY);continue;
+                    }
+                }
                 DECISION_CALL(bot_ai_choose_weapon(b,s,e));
                 qa_bot_move_result attack_result;
                 DECISION_CALL(bot_ai_attack_move(b,s,bot_ai_travel_flags(s),&attack_result,e));

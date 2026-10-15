@@ -235,14 +235,13 @@ void bot_ai_cooperative_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goa
     bot_ai_cooperative_cooldown_set(b,&row);
     s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
 }
-bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
-    bool cooperative;
-    *found=false;
-    if(!bot_ai_rerelease_behavior(b)) return true;
-    SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
-    if(!cooperative) return true;
-    qa_vec3 human={0};bool has_human=false;float human_distance=INFINITY;
+bool bot_ai_human_nearest(qa_bots *b,bot_ai_state *s,bool teammates_only,
+    qa_vec3 *human,float *human_distance,bool *has_human,qa_error *e)
+{
+    *has_human=false;*human_distance=INFINITY;
     const qa_actor_registry *actors=qa_session_actors(b->services.shared.session);
+    qa_combat_state self;
+    if(teammates_only) SOURCE_CALL(qa_combat_read(b->services.shared.combat,s->view.actor,&self,e));
     for(size_t i=0;i<b->players.count;++i) {
         qa_actor_id actor=b->players.actors[i];
         const qa_actor_player *identity=qa_actors_player(actors,actor);
@@ -250,12 +249,30 @@ bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *f
         qa_builtin_player_info player;
         if(!b->services.shared.player_info(b->services.shared.context,actor,&player) ||
            !player.connected || player.dead || player.spectator || !bot_ai_live(b,actor)) continue;
+        if(teammates_only) {
+            bool same;SOURCE_CALL(bot_ai_same_team(b,s,actor,&same,e));
+            if(!same) {
+                qa_combat_state other;
+                SOURCE_CALL(qa_combat_read(b->services.shared.combat,actor,&other,e));
+                if(!qa_team_equal(qa_session_strings(b->services.shared.session),self.team,other.team)) continue;
+            }
+        }
         qa_body_state body;
         SOURCE_CALL(qa_world_body_read(b->services.shared.world,actor,&body,e));
         if(!bot_ai_live(b,actor)) continue;
         qa_vec3 delta=qa_vec_sub(body.origin,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
-        if(distance<human_distance) {human_distance=distance;human=body.origin;has_human=true;}
+        if(distance<*human_distance) {*human_distance=distance;*human=body.origin;*has_human=true;}
     }
+    return true;
+}
+bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
+    bool cooperative;
+    *found=false;
+    if(!bot_ai_rerelease_behavior(b)) return true;
+    SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
+    if(!cooperative) return true;
+    qa_vec3 human={0};bool has_human;float human_distance;
+    SOURCE_CALL(bot_ai_human_nearest(b,s,false,&human,&human_distance,&has_human,e));
     bot_cooperative_state *state=&s->cooperative;
     if(!has_human) state->regrouping=false;
     else {

@@ -16,6 +16,8 @@ struct qa_bot_source_knowledge {
     size_t skill_count,skill_capacity;
     qa_id_index weapon_items;
     qa_bot_source_weapon *weapons;
+    qa_id_index item_names;
+    qa_bot_source_item *items;
 };
 static void *reserve(qa_bot_source_knowledge *knowledge,void *old,size_t *capacity,
     size_t needed,size_t stride,size_t alignment,qa_error *error) {
@@ -142,6 +144,16 @@ typedef struct setting_field {const char *name;size_t offset;bool boolean;} sett
 static const setting_field setting_fields[]={
     BOOL("behaviors.allow_combat",allow_combat),
     BOOL("behaviors.allow_melee",allow_melee),
+    BOOL("behaviors.allow_grab_items",items.allow_grab_items),
+    BOOL("behaviors.allow_grab_items_in_combat",items.allow_grab_items_in_combat),
+    BOOL("behaviors.combat.allow_grab_items",items.allow_grab_items_in_combat),
+    BOOL("behaviors.allow_grab_power_items",items.allow_grab_power_items),
+    BOOL("behaviors.defer_power_items_to_humans",items.defer_power_items_to_humans),
+    BOOL("behaviors.combat.grab_weapons",items.combat_grab_weapons),
+    FLOAT("behaviors.combat.max_item_dist",items.combat_max_item_distance),
+    FLOAT("behaviors.combat.min_health_pct",items.combat_min_health_pct),
+    FLOAT("behaviors.combat.min_armor_pct",items.combat_min_armor_pct),
+    FLOAT("behaviors.combat.min_ammo_pct",items.combat_min_ammo_pct),
     BOOL("aiming.lead_targets",lead_targets),
     FLOAT("aiming.max_acceleration",aiming.maximum_speed),FLOAT("aiming.spring_stiffness",aiming.spring_stiffness),
     FLOAT("aiming.damping",aiming.damping),FLOAT("aiming.velocity_offset",aiming.velocity_offset),
@@ -176,7 +188,9 @@ static bool skills_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_
             knowledge->skill_count+1,sizeof(*grown),_Alignof(qa_bot_source_skill),error);
         if(!grown) return false;
         knowledge->skills=grown;qa_bot_source_skill *skill=grown+knowledge->skill_count++;
-        *skill=(qa_bot_source_skill){.name=block->header[1]};
+        *skill=(qa_bot_source_skill){.name=block->header[1],.items={.combat_grab_weapons=true,
+            .combat_max_item_distance=512,.combat_min_health_pct=100,
+            .combat_min_armor_pct=100,.combat_min_ammo_pct=100}};
         for(size_t j=0;j<block->field_count;++j) {
             const qa_bot_source_field *field=block->fields+j;
             for(size_t k=0;k<sizeof(keys)/sizeof(*keys);++k) if(field->key==keys[k]) {
@@ -198,14 +212,22 @@ static bool skills_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_
         knowledge->skills[i].best_aim_head=i+2>=knowledge->skill_count;
     return true;
 }
+typedef struct source_item_weapon {
+    qa_string_id name,ammo;
+    qa_item_id item;
+} source_item_weapon;
 static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
-    qa_ruleset_id rules,qa_bot_source_weapon_resolve resolve,void *context,qa_error *error)
+    qa_ruleset_id rules,qa_bot_source_weapon_resolve resolve,void *context,
+    qa_arena *binding_storage,source_item_weapon **bindings,qa_error *error)
 {
     knowledge->weapon_items.storage=&knowledge->storage;
     if(!qa_id_index_reserve(&knowledge->weapon_items,document->block_count,error)) return false;
     knowledge->weapons=document->block_count?qa_arena_alloc(&knowledge->storage,
         document->block_count*sizeof(*knowledge->weapons),_Alignof(qa_bot_source_weapon),error):NULL;
     if(document->block_count && !knowledge->weapons) return false;
+    *bindings=document->block_count?qa_arena_alloc(binding_storage,
+        document->block_count*sizeof(**bindings),_Alignof(source_item_weapon),error):NULL;
+    if(document->block_count && !*bindings) return false;
     static const struct {const char *name;size_t offset;} numbers[]={
         {"ideal_fov",offsetof(qa_bot_source_weapon,ideal_fov)},
         {"priority",offsetof(qa_bot_source_weapon,priority)},
@@ -214,6 +236,7 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
         {"min_height",offsetof(qa_bot_source_weapon,min_height)},
         {"max_height",offsetof(qa_bot_source_weapon,max_height)},
         {"min_ammo",offsetof(qa_bot_source_weapon,min_ammo)},
+        {"max_ammo",offsetof(qa_bot_source_weapon,maximum_ammo)},
         {"trigger_hold",offsetof(qa_bot_source_weapon,trigger_hold)},
         {"trigger_cooldown",offsetof(qa_bot_source_weapon,trigger_cooldown)}};
     qa_string_id name_key,number_key,flags_key,ammo_key,trigger_key,aim_key,
@@ -239,6 +262,7 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
         if(!qa_strings_intern_cstr(knowledge->strings,point_names[i],points+i,error)) return false;
     for(size_t i=0;i<document->block_count;++i) {
         qa_string_id name=0;uint32_t number=0;
+        source_item_weapon *binding=*bindings+i;*binding=(source_item_weapon){0};
         qa_bot_source_weapon *weapon=knowledge->weapons+i;
         *weapon=(qa_bot_source_weapon){.ordinal=i};
         const qa_bot_source_block *block=document->blocks+i;
@@ -264,9 +288,11 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
                 if(field->values[0]==continuous || field->values[0]==release)
                     weapon->hold_and_release=field->values[0]==release;
             }
-            else if(field->key==ammo_key)
+            else if(field->key==ammo_key) {
+                binding->ammo=field->values[0];
                 weapon->needs_ammo=field->values[0]!=none &&
                     qa_strings_text(knowledge->strings,field->values[0]).size!=0;
+            }
             else if(field->key==number_key) {
                 double value;
                 if(qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) &&
@@ -289,10 +315,113 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
             memcpy(item,"q2:",3);memcpy(item+3,source.data,source.size);item[source.size+3]=0;
             if(!qa_strings_intern_cstr(knowledge->strings,item,&key,error)) return false;
         }
+        binding->name=name;binding->item=key;
         if(!key) continue;
         qa_id_index_entry *old=qa_id_index_find(&knowledge->weapon_items,key,0);
         if(old) old->value=i;
         else qa_id_index_insert(&knowledge->weapon_items,key,0,i);
+    }
+    return true;
+}
+static size_t weapon_item_match(qa_bytes item,qa_bytes weapon)
+{
+    if(item.size>=7 && !memcmp(item.data,"weapon_",7)) {item.data+=7;item.size-=7;}
+    size_t a=0,b=0,length=0;
+    while(a<item.size && b<weapon.size) {
+        if(item.data[a]=='_') {++a;continue;}
+        if(weapon.data[b]=='_') {++b;continue;}
+        if(item.data[a++]!=weapon.data[b++]) return 0;
+    }
+    while(a<item.size && item.data[a]=='_') ++a;
+    while(b<weapon.size && weapon.data[b]=='_') ++b;
+    if(a<item.size && b<weapon.size) return 0;
+    for(size_t i=0;i<weapon.size;++i) length+=weapon.data[i]!='_';
+    return length;
+}
+static bool items_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
+    qa_ruleset_id rules,const source_item_weapon *weapons,size_t weapon_count,qa_error *error)
+{
+    qa_string_id name_key,flags_key,sight_key,spawnflags_key,team_key,equal,mega;
+    static const struct {const char *name;uint32_t bit;} flags[]={
+        {"health",QA_BOT_SOURCE_ITEM_HEALTH},{"armor",QA_BOT_SOURCE_ITEM_ARMOR},
+        {"ammo",QA_BOT_SOURCE_ITEM_AMMO},{"weapon",QA_BOT_SOURCE_ITEM_WEAPON},
+        {"powerup",QA_BOT_SOURCE_ITEM_POWERUP},{"mega_item",QA_BOT_SOURCE_ITEM_MEGA},
+        {"backpack",QA_BOT_SOURCE_ITEM_BACKPACK},{"objective",QA_BOT_SOURCE_ITEM_OBJECTIVE},
+        {"rune",QA_BOT_SOURCE_ITEM_RUNE}};
+    qa_string_id flag_names[sizeof(flags)/sizeof(*flags)];
+    if(!qa_strings_intern_cstr(knowledge->strings,"name",&name_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"flags",&flags_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"sight_dist",&sight_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"spawnflags",&spawnflags_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"team",&team_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"=",&equal,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"mega_item",&mega,error)) return false;
+    for(size_t i=0;i<sizeof(flags)/sizeof(*flags);++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,flags[i].name,flag_names+i,error)) return false;
+    knowledge->item_names.storage=&knowledge->storage;
+    if(!qa_id_index_reserve(&knowledge->item_names,document->block_count,error)) return false;
+    knowledge->items=document->block_count?qa_arena_alloc(&knowledge->storage,
+        document->block_count*sizeof(*knowledge->items),_Alignof(qa_bot_source_item),error):NULL;
+    if(document->block_count && !knowledge->items) return false;
+    for(size_t i=0;i<document->block_count;++i) {
+        qa_bot_source_item *item=knowledge->items+i;*item=(qa_bot_source_item){.sight_distance=FLT_MAX};
+        qa_string_id name=0;const qa_string_id *item_flags=NULL;size_t flag_count=0;bool mega_seen=false;
+        const qa_bot_source_block *block=document->blocks+i;
+        for(size_t j=0;j<block->field_count;++j) {
+            const qa_bot_source_field *field=block->fields+j;
+            if(field->key==flags_key) {
+                item->flags=0;item_flags=field->values;flag_count=field->count;
+                for(size_t k=0;k<flag_count;++k) for(size_t n=0;n<sizeof(flags)/sizeof(*flags);++n)
+                    if(item_flags[k]==flag_names[n]) item->flags|=flags[n].bit;
+            } else if(field->key==spawnflags_key && field->count==3 && field->values[1]==equal &&
+                      field->values[2]==mega && !mega_seen) {
+                double value;
+                if(qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) &&
+                   isfinite(value) && value>=INT32_MIN && value<=UINT32_MAX && trunc(value)==value) {
+                    item->mega_spawnflag=(uint32_t)(int64_t)value;mega_seen=true;
+                }
+            } else if(field->count==1) {
+                double value;
+                if(field->key==name_key) name=field->values[0];
+                else if((field->key==sight_key || field->key==team_key) &&
+                        qa_parse_number(qa_strings_text(knowledge->strings,field->values[0]),&value,NULL) && isfinite(value)) {
+                    if(field->key==sight_key && value>=-FLT_MAX && value<=FLT_MAX) item->sight_distance=(float)value;
+                    else if(field->key==team_key && value>=INT32_MIN && value<=INT32_MAX && trunc(value)==value) {
+                        item->team=(int32_t)value;item->has_team=true;
+                    }
+                }
+            }
+        }
+        if(item->flags&QA_BOT_SOURCE_ITEM_WEAPON) {
+            size_t best=0;
+            for(size_t j=0;j<weapon_count;++j) {
+                if(weapons[j].name==name) {item->weapon=weapons[j].item;break;}
+                if(rules!=QA_RULESET_NETQUAKE) continue;
+                size_t match=weapon_item_match(qa_strings_text(knowledge->strings,name),
+                    qa_strings_text(knowledge->strings,weapons[j].name));
+                if(match>best) {item->weapon=weapons[j].item;best=match;}
+            }
+        }
+        if(item->flags&QA_BOT_SOURCE_ITEM_AMMO) {
+            qa_item_id *matches=NULL;size_t capacity=0;
+            for(size_t j=0;j<weapon_count;++j) {
+                const qa_bot_source_weapon *weapon=qa_bot_source_weapon_read(knowledge,weapons[j].item);
+                if(!weapon || !weapon->needs_ammo) continue;
+                bool match=rules!=QA_RULESET_NETQUAKE?name==weapons[j].ammo:false;
+                if(rules==QA_RULESET_NETQUAKE)
+                    for(size_t k=0;k<flag_count;++k) match|=item_flags[k]==weapons[j].ammo;
+                if(!match) continue;
+                qa_item_id *next=reserve(knowledge,matches,&capacity,item->ammo_weapon_count+1,
+                    sizeof(*matches),_Alignof(qa_item_id),error);
+                if(!next) return false;
+                matches=next;matches[item->ammo_weapon_count++]=weapons[j].item;
+            }
+            item->ammo_weapons=matches;
+        }
+        if(!name) continue;
+        qa_id_index_entry *old=qa_id_index_find(&knowledge->item_names,name,0);
+        if(old) old->value=i;
+        else qa_id_index_insert(&knowledge->item_names,name,0,i);
     }
     return true;
 }
@@ -326,10 +455,10 @@ bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_i
     }
     *found=false;qa_bot_source_knowledge *knowledge=calloc(1,sizeof(*knowledge));
     if(!knowledge) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating bot source knowledge");return false;}
-    knowledge->strings=strings;bool present;
+    knowledge->strings=strings;bool present;qa_arena binding_storage={0};source_item_weapon *bindings=NULL;
     if(!document_load(knowledge,files,"bots/weapons.txt",&present,error)) goto failed;
     if(!present) goto missing;
-    if(!weapons_parse(knowledge,knowledge->documents,rules,resolve,context,error)) goto failed;
+    if(!weapons_parse(knowledge,knowledge->documents,rules,resolve,context,&binding_storage,&bindings,error)) goto failed;
     const char *const settings[]={"bots/settings_PC.txt","bots/settings_Consoles.txt","bots/settings_Nintendo.txt"};
     size_t count=rules==QA_RULESET_NETQUAKE?3:1;
     for(size_t i=0;i<count;++i) {
@@ -341,22 +470,33 @@ bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_i
     if(!knowledge->skill_count) goto missing;
     const char *const optional[]={"bots/characters.txt","bots/items.txt","bots/monsters.txt","bots/interactables.txt",
         "bots/game_rules.txt","bots/teams.txt","bots/chats.txt","bots/dangers.txt"};
-    for(size_t i=0;i<sizeof(optional)/sizeof(*optional);++i)
+    for(size_t i=0;i<sizeof(optional)/sizeof(*optional);++i) {
         if(!document_load(knowledge,files,optional[i],&present,error)) goto failed;
+        if(present && i==1 && !items_parse(knowledge,knowledge->documents+knowledge->document_count-1,
+            rules,bindings,knowledge->documents[0].block_count,error)) goto failed;
+    }
+    qa_arena_destroy(&binding_storage);
     qa_arena_seal(&knowledge->storage);*out=knowledge;*found=true;return true;
 missing:
-    qa_bot_source_knowledge_destroy(knowledge);return true;
+    qa_arena_destroy(&binding_storage);qa_bot_source_knowledge_destroy(knowledge);return true;
 failed:
-    qa_bot_source_knowledge_destroy(knowledge);return false;
+    qa_arena_destroy(&binding_storage);qa_bot_source_knowledge_destroy(knowledge);return false;
 }
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *knowledge) {
-    if(knowledge) {qa_id_index_destroy(&knowledge->weapon_items);qa_arena_destroy(&knowledge->storage);free(knowledge);}
+    if(knowledge) {qa_id_index_destroy(&knowledge->weapon_items);qa_id_index_destroy(&knowledge->item_names);
+        qa_arena_destroy(&knowledge->storage);free(knowledge);}
 }
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *knowledge,qa_item_id item)
 {
     if(!knowledge) return NULL;
     qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->weapon_items,item,0);size_t at;
     return qa_id_index_next(&knowledge->weapon_items,&cursor,&at)?knowledge->weapons+at:NULL;
+}
+const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge *knowledge,qa_string_id classname)
+{
+    if(!knowledge) return NULL;
+    qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->item_names,classname,0);size_t at;
+    return qa_id_index_next(&knowledge->item_names,&cursor,&at)?knowledge->items+at:NULL;
 }
 size_t qa_bot_source_skill_count(const qa_bot_source_knowledge *knowledge) {return knowledge?knowledge->skill_count:0;}
 const qa_bot_source_skill *qa_bot_source_skill_at(const qa_bot_source_knowledge *knowledge,size_t index) {

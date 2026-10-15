@@ -223,8 +223,12 @@ static bool pickup(void *opaque,int32_t client,qa_actor_id actor,qa_bot_pickup_g
     if(!qa_world_body_read(application->world,actor,&body,error)) return false;
     const char *name=qa_strings_cstr(qa_session_strings(application->session),observation.item);
     int32_t number;if(!application_bot_entity_number(bots,actor,&number,error)) return false;
+    qa_builtin_services shared=application_builtin_services(application,application->world,application->physics);
+    qa_builtin_actor_traits traits={0};
+    if(shared.actor_traits) shared.actor_traits(shared.context,actor,&traits);
     *out=(qa_bot_pickup_goal){.actor=actor,.entity=number,.origin=body.origin,
-        .bounds=body.bounds,.name=name?observation.item:application->ui_names.source_pickup,.utility=observation.utility};
+        .bounds=body.bounds,.name=name?observation.item:application->ui_names.source_pickup,.utility=observation.utility,
+        .classname=traits.classname,.spawnflags=observation.spawnflags,.dropped=observation.dropped};
     *found=qa_actors_get(qa_session_actors(application->session),actor)!=NULL;return true;
 }
 static bool owns_item(void *opaque,int32_t client,int32_t entity,bool *out,qa_error *error) {

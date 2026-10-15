@@ -131,6 +131,30 @@ static bool source_inventory_read(void *context,int32_t index,int32_t *out,qa_er
     }
     *out=inventory_value(*inventory,index);return true;
 }
+float qa_bot_source_item_value(const qa_bot_source_item *item,const qa_bot_source_item_context *context)
+{
+    bool mega=(item->flags&QA_BOT_SOURCE_ITEM_MEGA) || (item->mega_spawnflag &&
+        (context->spawnflags&item->mega_spawnflag)==item->mega_spawnflag);
+    if((item->flags&QA_BOT_SOURCE_ITEM_POWERUP) || mega)
+        return context->allow_power_items?(item->flags&QA_BOT_SOURCE_ITEM_POWERUP?1000:700):0;
+    if(item->flags&QA_BOT_SOURCE_ITEM_WEAPON)
+        return context->weapon_owned?200:600+context->weapon_priority*10;
+    if(item->flags&QA_BOT_SOURCE_ITEM_HEALTH) {
+        double missing=fmax(0,context->max_health-context->health);
+        return missing>0?(float)(100+missing*4):0;
+    }
+    if(item->flags&QA_BOT_SOURCE_ITEM_ARMOR)
+        return context->armor<200?(float)(300+200-context->armor):0;
+    if(item->flags&QA_BOT_SOURCE_ITEM_AMMO) {
+        double room=fmax(0,context->maximum_ammo-context->ammo_count);
+        return context->maximum_ammo>0?(float)((context->weapon_owned?150:40)*room/context->maximum_ammo):0;
+    }
+    if(item->flags&QA_BOT_SOURCE_ITEM_BACKPACK) return 120;
+    if(item->flags&QA_BOT_SOURCE_ITEM_OBJECTIVE)
+        return context->item_team<=0 || context->team<=0 || context->item_team!=context->team?900:
+            context->objective_at_home?0:950;
+    return item->flags&QA_BOT_SOURCE_ITEM_RUNE?900:0;
+}
 qa_vec3 qa_bot_weapon_aim_point(const qa_bot_source_weapon *weapon,bool best_aim_head,
     qa_vec3 origin,qa_bounds bounds,qa_vec3 from)
 {

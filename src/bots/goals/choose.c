@@ -20,7 +20,7 @@ static bool travel(goal_choice *c, uint32_t from, qa_vec3 origin, uint32_t to,
     return true;
 }
 static bool consider(goal_choice *c, const qa_bot_goal *goal, float weight, bool native,
-                      uint32_t item_pointer, float avoid, bool return_leg, qa_error *e) {
+                      uint32_t item_pointer, float avoid, bool return_leg, bool ranked, qa_error *e) {
     if (!(weight > 0)) return true;
     uint32_t time;
     if (!travel(c, c->area, c->query->origin, (uint32_t)goal->area, &time, e)) return false;
@@ -28,7 +28,7 @@ static bool consider(goal_choice *c, const qa_bot_goal *goal, float weight, bool
     float remaining;
     if (!qa_bot_goals_avoid_time(c->goals, c->handle, goal->number, &remaining, e)) return false;
     if (remaining - (float)time * .009f > 0) return true;
-    weight /= (float)time * .01f;
+    if(!ranked) weight /= (float)time * .01f;
     if (!(weight > c->best_weight)) return true;
     qa_vec3 goal_origin = goal->origin;
     if (c->query->nearby && native) {
@@ -81,6 +81,7 @@ static bool source_binding(qa_bot_goals *g, const qa_bot_pickup_goal *current,
     binding->goal.mins = qa_vec_sub(world.mins, origin);
     binding->goal.maxs = qa_vec_sub(world.maxs, origin);
     binding->goal.entity = current->entity;
+    binding->goal.flags = QA_BOT_GOAL_ITEM | (current->dropped ? QA_BOT_GOAL_DROPPED : 0);
     *out = binding->goal;
     return true;
 }
@@ -95,6 +96,10 @@ static bool choose_sources(goal_choice *c, const qa_actor_id *actors, size_t cou
         if (!qa_vec_finite(current.origin) || !qa_vec_finite(current.bounds.mins) ||
             !qa_vec_finite(current.bounds.maxs) || !isfinite(current.utility))
             return bot_goal_fail(e, "invalid canonical pickup goal observation");
+        float weight=current.utility;bool ranked=false;
+        if(c->query->rank_pickup &&
+           !c->query->rank_pickup(c->query->rank_context,&current,&weight,&ranked,e)) return false;
+        if(!(weight>0)) continue;
         qa_bounds world = qa_bounds_translate(current.bounds, current.origin);
         qa_vec3 center = qa_vec_scale(qa_vec_add(world.mins, world.maxs), .5f), origin;
         qa_bounds local = {qa_vec_sub(world.mins, center), qa_vec_sub(world.maxs, center)};
@@ -103,7 +108,7 @@ static bool choose_sources(goal_choice *c, const qa_actor_id *actors, size_t cou
         if (!area) continue;
         qa_bot_goal goal;
         if (!source_binding(g, &current, origin, area, world, &goal, e) ||
-            !consider(c, &goal, current.utility, false, 0, 0, true, e)) return false;
+            !consider(c, &goal, weight, false, 0, 0, true, ranked, e)) return false;
     }
     return true;
 }
@@ -162,7 +167,7 @@ static bool choose(goal_choice *c, qa_error *e) {
         if (item->flags & 16) weight *= item->weight;
         qa_bot_goal goal = {.area = 0, .number = item->number};
         memcpy(&goal.area, &item->goal_area, sizeof(goal.area));
-        if (!consider(c, &goal, weight, true, id, 0, false, e)) return false;
+        if (!consider(c, &goal, weight, true, id, 0, false, false, e)) return false;
 advance:
         if (!bot_goal_level_read(g, id, &value, e)) return false;
         id = value.next;
