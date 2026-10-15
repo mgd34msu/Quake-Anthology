@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "windows_crt.h"
+#include "memory_string.h"
 #include "scan.h"
 #include "sysv_libc_format.h"
 #include "qa/text.h"
@@ -149,15 +150,12 @@ bool windows_crt_initialize(guest_windows *owner, qa_error *error)
 static bool text(guest_windows *owner, uint64_t address, qa_arena *scratch,
     char **out, qa_error *error)
 {
-    qa_arena temporary; qa_arena_init_pool(&temporary, &owner->guest->scratch_pages);
-    uint16_t *units = NULL; size_t count;
-    if (!windows_string(owner, address, false, &temporary, &units, &count, error)) {
-        qa_arena_destroy(&temporary); return false;
-    }
-    char *value = qa_arena_alloc(scratch, count + 1, 1, error);
-    if (!value) { qa_arena_destroy(&temporary); return false; }
-    for (size_t i = 0; i <= count; ++i) value[i] = (char)units[i];
-    qa_arena_destroy(&temporary); *out = value; return true;
+    qa_buffer value = {0}; bool terminated;
+    if (!guest_string_read(owner->guest, address, 1, 1048576, scratch,
+        &value, &terminated, error)) return false;
+    if (!terminated)
+        return guest_fail(error, QA_ERROR_FORMAT, address, "Windows string exceeds source read limit");
+    *out = (char *)value.data; return true;
 }
 
 static bool extent(uint64_t value, size_t *out, qa_error *error)

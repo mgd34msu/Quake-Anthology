@@ -3,6 +3,7 @@
 #include "windows_kernel.h"
 #include "windows_crt.h"
 #include "windows_msvc.h"
+#include "memory_string.h"
 #include "pe_bind.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -75,26 +76,29 @@ bool windows_string(guest_windows *owner, uint64_t address, bool wide,
     qa_arena *scratch, uint16_t **out, size_t *length, qa_error *error)
 {
     if (!address || !out || *out || !length) return guest_fail(error, QA_ERROR_ARGUMENT, address, "Windows string requires real storage and empty output");
-    size_t count = 0, capacity = 0; uint16_t *text = NULL;
-    for (; count < 1048576; ++count) {
-        uint64_t value;
-        if (!windows_read(owner, address + count * (wide ? 2 : 1), wide ? 2 : 1, &value, error)) {
-            if (!scratch) free(text);
-            return false;
-        }
-        if (scratch && count == capacity) {
-            size_t next = capacity ? capacity * 2 : 1;
-            uint16_t *grown = qa_arena_grow(scratch, text, capacity * sizeof(*text),
-                next * sizeof(*text), _Alignof(uint16_t), error);
-            if (!grown) return false;
-            text = grown; capacity = next;
-        } else if (!scratch && !guest_grow((void **)&text, &capacity,
-            count + 1, sizeof(*text), error)) { free(text); return false; }
-        text[count] = (uint16_t)value;
-        if (!value) { *out = text; *length = count; return true; }
+    qa_buffer raw = {0}; bool terminated;
+    if (!guest_string_read(owner ? owner->guest : NULL, address, wide ? 2 : 1,
+        1048576, scratch, &raw, &terminated, error)) return false;
+    if (!terminated) {
+        if (!scratch) qa_buffer_free(&raw);
+        return guest_fail(error, QA_ERROR_FORMAT, address, "Windows string exceeds source read limit");
     }
-    if (!scratch) free(text);
-    return guest_fail(error, QA_ERROR_FORMAT, address, "Windows string exceeds source read limit");
+    size_t count = raw.size / (wide ? 2 : 1), bytes = (count + 1) * sizeof(uint16_t);
+    uint16_t *text = wide ? (uint16_t *)raw.data : scratch ?
+        qa_arena_grow(scratch, raw.data, raw.size + 1, bytes, _Alignof(uint16_t), error) :
+        realloc(raw.data, bytes);
+    if (!text) {
+        if (!scratch) {
+            qa_buffer_free(&raw);
+            guest_fail(error, QA_ERROR_MEMORY, address, "owning Windows decoded string units");
+        }
+        return false;
+    }
+    for (size_t i = count + 1; i; ) {
+        --i;
+        text[i] = wide ? qa_load_u16le((uint8_t *)text + i * 2) : ((uint8_t *)text)[i];
+    }
+    *out = text; *length = count; return true;
 }
 
 bool windows_store_string(guest_windows *owner, const uint16_t *text, size_t length,

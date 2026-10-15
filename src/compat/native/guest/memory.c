@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "memory_string.h"
 #include "unicorn_state.h"
 #include "abi.h"
 #include "sysv_libc_format.h"
@@ -352,6 +353,79 @@ bool qa_native_guest_read(const qa_native_guest *guest, uint64_t address, void *
         offset += amount;
     }
     return true;
+}
+
+bool guest_string_read(const qa_native_guest *guest, uint64_t address, size_t unit_bytes,
+    size_t maximum_units, qa_arena *arena, qa_buffer *out, bool *terminated, qa_error *error)
+{
+    if (!out || out->data || out->size || !terminated || (unit_bytes != 1 && unit_bytes != 2))
+        return guest_fail(error, QA_ERROR_ARGUMENT, address, "native string requires empty output and byte or UTF-16 units");
+    *terminated = false;
+    if (!maximum_units) return true;
+    if (!guest_ready(guest, error)) return false;
+    qa_buffer text = {0}; size_t capacity = 0, count = 0;
+    while (count < maximum_units) {
+        if (!address_range(guest, address, unit_bytes, error)) goto failed;
+        const qa_native_guest_mapping *mapping = guest_mapping(guest, address);
+        if (!mapping || !(mapping->permissions & QA_NATIVE_GUEST_READ)) {
+            guest_fail(error, QA_ERROR_ARGUMENT, address, "native guest memory is unavailable for this access");
+            goto failed;
+        }
+        guest_backing *backing = guest_backing_at(guest, mapping->backing);
+        size_t displacement = (size_t)(address - mapping->base);
+        uint64_t physical = mapping->backing_offset + displacement;
+        size_t available = (size_t)(mapping->bytes - displacement);
+        size_t page = QA_NATIVE_GUEST_PAGE - (size_t)(address % QA_NATIVE_GUEST_PAGE);
+        if (available > page) available = page;
+        if (backing->file) {
+            if (physical >= backing->source.accessible_bytes) {
+                guest_fail(error, QA_ERROR_FORMAT, address, "native guest file mapping access faults beyond EOF");
+                goto failed;
+            }
+            uint64_t remaining = backing->source.accessible_bytes - physical;
+            if (available > remaining) available = (size_t)remaining;
+        }
+        uint64_t limit = guest->options.image.target.pointer_bytes == 4 ? UINT64_C(0x100000000) : UINT64_MAX;
+        if (available > limit - address) available = (size_t)(limit - address);
+        const uint8_t *source = backing->data + physical;
+        uint8_t boundary[2]; size_t units;
+        if (available < unit_bytes) {
+            if (!qa_native_guest_read(guest, address, boundary, unit_bytes, error)) goto failed;
+            source = boundary; units = 1;
+        } else units = available / unit_bytes;
+        if (units > maximum_units - count) units = maximum_units - count;
+        size_t bytes = units * unit_bytes;
+        bool ended = false;
+        if (unit_bytes == 1) {
+            const uint8_t *zero = memchr(source, 0, bytes);
+            if (zero) { bytes = (size_t)(zero - source) + 1; ended = true; }
+        } else {
+            for (size_t i = 0; i < bytes; i += 2)
+                if (!qa_load_u16le(source + i)) { bytes = i + 2; ended = true; break; }
+        }
+        if (bytes > SIZE_MAX - text.size) {
+            guest_fail(error, QA_ERROR_MEMORY, address, "native string storage extent overflows");
+            goto failed;
+        }
+        size_t needed = text.size + bytes;
+        if (needed > capacity) {
+            if (arena) {
+                size_t next = capacity && capacity <= SIZE_MAX / 2 ? capacity * 2 : needed;
+                if (next < needed) next = needed;
+                void *grown = qa_arena_grow(arena, text.data, text.size, next, unit_bytes, error);
+                if (!grown) goto failed;
+                text.data = grown; capacity = next;
+            } else if (!guest_grow((void **)&text.data, &capacity, needed, 1, error)) goto failed;
+        }
+        memcpy(text.data + text.size, source, bytes);
+        text.size += bytes;
+        if (ended) { text.size -= unit_bytes; *terminated = true; *out = text; return true; }
+        count += units; address += bytes;
+    }
+    *out = text; return true;
+failed:
+    if (!arena) qa_buffer_free(&text);
+    return false;
 }
 
 bool guest_callback_cancelled(const qa_native_guest *guest,const qa_error *error)

@@ -1,4 +1,5 @@
 #include "sysv_libc_private.h"
+#include "memory_string.h"
 
 bool sysv_fail(qa_error *error, qa_status code, const char *text)
 { qa_error_set(error, code, 0, "%s", text); return false; }
@@ -60,32 +61,8 @@ bool sysv_string(guest_sysv_runtime *runtime, uint64_t address, size_t maximum,
     if (!out || out->data || out->size || !terminated || maximum > SYSV_MAX_STRING)
         return sysv_fail(error, QA_ERROR_ARGUMENT, "invalid System V string receipt");
     *terminated = false;
-    size_t capacity = 0;
-    for (size_t i = 0; i < maximum; ++i) {
-        uint8_t byte;
-        if (address > UINT64_MAX - i || !sysv_read(runtime, address + i, &byte, 1, error)) {
-            if (!arena) qa_buffer_free(out); else *out = (qa_buffer){0};
-            return false;
-        }
-        size_t needed = out->size + 1;
-        if (needed > capacity) {
-            size_t next = capacity ? capacity * 2 : 16;
-            if (next < needed) next = needed;
-            bool grown;
-            if (arena) {
-                void *data = qa_arena_grow(arena, out->data, out->size, next, 1, error);
-                grown = data != NULL;
-                if (grown) { out->data = data; capacity = next; }
-            } else grown = guest_grow((void **)&out->data, &capacity, needed, 1, error);
-            if (!grown) {
-                if (!arena) qa_buffer_free(out); else *out = (qa_buffer){0};
-                return false;
-            }
-        }
-        if (!byte) { out->data[out->size] = 0; *terminated = true; return true; }
-        out->data[out->size++] = byte;
-    }
-    return true;
+    return !maximum || (sysv_current(runtime, error) &&
+        guest_string_read(runtime->guest, address, 1, maximum, arena, out, terminated, error));
 }
 bool sysv_allocate(guest_sysv_runtime *runtime, uint64_t bytes, bool heap,
     uint64_t *out, qa_error *error)

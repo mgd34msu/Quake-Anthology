@@ -6,6 +6,7 @@
 #include "qa/native.h"
 #include "qa/native_guest.h"
 #include "../src/compat/native/guest/abi.h"
+#include "../src/compat/native/guest/memory_string.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -4984,6 +4985,65 @@ static void test_q2_weapon_names(void)
     free(config); qa_strings_destroy(strings);
 }
 
+static void test_native_string_boundaries(void)
+{
+    qa_error error = {0};
+    qa_native_guest *guest = NULL;
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_ELF64,
+            .target = {.os = QA_NATIVE_OS_LINUX, .arch = QA_NATIVE_ARCH_X86_64,
+                .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .pointer_bytes = 8}},
+        .allocation_base = UINT64_C(0x300000),
+        .maximum_backing_bytes = 4 * QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    uint64_t base = UINT64_C(0x100000), boundary = base + QA_NATIVE_GUEST_PAGE;
+    qa_native_guest_mapping first, second;
+    CHECK(qa_native_guest_map(guest, base, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){0}, &first, &error));
+    CHECK(qa_native_guest_map(guest, boundary, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){0}, &second, &error));
+    CHECK(qa_native_guest_write(guest, boundary - 2, (qa_bytes){(const uint8_t *)"abc", 4}, &error));
+    qa_buffer text = {0}; bool terminated;
+    CHECK(guest_string_read(guest, boundary - 2, 1, 8, NULL, &text, &terminated, &error));
+    CHECK(terminated && text.size == 3 && !memcmp(text.data, "abc", 4));
+    qa_buffer_free(&text);
+    CHECK(guest_string_read(guest, boundary - 2, 1, 2, NULL, &text, &terminated, &error));
+    CHECK(!terminated && text.size == 2 && !memcmp(text.data, "ab", 2));
+    qa_buffer_free(&text);
+    const uint8_t wide[] = {'A', 0, 'B', 0, 0, 0};
+    CHECK(qa_native_guest_write(guest, boundary - 1, (qa_bytes){wide, sizeof(wide)}, &error));
+    qa_arena storage; qa_arena_init(&storage, 0);
+    CHECK(guest_string_read(guest, boundary - 1, 2, 4, &storage, &text, &terminated, &error));
+    CHECK(terminated && text.size == 4 && !memcmp(text.data, wide, sizeof(wide)));
+    qa_arena_destroy(&storage); text = (qa_buffer){0};
+    const uint8_t last[] = {255, 0};
+    CHECK(qa_native_guest_write(guest, boundary - 2, (qa_bytes){last, sizeof(last)}, &error));
+    CHECK(qa_native_guest_protect(guest, second.id, 0, &error));
+    CHECK(guest_string_read(guest, boundary - 2, 1, 8, NULL, &text, &terminated, &error));
+    CHECK(terminated && text.size == 1 && text.data[0] == 255 && text.data[1] == 0);
+    qa_buffer_free(&text);
+    CHECK(qa_native_guest_write(guest, boundary - 1, (qa_bytes){(const uint8_t *)"x", 1}, &error));
+    CHECK(!guest_string_read(guest, boundary - 1, 1, 8, NULL, &text, &terminated, &error));
+    CHECK(error.code != QA_OK && !text.data && !text.size);
+    error = (qa_error){0};
+    CHECK(guest_string_read(guest, 0, 1, 0, NULL, &text, &terminated, &error));
+    CHECK(!terminated && !text.data && !text.size);
+    uint64_t file_base = base + 4 * QA_NATIVE_GUEST_PAGE;
+    qa_native_guest_mapping file_mapping;
+    CHECK(qa_native_guest_map_file(guest, file_base, 2 * QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ, (qa_bytes){(const uint8_t *)"s", 2}, 0, &file_mapping, &error));
+    CHECK(guest_string_read(guest, file_base + QA_NATIVE_GUEST_PAGE - 1, 1, 8,
+        NULL, &text, &terminated, &error));
+    CHECK(terminated && !text.size && text.data[0] == 0);
+    qa_buffer_free(&text);
+    CHECK(!guest_string_read(guest, file_base + QA_NATIVE_GUEST_PAGE, 1, 1,
+        NULL, &text, &terminated, &error));
+    CHECK(error.code == QA_ERROR_FORMAT && !text.data && !text.size);
+    error = (qa_error){0};
+    CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
+}
+
 static void test_native_resumable_budget(void)
 {
     qa_error error = {0};
@@ -5680,6 +5740,7 @@ int main(int argc, char **argv)
     test_shared_angle_wrapping();
     test_shared_direction_angles();
     test_native_import_slot_identity();
+    test_native_string_boundaries();
     test_native_resumable_budget();
     test_q2_weapon_names();
     test_q2_player_media();
