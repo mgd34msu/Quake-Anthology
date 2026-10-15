@@ -101,7 +101,8 @@ bool qa_browser_q3_valid(const qa_server_browser *b)
             if (v->completed_ns < v->sent_ns || entry->updated_ns != v->completed_ns ||
                 entry->ping_ns != v->completed_ns - v->sent_ns || !entry->has_ping || !entry->available || entry->pending || entry->timed_out ||
                 entry->protocol.kind != QA_NET_Q3_68 || entry->protocol.revision || entry->protocol.flags ||
-                !qa_net_address_equal(&v->address, &entry->address, true) || !entry->sources || (entry->sources & ~31u) ||
+                !qa_net_address_equal(&v->address, &entry->address, true) || !entry->sources ||
+                (entry->sources & ~(uint32_t)QA_SERVER_SOURCES) ||
                 entry->players > 1024 || entry->maximum_players > 1024 ||
                 !memchr(entry->name, 0, sizeof(entry->name)) || !memchr(entry->map, 0, sizeof(entry->map)) ||
                 !memchr(entry->rules, 0, sizeof(entry->rules)) || !memchr(v->status, 0, sizeof(v->status)) ||

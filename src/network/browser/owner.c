@@ -160,7 +160,7 @@ void qa_server_browser_destroy(qa_server_browser *browser) {
 }
 bool qa_server_browser_add(qa_server_browser *browser, const qa_net_address *address,
                             qa_net_protocol_id protocol, uint32_t sources, qa_error *error) {
-    if (!browser || browser->callback || !address || !sources || (sources & ~31u) ||
+    if (!browser || browser->callback || !address || !sources || (sources & ~(uint32_t)QA_SERVER_SOURCES) ||
         !qa_net_protocol_valid(protocol, error)) return qa_browser_fail(error, "Invalid browser entry");
     browser_record *record = qa_browser_find(browser, address, protocol);
     bool fresh = !record;
@@ -193,8 +193,8 @@ bool qa_server_browser_remove_source(qa_server_browser *browser, const qa_net_ad
     }
     qa_browser_changed(browser, &previous, QA_BROWSER_MEMBERSHIP_CHANGED); return true;
 }
-bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *address,
-                              qa_net_protocol_id protocol, bool broadcast, uint64_t now, uint64_t timeout, qa_error *error) {
+static bool browser_query(qa_server_browser *browser, const qa_net_address *address,
+    qa_net_protocol_id protocol, bool broadcast, uint32_t source, uint64_t now, uint64_t timeout, qa_error *error) {
     if (!browser || browser->callback || !address || !timeout || !browser->next_query ||
         (broadcast && !browser->hooks.local) ||
         !qa_net_protocol_valid(protocol, error)) return qa_browser_fail(error, "Invalid browser query");
@@ -202,12 +202,13 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
      * dialects can probe one endpoint; receive selects the decoder that fits. */
     browser_record *pending = broadcast ? NULL : qa_browser_find(browser, address, protocol);
     if (pending && pending->entry.pending && now >= pending->sent_ns &&
-        now - pending->sent_ns < pending->timeout_ns) return true;
+        now - pending->sent_ns < pending->timeout_ns)
+        return (pending->entry.sources & source) ||
+            qa_server_browser_add(browser, address, protocol, source, error);
     uint64_t query = browser->next_query++;
     uint8_t bytes[256]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     if (!qa_browser_query_encode(protocol, query, &writer)) return false;
-    if (!broadcast && !(protocol.kind == QA_NET_Q3_68 && qa_browser_find(browser, address, protocol)) &&
-        !qa_server_browser_add(browser, address, protocol, QA_SERVER_DIRECT, error)) return false;
+    if (!broadcast && !qa_server_browser_add(browser, address, protocol, source, error)) return false;
     browser->callback = true;
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     browser->callback = false; if (!ok) return false;
@@ -222,14 +223,18 @@ bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *a
     }
     return true;
 }
+bool qa_server_browser_query(qa_server_browser *browser, const qa_net_address *address,
+    qa_net_protocol_id protocol, bool broadcast, uint64_t now, uint64_t timeout, qa_error *error) {
+    return browser_query(browser, address, protocol, broadcast, QA_SERVER_DIRECT, now, timeout, error);
+}
 bool qa_server_browser_probe(qa_server_browser *browser, const qa_net_address *address,
     uint64_t now, uint64_t timeout, qa_error *error) {
     static const qa_net_protocol protocols[] = {
         QA_NET_NQ15, QA_NET_QW28, QA_NET_Q2_34, QA_NET_Q2KEX_2023, QA_NET_Q3_68
     };
     for (size_t i = 0; i < sizeof(protocols) / sizeof(*protocols); ++i)
-        if (!qa_server_browser_query(browser, address, (qa_net_protocol_id){.kind = protocols[i]},
-            false, now, timeout, error)) return false;
+        if (!browser_query(browser, address, (qa_net_protocol_id){.kind = protocols[i]},
+            false, QA_SERVER_PROBE, now, timeout, error)) return false;
     return true;
 }
 void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
@@ -238,6 +243,10 @@ void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
         browser_record *record = &browser->records[i];
         if (record->occupied && record->entry.pending && now >= record->sent_ns &&
             now - record->sent_ns >= record->timeout_ns) {
+            if (record->entry.sources == QA_SERVER_PROBE) {
+                qa_browser_response_clear(browser, record); memset(record, 0, sizeof(*record)); continue;
+            }
+            record->entry.sources &= ~(uint32_t)QA_SERVER_PROBE;
             record->entry.pending = false; record->entry.timed_out = true; qa_browser_changed(browser, &record->entry, QA_BROWSER_QUERY_EXPIRED);
         }
     }
@@ -319,7 +328,9 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
         if (!qa_server_browser_add(browser, &packet->from, protocol, QA_SERVER_LAN, error)) return false;
         target = qa_browser_find(browser, &packet->from, protocol);
     }
-    decoded.address = target->entry.address; decoded.sources = target->entry.sources;
+    decoded.address = target->entry.address;
+    decoded.sources = target->entry.sources & ~(uint32_t)QA_SERVER_PROBE;
+    if (!decoded.sources) decoded.sources = QA_SERVER_DIRECT;
     decoded.updated_ns = packet->received_ns; decoded.ping_ns = packet->received_ns - sent;
     if (!qa_browser_response_store(browser, target, packet->payload, protocol.kind == QA_NET_Q3_68, error)) return false;
     decoded.available = true; decoded.has_ping = true; target->entry = decoded;
@@ -440,11 +451,13 @@ bool qa_server_browser_master_http(qa_server_browser *browser, const char *url,
 }
 size_t qa_server_browser_count(const qa_server_browser *browser) {
     size_t count = 0;
-    if (browser) for (uint32_t i = 0; i < browser->capacity; ++i) if (browser->records[i].occupied) ++count;
+    if (browser) for (uint32_t i = 0; i < browser->capacity; ++i)
+        if (browser->records[i].occupied && browser->records[i].entry.sources != QA_SERVER_PROBE) ++count;
     return count;
 }
 bool qa_server_browser_at(const qa_server_browser *browser, size_t index, qa_server_entry *out) {
-    if (!browser || !out || index >= browser->capacity || !browser->records[index].occupied) return false;
+    if (!browser || !out || index >= browser->capacity || !browser->records[index].occupied ||
+        browser->records[index].entry.sources == QA_SERVER_PROBE) return false;
     *out = browser->records[index].entry; return true;
 }
 static bool contains(const char *text, const char *needle) {
@@ -471,7 +484,8 @@ bool qa_server_browser_list(const qa_server_browser *browser, const qa_browser_f
     size_t size = 0;
     for (uint32_t i = 0; i < browser->capacity; ++i) {
         const qa_server_entry *entry = &browser->records[i].entry;
-        if (!browser->records[i].occupied || (filter->favorites_only && !(entry->sources & QA_SERVER_FAVORITE)) ||
+        if (!browser->records[i].occupied || entry->sources == QA_SERVER_PROBE ||
+            (filter->favorites_only && !(entry->sources & QA_SERVER_FAVORITE)) ||
             (filter->hide_empty && !entry->players) || (filter->hide_full && entry->maximum_players && entry->players >= entry->maximum_players) ||
             (!contains(entry->name, filter->text) && !contains(entry->map, filter->text))) continue;
         size_t position = size;

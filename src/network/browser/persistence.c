@@ -117,7 +117,7 @@ static bool browser_checkpoint_valid(const qa_server_browser *b)
         if (!qa_browser_status_response_valid(b, r) || (e->has_ping && !e->available) ||
             (!e->has_ping && e->ping_ns)) return false;
         if (!r->occupied) continue;
-        if (!e->sources || (e->sources & ~31u) || !service_address_valid(&e->address) ||
+        if (!e->sources || (e->sources & ~(uint32_t)QA_SERVER_SOURCES) || !service_address_valid(&e->address) ||
             !qa_net_protocol_valid(e->protocol, NULL) || !memchr(e->name, 0, sizeof(e->name)) ||
             !memchr(e->map, 0, sizeof(e->map)) || !memchr(e->rules, 0, sizeof(e->rules)) ||
             (e->pending && (!r->query || !r->timeout_ns))) return false;
@@ -125,8 +125,8 @@ static bool browser_checkpoint_valid(const qa_server_browser *b)
             const qa_server_entry *other = &b->records[j].entry;
             if (!b->records[j].occupied) continue;
             if (qa_net_address_equal(&e->address, &other->address, true) &&
-                ((e->protocol.kind == other->protocol.kind && e->protocol.revision == other->protocol.revision &&
-                  e->protocol.flags == other->protocol.flags) || (e->pending && other->pending))) return false;
+                (e->protocol.kind == other->protocol.kind && e->protocol.revision == other->protocol.revision &&
+                  e->protocol.flags == other->protocol.flags)) return false;
         }
     }
     return true;
@@ -139,10 +139,12 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
     if (b->q3->broadcast_count > (SIZE_MAX - fixed) / 16 ||
         b->q3->status_count > (SIZE_MAX - fixed - b->q3->broadcast_count * 16) / 160)
         return qa_browser_fail(error, "Q3 broadcasts exceed checkpoint allocation extent");
-    size_t response_bytes = 0;
-    for (uint32_t i = 0; i < b->capacity; ++i)
+    size_t response_bytes = 0, records = 0;
+    for (uint32_t i = 0; i < b->capacity; ++i) {
         response_bytes += b->records[i].q3_response.size + b->records[i].status_response.size;
-    size_t capacity = 4194304 + b->q3->broadcast_count * 16 + b->q3->status_count * 160 + b->capacity + qa_server_browser_count(b) * 12000 + response_bytes +
+        if (b->records[i].occupied) ++records;
+    }
+    size_t capacity = 4194304 + b->q3->broadcast_count * 16 + b->q3->status_count * 160 + b->capacity + records * 12000 + response_bytes +
         b->master_body.size + (b->master_url ? strlen(b->master_url) + 1 : 0);
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding browser continuation"); return false; }

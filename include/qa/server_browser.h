@@ -7,7 +7,11 @@
 typedef struct qa_server_browser qa_server_browser;
 enum qa_server_source {
     QA_SERVER_LAN = 1u, QA_SERVER_MASTER = 2u, QA_SERVER_FAVORITE = 4u, QA_SERVER_DIRECT = 8u,
-    QA_SERVER_SECONDARY_MASTER = 16u
+    QA_SERVER_SECONDARY_MASTER = 16u,
+    /* An unanswered protocol probe is not an admitted server listing. */
+    QA_SERVER_PROBE = 32u,
+    QA_SERVER_SOURCES = QA_SERVER_LAN | QA_SERVER_MASTER | QA_SERVER_FAVORITE |
+        QA_SERVER_DIRECT | QA_SERVER_SECONDARY_MASTER | QA_SERVER_PROBE
 };
 typedef struct qa_server_entry {
     qa_net_address address;

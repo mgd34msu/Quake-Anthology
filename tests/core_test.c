@@ -72,6 +72,7 @@
 #include "../src/network/q3/event_detect.h"
 #include "qa/network_q3_save.h"
 #include "qa/server_browser.h"
+#include "qa/network_services_save.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_qw_source.h"
@@ -8444,7 +8445,12 @@ static void test_browser_endpoint_probe(void)
     CHECK(qa_server_browser_create(http, 16, &hooks, &browser, &error));
     CHECK(qa_server_browser_probe(browser, &address, 100, 1000, &error));
     size_t sends = capture.sends;
-    CHECK(sends > 1 && capture.challenge[0]);
+    CHECK(sends > 1 && capture.challenge[0] && qa_server_browser_count(browser) == 0);
+    qa_buffer checkpoint = {0}; qa_server_browser *restored = NULL;
+    CHECK(qa_server_browser_checkpoint(browser, &checkpoint, &error));
+    CHECK(qa_server_browser_restore_checkpoint((qa_bytes){checkpoint.data, checkpoint.size}, http, 16,
+        &hooks, &restored, &error) && qa_server_browser_count(restored) == 0);
+    qa_buffer_free(&checkpoint); qa_server_browser_destroy(browser); browser = restored;
     CHECK(qa_server_browser_probe(browser, &address, 150, 1000, &error) && capture.sends == sends);
     CHECK(qa_server_browser_query(browser, &address, (qa_net_protocol_id){.kind = QA_NET_Q2_34},
         false, 160, 1000, &error) && capture.sends == sends);
@@ -8482,6 +8488,8 @@ static void test_browser_endpoint_probe(void)
     CHECK(qa_server_browser_list(browser, &filter, &scratch, indices, 16, &count, &error) && count == 1);
     CHECK(qa_server_browser_at(browser, indices[0], &entry) && entry.protocol.kind == QA_NET_Q3_68 &&
         entry.available && !entry.pending && entry.has_ping && entry.ping_ns == 200);
+    qa_server_browser_expire(browser, 1200);
+    CHECK(qa_server_browser_count(browser) == 2);
     qa_arena_destroy(&scratch); qa_server_browser_destroy(browser);
     CHECK(qa_http_destroy(http, &error));
 }
