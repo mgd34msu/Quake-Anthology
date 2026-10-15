@@ -43,9 +43,16 @@ typedef struct qa_bot_source_document {
 } qa_bot_source_document;
 typedef struct qa_bot_source_weapon {
     float ideal_fov, priority, min_range, max_range, min_height, max_height, min_ammo;
+    float trigger_hold, trigger_cooldown;
     size_t ordinal;
-    bool melee, electric, needs_ammo;
+    bool melee, electric, needs_ammo, hold_and_release;
 } qa_bot_source_weapon;
+typedef struct qa_bot_trigger_state {
+    float held_since, ready_at;
+    bool held;
+} qa_bot_trigger_state;
+bool qa_bot_weapon_trigger_step(qa_bot_trigger_state *, const qa_bot_source_weapon *,
+                                bool aimed, float now);
 typedef struct qa_bot_source_weapon_policy {
     const qa_bot_source_knowledge *knowledge;
     float range, height_delta;

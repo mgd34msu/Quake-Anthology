@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_storage.h"
+#include "source_view.h"
 
 bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t weapon,qa_error *e) {
     if(!bot_ai_mutable(b,e)) return false;
@@ -7,8 +8,8 @@ bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t we
     bot_ai_state *state=bot_ai_actor(b,actor);
     if(!state) return true;
     if(!bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_VIEW_ANGLES,&angles,true,e) ||
-       !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e) ||
-       !bot_ai_storage_i32(b,state,QA_BOT_SOURCE_WEAPON_NUMBER,&weapon,true,e)) return false;
+       !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e)) return false;
+    bot_ai_weapon_number_set(state,weapon);
     return true;
 }
 

@@ -151,6 +151,23 @@ static bool arsenal(qa_bots *b, bot_ai_state *s, const qa_bot_weapon_knowledge *
     }
     return true;
 }
+bool bot_ai_trigger(qa_bots *b,bot_ai_state *s,qa_error *e)
+{
+    if(s->player.dead || s->player.observer || s->player.intermission ||
+       s->view.decision==QA_BOT_RESPAWNING || s->view.decision==QA_BOT_OBSERVER ||
+       s->view.decision==QA_BOT_INTERMISSION) {
+        bot_ai_trigger_clear(s);return true;
+    }
+    const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
+    if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
+    const qa_bot_source_weapon *source=NULL;
+    for(size_t i=0;i<count;++i) if(weapons[i].weapon.number==bot_ai_weapon_number(s)) {
+        source=qa_bot_source_weapon_read(b->services.source_knowledge,weapons[i].supply_weapon);break;
+    }
+    b->services.arsenal_end(b->services.context,lease);
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    return !source || bot_ai_source_action_trigger(b,s,source,e);
+}
 static bool source_weapon_policy(qa_bots *b,bot_ai_state *s,qa_actor_id target,
     qa_bot_source_weapon_policy *out,qa_error *e)
 {
@@ -906,6 +923,8 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
                   hit.fraction*1000<selected.projectile.radius &&
                   (selected.selected_projectile_damage-.5f*hit.fraction*1000)*.5f>0) return true;
     }
+    if(s->source_settings && qa_bot_source_weapon_read(b->services.source_knowledge,selected.supply_weapon))
+        return bot_ai_source_action(b,s,QA_BOT_ATTACK,e);
     bool fire=selected.requires_release?!bot_ai_flag(s,BOT_AI_ATTACKED):
         !(selected.weapon.flags&BOT_FIRE_RELEASED)||bot_ai_flag(s,BOT_AI_ATTACKED);
     if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;

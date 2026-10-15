@@ -3,12 +3,14 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "source_alias.h"
+#include "source_timers.h"
 
 /* Setup, live-frame admission and restore qualify this same GAME allocation. */
 static inline int32_t bot_ai_weapon_number(const bot_ai_state *state) {
     return qa_load_i32le(state->source_span.data+QA_BOT_SOURCE_WEAPON_NUMBER);
 }
 static inline void bot_ai_weapon_number_set(bot_ai_state *state,int32_t value) {
+    if(state->source_settings && value!=bot_ai_weapon_number(state)) bot_ai_trigger_clear(state);
     qa_store_u32le(state->source_span.data+QA_BOT_SOURCE_WEAPON_NUMBER, (uint32_t)value);
 }
 static inline qa_vec3 bot_ai_view_angles(const bot_ai_state *state) {

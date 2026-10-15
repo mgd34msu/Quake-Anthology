@@ -231,6 +231,8 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
 finished:
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
         ok = bot_ai_source_action_weapon(b,s,e);
+    if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
+        ok=bot_ai_trigger(b,s,e);
     if(!ok) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!delta_angles(b,s,delta,e)) return false;

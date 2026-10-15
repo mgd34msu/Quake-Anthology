@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "source_alias.h"
+#include "source_flags.h"
 
 static inline bool bot_ai_respawn_wait(const bot_ai_state *s) {
     return qa_load_u32le(s->source_span.data+QA_BOT_SOURCE_RESPAWN_WAIT)!=0;
@@ -82,6 +83,10 @@ static inline float bot_ai_fire_shoot_time(const bot_ai_state *s) {
 }
 static inline void bot_ai_fire_shoot_time_set(bot_ai_state *s,float value) {
     qa_store_f32le(s->source_span.data+QA_BOT_SOURCE_FIRE_SHOOT_TIME,value);
+}
+static inline void bot_ai_trigger_clear(bot_ai_state *s) {
+    bot_ai_flag_set(s,BOT_AI_ATTACKED,false);
+    bot_ai_fire_shoot_time_set(s,0);bot_ai_fire_wait_time_set(s,0);
 }
 static inline float bot_ai_teleport_time(const bot_ai_state *s) {
     return qa_load_f32le(s->source_span.data+QA_BOT_SOURCE_TELEPORT_TIME);

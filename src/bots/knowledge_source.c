@@ -211,15 +211,20 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
         {"max_range",offsetof(qa_bot_source_weapon,max_range)},
         {"min_height",offsetof(qa_bot_source_weapon,min_height)},
         {"max_height",offsetof(qa_bot_source_weapon,max_height)},
-        {"min_ammo",offsetof(qa_bot_source_weapon,min_ammo)}};
-    qa_string_id name_key,number_key,flags_key,ammo_key,melee,electric,none;
+        {"min_ammo",offsetof(qa_bot_source_weapon,min_ammo)},
+        {"trigger_hold",offsetof(qa_bot_source_weapon,trigger_hold)},
+        {"trigger_cooldown",offsetof(qa_bot_source_weapon,trigger_cooldown)}};
+    qa_string_id name_key,number_key,flags_key,ammo_key,trigger_key,melee,electric,none,continuous,release;
     qa_string_id keys[sizeof(numbers)/sizeof(*numbers)];
     if(!qa_strings_intern_cstr(knowledge->strings,"name",&name_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"number",&number_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"flags",&flags_key,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"trigger_type",&trigger_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,rules==QA_RULESET_NETQUAKE?"ammo":"ammo_name",&ammo_key,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"melee",&melee,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"electric",&electric,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"continuous",&continuous,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"hold_and_release",&release,error) ||
        !qa_strings_intern_cstr(knowledge->strings,"none",&none,error)) return false;
     for(size_t i=0;i<sizeof(keys)/sizeof(*keys);++i)
         if(!qa_strings_intern_cstr(knowledge->strings,numbers[i].name,keys+i,error)) return false;
@@ -240,6 +245,10 @@ static bool weapons_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source
             }
             if(field->count!=1) continue;
             if(field->key==name_key) name=field->values[0];
+            else if(field->key==trigger_key) {
+                if(field->values[0]==continuous || field->values[0]==release)
+                    weapon->hold_and_release=field->values[0]==release;
+            }
             else if(field->key==ammo_key)
                 weapon->needs_ammo=field->values[0]!=none &&
                     qa_strings_text(knowledge->strings,field->values[0]).size!=0;

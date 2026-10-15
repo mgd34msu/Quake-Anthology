@@ -131,6 +131,20 @@ static bool source_inventory_read(void *context,int32_t index,int32_t *out,qa_er
     }
     *out=inventory_value(*inventory,index);return true;
 }
+bool qa_bot_weapon_trigger_step(qa_bot_trigger_state *state,const qa_bot_source_weapon *weapon,
+    bool aimed,float now)
+{
+    if(!weapon || !weapon->hold_and_release) {
+        *state=(qa_bot_trigger_state){0};return aimed;
+    }
+    if(state->held) {
+        if(aimed && now-state->held_since<weapon->trigger_hold) return true;
+        state->held=false;state->held_since=0;state->ready_at=now+weapon->trigger_cooldown;
+        return false;
+    }
+    if(!aimed || now<state->ready_at) return false;
+    state->held=true;state->held_since=now;return true;
+}
 bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
                               const qa_bot_weapon_knowledge *candidates,size_t count,
                               qa_bot_inventory_bytes inventory,

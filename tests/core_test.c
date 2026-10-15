@@ -85,6 +85,7 @@
 #include "../src/network/unified/frame_internal.h"
 #include "../src/bots/runtime/internal.h"
 #include "../src/bots/ai/internal.h"
+#include "../src/bots/ai/source_view.h"
 #include "qa/bot_observations_save.h"
 #include "qa/bot_knowledge.h"
 #include "qa/console_save.h"
@@ -186,8 +187,42 @@ static qa_vec3 bot_weapon_fixture_launch(const qa_bot_weapon_knowledge *weapon,q
     qa_vec3 forward;qa_angle_vectors(angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
     return qa_vec_scale(forward,weapon->weapon.speed);
 }
+static void test_bot_authored_trigger(void)
+{
+    qa_bot_source_weapon weapon={.hold_and_release=true,.trigger_hold=.5f,.trigger_cooldown=.3f};
+    qa_bot_trigger_state trigger={0};
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,false,9));
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,10) && trigger.held && trigger.held_since==10);
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,10.25f));
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,true,10.5f) && !trigger.held && trigger.ready_at==10.8f);
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,true,10.75f));
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,10.9f));
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,false,11) && trigger.ready_at==11.3f);
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,false,11.1f) && trigger.ready_at==11.3f);
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,11.5f));
+    weapon.hold_and_release=false;
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,11.6f) && !trigger.held && !trigger.ready_at);
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,NULL,false,11.7f));
+    weapon.hold_and_release=true;weapon.trigger_hold=0;
+    CHECK(qa_bot_weapon_trigger_step(&trigger,&weapon,true,12));
+    CHECK(!qa_bot_weapon_trigger_step(&trigger,&weapon,true,12) && trigger.ready_at==12.3f);
+
+    uint8_t source[QA_BOT_STATE_SOURCE_BYTES]={0};qa_bot_source_skill settings={0};
+    bot_ai_state state={.source_settings=&settings,.source_span={.data=source,.length=sizeof(source)}};
+    bot_ai_weapon_number_set(&state,8);
+    bot_ai_flag_set(&state,BOT_AI_ATTACKED,true);
+    bot_ai_fire_shoot_time_set(&state,10);bot_ai_fire_wait_time_set(&state,11);
+    bot_ai_weapon_number_set(&state,8);
+    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==11);
+    bot_ai_weapon_number_set(&state,9);
+    CHECK(!bot_ai_flag(&state,BOT_AI_ATTACKED) && !bot_ai_fire_shoot_time(&state) && !bot_ai_fire_wait_time(&state));
+    state.source_settings=NULL;bot_ai_flag_set(&state,BOT_AI_ATTACKED,true);
+    bot_ai_fire_wait_time_set(&state,13);bot_ai_weapon_number_set(&state,10);
+    CHECK(bot_ai_flag(&state,BOT_AI_ATTACKED) && bot_ai_fire_wait_time(&state)==13);
+}
 static void test_bot_source_knowledge(void)
 {
+    test_bot_authored_trigger();
     qa_error error={0};
     char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[3][160];
     CHECK(mkdtemp(directory));
@@ -199,6 +234,7 @@ static void test_bot_source_knowledge(void)
     qa_strings *strings=NULL;CHECK(qa_strings_create(&strings,&error));
     const char weapons[]="weapon \"laser\"\n{\n flags melee | starting\n bounds { -1 -2 -3 } { 1 2 3 }\n"
         " name weapon_blaster\n number 4096\n ideal_fov 25\n priority 5\n"
+        " trigger_type hold_and_release\n trigger_hold 0.5\n trigger_cooldown 0.3\n"
         " min_range 10\n max_range 500\n min_height 50\n max_height 60\n min_ammo 5\n"
         " ammo cells\n ammo_name ammo_cells\n}\n"
         "weapon rail {\n name weapon_railgun\n number 1\n priority 5\n ammo_name none\n}\n"
@@ -251,12 +287,13 @@ static void test_bot_source_knowledge(void)
     CHECK(document && document->source.size==sizeof(weapons)-3 &&
         !memcmp(document->source.data,weapons,document->source.size) && document->block_count==4);
     const qa_bot_source_block *block=document->blocks;
-    CHECK(block->header_count==2 && block->field_count==13 && block->fields[0].count==3 &&
+    CHECK(block->header_count==2 && block->field_count==16 && block->fields[0].count==3 &&
         block->fields[1].count==10);
     qa_item_id lava_nailgun;
     CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
     const qa_bot_source_weapon *bound=qa_bot_source_weapon_read(knowledge,lava_nailgun);
-    CHECK(bound && bound->ideal_fov==25 && bound->ordinal==0 && bound->melee && bound->needs_ammo);
+    CHECK(bound && bound->ideal_fov==25 && bound->ordinal==0 && bound->melee && bound->needs_ammo &&
+        bound->hold_and_release && bound->trigger_hold==.5f && bound->trigger_cooldown==.3f);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
     CHECK(block->field_count==17 && block->fields[0].key==block->fields[1].key &&
         block->fields[15].key==block->fields[16].key && block->fields[15].count==2);

@@ -3,6 +3,7 @@
 #include "source_alias.h"
 #include "source_player.h"
 #include "source_view.h"
+#include "source_selectors.h"
 #include "qa/text.h"
 
 static bool bytes(qa_bots *bots, bot_ai_state *state, uint8_t **out, qa_error *error) {
@@ -109,4 +110,26 @@ bool bot_ai_source_action_input(qa_bots *bots,bot_ai_state *state,float time,
     uint32_t client;bool ready;
     if(!action_client(bots,state,&client,&ready,error)) return false;
     return !ready || qa_bot_actions_input(qa_bot_runtime_actions(bots->runtime),client,time,out,error);
+}
+bool bot_ai_source_action_trigger(qa_bots *bots,bot_ai_state *state,
+    const qa_bot_source_weapon *weapon,qa_error *error)
+{
+    uint32_t client;bool ready;
+    if(!action_client(bots,state,&client,&ready,error)) return false;
+    if(!ready) return true;
+    qa_bot_actions *actions=qa_bot_runtime_actions(bots->runtime);
+    qa_bot_input input;
+    if(!qa_bot_actions_read(actions,client,&input,error)) return false;
+    if(!bot_ai_live(bots,bot_ai_enemy_actor(bots,state))) {
+        bot_ai_flag_set(state,BOT_AI_ATTACKED,false);bot_ai_fire_shoot_time_set(state,0);
+    } else {
+        qa_bot_trigger_state trigger={.held=bot_ai_flag(state,BOT_AI_ATTACKED),
+            .held_since=bot_ai_fire_shoot_time(state),.ready_at=bot_ai_fire_wait_time(state)};
+        bool fire=qa_bot_weapon_trigger_step(&trigger,weapon,
+            (input.action_flags&QA_BOT_ATTACK)!=0,bots->time);
+        bot_ai_flag_set(state,BOT_AI_ATTACKED,trigger.held);
+        bot_ai_fire_shoot_time_set(state,trigger.held_since);bot_ai_fire_wait_time_set(state,trigger.ready_at);
+        if(!fire) input.action_flags&=~(uint32_t)QA_BOT_ATTACK;
+    }
+    return qa_bot_actions_restore(actions,client,&input,error);
 }
