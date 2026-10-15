@@ -7,6 +7,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_q3_private.h"
 #include "guest_q3_pickups.h"
+#include "guest_q3_save.h"
 #include "map_players_private.h"
 #include "qa/application_supplies_save.h"
 #include "qa/source_save.h"
@@ -773,8 +774,12 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
         struct application_q3_guest *engine = q3g_engine(source);
         uint32_t slot = record->client_slot;
         if (engine && slot < sizeof(engine->clients)/sizeof(*engine->clients) &&
-            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor))
+            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) {
+            uint32_t restored_slot;
+            if (application_guest_q3_save_actor_client(source, actor, &restored_slot) &&
+                restored_slot == slot) return true;
             return original_player_current(source, actor, error);
+        }
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Supply actor differs from its actual physical source client");
 }
