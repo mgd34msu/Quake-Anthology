@@ -701,7 +701,9 @@ static command_contribution *ordinary_command(const command_entry *entry, uint64
 
 static bool contribution_visible(const qa_console *console,const command_contribution *part, const qa_command_context *context)
 {
-    if (part->retired || (context->owner && part->view.owner && part->view.owner!=context->owner) ||
+    bool declaration = !part->handler && !part->callback &&
+        part->cvar_view == context->cvar_view;
+    if (part->retired || (!declaration && context->owner && part->view.owner && part->view.owner!=context->owner) ||
         (part->scoped && part->seat!=context->seat)) return false;
     if (!part->view.owner && part->view.engine_command &&
         (!part->cvar_view || part->cvar_view==console->options.context.cvar_view)) return true;

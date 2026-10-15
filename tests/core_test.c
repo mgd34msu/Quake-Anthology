@@ -544,6 +544,8 @@ static void test_console_command_precedence(void)
     CHECK(qa_cvars_register(cvars,"qa_forward_collision","original",0,1,"",&error));
     CHECK(qa_cvars_register(cvars,"qa_callback_collision","original",0,1,"",&error));
     CHECK(qa_cvars_register(cvars,"qa_plain_cvar","original",0,1,"",&error));
+    CHECK(qa_cvars_register(cvars,"qa_declared_receiver","original",0,1,"",&error));
+    CHECK(qa_cvars_register(cvars,"qa_foreign_callback","original",0,1,"",&error));
     qa_command_context context={.owner=1,.dialect=QA_RULESET_Q3,.origin=QA_COMMAND_LOCAL,
         .cvar_view=qa_cvars_view_identity(cvars)};
     console_precedence_counts counts={.forward_result=QA_COMMAND_HANDLED,.callback_result=QA_COMMAND_HANDLED};
@@ -575,6 +577,16 @@ static void test_console_command_precedence(void)
     CHECK(qa_console_execute_now(console,&context,"qa_forward_only declined",&error));
     CHECK(counts.forwarded==3 && counts.called==2);
     CHECK(!qa_cvars_find(cvars,"qa_forward_only"));
+    CHECK(qa_console_register(console,"qa_declared_receiver","",2,false,NULL,NULL,&error));
+    counts.forward_result=QA_COMMAND_HANDLED;
+    CHECK(qa_console_execute_now(console,&context,"qa_declared_receiver sent",&error));
+    CHECK(counts.forwarded==4 && counts.called==2);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_declared_receiver")->value,"original"));
+    contribution.receiver=2; contribution.lifetime_owner=3;
+    CHECK(qa_console_contribute(console,"qa_foreign_callback",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&context,"qa_foreign_callback fallback",&error));
+    CHECK(counts.forwarded==4 && counts.called==2);
+    CHECK(!strcmp(qa_cvars_find(cvars,"qa_foreign_callback")->value,"fallback"));
     qa_console_destroy(console);qa_cvars_destroy(cvars);
 }
 
