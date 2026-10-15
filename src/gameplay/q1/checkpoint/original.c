@@ -196,6 +196,9 @@ static const original_field particle_tele_fields[] = {
     FIELD(q1_map_state, particle_size, "size", VECTOR),
     FIELD(q1_map_state, distance, "distance", FLOAT)
 };
+static const original_field shooter_fields[] = {
+    FIELD(q1_map_state, field_state, "state", FLOAT)
+};
 static const original_field mover_fields[] = {
     FIELD(q1_map_movement, pos1, "pos1", VECTOR),
     FIELD(q1_map_movement, pos2, "pos2", VECTOR),
@@ -498,7 +501,11 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_DOOR_TRIGGER: touch = "door_trigger_touch"; break;
     case Q1_MAP_PLAT_TRIGGER: touch = "plat_center_touch"; break;
     case Q1_MAP_SIGIL: touch = "sigil_touch"; break;
-    case Q1_MAP_SHOOTER: use = "spikeshooter_use"; break;
+    case Q1_MAP_SHOOTER: {
+        const char *name = qa_strings_cstr(strings, entity->classname);
+        use = name && !strcmp(name, "trap_switched_shooter") ? "trap_shooter_use" : "spikeshooter_use";
+        break;
+    }
     case Q1_MAP_FIREBALL: touch = "fire_touch"; break;
     default:
         if (map->touch_enabled || map->use_enabled)
@@ -664,8 +671,17 @@ static const original_projectile projectiles[] = {
     {Q1_LAVA_BALL,"","T_MissileTouch",QA_Q1_WEAPON_COUNT,"chthon_lavaball"},
     {Q1_HIP_LASER,"hiplaser","HIP_LaserTouch",QA_Q1_LASER,"hiplaser"},
     {Q1_PROXIMITY,"proximity_grenade","ProximityGrenadeTouch",QA_Q1_PROXIMITY,"proximity_grenade"},
-    {Q1_WRATH_MISSILE,"","WrathMissileTouch",QA_Q1_WEAPON_COUNT,"wrath_missile"}
+    {Q1_WRATH_MISSILE,"","WrathMissileTouch",QA_Q1_WEAPON_COUNT,"wrath_missile"},
+    {Q1_LAVA_SPIKE,"lava_spike","lavaspike_touch",QA_Q1_LAVA_NAILGUN,"lava_spike"},
+    {Q1_DRAGON_FIREBALL,"fireball","FireballTouch",QA_Q1_WEAPON_COUNT,"fireball"}
 };
+static const char *projectile_touch_name(const q1_projectile *p, const original_projectile *source) {
+    return p->kind == Q1_LAVA_SPIKE && p->count == 1 ? "superlavaspike_touch" : source->touch;
+}
+static void projectile_touch_restore(q1_projectile *p, const char *touch) {
+    if (p->kind == Q1_LAVA_SPIKE)
+        p->count = touch && !strcmp(touch, "superlavaspike_touch");
+}
 static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entity,
     qa_q1_save_record *record, qa_error *error) {
     const q1_projectile *p = &entity->state.projectile;
@@ -678,9 +694,13 @@ static bool projectile_fields(qa_q1_wire_receipt *receipt, const q1_actor *entit
         (!FIELDS(receipt,record,p,proximity_fields,error) ||
          !callback(record,"th_die","ProximityGrenadeExplode",error) ||
          (p->detonating && !text(record,"deathtype","exploding",QA_Q1_SAVE_STRING,error)))) return false;
-    return text(record, "classname", source->classname, QA_Q1_SAVE_STRING, error) &&
+    qa_q1_game *game = receipt->operation.game;
+    const char *classname = p->kind == Q1_LAVA_BALL &&
+        entity->classname == game->runtime_names[Q1_NAME_CLASS_TRAP_LAVABALL]
+        ? "lavaball" : source->classname;
+    return text(record, "classname", classname, QA_Q1_SAVE_STRING, error) &&
         callback(record, "touch", entity->think == Q1_THINK_SPRITE ? "SUB_Null" :
-            entity->touch_disabled ? NULL : p->remove_touch ? "SUB_Remove" : source->touch, error) &&
+            entity->touch_disabled ? NULL : p->remove_touch ? "SUB_Remove" : projectile_touch_name(p, source), error) &&
         actor(receipt, record, "enemy", p->enemy, false, error) &&
         actor(receipt, record, "owner", entity->owner, false, error);
 }
@@ -988,6 +1008,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE &&
             !FIELDS(receipt, record, entity->map, particle_tele_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_SHOOTER &&
+            !FIELDS(receipt, record, entity->map, shooter_fields, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
             const q1_map_movement *move = &entity->map->pending.mover;
             if (entity->map->kind == Q1_MAP_DOOR && move->group && move->group->count) {
@@ -1373,8 +1395,11 @@ static bool restore_player(qa_q1_program program, qa_strings *strings, q1_player
 static const original_projectile *saved_projectile(const qa_q1_save_record *record) {
     const char *name = saved(record, "classname"), *touch = saved(record, "touch");
     for (size_t i = 0; i < sizeof(projectiles) / sizeof(*projectiles); ++i) {
-        if (strcmp(name ? name : "",projectiles[i].classname)) continue;
-        if (touch && !strcmp(touch,projectiles[i].touch)) return projectiles + i;
+        bool lavaball = projectiles[i].kind == Q1_LAVA_BALL && name && !strcmp(name, "lavaball");
+        if (!lavaball && strcmp(name ? name : "",projectiles[i].classname)) continue;
+        if (touch && (!strcmp(touch, projectiles[i].touch) ||
+            (projectiles[i].kind == Q1_LAVA_SPIKE && !strcmp(touch, "superlavaspike_touch"))))
+            return projectiles + i;
     }
     const char *model = saved(record,"model");
     if ((!name || !*name) && touch && !strcmp(touch,"SUB_Remove") && model && !strcmp(model,"progs/zom_gib.mdl"))
@@ -1465,6 +1490,7 @@ static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     if (projectile) {
         entity->state.projectile.kind = projectile->kind;
         entity->state.projectile.weapon = projectile->weapon;
+        projectile_touch_restore(&entity->state.projectile, saved(record, "touch"));
     }
     return true;
 }
@@ -1506,6 +1532,9 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     }
     if (original_hidden_map_model(map->kind, map->dormant) && saved_number(record,"modelindex") == 0)
         entity->model = QA_STRING_NONE;
+    if (map->kind == Q1_MAP_SHOOTER &&
+        !restore_fields(strings, source, record, map, shooter_fields,
+            sizeof(shooter_fields) / sizeof(*shooter_fields), slots, count, error)) return false;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
@@ -1770,7 +1799,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_REGISTERED: case Q1_MAP_MONSTERJUMP: case Q1_MAP_LIGHT:
     case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
     case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
-    case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
+    case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
     case Q1_MAP_ADDON_PARTICLE_TELE:
         return true;
     default:
@@ -1790,6 +1819,7 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
             action==Q1_MAP_SECRET_RETURN || action==Q1_MAP_SECRET_LAST;
     case Q1_MAP_PLAT: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_PLAT_DOWN;
     case Q1_MAP_FIREBALL_SOURCE: return action==Q1_MAP_FIREBALL_FLY;
+    case Q1_MAP_SHOOTER: return action==Q1_MAP_SHOOTER_FIRE;
     case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
     case Q1_MAP_ADDON_PARTICLE_TELE: return action==Q1_MAP_ADDON_PARTICLE_TICK;
     default: return false;
@@ -1930,6 +1960,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
             if (source.map == Q1_MAP_ADDON_PARTICLE_TELE &&
                 !ADMIT_FIELDS(admission, &map, particle_tele_fields, error)) goto done;
+            if (source.map == Q1_MAP_SHOOTER &&
+                !ADMIT_FIELDS(admission, &map, shooter_fields, error)) goto done;
             if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
                 unsupported(error,"Source platform helper has an unrepresented independent owner");goto done;
             }
@@ -1986,9 +2018,10 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (!map_functions(admission->strings,&entity,damage!=0,&callbacks,error)) goto done;
         } else if (source.projectile) {
             entity.state.projectile.kind=source.projectile->kind;
+            projectile_touch_restore(&entity.state.projectile, saved(record, "touch"));
             if (source.projectile->kind==Q1_HIP_LASER && !ADMIT_FIELDS(admission,&entity.state.projectile,hip_laser_fields,error)) goto done;
             if (source.projectile->kind==Q1_PROXIMITY && !ADMIT_FIELDS(admission,&entity.state.projectile,proximity_fields,error)) goto done;
-            if (!callback(&callbacks,"touch",source.projectile->touch,error)) goto done;
+            if (!callback(&callbacks,"touch",projectile_touch_name(&entity.state.projectile, source.projectile),error)) goto done;
             if (source.projectile->kind==Q1_PROXIMITY && !callback(&callbacks,"th_die","ProximityGrenadeExplode",error)) goto done;
         } else {
             unsupported(error,"Source anonymous continuation needs its complete paired state admission");goto done;

@@ -744,8 +744,20 @@ bool q1_wire_spawn_declarations(qa_q1_game *g, const qa_q1_spawn *spawn, qa_erro
         for (unsigned i = 0; i < 4; ++i) if (flags & (1u << i)) {
             char path[32]; snprintf(path, sizeof(path), "progs/end%u.mdl", i + 1); MODEL(path);
         }
-    } else if (!strcmp(name, "trap_spikeshooter") || !strcmp(name, "trap_shooter")) {
+    } else if (!strcmp(name, "trap_spikeshooter") || !strcmp(name, "trap_shooter") ||
+               (g->options.program == QA_Q1_HIPNOTIC && !strcmp(name, "trap_switched_shooter"))) {
         if (flags & 2) { MODEL("progs/laser.mdl"); SOUND("enforcer/enfire.wav"); SOUND("enforcer/enfstop.wav"); }
+        else if (g->options.program == QA_Q1_HIPNOTIC && (flags & 4u)) {
+            MODEL("progs/lavarock.mdl"); SOUND("misc/spike.wav");
+        } else if (g->options.program == QA_Q1_HIPNOTIC && (flags & 8u)) {
+            MODEL("progs/missile.mdl"); SOUND("weapons/sgun1.wav");
+        } else if (g->options.program == QA_Q1_ROGUE && (flags & (4u | 8u | 16u))) {
+            MODEL("progs/lspike.mdl"); SOUND("lavagun/snail.wav");
+            if ((flags & 4u) || !(flags & 8u)) SOUND("weapons/rocket1i.wav");
+            if (!(flags & 4u)) SOUND("weapons/spike2.wav");
+        } else if (g->options.program == QA_Q1_ROGUE && (flags & 32u)) {
+            MODEL("progs/fireball.mdl");
+        }
         else SOUND("weapons/spike2.wav");
     } else if (!strcmp(name, "misc_fireball")) { MODEL("progs/lavaball.mdl");
     } else if (!strcmp(name, "air_bubbles")) { if (!g->options.deathmatch) MODEL("progs/s_bubble.spr");
