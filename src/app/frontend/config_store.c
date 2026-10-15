@@ -3433,13 +3433,6 @@ bool frontend_config_store_retire(frontend_config_store *manager,const qa_cvars 
 void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *frontend)
 { if (manager && !manager->running && !manager->shared) { manager->frontend=frontend; frontend_source_admin_rebind(manager->admin,frontend); frontend_remote_configs_rebind(manager->clients,frontend,manager); frontend_neutral_configs_rebind(manager->neutral,frontend,manager); } }
 
-bool frontend_config_store_neutral_options(frontend_config_store *manager,uint32_t physical,
-    qa_ruleset_id movement,frontend_client_source_options *out,qa_error *error)
-{
-    if (!manager || manager->running || manager->prepared || manager->shared)
-        return fail(error,QA_ERROR_ARGUMENT,"Neutral construction requires its returned configuration manager");
-    return frontend_neutral_config_options(manager->neutral,physical,movement,out,error);
-}
 bool frontend_config_store_neutral_read(const frontend_config_store *manager,const qa_cvars *view,
     frontend_neutral_config_view *out,qa_error *error)
 {
@@ -3631,9 +3624,7 @@ bool frontend_config_store_client_settings_cancel(frontend_config_store *manager
 bool frontend_config_store_neutral_pending_options(frontend_config_store *manager,uint32_t physical,
     frontend_client_source_options *out,qa_error *error)
 {
-    if (!manager || manager->running || manager->prepared || manager->shared)
-        return fail(error,QA_ERROR_ARGUMENT,"Neutral construction requires its returned configuration manager");
-    return frontend_neutral_config_pending_options(manager->neutral,physical,out,error);
+    return frontend_neutral_config_pending_options(manager ? manager->neutral : NULL,physical,out,error);
 }
 bool frontend_config_store_neutral_movement_adopt(frontend_config_store *manager,const qa_cvars *view,
     qa_ruleset_id movement,qa_error *error)

@@ -58,8 +58,6 @@ bool frontend_config_store_neutral_checkpoint_read(const frontend_config_store *
     frontend_neutral_config_view *,qa_error *);
 bool frontend_config_store_neutral_retired_recipient(const frontend_config_store *,
     const qa_application_client_source *,bool *,qa_error *);
-bool frontend_config_store_neutral_options(frontend_config_store *,uint32_t physical_seat,
-    qa_ruleset_id actual_movement,frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_pending_options(frontend_config_store *,uint32_t physical_seat,
     frontend_client_source_options *,qa_error *);
 bool frontend_config_store_neutral_options_cancel(frontend_config_store *,frontend_client_source_options *,qa_error *);
