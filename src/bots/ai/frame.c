@@ -78,14 +78,28 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if(!delta_angles(b,s,delta,e)) return false;
     bot_ai_view_delta(s,delta,true);
     bot_ai_view_prepare(s);
-    float factor = .05f, maximum = 360;
-    if (bot_ai_enemy_number(s)>=0) {
-        if(!bot_ai_character_float(b,s,BOT_C_VIEW_FACTOR,.01f,1,&factor,e)) return false;
+    if(s->source_settings) {
+        if(!s->player.dead && !s->player.observer) {
+            qa_vec3 angles=bot_ai_view_angles(s),velocity=bot_ai_view_velocity(s),direction;
+            qa_angle_vectors(bot_ai_view_ideal(s),&direction,NULL,NULL,QA_ANGLE_FLOAT_MATH);
+            qa_bot_aim_state aim={.pitch=angles.x,.yaw=angles.y,
+                .pitch_velocity=velocity.x,.yaw_velocity=velocity.y,.modifier_until=s->aim_modifier_until};
+            qa_bot_aim_step(&aim,direction,&s->source_settings->aiming,(float)elapsed/1000,b->time);
+            angles.x=aim.pitch;angles.y=aim.yaw;velocity.x=aim.pitch_velocity;velocity.y=aim.yaw_velocity;
+            bot_ai_view_angles_set(s,angles);
+            bot_source_vec3_write(s->source_span.data+QA_BOT_SOURCE_VIEW_SPEED,velocity);
+            s->aim_modifier_until=aim.modifier_until;
+        }
+    } else {
+        float factor = .05f, maximum = 360;
+        if (bot_ai_enemy_number(s)>=0) {
+            if(!bot_ai_character_float(b,s,BOT_C_VIEW_FACTOR,.01f,1,&factor,e)) return false;
+            if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+            if(!bot_ai_character_float(b,s,BOT_C_VIEW_MAX,1,1800,&maximum,e)) return false;
+        }
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-        if(!bot_ai_character_float(b,s,BOT_C_VIEW_MAX,1,1800,&maximum,e)) return false;
+        bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
     }
-    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-    bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
     qa_bot_input input;
     qa_usercmd command;
     if(!bot_ai_source_action_view(b,s,e)) return false;

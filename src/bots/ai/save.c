@@ -462,6 +462,27 @@ static bool awareness_fields(qa_source_save_io *io,qa_bots *bots)
     }
     return true;
 }
+static bool aim_fields(qa_source_save_io *io,qa_bots *bots)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    size_t count=0,next=0;
+    if(!reading) for(size_t i=0;i<64;++i)
+        if(bots->source_cells[i] && bots->source_cells[i]->aim_modifier_until>bots->time) ++count;
+    if(!qa_source_save_count(io,&count,64)) return false;
+    for(size_t i=0;i<count;++i) {
+        uint32_t client=0;double until=0;
+        if(!reading) {
+            while(next<64 && (!bots->source_cells[next] ||
+                bots->source_cells[next]->aim_modifier_until<=bots->time)) ++next;
+            client=(uint32_t)next++;until=bots->source_cells[client]->aim_modifier_until;
+        }
+        U(client);FIELD(f64,until);
+        if(client>=64 || !bots->source_cells[client] || !isfinite(until)) return false;
+        if(reading) bots->source_cells[client]->aim_modifier_until=until;
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -469,7 +490,8 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     qa_source_save_io io = {0}; qa_bots view = *bots;
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
-        cooperative_fields(&io,&view) && awareness_fields(&io,&view) && qa_source_save_finish(&io, out);
+        cooperative_fields(&io,&view) && awareness_fields(&io,&view) && aim_fields(&io,&view) &&
+        qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
@@ -485,7 +507,8 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     bool ok = bot_ai_observations_prepare(&scratch,error) &&
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
-        cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && scratch.client_capacity == bots->client_capacity &&
+        cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && aim_fields(&io,&scratch) &&
+        scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])
         ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,

@@ -155,6 +155,28 @@ static bool bot_source_fixture_weapon(void *context,qa_string_id name,uint32_t n
     return !qa_q1_weapon_source(QA_Q1_ROGUE,number,&weapon) ||
         qa_strings_intern_cstr(strings,qa_q1_weapon_identity(weapon),out,error);
 }
+static void test_bot_authored_aim(void)
+{
+    qa_bot_aiming settings={.maximum_speed=90,.spring_stiffness=64,.damping=16,.velocity_offset=-.25f};
+    qa_bot_aim_state slow={0},fast={0};qa_vec3 direction=qa_v3(0,1,0);
+    qa_bot_aim_step(&slow,direction,&settings,.1f,1);
+    CHECK(slow.yaw>0 && slow.yaw<=9.001f && slow.yaw_velocity<=90);
+    settings.maximum_speed=720;
+    qa_bot_aim_step(&fast,direction,&settings,.1f,1);
+    CHECK(fast.yaw>slow.yaw && fast.yaw<90 && fast.yaw_velocity<=720);
+    settings.modifier_maximum_angle=45;settings.modifier_apply_time=1;
+    settings.modifier_acceleration_scalar=2;settings.modifier_spring_scalar=2;settings.modifier_damping_scalar=2;
+    qa_bot_aim_state catchup={0};
+    qa_bot_aim_step(&catchup,direction,&settings,.05f,2);
+    CHECK(catchup.modifier_until==3 && catchup.yaw>0);
+    qa_vec3 target=qa_v3(100,20,10),velocity=qa_v3(20,0,0);
+    CHECK(qa_vec_equal(qa_bot_aim_lead(target,velocity,&settings),qa_v3(95,20,10)));
+    settings.velocity_offset=.1f;
+    CHECK(qa_vec_equal(qa_bot_aim_lead(target,velocity,&settings),qa_v3(102,20,10)));
+    qa_bot_aim_state wrapped={.yaw=359};
+    qa_bot_aim_step(&wrapped,qa_v3(1,0,0),&settings,.1f,5);
+    CHECK(fabsf(qa_angle_subtract(wrapped.yaw,0))<1);
+}
 static void test_bot_source_knowledge(void)
 {
     qa_error error={0};
@@ -172,6 +194,7 @@ static void test_bot_source_knowledge(void)
         "skill \"practice\"\n{ // retained source order\n"
         " movement.walk_only false\n movement.walk_only true\n"
         " behaviors.allow_combat true\n"
+        " aiming.lead_targets true\n"
         " movement.allow_jumping_in_combat true\n movement.allow_rocket_jumping false\n"
         " movement.jump_chance 37.5\n movement.jump_cooldown 2.25\n"
         " aiming.max_acceleration 360\n aiming.spring_stiffness 48\n"
@@ -199,7 +222,7 @@ static void test_bot_source_knowledge(void)
     const qa_bot_source_skill *practice=qa_bot_source_skill_at(knowledge,0),
         *hard=qa_bot_source_skill_at(knowledge,1);
     CHECK(practice && !strcmp(qa_strings_cstr(strings,practice->name),"practice") &&
-        practice->allow_combat && practice->movement.walk_only && practice->movement.allow_combat_jumping &&
+        practice->allow_combat && practice->lead_targets && practice->movement.walk_only && practice->movement.allow_combat_jumping &&
         !practice->movement.allow_rocket_jumping && practice->movement.jump_chance==37.5f &&
         practice->movement.jump_cooldown==2.25f && practice->aiming.maximum_speed==360 &&
         practice->aiming.spring_stiffness==48 && practice->senses.fov_angle==110 &&
@@ -217,11 +240,11 @@ static void test_bot_source_knowledge(void)
     CHECK(qa_strings_intern_cstr(strings,qa_q1_weapon_identity(QA_Q1_LAVA_NAILGUN),&lava_nailgun,&error));
     CHECK(qa_bot_source_weapon_fov(knowledge,lava_nailgun)==25);
     document=qa_bot_source_document_at(knowledge,1);block=document->blocks;
-    CHECK(block->field_count==15 && block->fields[0].key==block->fields[1].key &&
-        block->fields[13].key==block->fields[14].key && block->fields[13].count==2);
-    const qa_bytes byte_name=qa_strings_text(strings,block->fields[13].values[1]);
+    CHECK(block->field_count==16 && block->fields[0].key==block->fields[1].key &&
+        block->fields[14].key==block->fields[15].key && block->fields[14].count==2);
+    const qa_bytes byte_name=qa_strings_text(strings,block->fields[14].values[1]);
     CHECK(byte_name.size==2 && byte_name.data[0]==255 && byte_name.data[1]==128 &&
-        !strcmp(qa_strings_cstr(strings,block->fields[13].values[0]),"a//b"));
+        !strcmp(qa_strings_cstr(strings,block->fields[14].values[0]),"a//b"));
     document=qa_bot_source_document_at(knowledge,2);
     const qa_bytes optional_name=qa_strings_text(strings,document->blocks[0].fields[0].values[0]);
     CHECK(optional_name.size==2 && optional_name.data[0]==254 && optional_name.data[1]==129);
@@ -6399,6 +6422,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_bot_awareness_storage();
+    test_bot_authored_aim();
     test_bot_source_knowledge();
     test_aas_geometry_compaction();
     test_prediction_continuations();

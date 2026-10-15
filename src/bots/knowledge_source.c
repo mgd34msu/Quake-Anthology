@@ -141,6 +141,7 @@ typedef struct setting_field {const char *name;size_t offset;bool boolean;} sett
 #define BOOL(name,field) {name,offsetof(qa_bot_source_skill,field),true}
 static const setting_field setting_fields[]={
     BOOL("behaviors.allow_combat",allow_combat),
+    BOOL("aiming.lead_targets",lead_targets),
     FLOAT("aiming.max_acceleration",aiming.maximum_speed),FLOAT("aiming.spring_stiffness",aiming.spring_stiffness),
     FLOAT("aiming.damping",aiming.damping),FLOAT("aiming.velocity_offset",aiming.velocity_offset),
     FLOAT("aiming.modifier.max_angle",aiming.modifier_maximum_angle),FLOAT("aiming.modifier.apply_time",aiming.modifier_apply_time),

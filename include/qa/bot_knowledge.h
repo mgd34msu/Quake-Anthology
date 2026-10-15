@@ -15,7 +15,7 @@ typedef struct qa_bot_source_movement {
 } qa_bot_source_movement;
 typedef struct qa_bot_source_skill {
     qa_string_id name;
-    bool allow_combat;
+    bool allow_combat, lead_targets;
     qa_bot_senses senses;
     qa_bot_weapon_senses weapons;
     qa_bot_aiming aiming;

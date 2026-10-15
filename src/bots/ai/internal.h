@@ -100,6 +100,7 @@ typedef struct bot_ai_state {
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
     const qa_bot_source_skill *source_settings;
+    double aim_modifier_until;
     char *admitted_character;
     char *admitted_name;
     float state_time;

@@ -696,6 +696,9 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
     qa_bot_player target;bool present;
     if(!bot_ai_target(b,s,enemy,&target,&present,e)) return false;
     if(!present || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy) || target.dead) return true;
+    const qa_bot_awareness *memory=s->source_settings?bot_ai_senses_awareness(b,s,enemy):NULL;
+    bool remembered=memory && memory->last_seen<b->time;
+    if(remembered) {target.origin=memory->last_known_origin;target.velocity=qa_v3(0,0,0);}
     bot_ai_enemy_origin_set(s,target.origin);bot_ai_enemy_velocity_set(s,target.velocity);
     const qa_bot_weapon_knowledge *weapons;size_t count;void *lease;
     if(!arsenal(b,s,&weapons,&count,&lease,e)) return false;
@@ -716,15 +719,21 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
         if(!bot_ai_random(b,&random,e)) return false;
         if(random>.1f) accuracy*=.4f;
     }
-    qa_vec3 aim=qa_vec_add(target.origin,qa_v3(0,0,8));
+    qa_vec3 aim=remembered?target.origin:qa_vec_add(target.origin,qa_v3(0,0,8));
     float distance=qa_vec_length(qa_vec_sub(aim,bot_ai_eye(s)));
-    if(selected.launch_velocity && selected.deployable) {
+    if(!remembered && selected.launch_velocity && selected.deployable) {
         qa_trace_result floor;
         if(!trace(b,s,target.origin,qa_vec_add(target.origin,qa_v3(0,0,-64)),NULL,enemy,BOT_SHOT,&floor,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
         aim=floor.start_solid?target.origin:floor.end;
     }
-    if(selected.weapon.speed>0 && skill>.4f &&
+    if(s->source_settings) {
+        if(!remembered) {
+            aim=qa_bot_aim_lead(aim,target.velocity,&s->source_settings->aiming);
+            if(s->source_settings->lead_targets && selected.weapon.speed>0)
+                aim=qa_vec_add(aim,qa_vec_scale(target.velocity,distance/selected.weapon.speed));
+        }
+    } else if(selected.weapon.speed>0 && skill>.4f &&
        (!selected.launch_velocity || (!selected.homing && !selected.deployable && !selected.conditional_trajectory))) {
         float flight=distance/selected.weapon.speed+selected.launch_delay;
         if(selected_predictable(&selected)) {
