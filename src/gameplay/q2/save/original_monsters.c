@@ -1025,7 +1025,9 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
         integer_float(io, "gib_health", 488, &m->gib_health) &&
         integer_float(io, "max_health", 484, &m->max_health) &&
         integer_float(io, "viewheight", 508, &m->view_height);
-    uint64_t pause = m->pause_ns == UINT64_MAX ? UINT64_C(100000000000000000) : m->pause_ns;
+    uint64_t pause = m->pause_ns;
+    if (io->edition == QA_RULESET_Q2_CLASSIC && pause == UINT64_MAX)
+        pause = UINT64_C(100000000000000000);
     if (okay) okay = q2_original_scalar(io, "monsterinfo.pausetime", Q2_ORIGINAL_TIME,
         828, 828, 828, &pause);
     if (io->reading) m->pause_ns = pause >= UINT64_C(100000000000000000) ? UINT64_MAX : pause;

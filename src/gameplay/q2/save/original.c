@@ -216,12 +216,18 @@ static bool json_component(q2_original_record_io *io, const q2_original_field *f
             }
             int64_t milliseconds;
             if (!qa_json_i64(io->document, id, &milliseconds, io->error)) return false;
+            /* Rerelease g_local.h HOLD_FOREVER is gtime_t(INT64_MAX ms). */
+            if (milliseconds == INT64_MAX) {
+                *(uint64_t *)value = UINT64_MAX;
+                return true;
+            }
             if (milliseconds < 0 || (uint64_t)milliseconds > UINT64_MAX / Q2_MS)
                 return fail(io, id, "Q2 original time exceeds its Source clock");
             *(uint64_t *)value = (uint64_t)milliseconds * Q2_MS;
             return true;
         }
-        qa_json_writer_number(io->writer, (double)(*(uint64_t *)value / Q2_MS));
+        uint64_t time = *(uint64_t *)value;
+        qa_json_writer_u64(io->writer, time == UINT64_MAX ? (uint64_t)INT64_MAX : time / Q2_MS);
         return written(io);
     }
     double number = value_number(field, value);
