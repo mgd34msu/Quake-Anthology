@@ -1466,7 +1466,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
     qa_arena command_arena={0};
     qa_console_command_arena(console,&command_arena);
     qa_command_invocation command = {console, *context, tokens.count,
-        (const char *const *)tokens.values, tokens.args_text, raw, 0, 0};
+        (const char *const *)tokens.values, tokens.args_text, raw, 0, 0, expanded};
     command.context.direct = context->direct && context->script == NULL &&
         (context->origin == QA_COMMAND_LOCAL || context->origin == QA_COMMAND_SEAT);
     command_frame frame = {.invocation=&command, .parent=console->frame};
@@ -1683,7 +1683,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
             qac_console_program_touch(console, false);
             console->head = first->next;
             if (console->tail == first) console->tail = NULL;
-            qa_command_invocation invocation = {console, first->context, 0, NULL, "", "", 0, 0};
+            qa_command_invocation invocation = {console, first->context, 0, NULL, "", "", 0, 0, NULL};
             command_frame frame = {.invocation=&invocation, .parent=console->frame};
             console->frame = &frame;
             const qa_console_options *options=options_for(console,&first->context);

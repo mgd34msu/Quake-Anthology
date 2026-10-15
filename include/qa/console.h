@@ -327,6 +327,8 @@ typedef struct qa_command_invocation {
     const char *raw;
     /* Selected registration identity, separate from the captured sender. */
     uint64_t receiver, registration_owner;
+    /* Expanded input before dialect tokenization; NULL for literal invocations. */
+    const char *text;
 } qa_command_invocation;
 
 typedef bool (*qa_command_handler)(void *user, const qa_command_invocation *command,

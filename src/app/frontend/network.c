@@ -4301,6 +4301,32 @@ static bool unsigned_text(const char *text, uint64_t *out, qa_error *error)
 }
 static void emit(const qa_command_invocation *command, const char *text)
 { qa_console_emit(command->console, &command->context, text); }
+static bool address_arguments(qa_frontend_network *n,const qa_command_invocation *call,
+    const char **values,size_t capacity,size_t *count,qa_error *error)
+{
+    *count=0;
+    if(!call->text) {
+        *count=call->argc?call->argc-1:0;
+        for(size_t i=0;i<*count && i<capacity;++i) values[i]=call->argv[i+1];
+        return true;
+    }
+    qa_tokenizer lexer; qa_token token; bool found;
+    qa_tokenizer_options options={.reject_quoted_newlines=true};
+    qa_bytes text={(const uint8_t *)call->text,strlen(call->text)};
+    if(!qa_tokenizer_init_options(&lexer,text,&options,error) ||
+        !qa_tokenizer_next(&lexer,&token,&found,error)) return false;
+    if(!found) return true;
+    while(qa_tokenizer_next(&lexer,&token,&found,error)) {
+        if(!found) return true;
+        if(*count<capacity) {
+            char *value=qa_arena_alloc(&n->frontend->frame.storage,token.text.size+1,1,error);
+            if(!value || !qa_token_copy(&token,value,token.text.size+1,error)) return false;
+            values[*count]=value;
+        }
+        ++*count;
+    }
+    return false;
+}
 static bool client_attempt_enqueue(qa_frontend_network *n, const char *server, bool disconnect,
     uint32_t physical, qa_net_protocol_id protocol, const qa_launch_draft *selection, qa_error *error)
 {
@@ -4338,7 +4364,9 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
         emit(call, "Connection commands require a local client seat.\n"); return true;
     }
     bool disconnect = !strcmp(call->argv[0], "disconnect"), reconnecting = !strcmp(call->argv[0], "reconnect");
-    if (call->argc != (disconnect || reconnecting ? 1u : 2u)) {
+    const char *arguments[1]; size_t count;
+    if(!address_arguments(n,call,arguments,1,&count,error)) return false;
+    if (count != (disconnect || reconnecting ? 0u : 1u)) {
         emit(call, "usage: connect server, reconnect, or disconnect\n"); return true;
     }
     qa_frontend *f = n->frontend;
@@ -4356,7 +4384,7 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
         selection = live_selection;
     }
     const char *server = disconnect ? "" : reconnecting ?
-        (f->network_connect_text ? f->network_connect_text : n->client_server) : call->argv[1];
+        (f->network_connect_text ? f->network_connect_text : n->client_server) : arguments[0];
     if (reconnecting) {
         if (f->network_connect_text) protocol = f->network_connect_protocol;
         qa_application_event_range range = {.next = n->client_attempts.next, .end = UINT64_MAX};
@@ -4406,7 +4434,9 @@ static bool browser_endpoint(qa_frontend_network *n,const qa_net_client *connect
 static bool browser_query_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
 {
     bool details=!strcmp(call->argv[0],"serverstatus");
-    if(call->argc>2) { emit(call,details?"usage: serverstatus [server]\n":"usage: ping [server]\n"); return true; }
+    const char *arguments[1]; size_t count;
+    if(!address_arguments(n,call,arguments,1,&count,error)) return false;
+    if(count>1) { emit(call,details?"usage: serverstatus [server]\n":"usage: ping [server]\n"); return true; }
     qa_frontend *f=n->frontend;
     frontend_client_connection *row=n->primary_client;
     uint32_t physical;
@@ -4422,7 +4452,7 @@ static bool browser_query_command(qa_frontend_network *n,const qa_command_invoca
     }
     qa_net_protocol_id protocol=connection?connection->protocol:f->options.network_protocol;
     qa_net_address address;
-    if(call->argc==1 && !details) {
+    if(!count && !details) {
         bool player_pings=q1_client_protocol(protocol) ||
             (protocol.kind==QA_NET_UNIFIED_1 && present &&
              (recipient.source.context.command.dialect==QA_RULESET_NETQUAKE ||
@@ -4437,12 +4467,12 @@ static bool browser_query_command(qa_frontend_network *n,const qa_command_invoca
         if(!connection) { emit(call,"No server connected.\nUsage: ping [server]\n"); return true; }
         if(connection->endpoint.kind==QA_NET_LOOPBACK) { emit(call,"0 ms (local server)\n"); return true; }
     }
-    if(call->argc==1 && details && (!connection || connection->endpoint.kind==QA_NET_LOOPBACK)) {
+    if(!count && details && (!connection || connection->endpoint.kind==QA_NET_LOOPBACK)) {
         if(!connection) { emit(call,"No server connected.\nUsage: serverstatus [server]\n"); return true; }
         return qa_console_append(call->console,&call->context,"status\n",error);
     }
     bool known=false;
-    if(!browser_endpoint(n,connection,call->argc==2?call->argv[1]:NULL,&address,&protocol,&known,error)) return false;
+    if(!browser_endpoint(n,connection,count?arguments[0]:NULL,&address,&protocol,&known,error)) return false;
     if(known) {
         if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
             UINT64_C(5000000000),error)) return false;
@@ -4689,13 +4719,15 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
         return true;
     }
     if (!strcmp(name, "serverquery") || !strcmp(name, "serverfavorite") || !strcmp(name, "servermaster")) {
-        if (call->argc < 2 || call->argc > 3) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: serverquery/serverfavorite/servermaster address [protocol]");
+        const char *arguments[2]; size_t count;
+        if(!address_arguments(n,call,arguments,2,&count,error)) return false;
+        if (count < 1 || count > 2) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: serverquery/serverfavorite/servermaster address [protocol]");
         qa_net_protocol_id protocol = n->frontend->options.network_protocol;
-        if (call->argc == 3 && !frontend_protocol(call->argv[2], &protocol, error)) return false;
-        if (!strcmp(name, "servermaster") && (strstr(call->argv[1], "http://") == call->argv[1] || strstr(call->argv[1], "https://") == call->argv[1]))
-            return qa_server_browser_master_http(n->browser, call->argv[1], protocol, n->frontend->wall_time_ns, error);
+        if (count == 2 && !frontend_protocol(arguments[1], &protocol, error)) return false;
+        if (!strcmp(name, "servermaster") && (strstr(arguments[0], "http://") == arguments[0] || strstr(arguments[0], "https://") == arguments[0]))
+            return qa_server_browser_master_http(n->browser, arguments[0], protocol, n->frontend->wall_time_ns, error);
         qa_net_address address;
-        if (!qa_net_address_resolve(call->argv[1], n->frontend->options.network_port, 0, &address, error)) return false;
+        if (!qa_net_address_resolve(arguments[0], n->frontend->options.network_port, 0, &address, error)) return false;
         if (!strcmp(name, "serverfavorite")) return qa_server_browser_add(n->browser, &address, protocol, QA_SERVER_FAVORITE, error) && save_favorites(n, error);
         if (!strcmp(name, "servermaster")) return qa_server_browser_master_udp(n->browser, &address, protocol,
             n->frontend->wall_time_ns, UINT64_C(5000000000), error);
@@ -4705,13 +4737,15 @@ static bool command(void *context, const qa_command_invocation *call, qa_error *
     if (!operator_command(n,call,0,&handled,error)) return false;
     if (handled) return true;
     if (!strcmp(name, "download")) {
-        if (call->argc < 4 || call->argc > 5) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: download path url bytes [resume-nonce]");
-        qa_download_request request = {.path = call->argv[1], .exact_length = true};
-        if (!unsigned_text(call->argv[3], &request.expected_bytes, error)) return false;
+        const char *arguments[4]; size_t count;
+        if(!address_arguments(n,call,arguments,4,&count,error)) return false;
+        if (count < 3 || count > 4) return frontend_fail(error, QA_ERROR_ARGUMENT, "usage: download path url bytes [resume-nonce]");
+        qa_download_request request = {.path = arguments[0], .exact_length = true};
+        if (!unsigned_text(arguments[2], &request.expected_bytes, error)) return false;
         request.maximum_bytes = request.expected_bytes; request.stage_nonce = ++n->nonce;
-        if (call->argc == 5) { request.resume = true; if (!unsigned_text(call->argv[4], &request.stage_nonce, error)) return false; }
+        if (count == 4) { request.resume = true; if (!unsigned_text(arguments[3], &request.stage_nonce, error)) return false; }
         qa_download_id id;
-        if (!downloads_ready(n, error) || !qa_downloads_begin(n->downloads, &request, call->argv[2], &id, error)) return false;
+        if (!downloads_ready(n, error) || !qa_downloads_begin(n->downloads, &request, arguments[1], &id, error)) return false;
         char line[128]; snprintf(line, sizeof(line), "download %" PRIu64 " stage %" PRIu64 "\n", id, request.stage_nonce); emit(call, line); return true;
     }
     uint64_t id;
