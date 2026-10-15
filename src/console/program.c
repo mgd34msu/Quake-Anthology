@@ -468,7 +468,7 @@ bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
             chunk->program_pending = true;
             ok = map_context(program, &chunk->context, error) && map_context(program, &chunk->caller, error);
         }
-    if (ok) {
+    if (ok && program->prepared.wait) {
         program->prepared.wait_source = program->prepared.wait_context;
         ok = map_context(program, &program->prepared.wait_context, error);
     }

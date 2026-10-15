@@ -227,7 +227,10 @@ bool frontend_cinematic_command(qa_frontend *f,const qa_command_invocation *comm
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Cinematic callback or retained UI child is active");
     if (!strcmp(command->argv[0],"cinematicpause")) {
         if (!owner || !owner->movie || !current(owner)) return frontend_fail(error,QA_ERROR_ARGUMENT,"No cinematic is playing");
-        return qa_cinematic_pause(owner->movie,qa_cinematic_status(owner->movie)!=QA_MEDIA_PAUSED,error);
+        bool paused=owner->focus_paused || qa_cinematic_status(owner->movie)!=QA_MEDIA_PAUSED;
+        if (!qa_cinematic_pause(owner->movie,paused,error)) return false;
+        owner->focus_paused=false;
+        return true;
     }
     if (!strcmp(command->argv[0],"stopcinematic")) {
         if (!owner || (!owner->movie && !owner->pending)) return frontend_fail(error,QA_ERROR_ARGUMENT,"No cinematic is playing");
