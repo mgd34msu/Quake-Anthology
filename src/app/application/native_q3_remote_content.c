@@ -10,7 +10,7 @@ static application_provider *admission_receiver(qa_application *app,
         !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
         !request->previous.receiver.native_source || request->previous.receiver.initialized ||
         !request->connection_epoch || request->connection_epoch != request->previous.connection_epoch ||
-        !request->previous.configuration_generation || request->previous.configuration_generation == UINT64_MAX ||
+        request->previous.configuration_generation == UINT64_MAX ||
         !qa_application_q3_remote_source_current(app, &request->previous)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Builtin content admission requires its idle current pre-Init CLIENT source");
         return NULL;

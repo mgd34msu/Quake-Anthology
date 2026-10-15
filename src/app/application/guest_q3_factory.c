@@ -290,9 +290,9 @@ bool qa_application_q3_remote_source_read(qa_application *app, qa_actor_owner re
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote source differs from its actual connection lifetime");
     qa_application_q3_remote_source source = {.descriptor = engine->client_descriptor ?
         qa_launch_instance_lease_view(engine->client_descriptor) : provider->launch,
-        .configuration_generation = engine->client_generation ? engine->client_generation :
+        .configuration_generation = engine->client_descriptor ? engine->client_generation :
             qa_application_configuration_generation(app), .connection_epoch = epoch};
-    if (!source.configuration_generation || !qa_application_q3_remote_context_read(app,
+    if (!qa_application_q3_remote_context_read(app,
         receiver, seat, &source.receiver, error)) return false;
     *out = source; return true;
 }
@@ -523,7 +523,7 @@ static bool role_artifact_read(qa_application *app, qa_actor_owner receiver,
         return application_fail(error, QA_ERROR_ARGUMENT, "Role artifact requires its actual retained opening and lifecycle");
     out->path = role->path;
     out->source = (qa_application_q3_role_receipt){.role = kind, .receiver = receiver, .seat = seat,
-        .service_owner = role->service_owner, .configuration_generation = kind != QA_QVM_GAME && engine->client_generation ?
+        .service_owner = role->service_owner, .configuration_generation = kind != QA_QVM_GAME && engine->client_descriptor ?
             engine->client_generation : qa_application_configuration_generation(app),
         .connection_epoch = kind != QA_QVM_GAME ? engine->connection_epoch : 0, .descriptor = role->descriptor,
         .artifact = role->artifact->resource, .acquisition = &role->artifact->acquisition,

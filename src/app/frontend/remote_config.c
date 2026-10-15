@@ -1211,16 +1211,8 @@ bool frontend_remote_configs_save(frontend_remote_configs *owner,qa_application 
             return fail(error,QA_ERROR_ARGUMENT,"CLIENT archive lost its current physical source owner");
         if (row->hosted) continue;
         if (!frontend_key_profile_save(row->keys,error)) return false;
-    }
-    if (frontend_network_remote(owner->frontend)) {
-        uint32_t logical;
-        frontend_remote_config_view view;
-        if (!frontend_seat_launch_id_read(owner->frontend,0,&logical) ||
-            !frontend_network_client_configuration(owner->frontend,logical,&view,error)) return false;
-        frontend_remote_config *row=frontend_remote_config_find(owner,view.cvars);
-        if (!row || !frontend_remote_config_current(row,&view))
-            return fail(error,QA_ERROR_ARGUMENT,"CLIENT input save lost its actual network configuration");
-        return save_input(row,error);
+        if (frontend_network_remote(owner->frontend) && row->scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME &&
+            !save_input(row,error)) return false;
     }
     return true;
 }

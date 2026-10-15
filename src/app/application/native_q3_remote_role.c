@@ -537,10 +537,10 @@ bool application_native_q3_remote_role_source_read(application_provider *provide
         !qa_application_client_physical_read(provider->application, provider->owner, seat, &client, error)) return false;
     qa_application_q3_remote_source source = {.descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) :
             provider->client_only_owned ? client.descriptor : provider->launch,
-        .configuration_generation = row->configuration_generation ? row->configuration_generation :
+        .configuration_generation = row->descriptor ? row->configuration_generation :
             provider->client_only_owned ? client.configuration_generation :
                 qa_application_configuration_generation(provider->application), .connection_epoch = epoch};
-    if (!source.configuration_generation || !application_native_q3_remote_role_context(provider, seat, &source.receiver, error)) return false;
+    if (!application_native_q3_remote_role_context(provider, seat, &source.receiver, error)) return false;
     *out = source; return true;
 }
 bool application_native_q3_remote_role_source_current(application_provider *provider, const qa_application_q3_remote_source *source)
@@ -558,7 +558,7 @@ bool application_native_q3_remote_role_descriptor_bind(application_provider *pro
     struct application_native_q3_remote_role *row = application_native_q3_remote_role_find(provider, seat);
     if (!replace_ready(row) || row->lifecycle == NATIVE_Q3_REMOTE_ATTACHED ||
         !native_receiver(provider) || !descriptor || !descriptor->storage || !descriptor->content ||
-        descriptor->artifact || descriptor->selection.runtime != QA_PROGRAM_BUILTIN || !epoch || !generation ||
+        descriptor->artifact || descriptor->selection.runtime != QA_PROGRAM_BUILTIN || !epoch ||
         strcmp(descriptor->selection.instance, provider->launch->selection.instance) ||
         strcmp(descriptor->selection.implementation, provider->launch->selection.implementation))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT content binding lost its actual compiled descriptor");
@@ -647,9 +647,9 @@ bool application_native_q3_remote_role_modules_retained(application_provider *pr
     struct application_native_q3_remote_role *row = source ? application_native_q3_remote_role_find(provider, source->receiver.seat) : NULL;
     if (!native_receiver(provider) || !provider->application || !row || row->provider != provider ||
         !modules || row->modules != modules || !source->descriptor || !row->connection_epoch ||
-        source->connection_epoch != row->connection_epoch || !row->module_generation ||
+        source->connection_epoch != row->connection_epoch ||
         source->configuration_generation != row->module_generation ||
-        (row->configuration_generation && source->configuration_generation != row->configuration_generation)) return false;
+        (row->descriptor && source->configuration_generation != row->configuration_generation)) return false;
     const qa_launch_instance *descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) : provider->launch;
     const qa_application_q3_client_context *receiver = &source->receiver;
     const qa_command_context *command = &receiver->command_context;

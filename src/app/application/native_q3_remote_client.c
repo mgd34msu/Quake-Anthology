@@ -165,7 +165,7 @@ static bool basis_current(const qa_native_q3_remote_client_services *services)
         basis->session == basis->application->session && basis->descriptor && basis->descriptor->storage &&
         basis->descriptor->selection.runtime == QA_PROGRAM_BUILTIN && !basis->descriptor->artifact &&
         basis->content == basis->descriptor->content && basis->content_product == basis->descriptor->selection.product &&
-        basis->connection.owner && basis->connection.generation && basis->epoch && basis->configuration_generation &&
+        basis->connection.owner && basis->connection.generation && basis->epoch &&
         basis->publication_generation == basis->application->publication_generation && basis->map && basis->geometry &&
         basis->gamestate && basis->gamestate->client_number >= 0 && basis->gamestate->client_number < 64 &&
         basis->physical_client == (uint32_t)basis->gamestate->client_number &&
