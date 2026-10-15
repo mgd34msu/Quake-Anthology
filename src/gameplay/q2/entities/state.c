@@ -778,5 +778,8 @@ bool q2_entity_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *ou
     out->max_health = a->entity->health;
     out->owner = a->entity->owner;
     out->damageable_target = a->entity->health > 0;
+    out->navigation_hazard = a->entity->kind == Q2E_HURT && a->entity->touchable &&
+        a->physics.solid == QA_PHYSICS_TRIGGER && a->entity->damage > 0 &&
+        a->entity->timestamp_ns <= g->now_ns;
     return true;
 }

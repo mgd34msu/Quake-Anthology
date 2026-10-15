@@ -144,7 +144,7 @@ typedef struct qa_qc_definition {
     X(team) X(netname) X(frags) X(message) X(sounds) X(classname) \
     X(fixangle) X(v_angle) X(oldorigin) X(movedir) X(teleport_time) \
     X(button0) X(button2) X(impulse) X(lastruntime) X(maxspeed) \
-    X(touch) X(blocked) X(dmg_inflictor) X(dmg_save) X(dmg_take) \
+    X(touch) X(blocked) X(dmg) X(dmg_inflictor) X(dmg_save) X(dmg_take) \
     X(attack_finished) X(super_damage_finished) X(invincible_finished) \
     X(invisible_finished) X(radsuit_finished) X(deathtype)
 typedef struct qa_qc_game_fields {

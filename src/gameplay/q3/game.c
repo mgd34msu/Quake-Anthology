@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/game_type.h"
 #include "source_postgame.h"
+#include "map/internal.h"
 
 bool qa_q3_source_memory_allocate(qa_q3_game *game, uint32_t size, uint32_t *out,
                                   qa_error *error) {
@@ -570,9 +571,16 @@ bool q3_is_player(qa_q3_game *game, qa_actor_id actor) {
 }
 bool qa_q3_actor_traits(const qa_q3_game *game, qa_actor_id actor, qa_builtin_actor_traits *out) {
     const q3_actor *entry = q3_actor_const(game, actor);
-    if (!entry || !out)
+    const qa_q3_map_actor_state *map = q3_map_const(game, actor);
+    if ((!entry && !map) || !out)
         return false;
     *out = (qa_builtin_actor_traits){.gib_health = -40};
+    if (map) {
+        out->classname = map->classname;
+        out->navigation_hazard = map->kind == QA_Q3_MAP_TRIGGER_HURT && map->linked &&
+            map->touchable && map->damage > 0 && q3_sub_time(map->cooldown_ms, game->now_ms) <= 0;
+    }
+    if (!entry) return true;
     if (entry->kind == Q3_ACTOR_PLAYER) {
         out->player = true;
         out->has_life = (entry->state.player.selections & QA_Q3_CHARACTER) != 0;

@@ -66,6 +66,7 @@ static int32_t source_model_index(qa_bytes text) {
     int32_t result;memcpy(&result,&value,sizeof(result));return result;
 }
 bool bot_ai_source_goals_load(qa_bots *b,qa_error *e) {
+    bot_ai_map_script_bind(b);
     qa_cvars *configuration=b->services.configuration?b->services.configuration(b->services.context):NULL;
     const qa_cvar_view *type=configuration?qa_cvars_find(configuration,"g_gametype"):NULL;
     bot_source_goals *source=&b->source_goals;source->game_type=type?type->integer:0;

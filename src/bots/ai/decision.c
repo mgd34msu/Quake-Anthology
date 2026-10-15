@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "qa/collision_bits.h"
+#include "qa/text.h"
 #include "source_goal_record.h"
 #include "source_activation.h"
 #include "source_event_state.h"
@@ -16,7 +17,8 @@
 #include "source_command.h"
 #include "source_storage.h"
 
-enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
+enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32,
+       BOT_TRAVEL_FUNCBOB=0x01000000 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
 static qa_bot_moves *moves(qa_bots *b) { return qa_bot_runtime_moves(b->runtime); }
 static qa_bot_navigation *navigation(qa_bots *b, bot_ai_state *s) {
@@ -34,6 +36,54 @@ static bool enter(qa_bots *b, bot_ai_state *s, qa_bot_decision decision,qa_error
     return true;
 }
 #define ENTER(decision) do {if(!enter(b,s,(decision),e)) return false;} while(0)
+void bot_ai_map_script_bind(qa_bots *b) {
+    const char *name=qa_bot_runtime_map_name(b->runtime);
+    b->map_script=BOT_MAP_SCRIPT_NONE;
+    if(!name) return;
+    const char *leaf=name;
+    for(const char *p=name;*p;++p) if(*p=='/' || *p=='\\') leaf=p+1;
+    qa_bytes map={(const uint8_t *)leaf,strlen(leaf)};
+    if(map.size>=4 && qa_text_ascii_equal(leaf+map.size-4,".bsp")) map.size-=4;
+    if(qa_text_bytes_equal(map,(qa_bytes){(const uint8_t *)"q3tourney6",10},true))
+        b->map_script=BOT_MAP_SCRIPT_Q3TOURNEY6;
+    else if(qa_text_bytes_equal(map,(qa_bytes){(const uint8_t *)"mpq3tourney6",12},true))
+        b->map_script=BOT_MAP_SCRIPT_MPQ3TOURNEY6;
+}
+static bool below_crusher(qa_vec3 origin) {
+    return origin.x>700 && origin.x<964 && origin.y>204 && origin.y<468 && origin.z<672;
+}
+static bool map_scripts(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    if(b->map_script==BOT_MAP_SCRIPT_NONE) return true;
+    bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)&~(uint32_t)BOT_TRAVEL_FUNCBOB);
+    if(b->map_script!=BOT_MAP_SCRIPT_Q3TOURNEY6 || below_crusher(bot_ai_origin(s))) return true;
+    bool shoot=false;
+    for(size_t i=0;i<b->players.count;++i) {
+        qa_actor_id actor=b->players.actors[i];
+        if(qa_actor_id_equal(actor,s->view.actor)) continue;
+        qa_bot_player player;bool present;
+        DECISION_CALL(bot_ai_target(b,s,actor,&player,&present,e));
+        if(!present || player.dead || player.observer || player.intermission || !below_crusher(player.origin)) continue;
+        bool same;
+        DECISION_CALL(bot_ai_same_team(b,s,actor,&same,e));
+        if(same) return true;
+        shoot=true;
+    }
+    if(!shoot) return true;
+    bot_ai_flag_set(s,BOT_AI_IDEAL_VIEW_SET,true);
+    bot_ai_view_ideal_set(s,qa_vec_angles(qa_vec_sub(qa_v3(304,352,920),bot_ai_eye(s)),
+        QA_DIRECTION_VM,QA_VECTOR_SOURCE));
+    float accuracy,random;
+    DECISION_CALL(bot_ai_character_float(b,s,BOT_C_ACCURACY,0,1,&accuracy,e));
+    DECISION_CALL(bot_ai_random(b,&random,e));
+    float pitch=bot_ai_view_ideal(s).x+8*(random*2-1)*(1-accuracy);
+    bot_ai_view_ideal_axis_set(s,0,qa_angle_mod(pitch,QA_ANGLE_WORD_VM));
+    DECISION_CALL(bot_ai_random(b,&random,e));
+    float yaw=bot_ai_view_ideal(s).y+8*(random*2-1)*(1-accuracy);
+    bot_ai_view_ideal_axis_set(s,1,qa_angle_mod(yaw,QA_ANGLE_WORD_VM));
+    if(qa_bot_field_of_vision(bot_ai_view_angles(s),20,bot_ai_view_ideal(s)))
+        DECISION_CALL(bot_ai_source_action(b,s,QA_BOT_ATTACK,e));
+    return true;
+}
 bool bot_ai_source_reached_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
                       bool *done, qa_error *e) {
     qa_bot_source_goal_status status;
@@ -178,7 +228,8 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
         if(!bot_ai_character_float(b,s,BOT_C_WEAPON_JUMP,0,1,&propensity,e)) return false;
         if(propensity>=.5f) bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)|(rocket?0x1000u:0u)|(bfg?0x2000u:0u));
     }
-    return true;
+    if(s->view.decision==QA_BOT_FIGHTING) return true;
+    return map_scripts(b,s,e);
 }
 static bool activation_weapon(qa_bots *b,bot_ai_state *s,bool mine,int32_t *out,qa_error *e) {
     *out=0;
@@ -456,7 +507,7 @@ static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
             qa_vec3 ideal=qa_vec_angles(qa_vec_sub(target,bot_ai_origin(s)),QA_DIRECTION_VM,QA_VECTOR_SOURCE);ideal.z*=.5f;
             bot_ai_view_ideal_set(s,ideal);
         }
-    } else if(!seeking || !bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET)) {
+    } else if(!bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET)) {
         qa_vec3 target;bool found;
         qa_bot_goal view_goal=*goal;
         if(node==QA_BOT_SEEK_NEARBY) {
@@ -542,6 +593,7 @@ static bool enemy_state(qa_bots *b, bot_ai_state *s, bool remember,
 static bool battle(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     DECISION_CALL(bot_ai_source_battle_items(b,s,e));
     DECISION_CALL(bot_ai_choose_weapon(b,s,e));
+    if(bot_ai_flag(s,BOT_AI_IDEAL_VIEW_SET)) return true;
     return bot_ai_attack(b,s,moving,e);
 }
 static bool scripted_combat(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {

@@ -95,6 +95,7 @@ bool qa_bot_runtime_predict_movement(qa_bot_runtime *, int32_t entity,
 /* Attach borrows immutable map metadata and the selected shared navigation.
  * It does not spawn actors or construct another collision world. */
 bool qa_bot_runtime_attach_map(qa_bot_runtime *, const qa_bot_runtime_map *, qa_error *);
+const char *qa_bot_runtime_map_name(const qa_bot_runtime *);
 /* Replace round observers after GAME/AI shutdown while retaining the exact
  * map, actual library initialization state and existing static goal metadata. */
 bool qa_bot_runtime_rebind_round(qa_bot_runtime *, const qa_bot_runtime_map *, qa_error *);

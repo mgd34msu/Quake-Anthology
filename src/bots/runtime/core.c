@@ -280,6 +280,9 @@ bool qa_bot_runtime_predict_movement(qa_bot_runtime *r, int32_t entity,
     r->busy = false;
     return ok;
 }
+const char *qa_bot_runtime_map_name(const qa_bot_runtime *r) {
+    return r ? r->map_name : NULL;
+}
 bool qa_bot_runtime_attach_map(qa_bot_runtime *r, const qa_bot_runtime_map *map, qa_error *e) {
     if (!bot_runtime_mutable(r, e) || !bot_runtime_owners_idle(r, e)) return false;
     if (!map || !map->name || !map->navigation || (map->source_entities.size && !map->source_entities.data))

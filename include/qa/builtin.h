@@ -144,6 +144,7 @@ typedef struct qa_builtin_actor_traits {
     bool has_life, dead;
     uint8_t light_level;
     bool has_light_level;
+    bool navigation_hazard;
 } qa_builtin_actor_traits;
 
 /* Borrowed connection/selected-character projection, never a second player

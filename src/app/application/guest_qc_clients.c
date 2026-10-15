@@ -738,5 +738,16 @@ bool application_qc_actor_traits(application_provider *provider, qa_actor_id act
         .max_health = health, .view_height = 22, .classname = identity};
     const application_qc_client *client = application_qc_client_for_actor(engine, actor);
     value.player = client && client->connected;
+    const qa_application_ui_names *names = qa_application_ui_names_read(provider->application);
+    if (identity == names->trigger_hurt) {
+        float solid, hurt;
+        int32_t touch;
+        const qa_qc_game_fields *fields = engine->field_bindings;
+        if (fields->solid && fields->dmg && fields->touch &&
+            application_qc_float(engine, reference, fields->solid, &solid, &ignored) &&
+            application_qc_float(engine, reference, fields->dmg, &hurt, &ignored) &&
+            qa_qc_entity_int(provider->state.qc.instance, reference, fields->touch->offset, &touch, &ignored))
+            value.navigation_hazard = solid == 1 && hurt > 0 && touch != 0;
+    }
     *out = value; return true;
 }

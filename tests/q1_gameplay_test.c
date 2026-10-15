@@ -438,6 +438,31 @@ static qa_damage_outcome hit(q1_fixture *fixture, qa_actor_id target, float amou
     return outcome;
 }
 
+static void navigation_hurt_state(qa_q1_edition edition)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, edition, 1, true, QA_Q1_ID1);
+    fixture_bind_maps(&fixture);
+    qa_actor_id victim = spawn(&fixture, "monster_knight"), hurt, healing;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trigger_hurt", .map_fields = &(qa_q1_map_fields){.model = "*0"}},
+        &hurt, &error));
+    qa_builtin_actor_traits traits;
+    GAME_CHECK(qa_q1_game_actor_traits(fixture.game, hurt, &traits) && traits.navigation_hazard);
+    GAME_CHECK(qa_q1_game_touch(fixture.game, &(qa_touch_contact){.self = hurt, .other = victim}, &error));
+    GAME_CHECK(qa_q1_game_actor_traits(fixture.game, hurt, &traits) && !traits.navigation_hazard);
+    advance(&fixture, 11);
+    GAME_CHECK(qa_q1_game_actor_traits(fixture.game, hurt, &traits) && traits.navigation_hazard);
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "trigger_hurt", .damage = -5,
+        .map_fields = &(qa_q1_map_fields){.model = "*0"}}, &healing, &error));
+    GAME_CHECK(qa_q1_game_actor_traits(fixture.game, healing, &traits) && !traits.navigation_hazard);
+    GAME_CHECK(qa_session_release(fixture.session, hurt, &error));
+    GAME_CHECK(!qa_q1_game_actor_traits(fixture.game, hurt, &traits));
+    fixture_destroy(&fixture);
+}
+
 static void armor_and_protection(void)
 {
     qa_error error = {0};
@@ -1366,6 +1391,8 @@ void test_q1_gameplay(void)
     exiting_body_over_world_hit();
     movement_output_owner();
     donor_check_client();
+    navigation_hurt_state(QA_Q1_CLASSIC);
+    navigation_hurt_state(QA_Q1_RERELEASE);
     armor_and_protection();
     foreign_shambler_resistance();
     pain_cooldown(1);

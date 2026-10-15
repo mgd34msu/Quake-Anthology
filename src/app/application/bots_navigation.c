@@ -1,4 +1,5 @@
 #include "bots_private.h"
+#include "bots_npc.h"
 #include "native_q3_console.h"
 #include "qa/bots_memory.h"
 #include "qa/game_q3_wire.h"
@@ -85,6 +86,27 @@ static int32_t source_model(void *opaque,qa_actor_id actor) {
 static uint64_t revision(void *opaque) {
     application_bots *bots=opaque;
     return qa_session_elapsed(bots->application->session);
+}
+bool application_navigation_hazard(qa_application *application,qa_world *world,qa_bounds bounds) {
+    qa_world_actor_snapshot actors={0};qa_error error={0};
+    if(!qa_world_snapshot_capture(world,bounds,QA_COLLISION_BOTH,QA_WORLD_ORDER_SPATIAL,
+        &actors,&error)) return true;
+    qa_builtin_services services=application_builtin_services(application,world,application->physics);
+    bool hazardous=false;
+    for(size_t i=0;i<actors.count;++i) {
+        qa_actor_id actor=actors.actors[i];qa_builtin_actor_traits traits={0};
+        if(qa_actors_get(qa_world_actors(world),actor) &&
+           services.actor_traits(services.context,actor,&traits) &&
+           qa_actors_get(qa_world_actors(world),actor) && traits.navigation_hazard) {
+            hazardous=true;break;
+        }
+    }
+    qa_world_snapshot_release(&actors);
+    return hazardous;
+}
+static bool hazard(void *opaque,qa_bounds bounds) {
+    application_bots *bots=opaque;
+    return application_navigation_hazard(bots->application,bots->application->world,bounds);
 }
 typedef struct application_bot_mover {
     qa_actor_id activation;
@@ -648,7 +670,7 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
 }
 qa_navigation_services application_bot_navigation_services(application_bots *bots) {
     return (qa_navigation_services){.context=bots,.world=bots->application->world,.revision=revision,
-        .entity=entity,.movement_input=application_bot_movement_input};
+        .hazard=hazard,.entity=entity,.movement_input=application_bot_movement_input};
 }
 bool application_bot_navigation_restore_binding(application_bots *bots,qa_navigation *runtime,qa_actor_id actor,
                                                 qa_bot_navigation **out,qa_error *error) {

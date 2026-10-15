@@ -2078,6 +2078,8 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
         .monster = entity && (entity->physics.flags & QA_PHYSICS_MONSTER),
         .no_target = player && player->source_client && player->source_no_target,
         .aimed_damage = entity && entity->aimed_damage,
+        .navigation_hazard = entity && entity->map && entity->map->kind == Q1_MAP_HURT &&
+            entity->map->touch_enabled && entity->physics.solid == QA_PHYSICS_TRIGGER && entity->damage > 0,
         .grounded = entity && (entity->physics.flags & QA_PHYSICS_ONGROUND),
         .in_water = player && player->character ? player->character_state.in_water :
                     (source_flags & 16u) != 0,

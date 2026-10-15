@@ -6,6 +6,8 @@
 
 struct application_provider;
 struct application_bots_npc;
+struct qa_application;
+bool application_navigation_hazard(struct qa_application *,qa_world *,qa_bounds);
 bool application_bots_npc_walk(void *,qa_actor_id,qa_vec3,float,qa_q1_path_result *,qa_error *);
 bool application_bots_npc_path(void *,const qa_native_host_q2_path_request *,
     qa_native_host_q2_path_info *,qa_error *);

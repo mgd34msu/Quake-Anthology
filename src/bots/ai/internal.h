@@ -36,6 +36,9 @@ typedef enum bot_shutdown_phase {
     BOT_SHUTDOWN_RUNNING, BOT_SHUTDOWN_SESSION, BOT_SHUTDOWN_CHAT,
     BOT_SHUTDOWN_SEND, BOT_SHUTDOWN_DONE, BOT_SHUTDOWN_FAILED
 } bot_shutdown_phase;
+typedef enum bot_map_script {
+    BOT_MAP_SCRIPT_NONE, BOT_MAP_SCRIPT_Q3TOURNEY6, BOT_MAP_SCRIPT_MPQ3TOURNEY6
+} bot_map_script;
 typedef struct bot_source_goals {
     qa_bot_goal red_flag, blue_flag, neutral_flag, red_obelisk, blue_obelisk, neutral_obelisk;
     int32_t game_type, max_clients, max_bsp_model_index;
@@ -101,6 +104,7 @@ struct qa_bots {
     struct {char name[36];int32_t preference;} team_preferences[64];
     bool not_leader[64];
     bot_source_goals source_goals;
+    bot_map_script map_script;
     bot_source_orders_state source_orders;
     bot_source_team_policy_globals source_team_policy;
     bot_source_events_globals source_event_globals;
@@ -161,6 +165,7 @@ bool bot_ai_client_name(qa_bots *,int32_t,char *,size_t,bool,qa_error *);
 bool bot_ai_leader_client_name(qa_bots *,bot_ai_state *,int32_t,qa_error *);
 bool bot_ai_easy_name(qa_bots *,int32_t,char *,size_t,qa_error *);
 bool bot_ai_decide(qa_bots *, bot_ai_state *, qa_error *);
+void bot_ai_map_script_bind(qa_bots *);
 bool bot_ai_order_active(const bot_ai_state *);
 bool bot_ai_order_goal(qa_bots *, bot_ai_state *, qa_bot_goal *, bool *, qa_error *);
 bool bot_ai_point_area(qa_bots *, bot_ai_state *, qa_vec3, uint32_t *, qa_error *);

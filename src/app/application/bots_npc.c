@@ -161,10 +161,16 @@ static uint64_t revision(void *opaque)
     application_bots_npc *owner=opaque;
     return qa_session_elapsed(owner->source->application->session)/UINT64_C(1000000);
 }
+static bool hazard(void *opaque,qa_bounds bounds)
+{
+    application_bots_npc *owner=opaque;
+    return application_navigation_hazard(owner->source->application,owner->world,bounds);
+}
 qa_navigation_services application_npc_services(application_bots_npc *owner)
 {
     return (qa_navigation_services){.context=owner,.world=owner->world,.revision=revision,
-        .traversal_begin=prediction_begin,.traversal_admit=prediction_admit,.traversal_end=prediction_end};
+        .hazard=hazard,.traversal_begin=prediction_begin,.traversal_admit=prediction_admit,
+        .traversal_end=prediction_end};
 }
 void application_npc_actor_free(npc_actor *actor)
 {
