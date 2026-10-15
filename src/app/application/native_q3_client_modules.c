@@ -12,8 +12,7 @@ static bool consume(native_client_module *, qa_error *);
 
 static application_provider *receiver(qa_application *app, qa_actor_owner owner)
 {
-    return application_provider_lookup_unique(app, owner,
-        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    return application_native_q3_remote_provider(app, owner, false);
 }
 
 static bool same_source(const qa_application_q3_remote_source *a,

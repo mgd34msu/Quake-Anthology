@@ -356,16 +356,12 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
             continue;
         }
         if (!frontend_network_q3_input_owned(frontend,i)) continue;
-        qa_actor_id actor; uint32_t launch_seat;
-        if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
-            !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
+        qa_actor_id actor;
         frontend_remote_config_view configuration;
         bool configured=false;
-        if (!frontend_network_client_configuration_read(frontend,launch_seat,&configuration,&configured,error)) return false;
-        if (!configured) continue;
         qa_player_state state;
-        if (!qa_application_control_read(frontend->application, actor, &state))
-            return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
+        if (!frontend_network_q3_input_read(frontend,i,&actor,&state,&configuration,&configured,error)) return false;
+        if (!configured) continue;
         if (!control_binding(frontend,seat,actor,&state,true,error)) return false;
         seat->client_frame_ns=elapsed_ns;
         qa_ruleset_id kind = state.profile.kind;

@@ -17,6 +17,8 @@ bool frontend_network_client_configuration(const qa_frontend *, uint32_t authore
     frontend_remote_config_view *, qa_error *);
 bool frontend_network_client_configuration_read(const qa_frontend *, uint32_t authored_seat,
     frontend_remote_config_view *, bool *present, qa_error *);
+bool frontend_network_q3_input_read(qa_frontend *,uint32_t physical_seat,qa_actor_id *,
+    qa_player_state *,frontend_remote_config_view *,bool *ready,qa_error *);
 /* The old published receiver remains the archive authority while a different
  * candidate routing snapshot is temporarily borrowed for configuration. */
 bool frontend_network_client_previous_configuration_read(const qa_frontend *, uint32_t authored_seat,

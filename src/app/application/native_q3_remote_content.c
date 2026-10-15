@@ -15,13 +15,7 @@ static application_provider *admission_receiver(qa_application *app,
         application_fail(error, QA_ERROR_ARGUMENT, "Builtin content admission requires its idle current pre-Init CLIENT source");
         return NULL;
     }
-    qa_id_index_cursor cursor = application_provider_lookup_begin(app, request->previous.receiver.receiver,
-        APPLICATION_PROVIDER_PUBLISHED);
-    application_provider *provider = application_provider_lookup_next(app, &cursor);
-    if (application_provider_lookup_next(app, &cursor)) {
-        application_fail(error, QA_ERROR_ARGUMENT, "Builtin content admission has ambiguous receiver ownership");
-        return NULL;
-    }
+    application_provider *provider = application_native_q3_remote_provider(app, request->previous.receiver.receiver, true);
     qa_native_q3_remote_client_service *service = NULL;
     if (!provider || provider->application != app || provider->kind != APPLICATION_PROVIDER_Q3 ||
         !provider->constructed || !provider->attached || provider->close_pending || !provider->launch ||

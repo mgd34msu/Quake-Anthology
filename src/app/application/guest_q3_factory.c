@@ -25,8 +25,7 @@ bool q3g_compatibility(const qa_launch_instance *descriptor, const char *path,
 static application_provider *receiver_provider(qa_application *app, qa_actor_owner owner)
 {
     if (!app || !owner) return NULL;
-    return application_provider_lookup_unique(app, owner,
-        app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+    return application_native_q3_remote_provider(app, owner, false);
 }
 
 static bool same_descriptor(const qa_launch_instance *actual, const qa_launch_instance *retained)
@@ -43,9 +42,13 @@ bool qa_application_q3_client_configuration_read(qa_application *app, qa_actor_o
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!app || !out || !provider || provider->application != app || provider->close_pending || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration lost its retained receiver");
-    if (provider->kind == APPLICATION_PROVIDER_Q3)
-        return kind == QA_QVM_CGAME ? application_native_q3_remote_role_configuration(provider, seat, out, error) :
-            application_fail(error, QA_ERROR_NOT_FOUND, "Native receiver has no UI Source view");
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        if (kind != QA_QVM_CGAME && !(provider->client_only_owned && kind == QA_QVM_UI))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Native receiver has no UI Source view");
+        if (!application_native_q3_remote_role_configuration(provider, seat, out, error)) return false;
+        if (kind == QA_QVM_UI) out->scope.kind = QA_APPLICATION_CONSOLE_Q3_UI;
+        return true;
+    }
     if (!engine ||
         !application_guest_q3_client_console_at(engine, kind, seat, NULL, NULL))
         return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration lost its retained receiver");
@@ -257,6 +260,17 @@ bool qa_application_q3_role_loading(qa_application *app, qa_actor_owner receiver
         return application_fail(error, QA_ERROR_ARGUMENT, "Loading observation requires its live actual receiver");
     *out = application_q3_guest_role_loading(provider, kind, seat);
     return true;
+}
+
+bool qa_application_q3_remote_source_from_client(qa_application *app,
+    const qa_application_client_source *client, uint64_t epoch,
+    qa_application_q3_remote_source *out, qa_error *error)
+{
+    application_provider *provider = client ? receiver_provider(app, client->context.receiver) : NULL;
+    if (!out || !epoch)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote source requires its actual connection lifetime and output");
+    if (!application_native_q3_remote_role_client_adopt(provider, client, error)) return false;
+    return application_native_q3_remote_role_source_read(provider, client->context.seat, epoch, out, error);
 }
 
 bool qa_application_q3_remote_source_read(qa_application *app, qa_actor_owner receiver,

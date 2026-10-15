@@ -3,6 +3,7 @@
 #include "qa/application_startup_prepare.h"
 
 #include "qa/application_q3_client.h"
+#include "qa/application_client.h"
 #include "qa/persistence_content.h"
 
 typedef struct qa_application_q3_remote_source {
@@ -58,6 +59,12 @@ bool qa_application_q3_remote_recipe_read(qa_application *,
  * Initial descriptors and later client-only descriptors share this contract. */
 bool qa_application_q3_remote_source_read(qa_application *, qa_actor_owner,
     uint32_t, uint64_t connection_epoch, qa_application_q3_remote_source *, qa_error *);
+bool qa_application_q3_remote_source_from_client(qa_application *,
+    const qa_application_client_source *, uint64_t connection_epoch,
+    qa_application_q3_remote_source *, qa_error *);
+qa_command_result qa_application_q3_remote_client_command(qa_application *,
+    const qa_application_client_source *, const qa_command_invocation *, bool forward,
+    qa_error *);
 bool qa_application_q3_remote_source_current(qa_application *,
     const qa_application_q3_remote_source *);
 /* Available only inside the real q3_services construction callback. The

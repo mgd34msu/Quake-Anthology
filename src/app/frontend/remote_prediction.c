@@ -404,6 +404,22 @@ static bool ground_number(frontend_remote_prediction *owner, qa_movement_ground 
     }
     return true;
 }
+qa_q3_movement_state frontend_q3_player_movement(const qa_q3_player *p,
+    qa_movement_ground ground, qa_actor_id jump_pad)
+{
+    return (qa_q3_movement_state){
+        .command_time_ms = p->commandTime, .movement_type = p->pmType,
+        .bob_cycle = p->bobCycle, .movement_flags = (uint32_t)p->pmFlags,
+        .movement_time_ms = p->pmTime, .origin = vector(p->origin),
+        .velocity = vector(p->velocity), .gravity = p->gravity, .speed = p->speed,
+        .delta_angle_words = {p->deltaAngles[0], p->deltaAngles[1], p->deltaAngles[2]},
+        .movement_direction = p->movementDir, .grapple_point = vector(p->grapplePoint),
+        .flags = (uint32_t)p->eFlags, .view_angles = vector(p->viewangles),
+        .view_height = (float)p->viewheight, .ground = ground,
+        .event_sequence = (uint32_t)p->eventSequence, .jump_pad = jump_pad,
+        .movement_frame = p->pmoveFramecount, .jump_pad_frame = p->jumppadFrame,
+    };
+}
 static bool seed_player(frontend_remote_prediction *owner,
     const qa_q3_player *p, const prediction_player *base,
     prediction_player *out, qa_error *error)
@@ -425,18 +441,7 @@ static bool seed_player(frontend_remote_prediction *owner,
         qa_actor_id pad = {0}; bool present = false;
         if (p->jumppadEnt && (!owner->options.actor_at(owner->options.context,
                 (uint32_t)p->jumppadEnt, &pad, &present, error))) return false;
-        state->data.q3 = (qa_q3_movement_state){
-            .command_time_ms = p->commandTime, .movement_type = p->pmType,
-            .bob_cycle = p->bobCycle, .movement_flags = (uint32_t)p->pmFlags,
-            .movement_time_ms = p->pmTime, .origin = vector(p->origin),
-            .velocity = vector(p->velocity), .gravity = p->gravity, .speed = p->speed,
-            .delta_angle_words = {p->deltaAngles[0], p->deltaAngles[1], p->deltaAngles[2]},
-            .movement_direction = p->movementDir, .grapple_point = vector(p->grapplePoint),
-            .flags = (uint32_t)p->eFlags, .view_angles = vector(p->viewangles),
-            .view_height = (float)p->viewheight, .ground = ground,
-            .event_sequence = (uint32_t)p->eventSequence, .jump_pad = present ? pad : (qa_actor_id){0},
-            .movement_frame = p->pmoveFramecount, .jump_pad_frame = p->jumppadFrame,
-        };
+        state->data.q3 = frontend_q3_player_movement(p, ground, present ? pad : (qa_actor_id){0});
         player.view.ground = ground;
         player.environment.gravity_multiplier = 1;
     } else if (!qa_movement_set_origin(state, vector(p->origin), error) ||
@@ -799,6 +804,11 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     return true;
 }
 
+static bool protocol_configuration(const qa_application_control_prediction_configuration *c)
+{
+    return !c->movement && !c->character && !c->arsenal && !c->profile_id &&
+        c->input.state.kind == QA_RULESET_Q3;
+}
 static bool source_valid(const frontend_remote_prediction *owner,
     const frontend_remote_prediction_source *source)
 {
@@ -808,12 +818,12 @@ static bool source_valid(const frontend_remote_prediction *owner,
     return input->connection.owner && input->connection.generation && input->epoch &&
         input->receiver.session == owner->options.session && input->receiver.receiver &&
         input->receiver.initialized && input->input_settings && input->frame.kind == QA_RULESET_Q3 &&
-        configuration->movement && configuration->character && configuration->arsenal &&
         qa_actors_get(qa_session_actors(owner->options.session), configuration->input.actor) &&
         configuration->input.state.kind == configuration->input.profile.kind &&
         configuration->input.prediction && !configuration->input.q2r_pml_origin &&
-        (!configuration->q3_character || configuration->native_q3_character) &&
-        (!configuration->q3_arsenal || configuration->native_q3_arsenal) &&
+        (protocol_configuration(configuration) ||
+            ((!configuration->q3_character || configuration->native_q3_character) &&
+             (!configuration->q3_arsenal || configuration->native_q3_arsenal))) &&
         source->geometry && qa_collision_load_generation(source->geometry) && selected && source->scene.snapshot &&
         isfinite(source->settings.error_decay_value) &&
         (!source->settings.error_decay_integer || source->settings.error_decay_value != 0) &&
@@ -874,6 +884,7 @@ static prediction_player initial_player(const qa_application_control_prediction_
 }
 static bool native_capabilities(const qa_application_control_prediction_configuration *c)
 {
+    if (protocol_configuration(c)) return true;
     return (!c->q3_character || c->native_q3_character) && (!c->q3_arsenal || c->native_q3_arsenal);
 }
 static bool warning(frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
@@ -910,8 +921,7 @@ bool frontend_remote_prediction_create(const frontend_remote_prediction_options 
         !options->trigger_count || !options->trigger_at || !options->trigger_overlap || !options->item_position || !options->item_misc_time ||
         !options->set_pmove_msec || !options->warning ||
         !options->actor_at || !options->number_of || !out || *out ||
-        !options->initial_configuration.movement || !options->initial_configuration.character ||
-        !options->initial_configuration.arsenal || options->initial_configuration.input.q2r_pml_origin ||
+        options->initial_configuration.input.q2r_pml_origin ||
         !qa_actors_get(qa_session_actors(options->session), options->initial_configuration.input.actor) ||
         !options->configuration_current(options->context, &options->initial_configuration))
         return fail(error, QA_ERROR_ARGUMENT, "Private prediction requires its real source and collision owners");
@@ -1369,10 +1379,10 @@ static bool configuration_fields(qa_source_save_io *io, qa_application_control_p
     in->trace_policy.behavior = &qa_trace_behaviors[contents_format == QA_GAME_Q2 && merged ?
         QA_RULESET_Q2_RERELEASE : qa_collision_source_rules(contents_format)];
     in->trace_policy.q1_move = (qa_q1_move_kind)move;
-    return v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
+    return (protocol_configuration(v) || (v->movement && v->character && v->arsenal && v->profile_id == v->movement &&
         v->prediction_numeric.native_c && v->prediction_numeric.id &&
         v->prediction_numeric.radix && v->prediction_numeric.scalar_mantissa_bits &&
-        v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_RULESET_QUAKEWORLD) &&
+        v->prediction_numeric.double_mantissa_bits && v->prediction_numeric.qw_origin_binary64 == (in->state.kind == QA_RULESET_QUAKEWORLD))) &&
         in->actor.registry && in->prediction && qa_vec_finite(v->client_view_offset) &&
         (v->has_client_view_offset || (v->client_view_offset.x == 0 && v->client_view_offset.y == 0 && v->client_view_offset.z == 0)) &&
         (v->numeric.native_c ? v->numeric.id && v->numeric.radix && v->numeric.scalar_mantissa_bits &&

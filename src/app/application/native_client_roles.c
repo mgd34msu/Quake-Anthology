@@ -1,4 +1,5 @@
 #include "native_client_roles.h"
+#include "native_q3_remote_role.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/application_client_save.h"
 #include "qa/application_client_prepare.h"
@@ -539,6 +540,8 @@ static bool retire(struct application_native_client_role *r, qa_error *error)
     if (!row_idle(r)) return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT retirement retains entered physical owners");
     if (qa_application_client_prepare_holds(r->provider->application,&r->source))
         return application_fail(error,QA_ERROR_ARGUMENT,"CLIENT retirement retains its settings preparation");
+    if (r->provider->client_only_owned &&
+        !application_native_q3_remote_role_client_release(r->provider,r->source.context.seat,error)) return false;
     r->retiring = true;
     qa_actor_registry *actors = qa_session_actor_registry(r->provider->application->session);
     while (r->actor_count) {

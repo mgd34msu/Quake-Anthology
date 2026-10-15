@@ -503,6 +503,9 @@ static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
 {
     if (!app || !out || !receiver || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context requires its live actual-seat receiver");
+    application_provider *physical = application_provider_lookup(app, receiver, APPLICATION_PROVIDER_LIVE);
+    if (physical && physical->client_only_owned)
+        return application_native_q3_remote_role_context(physical, seat, out, error);
     const qa_launch_snapshot *snapshot = !published && app->routing_snapshot ?
         app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
@@ -561,6 +564,9 @@ static bool remote_context_current(qa_application *app,
     qa_application_q3_client_context actual;
     if (!retained || !remote_context_read(app, retained->receiver,
         retained->seat, published, &actual, NULL)) return false;
+    application_provider *physical = application_provider_lookup(app, retained->receiver, APPLICATION_PROVIDER_LIVE);
+    if (physical && physical->client_only_owned)
+        return application_native_q3_remote_role_current(physical, retained);
     qa_id_index_cursor cursor = application_provider_lookup_begin(app, retained->receiver,
         !published && app->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
     application_provider *provider;

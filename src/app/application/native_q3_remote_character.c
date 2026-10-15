@@ -52,6 +52,16 @@ static bool current(void *context, const qa_native_q3_character_selection *selec
             owner->source.connection_epoch, &source, NULL) || !same_physical(&source, &owner->source) ||
         !qa_native_q3_remote_client_publication_read(app, &source, &publication, NULL)) return false;
     application_provider *provider = owner->provider;
+    if (provider && provider->client_only_owned) {
+        const qa_native_q3_character_selection *retained = &owner->selection;
+        return selection->owner == retained->owner && selection->product == retained->product &&
+            selection->publication_generation == retained->publication_generation &&
+            selection->launch == retained->launch && selection->content == retained->content &&
+            selection->definition == retained->definition && selection->model == retained->model &&
+            selection->skin == retained->skin && selection->head_model == retained->head_model &&
+            selection->head_skin == retained->head_skin && selection->lifetime == owner &&
+            selection->current == current && selection->release == retained->release;
+    }
     const qa_launch_choices *choices = qa_launch_snapshot_choices(app->routing_snapshot
         ? app->routing_snapshot : qa_application_launch(app));
     if (choices != owner->choices) {
@@ -88,7 +98,45 @@ bool qa_native_q3_remote_client_character_selection_read(qa_application *app,
     qa_application_character_declaration declaration;
     uint64_t publication;
     bool found;
-    if (!out || !qa_native_q3_remote_client_publication_read(app, source, &publication, error) ||
+    if (!out || !qa_native_q3_remote_client_publication_read(app, source, &publication, error)) return false;
+    application_provider *physical = application_provider_lookup(app, source->receiver.receiver,
+        APPLICATION_PROVIDER_LIVE);
+    if (physical && physical->client_only_owned) {
+        const qa_cvar_view *body = qa_cvars_find(source->receiver.cvars, "model"),
+            *head = qa_cvars_find(source->receiver.cvars, "headmodel");
+        if (!body || !head) return native_client_fail(error, QA_ERROR_NOT_FOUND, "Remote CLIENT has no model userinfo");
+        size_t body_length = strlen(body->value), head_length = strlen(head->value);
+        if (body_length > SIZE_MAX - head_length - 2)
+            return native_client_fail(error, QA_ERROR_MEMORY, "Remote CLIENT model userinfo exceeds capacity");
+        char *text = malloc(body_length + head_length + 2);
+        remote_character_owner *owner = calloc(1, sizeof(*owner));
+        if (!text || !owner) {
+            free(text); free(owner);
+            return native_client_fail(error, QA_ERROR_MEMORY, "Retaining remote CLIENT model userinfo");
+        }
+        memcpy(text, body->value, body_length + 1);
+        char *head_model = text + body_length + 1;
+        memcpy(head_model, head->value, head_length + 1);
+        char *skin = strchr(text, '/'), *head_skin = strchr(head_model, '/');
+        if (skin) *skin++ = 0;
+        if (head_skin) *head_skin++ = 0;
+        declaration = (qa_application_character_declaration){.product = source->descriptor->selection.product,
+            .family = QA_GAME_Q3, .definition = source->descriptor->selection.instance,
+            .appearance = {text, skin ? skin : "default", head_model, head_skin ? head_skin : "default"}};
+        owner->application = app; owner->provider = physical; owner->source = *source;
+        bool ok = application_character_names_retain(qa_session_strings(app->session), &declaration,
+            &owner->names, &owner->selection, error) &&
+            qa_launch_instance_retain_metadata(source->descriptor, &owner->receiver, error);
+        free(text);
+        if (!ok) { release(owner); return false; }
+        owner->source.descriptor = qa_launch_instance_lease_view(owner->receiver);
+        owner->selection.owner = physical->owner; owner->selection.product = declaration.product;
+        owner->selection.publication_generation = publication;
+        owner->selection.launch = owner->source.descriptor; owner->selection.content = source->descriptor->content;
+        owner->selection.lifetime = owner; owner->selection.current = current; owner->selection.release = release;
+        *out = owner->selection; return true;
+    }
+    if (
         !qa_application_character_constructor_read(app, source->receiver.receiver, source->receiver.seat,
             &declaration, &found, error) || !found)
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote CLIENT requires its actual authored CHARACTER declaration");

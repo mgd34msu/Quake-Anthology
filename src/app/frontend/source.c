@@ -323,12 +323,12 @@ static bool time_register(qa_cvars *source,qa_cvars *client,uint64_t owner,qa_er
 }
 bool frontend_source_system_info(qa_frontend *f,const qa_application_q3_client_context *view,const char *info,qa_error *error)
 {
-    frontend_source_lease *lease=view?view->frontend_lifetime:NULL;
+    frontend_source_lease *lease=NULL;
     /* Locate the token without dereferencing a caller-supplied pointer. */
-    bool found=false;
     for (frontend_source *source=f?f->sources:NULL;source;source=source->next)
-        for (frontend_source_lease *row=source->lease_list;row;row=row->next) if (row==lease) found=true;
-    if (!found || !info || lease->role!=QA_QVM_CGAME || lease->source->frontend!=f)
+        for (frontend_source_lease *row=source->lease_list;row;row=row->next)
+            if (view && row==view->frontend_lifetime) lease=row;
+    if (!lease || !info || lease->role!=QA_QVM_CGAME || lease->source->frontend!=f)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"SystemInfo lacks its actual linked frontend client role");
     lease->time_context=*view;
     if (!time_enter(lease,error)) return false;

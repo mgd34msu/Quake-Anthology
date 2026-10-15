@@ -3,6 +3,7 @@
 #include "remote_q3_runtime.h"
 #include "remote_q3_frame.h"
 #include "network_restore_prediction.h"
+#include "qa/application_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,13 +93,40 @@ static bool configuration_identity(const qa_application_control_prediction_confi
         a->input.profile.kind==b->input.profile.kind && a->q3_character==b->q3_character && a->q3_arsenal==b->q3_arsenal &&
         a->native_q3_character==b->native_q3_character && a->native_q3_arsenal==b->native_q3_arsenal;
 }
+static bool source_configuration(frontend_network_predictor *, const frontend_network_prediction_source *,
+    qa_application_control_prediction_configuration *, qa_error *);
 static bool configuration_current(void *context, const qa_application_control_prediction_configuration *configuration)
 {
     frontend_network_predictor *owner=context;
     qa_application_control_prediction_configuration actual; qa_error ignored={0};
+    if (owner && configuration && !configuration->movement && !configuration->character && !configuration->arsenal) {
+        frontend_network_prediction_source network; bool present = false;
+        bool importing = frontend_network_restore_prediction_pending(owner->frontend);
+        return (importing ? frontend_network_restore_prediction_read(owner->frontend, &network, &present, &ignored) :
+            frontend_network_prediction_source_read(owner->frontend, &owner->receiver, &network, &present, &ignored)) &&
+            present && source_configuration(owner, &network, &actual, &ignored) &&
+            configuration_identity(configuration, &actual);
+    }
     return owner && configuration && owner->frontend && owner->application==owner->frontend->application &&
         qa_application_control_prediction_read(owner->frontend->application,configuration->input.actor,&actual,&ignored) &&
         configuration_identity(configuration,&actual);
+}
+static bool source_configuration(frontend_network_predictor *owner,
+    const frontend_network_prediction_source *network,
+    qa_application_control_prediction_configuration *out, qa_error *error)
+{
+    qa_application_client_source client;
+    if (qa_application_client_physical_read(owner->application, network->receiver.receiver,
+        network->receiver.seat, &client, NULL)) {
+        if (!network->scene.prediction_snapshot) return false;
+        *out = (qa_application_control_prediction_configuration){.clock = qa_clock_defaults(QA_RULESET_Q3),
+            .input = qa_movement_input_default(QA_RULESET_Q3, network->viewer),
+            .q3_character = true, .q3_arsenal = true, .requested_weapon = -1};
+        out->input.prediction = true;
+        out->input.profile.data.q3.missionpack = network->scene.prediction_snapshot->player.product == QA_Q3_TEAM_ARENA;
+        return true;
+    }
+    return qa_application_control_prediction_read(owner->application, network->viewer, out, error);
 }
 static bool native_children(frontend_network_predictor *owner, const frontend_network_prediction_source *network,
     frontend_remote_q3 **out, frontend_remote_q3_services_view *services, qa_error *error)
@@ -140,7 +168,7 @@ static bool source_observe(void *context, frontend_remote_prediction_source *out
           frontend_network_prediction_input_read(owner->frontend,&owner->receiver,&out->input,&available,error)) || !available ||
         !qa_native_q3_remote_client_cache_read(services.client,&cache,error) ||
         !q3n_remote_source_read(services.source,&source,error) ||
-        !qa_application_control_prediction_read(owner->frontend->application,network.viewer,&out->configuration,error)) return false;
+        !source_configuration(owner,&network,&out->configuration,error)) return false;
     frontend_remote_q3_frame_import_view imported={0};
     frontend_remote_q3_frame *frame=frontend_remote_q3_frames_read(row);
     bool imported_frame=importing && !frontend_remote_q3_frame_initialized_current(frame);
@@ -353,10 +381,76 @@ bool frontend_network_predictor_restore(qa_frontend *f, const qa_application_q3_
     if(!frontend_remote_prediction_restore_new(&actual,bytes,&owner->prediction,error)) { free(owner); return false; }
     *out=owner; return true;
 }
+bool frontend_network_predictor_create_received(qa_frontend *f,
+    const qa_application_q3_client_context *receiver, frontend_network_predictor **out,
+    bool *present, qa_error *error)
+{
+    if (!f || !receiver || !out || *out || !present)
+        return fail(error, "Received prediction needs its actual CLIENT and destination");
+    frontend_network_prediction_source network;
+    *present = false;
+    bool ready = false;
+    if (!frontend_network_prediction_source_read(f, receiver, &network, &ready, error)) return false;
+    if (!ready || !network.scene.prediction_snapshot) return true;
+    frontend_network_predictor binding = {.frontend = f, .application = f->application, .receiver = *receiver};
+    qa_application_control_prediction_configuration initial;
+    if (!source_configuration(&binding, &network, &initial, error) ||
+        !frontend_network_predictor_create(f, receiver, &initial, out, error)) return false;
+    *present = true; return true;
+}
 void frontend_network_predictor_destroy(frontend_network_predictor *owner)
 { if(owner) { frontend_remote_prediction_destroy(owner->prediction); free(owner); } }
 frontend_remote_prediction *frontend_network_predictor_read(const frontend_network_predictor *owner)
 { return owner?owner->prediction:NULL; }
+bool frontend_network_predictor_player_read(frontend_network_predictor *owner,
+    qa_player_state *out, bool *present, qa_error *error)
+{
+    if (!owner || !out || !present)
+        return fail(error, "Received player input needs its actual prediction owner and destination");
+    *out = (qa_player_state){0}; *present = false;
+    frontend_network_prediction_source network;
+    bool ready = false;
+    if (!frontend_network_prediction_source_read(owner->frontend, &owner->receiver, &network, &ready, error)) return false;
+    if (!ready || !network.scene.prediction_snapshot) return true;
+    qa_application_control_prediction_configuration configuration;
+    if (!source_configuration(owner, &network, &configuration, error)) return false;
+    frontend_remote_prediction_view view = {0};
+    bool predicted = false;
+    if (frontend_remote_prediction_initialized(owner->prediction)) {
+        frontend_remote_prediction_source source;
+        if (!source_observe(owner, &source, &ready, NULL, error)) return false;
+        predicted = ready && frontend_remote_prediction_read(owner->prediction, &source, &view);
+    }
+    if (!predicted) {
+        const qa_q3_player *p = &network.scene.prediction_snapshot->player;
+        qa_movement_ground ground = {0};
+        qa_actor_id pad = {0}; bool found = false;
+        if (p->groundEntityNum == QA_Q3_ENTITY_WORLD) ground.hit = QA_TRACE_HIT_WORLD;
+        else if (p->groundEntityNum >= 0 && p->groundEntityNum < QA_Q3_ENTITY_WORLD) {
+            if (!frontend_network_prediction_actor_at(owner->frontend, &owner->receiver,
+                (uint32_t)p->groundEntityNum, &ground.actor, &found, error)) return false;
+            if (found) ground.hit = QA_TRACE_HIT_ACTOR;
+        }
+        if (p->jumppadEnt > 0 && p->jumppadEnt < QA_Q3_ENTITY_WORLD &&
+            !frontend_network_prediction_actor_at(owner->frontend, &owner->receiver,
+                (uint32_t)p->jumppadEnt, &pad, &found, error)) return false;
+        view.movement = (qa_movement_state){.kind = QA_RULESET_Q3,
+            .data.q3 = frontend_q3_player_movement(p, ground, pad)};
+        view.bounds = p->pmType == 3 ? configuration.input.dead.bounds :
+            (p->pmFlags & 1) ? configuration.input.crouched.bounds : configuration.input.standing.bounds;
+        view.view_angles = view.command_angles = view.movement.data.q3.view_angles;
+        view.view_height = (float)p->viewheight; view.ground = ground;
+    }
+    *out = (qa_player_state){.actor = network.viewer, .state = view.movement,
+        .profile = configuration.input.profile, .standing_bounds = configuration.input.standing.bounds,
+        .bounds = view.bounds, .ground = view.ground, .view_angles = view.view_angles,
+        .command_angles = view.command_angles, .view_offset = view.view_offset,
+        .view_height = view.view_height, .water_level = view.water_level, .water_type = view.water_type,
+        .command_sequence = view.sequence, .command_angle_revision = network.restart_generation,
+        .gravity_multiplier = configuration.input.environment.gravity_multiplier,
+        .flight = configuration.input.environment.flight};
+    *present = true; return true;
+}
 bool frontend_network_predictor_source_current(frontend_network_predictor *owner,
     const frontend_remote_prediction_source *source)
 { return source_current(owner,source); }

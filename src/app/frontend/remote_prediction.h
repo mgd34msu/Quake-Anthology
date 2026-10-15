@@ -6,6 +6,8 @@
 #include "qa/network_q3_prediction_scene.h"
 
 typedef struct frontend_remote_prediction frontend_remote_prediction;
+qa_q3_movement_state frontend_q3_player_movement(const qa_q3_player *,
+    qa_movement_ground, qa_actor_id jump_pad);
 typedef struct frontend_remote_prediction_settings {
     int32_t game_type, dm_flags, pmove_msec;
     int32_t error_decay_integer, show_miss;

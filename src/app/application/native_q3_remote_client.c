@@ -7,7 +7,7 @@
 
 static application_provider *receiver(qa_application *app, qa_actor_owner owner)
 {
-    return application_provider_lookup_unique(app, owner, APPLICATION_PROVIDER_PUBLISHED);
+    return application_native_q3_remote_provider(app, owner, true);
 }
 struct qa_native_q3_remote_client_transport {
     qa_application *application;
@@ -156,9 +156,9 @@ static bool basis_current(const qa_native_q3_remote_client_services *services)
     const qa_native_q3_remote_client_basis *basis = &services->basis;
     application_provider *provider = receiver(basis->application, basis->client.receiver);
     qa_application_q3_remote_source source;
-    qa_q3_product product = provider && provider->product && provider->product->campaign_id==QA_CAMPAIGN_MISSIONPACK ?
-        QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
-    return provider && provider->constructed && provider->attached && !provider->close_pending &&
+    qa_q3_product product;
+    return provider && application_native_q3_remote_role_product(provider, basis->client.seat, &product, NULL) &&
+        provider->constructed && provider->attached && !provider->close_pending &&
         provider->kind == APPLICATION_PROVIDER_Q3 && provider->launch &&
         provider->launch->selection.runtime == QA_PROGRAM_BUILTIN && provider->product &&
         provider->product->family == QA_GAME_Q3 && basis->product == product &&

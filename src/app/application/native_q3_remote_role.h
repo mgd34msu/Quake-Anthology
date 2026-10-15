@@ -8,8 +8,12 @@
 typedef struct qa_native_q3_remote_client_service qa_native_q3_remote_client_service;
 typedef struct qa_native_q3_remote_client_transport qa_native_q3_remote_client_transport;
 typedef struct application_native_q3_client_modules application_native_q3_client_modules;
+application_provider *application_native_q3_remote_provider(qa_application *, qa_actor_owner, bool published);
 
 bool application_native_q3_remote_roles_prepare(application_provider *, const qa_launch_choices *, qa_error *);
+bool application_native_q3_remote_role_client_adopt(application_provider *,
+    const qa_application_client_source *, qa_error *);
+bool application_native_q3_remote_role_client_release(application_provider *, uint32_t, qa_error *);
 bool application_native_q3_remote_role_selected(const qa_launch_instance *, const qa_launch_choices *, uint32_t seat);
 /* Call only after the physical services for omitted seats have returned. */
 bool application_native_q3_remote_roles_retain(application_provider *, const qa_launch_choices *, qa_error *);

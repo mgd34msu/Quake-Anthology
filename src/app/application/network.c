@@ -14,6 +14,7 @@
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
 #include "native_q3_remote_role.h"
+#include "native_client_roles.h"
 #include "client_events.h"
 #include "qa/application_network.h"
 #include "qa/application_network_qw.h"
@@ -1342,7 +1343,7 @@ bool qa_application_network_q3_client_actor(qa_application *app,
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session),
         projection->actors[source_number]);
     if (record && record->owner == projection->owner && record->definition == projection->definition &&
-        !record->has_source) {
+        (!record->has_source || application_native_client_observer_actor(app, app->session, record))) {
         *out = record->id; *present = true;
     }
     return true;
@@ -1357,9 +1358,10 @@ bool qa_application_network_q3_client_unproject(qa_application *app,
         qa_actor_id actor = projection->actors[i];
         const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
         if (record) {
-            if (record->owner != projection->owner || record->definition != projection->definition || record->has_source)
+            if (record->owner != projection->owner || record->definition != projection->definition ||
+                (record->has_source && !application_native_client_observer_actor(app, app->session, record)))
                 return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 projection contains a foreign actor");
-            if (!qa_session_release(app->session, actor, error)) return false;
+            if (!record->has_source && !qa_session_release(app->session, actor, error)) return false;
         }
         projection->actors[i] = (qa_actor_id){0};
     }
@@ -1420,14 +1422,23 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
     const qa_q3_prediction_scene_view *view, qa_error *error)
 {
     qa_application_q3_client_context receiver;
+    application_provider *provider = app ? application_provider_lookup(app, owner, APPLICATION_PROVIDER_LIVE) : NULL;
+    qa_application_client_source client = {0};
+    bool physical = provider && provider->client_only_owned;
+    if (physical && !qa_application_client_read(app, owner, seat, &client, error)) return false;
+    qa_actor_owner entity_owner = physical ? client.context.entity_owner : owner;
     if (!app || !projection || !current || app->destroy_requested || app->operation != APPLICATION_IDLE ||
         !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
         !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
         !qa_application_q3_remote_context_current(app, &receiver) ||
-        (projection->owner && projection->owner != owner) ||
+        (projection->owner && projection->owner != entity_owner) ||
         !qa_q3_prediction_scene_current(scene, view) || current != view->snapshot ||
         (next && (next != view->next_snapshot || view->next_frame_teleport)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication requires its admitted idle cgame owner");
+    if (physical) {
+        qa_actor_id viewer;
+        if (!qa_application_client_entity_read(app, &client, (uint32_t)current->player.clientNum, &viewer, error)) return false;
+    }
     qa_body_state bodies[QA_Q3_ENTITY_NONE] = {0};
     bool present[QA_Q3_ENTITY_NONE] = {0};
     bool identities[QA_Q3_ENTITY_NONE] = {0};
@@ -1463,28 +1474,30 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
             return application_fail(error, QA_ERROR_FORMAT, "Q3 collision projection has an invalid retained source pose");
         bodies[row->number] = body; present[row->number] = true;
     }
-    qa_string_id definition = projection->definition;
+    qa_string_id definition = physical ? client.context.entity_definition : projection->definition;
     if (definition == QA_STRING_NONE &&
         !qa_strings_intern_cstr(qa_session_strings(app->session), "qa.network.q3.remote-entity", &definition, error)) return false;
     if (projection->owner && projection->definition != definition)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication has a foreign definition");
-    projection->owner = owner; projection->definition = definition;
+    projection->owner = entity_owner; projection->definition = definition;
     for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
         const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), projection->actors[i]);
-        if (record && (record->owner != owner || record->has_source || record->definition != definition))
+        if (record && (record->owner != entity_owner || record->has_source != physical || record->definition != definition))
             return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication contains a foreign actor");
         if (!record) projection->actors[i] = (qa_actor_id){0};
     }
     for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
         if (!identities[i]) continue;
-        if (!projection->actors[i].registry &&
-            !qa_session_allocate(app->session, owner, definition, false, 0, &projection->actors[i], error)) return false;
+        if (physical) {
+            if (!qa_application_client_entity_read(app, &client, i, &projection->actors[i], error)) return false;
+        } else if (!projection->actors[i].registry &&
+            !qa_session_allocate(app->session, entity_owner, definition, false, 0, &projection->actors[i], error)) return false;
         qa_world *world=qa_q3_prediction_scene_world(scene);
         qa_body_state previous; qa_error ignored={0};
         if ((present[i] || !qa_world_body_read(world,projection->actors[i],&previous,&ignored)) &&
             !qa_world_body_write(world, projection->actors[i], &bodies[i], error)) return false;
     }
-    return qa_q3_prediction_scene_project(scene,owner,projection->actors,error);
+    return qa_q3_prediction_scene_project(scene,entity_owner,projection->actors,error);
 }
 bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id actor,
     qa_actor_owner *owner, qa_q3_product *product, uint32_t *launch_seat, qa_error *error)
@@ -1513,13 +1526,8 @@ bool qa_application_network_q3_client_native_system_info(qa_application *app, qa
     if (!app || !info || !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
         !receiver.native_source || !qa_application_q3_remote_context_current(app, &receiver))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lacks its actual native CLIENT receiver");
-    qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
-    application_provider *provider;
-    while ((provider = application_provider_lookup_next(app, &cursor))) {
-        if (provider->attached)
-            return application_native_q3_remote_role_system_info(provider, seat, info, error);
-    }
-    return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lost its actual native provider");
+    application_provider *provider = application_native_q3_remote_provider(app, owner, true);
+    return provider && application_native_q3_remote_role_system_info(provider, seat, info, error);
 }
 bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owner owner,
     uint32_t seat, const qa_q3_tokens *tokens, qa_error *error)
@@ -1530,13 +1538,8 @@ bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owne
         !qa_application_q3_remote_context_current(app, &receiver))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks its actual remote CLIENT receiver");
     if (receiver.native_source) {
-        qa_id_index_cursor cursor = application_provider_lookup_begin(app, owner, APPLICATION_PROVIDER_PUBLISHED);
-        application_provider *provider;
-        while ((provider = application_provider_lookup_next(app, &cursor))) {
-            if (provider->attached)
-                return application_native_q3_remote_role_command(provider, seat, tokens, error);
-        }
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 native arguments lost their admitted provider");
+        application_provider *provider = application_native_q3_remote_provider(app, owner, true);
+        return provider && application_native_q3_remote_role_command(provider, seat, tokens, error);
     }
     q3g_role *role = external_cgame(app, owner, seat);
     if (!role || !tokens || tokens->truncated)

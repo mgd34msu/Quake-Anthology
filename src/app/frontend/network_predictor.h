@@ -9,10 +9,13 @@ typedef struct frontend_network_predictor frontend_network_predictor;
 bool frontend_network_predictor_create(qa_frontend *,
     const qa_application_q3_client_context *receiver,
     const qa_application_control_prediction_configuration *, frontend_network_predictor **, qa_error *);
+bool frontend_network_predictor_create_received(qa_frontend *,
+    const qa_application_q3_client_context *, frontend_network_predictor **, bool *present, qa_error *);
 bool frontend_network_predictor_restore(qa_frontend *,
     const qa_application_q3_client_context *receiver, qa_bytes, frontend_network_predictor **, qa_error *);
 void frontend_network_predictor_destroy(frontend_network_predictor *);
 frontend_remote_prediction *frontend_network_predictor_read(const frontend_network_predictor *);
+bool frontend_network_predictor_player_read(frontend_network_predictor *, qa_player_state *, bool *, qa_error *);
 bool frontend_network_predictor_source_current(frontend_network_predictor *, const frontend_remote_prediction_source *);
 bool frontend_network_predictor_bound(const frontend_network_predictor *, const qa_frontend *);
 void frontend_network_predictor_rebind(frontend_network_predictor *, qa_frontend *);

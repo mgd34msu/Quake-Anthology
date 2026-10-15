@@ -9,7 +9,7 @@ typedef struct qa_application_q3_client_context {
     qa_actor_id source_actor;
     uint32_t seat, source_client;
     uint64_t service_owner;
-    void *frontend_lifetime;
+    const void *frontend_lifetime;
     qa_console *console;
     qa_cvars *cvars, *source_cvars;
     qa_cvars *client_time_cvars;

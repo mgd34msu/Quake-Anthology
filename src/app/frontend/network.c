@@ -67,6 +67,7 @@
 #include "network_player_drop.h"
 #include "remote_q2_client.h"
 #include "qa/application_native_q3_client_modules.h"
+#include "qa/application_native_q3_cvars.h"
 #include "remote_q3_client.h"
 #include "remote_q3_session.h"
 #include "qa/application_native_q3_remote_content.h"
@@ -124,6 +125,8 @@ typedef struct frontend_q3_client {
     qa_network_runtime *runtime;
     qa_net_seat_id seat;
     uint32_t physical;
+    frontend_client_source *physical_source;
+    bool physical_adopted;
     qa_q3_client_authorization *q3_client_authorization;
     frontend_remote_config_view q3_authorization_configuration;
     frontend_key_profile_view q3_authorization_profile;
@@ -318,10 +321,19 @@ static frontend_q3_client *q3_client_connection(const qa_frontend *f, qa_net_cli
             return f->network->q3_clients + i;
     return NULL;
 }
-static bool client_player(const frontend_q3_client *n, qa_actor_id *out, qa_error *error)
+static bool client_player(const frontend_q3_client *n,qa_actor_id *out,qa_error *error)
 {
-    return qa_application_player_actor(n->frontend->application, n->q3_client_launch_seat, out) ||
-        frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 client lost its actual viewing seat");
+    if(n->physical_source) {
+        frontend_client_source_view source;
+        const qa_q3_client_peer *peer=n->q3_client_attached?qa_network_q3_client_view(n->runtime,n->q3_client):NULL;
+        const qa_q3_snapshot *snapshot=peer?qa_q3_client_peer_snapshot(peer):NULL;
+        return snapshot && snapshot->player.clientNum>=0 &&
+            frontend_client_source_metadata_read(n->physical_source,&source,error) &&
+            qa_application_client_entity_read(n->frontend->application,&source.source,
+                (uint32_t)snapshot->player.clientNum,out,error);
+    }
+    return qa_application_player_actor(n->frontend->application,n->q3_client_launch_seat,out) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 client lost its actual viewing seat");
 }
 static frontend_q3_client *q3_client_physical(const qa_frontend *f, uint32_t physical)
 {
@@ -428,6 +440,7 @@ static bool local_server_prepare(qa_frontend_network *, qa_error *);
 static bool local_q3_prepare(frontend_local_client *, qa_actor_id, qa_error *);
 static bool q3_client_receive(frontend_q3_client *, const qa_net_datagram *, bool *, qa_error *);
 static bool client_drain(frontend_q3_client *, bool, qa_error *);
+static frontend_remote_input_options client_input_options(frontend_q3_client *);
 static bool q1_service_message(qa_frontend_network *, const qa_application_client_source *,
     const qa_nq_message *, qa_error *);
 static bool q1_controlled(frontend_network_q1_client *, qa_net_client_id, qa_net_seat_id,
@@ -959,6 +972,8 @@ bool frontend_network_client_configuration_primary(const qa_frontend *f,const qa
         frontend_network_unified_client_view view;
         if(!frontend_network_unified_client_metadata_read(n->unified_client_service,&view,NULL)) return false;
         held=view.physical;
+    } else if(physical<f->options.seats && n->q3_clients[physical].physical_source) {
+        if(!frontend_client_source_metadata_read(n->q3_clients[physical].physical_source,&held,NULL)) return false;
     } else return false;
     return frontend_client_source_descriptor_equal(source->descriptor,held.source.descriptor) &&
         source->context.receiver==held.source.context.receiver &&
@@ -997,6 +1012,9 @@ bool frontend_network_client_recipient_read(const qa_frontend *f,uint32_t physic
             frontend_network_unified_client_view view;
             if(!frontend_network_unified_client_metadata_read(service,&view,error)) return false;
             held=view.physical;
+        } else if(n->q3_clients[physical].physical_source) {
+            if(n->q3_clients[physical].q3_client_retiring || n->q3_clients[physical].q3_client_closed) return true;
+            if(!frontend_client_source_metadata_read(n->q3_clients[physical].physical_source,&held,error)) return false;
         } else return true;
         if(held.source.context.physical_seat!=physical) return true;
         if(!frontend_client_source_current(&held))
@@ -1253,13 +1271,6 @@ bool frontend_network_ui_client_state(frontend_network_browser_binding *binding,
     if (!browser_binding_current(binding, error) || !host_current(context, host, &binding->ui, error)) return false;
     *out = state; return true;
 }
-static bool remote_player(qa_application *application, qa_actor_id *out, qa_error *error)
-{
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(application));
-    return (choices && choices->seat_count == 1 &&
-        qa_application_player_actor(application, choices->seats[0].id, out)) ||
-        frontend_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 client lost its actual single viewing seat");
-}
 static bool admit(void *context, const qa_net_connect *request, qa_error *error)
 {
     qa_frontend_network *n = context;
@@ -1294,10 +1305,10 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
         !qa_application_network_output_complete(n->frontend->application, request->protocol.kind))
         return frontend_fail(error, QA_ERROR_MEMORY, "Server output baseline is incomplete");
     if (frontend_network_remote(n->frontend) && request->protocol.kind == QA_NET_Q3_68) {
-        qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
-        return remote_player(n->frontend->application, &actor, error) &&
-            qa_application_network_q3_client_source(n->frontend->application, actor, &owner, &product, &seat, error) &&
-            seat == n->q3_clients[0].q3_client_launch_seat;
+        frontend_client_source_view source;
+        return frontend_client_source_read(n->q3_clients[0].physical_source,&source,error) && source.ready &&
+            source.source.context.receiver==n->q3_clients[0].q3_cgame_owner &&
+            source.source.context.seat==n->q3_clients[0].q3_client_launch_seat;
     }
     if (n->q3_admission && request->protocol.kind == QA_NET_Q3_68) {
         qa_actor_owner owner; qa_q3_product product;
@@ -2956,6 +2967,131 @@ static bool client_project(frontend_q3_client *n, qa_error *error)
     n->q3_projection_epoch = epoch;
     n->q3_scene_frame = n->frontend->frame_number; n->q3_scene_frame_valid = true; return true;
 }
+static bool client_physical_connection(void *context,const qa_application_client_source *source)
+{
+    frontend_q3_client *n=context;
+    const qa_net_client *peer=n && source && n->runtime?
+        qa_net_connections_get(qa_network_connections(n->runtime),source->client):NULL;
+    return peer && n->q3_client_requested && n->q3_client_attached && !n->q3_client_retiring &&
+        source->runtime==n->runtime && qa_net_client_id_equal(source->client,n->q3_client) &&
+        source->connection_epoch==n->q3_client_epoch && qa_network_epoch(n->runtime,source->client)==1 &&
+        source->context.physical_seat==n->physical && source->network_seat.owner==n->seat.owner &&
+        source->network_seat.index==n->seat.index && peer->seat_count==1 &&
+        qa_net_client_owns_seat(peer,source->network_seat) && !peer->seats[0].remote_index &&
+        peer->protocol.kind==QA_NET_Q3_68 && !peer->protocol.flags && !peer->protocol.revision &&
+        qa_net_address_equal(&peer->endpoint,&n->q3_client_admission.address,true);
+}
+static bool client_physical_retirement(void *context,const qa_application_client_source *source)
+{
+    frontend_q3_client *n=context;
+    return n && source && n->q3_client_retiring && source->runtime==n->runtime &&
+        qa_net_client_id_equal(source->client,n->q3_client) &&
+        source->connection_epoch==(source->client.owner?n->q3_client_epoch:0) &&
+        source->context.physical_seat==n->physical &&
+        (!source->client.owner || (source->network_seat.owner==n->seat.owner && source->network_seat.index==n->seat.index));
+}
+static bool client_snapshot_entity(const qa_q3_snapshot *snapshot,uint32_t number)
+{
+    if(!snapshot) return false;
+    if((snapshot->player.clientNum>=0 && number==(uint32_t)snapshot->player.clientNum) ||
+        (snapshot->player.groundEntityNum>=0 && number==(uint32_t)snapshot->player.groundEntityNum) ||
+        (snapshot->player.jumppadEnt>0 && number==(uint32_t)snapshot->player.jumppadEnt)) return true;
+    for(size_t i=0;i<snapshot->entity_count;++i)
+        if(snapshot->entities[i].number>=0 && number==(uint32_t)snapshot->entities[i].number) return true;
+    return false;
+}
+static bool client_physical_entity(void *context,const qa_application_client_source *source,
+    uint32_t number,uint64_t *generation)
+{
+    frontend_q3_client *n=context;
+    if(!generation || number>=QA_Q3_ENTITY_WORLD || !client_physical_connection(n,source)) return false;
+    *generation=n->q3_client_restart_generation+1;
+    const qa_q3_client_peer *peer=q3_view(n);
+    if(peer && client_snapshot_entity(qa_q3_client_peer_snapshot(peer),number)) return true;
+    qa_q3_prediction_scene_view scene;
+    if(!qa_q3_prediction_scene_read(n->q3_prediction_scene,&scene)) return false;
+    if(client_snapshot_entity(scene.snapshot,number) || client_snapshot_entity(scene.next_snapshot,number) ||
+        client_snapshot_entity(scene.prediction_snapshot,number)) return true;
+    for(unsigned list=0;list<2;++list) for(size_t i=0;;++i) {
+        qa_q3_prediction_scene_entity_view entity; bool present=false;
+        bool ok=list?qa_q3_prediction_scene_trigger_at(n->q3_prediction_scene,&scene,i,&entity,&present,NULL):
+            qa_q3_prediction_scene_solid_at(n->q3_prediction_scene,&scene,i,&entity,&present,NULL);
+        if(!ok || !present) break;
+        if(entity.source_number==number || (entity.entity && entity.entity->number>=0 &&
+            (uint32_t)entity.entity->number==number)) return true;
+    }
+    return false;
+}
+static bool client_physical_initialize(void *context,const qa_launch_instance *descriptor,
+    qa_cvars *variables,const qa_command_context *command,qa_error *error)
+{
+    frontend_q3_client *n=context;
+    return qa_native_q3_client_defaults(descriptor,variables,command,n->frontend->options.character_model,error);
+}
+static qa_command_result client_physical_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_q3_client *n=context; frontend_client_source_view source;
+    if(!n->physical_adopted) return QA_COMMAND_UNHANDLED;
+    if(!frontend_client_source_read(n->physical_source,&source,error)) return QA_COMMAND_FAILED;
+    return qa_application_q3_remote_client_command(n->frontend->application,&source.source,call,false,error);
+}
+static qa_command_result client_physical_forward(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_q3_client *n=context; frontend_client_source_view source;
+    if(!n->physical_adopted) return QA_COMMAND_UNHANDLED;
+    if(!frontend_client_source_read(n->physical_source,&source,error)) return QA_COMMAND_FAILED;
+    return qa_application_q3_remote_client_command(n->frontend->application,&source.source,call,true,error);
+}
+static bool client_physical_create(frontend_q3_client *n,qa_error *error)
+{
+    qa_frontend *f=n->frontend;
+    const qa_product *selected=frontend_product_current(f);
+    qa_product_id profile_id=0; frontend_client_source_options options={0};
+    if(!selected || !frontend_config_store_client_profile(f->config_store,selected->id,&profile_id,error) ||
+        !frontend_config_store_neutral_pending_options(f->config_store,n->physical,&options,error)) return false;
+    qa_catalog *catalog=qa_application_catalog(f->application); qa_vfs *prepared=NULL;
+    if(!qa_catalog_open(catalog,selected->id,&prepared,error)) {
+        (void)frontend_config_store_neutral_options_cancel(f->config_store,&options,NULL); return false;
+    }
+    options.runtime=n->runtime; options.physical_seat=n->physical;
+    options.input_origin=qa_input_seat_context(f->seats[n->physical].input);
+    options.input_origin.owner=0; options.input_origin.actor=(qa_actor_id){0}; options.input_origin.client=0;
+    options.input_origin.registry=options.input_origin.generation=0; options.input_origin.script=NULL;
+    options.input_origin.dialect=QA_RULESET_Q3;
+    options.metadata=(qa_launch_client_metadata){.catalog=catalog,.profile=profile_id,.selected=selected->id,
+        .prepared=prepared,.instance="remote-q3-client",.seat=options.input_origin.seat,.clock=QA_RULESET_Q3};
+    options.services=(frontend_client_source_services){.context=n,.initialize=client_physical_initialize,
+        .connection_current=client_physical_connection,.entity_current=client_physical_entity,
+        .retirement_current=client_physical_retirement,.command=client_physical_command,.forward=client_physical_forward};
+    bool ok=frontend_client_source_create(f,&options,&n->physical_source,error);
+    qa_vfs_destroy(prepared);
+    if(!ok) {
+        if(!n->physical_source) (void)frontend_config_store_neutral_options_cancel(f->config_store,&options,NULL);
+        return false;
+    }
+    frontend_client_source_view source;
+    if(!frontend_client_source_metadata_read(n->physical_source,&source,error) ||
+        !frontend_config_store_neutral_movement_adopt(f->config_store,source.source.context.cvars,QA_RULESET_Q3,error)) return false;
+    n->q3_cgame_owner=source.source.context.receiver; n->q3_client_launch_seat=source.source.context.seat;
+    const qa_product *profile=qa_catalog_product(catalog,profile_id);
+    n->q3_client_product=profile->campaign_id==QA_CAMPAIGN_MISSIONPACK?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
+    return true;
+}
+static bool client_physical_advance(frontend_q3_client *n,bool *ready,qa_error *error)
+{
+    if(n->physical_adopted) { *ready=true; return true; }
+    if(!frontend_client_source_advance(n->physical_source,ready,error)) return false;
+    if(!*ready) return true;
+    frontend_client_source_view source; qa_application_q3_remote_source adopted;
+    if(!frontend_client_source_read(n->physical_source,&source,error) ||
+        !qa_application_q3_remote_source_from_client(n->frontend->application,&source.source,n->q3_client_epoch,&adopted,error) ||
+        !qa_q3_prediction_scene_create(n->q3_client_product,&n->q3_prediction_scene,error)) return false;
+    frontend_remote_input_options input=client_input_options(n);
+    if(!frontend_remote_input_create(&input,&n->q3_input,error)) return false;
+    client_cvars_bind(n,source.source.context.cvars); n->physical_adopted=true;
+    return true;
+}
+
 static bool client_initial_session(frontend_q3_client *n, qa_error *error)
 {
     if(n->q3_session || n->q3_client_decoded) return true;
@@ -2985,6 +3121,11 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
         }
         return true;
     }
+    if(n->physical_source) {
+        bool ready=false;
+        if(!client_physical_advance(n,&ready,error)) return false;
+        if(!ready) return true;
+    }
     if (n->q3_client_generation != qa_application_configuration_generation(n->frontend->application))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Remote Q3 launch changed and requires fresh connection admission");
     if (n->q3_client_attach) {
@@ -3003,6 +3144,8 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
             n->q3_client_admission.challenge, n->q3_client_admission.qport, &hooks,
             &policy, n->frontend->wall_time_ns, &n->q3_client, error)) return false;
         n->q3_client_attach = false; n->q3_client_attached = true;
+        if(n->physical_source && !frontend_client_source_bind(n->physical_source,n->q3_client,n->seat,
+            n->q3_client_epoch,error)) return false;
     }
     if (!n->q3_client_attached) {
         if (qa_application_startup_pending(n->frontend->application)) return true;
@@ -3041,7 +3184,7 @@ static bool client_drain(frontend_q3_client *n, bool presentation_frame, qa_erro
     if (n->q3_client_gamestate && !n->q3_client_entered) {
         qa_q3_usercmd initial = {0};
         if (!qa_network_q3_client_usercmd(n->runtime, n->q3_client, &initial, error)) return false;
-        if(n->q3_predictor) {
+        if(n->q3_predictor || n->physical_source) {
             const qa_q3_client_peer *peer=q3_view(n);
             uint64_t number=peer?qa_q3_client_peer_usercmd_number(peer):0;
             const qa_q3_usercmd *zero=peer?qa_q3_client_peer_usercmd_at(peer,number):NULL;
@@ -3227,19 +3370,14 @@ bool frontend_network_client_services(qa_frontend *f, qa_application *applicatio
     host->client_time_owner = owner;
     return true;
 }
-static bool client_configuration_view(const frontend_q3_client *n, frontend_remote_config_view *out, qa_error *error)
+static bool client_configuration_view(const frontend_q3_client *n,frontend_remote_config_view *out,qa_error *error)
 {
-    const qa_frontend *f = n ? n->frontend : NULL;
-    qa_application_startup_source source;
-    if (!n || !out || !n->q3_client_requested || !qa_application_q3_client_configuration_read(f->application,
-        n->q3_cgame_owner, QA_QVM_CGAME, n->q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
-    if (!frontend_remote_config_read(row, out) || !out->ready || !out->published ||
-        out->scope.provider != source.scope.provider || out->scope.kind != source.scope.kind ||
-        out->scope.seat != source.scope.seat || out->console != source.console || out->cvars != source.cvars ||
-        !frontend_remote_config_current(row, out))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Remote CLIENT lost its completed physical configuration owner");
-    return true;
+    qa_application_q3_client_context receiver;
+    return n && out && n->q3_client_requested &&
+        qa_application_q3_remote_context_read(n->frontend->application,n->q3_cgame_owner,
+            n->q3_client_launch_seat,&receiver,error) &&
+        frontend_client_configuration_read(n->frontend,receiver.cvars,out,error) &&
+        out->ready && out->published && frontend_client_configuration_current(out);
 }
 bool frontend_network_client_configuration(const qa_frontend *f, uint32_t seat,
     frontend_remote_config_view *out, qa_error *error)
@@ -3262,18 +3400,16 @@ bool frontend_network_client_configuration_read(const qa_frontend *f, uint32_t s
     frontend_q3_client *n = q3_client_launch(f, seat);
     if (!n || !n->q3_client_requested || !n->q3_cgame_owner || seat != n->q3_client_launch_seat ||
         n->q3_client_retiring || n->q3_client_closed) return true;
+    if(n->physical_source) {
+        frontend_client_source_view physical;
+        if(!frontend_client_source_metadata_read(n->physical_source,&physical,error)) return false;
+        if(!physical.ready) return true;
+    }
     qa_application_q3_client_context receiver; qa_error observed = {0};
     if (!qa_application_q3_remote_context_read(f->application, n->q3_cgame_owner, seat, &receiver, &observed)) {
         if (qa_application_startup_pending(f->application)) return true;
         if (error) *error = observed;
         return false;
-    }
-    if (qa_application_startup_pending(f->application)) {
-        qa_application_startup_source source;
-        if (!qa_application_q3_client_configuration_read(f->application, n->q3_cgame_owner, QA_QVM_CGAME, seat, &source, error)) return false;
-        frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
-        frontend_remote_config_view view;
-        if (!frontend_remote_config_read(row, &view) || !view.ready || !view.published) return true;
     }
     if (!frontend_network_client_configuration(f, seat, out, error)) return false;
     *present = true; return true;
@@ -3331,7 +3467,8 @@ static bool client_attempt_owner_current(const qa_frontend *f,
         attempt->source.configuration_generation == actual.source.configuration_generation &&
         attempt->source.connection_epoch == actual.source.connection_epoch &&
         attempt->configuration.owner == actual.configuration.owner &&
-        frontend_remote_config_current(attempt->configuration.owner, &attempt->configuration) &&
+        attempt->configuration.neutral.owner == actual.configuration.neutral.owner &&
+        frontend_client_configuration_current(&attempt->configuration) &&
         attempt->epoch == actual.epoch && attempt->restart_generation == actual.restart_generation &&
         qa_net_address_equal(&attempt->endpoint, &actual.endpoint, true);
 }
@@ -3459,18 +3596,17 @@ bool frontend_network_client_previous_configuration_read(const qa_frontend *f, u
     qa_application_q3_client_context receiver;
     if (!qa_application_q3_remote_published_context_read(f->application, n->q3_cgame_owner, seat, &receiver, error))
         return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, receiver.cvars);
     frontend_remote_config_view view;
-    if (!frontend_remote_config_read(row, &view) || !view.ready || !view.published ||
+    if (!frontend_client_configuration_read(f,receiver.cvars,&view,error) || !view.ready || !view.published ||
         !view.receiver || !view.receiver->selection.instance ||
         view.scope.provider != receiver.receiver || view.scope.kind != QA_APPLICATION_CONSOLE_Q3_CGAME ||
         view.scope.seat != seat || view.physical_seat != n->physical ||
         view.console != receiver.console || view.cvars != receiver.cvars ||
-        !frontend_remote_config_current(row, &view) ||
+        !frontend_client_configuration_current(&view) ||
         !qa_application_q3_remote_published_context_current(f->application, &receiver))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Published CLIENT archive lost its actual physical row and receiver");
-    const qa_launch_instance *descriptor = qa_launch_snapshot_find(qa_application_launch(f->application),
-        view.receiver->selection.instance);
+    const qa_launch_instance *descriptor = view.neutral.owner?view.neutral.source.descriptor:
+        qa_launch_snapshot_find(qa_application_launch(f->application),view.receiver->selection.instance);
     if (!descriptor || descriptor->storage != view.receiver->storage || descriptor->content != view.receiver->content ||
         descriptor != view.receiver)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Published CLIENT archive lost its retained configuration descriptor");
@@ -3479,24 +3615,19 @@ bool frontend_network_client_previous_configuration_read(const qa_frontend *f, u
 static bool client_authorization_current(void *context, qa_error *error)
 {
     frontend_q3_client *n = context;
-    qa_application_startup_source source; qa_application_q3_client_context role;
+    qa_application_q3_client_context role;
     frontend_remote_config_view configuration; frontend_key_profile_view profile;
-    if (!n || !n->frontend || !n->q3_client_requested ||
-        !qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner, QA_QVM_CGAME,
-            n->q3_client_launch_seat, &source, error) ||
-        !qa_application_q3_remote_context_read(n->frontend->application, n->q3_cgame_owner,
-            n->q3_client_launch_seat, &role, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.cvars);
+    if(!n || !client_configuration_view(n,&configuration,error) ||
+        !qa_application_q3_remote_context_read(n->frontend->application,n->q3_cgame_owner,
+            n->q3_client_launch_seat,&role,error)) return false;
     const frontend_remote_config_view *retained = &n->q3_authorization_configuration;
     const frontend_key_profile_view *key = &n->q3_authorization_profile;
-    if (!frontend_remote_config_read(row, &configuration) || !frontend_remote_config_current(row, &configuration) ||
-        configuration.owner != retained->owner || configuration.receiver != retained->receiver ||
+    if (!frontend_client_configuration_current(&configuration) ||
+        configuration.owner != retained->owner || configuration.neutral.owner != retained->neutral.owner || configuration.receiver != retained->receiver ||
         configuration.scope.provider != retained->scope.provider || configuration.scope.kind != retained->scope.kind ||
         configuration.scope.seat != retained->scope.seat || configuration.console != retained->console ||
         configuration.cvars != retained->cvars || configuration.keys != retained->keys ||
-        source.scope.provider != configuration.scope.provider || source.scope.kind != configuration.scope.kind ||
-        source.scope.seat != configuration.scope.seat || source.console != configuration.console ||
-        source.cvars != configuration.cvars || role.console != configuration.console || role.cvars != configuration.cvars ||
+        role.console != configuration.console || role.cvars != configuration.cvars ||
         !qa_application_q3_remote_context_current(n->frontend->application, &role) ||
         !frontend_key_profile_read(configuration.keys, &profile) || profile.profile != key->profile ||
         profile.state != key->state || profile.cvars != key->cvars || profile.identity != key->identity ||
@@ -3524,15 +3655,11 @@ static bool client_authorization_prepare(frontend_q3_client *n, qa_bytes saved, 
     if (n->q3_client_authorization)
         return (!saved.size || frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 authorization import needs an empty actual owner")) &&
             client_authorization_current(n, error);
-    qa_application_startup_source source;
-    if (!qa_application_q3_client_configuration_read(n->frontend->application, n->q3_cgame_owner, QA_QVM_CGAME,
-        n->q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(n->frontend->config_store, source.cvars);
     frontend_remote_config_view configuration; frontend_key_profile_view profile;
-    if (!frontend_remote_config_read(row, &configuration) || !frontend_remote_config_current(row, &configuration) ||
+    if(!client_configuration_view(n,&configuration,error) ||
         (!saved.size && (!configuration.ready || !configuration.published)) ||
-        !frontend_key_profile_read(configuration.keys, &profile))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 authorization requires its actual bound CLIENT key profile");
+        !frontend_key_profile_read(configuration.keys,&profile))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 authorization requires its actual bound CLIENT key profile");
     n->q3_authorization_configuration = configuration; n->q3_authorization_profile = profile;
     if (!client_authorization_current(n, error)) return false;
     qa_q3_client_authorization_bindings bindings = client_authorization_bindings(n);
@@ -3736,21 +3863,13 @@ bool frontend_network_client_frame_time_read(const qa_frontend *f,
         *out=frontend_network_q2_client_frame_time(n->q2_client_owner); *present=true; return true;
     }
     if (!n || !n->q3_clients[0].q3_client_requested || !n->q3_clients[0].q3_cgame_owner) return true;
-    qa_application_startup_source source;
-    if (!qa_application_q3_client_configuration_read(f->application, n->q3_clients[0].q3_cgame_owner, QA_QVM_CGAME,
-        n->q3_clients[0].q3_client_launch_seat, &source, error)) return false;
-    frontend_remote_config *row = frontend_config_store_client(f->config_store, source.cvars);
-    frontend_remote_config_view view;
-    if (!frontend_remote_config_read(row, &view)) {
-        if (qa_application_startup_pending(f->application)) return true;
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT timing has no retained physical configuration owner");
+    if(n->q3_clients[0].physical_source) {
+        frontend_client_source_view physical;
+        if(!frontend_client_source_metadata_read(n->q3_clients[0].physical_source,&physical,error)) return false;
+        if(!physical.ready) return true;
     }
-    if ((!view.ready || !view.published) && qa_application_startup_pending(f->application)) return true;
-    if (!view.ready || !view.published ||
-        view.scope.provider != source.scope.provider || view.scope.kind != source.scope.kind ||
-        view.scope.seat != source.scope.seat || view.console != source.console || view.cvars != source.cvars ||
-        !frontend_remote_config_current(row, &view))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT timing lacks its completed physical configuration owner");
+    frontend_remote_config_view view;
+    if(!client_configuration_view(n->q3_clients,&view,error)) return false;
     *out = view.frame_time; *present = true; return true;
 }
 bool frontend_network_client_map_read(const qa_frontend *f, qa_application *application,
@@ -4497,33 +4616,19 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         }
         udp.bind.kind=q2_remote.kind; udp.ipv6_only=false; udp.broadcast=q2_remote.kind==QA_NET_IPV4;
     }
-    if (n->q3_clients[0].q3_client_requested) {
-        qa_actor_id actor; qa_net_address address;
-        if (f->options.dedicated || f->options.seats != 1) {
-            frontend_fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 remote client requires one presentation seat"); goto failed;
+    if(n->q3_clients[0].q3_client_requested) {
+        qa_net_address address;
+        if(f->options.dedicated || f->options.seats!=1) {
+            frontend_fail(error,QA_ERROR_UNSUPPORTED,"Original Q3 remote client requires one presentation seat"); goto failed;
         }
-        if (!remote_player(f->application, &actor, error) ||
-            !qa_application_network_q3_client_source(f->application, actor, &n->q3_clients[0].q3_cgame_owner, &n->q3_clients[0].q3_client_product, &n->q3_clients[0].q3_client_launch_seat, error) ||
-            !qa_net_address_resolve(f->options.network_connect, f->options.network_port, 0, &address, error)) goto failed;
-        if (address.kind != QA_NET_IPV4 && address.kind != QA_NET_IPV6) {
-            frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote client requires the selected UDP address family"); goto failed;
+        if(!qa_net_address_resolve(f->options.network_connect,f->options.network_port,0,&address,error)) goto failed;
+        if(address.kind!=QA_NET_IPV4 && address.kind!=QA_NET_IPV6) {
+            frontend_fail(error,QA_ERROR_UNSUPPORTED,"Q3 remote client requires the selected UDP address family"); goto failed;
         }
-        udp.bind.kind = address.kind; udp.ipv6_only = false;
-        udp.broadcast = address.kind == QA_NET_IPV4;
-        qa_q3_client_admission_begin(&n->q3_clients[0].q3_client_admission, &address, (uint16_t)n->rotation_random);
-        n->q3_clients[0].q3_client_generation = qa_application_configuration_generation(f->application); n->q3_clients[0].q3_client_epoch = 1;
-        if (!qa_q3_prediction_scene_create(n->q3_clients[0].q3_client_product, &n->q3_clients[0].q3_prediction_scene, error)) goto failed;
-        frontend_remote_input_options input_options = client_input_options(&n->q3_clients[0]);
-        if (!frontend_remote_input_create(&input_options, &n->q3_clients[0].q3_input, error)) goto failed;
-        qa_application_q3_client_context receiver;
-        if (!qa_application_q3_remote_context_read(f->application,n->q3_clients[0].q3_cgame_owner,n->q3_clients[0].q3_client_launch_seat,&receiver,error)) goto failed;
-        client_cvars_bind(&n->q3_clients[0], receiver.cvars);
-        if (receiver.native_source) {
-            qa_application_control_prediction_configuration initial;
-            if (!qa_application_control_prediction_read(f->application,actor,&initial,error) ||
-                !frontend_network_predictor_create(f,&receiver,&initial,&n->q3_clients[0].q3_predictor,error)) goto failed;
-        }
-        n->composition = n->q3_clients[0].q3_client_generation;
+        udp.bind.kind=address.kind; udp.ipv6_only=false; udp.broadcast=address.kind==QA_NET_IPV4;
+        qa_q3_client_admission_begin(&n->q3_clients[0].q3_client_admission,&address,(uint16_t)n->rotation_random);
+        n->q3_clients[0].q3_client_generation=qa_application_configuration_generation(f->application);
+        n->q3_clients[0].q3_client_epoch=1; n->composition=n->q3_clients[0].q3_client_generation;
     }
     if (f->options.network_host) {
         if (!qa_net_address_parse(f->options.network_host, f->options.network_port, false, &udp.bind, error)) goto failed;
@@ -4689,6 +4794,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
         }
         if(!unified_tick(n,error)) goto failed;
     }
+    if(n->q3_clients[0].q3_client_requested && !client_physical_create(&n->q3_clients[0],error)) goto failed;
     if (!client_drain(&n->q3_clients[0], false, error)) goto failed;
     /* Detached candidates acquire the live socket at publication. The ordinary
      * network pump then adopts pending Source administration on that socket. */
@@ -4832,12 +4938,20 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
     for (uint32_t physical = 0; physical < n->frontend->options.seats; ++physical) {
         frontend_q3_client *client = n->q3_clients + physical;
         if (client->q3_client_requested) {
-            qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
             qa_application_q3_remote_source retained_source;
-            if (n->frontend->options.dedicated ||
-                !client_player(client, &actor, error) ||
-                !qa_application_network_q3_client_source(app, actor, &owner, &product, &seat, error) ||
-                owner != client->q3_cgame_owner || product != client->q3_client_product || seat != client->q3_client_launch_seat ||
+            bool selected;
+            if(client->physical_source) {
+                frontend_client_source_view source_view;
+                selected=frontend_client_source_metadata_read(client->physical_source,&source_view,error) &&
+                    source_view.source.context.receiver==client->q3_cgame_owner &&
+                    source_view.source.context.seat==client->q3_client_launch_seat;
+            } else {
+                qa_actor_id actor; qa_actor_owner owner; qa_q3_product product; uint32_t seat;
+                selected=client_player(client,&actor,error) &&
+                    qa_application_network_q3_client_source(app,actor,&owner,&product,&seat,error) &&
+                    owner==client->q3_cgame_owner && product==client->q3_client_product && seat==client->q3_client_launch_seat;
+            }
+            if (n->frontend->options.dedicated || !selected ||
                 client->q3_client_generation != qa_application_configuration_generation(app) || !client->q3_client_epoch ||
                 !client->q3_prediction_scene || !client->q3_input ||
                 (!client->q3_scene_frame_valid && client->q3_scene_frame) ||
@@ -4868,7 +4982,9 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
                 return false;
             if (!frontend_network_predictor_bound(client->q3_predictor,n->frontend) ||
                 (client->q3_predictor && client->q3_predictor_pending.data) ||
-                ((client->q3_predictor || client->q3_predictor_pending.size) != retained_source.receiver.native_source))
+                ((client->q3_predictor || client->q3_predictor_pending.size) && !retained_source.receiver.native_source) ||
+                (!client->physical_source && !client->q3_predictor && !client->q3_predictor_pending.size &&
+                    retained_source.receiver.native_source))
                 return frontend_fail(error,QA_ERROR_FORMAT,"Selected private predictor differs from its actual compiled CLIENT owner");
         } else if (client->q3_client_attach || client->q3_client_attached || client->q3_client_gamestate || client->q3_client_active || client->q3_projection.owner ||
             client->q3_client_epoch || client->q3_client_restart_generation || client->q3_client_decoded ||
@@ -4884,15 +5000,20 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
             return frontend_fail(error, QA_ERROR_FORMAT, "uninstalled remote source carries live client state");
         if (client->q3_projection.owner) {
             const char *definition = qa_strings_cstr(qa_session_strings(qa_application_session(app)), client->q3_projection.definition);
-            if (client->q3_projection.owner != client->q3_cgame_owner || !definition || strcmp(definition, "qa.network.q3.remote-entity"))
-                return frontend_fail(error, QA_ERROR_FORMAT, "remote entity projection has a foreign source definition");
+            if(client->physical_source) {
+                frontend_client_source_view source_view;
+                if(!frontend_client_source_metadata_read(client->physical_source,&source_view,error) ||
+                    client->q3_projection.owner!=source_view.source.context.entity_owner ||
+                    client->q3_projection.definition!=source_view.source.context.entity_definition) return false;
+            } else if(client->q3_projection.owner!=client->q3_cgame_owner || !definition || strcmp(definition,"qa.network.q3.remote-entity"))
+                return frontend_fail(error,QA_ERROR_FORMAT,"remote entity projection has a foreign source definition");
         } else if (client->q3_projection.definition) return frontend_fail(error, QA_ERROR_FORMAT, "absent remote projection has a definition");
         const qa_actor_registry *actors = qa_session_actors(qa_application_session(app));
         for (size_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
             qa_actor_id id = client->q3_projection.actors[i]; if (!id.registry) continue;
             const qa_actor_record *record = qa_actors_get(actors, id);
             if (!client->q3_projection.owner || !record || record->owner != client->q3_projection.owner ||
-                record->definition != client->q3_projection.definition || record->has_source)
+                record->definition != client->q3_projection.definition || record->has_source!=(client->physical_source!=NULL))
                 return frontend_fail(error, QA_ERROR_FORMAT, "remote entity projection does not own its saved canonical actor");
             for (size_t j = 0; j < i; ++j) if (qa_actor_id_equal(id, client->q3_projection.actors[j]))
                 return frontend_fail(error, QA_ERROR_FORMAT, "remote source entity numbers alias one canonical actor");
@@ -5405,7 +5526,7 @@ static bool prediction_actor_at(void *context, uint32_t number, qa_actor_id *act
     if (number >= QA_Q3_ENTITY_NONE || number == QA_Q3_ENTITY_WORLD) return true;
     *actor = n->q3_projection.actors[number];
     const qa_actor_record *record = qa_actors_get(qa_session_actors(qa_application_session(n->frontend->application)), *actor);
-    *present = record && record->owner == n->q3_cgame_owner && !record->has_source &&
+    *present = record && record->owner == n->q3_projection.owner &&
         record->definition == n->q3_projection.definition;
     return true;
 }
@@ -6030,6 +6151,8 @@ static bool q3_client_destroy(frontend_q3_client *n, qa_error *error)
     qa_buffer_free(&n->q3_connections_prefix);
     qa_q3_client_authorization_destroy(n->q3_client_authorization);
     application_q3_command_clear(&n->q3_commands);
+    n->q3_client_retiring=true;
+    if(!frontend_client_source_destroy(&n->physical_source,error)) return false;
     *n = (frontend_q3_client){.network=n->network, .frontend=n->frontend,
         .physical=n->physical, .seat=n->seat, .q3_sensitivity=1};
     application_q3_command_init(&n->q3_commands,n->frontend->application);
@@ -6440,7 +6563,15 @@ static bool client_predictor_initial(frontend_q3_client *, bool *, qa_error *);
 static bool client_copied_prediction(frontend_q3_client *n, bool *copied, qa_error *error)
 {
     *copied=false;
-    if(!n->q3_predictor || !n->q3_client_active || !n->q3_client_gamestate) return true;
+    if(!n->q3_client_active || !n->q3_client_gamestate) return true;
+    if(n->physical_source && !n->q3_predictor) {
+        qa_application_q3_client_context receiver; bool present=false;
+        if(!qa_application_q3_remote_context_read(n->frontend->application,n->q3_cgame_owner,
+            n->q3_client_launch_seat,&receiver,error) ||
+            !frontend_network_predictor_create_received(n->frontend,&receiver,&n->q3_predictor,&present,error)) return false;
+        if(!present) return true;
+    }
+    if(!n->q3_predictor) return true;
     qa_application_q3_remote_source source; qa_application_native_q3_client_modules_recipe recipe;
     const qa_q3_client_peer *current=q3_view(n);
     if(!current || !qa_application_q3_remote_source_read(n->frontend->application,n->q3_cgame_owner,
@@ -6618,6 +6749,33 @@ bool frontend_network_client_predictor_admit(qa_frontend *f, frontend_remote_pre
             client_predictor_initial(n, &ready, error) && ready;
     }
     return false;
+}
+bool frontend_network_q3_input_read(qa_frontend *f,uint32_t physical,qa_actor_id *actor,
+    qa_player_state *state,frontend_remote_config_view *configuration,bool *ready,qa_error *error)
+{
+    *ready=false; *actor=(qa_actor_id){0}; *state=(qa_player_state){0};
+    *configuration=(frontend_remote_config_view){0};
+    frontend_q3_client *n=q3_client_physical(f,physical);
+    if(!n || !n->q3_client_requested || n->q3_client_retiring || n->q3_client_closed) return true;
+    if(n->physical_source) {
+        if(!n->q3_client_active || !n->q3_client_gamestate) return true;
+        bool copied=false, initialized=false, present=false;
+        if(!client_copied_prediction(n,&copied,error)) return false;
+        if(copied && !client_predictor_initial(n,&initialized,error)) return false;
+        if(copied && !initialized) return true;
+        if(!n->q3_predictor) return true;
+        if(!frontend_network_predictor_player_read(n->q3_predictor,state,&present,error)) return false;
+        if(!present) return true;
+        *actor=state->actor;
+        if(!client_configuration_view(n,configuration,error)) return false;
+    } else {
+        if(!client_player(n,actor,error) ||
+            !frontend_network_client_configuration_read(f,n->q3_client_launch_seat,configuration,ready,error)) return false;
+        if(!*ready) return true;
+        if(!qa_application_control_read(f->application,*actor,state))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Local player lacks its application control continuation");
+    }
+    *ready=true; return true;
 }
 bool frontend_network_client_sample(qa_frontend *f, uint32_t seat, qa_actor_id actor,
     const qa_usercmd *selected, frontend_remote_prediction_angle_space angle_space,
@@ -7365,7 +7523,7 @@ bool frontend_network_restore_publication_read(const qa_frontend *f,
         .executed_command=counters.last_executed_server_command,
         .initializing=f->network->q3_clients[0].q3_client_initializing,.has_snapshot=latest!=NULL,
         .demo_playback=qa_q3_client_peer_demo(peer)};
-    if(!remote_player(f->application,&publication.viewer,error) ||
+    if(!client_player(&f->network->q3_clients[0],&publication.viewer,error) ||
         !frontend_network_client_restore_domain_current(f,&domain))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native graph publication changed its actual source binding");
     *out=publication; return true;
@@ -7650,7 +7808,7 @@ bool frontend_network_restore_prediction_read(const qa_frontend *f,
     if(!n->q3_clients[0].q3_session || !frontend_remote_q3_resources_import_read(n->q3_clients[0].q3_session,&resources,error) ||
         !frontend_remote_q3_resources_import_current(&resources) || resources.domain.content_owner!=domain.content_owner ||
         resources.domain.source.descriptor->storage!=domain.source.descriptor->storage ||
-        resources.map!=domain.map || !resources.geometry || !remote_player(f->application,&out->viewer,error))
+        resources.map!=domain.map || !resources.geometry || !client_player(&f->network->q3_clients[0],&out->viewer,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Imported prediction lost its actual resource parent or viewer");
     out->connection=domain.connection; out->epoch=domain.epoch; out->restart_generation=domain.restart_generation;
     out->receiver=domain.source.receiver; out->geometry=resources.geometry;
@@ -7811,10 +7969,10 @@ bool frontend_network_menu_download_policy_read(const qa_frontend *f,const front
     if(!configured || configuration.physical_seat!=view->physical_seat) return true;
     const qa_cvar_view *row=qa_cvars_find(configuration.cvars,"cl_allowDownload");
     if(!row) return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 CLIENT lacks its registered automatic-transfer policy");
-    *out=(frontend_network_menu_download_policy){.owner=configuration.owner,.registry=configuration.cvars,
+    *out=(frontend_network_menu_download_policy){.owner=configuration.owner?(const void *)configuration.owner:configuration.neutral.owner,.registry=configuration.cvars,
         .handle=row->handle,.modification=row->modification_count,.integer=row->integer,.number=row->number,
         .allowed=row->integer!=0};
-    if(!frontend_remote_config_current(configuration.owner,&configuration) || !menu_admitted(f,view,error)) return false;
+    if(!frontend_client_configuration_current(&configuration) || !menu_admitted(f,view,error)) return false;
     *present=true; return true;
 }
 bool frontend_network_menu_download_policy_current(const qa_frontend *f,const frontend_network_menu_view *view,
