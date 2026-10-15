@@ -176,8 +176,9 @@ static bool released(void *context, qa_session *session, qa_actor_record actor, 
     return true;
 }
 
-static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
-    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch, qa_ruleset_id rules)
+static void fixture_create_rules_clients(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
+    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch, qa_ruleset_id rules,
+    uint32_t max_clients)
 {
     qa_error error = {0};
     *fixture = (q1_fixture){0};
@@ -205,7 +206,7 @@ static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uin
     qa_q1_options options = {.provider = fixture->owner, .combat_provider = fixture->owner,
         .inventory_provider = fixture->owner, .program = program, .edition = edition,
         .rules = rules,
-        .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1,
+        .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = max_clients,
         .coop = coop, .deathmatch = deathmatch};
     qa_q1_host host = {.context = fixture, .check_client = check_client,
         .force_retouch = force_retouch};
@@ -218,6 +219,13 @@ static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uin
     GAME_CHECK(qa_combat_register_policy(fixture->combat, &policy, &error));
     if (native_world)
         GAME_CHECK(qa_q1_wire_begin_world(fixture->game, "maps/test.bsp", 0, 1, &error));
+}
+
+static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
+    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch, qa_ruleset_id rules)
+{
+    fixture_create_rules_clients(fixture, edition, skill, native_world, program, coop,
+        deathmatch, rules, 1);
 }
 
 static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
@@ -643,6 +651,77 @@ static void edition_damage(qa_q1_edition edition)
     qa_damage_outcome_release(&outcome);
     GAME_CHECK(qa_combat_read(fixture.combat, oldone, &state, &error));
     GAME_CHECK(state.health == (edition == QA_Q1_RERELEASE ? 30001 : 30000));
+    fixture_destroy(&fixture);
+}
+
+static qa_actor_id damage_player(q1_fixture *fixture, bool bot)
+{
+    qa_error error = {0};
+    qa_builtin_services services = {.session = fixture->session, .world = fixture->world,
+        .combat = fixture->combat, .inventory = fixture->inventory};
+    qa_combat_state combat = {.health = 100, .can_take_damage = true};
+    qa_string_id definition;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session),
+        "test:q1-damage-player", &definition, &error));
+    qa_actor_id actor;
+    GAME_CHECK(qa_builtin_spawn_actor(&services, &(qa_builtin_spawn){
+        .owner = fixture->owner, .definition = definition,
+        .body = {.origin = {0, 0, 64}}, .combat = &combat}, &actor, &error));
+    qa_actor_player *identity = qa_actors_player(qa_session_actors(fixture->session), actor);
+    GAME_CHECK(identity != NULL);
+    *identity = (qa_actor_player){.present = true, .bot = bot};
+    return actor;
+}
+
+static void player_damage_check(q1_fixture *fixture, qa_actor_id target, qa_actor_id attacker,
+    bool radius, bool cancelled)
+{
+    qa_error error = {0};
+    qa_armor armor = {.regular = {.kind = QA_ARMOR_Q1, .points = 30,
+        .protection.q1_absorption = 0.3f}};
+    GAME_CHECK(qa_combat_set_health(fixture->combat, target, 100, &error));
+    GAME_CHECK(qa_combat_set_armor(fixture->combat, target, &armor, &error));
+    uint64_t time_ns;
+    double elapsed;
+    GAME_CHECK(qa_q1_game_clock_read(fixture->game, &time_ns, &elapsed));
+    qa_damage_request request = {.target = target, .amount = 10, .radius = radius,
+        .attack = {.sequence = ++fixture->sequence, .time_ns = time_ns, .attacker = attacker,
+            .combat_provider = fixture->owner, .cause = {.kind = QA_CAUSE_Q1}}};
+    qa_damage_outcome outcome = {0};
+    GAME_CHECK(qa_combat_apply(fixture->combat, &request, &outcome, &error));
+    qa_combat_state state;
+    GAME_CHECK(qa_combat_read(fixture->combat, target, &state, &error));
+    GAME_CHECK(state.health == (cancelled ? 100 : 93));
+    GAME_CHECK(state.armor.regular.points == (cancelled ? 30 : 27));
+    GAME_CHECK(outcome.result.applied_damage == (cancelled ? 0 : 7));
+    if (cancelled) GAME_CHECK(outcome.result.reaction == QA_REACTION_NONE);
+    qa_damage_outcome_release(&outcome);
+}
+
+static void cooperative_bot_damage(qa_q1_edition edition, qa_q1_program program, bool coop)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create_rules_clients(&fixture, edition, 1, false, program, coop, 0,
+        QA_RULESET_NETQUAKE, 2);
+    qa_actor_id human = damage_player(&fixture, false), bot = damage_player(&fixture, true),
+        foreign = damage_player(&fixture, false);
+    GAME_CHECK(qa_q1_source_bind_client(fixture.game, 0, human, &error));
+    GAME_CHECK(qa_q1_source_bind_client(fixture.game, 1, bot, &error));
+    bool cancelled = edition == QA_Q1_RERELEASE && coop &&
+        (program == QA_Q1_ID1 || program == QA_Q1_HIPNOTIC || program == QA_Q1_ROGUE);
+    player_damage_check(&fixture, human, bot, false, cancelled);
+    player_damage_check(&fixture, human, bot, true, cancelled);
+    player_damage_check(&fixture, bot, human, false, false);
+    player_damage_check(&fixture, human, human, false, false);
+    player_damage_check(&fixture, bot, bot, true, false);
+    player_damage_check(&fixture, foreign, bot, false, false);
+    qa_actor_player *identity = qa_actors_player(qa_session_actors(fixture.session), foreign);
+    identity->bot = true;
+    player_damage_check(&fixture, human, foreign, false, false);
+    identity = qa_actors_player(qa_session_actors(fixture.session), human);
+    identity->bot = true;
+    player_damage_check(&fixture, human, bot, false, false);
     fixture_destroy(&fixture);
 }
 
@@ -1553,4 +1632,9 @@ void test_q1_gameplay(void)
     pain_cooldown(3);
     edition_damage(QA_Q1_CLASSIC);
     edition_damage(QA_Q1_RERELEASE);
+    for (qa_q1_program program = QA_Q1_ID1; program <= QA_Q1_CTF; ++program) {
+        cooperative_bot_damage(QA_Q1_CLASSIC, program, true);
+        cooperative_bot_damage(QA_Q1_RERELEASE, program, true);
+    }
+    cooperative_bot_damage(QA_Q1_RERELEASE, QA_Q1_ID1, false);
 }

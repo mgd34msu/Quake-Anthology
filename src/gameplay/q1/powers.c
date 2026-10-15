@@ -343,6 +343,21 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
     if (!player || !effect->allowed)
         return true;
     if (stage == QA_DAMAGE_BEFORE_QUAD) {
+        if (g->options.edition == QA_Q1_RERELEASE && g->options.coop &&
+            (g->options.program == QA_Q1_ID1 || g->options.program == QA_Q1_HIPNOTIC ||
+             g->options.program == QA_Q1_ROGUE) && player->source_client &&
+            !qa_actor_id_equal(request->target, request->attack.attacker)) {
+            q1_player *attacker = q1_player_get(g, request->attack.attacker);
+            if (attacker && attacker->source_client) {
+                const qa_actor_registry *actors = qa_session_actors(g->services.session);
+                const qa_actor_player *source = qa_actors_player(actors, attacker->id);
+                const qa_actor_player *target = qa_actors_player(actors, player->id);
+                if (source->bot && !target->bot) {
+                    effect->allowed = false;
+                    return true;
+                }
+            }
+        }
         if (player->power_expires[QA_Q1_WETSUIT] != 0 &&
             request->attack.cause.kind == QA_CAUSE_Q1) {
             if (request->attack.cause.source.q1.death_type ==
