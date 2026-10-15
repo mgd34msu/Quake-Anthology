@@ -288,6 +288,11 @@ static bool target_field(void *context, qa_actor_id actor, qa_string_id key, qa_
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
         return false;
+    if (key == g->field_keys[QA_TARGET_KEY_NETNAME]) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+            .value.text = entity->map ? entity->map->netname : entity->source_netname};
+        return true;
+    }
     if (entity->kind == Q1_ROGUE_TEAM_STATE) {
         static const qa_target_key names[QA_Q1_ROGUE_FIELDS] = {
             QA_TARGET_KEY_STEAM, QA_TARGET_KEY_CTF_FLAGS, QA_TARGET_KEY_CTF_KILLED, QA_TARGET_KEY_SUICIDE_COUNT, QA_TARGET_KEY_CTF_LASTHURTCARRIER,

@@ -527,6 +527,14 @@
     X(INFO_INTERMISSION, "info_intermission") \
     X(INFO_OVERLORD_DESTINATION, "info_overlord_destination") \
     X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
+    X(INFO_PLAYER_START_HUB, "info_player_start_hub") \
+    X(TESTPLAYERSTART, "testplayerstart") \
+    X(HUB_SPAWN_RULE, "q1:hub-spawn") \
+    X(HUB_START_1, "start_1") \
+    X(HUB_START_2, "start_2") \
+    X(HUB_START_3, "start_3") \
+    X(HUB_START_4, "start_4") \
+    X(HUB_START_5, "start_5") \
     X(INFO_SZOMBIE_SPAWN, "info_szombie_spawn") \
     X(INFO_VOTE_DESTINATION, "info_vote_destination") \
     X(ITEM_ARTIFACT_INVULNERABILITY, "item_artifact_invulnerability") \

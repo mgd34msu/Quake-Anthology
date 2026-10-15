@@ -5,6 +5,60 @@ static q1_actor *campaign_actor(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
     return e && e->map ? e : NULL;
 }
+static bool hub_spawn_select(void *context, bool force, qa_q1_spawn_decision *decision,
+                             qa_actor_id *out, qa_error *error) {
+    (void)force;
+    qa_q1_game *g = context;
+    *decision = QA_Q1_SPAWN_DELEGATE;
+    *out = (qa_actor_id){0};
+    if (g->destroy_pending || g->continuation_pending)
+        return true;
+    qa_target_cursor cursor = {0};
+    qa_actor_id point;
+    if (qa_targets_next_authored(g->targets, g->runtime_names[Q1_NAME_TESTPLAYERSTART], &cursor, &point))
+        return true;
+    float horde;
+    if (!q1_source_value(g, QA_Q1_SOURCE_HORDE, 0, &horde, error))
+        return false;
+    if (horde != 0 || g->options.coop || g->options.deathmatch)
+        return true;
+    uint32_t *flags = q1_campaign_flags_owner(g);
+    uint32_t last = flags ? qa_q1_mg1_last_sigil(*flags) : 0;
+    if (!last)
+        return true;
+    static const q1_runtime_name names[] = {Q1_NAME_HUB_START_1, Q1_NAME_HUB_START_2,
+        Q1_NAME_HUB_START_3, Q1_NAME_HUB_START_4, Q1_NAME_HUB_START_5};
+    unsigned index = 0;
+    while (!(last & 1u)) {
+        last >>= 1;
+        ++index;
+    }
+    qa_string_id name = g->runtime_names[names[index]];
+    cursor = (qa_target_cursor){0};
+    while (qa_targets_next_authored(g->targets, QA_STRING_NONE, &cursor, &point)) {
+        qa_target_field field;
+        if (!qa_targets_field(g->targets, point, g->field_keys[QA_TARGET_KEY_NETNAME], &field) ||
+            field.kind != QA_TARGET_FIELD_TEXT || field.value.text != name)
+            continue;
+        qa_authored_target target;
+        if (!qa_targets_read(g->targets, point, &target) ||
+            target.classname != g->runtime_names[Q1_NAME_INFO_PLAYER_START_HUB] ||
+            !q1_alive(g, point))
+            return true;
+        *flags = qa_q1_mg1_clear_last_sigil(*flags);
+        *out = point;
+        *decision = QA_Q1_SPAWN_SELECTED;
+        return true;
+    }
+    return true;
+}
+bool qa_q1_game_hub_spawn_rule(qa_q1_game *g, qa_q1_spawn_rule *out) {
+    if (!g || !out || (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1))
+        return false;
+    *out = (qa_q1_spawn_rule){.id = g->runtime_names[Q1_NAME_HUB_SPAWN_RULE],
+        .context = g, .select = hub_spawn_select};
+    return true;
+}
 static const float Q1_COOP_SPAWN_ACTIVE = 73;
 bool qa_q1_game_map_spawn_eligible(qa_q1_game *g, qa_actor_id actor) {
     q1_actor *point = q1_entity(g, actor);

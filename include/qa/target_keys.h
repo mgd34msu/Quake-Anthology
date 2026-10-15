@@ -100,6 +100,7 @@
     X(MONSTER_SLOTS, "monster_slots") \
     X(MOVEDIR, "movedir") \
     X(MUSIC, "music") \
+    X(NETNAME, "netname") \
     X(NEXTMAP, "nextmap") \
     X(NOISE, "noise") \
     X(NOISE1, "noise1") \

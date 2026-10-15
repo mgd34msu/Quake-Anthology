@@ -193,6 +193,7 @@ bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_intermission_input(qa_q1_game *, qa_actor_id, bool pressed, bool *handled,
                                         qa_error *);
 bool qa_q1_game_map_spawn_eligible(qa_q1_game *, qa_actor_id);
+bool qa_q1_game_hub_spawn_rule(qa_q1_game *, qa_q1_spawn_rule *);
 bool qa_q1_game_map_coop_spawn_grant(qa_q1_game *, qa_actor_id player, qa_actor_id point,
                                     qa_error *);
 bool qa_q1_game_coop_weapons_read(qa_q1_game *, qa_actor_id, uint32_t *, qa_error *);

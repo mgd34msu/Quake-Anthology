@@ -1144,6 +1144,9 @@ static bool create_q1_selector_options(qa_application *application,
     bool progressive_coop = source_options->coop &&
         roster->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
         (source_options->program == QA_Q1_MG1 || source_options->program == QA_Q1_MG3);
+    qa_q1_spawn_rule hub_rule = {0};
+    bool hub_return = roster->map_provider->kind == APPLICATION_PROVIDER_Q1 &&
+        qa_q1_game_hub_spawn_rule(roster->map_provider->state.q1, &hub_rule);
     roster->q1_selector = qa_q1_spawn_selector_create(&(qa_q1_spawn_options){
         .services = application_builtin_services(application, application->world, application->physics),
         .server_flags = &roster->map_provider->q1_server_flags,
@@ -1152,6 +1155,8 @@ static bool create_q1_selector_options(qa_application *application,
         .cycle_coop = progressive_coop,
         .point_context = progressive_coop ? roster->map_provider->state.q1 : NULL,
         .point_eligible = progressive_coop ? q1_spawn_eligible : NULL,
+        .rules = hub_return ? &hub_rule : NULL,
+        .rule_count = hub_return ? 1 : 0,
         .deathmatch = source_options->deathmatch, .context = application, .random = spawn_random}, error);
     return roster->q1_selector != NULL;
 }

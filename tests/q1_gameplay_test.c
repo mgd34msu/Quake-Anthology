@@ -161,8 +161,8 @@ static bool released(void *context, qa_session *session, qa_actor_record actor, 
     return true;
 }
 
-static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
-    bool native_world, qa_q1_program program)
+static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
+    bool native_world, qa_q1_program program, bool coop, int32_t deathmatch)
 {
     qa_error error = {0};
     *fixture = (q1_fixture){0};
@@ -189,7 +189,8 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
     qa_q1_options options = {.provider = fixture->owner, .combat_provider = fixture->owner,
         .inventory_provider = fixture->owner, .program = program, .edition = edition,
         .rules = QA_RULESET_NETQUAKE,
-        .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1};
+        .skill = skill, .gravity = 800, .aim_threshold = 2, .max_clients = 1,
+        .coop = coop, .deathmatch = deathmatch};
     qa_q1_host host = {.context = fixture, .check_client = check_client,
         .force_retouch = force_retouch};
     GAME_CHECK(qa_q1_game_create(&services, &options, &host, &fixture->game, &error));
@@ -201,6 +202,12 @@ static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t s
     GAME_CHECK(qa_combat_register_policy(fixture->combat, &policy, &error));
     if (native_world)
         GAME_CHECK(qa_q1_wire_begin_world(fixture->game, "maps/test.bsp", 0, 1, &error));
+}
+
+static void fixture_create(q1_fixture *fixture, qa_q1_edition edition, uint8_t skill,
+    bool native_world, qa_q1_program program)
+{
+    fixture_create_rules(fixture, edition, skill, native_world, program, false, 0);
 }
 
 static void fixture_destroy(q1_fixture *fixture)
@@ -940,9 +947,99 @@ static void draught_target(void)
     fixture_destroy(&fixture);
 }
 
+static double hub_spawn_random(void *context)
+{
+    q1_fixture *fixture = context;
+    ++fixture->sequence;
+    return .5;
+}
+
+static void hub_spawn(qa_q1_program program)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create(&fixture, QA_Q1_RERELEASE, 1, false, program);
+    fixture_bind_maps(&fixture);
+    qa_actor_id start, returning, wrong, hub2, hub3, test;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start", .origin = {0, 0, 64}}, &start, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start2", .origin = {10, 0, 64}}, &returning, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start", .origin = {20, 0, 64},
+        .map_fields = &(qa_q1_map_fields){.netname = "start_2"}}, &wrong, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start_hub", .origin = {30, 0, 64},
+        .map_fields = &(qa_q1_map_fields){.netname = "start_2"}}, &hub2, &error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start_hub", .origin = {40, 0, 64},
+        .map_fields = &(qa_q1_map_fields){.netname = "start_3"}}, &hub3, &error));
+    qa_q1_spawn_rule rule;
+    GAME_CHECK(qa_q1_game_hub_spawn_rule(fixture.game, &rule));
+    qa_q1_spawn_point points[3] = {{.actor = start, .kind = QA_Q1_SPAWN_START},
+        {.actor = returning, .kind = QA_Q1_SPAWN_RETURN}};
+    qa_q1_spawn_selector *selector = qa_q1_spawn_selector_create(&(qa_q1_spawn_options){
+        .services = {.session = fixture.session, .world = fixture.world, .combat = fixture.combat},
+        .server_flags = &fixture.server_flags, .rules = &rule, .rule_count = 1,
+        .context = &fixture, .random = hub_spawn_random}, &error);
+    GAME_CHECK(selector != NULL);
+    qa_actor_id selected;
+    const uint32_t retained = UINT32_C(1) << 20 | 3u;
+    fixture.server_flags = retained | (2u | 4u) << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    uint32_t flags = fixture.server_flags;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 2, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, returning) && fixture.server_flags == flags);
+    GAME_CHECK(qa_session_release(fixture.session, wrong, &error));
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 2, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, hub2) && fixture.server_flags == retained);
+    fixture.server_flags = retained | 4u << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 2, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, hub3) && fixture.server_flags == retained);
+    fixture.server_flags = retained | 1u << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    flags = fixture.server_flags;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 2, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, returning) && fixture.server_flags == flags);
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "testplayerstart", .origin = {50, 0, 64}}, &test, &error));
+    points[2] = (qa_q1_spawn_point){.actor = test, .kind = QA_Q1_SPAWN_TEST};
+    fixture.server_flags = retained | 2u << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    flags = fixture.server_flags;
+    GAME_CHECK(qa_q1_spawn_select(selector, points, 3, true, &selected, &error));
+    GAME_CHECK(qa_actor_id_equal(selected, test) && fixture.server_flags == flags);
+    GAME_CHECK(fixture.sequence == 0);
+    qa_q1_spawn_selector_destroy(selector);
+    fixture_destroy(&fixture);
+}
+
+static void hub_multiplayer(bool coop)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create_rules(&fixture, QA_Q1_RERELEASE, 1, false, QA_Q1_MG1, coop, coop ? 0 : 1);
+    fixture_bind_maps(&fixture);
+    qa_actor_id hub;
+    GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
+        .classname = "info_player_start_hub", .origin = {30, 0, 64},
+        .map_fields = &(qa_q1_map_fields){.netname = "start_2"}}, &hub, &error));
+    qa_q1_spawn_rule rule;
+    GAME_CHECK(qa_q1_game_hub_spawn_rule(fixture.game, &rule));
+    const uint32_t flags = 3u | 2u << QA_Q1_MG1_LAST_SIGIL_SHIFT;
+    fixture.server_flags = flags;
+    qa_q1_spawn_decision decision = QA_Q1_SPAWN_SELECTED;
+    qa_actor_id selected = hub;
+    GAME_CHECK(rule.select(rule.context, true, &decision, &selected, &error));
+    GAME_CHECK(decision == QA_Q1_SPAWN_DELEGATE && !selected.registry &&
+        fixture.server_flags == flags);
+    fixture_destroy(&fixture);
+}
+
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    hub_spawn(QA_Q1_MG1);
+    hub_spawn(QA_Q1_DOPA);
+    hub_multiplayer(true);
+    hub_multiplayer(false);
     draught_ring(false, 0, false);
     draught_ring(true, 0, true);
     draught_ring(false, 128, false);
