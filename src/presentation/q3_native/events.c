@@ -616,21 +616,6 @@ bool q3n_events_player(const q3n_frame *f, const qa_q3_entity *source, q3n_entit
         (!row || q3n_remote_entity_current(row));
     f->events->busy=false; return ok;
 }
-bool q3n_entity_event_detect(qa_q3_entity *event, q3n_entity *cent)
-{
-    if (event->eType > 13) {
-        if (cent->previous_event) return false;
-        if (event->eFlags & 16) event->number = event->otherEntityNum;
-        cent->previous_event = 1;
-        cent->event_only_fired = true;
-        event->event = event->eType - 13;
-    } else {
-        if (event->event == cent->previous_event) return false;
-        cent->previous_event = event->event;
-        if (!(event->event & ~0x300)) return false;
-    }
-    return true;
-}
 bool q3n_events_apply(const q3n_frame *f, const qa_application_native_q3_entity *actual, q3n_entity *cent, qa_error *error)
 {
     if(!f || f->remote || f->compiled || !actual || !cent || !actual->present || !cent->valid || !qa_actor_id_equal(actual->binding.actor,cent->actor) ||
@@ -638,7 +623,7 @@ bool q3n_events_apply(const q3n_frame *f, const qa_application_native_q3_entity 
         return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 event has stale actor generation or physical source binding");
     if(!admit(f,error))return false;
     qa_q3_entity s=actual->state; bool ok=true;
-    if(!q3n_entity_event_detect(&s,cent))goto end;
+    if(!qa_q3_entity_event_detect(&s,&cent->previous_event,&cent->event_only_fired))goto end;
     if(!q3n_trajectory(&s.pos,f->source.source_time_ms,&cent->lerp_origin,error)) { ok=false; goto end; }
     qa_vec3 sound_origin=cent->lerp_origin;
     if(s.solid==0xffffff) {

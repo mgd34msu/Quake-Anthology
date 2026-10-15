@@ -9,6 +9,7 @@
 #include "startup_flow.h"
 #include "bots_catalog.h"
 #include "guest_q3_components.h"
+#include "unified_q3_events.h"
 #include "qa/application_players.h"
 #include "qa/application_equipment.h"
 #include "qa/command_lexer.h"
@@ -435,6 +436,23 @@ static qa_command_result chat_command(qa_application *application,
         provider = command_owner(application, owner);
     }
     if (!provider || provider->client_only_owned) return QA_COMMAND_UNHANDLED;
+    if (!actor.registry && application->dedicated &&
+        command->context.origin == QA_COMMAND_SERVER && mode == QA_Q1_CHAT_ALL &&
+        (provider->kind == APPLICATION_PROVIDER_Q3 ||
+         application_q3_guest_server_gamestate(provider))) {
+        if (command->argc < 2) return QA_COMMAND_HANDLED;
+        char output[QA_Q3_COMMAND_CHARS] = "print \"server: ";
+        size_t used = sizeof("print \"server: ") - 1;
+        const char *text = command->args_text ? command->args_text : "";
+        while (*text && used < sizeof(output) - 2) {
+            output[used++] = *text == '"' ? '\'' : *text;
+            ++text;
+        }
+        output[used++] = '"';
+        output[used] = 0;
+        return application_unified_q3_text(provider, APPLICATION_Q3_SOURCE_COMMAND,
+            -1, output, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
     bool handled = false;
     if (mode == QA_Q1_CHAT_TEAM && actor.registry && application->primary_mode_ready) {
         if (!qa_modes_team_chat(application->modes, application->primary_mode, actor,

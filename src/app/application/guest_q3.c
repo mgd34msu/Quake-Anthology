@@ -12,6 +12,7 @@
 #include "guest_q3_pickups.h"
 #include "native_q3_wire.h"
 #include "qa/game_q3_source_types.h"
+#include "q3_sound_events.h"
 
 struct application_q3_guest *q3g_engine(application_provider *provider)
 {
@@ -138,6 +139,7 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     bool ok = q3g_call(engine->game, 8, &engine->milliseconds, 1, &result, error);
     if (ok) ok = application_guest_bots_admit(engine->provider, error);
     if (ok) ok = application_guest_clients_drain(engine->provider, error);
+    if (ok) ok = application_q3_sound_events_frame(engine->provider, frame, error);
     return ok;
 }
 

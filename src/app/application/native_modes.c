@@ -18,6 +18,7 @@
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_shader_remap.h"
 #include "qa/game_q3_source.h"
+#include "q3_sound_events.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -588,7 +589,8 @@ bool application_native_q3_source_end_frame(void *opaque,
          !application_native_q3_team_status(p, error) ||
          !application_native_q3_votes_frame(p, error))) return false;
     return application_native_q3_settings_check_cvars(p, error) &&
-        q3_list_entities(p, error) && q3_source_info(p, error);
+        q3_list_entities(p, error) && q3_source_info(p, error) &&
+        application_q3_sound_events_frame(p, frame, error);
 }
 
 bool application_native_mode_emit(void *opaque, qa_mode_id mode,

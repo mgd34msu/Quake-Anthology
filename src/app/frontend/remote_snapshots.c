@@ -136,7 +136,8 @@ static bool reset(frontend_remote_snapshots *s,frontend_remote_centity *row,cons
 static bool events(frontend_remote_snapshots *s,frontend_remote_centity *row,qa_error *e)
 {
     qa_q3_entity event=row->current;
-    if(!q3n_entity_event_detect(&event,row->presentation)) return true;
+    if(!qa_q3_entity_event_detect(&event,&row->presentation->previous_event,
+        &row->presentation->event_only_fired)) return true;
     if(!q3n_trajectory(&event.pos,s->snap.value.server_time,&row->presentation->lerp_origin,e)) return false;
     if(!callback_begin(s,e)) return false;
     bool ok=s->options.event(s->options.context,&s->source,row,&event,row->presentation->lerp_origin,s->time,e);

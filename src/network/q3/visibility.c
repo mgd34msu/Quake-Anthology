@@ -1,5 +1,6 @@
 /* Port of quake-typescript/src/network/q3/visibility.ts. */
 #include "qa/network_q3.h"
+#include "event_detect.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,13 +56,8 @@ static bool visible_from(visibility_search *s, const float origin[3]) {
     for (size_t number = 0; number < s->entity_count; ++number) {
         const qa_q3_visibility_entity *entity = &s->entities[number];
         uint32_t flags = entity->flags;
-        if (!entity->linked || !entity->state || (flags & QA_Q3_SVF_NOCLIENT)) continue;
-        if ((flags & QA_Q3_SVF_SINGLECLIENT) && entity->single_client != s->player->clientNum) continue;
-        if ((flags & QA_Q3_SVF_NOTSINGLECLIENT) && entity->single_client == s->player->clientNum) continue;
-        if (flags & QA_Q3_SVF_CLIENTMASK) {
-            if (s->player->clientNum >= 32) { qa_error_set(s->error, QA_ERROR_FORMAT, number, "Q3 client mask cannot address player 32 or higher"); return false; }
-            if (!((uint32_t)entity->single_client & (UINT32_C(1) << s->player->clientNum))) continue;
-        }
+        if (!entity->linked || !entity->state || !qa_q3_entity_audience_contains(flags,
+            entity->single_client, (uint32_t)s->player->clientNum)) continue;
         if (qa_stamp_set_test(s->visited, number)) continue;
         if (number == QA_Q3_ENTITY_NONE) { qa_error_set(s->error, QA_ERROR_FORMAT, number, "Q3 entity sentinel cannot be transmitted"); return false; }
         if (flags & QA_Q3_SVF_BROADCAST) { add(s, number); continue; }

@@ -249,7 +249,7 @@ static bool reset(frontend_unified_q3_snapshots *s,uint32_t number,qa_error *e)
 static bool event(frontend_unified_q3_snapshots *s,uint32_t number,qa_error *e)
 {
     cached_entity *row = s->rows+number; q3n_entity *cent = s->entities+number; qa_q3_entity scratch = row->current;
-    if (!q3n_entity_event_detect(&scratch,cent)) return true;
+    if (!qa_q3_entity_event_detect(&scratch,&cent->previous_event,&cent->event_only_fired)) return true;
     if (!q3n_trajectory(&scratch.pos,s->snap.value.server_time,&cent->lerp_origin,e)) return false;
     q3n_compiled_frame f; q3n_compiled_entity entity;
     if (!begin(s,Q3N_COMPILED_SNAPSHOT_CALLBACK,&f,e)) return false;

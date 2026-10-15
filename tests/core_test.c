@@ -62,6 +62,7 @@
 #include "qa/input.h"
 #include "qa/platform_events.h"
 #include "qa/network_q3.h"
+#include "../src/network/q3/event_detect.h"
 #include "qa/network_q3_save.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
@@ -6315,6 +6316,23 @@ static void test_q3_player_entity_projection(void)
     player.pmType = 2;
     qa_q3_player_entity_state(&player, &entity, false, false, 0);
     CHECK(entity.eType == 10 && entity.eFlags == 8);
+
+    int32_t previous=0;bool event_only=false;
+    entity=(qa_q3_entity){.number=7,.event=Q3N_EV_JUMP|256};
+    CHECK(qa_q3_entity_event_detect(&entity,&previous,&event_only));
+    CHECK(!qa_q3_entity_event_detect(&entity,&previous,&event_only));
+    entity.event=Q3N_EV_JUMP|512;
+    CHECK(qa_q3_entity_event_detect(&entity,&previous,&event_only));
+    previous=0;entity=(qa_q3_entity){.number=90,.eType=13+Q3N_EV_FIRE_WEAPON,
+        .eFlags=16,.otherEntityNum=7};
+    CHECK(qa_q3_entity_event_detect(&entity,&previous,&event_only));
+    CHECK(event_only && entity.number==7 && entity.event==Q3N_EV_FIRE_WEAPON);
+    CHECK(!qa_q3_entity_event_detect(&entity,&previous,&event_only));
+    CHECK(qa_q3_entity_audience_contains(QA_Q3_SVF_SINGLECLIENT,7,7));
+    CHECK(!qa_q3_entity_audience_contains(QA_Q3_SVF_SINGLECLIENT,7,8));
+    CHECK(!qa_q3_entity_audience_contains(QA_Q3_SVF_NOTSINGLECLIENT,7,7));
+    CHECK(qa_q3_entity_audience_contains(QA_Q3_SVF_CLIENTMASK,1u<<7,7));
+    CHECK(!qa_q3_entity_audience_contains(QA_Q3_SVF_CLIENTMASK,1u<<7,32));
 }
 
 static bool gtv_send_discard(void *context, qa_bytes bytes, qa_error *error)

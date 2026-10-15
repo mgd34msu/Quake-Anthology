@@ -1379,6 +1379,7 @@ add_library(qa_application STATIC
     src/app/application/native_q3_wire_state.c
     src/app/application/native_q3_equipment.c
     src/app/application/native_modes.c
+    src/app/application/q3_sound_events.c
     src/app/application/native_maps.c
     src/app/application/q3_restart.c
     src/app/application/q3_round.c

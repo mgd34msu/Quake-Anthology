@@ -21,6 +21,7 @@
 #include "qa/qc_observation.h"
 #include "guest_qc_internal.h"
 #include "map_players_private.h"
+#include "q3_sound_events.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -802,7 +803,8 @@ static bool emit_event(qa_application *application, const qa_builtin_event *even
         !application_native_q2_delivery_retain(application, audience, &record->q2_audience, error) ||
         !application_native_q1_wire_emit(application, event, error) ||
         !application_unified_q1_event(application, event, (qa_actor_id){0}, error) ||
-        !application_unified_q2_native_builtin(application, event, audience, error)) goto abort;
+        !application_unified_q2_native_builtin(application, event, audience, error) ||
+        !application_q3_sound_builtin(application, event, error)) goto abort;
     if (event->family == QA_GAME_Q3 && event->kind == QA_BUILTIN_MESSAGE) {
         qa_unified_presentation_payload payload = {.kind = QA_UNIFIED_PRESENTATION_Q3,
             .value.q3 = {.kind = QA_UNIFIED_Q3_PRINT, .client = -1,

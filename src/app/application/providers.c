@@ -47,6 +47,7 @@
 #include "unified_q1_events.h"
 #include "unified_q2_native_events.h"
 #include "unified_q3_events.h"
+#include "q3_sound_events.h"
 #include "unified_events.h"
 #include "native_q3_team_combat.h"
 #include "qa/game_q3_clients.h"
@@ -1608,6 +1609,7 @@ static bool construct_provider(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "unknown application provider runtime");
     }
+    if (ok) ok = application_q3_sound_events_prepare(provider, error);
     if (!ok) {
         qa_error ignored = {0};
         (void)application_provider_deconstruct(provider, &ignored);
@@ -1646,7 +1648,8 @@ bool application_provider_construct_q3_restored(qa_application *application,
                                 "Invalid detached saved original Q3 provider construction");
     provider->constructed = true;
     if (!application_provider_product_bind(provider, catalog, product, error)) return false;
-    if (!application_guest_q3_save_prepare(provider, world, product, choices, record, error)) {
+    if (!application_guest_q3_save_prepare(provider, world, product, choices, record, error) ||
+        !application_q3_sound_events_prepare(provider, error)) {
         qa_error ignored = {0};
         (void)application_provider_deconstruct(provider, &ignored);
         return false;
@@ -1822,6 +1825,7 @@ bool application_provider_deconstruct(application_provider *provider, qa_error *
     }
     if (ok && provider) application_network_q2_capture_dispose(provider);
     if (ok && provider) application_q3_wire_capture_dispose(provider);
+    if (ok && provider) application_q3_sound_events_destroy(provider);
     if (ok) application_network_q2_retire_source_bindings(provider);
     if(ok && provider && provider->event_activation_bound)
         ok=application_unified_event_registration_clear(app,provider->owner,error);
