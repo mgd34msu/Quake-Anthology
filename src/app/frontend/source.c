@@ -1490,6 +1490,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         common_calendar, host->common.arguments ? common_arguments : NULL,
         (host->common.client_command || packet_client) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
         frontend_clipboard_read};
+    if (!frontend_client_sources_commands_bind(frontend,ordinal,error)) return false;
     if (frontend->source_restoring) return true;
     return source_publish_backend(source, error) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,
@@ -2480,6 +2481,21 @@ size_t frontend_source_group_count(const qa_frontend *frontend)
 {
     size_t count=0; if (frontend) for (const frontend_source *source=frontend->sources;source;source=source->next) ++count;
     return count;
+}
+bool frontend_source_client_commands_bind(qa_frontend *frontend,uint32_t physical,
+    const qa_application_client_source *client,qa_error *error)
+{
+    for (const frontend_source *source=frontend->sources;source;source=source->next) {
+        if (source->seat!=physical) continue;
+        uint64_t receiver=client && client->context.seat==source->launch_seat?
+            client->context.receiver:source->owner;
+        for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
+            if (lease->released) continue;
+            if (!qa_console_contributions_bind_receiver(lease->console,lease->service_owner,
+                source->owner,source->launch_seat,receiver,error)) return false;
+        }
+    }
+    return true;
 }
 bool frontend_source_cgame_recipient(const qa_frontend *frontend,uint32_t seat,qa_actor_owner *out,qa_error *error)
 {

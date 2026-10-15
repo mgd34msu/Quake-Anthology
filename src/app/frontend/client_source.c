@@ -268,6 +268,15 @@ static bool install_handlers(void *context, const qa_command_context *command, q
     return s->options.install(s->options.context, &s->application, s->restored_constructor, error) &&
         (!s->restored_constructor || !s->frontend->tools || frontend_tools_attach_restored(s->frontend, error));
 }
+bool frontend_client_sources_commands_bind(qa_frontend *f,uint32_t physical,qa_error *error)
+{
+    const qa_application_client_source *client=NULL;
+    for (const frontend_client_source *source=f->client_sources;source;source=source->next)
+        if (source->app_attached && !source->closing && !source->retiring && !source->programme_retired &&
+            !source->restored_retiring && source->options.physical_seat==physical)
+            client=&source->application;
+    return frontend_source_client_commands_bind(f,physical,client,error);
+}
 static bool construct(qa_frontend *f, const frontend_client_source_options *options,
     const qa_launch_restored_instance *metadata, const frontend_client_source_state *state,
     const qa_console_save_resolvers *resolvers, frontend_client_source **out, qa_error *error)
@@ -348,6 +357,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     if(state&&state->retiring&&!qa_application_client_retirement_current(f->application,&s->application)) {
         frontend_fail(error,QA_ERROR_ARGUMENT,"Restored CLIENT retirement lacks its actual disconnect custody"); goto done;
     }
+    if (!frontend_client_sources_commands_bind(f,options->physical_seat,error)) goto done;
     if (options->install) {
         ++s->calls;
         ok = qa_console_cvar_enter(s->console, &s->command, install_current, s,
@@ -560,6 +570,7 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     }
     if (!qa_console_idle(s->console) || !frontend_client_registry_release_ready(s->registry, error))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT programme retains a physical console or registry lease");
+    if (!frontend_client_sources_commands_bind(s->frontend,s->options.physical_seat,error)) return false;
     if (s->console_bound && !qa_console_unbind_source(s->console, s->command.cvar_view, error)) return false;
     s->console_bound = false;
     s->closing = true;

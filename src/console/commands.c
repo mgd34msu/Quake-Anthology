@@ -699,6 +699,31 @@ static command_contribution *ordinary_command(const command_entry *entry, uint64
     return NULL;
 }
 
+static command_receiver_binding *receiver_binding(const qa_console *console,
+    uint64_t lifetime_owner,uint32_t seat)
+{
+    for (command_receiver_binding *at=console->receiver_bindings;at;at=at->next)
+        if (at->lifetime_owner==lifetime_owner && at->seat==seat) return at;
+    return NULL;
+}
+
+static uint64_t contribution_receiver(const qa_console *console,uint64_t declared_receiver,
+    uint64_t lifetime_owner,uint32_t seat)
+{
+    const command_receiver_binding *binding=receiver_binding(console,lifetime_owner,seat);
+    return binding && binding->declared_receiver==declared_receiver?binding->receiver:declared_receiver;
+}
+
+static void contributions_receiver_set(qa_console *console,const command_receiver_binding *binding,
+    uint64_t receiver)
+{
+    for (command_entry *entry=console->commands;entry;entry=entry->next)
+        for (command_contribution *part=entry->contributions;part;part=part->next)
+            if (!part->ordinary && part->lifetime_owner==binding->lifetime_owner && part->seat==binding->seat &&
+                (part->view.owner==binding->declared_receiver || part->view.owner==binding->receiver))
+                part->view.owner=receiver;
+}
+
 static bool contribution_visible(const qa_console *console,const command_contribution *part, const qa_command_context *context)
 {
     bool declaration = !part->handler && !part->callback &&
@@ -710,8 +735,8 @@ static bool contribution_visible(const qa_console *console,const command_contrib
     if (!part->cvar_view || part->cvar_view==context->cvar_view) return true;
     const qa_console_options *options=options_for(console,&(qa_command_context){.cvar_view=part->cvar_view});
     if (!options) return false;
-    if (context->owner) return options->context.owner==context->owner &&
-        ((part->view.engine_command && options->context.origin==QA_COMMAND_SERVER) ||
+    if (context->owner) return
+        ((part->view.engine_command && options->context.owner==context->owner && options->context.origin==QA_COMMAND_SERVER) ||
          (part->callback && part->view.owner==context->owner &&
           (context->origin==QA_COMMAND_LOCAL || context->origin==QA_COMMAND_SEAT) &&
           (options->context.origin==QA_COMMAND_LOCAL || options->context.origin==QA_COMMAND_SEAT)));
@@ -791,6 +816,10 @@ void qa_console_destroy(qa_console *console)
         command_entry *next = console->commands->next;
         free_command(console->commands);
         console->commands = next;
+    }
+    while (console->receiver_bindings) {
+        command_receiver_binding *next=console->receiver_bindings->next;
+        free(console->receiver_bindings);console->receiver_bindings=next;
     }
     while (console->aliases != NULL) {
         alias_entry *next = console->aliases->next;
@@ -997,9 +1026,10 @@ bool qa_console_contribute(qa_console *console, const char *name,
         return qac_fail(error,QA_ERROR_ARGUMENT,"command contribution lost its actual Source view");
     if (is_builtin(console,owner->cvar_view ? &options->context : NULL,name))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command name is a builtin");
+    uint64_t receiver=contribution_receiver(console,owner->receiver,owner->lifetime_owner,owner->seat);
     command_entry *entry = find_command(console,name);
     for (command_contribution *part = entry ? entry->contributions : NULL; part; part = part->next)
-        if (!part->retired && !part->ordinary && part->view.owner == owner->receiver &&
+        if (!part->retired && !part->ordinary && part->view.owner == receiver &&
             part->lifetime_owner == owner->lifetime_owner)
             return (part->seat == owner->seat && part->cvar_view==owner->cvar_view &&
                 part->callback == owner->callback && part->user == owner->user) ||
@@ -1015,12 +1045,37 @@ bool qa_console_contribute(qa_console *console, const char *name,
         if (!entry->name) { free(entry); free_contribution(part); return false; }
         entry->next = console->commands; console->commands = entry;
     }
-    part->view.name = entry->name; part->view.owner = owner->receiver;
+    part->view.name = entry->name; part->view.owner = receiver;
     part->lifetime_owner = owner->lifetime_owner; part->seat = owner->seat;
     part->cvar_view=owner->cvar_view;
     part->callback = owner->callback; part->user = owner->user; part->scoped = owner->callback != NULL;
     part->next = entry->contributions;
     qac_console_program_touch(console,true); entry->contributions = part;
+    return true;
+}
+
+bool qa_console_contributions_bind_receiver(qa_console *console,uint64_t lifetime_owner,
+    uint64_t declared_receiver,uint32_t seat,uint64_t attached_receiver,qa_error *error)
+{
+    if (!console || !lifetime_owner || !declared_receiver || !attached_receiver)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"Command receiver binding requires its console and module");
+    if (!qac_console_release_access(console,error)) return false;
+    command_receiver_binding **link=&console->receiver_bindings;
+    while (*link && ((*link)->lifetime_owner!=lifetime_owner || (*link)->seat!=seat)) link=&(*link)->next;
+    command_receiver_binding *binding=*link;
+    if (!binding && declared_receiver==attached_receiver) return true;
+    if (binding && binding->declared_receiver==declared_receiver && binding->receiver==attached_receiver) return true;
+    if (!binding) {
+        binding=calloc(1,sizeof(*binding));
+        if (!binding) return qac_fail(error,QA_ERROR_MEMORY,"Retaining module command receiver");
+        *binding=(command_receiver_binding){.lifetime_owner=lifetime_owner,.declared_receiver=declared_receiver,
+            .receiver=declared_receiver,.seat=seat};
+        *link=binding;
+    }
+    contributions_receiver_set(console,binding,attached_receiver);
+    if (declared_receiver==attached_receiver) { *link=binding->next;free(binding); }
+    else { binding->declared_receiver=declared_receiver;binding->receiver=attached_receiver; }
+    qac_console_program_touch(console,true);
     return true;
 }
 
@@ -1030,7 +1085,8 @@ bool qa_console_uncontribute(qa_console *console, const char *name,
     if (!qac_console_release_access(console,NULL) || !console || !name) return false;
     command_entry *entry = find_command(console,name);
     for (command_contribution *part = entry ? entry->contributions : NULL; part; part = part->next)
-        if (!part->retired && !part->ordinary && part->view.owner == dispatch_owner && part->lifetime_owner == lifetime_owner) {
+        if (!part->retired && !part->ordinary && part->lifetime_owner == lifetime_owner &&
+            part->view.owner == contribution_receiver(console,dispatch_owner,lifetime_owner,part->seat)) {
             qac_console_program_touch(console,true); part->retired = true;
             collect_command(console,entry); return true;
         }
@@ -1752,6 +1808,14 @@ static bool remove_id(qa_console *console, uint64_t id, bool owner, qa_error *er
         console->wait_context.script = NULL;
     }
     if (owner) {
+        command_receiver_binding **binding=&console->receiver_bindings;
+        while (*binding) {
+            command_receiver_binding *at=*binding;
+            if (at->receiver==id || at->declared_receiver==id || at->lifetime_owner==id) {
+                contributions_receiver_set(console,at,at->declared_receiver);
+                *binding=at->next;free(at);
+            } else binding=&at->next;
+        }
         command_entry *current = console->commands;
         while (current) {
             command_entry *next = current->next;

@@ -607,9 +607,10 @@ static bool console_current(native_client_module *role,
         !application_command_capture(owner->app, &source.receiver.command_context, &expected, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired console entry lost its physical invocation");
     if (call->registration_owner) {
-        if (call->receiver!=source.receiver.receiver || call->registration_owner!=role->service_owner ||
+        if (call->registration_owner!=role->service_owner ||
             call->context.seat!=source.receiver.seat ||
-            !qa_console_invocation_current(call->console,call) ||
+            !qa_console_invocation_delivered_view(call,qa_cvars_view_identity(source.receiver.cvars),
+                call->receiver,role->service_owner) ||
             !qa_application_command_context_active(owner->app,&call->context))
             return application_fail(error,QA_ERROR_ARGUMENT,"Acquired command lost its registered module or captured caller");
         return true;

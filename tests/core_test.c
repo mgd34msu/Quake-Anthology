@@ -1160,7 +1160,46 @@ static void test_console_command_precedence(void)
     CHECK(qa_console_contribute(console,"qa_engine_control",&contribution,&error));
     CHECK(qa_console_execute_now(console,&context,"qa_engine_control",&error));
     CHECK(counts.forwarded==4 && counts.called==1 && fallback_counts.completed==2);
-    qa_console_destroy(console);qa_cvars_destroy(module_cvars);
+    qa_cvars *physical_cvars=qa_cvars_create_view(cvars,&(qa_cvar_options){
+        .dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME},&error);
+    CHECK(physical_cvars);
+    qa_command_context physical=context;
+    physical.owner=4;physical.origin=QA_COMMAND_SEAT;physical.cvar_view=qa_cvars_view_identity(physical_cvars);
+    CHECK(qa_console_bind_source(console,&(qa_console_options){.context=physical,.cvars=physical_cvars,
+        .user=&counts,.source_command=console_precedence_callback},&error));
+    CHECK(qa_console_contributions_bind_receiver(console,2,1,0,physical.owner,&error));
+    const qa_console_entry *entry=qa_console_find(console,&physical,"qa_module_command");
+    CHECK(entry && entry->owner==physical.owner);
+    CHECK(!qa_console_find(console,&context,"qa_module_command"));
+    CHECK(qa_console_execute_now(console,&physical,"qa_module_command attached",&error));
+    CHECK(counts.forwarded==5 && counts.called==1);
+    CHECK(qa_console_contribute(console,"qa_module_late",&contribution,&error));
+    entry=qa_console_find(console,&physical,"qa_module_late");
+    CHECK(entry && entry->owner==physical.owner);
+    CHECK(qa_console_execute_now(console,&physical,"qa_module_late",&error));
+    CHECK(counts.forwarded==6 && counts.called==1);
+    CHECK(qa_console_uncontribute(console,"qa_module_late",contribution.receiver,contribution.lifetime_owner));
+    CHECK(!qa_console_find(console,&physical,"qa_module_late"));
+    qa_session *binding_session=NULL;qa_buffer continuation={0};
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=1,.component_capacity=1},&binding_session,&error));
+    CHECK(qa_console_save_capture(console,binding_session,&continuation,&error));
+    CHECK(qa_console_save_restore(console,binding_session,&(qa_console_save_resolvers){0},
+        (qa_bytes){continuation.data,continuation.size},&error));
+    CHECK(qa_console_execute_now(console,&physical,"qa_module_command restored",&error));
+    CHECK(counts.forwarded==7 && counts.called==1);
+    qa_buffer_free(&continuation);CHECK(qa_session_destroy(binding_session,&error));
+    CHECK(qa_console_contributions_bind_receiver(console,2,1,0,1,&error));
+    entry=qa_console_find(console,&context,"qa_module_command");
+    CHECK(entry && entry->owner==1);
+    CHECK(!qa_console_find(console,&physical,"qa_module_command"));
+    CHECK(qa_console_contributions_bind_receiver(console,2,1,0,physical.owner,&error));
+    CHECK(qa_console_remove_owner(console,physical.owner,&error));
+    entry=qa_console_find(console,&context,"qa_module_command");
+    CHECK(entry && entry->owner==1);
+    CHECK(qa_console_contributions_bind_receiver(console,2,1,0,5,&error));
+    CHECK(qa_console_remove_owner(console,contribution.lifetime_owner,&error));
+    CHECK(!qa_console_find(console,&context,"qa_module_command"));
+    qa_console_destroy(console);qa_cvars_destroy(physical_cvars);qa_cvars_destroy(module_cvars);
 
     CHECK(qa_cvars_register(cvars,"team","original",0,1,"",&error));
     CHECK(qa_cvars_set(cvars,"team","original",true,&error));

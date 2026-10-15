@@ -656,6 +656,9 @@ bool frontend_source_prepare_scene(qa_frontend *,qa_application *,uint32_t,
 bool frontend_source_submit_scene(qa_frontend *,uint32_t,qa_actor_owner,
     const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 bool frontend_source_cgame_recipient(const qa_frontend *,uint32_t,qa_actor_owner *,qa_error *);
+struct qa_application_client_source;
+bool frontend_source_client_commands_bind(qa_frontend *,uint32_t,const struct qa_application_client_source *,qa_error *);
+bool frontend_client_sources_commands_bind(qa_frontend *,uint32_t,qa_error *);
 bool frontend_source_group_q3_ready(const qa_frontend *, size_t,
     const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_source_system_info(qa_frontend *, const qa_application_q3_client_context *, const char *, qa_error *);

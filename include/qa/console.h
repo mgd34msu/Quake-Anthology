@@ -433,6 +433,8 @@ typedef struct qa_console_contribution {
 } qa_console_contribution;
 bool qa_console_contribute(qa_console *, const char *name,
                             const qa_console_contribution *, qa_error *);
+bool qa_console_contributions_bind_receiver(qa_console *, uint64_t lifetime_owner,
+    uint64_t declared_receiver, uint32_t seat, uint64_t attached_receiver, qa_error *);
 bool qa_console_uncontribute(qa_console *, const char *name, uint64_t dispatch_owner,
                               uint64_t lifetime_owner);
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner);

@@ -732,7 +732,7 @@ qa_command_result q3g_declared_command(void *context,const qa_command_invocation
 {
     q3g_role *role=context;
     if (!role || role->kind!=QA_QVM_CGAME || !role->ready || role->retired ||
-        !command || command->receiver!=role->engine->provider->owner ||
+        !command ||
         command->registration_owner!=role->service_owner || command->context.seat!=role->seat ||
         !qa_console_invocation_current(command->console,command) ||
         !qa_application_command_context_active(role->engine->provider->application,&command->context)) {

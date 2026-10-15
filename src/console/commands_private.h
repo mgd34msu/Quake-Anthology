@@ -21,6 +21,11 @@ typedef struct command_entry {
     unsigned calls;
     struct command_entry *next;
 } command_entry;
+typedef struct command_receiver_binding {
+    uint64_t lifetime_owner, declared_receiver, receiver;
+    uint32_t seat;
+    struct command_receiver_binding *next;
+} command_receiver_binding;
 typedef struct alias_entry {
     qa_console_entry view;
     qa_ruleset_id dialect;
@@ -90,6 +95,7 @@ struct qa_console {
     console_source *sources;
     char *startup;
     command_entry *commands;
+    command_receiver_binding *receiver_bindings;
     alias_entry *aliases;
     command_chunk *head;
     command_chunk *tail;
