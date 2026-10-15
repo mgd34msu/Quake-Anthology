@@ -953,6 +953,14 @@ static bool frontend_step(qa_frontend *frontend,
             ok=qa_application_clients_drain(frontend->application,error);
         bool cinematic=!replay && frontend_cinematic_running(frontend);
         uint64_t adjusted=raw_elapsed;
+        if (ok && ready && !replay && !qa_application_should_stop(frontend->application)) {
+            if (frontend->recipient_begin_generation==UINT64_MAX)
+                ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
+            else {
+                ++frontend->recipient_begin_generation;
+                ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
+            }
+        }
         if (ok && ready && !cinematic && !qa_application_should_stop(frontend->application)) {
             uint64_t source_duration=raw_elapsed,application_duration=raw_elapsed;
             const qa_cvars *time_owner=NULL;
@@ -966,12 +974,6 @@ static bool frontend_step(qa_frontend *frontend,
             if (ok) {
                 elapsed_ns=paused?0:adjusted;
                 if(!replay) frontend->time_ns+=elapsed_ns;
-            }
-            if (ok && !replay && frontend->recipient_begin_generation==UINT64_MAX)
-                ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Recipient frame begin generation overflow");
-            if (ok && !replay) {
-                ++frontend->recipient_begin_generation;
-                ok=frontend_remote_unified_begin_frame(frontend,frontend->wall_time_ns,raw_elapsed,error);
             }
             if (ok && !replay) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
             retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
@@ -1021,6 +1023,7 @@ static bool frontend_step(qa_frontend *frontend,
                     if (!ok) *playing=false;
                 }
             }
+            if (ok) ok=frontend_events(frontend,error);
             if(ok) ok=frontend_music_cue_drain(frontend,error);
             if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
             frontend->stepping=false;
