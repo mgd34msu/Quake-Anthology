@@ -193,8 +193,21 @@ static bool aim(struct application_qc_state *engine, qa_qc_instance *vm, qa_erro
     qa_vec3 forward;
     const qa_qc_definition *direction = engine->global_bindings->v_forward;
     if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_reference_actor(vm, reference, &actor, error) ||
-        direction == NULL || direction->type != QA_QC_VECTOR || !qa_qc_global_vector(vm, direction->offset, &forward, error) ||
-        !qa_world_body_read(engine->world, actor, &body, error)) return false;
+        direction == NULL || direction->type != QA_QC_VECTOR || !qa_qc_global_vector(vm, direction->offset, &forward, error)) return false;
+    if (engine->profile == QA_QC_QUAKEWORLD) {
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        if (client && client->connected) {
+            const char *raw;
+            if (!qa_application_network_qw_userinfo_read(engine->provider->application, actor, &raw, error)) return false;
+            qa_bytes value;
+            if (qa_info_find(raw, (qa_bytes){(const uint8_t *)"noaim", 5}, QA_INFO_LAST, &value)) {
+                qa_number_cursor cursor = {.text = value};
+                if (qa_parse_decimal_i32_cursor(&cursor, QA_DECIMAL_ASCII_CLAMP, false) > 0)
+                    return qa_qc_return_vector(vm, forward, error);
+            }
+        }
+    }
+    if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
     const qa_cvar_view *threshold = qa_cvars_read(engine->cvars, engine->cvar_handles.sv_aim);
     const qa_cvar_view *teamplay = qa_cvars_read(engine->cvars, engine->cvar_handles.teamplay);
     float best = threshold->number, teams = teamplay->number;
