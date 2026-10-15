@@ -186,7 +186,6 @@ static bool source_command_current(const application_native_q3_source_command_sc
         p->kind==APPLICATION_PROVIDER_Q3&&p->state.q3==scope->game&&p->launch==scope->launch&&
         app->publication_generation==scope->publication_generation&&
         app->command_generation==scope->command_generation&&app->map_revision==scope->map_revision&&
-        qa_launch_snapshot_find(qa_application_launch(app),scope->launch->selection.instance)==scope->launch&&
         qa_actors_get(qa_session_actors(app->session),scope->actor)&&
         qa_q3_native_client_slot(scope->game,scope->actor,&slot,NULL)&&slot==scope->slot&&
         qa_q3_source_binding_read(scope->game,slot,&binding,NULL)&&binding.in_use&&
@@ -211,8 +210,7 @@ static bool source_drop_current(const application_native_q3_source_drop_scope *s
     if(!app||app->destroy_requested||!p->constructed||!p->attached||p->close_pending||
         p->kind!=APPLICATION_PROVIDER_Q3||p->state.q3!=scope->game||p->launch!=scope->launch||
         app->publication_generation!=scope->publication_generation||
-        app->command_generation!=scope->command_generation||app->map_revision!=scope->map_revision||
-        qa_launch_snapshot_find(qa_application_launch(app),scope->launch->selection.instance)!=scope->launch)
+        app->command_generation!=scope->command_generation||app->map_revision!=scope->map_revision)
         return false;
     if(scope->disconnected) {
         qa_q3_native_client client;
