@@ -21,18 +21,27 @@ bool aas_reach_add(aas_reach_build *work, uint32_t from, qa_aas_reach reach, qa_
     ++work->link_count;
     return true;
 }
-bool aas_reach_time(double time, uint16_t *out, qa_error *error) {
-    /* The original conversion stores the low sixteen bits of a signed int. */
-    if (!isfinite(time) || (double)time < INT32_MIN || (double)time > INT32_MAX) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "AAS travel time exceeds its source integer range");
+bool aas_reach_integer(double value, int32_t *out, qa_error *error) {
+    if (!isfinite(value) || value < INT32_MIN || value > INT32_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "AAS reachability value exceeds its source integer range");
         return false;
     }
-    *out = (uint16_t)(int32_t)time;
+    *out = (int32_t)value;
     return true;
 }
-static bool generated_type(int32_t type) {
+bool aas_reach_time(double time, uint16_t *out, qa_error *error) {
+    /* The original conversion stores the low sixteen bits of a signed int. */
+    int32_t value;
+    if (!aas_reach_integer(time, &value, error)) return false;
+    *out = (uint16_t)value;
+    return true;
+}
+static bool generated_type(const aas_reach_build *work, int32_t type) {
     /* Authored restriction bits belong to the existing link until a generator
      * can reconstruct their source rule. */
+    uint32_t base = (uint32_t)type & UINT32_C(0x00ffffff);
+    if (work->geometry && (base == AAS_REACH_TELEPORT_TYPE || base == AAS_REACH_JUMPPAD_TYPE) &&
+        !((uint32_t)type & UINT32_C(0xfc000000))) return true;
     switch (type) {
     case AAS_REACH_WALK: case AAS_REACH_JUMP: case AAS_REACH_BARRIER:
     case AAS_REACH_LADDER: case AAS_REACH_LEDGE:
@@ -49,7 +58,9 @@ static bool prepare(aas_reach_build *work, qa_error *error) {
         _Alignof(aas_reach_link *), error);
     work->settings = qa_arena_alloc(&work->storage, areas * sizeof(*work->settings),
         _Alignof(qa_aas_setting), error);
-    if (!work->heads || !work->settings) return false;
+    work->entity_areas = qa_arena_alloc(&work->storage, areas * sizeof(*work->entity_areas),
+        _Alignof(uint32_t), error);
+    if (!work->heads || !work->settings || !work->entity_areas) return false;
     memset(work->heads, 0, areas * sizeof(*work->heads));
     memcpy(work->settings, work->source->settings, areas * sizeof(*work->settings));
     if (!qa_aas_query_create(&work->storage, &work->query, error) ||
@@ -64,11 +75,17 @@ static bool prepare(aas_reach_build *work, qa_error *error) {
          * generator is not implemented here, including extensions. */
         for (int32_t i = setting->reach_count; i > 0; --i) {
             qa_aas_reach reach = work->source->reachability[setting->first_reach + i - 1];
-            if (!generated_type(reach.travel_type) &&
+            if (!generated_type(work, reach.travel_type) &&
                 !aas_reach_add(work, (uint32_t)area, reach, error)) return false;
         }
     }
     return true;
+}
+bool aas_reach_predict(aas_reach_build *work, qa_nav_prediction_query *query, qa_error *error) {
+    query->world_only = true;
+    query->omit_trajectory = true;
+    query->environment = &work->environment;
+    return qa_navigation_predict(work->navigation, work->workspace, query, &work->prediction, error);
 }
 static bool finish(aas_reach_build *work, qa_nav_asset **out, qa_error *error) {
     size_t counts[QA_AAS_LUMP_COUNT];
@@ -111,14 +128,13 @@ static bool finish(aas_reach_build *work, qa_nav_asset **out, qa_error *error) {
 bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bsp_view *geometry,
     float (*variable)(void *, const char *, float), void *context,
     qa_nav_asset **out, qa_error *error) {
-    (void)geometry;
     const qa_aas_view *source = navigation ? qa_nav_asset_aas(navigation->graph->view.asset) : NULL;
     if (!source || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "AAS generation requires its source navigation owner");
         return false;
     }
     if (!qa_aas_validate(source, error)) return false;
-    aas_reach_build work = {.navigation = navigation, .source = source};
+    aas_reach_build work = {.navigation = navigation, .source = source, .geometry = geometry};
     nav_arena_init(&work.storage, &navigation->storage);
 #define READ(field, name, initial) work.movement.field = variable ? variable(context, name, initial) : initial
     READ(gravity, "phys_gravity", 800);
@@ -139,6 +155,9 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     READ(jump_velocity, "phys_jumpvel", 270);
     READ(max_jump_fall_height, "rs_maxjumpfallheight", 450);
     READ(start_jump, "rs_startjump", 300);
+    READ(teleport, "rs_teleport", 50);
+    READ(jump_pad, "rs_jumppad", 250);
+    READ(air_jump_pad, "rs_aircontrolledjumppad", 300);
 #undef READ
     work.environment = qa_movement_environment_default();
     work.environment.gravity_multiplier = work.movement.gravity / 800;
@@ -158,9 +177,11 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     for (uint32_t area = 1; okay && area < source->count[QA_AAS_AREAS]; ++area)
         if (!(work.settings[area].contents & AAS_REACH_JUMPPAD))
             okay = aas_reach_walk_ledge(&work, area, error);
+    if (okay && geometry && source->count[QA_AAS_AREAS]) okay = aas_reach_special(&work, error);
     if (okay) okay = finish(&work, out, error);
     qa_nav_prediction_result_free(&work.prediction);
     qa_nav_workspace_destroy(work.workspace);
+    qa_entities_free(&work.entities);
     qa_aas_query_destroy(work.query);
     qa_arena_destroy(&work.storage);
     return okay;

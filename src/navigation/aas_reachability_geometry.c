@@ -24,7 +24,7 @@ static bool close_bounds(qa_bounds a, qa_bounds b, bool vertical) {
         a.mins.y <= b.maxs.y + 10 && a.maxs.y >= b.mins.y - 10 &&
         (!vertical || (a.mins.z <= b.maxs.z + 10 && a.maxs.z >= b.mins.z - 10));
 }
-static qa_vec3 face_center(const qa_aas_view *world, const qa_aas_face *face) {
+qa_vec3 aas_reach_face_center(const qa_aas_view *world, const qa_aas_face *face) {
     qa_vec3 center = {0};
     for (int32_t i = 0; i < face->edge_count; ++i) {
         const qa_aas_edge *edge = face_edge(world, face, i, NULL);
@@ -89,7 +89,7 @@ static bool swim(aas_reach_build *work, uint32_t from, uint32_t to, bool *found,
         if (!face->edge_count) continue;
         for (int32_t j = 0; j < area2->face_count; ++j) {
             if (number != nav_aas_oriented_index(world->face_index[area2->first_face + j])) continue;
-            qa_vec3 start = face_center(world, face);
+            qa_vec3 start = aas_reach_face_center(world, face);
             uint32_t contents;
             if (!nav_contents(&work->navigation->services, &work->navigation->graph->view.profile,
                 (qa_actor_id){0}, start, true, &contents, error)) return false;
@@ -371,7 +371,7 @@ static float max_jump_height(const aas_reach_build *work) {
     float time = work->movement.jump_velocity / work->movement.gravity;
     return (float)(.5 * work->movement.gravity * time * time);
 }
-static bool horizontal_jump_speed(const aas_reach_build *work, float z_velocity,
+bool aas_reach_horizontal_jump_speed(const aas_reach_build *work, float z_velocity,
     qa_vec3 start, qa_vec3 end, float *speed) {
     float gravity = work->movement.gravity, ascent = z_velocity / gravity;
     float maximum = (float)(.5 * gravity * ascent * ascent);
@@ -422,10 +422,10 @@ static bool jump(aas_reach_build *work, uint32_t from, uint32_t to,
     int32_t type; float speed;
     if (closest.distance <= 48 && fabsf(start.z - end.z) < 8) {
         speed = 400; type = AAS_REACH_LEDGE;
-    } else if (horizontal_jump_speed(work, 0, start, end, &speed)) {
+    } else if (aas_reach_horizontal_jump_speed(work, 0, start, end, &speed)) {
         speed *= 1.2f; type = AAS_REACH_LEDGE;
     } else {
-        if (!horizontal_jump_speed(work, settings->jump_velocity, start, end, &speed)) return true;
+        if (!aas_reach_horizontal_jump_speed(work, settings->jump_velocity, start, end, &speed)) return true;
         speed *= 1.05f; type = AAS_REACH_JUMP;
         qa_vec3 horizontal = qa_vec_sub(end, start); horizontal.z = 0;
         if (qa_vec_length(horizontal) < 10) return true;
@@ -457,10 +457,10 @@ static bool jump(aas_reach_build *work, uint32_t from, uint32_t to,
             .command_move = {0, 0, type == AAS_REACH_JUMP ? settings->jump_velocity : 0},
             .presence = 2, .command_frames = 3, .maximum_frames = 30, .frame_ms = 100,
             .stop_events = stops, .stop_area = QA_NAV_NO_INDEX, .on_ground = true,
-            .world_only = true, .omit_trajectory = true, .environment = &work->environment};
-        if (!qa_navigation_predict(work->navigation, work->workspace, &query, &work->prediction, error)) return false;
+            .world_only = true};
+        if (!aas_reach_predict(work, &query, error)) return false;
         const qa_nav_prediction_result *move = &work->prediction;
-        uint32_t frames = move->frames - (move->stop_event && move->frames ? 1u : 0u);
+        uint32_t frames = aas_reach_prediction_frames(work);
         if (frames >= 30 || (move->stop_event & (8 | 16 | 4096))) return true;
         qa_vec3 back = qa_vec_ma(move->end, -64, direction); back.z += 1;
         qa_aas_crossing crossings[10]; size_t count;

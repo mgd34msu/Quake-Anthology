@@ -8,13 +8,15 @@ enum {
     AAS_REACH_TELEPORT = 64, AAS_REACH_JUMPPAD = 128,
     AAS_REACH_WALK = 2, AAS_REACH_JUMP = 4, AAS_REACH_BARRIER = 5,
     AAS_REACH_LADDER = 6, AAS_REACH_LEDGE = 7,
-    AAS_REACH_SWIM = 8, AAS_REACH_WATERJUMP = 9
+    AAS_REACH_SWIM = 8, AAS_REACH_WATERJUMP = 9,
+    AAS_REACH_TELEPORT_TYPE = 10, AAS_REACH_JUMPPAD_TYPE = 18
 };
 typedef struct aas_reach_settings {
     float gravity, max_step, max_water_jump, max_barrier, start_crouch,
         water_jump, barrier_jump, start_ledge, max_fall_height,
         fall_delta5, fall_delta10, fall_damage5, fall_damage10,
-        max_velocity, max_walk_velocity, jump_velocity, max_jump_fall_height, start_jump;
+        max_velocity, max_walk_velocity, jump_velocity, max_jump_fall_height, start_jump,
+        teleport, jump_pad, air_jump_pad;
 } aas_reach_settings;
 typedef struct aas_reach_link {
     qa_aas_reach reach;
@@ -23,6 +25,10 @@ typedef struct aas_reach_link {
 typedef struct aas_reach_build {
     qa_navigation *navigation;
     const qa_aas_view *source;
+    const qa_bsp_view *geometry;
+    qa_entities entities;
+    uint32_t *entity_areas;
+    size_t entity_area_count;
     qa_arena storage;
     qa_aas_query *query;
     qa_nav_workspace *workspace;
@@ -46,8 +52,17 @@ static inline bool aas_reach_crouched(const aas_reach_build *w, uint32_t area) {
 bool aas_reach_exists(const aas_reach_build *, uint32_t from, uint32_t to);
 bool aas_reach_add(aas_reach_build *, uint32_t from, qa_aas_reach, qa_error *);
 bool aas_reach_time(double, uint16_t *, qa_error *);
+bool aas_reach_integer(double, int32_t *, qa_error *);
 bool aas_reach_geometry(aas_reach_build *, uint32_t from, uint32_t to, bool *found, qa_error *);
 bool aas_reach_walk_ledge(aas_reach_build *, uint32_t area, qa_error *);
 float aas_reach_fall_delta(const aas_reach_build *, float);
+qa_vec3 aas_reach_face_center(const qa_aas_view *, const qa_aas_face *);
+bool aas_reach_horizontal_jump_speed(const aas_reach_build *, float z_velocity,
+    qa_vec3 start, qa_vec3 end, float *speed);
+bool aas_reach_predict(aas_reach_build *, qa_nav_prediction_query *, qa_error *);
+static inline uint32_t aas_reach_prediction_frames(const aas_reach_build *work) {
+    return work->prediction.frames - (work->prediction.stop_event && work->prediction.frames ? 1u : 0u);
+}
+bool aas_reach_special(aas_reach_build *, qa_error *);
 
 #endif

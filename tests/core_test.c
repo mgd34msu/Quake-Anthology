@@ -710,7 +710,7 @@ static void test_aas_clustering(void)
 }
 
 static void aas_reachability_generate(const qa_aas_view *source, bool water,
-    qa_nav_asset **out)
+    const qa_bsp_view *geometry, qa_nav_asset **out)
 {
     qa_error error={0};gameplay_map map;gameplay_map_create(&map);
     if(water) {
@@ -755,7 +755,10 @@ static void aas_reachability_generate(const qa_aas_view *source, bool water,
         qa_nav_prediction_result_free(&normal);qa_nav_prediction_result_free(&scaled);
         qa_nav_workspace_destroy(workspace);
     }
-    CHECK(qa_navigation_aas_reachability_build(navigation,NULL,NULL,NULL,out,&error));
+    bool built=qa_navigation_aas_reachability_build(navigation,geometry,NULL,NULL,out,&error);
+    if(!built) fprintf(stderr,"AAS reachability fixture checksum=%d geometry=%s error=%d: %s\n",
+        source->bsp_checksum,geometry?"present":"absent",(int)error.code,error.message);
+    CHECK(built);
     qa_navigation_destroy(navigation);qa_nav_graph_release(graph);qa_nav_asset_release(asset);
     qa_buffer_free(&bytes);
     CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
@@ -799,7 +802,7 @@ static void test_aas_reachability(void)
     qa_buffer original={0},after={0},packed={0},roundtrip={0};
     CHECK(qa_aas_write(&source,&original,&error));
     qa_nav_asset *generated=NULL,*decoded=NULL;
-    aas_reachability_generate(&source,false,&generated);
+    aas_reachability_generate(&source,false,NULL,&generated);
     const qa_aas_view *view=qa_nav_asset_aas(generated);
     const qa_aas_reach *forward=aas_reachability_to(view,1,2),*reverse=aas_reachability_to(view,2,1);
     CHECK(forward && reverse && forward->travel_type==2 && reverse->travel_type==2);
@@ -821,7 +824,7 @@ static void test_aas_reachability(void)
         .start={-4,0,30},.end={-8,0,30},.travel_type=10,.travel_time=73,.padding=19}};
     source.reachability=authored;source.count[QA_AAS_REACHABILITY]=2;
     settings[1].first_reach=1;settings[1].reach_count=1;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     const qa_aas_reach *retained=aas_reachability_to(view,1,1);
     CHECK(retained && !memcmp(retained,authored+1,sizeof(*retained)) && aas_reachability_to(view,1,2));
     qa_nav_asset_release(generated);generated=NULL;
@@ -835,7 +838,7 @@ static void test_aas_reachability(void)
         for(size_t j=4;j<8;++j) vertices[j].z=24+rise;
         planes[2].distance=24+rise;planes[3].distance=-24-rise;
         areas[2].bounds.mins.z=24+rise;areas[2].bounds.maxs.z=80+rise;areas[2].center.z=48+rise;
-        aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+        aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
         forward=aas_reachability_to(view,1,2);
         if(i<2) CHECK(forward && forward->travel_type==(i?5:2) && forward->travel_time==(i?100:0));
         else CHECK(!forward);
@@ -844,7 +847,7 @@ static void test_aas_reachability(void)
         qa_nav_asset_release(generated);generated=NULL;
     }
     settings[1].flags=4;faces[1].flags=0;face_index[0]=-1;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     forward=aas_reachability_to(view,1,2);
     CHECK(forward && forward->travel_type==9 && forward->travel_time==400);
     qa_nav_asset_release(generated);generated=NULL;
@@ -859,10 +862,10 @@ static void test_aas_reachability(void)
     source.count[QA_AAS_FACES]=2;settings[2].flags=4;
     planes[2].distance=24;planes[3].distance=-24;
     areas[2].bounds.mins.z=24;areas[2].bounds.maxs.z=80;areas[2].center.z=48;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     CHECK(!aas_reachability_to(view,1,2) && !aas_reachability_to(view,2,1));
     qa_nav_asset_release(generated);generated=NULL;
-    aas_reachability_generate(&source,true,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,true,NULL,&generated);view=qa_nav_asset_aas(generated);
     forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
     CHECK(forward && reverse && forward->travel_type==8 && reverse->travel_type==8 &&
         forward->face==1 && reverse->face==1 && forward->travel_time==201 && reverse->travel_time==201);
@@ -886,7 +889,7 @@ static void test_aas_reachability(void)
     CHECK(count==2 && crossings[0].area==1 && crossings[1].area==2 && crossings[1].point.x==0);
     qa_aas_query_destroy(query);
     const qa_aas_view empty={.version=5,.bsp_checksum=95};
-    aas_reachability_generate(&empty,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&empty,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     CHECK(view->version==5 && view->bsp_checksum==95 && !view->count[QA_AAS_REACHABILITY]);
     qa_nav_asset_release(generated);
 }
@@ -917,7 +920,7 @@ static void test_aas_jump_ladder(void)
         .vertices=vertices,.planes=planes,.edges=edges,.edge_index=edge_index,
         .faces=faces,.face_index=face_index,.areas=areas,.settings=settings,.nodes=nodes};
     qa_nav_asset *generated=NULL;
-    aas_reachability_generate(&source,false,&generated);
+    aas_reachability_generate(&source,false,NULL,&generated);
     const qa_aas_view *view=qa_nav_asset_aas(generated);
     const qa_aas_reach *forward=aas_reachability_to(view,1,2),*reverse=aas_reachability_to(view,2,1);
     CHECK(forward && reverse && forward->travel_type==4 && reverse->travel_type==4 &&
@@ -925,7 +928,7 @@ static void test_aas_jump_ladder(void)
     CHECK(forward->start.x==0 && forward->end.x==64 && reverse->start.x==64 && reverse->end.x==0);
     qa_nav_asset_release(generated);generated=NULL;
     settings[2].presence=4;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     CHECK(!aas_reachability_to(view,1,2) && !aas_reachability_to(view,2,1));
     qa_nav_asset_release(generated);generated=NULL;
 
@@ -950,7 +953,7 @@ static void test_aas_jump_ladder(void)
             [QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3,[QA_AAS_NODES]=2},
         .vertices=ladder_vertices,.planes=ladder_planes,.edges=ladder_edges,.edge_index=ladder_edge_index,
         .faces=ladder_faces,.face_index=face_index,.areas=ladder_areas,.settings=ladder_settings,.nodes=ladder_nodes};
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
     CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==6 &&
         forward->face==1 && reverse->face==2 && forward->edge==1 && reverse->edge==1 &&
@@ -960,7 +963,7 @@ static void test_aas_jump_ladder(void)
     qa_nav_asset_release(generated);generated=NULL;
     ladder_vertices[4]=qa_v3(32,-16,88);ladder_vertices[5]=qa_v3(32,16,88);
     ladder_faces[2].plane=2;ladder_faces[2].flags=6;ladder_settings[2].flags=3;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     forward=aas_reachability_to(view,1,2);reverse=aas_reachability_to(view,2,1);
     CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==7 &&
         forward->end.z==136 && forward->end.x==-15 && reverse->end.z==56);
@@ -981,11 +984,80 @@ static void test_aas_jump_ladder(void)
     source.planes=bottom_planes;source.areas=bottom_areas;source.settings=bottom_settings;source.nodes=bottom_nodes;
     source.count[QA_AAS_PLANES]=8;source.count[QA_AAS_AREAS]=source.count[QA_AAS_SETTINGS]=4;
     source.count[QA_AAS_NODES]=4;
-    aas_reachability_generate(&source,false,&generated);view=qa_nav_asset_aas(generated);
+    aas_reachability_generate(&source,false,NULL,&generated);view=qa_nav_asset_aas(generated);
     forward=aas_reachability_to(view,1,3);reverse=aas_reachability_to(view,3,1);
     CHECK(forward && reverse && forward->travel_type==6 && reverse->travel_type==4 &&
         forward->face==1 && reverse->face==1 && forward->edge==2 && reverse->edge==2 &&
         forward->start.z==48 && forward->end.z==25.25f && reverse->end.z==58);
+    qa_nav_asset_release(generated);
+}
+
+static void test_aas_teleport_jump_pad(void)
+{
+    qa_aas_area areas[]={{0},
+        {.number=1,.bounds={{-512,-512,24},{64,512,40}},.center={0,0,32}},
+        {.number=2,.bounds={{64,-512,24},{512,512,40}},.center={96,0,32}},
+        {.number=3,.bounds={{-512,-512,40},{512,512,1024}},.center={0,0,128}}};
+    qa_aas_setting settings[]={{0},{.contents=64,.flags=1,.presence=6},
+        {.flags=1,.presence=6},{.presence=6}};
+    const qa_aas_plane planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{1,0,0},64,0},{{-1,0,0},-64,0},{{0,0,1},40,2},{{0,0,-1},-40,2}};
+    const qa_aas_node nodes[]={{0},{.plane=4,.children={-3,2}},
+        {.plane=2,.children={3,4}},{.plane=0,.children={-2,0}},{.plane=0,.children={-1,0}}};
+    const qa_aas_reach authored[]={{0},{.area=1,.face=0x12345678,.edge=INT32_MIN,
+        .start={0,0,30},.end={0,0,32},.travel_type=0x01000000|11,.travel_time=47,.padding=13}};
+    settings[1].first_reach=1;settings[1].reach_count=1;
+    const qa_aas_view source={.version=5,.bsp_checksum=98,
+        .count={[QA_AAS_PLANES]=6,[QA_AAS_AREAS]=4,[QA_AAS_SETTINGS]=4,[QA_AAS_NODES]=5,
+            [QA_AAS_REACHABILITY]=2},
+        .planes=planes,.areas=areas,.settings=settings,.nodes=nodes,.reachability=authored};
+    uint8_t models[80]={0};
+    for(unsigned axis=0;axis<3;++axis) {
+        gameplay_float(models+axis*4,-512);gameplay_float(models+12+axis*4,512);
+        gameplay_float(models+40+axis*4,axis==2?24:-16);
+        gameplay_float(models+52+axis*4,axis==2?32:16);
+    }
+    const char direct[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"trigger_teleport\" \"model\" \"*1\" \"target\" \"exit\" \"bot_notteam\" \"1\" }\n"
+        "{ \"classname\" \"misc_teleporter_dest\" \"targetname\" \"exit\" \"origin\" \"96 0 64\" }\n";
+    qa_bsp_view geometry={.family=QA_BSP_Q3,.format=QA_BSP_IBSP46,
+        .lumps={[QA_BSP_MODELS]={.bytes={models,sizeof(models)},.stride=40,.present=true},
+            [QA_BSP_ENTITIES]={.bytes={(const uint8_t *)direct,sizeof(direct)-1},.present=true}}};
+    qa_nav_asset *generated=NULL;
+    aas_reachability_generate(&source,false,&geometry,&generated);
+    const qa_aas_view *view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *reach=aas_reachability_to(view,1,2);
+    CHECK(reach && reach->travel_type==(0x01000000|10) && reach->travel_time==50 &&
+        reach->face==0 && reach->edge==0 && qa_vec_equal(reach->start,qa_v3(0,0,28)) &&
+        reach->end.x==96 && reach->end.z>=24 && reach->end.z<25);
+    const qa_aas_reach *retained=aas_reachability_to(view,1,1);
+    CHECK(retained && !memcmp(retained,authored+1,sizeof(*retained)));
+    qa_nav_asset_release(generated);generated=NULL;
+    const char relay[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"trigger_multiple\" \"model\" \"*1\" \"target\" \"relay\" \"bot_notteam\" \"2\" }\n"
+        "{ \"classname\" \"target_teleporter\" \"targetname\" \"relay\" \"target\" \"exit\" }\n"
+        "{ \"classname\" \"misc_teleporter_dest\" \"targetname\" \"exit\" \"origin\" \"96 0 32\" }\n";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)relay,sizeof(relay)-1};
+    settings[2].contents=128;
+    aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
+    reach=aas_reachability_to(view,1,2);
+    CHECK(reach && reach->travel_type==(0x02000000|10) && qa_vec_equal(reach->end,qa_v3(96,0,32)));
+    qa_nav_asset_release(generated);generated=NULL;
+    const char pad[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"trigger_push\" \"model\" \"*1\" \"target\" \"apex\" \"bot_notteam\" \"2\" }\n"
+        "{ \"classname\" \"target_position\" \"targetname\" \"apex\" \"origin\" \"96 0 128\" }\n";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)pad,sizeof(pad)-1};
+    settings[1].contents=128;settings[2].contents=0;
+    aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
+    reach=aas_reachability_to(view,1,2);
+    CHECK(reach && reach->travel_type==(0x02000000|18) && reach->travel_time==250 &&
+        reach->face==400 && reach->edge==211 && reach->start.z==28.125f &&
+        reach->end.x>64 && reach->end.z>=24 && reach->end.z<25);
+    qa_nav_asset_release(generated);generated=NULL;
+    const char missing_target[]="{ \"classname\" \"trigger_push\" \"model\" \"*1\" \"target\" \"absent\" }";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)missing_target,sizeof(missing_target)-1};
+    aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
+    CHECK(!aas_reachability_to(view,1,2));
     qa_nav_asset_release(generated);
 }
 
@@ -7639,6 +7711,7 @@ int main(int argc, char **argv)
     test_aas_clustering();
     test_aas_reachability();
     test_aas_jump_ladder();
+    test_aas_teleport_jump_pad();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
     test_prediction_continuations();
