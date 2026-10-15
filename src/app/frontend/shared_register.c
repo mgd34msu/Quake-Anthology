@@ -5,6 +5,7 @@
 #include "legacy_render_policy.h"
 #include "shared_settings.h"
 #include "shared_video.h"
+#include "video_modes_generated.h"
 #include "view_settings.h"
 #include "qa/cvars_alias.h"
 #include "qa/console_cvar_observer.h"
@@ -451,7 +452,8 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_ruleset_id *source,
         output.sample_rate<8000 || output.sample_rate>192000 ||
         (output.channels!=1 && output.channels!=2) || (output.sample_bits!=8 && output.sample_bits!=16))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Shared settings require actual factory defaults");
-    if (!qa_cvars_set_video_resolver(cvars,frontend_shared_video_resolve,NULL,error)) return false;
+    if (!qa_cvars_set_video_resolver(cvars,frontend_shared_video_resolve,NULL,error) ||
+        !qa_cvars_declare_save_policy(cvars,FRONTEND_VIDEO_MODE_NAME,QA_CVAR_SAVE_SETTING,error)) return false;
     for (size_t i=0;i<sizeof(declarations)/sizeof(*declarations);++i) {
         const shared_declaration *row=declarations+i; const char *initial=row->initial; char text[32];
         if (!strcmp(row->name,"r_gamma")) { if (!qa_format_number(gamma,text,error)) return false; initial=text; }
@@ -462,7 +464,8 @@ bool frontend_shared_register(qa_cvars *cvars,const qa_ruleset_id *source,
         else if (!strcmp(row->name,"s_outputRate")) { snprintf(text,sizeof(text),"%u",output.sample_rate); initial=text; }
         else if (!strcmp(row->name,"s_outputBits")) { snprintf(text,sizeof(text),"%u",output.sample_bits); initial=text; }
         else if (!strcmp(row->name,"s_outputChannels")) { snprintf(text,sizeof(text),"%u",output.channels); initial=text; }
-        if (!qa_cvars_register(cvars,row->name,initial,row->flags,QA_FRONTEND_COMMAND_OWNER,row->description,error)) return false;
+        if (!qa_cvars_register(cvars,row->name,initial,row->flags,QA_FRONTEND_COMMAND_OWNER,row->description,error) ||
+            !qa_cvars_declare_save_policy(cvars,row->name,QA_CVAR_SAVE_SETTING,error)) return false;
         if (row->validation!=ANY && !qa_cvars_bind(cvars,row->name,&(qa_cvar_binding){
             .owner=QA_FRONTEND_COMMAND_OWNER,.user=(void *)row,.validate=validate},error)) return false;
     }
