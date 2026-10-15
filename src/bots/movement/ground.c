@@ -109,15 +109,20 @@ bool bot_ground_travel(bot_travel *t, const bot_reach *r, bool airborne, qa_bot_
         distance = qa_vec_length(offset);
         direction = qa_vec_normalize(offset);
         bool waypoint = r->graph_edge->source.kind != QA_NAV_ORIGIN_AAS;
+        bool at_start = distance < 10;
+        if (waypoint) {
+            const qa_nav_node *node = qa_navigation_node(t->runtime, r->graph_edge->from);
+            at_start = distance <= (node->radius > 0 ? node->radius : 32);
+        }
         if (!waypoint && !bot_blocked(t, direction, true, out, e))
             return false;
         if (waypoint && state->walk_progress && state->walk_edge != r->graph_edge->id)
             state->walk_progress = false;
-        if (waypoint && distance < 10) {
+        if (waypoint && at_start) {
             state->walk_progress = true;
             state->walk_edge = r->graph_edge->id;
         }
-        if (distance < 10 || (waypoint && state->walk_progress)) {
+        if (at_start || (waypoint && state->walk_progress)) {
             offset = bot_horizontal(bot_move_vector(s,BM_ORIGIN), r->end);
             distance = qa_vec_length(offset);
             direction = qa_vec_normalize(offset);
