@@ -582,6 +582,12 @@ static const original_player_animation player_animations[] = {
     {107,6,"player_rocket",true,false,false}, {113,6,"player_shot",true,false,false},
     {119,4,"player_axe",true,false,false}, {125,4,"player_axeb",true,false,false},
     {131,4,"player_axec",true,false,false}, {137,4,"player_axed",true,false,false},
+    {41,9,"player_die_ax",false,false,true},
+    {50,11,"player_diea",false,false,true},
+    {61,9,"player_dieb",false,false,true},
+    {70,15,"player_diec",false,false,true},
+    {85,9,"player_died",false,false,true},
+    {94,9,"player_diee",false,false,true},
     {18,6,"player_hampain",false,true,false},
     {24,8,"player_die_ham",false,true,true},
     {32,6,"player_hammer",true,true,false},
@@ -606,17 +612,15 @@ static bool player_functions(qa_q1_program program, const qa_strings *strings,
         c->pose.pain.first != 18 || c->pose.pain.count != 6 ||
         c->pose.death.first != 24 || c->pose.death.count != 8))
         return fail(error, "Original player model has no compiled Source pose");
-    if (c->life != QA_Q1_ALIVE && !head && (!hammer || !c->death_animation ||
-        c->animation.first != 24 || c->frame < 24 || c->frame > 31))
-        return fail(error, "Original dead player has no compiled Source animation");
     if (head) {
         think = "HeadThink";
         next = c->head_fly_ns ? (double)c->head_fly_ns / 1000000000.0 : -1;
         if (!number(record, "gorging", 1, false, error)) return false;
     }
+    bool animation_found = false;
     for (size_t i = 0; i < sizeof(player_animations) / sizeof(*player_animations); ++i) {
         const original_player_animation *a = player_animations + i;
-        if (head || a->hammer != hammer) continue;
+        if (head || a->hammer != hammer || a->death != c->death_animation) continue;
         bool source_attack = a->hammer && a->attack && c->life == QA_Q1_ALIVE &&
             c->pose.source_frame && c->pose.frame >= a->first && c->pose.frame < a->first + a->count;
         if (!source_attack && ((!c->animation.count && !a->death) || c->animation.first != a->first)) continue;
@@ -626,6 +630,9 @@ static bool player_functions(qa_q1_program program, const qa_strings *strings,
             frame = c->frame == a->first ? 2 : 1; next = player->next_weapon_frame;
         }
         if (a->death) {
+            if (c->life == QA_Q1_ALIVE || c->frame != a->first + c->animation_frame ||
+                c->animation_frame >= a->count)
+                return fail(error, "Original player death frame differs from its Source continuation");
             if (c->life != QA_Q1_DYING) {
                 if (c->frame != a->first + a->count - 1)
                     return fail(error, "Original dead player requires its terminal Source frame");
@@ -636,8 +643,11 @@ static bool player_functions(qa_q1_program program, const qa_strings *strings,
         }
         if (frame <= a->count) { snprintf(name, sizeof(name), "%s%u", a->prefix, frame); think = name; }
         else think = "player_run";
+        animation_found = true;
         break;
     }
+    if (c->life != QA_Q1_ALIVE && !head && !animation_found)
+        return fail(error, "Original dead player has no compiled Source animation");
     return callback(record, "think", think, error) && number(record, "nextthink", next, false, error) &&
         callback(record, "th_pain", "player_pain", error) && callback(record, "th_die", "PlayerDie", error) &&
         number(record, "deadflag", c->life, false, error);
