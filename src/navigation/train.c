@@ -50,7 +50,7 @@ bool qa_navigation_train_at_stop(const qa_nav_entity_state *state,const qa_nav_t
     const qa_nav_profile *profile) {
     return nav_distance(state->data.train.origin,stop->origin)<=profile->maximum_step;
 }
-bool nav_boarding(qa_navigation *n, uint32_t id, bool train, const qa_nav_edge **edge,
+bool nav_boarding(qa_navigation *n, qa_actor_id actor, uint32_t id, bool train, const qa_nav_edge **edge,
                   qa_nav_entity_state *state, qa_nav_train_ride *ride, bool *found, qa_error *e) {
     *found = false;
     uint32_t index = nav_node_index(n->graph, id);
@@ -64,7 +64,7 @@ bool nav_boarding(qa_navigation *n, uint32_t id, bool train, const qa_nav_edge *
                        candidate->source_travel_type != 6))
             continue;
         bool exists;
-        if (!nav_entity(n, candidate, state, &exists, e))
+        if (!nav_entity(n, actor, candidate, state, &exists, e))
             return false;
         if (!exists || !state->enabled || state->locked)
             continue;
@@ -91,7 +91,7 @@ bool qa_navigation_train_step(qa_navigation *n, qa_nav_workspace *w, qa_actor_id
         return true;
     qa_nav_entity_state state;
     bool found;
-    if (!nav_entity(n, edge, &state, &found, e))
+    if (!nav_entity(n, actor, edge, &state, &found, e))
         return false;
     if (!found || state.kind != QA_NAV_ENTITY_TRAIN)
         return true;

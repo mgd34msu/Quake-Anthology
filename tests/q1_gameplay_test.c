@@ -93,6 +93,12 @@ static bool physics_write(void *context, qa_actor_id actor,
     return qa_q1_game_physics_write(((q1_fixture *)context)->game, actor, properties, error);
 }
 
+static bool physics_pusher_think(void *context, qa_actor_id actor,
+    const qa_source_frame *frame, qa_error *error)
+{
+    return qa_q1_game_pusher_think(((q1_fixture *)context)->game, actor, frame, error);
+}
+
 static bool actor_traits(void *context, qa_actor_id actor, qa_builtin_actor_traits *traits)
 {
     q1_fixture *fixture = context;
@@ -189,7 +195,8 @@ static void fixture_create_rules(q1_fixture *fixture, qa_q1_edition edition, uin
     GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session),
         "test:q1", &fixture->owner, &error));
     GAME_CHECK(qa_physics_init(&fixture->physics, fixture->world, (qa_actor_id){0},
-        &(qa_physics_services){.context = fixture, .read = physics_read, .write = physics_write},
+        &(qa_physics_services){.context = fixture, .read = physics_read, .write = physics_write,
+            .pusher_think = physics_pusher_think},
         &error));
     qa_builtin_services services = {.session = fixture->session, .world = fixture->world,
         .combat = fixture->combat, .inventory = fixture->inventory,
@@ -460,6 +467,113 @@ static void navigation_hurt_state(qa_q1_edition edition)
     GAME_CHECK(qa_q1_game_actor_traits(fixture.game, healing, &traits) && !traits.navigation_hazard);
     GAME_CHECK(qa_session_release(fixture.session, hurt, &error));
     GAME_CHECK(!qa_q1_game_actor_traits(fixture.game, hurt, &traits));
+    fixture_destroy(&fixture);
+}
+
+static qa_q1_map_mover_view navigation_mover_read(q1_fixture *fixture,qa_actor_id mover,
+    qa_actor_id traveller)
+{
+    qa_error error={0};qa_q1_map_mover_view view;qa_nav_train_stop stops[32];size_t count;bool found;
+    GAME_CHECK(qa_q1_game_map_mover_read(fixture->game,mover,traveller,&view,stops,32,&count,&found,&error));
+    GAME_CHECK(found && !count);
+    return view;
+}
+
+static void navigation_key_door(qa_q1_edition edition)
+{
+    qa_error error={0};q1_fixture fixture;
+    fixture_create(&fixture,edition,1,true,QA_Q1_ID1);fixture_bind_maps(&fixture);
+    qa_string_id gold,definition;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),"q1:key/gold",&gold,&error));
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),"foreign-navigation-player",&definition,&error));
+    qa_actor_id keyed,unkeyed,master,member;
+    GAME_CHECK(qa_session_allocate(fixture.session,fixture.owner,definition,false,0,&keyed,&error));
+    GAME_CHECK(qa_session_allocate(fixture.session,fixture.owner,definition,false,0,&unkeyed,&error));
+    GAME_CHECK(qa_inventory_create_actor(fixture.inventory,keyed,
+        &(qa_inventory_entry){.item=gold,.count=1,.capacity=1},1,&error));
+    GAME_CHECK(qa_inventory_create_actor(fixture.inventory,unkeyed,NULL,0,&error));
+    qa_q1_spawn door={.classname="func_door",.spawnflags=8,.speed=100000,
+        .map_fields=&(qa_q1_map_fields){.model="*0"}};
+    GAME_CHECK(qa_q1_game_spawn(fixture.game,&door,&master,&error));
+    GAME_CHECK(qa_q1_game_spawn(fixture.game,&door,&member,&error));
+    GAME_CHECK(qa_q1_game_maps_finish(fixture.game,&error));
+    qa_q1_map_mover_view view=navigation_mover_read(&fixture,member,unkeyed);
+    GAME_CHECK(view.navigation.locked && qa_actor_id_equal(view.activation,master));
+    view=navigation_mover_read(&fixture,member,keyed);GAME_CHECK(!view.navigation.locked);
+    view=navigation_mover_read(&fixture,master,(qa_actor_id){0});GAME_CHECK(view.navigation.locked);
+    double count;
+    GAME_CHECK(qa_inventory_count_read(fixture.inventory,keyed,gold,&count,&error) && count==1);
+    fixture.teleport_player=keyed;
+    GAME_CHECK(qa_q1_game_touch(fixture.game,&(qa_touch_contact){.self=member,.other=keyed},&error));
+    GAME_CHECK(qa_inventory_count_read(fixture.inventory,keyed,gold,&count,&error) && count==0);
+    view=navigation_mover_read(&fixture,member,unkeyed);
+    GAME_CHECK(!view.navigation.locked && view.navigation.has_destination);
+    advance(&fixture,2);
+    view=navigation_mover_read(&fixture,member,unkeyed);
+    GAME_CHECK(!view.navigation.locked && !view.navigation.has_destination);
+    bool handled;
+    GAME_CHECK(qa_q1_game_map_relay_mover(fixture.game,master,true,keyed,&handled,&error) && handled);
+    view=navigation_mover_read(&fixture,member,unkeyed);GAME_CHECK(!view.navigation.locked);
+    fixture_destroy(&fixture);
+}
+
+static void navigation_door_activation(qa_q1_edition edition)
+{
+    for(unsigned kind=0;kind<4;++kind) {
+        qa_error error={0};q1_fixture fixture;
+        fixture_create(&fixture,edition,1,true,QA_Q1_ID1);fixture_bind_maps(&fixture);
+        qa_actor_id door,member={0},button={0},relay={0};
+        qa_q1_spawn spawn={.classname="func_door",.speed=100000,.spawnflags=kind==1?4:0,
+            .health=kind==2?10:0,.map_fields=&(qa_q1_map_fields){.model="*0"}};
+        GAME_CHECK(qa_q1_game_spawn(fixture.game,&spawn,&door,&error));
+        if(kind==3) {
+            spawn.targetname="remote-door";
+            GAME_CHECK(qa_q1_game_spawn(fixture.game,&spawn,&member,&error));
+            GAME_CHECK(qa_q1_game_spawn(fixture.game,&(qa_q1_spawn){.classname="trigger_relay",
+                .target="remote-door",.targetname="remote-button"},&relay,&error));
+            GAME_CHECK(qa_q1_game_spawn(fixture.game,&(qa_q1_spawn){.classname="func_button",
+                .target="remote-button",.map_fields=&(qa_q1_map_fields){.model="*0"}},&button,&error));
+        }
+        GAME_CHECK(qa_q1_game_maps_finish(fixture.game,&error));
+        qa_q1_map_mover_view view=navigation_mover_read(&fixture,door,(qa_actor_id){0});
+        GAME_CHECK(view.navigation.locked==(kind!=0));
+        if(kind==2) GAME_CHECK(view.shootable);
+        if(kind==3) {
+            GAME_CHECK(qa_actor_id_equal(view.activation,button) && view.useable && !view.shootable);
+            view=navigation_mover_read(&fixture,member,(qa_actor_id){0});
+            GAME_CHECK(view.navigation.locked && qa_actor_id_equal(view.activation,button));
+        }
+        GAME_CHECK(qa_q1_game_use(fixture.game,door,(qa_actor_id){0},&error));
+        view=navigation_mover_read(&fixture,door,(qa_actor_id){0});GAME_CHECK(!view.navigation.locked);
+        advance(&fixture,2);
+        view=navigation_mover_read(&fixture,door,(qa_actor_id){0});
+        GAME_CHECK(!view.navigation.locked && !view.navigation.has_destination);
+        fixture_destroy(&fixture);
+    }
+}
+
+static void navigation_plat_activation(qa_q1_edition edition)
+{
+    qa_error error={0};q1_fixture fixture;
+    fixture_create(&fixture,edition,1,true,QA_Q1_ID1);fixture_bind_maps(&fixture);
+    qa_actor_id automatic,remote;
+    qa_q1_spawn plat={.classname="func_plat",.speed=100000,
+        .map_fields=&(qa_q1_map_fields){.model="*0",.height=64}};
+    GAME_CHECK(qa_q1_game_spawn(fixture.game,&plat,&automatic,&error));
+    plat.targetname="lower-platform";
+    GAME_CHECK(qa_q1_game_spawn(fixture.game,&plat,&remote,&error));
+    qa_q1_map_mover_view view=navigation_mover_read(&fixture,automatic,(qa_actor_id){0});
+    GAME_CHECK(!view.navigation.locked && view.navigation.kind==QA_NAV_ENTITY_ELEVATOR &&
+        view.navigation.data.elevator.phase==QA_NAV_MOVER_BOTTOM);
+    view=navigation_mover_read(&fixture,remote,(qa_actor_id){0});GAME_CHECK(view.navigation.locked);
+    GAME_CHECK(qa_q1_game_use(fixture.game,remote,(qa_actor_id){0},&error));
+    view=navigation_mover_read(&fixture,remote,(qa_actor_id){0});
+    GAME_CHECK(!view.navigation.locked && view.navigation.has_destination &&
+        view.navigation.data.elevator.phase==QA_NAV_MOVER_DOWN);
+    advance(&fixture,2);
+    view=navigation_mover_read(&fixture,remote,(qa_actor_id){0});
+    GAME_CHECK(!view.navigation.locked && !view.navigation.has_destination &&
+        view.navigation.data.elevator.phase==QA_NAV_MOVER_BOTTOM);
     fixture_destroy(&fixture);
 }
 
@@ -1427,6 +1541,12 @@ void test_q1_gameplay(void)
     donor_check_client();
     navigation_hurt_state(QA_Q1_CLASSIC);
     navigation_hurt_state(QA_Q1_RERELEASE);
+    navigation_key_door(QA_Q1_CLASSIC);
+    navigation_key_door(QA_Q1_RERELEASE);
+    navigation_door_activation(QA_Q1_CLASSIC);
+    navigation_door_activation(QA_Q1_RERELEASE);
+    navigation_plat_activation(QA_Q1_CLASSIC);
+    navigation_plat_activation(QA_Q1_RERELEASE);
     armor_and_protection();
     foreign_shambler_resistance();
     pain_cooldown(1);

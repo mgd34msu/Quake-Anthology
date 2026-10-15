@@ -97,8 +97,8 @@ bool nav_node_allowed(qa_navigation *, qa_actor_id, uint32_t, const qa_nav_route
                       bool *, qa_error *);
 bool nav_edge_allowed(qa_navigation *, qa_nav_workspace *, qa_actor_id, uint32_t,
                       const qa_nav_route_query *, bool *, qa_error *);
-bool nav_entity(qa_navigation *, const qa_nav_edge *, qa_nav_entity_state *, bool *, qa_error *);
-bool nav_boarding(qa_navigation *, uint32_t, bool train, const qa_nav_edge **,
+bool nav_entity(qa_navigation *, qa_actor_id, const qa_nav_edge *, qa_nav_entity_state *, bool *, qa_error *);
+bool nav_boarding(qa_navigation *, qa_actor_id, uint32_t, bool train, const qa_nav_edge **,
                   qa_nav_entity_state *, qa_nav_train_ride *, bool *, qa_error *);
 bool nav_route_point(qa_nav_route *, qa_vec3, qa_error *);
 void nav_prediction_close(nav_prediction *);

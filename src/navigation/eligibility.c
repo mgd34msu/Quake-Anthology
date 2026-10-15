@@ -107,7 +107,7 @@ bool nav_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t index,
                 const qa_nav_edge *edge = n->graph->edges + n->graph->outgoing[i];
                 qa_nav_entity_state source;
                 bool found;
-                if (!nav_entity(n, edge, &source, &found, e)) return false;
+                if (!nav_entity(n, actor, edge, &source, &found, e)) return false;
                 if (found && source.locked) return true;
             }
         }
@@ -148,12 +148,12 @@ bool qa_navigation_node_allowed(qa_navigation *n, qa_actor_id actor, uint32_t no
     nav_refresh(n);
     return nav_node_allowed(n, actor, index, q, false, allowed, e);
 }
-bool nav_entity(qa_navigation *n, const qa_nav_edge *edge, qa_nav_entity_state *out, bool *found,
+bool nav_entity(qa_navigation *n, qa_actor_id actor, const qa_nav_edge *edge, qa_nav_entity_state *out, bool *found,
                 qa_error *e) {
     *found = false;
     if (!edge->has_entity || n->services.entity == NULL)
         return true;
-    if (!n->services.entity(n->services.context, &edge->entity, out, found, e))
+    if (!n->services.entity(n->services.context, actor, &edge->entity, out, found, e))
         return false;
     if (*found &&
         (!qa_bounds_valid(out->bounds) || !qa_vec_finite(out->velocity) ||
@@ -193,13 +193,13 @@ bool nav_edge_allowed(qa_navigation *n, qa_nav_workspace *w, qa_actor_id actor, 
     const qa_nav_edge *boarding;
     qa_nav_train_ride ride;
     bool has_elevator, has_train, has_source;
-    if (!nav_boarding(n, edge->to, false, &boarding, &elevator, &ride, &has_elevator, e))
+    if (!nav_boarding(n, actor, edge->to, false, &boarding, &elevator, &ride, &has_elevator, e))
         return false;
-    if (!nav_boarding(n, edge->to, true, &boarding, &train, &ride, &has_train, e))
+    if (!nav_boarding(n, actor, edge->to, true, &boarding, &train, &ride, &has_train, e))
         return false;
     bool awaiting_train = has_train &&
         !qa_navigation_train_at_stop(&train,&ride.boarding,&n->graph->view.profile);
-    if (!nav_entity(n, edge, &source, &has_source, e))
+    if (!nav_entity(n, actor, edge, &source, &has_source, e))
         return false;
     if (edge->mode == QA_NAV_MOVER && has_source && source.kind == QA_NAV_ENTITY_TRAIN &&
         source.data.train.running &&

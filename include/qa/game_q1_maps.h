@@ -178,7 +178,7 @@ bool qa_q1_game_map_horde_manager_read(qa_q1_game *, qa_actor_id, qa_string_id *
 /* Stops are detached into caller storage and remain valid until that storage
  * is reused. Reserve registry capacity; no source state or save payload is
  * allocated. Native activator chains select actual usable/shootable buttons. */
-bool qa_q1_game_map_mover_read(qa_q1_game *, qa_actor_id, qa_q1_map_mover_view *,
+bool qa_q1_game_map_mover_read(qa_q1_game *, qa_actor_id, qa_actor_id traveller, qa_q1_map_mover_view *,
                               qa_nav_train_stop *stops, size_t capacity, size_t *count,
                               bool *found, qa_error *);
 /* Follower-owned adapter for native Rogue actors touching any authored corner. */

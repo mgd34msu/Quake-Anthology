@@ -601,6 +601,9 @@ bool q1_map_trigger_use(qa_q1_game *, q1_actor *, qa_actor_id other, qa_actor_id
                         qa_error *);
 bool q1_map_multi_fire(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_is_mover(q1_map_kind);
+q1_actor *q1_map_door_master(qa_q1_game *,q1_actor *);
+qa_item_id q1_map_door_key(const qa_q1_game *,const q1_actor *);
+bool q1_map_key_available(qa_q1_game *,qa_actor_id,qa_item_id,bool *,qa_error *);
 q1_runtime_name q1_map_door_sound(const q1_actor *, bool moving);
 q1_runtime_name q1_map_secret_sound(const q1_actor *, bool moving);
 q1_runtime_name q1_map_secret_first_sound(const q1_actor *);

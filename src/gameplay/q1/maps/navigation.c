@@ -46,11 +46,10 @@ static bool activator(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *vi
     q1_actor *e = mapped(g, actor);
     if (!e)
         return true;
-    if (e->map->kind == Q1_MAP_DOOR && e->map->pending.mover.group) {
-        actor = q1_ref_actor(g, e->map->pending.mover.group->members[0]);
-        e = mapped(g, actor);
-        if (!e)
-            return true;
+    if (e->map->kind == Q1_MAP_DOOR) {
+        e=q1_map_door_master(g,e);
+        if(!e || !e->map) return true;
+        actor=e->id;
     } else if (e->map->kind == Q1_MAP_MOVEWALL || e->map->kind == Q1_MAP_ROTATE_OBJECT) {
         actor = q1_ref_actor(g, e->owner);
         e = mapped(g, actor);
@@ -157,7 +156,7 @@ static bool train_stops(qa_q1_game *g, qa_actor_id actor, q1_map_kind kind,
     }
     return true;
 }
-static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *out,
+static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_actor_id traveller,qa_q1_map_mover_view *out,
                         qa_nav_train_stop *stops, size_t capacity, size_t *count,
                         bool *found, qa_error *error) {
     q1_actor *e = mapped(g, actor);
@@ -203,7 +202,7 @@ static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *o
     if (kind == QA_Q1_MOVER_ELEVATOR) {
         q1_map_movement motion = state->pending.mover;
         view.navigation.kind = QA_NAV_ENTITY_ELEVATOR;
-        view.navigation.locked = source_kind == Q1_MAP_ROGUE_PLAT && motion.rogue.disabled;
+        view.navigation.locked = source_kind == Q1_MAP_ROGUE_PLAT ? motion.rogue.disabled : !motion.activated;
         view.navigation.has_destination = motion.moving;
         view.navigation.destination = motion.destination;
         view.navigation.data.elevator.origin = body.origin;
@@ -232,9 +231,20 @@ static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *o
         view.navigation.data.train.stops = stops;
         view.navigation.data.train.count = *count;
     } else if (source_kind == Q1_MAP_DOOR) {
-        view.navigation.locked = (e->spawnflags & 24) != 0;
         view.navigation.has_destination = state->pending.mover.moving;
         view.navigation.destination = state->pending.mover.destination;
+        q1_actor *master=q1_map_door_master(g,e);
+        if(!master || !master->map) return true;
+        q1_map_movement motion=master->map->pending.mover;
+        bool closed=motion.position==Q1_MAP_BOTTOM || motion.position==Q1_MAP_DOWN;
+        if(closed) {
+            bool locked=q1_map_text(g,master->targetname) || master->max_health>0 || (master->spawnflags&4);
+            qa_item_id key=master->map->touch_enabled?q1_map_door_key(g,master):0;
+            bool available=false;
+            if(!locked && key && q1_alive(g,traveller) &&
+               !q1_map_key_available(g,traveller,key,&available,error)) return false;
+            view.navigation.locked=locked || (key && !available);
+        }
     }
     if (!mapped(g, actor))
         return true;
@@ -246,7 +256,7 @@ static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *o
     *found = true;
     return true;
 }
-bool qa_q1_game_map_mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *out,
+bool qa_q1_game_map_mover_read(qa_q1_game *g, qa_actor_id actor,qa_actor_id traveller, qa_q1_map_mover_view *out,
                               qa_nav_train_stop *stops, size_t capacity, size_t *count,
                               bool *found, qa_error *error) {
     if (!g || !out || !count || !found || (capacity && !stops))
@@ -258,7 +268,7 @@ bool qa_q1_game_map_mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = mover_read(g, actor, out, stops, capacity, count, found, error);
+    bool ok = mover_read(g, actor, traveller,out, stops, capacity, count, found, error);
     if (!*found)
         *count = 0;
     qa_q1_game_operation_end(&operation);

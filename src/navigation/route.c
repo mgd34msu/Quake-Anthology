@@ -109,7 +109,7 @@ static bool traverse(qa_navigation *n, nav_prediction *prediction, qa_actor_id a
     qa_nav_entity_state source;
     bool has_source;
     *admitted = false;
-    if (!nav_entity(n, edge, &source, &has_source, e))
+    if (!nav_entity(n, actor, edge, &source, &has_source, e))
         return false;
     if (edge->mode == QA_NAV_MOVER && has_source && source.kind == QA_NAV_ENTITY_TRAIN) {
         qa_nav_train_ride ride;
@@ -175,13 +175,13 @@ static bool traverse(qa_navigation *n, nav_prediction *prediction, qa_actor_id a
         qa_nav_entity_state state;
         qa_nav_train_ride ride;
         bool found;
-        if (!nav_boarding(n, edge->to, true, &boarding, &state, &ride, &found, e))
+        if (!nav_boarding(n, actor, edge->to, true, &boarding, &state, &ride, &found, e))
             return false;
         if (found && !qa_navigation_train_at_stop(&state,&ride.boarding,p))
             landing = boarding->has_hint ? boarding->hint.funnel : edge->start;
         else if (edge->source.kind == QA_NAV_ORIGIN_NAV2 ||
                  edge->source.kind == QA_NAV_ORIGIN_NAV3) {
-            if (!nav_boarding(n, edge->to, false, &boarding, &state, &ride, &found, e))
+            if (!nav_boarding(n, actor, edge->to, false, &boarding, &state, &ride, &found, e))
                 return false;
             if (found && state.data.elevator.phase != QA_NAV_MOVER_BOTTOM)
                 landing = edge->start;

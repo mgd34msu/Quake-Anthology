@@ -66,9 +66,13 @@ static bool rearm(qa_q1_game *g, q1_actor *entity, qa_error *error) {
            (qa_combat_set_health(g->services.combat, entity->id, entity->max_health, error) &&
             (!q1_alive(g, entity->id) || q1_map_damageable(g, entity, true, error)));
 }
-static q1_actor *door_master(qa_q1_game *g, q1_actor *entity) {
+q1_actor *q1_map_door_master(qa_q1_game *g, q1_actor *entity) {
     const q1_door_group *group = entity->map->pending.mover.group;
     return group ? q1_entity(g, q1_ref_actor(g, group->members[0])) : entity;
+}
+qa_item_id q1_map_door_key(const qa_q1_game *g,const q1_actor *entity) {
+    return entity->spawnflags&8?g->runtime_names[Q1_NAME_KEY_GOLD]:
+        entity->spawnflags&16?g->runtime_names[Q1_NAME_KEY_SILVER]:0;
 }
 bool q1_map_door_down(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_sound_resource(g, entity->id, g->runtime_names[q1_map_door_sound(entity, true)], 2, 1, 1, error))
@@ -99,7 +103,7 @@ static bool door_up(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return !entity || !entity->map || q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error);
 }
 static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
-    q1_actor *master = door_master(g, entity);
+    q1_actor *master = q1_map_door_master(g, entity);
     if (!master || !master->map)
         return true;
     q1_map_movement *move = &master->map->pending.mover;
@@ -515,28 +519,16 @@ bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         return true;
     }
 }
-static bool horde_key(qa_q1_game *g, qa_actor_id actor, bool gold, bool *has,
-                       qa_error *error) {
-    *has = false;
-    if (!qa_inventory_has(g->services.inventory, actor))
-        return true;
-    qa_item_id item = g->runtime_names[gold ? Q1_NAME_KEY_GOLD : Q1_NAME_KEY_SILVER];
-    qa_inventory_entry entry;
-    qa_error missing = {0};
-    if (!qa_inventory_entry_read(g->services.inventory, actor, item, &entry, &missing)) {
-        if (missing.code == QA_ERROR_NOT_FOUND)
-            return true;
-        if (error)
-            *error = missing;
-        return false;
-    }
-    *has = entry.count != 0;
-    return true;
+bool q1_map_key_available(qa_q1_game *g,qa_actor_id actor,qa_item_id item,bool *has,
+    qa_error *error) {
+    double count;
+    if(!qa_inventory_count_read(g->services.inventory,actor,item,&count,error)) return false;
+    *has=count!=0;return true;
 }
 static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                               qa_error *error) {
     qa_actor_id id = entity->id;
-    q1_actor *master = door_master(g, entity);
+    q1_actor *master = q1_map_door_master(g, entity);
     if (!master || !master->map || !q1_map_player(g, other) || master->map->cooldown > g->time)
         return true;
     qa_actor_id master_id = master->id;
@@ -558,8 +550,8 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     if (!silver && !gold)
         return true;
     bool has_silver = false, has_gold = false;
-    if ((silver && !horde_key(g, other, false, &has_silver, error)) ||
-        (gold && !horde_key(g, other, true, &has_gold, error)))
+    if ((silver && !q1_map_key_available(g, other, g->runtime_names[Q1_NAME_KEY_SILVER], &has_silver, error)) ||
+        (gold && !q1_map_key_available(g, other, g->runtime_names[Q1_NAME_KEY_GOLD], &has_gold, error)))
         return false;
     if (!q1_alive(g, id) || !q1_alive(g, master_id) || !q1_alive(g, other))
         return true;
@@ -595,7 +587,7 @@ static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
 static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (q1_map_horde_present(g))
         return horde_door_touch(g, entity, other, error);
-    q1_actor *master = door_master(g, entity);
+    q1_actor *master = q1_map_door_master(g, entity);
     if (!master || !q1_map_player(g, other) || master->map->cooldown > g->time)
         return true;
     master->map->cooldown = g->time + 2;
@@ -604,9 +596,7 @@ static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_er
         return false;
     if (!q1_alive(g, entity->id) || !q1_alive(g, master->id) || !q1_alive(g, other))
         return true;
-    qa_item_id item = entity->spawnflags & 8    ? g->runtime_names[Q1_NAME_KEY_GOLD]
-                      : entity->spawnflags & 16 ? g->runtime_names[Q1_NAME_KEY_SILVER]
-                                                : 0;
+    qa_item_id item = q1_map_door_key(g,entity);
     if (!item || !qa_inventory_has(g->services.inventory, other))
         return true;
     bool consumed;
@@ -708,7 +698,7 @@ bool q1_map_mover_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outc
         return secret_fire(g, entity, attacker, error);
     if (outcome->result.reaction != QA_REACTION_DEATH)
         return true;
-    q1_actor *target = entity->map->kind == Q1_MAP_DOOR ? door_master(g, entity) : entity;
+    q1_actor *target = entity->map->kind == Q1_MAP_DOOR ? q1_map_door_master(g, entity) : entity;
     if (!target || !target->map ||
         (target->map->kind != Q1_MAP_DOOR && target->map->kind != Q1_MAP_BUTTON))
         return true;

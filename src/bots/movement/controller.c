@@ -33,7 +33,7 @@ static bool travel(bot_travel *t, const bot_reach *reach, bool airborne, qa_bot_
         qa_nav_entity_state platform;
         bool found;
         uint32_t area = type == BOT_WALK ? reach->graph_edge->to : reach->graph_edge->from;
-        if (!qa_navigation_boarding_elevator(t->runtime, area, &edge, &platform, &found, e))
+        if (!qa_navigation_boarding_elevator(t->runtime, t->actor, area, &edge, &platform, &found, e))
             return false;
         if (found && platform.data.elevator.phase != QA_NAV_MOVER_BOTTOM &&
             (type != BOT_WALK || !airborne)) {

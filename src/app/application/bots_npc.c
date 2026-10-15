@@ -468,9 +468,10 @@ static bool graph_for(application_bots_npc *owner,qa_bounds bounds,uint32_t flag
     *out=graph;return true;
 }
 
-static bool advisory_entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_state *out,
+static bool advisory_entity(void *opaque,qa_actor_id traveller,const qa_nav_binding *binding,qa_nav_entity_state *out,
     bool *found,qa_error *error)
 {
+    (void)traveller;
     application_bots_npc *owner=opaque;
     *found=false;
     const qa_nav_graph_view *graph=qa_nav_graph_read(owner->advisory_graph->graph);

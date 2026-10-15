@@ -121,7 +121,7 @@ typedef struct qa_navigation_services {
     qa_world *world;
     uint64_t (*revision)(void *);
     bool (*hazard)(void *, qa_bounds, bool *hazardous, qa_error *);
-    bool (*entity)(void *, const qa_nav_binding *, qa_nav_entity_state *, bool *found, qa_error *);
+    bool (*entity)(void *, qa_actor_id traveller, const qa_nav_binding *, qa_nav_entity_state *, bool *found, qa_error *);
     /* Read the actor's selected continuation for a detached prediction. The
      * navigation owner copies it; prediction never commits gameplay effects. */
     bool (*movement_input)(void *, qa_actor_id, qa_movement_input *, qa_error *);
@@ -231,7 +231,7 @@ bool qa_navigation_trace_collect(qa_navigation *, qa_nav_workspace *, qa_vec3 st
 bool qa_navigation_bbox_areas(qa_navigation *, qa_nav_workspace *, qa_bounds, uint32_t *, size_t,
                               size_t *, qa_error *);
 bool qa_navigation_edge_allowed(qa_navigation *, qa_actor_id, uint32_t, bool *, qa_error *);
-bool qa_navigation_boarding_elevator(qa_navigation *, uint32_t area, const qa_nav_edge **,
+bool qa_navigation_boarding_elevator(qa_navigation *, qa_actor_id, uint32_t area, const qa_nav_edge **,
                                        qa_nav_entity_state *, bool *found, qa_error *);
 typedef struct qa_nav_train_ride {
     qa_nav_train_stop boarding, arrival;

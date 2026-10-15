@@ -135,7 +135,7 @@ static bool fit_native_nodes(qa_nav_graph *g, const qa_nav_source_view *asset,
                 .bounds = body.absolute_bounds};
             qa_nav_entity_state entity;
             bool found;
-            if (!s->entity(s->context, &binding, &entity, &found, e))
+            if (!s->entity(s->context, (qa_actor_id){0}, &binding, &entity, &found, e))
                 goto done;
             transient = found && (entity.kind != QA_NAV_ENTITY_GENERIC ||
                 entity.has_destination || !qa_vec_equal(entity.velocity, qa_v3(0, 0, 0)));

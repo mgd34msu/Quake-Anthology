@@ -118,7 +118,7 @@ typedef struct application_bot_mover {
     uint32_t inline_model;
     bool has_inline_model,shootable,useable;
 } application_bot_mover;
-static bool native_mover(application_bots *bots,qa_actor_id actor,application_bot_mover *out,bool *found,qa_error *error) {
+static bool native_mover(application_bots *bots,qa_actor_id actor,qa_actor_id traveller,application_bot_mover *out,bool *found,qa_error *error) {
     qa_application *application=bots->application;*found=false;
     const qa_actor_record *record=qa_actors_get(qa_session_actors(application->session),actor);
     if(!record) return true;
@@ -136,7 +136,7 @@ static bool native_mover(application_bots *bots,qa_actor_id actor,application_bo
         bots->mover_borrowed=true;
         if(provider->kind==APPLICATION_PROVIDER_Q1) {
             qa_q1_map_mover_view view;
-            ok=qa_q1_game_map_mover_read(provider->state.q1,actor,&view,bots->train_stops,bots->train_capacity,&stops,found,error);
+            ok=qa_q1_game_map_mover_read(provider->state.q1,actor,traveller,&view,bots->train_stops,bots->train_capacity,&stops,found,error);
             if(ok && *found) *out=(application_bot_mover){.activation=view.activation,.navigation=view.navigation,
                 .kind=view.kind==QA_Q1_MOVER_ELEVATOR?QA_BOT_MODEL_ELEVATOR:
                     view.kind==QA_Q1_MOVER_TRAIN?QA_BOT_MODEL_TRAIN:view.kind==QA_Q1_MOVER_BOBBING?QA_BOT_MODEL_BOBBING:
@@ -163,7 +163,7 @@ bool application_bot_lift_ground(application_bots *bots,qa_actor_id ground,qa_na
     application_bot_mover mover;
     *found=false;
     bool observed;
-    if(!native_mover(bots,ground,&mover,&observed,error)) return false;
+    if(!native_mover(bots,ground,(qa_actor_id){0},&mover,&observed,error)) return false;
     *found=observed && (mover.kind==QA_BOT_MODEL_ELEVATOR || mover.kind==QA_BOT_MODEL_TRAIN);
     if(*found) *out=mover.navigation;
     return true;
@@ -196,7 +196,7 @@ bool application_bot_travel_model(void *opaque,int32_t model,qa_bot_travel_model
     uint32_t cursor=0;const qa_actor_record *record;
     while(qa_actors_next(actors,&cursor,&record)) {
         qa_actor_id actor=record->id;application_bot_mover mover;bool observed;
-        if(!native_mover(bots,actor,&mover,&observed,error)) return false;
+        if(!native_mover(bots,actor,(qa_actor_id){0},&mover,&observed,error)) return false;
         if(!observed || !mover.has_inline_model || mover.inline_model!=(uint32_t)model) continue;
         qa_body_state body;if(!qa_world_body_read(bots->application->world,actor,&body,error)) return false;
         *out=(qa_bot_travel_model){.actor=actor,.entity=(int32_t)actor.slot,.origin=body.origin,
@@ -209,7 +209,7 @@ bool application_bot_activation(void *opaque,qa_actor_id bot,int32_t number,qa_b
     application_bots *bots=opaque;*found=false;
     qa_actor_id blocker=application_bot_actor(bots,number);if(!blocker.registry) return true;
     application_bot_mover mover;bool observed;
-    if(!native_mover(bots,blocker,&mover,&observed,error)) return false;
+    if(!native_mover(bots,blocker,bot,&mover,&observed,error)) return false;
     if(!observed || !mover.activation.registry || (!mover.shootable && !mover.useable)) return true;
     qa_body_state body,target;
     if(!qa_world_body_read(bots->application->world,blocker,&body,error) ||
@@ -539,7 +539,7 @@ bool application_bot_source_activation(void *opaque,qa_actor_id actor,int32_t bl
     bool okay=activation_construct(&call,blocker,out,bsp_entity,error);
     --bots->calls;qa_bot_runtime_lease_end(bots->runtime);return okay;
 }
-static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_state *out,bool *found,qa_error *error) {
+static bool entity(void *opaque,qa_actor_id traveller,const qa_nav_binding *binding,qa_nav_entity_state *out,bool *found,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
     *found=false;
     const qa_actor_registry *actors=qa_session_actors(application->session);
@@ -547,7 +547,7 @@ static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_stat
     while(qa_actors_next(actors,&cursor,&record)) {
         qa_actor_id actor=record->id;qa_actor_collision collision;
         application_bot_mover mover;bool observed;
-        if(!native_mover(bots,actor,&mover,&observed,error)) return false;
+        if(!native_mover(bots,actor,traveller,&mover,&observed,error)) return false;
         if(observed && ((binding->has_model && mover.has_inline_model && mover.inline_model==(uint32_t)binding->model) ||
                        (!binding->has_model && qa_bounds_overlap(binding->bounds,mover.navigation.bounds)))) {
             *out=mover.navigation;*found=true;return true;
