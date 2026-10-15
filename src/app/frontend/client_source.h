@@ -11,11 +11,22 @@
 
 typedef struct frontend_client_source frontend_client_source;
 bool frontend_client_source_descriptor_equal(const qa_launch_instance *, const qa_launch_instance *);
+typedef struct frontend_client_source_services {
+    void *context;
+    bool (*initialize)(void *, const qa_launch_instance *, qa_cvars *, const qa_command_context *, qa_error *);
+    bool (*install)(void *, const qa_application_client_source *, bool restoring, qa_error *);
+    bool (*connection_current)(void *, const qa_application_client_source *);
+    bool (*entity_current)(void *, const qa_application_client_source *, uint32_t, uint64_t *);
+    qa_command_fallback command, forward;
+    bool (*retirement_current)(void *, const qa_application_client_source *);
+    void (*released)(void *);
+} frontend_client_source_services;
 typedef struct frontend_client_source_options {
     qa_launch_client_metadata metadata;
     qa_network_runtime *runtime;
     uint32_t physical_seat;
     qa_command_context input_origin;
+    frontend_client_source_services services;
     void *context;
     /* Registers the genuine selected CLIENT declarations on its typed view.
      * Restoration replays declarations while the common table retains values. */
@@ -27,8 +38,6 @@ typedef struct frontend_client_source_options {
      * calls it before rebinding saved registrations, without running config. */
     bool (*install)(void *, const qa_application_client_source *, bool restoring, qa_error *);
     void (*print)(void *, const qa_command_context *, const char *);
-    bool (*connection_current)(void *, const qa_application_client_source *);
-    bool (*entity_current)(void *, const qa_application_client_source *, uint32_t, uint64_t *);
     qa_command_fallback command, forward;
     bool (*allow_command)(void *, const qa_command_invocation *);
     bool (*read_script)(void *, const qa_command_context *, const char *, qa_bytes *, void **, qa_error *);
@@ -40,7 +49,6 @@ typedef struct frontend_client_source_options {
     void (*released)(void *);
     bool (*configuration_advance)(void *,const qa_application_client_source *,
         qa_application_client_preparation *,bool *,qa_error *);
-    bool (*retirement_current)(void *,const qa_application_client_source *);
 } frontend_client_source_options;
 typedef struct frontend_client_source_view {
     const frontend_client_source *owner;

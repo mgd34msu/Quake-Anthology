@@ -123,35 +123,17 @@ static bool retirement(void *context,const qa_application_client_source *source)
 static bool entity(void *context,const qa_application_client_source *source,uint32_t number,uint64_t *generation)
 { frontend_network_q1_client *o=context; return connection(o,source) && o->source &&
     frontend_remote_q1_source_entity_current(o->source,number,generation); }
-static void print(void *context,const qa_command_context *command,const char *text)
-{ frontend_network_q1_client *o=context; frontend_console_print(o->options.frontend,command,text); }
 static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cvars *variables,
     const qa_command_context *command,qa_error *error)
 {
     frontend_network_q1_client *o=context;
-    return parent(o) && frontend_remote_q1_source_defaults(variables,command->owner,command->seat,error) &&
-        (!o->options.configuration.initialize || o->options.configuration.initialize(
-            o->options.configuration.context,descriptor,variables,command,error));
-}
-static bool configure(void *context,const qa_application_client_source *source,bool *ready,qa_error *error)
-{ frontend_network_q1_client *o=context; return parent(o) && o->options.configuration.configure(
-    o->options.configuration.context,source,ready,error) && parent(o); }
-static bool configuration_advance(void *context,const qa_application_client_source *source,
-    qa_application_client_preparation *token,bool *ready,qa_error *error)
-{
-    frontend_network_q1_client *o=context;
-    return parent(o)&&o->options.configuration.configuration_advance(
-        o->options.configuration.context,source,token,ready,error)&&parent(o);
+    (void)descriptor;
+    return parent(o) && frontend_remote_q1_source_defaults(variables,command->owner,command->seat,error);
 }
 static qa_command_result forward(void *context,const qa_command_invocation *command,qa_error *error)
 {
     frontend_network_q1_client *o=context;
     if(!parent(o)) return QA_COMMAND_FAILED;
-    if(o->options.configuration.forward) {
-        qa_command_result result=o->options.configuration.forward(o->options.configuration.context,command,error);
-        if(result!=QA_COMMAND_UNHANDLED) return result;
-        if(!parent(o)) return QA_COMMAND_FAILED;
-    }
     if(!o->source) return QA_COMMAND_UNHANDLED;
     frontend_remote_q1_source_view view;
     if(!frontend_remote_q1_source_read(o->source,&view,error)) return QA_COMMAND_FAILED;
@@ -174,30 +156,8 @@ static qa_command_result forward(void *context,const qa_command_invocation *comm
     return qa_network_q1_client_command(o->options.runtime,o->client,text,error)?
         QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }
-static qa_command_result command(void *context,const qa_command_invocation *invocation,qa_error *error)
-{ frontend_network_q1_client *o=context; return o->options.configuration.command?
-    o->options.configuration.command(o->options.configuration.context,invocation,error):QA_COMMAND_UNHANDLED; }
-static bool allow(void *context,const qa_command_invocation *invocation)
-{ frontend_network_q1_client *o=context; return !o->options.configuration.allow_command ||
-    o->options.configuration.allow_command(o->options.configuration.context,invocation); }
-static bool script(void *context,const qa_command_context *origin,const char *path,
-    qa_bytes *out,void **lease,qa_error *error)
-{ frontend_network_q1_client *o=context; return o->options.configuration.read_script(
-    o->options.configuration.context,origin,path,out,lease,error); }
-static void script_release(void *context,void *lease)
-{ frontend_network_q1_client *o=context; o->options.configuration.release_script(o->options.configuration.context,lease); }
-static void script_complete(void *context,const qa_command_context *origin,const char *path,bool success)
-{ frontend_network_q1_client *o=context; o->options.configuration.script_complete(
-    o->options.configuration.context,origin,path,success); }
-static bool programme_retire(void *context,const qa_application_client_source *source,qa_error *error)
-{ frontend_network_q1_client *o=context; return o->options.configuration.retire(
-    o->options.configuration.context,source,error); }
 static void programme_released(void *context)
-{
-    frontend_network_q1_client *o=context;
-    o->configuration_released=true;
-    o->options.configuration.released(o->options.configuration.context);
-}
+{ frontend_network_q1_client *o=context; o->configuration_released=true; }
 static bool pending_invocation(frontend_network_q1_client *o,const qa_command_invocation *call,qa_error *error)
 {
     frontend_client_source_view view; qa_command_context expected;
@@ -327,8 +287,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
         source->context.receiver,source->context.receiver,true,center_command,o,error)) return false;
     if(!qa_console_register_owned(source->context.console,"bf","Flash the actual CLIENT bonus palette",
         source->context.receiver,source->context.receiver,true,bonus_command,o,error)) return false;
-    if(o->options.configuration.install && !o->options.configuration.install(
-        o->options.configuration.context,source,restoring,error)) return false;
+    (void)restoring;
     for (qa_q1_chat_mode mode=QA_Q1_CHAT_ALL;mode<QA_Q1_CHAT_UNKNOWN;++mode) {
         const char *name=qa_q1_chat_command_name(source->context.command.dialect,mode);
         if (name && !qa_console_register_owned(source->context.console,name,NULL,
@@ -355,16 +314,10 @@ static bool install(void *context,const qa_application_client_source *source,boo
 static frontend_client_source_options physical_options(frontend_network_q1_client *o)
 {
     frontend_client_source_options c=o->options.configuration;
-    c.context=o; c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
-    c.initialize=initialize; c.configure=configure; c.install=install; c.print=print;
-    c.connection_current=connection; c.retirement_current=retirement;
-    c.entity_current=entity; c.command=command; c.forward=forward;
-    c.allow_command=allow;
-    if(c.read_script) { c.read_script=script; c.release_script=script_release; }
-    if(c.script_complete) c.script_complete=script_complete;
-    if(c.retire) c.retire=programme_retire;
-    if(c.released) c.released=programme_released;
-    if(c.configuration_advance) c.configuration_advance=configuration_advance;
+    c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
+    c.services=(frontend_client_source_services){.context=o,.initialize=initialize,.install=install,
+        .connection_current=connection,.retirement_current=retirement,.entity_current=entity,
+        .forward=forward,.released=programme_released};
     return c;
 }
 static bool skin_current(void *context,const frontend_remote_q1_domain *expected,qa_error *error)
@@ -402,7 +355,7 @@ static bool skin_print(void *context,const char *text,qa_error *error)
 {
     frontend_network_q1_client *o=context; frontend_client_source_view view;
     if(!parent(o) || !frontend_client_source_read(o->physical,&view,error)) return false;
-    print(o,&view.source.context.command,text); return parent(o);
+    frontend_console_print(o->options.frontend,&view.source.context.command,text); return parent(o);
 }
 static bool load_content(void *context,const qa_application_client_source *source,
     const qa_nq_serverinfo *nq,const qa_qw_serverdata *qw,frontend_remote_q1_content *out,qa_error *error)
@@ -430,7 +383,7 @@ static bool disconnected(void *context,const qa_application_client_source *sourc
 {
     frontend_network_q1_client *o=context; (void)error;
     if(!parent(o) || !source || !reason) return false;
-    print(o,&source->context.command,reason); snprintf(o->reason,sizeof(o->reason),"%s",reason);
+    frontend_console_print(o->options.frontend,&source->context.command,reason); snprintf(o->reason,sizeof(o->reason),"%s",reason);
     o->retired=true; return true;
 }
 static bool demo_sample_seconds(void *context, const qa_application_client_source *source, double *out, qa_error *error)

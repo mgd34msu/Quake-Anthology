@@ -116,24 +116,24 @@ static bool connection_current(void *context, const qa_application_client_source
     frontend_client_source *s = context;
     if (!linked(s) || s->closing || s->calls == UINT_MAX) return false;
     ++s->calls;
-    bool ok = s->options.connection_current(s->options.context, source);
+    bool ok = s->options.services.connection_current(s->options.services.context, source);
     --s->calls; return ok;
 }
 static bool retirement_custody(void *context,const qa_application_client_source *source)
 {
     frontend_client_source *s=context;
-    if(!linked(s)||s->closing||s->calls==UINT_MAX||!s->options.retirement_current) return false;
+    if(!linked(s)||s->closing||s->calls==UINT_MAX||!s->options.services.retirement_current) return false;
     ++s->calls;
-    bool held=s->options.retirement_current(s->options.context,source);
+    bool held=s->options.services.retirement_current(s->options.services.context,source);
     --s->calls; return held;
 }
 static bool entity_current(void *context, const qa_application_client_source *source,
     uint32_t number, uint64_t *generation)
 {
     frontend_client_source *s = context;
-    if (!linked(s) || s->closing || s->calls == UINT_MAX || !s->options.entity_current) return false;
+    if (!linked(s) || s->closing || s->calls == UINT_MAX || !s->options.services.entity_current) return false;
     ++s->calls;
-    bool ok = s->options.entity_current(s->options.context, source, number, generation);
+    bool ok = s->options.services.entity_current(s->options.services.context, source, number, generation);
     --s->calls; return ok;
 }
 static bool active(void *context, const qa_command_context *command)
@@ -198,8 +198,12 @@ static qa_command_result command(void *context, const qa_command_invocation *inv
 {
     frontend_client_source *s = context;
     if (!active(s, &invocation->context)) return QA_COMMAND_FAILED;
-    if (!s->options.command) return QA_COMMAND_UNHANDLED;
-    ++s->calls; qa_command_result result = s->options.command(s->options.context, invocation, error); --s->calls;
+    ++s->calls;
+    qa_command_result result = s->options.command ?
+        s->options.command(s->options.context, invocation, error) : QA_COMMAND_UNHANDLED;
+    if (result == QA_COMMAND_UNHANDLED && s->options.services.command)
+        result = s->options.services.command(s->options.services.context, invocation, error);
+    --s->calls;
     return result;
 }
 static qa_command_result forward(void *context, const qa_command_invocation *invocation, qa_error *error)
@@ -215,10 +219,15 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
         qa_application_command_context_active(s->frontend->application,&invocation->context) &&
         qa_application_client_current(s->frontend->application,&s->application);
     if (!invocation || (!active(s, &invocation->context) && !engine)) return QA_COMMAND_FAILED;
-    if (!s->options.forward || !s->application.client.owner) return QA_COMMAND_UNHANDLED;
+    if ((!s->options.forward && !s->options.services.forward) || !s->application.client.owner) return QA_COMMAND_UNHANDLED;
     if (!connection_current(s, &s->application))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "CLIENT forwarding lost its actual connection"), QA_COMMAND_FAILED;
-    ++s->calls; qa_command_result result = s->options.forward(s->options.context, invocation, error); --s->calls;
+    ++s->calls;
+    qa_command_result result = s->options.forward ?
+        s->options.forward(s->options.context, invocation, error) : QA_COMMAND_UNHANDLED;
+    if (result == QA_COMMAND_UNHANDLED && s->options.services.forward)
+        result = s->options.services.forward(s->options.services.context, invocation, error);
+    --s->calls;
     return result;
 }
 static qa_application_client_options app_options(frontend_client_source *s)
@@ -229,18 +238,18 @@ static qa_application_client_options app_options(frontend_client_source *s)
         .console = s->console, .cvars = registry(s), .command = s->command,
         .owner = {.context = s, .retain = retain, .release = app_release,
             .current = physical_current, .idle = physical_idle, .connection_current = connection_current,
-            .entity_current = s->options.entity_current ? entity_current : NULL,
-            .retirement_current=s->options.retirement_current?retirement_custody:NULL}};
+            .entity_current = s->options.services.entity_current ? entity_current : NULL,
+            .retirement_current=s->options.services.retirement_current?retirement_custody:NULL}};
 }
 static uint32_t capabilities(const frontend_client_source_options *o)
 {
-    return (o->initialize ? 1u : 0u) | (o->configure ? 2u : 0u) | (o->print ? 4u : 0u) |
-        (o->connection_current ? 8u : 0u) | (o->entity_current ? 16u : 0u) |
-        (o->command ? 32u : 0u) | (o->forward ? 64u : 0u) | (o->allow_command ? 128u : 0u) |
-        (o->install ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
+    return ((o->initialize || o->services.initialize) ? 1u : 0u) | (o->configure ? 2u : 0u) | (o->print ? 4u : 0u) |
+        (o->services.connection_current ? 8u : 0u) | (o->services.entity_current ? 16u : 0u) |
+        32u | ((o->forward || o->services.forward) ? 64u : 0u) | (o->allow_command ? 128u : 0u) |
+        ((o->install || o->services.install) ? 2048u : 0u) | (o->read_script ? 4096u : 0u) |
         (o->release_script ? 8192u : 0u) | (o->script_complete ? 16384u : 0u) |
-        (o->retire ? 32768u : 0u) | (o->released ? 65536u : 0u) |
-        (o->configuration_advance ? 131072u : 0u) | (o->retirement_current ? 262144u : 0u);
+        (o->retire ? 32768u : 0u) | ((o->released || o->services.released) ? 65536u : 0u) |
+        (o->configuration_advance ? 131072u : 0u) | (o->services.retirement_current ? 262144u : 0u);
 }
 static bool capabilities_match(const frontend_client_source_options *options, uint32_t saved)
 {
@@ -265,7 +274,9 @@ static bool install_handlers(void *context, const qa_command_context *command, q
 {
     frontend_client_source *s = context;
     (void)command;
-    return s->options.install(s->options.context, &s->application, s->restored_constructor, error) &&
+    return (!s->options.install || s->options.install(s->options.context, &s->application, s->restored_constructor, error)) &&
+        (!s->options.services.install || s->options.services.install(s->options.services.context,
+            &s->application, s->restored_constructor, error)) &&
         (!s->restored_constructor || !s->frontend->tools || frontend_tools_attach_restored(s->frontend, error));
 }
 bool frontend_client_sources_commands_bind(qa_frontend *f,uint32_t physical,qa_error *error)
@@ -284,8 +295,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     if (!f || !f->application || f->capture || f->resource_inventory ||
         (state ? !f->source_restoring : f->source_restoring) || !options || !out || *out ||
         !options->runtime || options->physical_seat >= f->options.seats ||
-        !options->print || !options->connection_current ||
-        (!state && (!options->initialize || !options->configure)) ||
+        !options->print || !options->services.connection_current ||
+        (!state && ((!options->initialize && !options->services.initialize) || !options->configure)) ||
         ((options->read_script != NULL) != (options->release_script != NULL)) ||
         (state && (!metadata || !resolvers || !capabilities_match(options, state->capabilities))) ||
         options->input_origin.script || options->input_origin.actor.registry ||
@@ -338,9 +349,11 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
     if (!qa_application_command_context_active(f->application, &s->command)) {
         frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT constructor lost its actual bound view"); goto done;
     }
-    if (options->initialize) {
+    if (options->initialize || options->services.initialize) {
         ++s->calls;
-        ok = options->initialize(options->context, descriptor(s), registry(s), &s->command, error);
+        ok = (!options->services.initialize || options->services.initialize(options->services.context,
+            descriptor(s), registry(s), &s->command, error)) &&
+            (!options->initialize || options->initialize(options->context, descriptor(s), registry(s), &s->command, error));
         --s->calls;
         if (!ok) goto done;
     }
@@ -358,7 +371,7 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         frontend_fail(error,QA_ERROR_ARGUMENT,"Restored CLIENT retirement lacks its actual disconnect custody"); goto done;
     }
     if (!frontend_client_sources_commands_bind(f,options->physical_seat,error)) goto done;
-    if (options->install) {
+    if (options->install || options->services.install) {
         ++s->calls;
         ok = qa_console_cvar_enter(s->console, &s->command, install_current, s,
             install_handlers, s, error);
@@ -581,6 +594,7 @@ bool frontend_client_source_destroy(frontend_client_source **owned, qa_error *er
     if (s->receiver && !qa_application_client_provider_release(s->frontend->application, s->receiver, error)) return false;
     s->receiver = 0;
     qa_launch_instance_lease_release(s->metadata); s->metadata = NULL;
+    if(s->options.services.released) s->options.services.released(s->options.services.context);
     if(s->options.released) s->options.released(s->options.context);
     frontend_client_source **link = &s->frontend->client_sources;
     while (*link != s) link = &(*link)->next;

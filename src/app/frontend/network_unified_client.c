@@ -107,48 +107,12 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
         break;
     default: return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified CLIENT has no admitted source dialect");
     }
-    return ok && parent(o) && o->options.configuration.initialize(o->options.configuration.context,
-        descriptor,variables,command,e) && parent(o);
-}
-static bool configure(void *context,const qa_application_client_source *source,bool *ready,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return parent(o) && o->options.configuration.configure(o->options.configuration.context,source,ready,e) && parent(o);
-}
-static bool configuration_advance(void *context,const qa_application_client_source *source,
-    qa_application_client_preparation *preparation,bool *complete,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return parent(o)&&o->options.configuration.configuration_advance&&
-        o->options.configuration.configuration_advance(o->options.configuration.context,source,preparation,complete,e)&&parent(o);
-}
-static bool install(void *context,const qa_application_client_source *source,bool restoring,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return parent(o) && (!o->options.configuration.install ||
-        o->options.configuration.install(o->options.configuration.context,source,restoring,e)) && parent(o);
-}
-static void print(void *context,const qa_command_context *command,const char *text)
-{
-    frontend_network_unified_client_service *o=context;
-    if (o->options.configuration.print) o->options.configuration.print(o->options.configuration.context,command,text);
-    else frontend_console_print(o->options.frontend,command,text);
-}
-static qa_command_result command(void *context,const qa_command_invocation *call,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    if (!parent(o)) return QA_COMMAND_FAILED;
-    return o->options.configuration.command?o->options.configuration.command(o->options.configuration.context,call,e):
-        QA_COMMAND_UNHANDLED;
+    return ok && parent(o);
 }
 static qa_command_result forward(void *context,const qa_command_invocation *call,qa_error *e)
 {
     frontend_network_unified_client_service *o=context;
     if (!parent(o) || !call || !call->argc || !call->argv) return QA_COMMAND_FAILED;
-    if (o->options.configuration.forward) {
-        qa_command_result result=o->options.configuration.forward(o->options.configuration.context,call,e);
-        if (result!=QA_COMMAND_UNHANDLED) return result;
-    }
     frontend_client_source_view source;
     if (!o->replica || !frontend_client_source_read(o->physical,&source,e)) return QA_COMMAND_UNHANDLED;
     if (!connection(o,&source.source) || call->console!=source.source.context.console) return QA_COMMAND_FAILED;
@@ -159,50 +123,15 @@ static qa_command_result forward(void *context,const qa_command_invocation *call
     return frontend_remote_unified_command(o->replica,call->argv[first],call->argv+first+1,call->argc-first-1,e)?
         QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
 }
-static bool allow(void *context,const qa_command_invocation *call)
-{
-    frontend_network_unified_client_service *o=context;
-    return parent(o) && (!o->options.configuration.allow_command ||
-        o->options.configuration.allow_command(o->options.configuration.context,call));
-}
-static bool script(void *context,const qa_command_context *origin,const char *path,qa_bytes *out,void **lease,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return o->options.configuration.read_script(o->options.configuration.context,origin,path,out,lease,e);
-}
-static void script_release(void *context,void *lease)
-{
-    frontend_network_unified_client_service *o=context;
-    o->options.configuration.release_script(o->options.configuration.context,lease);
-}
-static void script_complete(void *context,const qa_command_context *origin,const char *path,bool success)
-{
-    frontend_network_unified_client_service *o=context;
-    o->options.configuration.script_complete(o->options.configuration.context,origin,path,success);
-}
-static bool retire(void *context,const qa_application_client_source *source,qa_error *e)
-{
-    frontend_network_unified_client_service *o=context;
-    return !o->options.configuration.retire || o->options.configuration.retire(o->options.configuration.context,source,e);
-}
 static void released(void *context)
-{
-    frontend_network_unified_client_service *o=context;
-    o->configuration_released=true;
-    if (o->options.configuration.released) o->options.configuration.released(o->options.configuration.context);
-}
+{ frontend_network_unified_client_service *o=context; o->configuration_released=true; }
 static frontend_client_source_options physical_options(frontend_network_unified_client_service *o)
 {
     frontend_client_source_options c=o->options.configuration;
-    c.context=o; c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
-    c.initialize=initialize; c.configure=configure; c.install=install; c.print=print;
-    if(c.configuration_advance) c.configuration_advance=configuration_advance;
-    c.connection_current=connection;c.retirement_current=frontend_network_unified_client_retirement_current;
-    c.entity_current=NULL; c.command=command; c.forward=forward;
-    c.allow_command=allow;
-    if (c.read_script) { c.read_script=script; c.release_script=script_release; }
-    if (c.script_complete) c.script_complete=script_complete;
-    c.retire=retire; c.released=released;
+    c.runtime=o->options.runtime; c.physical_seat=o->options.physical_seat;
+    c.services=(frontend_client_source_services){.context=o,.initialize=initialize,
+        .connection_current=connection,.retirement_current=frontend_network_unified_client_retirement_current,
+        .forward=forward,.released=released};
     return c;
 }
 static bool domain_namespace(const frontend_network_unified_client_service *o,
