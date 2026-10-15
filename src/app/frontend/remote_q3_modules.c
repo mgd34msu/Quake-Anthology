@@ -136,6 +136,7 @@ static bool initial_entered(void *context, const frontend_network_client_attempt
         qa_net_address_equal(&held->endpoint, &attempt->endpoint, true) &&
         same_source(&held->source, &attempt->source) &&
         held->configuration.owner == attempt->configuration.owner &&
+        held->configuration.neutral.owner == attempt->configuration.neutral.owner &&
         held->configuration.console == attempt->configuration.console &&
         held->configuration.cvars == attempt->configuration.cvars &&
         entered(lease, NULL, NULL, error)) ||
@@ -671,10 +672,9 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
     qa_q3_host_options *host = request->services;
     host->frontend_lifetime = lease; host->release_frontend = released;
     qa_application_startup_source tuple;
-    frontend_remote_config *config = frontend_config_store_client(f->config_store, host->cvars);
     frontend_remote_config_view configuration_view;
-    bool ok = config && frontend_remote_config_read(config, &configuration_view) &&
-        frontend_remote_config_current(config, &configuration_view) && configuration_view.ready &&
+    bool ok = frontend_client_configuration_read(f, host->cvars, &configuration_view, error) &&
+        frontend_client_configuration_current(&configuration_view) && configuration_view.ready &&
         configuration_view.cvars == host->cvars && configuration_view.physical_seat == physical_seat(owner) &&
         frontend_client_registry_retain(registry(owner), &lease->registry, error) &&
         qa_application_q3_client_configuration_read(owner->application, host->owner, host->role,
@@ -801,7 +801,7 @@ bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q
         !frontend_remote_q3_initial_read(initial, &view, error) ||
         !frontend_network_client_attempt_current(f, &view.attempt) || !f->seats ||
         view.physical_seat >= f->options.seats || view.input != f->seats[view.physical_seat].input ||
-        frontend_config_store_client(f->config_store, view.attempt.source.receiver.cvars) != view.attempt.configuration.owner ||
+        !frontend_client_configuration_current(&view.attempt.configuration) ||
         frontend_client_registry_cvars(view.registry) != view.attempt.source.receiver.cvars)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial source UI requires its actual CLIENT attempt and structural media parent");
     frontend_remote_q3_modules *owner = calloc(1, sizeof(*owner));

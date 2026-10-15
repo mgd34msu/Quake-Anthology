@@ -11,15 +11,18 @@
 typedef struct frontend_neutral_configs frontend_neutral_configs;
 typedef struct frontend_neutral_config frontend_neutral_config;
 typedef struct frontend_config_store frontend_config_store;
+typedef struct frontend_key_profile frontend_key_profile;
 typedef struct frontend_neutral_config_view {
     const frontend_neutral_config *owner;
     qa_application_client_source source;
     qa_cvars *client, *mouse, *movement;
     const qa_input_tuning_handles *input_tuning;
+    const qa_input_tuning_handles *client_input_tuning;
     qa_ruleset_id kind;
     uint32_t physical_seat;
     uint64_t namespace_revision;
     bool ready, published;
+    frontend_key_profile *keys;
 } frontend_neutral_config_view;
 
 frontend_neutral_configs *frontend_neutral_configs_create(qa_frontend *, frontend_config_store *, qa_error *);

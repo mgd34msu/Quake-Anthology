@@ -35,7 +35,8 @@ bool frontend_keys_destroy(frontend_keys *,qa_error *);
  * The caller prepares a real selected-source ConfigStore, independent of HUD
  * and CHARACTER assets. Failure leaves files with the caller. */
 bool frontend_keys_prepare(frontend_keys *,frontend_config_files *,qa_cvars *,
-                           const qa_q3_product_policy *,bool dedicated,frontend_key_profile **,qa_error *);
+                           const qa_q3_product_policy *,bool dedicated,const qa_bytes *restored,
+                           frontend_key_profile **,qa_error *);
 bool frontend_keys_carry(frontend_keys *,const frontend_key_profile *,frontend_config_files *,
                          qa_cvars *,frontend_key_profile **,qa_error *);
 bool frontend_key_profile_retain(frontend_key_profile *,qa_error *);

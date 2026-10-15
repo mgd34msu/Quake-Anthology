@@ -3,6 +3,7 @@
 #include "config_store.h"
 #include "qa/application_q3_factory.h"
 #include "qa/source_frame_time.h"
+#include "neutral_config.h"
 
 typedef struct frontend_remote_configs frontend_remote_configs;
 typedef struct frontend_remote_config frontend_remote_config;
@@ -18,7 +19,15 @@ typedef struct frontend_remote_config_view {
     bool ready,published;
     const qa_source_frame_time_binding *frame_time;
     const qa_input_tuning_handles *q3_input_tuning,*movement_input_tuning;
+    const qa_frontend *frontend;
+    frontend_neutral_config_view neutral;
 } frontend_remote_config_view;
+
+bool frontend_client_configuration_read(const qa_frontend *,const qa_cvars *,
+    frontend_remote_config_view *,qa_error *);
+bool frontend_client_configuration_current(const frontend_remote_config_view *);
+bool frontend_client_configuration_acquire(qa_frontend *,const frontend_remote_config_view *,
+    frontend_client_registry **,qa_error *);
 
 frontend_remote_configs *frontend_remote_configs_create(qa_frontend *,frontend_config_store *,qa_error *);
 bool frontend_remote_configs_destroy(frontend_remote_configs *,qa_error *);

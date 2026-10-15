@@ -86,7 +86,8 @@ static bool stored(void *context,qa_q3_key_product product,qa_error *error)
     profile->busy=false; return ok;
 }
 bool frontend_keys_prepare(frontend_keys *owner,frontend_config_files *files,qa_cvars *cvars,
-    const qa_q3_product_policy *policy,bool dedicated,frontend_key_profile **out,qa_error *error)
+    const qa_q3_product_policy *policy,bool dedicated,const qa_bytes *restored,
+    frontend_key_profile **out,qa_error *error)
 {
     const qa_product *product=files?qa_catalog_product(frontend_config_files_catalog(files),frontend_config_files_product(files)):NULL;
     if (!owner || owner->restoring || !product || product->family!=QA_GAME_Q3 || !cvars ||
@@ -96,8 +97,9 @@ bool frontend_keys_prepare(frontend_keys *owner,frontend_config_files *files,qa_
     if (!profile) return fail(error,QA_ERROR_MEMORY,"Allocating selected Q3 key profile");
     profile->owner=owner; profile->files=files; profile->cvars=cvars; profile->demo=policy->filesystem_restricted;
     profile->dedicated=dedicated; profile->references=1;
-    bool ok=qa_q3_key_create(cvars,dedicated,&profile->state,error) && load(profile,true,error);
-    if (ok && *frontend_config_files_game_directory(files)) ok=load(profile,false,error);
+    bool ok=qa_q3_key_create(cvars,dedicated,&profile->state,error);
+    if (ok) ok=restored?qa_q3_key_restore(profile->state,*restored,error):load(profile,true,error);
+    if (ok && !restored && *frontend_config_files_game_directory(files)) ok=load(profile,false,error);
     if (ok) ok=qa_q3_key_bind_storage(profile->state,stored,profile,error);
     if (!ok) { profile->files=NULL; profile_free(profile); return false; }
     profile->id=++owner->next_id; profile->next=owner->profiles; owner->profiles=profile; *out=profile; return true;

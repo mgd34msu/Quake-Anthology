@@ -25,6 +25,7 @@
 #include "qa/application_native_q3_cvars.h"
 #include "qa/q3_product_policy.h"
 #include "qa/input_release.h"
+#include "keys.h"
 #include "qa/ruleset.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -38,6 +39,9 @@ struct frontend_neutral_config {
     qa_application_client_source source;
     qa_command_context command;
     frontend_config_files *files;
+    frontend_key_profile *keys;
+    uint8_t restored_keys[34];
+    bool has_restored_keys;
     frontend_startup_config *phase;
     qa_application_client_preparation *preparation;
     frontend_authored_bindings *authored;
@@ -46,7 +50,7 @@ struct frontend_neutral_config {
     qa_input_seat *retirement_input;
     qa_input_release *retirement_release;
     qa_cvars *client, *mouse, *movement;
-    qa_input_tuning_handles input_tuning;
+    qa_input_tuning_handles input_tuning,client_input_tuning;
     qa_cvar_archive client_archive, mouse_archive, movement_archive, shared_archive;
     qa_seat_settings settings;
     char *saved_instance;
@@ -436,7 +440,8 @@ static bool declare_client(frontend_neutral_config *row,const qa_launch_instance
                 !qa_cvars_declare_save_policy(client,value.name,QA_CVAR_SAVE_SETTING,e)) return false;
         }
     }
-    return qa_source_frame_time_register(client,command->owner,e);
+    return (command->dialect!=QA_RULESET_Q3 || qa_input_movement_settings_register(client,QA_RULESET_Q3,e)) &&
+        qa_source_frame_time_register(client,command->owner,e);
 }
 static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars *client,
     const qa_command_context *command,qa_error *e)
@@ -492,7 +497,10 @@ static bool initialize(void *context,const qa_launch_instance *selected,qa_cvars
     bool ok=row->mouse && row->movement &&
         qa_input_mouse_settings_register(row->mouse,row->kind,e) &&
         qa_input_movement_settings_register(row->movement,row->kind,e);
-    if (ok) qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
+    if (ok) {
+        qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
+        qa_input_settings_bind(row->mouse,row->client,&row->client_input_tuning);
+    }
     return ok;
 }
 static bool restore_settings_view(frontend_neutral_config *row,qa_cvars **saved,
@@ -539,6 +547,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
             row->movement=row->client;
         } else if (!restore_settings_view(row,&row->movement,(row->kind),false,e)) return false;
         qa_input_settings_bind(row->mouse,row->movement,&row->input_tuning);
+        qa_input_settings_bind(row->mouse,row->client,&row->client_input_tuning);
         row->imported=false;
     }
     const qa_launch_instance *held=descriptor(row);
@@ -546,6 +555,16 @@ static bool install(void *context,const qa_application_client_source *source,boo
         !qa_command_context_equal(&row->command, &source->context.command, QA_COMMAND_CONTEXT_IGNORE_SCRIPT))
         return fail(e,QA_ERROR_ARGUMENT,"Neutral install changed its actual registry constructor");
     row->source=*source; row->attached=true;
+    if (row->dialect==QA_RULESET_Q3 && !row->keys) {
+        qa_q3_product_policy policy;
+        qa_bytes saved={row->restored_keys,sizeof(row->restored_keys)};
+        if (!qa_application_q3_product_policy_read(f->application,&policy) ||
+            !frontend_keys_prepare(f->keys,row->files,row->client,&policy,f->options.dedicated,
+                restoring && row->has_restored_keys?&saved:NULL,&row->keys,e) ||
+            !frontend_key_profile_scope(row->keys,(qa_application_console_scope){
+                source->context.receiver,QA_APPLICATION_CONSOLE_Q3_CGAME,source->context.seat},row->client,e)) return false;
+        memset(row->restored_keys,0,sizeof(row->restored_keys));
+    }
     if (restoring && row->retiring) return true;
     if (!restoring) {
         qa_input_seat *live=f->seats[row->physical_seat].input;
@@ -849,13 +868,17 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
     if (row->dump_registered) qa_console_unregister_context(row->source.context.console,&row->command,"condump",row->command.owner);
     row->write_registered=row->dump_registered=false;
     if (!frontend_startup_config_destroy(row->phase,e)) return false;
+    if (row->keys && frontend_key_profile_registry(row->keys) &&
+        !frontend_key_profile_detach(row->keys,row->client,e)) return false;
     row->phase=NULL; row->retiring=true; return true;
 }
 static bool dispose(frontend_neutral_config *row,qa_error *e)
 {
     if (row->running || row->preparation || row->retirement_release ||
         row->bindings || row->phase ||
-        (row->files && !frontend_config_files_destroy(row->files,e))) return false;
+        (row->keys?!frontend_key_profile_release(row->keys,e):
+            (row->files && !frontend_config_files_destroy(row->files,e)))) return false;
+    row->keys=NULL;
     row->files=NULL;
     qa_input_seat_destroy(row->input);
     if (row->movement!=row->client) qa_cvars_destroy(row->movement);
@@ -991,6 +1014,10 @@ bool frontend_neutral_config_movement_adopt(frontend_neutral_configs *owner,cons
         return fail(e,QA_ERROR_ARGUMENT,"Movement adoption needs the actual received recipe kind");
     for (frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->attached || row->source.context.cvars!=view) continue;
+        if (!row->ready && !row->running && !row->phase && !row->retiring && !row->imported &&
+            row->dialect==movement && row->movement==row->client) {
+            row->kind=movement; row->movement_selected=true; return true;
+        }
         qa_application_client_source actual;
         if (!row->ready || row->running || row->phase || row->retiring || row->retirement_started ||
             row->imported || !physical(row,&actual))
@@ -1029,15 +1056,14 @@ bool frontend_neutral_config_read(const frontend_neutral_configs *owner,const qa
     if (!owner || !view || !out) return fail(e,QA_ERROR_ARGUMENT,"Neutral read needs its actual CLIENT cvar view");
     for (frontend_neutral_config *row=owner->rows;row;row=row->next) {
         if (!row->attached || row->source.context.cvars!=view) continue;
-        if (row->retiring || row->retirement_started || row->imported || row->running || !row->ready || !row->published || row->phase || row->input ||
-            !qa_cvars_observer_idle(row->client) || !qa_cvars_observer_idle(row->mouse) || !qa_cvars_observer_idle(row->movement))
+        if (row->retiring || row->retirement_started || row->imported || row->running || !row->ready || !row->published || row->phase || row->input)
             return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT settings have not completed their actual programme");
         qa_application_client_source actual;
         settings_source(row,&actual);
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,
             .mouse=row->mouse,.movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
             .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true,
-            .input_tuning=&row->input_tuning};
+            .input_tuning=&row->input_tuning,.client_input_tuning=&row->client_input_tuning,.keys=row->keys};
         return true;
     }
     return fail(e,QA_ERROR_NOT_FOUND,"No neutral configuration owns this CLIENT cvar view");
@@ -1050,7 +1076,7 @@ bool frontend_neutral_config_current(const frontend_neutral_config_view *view)
         actual.movement==view->movement && actual.kind==view->kind && actual.physical_seat==view->physical_seat &&
         actual.namespace_revision==view->namespace_revision &&
         actual.ready==view->ready && actual.published==view->published &&
-        actual.source.context.lifetime==view->source.context.lifetime;
+        actual.source.context.lifetime==view->source.context.lifetime && actual.keys==view->keys;
 }
 bool frontend_neutral_config_retirement_release_ready(const frontend_neutral_configs *owner,
     const qa_input_seat *input,const qa_input_release *release,qa_error *e)
@@ -1094,7 +1120,7 @@ bool frontend_neutral_config_checkpoint_read(const frontend_neutral_configs *own
         *out=(frontend_neutral_config_view){.owner=row,.source=actual,.client=row->client,.mouse=row->mouse,
             .movement=row->movement,.kind=row->kind,.physical_seat=row->physical_seat,
             .namespace_revision=row->namespace_revision,.ready=row->movement_selected,.published=true,
-            .input_tuning=&row->input_tuning};
+            .input_tuning=&row->input_tuning,.client_input_tuning=&row->client_input_tuning,.keys=row->keys};
         return true;
     }
     return fail(e,QA_ERROR_NOT_FOUND,"No retained neutral namespace owns this checkpoint cvar view");
@@ -1247,6 +1273,7 @@ bool frontend_neutral_configs_save(frontend_neutral_configs *owner,qa_error *e)
         if (!row->published) continue;
         frontend_neutral_config_view view;
         if (!frontend_neutral_config_read(owner,row->source.context.cvars,&view,e)) return false;
+        if (row->keys && !frontend_key_profile_save(row->keys,e)) return false;
         const qa_launch_instance *held=descriptor(row);
         const qa_product *product=qa_catalog_product(qa_launch_instance_catalog(held),held->selection.product);
         qa_settings_store input=frontend_config_store_input_store(owner->manager);
@@ -1363,6 +1390,40 @@ static bool header(qa_source_save_io *io,size_t *count)
         qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
+static bool key_fields(frontend_neutral_config *first,qa_source_save_io *io,size_t rows)
+{
+    bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
+    if (!writing && io->offset==io->input.size) return true;
+    size_t count=0;
+    if (writing) for (const frontend_neutral_config *row=first;row;row=row->next)
+        if (row->keys) ++count;
+    if (writing && !count) return true;
+    uint8_t magic[4]={'Q','K','E','Y'};
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QKEY",sizeof(magic)) ||
+        !qa_source_save_count(io,&count,rows)) return false;
+    frontend_neutral_config *row=first;
+    size_t ordinal=0;
+    for (size_t i=0;i<count;++i) {
+        size_t selected=ordinal;
+        if (writing) {
+            while (row && !row->keys) { row=row->next; ++selected; }
+        }
+        if (!qa_source_save_count(io,&selected,rows?rows-1:0)) return false;
+        if (!writing) {
+            row=first;
+            for (size_t j=0;row && j<selected;++j) row=row->next;
+        }
+        if (!row || row->dialect!=QA_RULESET_Q3 || (!writing && row->has_restored_keys)) return false;
+        uint8_t keys[34]={0};
+        if (writing) qa_q3_key_capture(frontend_key_profile_state(row->keys),keys);
+        bool ok=qa_source_save_bytes(io,writing?keys:row->restored_keys,sizeof(keys));
+        memset(keys,0,sizeof(keys));
+        if (!ok) return false;
+        if (!writing) row->has_restored_keys=true;
+        row=row->next; ordinal=selected+1;
+    }
+    return true;
+}
 bool frontend_neutral_configs_checkpoint(const frontend_neutral_configs *owner,
     const qa_application_content_graph *graph,qa_buffer *out,qa_error *e)
 {
@@ -1375,6 +1436,7 @@ bool frontend_neutral_configs_checkpoint(const frontend_neutral_configs *owner,
     }
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,e) && header(&io,&count);
     for (frontend_neutral_config *row=owner->rows;ok && row;row=row->next) ok=row_fields(row,&io,graph);
+    if (ok) ok=key_fields(owner->rows,&io,count);
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -1396,6 +1458,7 @@ bool frontend_neutral_configs_restore(frontend_neutral_configs *owner,qa_applica
         for (frontend_neutral_config *previous=owner->rows;ok && previous!=row;previous=previous->next)
             ok=strcmp(previous->saved_instance,row->saved_instance)!=0 || previous->saved_seat!=row->saved_seat;
     }
+    if (ok) ok=key_fields(owner->rows,&io,count);
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io); return ok;
 }

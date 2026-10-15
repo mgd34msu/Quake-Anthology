@@ -1451,8 +1451,18 @@ static bool registry_inventory(const frontend_config_store *manager,qa_applicati
                 qa_q3_host_console(host,&registry,NULL)!=authority->console || registry!=authority->cvars)
                 return fail(error,QA_ERROR_ARGUMENT,"Host namespaces differ from the retained physical CLIENT slot");
         }
+        frontend_neutral_config_view neutral;
         frontend_remote_config *client=frontend_config_store_client(manager,authority->cvars);
-        if (client) {
+        if (frontend_neutral_config_read(manager->neutral,authority->cvars,&neutral,NULL)) {
+            rows[QA_Q3_HOST_CVAR_CLIENT-1]=neutral.client;
+            rows[QA_Q3_HOST_CVAR_MOUSE-1]=neutral.mouse;
+            rows[QA_Q3_HOST_CVAR_SELECTED_VIEW-1]=neutral.client;
+            rows[QA_Q3_HOST_CVAR_MOVEMENT-1]=neutral.movement;
+            if (parent_game) {
+                game=namespace_game(manager,application,parent_game,error);
+                if (!game) return false;
+            }
+        } else if (client) {
             qa_cvars *hosted=NULL;
             if (!frontend_remote_config_registries(client,application,authority,rows,&hosted,error)) return false;
             game=hosted?frontend_config_store_source(manager,hosted):NULL;
@@ -1571,6 +1581,13 @@ bool frontend_config_host_bindings(void *context,const qa_input_seat *physical,q
         return fail(error,QA_ERROR_ARGUMENT,"Host bindings need their actual retained CLIENT namespace");
     frontend_remote_config *client=frontend_config_store_client(owner->manager,owner->source.cvars);
     if (client) return frontend_remote_config_bindings(client,owner->application,&owner->source,physical,out,error);
+    frontend_neutral_config_view neutral;
+    if (frontend_neutral_config_read(owner->manager->neutral,owner->source.cvars,&neutral,NULL)) {
+        qa_frontend *f=owner->manager->frontend;
+        if (!f->seats || neutral.physical_seat>=f->options.seats ||
+            f->seats[neutral.physical_seat].input!=physical) return false;
+        *out=f->seats[neutral.physical_seat].input; return true;
+    }
     frontend_config_source *game=namespace_game(owner->manager,owner->application,&owner->parent_game,error);
     size_t index=game?seat_index(game,owner->source.scope.seat):0;
     uint32_t ordinal=qa_input_seat_ordinal(physical);
@@ -2544,7 +2561,7 @@ static bool prepare_source_row(void *context,qa_application *application,const q
     if (ok && product->family==QA_GAME_Q3) {
         qa_q3_product_policy policy;
         ok=f->keys && qa_application_q3_product_policy_read(application,&policy) &&
-            frontend_keys_prepare(f->keys,source->files,cvars,&policy,f->options.dedicated,&source->keys,error);
+            frontend_keys_prepare(f->keys,source->files,cvars,&policy,f->options.dedicated,NULL,&source->keys,error);
         if (ok) ok=frontend_key_profile_scope(source->keys,
             (qa_application_console_scope){.provider=(qa_actor_owner)command->owner,.kind=QA_APPLICATION_CONSOLE_Q3_GAME},cvars,error);
         if (!ok && (!error || error->code==QA_OK)) fail(error,QA_ERROR_ARGUMENT,"Q3 configuration needs its genuine shared key and resolved initial policy owners");

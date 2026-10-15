@@ -96,7 +96,7 @@ bool frontend_remote_q3_movie_source_read(frontend_remote_q3 *row,frontend_mater
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Movie binding lacks its retained remote provider");
     *out=view; return true;
 }
-static bool build_resources(frontend_remote_q3 *,frontend_remote_config *,qa_error *);
+static bool build_resources(frontend_remote_q3 *,const frontend_remote_config_view *,qa_error *);
 
 bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_client_domain *domain,
     frontend_remote_q3 **out,qa_error *error)
@@ -115,11 +115,10 @@ bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_c
         if(p->resources.domain.source.receiver.receiver==domain->source.receiver.receiver &&
             p->resources.domain.source.receiver.seat==domain->source.receiver.seat)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote CLIENT resource owner is already retained");
-    frontend_remote_config *configuration=frontend_config_store_client(f->config_store,domain->source.receiver.cvars);
     frontend_remote_config_view settings;
-    if(!configuration || !frontend_remote_config_read(configuration,&settings) || !settings.ready || !settings.published ||
+    if(!frontend_client_configuration_read(f,domain->source.receiver.cvars,&settings,error) || !settings.ready || !settings.published ||
         settings.physical_seat!=ordinal || settings.console!=domain->source.receiver.console ||
-        settings.cvars!=domain->source.receiver.cvars || !frontend_remote_config_current(configuration,&settings))
+        settings.cvars!=domain->source.receiver.cvars || !frontend_client_configuration_current(&settings))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote resources lost their completed canonical CLIENT configuration");
     if(qa_resource_pool_find(qa_vfs_resources(domain->content),qa_resource_id(domain->map))!=domain->map)
         return frontend_fail(error,QA_ERROR_FORMAT,"Native remote map leaves the actual descriptor content pool");
@@ -130,12 +129,12 @@ bool frontend_remote_q3_resources_create(qa_frontend *f,const frontend_network_c
         .input=f->seats[ordinal].input,.map=domain->map};
     row->next=f->remote_q3; f->remote_q3=row; *out=row;
     row->constructing=true;
-    bool ok=build_resources(row,configuration,error);
+    bool ok=build_resources(row,&settings,error);
     row->constructing=false; row->resources_ready=ok;
     return ok;
 }
 static bool build_media(frontend_remote_q3 *row,qa_error *error);
-static bool build_resources(frontend_remote_q3 *row,frontend_remote_config *configuration,qa_error *error)
+static bool build_resources(frontend_remote_q3 *row,const frontend_remote_config_view *configuration,qa_error *error)
 {
     qa_frontend *f=row->frontend;
     const frontend_network_client_domain *domain=&row->resources.domain;
@@ -143,7 +142,7 @@ static bool build_resources(frontend_remote_q3 *row,frontend_remote_config *conf
         !qa_launch_instance_retain_metadata(domain->source.descriptor,&row->descriptor,error)) return false;
     row->resources.descriptor=qa_launch_instance_lease_view(row->descriptor);
     row->resources.domain.source.descriptor=row->resources.descriptor;
-    if(!frontend_remote_config_acquire(configuration,&row->resources.registry,error)) return false;
+    if(!frontend_client_configuration_acquire(f,configuration,&row->resources.registry,error)) return false;
     if(frontend_client_registry_cvars(row->resources.registry)!=domain->source.receiver.cvars)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote resources adopted a different CLIENT registry heap");
     row->map=(qa_resource *)domain->map; qa_resource_retain(row->map);

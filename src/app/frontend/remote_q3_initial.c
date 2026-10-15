@@ -69,7 +69,7 @@ static bool same_attempt(const frontend_network_client_attempt *a,
         a->source.configuration_generation==b->source.configuration_generation &&
         a->source.connection_epoch==b->source.connection_epoch &&
         a->source.descriptor->storage==b->source.descriptor->storage &&
-        a->configuration.owner==b->configuration.owner &&
+        a->configuration.owner==b->configuration.owner && a->configuration.neutral.owner==b->configuration.neutral.owner &&
         a->configuration.console==b->configuration.console && a->configuration.cvars==b->configuration.cvars &&
         x->session==y->session && x->receiver==y->receiver && x->seat==y->seat &&
         x->service_owner==y->service_owner && x->frontend_lifetime==y->frontend_lifetime &&
@@ -136,7 +136,7 @@ static bool build(frontend_remote_q3_initial *owner,qa_error *error)
     v->descriptor=qa_launch_instance_lease_view(owner->descriptor);
     v->attempt.source.descriptor=v->descriptor;
     if(!qa_native_q3_remote_client_product_read(owner->application,&v->attempt.source,&v->product,error) ||
-        !frontend_remote_config_acquire(attempt->configuration.owner,&v->registry,error)) return false;
+        !frontend_client_configuration_acquire(f,&attempt->configuration,&v->registry,error)) return false;
     if(frontend_client_registry_cvars(v->registry)!=attempt->source.receiver.cvars)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Connecting UI acquired a different physical CLIENT heap");
     v->mounts=qa_vfs_clone(v->descriptor->content,error);

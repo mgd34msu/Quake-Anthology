@@ -184,10 +184,12 @@ bool frontend_remote_config_read(const frontend_remote_config *row,frontend_remo
 {
     if (!row || !out || !row->registry || !row->cvars || !row->keys || row->running || row->imported || row->retargeting || !descriptor(row) ||
         frontend_client_registry_cvars(row->registry)!=row->cvars) return false;
-    *out=(frontend_remote_config_view){row,descriptor(row),row->scope,row->console,row->cvars,
-        row->q3_mouse,row->q3_view,row->movement_mouse,row->keys,row->physical_seat,row->movement,
-        row->configured && row->released,row->published,&row->frame_time,
-        &row->q3_input_tuning,&row->movement_input_tuning}; return true;
+    *out=(frontend_remote_config_view){.owner=row,.receiver=descriptor(row),.scope=row->scope,
+        .console=row->console,.cvars=row->cvars,.q3_mouse=row->q3_mouse,.q3_view=row->q3_view,
+        .movement_mouse=row->movement_mouse,.keys=row->keys,.physical_seat=row->physical_seat,
+        .movement=row->movement,.ready=row->configured && row->released,.published=row->published,
+        .frame_time=&row->frame_time,.q3_input_tuning=&row->q3_input_tuning,
+        .movement_input_tuning=&row->movement_input_tuning,.frontend=row->owner->frontend}; return true;
 }
 bool frontend_remote_config_current(const frontend_remote_config *row,const frontend_remote_config_view *view)
 {
@@ -198,6 +200,47 @@ bool frontend_remote_config_current(const frontend_remote_config *row,const fron
         current.q3_mouse==view->q3_mouse && current.q3_view==view->q3_view && current.movement_mouse==view->movement_mouse &&
         current.physical_seat==view->physical_seat && current.movement==view->movement &&
         current.ready==view->ready && current.published==view->published;
+}
+bool frontend_client_configuration_read(const qa_frontend *f,const qa_cvars *cvars,
+    frontend_remote_config_view *out,qa_error *error)
+{
+    if (!f || !out || !cvars) return fail(error,QA_ERROR_ARGUMENT,"Missing CLIENT configuration observation");
+    frontend_remote_config *legacy=frontend_config_store_client(f->config_store,cvars);
+    if (legacy) {
+        if (!frontend_remote_config_read(legacy,out)) return false;
+        out->frontend=f; return true;
+    }
+    frontend_neutral_config_view neutral;
+    if (!frontend_config_store_neutral_read(f->config_store,cvars,&neutral,error)) return false;
+    for (size_t i=0;i<frontend_client_source_count(f);++i) {
+        frontend_client_source_view physical;
+        if (!frontend_client_source_metadata_read(frontend_client_source_at(f,i),&physical,NULL)) continue;
+        if (physical.source.context.cvars!=cvars) continue;
+        const qa_application_client_context *context=&physical.source.context;
+        *out=(frontend_remote_config_view){.receiver=physical.source.descriptor,
+            .scope={context->receiver,QA_APPLICATION_CONSOLE_Q3_CGAME,context->seat},
+            .console=context->console,.cvars=neutral.client,.q3_mouse=neutral.mouse,
+            .q3_view=neutral.client,.movement_mouse=neutral.movement,.keys=neutral.keys,
+            .physical_seat=neutral.physical_seat,.movement=neutral.kind,
+            .ready=physical.ready && neutral.ready,.published=neutral.published,
+            .frame_time=physical.frame_time,.q3_input_tuning=neutral.client_input_tuning,
+            .movement_input_tuning=neutral.input_tuning,.frontend=f,.neutral=neutral};
+        return true;
+    }
+    return fail(error,QA_ERROR_NOT_FOUND,"CLIENT configuration has no physical Source owner");
+}
+bool frontend_client_configuration_current(const frontend_remote_config_view *view)
+{
+    if (!view) return false;
+    if (view->owner) return frontend_remote_config_current(view->owner,view);
+    return view->neutral.owner && frontend_neutral_config_current(&view->neutral);
+}
+bool frontend_client_configuration_acquire(qa_frontend *f,const frontend_remote_config_view *view,
+    frontend_client_registry **out,qa_error *error)
+{
+    if (!frontend_client_configuration_current(view)) return false;
+    if (view->owner) return frontend_remote_config_acquire(view->owner,out,error);
+    return frontend_client_registry_acquire_view(f,view->receiver,view->scope.seat,view->cvars,out,error);
 }
 static bool local_route(const frontend_remote_config *row,const qa_launch_choices *choices,uint32_t *physical)
 {
@@ -693,7 +736,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
             row->files=frontend_config_files_create(catalog,product->id,
                 frontend_global_settings_storage_user_store(f->global_settings_storage),
                 frontend_global_settings_storage_device_store(f->global_settings_storage),error);
-            if (!row->files || !frontend_keys_prepare(f->keys,row->files,row->cvars,&policy,false,&row->keys,error)) return false;
+            if (!row->files || !frontend_keys_prepare(f->keys,row->files,row->cvars,&policy,false,NULL,&row->keys,error)) return false;
         }
         if (!row->keys ||
             !frontend_key_profile_scope(row->keys,row->scope,row->cvars,error)) return false;

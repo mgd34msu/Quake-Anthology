@@ -1345,13 +1345,13 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error)) return false;
     if (client_tuple.console!=host->console)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor changed its retained physical console");
-    frontend_remote_config *client_config=frontend_config_store_client(frontend->config_store,client_tuple.cvars);
     frontend_remote_config_view client_view;
-    if (client_config && (!frontend_remote_config_read(client_config,&client_view) || !client_view.ready ||
+    bool client_config=frontend_client_configuration_read(frontend,client_tuple.cvars,&client_view,NULL);
+    if (client_config && (!client_view.ready ||
         client_view.physical_seat!=ordinal || client_view.scope.provider!=client_tuple.scope.provider ||
-        client_view.scope.kind!=client_tuple.scope.kind || client_view.scope.seat!=seat ||
+        (!client_view.neutral.owner && client_view.scope.kind!=client_tuple.scope.kind) || client_view.scope.seat!=seat ||
         client_view.console!=client_tuple.console || client_view.cvars!=client_tuple.cvars ||
-        !frontend_remote_config_current(client_config,&client_view)))
+        !frontend_client_configuration_current(&client_view)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its prepared physical configuration");
     frontend_config_source *configured=preparation.source_cvars?
         frontend_config_store_source(frontend->config_store,preparation.source_cvars):NULL;
@@ -1452,7 +1452,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     host->render=(qa_q3_host_render_services){lease,render_enter,render_leave};
     host->keys = source->keys;
     if (client_config || configured) {
-        bool acquired=client_config?frontend_remote_config_acquire(client_config,&lease->registry,error):
+        bool acquired=client_config?frontend_client_configuration_acquire(frontend,&client_view,&lease->registry,error):
             frontend_config_source_acquire_seat_registry(configured,seat,&lease->registry,error);
         if (!acquired) return false;
         host->cvars=frontend_client_registry_cvars(lease->registry); lease->cvars=host->cvars;
@@ -1822,19 +1822,19 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
         qa_application_startup_source client_tuple;
         if (!qa_application_q3_client_configuration_read(application,preparation->receiver,preparation->role,preparation->seat,
             &client_tuple,error)) return false;
-        frontend_remote_config *client_config=frontend_config_store_client(f->config_store,client_tuple.cvars);
         frontend_remote_config_view client_view;
+        bool client_config=frontend_client_configuration_read(f,client_tuple.cvars,&client_view,NULL);
         frontend_config_source *configured=preparation->source_cvars?
             frontend_config_store_source(f->config_store,preparation->source_cvars):NULL;
         if ((!client_config && !configured) || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
             lease->cvars!=host->cvars)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its canonical source seat registry");
-        if (client_config && (!frontend_remote_config_read(client_config,&client_view) || !client_view.ready ||
+        if (client_config && (!client_view.ready ||
             client_view.console!=host->console || client_tuple.console!=host->console ||
             client_view.cvars!=host->cvars || client_tuple.cvars!=host->cvars ||
             client_view.scope.provider!=preparation->receiver || client_view.scope.seat!=preparation->seat ||
-            client_view.scope.kind!=client_tuple.scope.kind || client_view.physical_seat!=lease->source->seat ||
-            client_view.keys!=lease->source->key_profile || !frontend_remote_config_current(client_config,&client_view)))
+            (!client_view.neutral.owner && client_view.scope.kind!=client_tuple.scope.kind) || client_view.physical_seat!=lease->source->seat ||
+            client_view.keys!=lease->source->key_profile || !frontend_client_configuration_current(&client_view)))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its decoded physical configuration");
         if (!client_config && preparation->restoring && !frontend_config_source_restore_seat_registry(configured,
             preparation->seat,lease->registry,NULL,error)) return false;
