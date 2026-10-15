@@ -25,7 +25,7 @@ struct qa_font {
     uint32_t truetype_pixel_size, truetype_atlas_width, truetype_atlas_height;
     uint32_t *truetype_coverage;
     size_t truetype_coverage_count;
-    bool has_q3_record;
+    bool has_q3_record, q3_generated;
     qa_q3_font_record q3_record;
 };
 
@@ -34,6 +34,7 @@ struct qa_font_library {
     qa_scene_resources *resources;
     qa_font **fonts;
     size_t font_count, font_capacity;
+    uint64_t q3_save_nonce;
     FT_Library freetype;
     struct qa_font_library_capture *capture;
     qa_font_resource_policy *policy;

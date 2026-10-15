@@ -32,6 +32,8 @@
 #include "qa/localization.h"
 #include "qa/lightstyles.h"
 #include "qa/text.h"
+#include "qa/font.h"
+#include "qa/image.h"
 #include "qa/common_parse.h"
 #include "qa/q2_sound.h"
 #include "qa/hud_q2.h"
@@ -3369,6 +3371,63 @@ static void test_recovery_checkpoints(void)
     CHECK(unlink(path) == 0 && rmdir(directory) == 0);
 }
 
+static int32_t font_export_image(void *context,const qa_scene_image *image)
+{ (void)context; (void)image; return 37; }
+static void font_export_warning(void *context,const char *message)
+{ (void)message; ++*(unsigned *)context; }
+static void test_q3_font_export(const char *executable)
+{
+    qa_error error={0};
+    const char *slash=strrchr(executable,'/');
+    char directory[4096];
+    int length=slash?snprintf(directory,sizeof(directory),"%.*s/engine-data/fonts",
+        (int)(slash-executable),executable):snprintf(directory,sizeof(directory),"engine-data/fonts");
+    CHECK(length>0 && (size_t)length<sizeof(directory));
+    qa_resource_pool *pool=qa_resource_pool_create(&error); CHECK(pool);
+    qa_vfs *files=qa_vfs_create(pool,&error); CHECK(files);
+    qa_mount_id mount;
+    CHECK(qa_vfs_mount_directory(files,directory,QA_ARCHIVE_EXACT,false,&mount,&error));
+    qa_scene_resources *images=qa_scene_resources_create(files,&error); CHECK(images);
+    qa_q3_image_upload_options upload={.color={.device={.color_bits=24},.gamma=1,.intensity=1}};
+    CHECK(qa_scene_resources_source_q3_initialize(images,&upload,&error));
+    qa_font_library *fonts=qa_font_library_create(files,images,&error); CHECK(fonts);
+    qa_font_q3_options options={.point_size=16,.truetype_path="DejaVuSans.ttf",.generate_if_missing=true};
+    const qa_font *font=NULL,*cached=NULL;
+    CHECK(qa_font_q3_register(fonts,&options,&font,&error));
+    qa_fs_root *root=NULL; CHECK(qa_fs_root_temporary_create(&root,&error));
+    unsigned warnings=0;
+    qa_font_q3_save_options save={.root=root,.context=&warnings,.warning=font_export_warning};
+    uint8_t record[QA_Q3_FONT_RECORD_BYTES];
+    CHECK(qa_font_q3_export(font,font_export_image,NULL,&save,record,&error));
+    qa_fs_entry_kind kind;
+    CHECK(qa_fs_root_status(root,"fonts/fontImage_16.dat",&kind,NULL,&error) && kind==QA_FS_MISSING);
+    CHECK(qa_font_q3_register(fonts,&options,&cached,&error) && cached==font);
+    save.enabled=true;
+    CHECK(qa_font_q3_export(cached,font_export_image,NULL,&save,record,&error) && !warnings);
+    qa_fs_file *saved=NULL; qa_fs_identity identity; qa_buffer bytes={0};
+    CHECK(qa_fs_root_file_open(root,"fonts/fontImage_16.dat",&saved,&identity,&error));
+    CHECK(qa_fs_file_read_snapshot(saved,&identity,&bytes,&error)); qa_fs_file_close(saved);
+    CHECK(bytes.size==sizeof(record) && !memcmp(bytes.data,record,sizeof(record)));
+    qa_q3_font_record decoded;
+    CHECK(qa_q3_font_record_decode((qa_bytes){bytes.data,bytes.size},&decoded,&error));
+    CHECK(decoded.glyphs['A'].handle==37 && decoded.glyphs['A'].shader_name[0]);
+    qa_buffer_free(&bytes);
+    CHECK(qa_fs_root_file_open(root,decoded.glyphs['A'].shader_name,&saved,&identity,&error));
+    CHECK(qa_fs_file_read_snapshot(saved,&identity,&bytes,&error)); qa_fs_file_close(saved);
+    qa_image atlas={0};
+    CHECK(qa_image_decode_tga((qa_bytes){bytes.data,bytes.size},QA_IMAGE_FORMAT,&atlas,&error));
+    qa_font_glyph glyph; CHECK(qa_font_find_glyph(font,'A',&glyph));
+    CHECK(atlas.width==glyph.image->levels[0].width && atlas.height==glyph.image->levels[0].height &&
+        atlas.rgba.size==glyph.image->levels[0].bytes &&
+        !memcmp(atlas.rgba.data,glyph.image->levels[0].pixels,atlas.rgba.size));
+    qa_image_free(&atlas); qa_buffer_free(&bytes);
+    save.root=NULL;
+    CHECK(qa_font_q3_export(font,font_export_image,NULL,&save,record,&error) && warnings==1);
+    qa_font_library_destroy(fonts); qa_scene_resources_destroy(images);
+    qa_vfs_destroy(files); qa_resource_pool_destroy(pool);
+    CHECK(qa_fs_root_temporary_dispose(&root,&error));
+}
+
 static void test_q1_original_codec(void)
 {
     qa_error error={0};qa_buffer bytes={0};qa_q1_save_data *decoded=NULL;
@@ -5947,6 +6006,7 @@ int main(int argc, char **argv)
     test_campaign_unit();
     test_recovery_checkpoints();
     test_q1_original_codec();
+    test_q3_font_export(argv[0]);
     test_q1_effect_state();
     test_q1_lightstyle_event();
     test_ordered_lightstyles();

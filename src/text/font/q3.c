@@ -314,6 +314,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name, const 
         qa_font_internal_destroy(font);
         return false;
     }
+    font->q3_generated = true;
     font->q3_record.glyph_scale = 48.0f / (float)point_size;
     set_name(font->q3_record.name, sizeof(font->q3_record.name), cache_name);
 
@@ -450,7 +451,48 @@ bool qa_font_q3_register(qa_font_library *library, const qa_font_q3_options *opt
     return generate_q3(library, cache_name, options->truetype_path, point_size, out, error);
 }
 
+static void save_warning(const qa_font_q3_save_options *save, const char *path,
+                         const qa_error *error) {
+    if (!save->warning)
+        return;
+    char message[1024];
+    snprintf(message, sizeof(message), "RE_RegisterFont: cannot save %s: %s\n", path, error->message);
+    save->warning(save->context, message);
+}
+
+static void save_generated(const qa_font *font, const qa_font_q3_save_options *save,
+                           const uint8_t record[QA_Q3_FONT_RECORD_BYTES]) {
+    if (!save || !save->enabled || !font->q3_generated)
+        return;
+    qa_error error = {0};
+    if (!save->root) {
+        qa_error_set(&error, QA_ERROR_UNSUPPORTED, 0, "No writable user-file owner");
+        save_warning(save, font->q3_record.name, &error);
+        return;
+    }
+    for (size_t i = 0; i < font->image_count; ++i) {
+        const qa_scene_image *image = font->images[i];
+        const qa_scene_image_level *level = image->levels;
+        qa_image pixels = {.width = level->width, .height = level->height,
+            .rgba = {(uint8_t *)level->pixels, level->bytes}};
+        qa_buffer tga = {0};
+        bool ok = qa_image_encode_tga(&pixels, &tga, &error) &&
+            qa_fs_root_replace(save->root, image->name, (qa_bytes){tga.data, tga.size},
+                               ++font->library->q3_save_nonce, &error);
+        qa_buffer_free(&tga);
+        if (!ok) {
+            save_warning(save, image->name, &error);
+            return;
+        }
+    }
+    if (!qa_fs_root_replace(save->root, font->q3_record.name,
+                           (qa_bytes){record, QA_Q3_FONT_RECORD_BYTES},
+                           ++font->library->q3_save_nonce, &error))
+        save_warning(save, font->q3_record.name, &error);
+}
+
 bool qa_font_q3_export(const qa_font *font, qa_font_image_handle image_handle, void *context,
+                       const qa_font_q3_save_options *save,
                        uint8_t out[QA_Q3_FONT_RECORD_BYTES], qa_error *error) {
     if (!font || font->kind != QA_FONT_Q3 || !font->has_q3_record || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Font is not a registered Q3 font");
@@ -463,5 +505,7 @@ bool qa_font_q3_export(const qa_font *font, qa_font_image_handle image_handle, v
         record.glyphs[code].handle = image_handle && image ? image_handle(context, image) : 0;
     }
     bool ok=qa_q3_font_record_encode(&record, out, error);
+    if (ok)
+        save_generated(font, save, out);
     --font->library->callbacks; return ok;
 }

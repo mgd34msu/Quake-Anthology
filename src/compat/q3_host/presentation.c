@@ -246,7 +246,11 @@ static bool font(q3_call *call, qa_error *error)
         return false;
     uint8_t *record = qa_arena_alloc(&call->host->scratch, QA_Q3_FONT_RECORD_BYTES, 1, error);
     font_images images = {.assets = qa_q3_presentation_resources(services->seat)};
-    if (!record || !qa_font_q3_export(registered, font_image, &images, record, error))
+    const qa_cvar_view *save_font = qa_cvars_find(call->host->options.cvars, "r_saveFontData");
+    qa_font_q3_save_options save = {.enabled = save_font && save_font->integer != 0,
+        .root = call->host->options.write_view.root, .context = call->host->options.common.context,
+        .warning = call->host->options.common.print};
+    if (!record || !qa_font_q3_export(registered, font_image, &images, &save, record, error))
         return false;
     if (images.failed) {
         if (error) *error = images.error;

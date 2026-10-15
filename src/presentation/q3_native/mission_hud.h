@@ -21,6 +21,7 @@ typedef struct q3n_mission_hud_options {
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     qa_font_library *fonts;
+    qa_fs_root *font_save_root;
     uint32_t seat;
     void *context;
     int32_t (*milliseconds)(void *);

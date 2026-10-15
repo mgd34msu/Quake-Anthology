@@ -881,6 +881,8 @@ bool frontend_native_q3_make_children(frontend_native_q3 *row,const qa_applicati
             q3n_mission_hud_options options={.application=row->frontend->application,.source=source,
                 .client=row->view.client,.reader=row->view.reader,.recipient=services->client,.content=row->view.source_files,
                 .assets=row->view.assets,.presentation=row->view.presentation,.fonts=row->view.fonts,
+                .font_save_root=qa_catalog_product_write_root(qa_launch_instance_catalog(row->view.source_launch),
+                    row->view.source_launch->selection.product),
                 .seat=row->view.launch_seat,.context=row,
                 .milliseconds=milliseconds,.print=print_row,.key_catcher=key_catcher};
             if(!q3n_mission_hud_create(&options,&row->view.mission,e) || !q3n_mission_hud_bind(row->view.mission,owners.hud,e))return false;

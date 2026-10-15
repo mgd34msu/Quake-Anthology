@@ -189,9 +189,12 @@ static void font(const char *path,int point_size,fontInfo_t *out)
     q3n_mission_hud *o=q3nm_active(); const qa_font *registered=NULL;
     if(o->menus->failed||!q3nm_current(o,o->frame,o->menus->error)) { q3nm_result(false); return; }
     qa_font_q3_options options={.point_size=point_size,.truetype_path=path,.generate_if_missing=true};
+    const qa_cvar_view *save_font=qa_cvars_find(q3nm_registry(o),"r_saveFontData");
+    qa_font_q3_save_options save={.enabled=save_font&&save_font->integer!=0,
+        .root=o->options.font_save_root,.context=o->options.context,.warning=o->options.print};
     uint8_t bytes[QA_Q3_FONT_RECORD_BYTES]; qa_q3_font_record record;
     bool ok=qa_font_q3_register(o->options.fonts,&options,&registered,o->menus->error) &&
-        qa_font_q3_export(registered,font_image,o,bytes,o->menus->error) &&
+        qa_font_q3_export(registered,font_image,o,&save,bytes,o->menus->error) &&
         qa_q3_font_record_decode((qa_bytes){bytes,sizeof(bytes)},&record,o->menus->error) && q3nm_current(o,o->frame,o->menus->error);
     if(ok) { q3nm_font_import(&record,out);
         unsigned slot=out==&o->display.Assets.smallFont?0:out==&o->display.Assets.bigFont?2:1; o->font_holders[slot]=registered; }

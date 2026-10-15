@@ -111,10 +111,16 @@ bool qa_font_find_glyph(const qa_font *, uint32_t codepoint, qa_font_glyph *out)
 /* Q3 records are little-endian on the wire. Export rewrites only the renderer
  * handle field; image_handle may be NULL to write zero handles. */
 typedef int32_t (*qa_font_image_handle)(void *, const qa_scene_image *);
+typedef struct qa_font_q3_save_options {
+    bool enabled;
+    qa_fs_root *root;
+    void *context;
+    void (*warning)(void *, const char *);
+} qa_font_q3_save_options;
 bool qa_q3_font_record_decode(qa_bytes, qa_q3_font_record *, qa_error *);
 bool qa_q3_font_record_encode(const qa_q3_font_record *, uint8_t out[QA_Q3_FONT_RECORD_BYTES],
                               qa_error *);
-bool qa_font_q3_export(const qa_font *, qa_font_image_handle, void *,
+bool qa_font_q3_export(const qa_font *, qa_font_image_handle, void *, const qa_font_q3_save_options *,
                        uint8_t out[QA_Q3_FONT_RECORD_BYTES], qa_error *);
 
 /* This POD is private to one presentation seat. Fonts remain shared. */

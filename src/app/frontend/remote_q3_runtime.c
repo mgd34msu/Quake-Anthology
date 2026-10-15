@@ -821,7 +821,9 @@ static bool create_runtime(frontend_remote_q3 *parent,bool restoring,frontend_re
     if(basis.product==QA_Q3_TEAM_ARENA) {
         q3n_mission_hud_options mission={.application=f->application,.remote_client=services.client,.remote_source=services.source,
             .recipient=basis.client,.content=basis.content,.assets=r->assets,.presentation=o->children.presentation,
-            .fonts=r->fonts,.seat=basis.client.seat,.context=o,.milliseconds=milliseconds,.print=print,.key_catcher=key_catcher};
+            .fonts=r->fonts,.font_save_root=qa_catalog_product_write_root(qa_launch_instance_catalog(basis.descriptor),
+                basis.descriptor->selection.product),
+            .seat=basis.client.seat,.context=o,.milliseconds=milliseconds,.print=print,.key_catcher=key_catcher};
         if(!q3n_mission_hud_create_remote(&mission,&o->children.mission,e) ||
            !q3n_mission_hud_bind(o->children.mission,o->children.hud,e))return false;
     }

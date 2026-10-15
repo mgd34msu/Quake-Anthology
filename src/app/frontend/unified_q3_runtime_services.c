@@ -481,6 +481,8 @@ bool frontend_unified_q3_runtime_services_read(frontend_unified_q3_runtime_servi
     if(v.hud.weapon_warning)v.hud.weapon_warning=hud_warning;
     v.loading.context=o;v.loading.update_screen=update_loading;
     v.commands.context=o;v.commands.content=v.mission.content=o->files;
+    v.mission.font_save_root=qa_catalog_product_write_root(
+        frontend_remote_unified_domain_read(o->options.replica)->catalog,o->content_product->id);
     v.commands.compiled_cvars=v.mission.compiled_cvars=v.loading.compiled_cvars=registry;
     v.commands.compiled_context=v.mission.compiled_context=*origin;
     v.commands.compiled_current=v.mission.compiled_current=compiled_current;
