@@ -4,6 +4,7 @@
 #include "original_internal.h"
 
 bool q2_original_seconds(q2_original_record_io *, const char *, uint16_t, uint64_t *);
+bool q2_original_takedamage(q2_original_record_io *, int32_t *);
 
 typedef struct q2_original_string_field {
     const char *name;

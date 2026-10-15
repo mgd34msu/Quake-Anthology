@@ -1078,14 +1078,9 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
             65535, 65535, 65535, 288, &m->weapon_sound);
     if (okay) okay = monster_deadflag_record(io, &m->dead);
     if (okay && io->reading) {
-        if (io->edition == QA_RULESET_Q2_RERELEASE) {
-            okay =
-                q2_original_scalar(io, "takedamage", Q2_ORIGINAL_BOOL, 512, 512, 512, &m->can_take_damage);
-        } else {
-            int32_t damage = 0;
-            okay = q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, &damage);
-            m->can_take_damage = damage != 0;
-        }
+        int32_t damage = 0;
+        okay = q2_original_takedamage(io, &damage);
+        m->can_take_damage = damage != 0;
         m->death_notified = m->dead;
         m->old_frame = m->frame;
         m->corpse = m->dead && (actor->physics.flags & QA_PHYSICS_DEAD) != 0;

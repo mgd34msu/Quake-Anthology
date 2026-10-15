@@ -16,6 +16,25 @@ static bool malformed(q2_original_record_io *io, size_t position, const char *me
     return false;
 }
 
+bool q2_original_takedamage(q2_original_record_io *io, int32_t *damage)
+{
+    if (io->edition == QA_RULESET_Q2_RERELEASE) {
+        qa_json_id id = io->reading ? q2_original_json_member(io, "takedamage") : QA_JSON_NONE;
+        if (io->reading && qa_json_type(io->document, id) == QA_JSON_NUMBER) {
+            /* Earlier C original-save writers used their classic integer field. */
+            return q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, damage) &&
+                ((*damage == 0 || *damage == 1) ||
+                 malformed(io, id, "Original rerelease takedamage is not boolean"));
+        }
+        bool enabled = *damage != 0;
+        if (!q2_original_scalar(io, "takedamage", Q2_ORIGINAL_BOOL, 512, 512, 512, &enabled))
+            return false;
+        if (io->reading) *damage = enabled ? 1 : 0;
+        return true;
+    }
+    return q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, damage);
+}
+
 /* Source wait fields remain float seconds in both editions. */
 bool q2_original_seconds(q2_original_record_io *io, const char *name,
     uint16_t offset, uint64_t *time)
@@ -554,7 +573,7 @@ bool q2_original_edict_record(qa_q2_game *game, q2_original_record_io *io,
          !q2_original_scalar(io, "health", Q2_ORIGINAL_I32, 480, 480, 480, &health)) ||
         (actor->projectile.kind != Q2_TRAP &&
          !q2_original_scalar(io, "mass", Q2_ORIGINAL_I32, 400, 400, 400, &mass)) ||
-        !q2_original_scalar(io, "takedamage", Q2_ORIGINAL_I32, 512, 512, 512, &damage) ||
+        !q2_original_takedamage(io, &damage) ||
         !q2_original_scalar(io, "flags", Q2_ORIGINAL_U64, 264, 264, 264, &flags) ||
         !q2_original_scalar(io, "svflags", Q2_ORIGINAL_U32, 184, 184, 184, &svflags)) return false;
     if (!io->reading && !visual_record(game, io, actor, engine, &visual)) return false;
