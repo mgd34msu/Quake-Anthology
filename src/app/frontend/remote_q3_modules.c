@@ -692,7 +692,7 @@ static bool prepare(void *context, const qa_application_native_q3_module_prepara
         ok = frontend_network_client_attempt_services(f, &owner->basis.initial.view.attempt,
             &lease->initial_network, lease, initial_entered, &lease->network, error);
     else if (ok)
-        ok = frontend_network_presentation_services(f, &request->source->receiver, &lease->network, error);
+        ok = frontend_network_presentation_services(f, &source(owner)->receiver, &lease->network, error);
     lease->constructor = (qa_q3_host_client_context){host->session, host->role, host->owner,
         host->service_owner, host->console, host->cvars, host->client_time_cvars,
         host->client_time_owner, host->command_context, lease};
