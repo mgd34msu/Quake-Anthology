@@ -14,11 +14,11 @@ enum crt_operation {
     C_INITTERM, C_INITTERM_E, C_TYPEINFO, C_QSORT, C_ACOS, C_SIN, C_CEIL, C_COS,
     C_TRUNC, C_LOG2, C_FLOOR, C_SQRT, C_TAN, C_ATAN2, C_FMOD, C_POW, C_NEXTAFTER,
     C_MODF, C_DCLASS, C_FCLASS, C_SIGN, C_ERRNO, C_STRTOUL, C_ATOI, C_ATOLL, C_ATOF,
-    C_TIME, C_LOCALTIME, C_LOCALE, C_PRINTF, C_SCANF
+    C_TIME, C_LOCALTIME, C_LOCALE, C_PRINTF, C_SCANF, C_PRINTF_S
 };
 typedef struct crt_descriptor {
     const char *family, *name; uint32_t operation; qa_native_value_type result;
-    size_t count; qa_native_value_type parameters[6];
+    size_t count; qa_native_value_type parameters[7];
 } crt_descriptor;
 #define P QA_NATIVE_ADDRESS
 #define I QA_NATIVE_I32
@@ -71,7 +71,8 @@ static const crt_descriptor descriptors[] = {
     D("stdio","putc",WST_PUT,I,2,I,P),
     D("stdio","_flsbuf",WST_PUT,I,2,I,P),
     D("stdio","ungetc",WST_UNGET,I,2,I,P),
-    D("stdio","_fileno",WST_FILENO,I,1,P)
+    D("stdio","_fileno",WST_FILENO,I,1,P),
+    D("stdio","__stdio_common_vsnprintf_s",C_PRINTF_S,I,7,QA_NATIVE_U64,P,Z,Z,P,P,P)
 };
 #undef D
 #undef P
@@ -108,7 +109,7 @@ static void result(qa_native_value *out, qa_native_value_type type, uint64_t val
 bool windows_crt_descriptors(guest_windows *owner, bool bind, qa_error *error)
 {
     for (size_t i = 0; i < sizeof(descriptors) / sizeof(*descriptors); ++i) {
-        const crt_descriptor *entry = descriptors + i; qa_native_value_type types[6];
+        const crt_descriptor *entry = descriptors + i; qa_native_value_type types[7];
         for (size_t j = 0; j < entry->count; ++j) types[j] = entry->parameters[j] == QA_NATIVE_BYTES ?
             owner->target.pointer_bytes == 4 ? QA_NATIVE_U32 : QA_NATIVE_U64 : entry->parameters[j];
         qa_native_value_type return_type = entry->result == QA_NATIVE_BYTES ? owner->target.pointer_bytes == 4 ? QA_NATIVE_U32 : QA_NATIVE_U64 : entry->result;
@@ -261,7 +262,7 @@ static bool sort_transfer(void *context, uint64_t address, void *bytes, size_t w
         qa_native_guest_read(sort->owner->guest, address, bytes, width, error);
 }
 
-static bool printf_service(guest_windows *, const qa_native_value *, qa_arena *, qa_native_value *, qa_error *);
+static bool printf_service(guest_windows *, const qa_native_value *, bool, qa_arena *, qa_native_value *, qa_error *);
 static bool scanf_service(guest_windows *, const qa_native_value *, qa_native_value *, qa_error *);
 
 static bool crt_invoke(windows_service *service, const qa_native_value *args,
@@ -507,7 +508,8 @@ static bool crt_invoke(windows_service *service, const qa_native_value *args,
         result(out, type, crt->time_buffer); return true;
     }
     case C_LOCALE: result(out, type, crt->locale); return true;
-    case C_PRINTF: return printf_service(owner, args, scratch, out, error);
+    case C_PRINTF: case C_PRINTF_S:
+        return printf_service(owner, args, operation == C_PRINTF_S, scratch, out, error);
     case C_SCANF: return scanf_service(owner, args, out, error);
     default: return guest_fail(error, QA_ERROR_ARGUMENT, operation, "invalid Windows CRT descriptor");
     }
@@ -531,20 +533,42 @@ static bool va_next(guest_windows *owner, uint64_t *cursor, size_t bytes, uint64
     *cursor = at + (bytes > width ? bytes : width); return true;
 }
 
-static bool printf_service(guest_windows *owner, const qa_native_value *args, qa_arena *scratch,
-    qa_native_value *out, qa_error *error)
+static bool printf_service(guest_windows *owner, const qa_native_value *args, bool secure,
+    qa_arena *scratch, qa_native_value *out, qa_error *error)
 {
     uint64_t options = integer(args), buffer = integer(args + 1), capacity = integer(args + 2),
-        format = integer(args + 3), cursor = integer(args + 5);
-    if (integer(args + 4) || (options & ~UINT64_C(0x3f)) || (options & 8))
+        maximum = secure ? integer(args + 3) : 0,
+        format = integer(args + (secure ? 4 : 3)), cursor = integer(args + (secure ? 6 : 5));
+    if (integer(args + (secure ? 5 : 4)) || (options & ~UINT64_C(0x3f)) || (options & 8))
         return guest_fail(error, QA_ERROR_UNSUPPORTED, 0, "unsupported UCRT printf locale/options");
-    if (!format || (!buffer && capacity)) {
+    if (!format || (!secure && !buffer && capacity)) {
         if (!windows_write(owner, owner->crt->error_number, 4, 22, error)) return false;
         result(out, QA_NATIVE_I32, UINT32_MAX); return true;
     }
+    if (secure && !maximum && !buffer && !capacity) {
+        result(out, QA_NATIVE_I32, 0); return true;
+    }
+    if (secure && (!buffer || !capacity)) {
+        if (!windows_write(owner, owner->crt->error_number, 4, 22, error)) return false;
+        result(out, QA_NATIVE_I32, UINT32_MAX); return true;
+    }
+    bool count_limited = secure && capacity > maximum;
+    uint64_t render_capacity = count_limited ? maximum + 1 : capacity;
     int32_t returned; uint32_t format_errno;
-    if (!guest_format_render_va(owner->guest,format,cursor,buffer,capacity,options,scratch,
+    if (!guest_format_render_va(owner->guest,format,cursor,buffer,render_capacity,options,scratch,
         &returned,&format_errno,error)) return false;
+    if (secure) {
+        if (!count_limited && !windows_write(owner, buffer + capacity - 1, 1, 0, error)) return false;
+        uint64_t truncate = owner->target.pointer_bytes == 4 ? UINT32_MAX : UINT64_MAX;
+        if (returned == -2 && (count_limited || maximum == truncate)) {
+            if (format_errno == 34) format_errno = 0;
+            returned = -1;
+        } else if (returned < 0) {
+            if (!windows_write(owner, buffer, 1, 0, error)) return false;
+            if (returned == -2) format_errno = 34;
+            returned = -1;
+        }
+    }
     if (format_errno && !windows_write(owner,owner->crt->error_number,4,format_errno,error)) return false;
     result(out,QA_NATIVE_I32,(uint32_t)returned); return true;
 }

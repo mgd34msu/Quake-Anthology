@@ -315,6 +315,44 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
         !trap_contains(o, d->address) || !key_valid(key))
         return guest_fail(e, QA_ERROR_ARGUMENT, 0, "import function needs its actual signature, service identity and owned executable trap");
     import_function *previous = function_at(o, d->id);
+    import_function *occupied = function_address(o, d->address);
+    if (occupied && occupied->unresolved) {
+        import_row *row = key_at(o, key);
+        if (!guest_runtime_imports_idle(o) || (previous && previous != occupied) ||
+            !row || row->kind != GUEST_RUNTIME_IMPORT_UNRESOLVED ||
+            row->id != occupied->descriptor.id || row->address != d->address)
+            return guest_fail(e, QA_ERROR_ARGUMENT, d->id, "import promotion changed its unresolved key or physical trap");
+        import_function replacement = *occupied;
+        replacement.descriptor = *d;
+        memset(&replacement.descriptor.signature, 0, sizeof(replacement.descriptor.signature));
+        replacement.plan = NULL; replacement.unresolved = false; replacement.bound = true;
+        bool okay = signature_copy(&d->signature, &replacement.descriptor.signature, e) &&
+            guest_abi_plan_create(&replacement.descriptor.signature, NULL, 0, NULL, &replacement.plan, e);
+        if (okay && occupied->bound) {
+            okay = qa_native_guest_unbind(o->guest, occupied->descriptor.id, e);
+            if (okay) occupied->bound = false;
+        }
+        qa_native_guest_callback callback = {d->id, d->address, dispatch, o};
+        if (okay) okay = qa_native_guest_bind(o->guest, &callback, e);
+        if (!okay) {
+            signature_free(&replacement.descriptor.signature); guest_abi_plan_destroy(replacement.plan);
+            return false;
+        }
+        uint64_t old_id = occupied->descriptor.id;
+        size_t function_index = (size_t)(occupied - o->functions);
+        size_t first_index = (size_t)(first_row(o, old_id) - o->rows);
+        signature_free(&occupied->descriptor.signature); guest_abi_plan_destroy(occupied->plan);
+        *occupied = replacement;
+        qa_id_index_remove(&o->identities, IMPORT_FUNCTION_ID, old_id);
+        qa_id_index_remove(&o->identities, IMPORT_FIRST_ROW, old_id);
+        qa_id_index_insert(&o->identities, IMPORT_FUNCTION_ID, d->id, function_index);
+        qa_id_index_insert(&o->identities, IMPORT_FIRST_ROW, d->id, first_index);
+        for (size_t i = 0; i < o->count; ++i) if (o->rows[i].id == old_id) {
+            o->rows[i].id = d->id;
+            o->rows[i].kind = GUEST_RUNTIME_IMPORT_FUNCTION;
+        }
+        return true;
+    }
     if (previous) {
         import_row *row = key_at(o, key);
         if (previous->bound || previous->unresolved || !row || row->kind != GUEST_RUNTIME_IMPORT_FUNCTION || row->id != d->id ||
@@ -326,7 +364,7 @@ bool guest_runtime_imports_function(guest_runtime_imports *o, const guest_runtim
         previous->descriptor.invoke = d->invoke; previous->descriptor.variadic = d->variadic;
         previous->descriptor.context = d->context; previous->bound = true; return true;
     }
-    if (function_address(o, d->address))
+    if (occupied)
         return guest_fail(e, QA_ERROR_ARGUMENT, d->address, "import trap slot already belongs to another function");
     import_row row = {.kind = GUEST_RUNTIME_IMPORT_FUNCTION, .id = d->id, .address = d->address, .bytes = 16};
     if (!add_row(o, key, &row, e)) return false;

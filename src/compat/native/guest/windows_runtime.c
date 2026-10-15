@@ -303,6 +303,25 @@ static bool ensure_library(guest_windows *owner, const char *name, qa_error *err
     owner->libraries[owner->library_count++] = (windows_library){text, handle, 0}; return true;
 }
 
+static bool bind_service(guest_windows *owner, windows_service *service, qa_error *error)
+{
+    guest_runtime_import_key key = {.library = service->library,
+        .kind = GUEST_RUNTIME_SYMBOL_NAME, .name = service->name};
+    if (!service->function.address) {
+        guest_runtime_import_view view; qa_error absent = {0};
+        if (guest_runtime_imports_find(owner->imports, &key, &view, &absent)) {
+            if (view.kind != GUEST_RUNTIME_IMPORT_UNRESOLVED)
+                return guest_fail(error, QA_ERROR_FORMAT, view.id, "Windows new service key already belongs to another descriptor");
+            service->function.address = view.address;
+        } else {
+            if (absent.code != QA_ERROR_NOT_FOUND) { if (error) *error = absent; return false; }
+            if (!trap(owner, &service->function.address, error)) return false;
+        }
+    }
+    return ensure_library(owner, service->library, error) &&
+        guest_runtime_imports_function(owner->imports, &key, &service->function, error);
+}
+
 bool windows_service_add(guest_windows *owner, uint64_t id, uint8_t family, uint32_t operation,
     const char *library, const char *name, const qa_native_value_type *types, size_t count,
     qa_native_value_type result, guest_abi_convention convention, bool bind, qa_error *error)
@@ -326,9 +345,7 @@ bool windows_service_add(guest_windows *owner, uint64_t id, uint8_t family, uint
         .invoke = service_invoke, .context = service};
     owner->services[owner->service_count++] = service;
     if (!bind) return true;
-    guest_runtime_import_key key = {.library = service->library, .kind = GUEST_RUNTIME_SYMBOL_NAME, .name = service->name};
-    return trap(owner, &service->function.address, error) && ensure_library(owner, service->library, error) &&
-        guest_runtime_imports_function(owner->imports, &key, &service->function, error);
+    return bind_service(owner, service, error);
 }
 
 const windows_image_record *windows_image_at(const guest_windows *owner, uint64_t id)
@@ -1247,21 +1264,30 @@ static bool codec_owner(windows_codec *io, guest_windows *owner,
         !windows_crt_descriptors(owner,false,io->error) || !windows_msvc_descriptors(owner,false,io->error))) return false;
     size_t services = owner->service_count;
     if (!codec_count(io,&services,16)) return false;
-    size_t immutable_count = owner->service_count;
-    if (io->reading && services != immutable_count && services != immutable_count + 2)
-        return guest_fail(io->error,QA_ERROR_FORMAT,io->offset,"Windows continuation descriptor inventory differs");
-    if (io->reading && services == immutable_count + 2) {
-        qa_native_value_type pointer = QA_NATIVE_ADDRESS; size_t width = owner->target.pointer_bytes;
-        if (!windows_service_add(owner,UINT64_C(0x57494e0400000001),4,1,"quake-runtime.dll","guard-check",NULL,0,
-            QA_NATIVE_VOID,width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,false,io->error) ||
-            !windows_service_add(owner,UINT64_C(0x57494e0400000002),4,2,"quake-runtime.dll","guard-dispatch-check",
-                width == 8 ? &pointer : NULL,width == 8 ? 1 : 0,QA_NATIVE_VOID,
-                width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,false,io->error)) return false;
-    }
+    size_t service_offset = io->offset;
     for (size_t i = 0; i < services; ++i) {
-        windows_service *service = owner->services[i]; uint64_t id = service->function.id;
-        if (!codec_u64(io,&id) || !codec_u64(io,&service->function.address)) return false;
-        if (id != service->function.id) return guest_fail(io->error,QA_ERROR_FORMAT,io->offset,"Windows immutable descriptor identity/order differs");
+        uint64_t id = io->reading ? 0 : owner->services[i]->function.id;
+        uint64_t address = io->reading ? 0 : owner->services[i]->function.address;
+        if (!codec_u64(io,&id) || !codec_u64(io,&address)) return false;
+        if (!io->reading) continue;
+        for (size_t j = 0; j < i; ++j)
+            if (qa_load_u64le(io->input.data + service_offset + j * 16) == id)
+                return guest_fail(io->error,QA_ERROR_FORMAT,id,"Windows saved descriptor identity repeats");
+        windows_service *service = NULL;
+        for (size_t j = 0; j < owner->service_count; ++j)
+            if (owner->services[j]->function.id == id) { service = owner->services[j]; break; }
+        if (!service && (id == UINT64_C(0x57494e0400000001) || id == UINT64_C(0x57494e0400000002))) {
+            qa_native_value_type pointer = QA_NATIVE_ADDRESS;
+            size_t width = owner->target.pointer_bytes;
+            bool dispatch = id == UINT64_C(0x57494e0400000002);
+            if (!windows_service_add(owner,id,4,dispatch ? 2 : 1,"quake-runtime.dll",
+                dispatch ? "guard-dispatch-check" : "guard-check",
+                dispatch && width == 8 ? &pointer : NULL,dispatch && width == 8 ? 1 : 0,
+                QA_NATIVE_VOID,width == 4 ? GUEST_ABI_STDCALL : GUEST_ABI_DEFAULT,false,io->error)) return false;
+            service = owner->services[owner->service_count - 1];
+        }
+        if (!service) return guest_fail(io->error,QA_ERROR_FORMAT,id,"Windows saved callback has no immutable descriptor");
+        service->function.address = address;
     }
     if (!codec_count(io,&owner->library_count,24)) return false;
     if (io->reading && !guest_grow((void **)&owner->libraries,&owner->library_capacity,
@@ -1352,7 +1378,8 @@ static bool records_valid(guest_windows *owner, qa_error *error)
     for (size_t i = 0; i < sizeof(addresses)/sizeof(*addresses); ++i) if (!pointer_value(owner,addresses[i])) return guest_fail(error,QA_ERROR_FORMAT,addresses[i],"Windows pointer exceeds the actual process width");
     for (size_t i = 0; i < owner->service_count; ++i) {
         uint64_t address = owner->services[i]->function.address;
-        if (!address || address % 16 || !pointer_value(owner,address) || address == owner->return_trap)
+        if (!address) continue;
+        if (address % 16 || !pointer_value(owner,address) || address == owner->return_trap)
             return guest_fail(error,QA_ERROR_FORMAT,address,"Windows callback trap identity is invalid");
         for (size_t j = 0; j < i; ++j) if (owner->services[j]->function.address == address)
             return guest_fail(error,QA_ERROR_FORMAT,address,"Windows physical service traps repeat");
@@ -1455,8 +1482,13 @@ static bool registry_valid(const guest_windows *owner, qa_error *error)
         const windows_service *service = owner->services[i];
         guest_runtime_import_key key = {.library=service->library,
             .kind=GUEST_RUNTIME_SYMBOL_NAME,.name=service->name};
-        guest_runtime_import_view view;
-        if (!guest_runtime_imports_find(owner->imports,&key,&view,error)) return false;
+        guest_runtime_import_view view; qa_error absent = {0};
+        if (!guest_runtime_imports_find(owner->imports,&key,&view,&absent)) {
+            if (!service->function.address && absent.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = absent;
+            return false;
+        }
+        if (!service->function.address && view.kind == GUEST_RUNTIME_IMPORT_UNRESOLVED) continue;
         if (view.kind != GUEST_RUNTIME_IMPORT_FUNCTION || view.id != service->function.id ||
             view.address != service->function.address)
             return guest_fail(error,QA_ERROR_FORMAT,service->function.id,
@@ -1530,7 +1562,7 @@ static bool restored_storage(guest_windows *owner, qa_error *error)
             if (!windows_validate_storage(owner,record->tls_block,bytes ? bytes : 1,WINDOWS_STORAGE_TAG,error)) return false;
         }
     }
-    if (!owner->service_count || owner->return_trap > UINT64_MAX - 16 || owner->services[0]->function.address != owner->return_trap + 16 ||
+    if (owner->return_trap > UINT64_MAX - 16 ||
         !executable(owner,owner->return_trap,error)) return guest_fail(error,QA_ERROR_FORMAT,owner->return_trap,"Windows return trap lost its actual import-page owner");
     uint64_t trap_byte;
     if (!windows_read(owner,owner->return_trap,1,&trap_byte,error) || trap_byte != 0xcc)
@@ -1584,12 +1616,14 @@ bool guest_windows_attach(guest_windows *owner, qa_native_guest *guest,
         guest->options.image.target.abi != owner->target.abi || guest->options.image.target.pointer_bytes != owner->target.pointer_bytes)
         return guest_fail(error,QA_ERROR_ARGUMENT,0,"Windows cold attach requires its exact completed guest and retained capability identity");
     owner->guest = guest; owner->capabilities = *capabilities;
-    /* No processor or RAM write occurs. Source-modified IAT/TEB/TLS values stay
-     * authoritative; owner allocations and immutable callback identities prove
-     * the retained process. */
+    /* Qualify the saved process before adding descriptors introduced since its
+     * capture. Source-modified IAT/TEB/TLS values remain authoritative. */
     if (!records_valid(owner,error) || !restored_storage(owner,error) ||
         !guest_runtime_resources_rebind(owner->resources,capabilities->resolve_file,capabilities->context,error) ||
         !guest_runtime_imports_attach(owner->imports,guest,error)) return false;
+    for (size_t i = 0; i < owner->service_count; ++i)
+        if (owner->services[i]->family != 4 && !owner->services[i]->function.address &&
+            !bind_service(owner,owner->services[i],error)) return false;
     owner->detached = false; owner->publication_pending = true; return true;
 }
 
