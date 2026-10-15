@@ -1678,8 +1678,12 @@ bool qa_scene_model_grip_sample(qa_scene_model *model, const qa_scene_model_inpu
         return false;
     }
     *found = false;
+    qa_scene_model *authored=model;
     qa_scene_model_input input = *original;
-    if (!model->grip_defined && !model_replacement_select(&model,&input,error)) return false;
+    if (!model_replacement_select(&model,&input,error)) return false;
+    if (!model->grip_defined && authored->grip_defined) {
+        model=authored; input=*original;
+    }
     if (!model->grip_defined) return true;
     if (model->replacement_source && !input.animation) {
         input.replacement = model->replacement_source;

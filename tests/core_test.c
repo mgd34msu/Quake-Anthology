@@ -58,6 +58,7 @@
 #include "qa/q1_text.h"
 #include "qa/campaign_q1.h"
 #include "qa/scene.h"
+#include "qa/scene_model_save.h"
 #include "qa/render_cpu.h"
 #include "../src/render/resource_index_private.h"
 #include "../src/render/controls_private.h"
@@ -5592,6 +5593,78 @@ static void test_profiler_mode_changes(void)
     CHECK(qa_profiler_destroy(profiler, &error));
 }
 
+static void grip_fixture_release(void *context)
+{ ++*(unsigned *)context; }
+typedef struct grip_fixture_child {
+    qa_scene_model *root,*replacement;
+} grip_fixture_child;
+static bool grip_fixture_bind_child(void *context,qa_scene_model *model,qa_error *error)
+{
+    grip_fixture_child *child=context;
+    if (model==child->root) return true;
+    child->replacement=model;
+    qa_model_transform grip;
+    qa_model_transform_identity(&grip);
+    return qa_scene_model_grip_bind(model,"Weapon",0,NULL,&grip,error);
+}
+static void test_model_grip_replacement_selection(void)
+{
+    qa_error error={0}; qa_strings *strings=NULL;
+    CHECK(qa_strings_create(&strings,&error));
+    qa_scene_resources *resources=qa_scene_resources_create(NULL,&error); CHECK(resources);
+    uint8_t palette[768]={0};
+    qa_scene_image_options images={.family=QA_GAME_Q1,.palette_rgb={palette,sizeof(palette)},
+        .transparent_index=-1};
+    qa_model_vertex vertices[3]={
+        {.position={0,0,0},.normal={0,0,1}},
+        {.position={1,0,0},.normal={0,0,1}},
+        {.position={0,1,0},.normal={0,0,1}}};
+    const uint8_t packed_vertices[]={0,0,0,0, 1,0,0,0, 0,1,0,0};
+    qa_model_mesh mesh={.vertex_count=3,.frame_count=1,.vertices=vertices};
+    qa_model_frame frame={.scale={1,1,1},
+        .packed_vertices={packed_vertices,sizeof(packed_vertices)}};
+    qa_model alias={.format=QA_MODEL_MD2,.mesh_count=1,.meshes=&mesh,.frame_count=1,.frames=&frame};
+    qa_model_bone bone={.name="Weapon",.parent=-1};
+    qa_model_pose pose={.position={10,0,0},.orientation={0,0,0,-1},.scale=1};
+    qa_model skeletal={.format=QA_MODEL_MD5,.bone_count=1,.bones=&bone,.bind_pose=&pose};
+    qa_model_animation animation={.frame_count=1,.joint_count=1,.poses=&pose};
+    qa_model_replacement replacement={.source=&alias,.mesh=&skeletal,.animation=&animation};
+    qa_scene_model *model=NULL;
+    CHECK(qa_scene_model_create(&alias,"carrier.md2",resources,NULL,&images,strings,&model,&error));
+    const uint32_t triangle[]={0,1,2};
+    qa_model_transform grip;
+    qa_model_transform_identity(&grip); grip.origin[0]=2; grip.origin[1]=3; grip.origin[2]=4;
+    CHECK(qa_scene_model_grip_bind(model,NULL,0,triangle,&grip,&error));
+    unsigned released[3]={0};
+    qa_scene_model_content_lease mesh_lease={.context=released,.release=grip_fixture_release},
+        source_lease={.context=released+1,.release=grip_fixture_release},
+        animation_lease={.context=released+2,.release=grip_fixture_release};
+    CHECK(qa_scene_model_replacement_prepare(model,&replacement,&mesh_lease,&source_lease,&animation_lease,&error));
+    CHECK(qa_scene_model_replacement_policy_bind(model,true,50,&replacement,&error));
+    qa_scene_frame scene;
+    CHECK(qa_scene_frame_init(&scene,91,64*1024,&error));
+    qa_scene_model_input input={0}; qa_model_transform_identity(&input.transform);
+    qa_model_transform sampled; bool found=false;
+    CHECK(qa_scene_model_grip_sample(model,&input,&scene,&sampled,&found,&error) && found);
+    CHECK(sampled.origin[0]==2 && sampled.origin[1]==3 && sampled.origin[2]==4);
+    grip_fixture_child child={.root=model};
+    CHECK(qa_scene_model_visit(model,grip_fixture_bind_child,&child,&error) && child.replacement);
+    CHECK(qa_scene_model_grip_sample(model,&input,&scene,&sampled,&found,&error) && found);
+    CHECK(sampled.origin[0]==10 && sampled.origin[1]==0 && sampled.origin[2]==0);
+    input.view.origin=qa_v3(100,0,0);
+    CHECK(qa_scene_model_grip_sample(model,&input,&scene,&sampled,&found,&error) && found);
+    CHECK(sampled.origin[0]==2 && sampled.origin[1]==3 && sampled.origin[2]==4);
+    input.shadow_only=true;
+    CHECK(qa_scene_model_grip_sample(model,&input,&scene,&sampled,&found,&error) && found);
+    CHECK(sampled.origin[0]==10 && sampled.origin[1]==0 && sampled.origin[2]==0);
+    CHECK(qa_scene_model_replacement_policy_update(model,false,50,&error));
+    CHECK(qa_scene_model_grip_sample(model,&input,&scene,&sampled,&found,&error) && found);
+    CHECK(sampled.origin[0]==2 && sampled.origin[1]==3 && sampled.origin[2]==4);
+    qa_scene_frame_destroy(&scene); qa_scene_model_destroy(model);
+    CHECK(released[0]==1 && released[1]==1 && released[2]==1);
+    qa_scene_resources_destroy(resources); qa_strings_destroy(strings);
+}
+
 static void test_source_nonmipped_transparency(void)
 {
     qa_error error = {0};
@@ -8166,6 +8239,7 @@ int main(int argc, char **argv)
     test_shared_input_menu_defaults();
     test_profiler_mode_changes();
     test_source_nonmipped_transparency();
+    test_model_grip_replacement_selection();
     test_cached_world_surface();
     test_retained_patch_levels();
     test_json_caller_storage();
