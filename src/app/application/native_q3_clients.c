@@ -536,7 +536,7 @@ bool application_native_q3_client_connect(application_provider *provider, qa_act
     if (ok && first_time) {
         ok = qa_q3_client_read(provider->state.q3, actor, &client, error);
         if (ok) {
-            snprintf(text, sizeof(text), "print \"%s^7 connected\\n\"", client.netname);
+            snprintf(text, sizeof(text), "print \"%s^7 connected\n\"", client.netname);
             ok = application_native_q3_send_command(provider, -1, text, error) &&
                  source(provider, actor, &slot, error);
         }
@@ -652,7 +652,7 @@ bool application_native_q3_client_begin(application_provider *provider, qa_actor
         ok = qa_q3_client_teleport_event(provider->state.q3, actor, true, error) &&
              source(provider, actor, &slot, error);
         if (ok && game_type != 1) {
-            snprintf(text, sizeof(text), "print \"%s^7 entered the game\\n\"", client.netname);
+            snprintf(text, sizeof(text), "print \"%s^7 entered the game\n\"", client.netname);
             ok = application_native_q3_send_command(provider, -1, text, error) &&
                  source(provider, actor, &slot, error);
         }
