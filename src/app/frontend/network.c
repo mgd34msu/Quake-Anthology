@@ -623,10 +623,13 @@ static bool client_q1_current(void *context, const frontend_network_q1_client *o
     return n->frontend->network == n && client->q1 == owner &&
         (client->runtime != n->runtime || !n->detached_transport);
 }
-static bool local_q2_current(void *context, const frontend_network_q2_client *owner)
+static bool client_q2_current(void *context, const frontend_network_q2_client *owner)
 {
-    const frontend_client_connection *local = context;
-    return local->network->frontend->network == local->network && local->q2 == owner;
+    const frontend_client_connection *client = context;
+    const qa_frontend_network *n = client->network;
+    return n->frontend->network == n && client->q2 == owner &&
+        (client->runtime != n->runtime || !n->detached_transport ||
+         frontend_network_q2_client_importing(owner));
 }
 static bool client_q1_downloads(void *context, bool *allowed, bool *recording,
     bool *playback, qa_error *error)
@@ -659,20 +662,6 @@ static bool client_q1_download_nonce(void *context, uint64_t *nonce, qa_error *e
 {
     frontend_client_connection *local = context;
     return q2_download_nonce(local->network, nonce, error);
-}
-static bool local_download_stage(void *context, qa_fs_root *root, const char *path,
-    qa_fs_stage **out, uint64_t *nonce, qa_error *error)
-{
-    frontend_client_connection *local = context;
-    return q2_download_stage(local->network, root, path, out, nonce, error);
-}
-static bool local_restore_stage(void *context, qa_fs_root *root, const char *path,
-    uint64_t logical_nonce, bool published, qa_bytes prefix, qa_fs_stage **out,
-    uint64_t *nonce, qa_fs_identity *identity, qa_error *error)
-{
-    frontend_client_connection *local = context;
-    return q2_restore_stage(local->network, root, path, logical_nonce, published,
-        prefix, out, nonce, identity, error);
 }
 static qa_network_q1_client_policy q1_policy(qa_net_protocol_id protocol)
 {
@@ -707,6 +696,19 @@ static bool client_connection_q1_create(frontend_client_connection *receiver,
     if (!receiver->q1)
         (void)frontend_config_store_neutral_options_cancel(f->config_store, &client.configuration, NULL);
     return false;
+}
+static bool client_connection_q2_create(frontend_client_connection *receiver,
+    frontend_network_q2_client_options options, qa_error *error)
+{
+    options.frontend = receiver->network->frontend;
+    options.runtime = receiver->runtime;
+    options.physical_seat = receiver->physical;
+    options.seat = receiver->client_seat;
+    options.context = receiver;
+    options.current = client_q2_current;
+    options.download_stage = q2_download_stage;
+    options.restore_stage = q2_restore_stage;
+    return frontend_network_q2_client_create(&options, &receiver->q2, error);
 }
 static qa_product_id local_client_selection(qa_frontend *f, uint32_t authored, qa_actor_id actor)
 {
@@ -778,13 +780,10 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
         qa_product_id profile;
         if (!frontend_config_store_client_profile(f->config_store, selected, &profile, error)) return false;
         if (q2_host_protocol(f->options.network_protocol)) {
-            frontend_network_q2_client_options client = {.frontend = f, .runtime = local->runtime,
-                .remote = n->loopback_server, .protocol = f->options.network_protocol,
-                .physical_seat = i, .qport = (uint16_t)(n->rotation_random + i),
-                .profile = profile, .selected = selected, .seat = local->client_seat,
-                .context = local, .current = local_q2_current, .download_stage = local_download_stage,
-                .restore_stage = local_restore_stage};
-            if (!frontend_network_q2_client_create(&client, &local->q2, error)) return false;
+            frontend_network_q2_client_options client = {.remote = n->loopback_server,
+                .protocol = f->options.network_protocol, .qport = (uint16_t)(n->rotation_random + i),
+                .profile = profile, .selected = selected};
+            if (!client_connection_q2_create(local, client, error)) return false;
         } else if (f->options.network_protocol.kind == QA_NET_Q3_68) {
             if (!local_q3_prepare(local, actor, error)) return false;
         } else if (f->options.network_protocol.kind == QA_NET_UNIFIED_1) {
@@ -876,13 +875,6 @@ static frontend_network_q2_client *q2_client_at(const qa_frontend_network *n, ui
     return n->clients[physical].q2;
 }
 
-static bool q2_client_current(void *context,const frontend_network_q2_client *client)
-{
-    const qa_frontend_network *n=context;
-    const frontend_client_connection *main_client=client_connection_runtime(n,n?n->runtime:NULL);
-    return main_client && n->frontend && n->frontend->network==n && main_client->q2==client &&
-        (!n->detached_transport || frontend_network_q2_client_importing(client));
-}
 static bool nq_host_protocol(qa_net_protocol_id protocol)
 { return protocol.kind<=QA_NET_RMQ999 && qa_q1_profile_valid(protocol,NULL); }
 static bool q1_client_protocol(qa_net_protocol_id protocol)
@@ -944,7 +936,8 @@ static bool q2_download_nonce(void *context,uint64_t *out,qa_error *error)
 static bool q2_download_stage(void *context,qa_fs_root *root,const char *path,
     qa_fs_stage **out,uint64_t *nonce,qa_error *error)
 {
-    qa_frontend_network *n=context; uint64_t initial=0;
+    const frontend_client_connection *client=context;
+    qa_frontend_network *n=client?client->network:NULL; uint64_t initial=0;
     if(!n || !n->frontend || n->frontend->network!=n || n->detached_transport ||
         !root || !path || !out || *out || !nonce || *nonce)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 download stage lacks its live Network namespace");
@@ -954,7 +947,8 @@ static bool q2_download_stage(void *context,qa_fs_root *root,const char *path,
 static bool q2_restore_stage(void *context,qa_fs_root *root,const char *path,uint64_t logical_nonce,
     bool published,qa_bytes prefix,qa_fs_stage **out,uint64_t *nonce,qa_fs_identity *identity,qa_error *error)
 {
-    qa_frontend_network *n=context; uint64_t initial=0; size_t written=0;
+    const frontend_client_connection *client=context;
+    qa_frontend_network *n=client?client->network:NULL; uint64_t initial=0; size_t written=0;
     if(!n || !n->frontend || n->frontend->network!=n || !n->detached_transport ||
         !n->frontend->source_restoring || !root || !path || !logical_nonce ||
         !out || *out || !nonce || *nonce || !identity || (prefix.size && !prefix.data))
@@ -4800,13 +4794,13 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
     }
     if(!q2_local_groups_prepare(n,error)) goto failed;
     if(f->options.network_connect && q2_host_protocol(f->options.network_protocol)) {
-        frontend_network_q2_client_options client={.frontend=f,.runtime=n->runtime,.remote=q2_remote,
-            .protocol=f->options.network_protocol,.qport=(uint16_t)n->rotation_random,.physical_seat=0,
+        frontend_network_q2_client_options client={.remote=q2_remote,
+            .protocol=f->options.network_protocol,.qport=(uint16_t)n->rotation_random,
             .selected=frontend_product_current(f)->id,
-            .context=n,.current=q2_client_current,.download_stage=q2_download_stage,.restore_stage=q2_restore_stage,
             .lobby=n->kex_transport?qa_kex_transport_lobby(n->kex_transport):NULL};
+        n->clients[0].client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
         if(!frontend_config_store_client_profile(f->config_store, client.selected, &client.profile, error) ||
-            !frontend_network_q2_client_create(&client,&n->clients[0].q2,error)) goto failed;
+            !client_connection_q2_create(n->clients,client,error)) goto failed;
     }
     if(f->options.network_connect && q1_client_protocol(f->options.network_protocol)) {
         n->clients[0].client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
@@ -8826,14 +8820,12 @@ static bool playback_q2_create(qa_frontend_network *n,qa_net_protocol_id wire,
     uint32_t physical,frontend_demo_format format,bool live,qa_error *error)
 {
     qa_net_address local={.kind=QA_NET_LOOPBACK,.host.loopback="demo"};
-    frontend_network_q2_client_options options={.frontend=n->frontend,.runtime=n->runtime,
-        .remote=local,.protocol=wire,.physical_seat=physical,.demo=true,.live_mvd=live,
-        .mvd_records=live?n->gtv_input:NULL,
-        .demo_format=format,.context=n,.current=q2_client_current,
-        .download_stage=q2_download_stage,.restore_stage=q2_restore_stage};
+    frontend_network_q2_client_options options={.remote=local,.protocol=wire,
+        .demo=true,.live_mvd=live,.mvd_records=live?n->gtv_input:NULL,.demo_format=format};
     frontend_client_connection *receiver=n->clients+physical;
     receiver->network=n; receiver->runtime=n->runtime; receiver->physical=physical;
-    return frontend_network_q2_client_create(&options,&receiver->q2,error) &&
+    receiver->client_seat=(qa_net_seat_id){NETWORK_OWNER,0};
+    return client_connection_q2_create(receiver,options,error) &&
         frontend_network_q2_client_demo_playback(receiver->q2,&n->demo_source,error);
 }
 static bool gtv_event(void *context,const qa_gtv_event *event,qa_error *error)
