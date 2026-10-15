@@ -805,13 +805,34 @@ static bool clients_prepare(qa_frontend_network *n, qa_error *error)
     }
     return clients_tick(n, error);
 }
+static bool client_connection_tick_returned(frontend_client_connection *client,qa_error *error)
+{
+    qa_frontend_network *n=client->network;
+    bool retired;
+    if(client->q1) {
+        if(!frontend_network_q1_client_tick(client->q1,n->frontend->wall_time_ns,error)) return false;
+        retired=frontend_network_q1_client_retired(client->q1);
+    } else if(client->q2) {
+        if(n->gtv && client->physical==n->gtv_seat && frontend_network_q2_client_retired(client->q2)) return true;
+        if(!frontend_network_q2_client_tick(client->q2,n->frontend->wall_time_ns,error)) return false;
+        retired=frontend_network_q2_client_retired(client->q2);
+    } else return true;
+    if(!retired || (client->runtime!=n->runtime && !frontend_network_client_only(n->frontend))) return true;
+    if(!frontend_demo_dispatch_sources_returned(n->frontend->demos,error)) return false;
+    if(n->demo_source.owner) return true;
+    qa_error retirement={0};
+    bool released=client->q1 ? frontend_network_q1_client_destroy(&client->q1,&retirement) :
+        frontend_network_q2_client_destroy(&client->q2,&retirement);
+    if(released || retirement.code==QA_OK) return true;
+    if(error) *error=retirement;
+    return false;
+}
 static bool clients_tick(qa_frontend_network *n, qa_error *error)
 {
     for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
         frontend_client_connection *local = n->clients + i;
         if (!local->runtime || local->runtime==n->runtime) continue;
-        if (local->q1 && !frontend_network_q1_client_tick(local->q1, n->frontend->wall_time_ns, error)) return false;
-        if (local->q2 && !frontend_network_q2_client_tick(local->q2, n->frontend->wall_time_ns, error)) return false;
+        if (!client_connection_tick_returned(local, error)) return false;
         if (local->q3.q3_client_requested && !client_drain(&local->q3, false, error)) return false;
         bool ready=false;
         if (!client_connection_unified_tick(local, &ready, error)) return false;
@@ -6336,35 +6357,6 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_fs_root_close(n->preferences); qa_fs_root_close(n->content);
     free(n); f->network = NULL; return true;
 }
-static bool q1_client_tick_returned(qa_frontend_network *n,qa_error *error)
-{
-    const frontend_client_connection *main_client=client_connection_runtime(n,n?n->runtime:NULL);
-    if(!main_client || !main_client->q1) return true;
-    if(!frontend_network_q1_client_tick(main_client->q1,n->frontend->wall_time_ns,error)) return false;
-    if(!frontend_network_q1_client_retired(main_client->q1)) return true;
-    if(!frontend_demo_dispatch_sources_returned(n->frontend->demos,error)) return false;
-    if(n->demo_source.owner) return true;
-    qa_error retirement={0};
-    if(frontend_network_q1_client_destroy(&n->clients[main_client->physical].q1,&retirement)) return true;
-    if(retirement.code==QA_OK) return true;
-    if(error) *error=retirement;
-    return false;
-}
-static bool q2_client_tick_returned(qa_frontend_network *n,qa_error *error)
-{
-    const frontend_client_connection *main_client=client_connection_runtime(n,n?n->runtime:NULL);
-    if(!main_client || !main_client->q2) return true;
-    if(n->gtv && frontend_network_q2_client_retired(main_client->q2)) return true;
-    if(!frontend_network_q2_client_tick(main_client->q2,n->frontend->wall_time_ns,error)) return false;
-    if(!frontend_network_q2_client_retired(main_client->q2)) return true;
-    if(!frontend_demo_dispatch_sources_returned(n->frontend->demos,error)) return false;
-    if(n->demo_source.owner) return true;
-    qa_error retirement={0};
-    if(frontend_network_q2_client_destroy(&n->clients[main_client->physical].q2,&retirement)) return true;
-    if(retirement.code==QA_OK) return true;
-    if(error) *error=retirement;
-    return false;
-}
 bool frontend_network_admin_resume(qa_frontend *f,qa_error *error)
 {
     if(!f) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source administration continuation requires its frontend");
@@ -6411,8 +6403,8 @@ bool frontend_network_prepare(qa_frontend *f, qa_error *error)
     if (!incomplete_output_close(n, error)) return false;
     if (!gtv_server_prepare(n,error)) return false;
     if(!q2_local_groups_prepare(n,error) || !q2_timeout_sync(n,error)) return false;
-    if(!q2_client_tick_returned(n,error)) return false;
-    if(!q1_client_tick_returned(n,error)) return false;
+    const frontend_client_connection *main=client_connection_runtime(n,n->runtime);
+    if(main && !client_connection_tick_returned(n->clients+main->physical,error)) return false;
     if(n->q2_host && !frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) return false;
     if(!unified_tick(n,error)) return false;
     if (n->downloads && (!qa_downloads_pump(n->downloads, error) || !frontend_tools_sync(f, error))) return false;
@@ -6573,13 +6565,12 @@ bool frontend_network_maintenance(qa_frontend *f,qa_error *error)
     bool ok = qa_network_tick(n->runtime, f->wall_time_ns, error) && qa_server_browser_q3_pump(n->browser, f->wall_time_ns, error) &&
         frontend_q3_browser_poll(n->q3_browser, error) && qa_server_admin_tick(n->admin, f->wall_time_ns, false, error);
     --n->busy;
-    return ok && q2_client_tick_returned(n,error) &&
-        q1_client_tick_returned(n,error) &&
+    const frontend_client_connection *main=client_connection_runtime(n,n->runtime);
+    return ok && (!main || client_connection_tick_returned(n->clients+main->physical,error)) &&
         unified_tick(n,error) && clients_tick(n,error) &&
         (!n->q2_host || frontend_network_q2_host_tick(n->q2_host,f->wall_time_ns,error)) &&
         (!n->q3_admission || q3_retire(n, error)) &&
-        (!frontend_network_remote(f) || !n->primary_client ||
-            client_drain(&n->primary_client->q3, false, error)) &&
+        (!main || client_drain(&n->clients[main->physical].q3, false, error)) &&
         frontend_nq_prepare(n->nq_host, error) && frontend_qw_pump(n->qw_host, error);
 }
 static bool client_predictor_initial(frontend_q3_client *, bool *, qa_error *);
@@ -6898,7 +6889,13 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     if(n->q2_host) return frontend_network_q2_host_publish(n->q2_host,f->wall_time_ns,error);
     if (n->nq_host) return frontend_nq_publish(n->nq_host, error);
     if (n->qw_host) return frontend_qw_publish(n->qw_host, error);
-    if (frontend_network_remote(f)) return !primary || client_drain(&primary->q3, false, error);
+    if (frontend_network_remote(f)) {
+        for(uint32_t physical=0;physical<f->options.seats;++physical) {
+            frontend_client_connection *client=n->clients+physical;
+            if(client->runtime && !client_drain(&client->q3,false,error)) return false;
+        }
+        return true;
+    }
     if (n->q3_admission) {
         if (n->round) return round_publish(n->round, error);
         if (!q3_prepare(n, error)) return false;
