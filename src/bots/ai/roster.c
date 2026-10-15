@@ -130,10 +130,10 @@ bool qa_bots_create_round(qa_bot_runtime *runtime, const qa_bot_services *servic
 bool qa_bots_admission_read(const qa_bots *b, qa_actor_id actor,
                             qa_bot_admission *out, qa_error *e) {
     bot_ai_state *state = bot_ai_actor(b, actor);
-    const qa_bot_character_view *character = state ?
+    const qa_bot_character_view *character = state && !state->source_settings ?
         qa_bot_character_read(qa_bot_runtime_character(b->runtime, state->character)) : NULL;
     if (!out || !state || !state->inuse || state->source_setup.progress.kind!=BOT_SOURCE_SETUP_COMPLETE ||
-        state->retired || !bot_ai_live(b, actor) || !character ||
+        state->retired || !bot_ai_live(b, actor) || (!state->source_settings && !character) ||
         !state->admitted_character || !state->admitted_name || !isfinite(state->admitted_skill) || b->busy || b->restore_pending)
         return bot_ai_fail(e, "bot admission settings require the actual idle live character owner");
     *out = (qa_bot_admission){.actor = actor, .client = state->view.client,

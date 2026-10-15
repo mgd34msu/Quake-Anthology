@@ -413,6 +413,22 @@ static void test_bot_authored_chat_delivery(qa_vfs *files)
     uint8_t source[QA_BOT_STATE_SOURCE_BYTES]={0};
     state.source_span=(qa_bot_source_span){source,sizeof(source)};
     CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&state.view.actor,&error));
+    bot_ai_state *clients[]={&state};bots.clients=clients;bots.client_capacity=1;
+    CHECK(qa_actor_index_create(&bots.actor_clients,qa_session_actors(session),NULL,&error));
+    qa_actor_index_put(&bots.actor_clients,state.view.actor,0);
+    state.inuse=true;state.view.entity=7;
+    state.admitted_character="bots/characters.txt";state.admitted_name="ozzy";
+    state.admitted_skill=2;
+    qa_bot_admission admission;
+    CHECK(!qa_bots_admission_read(&bots,state.view.actor,&admission,&error));
+    state.source_setup.progress.kind=BOT_SOURCE_SETUP_COMPLETE;
+    error=(qa_error){0};
+    CHECK(qa_bots_admission_read(&bots,state.view.actor,&admission,&error));
+    CHECK(admission.client==0 && admission.entity==7 && admission.skill==2 &&
+        !strcmp(admission.character_file,"bots/characters.txt") && !strcmp(admission.name,"ozzy"));
+    const qa_bot_source_skill *settings=state.source_settings;state.source_settings=NULL;
+    CHECK(!qa_bots_admission_read(&bots,state.view.actor,&admission,&error));
+    state.source_settings=settings;error=(qa_error){0};
     bot_ai_authored_chat_bind(&bots);
     CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_CONNECTED,&error));
     CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_MATCH_START,&error));
@@ -439,6 +455,7 @@ static void test_bot_authored_chat_delivery(qa_vfs *files)
     for(size_t i=0;i<BOT_CHAT_COUNT;++i) CHECK(!state.authored_chat.pending[i].row);
     state.source_settings=NULL;
     CHECK(bot_ai_authored_chat_emit(&bots,&state,BOT_CHAT_MATCH_START,&error) && output.draws==9);
+    qa_actor_index_destroy(&bots.actor_clients);
     qa_bot_actions_destroy(actions);
     qa_bot_source_knowledge_destroy(knowledge);
     CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
