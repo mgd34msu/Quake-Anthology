@@ -460,7 +460,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment draw has no current successful CGAME source context");
     owner->draw.actor = owner->client.source_actor;
     if (owner->draw.actor.registry) {
-        if (!qa_application_equipment_read(owner->options.frontend->application, owner->draw.actor,
+        if (!frontend_equipment_source_selected_read(owner, owner->draw.actor,
                 &owner->selection, error) || !current_owner(owner)) return false;
         if (owner->selection.selected) {
             if(owner->selection.source_slot) {
@@ -587,9 +587,9 @@ static bool gear_held_output(frontend_equipment_source *owner, const qa_applicat
 bool frontend_equipment_source_selected_read(frontend_equipment_source *owner,
     qa_actor_id actor, qa_application_equipment_view *out, qa_error *error)
 {
-    if (!owner || !out || !owner->drawing || !current_owner(owner) ||
+    if (!owner || !out || !owner->borrowed || !current_owner(owner) ||
         !qa_actors_get(qa_session_actors(owner->client.session), actor))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Held equipment requires its live actor and Source draw");
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment requires its live actor and borrowed Source lease");
     uint32_t seat;
     if (!qa_application_player_seat(owner->options.frontend->application, actor, &seat)) {
         *out = (qa_application_equipment_view){0};
@@ -958,6 +958,7 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
 {
     if (owner->world_ready) return true;
     qa_application *application = owner->options.frontend->application;
+    if (!qa_application_world(application)) { owner->world_ready = true; return true; }
     const qa_actor_registry *actors = qa_session_actors(owner->client.session);
     uint64_t revision = qa_actors_revision(actors);
     equipment_world_packet **tail = &owner->world_packets;
