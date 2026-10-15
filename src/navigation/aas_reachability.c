@@ -37,6 +37,7 @@ bool aas_reach_time(double time, uint16_t *out, qa_error *error) {
     return true;
 }
 static bool generated_type(const aas_reach_build *work, int32_t type) {
+    if (type == AAS_REACH_GRAPPLE && work->movement.grapple) return true;
     /* Authored restriction bits belong to the existing link until a generator
      * can reconstruct their source rule. */
     uint32_t base = (uint32_t)type & UINT32_C(0x00ffffff);
@@ -161,7 +162,9 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     READ(air_jump_pad, "rs_aircontrolledjumppad", 300);
     READ(start_elevator, "rs_startelevator", 50);
     READ(func_bob, "rs_funcbob", 300);
+    READ(start_grapple, "rs_startgrapple", 500);
 #undef READ
+    work.movement.grapple = variable && truncf(variable(context, "grapplereach", 0)) != 0;
     work.environment = qa_movement_environment_default();
     work.environment.gravity_multiplier = work.movement.gravity / 800;
     work.environment.speed_multiplier = work.movement.max_velocity / 320;
@@ -176,6 +179,10 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
             bool found;
             okay = aas_reach_geometry(&work, from, to, &found, error);
         }
+        if (!(contents & (AAS_REACH_TELEPORT | AAS_REACH_JUMPPAD)) && work.movement.grapple)
+            for (uint32_t to = 1; okay && to < source->count[QA_AAS_AREAS]; ++to)
+                if (from != to && !aas_reach_exists(&work, from, to))
+                    okay = aas_reach_grapple(&work, from, to, error);
     }
     for (uint32_t area = 1; okay && area < source->count[QA_AAS_AREAS]; ++area)
         if (!(work.settings[area].contents & AAS_REACH_JUMPPAD))

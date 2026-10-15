@@ -9,7 +9,7 @@ enum {
     AAS_REACH_WALK = 2, AAS_REACH_JUMP = 4, AAS_REACH_BARRIER = 5,
     AAS_REACH_LADDER = 6, AAS_REACH_LEDGE = 7,
     AAS_REACH_SWIM = 8, AAS_REACH_WATERJUMP = 9,
-    AAS_REACH_TELEPORT_TYPE = 10, AAS_REACH_ELEVATOR = 11,
+    AAS_REACH_TELEPORT_TYPE = 10, AAS_REACH_ELEVATOR = 11, AAS_REACH_GRAPPLE = 14,
     AAS_REACH_JUMPPAD_TYPE = 18, AAS_REACH_BOBBING = 19
 };
 typedef struct aas_reach_settings {
@@ -17,7 +17,8 @@ typedef struct aas_reach_settings {
         water_jump, barrier_jump, start_ledge, max_fall_height,
         fall_delta5, fall_delta10, fall_damage5, fall_damage10,
         max_velocity, max_walk_velocity, jump_velocity, max_jump_fall_height, start_jump,
-        teleport, jump_pad, air_jump_pad, start_elevator, func_bob;
+        teleport, jump_pad, air_jump_pad, start_elevator, func_bob, start_grapple;
+    bool grapple;
 } aas_reach_settings;
 typedef struct aas_reach_closest_edges {
     qa_vec3 start[2], end[2];
@@ -73,5 +74,6 @@ static inline uint32_t aas_reach_prediction_frames(const aas_reach_build *work) 
     return work->prediction.frames - (work->prediction.stop_event && work->prediction.frames ? 1u : 0u);
 }
 bool aas_reach_special(aas_reach_build *, qa_error *);
+bool aas_reach_grapple(aas_reach_build *, uint32_t from, uint32_t to, qa_error *);
 
 #endif

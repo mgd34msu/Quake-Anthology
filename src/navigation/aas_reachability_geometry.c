@@ -251,10 +251,10 @@ static bool ledge_time(const aas_reach_build *work, uint32_t to, float distance,
     return true;
 }
 static bool crosses_portal(aas_reach_build *work, qa_vec3 start, qa_vec3 end,
-    bool *crossed, qa_error *error) {
-    qa_aas_crossing crossings[10]; size_t count;
-    if (!qa_aas_trace_areas(work->source, work->query, start, end, crossings, 10, &count, error)) return false;
-    *crossed = false;
+    size_t maximum, bool reject_full, bool *crossed, qa_error *error) {
+    qa_aas_crossing crossings[20]; size_t count;
+    if (!qa_aas_trace_areas(work->source, work->query, start, end, crossings, maximum, &count, error)) return false;
+    *crossed = reject_full && count == maximum;
     for (size_t i = 0; i < count; ++i)
         if (work->settings[crossings[i].area].contents & 8) { *crossed = true; break; }
     return true;
@@ -299,7 +299,7 @@ static bool step(aas_reach_build *work, uint32_t from, uint32_t to, bool *found,
     if (!qa_aas_point_area(work->source, point, &area, error)) return false;
     if (area != to) return true;
     bool portal;
-    if (!crosses_portal(work, start, end, &portal, error)) return false;
+    if (!crosses_portal(work, start, end, 10, false, &portal, error)) return false;
     if (portal) return true;
     uint16_t time;
     if (!ledge_time(work, to, ground.distance, true, &time, error)) return false;
@@ -645,7 +645,7 @@ bool aas_reach_walk_ledge(aas_reach_build *work, uint32_t area_number, qa_error 
                         (!aas_reach_grounded(work, destination) && !aas_reach_swimming(work, destination)) ||
                         (work->settings[destination].contents & 6)) break;
                     bool portal;
-                    if (!crosses_portal(work, midpoint, end, &portal, error)) return false;
+                    if (!crosses_portal(work, midpoint, end, 10, false, &portal, error)) return false;
                     if (portal) break;
                     float distance = midpoint.z - trace.end.z;
                     if (work->movement.max_fall_height != 0 && fabsf(distance) > work->movement.max_fall_height) break;
@@ -657,6 +657,69 @@ bool aas_reach_walk_ledge(aas_reach_build *work, uint32_t area_number, qa_error 
                 }
             }
         }
+    }
+    return true;
+}
+bool aas_reach_grapple(aas_reach_build *work, uint32_t from, uint32_t to, qa_error *error) {
+    if (!aas_reach_grounded(work, from) || aas_reach_swimming(work, from) ||
+        aas_reach_crouched(work, from)) return true;
+    const qa_aas_view *world = work->source;
+    const qa_aas_area *source = world->areas + from, *destination = world->areas + to;
+    if (destination->bounds.maxs.z < source->bounds.mins.z) return true;
+    qa_vec3 end = source->center; end.z -= 1000;
+    qa_aas_presence_trace floor;
+    if (!qa_aas_trace_presence(world, work->query, source->center, end, 4, &floor, error)) return false;
+    if (floor.start_solid) return true;
+    qa_vec3 area_start = floor.end;
+    qa_nav_profile point = work->navigation->graph->view.profile;
+    point.shape = (qa_trace_shape){.kind = QA_SHAPE_POINT};
+    point.policy.q1_hull = 0;
+    point.policy.contents_mask = qa_collision_contents_mask(1, QA_GAME_Q3);
+    float maximum_velocity = (float)sqrt(30 * 10000), fall_time = maximum_velocity / work->movement.gravity;
+    int32_t fall_distance;
+    if (!aas_reach_integer(.5 * work->movement.gravity * fall_time * fall_time, &fall_distance, error)) return false;
+    for (int32_t i = 0; i < destination->face_count; ++i) {
+        int32_t face_number;
+        const qa_aas_face *face = area_face(world, destination, i, &face_number);
+        if (!(face->flags & AAS_REACH_FACE_SOLID) || !face->edge_count) continue;
+        const qa_aas_plane *plane = world->planes + face->plane;
+        const qa_aas_edge *edge = face_edge(world, face, 0, NULL);
+        qa_vec3 direction = qa_vec_sub(world->vertices[edge->vertices[0]], area_start);
+        if (qa_vec_dot(plane->normal, direction) > 0) continue;
+        qa_vec3 center = aas_reach_face_center(world, face);
+        if (center.z < area_start.z + 64 || plane->normal.z > 0) continue;
+        direction = qa_vec_sub(center, area_start);
+        float rise = direction.z; direction.z = 0;
+        float horizontal_distance = qa_vec_length(direction);
+        if (horizontal_distance == 0 || horizontal_distance > 2000 ||
+            rise / horizontal_distance < tan(2 * 3.14159265358979323846 * 15 / 360)) continue;
+        end = qa_vec_ma(center, -500, plane->normal);
+        qa_trace_result impact;
+        if (!nav_trace(&work->navigation->services, &point, (qa_actor_id){0},
+            center, end, true, &impact, error)) return false;
+        qa_collision_bits sky = qa_collision_bits_union(qa_collision_bit(QA_SURFACE_SKY),
+            qa_collision_bit(QA_SURFACE_SKY_NOIMPACT));
+        if (qa_collision_bits_overlap(impact.surface_flags, sky) || impact.fraction * 500 > 32) continue;
+        qa_vec3 start = qa_vec_ma(area_start, 4, qa_vec_normalize(qa_vec_sub(center, area_start)));
+        qa_aas_presence_trace approach;
+        if (!qa_aas_trace_presence(world, work->query, start, impact.end, 2, &approach, error)) return false;
+        if (qa_vec_length(qa_vec_sub(approach.end, center)) > 24) continue;
+        start = end = approach.end; end.z -= (float)fall_distance;
+        qa_aas_presence_trace landing;
+        if (!qa_aas_trace_presence(world, work->query, start, end, 2, &landing, error)) return false;
+        if (landing.fraction >= 1) continue;
+        uint32_t area;
+        if (!qa_aas_point_area(world, landing.end, &area, error)) return false;
+        if ((work->settings[area].contents & 6) || area == from ||
+            aas_reach_exists(work, from, area) || !aas_reach_grounded(work, area)) continue;
+        bool portal;
+        if (!crosses_portal(work, area_start, impact.end, 20, true, &portal, error)) return false;
+        if (portal) continue;
+        qa_aas_reach reach = {.area = (int32_t)area, .face = face_number, .start = area_start,
+            .end = impact.end, .travel_type = AAS_REACH_GRAPPLE};
+        if (!aas_reach_time(work->movement.start_grapple +
+            qa_vec_length(qa_vec_sub(reach.end, reach.start)) * .25f, &reach.travel_time, error) ||
+            !aas_reach_add(work, from, reach, error)) return false;
     }
     return true;
 }
