@@ -51,10 +51,16 @@ bool guest_host_x86_64_capability(guest_host_x86_64_capabilities *out, qa_error 
     if (syscall(SYS_arch_prctl,ARCH_GET_XCOMP_PERM,&permitted) == 0) mask &= permitted;
     __cpuid_count(0x0d,0,a,b,c,d);
     if ((mask & 3) != 3 || b < 576) return fail(error,QA_ERROR_UNSUPPORTED,0,"host lacks actual x87/SSE standard XSAVE layout");
+    uint64_t hardware_features=((uint64_t)d<<32)|a;
     _Alignas(16) uint8_t fxsave[512]; memset(fxsave,0,sizeof(fxsave));
     __asm__ volatile("fxsave64 %0" : "=m"(fxsave));
     uint32_t mxcsr_mask = qa_load_u32le(fxsave+28);
     *out = (guest_host_x86_64_capabilities){.xfeatures=mask,.xsave_bytes=b,.mxcsr_mask=mxcsr_mask ? mxcsr_mask : 0xffbf};
+    for (unsigned bit=2;bit<64;++bit) if ((hardware_features>>bit)&1) {
+        __cpuid_count(0x0d,bit,a,b,c,d);
+        out->components[bit]=(guest_host_x86_64_component){.index=bit,.offset=b,.bytes=a,
+            .supervisor=(c&1)!=0,.compact_align64=(c&2)!=0};
+    }
     return true;
 #else
     (void)out; return fail(error,QA_ERROR_UNSUPPORTED,0,"hardware guest execution requires Linux x86-64");
@@ -74,25 +80,13 @@ bool guest_host_x86_64_state_valid(const guest_host_x86_64_state *state,
 #if defined(__linux__) && defined(__x86_64__)
     uint64_t bits = qa_load_u64le(state->xsave.data+512);
     for (unsigned bit = 2; bit < 64; ++bit) if ((bits>>bit)&1) {
-        unsigned a,b,c,d; __cpuid_count(0x0d,bit,a,b,c,d);
-        if (!a || (c&1) || b < 576 || b > state->xsave.size || a > state->xsave.size-b)
+        const guest_host_x86_64_component *row=capability->components+bit;
+        if (!row->bytes || row->supervisor || row->offset < 576 ||
+            row->offset > state->xsave.size || row->bytes > state->xsave.size-row->offset)
             return fail(error,QA_ERROR_UNSUPPORTED,bit,"hardware component is absent from its actual user layout");
     }
 #endif
     return true;
-}
-
-bool guest_host_x86_64_component_read(uint32_t index, guest_host_x86_64_component *out, qa_error *error)
-{
-    if (!out || index<2 || index>=64) return fail(error,QA_ERROR_ARGUMENT,index,"extended hardware component index is invalid");
-#if defined(__linux__) && defined(__x86_64__)
-    unsigned a,b,c,d; __cpuid_count(0x0d,index,a,b,c,d);
-    if (!a) return fail(error,QA_ERROR_UNSUPPORTED,index,"host CPU has no such actual XSTATE component");
-    *out=(guest_host_x86_64_component){.index=index,.offset=b,.bytes=a,.supervisor=(c&1)!=0,.compact_align64=(c&2)!=0};
-    return true;
-#else
-    return fail(error,QA_ERROR_UNSUPPORTED,index,"hardware XSTATE component platform is unavailable");
-#endif
 }
 
 bool guest_host_x86_64_to_cpu(const guest_host_x86_64_state *state, qa_native_guest_cpu *out, qa_error *error)
@@ -239,9 +233,8 @@ void qa_host_bridge_dispatch(int number, siginfo_t *information, void *opaque)
         memcmp(original_selectors,frame->state.selectors,sizeof(original_selectors))))
         frame->okay=fail(&frame->failure,QA_ERROR_UNSUPPORTED,0,"resumed hardware state exceeds its actual signal or selector context");
     for (unsigned bit=2; frame->okay && resume && bit<64; ++bit) if ((qa_load_u64le(frame->state.xsave.data+512)>>bit)&1) {
-        guest_host_x86_64_component component;
-        if (!guest_host_x86_64_component_read(bit,&component,&frame->failure)) frame->okay=false;
-        else if (component.offset>size || component.bytes>size-component.offset)
+        const guest_host_x86_64_component *component=bridge_capability.components+bit;
+        if (component->offset>size || component->bytes>size-component->offset)
             frame->okay=fail(&frame->failure,QA_ERROR_UNSUPPORTED,bit,"resumed hardware component exceeds its actual kernel signal extent");
     }
     if (frame->okay && resume) {
@@ -310,9 +303,7 @@ bool guest_host_x86_64_enter(const guest_host_x86_64_state *source, qa_error *er
     if (source->flags&UINT64_C(0x10100))
         return fail(error,QA_ERROR_UNSUPPORTED,0,"native entry cannot install trap or resume flags through its user entry bridge");
     if ((qa_load_u64le(source->xsave.data+512)>>9)&1) {
-        guest_host_x86_64_component pkru;
-        if (!guest_host_x86_64_component_read(9,&pkru,error)) return false;
-        if (qa_load_u32le(source->xsave.data+pkru.offset)&3)
+        if (qa_load_u32le(source->xsave.data+bridge_capability.components[9].offset)&3)
             return fail(error,QA_ERROR_UNSUPPORTED,0,"native entry protection key zero denies the actual bridge storage");
     }
     size_t slot;

@@ -611,10 +611,15 @@ bool guest_host_child_create(const guest_host_child_options *options,guest_host_
             qa_load_u64le(ready.body.data+20)==(uint64_t)process && qa_load_u64le(ready.body.data+28)==(uint64_t)process &&
             qa_load_u64le(ready.body.data+36)>0 && qa_load_u64le(ready.body.data+36)<=(uint64_t)INT_MAX;
         if(okay) {
-            child->capability=(guest_host_x86_64_capabilities){qa_load_u64le(ready.body.data),qa_load_u32le(ready.body.data+8),qa_load_u32le(ready.body.data+12)};
+            okay=guest_host_x86_64_capability(&child->capability,error);
+            /* READY owns the child's thread-enabled inventory and limits;
+             * only immutable physical component layouts come from here. */
+            child->capability.xfeatures=qa_load_u64le(ready.body.data);
+            child->capability.xsave_bytes=qa_load_u32le(ready.body.data+8);
+            child->capability.mxcsr_mask=qa_load_u32le(ready.body.data+12);
             child->profile=(guest_profile_guard_receipt){qa_load_u32le(ready.body.data+16)};
             child->thread=qa_load_u64le(ready.body.data+36);
-            okay=child->profile.policy==GUEST_PROFILE_GUARD_SOURCE_X64 &&
+            okay=okay && child->profile.policy==GUEST_PROFILE_GUARD_SOURCE_X64 &&
                 state_decode((qa_bytes){ready.body.data+44,ready.body.size-44},&child->capability,NULL,&child->state,error) &&
                 guest_profile_cpu_domain_read(&child->state,&child->capability,&child->domain,error) &&
                 output_prepare(&child->output_storage,&child->capability,error);

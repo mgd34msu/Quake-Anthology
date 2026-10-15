@@ -5,12 +5,28 @@
 static bool fail(qa_error *error, uint64_t where, const char *detail)
 { qa_error_set(error, QA_ERROR_UNSUPPORTED, (size_t)where, "%s", detail); return false; }
 
-static bool layouts(const guest_host_x86_64_state *state,
-    const guest_host_x86_64_capabilities *capability,
-    guest_host_x86_64_component rows[64], qa_error *error)
+static bool zero(const uint8_t *bytes, size_t count)
 {
-    if (!guest_host_x86_64_state_valid(state, capability, error)) return false;
-    /* These are the actual named user components supported by QAHC.
+    for (size_t i = 0; i < count; ++i) if (bytes[i]) return false;
+    return true;
+}
+
+static bool component_init(unsigned bit, const uint8_t *data, size_t bytes)
+{
+    /* Match the named QAHC register fields, never architectural reserved
+     * padding. Active init-valued SIMD rows are legitimate: DR's signal
+     * delivery materializes their BV bits while copying actual registers. */
+    if (bit == 4) return zero(data, 16); /* BNDCFGU/BNDSTATUS */
+    if (bit == 17) return zero(data, 2) && zero(data + 16, 16) && zero(data + 48, 8);
+    return zero(data, bytes);
+}
+
+bool guest_profile_cpu_domain_read(const guest_host_x86_64_state *baseline,
+    const guest_host_x86_64_capabilities *capability,
+    guest_profile_cpu_domain *out, qa_error *error)
+{
+    if (!out || !guest_host_x86_64_state_valid(baseline, capability, error)) return false;
+    /* Qualify immutable physical layouts once at actual source admission.
      * Unknown enabled components require a real ownership/codec extension. */
     const uint64_t known = UINT64_C(3) | (UINT64_C(1) << 2) |
         (UINT64_C(1) << 3) | (UINT64_C(1) << 4) | (UINT64_C(1) << 5) |
@@ -18,10 +34,10 @@ static bool layouts(const guest_host_x86_64_state *state,
         (UINT64_C(1) << 17) | (UINT64_C(1) << 18) | (UINT64_C(1) << 19);
     if ((capability->xfeatures & 3) != 3 || (capability->xfeatures & ~known))
         return fail(error, capability->xfeatures, "physical user component has no source profile owner");
-    memset(rows, 0, 64 * sizeof(*rows));
+    const guest_host_x86_64_component *rows = capability->components;
     for (unsigned bit = 2; bit < 64; ++bit) if ((capability->xfeatures >> bit) & 1) {
-        if (!guest_host_x86_64_component_read(bit, rows + bit, error)) return false;
         const guest_host_x86_64_component *row = rows + bit;
+        if (!row->bytes) return fail(error, bit, "host CPU has no such actual XSTATE component");
         size_t expected = 0;
         switch (bit) {
         case 2: expected = 256; break;
@@ -44,31 +60,6 @@ static bool layouts(const guest_host_x86_64_state *state,
     }
     if ((capability->xfeatures & (UINT64_C(1) << 9)) && rows[9].bytes < 4)
         return fail(error, 9, "actual PKRU component is truncated");
-    return true;
-}
-
-static bool zero(const uint8_t *bytes, size_t count)
-{
-    for (size_t i = 0; i < count; ++i) if (bytes[i]) return false;
-    return true;
-}
-
-static bool component_init(unsigned bit, const uint8_t *data, size_t bytes)
-{
-    /* Match the named QAHC register fields, never architectural reserved
-     * padding. Active init-valued SIMD rows are legitimate: DR's signal
-     * delivery materializes their BV bits while copying actual registers. */
-    if (bit == 4) return zero(data, 16); /* BNDCFGU/BNDSTATUS */
-    if (bit == 17) return zero(data, 2) && zero(data + 16, 16) && zero(data + 48, 8);
-    return zero(data, bytes);
-}
-
-bool guest_profile_cpu_domain_read(const guest_host_x86_64_state *baseline,
-    const guest_host_x86_64_capabilities *capability,
-    guest_profile_cpu_domain *out, qa_error *error)
-{
-    guest_host_x86_64_component rows[64];
-    if (!out || !layouts(baseline, capability, rows, error)) return false;
     if (baseline->xfeatures != capability->xfeatures)
         return fail(error, 0, "constructor baseline lacks its physical enabled-component inventory");
     bool has_pkru = (baseline->xfeatures & (UINT64_C(1) << 9)) != 0;
@@ -86,8 +77,8 @@ bool guest_profile_cpu_current(const guest_profile_cpu_domain *domain,
     const guest_host_x86_64_capabilities *capability,
     const guest_host_x86_64_state *state, qa_error *error)
 {
-    guest_host_x86_64_component rows[64];
-    if (!domain || !layouts(state, capability, rows, error)) return false;
+    if (!domain || !guest_host_x86_64_state_valid(state, capability, error)) return false;
+    const guest_host_x86_64_component *rows = capability->components;
     if (domain->xfeatures != capability->xfeatures ||
         domain->has_pkru != ((capability->xfeatures & (UINT64_C(1) << 9)) != 0) ||
         (!domain->has_pkru && domain->pkru) || (domain->pkru & 3))
@@ -116,8 +107,8 @@ bool guest_profile_cpu_initialize(const guest_profile_cpu_domain *domain,
     const guest_host_x86_64_capabilities *capability,
     guest_host_x86_64_state *fresh, qa_error *error)
 {
-    guest_host_x86_64_component rows[64];
-    if (!domain || !layouts(fresh, capability, rows, error)) return false;
+    if (!domain || !guest_host_x86_64_state_valid(fresh, capability, error)) return false;
+    const guest_host_x86_64_component *rows = capability->components;
     if (fresh->xfeatures != capability->xfeatures ||
         fresh->xsave.size < capability->xsave_bytes ||
         domain->xfeatures != fresh->xfeatures ||

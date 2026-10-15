@@ -75,9 +75,12 @@ static bool words(hardware_codec *io, uint8_t *fields, size_t count)
 /* Linux v6.18 arch/x86/include/asm/fpu/types.h and the architectural standard
  * XSAVE layouts: extended rows name registers, excluding reserved padding. */
 static bool component(hardware_codec *io, unsigned bit,
-    guest_host_x86_64_component *layout, size_t *wire_bytes)
+    const guest_host_x86_64_component *layout, size_t *wire_bytes)
 {
-    if (!guest_host_x86_64_component_read(bit, layout, io->error)) return false;
+    if (!layout->bytes) {
+        qa_error_set(io->error, QA_ERROR_UNSUPPORTED, bit, "host CPU has no such actual XSTATE component");
+        return false;
+    }
     size_t required = 0, payload = 0;
     switch (bit) {
     case 2: required = payload = 16 * 16; break; /* YMM0..15 upper128 */
@@ -142,7 +145,7 @@ static bool encode(hardware_codec *io, guest_host_x86_64_state *state,
         return fail(io, QA_ERROR_UNSUPPORTED, "saved hardware features differ from the actual destination CPU");
     /* Qualify every enabled feature, including architectural init-state rows.
      * Their inactive bytes are not registers and are not checkpoint payload. */
-    guest_host_x86_64_component layouts[64] = {{0}};
+    const guest_host_x86_64_component *layouts = capability->components;
     size_t payloads[64] = {0};
     for (unsigned bit = 2; bit < 64; ++bit) if ((state->xfeatures >> bit) & 1) {
         if (!component(io, bit, layouts + bit, payloads + bit) ||
