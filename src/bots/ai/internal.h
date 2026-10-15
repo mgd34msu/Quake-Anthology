@@ -63,6 +63,20 @@ typedef struct bot_ai_activation_scratch {
     qa_stamp_set visits;
     uint32_t marks[QA_BOT_SOURCE_ACTIVATION_COUNT];
 } bot_ai_activation_scratch;
+typedef enum bot_cooperative_goal_kind {
+    BOT_COOP_NONE, BOT_COOP_REGROUP, BOT_COOP_HUNT
+} bot_cooperative_goal_kind;
+typedef struct bot_cooperative_state {
+    qa_actor_id hunt;
+    float regroup_at, regroup_until;
+    bot_cooperative_goal_kind goal;
+    bool regrouping;
+} bot_cooperative_state;
+typedef struct bot_cooperative_cooldown {
+    qa_actor_id actor;
+    uint32_t client;
+    float until;
+} bot_cooperative_cooldown;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
@@ -70,6 +84,7 @@ typedef struct bot_ai_state {
     qa_stamp_set *activation_visits;
     bot_ai_view view;
     bot_ai_player player;
+    bot_cooperative_state cooperative;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
     char *admitted_character;
@@ -92,6 +107,8 @@ struct qa_bots {
     uint32_t source_clients[64];
     uint32_t client_capacity, count;
     qa_actor_index actor_clients;
+    qa_actor_index cooperative_actors;
+    float *cooperative_cooldowns;
     /* Extent of the legacy slot/client words in population saves. */
     uint32_t actor_save_capacity;
     qa_bot_controls controls;
@@ -118,6 +135,16 @@ struct qa_bots {
     qa_actor_id shutdown_actor;
 };
 bool bot_ai_fail(qa_error *, const char *);
+static inline bool bot_ai_rerelease_behavior(const qa_bots *bots) {
+    return bots->services.behavior==qa_ruleset_read(QA_RULESET_NETQUAKE) ||
+        bots->services.behavior==qa_ruleset_read(QA_RULESET_Q2_RERELEASE);
+}
+bool bot_ai_cooperative(qa_bots *,bot_ai_state *,bool *,qa_error *);
+bool bot_ai_cooperative_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
+void bot_ai_cooperative_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
+bool bot_ai_cooperative_cooldown_next(const qa_bots *,size_t *,bot_cooperative_cooldown *);
+void bot_ai_cooperative_cooldown_set(qa_bots *,const bot_cooperative_cooldown *);
+void bot_ai_cooperative_cooldowns_clear(qa_bots *);
 bool bot_ai_observations_prepare(qa_bots *, qa_error *);
 bot_ai_state *bot_ai_actor(const qa_bots *, qa_actor_id);
 bool bot_ai_live(const qa_bots *, qa_actor_id);

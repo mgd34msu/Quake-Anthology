@@ -285,6 +285,7 @@ static void clear(qa_bots *bots)
         free(bots->source_cells[i]);
     }
     free(bots->clients); qa_actor_index_destroy(&bots->actor_clients);
+    qa_actor_index_destroy(&bots->cooperative_actors);
     qa_arena_destroy(&bots->observation_storage);
 }
 static bool fields(qa_source_save_io *io, qa_bots *bots,const bot_source_orders_state *waypoints)
@@ -391,6 +392,51 @@ static bool order_tolerance_fields(qa_source_save_io *io, qa_bots *bots)
     }
     return true;
 }
+static bool cooperative_fields(qa_source_save_io *io,qa_bots *bots) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    uint32_t count=0;
+    if(!reading) for(size_t i=0;i<64;++i) {
+        const bot_ai_state *state=bots->source_cells[i];
+        if(state && (state->cooperative.regroup_at!=0 || state->cooperative.regroup_until!=0 ||
+            state->cooperative.regrouping || state->cooperative.goal!=BOT_COOP_NONE)) ++count;
+    }
+    U(count);if(count>64) return false;
+    uint32_t next=0;
+    for(uint32_t i=0;i<count;++i) {
+        uint32_t client=0;bot_cooperative_state value={0};
+        if(!reading) {
+            for(;next<64;++next) {
+                const bot_ai_state *state=bots->source_cells[next];
+                if(state && (state->cooperative.regroup_at!=0 || state->cooperative.regroup_until!=0 ||
+                    state->cooperative.regrouping || state->cooperative.goal!=BOT_COOP_NONE)) break;
+            }
+            client=next++;value=bots->source_cells[client]->cooperative;
+            if(!bot_ai_live(bots,value.hunt)) value.hunt=(qa_actor_id){0};
+        }
+        U(client);F(value.regroup_at);F(value.regroup_until);B(value.regrouping);
+        uint32_t goal=value.goal;U(goal);A(value.hunt);
+        if(client>=64 || !bots->source_cells[client] || goal>BOT_COOP_HUNT ||
+           !isfinite(value.regroup_at) || !isfinite(value.regroup_until)) return false;
+        value.goal=(bot_cooperative_goal_kind)goal;
+        if(reading) bots->source_cells[client]->cooperative=value;
+    }
+    size_t cooldown_count=0,cursor=0;bot_cooperative_cooldown row;
+    if(!reading) while(bot_ai_cooperative_cooldown_next(bots,&cursor,&row)) ++cooldown_count;
+    if(!qa_source_save_count(io,&cooldown_count,
+        qa_actors_capacity(qa_session_actors(bots->services.shared.session))*UINT64_C(64))) return false;
+    cursor=0;
+    if(reading) bot_ai_cooperative_cooldowns_clear(bots);
+    for(size_t i=0;i<cooldown_count;++i) {
+        if(reading) row=(bot_cooperative_cooldown){0};
+        else if(!bot_ai_cooperative_cooldown_next(bots,&cursor,&row)) return false;
+        A(row.actor);U(row.client);F(row.until);
+        if(!row.actor.registry || row.client>=64 || !bots->source_cells[row.client] ||
+           !isfinite(row.until)) return false;
+        if(reading) bot_ai_cooperative_cooldown_set(bots,&row);
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -398,7 +444,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     qa_source_save_io io = {0}; qa_bots view = *bots;
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
-        qa_source_save_finish(&io, out);
+        cooperative_fields(&io,&view) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
@@ -414,7 +460,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     bool ok = bot_ai_observations_prepare(&scratch,error) &&
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
-        scratch.client_capacity == bots->client_capacity &&
+        cooperative_fields(&io,&scratch) && scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])
         ok=bot_ai_source_order_rebase(&scratch.source_orders,&scratch.source_cells[i]->source_order,
@@ -422,7 +468,10 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
     if(ok) ok=bot_ai_source_orders_rebase(&scratch.source_orders,&scratch.source_orders,&bots->source_orders,error);
     if (ok) {
         bot_ai_source_match_bind(&scratch);bot_ai_map_script_bind(&scratch);
-        qa_bots old = *bots; *bots = scratch; clear(&old);
+        qa_bots old = *bots; *bots = scratch;
+        if(bots->cooperative_actors.retained.storage)
+            bots->cooperative_actors.retained.storage=&bots->observation_storage;
+        clear(&old);
     }
     else clear(&scratch);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid complete bot population continuation");

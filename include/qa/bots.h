@@ -113,6 +113,7 @@ typedef struct qa_bot_source_memory {
 typedef struct qa_bot_services {
     void *context;
     qa_bot_source_memory memory;
+    const qa_ruleset_descriptor *behavior;
     bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;

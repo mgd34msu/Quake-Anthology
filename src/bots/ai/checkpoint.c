@@ -18,6 +18,8 @@ struct qa_bots_checkpoint {
     bot_goal_history *goals;
     bot_chat_history *chat;
     bot_checkpoint_record *records;
+    bot_cooperative_cooldown *cooperative;
+    size_t cooperative_count;
     qa_arena validation_storage;
     bot_ai_activation_scratch *activation_scratch;
     uint32_t count,bot_count,client_capacity;
@@ -55,7 +57,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
     bot_define_history_destroy(checkpoint->defines);
     qa_bot_memory_checkpoint_destroy(checkpoint->memory);
     qa_arena_destroy(&checkpoint->validation_storage);
-    free(checkpoint->records);free(checkpoint);
+    free(checkpoint->cooperative);free(checkpoint->records);free(checkpoint);
 }
 static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     qa_bots_checkpoint *checkpoint=calloc(1,sizeof(*checkpoint));
@@ -85,6 +87,18 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
     checkpoint->source_goals=b->source_goals;
     checkpoint->source_orders=b->source_orders;checkpoint->source_team_policy=b->source_team_policy;
     checkpoint->source_event_globals=b->source_event_globals;
+    size_t cursor=0;bot_cooperative_cooldown cooldown;
+    while(bot_ai_cooperative_cooldown_next(b,&cursor,&cooldown)) ++checkpoint->cooperative_count;
+    if(checkpoint->cooperative_count) {
+        checkpoint->cooperative=malloc(checkpoint->cooperative_count*sizeof(*checkpoint->cooperative));
+        if(!checkpoint->cooperative) {
+            qa_error_set(e,QA_ERROR_MEMORY,checkpoint->cooperative_count,"retaining active bot hunt cooldowns");
+            goto failed;
+        }
+        cursor=0;
+        for(size_t i=0;i<checkpoint->cooperative_count;++i)
+            (void)bot_ai_cooperative_cooldown_next(b,&cursor,&checkpoint->cooperative[i]);
+    }
     checkpoint->source_chat=b->source_chat;
     checkpoint->source_match=b->source_match;
     checkpoint->bot_count=b->count;
@@ -322,6 +336,10 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         memcpy(b->not_leader,checkpoint->not_leader,sizeof(b->not_leader));b->source_goals=checkpoint->source_goals;
         b->source_orders=orders;b->source_team_policy=checkpoint->source_team_policy;
         b->source_event_globals=checkpoint->source_event_globals;
+        bot_ai_cooperative_cooldowns_clear(b);
+        for(size_t i=0;i<checkpoint->cooperative_count;++i)
+            if(bot_ai_live(b,checkpoint->cooperative[i].actor))
+                bot_ai_cooperative_cooldown_set(b,&checkpoint->cooperative[i]);
         b->source_chat=checkpoint->source_chat;
         b->source_match=checkpoint->source_match;
     }

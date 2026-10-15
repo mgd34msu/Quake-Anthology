@@ -959,6 +959,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
     return (qa_bot_services){.context=bots,
         .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
             .borrow_span=application_bots_memory_span},
+        .behavior=qa_ruleset_read(bots->behavior),
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
             (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
         .shared=application_builtin_services(application,application->world,application->physics),

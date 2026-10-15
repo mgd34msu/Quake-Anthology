@@ -38,6 +38,15 @@ bool bot_ai_observations_prepare(qa_bots *b,qa_error *e) {
     b->entities=(qa_world_actor_snapshot){.actors=actors,.world=b->services.shared.world,.borrowed=true};
     b->players=(qa_world_actor_snapshot){.actors=actors?actors+capacity:NULL,
         .world=b->services.shared.world,.borrowed=true};
+    if(bot_ai_rerelease_behavior(b)) {
+        if(capacity>SIZE_MAX/(64*sizeof(float)) ||
+           !qa_actor_index_create(&b->cooperative_actors,
+               qa_session_actors(b->services.shared.session),&b->observation_storage,e)) return false;
+        b->cooperative_cooldowns=capacity?qa_arena_alloc(&b->observation_storage,
+            capacity*64*sizeof(float),_Alignof(float),e):NULL;
+        if(capacity && !b->cooperative_cooldowns) return false;
+        if(capacity) memset(b->cooperative_cooldowns,0,capacity*64*sizeof(float));
+    }
     qa_arena_seal(&b->observation_storage);
     return true;
 }
@@ -67,6 +76,7 @@ bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *servi
         free(b->clients);free(b);return false;
     }
     if(!bot_ai_observations_prepare(b,e)) {
+        qa_actor_index_destroy(&b->cooperative_actors);
         qa_arena_destroy(&b->observation_storage);
         qa_actor_index_destroy(&b->actor_clients);free(b->clients);free(b);return false;
     }
@@ -177,6 +187,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
         bot_ai_source_cell_clear(b,s);
         free(s);b->source_cells[i]=NULL;
     }
+    qa_actor_index_destroy(&b->cooperative_actors);
     qa_arena_destroy(&b->observation_storage);
     qa_bot_runtime_lease_end(b->runtime);
     free(b->clients); qa_actor_index_destroy(&b->actor_clients); free(b);
@@ -416,6 +427,10 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
         qa_actor_index_remove(&b->actor_clients,s->view.actor);
         if(s->view.client<b->client_capacity && b->clients[s->view.client]==s) b->clients[s->view.client]=NULL;
     }
+    if(b->cooperative_cooldowns)
+        for(size_t i=0;i<b->cooperative_actors.capacity;++i)
+            b->cooperative_cooldowns[i*64+(uint32_t)source_client]=0;
+    s->cooperative=(bot_cooperative_state){0};
     s->acquired_source_client=(uint32_t)source_client;
     s->view=(bot_ai_view){.actor=a->actor,.client=a->client,.entity=a->entity,
         .source_client=source_client,.mode=a->mode,.decision=QA_BOT_SEEK_LONG_TERM};

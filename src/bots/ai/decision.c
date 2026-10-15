@@ -493,6 +493,7 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool 
     memset(result,0,sizeof(*result));
     DECISION_CALL(bot_ai_move_setup(b,s,e));
     DECISION_CALL(qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e));
+    if(result->failure) bot_ai_cooperative_failed(b,s,goal);
     return movement_result(b,s,activate,result,e);
 }
 static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
@@ -813,7 +814,10 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     bool retreat;DECISION_CALL(bot_ai_retreat(b,s,&retreat,e));
                     ENTER(retreat?QA_BOT_RETREATING:QA_BOT_FIGHTING);continue;
                 }
-                if(ordered) {if(!bot_ai_order_goal(b,s,&goal,&found,e)) return false;}
+                if(ordered) {
+                    s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
+                    if(!bot_ai_order_goal(b,s,&goal,&found,e)) return false;
+                }
                 else {
                     if(!bot_ai_source_team_goals(b,s,false,e)) return false;
                     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
@@ -821,7 +825,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 }
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                 if(!found) return !ordered || scripted_combat(b,s,false,e);
-                if(!ordered && bot_ai_check_time(s)<b->time) {
+                if(!ordered && s->cooperative.goal==BOT_COOP_NONE && bot_ai_check_time(s)<b->time) {
                     bot_ai_check_time_set(s,b->time+.5f);
                     bool accepted,nearby_found;
                     if(!bot_ai_source_wants_camp(b,s,&accepted,e)) return false;
@@ -836,6 +840,11 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     }
                 }
             } else {
+                DECISION_CALL(bot_ai_cooperative_goal(b,s,&goal,&found,e));
+                if(found) {
+                    DECISION_CALL(qa_bot_goals_pop(goals(b),s->goals,e));
+                    ENTER(QA_BOT_SEEK_LONG_TERM);continue;
+                }
                 if(!qa_bot_goals_top(goals(b),s->goals,false,&goal,&found,e)) return false;
                 if(found && !bot_ai_source_reached_goal(b,s,&goal,&done,e)) return false;
                 if(!found || done || bot_ai_nearby_until(s)<b->time) {

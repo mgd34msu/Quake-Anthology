@@ -42,6 +42,7 @@ bool qa_bots_level_reset(qa_bots *b, qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
     if (!qa_bot_runtime_lease_begin(b->runtime,e)) return false;
     b->busy = true;
+    bot_ai_cooperative_cooldowns_clear(b);
     bool ok = true;
     for (uint32_t i = 0; ok && i < b->client_capacity; ++i) {
         bot_ai_state *s = b->clients[i];

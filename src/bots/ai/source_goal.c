@@ -219,6 +219,120 @@ bool bot_ai_source_roam_goal(qa_bots *b,bot_ai_state *s,qa_vec3 *out,qa_error *e
     return true;
 }
 
+bool bot_ai_cooperative(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
+    *out=false;
+    if(!bot_ai_rerelease_behavior(b) || !b->services.modes || !s->view.mode.generation) return true;
+    qa_mode_view mode;
+    SOURCE_CALL(qa_modes_read(b->services.modes,s->view.mode,&mode,e));
+    *out=mode.rules.kind==QA_MODE_COOPERATIVE || mode.rules.kind==QA_MODE_HORDE;
+    return true;
+}
+void bot_ai_cooperative_cooldowns_clear(qa_bots *b) {
+    qa_actor_index_clear(&b->cooperative_actors);
+    if(b->cooperative_cooldowns)
+        memset(b->cooperative_cooldowns,0,b->cooperative_actors.capacity*64*sizeof(float));
+}
+void bot_ai_cooperative_cooldown_set(qa_bots *b,const bot_cooperative_cooldown *row) {
+    if(!b->cooperative_cooldowns) return;
+    size_t slot;
+    if(!qa_actor_index_find(&b->cooperative_actors,row->actor,&slot)) {
+        slot=row->actor.slot;
+        memset(b->cooperative_cooldowns+slot*64,0,64*sizeof(float));
+        qa_actor_index_put(&b->cooperative_actors,row->actor,slot);
+    }
+    b->cooperative_cooldowns[slot*64+row->client]=row->until;
+}
+bool bot_ai_cooperative_cooldown_next(const qa_bots *b,size_t *cursor,bot_cooperative_cooldown *out) {
+    size_t limit=b->cooperative_cooldowns?b->cooperative_actors.capacity*64:0;
+    while(*cursor<limit) {
+        size_t at=(*cursor)++,slot=at/64;uint32_t client=(uint32_t)(at%64);
+        qa_actor_id actor=b->cooperative_actors.entries[slot].actor;
+        if(!actor.registry || !b->source_cells[client] || !b->source_cells[client]->inuse ||
+           !bot_ai_live(b,actor)) continue;
+        float until=b->cooperative_cooldowns[at];
+        if(until>b->time) {
+            *out=(bot_cooperative_cooldown){.actor=actor,.client=client,.until=until};return true;
+        }
+    }
+    return false;
+}
+void bot_ai_cooperative_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal) {
+    qa_actor_id actor=s->cooperative.hunt;
+    if(s->cooperative.goal!=BOT_COOP_HUNT || !bot_ai_live(b,actor) ||
+       b->services.entity_number(b->services.context,actor)!=goal->entity) return;
+    bot_cooperative_cooldown row={.actor=actor,.client=s->acquired_source_client,.until=b->time+4};
+    bot_ai_cooperative_cooldown_set(b,&row);
+    s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
+}
+bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
+    bool cooperative;
+    *found=false;
+    SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
+    if(!cooperative) return true;
+    qa_vec3 human={0};bool has_human=false;float human_distance=INFINITY;
+    const qa_actor_registry *actors=qa_session_actors(b->services.shared.session);
+    for(size_t i=0;i<b->players.count;++i) {
+        qa_actor_id actor=b->players.actors[i];
+        const qa_actor_player *identity=qa_actors_player(actors,actor);
+        if(!identity || !identity->present || identity->bot || identity->spectator) continue;
+        qa_builtin_player_info player;
+        if(!b->services.shared.player_info(b->services.shared.context,actor,&player) ||
+           !player.connected || player.dead || player.spectator || !bot_ai_live(b,actor)) continue;
+        qa_body_state body;
+        SOURCE_CALL(qa_world_body_read(b->services.shared.world,actor,&body,e));
+        if(!bot_ai_live(b,actor)) continue;
+        qa_vec3 delta=qa_vec_sub(body.origin,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
+        if(distance<human_distance) {human_distance=distance;human=body.origin;has_human=true;}
+    }
+    bot_cooperative_state *state=&s->cooperative;
+    if(!has_human) state->regrouping=false;
+    else {
+        if(!state->regrouping && b->time>=state->regroup_at) {
+            state->regrouping=true;state->regroup_until=b->time+12;
+        }
+        if(state->regrouping && (human_distance<=250*250 || b->time>=state->regroup_until)) {
+            state->regrouping=false;state->regroup_at=b->time+15;
+        }
+        if(state->regrouping) {
+            uint32_t area;
+            SOURCE_CALL(bot_ai_point_area(b,s,human,&area,e));
+            *out=(qa_bot_goal){.origin=human,.area=(int32_t)area,.mins={-8,-8,-8},
+                .maxs={8,8,8},.entity=-1};
+            state->goal=BOT_COOP_REGROUP;*found=true;return true;
+        }
+    }
+    qa_actor_id best={0};qa_vec3 best_origin={0};float best_distance=INFINITY;
+    for(size_t i=0;i<b->entities.count;++i) {
+        qa_actor_id actor=b->entities.actors[i];qa_builtin_actor_traits traits;
+        if(!bot_ai_live(b,actor) || !b->services.shared.actor_traits ||
+           !b->services.shared.actor_traits(b->services.shared.context,actor,&traits) ||
+           !traits.monster || !bot_ai_live(b,actor)) continue;
+        size_t slot;
+        if(qa_actor_index_find(&b->cooperative_actors,actor,&slot) &&
+           b->cooperative_cooldowns[slot*64+s->acquired_source_client]>b->time) continue;
+        qa_body_state body;qa_combat_state combat;bool same;
+        SOURCE_CALL(qa_world_body_read(b->services.shared.world,actor,&body,e));
+        SOURCE_CALL(qa_combat_read(b->services.shared.combat,actor,&combat,e));
+        if(combat.health<=0 || traits.dead || !bot_ai_live(b,actor)) continue;
+        SOURCE_CALL(bot_ai_same_team(b,s,actor,&same,e));
+        if(same || !bot_ai_live(b,actor)) continue;
+        qa_vec3 delta=qa_vec_sub(body.origin,human);
+        if(has_human && qa_vec_dot(delta,delta)>2000*2000) continue;
+        delta=qa_vec_sub(body.origin,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
+        if(distance<best_distance) {best=actor;best_origin=body.origin;best_distance=distance;}
+    }
+    if(!best.registry) return true;
+    uint32_t area;
+    SOURCE_CALL(bot_ai_point_area(b,s,best_origin,&area,e));
+    if(!bot_ai_live(b,best)) return true;
+    int32_t entity=b->services.entity_number(b->services.context,best);
+    if(entity<0) return true;
+    *out=(qa_bot_goal){.origin=best_origin,.area=(int32_t)area,.mins={-8,-8,-8},
+        .maxs={8,8,8},.entity=entity};
+    state->hunt=best;state->goal=BOT_COOP_HUNT;*found=true;
+    return true;
+}
+
 static bool persistent_equipment(bot_ai_state *s) {
     if(s->team_arena && !bot_ai_inventory_value(s,41) && !bot_ai_inventory_value(s,42) &&
        !bot_ai_inventory_value(s,43) && !bot_ai_inventory_value(s,44)) return false;
@@ -233,6 +347,8 @@ static bool persistent_equipment(bot_ai_state *s) {
 }
 bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error *e) {
     *accepted=false;if(!alive(b,s)) return true;
+    bool cooperative;SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
+    if(cooperative) return true;
     float camper;
     SOURCE_CALL(bot_ai_character_float(b,s,BOT_C_CAMPER,0,1,&camper,e));
     if(camper<.1f) return true;
@@ -644,8 +760,13 @@ static bool get_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
         }
         return true;
     }
-    if((type==BOT_LTG_CAMP || type==BOT_LTG_CAMP_ORDER) && !retreat) return camp(b,s,out,found,e);
+    if(type==BOT_LTG_CAMP_ORDER && !retreat) return camp(b,s,out,found,e);
     if(type==BOT_LTG_PATROL && !retreat) return patrol(b,s,out,found,e);
+    if(!retreat) {
+        SOURCE_CALL(bot_ai_cooperative_goal(b,s,out,found,e));
+        if(*found) return true;
+    }
+    if(type==BOT_LTG_CAMP && !retreat) return camp(b,s,out,found,e);
     return objective(b,s,out,found,e);
 }
 
@@ -691,6 +812,7 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
 
 bool bot_ai_source_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                                    qa_bot_goal *out,bool *found,qa_error *e) {
+    s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
     bool result=long_term_goal(b,s,retreat,out,found,e);
     if(!alive(b,s)) *found=false;
     return result;
