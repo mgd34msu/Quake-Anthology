@@ -243,7 +243,9 @@ static bool frame_shape(const q3n_remote_frame *f)
     if (f->snapshots.next_snapshot && (!f->snapshots.next_snapshot->valid ||
         f->snapshots.next_snapshot->player.product != f->source.basis.product ||
         f->snapshots.next_snapshot->message_number > f->snapshots.processed_message ||
-        f->snapshots.next_snapshot->message_number <= f->snapshots.snapshot->message_number)) return false;
+        f->snapshots.next_snapshot->message_number < f->snapshots.snapshot->message_number ||
+        (f->snapshots.next_snapshot->message_number == f->snapshots.snapshot->message_number &&
+            f->snapshots.stage != Q3N_REMOTE_SNAPSHOT_CALLBACK))) return false;
     if ((f->snapshots.stage == Q3N_REMOTE_PREDICTION_CALLBACK || f->snapshots.stage == Q3N_REMOTE_COMPLETED_FRAME) &&
         (!f->snapshots.snapshot || !f->prediction.owner || !f->prediction.player ||
             !f->predicted_state || !f->predicted_entity || !f->predicted_player)) return false;
