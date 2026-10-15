@@ -12,9 +12,6 @@ bool qa_bot_bsp_value(const qa_entities *, int32_t entity, const char *key, qa_b
 typedef bool (*qa_bot_bsp_compare)(void *, qa_bytes candidate, bool *equal, qa_error *);
 bool qa_bot_bsp_lookup(const qa_entities *, int32_t, qa_bot_bsp_compare, void *,
                        qa_entity_property *, bool *found, qa_error *);
-bool qa_bot_bsp_parse_integer(qa_bytes, int32_t *, qa_error *);
-bool qa_bot_bsp_parse_float(qa_bytes, float *, qa_error *);
-bool qa_bot_bsp_parse_vector(qa_bytes, qa_vec3 *, qa_error *);
 bool qa_bot_bsp_integer(const qa_entities *, int32_t, const char *, int32_t *, bool *, qa_error *);
 bool qa_bot_bsp_float(const qa_entities *, int32_t, const char *, float *, bool *, qa_error *);
 bool qa_bot_bsp_vector(const qa_entities *, int32_t, const char *, qa_vec3 *, bool *, qa_error *);

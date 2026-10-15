@@ -263,5 +263,9 @@ typedef struct qa_entities {
 bool qa_entities_parse(qa_bytes text, qa_entity_syntax syntax, qa_entities *out, qa_error *error);
 void qa_entities_free(qa_entities *entities);
 bool qa_entity_value(const qa_entities *, size_t entity, const char *key, qa_bytes *out);
+/* Original botlib epair conversion consumes at most 127 bytes. */
+bool qa_bsp_value_integer(qa_bytes, int32_t *, qa_error *);
+bool qa_bsp_value_float(qa_bytes, float *, qa_error *);
+bool qa_bsp_value_vector(qa_bytes, qa_vec3 *, qa_error *);
 
 #endif

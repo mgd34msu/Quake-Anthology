@@ -769,9 +769,9 @@ static void mvd_spectator_prepare(frontend_network_q2_client *owner, const qa_bs
             (qa_bytes){(const uint8_t *)classes[kind],strlen(classes[kind])},false)) ++kind;
         if (kind==3) continue;
         qa_vec3 origin={0}, angles={0}; qa_bytes value;
-        if (qa_entity_value(&entities,i,"origin",&value)) (void)qa_bot_bsp_parse_vector(value,&origin,NULL);
-        if (qa_entity_value(&entities,i,"angles",&value)) (void)qa_bot_bsp_parse_vector(value,&angles,NULL);
-        if (qa_entity_value(&entities,i,"angle",&value)) (void)qa_bot_bsp_parse_float(value,&angles.y,NULL);
+        if (qa_entity_value(&entities,i,"origin",&value)) (void)qa_bsp_value_vector(value,&origin,NULL);
+        if (qa_entity_value(&entities,i,"angles",&value)) (void)qa_bsp_value_vector(value,&angles,NULL);
+        if (qa_entity_value(&entities,i,"angle",&value)) (void)qa_bsp_value_float(value,&angles.y,NULL);
         owner->mvd_spectator.pmove.origin[0]=qa_source_to_i32(origin.x*8);
         owner->mvd_spectator.pmove.origin[1]=qa_source_to_i32(origin.y*8);
         owner->mvd_spectator.pmove.origin[2]=qa_source_to_i32(origin.z*8);

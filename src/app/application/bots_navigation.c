@@ -300,7 +300,7 @@ static bool activation_model(const qa_entities *entities,int32_t entity,size_t c
                              int32_t *model,qa_error *error) {
     char text[1024];*model=0;
     if(!activation_string(entities,entity,"model",text,capacity) || !text[0]) return true;
-    return qa_bot_bsp_parse_integer((qa_bytes){(const uint8_t *)text+1,strlen(text+1)},model,error);
+    return qa_bsp_value_integer((qa_bytes){(const uint8_t *)text+1,strlen(text+1)},model,error);
 }
 static bool activation_vector(const source_activation_call *call,
     bool (*read)(void *,qa_vec3 *,qa_error *),qa_vec3 *out,qa_error *error) {

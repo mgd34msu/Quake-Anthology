@@ -110,6 +110,7 @@ add_library(qa_content STATIC
     src/content/resource_pool_save.c
     src/content/vfs_view_save.c
     src/formats/bsp.c
+    src/formats/entity_values.c
     src/formats/image/image.c
     src/formats/image/indexed.c
     src/formats/image/raster.c

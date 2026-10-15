@@ -65,16 +65,16 @@ static bool bsp_query(q3_call *call, qa_bot_runtime *runtime, int32_t *result, q
     }
     if (call->service == 312) {
         qa_vec3 value = {0};
-        return (!found || qa_bot_bsp_parse_vector(property.value, &value, error)) &&
+        return (!found || qa_bsp_value_vector(property.value, &value, error)) &&
             q3_write_vector(call, address, value, error);
     }
     if (call->service == 313) {
         float value = 0;
-        return (!found || qa_bot_bsp_parse_float(property.value, &value, error)) &&
+        return (!found || qa_bsp_value_float(property.value, &value, error)) &&
             q3_write_float(call, address, value, error);
     }
     int32_t value = 0;
-    return (!found || qa_bot_bsp_parse_integer(property.value, &value, error)) &&
+    return (!found || qa_bsp_value_integer(property.value, &value, error)) &&
         q3_write_word(call, address, (uint32_t)value, error);
 }
 
