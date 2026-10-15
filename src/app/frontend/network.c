@@ -1442,6 +1442,11 @@ static bool connectionless(void *context, qa_network_runtime *runtime,
         if(!frontend_kex_browser_receive(n->kex_browser,packet,&recognized,error)) return false;
         if(recognized) return true;
     }
+    {
+        bool recognized;
+        if (!qa_server_browser_receive(n->browser,packet,&recognized,error)) return false;
+        if (recognized) return true;
+    }
     if(receiver && receiver->q1) {
         bool recognized=false;
         if(!frontend_network_q1_client_receive(receiver->q1,packet,&recognized,error)) return false;
@@ -1473,8 +1478,6 @@ static bool connectionless(void *context, qa_network_runtime *runtime,
         if (recognized) return true;
     }
     bool recognized;
-    if (!qa_server_browser_receive(n->browser,packet,&recognized,error)) return false;
-    if (recognized) return true;
     qa_admin_result result;
     if (!qa_server_admin_receive(n->admin, packet, &result, error)) return false;
     if (result != QA_ADMIN_IGNORED || qa_server_admin_rejects(n->admin, &packet->from)) return true;
@@ -4341,6 +4344,29 @@ static bool browser_command_current(void *context, qa_error *error)
     return browser_owner_current(n, error) && n->primary_client &&
         client_configuration_view(&n->primary_client->q3, &configuration, error);
 }
+static bool browser_endpoint(qa_frontend_network *n,const qa_net_client *connection,
+    const char *remote,qa_net_address *address,qa_net_protocol_id *protocol,bool *known,qa_error *error)
+{
+    *protocol=connection?connection->protocol:n->frontend->options.network_protocol;
+    if(remote) {
+        if(!menu_resolve(remote,menu_port(*protocol),address,error)) return false;
+    } else *address=connection->endpoint;
+    *known=connection && qa_net_address_equal(&connection->endpoint,address,true);
+    if(*known) return true;
+    size_t total=qa_server_browser_count(n->browser),count=0;
+    qa_arena *storage=&n->frontend->frame.storage;
+    uint32_t *indices=total?qa_arena_alloc(storage,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
+    if(total && !indices) return false;
+    qa_browser_filter filter={.sort=QA_BROWSER_NAME};
+    if(!qa_server_browser_list(n->browser,&filter,storage,indices,total,&count,error)) return false;
+    for(size_t i=0;i<count;++i) {
+        qa_server_entry entry;
+        if(!qa_server_browser_at(n->browser,indices[i],&entry) || !entry.available ||
+            !qa_net_address_equal(&entry.address,address,true)) continue;
+        *protocol=entry.protocol; *known=true; break;
+    }
+    return true;
+}
 static bool ping_command(qa_frontend_network *n,const qa_command_invocation *call,qa_error *error)
 {
     if(call->argc>2) { emit(call,"usage: ping [server]\n"); return true; }
@@ -4368,37 +4394,21 @@ static bool ping_command(qa_frontend_network *n,const qa_command_invocation *cal
         if(connection && player_pings && present && recipient.ready)
             result=qa_console_forward_source(call->console,call,&recipient.source.context.command,
                 recipient.source.context.receiver,error);
-        if(result==QA_COMMAND_UNHANDLED) result=qa_application_host_command(f->application,call,error);
+        if(result==QA_COMMAND_UNHANDLED && (player_pings || !connection))
+            result=qa_application_host_command(f->application,call,error);
         if(result!=QA_COMMAND_UNHANDLED) return result==QA_COMMAND_HANDLED;
         if(!connection) { emit(call,"No server connected.\nUsage: ping [server]\n"); return true; }
         if(connection->endpoint.kind==QA_NET_LOOPBACK) { emit(call,"0 ms (local server)\n"); return true; }
-        address=connection->endpoint;
-    } else if(!menu_resolve(call->argv[1],menu_port(protocol),&address,error)) return false;
-    qa_server_entry entry={0}; bool found=false;
-    bool connected_address=connection && qa_net_address_equal(&connection->endpoint,&address,true);
-    size_t total=qa_server_browser_count(n->browser),count=0;
-    uint32_t *indices=total?qa_arena_alloc(&f->frame.storage,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
-    if(total && !indices) return false;
-    qa_browser_filter filter={.sort=QA_BROWSER_NAME};
-    if(!qa_server_browser_list(n->browser,&filter,&f->frame.storage,indices,total,&count,error)) return false;
-    for(size_t i=0;i<count;++i) {
-        qa_server_entry candidate;
-        if(!qa_server_browser_at(n->browser,indices[i],&candidate) ||
-            !qa_net_address_equal(&candidate.address,&address,true)) continue;
-        bool same_protocol=candidate.protocol.kind==protocol.kind && candidate.protocol.revision==protocol.revision &&
-            candidate.protocol.flags==protocol.flags;
-        if(connected_address && !same_protocol) continue;
-        if(!found) { entry=candidate; found=true; }
-        if(same_protocol) { entry=candidate; break; }
     }
-    if(found) protocol=entry.protocol;
-    if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
-        UINT64_C(5000000000),error)) return false;
+    bool known=false;
+    if(!browser_endpoint(n,connection,call->argc==2?call->argv[1]:NULL,&address,&protocol,&known,error)) return false;
+    if(known) {
+        if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
+            UINT64_C(5000000000),error)) return false;
+    } else if(!qa_server_browser_probe(n->browser,&address,f->wall_time_ns,UINT64_C(5000000000),error)) return false;
     char target[256],text[320];
     if(!qa_net_address_format(&address,target,sizeof(target),error)) return false;
-    if(found && entry.has_ping)
-        snprintf(text,sizeof(text),"%s %.0f ms (previous reply); querying\n",target,(double)entry.ping_ns/1000000.0);
-    else snprintf(text,sizeof(text),"Querying %s\n",target);
+    snprintf(text,sizeof(text),"Querying %s\n",target);
     emit(call,text); return true;
 }
 static bool q3_browser_command(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
