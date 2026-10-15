@@ -197,7 +197,10 @@ static const original_field particle_tele_fields[] = {
     FIELD(q1_map_state, distance, "distance", FLOAT)
 };
 static const original_field shooter_fields[] = {
-    FIELD(q1_map_state, field_state, "state", FLOAT)
+    FIELD(q1_map_state, field_state, "state", FLOAT),
+    FIELD(q1_map_state, current_ammo, "currentammo", FLOAT),
+    FIELD(q1_map_state, ammo_rockets, "ammo_rockets", FLOAT),
+    FIELD(q1_map_state, punch_angle, "punchangle", VECTOR)
 };
 static const original_field mover_fields[] = {
     FIELD(q1_map_movement, pos1, "pos1", VECTOR),
@@ -220,6 +223,7 @@ static const original_field game_globals[] = {
     FIELD(qa_q1_game, killed_monsters, "killed_monsters", U32),
     FIELD(qa_q1_game, enemy_range, "enemy_range", U8),
     FIELD(qa_q1_game, sight_actor, "sight_entity", REF),
+    FIELD(qa_q1_game, newmis, "newmis", REF),
     FIELD(qa_q1_game, sight_time, "sight_entity_time", DOUBLE),
     FIELD(qa_q1_game, hellknight_melee, "hknight_type", U32),
     FIELD(qa_q1_game, forward.x, "v_forward_x", FLOAT),

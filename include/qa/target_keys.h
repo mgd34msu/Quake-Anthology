@@ -11,6 +11,7 @@
     X(ACHIEVEMENT, "achievement") \
     X(ADDON_FROZENDAMAGEABLE, "addon.frozenDamageable") \
     X(ALPHA, "alpha") \
+    X(AMMO_ROCKETS, "ammo_rockets") \
     X(AMMO_ROCKETS1, "ammo_rockets1") \
     X(ANGLE, "angle") \
     X(ANGLES, "angles") \
@@ -113,6 +114,7 @@
     X(PATH, "path") \
     X(PATHTARGET, "pathtarget") \
     X(PAUSETIME, "pausetime") \
+    X(PUNCHANGLE, "punchangle") \
     X(RADIUS, "radius") \
     X(RANDOM, "random") \
     X(REINFORCEMENTS, "reinforcements") \

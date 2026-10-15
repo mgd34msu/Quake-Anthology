@@ -1153,7 +1153,9 @@ static void hipnotic_shooter(uint32_t flags)
     fixture_bind_maps(&fixture);
     qa_actor_id shooter;
     GAME_CHECK(qa_q1_game_spawn(fixture.game, &(qa_q1_spawn){
-        .classname = "trap_spikeshooter", .origin = {0, 0, 64}, .spawnflags = flags}, &shooter, &error));
+        .classname = "trap_spikeshooter", .origin = {0, 0, 64}, .spawnflags = flags,
+        .map_fields = &(qa_q1_map_fields){.ammo_rockets = 2, .current_ammo = 7,
+            .punch_angle = {3, 4, 5}}}, &shooter, &error));
     shooter_resource(&fixture, flags & 2u ? "progs/laser.mdl" : flags & 4u ?
         "progs/lavarock.mdl" : "progs/missile.mdl", true);
     shooter_resource(&fixture, flags & 2u ? "enforcer/enfstop.wav" : flags & 4u ?
@@ -1192,6 +1194,25 @@ static void hipnotic_shooter(uint32_t flags)
         GAME_CHECK(body.velocity.x == 1000 && body.origin.x == 8);
         GAME_CHECK(model && !strcmp(model, "progs/missile.mdl"));
         GAME_CHECK(fixture.shot_sounds == ((flags & 16u) ? 1u : 2u) && fixture.sound_channel == 1);
+        qa_target_binding binding;
+        qa_target_field field;
+        qa_string_id rockets, current, punch;
+        GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session), "ammo_rockets", &rockets, &error));
+        GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session), "currentammo", &current, &error));
+        GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session), "punchangle", &punch, &error));
+        GAME_CHECK(qa_q1_game_target_binding(fixture.game, shooter, &binding, &error));
+        GAME_CHECK(binding.field(binding.context, shooter, rockets, &field) &&
+            field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == 1);
+        GAME_CHECK(binding.field(binding.context, shooter, current, &field) &&
+            field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == 1);
+        GAME_CHECK(binding.field(binding.context, shooter, punch, &field) &&
+            field.kind == QA_TARGET_FIELD_VECTOR && qa_vec_equal(field.value.vector, qa_v3(-2, 4, 5)));
+        GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+        GAME_CHECK(qa_q1_game_use(fixture.game, shooter, (qa_actor_id){0}, &error));
+        GAME_CHECK(binding.field(binding.context, shooter, rockets, &field) &&
+            field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == -1);
+        GAME_CHECK(binding.field(binding.context, shooter, current, &field) &&
+            field.kind == QA_TARGET_FIELD_NUMBER && field.value.number == -1);
     }
     fixture_destroy(&fixture);
 }

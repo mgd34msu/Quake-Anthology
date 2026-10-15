@@ -279,6 +279,51 @@ static bool rogue_runes(q1_save_io *io, qa_q1_game *g) {
     }
     return true;
 }
+static bool rockets_in_payload(const q1_map_state *map) {
+    return map->kind == Q1_MAP_ENDING_ACTOR || map->kind == Q1_MAP_BUZZSAW;
+}
+static bool weapon_tail_needed(const q1_map_state *map) {
+    qa_vec3 punch = map->punch_angle;
+    return (!rockets_in_payload(map) && (map->ammo_rockets != 0 || signbit(map->ammo_rockets))) ||
+        punch.x != 0 || signbit(punch.x) || punch.y != 0 || signbit(punch.y) ||
+        punch.z != 0 || signbit(punch.z);
+}
+static bool weapon_tail(q1_save_io *io, qa_q1_game *g) {
+    uint32_t count = 0;
+    if (io->values.direction == QA_SOURCE_SAVE_WRITE) {
+        for (uint32_t i = 0; i < g->capacity; ++i)
+            if (g->actors[i] && g->actors[i]->map && weapon_tail_needed(g->actors[i]->map))
+                ++count;
+        if (!count && !q1_ref_present(g->newmis))
+            return true;
+    } else {
+        g->newmis = (q1_ref){0};
+        if (io->values.offset == io->values.input.size)
+            return true;
+    }
+    Q1_SAVE(io, ref, g->newmis);
+    Q1_SAVE(io, u32, count);
+    if (count > g->capacity)
+        return q1_save_fail(io, "Q1 weapon state exceeds its actor capacity");
+    uint32_t cursor = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        qa_actor_id id = {0};
+        if (io->values.direction == QA_SOURCE_SAVE_WRITE) {
+            while (cursor < g->capacity && (!g->actors[cursor] || !g->actors[cursor]->map ||
+                !weapon_tail_needed(g->actors[cursor]->map)))
+                ++cursor;
+            id = g->actors[cursor++]->id;
+        }
+        Q1_SAVE(io, owned_actor, id);
+        q1_actor *entity = id.slot < g->capacity ? g->actors[id.slot] : NULL;
+        if (!entity || !qa_actor_id_equal(entity->id, id) || !entity->map)
+            return q1_save_fail(io, "Q1 weapon state has no map actor");
+        if (!rockets_in_payload(entity->map))
+            Q1_SAVE(io, float, entity->map->ammo_rockets);
+        Q1_SAVE(io, vector, entity->map->punch_angle);
+    }
+    return true;
+}
 static bool payload(q1_save_io *io, qa_q1_game *g) {
     if (!q1_save_runtime(io, g) || !q1_save_wire(io, g))
         return false;
@@ -315,7 +360,7 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
                 ok = q1_save_fail(io, "Rogue state has no matching physical source client");
         }
     }
-    if (ok) ok = q1_body_queue_validate(g, io->values.error);
+    if (ok) ok = q1_body_queue_validate(g, io->values.error) && weapon_tail(io, g);
     free(index);
     return ok;
 }

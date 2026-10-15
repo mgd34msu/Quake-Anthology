@@ -17,14 +17,14 @@ typedef struct qa_q1_map_fields {
     const char *spawn_function, *spawn_classname;
     const char *group, *path, *category, *fog_info_entity, *fog;
     qa_vec3 mangle, movedir, view_offset, rotate;
-    qa_vec3 dest, dest2, pos2, angular_velocity;
+    qa_vec3 dest, dest2, pos2, angular_velocity, punch_angle;
     qa_vec3 particle_size;
     qa_vec3 fog_color;
     float fog_density;
     bool has_movedir, has_view_offset, has_dest2;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds, local_time_seconds;
-    float spawn_multi, spawn_silent, gravity, current_ammo, pain_finished, weapon, frags;
+    float spawn_multi, spawn_silent, gravity, current_ammo, ammo_rockets, pain_finished, weapon, frags;
     int32_t sounds, style, world_type, color_map, impulse;
     int32_t initial_state, frame, skin;
     float counter_value, goal_state;

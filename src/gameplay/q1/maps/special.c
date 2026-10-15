@@ -239,6 +239,19 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return qa_world_body_write(g->services.world, entity->id, &body, error) &&
            q1_link(g, entity, error);
 }
+bool q1_map_rocket_begin(qa_q1_game *g, qa_actor_id id, qa_error *error) {
+    q1_actor *entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
+    entity->map->ammo_rockets -= 1;
+    entity->map->current_ammo = entity->map->ammo_rockets;
+    if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (entity && entity->map)
+        entity->map->punch_angle.x = -2;
+    return true;
+}
 static bool shooter_fire(qa_q1_game *g, q1_actor *entity, bool continuous, qa_error *error) {
     qa_actor_id id = entity->id;
     uint32_t flags = entity->spawnflags;
@@ -265,7 +278,7 @@ static bool shooter_fire(qa_q1_game *g, q1_actor *entity, bool continuous, qa_er
     if (!q1_alive(g, id))
         return true;
     if (hipnotic && kind == Q1_ROCKET &&
-        !q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_SGUN1_WAV], 1, 1, 1, error))
+        !q1_map_rocket_begin(g, id, error))
         return false;
     entity = q1_entity(g, id);
     if (!entity || !entity->map)

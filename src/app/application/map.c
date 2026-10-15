@@ -2042,6 +2042,8 @@ static bool q1_spawn_entity(application_provider *provider,
                        &fields.pos2, NULL, error) ||
         !entity_vector(entities, index, "avelocity", qa_v3(0, 0, 0),
                        &fields.angular_velocity, NULL, error) ||
+        !entity_vector(entities, index, "punchangle", qa_v3(0, 0, 0),
+                       &fields.punch_angle, NULL, error) ||
         !entity_vector(entities, index, "movedir", qa_v3(0, 0, 0),
                        &fields.movedir, &fields.has_movedir, error) ||
         !entity_vector(entities, index, "view_ofs", qa_v3(0, 0, 0),
@@ -2072,6 +2074,8 @@ static bool q1_spawn_entity(application_provider *provider,
                       error) ||
         !entity_float(entities, index, "currentammo", 0,
                       &fields.current_ammo, error) ||
+        !entity_float(entities, index, "ammo_rockets", 0,
+                      &fields.ammo_rockets, error) ||
         !entity_float(entities, index, "pain_finished", 0,
                       &fields.pain_finished, error) ||
         !entity_float(entities, index, "cnt", 0, &fields.counter_value,

@@ -1543,7 +1543,7 @@ struct qa_q1_game {
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
-    q1_ref sight_actor, horn_charmer, rogue_runes_world, body_queue_head;
+    q1_ref sight_actor, horn_charmer, rogue_runes_world, body_queue_head, newmis;
     double time, elapsed, sight_time;
     double finale_last_poll;
     bool finale_polled, finale_acknowledged;

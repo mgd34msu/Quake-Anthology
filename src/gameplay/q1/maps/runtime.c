@@ -238,7 +238,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
     g->qw_rj = g->options.rules == QA_RULESET_QUAKEWORLD ? 1 : 0;
-    g->sight_actor = g->horn_charmer = (q1_ref){0};
+    g->sight_actor = g->horn_charmer = g->newmis = (q1_ref){0};
     g->rogue_runes_world = g->body_queue_head = (q1_ref){0};
     g->rogue_runes_started = false;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
@@ -473,11 +473,21 @@ static bool target_field(void *context, qa_actor_id actor, qa_string_id key, qa_
                                                                       : entity->map->current_ammo};
         return true;
     }
+    if (entity->map && key == g->field_keys[QA_TARGET_KEY_AMMO_ROCKETS]) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->map->ammo_rockets};
+        return true;
+    }
+    if (entity->map && key == g->field_keys[QA_TARGET_KEY_PUNCHANGLE]) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                                 .value.vector = entity->map->punch_angle};
+        return true;
+    }
     if (entity->map && entity->map->kind == Q1_MAP_ENDING_ACTOR) {
         if ((key == g->field_keys[QA_TARGET_KEY_AMMO_ROCKETS1]) || (key == g->field_keys[QA_TARGET_KEY_PAUSETIME])) {
             *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                      .value.number = (key == g->field_keys[QA_TARGET_KEY_AMMO_ROCKETS1])
-                                                         ? entity->map->pending.follower.rockets
+                                                         ? entity->map->ammo_rockets
                                                          : entity->map->pause_time};
             return true;
         }
@@ -838,7 +848,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         source->duration,      source->distance,     source->next_think_seconds,
         source->local_time_seconds,
         source->counter_value, source->spawn_multi,  source->spawn_silent,
-        source->gravity,       source->current_ammo, source->pain_finished,
+        source->gravity,       source->current_ammo, source->ammo_rockets, source->pain_finished,
         source->weapon,        source->frags, source->goal_state, source->fog_density};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
@@ -847,7 +857,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         !qa_vec_finite(source->rotate) || !qa_vec_finite(source->dest) ||
         !qa_vec_finite(source->dest2) || !qa_vec_finite(source->pos2) ||
         !qa_vec_finite(source->angular_velocity) || !qa_vec_finite(source->particle_size) ||
-        !qa_vec_finite(source->fog_color) ||
+        !qa_vec_finite(source->fog_color) || !qa_vec_finite(source->punch_angle) ||
         (source->has_view_offset && !qa_vec_finite(source->view_offset)))
         return q1_map_fail(error, "invalid Q1 authored direction");
     q1_map_state *state = entity->map;
@@ -873,6 +883,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->dest2 = source->dest2;
     state->has_dest2 = source->has_dest2;
     state->pos2 = source->pos2;
+    state->punch_angle = source->punch_angle;
     state->particle_size = source->particle_size;
     state->fog_color = source->fog_color;
     state->fog_density = source->fog_density;
@@ -908,6 +919,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->spawn_silent = source->spawn_silent;
     state->gravity = source->gravity;
     state->current_ammo = source->current_ammo;
+    state->ammo_rockets = source->ammo_rockets;
     state->weapon = source->weapon;
     state->frags = source->frags;
     if (state->kind == Q1_MAP_TIME_MACHINE)

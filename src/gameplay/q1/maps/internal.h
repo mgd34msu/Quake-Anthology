@@ -361,12 +361,12 @@ struct q1_map_state {
     qa_string_id spawn_function, spawn_classname;
     qa_string_id group, path, category, fog_info_entity;
     qa_vec3 movedir, mangle, view_offset, rotate;
-    qa_vec3 dest, dest2, pos2;
+    qa_vec3 dest, dest2, pos2, punch_angle;
     qa_vec3 particle_size;
     qa_vec3 fog_color;
     float fog_density;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
-    float spawn_multi, spawn_silent, gravity, current_ammo, weapon, frags;
+    float spawn_multi, spawn_silent, gravity, current_ammo, ammo_rockets, weapon, frags;
     int32_t sounds, style, color_map, impulse;
     uint32_t inline_model, coop_weapons;
     float counter_value, field_state, goal_state;
@@ -395,7 +395,6 @@ struct q1_map_state {
         struct {
             q1_ref move_target;
             qa_vec3 view_angles;
-            float rockets;
             uint8_t fire_stage;
         } follower;
         struct {
@@ -664,6 +663,7 @@ bool q1_map_pushable_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_bob_water(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_special_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_special_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_rocket_begin(qa_q1_game *, qa_actor_id, qa_error *);
 bool q1_map_special_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_special_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 void q1_map_cancel(qa_q1_game *, q1_actor *);

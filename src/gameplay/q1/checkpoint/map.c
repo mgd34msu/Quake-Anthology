@@ -232,7 +232,7 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
     case Q1_MAP_BUZZSAW:
         Q1_SAVE(io, ref, m->pending.follower.move_target);
         Q1_SAVE(io, vector, m->pending.follower.view_angles);
-        Q1_SAVE(io, float, m->pending.follower.rockets);
+        Q1_SAVE(io, float, m->ammo_rockets);
         Q1_SAVE(io, u8, m->pending.follower.fire_stage);
         break;
     case Q1_MAP_HIP_COUNTER:
