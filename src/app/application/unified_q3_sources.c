@@ -256,9 +256,9 @@ static bool source_capture(qa_unified_q3_source *out, application_unified_q3_sou
     }
     out->entities = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*out->entities),
         _Alignof(qa_unified_q3_entity), e);
-    out->clients = qa_unified_frame_lease_alloc(v->lease, r->entities, sizeof(*out->clients),
+    out->clients = qa_unified_frame_lease_alloc(v->lease, r->clients, sizeof(*out->clients),
         _Alignof(qa_unified_q3_client), e);
-    if (r->entities && (!out->entities || !out->clients))
+    if ((r->entities && !out->entities) || (r->clients && !out->clients))
         return application_fail(e, QA_ERROR_MEMORY, "Retaining compiled Q3 physical rows");
     for (uint32_t i = 0; i < r->entities; ++i) {
         qa_q3_source_binding binding;
@@ -281,7 +281,7 @@ static bool source_capture(qa_unified_q3_source *out, application_unified_q3_sou
             entity->link_bounds = link.absolute_bounds;
         }
     }
-    for (uint32_t i = 0; i < r->entities; ++i) {
+    for (uint32_t i = 0; i < r->clients; ++i) {
         qa_q3_source_binding binding;
         if (!stable(v, r, e) || !qa_q3_source_binding_read(r->game, i, &binding, e)) return false;
         if (!binding.in_use || binding.client_slot < 0) continue;
