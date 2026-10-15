@@ -100,7 +100,7 @@ static float vertical_offset(qa_q1_game *g, q1_actor *e, qa_vec3 origin) {
 }
 static bool heavy_spike(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 velocity,
                         q1_actor **out, qa_error *error) {
-    if (!q1_projectile_spawn(g, owner->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin, velocity, out,
+    if (!q1_projectile_spawn(g, owner->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, true, origin, velocity, out,
                              error))
         return false;
     (*out)->state.projectile.kind = Q1_HEAVY_SPIKE;

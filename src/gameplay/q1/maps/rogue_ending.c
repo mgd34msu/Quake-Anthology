@@ -273,7 +273,7 @@ static bool fire_rocket(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         return true;
     qa_vec3 origin = qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(forward, 8)), qa_v3(0, 0, 16));
     q1_actor *missile;
-    if (!q1_projectile_spawn(g, id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, origin,
+    if (!q1_projectile_spawn(g, id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, false, origin,
                              qa_vec_scale(direction, 1000), &missile, error) ||
         !q1_map_finale_emit(
             g, 4, qa_q1_finale_text(g->options.edition == QA_Q1_RERELEASE, "$qc_finale_rogue_end"),

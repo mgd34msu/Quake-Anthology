@@ -662,9 +662,10 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     return operation_finish(&operation, ok, error);
 }
 static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id actor,
-                        const qa_source_frame *frame, qa_error *error) {
+                        const qa_source_frame *frame, double source_frametime, qa_error *error) {
     (void)session;
     qa_q1_game *g = context;
+    g->elapsed = source_frametime;
     q1_actor *entity = q1_entity(g, actor);
     if (!entity || !entity->native)
         return true;
@@ -719,12 +720,57 @@ static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id ac
         return false;
     return !q1_entity(g, actor) || qa_q1_game_water_transition(g, actor, error);
 }
+typedef struct q1_newmis_step {
+    qa_q1_game *game;
+    qa_actor_id actor;
+    qa_source_frame frame;
+    double source_frametime;
+} q1_newmis_step;
+static bool newmis_step(void *context, qa_session *session, qa_error *error) {
+    q1_newmis_step *step = context;
+    return actor_frame_inner(step->game, session, step->actor, &step->frame,
+        step->source_frametime, error);
+}
+bool q1_run_newmis(qa_q1_game *g, const qa_source_frame *frame, qa_error *error) {
+    if (g->options.rules != QA_RULESET_QUAKEWORLD || !q1_ref_present(g->newmis) ||
+        (g->newmis.kind == QA_ACTOR_REFERENCE_SOURCE && g->newmis.value.source.slot == 0))
+        return true;
+    qa_actor_id actor = q1_ref_actor(g, g->newmis);
+    g->newmis = (q1_ref){0};
+    if (!q1_entity(g, actor))
+        return true;
+    qa_source_frame immediate;
+    if (frame)
+        immediate = *frame;
+    else {
+        qa_clock_state clock = {0};
+        (void)qa_session_clock(g->services.session, g->options.provider, &clock);
+        immediate = clock.frame;
+    }
+    immediate.provider = g->options.provider;
+    immediate.kind = g->options.rules;
+    immediate.phase = QA_ENTITY_PHYSICS;
+    immediate.start_ns = immediate.time_ns = g->time_ns;
+    immediate.elapsed_ns = UINT64_C(50000000);
+    double source_frametime = g->elapsed;
+    q1_newmis_step step = {g, actor, immediate, source_frametime};
+    bool okay = qa_session_invoke(g->services.session, actor, QA_INVOKE_PHYSICS,
+        newmis_step, &step, error);
+    g->elapsed = source_frametime;
+    return okay;
+}
 static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
                          const qa_source_frame *frame, qa_error *error) {
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(context, &operation, error))
         return false;
-    bool ok = actor_frame_inner(context, session, actor, frame, error);
+    qa_q1_game *g = context;
+    double source_frametime = g->elapsed;
+    bool ok = actor_frame_inner(context, session, actor, frame,
+        (double)frame->elapsed_ns / 1000000000.0, error);
+    if (ok && qa_q1_game_operation_live(&operation))
+        ok = q1_run_newmis(g, frame, error);
+    g->elapsed = source_frametime;
     return operation_finish(&operation, ok, error);
 }
 static bool end_frame(void *context, qa_session *session, const qa_source_frame *frame,
@@ -1227,7 +1273,8 @@ static bool think_callback(void *context, qa_actor_id actor, const qa_think_scop
     uint64_t previous_ns = g->time_ns;
     g->time_ns = scope->time_ns;
     g->time = callback_time;
-    g->elapsed = (double)scope->interval_elapsed_ns / 1000000000.0;
+    if (clock != QA_RULESET_QUAKEWORLD)
+        g->elapsed = (double)scope->interval_elapsed_ns / 1000000000.0;
     bool result = q1_think(g, entity, error);
     g->time = previous;
     g->elapsed = previous_elapsed;

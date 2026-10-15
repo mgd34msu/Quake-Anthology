@@ -1113,7 +1113,31 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
   return q2m_change_yaw(context, error);
 }
 
+bool q2m_stand_state(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  q2m_move_id move = monster->definition->stand_move;
+  bool floater = monster->definition->species == Q2M_FLOATER;
+  if (floater) {
+    if (context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
+        monster->move && monster->move->id == Q2M_MOVE_floater_move_disguise)
+      move = Q2M_MOVE_floater_move_disguise;
+    else
+      move = q2m_random(context->game) <= .5f ? Q2M_MOVE_floater_move_stand1
+                                           : Q2M_MOVE_floater_move_stand2;
+  }
+  return move == Q2M_MOVE_NONE || q2m_set_move(context, move, floater, error);
+}
+
 bool q2m_run_state(q2m_context *context, qa_error *error) {
+    if (context->monster->definition->species == Q2M_FLOATER) {
+      q2m_move_id move = context->game->options.rules == QA_RULESET_Q2_RERELEASE &&
+          context->monster->move &&
+          context->monster->move->id == Q2M_MOVE_floater_move_disguise
+              ? Q2M_MOVE_floater_move_pop
+              : context->monster->stand_ground ? Q2M_MOVE_floater_move_stand1
+                                               : Q2M_MOVE_floater_move_run;
+      return q2m_set_move(context, move, true, error);
+    }
     bool tank_callback = context->monster->definition->species == Q2M_TANK ||
                          context->monster->definition->species == Q2M_TANK_COMMANDER;
     if (tank_callback && !q2m_callback_run(context, Q2M_CALLBACK_tank_run, error))
@@ -1151,7 +1175,12 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
   if (!q2_actor_live(context->game, id))
     return true;
   context->monster->goal = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(id));
-  if (animate_state && !q2m_run_state(context, error)) return false;
+  if (animate_state &&
+      !(context->monster->definition->species == Q2M_FLOATER &&
+                context->monster->stand_ground
+            ? q2m_stand_state(context, error)
+            : q2m_run_state(context, error)))
+    return false;
   if (!q2m_alive(context))
     return true;
   if (!q2m_refresh(context, error))
@@ -1602,6 +1631,9 @@ static bool hear_target(q2m_context *context, bool *found, qa_error *error) {
   context->actor->physics.enemy = qa_actor_reference_lifetime(noise.owner);
   context->actor->physics.goal = qa_actor_reference_lifetime(noise.owner);
   *found = true;
+  if (monster->definition->species == Q2M_FLOATER)
+    return monster->stand_ground ? q2m_stand_state(context, error)
+                                 : q2m_run_state(context, error);
   return q2m_set_move(context,
                       monster->stand_ground ? monster->definition->stand_move
                                             : monster->definition->run_move,
@@ -2466,9 +2498,9 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started,
         monster->pause_ns = rerelease ? UINT64_MAX
             : q2m_after(context->game->now_ns, 100000000);
       *selected = *started = true;
-      return q2m_set_move(context, walk ? monster->definition->walk_move
-                                       : monster->definition->stand_move,
-                          false, error);
+      return walk ? q2m_set_move(context, monster->definition->walk_move,
+                                 false, error)
+                  : q2m_stand_state(context, error);
     }
   }
   bool visible;
@@ -4277,7 +4309,9 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       if (context->body.angles.y != monster->ideal_yaw && monster->temporary_stand_ground) {
         monster->stand_ground = false;
         monster->temporary_stand_ground = false;
-        if (!q2m_set_move(context, monster->definition->run_move, false, error))
+        if (!(monster->definition->species == Q2M_FLOATER
+                  ? q2m_run_state(context, error)
+                  : q2m_set_move(context, monster->definition->run_move, false, error)))
           return false;
       }
       if ((context->game->options.product != QA_Q2_ROGUE || !monster->manual_steering) &&
@@ -4353,7 +4387,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
             return true;
           monster->close_sight_tripped = false;
         }
-        return q2m_set_move(context, monster->definition->stand_move, false, error);
+        return q2m_stand_state(context, error);
       }
       if (!(rerelease && touching ? q2m_change_yaw(context, error)
                                   : q2m_move_to_goal(context, distance, error)))

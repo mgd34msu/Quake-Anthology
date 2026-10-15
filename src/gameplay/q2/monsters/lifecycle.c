@@ -151,7 +151,7 @@ static bool set_route(q2m_context *context, qa_actor_id goal, bool spawn_dead, q
         monster->pause_ns = actor ? rerelease ? UINT64_MAX : UINT64_C(100000000) * Q2M_SECOND
                                  : q2m_after(context->game->now_ns, 100000000.0);
         return spawn_dead || (actor ? q2m_callback_run(context, Q2M_CALLBACK_actor_stand, error)
-                                   : q2m_set_move(context, monster->definition->stand_move, false, error));
+                                   : q2m_stand_state(context, error));
     }
     qa_vec3 direction = qa_vec_sub(target.origin, context->body.origin);
     monster->ideal_yaw = context->body.angles.y = actor
@@ -533,7 +533,9 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
             monster->goal = monster->move_target = qa_actor_reference_resolve(qa_session_actors(context->game->services.session), context->actor->physics.goal = qa_actor_reference_lifetime(route.goal));
             monster->pause_ns = 0;
             *routed = true;
-            return !found_target || q2m_set_move(context, monster->definition->run_move, false, error);
+            return !found_target || (monster->definition->species == Q2M_FLOATER
+                ? q2m_run_state(context, error)
+                : q2m_set_move(context, monster->definition->run_move, false, error));
         }
         if (!found_target && monster->combat_point) {
             monster->combat_point = false;
@@ -562,5 +564,7 @@ bool q2m_lifecycle_route(q2m_context *context, bool found_target, bool *routed, 
             return true;
     }
     *routed = true;
-    return q2m_set_move(context, monster->definition->run_move, false, error);
+    return monster->definition->species == Q2M_FLOATER
+        ? q2m_run_state(context, error)
+        : q2m_set_move(context, monster->definition->run_move, false, error);
 }

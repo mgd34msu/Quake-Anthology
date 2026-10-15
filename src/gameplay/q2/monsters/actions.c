@@ -2451,6 +2451,10 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
     *handled = true;
     return q2m_set_move(context, Q2M_MOVE_flyer_move_kamikaze, false, error);
   }
+  if (callback == Q2M_CALLBACK_floater_run) {
+    *handled = true;
+    return q2m_run_state(context, error);
+  }
   if (callback == Q2M_CALLBACK_tank_run || callback == Q2M_CALLBACK_tank_poststrike) {
     *handled = true;
     if (callback == Q2M_CALLBACK_tank_poststrike) {
@@ -2586,8 +2590,7 @@ static bool end_transition(q2m_context *context, q2m_callback_id callback,
       (callback == Q2M_CALLBACK_insane_onground) ||
       (callback == Q2M_CALLBACK_insane_cross)) {
     *handled = true;
-    return set_definition_move(context,
-                               context->monster->definition->stand_move, error);
+    return q2m_stand_state(context, error);
   }
   if ((q2m_callbacks[callback].flags & Q2M_CALLBACK_WALK) != 0) {
     *handled = true;

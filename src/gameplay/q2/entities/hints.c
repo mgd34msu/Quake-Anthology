@@ -161,7 +161,7 @@ bool q2_hint_stop(q2m_context *c, qa_error *e) {
     c->actor->physics.enemy = (qa_actor_reference){0};
     m->pause_ns = c->game->options.rules == QA_RULESET_Q2_RERELEASE
         ? UINT64_MAX : q2m_after(c->game->now_ns, 100000000.0);
-    return q2m_set_move(c, m->definition->stand_move, false, e);
+    return q2m_stand_state(c, e);
 }
 
 static bool visible_from(qa_q2_game *g, qa_actor_id observer, qa_actor_id target,

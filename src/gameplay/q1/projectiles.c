@@ -46,7 +46,7 @@ cleanup:
 }
 
 bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
-                         q1_projectile_kind kind, qa_vec3 origin, qa_vec3 velocity, q1_actor **out,
+                         q1_projectile_kind kind, bool source_newmis, qa_vec3 origin, qa_vec3 velocity, q1_actor **out,
                          qa_error *error) {
     static const q1_runtime_name names[] = {
         Q1_NAME_CLASS_SPIKE,           Q1_NAME_CLASS_SUPERSPIKE,     Q1_NAME_MISSILE,           Q1_NAME_GRENADE,        Q1_NAME_CLASS_WIZARD_SPIKE,
@@ -66,6 +66,11 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
     q1_actor *entity;
     if (!q1_create(g, g->runtime_names[names[kind]], Q1_PROJECTILE, owner, &entity, error))
         return false;
+    q1_ref source_reference = q1_ref_from(g, entity->id);
+    bool complete_newmis = source_newmis && kind == Q1_ROCKET &&
+        g->options.program == QA_Q1_HIPNOTIC && g->options.rules != QA_RULESET_QUAKEWORLD;
+    if (source_newmis && !complete_newmis)
+        g->newmis = source_reference;
     entity->state.projectile = (q1_projectile){.kind = kind,
                                                .weapon = weapon,
                                                .activator = q1_ref_from(g, owner),
@@ -110,6 +115,8 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         if (!q1_launch_behavior(g, entity, role, error))
             goto fail;
     }
+    if (complete_newmis)
+        g->newmis = source_reference;
     *out = entity;
     return true;
 fail:
@@ -343,7 +350,7 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                 qa_vec_sub(target.origin, qa_vec_scale(projectile.right, 13)), body.origin));
             q1_actor *missile;
             if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WIZARD_WATTACK_WAV], 1, 1, 1, error) ||
-                !q1_projectile_spawn(g, q1_ref_actor(g, entity->owner), QA_Q1_WEAPON_COUNT, Q1_WIZARD_SPIKE,
+                !q1_projectile_spawn(g, q1_ref_actor(g, entity->owner), QA_Q1_WEAPON_COUNT, Q1_WIZARD_SPIKE, true,
                                      body.origin, qa_vec_scale(direction, 600), &missile, error))
                 return false;
         }

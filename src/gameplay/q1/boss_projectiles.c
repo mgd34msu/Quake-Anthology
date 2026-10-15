@@ -24,7 +24,7 @@ bool q1_boss_shot(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 dire
                   qa_vec3 velocity, qa_string_id model, q1_projectile_kind kind, q1_actor **out,
                   qa_error *error) {
     q1_actor *shot;
-    if (!q1_projectile_spawn(g, owner, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin, direction, &shot,
+    if (!q1_projectile_spawn(g, owner, QA_Q1_WEAPON_COUNT, Q1_SPIKE, true, origin, direction, &shot,
                              error))
         return false;
     shot->state.projectile.kind = kind;

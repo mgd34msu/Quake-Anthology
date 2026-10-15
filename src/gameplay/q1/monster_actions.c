@@ -148,7 +148,7 @@ static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *e
     qa_vec3 direction = qa_vec_normalize(g->forward);
     direction.z = -direction.z + (q1_random(g) - 0.5f) * 0.1f;
     q1_actor *missile;
-    return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_KNIGHT_SPIKE, origin,
+    return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_KNIGHT_SPIKE, true, origin,
                                qa_vec_scale(direction, 300), &missile, error) &&
            q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_HKNIGHT_ATTACK1_WAV], 1, 1, 1, error);
 }
@@ -225,10 +225,11 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
             qa_vec_scale(velocity, qa_vec_length(qa_vec_sub(target.origin, origin)) / 300));
     }
     q1_actor *missile;
-    if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_LAVA_BALL, origin,
+    if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_LAVA_BALL, true, origin,
                              qa_vec_scale(qa_vec_normalize(qa_vec_sub(destination, origin)), 300),
-                             &missile, error) ||
-        !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
+                             &missile, error))
+        return false;
+    if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_BOSS1_THROW_WAV], 1, 1, 1, error))
         return false;
     return q1_health(g, q1_ref_actor(g, entity->state.monster.enemy)) > 0 ||
            q1_monster_play(g, entity, Q1_FRAME_boss_idle1, error);
@@ -322,7 +323,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) &&
                q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_ENFORCER_ENFIRE_WAV], 1, 1, 1, error) &&
                q1_projectile_spawn(
-                   g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ENFORCER_LASER,
+                   g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ENFORCER_LASER, true,
                    qa_vec_add(body.origin, qa_vec_add(qa_vec_scale(g->forward, 30),
                                                       qa_vec_add(qa_vec_scale(g->right, 8.5f),
                                                                  qa_v3(0, 0, 16)))),
@@ -426,7 +427,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         velocity.z = 200;
         return q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error) &&
                q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_GRENADE_WAV], 1, 1, 1, error) &&
-               q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_OGRE_GRENADE, body.origin,
+               q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_OGRE_GRENADE, false, body.origin,
                                    velocity, &missile, error);
     }
     case Q1_ACTION_OGRE_DIE3:
@@ -554,7 +555,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
             return true;
         qa_vec3 direction =
             qa_vec_normalize(qa_vec_sub(qa_vec_add(target.origin, qa_v3(0, 0, 10)), body.origin));
-        if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_VORE_BALL,
+        if (!q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_VORE_BALL, false,
                                  qa_vec_add(body.origin, qa_v3(0, 0, 10)),
                                  qa_vec_scale(direction, 400), &missile, error))
             return false;
@@ -612,7 +613,7 @@ bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         axes(g, body);
         qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(qa_vec_sub(target.origin, origin)), 600);
         velocity.z = 200;
-        return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, origin,
+        return q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ZOMBIE_GRENADE, false, origin,
                                    velocity, &missile, error);
     }
     case Q1_ACTION_ZOMBIE_PAINE1:

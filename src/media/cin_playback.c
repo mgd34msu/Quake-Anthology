@@ -98,6 +98,27 @@ const qa_media_frame *qa_cin_playback_frame(qa_cin_playback *player) {
         .loop = player->loop, .source_ms = source, .presentation_ms = player->epoch_ms + source};
     return &player->frame;
 }
+static bool advance_picture(qa_cin_playback *player, double now, bool *looped, qa_error *error) {
+    cin_picture previous = player->picture;
+    player->picture = player->pending; player->pending = previous;
+    player->image_dirty = true;
+    player->busy = true;
+    bool ok = read_picture(player, &player->pending, error);
+    player->busy = false;
+    if (!ok) return false;
+    if (!player->pending.present) {
+        if (player->options.hold) {
+            if (!player->picture.present) player->picture = previous;
+            player->status = QA_MEDIA_HELD;
+        } else if (player->options.loop) {
+            if (player->loop == UINT64_MAX) { player->faulted = true; return fail(error, "CIN loop counter overflow"); }
+            ++player->loop;
+            if (!qa_cin_playback_restart(player, now, error)) return false;
+            *looped = true;
+        } else { player->picture.present = false; player->status = QA_MEDIA_ENDED; }
+    }
+    return true;
+}
 bool qa_cin_playback_tick(qa_cin_playback *player, double now, bool game_focus, qa_media_tick *out, qa_error *error) {
     if (!player || !out || player->busy || player->faulted || !clock_valid(now)) return fail(error, "Invalid CIN tick or faulted playback");
     bool changed = false, looped = false;
@@ -108,7 +129,6 @@ bool qa_cin_playback_tick(qa_cin_playback *player, double now, bool game_focus, 
         else {
             double desired = trunc((now - player->epoch_ms) * 14 / 1000);
             if (desired > (double)decoded) {
-                player->busy = true;
                 if (desired > (double)decoded + 1) {
                     if (player->options.dropped_frame) {
                         uint64_t requested = desired >= 18446744073709551616.0 ? UINT64_MAX : (uint64_t)desired;
@@ -116,23 +136,7 @@ bool qa_cin_playback_tick(qa_cin_playback *player, double now, bool game_focus, 
                     }
                     player->epoch_ms = now - trunc((double)decoded * 1000 / 14);
                 }
-                cin_picture previous = player->picture;
-                player->picture = player->pending; player->pending = previous;
-                player->image_dirty = true;
-                bool ok = read_picture(player, &player->pending, error);
-                player->busy = false;
-                if (!ok) return false;
-                if (!player->pending.present) {
-                    if (player->options.hold) {
-                        if (!player->picture.present) player->picture = previous;
-                        player->status = QA_MEDIA_HELD;
-                    } else if (player->options.loop) {
-                        if (player->loop == UINT64_MAX) { player->faulted = true; return fail(error, "CIN loop counter overflow"); }
-                        ++player->loop;
-                        if (!qa_cin_playback_restart(player, now, error)) return false;
-                        looped = true;
-                    } else { player->picture.present = false; player->status = QA_MEDIA_ENDED; }
-                }
+                if (!advance_picture(player, now, &looped, error)) return false;
                 changed = true;
             }
         }
@@ -140,24 +144,52 @@ bool qa_cin_playback_tick(qa_cin_playback *player, double now, bool game_focus, 
     *out = (qa_media_tick){.status = player->status, .frame = qa_cin_playback_frame(player), .changed = changed, .looped = looped};
     return true;
 }
-bool cinematic_cin_resume(qa_cin_playback *player, double source_ms, uint64_t loop,
+bool cinematic_cin_resume(qa_cin_playback *player, const qa_cinematic_checkpoint *checkpoint,
     double *elapsed_ms, qa_media_status *status, qa_error *error) {
+    uint64_t loop = checkpoint->loop;
     player->loop = loop;
     if (!qa_cin_playback_restart(player, 0, error)) return false;
-    double desired = trunc(trunc(source_ms) * 14 / 1000);
+    bool exact = checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_CIN;
+    const qa_cinematic_cin_progress *progress = &checkpoint->progress.cin;
+    double desired = trunc(trunc(checkpoint->source_ms) * 14 / 1000);
     qa_media_tick tick = {0};
-    while (player->status == QA_MEDIA_PLAYING && player->loop == loop &&
-        desired > (double)qa_cin_decoder_index(player->decoder)) {
-        double next = ceil(((double)qa_cin_decoder_index(player->decoder) + 1) * 1000 / 14);
-        if (!qa_cin_playback_tick(player, next, true, &tick, error)) return false;
+    for (;;) {
+        if (exact) {
+            qa_cin_prefix_cursor cursor;
+            cinematic_cin_decoder_cursor(player->decoder, &cursor);
+            if (cursor.position == progress->cursor.position && cursor.next_index == progress->cursor.next_index &&
+                cursor.ended == progress->cursor.ended && player->loop == loop)
+                break;
+            if (cursor.ended || player->loop != loop)
+                return fail(error, "Saved CIN prefix is not present in its resource");
+            bool looped = false;
+            if (!advance_picture(player, 0, &looped, error)) return false;
+        } else {
+            if (player->status != QA_MEDIA_PLAYING || player->loop != loop ||
+                desired <= (double)qa_cin_decoder_index(player->decoder)) break;
+            double next = ceil(((double)qa_cin_decoder_index(player->decoder) + 1) * 1000 / 14);
+            if (!qa_cin_playback_tick(player, next, true, &tick, error)) return false;
+        }
     }
     if (player->loop != loop) return fail(error, "Saved CIN time exceeds its loop pass");
-    *elapsed_ms = player->epoch_ms + source_ms;
-    *status = player->status;
+    if (exact) {
+        player->epoch_ms = progress->clock_ms - progress->epoch_back_ms;
+        player->status = checkpoint->status == QA_MEDIA_HELD || checkpoint->status == QA_MEDIA_ENDED ?
+            checkpoint->status : QA_MEDIA_PLAYING;
+        *elapsed_ms = progress->clock_ms;
+        *status = checkpoint->status;
+    } else {
+        *elapsed_ms = player->epoch_ms + checkpoint->source_ms;
+        *status = player->status;
+    }
     return true;
 }
 void cinematic_cin_position(const qa_cin_playback *player, double elapsed_ms,
-    double *source_ms, uint64_t *loop) {
-    *source_ms = fmax(0, elapsed_ms - player->epoch_ms);
-    *loop = player->loop;
+    qa_cinematic_checkpoint *out) {
+    out->source_ms = fmax(0, elapsed_ms - player->epoch_ms);
+    out->loop = player->loop;
+    out->progress_kind = QA_CINEMATIC_PROGRESS_CIN;
+    cinematic_cin_decoder_cursor(player->decoder, &out->progress.cin.cursor);
+    out->progress.cin.clock_ms = elapsed_ms;
+    out->progress.cin.epoch_back_ms = elapsed_ms - player->epoch_ms;
 }

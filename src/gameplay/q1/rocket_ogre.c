@@ -33,7 +33,7 @@ static bool fire(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     q1_actor *missile;
     if (!q1_projectile_spawn(
-            g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ROCKET,
+            g, entity->id, QA_Q1_WEAPON_COUNT, Q1_ROCKET, false,
             qa_vec_add(qa_vec_add(self.origin, qa_vec_scale(forward, 8)), qa_v3(0, 0, 16)),
             qa_vec_scale(qa_vec_normalize(direction), 600), &missile, error))
         return false;

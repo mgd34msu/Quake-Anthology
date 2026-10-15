@@ -1291,8 +1291,9 @@ bool qa_q2_monster_route_advance(qa_q2_game *game, qa_actor_id id, qa_actor_id g
     qa_vec3 delta = qa_vec_sub(body.origin, context.body.origin);
     context.monster->ideal_yaw = qa_vec_yaw(delta, QA_DIRECTION_FLOAT, false);
   }
-  return q2m_set_move(&context, pause_until_ns || hold || !goal.registry ?
-    context.monster->definition->stand_move : context.monster->definition->walk_move, false, error);
+  return pause_until_ns || hold || !goal.registry
+      ? q2m_stand_state(&context, error)
+      : q2m_set_move(&context, context.monster->definition->walk_move, false, error);
 }
 
 bool qa_q2_monster_follow_begin(qa_q2_game *game, qa_actor_id id,
@@ -1344,9 +1345,7 @@ bool qa_q2_monster_touch_path_corner(qa_q2_game *game, qa_actor_id id,
   context.monster->move_target = step->next;
   if (step->pause_until_ns != 0) {
     context.monster->pause_ns = step->pause_until_ns;
-    if (context.monster->definition->stand_move != Q2M_MOVE_NONE &&
-        !q2m_set_move(&context, context.monster->definition->stand_move, false,
-                      error))
+    if (!q2m_stand_state(&context, error))
       return false;
   } else if (step->next.registry != 0) {
     qa_body_state target;
@@ -1498,9 +1497,7 @@ bool qa_q2_monster_touch_combat_point(qa_q2_game *game, qa_actor_id id,
              (context.monster->move->flags & Q2M_MOVE_WALKING) != 0) {
     context.monster->pause_ns = q2m_after(game->now_ns, 100000000.0);
     context.monster->stand_ground = true;
-    if (context.monster->definition->stand_move != Q2M_MOVE_NONE &&
-        !q2m_set_move(&context, context.monster->definition->stand_move, false,
-                      error))
+    if (!q2m_stand_state(&context, error))
       return false;
   }
   if (qa_actor_id_equal(context.monster->move_target, step->corner)) {
@@ -2159,6 +2156,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       return !q2m_alive(&context);
   }
   bool automatic = !(definition->species == Q2M_TURRET && (monster->spawnflags & 128u));
+  if (definition->species == Q2M_FLOATER) {
+    bool disguise = game->options.rules == QA_RULESET_Q2_RERELEASE &&
+                    (monster->spawnflags & 8u);
+    if (!(disguise ? q2m_set_move(&context, Q2M_MOVE_floater_move_disguise, true, error)
+                   : q2m_stand_state(&context, error)))
+      return false;
+  }
   if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (species_is_soldier(definition->species) || species_is_soldierh(definition->species))) {
     monster->move = NULL;

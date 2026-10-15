@@ -36,7 +36,7 @@ bool q1_hipnotic_launch_laser(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon wea
     const qa_q1_weapon_view *shape = q1_weapon_shape(weapon == QA_Q1_MG3_LASER
                                                       ? weapon : QA_Q1_LASER);
     qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(direction), shape->speed);
-    if (!q1_projectile_spawn(g, owner, weapon, Q1_HIP_LASER, origin, velocity, &laser, error))
+    if (!q1_projectile_spawn(g, owner, weapon, Q1_HIP_LASER, true, origin, velocity, &laser, error))
         return false;
     laser->effects = light ? 8 : 0;
     laser->speed = shape->speed;
@@ -52,7 +52,7 @@ bool q1_hipnotic_launch_laser(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon wea
 bool q1_hipnotic_launch_proximity(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin,
                                   qa_vec3 velocity, qa_error *error) {
     q1_actor *mine;
-    if (!q1_projectile_spawn(g, owner, QA_Q1_PROXIMITY, Q1_PROXIMITY, origin, velocity, &mine,
+    if (!q1_projectile_spawn(g, owner, QA_Q1_PROXIMITY, Q1_PROXIMITY, false, origin, velocity, &mine,
                              error))
         return false;
     mine->physics.motion = QA_PHYSICS_TOSS;

@@ -54,7 +54,7 @@ static bool shoot(qa_q1_game *g, q1_actor *entity, float offset, qa_error *error
                      1000);
     q1_actor *shot;
     if (!q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_ROCKET1I_WAV], 1, 1, 1, error) ||
-        !q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, origin, velocity, &shot,
+        !q1_projectile_spawn(g, entity->id, QA_Q1_WEAPON_COUNT, Q1_SPIKE, true, origin, velocity, &shot,
                              error))
         return false;
     entity->state.monster.attack_finished = g->time + 0.2;
