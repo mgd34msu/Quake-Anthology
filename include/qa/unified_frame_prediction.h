@@ -30,10 +30,11 @@ struct qa_unified_frame_prediction {
     qa_movement_profile profile;
     qa_movement_state state;
     qa_string_id active_weapon;
-    qa_unified_weapon_state weapon;
+    /* Opaque modules keep private weapon and animation continuations server-side. */
+    qa_unified_weapon_state *weapon;
     qa_inventory_entry *ammo;
     size_t ammo_count;
-    qa_unified_animation_state animation;
+    qa_unified_animation_state *animation;
     qa_movement_posture standing, crouched, dead;
     qa_bounds invulnerability_bounds, bounds;
     qa_vec3 view_angles, view_offset;

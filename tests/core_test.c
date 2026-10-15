@@ -15,6 +15,7 @@
 #include "qa/network_unified_control.h"
 #include "qa/unified_frame_metadata.h"
 #include "qa/unified_frame_events.h"
+#include "qa/unified_frame_prediction.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/console_buffer.h"
 #include "qa/console_release.h"
@@ -568,6 +569,33 @@ static void test_debug_geometry_wire(void)
         &value, &decoded, NULL, NULL));
     qa_unified_record_dispose(&qa_unified_presentation_payload_layout, &decoded);
     qa_buffer_free(&wire);
+}
+
+static void test_prediction_continuations(void)
+{
+    qa_error error={0};
+    qa_unified_weapon_state weapon={.kind=QA_GAME_Q2,.gun_frame=4,.state=3};
+    qa_unified_animation_state animation={.family=QA_GAME_Q2,.frame=95,.end_frame=100};
+    qa_unified_frame_prediction previous={0};
+    for (unsigned mask=0;mask<4;++mask) {
+        qa_unified_frame_prediction source={.actor={.registry=7,.slot=1,.generation=2},
+            .sequence=12,.command_time_ms=125,.state={.kind=QA_RULESET_Q2_RERELEASE},
+            .view_angles={1,2,3},.view_height=22,
+            .weapon=(mask&1)?&weapon:NULL,.animation=(mask&2)?&animation:NULL};
+        qa_unified_frame_prediction decoded={0}; qa_buffer wire={0};
+        CHECK(qa_unified_record_delta_encode(&qa_unified_prediction_layout,
+            &source,mask?&previous:NULL,65536,&wire,NULL,&error));
+        CHECK(qa_unified_record_delta_decode(&qa_unified_prediction_layout,
+            (qa_bytes){wire.data,wire.size},mask?&previous:NULL,&decoded,
+            NULL,NULL,NULL,NULL,NULL,&error));
+        CHECK(qa_unified_record_equal(&qa_unified_prediction_layout,&source,&decoded,NULL,NULL));
+        CHECK(decoded.state.kind==QA_RULESET_Q2_RERELEASE && decoded.sequence==12 &&
+            decoded.command_time_ms==125 && decoded.view_height==22 && decoded.view_angles.y==2);
+        CHECK(!!decoded.weapon==!!(mask&1) && !!decoded.animation==!!(mask&2));
+        qa_unified_record_dispose(&qa_unified_prediction_layout,&previous);
+        previous=decoded; qa_buffer_free(&wire);
+    }
+    qa_unified_record_dispose(&qa_unified_prediction_layout,&previous);
 }
 
 static bool debug_clock_read(void *context, const qa_debug_clock *clock, double *out) {
@@ -5917,6 +5945,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_prediction_continuations();
     test_field_completion();
     test_source_text();
     test_shared_random();

@@ -3,6 +3,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_weapons.h"
 #include "guest_q3_catalog.h"
+#include "guest_native_q2_private.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/application_native_q2_prediction.h"
 
@@ -71,7 +72,9 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
     qa_item_id active;
     if (!p->launch || !qa_application_weapon_read(app, id, &active, e)) return false;
     out->active_weapon=active;
-    qa_unified_weapon_state *w = &out->weapon;
+    qa_unified_weapon_state *w = application_unified_frame_alloc(lease, 1, sizeof(*w), e);
+    if (!w) return false;
+    out->weapon = w;
     if (p->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view v;
         if (!qa_q1_player_read(p->state.q1, id, &v))
@@ -140,10 +143,12 @@ static bool weapon(qa_application *app, application_provider *p, qa_actor_id id,
 }
 
 static bool animation(qa_application *app, application_provider *p, qa_actor_id id,
-    qa_unified_frame_prediction *out, qa_error *e)
+    qa_unified_frame_prediction *out, qa_unified_frame_lease *lease, qa_error *e)
 {
     if (!p->launch) return false;
-    qa_unified_animation_state *a = &out->animation;
+    qa_unified_animation_state *a = application_unified_frame_alloc(lease, 1, sizeof(*a), e);
+    if (!a) return false;
+    out->animation = a;
     if (p->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_character_view v;
         if (!qa_q1_character_read(p->state.q1, id, &v))
@@ -225,8 +230,11 @@ bool application_unified_prediction_build(qa_application *app,
     out->has_rerelease_origin = input->state.kind == QA_RULESET_Q2_RERELEASE;
     if (out->has_rerelease_origin) out->rerelease_origin = configuration.q2r_pml_origin;
     out->profile_id=configuration.profile_id;
-    bool ok = weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
-        animation(app, c, player->actor, out, e);
+    bool opaque_source = a->kind == APPLICATION_PROVIDER_NATIVE &&
+        a->state.native.q2_engine &&
+        application_native_q2_whole_source(a->state.native.q2_engine, player->actor);
+    bool ok = opaque_source || (weapon(app, a, player->actor, out, lease, entries, entry_count, e) &&
+        animation(app, c, player->actor, out, lease, e));
     if (ok) {
         ok = application_unified_source_current(app, source) && application_unified_player_current(app, client, player) &&
             qa_actors_revision(registry) == revision &&
