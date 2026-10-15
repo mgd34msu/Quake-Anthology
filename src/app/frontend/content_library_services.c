@@ -1218,16 +1218,18 @@ bool frontend_content_library_demo_root(qa_frontend *frontend, const qa_command_
     if (!frontend || !source || !root) return frontend_fail(error, QA_ERROR_ARGUMENT, "Demo root requires its actual Source context");
     return demo_source(frontend, source, root, &mounted, error);
 }
-bool frontend_content_library_demo_read(qa_frontend *frontend, const qa_command_context *source,
+static bool demo_file(qa_frontend *frontend, const qa_command_context *source,
     const char *name, qa_buffer *out, bool *found, qa_error *error)
 {
-    if (!frontend || !source || !name || !out || out->data || out->size || !found)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Demo read requires its actual Source and empty destination");
     *found = false; char *path = qa_vfs_normalize_path(name, error); if (!path) return false;
     qa_fs_root *root = NULL; qa_vfs *mounted = NULL; qa_fs_entry_kind kind;
     bool okay = demo_source(frontend, source, &root, &mounted, error) && qa_fs_root_status(root, path, &kind, NULL, error);
-    if (okay && kind == QA_FS_REGULAR) { okay = root_read(root, path, out, error); *found = okay; }
+    if (okay && kind == QA_FS_REGULAR) { okay = !out || root_read(root, path, out, error); *found = okay; }
     else if (okay && kind != QA_FS_MISSING) okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Demo recording path is not a regular file");
+    else if (okay && !out) {
+        uint64_t size;
+        okay = qa_vfs_probe(mounted, path, found, &size, error);
+    }
     else if (okay) {
         qa_resource *resource = NULL; qa_error lookup = {0};
         okay = qa_vfs_acquire(mounted, path, &resource, NULL, &lookup);
@@ -1242,6 +1244,20 @@ bool frontend_content_library_demo_read(qa_frontend *frontend, const qa_command_
         qa_resource_release(resource);
     }
     free(path); return okay;
+}
+bool frontend_content_library_demo_read(qa_frontend *frontend, const qa_command_context *source,
+    const char *name, qa_buffer *out, bool *found, qa_error *error)
+{
+    if (!frontend || !source || !name || !out || out->data || out->size || !found)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Demo read requires its actual Source and empty destination");
+    return demo_file(frontend, source, name, out, found, error);
+}
+bool frontend_content_library_demo_probe(qa_frontend *frontend, const qa_command_context *source,
+    const char *name, bool *found, qa_error *error)
+{
+    if (!frontend || !source || !name || !found)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Demo probe requires its actual Source and destination");
+    return demo_file(frontend, source, name, NULL, found, error);
 }
 static frontend_demo_format demo_format(const char *path)
 {

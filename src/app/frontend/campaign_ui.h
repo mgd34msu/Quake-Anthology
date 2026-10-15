@@ -18,6 +18,7 @@ typedef struct frontend_campaign_ui_view {
     qa_team_arena_score_result team_score;
     qa_application_q3_campaign_result team_live;
     const qa_cvar_view *result_fields[3];
+    const char *demo_path;
 } frontend_campaign_ui_view;
 /* Borrows the actual published local CGAME recipient and its physical GAME.
  * Missing campaigns or recipients succeed with installed=false. All catalog
@@ -25,7 +26,7 @@ typedef struct frontend_campaign_ui_view {
 bool frontend_campaign_ui_read(qa_frontend *,uint32_t,frontend_campaign_ui_view *,qa_error *);
 typedef enum frontend_campaign_ui_action {
     FRONTEND_CAMPAIGN_PLAY, FRONTEND_CAMPAIGN_RETRY, FRONTEND_CAMPAIGN_NEXT,
-    FRONTEND_CAMPAIGN_RESET, FRONTEND_CAMPAIGN_QUIT
+    FRONTEND_CAMPAIGN_RESET, FRONTEND_CAMPAIGN_DEMO, FRONTEND_CAMPAIGN_QUIT
 } frontend_campaign_ui_action;
 /* Stage against the actual recipient. PLAY uses the authored arena number
  * and skill 1..5; execution follows source and UI callback unwind. */

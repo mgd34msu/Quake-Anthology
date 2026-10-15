@@ -41,7 +41,8 @@ static bool copy_identity(qa_frontend *f,qa_actor_owner owner,char **out,qa_erro
 static bool stage(frontend_seat *seat,frontend_campaign_ui_action action,int32_t arena,int32_t skill,qa_error *error)
 {
     if (!frontend_campaign_ui_stage(seat->frontend,seat->id,action,arena,skill,error)) return false;
-    return (action!=FRONTEND_CAMPAIGN_PLAY && action!=FRONTEND_CAMPAIGN_RETRY && action!=FRONTEND_CAMPAIGN_NEXT) ||
+    return (action!=FRONTEND_CAMPAIGN_PLAY && action!=FRONTEND_CAMPAIGN_RETRY && action!=FRONTEND_CAMPAIGN_NEXT &&
+        action!=FRONTEND_CAMPAIGN_DEMO) ||
         qa_ui_close_all(seat->ui,now(seat),error);
 }
 static bool action(void *context,uint32_t seat_id,qa_ui_id control,const qa_ui_action *event,qa_error *error)
@@ -62,6 +63,7 @@ static bool action(void *context,uint32_t seat_id,qa_ui_id control,const qa_ui_a
         if (control==6) return qa_ui_library_open_arenas(seat->library,error);
         if (control==7) return open(seat,FRONTEND_ARENA_PROGRESS,error);
         if (control==8) return frontend_campaign_ui_stage(seat->frontend,seat->id,FRONTEND_CAMPAIGN_QUIT,0,0,error);
+        if (control==9 && view.team) return stage(seat,FRONTEND_CAMPAIGN_DEMO,0,0,error);
     }
     return true;
 }
@@ -143,8 +145,10 @@ static bool team_result_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_e
     seat->controls[0]=button(seat,1,state->campaign_status,108,false);
     seat->controls[1]=button(seat,5,"Next match",196,true);
     seat->controls[2]=button(seat,4,"Retry match",240,true);
-    seat->controls[3]=button(seat,8,"Main menu",328,true);
-    *out=(qa_ui_menu){.id=FRONTEND_TEAM_RESULT,.title=state->campaign_title,.controls=seat->controls,.count=4,.fullscreen=true}; return true;
+    size_t count=3;
+    if (view.demo_path) seat->controls[count++]=button(seat,9,"Watch demo",284,true);
+    seat->controls[count++]=button(seat,8,"Main menu",328,true);
+    *out=(qa_ui_menu){.id=FRONTEND_TEAM_RESULT,.title=state->campaign_title,.controls=seat->controls,.count=count,.fullscreen=true}; return true;
 }
 bool frontend_campaign_menu_create(frontend_seat *seat,qa_error *error)
 {

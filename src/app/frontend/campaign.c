@@ -3,7 +3,9 @@
 #include "capture.h"
 #include "campaign_ui.h"
 #include "campaign_cinematic.h"
+#include "content_library_services.h"
 #include "startup_menus.h"
+#include "../application/control_frame.h"
 #include "qa/settings.h"
 #include "qa/player_progress.h"
 #include "qa/q3_product_policy.h"
@@ -27,7 +29,7 @@ struct frontend_campaign {
     uint64_t map_revision;
     int32_t match_start;
     campaign_kind kind;
-    qa_cvar_handle nextmap, skill, selection, deathmatch;
+    qa_cvar_handle nextmap, skill, selection, deathmatch, protocol;
     qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6], result_fields[3];
     uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
@@ -42,6 +44,9 @@ struct frontend_campaign {
     size_t player_count;
     int32_t player_client;
     qa_team_arena_score_result team_result;
+    qa_string_id demo_path;
+    int32_t demo_game_type, demo_protocol;
+    bool demo_checked;
     bool result,announced,movie_played,music_attached,draining,match_prepared;
 
 };
@@ -314,6 +319,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->skill=qa_cvars_resolve(view.cvars,"g_spSkill");
     owner->selection=qa_cvars_resolve(view.cvars,"ui_spSelection");
     owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
+    owner->protocol=qa_cvars_resolve(view.cvars,"protocol");
     campaign_result_bind(owner);
     for(size_t i=0;i<6;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
@@ -512,6 +518,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
         free(saved); if (!ok) return false;
     }
     owner->team_result=result; owner->result=true;
+    owner->demo_checked=false; owner->demo_path=QA_STRING_NONE;
     if (result.new_high_score) {
         char message[96]; (void)snprintf(message,sizeof(message),"New Team Arena high score: %" PRId32 "\n",result.current.score);
         frontend_print(f,message);
@@ -524,6 +531,47 @@ static bool campaign_source_matches(const frontend_campaign *owner,const qa_appl
         owner->config_root==view->config_root && owner->publication==view->publication &&
         owner->map_revision==view->map_revision && owner->match_start==view->match_start_time &&
         owner->kind == campaign_kind_of(view, owner->nextmap);
+}
+static bool campaign_team_demo(frontend_campaign *owner,const qa_application_q3_campaign *source,
+    const qa_command_context *command,qa_error *error)
+{
+    const qa_cvar_view *value=qa_cvars_read(owner->cvars,owner->protocol);
+    int32_t protocol=value?value->integer:68;
+    if (owner->demo_checked && owner->demo_game_type==source->game_type && owner->demo_protocol==protocol) return true;
+    owner->demo_checked=true; owner->demo_game_type=source->game_type; owner->demo_protocol=protocol;
+    owner->demo_path=QA_STRING_NONE;
+    const char *map=source->map; if (!strncmp(map,"maps/",5)) map+=5;
+    size_t length=strlen(map);
+    if (length>=4 && !strcmp(map+length-4,".bsp")) length-=4;
+    if (!length || source->game_type<0 || protocol<0)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Invalid Team Arena postgame demo selection");
+    for (size_t i=0;i<length;++i) {
+        unsigned char c=(unsigned char)map[i];
+        bool separator=c=='/';
+        if (!((c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' || c=='-' || separator) ||
+            (separator && (!i || i+1==length || map[i-1]=='/')))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Invalid Team Arena postgame demo map");
+    }
+    char ending[40];
+    int ending_length=snprintf(ending,sizeof(ending),"_%" PRId32 ".dm_%" PRId32,source->game_type,protocol);
+    if (ending_length<0 || (size_t)ending_length>=sizeof(ending) || length>SIZE_MAX-(size_t)ending_length-7)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Team Arena demo path exceeds memory extent");
+    qa_frontend *f=owner->frontend;
+    qa_unified_frame_lease *storage=application_control_storage_acquire(f->application,error);
+    if (!storage) return false;
+    char *path=qa_arena_alloc(qa_unified_frame_lease_arena(storage),length+(size_t)ending_length+7,1,error);
+    bool found=false,okay=path!=NULL;
+    if (okay) {
+        memcpy(path,"demos/",6); memcpy(path+6,map,length);
+        memcpy(path+6+length,ending,(size_t)ending_length+1);
+        okay=frontend_content_library_demo_probe(f,command,path,&found,error);
+    }
+    qa_string_id selected=QA_STRING_NONE;
+    if (okay && found) okay=qa_strings_intern_cstr(qa_session_strings(source->session),path,&selected,error);
+    if (okay) okay=qa_application_q3_campaign_current(f->application,source);
+    if (okay) owner->demo_path=selected;
+    qa_unified_frame_lease_release(storage);
+    return okay;
 }
 bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui_view *out,qa_error *error)
 {
@@ -551,6 +599,13 @@ bool frontend_campaign_ui_read(qa_frontend *f,uint32_t seat,frontend_campaign_ui
         for(size_t i=0;i<3;++i) out->result_fields[i]=qa_cvars_read(owner->cvars,owner->result_fields[i]);
         if (!qa_application_q3_campaign_result_read(f->application,&out->source,launch_seat,
             &out->team_live,&out->result,error)) return false;
+        if (owner->result && out->result) {
+            qa_error lookup={0};
+            if (!campaign_team_demo(owner,&out->source,&out->client.command_context,&lookup) && lookup.code!=QA_OK)
+                qa_application_feature_report(f->application,"postgame demo",&lookup);
+            if (owner->demo_path!=QA_STRING_NONE)
+                out->demo_path=qa_strings_cstr(qa_session_strings(out->source.session),owner->demo_path);
+        }
     }
     else {
         out->catalog=owner->catalog; out->progression=&owner->progression;
@@ -595,7 +650,8 @@ bool frontend_campaign_ui_stage(qa_frontend *f,uint32_t seat,frontend_campaign_u
     if (action>FRONTEND_CAMPAIGN_QUIT || action<FRONTEND_CAMPAIGN_PLAY ||
         !frontend_campaign_ui_read(f,seat,&view,error) || !view.installed || !frontend_campaign_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign action requires its idle installed local recipient");
-    if (view.team && action!=FRONTEND_CAMPAIGN_QUIT && action!=FRONTEND_CAMPAIGN_RETRY && action!=FRONTEND_CAMPAIGN_NEXT)
+    if (view.team && action!=FRONTEND_CAMPAIGN_QUIT && action!=FRONTEND_CAMPAIGN_RETRY &&
+        action!=FRONTEND_CAMPAIGN_NEXT && action!=FRONTEND_CAMPAIGN_DEMO)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Base Arena action requires its actual Base Arena campaign");
     if (action==FRONTEND_CAMPAIGN_PLAY || action==FRONTEND_CAMPAIGN_RETRY || action==FRONTEND_CAMPAIGN_NEXT) {
         qa_q3_product_policy policy;
@@ -612,6 +668,22 @@ bool frontend_campaign_ui_stage(qa_frontend *f,uint32_t seat,frontend_campaign_u
     qa_console *console; qa_cvars *cvars; qa_command_context command;
     if (!qa_input_seat_recipient_read(f->seats[seat].input, &console, &cvars, &command)) return false;
     (void)cvars;
+    if (action==FRONTEND_CAMPAIGN_DEMO) {
+        if (!view.team || !view.result || !view.demo_path)
+            return frontend_fail(error,QA_ERROR_NOT_FOUND,"No demo recording is available for this Team Arena result");
+        size_t length=strlen(view.demo_path);
+        if (length>SIZE_MAX-9) return frontend_fail(error,QA_ERROR_MEMORY,"Demo command exceeds memory extent");
+        qa_unified_frame_lease *storage=application_control_storage_acquire(f->application,error);
+        if (!storage) return false;
+        char *text=qa_arena_alloc(qa_unified_frame_lease_arena(storage),length+9,1,error);
+        bool okay=text!=NULL;
+        if (okay) {
+            snprintf(text,length+9,"demo \"%s\"\n",view.demo_path);
+            okay=qa_console_append(console,&command,text,error);
+        }
+        qa_unified_frame_lease_release(storage);
+        return okay;
+    }
     char text[96];
     if (action == FRONTEND_CAMPAIGN_RESET) strcpy(text, "arena-reset\n");
     else if (action == FRONTEND_CAMPAIGN_QUIT) strcpy(text, "quit\n");

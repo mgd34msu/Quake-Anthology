@@ -19,6 +19,8 @@ bool frontend_content_library_services_bind_demo(frontend_content_library_servic
     frontend_demo_service *, qa_error *);
 bool frontend_content_library_demo_read(qa_frontend *, const qa_command_context *,
     const char *, qa_buffer *, bool *found, qa_error *);
+bool frontend_content_library_demo_probe(qa_frontend *, const qa_command_context *,
+    const char *, bool *found, qa_error *);
 bool frontend_content_library_demo_root(qa_frontend *, const qa_command_context *,
     qa_fs_root **borrowed, qa_error *);
 /* Called after the shared HTTP pump, outside entered transport callbacks. */
