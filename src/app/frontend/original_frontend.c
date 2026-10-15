@@ -6,6 +6,7 @@
 #include "input_profile.h"
 #include "campaign_cinematic.h"
 #include "local_lobby.h"
+#include "network_session.h"
 #include "qa/application_q1_save.h"
 #include "qa/application_q2_save.h"
 #include <SDL.h>
@@ -186,8 +187,13 @@ bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operatio
     if (!frontend_startup_advance(source,&started,error)) goto failed;
     if (!started) return true;
     if (!frontend_input_profile_bind(source,error) || !frontend_tools_sync(source,error) ||
-        (!source->options.dedicated && !frontend_scene_sync(source,error)) ||
-        !publish_ready(operation,error)) goto failed;
+        (!source->options.dedicated && !frontend_scene_sync(source,error))) goto failed;
+    if (operation->save.family==QA_GAME_Q2) {
+        const qa_q2_config_entry *entries;
+        size_t count;
+        if (!frontend_network_q2_configs(source,&entries,&count,error)) goto failed;
+    }
+    if (!publish_ready(operation,error)) goto failed;
     publish(operation,slot,displaced);
     operation->finished=true; *complete=true;
     return true;
