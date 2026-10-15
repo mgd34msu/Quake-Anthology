@@ -73,16 +73,14 @@ static bool moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity
     if(!ground || !ground->actor.registry || !handle) return true;
     bot_move_record *state=bot_move_state(moves,handle,e);
     if(!state) return false;
-    if(!state->route.found || state->route_cursor>=state->route.edge_count ||
+    if(!bot_move_word(state,BM_LAST_REACHABILITY) ||
        bot_move_float(state,BM_REACHABILITY_TIME)<=moves->time ||
-       bot_move_word(state,BM_AREA)==state->route_goal) return true;
+       bot_move_word(state,BM_AREA)==bot_move_word(state,BM_LAST_GOAL_AREA)) return true;
     bot_travel travel;
     if(!bot_travel_begin(moves,state,&travel,e)) return false;
-    if(!qa_actor_id_equal(state->route_actor,travel.actor)) return true;
     bot_reach reach;bool found;
     if(!bot_reach_read(&travel,bot_move_word(state,BM_LAST_REACHABILITY),&reach,&found,e)) return false;
-    if(!found || reach.graph_edge->id!=state->route.edges[state->route_cursor] ||
-       reach.graph_edge->mode!=QA_NAV_MOVER || !reach.graph_edge->has_entity) return true;
+    if(!found || reach.graph_edge->mode!=QA_NAV_MOVER || !reach.graph_edge->has_entity) return true;
     const qa_nav_binding *binding=&reach.graph_edge->entity;
     if(binding->has_model) {
         int32_t entity=moves->services.entity_number?

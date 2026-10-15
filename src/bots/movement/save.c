@@ -17,51 +17,24 @@ static bool empty(const qa_bot_moves *m) {
 static int32_t client_read(const qa_bot_memory_span *bytes) {
     return qa_load_i32le(bytes->data+BM_CLIENT);
 }
-static void slots_clear(bot_move_slot *slots,uint32_t maximum) {
-    if(!slots) return;
-    for(uint32_t i=0;i<maximum;++i) qa_nav_route_free(&slots[i].state.route);
-}
-static bool slots_copy(bot_move_slot *out,const bot_move_slot *source,uint32_t maximum,qa_error *e) {
-    for(uint32_t i=0;i<maximum;++i) {
-        out[i]=source[i];out[i].state.route=(qa_nav_route){0};
-        if(source[i].used && !bot_move_route_copy(&out[i].state,&source[i].state,e)) return false;
-    }
-    return true;
-}
-static bool slots_prepare(bot_move_slot *slots,const qa_bot_moves *owner,qa_error *e) {
-    size_t nodes=0,edges=0;
-    for(uint32_t i=0;i<owner->maximum;++i) {
-        const qa_nav_route *route=&owner->slots[i].state.route;
-        if(nodes<route->node_capacity) nodes=route->node_capacity;
-        if(edges<route->edge_capacity) edges=route->edge_capacity;
-    }
-    for(uint32_t i=0;i<owner->maximum;++i)
-        if(!qa_nav_route_reserve(&slots[i].state.route,nodes,edges,0,e)) return false;
-    return true;
-}
-static bool route_fields(qa_source_save_io *io,bot_move_record *record) {
-    if(!qa_source_save_bool(io,&record->route.found)) return false;
-    if(!record->route.found) return true;
-    uint32_t format=(uint32_t)record->route_map.format;
-    if(!qa_source_save_u32(io,&format) ||
-       !qa_source_save_u32(io,&record->route_goal) ||
-       !qa_source_save_u32(io,&record->route_flags) ||
-       !qa_source_save_u32(io,&record->route_move_flags) ||
-       !qa_source_save_count(io,&record->route_cursor,SIZE_MAX)) return false;
-    record->route_map.format=(qa_bsp_format)format;
-    size_t *counts[2]={&record->route.node_count,&record->route.edge_count};
-    uint32_t **arrays[2]={&record->route.nodes,&record->route.edges};
+/* Earlier images included a predicted route. Keep its byte layout readable,
+ * but rebuild decisions from the source movement state and current graph. */
+static bool route_fields(qa_source_save_io *io) {
+    bool found=false;
+    if(!qa_source_save_bool(io,&found)) return false;
+    if(!found) return true;
+    uint32_t value=0;
+    for(size_t i=0;i<4;++i)
+        if(!qa_source_save_u32(io,&value)) return false;
+    size_t cursor=0;
+    if(!qa_source_save_count(io,&cursor,SIZE_MAX)) return false;
     for(size_t a=0;a<2;++a) {
-        if(!qa_source_save_count(io,counts[a],SIZE_MAX/sizeof(uint32_t))) return false;
-        if(io->direction==QA_SOURCE_SAVE_READ &&
-           *counts[a]>(io->input.size-io->offset)/sizeof(uint32_t))
+        size_t count=0;
+        if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(uint32_t))) return false;
+        if(count>(io->input.size-io->offset)/sizeof(uint32_t))
             return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated retained actual bot route");
-        if(io->direction==QA_SOURCE_SAVE_READ && *counts[a]) {
-            if(!qa_nav_route_reserve(&record->route,
-                a==0?*counts[a]:0,a==1?*counts[a]:0,0,io->error)) return false;
-        }
-        for(size_t i=0;i<*counts[a];++i)
-            if(!qa_source_save_u32(io,&(*arrays[a])[i])) return false;
+        for(size_t i=0;i<count;++i)
+            if(!qa_source_save_u32(io,&value)) return false;
     }
     return true;
 }
@@ -115,11 +88,10 @@ bool qa_bot_moves_save_capture(const qa_bot_moves *m,qa_buffer *out,qa_error *e)
         if(!ok || !used) continue;
         qa_bot_move_state state;
         bool progress=slot->state.walk_progress;uint32_t edge=slot->state.walk_edge;
-        bot_move_record record=slot->state;
         ok=slot->state.owner==m && qa_bot_moves_capture(m,i+1,&state,e) &&
            state_fields(&io,&state) &&
            qa_source_save_bool(&io,&progress) && qa_source_save_u32(&io,&edge) &&
-           route_fields(&io,&record);
+           route_fields(&io);
         for(uint32_t j=0;ok && j<i;++j)
             if(m->slots[j].used && same_allocation(m->slots[j].state.allocation,slot->state.allocation))
                 ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Movement handles share one source allocation");
@@ -167,21 +139,19 @@ bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
         }
         if(ok) ok=
            qa_source_save_bool(&io,&slot->state.walk_progress) &&
-           qa_source_save_u32(&io,&slot->state.walk_edge) && route_fields(&io,&slot->state);
+           qa_source_save_u32(&io,&slot->state.walk_edge) && route_fields(&io);
         if(ok) clients[i]=state.input.client;
         for(uint32_t j=0;ok && j<i;++j)
             if(slots[j].used && same_allocation(slots[j].state.allocation,slot->state.allocation))
                 ok=bot_save_fail(&io,QA_ERROR_FORMAT,"Restored movement handles share one source allocation");
     }
     if(ok) ok=qa_source_save_finish(&io,NULL);
-    if(ok) ok=slots_prepare(slots,m,e);
     m->busy=true;
     for(uint32_t i=0;ok && i<maximum;++i) if(slots[i].used &&
-        (slots[i].state.walk_progress || slots[i].state.route.found)) {
+        slots[i].state.walk_progress) {
         qa_bot_navigation *navigation=m->services.navigation(m->services.context,clients[i]);
-        ok=navigation && (!slots[i].state.walk_progress ||
-            qa_navigation_edge(qa_bot_navigation_runtime(navigation),slots[i].state.walk_edge)) &&
-            bot_move_route_bind(&slots[i].state,navigation,e);
+        ok=navigation &&
+            qa_navigation_edge(qa_bot_navigation_runtime(navigation),slots[i].state.walk_edge);
     }
     /* Navigation callbacks may invalidate the actual aliases; publication must
      * not bind an allocation that disappeared while resolving managed edges. */
@@ -190,14 +160,12 @@ bool qa_bot_moves_save_restore(qa_bot_moves *m,qa_bytes saved,qa_error *e) {
     }
     m->busy=false;
     if(ok) {
-        slots_clear(m->slots,m->maximum);
         memcpy(m->slots,slots,(size_t)maximum*sizeof(*slots));
         memcpy(m->variables,variables,sizeof(variables));m->time=time;
         qa_nav_prediction_result_reset(&m->prediction);qa_nav_route_reset(&m->trajectory);
         m->point_count=0;
         qa_stamp_set_init(&m->visited,m->visited.marks,m->visited.count);
     } else {
-        slots_clear(slots,maximum);
         if(!e || e->code==QA_OK)
             qa_error_set(e,QA_ERROR_FORMAT,io.offset,"Invalid movement reference or selected route edge");
     }
@@ -219,7 +187,6 @@ struct bot_move_history_restore {
 };
 void bot_move_history_destroy(bot_move_history *image) {
     if(!image) return;
-    slots_clear(image->slots,image->maximum);
     free(image->slots);free(image->clients);free(image);
 }
 bool bot_move_history_capture(qa_bot_moves *m,bot_move_history **out,qa_error *e) {
@@ -233,7 +200,7 @@ bool bot_move_history_capture(qa_bot_moves *m,bot_move_history **out,qa_error *e
     if(!image->slots || !image->clients) {
         bot_move_history_destroy(image);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining movement handle history");return false;
     }
-    if(!slots_copy(image->slots,m->slots,m->maximum,e)) {bot_move_history_destroy(image);return false;}
+    memcpy(image->slots,m->slots,(size_t)m->maximum*sizeof(*m->slots));
     memcpy(image->variables,m->variables,sizeof(m->variables));
     for(uint32_t i=0;i<m->maximum;++i) if(image->slots[i].used) {
         qa_bot_memory_span bytes;
@@ -256,12 +223,11 @@ bool bot_move_history_validate(qa_bot_moves *m,const bot_move_history *image,qa_
             bot_move_variable_name((bot_move_variable)i)))
             return bot_move_fail(e,"Movement history LibVar identity was replaced");
     for(uint32_t i=0;i<m->maximum;++i) if(image->slots[i].used &&
-        (image->slots[i].state.walk_progress || image->slots[i].state.route.found)) {
+        image->slots[i].state.walk_progress) {
         qa_bot_navigation *navigation=m->services.navigation(m->services.context,image->clients[i]);
         bot_move_record record=image->slots[i].state;
-        if(!navigation || (record.walk_progress &&
-            !qa_navigation_edge(qa_bot_navigation_runtime(navigation),record.walk_edge)) ||
-           !bot_move_route_bind(&record,navigation,e))
+        if(!navigation ||
+            !qa_navigation_edge(qa_bot_navigation_runtime(navigation),record.walk_edge))
             return bot_move_fail(e,"Movement history route is absent from selected navigation");
     }
     return true;
@@ -279,14 +245,11 @@ bool bot_move_history_prepare(qa_bot_moves *m,const bot_move_history *image,
     if(!plan->state.slots) {
         free(plan);qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing movement handle aliases");return false;
     }
-    if(!slots_copy(plan->state.slots,image->slots,m->maximum,e) ||
-       !slots_prepare(plan->state.slots,m,e)) {
-        slots_clear(plan->state.slots,m->maximum);free(plan->state.slots);free(plan);return false;
-    }
+    memcpy(plan->state.slots,image->slots,(size_t)m->maximum*sizeof(*m->slots));
     for(uint32_t i=0;i<m->maximum;++i) if(plan->state.slots[i].used &&
         !qa_bot_memory_checkpoint_resolve(memory,plan->state.slots[i].state.allocation,
              &plan->state.slots[i].state.allocation,e)) {
-        slots_clear(plan->state.slots,m->maximum);free(plan->state.slots);free(plan);return false;
+        free(plan->state.slots);free(plan);return false;
     }
     *out=plan;return true;
 }
@@ -294,12 +257,11 @@ void bot_move_history_finish(bot_move_history_restore *plan,bool commit) {
     if(!plan) return;
     if(commit) {
         qa_bot_moves *m=plan->owner;
-        slots_clear(m->slots,m->maximum);
         memcpy(m->slots,plan->state.slots,(size_t)m->maximum*sizeof(*m->slots));
         memcpy(m->variables,plan->state.variables,sizeof(m->variables));m->time=plan->state.time;
         qa_nav_prediction_result_reset(&m->prediction);qa_nav_route_reset(&m->trajectory);
         m->point_count=0;
         qa_stamp_set_init(&m->visited,m->visited.marks,m->visited.count);
-    } else slots_clear(plan->state.slots,plan->state.maximum);
+    }
     free(plan->state.slots);free(plan);
 }

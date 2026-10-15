@@ -37,11 +37,6 @@ typedef struct bot_move_record {
     qa_bot_memory_allocation allocation;
     bool walk_progress;
     uint32_t walk_edge;
-    qa_nav_route route;
-    qa_nav_map route_map;
-    qa_actor_id route_actor;
-    uint32_t route_goal, route_flags, route_move_flags;
-    size_t route_cursor;
 } bot_move_record;
 typedef struct bot_move_scope {
     jmp_buf jump;
@@ -186,9 +181,6 @@ void bot_move_spot_admit(const bot_move_record *, int32_t);
 void bot_move_write_spot(bot_move_record *, int32_t, qa_bot_avoid_spot);
 qa_bot_vector_source bot_move_origin_source(bot_move_record *);
 void bot_move_record_snapshot(const bot_move_record *, qa_bot_move_state *);
-void bot_move_route_clear(bot_move_record *);
-bool bot_move_route_copy(bot_move_record *, const bot_move_record *, qa_error *);
-bool bot_move_route_bind(bot_move_record *, qa_bot_navigation *, qa_error *);
 bool bot_goal_area(const qa_bot_move_goal_source *, uint32_t *, qa_error *);
 qa_bot_vector_source bot_goal_origin(const qa_bot_move_goal_source *);
 bool bot_result_read(const qa_bot_move_result_io *, qa_bot_move_result_field, int32_t *, qa_error *);

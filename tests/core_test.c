@@ -49,6 +49,10 @@
 #include "../src/audio/mixer_internal.h"
 #include "qa/movement.h"
 #include "qa/navigation_asset.h"
+#include "../src/navigation/internal.h"
+#include "../src/bots/movement/internal.h"
+#include "qa/bot_movement_save.h"
+#include "gameplay_fixture.h"
 #include "qa/q1_save.h"
 #include "qa/q1_text.h"
 #include "qa/campaign_q1.h"
@@ -404,6 +408,133 @@ static void test_aas_geometry_compaction(void)
     CHECK(qa_nav_asset_read((qa_bytes){packed.data,packed.size},&empty.bsp_checksum,&decoded,&error));
     CHECK(qa_nav_asset_aas(decoded)->count[QA_AAS_FACES]==0);
     qa_nav_asset_release(decoded);qa_nav_asset_release(optimized);qa_buffer_free(&packed);
+}
+
+typedef struct navigation_step_fixture {
+    qa_vec3 points[2];
+    size_t admitted, rejected;
+} navigation_step_fixture;
+static bool navigation_step_begin(void *context,qa_actor_id actor,void **lease,qa_error *error)
+{
+    (void)actor;(void)error;*lease=context;return true;
+}
+static void navigation_step_end(void *context,void *lease)
+{
+    CHECK(context==lease);
+}
+static bool navigation_step_admit(void *context,void *lease,qa_vec3 from,qa_vec3 to,
+    qa_nav_travel mode,const qa_vec3 **points,size_t *count,float *seconds,bool *admitted,
+    qa_error *error)
+{
+    navigation_step_fixture *fixture=context;
+    (void)mode;(void)error;CHECK(lease==context);
+    *admitted=to.x<=64;
+    if(*admitted) ++fixture->admitted; else ++fixture->rejected;
+    fixture->points[0]=from;fixture->points[1]=to;
+    *points=fixture->points;*count=2;*seconds=.2f;return true;
+}
+static void test_native_navigation_first_step(void)
+{
+    qa_error error={0};gameplay_map map;
+    gameplay_map_create(&map);
+    qa_actor_registry *actors=NULL;qa_world *world=NULL;
+    CHECK(qa_actors_create(4,NULL,NULL,&actors,&error));
+    CHECK(qa_world_create(actors,map.geometry,NULL,0,&world,&error));
+    qa_nav_profile profile={.movement={.kind=QA_RULESET_Q3},
+        .shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-16},{16,16,16}}},
+        .policy=qa_collision_ruleset_policy(QA_RULESET_Q3),
+        .capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK),.maximum_step=18,
+        .minimum_floor_normal=.7f,.maximum_drop=400};
+    qa_nav_map identity={.format=QA_BSP_IBSP38};qa_nav_graph *graph=NULL;
+    CHECK(nav_graph_new(&identity,&profile,NULL,&graph,&error));
+    const qa_vec3 origins[]={{64,0,40},{0,96,40},{0,-128,40},{64,-128,40},{128,-128,40}};
+    for(uint32_t i=0;i<5;++i) {
+        qa_nav_node node={.id=i,.origin=origins[i],.radius=32,.presence=2,
+            .source={.kind=QA_NAV_ORIGIN_NAV3,.node=i}};
+        node.bounds=qa_bounds_translate(profile.shape.bounds,node.origin);
+        CHECK(nav_graph_node(graph,&node,&error));
+    }
+    for(uint32_t i=0;i<2;++i) {
+        qa_nav_edge edge={.id=i,.from=i+2,.to=i+3,.mode=QA_NAV_WALK,
+            .start=origins[i+2],.end=origins[i+3],.travel_seconds=.2f,
+            .source_flags=3,.source={.kind=QA_NAV_ORIGIN_NAV3,.node=i+2,.link=i}};
+        CHECK(nav_graph_edge(graph,&edge,&error));
+    }
+    CHECK(nav_graph_finish(graph,&error));
+    qa_actor_id obstacle;
+    CHECK(qa_actors_allocate(actors,1,1,&obstacle,&error));
+    CHECK(qa_world_body_create(world,obstacle,&(qa_body_state){
+        .origin={32,12,40},.bounds={{-1,-1,-16},{1,1,16}}},&error));
+    CHECK(qa_world_set_collision(world,obstacle,&(qa_actor_collision){.family=QA_GAME_Q3,
+        .shape=QA_SHAPE_BOX,.contents=qa_collision_bit(QA_CONTENT_SOLID),.role=QA_COLLISION_SOLID},&error));
+    CHECK(qa_world_link(world,obstacle,NULL,&error));
+    navigation_step_fixture fixture={0};
+    qa_navigation_services services={.world=world,.context=&fixture,
+        .traversal_begin=navigation_step_begin,.traversal_admit=navigation_step_admit,
+        .traversal_end=navigation_step_end};
+    qa_navigation *runtime=NULL;qa_bot_navigation *navigation=NULL;
+    CHECK(qa_navigation_create(graph,&services,NULL,&runtime,&error));
+    uint32_t area;bool found;
+    CHECK(qa_navigation_area(runtime,(qa_actor_id){0},qa_v3(0,0,40),&area,&found,&error));
+    CHECK(found && area==1);
+    CHECK(qa_bot_navigation_create(runtime,world,(qa_actor_id){0},NULL,&navigation,&error));
+    qa_nav_workspace *workspace=NULL;
+    CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
+    CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
+    qa_nav_route whole={0};
+    qa_nav_route_query query={.start=origins[2],.goal=origins[4],.start_node=2,.goal_node=4};
+    CHECK(qa_navigation_route(runtime,workspace,&query,&whole,&error));
+    CHECK(!whole.found && fixture.rejected>0);
+    fixture.admitted=fixture.rejected=0;
+    qa_bot_moves moves={0};bot_move_scope scope={.error=&error};moves.scope=&scope;
+    CHECK(qa_bot_memory_create(NULL,&moves.memory,&error));
+    bot_move_record state={.owner=&moves};
+    CHECK(qa_bot_memory_allocate(moves.memory,BOT_MOVE_STATE_BYTES,QA_BOT_MEMORY_HEAP,
+        true,NULL,&state.allocation,&error));
+    uint32_t marks[2];qa_stamp_set_init(&moves.visited,marks,2);
+    bot_move_write_word(&state,BM_AREA,3);
+    bot_move_write_vector(&state,BM_ORIGIN,origins[2]);
+    qa_bot_goal goal={.area=5,.origin=origins[4]};
+    qa_bot_move_goal_source source={.value=&goal};
+    bot_travel travel={.moves=&moves,.state=&state,.navigation=navigation,.runtime=runtime,
+        .graph=qa_navigation_graph(runtime)};
+    uint32_t reach,flags;
+    CHECK(bot_reach_select(&travel,&source,UINT32_MAX,UINT32_MAX,&reach,&flags,&error));
+    CHECK(reach==1 && flags==0 && fixture.admitted==1 && fixture.rejected==0);
+    bot_move_write_word(&state,BM_AVOID_REACHABILITY,reach);
+    bot_move_write_float(&state,BM_AVOID_TIME,10);
+    bot_move_write_word(&state,BM_AVOID_TRIES,5);
+    CHECK(bot_reach_select(&travel,&source,UINT32_MAX,UINT32_MAX,&reach,&flags,&error));
+    CHECK(!reach && fixture.admitted==1);
+    bot_move_slot slot={.used=true,.state=state};moves.maximum=1;moves.slots=&slot;
+    qa_buffer saved={0},legacy={0},resaved={0};
+    CHECK(qa_bot_moves_save_capture(&moves,&saved,&error));
+    CHECK(saved.size && saved.data[saved.size-1]==0);
+    qa_source_save_io io={0};CHECK(qa_source_save_writer(&io,NULL,&error));
+    CHECK(qa_source_save_bytes(&io,saved.data,saved.size-1));
+    bool retained=true;CHECK(qa_source_save_bool(&io,&retained));
+    uint32_t metadata[]={QA_BSP_IBSP38,5,UINT32_MAX,UINT32_MAX};
+    for(size_t i=0;i<4;++i) CHECK(qa_source_save_u32(&io,&metadata[i]));
+    size_t cursor=0,node_count=3,edge_count=2;
+    CHECK(qa_source_save_count(&io,&cursor,SIZE_MAX));
+    CHECK(qa_source_save_count(&io,&node_count,SIZE_MAX));
+    for(uint32_t i=2;i<5;++i) CHECK(qa_source_save_u32(&io,&i));
+    CHECK(qa_source_save_count(&io,&edge_count,SIZE_MAX));
+    for(uint32_t i=0;i<2;++i) CHECK(qa_source_save_u32(&io,&i));
+    CHECK(qa_source_save_finish(&io,&legacy));qa_source_save_dispose(&io);
+    bot_move_slot imported={0};qa_bot_moves restored={.maximum=1,.slots=&imported};
+    CHECK(qa_bot_memory_create(NULL,&restored.memory,&error));
+    CHECK(qa_bot_moves_save_restore(&restored,(qa_bytes){legacy.data,legacy.size},&error));
+    CHECK(qa_bot_moves_save_capture(&restored,&resaved,&error));
+    CHECK(resaved.size==saved.size && !memcmp(resaved.data,saved.data,saved.size));
+    qa_buffer_free(&saved);qa_buffer_free(&legacy);qa_buffer_free(&resaved);
+    CHECK(qa_bot_memory_destroy(restored.memory,&error));
+    qa_nav_route_free(&moves.trajectory);qa_nav_route_free(&whole);
+    CHECK(qa_bot_memory_destroy(moves.memory,&error));
+    qa_nav_workspace_destroy(workspace);qa_bot_navigation_destroy(navigation);
+    qa_navigation_destroy(runtime);qa_nav_graph_release(graph);
+    CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
+    qa_collision_destroy(map.geometry);
 }
 
 static void test_typewriter_centers(void)
@@ -6505,6 +6636,7 @@ int main(int argc, char **argv)
     test_bot_authored_aim();
     test_bot_source_knowledge();
     test_aas_geometry_compaction();
+    test_native_navigation_first_step();
     test_prediction_continuations();
     test_field_completion();
     test_source_text();
