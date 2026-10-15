@@ -2550,8 +2550,7 @@ bool application_players_native_q1_respawn(qa_application *app,
         .visual.frame = visual.visual.frame, .visual.skin = visual.visual.skin, .visual.colormap = visual.visual.colormap};
     if (!qa_q1_source_copy_body(source->state.q1, actor, &corpse, physics.motion, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    body.bounds = qa_movement_input_default(character->component.clock.kind == QA_RULESET_Q3
-        ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE, actor).standing.bounds;
+    body.bounds = application_control_character_postures(character, actor).standing.bounds;
     body.ground = (qa_actor_reference){0};
     standing.bounds = body.bounds;
     if (!qa_world_body_write(app->world, actor, &standing, error) ||
@@ -2704,7 +2703,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_ROGUE &&
             deathmatch(choices) && selected_teamplay(choices) >= 4;
         qa_ruleset_id movement_kind = (movement->component.clock.kind);
-        qa_body_state body = {.bounds = qa_movement_input_default(movement_kind, actor).standing.bounds};
+        qa_body_state body = {
+            .bounds = application_control_character_postures(character, actor).standing.bounds};
         const char *current_map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
         bool keep = keep_native_travel(character, choices, carry, carry_players,
             carry->addon_reset, application->players->world_type, current_map);
@@ -3162,9 +3162,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
                 admit_components(application, actor, error);
         }
-        body.bounds = qa_movement_input_default(map_source->kind == APPLICATION_PROVIDER_Q1
-            ? character->component.clock.kind == QA_RULESET_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE
-            : movement_kind, actor).standing.bounds;
+        body.bounds = application_control_character_postures(character, actor).standing.bounds;
         if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_reference){0};
         qa_game_family family = movement_kind == QA_RULESET_Q3 ? QA_GAME_Q3
             : movement_kind == QA_RULESET_Q2_CLASSIC || movement_kind == QA_RULESET_Q2_RERELEASE
@@ -3588,8 +3586,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
         if (source->kind == APPLICATION_PROVIDER_Q1) {
             if (!q1_player_current(application, source, character, arsenal, actor,
                 true, &ordinal, error)) return false;
-            body.bounds = qa_movement_input_default(character->component.clock.kind == QA_RULESET_Q3
-                ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE, actor).standing.bounds;
+            body.bounds = application_control_character_postures(character, actor).standing.bounds;
             body.ground = (qa_actor_reference){0};
         }
         qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,

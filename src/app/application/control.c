@@ -1809,7 +1809,8 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
     qa_movement_numeric numeric, prediction_numeric;
     if (!movement_numeric(application, provider, kind, false, &numeric, error) ||
         !movement_numeric(application, provider, kind, true, &prediction_numeric, error)) return false;
-    qa_movement_input defaults = qa_movement_input_default(kind, actor);
+    qa_movement_input defaults = application_control_character_postures(
+        application_provider_for(application, actor, QA_ROLE_CHARACTER, ""), actor);
     *record = (application_control_record){
         .result = record->result,
         .application = application,
@@ -1827,6 +1828,8 @@ bool application_control_ensure(qa_application *application, qa_actor_id actor,
         .player.gravity_multiplier = 1.0f,
         .active = true,
     };
+    *qa_movement_height(&record->player.state, &record->player.view_height) =
+        defaults.standing.view_height;
     if (application->equipment != NULL) {
         float scale = qa_equipment_gravity_scale(application->equipment, actor);
         if (isfinite(scale) && scale >= 0)
