@@ -612,6 +612,20 @@ static bool canonical_goal_read(void *context,int32_t client,qa_actor_id actor,
     if(*found) *out=fixture->pickup;
     return true;
 }
+typedef struct bot_navigation_load_fixture {
+    qa_bot_navigation *navigation;
+    size_t calls;
+    bool reject;
+} bot_navigation_load_fixture;
+static bool bot_navigation_load(void *context,qa_bot_runtime *runtime,qa_error *error)
+{
+    bot_navigation_load_fixture *fixture=context;
+    CHECK(!runtime->busy && runtime->map.navigation==fixture->navigation);
+    ++fixture->calls;
+    if(!fixture->reject) return true;
+    qa_error_set(error,QA_ERROR_MEMORY,0,"fixture navigation admission failed");
+    return false;
+}
 static void test_bot_canonical_goal_without_weights(qa_bot_navigation *navigation,
     qa_actor_registry *actors)
 {
@@ -642,6 +656,18 @@ static void test_bot_canonical_goal_without_weights(qa_bot_navigation *navigatio
     CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && found && !fixture.borrowed);
     CHECK(qa_bot_goals_empty(goals,handle,&error));fixture.available=false;
     CHECK(qa_bot_goals_choose(goals,handle,&query,&found,&error) && !found && !fixture.borrowed);
+    qa_entities empty={0};
+    bot_navigation_load_fixture loading={.navigation=navigation,.reject=true};
+    qa_bot_runtime runtime={.initialized=true,.goals=goals,.map_name="navigation-fixture",
+        .map={.entities=&empty,.navigation=navigation},
+        .services={.context=&loading,.navigation_load=bot_navigation_load}};
+    CHECK(!qa_bot_runtime_load_map(&runtime,"another-map",&error) && !loading.calls);
+    CHECK(!qa_bot_runtime_load_map(&runtime,"navigation-fixture",&error) &&
+        loading.calls==1 && !runtime.loaded && !runtime.bsp_loaded && !runtime.busy);
+    loading.reject=false;error=(qa_error){0};
+    CHECK(qa_bot_runtime_load_map(&runtime,"navigation-fixture",&error) &&
+        loading.calls==2 && runtime.loaded && runtime.bsp_loaded && !runtime.busy);
+    CHECK(qa_bot_runtime_load_map(&runtime,"navigation-fixture",&error) && loading.calls==3);
     qa_bot_goals_destroy(goals);qa_bot_items_release(items);qa_strings_destroy(strings);
     CHECK(qa_actors_release(actors,fixture.pickup.actor,&error));
 }
@@ -787,6 +813,21 @@ static void test_native_navigation_first_step(void)
     qa_nav_route_free(&moves.trajectory);qa_nav_route_free(&whole);
     CHECK(qa_bot_memory_destroy(moves.memory,&error));
     test_bot_canonical_goal_without_weights(navigation,actors);
+    qa_actor_id retired,another_retired;
+    qa_bot_navigation *retained_navigation=NULL;qa_navigation *replacement=NULL;
+    CHECK(qa_actors_allocate(actors,1,1,&retired,&error));
+    CHECK(qa_bot_navigation_create(runtime,world,retired,NULL,&retained_navigation,&error));
+    CHECK(qa_actors_release(actors,retired,&error));
+    CHECK(qa_actors_allocate(actors,1,1,&another_retired,&error));
+    CHECK(qa_actors_release(actors,another_retired,&error));
+    CHECK(qa_navigation_create(graph,&services,NULL,&replacement,&error));
+    CHECK(qa_bot_navigation_bind(retained_navigation,replacement,retired,&error) &&
+        qa_bot_navigation_runtime(retained_navigation)==replacement &&
+        qa_actor_id_equal(qa_bot_navigation_actor(retained_navigation),retired));
+    CHECK(!qa_bot_navigation_bind(retained_navigation,runtime,another_retired,&error) &&
+        qa_bot_navigation_runtime(retained_navigation)==replacement &&
+        qa_actor_id_equal(qa_bot_navigation_actor(retained_navigation),retired));
+    qa_bot_navigation_destroy(retained_navigation);qa_navigation_destroy(replacement);
     qa_nav_workspace_destroy(workspace);qa_bot_navigation_destroy(navigation);
     qa_navigation_destroy(runtime);qa_nav_graph_release(graph);
     CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));

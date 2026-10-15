@@ -329,6 +329,8 @@ bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     if ((!module && (!r->initialized || r->closed)) ||
         !name || !r->map_name || strcmp(name, r->map_name) != 0)
         return bot_runtime_fail(e, "bot map name does not match the attached canonical world");
+    if (r->services.navigation_load &&
+        !r->services.navigation_load(r->services.context, r, e)) return false;
     qa_bot_bsp *bsp = NULL;
     r->busy = true;
     bool ok = true;

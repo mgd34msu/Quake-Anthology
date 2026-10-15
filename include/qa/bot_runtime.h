@@ -35,6 +35,7 @@ typedef struct qa_bot_runtime_services {
     qa_bot_log_services log;
     qa_bot_goal_services goals;
     qa_bot_move_services movement;
+    bool (*navigation_load)(void *, qa_bot_runtime *, qa_error *);
 } qa_bot_runtime_services;
 typedef struct qa_bot_runtime_options {
     qa_bot_library_options library;

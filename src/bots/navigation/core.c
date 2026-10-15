@@ -96,7 +96,8 @@ bool qa_bot_navigation_bind(qa_bot_navigation *n, qa_navigation *runtime, qa_act
                             qa_error *e) {
     const qa_nav_graph_view *graph = qa_navigation_graph(runtime);
     if (!n || !graph ||
-        (actor.registry && !qa_actors_get(qa_world_actors(n->world), actor)))
+        (actor.registry && !qa_actor_id_equal(actor, n->actor) &&
+         !qa_actors_get(qa_world_actors(n->world), actor)))
         return bot_nav_fail(e, "invalid selected bot navigation owner");
     if (n->runtime == runtime) {
         n->actor = actor;

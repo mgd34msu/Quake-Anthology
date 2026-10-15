@@ -627,7 +627,8 @@ static bool navigation_resource(application_bots *bots,qa_resource **saved_resou
     }
     qa_arena_destroy(&storage);return ok;
 }
-bool application_bot_navigation_rebuild(application_bots *bots,application_bot_graph *graph,qa_error *error) {
+static bool navigation_build(application_bots *bots,const application_bot_graph *graph,bool force,
+    qa_nav_graph **out_graph,qa_navigation **out_navigation,qa_error *error) {
     qa_nav_profile profile={.movement=graph->profile,.shape={QA_SHAPE_BOX,graph->bounds},
         .crouched_shape={QA_SHAPE_BOX,graph->bounds},.has_crouched_shape=true,
         .capabilities=QA_NAV_CAPABILITY(QA_NAV_WALK)|QA_NAV_CAPABILITY(QA_NAV_CROUCH)|
@@ -651,25 +652,71 @@ bool application_bot_navigation_rebuild(application_bots *bots,application_bot_g
         memcpy(&checksum,&checksum_word,sizeof(checksum));
         ok=qa_nav_asset_read(qa_resource_bytes(graph->asset_resource),&checksum,&asset,error);
         const qa_aas_view *aas=ok?qa_nav_asset_aas(asset):NULL;
-        const qa_cvar_view *force=qa_cvars_find(bots->application->cvars,"bot_forceclustering");
-        const qa_cvar_view *reach=qa_cvars_find(bots->application->cvars,"bot_forcereachability");
-        if(aas && aas->count[QA_AAS_CLUSTERS] && ((force && force->integer) || (reach && reach->integer))) {
+        if(aas && aas->count[QA_AAS_CLUSTERS] && force) {
             qa_nav_asset *clustered=NULL;
             ok=qa_aas_cluster_rebuild(aas,&clustered,error);
             if(ok) {qa_nav_asset_release(asset);asset=clustered;}
         }
-        if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,NULL,&graph->graph,error);
+        if(ok) ok=qa_nav_graph_from_asset(&map,asset,&profile,&services,NULL,out_graph,error);
         qa_nav_asset_release(asset);
     } else {
         qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
-        ok=qa_nav_graph_construct(&construction,&services,NULL,&graph->graph,error);
+        ok=qa_nav_graph_construct(&construction,&services,NULL,out_graph,error);
     }
     services.topology_geometry_only=false;
-    if (!ok || !qa_navigation_create(graph->graph,&services,NULL,&graph->navigation,error)) return false;
-    const qa_nav_graph_view *view=qa_nav_graph_read(graph->graph);
-    if (bots->runtime && !qa_bot_runtime_prepare_navigation(bots->runtime,view,error)) return false;
-    for (application_bot_guest *guest=bots->guests;guest;guest=guest->next)
-        if (guest->runtime && !qa_bot_runtime_prepare_navigation(guest->runtime,view,error)) return false;
+    if (ok) ok=qa_navigation_create(*out_graph,&services,NULL,out_navigation,error);
+    const qa_nav_graph_view *view=ok?qa_nav_graph_read(*out_graph):NULL;
+    if (ok && bots->runtime) ok=qa_bot_runtime_prepare_navigation(bots->runtime,view,error);
+    for (application_bot_guest *guest=bots->guests;ok && guest;guest=guest->next)
+        if (guest->runtime) ok=qa_bot_runtime_prepare_navigation(guest->runtime,view,error);
+    if(!ok) {
+        qa_navigation_destroy(*out_navigation);*out_navigation=NULL;
+        qa_nav_graph_release(*out_graph);*out_graph=NULL;
+    }
+    return ok;
+}
+bool application_bot_navigation_rebuild(application_bots *bots,application_bot_graph *graph,qa_error *error) {
+    const qa_cvar_view *force=qa_cvars_find(bots->application->cvars,"bot_forceclustering");
+    const qa_cvar_view *reach=qa_cvars_find(bots->application->cvars,"bot_forcereachability");
+    return navigation_build(bots,graph,(force && force->integer) || (reach && reach->integer),
+        &graph->graph,&graph->navigation,error);
+}
+static bool navigation_observer_bind(qa_bot_navigation *observer,qa_navigation *previous,
+    qa_navigation *next,qa_error *error) {
+    return qa_bot_navigation_runtime(observer)!=previous ||
+        qa_bot_navigation_bind(observer,next,qa_bot_navigation_actor(observer),error);
+}
+static bool navigation_observers_bind(application_bots *bots,qa_navigation *previous,
+    qa_navigation *next,qa_error *error) {
+    if(!navigation_observer_bind(bots->map_navigation,previous,next,error)) return false;
+    for(uint32_t i=0;i<bots->capacity;++i)
+        if(!navigation_observer_bind(bots->seats[i].navigation,previous,next,error)) return false;
+    for(application_bot_target *target=bots->targets;target;target=target->next)
+        if(!navigation_observer_bind(target->navigation,previous,next,error)) return false;
+    return true;
+}
+bool application_bot_navigation_load(void *context,qa_bot_runtime *requester,qa_error *error) {
+    application_bots *bots=context;
+    qa_bot_library *library=qa_bot_runtime_library(requester);
+    const qa_bot_variable *force=qa_bot_library_variable(library,"forceclustering");
+    const qa_bot_variable *reach=qa_bot_library_variable(library,"forcereachability");
+    if(!(force && (force->value>=1 || force->value<=-1)) &&
+       !(reach && (reach->value>=1 || reach->value<=-1))) return true;
+    for(application_bot_graph *owner=bots->graphs;owner;owner=owner->next) {
+        if(!qa_nav_asset_aas(qa_nav_graph_read(owner->graph)->asset)) continue;
+        qa_nav_graph *graph=NULL;qa_navigation *navigation=NULL;
+        if(!navigation_build(bots,owner,true,&graph,&navigation,error)) return false;
+        qa_navigation *previous=owner->navigation;
+        if(!navigation_observers_bind(bots,previous,navigation,error)) {
+            /* Existing graph dimensions remain reserved, so a rollback only
+             * restores bindings and retains each observer's actor identity. */
+            (void)navigation_observers_bind(bots,navigation,previous,NULL);
+            qa_navigation_destroy(navigation);qa_nav_graph_release(graph);return false;
+        }
+        owner->navigation=navigation;
+        qa_navigation_destroy(previous);
+        qa_nav_graph_release(owner->graph);owner->graph=graph;
+    }
     return true;
 }
 static bool navigation_graph(application_bots *bots,application_provider *movement,
