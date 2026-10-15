@@ -784,10 +784,25 @@ bool qa_launch_instance_prepare_client_profile(const qa_launch_client_metadata *
 {
     qa_launch_provider selection;
     if (!out || *out || !client_profile_selection(request, &selection, error)) return false;
+    char suffix[32];
+    size_t suffix_size=(size_t)snprintf(suffix,sizeof(suffix),":seat:%u",request->seat);
+    size_t instance_size=strlen(selection.instance);
+    char *instance=NULL;
+    if (instance_size<suffix_size || memcmp(selection.instance+instance_size-suffix_size,suffix,suffix_size)) {
+        if (instance_size>SIZE_MAX-suffix_size-1) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"CLIENT instance name exceeds storage"); return false;
+        }
+        instance=malloc(instance_size+suffix_size+1);
+        if (!instance) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining physical CLIENT instance"); return false; }
+        memcpy(instance,selection.instance,instance_size);
+        memcpy(instance+instance_size,suffix,suffix_size+1);
+        selection.instance=instance;
+    }
     instance_owner *owner = calloc(1, sizeof(*owner));
-    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining compiled CLIENT metadata"); return false; }
+    if (!owner) { free(instance); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining compiled CLIENT metadata"); return false; }
     owner->references = 1; owner->view.storage = owner;
     bool ok = client_profile_identity(owner, request, &selection, error);
+    free(instance);
     if (ok) { owner->view.content = qa_vfs_clone(request->prepared, error); ok = owner->view.content != NULL; }
     if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
         qa_launch_instance_retain_metadata(&owner->view, out, error);
