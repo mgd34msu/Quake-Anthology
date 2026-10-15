@@ -1407,7 +1407,7 @@ static bool dispatch_inner(qa_console *console, const qa_command_context *contex
         }
     }
     command_contribution *part = select_contribution(console,entry,context);
-    if (!part) {
+    if (!part && !(context->origin==QA_COMMAND_REMOTE && context->actor.registry)) {
         success = cvar_command(console, &command, &handled, error);
         if (!success || handled) goto done;
     }

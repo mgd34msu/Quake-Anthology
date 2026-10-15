@@ -669,6 +669,33 @@ static void test_console_command_precedence(void)
     CHECK(qa_console_execute_now(console,&context,"qa_foreign_callback fallback",&error));
     CHECK(counts.forwarded==4 && counts.called==2);
     CHECK(!strcmp(qa_cvars_find(cvars,"qa_foreign_callback")->value,"fallback"));
+    qa_console_destroy(console);
+
+    CHECK(qa_cvars_register(cvars,"team","original",0,1,"",&error));
+    CHECK(qa_cvars_set(cvars,"team","original",true,&error));
+    CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"original"));
+    counts=(console_precedence_counts){.callback_result=QA_COMMAND_HANDLED,
+        .forward_result=QA_COMMAND_HANDLED};
+    console=qa_console_create(&(qa_console_options){.context=context,.cvars=cvars,
+        .user=&counts,.source_command=console_precedence_callback},&error);
+    CHECK(console);
+    qa_command_context remote=context;
+    remote.origin=QA_COMMAND_REMOTE;remote.actor=(qa_actor_id){.registry=1,.slot=7};
+    CHECK(qa_console_execute_now(console,&remote,"team red",&error));
+    CHECK(counts.called==1 && !counts.forwarded);
+    CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"original"));
+    CHECK(qa_console_execute_now(console,&context,"team blue",&error));
+    CHECK(counts.called==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"blue"));
+    contribution=(qa_console_contribution){.receiver=1,.lifetime_owner=2,
+        .cvar_view=context.cvar_view,.callback=console_precedence_forward,.user=&counts};
+    CHECK(qa_console_contribute(console,"qa_registered_control",&contribution,&error));
+    CHECK(qa_console_execute_now(console,&remote,"qa_registered_control",&error));
+    CHECK(counts.called==1 && counts.forwarded==1);
+    counts.callback_result=QA_COMMAND_UNHANDLED;
+    CHECK(qa_console_execute_now(console,&remote,"team spectator",&error));
+    CHECK(counts.called==2 && counts.forwarded==1);
+    CHECK(!strcmp(qa_cvars_find(cvars,"team")->value,"spectator"));
     qa_console_destroy(console);qa_cvars_destroy(cvars);
 }
 
