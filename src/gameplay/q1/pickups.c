@@ -1070,6 +1070,10 @@ static bool dispatch_targets(item_touch *touch, qa_error *error) {
 static bool mission_pickup_message(item_touch *touch, qa_error *error) {
     qa_q1_game *g = touch->game;
     const q1_pickup *item = &touch->entity->state.pickup;
+    if (touch->external && item->kind == Q1_ITEM_ARMOR &&
+        (g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_DOPA))
+        return q1_message_resource_args(g, touch->recipient,
+            g->runtime_names[Q1_NAME_QC_ITEM_ARMOR], 2u, NULL, 0, error);
     if (!item->mission)
         return true;
     if (item->kind == Q1_ITEM_HORN)

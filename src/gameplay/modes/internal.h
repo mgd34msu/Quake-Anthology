@@ -523,6 +523,43 @@ typedef struct mode_objective {
     X(QC_HORDE_FIGHT, "$qc_horde_fight") \
     X(QC_HORDE_BOSS_WAVE, "$qc_horde_boss_wave") \
     X(SOUND_MISC_TALK_WAV, "misc/talk.wav") \
+    X(QC_HORDE_STREAK_2, "$qc_horde_streak_2") \
+    X(QC_HORDE_STREAK_3, "$qc_horde_streak_3") \
+    X(QC_HORDE_STREAK_4, "$qc_horde_streak_4") \
+    X(QC_HORDE_STREAK_5, "$qc_horde_streak_5") \
+    X(QC_HORDE_STREAK_6, "$qc_horde_streak_6") \
+    X(QC_HORDE_STREAK_7, "$qc_horde_streak_7") \
+    X(QC_HORDE_STREAK_8, "$qc_horde_streak_8") \
+    X(QC_HORDE_STREAK_9, "$qc_horde_streak_9") \
+    X(QC_HORDE_STREAK_10, "$qc_horde_streak_10") \
+    X(QC_HORDE_STREAK_11, "$qc_horde_streak_11") \
+    X(QC_HORDE_STREAK_12, "$qc_horde_streak_12") \
+    X(QC_HORDE_STREAK_13, "$qc_horde_streak_13") \
+    X(QC_HORDE_STREAK_GENERIC, "$qc_horde_streak_generic") \
+    X(QC_HORDE_STREAK_ENDED, "$qc_horde_streak_ended") \
+    X(QC_GOT_ITEM, "$qc_got_item") \
+    X(QC_ITEM_HEALTH, "$qc_item_health") \
+    X(QC_SHELLS, "$qc_shells") \
+    X(QC_NAILS, "$qc_nails") \
+    X(QC_ROCKETS, "$qc_rockets") \
+    X(QC_CELLS, "$qc_cells") \
+    X(QC_SILVER_KEY, "$qc_silver_key") \
+    X(QC_SILVER_RUNEKEY, "$qc_silver_runekey") \
+    X(QC_SILVER_KEYCARD, "$qc_silver_keycard") \
+    X(QC_GOLD_KEY, "$qc_gold_key") \
+    X(QC_GOLD_RUNEKEY, "$qc_gold_runekey") \
+    X(QC_GOLD_KEYCARD, "$qc_gold_keycard") \
+    X(QC_HORDE_SILVER_KEY_APPEARS, "$qc_horde_silver_key_appears") \
+    X(QC_HORDE_SILVER_RUNEKEY_APPEARS, "$qc_horde_silver_runekey_appears") \
+    X(QC_HORDE_SILVER_KEYCARD_APPEARS, "$qc_horde_silver_keycard_appears") \
+    X(QC_HORDE_GOLD_KEY_APPEARS, "$qc_horde_gold_key_appears") \
+    X(QC_HORDE_GOLD_RUNEKEY_APPEARS, "$qc_horde_gold_runekey_appears") \
+    X(QC_HORDE_GOLD_KEYCARD_APPEARS, "$qc_horde_gold_keycard_appears") \
+    X(SOUND_WEAPONS_LOCK4_WAV, "weapons/lock4.wav") \
+    X(SOUND_ITEMS_HEALTH1_WAV, "items/health1.wav") \
+    X(SOUND_MISC_MEDKEY_WAV, "misc/medkey.wav") \
+    X(SOUND_MISC_RUNEKEY_WAV, "misc/runekey.wav") \
+    X(SOUND_MISC_BASEKEY_WAV, "misc/basekey.wav") \
     X(BODYQUE, "bodyque") \
     X(INFO_PLAYER_DEATHMATCH, "info_player_deathmatch") \
     X(INFO_PLAYER_START, "info_player_start") \

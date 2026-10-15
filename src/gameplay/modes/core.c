@@ -134,7 +134,8 @@ bool mode_message_level(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa
                         const qa_builtin_message_arg *args, size_t count, int32_t level,
                         qa_error *e) {
     qa_builtin_event event={.kind=QA_BUILTIN_MESSAGE,.actor=recipient,.code=level,
-        .text=text,.arguments=args,.argument_count=count};
+        .text=text,.arguments=args,.argument_count=count,
+        .flags=v->value.rules.source<=QA_MODE_Q1_HORDE?2u:0u};
     return mode_builtin_emit(m, v, &event, e);
 }
 bool mode_message(qa_modes *m, mode_instance *v, qa_actor_id recipient, qa_string_id text,

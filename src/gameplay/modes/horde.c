@@ -23,6 +23,45 @@ typedef struct squad {
     qa_horde_point_kind kind;
     bool double_demon;
 } squad;
+static bool centerprint(qa_modes *m, mode_instance *v, mode_name text, qa_error *e) {
+    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .text = m->runtime_names[text]};
+    return mode_builtin_emit(m, v, &event, e);
+}
+typedef struct key_feedback {
+    mode_name label, appears, sound;
+} key_feedback;
+static key_feedback key_names(const horde_state *h, bool gold) {
+    static const key_feedback names[2][3] = {
+        {{MODE_NAME_QC_SILVER_KEY, MODE_NAME_QC_HORDE_SILVER_KEY_APPEARS, MODE_NAME_SOUND_MISC_MEDKEY_WAV},
+         {MODE_NAME_QC_SILVER_RUNEKEY, MODE_NAME_QC_HORDE_SILVER_RUNEKEY_APPEARS, MODE_NAME_SOUND_MISC_RUNEKEY_WAV},
+         {MODE_NAME_QC_SILVER_KEYCARD, MODE_NAME_QC_HORDE_SILVER_KEYCARD_APPEARS, MODE_NAME_SOUND_MISC_BASEKEY_WAV}},
+        {{MODE_NAME_QC_GOLD_KEY, MODE_NAME_QC_HORDE_GOLD_KEY_APPEARS, MODE_NAME_SOUND_MISC_MEDKEY_WAV},
+         {MODE_NAME_QC_GOLD_RUNEKEY, MODE_NAME_QC_HORDE_GOLD_RUNEKEY_APPEARS, MODE_NAME_SOUND_MISC_RUNEKEY_WAV},
+         {MODE_NAME_QC_GOLD_KEYCARD, MODE_NAME_QC_HORDE_GOLD_KEYCARD_APPEARS, MODE_NAME_SOUND_MISC_BASEKEY_WAV}}
+    };
+    unsigned world = h->options.world_type == 1 ? 1u : h->options.world_type == 2 ? 2u : 0u;
+    return names[gold ? 1 : 0][world];
+}
+static bool pickup_feedback(qa_modes *m, mode_instance *v, const horde_loot *loot,
+                            qa_actor_id actor, mode_name text, const qa_builtin_message_arg *arguments,
+                            size_t count, mode_name sound, qa_error *e) {
+    qa_actor_id pickup = loot->actor;
+    qa_item_id resource = loot->item;
+    if (!mode_message(m, v, actor, m->runtime_names[text], arguments, count, e))
+        return false;
+    if (!mode_live(m, actor) || !mode_live(m, pickup))
+        return true;
+    if (!mode_sound_full(m, v, actor, m->runtime_names[sound], 3, 1, 1, e))
+        return false;
+    if (!mode_live(m, actor) || !mode_live(m, pickup))
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(m->options.services.world, pickup, &body, e))
+        return false;
+    qa_builtin_event event = {.kind = QA_BUILTIN_ITEM, .actor = pickup, .other = actor,
+        .origin = body.origin, .resource = resource};
+    return mode_builtin_emit(m, v, &event, e);
+}
 static float random_value(qa_modes *m, mode_instance *v) {
     return m->options.hooks.source_random
                ? m->options.hooks.source_random(m->options.hooks.context, v->id)
@@ -473,7 +512,8 @@ static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t poi
         h->points[point_index].occupied = true;
         h->points[point_index].next_ns = 0;
     }
-    return true;
+    return (kind != HORDE_SILVER && kind != HORDE_GOLD) ||
+           centerprint(m, v, key_names(h, kind == HORDE_GOLD).appears, e);
 }
 static bool prepare(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) {
     size_t players = living(m, v);
@@ -783,10 +823,21 @@ static bool before_death(qa_modes *m, mode_instance *v, const qa_damage_outcome 
     if (killer) {
         killer->stats.streak = mode_add_i32(killer->stats.streak, 1);
         killer->stats.last_kill_ns = v->value.time_ns + 2 * MODE_SECOND;
-        if (killer->stats.streak > 1 &&
-            !mode_event(m, v, QA_MODE_HORDE_KILL_STREAK, attacker, (qa_actor_id){0}, victim, 0,
-                        killer->stats.streak, 0, e))
-            return false;
+        if (killer->stats.streak > 1) {
+            static const mode_name names[] = {
+                MODE_NAME_QC_HORDE_STREAK_2, MODE_NAME_QC_HORDE_STREAK_3, MODE_NAME_QC_HORDE_STREAK_4,
+                MODE_NAME_QC_HORDE_STREAK_5, MODE_NAME_QC_HORDE_STREAK_6, MODE_NAME_QC_HORDE_STREAK_7,
+                MODE_NAME_QC_HORDE_STREAK_8, MODE_NAME_QC_HORDE_STREAK_9, MODE_NAME_QC_HORDE_STREAK_10,
+                MODE_NAME_QC_HORDE_STREAK_11, MODE_NAME_QC_HORDE_STREAK_12, MODE_NAME_QC_HORDE_STREAK_13};
+            int32_t streak = killer->stats.streak;
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER, .value.number = streak};
+            if (!mode_event(m, v, QA_MODE_HORDE_KILL_STREAK, attacker, (qa_actor_id){0}, victim, 0,
+                             streak, 0, e) ||
+                !mode_message(m, v, attacker,
+                    m->runtime_names[streak >= 14 ? MODE_NAME_QC_HORDE_STREAK_GENERIC : names[streak - 2]],
+                    &argument, streak >= 14 ? 1u : 0u, e))
+                return false;
+        }
     }
     if (random_value(m, v) >= h->value.powerup_chance)
         h->value.powerup_chance += .025f;
@@ -850,6 +901,17 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
                 return false;
             if (current >= loot->capacity)
                 return true;
+            mode_name label = loot->item == m->runtime_names[MODE_NAME_Q1_AMMO_SHELLS] ? MODE_NAME_QC_SHELLS :
+                              loot->item == m->runtime_names[MODE_NAME_Q1_AMMO_NAILS] ? MODE_NAME_QC_NAILS :
+                              loot->item == m->runtime_names[MODE_NAME_Q1_AMMO_ROCKETS] ? MODE_NAME_QC_ROCKETS :
+                              MODE_NAME_QC_CELLS;
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                .value.text = m->runtime_names[label]};
+            if (!pickup_feedback(m, v, loot, actor, MODE_NAME_QC_GOT_ITEM, &argument, 1,
+                                  MODE_NAME_SOUND_WEAPONS_LOCK4_WAV, e))
+                return false;
+            if (!mode_live(m, actor) || !mode_live(m, item_actor) || !qa_actor_id_equal(loot->actor, item_actor))
+                return true;
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
                 uint32_t i = m->players_order.actors[ordinal].slot;
                 mode_member *p = &v->members[i];
@@ -890,6 +952,13 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
             if (!qa_combat_set_health(m->options.services.combat, actor,
                                       fminf(maximum, health + loot->amount), e))
                 return false;
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                .value.number = loot->amount};
+            if (!pickup_feedback(m, v, loot, actor, MODE_NAME_QC_ITEM_HEALTH, &argument, 1,
+                                  MODE_NAME_SOUND_ITEMS_HEALTH1_WAV, e))
+                return false;
+            if (!mode_live(m, actor) || !mode_live(m, item_actor) || !qa_actor_id_equal(loot->actor, item_actor))
+                return true;
         } else if (loot->kind == HORDE_ARMOR || loot->kind == HORDE_POWER) {
             bool granted = false;
             if (!m->options.hooks.grant_loot(m->options.hooks.context, item_actor, actor, &granted,
@@ -899,6 +968,13 @@ static bool loot_touch(qa_modes *m, qa_actor_id item_actor, qa_actor_id actor, b
                 return true;
         } else {
             if (player->identity->bot)
+                return true;
+            key_feedback key = key_names(h, loot->kind == HORDE_GOLD);
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING,
+                .value.text = m->runtime_names[key.label]};
+            if (!pickup_feedback(m, v, loot, actor, MODE_NAME_QC_GOT_ITEM, &argument, 1, key.sound, e))
+                return false;
+            if (!mode_live(m, actor) || !mode_live(m, item_actor) || !qa_actor_id_equal(loot->actor, item_actor))
                 return true;
             if (!qa_modes_horde_keys(m, v->id, loot->kind == HORDE_GOLD, 1, e))
                 return false;
@@ -931,10 +1007,6 @@ bool qa_modes_horde_loot_touch(qa_modes *m, qa_actor_id item, qa_actor_id player
         return mode_fail(e, "invalid Horde loot service");
     return MODE_CALLBACK(m, loot_touch(m, item, player, handled, accepted, e));
 }
-static bool centerprint(qa_modes *m, mode_instance *v, mode_name text, qa_error *e) {
-    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .text = m->runtime_names[text]};
-    return mode_builtin_emit(m, v, &event, e);
-}
 bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error *e) {
     horde_state *h = v->horde;
     if (!h || v->value.rules.paused)
@@ -965,10 +1037,14 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
             p->stats.streak = 0;
             if (streak > 1) {
                 int64_t score = ((int64_t)streak * streak + 1) / 2;
+                qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                    .value.number = (double)score};
                 if (!qa_modes_add_score(m, v->id, p->actor,
                                         score > INT32_MAX ? INT32_MAX : (int32_t)score, e) ||
                     !mode_event(m, v, QA_MODE_HORDE_SPREE, p->actor, (qa_actor_id){0},
-                                h->options.manager, 0, streak, (int32_t)score, e))
+                                h->options.manager, 0, streak, (int32_t)score, e) ||
+                    !mode_message(m, v, p->actor, m->runtime_names[MODE_NAME_QC_HORDE_STREAK_ENDED],
+                                   &argument, 1, e))
                     return false;
             }
         }

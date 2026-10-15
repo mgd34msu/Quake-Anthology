@@ -24,6 +24,7 @@
     X(QC_MULTI_ROCKETS, "$qc_multi_rockets") \
     X(MESSAGE_PLASMA, "plasma") \
     X(QC_GOT_ITEM, "$qc_got_item") \
+    X(QC_ITEM_ARMOR, "$qc_item_armor") \
     X(QC_GOT_HORN, "$qc_got_horn") \
     X(QC_BACKPACK_GOT, "$qc_backpack_got") \
     X(QC_BACKPACK_SHELLS, "$qc_backpack_shells") \
