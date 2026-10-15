@@ -364,6 +364,8 @@ typedef struct qa_modes_hooks {
     bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible,
                    bool reliable, qa_error *);
     bool (*source_frame)(void *, qa_mode_id, uint64_t *);
+    bool (*source_match_limits)(void *, qa_mode_id, double *source_seconds,
+        double *time_limit_minutes, double *capture_limit);
     /* Legacy mode records retain only the Q2 edition bit. Import borrows the
      * enclosing source's full ruleset without adding a saved selector. */
     qa_ruleset_id (*source_ruleset)(void *, qa_mode_id, qa_mode_origin, qa_actor_owner,

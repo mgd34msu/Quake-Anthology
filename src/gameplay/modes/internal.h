@@ -632,7 +632,12 @@ typedef struct mode_objective {
     X(SOUND_CTF_BLUESCORE1, "ctf/bluescore1.wav") \
     X(SOUND_CTF_BLUESCORE2, "ctf/bluescore2.wav") \
     X(SOUND_CTF_BLUESCORE3, "ctf/bluescore3.wav") \
-    X(SOUND_CTF_BLUESCORE4, "ctf/bluescore4.wav")
+    X(SOUND_CTF_BLUESCORE4, "ctf/bluescore4.wav") \
+    X(THREEWAVE_MATCH_TIED, "$qc_ks_match_tied") \
+    X(THREEWAVE_RED_WON, "$qc_ks_red_won") \
+    X(THREEWAVE_RED_LOST, "$qc_ks_red_lost") \
+    X(THREEWAVE_BLUE_WON, "$qc_ks_blue_won") \
+    X(THREEWAVE_BLUE_LOST, "$qc_ks_blue_lost")
 
 typedef enum mode_name {
 #define MODE_NAME_ENUM(key, text) MODE_NAME_##key,

@@ -119,6 +119,28 @@ static bool mode_source_frame(void *opaque, qa_mode_id mode, uint64_t *frame)
     return true;
 }
 
+static bool mode_source_match_limits(void *opaque, qa_mode_id mode, double *seconds,
+    double *minutes, double *captures)
+{
+    qa_application *app = opaque;
+    qa_mode_view view;
+    if (!qa_modes_read(app->modes, mode, &view, NULL) ||
+        view.origin != QA_MODE_NATIVE_Q1_COMPOSITION || view.rules.source != QA_MODE_THREEWAVE)
+        return false;
+    application_provider *source = application_mode_provider(app, mode);
+    uint64_t time_ns;
+    double elapsed;
+    if (!source || source->kind != APPLICATION_PROVIDER_Q1 ||
+        !qa_q1_game_clock_read(source->state.q1, &time_ns, &elapsed))
+        return false;
+    const qa_cvar_view *time = qa_q1_source_read(source->state.q1, QA_Q1_SOURCE_TIMELIMIT);
+    const qa_cvar_view *capture = qa_q1_source_read(source->state.q1, QA_Q1_SOURCE_FRAGLIMIT);
+    *seconds = (double)time_ns / 1000000000.0;
+    *minutes = time ? (float)time->number : 0;
+    *captures = capture ? (float)capture->number : 0;
+    return true;
+}
+
 static bool mode_intent(void *opaque, const qa_match_intent *intent,
                         qa_error *error)
 {
@@ -134,6 +156,29 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
                 .expression = qa_strings_cstr(qa_session_strings(application->session), intent->map)};
             if (intent->kind == QA_MATCH_START) request.start_match_mode = intent->mode;
             return application_source_queue_map_travel(application, &request, error);
+        }
+    }
+    if (source && source->kind == APPLICATION_PROVIDER_Q1 && intent->kind == QA_MATCH_NEXT_MAP) {
+        qa_mode_view view;
+        if (!qa_modes_read(application->modes, intent->mode, &view, error))
+            return false;
+        if (view.rules.source == QA_MODE_THREEWAVE) {
+            qa_string_id map = intent->map;
+            if (!map) {
+                static const char *const rotation[] = {
+                    "ctf1", "ctf2", "ctf3", "ctf4", "ctf5", "ctf6", "ctf7", "ctf8", "ctf9"};
+                qa_strings *strings = qa_session_strings(application->session);
+                const char *current = qa_strings_cstr(strings, qa_q1_game_map_name(source->state.q1));
+                size_t next = 0;
+                for (size_t i = 0; i < sizeof(rotation) / sizeof(*rotation); ++i)
+                    if (current && !strcmp(current, rotation[i])) {
+                        next = (i + 1) % (sizeof(rotation) / sizeof(*rotation));
+                        break;
+                    }
+                if (!qa_strings_intern_cstr(strings, rotation[next], &map, error))
+                    return false;
+            }
+            return qa_q1_game_map_ctf_nextlevel(source->state.q1, map, error);
         }
     }
     if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP ||
@@ -344,6 +389,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .chat_item = mode_chat_item,
                             .layout = mode_layout,
                             .source_frame = mode_source_frame,
+                            .source_match_limits = mode_source_match_limits,
                             .source_ruleset = mode_source_ruleset,
                             .q1_composition_expected = application_native_q1_composition_expected,
                             .q1_composition_current = application_native_q1_composition_current,

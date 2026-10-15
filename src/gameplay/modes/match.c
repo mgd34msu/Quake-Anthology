@@ -175,6 +175,29 @@ static bool ctf_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
         m->runtime_names[captures ? MODE_NAME_CTF_WON_CAPTURES : MODE_NAME_CTF_WON_POINTS],
         arguments, 3, 3, e);
 }
+static bool threewave_result_message(qa_modes *m, mode_instance *v, qa_error *e) {
+    if (v->value.rules.start_map)
+        return true;
+    int32_t captures[2] = {v->value.team_captures[0], v->value.team_captures[1]};
+    bool tied = captures[0] == captures[1];
+    unsigned winner = captures[1] > captures[0];
+    for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
+        qa_actor_id actor = m->players_order.actors[ordinal];
+        if (!mode_player_get(m, actor))
+            continue;
+        for (unsigned result = 0; result < (tied ? 1u : 2u); ++result) {
+            unsigned team = winner ^ result;
+            mode_name text = tied ? MODE_NAME_THREEWAVE_MATCH_TIED
+                : team == 0 ? result ? MODE_NAME_THREEWAVE_RED_LOST : MODE_NAME_THREEWAVE_RED_WON
+                : result ? MODE_NAME_THREEWAVE_BLUE_LOST : MODE_NAME_THREEWAVE_BLUE_WON;
+            qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_NUMBER,
+                .value.number = captures[team]};
+            if (!mode_message(m, v, actor, m->runtime_names[text], &argument, 1, e))
+                return false;
+        }
+    }
+    return true;
+}
 
 static int rank_compare(const void *left, const void *right) {
     const mode_rank_entry *a = left, *b = right;
@@ -630,6 +653,9 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
             return false;
         if (ctf_match && !ctf_result_message(m, v, e))
             return false;
+        if (v->value.rules.source == QA_MODE_THREEWAVE &&
+            !threewave_result_message(m, v, e))
+            return false;
         v->restart_sent = true;
         return mode_intent(m, v, QA_MATCH_NEXT_MAP, (qa_actor_id){0}, 0, 0, e);
     }
@@ -1004,6 +1030,8 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         if (tied(m, v)) return true;
         return mode_q3_limits(m, v, e);
     }
+    if (r->source == QA_MODE_THREEWAVE && (r->start_map || v->value.ctf_pregame_over))
+        return true;
     if (v->value.phase == QA_MODE_WAITING) {
         if (r->kind == QA_MODE_HORDE)
             return true;
@@ -1044,13 +1072,22 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         return true;
     if (r->source >= QA_MODE_Q3 && tied(m, v))
         return true;
-    if (r->time_limit_minutes > 0 &&
-        now - v->value.started_ns >= (uint64_t)(r->time_limit_minutes * 60.0f * (float)MODE_SECOND))
-        return limit_end(m, v, MODE_NAME_Q2_TIMELIMIT_HIT, MODE_NAME_Q2_RR_TIMELIMIT_HIT, e);
-    if (r->capture_limit > 0 && r->kind >= QA_MODE_CTF && r->kind <= QA_MODE_HARVESTER) {
-        for (int i = 0; i < 3; ++i)
-            if (v->value.team_captures[i] >= r->capture_limit ||
-                (r->source >= QA_MODE_Q3 && v->value.team_scores[i] >= r->capture_limit))
+    double source_seconds = 0, source_minutes = 0, source_captures = 0;
+    bool source_limits = r->source == QA_MODE_THREEWAVE && m->options.hooks.source_match_limits &&
+        m->options.hooks.source_match_limits(m->options.hooks.context, v->id,
+            &source_seconds, &source_minutes, &source_captures);
+    double minutes = source_limits ? source_minutes : r->time_limit_minutes;
+    double captures = source_limits ? source_captures : r->capture_limit;
+    if ((source_limits ? minutes != 0 : minutes > 0) &&
+        (source_limits ? source_seconds >= (double)((float)minutes * 60.0f)
+            : now - v->value.started_ns >= (uint64_t)(r->time_limit_minutes * 60.0f * (float)MODE_SECOND)))
+        return source_limits ? qa_modes_end(m, v->id, 0, e)
+            : limit_end(m, v, MODE_NAME_Q2_TIMELIMIT_HIT, MODE_NAME_Q2_RR_TIMELIMIT_HIT, e);
+    if ((source_limits ? captures != 0 : captures > 0) &&
+        r->kind >= QA_MODE_CTF && r->kind <= QA_MODE_HARVESTER) {
+        for (int i = 0; i < (source_limits ? 2 : 3); ++i)
+            if (v->value.team_captures[i] >= captures ||
+                (r->source >= QA_MODE_Q3 && v->value.team_scores[i] >= captures))
                 return qa_modes_end(m, v->id, r->source == QA_MODE_Q2_CTF
                     ? m->runtime_names[MODE_NAME_CTF_CAPTURELIMIT] : 0, e);
     }

@@ -1021,12 +1021,22 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         ok = application_players_advance(application, error);
     if (ok && application->modes != NULL) {
         uint64_t now = qa_session_elapsed(application->session);
-        for (size_t index = 0; index < application->mode_count; ++index) {
+        for (size_t index = 0; ; ++index) {
+            qa_mode_id mode;
+            qa_mode_view view;
+            qa_error enumeration = {0};
+            if (!qa_modes_at(application->modes, index, &mode, &view, &enumeration)) {
+                if (enumeration.code != QA_ERROR_NOT_FOUND) {
+                    if (error) *error = enumeration;
+                    ok = false;
+                }
+                break;
+            }
             if (application_native_q3_mode_frame_owned(application,
-                                                        application->mode_ids[index]))
+                                                        mode))
                 continue;
             if (!qa_modes_frame(application->modes,
-                                application->mode_ids[index], now, elapsed_ns,
+                                mode, now, elapsed_ns,
                                 error)) {
                 ok = false;
                 break;
