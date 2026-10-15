@@ -464,10 +464,10 @@ bool application_unified_source_drop_recipient(qa_application *app,qa_actor_owne
         native.rule.connected==QA_Q3_CLIENT_DISCONNECTED || !qa_actors_get(qa_session_actors(app->session),actual))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP differs from its actual pending native full actor");
     const application_player_record *recipient=application_player_record_live(app->players,actual);
-    if (!recipient || !recipient->remote) { *present=false; return true; }
+    if (!recipient || application_player_identity(recipient)->bot || !recipient->remote_client.owner ||
+        !recipient->remote_client.generation || !recipient->remote_seat.owner) { *present=false; return true; }
     qa_actor_id retained;
-    if (!recipient->remote_seat.owner ||
-        !qa_application_remote_player_actor(app,recipient->remote_client,recipient->remote_seat,&retained) ||
+    if (!qa_application_remote_player_actor(app,recipient->remote_client,recipient->remote_seat,&retained) ||
         !qa_actor_id_equal(retained,actual))
         return application_fail(error,QA_ERROR_ARGUMENT,"Source DROP lost its canonical full NetID and seat receipt");
     *actor=actual; *client=recipient->remote_client; *seat=recipient->remote_seat; *present=true; return true;
@@ -535,10 +535,10 @@ bool application_unified_server_source_drop_current(const application_unified_se
         return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP precedes its actual requesting Source completion");
     if (qa_actors_get(qa_session_actors(current.session),receipt->actor)) {
         qa_actor_id actor;
-        if (owner->drop_player_detached ||
-            !qa_actor_id_equal(binding.actor,receipt->actor) ||
-            !qa_application_remote_player_actor(owner->application,owner->client,owner->seat,&actor) ||
-            !qa_actor_id_equal(actor,receipt->actor))
+        bool bound=qa_application_remote_player_actor(owner->application,owner->client,owner->seat,&actor) &&
+            qa_actor_id_equal(actor,receipt->actor);
+        if (!qa_actor_id_equal(binding.actor,receipt->actor) ||
+            (owner->drop_player_detached ? bound : !bound))
             return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP lost its still-live canonical recipient");
     } else if ((!owner->drop_player_detached && (owner->drop_source_owner!=receipt->source_owner ||
             owner->drop_source_slot!=receipt->source_slot)) ||
@@ -558,8 +558,10 @@ bool application_unified_server_source_drop_finish(application_unified_server *o
     if (!owner->drop_player_detached) {
         if (qa_actors_get(qa_session_actors(owner->application->session),owner->admitted_player.actor) &&
             !application_unified_player_disconnect(owner->application,owner->client,owner->seat,error)) return false;
-        if (qa_actors_get(qa_session_actors(owner->application->session),owner->admitted_player.actor))
-            return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP canonical disconnect did not retire its actual full actor");
+        const application_player_record *bound=application_players_connection_read(
+            owner->application,owner->client,owner->seat);
+        if (bound && qa_actor_id_equal(bound->actor,owner->admitted_player.actor))
+            return application_fail(error,QA_ERROR_ARGUMENT,"Unified DROP canonical disconnect retained its connection seat");
         owner->drop_player_detached=true;
     }
     owner->admitted=false; owner->player_attached=false; owner->preparing_frame=false;

@@ -7098,13 +7098,13 @@ static bool server_drop_client(void *context, uint32_t slot, const char *reason,
     server_lease *lease = context;
     qa_frontend_network *n = lease->frontend->network;
     qa_actor_id actor = {0}; qa_net_client_id client = {0}; qa_net_seat_id seat = {0};
-    bool remote = false, matched = false;
+    bool bound = false, matched = false;
     if (!application_unified_source_drop_recipient(lease->frontend->application, lease->owner,
-        slot, reason, &actor, &client, &seat, &remote, error)) return false;
-    if (remote && n && n->unified && lease->frontend->options.network_host &&
+        slot, reason, &actor, &client, &seat, &bound, error)) return false;
+    if (bound && n && n->unified &&
         !frontend_network_unified_source_drop(n->unified, lease->owner, slot, reason, &matched, error))
         return false;
-    if (remote && !matched && n) {
+    if (bound && !matched && n) {
         frontend_q3_peer *recipient = NULL;
         for (size_t i = 0; i < 64; ++i) {
             frontend_q3_peer *peer = n->q3_peers + i;
@@ -7128,8 +7128,8 @@ static bool server_drop_client(void *context, uint32_t slot, const char *reason,
     }
     if (lease->original.drop_client)
         return lease->original.drop_client(lease->original.context, slot, reason, error);
-    return !remote || matched || frontend_fail(error, QA_ERROR_UNSUPPORTED,
-        "Source remote DROP has no matched transport owner");
+    return !bound || matched || frontend_fail(error, QA_ERROR_UNSUPPORTED,
+        "Source DROP has no matched transport owner");
 }
 
 bool frontend_network_qw_command_realtime(const qa_frontend *f,qa_actor_owner owner,
