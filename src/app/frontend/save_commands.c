@@ -893,10 +893,11 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
     bool autosaved=false;
     bool ok=qa_autosave_level_entry(&owner->autosave,request.world_generation,request.fresh_entry,&local);
     if (ok && request.authored && owner->autosave.enabled) owner->autosave.pending=true;
-    if (ok) ok=recovery_directory(owner,true,&local);
+    bool need_recovery=!owner->recovery_available && !owner->recovery_abandoned;
+    if (ok && (owner->autosave.pending || need_recovery)) ok=recovery_directory(owner,true,&local);
     qa_save_image *image=NULL; qa_q1_save_data *source=NULL;qa_q2_save_data *q2=NULL;char *autosave=NULL;
     owner->draining=true;
-    if (ok) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
+    if (ok && need_recovery) ok=qa_frontend_persistence_capture(f,f->options.persistence_services,QA_SAVE_LEVEL_ENTRY,&image,&local);
     if (ok && owner->autosave.pending) {
         const qa_launch_snapshot *snapshot=qa_application_launch(f->application);
         const qa_launch_binding *binding=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
@@ -927,7 +928,7 @@ bool frontend_save_commands_autosave(qa_frontend *f, qa_error *error)
         }
     }
     bool recovered=false;
-    if (ok && !owner->recovery_available) {
+    if (ok && need_recovery) {
         ok=recovery_checkpoint(f,image,&local);
         if (ok) {
             recovered=true;
