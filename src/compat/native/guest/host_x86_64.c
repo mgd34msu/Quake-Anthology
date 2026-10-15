@@ -86,8 +86,6 @@ bool guest_host_x86_64_component_read(uint32_t index, guest_host_x86_64_componen
 {
     if (!out || index<2 || index>=64) return fail(error,QA_ERROR_ARGUMENT,index,"extended hardware component index is invalid");
 #if defined(__linux__) && defined(__x86_64__)
-    guest_host_x86_64_capabilities capability;
-    if (!guest_host_x86_64_capability(&capability,error)) return false;
     unsigned a,b,c,d; __cpuid_count(0x0d,index,a,b,c,d);
     if (!a) return fail(error,QA_ERROR_UNSUPPORTED,index,"host CPU has no such actual XSTATE component");
     *out=(guest_host_x86_64_component){.index=index,.offset=b,.bytes=a,.supervisor=(c&1)!=0,.compact_align64=(c&2)!=0};
