@@ -1404,6 +1404,74 @@ static bool navigation_step_admit(void *context,void *lease,qa_vec3 from,qa_vec3
     fixture->points[0]=from;fixture->points[1]=to;
     *points=fixture->points;*count=2;*seconds=.2f;return true;
 }
+static void test_navigation_best_reachable(void)
+{
+    qa_error error={0};gameplay_map map;gameplay_map_create(&map);
+    qa_actor_registry *actors=NULL;qa_world *world=NULL;
+    CHECK(qa_actors_create(1,NULL,NULL,&actors,&error));
+    CHECK(qa_world_create(actors,map.geometry,NULL,0,&world,&error));
+    const qa_aas_box boxes[]={{.presence=4,.bounds={{-16,-16,-24},{16,16,16}}}};
+    const qa_aas_plane planes[]={
+        {{1,0,0},0,0},{{-1,0,0},0,0},{{1,0,0},32,0},{{-1,0,0},-32,0},
+        {{0,0,1},100,2},{{0,0,-1},-100,2},{{0,0,1},160,2},{{0,0,-1},-160,2}};
+    const qa_aas_node nodes[]={{0},{.plane=0,.children={2,0}},
+        {.plane=2,.children={0,3}},{.plane=4,.children={4,0}},
+        {.plane=6,.children={0,-1}}};
+    const qa_aas_area areas[]={{0},{.number=1,.bounds={{0,-64,100},{32,64,160}},.center={16,0,130}}};
+    const qa_aas_setting settings[]={{0},{.presence=4}};
+    const qa_aas_view source={.version=5,.bsp_checksum=99,
+        .count={[QA_AAS_BOXES]=1,[QA_AAS_PLANES]=8,[QA_AAS_NODES]=5,
+            [QA_AAS_AREAS]=2,[QA_AAS_SETTINGS]=2},
+        .boxes=boxes,.planes=planes,.nodes=nodes,.areas=areas,.settings=settings};
+    qa_buffer bytes={0};qa_nav_asset *asset=NULL;
+    CHECK(qa_aas_write(&source,&bytes,&error));
+    CHECK(qa_nav_asset_read((qa_bytes){bytes.data,bytes.size},&source.bsp_checksum,&asset,&error));
+    qa_nav_profile profile={.movement={.kind=QA_RULESET_Q3},
+        .shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-24},{16,16,32}}},
+        .crouched_shape={.kind=QA_SHAPE_BOX,.bounds={{-8,-8,-24},{8,8,16}}},
+        .has_crouched_shape=true,.policy=qa_collision_ruleset_policy(QA_RULESET_Q3),
+        .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
+    qa_navigation_services services={.world=world,.topology_geometry_only=true};
+    qa_nav_graph *graph=NULL;qa_navigation *runtime=NULL;qa_nav_workspace *workspace=NULL;
+    CHECK(qa_nav_graph_from_asset(&(qa_nav_map){.format=QA_BSP_29},asset,&profile,
+        &services,NULL,&graph,&error));
+    CHECK(qa_navigation_create(graph,&services,NULL,&runtime,&error));
+    CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
+    CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
+    const qa_bounds item={{-15,-15,-15},{15,15,15}};
+    const qa_vec3 origins[]={{16,0,130},{-4,0,130},{16,0,90}};
+    uint32_t node;bool found;qa_vec3 point;
+    for(size_t i=0;i<sizeof(origins)/sizeof(origins[0]);++i) {
+        CHECK(qa_navigation_best_reachable(runtime,workspace,origins[i],item,&point,&node,&found,&error));
+        CHECK(found && node==1 && point.z>100 && point.z<101);
+    }
+    qa_vec3 fallback={-24,0,130};
+    CHECK(qa_navigation_best_reachable(runtime,workspace,fallback,item,&point,&node,&found,&error));
+    CHECK(found && node==1 && qa_vec_equal(point,fallback));
+    CHECK(qa_navigation_best_reachable(runtime,workspace,qa_v3(-80,0,130),item,&point,&node,&found,&error));
+    CHECK(!found && node==QA_NAV_NO_INDEX && qa_vec_equal(point,qa_v3(-80,0,130)));
+    qa_nav_workspace_destroy(workspace);workspace=NULL;
+    qa_navigation_destroy(runtime);runtime=NULL;qa_nav_graph_release(graph);graph=NULL;
+    qa_nav_asset_release(asset);qa_buffer_free(&bytes);
+
+    CHECK(nav_graph_new(&(qa_nav_map){.format=QA_BSP_IBSP38},&profile,NULL,&graph,&error));
+    qa_nav_node native={.id=7,.origin={16,0,130},.bounds={{-16,-32,96},{48,32,164}},
+        .presence=2,.radius=32,.source={.kind=QA_NAV_ORIGIN_NAV3,.node=7}};
+    CHECK(nav_graph_node(graph,&native,&error) && nav_graph_finish(graph,&error));
+    CHECK(qa_navigation_create(graph,&services,NULL,&runtime,&error));
+    CHECK(qa_nav_workspace_create(NULL,&workspace,&error));
+    CHECK(qa_nav_workspace_prepare(workspace,qa_nav_workspace_limits_read(qa_nav_graph_read(graph)),&error));
+    CHECK(qa_navigation_best_reachable(runtime,workspace,native.origin,item,&point,&node,&found,&error));
+    CHECK(found && node==7 && qa_vec_equal(point,qa_v3(16,0,80)));
+    qa_bot_navigation *bot=NULL;qa_vec3 bot_point;uint32_t bot_area;
+    CHECK(qa_bot_navigation_create(runtime,world,(qa_actor_id){0},NULL,&bot,&error));
+    CHECK(qa_bot_navigation_best(bot,native.origin,item,&bot_point,&bot_area,&error));
+    CHECK(bot_area==8 && qa_vec_equal(bot_point,point));
+    qa_bot_navigation_destroy(bot);qa_nav_workspace_destroy(workspace);
+    qa_navigation_destroy(runtime);qa_nav_graph_release(graph);
+    CHECK(qa_world_destroy(world,&error));CHECK(qa_actors_destroy(actors,&error));
+    qa_collision_destroy(map.geometry);
+}
 static void test_native_navigation_first_step(void)
 {
     qa_error error={0};gameplay_map map;
@@ -7922,6 +7990,7 @@ int main(int argc, char **argv)
     test_aas_teleport_jump_pad();
     test_aas_elevator_bobbing();
     test_aas_grapple();
+    test_navigation_best_reachable();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
     test_prediction_continuations();

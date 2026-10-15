@@ -279,36 +279,10 @@ bool qa_bot_navigation_drop(qa_bot_navigation *n, qa_vec3 origin, qa_bounds boun
 bool qa_bot_navigation_best(qa_bot_navigation *n, qa_vec3 origin, qa_bounds bounds,
                             qa_vec3 *out, uint32_t *area, qa_error *e) {
     if (!n || !out || !area) return bot_nav_fail(e, "missing bot reachable-area output");
-    qa_vec3 start = origin;
-    if (!qa_bot_navigation_point(n, start, area, e)) return false;
-    for (int i = 0; i < 5 && !*area; ++i)
-        for (int j = 0; j < 5 && !*area; ++j)
-            for (int k = -1; k <= 1 && !*area; ++k)
-                for (int l = -1; l <= 1 && !*area; ++l) {
-                    start = qa_v3(origin.x + (float)(j * 4 * k), origin.y + (float)(j * 4 * l),
-                                  origin.z + (float)(i * 4));
-                    if (!qa_bot_navigation_point(n, start, area, e)) return false;
-                }
-    if (*area) {
-        qa_vec3 end = start; end.z -= 50; start.z += .25f;
-        qa_bounds crouch = qa_bot_navigation_presence(n, 4);
-        qa_trace_result trace;
-        if (!qa_bot_navigation_trace(n, start, end, &crouch, (qa_actor_id){0}, 0x10001, &trace, e))
-            return false;
-        if (trace.start_solid || trace.all_solid) { *out = start; return true; }
-        if (!qa_bot_navigation_point(n, trace.end, area, e)) return false;
-        if (*area) { *out = trace.end; return true; }
-    }
-    size_t count;
-    if (!qa_bot_navigation_bbox_areas(n, qa_bounds_translate(bounds, origin), n->areas,
-                                      n->capacity, &count, e)) return false;
-    *out = origin;
-    *area = count ? n->areas[0] : 0;
-    for (size_t i = 0; i < count; ++i)
-        if (qa_bot_navigation_area(n, n->areas[i]).flags & 5) {
-            *area = n->areas[i];
-            break;
-        }
+    uint32_t node; bool found;
+    if (!qa_navigation_best_reachable(n->runtime, n->workspace, origin, bounds, out, &node, &found, e))
+        return false;
+    *area = found ? qa_bot_navigation_source_area(n, node) : 0;
     return true;
 }
 bool qa_bot_navigation_route(qa_bot_navigation *n, const qa_bot_nav_route_query *query,

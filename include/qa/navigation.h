@@ -227,6 +227,9 @@ const qa_nav_edge *qa_navigation_adjacent_next(const qa_navigation *, uint32_t n
 bool qa_navigation_area(qa_navigation *, qa_actor_id, qa_vec3, uint32_t *, bool *found, qa_error *);
 bool qa_navigation_nearest(qa_navigation *, qa_actor_id, qa_vec3, float radius, uint32_t *,
                            bool *found, qa_error *);
+/* Static goal admission. Returns a shared graph node, or found=false. */
+bool qa_navigation_best_reachable(qa_navigation *,qa_nav_workspace *,qa_vec3 origin,qa_bounds bounds,
+    qa_vec3 *point,uint32_t *node,bool *found,qa_error *);
 bool qa_navigation_trace_areas(qa_navigation *, qa_nav_workspace *, qa_vec3, qa_vec3,
                                qa_aas_crossing *, size_t, size_t *, qa_error *);
 bool qa_navigation_trace_collect(qa_navigation *, qa_nav_workspace *, qa_vec3 start, qa_vec3 end,

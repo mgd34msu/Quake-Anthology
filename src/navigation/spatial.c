@@ -116,6 +116,68 @@ bool qa_navigation_bbox_areas(qa_navigation *n, qa_nav_workspace *w, qa_bounds b
             out[(*count)++] = n->graph->nodes[i].id;
     return true;
 }
+bool qa_navigation_best_reachable(qa_navigation *n, qa_nav_workspace *w, qa_vec3 origin,
+    qa_bounds bounds, qa_vec3 *point, uint32_t *node, bool *found, qa_error *e) {
+    if (!n || !w || !point || !node || !found || !qa_vec_finite(origin) || !qa_bounds_valid(bounds)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation reachable-area query");
+        return false;
+    }
+    *point = origin; *node = QA_NAV_NO_INDEX; *found = false;
+    if (n->graph->view.node_count > w->node_capacity) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Navigation workspace was not sized for its graph");
+        return false;
+    }
+    const qa_aas_view *aas = qa_nav_asset_aas(n->graph->view.asset);
+    qa_vec3 start = origin;
+    if (!qa_navigation_area(n, (qa_actor_id){0}, start, node, found, e)) return false;
+    for (int i = 0; i < 5 && !*found; ++i)
+        for (int j = 0; j < 5 && !*found; ++j)
+            for (int k = -1; k <= 1 && !*found; ++k)
+                for (int l = -1; l <= 1 && !*found; ++l) {
+                    start = qa_v3(origin.x + (float)(j * 4 * k), origin.y + (float)(j * 4 * l),
+                                  origin.z + (float)(i * 4));
+                    if (!qa_navigation_area(n, (qa_actor_id){0}, start, node, found, e)) return false;
+                }
+    const qa_nav_profile *profile = &n->graph->view.profile;
+    qa_bounds crouch = profile->has_crouched_shape ? profile->crouched_shape.bounds : profile->shape.bounds;
+    if (*found) {
+        qa_vec3 end = start; end.z -= 50; start.z += .25f;
+        if (aas) {
+            qa_aas_presence_trace trace;
+            if (!qa_aas_trace_presence(aas, w->aas, start, end, 4, &trace, e)) return false;
+            if (trace.start_solid) { *point = start; return true; }
+            end = trace.end;
+        } else {
+            qa_nav_profile drop = *profile;
+            drop.shape = (qa_trace_shape){.kind = QA_SHAPE_BOX, .bounds = crouch};
+            drop.policy = qa_collision_ruleset_policy(QA_RULESET_Q3);
+            drop.policy.contents_mask = qa_collision_contents_mask(0x10001, QA_GAME_Q3);
+            qa_navigation_services services = n->services;
+            services.topology_geometry_only = false;
+            qa_trace_result trace;
+            if (!nav_trace(&services, &drop, (qa_actor_id){0}, start, end, false, &trace, e)) return false;
+            if (trace.start_solid || trace.all_solid) { *point = start; return true; }
+            end = trace.end;
+        }
+        if (!qa_navigation_area(n, (qa_actor_id){0}, end, node, found, e)) return false;
+        if (*found) { *point = end; return true; }
+    }
+    qa_bounds target = qa_bounds_translate(bounds, origin);
+    if (aas) {
+        for (size_t i = 0; i < aas->count[QA_AAS_BOXES]; ++i)
+            if (aas->boxes[i].presence == 4) { crouch = aas->boxes[i].bounds; break; }
+        target = (qa_bounds){qa_vec_sub(target.mins, crouch.maxs), qa_vec_sub(target.maxs, crouch.mins)};
+    }
+    size_t count;
+    if (!qa_navigation_bbox_areas(n, w, target, w->path, w->node_capacity, &count, e)) return false;
+    *found = count != 0;
+    *node = count ? w->path[0] : QA_NAV_NO_INDEX;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_nav_node *candidate = qa_navigation_node(n, w->path[i]);
+        if (candidate && (candidate->flags & 5)) { *node = candidate->id; break; }
+    }
+    return true;
+}
 static int crossing_compare(const void *left, const void *right) {
     const nav_crossing *a = left, *b = right;
     if (a->fraction != b->fraction)
