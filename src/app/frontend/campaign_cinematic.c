@@ -386,11 +386,23 @@ static bool saved_system_slots(qa_source_save_io *io,qa_q3_cinematic_restore_slo
 static bool saved_progress(qa_source_save_io *io,qa_cinematic_checkpoint *playback)
 {
     int32_t kind=(int32_t)playback->progress_kind,status=(int32_t)playback->status;
-    if (!qa_source_save_i32(io,&kind) || kind!=QA_CINEMATIC_PROGRESS_ROQ ||
+    if (!qa_source_save_i32(io,&kind) || kind<QA_CINEMATIC_PROGRESS_ROQ || kind>QA_CINEMATIC_PROGRESS_OGV ||
         !qa_source_save_i32(io,&status) || status<QA_MEDIA_PLAYING || status>QA_MEDIA_STOPPED)
         return frontend_fail(io->error,QA_ERROR_FORMAT,"Invalid saved cinematic progress");
     playback->progress_kind=(qa_cinematic_progress_kind)kind;
     playback->status=(qa_media_status)status;
+    if (playback->progress_kind==QA_CINEMATIC_PROGRESS_CIN) {
+        qa_cinematic_cin_progress *cin=&playback->progress.cin;
+        return qa_source_save_u64(io,&cin->cursor.position) && qa_source_save_u64(io,&cin->cursor.next_index) &&
+            qa_source_save_bool(io,&cin->cursor.ended) && qa_source_save_f64(io,&cin->clock_ms) &&
+            qa_source_save_f64(io,&cin->epoch_back_ms);
+    }
+    if (playback->progress_kind==QA_CINEMATIC_PROGRESS_OGV) {
+        qa_cinematic_ogv_progress *ogv=&playback->progress.ogv;
+        return qa_source_save_u64(io,&ogv->next_index) && qa_source_save_u64(io,&ogv->audio_position) &&
+            qa_source_save_f64(io,&ogv->clock_ms) && qa_source_save_f64(io,&ogv->epoch_back_ms) &&
+            qa_source_save_bool(io,&ogv->reset_audio);
+    }
     qa_cinematic_roq_progress *roq=&playback->progress.roq;
     qa_roq_prefix_cursor *cursor=&roq->cursor;
     qa_cinematic_picture_progress *picture=&roq->picture;

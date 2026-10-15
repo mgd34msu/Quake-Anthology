@@ -2478,6 +2478,101 @@ static void test_roq_audio_cursor(void)
     qa_media_input_release(input);
 }
 
+static void test_cin_prefix_checkpoint(void)
+{
+    uint8_t bytes[65556+782+14+782+4]={0};
+    qa_store_u32le(bytes,1); qa_store_u32le(bytes+4,1);
+    qa_store_u32le(bytes+8,14); qa_store_u32le(bytes+12,1); qa_store_u32le(bytes+16,1);
+    for (unsigned i=0;i<256;++i) { bytes[20+i*256]=1; bytes[21+i*256]=1; }
+    uint8_t *next=bytes+65556;
+    for (unsigned i=0;i<3;++i) {
+        bool palette=i!=1;
+        qa_store_u32le(next,palette?1:0); next+=4;
+        if (palette) { next[0]=i?30:10; next[4]=i?40:20; next+=768; }
+        qa_store_u32le(next,5); next+=4;
+        qa_store_u32le(next,1); next+=4;
+        *next++=i==1?1:0;
+        *next++=(uint8_t)(132+i);
+    }
+    qa_store_u32le(next,2); next+=4; CHECK((size_t)(next-bytes)==sizeof(bytes));
+    qa_error error={0}; qa_media_input *input=NULL; qa_cin_asset *asset=NULL;
+    CHECK(qa_media_input_memory((qa_bytes){bytes,sizeof(bytes)},NULL,NULL,&input,&error));
+    CHECK(qa_cin_asset_load(input,&asset,&error));
+    qa_cinematic_source source={.name="prefix.cin",.format=QA_CINEMATIC_CIN,.data.cin=asset};
+    for (unsigned ending=0;ending<3;++ending) {
+        qa_audio_engine *engine=NULL,*copy_engine=NULL;
+        qa_audio_engine_options engine_options={.sample_rate=48000,.output_channels=2,
+            .mix_frames=32,.initial_voices=8};
+        CHECK(qa_audio_engine_create(&engine_options,&engine,&error));
+        CHECK(qa_audio_engine_create(&engine_options,&copy_engine,&error));
+        double now=0,later=10000; unsigned completions=0,restored_completions=0;
+        qa_cinematic_options options={.clock={&now,cinematic_test_clock},
+            .target={.kind=QA_CINEMATIC_SEAT},.hold=ending==1,.loop=ending==2,
+            .audio=engine,.audio_bus=29,.gain=1,.audio_audience={.kind=QA_CINEMATIC_AUDIO_WORLD},
+            .context=&completions,.complete=cinematic_test_complete};
+        qa_cinematic_options resumed=options;
+        resumed.clock.context=&later; resumed.audio=copy_engine; resumed.context=&restored_completions;
+        qa_cinematic *movie=NULL,*restored=NULL; qa_cinematic_checkpoint saved,copy;
+        qa_media_tick tick; int16_t discarded[34],a[32],b[32];
+        CHECK(qa_cinematic_create(&source,&options,&movie,&error));
+        CHECK(qa_cinematic_frame(movie) && qa_cinematic_frame(movie)->index==0 &&
+            qa_cinematic_frame(movie)->rgba.data[0]==10);
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error) && saved.progress_kind==QA_CINEMATIC_PROGRESS_CIN &&
+            saved.progress.cin.cursor.next_index==1 && !saved.progress.cin.cursor.ended);
+        qa_cinematic_checkpoint legacy=saved; legacy.progress_kind=QA_CINEMATIC_PROGRESS_TIME;
+        legacy.audio.captured=false;
+        CHECK(qa_cinematic_restore(&source,&resumed,&legacy,&restored,&error));
+        CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==0);
+        qa_cinematic_destroy(restored); restored=NULL; restored_completions=0;
+        now=500;
+        CHECK(qa_audio_engine_mix(engine,discarded,17,&error));
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        CHECK(saved.progress.cin.clock_ms==500 && saved.progress.cin.cursor.next_index==1 &&
+            saved.audio.present && saved.audio.cursor.end==1 && saved.audio.cursor.remainder!=0);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==0 &&
+            qa_cinematic_frame(restored)->rgba.data[0]==10);
+        CHECK(qa_audio_engine_mix(engine,a,16,&error) && qa_audio_engine_mix(copy_engine,b,16,&error));
+        CHECK(!memcmp(a,b,sizeof(a)) && a[0]==1024);
+        qa_cinematic_destroy(restored); restored=NULL; restored_completions=0;
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.changed && !tick.frame);
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error) && saved.progress.cin.cursor.next_index==2);
+        CHECK(qa_cinematic_pause(movie,true,&error)); now=600;
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error) && saved.progress.cin.clock_ms==500);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_status(restored)==QA_MEDIA_PAUSED && !qa_cinematic_frame(restored));
+        CHECK(qa_cinematic_checkpoint_read(restored,&copy,&error) && copy.progress.cin.cursor.next_index==2 &&
+            copy.progress.cin.cursor.position==saved.progress.cin.cursor.position && copy.progress.cin.clock_ms==500);
+        qa_cinematic_destroy(restored); restored=NULL; restored_completions=0;
+        CHECK(qa_cinematic_pause(movie,false,&error)); now=744;
+        CHECK(qa_cinematic_tick(movie,&tick,&error) && tick.frame && tick.frame->index==1 &&
+            tick.frame->rgba.data[1]==20);
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error) && saved.progress.cin.cursor.next_index==3);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_frame(restored) && qa_cinematic_frame(restored)->index==1 &&
+            qa_cinematic_frame(restored)->rgba.data[1]==20 &&
+            qa_cinematic_frame(restored)->presentation_ms==tick.frame->presentation_ms);
+        qa_cinematic_destroy(restored); restored=NULL; restored_completions=0;
+        now=815; CHECK(qa_cinematic_tick(movie,&tick,&error));
+        CHECK(qa_cinematic_checkpoint_read(movie,&saved,&error));
+        if (ending==0) CHECK(saved.status==QA_MEDIA_ENDED && saved.progress.cin.cursor.ended && !tick.frame && completions==1);
+        else if (ending==1) CHECK(saved.status==QA_MEDIA_HELD && saved.progress.cin.cursor.ended &&
+            tick.frame && tick.frame->index==2 && tick.frame->rgba.data[0]==30 && !saved.audio.cursor.paused);
+        else CHECK(saved.loop==1 && !saved.progress.cin.cursor.ended && saved.progress.cin.cursor.next_index==1 &&
+            tick.frame && tick.frame->index==0 && saved.audio.loop==1);
+        CHECK(qa_cinematic_restore(&source,&resumed,&saved,&restored,&error));
+        CHECK(qa_cinematic_status(restored)==saved.status && restored_completions==0);
+        const qa_media_frame *frame=qa_cinematic_frame(restored);
+        if (tick.frame) CHECK(frame && frame->index==tick.frame->index && frame->loop==tick.frame->loop &&
+            !memcmp(frame->rgba.data,tick.frame->rgba.data,frame->rgba.size));
+        else CHECK(!frame);
+        qa_cinematic_destroy(restored); qa_cinematic_destroy(movie);
+        CHECK(completions==1 && restored_completions==(ending==0?0u:1u));
+        qa_audio_engine_destroy(copy_engine); qa_audio_engine_destroy(engine);
+    }
+    qa_cin_asset_release(asset); qa_media_input_release(input);
+}
+
 static bool audio_position_not_actor(void *opaque, const qa_audio_position *position)
 {
     return position->actor != *(const uint64_t *)opaque;
@@ -5444,6 +5539,7 @@ int main(int argc, char **argv)
     test_raw_audio_custody();
     test_raw_audio_scalar_cursor();
     test_roq_audio_cursor();
+    test_cin_prefix_checkpoint();
     test_shared_audio_preparation();
     test_retained_movement_result();
     test_q2_requested_body();

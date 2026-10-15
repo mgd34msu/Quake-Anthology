@@ -1,4 +1,4 @@
-#include "qa/media.h"
+#include "cinematic_internal.h"
 #include "qa/binary.h"
 #include "qa/arena.h"
 
@@ -170,6 +170,10 @@ void qa_cin_decoder_rewind(qa_cin_decoder *decoder) {
     memset(decoder->palette, 0, sizeof(decoder->palette));
 }
 uint64_t qa_cin_decoder_index(const qa_cin_decoder *decoder) { return decoder->index; }
+void cinematic_cin_decoder_cursor(const qa_cin_decoder *decoder, qa_cin_prefix_cursor *out) {
+    *out = (qa_cin_prefix_cursor){.position = decoder->offset,
+        .next_index = decoder->index, .ended = decoder->ended};
+}
 bool qa_cin_rgba(qa_bytes pixels, qa_bytes palette, void *rgba, size_t capacity, qa_error *error) {
     if ((pixels.size && (!pixels.data || !rgba)) || !palette.data || palette.size != 768 ||
         pixels.size > capacity / 4) return fail(error, "Invalid CIN palette or RGBA destination");

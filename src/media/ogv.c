@@ -237,13 +237,13 @@ static bool decode_frame(qa_ogv_playback *playback, qa_error *error) {
     playback->has_frame = true;
     return true;
 }
-static bool queue_audio(qa_ogv_playback *playback, double elapsed, qa_error *error) {
-    if (!playback->audio)
-        return true;
+static bool queue_audio_to(qa_ogv_playback *playback, uint64_t wanted, qa_error *error) {
+    if (!playback->audio) return true;
+    if (wanted > qa_audio_stream_frames(playback->audio)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Saved OGV audio cursor exceeds its resource");
+        return false;
+    }
     uint32_t rate = qa_audio_stream_rate(playback->audio);
-    uint64_t total = qa_audio_stream_frames(playback->audio);
-    double requested = ceil((elapsed + 200) * rate / 1000);
-    uint64_t wanted = requested >= (double)total ? total : requested <= 0 ? 0 : (uint64_t)requested;
     while (qa_audio_stream_position(playback->audio) < wanted) {
         uint64_t source_sample = qa_audio_stream_position(playback->audio);
         uint64_t remaining = wanted - source_sample;
@@ -283,6 +283,15 @@ static bool queue_audio(qa_ogv_playback *playback, double elapsed, qa_error *err
         playback->reset_audio = false;
     }
     return true;
+}
+
+static bool queue_audio(qa_ogv_playback *playback, double elapsed, qa_error *error) {
+    if (!playback->audio) return true;
+    uint32_t rate = qa_audio_stream_rate(playback->audio);
+    uint64_t total = qa_audio_stream_frames(playback->audio);
+    double requested = ceil((elapsed + 200) * rate / 1000);
+    uint64_t wanted = requested >= (double)total ? total : requested <= 0 ? 0 : (uint64_t)requested;
+    return queue_audio_to(playback, wanted, error);
 }
 
 bool qa_ogv_playback_create(qa_ogv_asset *asset, const qa_ogv_options *options, double now,
@@ -420,30 +429,60 @@ fault:
 const qa_media_frame *qa_ogv_playback_frame(const qa_ogv_playback *playback) {
     return playback && playback->has_frame ? &playback->frame : NULL;
 }
-bool cinematic_ogv_resume(qa_ogv_playback *playback, double source_ms, uint64_t loop,
+bool cinematic_ogv_resume(qa_ogv_playback *playback, const qa_cinematic_checkpoint *checkpoint,
     double *elapsed_ms, qa_media_status *status, qa_error *error) {
-    playback->loop = loop;
-    playback->frame.loop = loop;
-    if (playback->audio) {
-        uint32_t rate = qa_audio_stream_rate(playback->audio);
-        uint64_t total = qa_audio_stream_frames(playback->audio);
-        double requested = ceil(source_ms * rate / 1000);
-        uint64_t sample = requested >= (double)total ? total : (uint64_t)requested;
-        if (!qa_audio_stream_seek(playback->audio, sample, error)) return false;
-        playback->reset_audio = true;
+    uint64_t loop = checkpoint->loop;
+    bool exact = checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_OGV;
+    if (exact) {
+        const qa_cinematic_ogv_progress *progress = &checkpoint->progress.ogv;
+        if (!progress->next_index || progress->next_index > playback->asset->info.frames ||
+            (!playback->audio && progress->audio_position)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Saved OGV prefix exceeds its resource");
+            return false;
+        }
+        if (!rewind_decoder(playback, error)) return false;
+        playback->loop = loop;
+        playback->epoch_ms = 0;
+        while (playback->next_index < progress->next_index)
+            if (!decode_frame(playback, error)) return false;
+        if (!queue_audio_to(playback, progress->audio_position, error)) return false;
+        playback->epoch_ms = progress->clock_ms - progress->epoch_back_ms;
+        playback->frame.presentation_ms = playback->epoch_ms + playback->frame.source_ms;
+        playback->reset_audio = progress->reset_audio;
+        playback->status = checkpoint->status == QA_MEDIA_HELD || checkpoint->status == QA_MEDIA_ENDED ?
+            checkpoint->status : QA_MEDIA_PLAYING;
+        *elapsed_ms = progress->clock_ms;
+        *status = checkpoint->status;
+    } else {
+        playback->loop = loop;
+        playback->frame.loop = loop;
+        if (playback->audio) {
+            uint32_t rate = qa_audio_stream_rate(playback->audio);
+            uint64_t total = qa_audio_stream_frames(playback->audio);
+            double requested = ceil(checkpoint->source_ms * rate / 1000);
+            uint64_t sample = requested >= (double)total ? total : (uint64_t)requested;
+            if (!qa_audio_stream_seek(playback->audio, sample, error)) return false;
+            playback->reset_audio = true;
+        }
+        qa_media_tick tick;
+        if (!qa_ogv_playback_tick(playback, checkpoint->source_ms, &tick, error)) return false;
+        if (playback->loop != loop) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Saved OGV time exceeds its loop pass");
+            return false;
+        }
+        *elapsed_ms = checkpoint->source_ms;
+        *status = tick.status;
     }
-    qa_media_tick tick;
-    if (!qa_ogv_playback_tick(playback, source_ms, &tick, error)) return false;
-    if (playback->loop != loop) {
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Saved OGV time exceeds its loop pass");
-        return false;
-    }
-    *elapsed_ms = source_ms;
-    *status = tick.status;
     return true;
 }
 void cinematic_ogv_position(const qa_ogv_playback *playback, double elapsed_ms,
-    double *source_ms, uint64_t *loop) {
-    *source_ms = fmax(0, elapsed_ms - playback->epoch_ms);
-    *loop = playback->loop;
+    qa_cinematic_checkpoint *out) {
+    out->source_ms = fmax(0, elapsed_ms - playback->epoch_ms);
+    out->loop = playback->loop;
+    out->progress_kind = QA_CINEMATIC_PROGRESS_OGV;
+    out->progress.ogv = (qa_cinematic_ogv_progress){
+        .next_index = playback->next_index,
+        .audio_position = qa_audio_stream_position(playback->audio),
+        .clock_ms = elapsed_ms, .epoch_back_ms = elapsed_ms - playback->epoch_ms,
+        .reset_audio = playback->reset_audio};
 }

@@ -71,7 +71,9 @@ typedef struct qa_cinematic_options {
 typedef struct qa_cinematic qa_cinematic;
 typedef enum qa_cinematic_progress_kind {
     QA_CINEMATIC_PROGRESS_TIME,
-    QA_CINEMATIC_PROGRESS_ROQ
+    QA_CINEMATIC_PROGRESS_ROQ,
+    QA_CINEMATIC_PROGRESS_CIN,
+    QA_CINEMATIC_PROGRESS_OGV
 } qa_cinematic_progress_kind;
 typedef struct qa_roq_prefix_cursor {
     uint64_t position, played, buffer_offset;
@@ -94,6 +96,19 @@ typedef struct qa_cinematic_roq_progress {
     bool pending_loop;
     qa_cinematic_picture_progress picture;
 } qa_cinematic_roq_progress;
+typedef struct qa_cin_prefix_cursor {
+    uint64_t position, next_index;
+    bool ended;
+} qa_cin_prefix_cursor;
+typedef struct qa_cinematic_cin_progress {
+    qa_cin_prefix_cursor cursor;
+    double clock_ms, epoch_back_ms;
+} qa_cinematic_cin_progress;
+typedef struct qa_cinematic_ogv_progress {
+    uint64_t next_index, audio_position;
+    double clock_ms, epoch_back_ms;
+    bool reset_audio;
+} qa_cinematic_ogv_progress;
 typedef struct qa_cinematic_checkpoint {
     const char *resource;
     double source_ms;
@@ -108,6 +123,8 @@ typedef struct qa_cinematic_checkpoint {
     } audio;
     union {
         qa_cinematic_roq_progress roq;
+        qa_cinematic_cin_progress cin;
+        qa_cinematic_ogv_progress ogv;
     } progress;
 } qa_cinematic_checkpoint;
 bool qa_cinematic_checkpoint_read(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);

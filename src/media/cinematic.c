@@ -377,13 +377,11 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
         movie->restore_audio = true;
         switch (movie->format) {
         case QA_CINEMATIC_CIN:
-            ok = cinematic_cin_resume(movie->movie.cin, checkpoint->source_ms, checkpoint->loop,
-                &elapsed, &status, error); break;
+            ok = cinematic_cin_resume(movie->movie.cin, checkpoint, &elapsed, &status, error); break;
         case QA_CINEMATIC_ROQ:
             ok = cinematic_roq_resume(movie->movie.roq, checkpoint, &elapsed, &status, error); break;
         case QA_CINEMATIC_OGV:
-            ok = cinematic_ogv_resume(movie->movie.ogv, checkpoint->source_ms, checkpoint->loop,
-                &elapsed, &status, error); break;
+            ok = cinematic_ogv_resume(movie->movie.ogv, checkpoint, &elapsed, &status, error); break;
         case QA_CINEMATIC_IMAGE: break;
         }
         if (ok && checkpoint->audio.captured) ok = restore_audio_cursor(movie, checkpoint, error);
@@ -418,17 +416,31 @@ bool qa_cinematic_restore(const qa_cinematic_source *source, const qa_cinematic_
     const qa_cinematic_checkpoint *checkpoint, qa_cinematic **out, qa_error *error) {
     if (!checkpoint || !checkpoint->resource || !isfinite(checkpoint->source_ms) || checkpoint->source_ms < 0 ||
         checkpoint->progress_kind < QA_CINEMATIC_PROGRESS_TIME ||
-        checkpoint->progress_kind > QA_CINEMATIC_PROGRESS_ROQ)
+        checkpoint->progress_kind > QA_CINEMATIC_PROGRESS_OGV)
         return cinematic_fail(error, "Invalid saved cinematic position");
+    if (checkpoint->progress_kind != QA_CINEMATIC_PROGRESS_TIME &&
+        (checkpoint->status < QA_MEDIA_PLAYING || checkpoint->status > QA_MEDIA_STOPPED))
+        return cinematic_fail(error, "Invalid saved cinematic status");
     if (checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_ROQ) {
         const qa_cinematic_roq_progress *progress = &checkpoint->progress.roq;
         if (!source || source->format != QA_CINEMATIC_ROQ ||
-            checkpoint->status < QA_MEDIA_PLAYING || checkpoint->status > QA_MEDIA_STOPPED ||
             !isfinite(progress->clock_ms) || progress->clock_ms < 0 || progress->decoded < -1 ||
             progress->cursor.terminal > 2 || (progress->picture.present &&
                 (!isfinite(progress->picture.source_ms) || progress->picture.source_ms < 0 ||
                  !isfinite(progress->picture.presentation_ms))))
             return cinematic_fail(error, "Invalid saved RoQ progress");
+    } else if (checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_CIN) {
+        const qa_cinematic_cin_progress *progress = &checkpoint->progress.cin;
+        if (!source || source->format != QA_CINEMATIC_CIN || !isfinite(progress->clock_ms) ||
+            progress->clock_ms < 0 || !isfinite(progress->epoch_back_ms) ||
+            !isfinite(progress->clock_ms - progress->epoch_back_ms))
+            return cinematic_fail(error, "Invalid saved CIN progress");
+    } else if (checkpoint->progress_kind == QA_CINEMATIC_PROGRESS_OGV) {
+        const qa_cinematic_ogv_progress *progress = &checkpoint->progress.ogv;
+        if (!source || source->format != QA_CINEMATIC_OGV || !isfinite(progress->clock_ms) ||
+            progress->clock_ms < 0 || !isfinite(progress->epoch_back_ms) ||
+            !isfinite(progress->clock_ms - progress->epoch_back_ms))
+            return cinematic_fail(error, "Invalid saved OGV progress");
     }
     return create(source, options, checkpoint, out, error);
 }
@@ -597,16 +609,17 @@ bool qa_cinematic_checkpoint_read(qa_cinematic *movie, qa_cinematic_checkpoint *
     if (!cinematic_elapsed(movie, &elapsed, error)) return false;
     switch (movie->format) {
     case QA_CINEMATIC_CIN:
-        cinematic_cin_position(movie->movie.cin, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
+        cinematic_cin_position(movie->movie.cin, elapsed, &checkpoint); break;
     case QA_CINEMATIC_ROQ:
-        cinematic_roq_position(movie->movie.roq, elapsed, &checkpoint);
+        cinematic_roq_position(movie->movie.roq, elapsed, &checkpoint); break;
+    case QA_CINEMATIC_OGV:
+        cinematic_ogv_position(movie->movie.ogv, elapsed, &checkpoint); break;
+    case QA_CINEMATIC_IMAGE: checkpoint.source_ms = elapsed; break;
+    }
+    if (movie->format != QA_CINEMATIC_IMAGE) {
         checkpoint.audio.captured = true;
         checkpoint.audio.present = qa_audio_raw_cursor_read(current_raw(movie), &checkpoint.audio.cursor);
         checkpoint.audio.loop = movie->audio_loop;
-        break;
-    case QA_CINEMATIC_OGV:
-        cinematic_ogv_position(movie->movie.ogv, elapsed, &checkpoint.source_ms, &checkpoint.loop); break;
-    case QA_CINEMATIC_IMAGE: checkpoint.source_ms = elapsed; break;
     }
     *out = checkpoint;
     return true;
