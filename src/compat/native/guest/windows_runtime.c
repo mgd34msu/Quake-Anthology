@@ -142,13 +142,15 @@ bool windows_allocation_size(guest_windows *owner, uint64_t address, uint64_t he
 bool windows_free(guest_windows *owner, uint64_t address, uint64_t heap, qa_error *error)
 {
     if (!address) return true;
-    for (size_t i = 0; i < owner->allocation_count; ++i)
+    for (size_t i = owner->allocation_count; i; ) {
+        --i;
         if (owner->allocations[i].address == address && owner->allocations[i].heap == heap) {
             if (!qa_native_guest_free(owner->guest, address, error)) return false;
             memmove(owner->allocations + i, owner->allocations + i + 1,
                 (owner->allocation_count - i - 1) * sizeof(*owner->allocations));
             --owner->allocation_count; return true;
         }
+    }
     windows_last_error(owner, 87, error);
     return guest_fail(error, QA_ERROR_NOT_FOUND, address, "Windows free does not name an allocation from this heap");
 }

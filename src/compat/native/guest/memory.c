@@ -721,10 +721,11 @@ bool qa_native_guest_free(qa_native_guest *guest, uint64_t address, qa_error *er
 {
     if (!guest_mutable(guest, error)) return false;
     if (!address) return true;
-    size_t index = 0;
-    while (index < guest->allocation_count && guest->allocations[index].address != address) ++index;
-    if (index == guest->allocation_count)
+    size_t index = guest->allocation_count;
+    while (index && guest->allocations[index - 1].address != address) --index;
+    if (!index)
         return guest_fail(error, QA_ERROR_ARGUMENT, address, "native guest free requires the real allocation base");
+    --index;
     guest_allocation allocation = guest->allocations[index];
     size_t rounded = 0;
     if (!guest_allocation_storage(guest, &allocation, NULL, &rounded, error)) return false;
