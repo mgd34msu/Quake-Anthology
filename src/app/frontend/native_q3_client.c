@@ -160,9 +160,8 @@ static bool reload_client(void *context,uint32_t physical,const char *text,qa_er
 }
 static bool status_visible(void *context)
 {
-    frontend_native_q3 *row=context; qa_application_presentation_view view;
-    return qa_application_presentation_read(row->frontend->application,row->view.launch_seat,&view) &&
-        view.hud==row->view.source_owner;
+    frontend_native_q3 *row=context;
+    return frontend_hud_source_visible(row->frontend,row->view.seat,row->view.launch_seat,row->view.source_owner);
 }
 static void release_services(void *context)
 {

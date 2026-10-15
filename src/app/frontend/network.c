@@ -5943,7 +5943,7 @@ bool frontend_network_native_publication_read(const qa_frontend *f,
         .executed_command = counters.last_executed_server_command,
         .initializing = n->q3_client_initializing, .has_snapshot = latest != NULL,
         .demo_playback = qa_q3_client_peer_demo(peer)};
-    if (!client_player(n, &publication.viewer, error) ||
+    if ((latest && !client_player(n, &publication.viewer, error)) ||
         !frontend_network_client_domain_current(f, &domain))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native publication changed its genuine receiver, viewer or decoded owner");
     *out = publication; return true;

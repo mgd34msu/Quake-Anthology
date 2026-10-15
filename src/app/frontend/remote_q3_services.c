@@ -130,10 +130,10 @@ static bool reload(void *context,uint32_t number,const char *text,qa_error *erro
 }
 static bool status_visible(void *context)
 {
-    const frontend_remote_q3_services *owner=context; qa_application_presentation_view view;
+    const frontend_remote_q3_services *owner=context;
     return owner && !owner->retiring && !owner->released &&
-        qa_application_presentation_read(owner->row->application,owner->row->resources.domain.source.receiver.seat,&view) &&
-        view.hud==owner->row->resources.domain.source.receiver.receiver;
+        frontend_hud_source_visible(owner->row->frontend,owner->row->resources.physical_seat,
+            owner->row->resources.domain.source.receiver.seat,owner->row->resources.domain.source.receiver.receiver);
 }
 static bool publication_read(void *context,q3n_remote_publication *out,qa_error *error)
 {

@@ -37,7 +37,17 @@
 #include "config_store.h"
 #include "qa/application_network.h"
 #include "qa/application_network_qw.h"
+#include "network_recipient.h"
 #include <stdio.h>
+
+bool frontend_hud_source_visible(const qa_frontend *f,uint32_t physical,uint32_t authored,qa_actor_owner receiver)
+{
+    qa_application_presentation_view selected;
+    if (qa_application_presentation_read(f->application,authored,&selected)) return selected.hud==receiver;
+    frontend_network_client_recipient recipient; bool present=false;
+    return frontend_network_client_recipient_read(f,physical,&recipient,&present,NULL) && present &&
+        recipient.ready && recipient.source.context.receiver==receiver && recipient.source.context.seat==authored;
+}
 
 struct frontend_hud_frame {
     qa_hud_frame frame;
