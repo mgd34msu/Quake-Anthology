@@ -876,7 +876,9 @@ static bool engine_recipient_command(qa_frontend *f,uint32_t physical,qa_console
         return frontend_fail(error,QA_ERROR_ARGUMENT,"ENGINE input handoff lost its installed physical services");
     qa_command_context previous=qa_input_seat_context(seat->input);
     qa_command_context command;
-    if (!engine_recipient_read(f,console,cvars,error) || !qa_console_context_read(*console,&command,error)) return false;
+    if (!engine_recipient_read(f,console,cvars,error)) return false;
+    if (f->engine_shutdown) command=*qa_console_constructor_context(*console);
+    else if (!qa_console_context_read(*console,&command,error)) return false;
     /* ENGINE input outlives the GAME actor and launch publication. */
     command.registry=command.generation=0; command.actor=(qa_actor_id){0};
     command.seat=physical; command.origin=QA_COMMAND_SEAT;

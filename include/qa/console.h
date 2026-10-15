@@ -527,6 +527,8 @@ void qa_console_emit_to(qa_console *, const qa_command_context *, const char *,
     void (*print)(void *, const qa_command_context *, const char *), void *);
 bool qa_console_idle(const qa_console *);
 /* Read the actual constructor context through its current capture/valid hooks. */
+/* Stored constructor metadata, without command capture or admission. */
+const qa_command_context *qa_console_constructor_context(const qa_console *);
 bool qa_console_context_read(qa_console *,qa_command_context *,qa_error *);
 /* Pure exact innermost invocation identity, including post-dispatch receipt. */
 bool qa_console_invocation_current(const qa_console *,const qa_command_invocation *);

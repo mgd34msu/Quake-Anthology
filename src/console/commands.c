@@ -360,6 +360,8 @@ bool qa_console_cvar_context(qa_console *console,const qa_command_context *sourc
     if (!valid_context(console,&captured,error)) return false;
     *out=captured; return true;
 }
+const qa_command_context *qa_console_constructor_context(const qa_console *console)
+{ return &console->options.context; }
 bool qa_console_context_read(qa_console *console,qa_command_context *out,qa_error *error)
 {
     if (!console || !out)
