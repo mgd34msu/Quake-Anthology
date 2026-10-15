@@ -112,11 +112,14 @@ typedef struct qa_q3_cinematic_restore_slot {
     bool has_playback;
     bool occupied, selected, decoder, detached;
     int32_t status, play_on_walls;
+    qa_q3_system_movie_state system_state;
 } qa_q3_cinematic_restore_slot;
 bool qa_q3_cinematic_handles_restore_reserve(qa_q3_cinematic_handles *,
     const qa_q3_cinematic_restore_slot *,size_t,qa_error *);
 bool qa_q3_cinematic_source_restore_bind(qa_q3_cinematic_source *,const char *instance,
     const char *content,int32_t role,uint32_t seat,uint32_t source_group,qa_error *);
+/* The admitted role owns the opener and context until pending restoration
+ * finishes or the Source detaches; restoration borrows both. */
 bool qa_q3_cinematic_source_restore_finish(qa_q3_cinematic_source *,
     bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),void *,qa_error *);
 bool qa_q3_cinematic_handles_restore_finish(qa_q3_cinematic_handles *,bool *complete,qa_error *);

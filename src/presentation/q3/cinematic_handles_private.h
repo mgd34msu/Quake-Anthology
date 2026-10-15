@@ -40,6 +40,8 @@ struct qa_q3_cinematic_source {
     int32_t role;
     uint32_t seat;
     bool detached;
+    bool (*restore_open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *);
+    void *restore_context;
 };
 struct qa_q3_cinematic_handles {
     qa_q3_cinematic_handles_options options;

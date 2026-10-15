@@ -94,7 +94,7 @@ void frontend_cinematic_save_discard(qa_frontend *f)
     for (size_t i=0;i<saved->count;++i) {
         free((char *)saved->slots[i].instance); free((char *)saved->slots[i].content);
         free((char *)saved->slots[i].parent_instance); free((char *)saved->slots[i].parent_content);
-        free((char *)saved->slots[i].path);
+        free((char *)saved->slots[i].path); free((char *)saved->slots[i].system_state.nextmap);
     }
     free(saved); f->cinematic_restore=NULL;
 }
@@ -340,6 +340,45 @@ static bool saved_slot(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slot)
         qa_source_save_bool(io,&slot->decoder) && qa_source_save_i32(io,&slot->status) &&
         qa_source_save_i32(io,&slot->play_on_walls);
 }
+static bool saved_system_state(qa_source_save_io *io,qa_q3_system_movie_state *state)
+{
+    int32_t phase=(int32_t)state->phase,reason=(int32_t)state->ending_reason;
+    bool ok=qa_source_save_i32(io,&phase) && qa_source_save_f64(io,&state->screen_ms) &&
+        qa_source_save_i32(io,&reason) && qa_source_save_bool(io,&state->screen) &&
+        qa_source_save_bool(io,&state->focus_paused) && qa_source_save_bool(io,&state->ending) &&
+        qa_source_save_bool(io,&state->appended) && saved_text(io,&state->nextmap);
+    if (ok && io->direction==QA_SOURCE_SAVE_READ) {
+        state->phase=(qa_q3_system_movie_phase)phase; state->ending_reason=(qa_cinematic_end)reason;
+    }
+    return ok;
+}
+static bool saved_system_slots(qa_source_save_io *io,qa_q3_cinematic_restore_slot *slots,size_t count)
+{
+    size_t expected=0;
+    for (size_t i=0;i<count;++i) if (slots[i].flags&1u) ++expected;
+    bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
+    if ((writing && !expected) || (!writing && io->offset==io->input.size && !expected)) return true;
+    size_t systems=expected;
+    if (!qa_source_save_count(io,&systems,16) || systems!=expected)
+        return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved System movie count differs from its slots");
+    bool seen[16]={0}; size_t next=0;
+    for (size_t i=0;i<systems;++i) {
+        if (writing) while (next<count && !(slots[next].flags&1u)) ++next;
+        int32_t handle=writing?slots[next].handle:0;
+        if (!qa_source_save_i32(io,&handle)) return false;
+        size_t index=next;
+        if (!writing) {
+            index=0;
+            while (index<count && (slots[index].handle!=handle || !(slots[index].flags&1u))) ++index;
+        }
+        if (index==count || seen[index])
+            return frontend_fail(io->error,QA_ERROR_FORMAT,"Saved System movie has no unique numeric slot");
+        seen[index]=true;
+        if (!saved_system_state(io,&slots[index].system_state)) return false;
+        next=index+1;
+    }
+    return true;
+}
 bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *error)
 {
     if (!out || !frontend_cinematic_capture_ready(f))
@@ -361,6 +400,7 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         if (!ok) break;
         if (!slot.source || !slot.path || slot.restore_pending) {
             const struct frontend_cinematic_restore *pending=f->cinematic_restore;
+            if (f->source_cinematics && pending && pending->reserved && !slot.restore_pending) continue;
             for (size_t j=0;pending && j<pending->count;++j) if (pending->slots[j].handle==(int32_t)i) {
                 slots[count]=pending->slots[j]; groups[count]=slots[count].source_group;
                 sources[count]=slot.source;
@@ -371,7 +411,6 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
             }
             continue;
         }
-        if (slot.flags&1u) continue;
         qa_q3_cinematic_restore_slot *saved=slots+count++;
         sources[count-1]=slot.source; groups[count-1]=slot.source_group;
         *saved=(qa_q3_cinematic_restore_slot){.handle=slot.handle,.instance=slot.instance,.content=slot.content,
@@ -380,7 +419,9 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
             .role=slot.role,.seat=slot.seat,.path=slot.path,.rect=slot.rect,.flags=slot.flags,
             .has_playback=slot.playback!=NULL,.occupied=slot.occupied,.selected=slot.selected,
             .decoder=slot.decoder,.status=slot.status,.play_on_walls=slot.play_on_walls};
-        if (saved->has_playback) ok=qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&saved->playback,error);
+        if (slot.flags&1u) ok=slot.system && slot.system->state &&
+            slot.system->state(slot.system->context,&saved->system_state,error);
+        if (ok && saved->has_playback) ok=qa_cinematic_checkpoint_read((qa_cinematic *)slot.playback,&saved->playback,error);
     }
     if (ok && count) {
         /* One per-save association also covers owners not yet lazily created.
@@ -394,6 +435,7 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         }
         ok=qa_source_save_count(&io,&count,16);
         for (size_t i=0;ok && i<count;++i) ok=saved_slot(&io,slots+i);
+        if (ok) ok=saved_system_slots(&io,slots,count);
     }
     ok=ok && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
@@ -411,6 +453,7 @@ bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *err
     if (ok && io.offset<io.input.size) {
         ok=qa_source_save_count(&io,&saved->count,16);
         for (size_t i=0;ok && i<saved->count;++i) ok=saved_slot(&io,saved->slots+i);
+        if (ok) ok=saved_system_slots(&io,saved->slots,saved->count);
     }
     ok=ok && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
@@ -507,7 +550,7 @@ static bool restore_drain(qa_frontend *f,qa_error *error)
     for (size_t i=0;i<saved->count;++i) {
         qa_q3_cinematic_slot slot;
         if (!qa_q3_cinematic_handles_at(f->source_cinematics,(uint32_t)saved->slots[i].handle,&slot)) return false;
-        if (!slot.source) return true;
+        if (!slot.source && slot.restore_pending) return true;
     }
     bool complete=false;
     if (!qa_q3_cinematic_handles_restore_finish(f->source_cinematics,&complete,error)) return false;

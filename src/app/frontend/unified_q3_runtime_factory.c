@@ -248,16 +248,22 @@ static frontend_system_cinematic_source movie_source(frontend_unified_q3_runtime
     .cvars=frontend_unified_q3_client_cvars(o->options.client),
     .context=o,.current=movie_current,.append=movie_append,.release=movie_release}; }
 
-static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *e)
+static bool movie_open(void *context,const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *e)
 {
-    frontend_unified_q3_runtime_factory *o=context;const q3n_compiled_frame *frame=entered(o);
-    q3n_compiled_source_view source;
-    if(!request || !out || !frame || !q3n_compiled_frame_current(frame) || !movie_parent(o,&source) ||
-       o->calls==SIZE_MAX || o->movie_references==SIZE_MAX)return fail(e,"Compiled system movie requires its actual entered CG role");
+    frontend_unified_q3_runtime_factory *o=context;q3n_compiled_source_view source;
+    if(!request || !out || !movie_parent(o,&source) || o->calls==SIZE_MAX || o->movie_references==SIZE_MAX)
+        return fail(e,"Compiled system movie requires its admitted CG role");
     frontend_system_cinematic_source value=movie_source(o,&source);++o->movie_references;++o->calls;
     bool okay=frontend_system_cinematic_open(o->options.frontend,&value,request,out,e);
     if(!okay)--o->movie_references;
     --o->calls;return okay;
+}
+static bool system_movie(void *context,const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *e)
+{
+    frontend_unified_q3_runtime_factory *o=context;const q3n_compiled_frame *frame=entered(o);
+    if(!frame || !q3n_compiled_frame_current(frame))
+        return fail(e,"Compiled system movie requires its actual entered CG role");
+    return movie_open(o,request,out,e);
 }
 static bool video_shutdown(void *context,qa_error *e)
 { frontend_unified_q3_runtime_factory *o=context;return frontend_unified_q3_commands_video_reset(o->commands,e); }
@@ -323,7 +329,7 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
     bool okay=frontend_unified_q3_commands_create(&commands,&o->commands,e);
     /* Only the actual CLIENT retains observed state/history. These immutable
      * names identify the factory's activation without borrowing a FRAME row. */
-    return okay;
+    return okay && qa_q3_cinematic_source_restore_finish(o->cinematics,movie_open,o,e);
 }
 
 bool frontend_unified_q3_runtime_factory_idle(const frontend_unified_q3_runtime_factory *o)

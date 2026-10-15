@@ -123,18 +123,33 @@ typedef struct qa_q3_scene_polygon {
     qa_scene_fog_volume fog;
 } qa_q3_scene_polygon;
 
+typedef enum qa_q3_system_movie_phase {
+    QA_Q3_SYSTEM_MOVIE_PLAYING,
+    QA_Q3_SYSTEM_MOVIE_COMPLETED,
+    QA_Q3_SYSTEM_MOVIE_STOPPED
+} qa_q3_system_movie_phase;
+typedef struct qa_q3_system_movie_state {
+    qa_q3_system_movie_phase phase;
+    double screen_ms;
+    qa_cinematic_end ending_reason;
+    bool screen, focus_paused, ending, appended;
+    const char *nextmap;
+} qa_q3_system_movie_state;
 typedef struct qa_q3_system_movie {
     void *context;
     qa_media_status (*status)(void *);
     bool (*end)(void *, qa_cinematic_end, qa_error *);
     void (*release)(void *);
     qa_cinematic *(*playback)(void *);
+    bool (*state)(void *,qa_q3_system_movie_state *,qa_error *);
 } qa_q3_system_movie;
 typedef struct qa_q3_movie_request {
     const char *path;
     bool loop, hold, silent;
     struct qa_q3_cinematic_source *numeric_source;
     int32_t numeric_handle;
+    const qa_q3_system_movie_state *restore_state;
+    const qa_cinematic_checkpoint *restore_playback;
 } qa_q3_movie_request;
 /* An actual entered UI/CGAME host supplies its own lifetime-qualified opener;
  * the shared presentation context cannot identify a requesting role. The

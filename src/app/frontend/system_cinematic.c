@@ -78,7 +78,7 @@ bool frontend_system_cinematic_source_current(const frontend_system_cinematic *r
 static frontend_system_cinematic *screen(const qa_frontend *f)
 {
     for (frontend_system_cinematic *row=f?f->system_cinematics:NULL;row;row=row->next)
-        if (row->screen && row->phase==SYSTEM_PLAYING &&
+        if (row->screen && row->phase==QA_Q3_SYSTEM_MOVIE_PLAYING &&
             frontend_system_cinematic_source_current(row)) return row;
     return NULL;
 }
@@ -99,7 +99,7 @@ qa_cinematic_options frontend_system_cinematic_options(frontend_system_cinematic
 }
 static bool finish(frontend_system_cinematic *row,qa_cinematic_end reason,qa_error *error)
 {
-    if (row->phase!=SYSTEM_PLAYING) return true;
+    if (row->phase!=QA_Q3_SYSTEM_MOVIE_PLAYING) return true;
     qa_frontend *f=row->frontend;
     if (!frontend_ui_features_idle(f) || (f->audio && !qa_audio_engine_round_ready(f->audio,error)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic cleanup retains an active UI or audio owner");
@@ -128,7 +128,7 @@ static bool finish(frontend_system_cinematic *row,qa_cinematic_end reason,qa_err
             return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic completion retired its source namespace");
     }
     if (row->screen) frontend_ui_cinematic_clear(f,row->source.identity.physical_seat);
-    row->screen=false; row->phase=complete?SYSTEM_COMPLETED:SYSTEM_STOPPED;
+    row->screen=false; row->phase=complete?QA_Q3_SYSTEM_MOVIE_COMPLETED:QA_Q3_SYSTEM_MOVIE_STOPPED;
     qa_cinematic_destroy(row->movie); row->movie=NULL;
     qa_cinematic_asset_release(row->asset); row->asset=NULL;
     return true;
@@ -137,8 +137,8 @@ static qa_media_status status(void *context)
 {
     frontend_system_cinematic *row=context;
     if (!row) return QA_MEDIA_STOPPED;
-    if (row->phase==SYSTEM_COMPLETED) return QA_MEDIA_ENDED;
-    if (row->phase==SYSTEM_STOPPED || !row->screen || !frontend_system_cinematic_source_current(row)) return QA_MEDIA_STOPPED;
+    if (row->phase==QA_Q3_SYSTEM_MOVIE_COMPLETED) return QA_MEDIA_ENDED;
+    if (row->phase==QA_Q3_SYSTEM_MOVIE_STOPPED || !row->screen || !frontend_system_cinematic_source_current(row)) return QA_MEDIA_STOPPED;
     /* A failed checked completion still owns its real pending transition. */
     return row->ending?QA_MEDIA_PLAYING:qa_cinematic_status(row->movie);
 }
@@ -166,14 +166,24 @@ void frontend_system_cinematic_row_free(frontend_system_cinematic *row)
 static void release(void *context)
 {
     frontend_system_cinematic *row=context;
-    if (!row || row->busy || row->phase==SYSTEM_PLAYING) return;
+    if (!row || row->busy || row->phase==QA_Q3_SYSTEM_MOVIE_PLAYING) return;
     frontend_system_cinematic_row_free(row);
 }
 static qa_cinematic *playback(void *context)
 { return ((frontend_system_cinematic *)context)->movie; }
+static bool state(void *context,qa_q3_system_movie_state *out,qa_error *error)
+{
+    const frontend_system_cinematic *row=context;
+    if (!row || !out || row->busy)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic state requires its returned owner");
+    *out=(qa_q3_system_movie_state){.phase=row->phase,.screen_ms=row->clock_ms,
+        .ending_reason=row->ending_reason,.screen=row->screen,.focus_paused=row->focus_paused,
+        .ending=row->ending,.appended=row->appended,.nextmap=row->nextmap};
+    return true;
+}
 void frontend_system_cinematic_handle(frontend_system_cinematic *row,qa_q3_system_movie *out)
 { *out=(qa_q3_system_movie){.context=row,.status=status,.end=end,.release=release,
-    .playback=row->numeric_source?playback:NULL}; }
+    .playback=row->numeric_source?playback:NULL,.state=state}; }
 bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinematic_source *source,
     const qa_q3_movie_request *request,qa_q3_system_movie *out,qa_error *error)
 {
@@ -197,12 +207,26 @@ bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinemat
     row->path=row->numeric_source && request->path && *request->path?
         copy_text(request->path,error):resource_path(request->path,error);
     if (!row->path) { free(row); return false; }
+    if (request->restore_state) {
+        const qa_q3_system_movie_state *saved=request->restore_state;
+        row->phase=saved->phase; row->clock_ms=saved->screen_ms;
+        row->screen=saved->screen; row->focus_paused=saved->focus_paused;
+        row->ending=saved->ending; row->ending_reason=saved->ending_reason;
+        row->appended=saved->appended;
+        if (saved->nextmap && !(row->nextmap=copy_text(saved->nextmap,error))) {
+            free(row->path); free(row); return false;
+        }
+    } else row->screen=true;
+    if (row->phase!=QA_Q3_SYSTEM_MOVIE_PLAYING) {
+        row->next=f->system_cinematics; f->system_cinematics=row;
+        frontend_system_cinematic_handle(row,out); return true;
+    }
     /* Source reserveMovie retires the previous screen request before preparing
      * the new decoder. Its numeric handle remains a genuine stopped owner. */
     if (!frontend_system_cinematic_stop_all(f,error) || !frontend_cinematic_destroy(f,error)) {
-        free(row->path); free(row); return false;
+        free(row->nextmap); free(row->path); free(row); return false;
     }
-    row->next=f->system_cinematics; f->system_cinematics=row; row->screen=true; row->busy=true;
+    row->next=f->system_cinematics; f->system_cinematics=row; row->busy=true;
     qa_error opened={0};
     bool ok=row->numeric_source?
         qa_media_library_load_source_roq(source->movies,source->files,row->path,&row->asset,&opened):
@@ -221,7 +245,9 @@ bool frontend_system_cinematic_open(qa_frontend *f,const frontend_system_cinemat
     if (ok) {
         qa_cinematic_options options=frontend_system_cinematic_options(row,staging);
         qa_cinematic_source movie_source=qa_cinematic_asset_source(row->asset); movie_source.name=row->path;
-        ok=qa_cinematic_create(&movie_source,&options,&row->movie,error);
+        ok=request->restore_playback?
+            qa_cinematic_restore(&movie_source,&options,request->restore_playback,&row->movie,error):
+            qa_cinematic_create(&movie_source,&options,&row->movie,error);
     }
     if (ok) ok=frontend_system_cinematic_source_current(row) &&
         frontend_ui_cinematic_prepare(f,source->files,row->path,source->identity.physical_seat,error);
@@ -257,7 +283,7 @@ bool frontend_system_cinematic_capture_ready(const qa_frontend *f)
 {
     if (!frontend_system_cinematic_idle(f)) return false;
     for (const frontend_system_cinematic *row=f->system_cinematics;row;row=row->next)
-        if (row->phase==SYSTEM_PLAYING && !frontend_system_cinematic_source_current(row)) return false;
+        if (row->phase==QA_Q3_SYSTEM_MOVIE_PLAYING && !frontend_system_cinematic_source_current(row)) return false;
     return true;
 }
 bool frontend_system_cinematic_running(const qa_frontend *f) { return screen(f)!=NULL; }
@@ -278,7 +304,7 @@ bool frontend_system_cinematic_drain(qa_frontend *f,qa_error *error)
 {
     if (!frontend_system_cinematic_idle(f)) return frontend_fail(error,QA_ERROR_ARGUMENT,"System cinematic drain retains a callback");
     for (frontend_system_cinematic *row=f->system_cinematics;row;row=row->next) {
-        if (row->phase!=SYSTEM_PLAYING) continue;
+        if (row->phase!=QA_Q3_SYSTEM_MOVIE_PLAYING) continue;
         if (!frontend_system_cinematic_source_current(row)) { if (!end(row,QA_CINEMATIC_STOPPED,error)) return false; }
         else if (row->ending && !end(row,row->ending_reason,error)) return false;
     }

@@ -3,7 +3,6 @@
 #include "system_cinematic.h"
 #include "internal.h"
 #include "qa/q3_cinematic_handles.h"
-typedef enum system_cinematic_phase { SYSTEM_PLAYING, SYSTEM_COMPLETED, SYSTEM_STOPPED } system_cinematic_phase;
 struct frontend_system_cinematic {
     frontend_system_cinematic *next;
     qa_frontend *frontend;
@@ -14,7 +13,7 @@ struct frontend_system_cinematic {
     int32_t numeric_handle;
     char *path,*nextmap;
     double clock_ms;
-    system_cinematic_phase phase;
+    qa_q3_system_movie_phase phase;
     qa_cinematic_end ending_reason;
     bool loop,hold,silent,screen,busy,ending,appended,focus_paused;
 };

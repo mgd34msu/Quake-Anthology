@@ -220,15 +220,12 @@ static bool movie_append(void *context, const char *text, qa_error *error)
         basis_current(owner, held, gs, error);
     --lease->callbacks; return ok;
 }
-static bool system_movie(void *context, const qa_q3_host *host, const qa_qvm_call *call,
-    const qa_q3_movie_request *request, qa_q3_system_movie *out, qa_error *error)
+static bool movie_open(void *context,const qa_q3_movie_request *request,
+    qa_q3_system_movie *out,qa_error *error)
 {
-    remote_module_lease *lease = context; qa_q3_host *actual_host = NULL;
-    if (!lease || lease->callbacks == SIZE_MAX || lease->movie_references == SIZE_MAX ||
-        !entered(lease, &actual_host, NULL, error) || actual_host != host ||
-        !qa_q3_host_system_movie_scope_current(host, call, lease, lease->service_owner,
-            lease->role, lease->presentation))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "System cinematic lost its actual entered remote role");
+    remote_module_lease *lease=context;
+    if (!lease || lease->released || lease->callbacks==SIZE_MAX || lease->movie_references==SIZE_MAX)
+        return false;
     frontend_remote_q3_modules *owner = lease->owner;
     frontend_system_cinematic_source view = {
         .identity = {identity(owner), lease->service_owner, lease->service_owner,
@@ -240,28 +237,24 @@ static bool system_movie(void *context, const qa_q3_host *host, const qa_qvm_cal
     if (!ok) --lease->movie_references;
     --lease->callbacks; return ok;
 }
-bool frontend_remote_q3_modules_cinematic_source_decode(frontend_remote_q3_modules *owner,
-    const frontend_system_cinematic_identity *id, frontend_system_cinematic_source *out, qa_error *error)
+static bool system_movie(void *context, const qa_q3_host *host, const qa_qvm_call *call,
+    const qa_q3_movie_request *request, qa_q3_system_movie *out, qa_error *error)
 {
-    if (!owner || !id || !out || owner->retiring || !attached(owner) || !owner->modules ||
-        id->source_group != identity(owner) || id->source_owner != source(owner)->receiver.receiver ||
-        id->physical_seat != physical_seat(owner) || id->launch_seat != source(owner)->receiver.seat)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Saved system movie leaves its real module parent");
-    for (remote_module_lease *lease = owner->leases; lease; lease = lease->next) {
-        if (lease->role != id->role || lease->service_owner != id->service_owner) continue;
-        qa_q3_host *host; qa_q3_host_client_context context;
-        const qa_q3_gamestate *gs = owner->kind == REMOTE_MODULE_INITIAL ? NULL : owner->basis.decoded.view.domain.gamestate;
-        if (lease->released || lease->movie_references == SIZE_MAX || id->audio_bus != lease->service_owner ||
-            !basis_current(owner, source(owner), gs, error) ||
-            !qa_application_native_q3_client_modules_host_read(owner->modules, lease->role, &host, &context, error) ||
-            !same_host_context(&context, &lease->constructor)) return false;
-        *out = (frontend_system_cinematic_source){.identity = *id, .files = mounts(owner),
-            .movies = movies(owner), .cvars = frontend_client_registry_cvars(lease->registry),
-            .cinematics=lease->cinematics,.context = lease, .current = movie_current, .append = movie_append, .release = movie_release};
-        ++lease->movie_references; return true;
-    }
-    return frontend_fail(error, QA_ERROR_FORMAT, "Saved system movie has no actual role namespace");
+    remote_module_lease *lease = context; qa_q3_host *actual_host = NULL;
+    if (!lease || !entered(lease, &actual_host, NULL, error) || actual_host != host ||
+        !qa_q3_host_system_movie_scope_current(host, call, lease, lease->service_owner,
+            lease->role, lease->presentation))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "System cinematic lost its actual entered remote role");
+    return movie_open(lease,request,out,error);
 }
+static bool movies_restore(frontend_remote_q3_modules *owner,qa_error *error)
+{
+    for (remote_module_lease *lease=owner->leases;lease;lease=lease->next)
+        if (!lease->released && lease->cinematics &&
+            !qa_q3_cinematic_source_restore_finish(lease->cinematics,movie_open,lease,error)) return false;
+    return true;
+}
+
 static bool namespace_entered(void *context, qa_application *app,
     const qa_application_startup_source *tuple, const qa_q3_host **out, qa_error *error)
 {
@@ -796,7 +789,7 @@ bool frontend_remote_q3_modules_create(frontend_remote_q3 *row, frontend_remote_
         .gamestate = resources.domain.gamestate, .context = owner, .current = current, .prepare = prepare};
     bool ok = qa_application_native_q3_client_modules_create(row->application, &options, &owner->modules, error);
     owner->constructing = false;
-    return ok && frontend_music_cue_drain(owner->frontend,error);
+    return ok && movies_restore(owner,error) && frontend_music_cue_drain(owner->frontend,error);
 }
 
 bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q3_initial *initial,
@@ -821,7 +814,7 @@ bool frontend_remote_q3_modules_create_initial(qa_frontend *f, frontend_remote_q
         .context = owner, .current = current, .prepare = prepare};
     bool ok = qa_application_native_q3_client_modules_create(f->application, &options, &owner->modules, error);
     owner->constructing = false;
-    return ok && frontend_music_cue_drain(owner->frontend,error);
+    return ok && movies_restore(owner,error) && frontend_music_cue_drain(owner->frontend,error);
 }
 frontend_remote_q3 *frontend_remote_q3_modules_parent(const frontend_remote_q3_modules *owner)
 { return owner && owner->kind == REMOTE_MODULE_DECODED ? owner->basis.decoded.row : NULL; }
