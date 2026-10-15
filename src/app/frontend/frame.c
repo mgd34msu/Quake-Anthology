@@ -185,6 +185,11 @@ static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvar
     *owner=cvars; *out=cvars?(uint64_t)duration:supplied;
     *application_ns=remote?*out:supplied; return true;
 }
+static void control_sequence_adopt(frontend_seat *seat,const qa_player_state *state)
+{
+    if (seat->sequence < state->command_sequence)
+        seat->sequence = state->command_sequence;
+}
 static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_id actor,
     const qa_player_state *state,bool remote,qa_error *error)
 {
@@ -197,8 +202,7 @@ static bool control_binding(qa_frontend *frontend,frontend_seat *seat,qa_actor_i
         if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
         qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
         seat->client_clock_ns=frontend->wall_time_ns;
-        if (!remote && seat->sequence < state->command_sequence)
-            seat->sequence = state->command_sequence;
+        if (!remote) control_sequence_adopt(seat,state);
         if (!qa_input_command_angles(&seat->builder,
             remote?state->view_angles:state->command_angles,error)) return false;
         seat->command_angle_revision=state->command_angle_revision;
@@ -290,6 +294,8 @@ static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_ela
                 qa_application_player_actor(frontend->application,selected_seat,&selected_actor)) {
                 qa_player_state selected_control;
                 if (qa_application_control_read(frontend->application,selected_actor,&selected_control)) {
+                    if (frontend_network_local_input_owned(frontend,i))
+                        control_sequence_adopt(seat,&selected_control);
                     if (!wheel_sample(seat,frontend->time_ns,&sample,error)) return false;
                 }
             }
