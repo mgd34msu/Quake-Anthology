@@ -4356,6 +4356,8 @@ static qa_net_protocol_id client_command_protocol(const qa_frontend_network *n, 
     }
     return (qa_net_protocol_id){.kind = QA_NET_UNIFIED_1};
 }
+static bool browser_endpoint(qa_frontend_network *,const qa_net_client *,const char *,
+    qa_net_protocol_id,qa_net_address *,qa_net_protocol_id *,bool *,qa_error *);
 static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invocation *call, qa_error *error)
 {
     uint32_t physical;
@@ -4394,6 +4396,13 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
         }
     } else if (!disconnect && !strncmp(server, "qts://", 6)) {
         server += 6; protocol = (qa_net_protocol_id){.kind = QA_NET_UNIFIED_1};
+    } else if(!disconnect && *server) {
+        qa_net_address address; bool known;
+        if(!browser_endpoint(n,NULL,server,protocol,&address,&protocol,&known,&failure)) {
+            emit(call,failure.message); emit(call,"\n");
+            qa_launch_draft_destroy(live_selection);
+            return true;
+        }
     }
     if (!disconnect && !*server) {
         emit(call, reconnecting ? "No server to reconnect to.\n" : "Connect requires a server address.\n");
@@ -4409,9 +4418,10 @@ static bool client_attempt_queue(qa_frontend_network *n, const qa_command_invoca
     return true;
 }
 static bool browser_endpoint(qa_frontend_network *n,const qa_net_client *connection,
-    const char *remote,qa_net_address *address,qa_net_protocol_id *protocol,bool *known,qa_error *error)
+    const char *remote,qa_net_protocol_id fallback,qa_net_address *address,
+    qa_net_protocol_id *protocol,bool *known,qa_error *error)
 {
-    *protocol=connection?connection->protocol:n->frontend->options.network_protocol;
+    *protocol=connection?connection->protocol:fallback;
     if(remote) {
         if(!menu_resolve(remote,menu_port(*protocol),address,error)) return false;
     } else *address=connection->endpoint;
@@ -4472,7 +4482,7 @@ static bool browser_query_command(qa_frontend_network *n,const qa_command_invoca
         return qa_console_append(call->console,&call->context,"status\n",error);
     }
     bool known=false;
-    if(!browser_endpoint(n,connection,count?arguments[0]:NULL,&address,&protocol,&known,error)) return false;
+    if(!browser_endpoint(n,connection,count?arguments[0]:NULL,protocol,&address,&protocol,&known,error)) return false;
     if(known) {
         if(!qa_server_browser_query(n->browser,&address,protocol,false,f->wall_time_ns,
             UINT64_C(5000000000),error)) return false;
