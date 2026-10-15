@@ -40,7 +40,8 @@ static bool generated_type(const aas_reach_build *work, int32_t type) {
     /* Authored restriction bits belong to the existing link until a generator
      * can reconstruct their source rule. */
     uint32_t base = (uint32_t)type & UINT32_C(0x00ffffff);
-    if (work->geometry && (base == AAS_REACH_TELEPORT_TYPE || base == AAS_REACH_JUMPPAD_TYPE) &&
+    if (work->geometry && (base == AAS_REACH_TELEPORT_TYPE || base == AAS_REACH_JUMPPAD_TYPE ||
+        base == AAS_REACH_ELEVATOR || base == AAS_REACH_BOBBING) &&
         !((uint32_t)type & UINT32_C(0xfc000000))) return true;
     switch (type) {
     case AAS_REACH_WALK: case AAS_REACH_JUMP: case AAS_REACH_BARRIER:
@@ -158,6 +159,8 @@ bool qa_navigation_aas_reachability_build(qa_navigation *navigation, const qa_bs
     READ(teleport, "rs_teleport", 50);
     READ(jump_pad, "rs_jumppad", 250);
     READ(air_jump_pad, "rs_aircontrolledjumppad", 300);
+    READ(start_elevator, "rs_startelevator", 50);
+    READ(func_bob, "rs_funcbob", 300);
 #undef READ
     work.environment = qa_movement_environment_default();
     work.environment.gravity_multiplier = work.movement.gravity / 800;

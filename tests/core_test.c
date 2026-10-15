@@ -1005,7 +1005,7 @@ static void test_aas_teleport_jump_pad(void)
     const qa_aas_node nodes[]={{0},{.plane=4,.children={-3,2}},
         {.plane=2,.children={3,4}},{.plane=0,.children={-2,0}},{.plane=0,.children={-1,0}}};
     const qa_aas_reach authored[]={{0},{.area=1,.face=0x12345678,.edge=INT32_MIN,
-        .start={0,0,30},.end={0,0,32},.travel_type=0x01000000|11,.travel_time=47,.padding=13}};
+        .start={0,0,30},.end={0,0,32},.travel_type=0x01000000|14,.travel_time=47,.padding=13}};
     settings[1].first_reach=1;settings[1].reach_count=1;
     const qa_aas_view source={.version=5,.bsp_checksum=98,
         .count={[QA_AAS_PLANES]=6,[QA_AAS_AREAS]=4,[QA_AAS_SETTINGS]=4,[QA_AAS_NODES]=5,
@@ -1058,6 +1058,116 @@ static void test_aas_teleport_jump_pad(void)
     geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)missing_target,sizeof(missing_target)-1};
     aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
     CHECK(!aas_reachability_to(view,1,2));
+    qa_nav_asset_release(generated);
+}
+
+static const qa_aas_reach *aas_reachability_kind_to(const qa_aas_view *view,
+    uint32_t from,uint32_t to,uint32_t kind)
+{
+    const qa_aas_setting *setting=view->settings+from;
+    for(int32_t i=0;i<setting->reach_count;++i) {
+        const qa_aas_reach *reach=view->reachability+setting->first_reach+i;
+        if(reach->area==(int32_t)to && ((uint32_t)reach->travel_type&0xffffffu)==kind) return reach;
+    }
+    return NULL;
+}
+static void test_aas_elevator_bobbing(void)
+{
+    const qa_aas_plane elevator_planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{0,0,1},80,2},{{0,0,-1},-80,2}};
+    const qa_aas_node elevator_nodes[]={{0},{.plane=2,.children={-2,2}},
+        {.plane=0,.children={-1,0}}};
+    const qa_aas_area elevator_areas[]={{0},
+        {.number=1,.bounds={{-512,-512,24},{512,512,80}},.center={0,0,48}},
+        {.number=2,.bounds={{-512,-512,80},{512,512,256}},.center={0,0,96}}};
+    const qa_aas_setting elevator_settings[]={{0},{.flags=1,.presence=6},{.flags=1,.presence=6}};
+    const qa_aas_view elevator_source={.version=5,.bsp_checksum=99,
+        .count={[QA_AAS_PLANES]=4,[QA_AAS_NODES]=3,[QA_AAS_AREAS]=3,[QA_AAS_SETTINGS]=3},
+        .planes=elevator_planes,.nodes=elevator_nodes,.areas=elevator_areas,.settings=elevator_settings};
+    uint8_t models[80]={0};
+    for(unsigned axis=0;axis<3;++axis) {
+        gameplay_float(models+axis*4,-512);gameplay_float(models+12+axis*4,512);
+        gameplay_float(models+40+axis*4,axis==2?16:-16);
+        gameplay_float(models+52+axis*4,axis==2?80:16);
+    }
+    const char elevator_entities[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"func_plat\" \"model\" \"*1\" \"bot_notteam\" \"1\" }\n";
+    qa_bsp_view geometry={.family=QA_BSP_Q3,.format=QA_BSP_IBSP46,
+        .lumps={[QA_BSP_MODELS]={.bytes={models,sizeof(models)},.stride=40,.present=true},
+            [QA_BSP_ENTITIES]={.bytes={(const uint8_t *)elevator_entities,sizeof(elevator_entities)-1},.present=true}}};
+    qa_nav_asset *generated=NULL;
+    aas_reachability_generate(&elevator_source,false,&geometry,&generated);
+    const qa_aas_view *view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *reach=aas_reachability_kind_to(view,1,2,11);
+    CHECK(reach && reach->travel_type==(0x01000000|11) && reach->face==1 &&
+        reach->edge==56 && reach->travel_time==78 && reach->start.x< -17 && reach->start.z==42 &&
+        qa_vec_equal(reach->end,qa_v3(-21,0,98)));
+    CHECK(!aas_reachability_kind_to(view,2,1,11));
+    qa_nav_asset_release(generated);generated=NULL;
+
+    qa_vec3 vertices[]={{-128,-16,24},{-128,16,24},{-80,16,24},{-80,-16,24},
+        {80,-16,24},{80,16,24},{128,16,24},{128,-16,24}};
+    const qa_aas_edge edges[]={{{0,0}},{{0,1}},{{1,2}},{{2,3}},{{3,0}},
+        {{4,5}},{{5,6}},{{6,7}},{{7,4}}};
+    const int32_t edge_index[]={1,2,3,4,5,6,7,8},face_index[]={1,2};
+    qa_aas_face faces[]={{0},
+        {.plane=0,.flags=5,.edge_count=4,.first_edge=0,.front_area=1},
+        {.plane=0,.flags=5,.edge_count=4,.first_edge=4,.front_area=2}};
+    const qa_aas_plane planes[]={{{0,0,1},24,2},{{0,0,-1},-24,2},
+        {{1,0,0},-48,0},{{-1,0,0},48,0},{{1,0,0},48,0},{{-1,0,0},-48,0},
+        {{0,0,1},23.875f,2},{{0,0,-1},-23.875f,2},
+        {{0,0,1},87.875f,2},{{0,0,-1},-87.875f,2},{{0,0,1},88,2},{{0,0,-1},-88,2}};
+    qa_aas_area areas[]={{0},
+        {.number=1,.face_count=1,.bounds={{-128,-16,24},{-48,16,80}},.center={-96,0,48}},
+        {.number=2,.face_count=1,.first_face=1,.bounds={{48,-16,24},{128,16,80}},.center={96,0,48}},
+        {.number=3,.bounds={{-48,-16,-128},{48,16,80}},.center={0,0,40}}};
+    const qa_aas_setting settings[]={{0},{.flags=1,.presence=6},{.flags=1,.presence=6},{.presence=6}};
+    const qa_aas_node nodes[]={{0},{.plane=2,.children={2,4}},
+        {.plane=4,.children={3,-3}},{.plane=6,.children={-2,0}},{.plane=6,.children={-1,0}}};
+    qa_aas_view source={.version=5,.bsp_checksum=100,
+        .count={[QA_AAS_VERTICES]=8,[QA_AAS_EDGES]=9,[QA_AAS_EDGE_INDEX]=8,
+            [QA_AAS_FACES]=3,[QA_AAS_FACE_INDEX]=2,[QA_AAS_PLANES]=12,
+            [QA_AAS_AREAS]=4,[QA_AAS_SETTINGS]=4,[QA_AAS_NODES]=5},
+        .vertices=vertices,.edges=edges,.edge_index=edge_index,.faces=faces,.face_index=face_index,
+        .planes=planes,.areas=areas,.settings=settings,.nodes=nodes};
+    gameplay_float(models+48,-8);gameplay_float(models+60,0);
+    const char horizontal[]="{ \"classname\" \"worldspawn\" }\n"
+        "{ \"classname\" \"func_bobbing\" \"model\" \"*1\" \"height\" \"64\" \"spawnflags\" \"1\" \"bot_notteam\" \"2\" }\n";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)horizontal,sizeof(horizontal)-1};
+    aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
+    const qa_aas_reach *forward=aas_reachability_kind_to(view,1,2,19),
+        *reverse=aas_reachability_kind_to(view,2,1,19);
+    CHECK(forward && reverse && forward->travel_type==(0x02000000|19) &&
+        reverse->travel_type==(0x02000000|19) && forward->travel_time==300 && reverse->travel_time==300 &&
+        forward->face==65537 && reverse->face==65537 &&
+        forward->edge==qa_i32_from_u32((uint32_t)-64<<16|64u) && reverse->edge==(64<<16|65472));
+    CHECK(forward->start.x< -80 && forward->end.x==80 && reverse->start.x>80 && reverse->end.x== -80);
+    qa_nav_asset_release(generated);generated=NULL;
+
+    const qa_vec3 lower[]={{-16,-16,24},{-16,16,24},{16,16,24},{16,-16,24}};
+    for(size_t i=0;i<4;++i) { vertices[i]=lower[i];vertices[i+4]=lower[i];vertices[i+4].z=88; }
+    faces[2].plane=10;
+    areas[1].bounds=(qa_bounds){{-16,-16,24},{16,16,88}};areas[1].center=qa_v3(0,0,48);
+    areas[2].bounds=(qa_bounds){{-16,-16,88},{16,16,256}};areas[2].center=qa_v3(0,0,96);
+    const qa_aas_node vertical_nodes[]={{0},{.plane=8,.children={-2,2}},{.plane=6,.children={-1,0}}};
+    source.nodes=vertical_nodes;source.count[QA_AAS_NODES]=3;
+    source.count[QA_AAS_AREAS]=source.count[QA_AAS_SETTINGS]=3;
+    gameplay_float(models+48,24);gameplay_float(models+60,32);
+    const char vertical[]="{ \"classname\" \"func_bobbing\" \"model\" \"*1\" }\n";
+    geometry.lumps[QA_BSP_ENTITIES].bytes=(qa_bytes){(const uint8_t *)vertical,sizeof(vertical)-1};
+    aas_reachability_generate(&source,false,&geometry,&generated);view=qa_nav_asset_aas(generated);
+    forward=aas_reachability_kind_to(view,1,2,19);
+    CHECK(forward && forward->face==1 && forward->edge==qa_i32_from_u32((uint32_t)-4<<16|60u) &&
+        forward->travel_time==300 && forward->end.z==89);
+    /* Boarding and exit drops are allowed; only the mover phase is upward. */
+    for(size_t area=1;area<view->count[QA_AAS_AREAS];++area) {
+        const qa_aas_setting *setting=view->settings+area;
+        for(int32_t i=0;i<setting->reach_count;++i) {
+            const qa_aas_reach *candidate=view->reachability+setting->first_reach+i;
+            if(((uint32_t)candidate->travel_type&0xffffffu)==19)
+                CHECK(candidate->edge==qa_i32_from_u32((uint32_t)-4<<16|60u));
+        }
+    }
     qa_nav_asset_release(generated);
 }
 
@@ -7712,6 +7822,7 @@ int main(int argc, char **argv)
     test_aas_reachability();
     test_aas_jump_ladder();
     test_aas_teleport_jump_pad();
+    test_aas_elevator_bobbing();
     test_native_navigation_first_step();
     test_native_navigation_ground_fit();
     test_prediction_continuations();

@@ -307,12 +307,6 @@ static bool step(aas_reach_build *work, uint32_t from, uint32_t to, bool *found,
         time, found, error);
 }
 
-typedef struct closest_edges {
-    qa_vec3 start[2], end[2];
-    float distance;
-    bool found;
-} closest_edges;
-
 static qa_vec3 edge_projection(qa_vec3 point, qa_vec3 origin, qa_vec3 direction,
     const qa_aas_plane *plane) {
     qa_vec3 flat;
@@ -327,7 +321,7 @@ static qa_vec3 edge_projection(qa_vec3 point, qa_vec3 origin, qa_vec3 direction,
 static bool between(qa_vec3 point, qa_vec3 a, qa_vec3 b) {
     return qa_vec_dot(qa_vec_sub(point, a), qa_vec_sub(point, b)) <= 0;
 }
-static void closest_update(closest_edges *best, qa_vec3 start, qa_vec3 end, bool range) {
+static void closest_update(aas_reach_closest_edges *best, qa_vec3 start, qa_vec3 end, bool range) {
     float distance = qa_vec_length(qa_vec_sub(end, start));
     if (range && best->found && distance > best->distance - .5f && distance < best->distance + .5f) {
         float first = qa_vec_length(qa_vec_sub(best->start[0], start)),
@@ -349,8 +343,8 @@ static void closest_update(closest_edges *best, qa_vec3 start, qa_vec3 end, bool
         best->found = true;
     }
 }
-static void closest_edge_points(qa_vec3 v1, qa_vec3 v2, qa_vec3 v3, qa_vec3 v4,
-    const qa_aas_plane *plane1, const qa_aas_plane *plane2, closest_edges *best) {
+void aas_reach_closest_edge_points(qa_vec3 v1, qa_vec3 v2, qa_vec3 v3, qa_vec3 v4,
+    const qa_aas_plane *plane1, const qa_aas_plane *plane2, aas_reach_closest_edges *best) {
     qa_vec3 direction1 = qa_vec_sub(v2, v1), direction2 = qa_vec_sub(v4, v3);
     direction1.z = direction2.z = 0;
     qa_vec3 p1 = edge_projection(v1, v3, direction2, plane2),
@@ -371,6 +365,11 @@ static float max_jump_height(const aas_reach_build *work) {
     float time = work->movement.jump_velocity / work->movement.gravity;
     return (float)(.5 * work->movement.gravity * time * time);
 }
+float aas_reach_max_jump_distance(const aas_reach_build *work) {
+    const aas_reach_settings *settings = &work->movement;
+    float fall_time = (float)sqrt(settings->max_jump_fall_height / (.5 * settings->gravity));
+    return settings->max_velocity * (fall_time + settings->jump_velocity / settings->gravity);
+}
 bool aas_reach_horizontal_jump_speed(const aas_reach_build *work, float z_velocity,
     qa_vec3 start, qa_vec3 end, float *speed) {
     float gravity = work->movement.gravity, ascent = z_velocity / gravity;
@@ -390,15 +389,13 @@ static bool jump(aas_reach_build *work, uint32_t from, uint32_t to,
     const qa_aas_view *world = work->source;
     const qa_aas_area *area1 = world->areas + from, *area2 = world->areas + to;
     const aas_reach_settings *settings = &work->movement;
-    float fall_time = (float)sqrt(settings->max_jump_fall_height / (.5 * settings->gravity));
-    float maximum_distance = 2 * (settings->max_velocity *
-        (fall_time + settings->jump_velocity / settings->gravity));
+    float maximum_distance = 2 * aas_reach_max_jump_distance(work);
     if (area1->bounds.mins.x > area2->bounds.maxs.x + maximum_distance ||
         area1->bounds.maxs.x < area2->bounds.mins.x - maximum_distance ||
         area1->bounds.mins.y > area2->bounds.maxs.y + maximum_distance ||
         area1->bounds.maxs.y < area2->bounds.mins.y - maximum_distance ||
         area2->bounds.mins.z > area1->bounds.maxs.z + max_jump_height(work)) return true;
-    closest_edges closest = {.distance = 999999};
+    aas_reach_closest_edges closest = {.distance = 999999};
     for (int32_t i = 0; i < area1->face_count; ++i) {
         const qa_aas_face *face1 = area_face(world, area1, i, NULL);
         if (!(face1->flags & AAS_REACH_FACE_GROUND)) continue;
@@ -409,7 +406,7 @@ static bool jump(aas_reach_build *work, uint32_t from, uint32_t to,
                 const qa_aas_edge *first = face_edge(world, face1, k, NULL);
                 for (int32_t l = 0; l < face2->edge_count; ++l) {
                     const qa_aas_edge *second = face_edge(world, face2, l, NULL);
-                    closest_edge_points(world->vertices[first->vertices[0]], world->vertices[first->vertices[1]],
+                    aas_reach_closest_edge_points(world->vertices[first->vertices[0]], world->vertices[first->vertices[1]],
                         world->vertices[second->vertices[0]], world->vertices[second->vertices[1]],
                         world->planes + face1->plane, world->planes + face2->plane, &closest);
                 }
