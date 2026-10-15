@@ -74,11 +74,10 @@ static bool settings_carry(const qa_frontend *source,qa_application *candidate,q
     qa_cvars *target=qa_application_cvars(candidate);
     for (const qa_cvar_view *row=qa_cvars_next(active,NULL);row;row=qa_cvars_next(active,row)) {
         if (row->player_scoped || row->save_policy!=QA_CVAR_SAVE_SETTING) continue;
-        const char *value=qa_cvars_archive_value(active,row);
-        if (!value) continue;
-        qa_cvar_archive_entry entry={(char *)row->name,(char *)value};
-        qa_cvar_archive archive={.entries=&entry,.count=1};
-        if (!qa_cvar_archive_apply(target,&archive,error)) return false;
+        if (!qa_cvars_archive_value(active,row)) continue;
+        if ((row->explicit_value && !qa_cvars_set(target,row->name,row->value,true,error)) ||
+            (row->latched_value && !qa_cvars_stage(target,row->name,row->latched_value,error)) ||
+            !qa_cvars_add_flags(target,row->name,QA_CVAR_ARCHIVE,error)) return false;
     }
     return true;
 }
