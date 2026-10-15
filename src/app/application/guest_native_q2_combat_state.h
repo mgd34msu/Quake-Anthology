@@ -22,7 +22,7 @@ typedef struct application_q2_combat_profile {
     uint32_t inventory, inventory_count, invincible, team, userinfo, userinfo_bytes,
         view_angles, time, item_table, item_stride, item_classname, item_info,
         normal, energy, screen, shield, cells, empty;
-    uint64_t godmode, no_knockback, power_armor;
+    uint64_t godmode, no_knockback, power_armor, notarget;
     uint32_t model_team, skin_team;
     qa_team_id coop_team;
     qa_string_id numeric_team_namespace;

@@ -4,6 +4,7 @@
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat_kex.h"
 #include "qa/native_observe.h"
+#include "qa/native_host_q2_wire.h"
 #include "qa/source_save.h"
 #include "control_frame.h"
 #include "qa/pool.h"
@@ -142,6 +143,60 @@ static combat_record *record_for(struct application_native_q2_combat *p, qa_acto
 {
     size_t value;
     return qa_actor_index_find(&p->record_index, actor, &value) ? (combat_record *)(uintptr_t)value : NULL;
+}
+bool application_native_q2_actor_traits(application_provider *provider, qa_actor_id actor,
+    qa_builtin_actor_traits *out)
+{
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.q2_engine : NULL;
+    if (!engine || !out || !engine->initialized || !engine->map_ready || engine->shutting_down ||
+        engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !provider->state.native.host) return false;
+    const qa_actor_registry *actors = qa_session_actors(provider->application->session);
+    const qa_actor_record *record = qa_actors_get(actors, actor);
+    qa_native_host *host = provider->state.native.host;
+    uint32_t slot;
+    qa_native_host_q2_entity source;
+    qa_error ignored = {0};
+    if (!record || !qa_native_host_slot_for_actor(host, actor, &slot) ||
+        !qa_native_host_q2_bot_entity(host, slot, &source, &ignored) ||
+        !source.in_use || !qa_actor_id_equal(source.binding.actor, actor)) return false;
+    const qa_actor_player *identity = qa_actors_player(actors, actor);
+    bool player = source.bot.player || application_native_q2_client_slot(engine, actor) != 0;
+    qa_builtin_actor_traits traits = {.classname = record->definition, .player = player,
+        .monster = (source.server_flags & 4u) != 0,
+        .spectator = identity && identity->spectator,
+        .disguised = identity && identity->disguised};
+    if (engine->profile == QA_NATIVE_Q2_GAME_API2023) {
+        /* Public API2023 sv_ent_flags_t, distinct from private edict flags. */
+        traits.no_target = (source.bot.flags & (UINT64_C(1) << 13)) != 0;
+        traits.spectator |= (source.bot.flags & (UINT64_C(1) << 29)) != 0;
+        traits.invisible = (source.bot.flags & (UINT64_C(1) << 3)) != 0;
+        traits.damageable_target = (source.bot.flags & (UINT64_C(1) << 9)) != 0;
+        if (source.bot.registered) {
+            traits.dead = (player || traits.monster) && source.bot.health <= 0;
+            traits.max_health = source.bot.max_health;
+            traits.view_height = (float)source.bot.view_height;
+        }
+    }
+    if (player && !source.bot.registered) {
+        qa_q2_player state;
+        if (!qa_native_host_q2_player(host, slot, &state, &ignored)) return false;
+        traits.view_height = state.viewoffset[2];
+    }
+    struct application_native_q2_combat *combat = engine->source_combat;
+    if (combat && combat->profile.notarget) {
+        const application_q2_combat_profile *profile = &combat->profile;
+        qa_native_instance *native = qa_native_host_instance(host);
+        qa_native_address address;
+        uint8_t flags[8];
+        if (!qa_native_entity_address(native, slot, &address, &ignored) ||
+            !qa_native_read(native, address + profile->flags, flags,
+                profile->kex ? 8 : 4, &ignored)) return false;
+        uint64_t value = profile->kex ? qa_load_u64le(flags) : qa_load_u32le(flags);
+        traits.no_target |= (value & profile->notarget) != 0;
+    }
+    *out = traits;
+    return true;
 }
 static combat_record *record_create(struct application_native_q2_combat *p, qa_actor_id actor,
     qa_error *error)

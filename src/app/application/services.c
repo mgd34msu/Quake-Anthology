@@ -21,6 +21,7 @@
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_private.h"
 #include "guest_qc_combat.h"
+#include "guest_native_q2_combat.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -184,8 +185,9 @@ static bool provider_traits(application_provider *provider, qa_actor_id actor,
     case APPLICATION_PROVIDER_QC:
         return application_qc_actor_traits(provider, actor, out);
     case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
         return false;
+    case APPLICATION_PROVIDER_NATIVE:
+        return application_native_q2_actor_traits(provider, actor, out);
     }
     return false;
 }
@@ -1169,6 +1171,12 @@ static bool builtin_traits(void *opaque, qa_actor_id actor,
             }
     }
     if (!matched) return false;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (source != traits_owner && source && source->kind == APPLICATION_PROVIDER_NATIVE) {
+        qa_builtin_actor_traits native;
+        if (application_native_q2_actor_traits(source, actor, &native))
+            out->no_target |= native.no_target;
+    }
     const qa_actor_player *identity = qa_actors_player(qa_session_actors(application->session), actor);
     if (identity) out->disguised = identity->disguised;
     bool source_water = traits_owner->kind == APPLICATION_PROVIDER_Q1 ||

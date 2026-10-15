@@ -122,6 +122,8 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         !mask(doc, flags, p->kex ? "godmode" : "invulnerable", p->kex, &p->godmode, error) ||
         !mask(doc, flags, "noKnockback", p->kex, &p->no_knockback, error) ||
         !mask(doc, flags, "powerArmor", p->kex, &p->power_armor, error)) return false;
+    if (qa_json_get(doc, flags, "notarget") != QA_JSON_NONE &&
+        !mask(doc, flags, "notarget", p->kex, &p->notarget, error)) return false;
     static const char *const call_names[] = {"damage", "regularArmor", "powerArmor", "pain", "death", "processPain"};
     for (size_t i = 0; i < 6; ++i) {
         if ((p->kex && i == APPLICATION_Q2_REGULAR_ARMOR) || (!p->kex && i == APPLICATION_Q2_PROCESS_PAIN)) continue;

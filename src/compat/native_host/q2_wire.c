@@ -257,7 +257,8 @@ bool qa_native_host_q2_wire_entity(qa_native_host *host, uint32_t slot,
 
 bool qa_native_host_q2_bot_entity(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)
-{ return entity_read(host, slot, out, Q2_OBSERVE_RETURNED, error); }
+{ return entity_read(host, slot, out,
+    host && host->callback_depth ? Q2_OBSERVE_IMPORT : Q2_OBSERVE_RETURNED, error); }
 
 bool qa_native_host_q2_wire_entity_import(qa_native_host *host, uint32_t slot,
     qa_native_host_q2_entity *out, qa_error *error)

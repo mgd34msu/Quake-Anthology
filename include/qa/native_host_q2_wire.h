@@ -59,8 +59,8 @@ typedef struct qa_native_host_q2_entity {
 bool qa_native_host_q2_wire_count(qa_native_host *, uint32_t *, qa_error *);
 bool qa_native_host_q2_wire_entity(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
-/* Shared AI reads the returned original GAME's current registration and sv
- * metadata through the same public-prefix decoder, without another registry. */
+/* Shared AI reads current registration and sv metadata at a returned GAME or
+ * inside its actual import callback, using the same public-prefix decoder. */
 bool qa_native_host_q2_bot_entity(qa_native_host *, uint32_t,
     qa_native_host_q2_entity *, qa_error *);
 /* This borrows the actual SDK row during a genuine GAME import callback.
