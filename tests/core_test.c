@@ -444,6 +444,60 @@ static void test_bot_authored_chat_delivery(qa_vfs *files)
     CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
     CHECK(qa_session_destroy(session,&error));
 }
+static bool bot_authored_missing_script(void *context,const qa_script_include *request,
+    qa_script_resource *resource,bool *found,qa_error *error)
+{
+    (void)request;(void)resource;(void)error;
+    ++*(size_t *)context;*found=false;return true;
+}
+static void bot_authored_release_script(void *context,qa_script_resource *resource)
+{(void)context;(void)resource;}
+static uint32_t bot_authored_runtime_random(void *context)
+{(void)context;return 1;}
+static qa_bot_navigation *bot_authored_runtime_navigation(void *context,int32_t client)
+{(void)context;(void)client;return NULL;}
+static void test_bot_authored_runtime(const qa_bot_source_knowledge *knowledge,qa_strings *strings)
+{
+    qa_error error={0};size_t reads=0;qa_bot_runtime *runtime=NULL;
+    qa_bot_runtime_options options={.maximum_states=1,.library={.scripts={
+        .context=&reads,.read=bot_authored_missing_script,.release=bot_authored_release_script}}};
+    qa_bot_runtime_services services={.source_knowledge=knowledge,.goals={.strings=strings},
+        .random={.next=bot_authored_runtime_random},.navigation=bot_authored_runtime_navigation};
+    CHECK(qa_bot_runtime_create(&options,&services,&runtime,&error));
+    CHECK(qa_bot_library_variable_set(qa_bot_runtime_library(runtime),"maxclients","1",&error));
+    int32_t result=-1;
+    CHECK(qa_bot_runtime_setup(runtime,&result,&error) && !result && qa_bot_runtime_initialized(runtime));
+    uint32_t goal=0,weapon=0,chat=0,move=0;
+    CHECK(qa_bot_goals_allocate(qa_bot_runtime_goals(runtime),0,&goal,&error) && goal);
+    CHECK(qa_bot_runtime_weapon_allocate(runtime,&weapon,&error) && weapon);
+    CHECK(qa_bot_runtime_chat_allocate(runtime,&chat,&error) && chat);
+    CHECK(qa_bot_moves_allocate(qa_bot_runtime_moves(runtime),&move,&error) && move && !reads);
+    uint8_t storage[QA_BOT_INVENTORY_SIZE*4]={0};
+    qa_store_u32le(storage+4,1);qa_store_u32le(storage+8,2);
+    qa_bot_inventory_bytes inventory={storage,QA_BOT_INVENTORY_SIZE};
+    int32_t scratch[QA_BOT_INVENTORY_SIZE],choice=99;
+    qa_bot_weapon_knowledge weapons[]={
+        {.weapon={.valid=true,.number=7,.weapon_inventory=1,.ammo_inventory=2,.ammo_amount=1,
+            .projectile_count=1,.reload=.2f},.personality_role=-1,.has_supply=true,.owned=true,
+            .available=true,.selected_projectile_damage=10},
+        {.weapon={.valid=true,.number=8,.weapon_inventory=1,.ammo_inventory=2,.ammo_amount=1,
+            .projectile_count=1,.reload=1},.personality_role=-1,.has_supply=true,.owned=true,
+            .available=true,.selected_projectile_damage=40}};
+    qa_bot_source_weapon_policy policy={.knowledge=knowledge,.range=100,.allow_melee=true};
+    CHECK(qa_bot_knowledge_choose(runtime,weapon,weapons,2,inventory,scratch,&policy,&choice,&error) && choice==7);
+    weapons[0].ranged_limit=true;weapons[0].maximum_range=64;
+    CHECK(qa_bot_knowledge_choose(runtime,weapon,weapons,2,inventory,scratch,&policy,&choice,&error) && choice==8);
+    weapons[1].owned=false;choice=99;
+    CHECK(qa_bot_knowledge_choose(runtime,weapon,weapons,2,inventory,scratch,&policy,&choice,&error) && choice==99);
+    weapons[0].ranged_limit=false;weapons[1].owned=true;
+    CHECK(qa_bot_knowledge_choose(runtime,weapon,weapons,2,inventory,scratch,NULL,&choice,&error) && !choice);
+    CHECK(!reads);
+    CHECK(qa_bot_moves_free(qa_bot_runtime_moves(runtime),move,&error));
+    CHECK(qa_bot_runtime_chat_free(runtime,chat,&error));
+    CHECK(qa_bot_runtime_weapon_free(runtime,weapon,&error));
+    CHECK(qa_bot_goals_free(qa_bot_runtime_goals(runtime),goal,&error));
+    CHECK(qa_bot_runtime_destroy(runtime,&error));
+}
 static void test_bot_source_knowledge(void)
 {
     test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
@@ -534,6 +588,7 @@ static void test_bot_source_knowledge(void)
         &knowledge,&found,&error));
     CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==3 &&
         qa_bot_source_document_count(knowledge)==5);
+    test_bot_authored_runtime(knowledge,strings);
     qa_string_id connected=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"connected",9});
     CHECK(qa_bot_source_chat_count(knowledge,connected)==2);
     const qa_bot_source_chat *chat=qa_bot_source_chat_at(knowledge,connected,0);

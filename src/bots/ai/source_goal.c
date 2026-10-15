@@ -90,6 +90,7 @@ static void look_at(bot_ai_state *s,qa_vec3 target) {
     bot_ai_view_ideal_set(s,ideal);
 }
 static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    if(s->source_settings) return true;
     if(bot_ai_attack_crouch_time(s)<b->time-5.0f) {
         float propensity,random;
         SOURCE_CALL(bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&propensity,e));
@@ -334,7 +335,7 @@ static bool persistent_equipment(bot_ai_state *s) {
     return false;
 }
 bool bot_ai_source_wants_camp(qa_bots *b,bot_ai_state *s,bool *accepted,qa_error *e) {
-    *accepted=false;if(!alive(b,s)) return true;
+    *accepted=false;if(!alive(b,s) || s->source_settings) return true;
     bool cooperative;SOURCE_CALL(bot_ai_cooperative(b,s,&cooperative,e));
     if(cooperative) return true;
     float camper;

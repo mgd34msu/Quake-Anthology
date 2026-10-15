@@ -9,6 +9,7 @@
 #include "qa/bot_log.h"
 
 typedef struct qa_bot_runtime qa_bot_runtime;
+struct qa_bot_source_knowledge;
 typedef enum qa_bot_observation_profile {
     QA_BOT_OBSERVATION_NATIVE, QA_BOT_OBSERVATION_MODULE
 } qa_bot_observation_profile;
@@ -36,6 +37,7 @@ typedef struct qa_bot_runtime_services {
     qa_bot_goal_services goals;
     qa_bot_move_services movement;
     bool (*navigation_load)(void *, qa_bot_runtime *, qa_error *);
+    const struct qa_bot_source_knowledge *source_knowledge; /* Borrowed for the runtime lifetime. */
 } qa_bot_runtime_services;
 typedef struct qa_bot_runtime_options {
     qa_bot_library_options library;

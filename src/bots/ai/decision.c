@@ -73,8 +73,8 @@ static bool map_scripts(qa_bots *b,bot_ai_state *s,qa_error *e) {
     bot_ai_flag_set(s,BOT_AI_IDEAL_VIEW_SET,true);
     bot_ai_view_ideal_set(s,qa_vec_angles(qa_vec_sub(qa_v3(304,352,920),bot_ai_eye(s)),
         QA_DIRECTION_VM,QA_VECTOR_SOURCE));
-    float accuracy,random;
-    DECISION_CALL(bot_ai_character_float(b,s,BOT_C_ACCURACY,0,1,&accuracy,e));
+    float accuracy=1,random;
+    if(!s->source_settings) DECISION_CALL(bot_ai_character_float(b,s,BOT_C_ACCURACY,0,1,&accuracy,e));
     DECISION_CALL(bot_ai_random(b,&random,e));
     float pitch=bot_ai_view_ideal(s).x+8*(random*2-1)*(1-accuracy);
     bot_ai_view_ideal_axis_set(s,0,qa_angle_mod(pitch,QA_ANGLE_WORD_VM));
@@ -375,8 +375,8 @@ static bool travel(qa_bots *b, bot_ai_state *s, qa_error *e) {
        s->view.decision!=QA_BOT_RETREATING && (rocket || bfg) &&
        !bot_ai_inventory_value(s,QA_BOT_INV_QUAD) && bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=60 &&
        (bot_ai_inventory_value(s,QA_BOT_INV_HEALTH)>=90 || bot_ai_inventory_value(s,QA_BOT_INV_ARMOR)>=40)) {
-        float propensity;
-        if(!bot_ai_character_float(b,s,BOT_C_WEAPON_JUMP,0,1,&propensity,e)) return false;
+        float propensity=1;
+        if(!s->source_settings && !bot_ai_character_float(b,s,BOT_C_WEAPON_JUMP,0,1,&propensity,e)) return false;
         if(propensity>=.5f) bot_ai_travel_flags_set(s,bot_ai_travel_flags(s)|(rocket?0x1000u:0u)|(bfg?0x2000u:0u));
     }
     if(s->view.decision==QA_BOT_FIGHTING) return true;

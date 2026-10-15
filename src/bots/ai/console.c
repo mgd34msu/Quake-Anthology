@@ -77,7 +77,7 @@ bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
                 synonym_context,false,false,e) ||
            !bot_ai_source_order_message(b,s,message.text,&matched,e)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-        if(!matched && message.type==1 && !b->controls.no_chat) {
+        if(!matched && message.type==1 && !s->source_settings && !b->controls.no_chat) {
             if(!qa_bot_chat_find_match(system,message.text,128,&match,&found,e)) return false;
             if(!found || (match.subtype&32768)) {if(!remove_console(chat,message.handle,e)) return false;continue;}
             char name[36],body[256];

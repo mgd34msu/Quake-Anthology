@@ -72,6 +72,7 @@ static bool capacity(qa_bot_runtime *runtime,const char *name,int32_t *out,qa_er
     *out=32;return qa_bot_library_variable_set(runtime->library,name,"32",error);
 }
 bool bot_runtime_weapon_setup(qa_bot_runtime *runtime,int32_t *result,qa_error *error) {
+    if(runtime->services.source_knowledge) return true;
     const qa_bot_variable *variable;
     if(!bot_runtime_variable(runtime,"weaponconfig","weapons.c",&variable,error)) return false;
     size_t size=strlen(variable->string);

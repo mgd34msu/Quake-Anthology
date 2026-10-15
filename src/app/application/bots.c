@@ -1145,27 +1145,29 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
     bots->files_launch=true;
     bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
     if(!bots->files) goto fail;
-    qa_resource *probe=NULL;qa_error local={0};
-    bool have_assets=qa_vfs_acquire(bots->files,"botfiles/bots/default_c.c",&probe,NULL,&local);
-    qa_resource_release(probe);
-    if(!have_assets) {
-        if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
-        bool opened=false;
-        for(size_t i=0;i<qa_catalog_count(application->catalog);++i) {
-            const qa_product *product=qa_catalog_at(application->catalog,i);
-            if(product->family!=QA_GAME_Q3 || product->availability!=QA_CONTENT_INSTALLED) continue;
-            qa_vfs *files=NULL;if(!qa_catalog_open(application->catalog,product->id,&files,error)) goto fail;
-            probe=NULL;local=(qa_error){0};have_assets=qa_vfs_acquire(files,"botfiles/bots/default_c.c",&probe,NULL,&local);
-            qa_resource_release(probe);
-            if(have_assets) {
-                if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->key,&bots->files_product,error)) {
-                    qa_vfs_destroy(files);goto fail;
+    if(!bots->source_knowledge || guest_count) {
+        qa_resource *probe=NULL;qa_error local={0};
+        bool have_assets=qa_vfs_acquire(bots->files,"botfiles/bots/default_c.c",&probe,NULL,&local);
+        qa_resource_release(probe);
+        if(!have_assets) {
+            if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
+            bool opened=false;
+            for(size_t i=0;i<qa_catalog_count(application->catalog);++i) {
+                const qa_product *product=qa_catalog_at(application->catalog,i);
+                if(product->family!=QA_GAME_Q3 || product->availability!=QA_CONTENT_INSTALLED) continue;
+                qa_vfs *files=NULL;if(!qa_catalog_open(application->catalog,product->id,&files,error)) goto fail;
+                probe=NULL;local=(qa_error){0};have_assets=qa_vfs_acquire(files,"botfiles/bots/default_c.c",&probe,NULL,&local);
+                qa_resource_release(probe);
+                if(have_assets) {
+                    if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->key,&bots->files_product,error)) {
+                        qa_vfs_destroy(files);goto fail;
+                    }
+                    qa_vfs_destroy(bots->files);bots->files=files;bots->files_launch=false;opened=true;break;
                 }
-                qa_vfs_destroy(bots->files);bots->files=files;bots->files_launch=false;opened=true;break;
+                qa_vfs_destroy(files);if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
             }
-            qa_vfs_destroy(files);if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
+            if(!opened && (count || native_q3 || requested)) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
         }
-        if(!opened && (count || native_q3 || requested)) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
     }
     if(!qa_entities_parse(geometry->lumps[QA_BSP_ENTITIES].bytes,
             geometry->family==QA_BSP_Q3?QA_ENTITY_Q3:QA_ENTITY_Q1,&bots->entities,error)) goto fail;
@@ -1216,6 +1218,7 @@ bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
         .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),
         .navigation_load=application_bot_navigation_load,
+        .source_knowledge=options.observations==QA_BOT_OBSERVATION_NATIVE?bots->source_knowledge:NULL,
         .goals={.context=bots,.strings=qa_session_strings(bots->application->session),
             .actors=qa_session_actors(bots->application->session),
             .navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,

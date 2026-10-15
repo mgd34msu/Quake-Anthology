@@ -317,10 +317,11 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
         if(!bot_ai_source_print(b,"^1Fatal: AAS not initialized\n",e)) return false;
         return bot_ai_fail(e, "bot navigation is not bound to the admitted canonical actor");
     }
-    if (!qa_bot_runtime_character_load(b->runtime, a->character_file, a->skill, &s->character, e)) return false;
+    if (!s->source_settings &&
+        !qa_bot_runtime_character_load(b->runtime, a->character_file, a->skill, &s->character, e)) return false;
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_CHARACTER,&s->character,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHARACTER);
-    if (!s->character) {
+    if (!s->source_settings && !s->character) {
         bot_ai_source_setup_failed(&s->source_setup,BOT_SOURCE_SETUP_FAILED_CHARACTER,0);
         return bot_ai_fail(e, "native bot character handles are exhausted");
     }
@@ -332,9 +333,10 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_GOALS,&s->goals,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_GOAL_STATE);
     char path[144], name[144];
-    if (!character_string(b, s, BOT_C_ITEM_WEIGHTS, path, e)) return false;
-    int32_t result;
-    if (!qa_bot_runtime_goal_weights(b->runtime, s->goals, path, &result, e)) return false;
+    int32_t result=0;
+    if (!s->source_settings &&
+        (!character_string(b,s,BOT_C_ITEM_WEIGHTS,path,e) ||
+         !qa_bot_runtime_goal_weights(b->runtime,s->goals,path,&result,e))) return false;
     if (result) {
         bot_ai_source_setup_failed(&s->source_setup,BOT_SOURCE_SETUP_FAILED_ITEM_WEIGHTS,result);
         if(s->goals && !qa_bot_goals_free(goals,s->goals,e)) return false;
@@ -345,8 +347,9 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     if (!qa_bot_runtime_weapon_allocate(b->runtime, &s->weapons, e)) return false;
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_WEAPONS,&s->weapons,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WEAPON_STATE);
-    if (!character_string(b, s, BOT_C_WEAPON_WEIGHTS, path, e) ||
-        !qa_bot_runtime_weapon_weights(b->runtime, s->weapons, path, &result, e)) return false;
+    if (!s->source_settings &&
+        (!character_string(b,s,BOT_C_WEAPON_WEIGHTS,path,e) ||
+         !qa_bot_runtime_weapon_weights(b->runtime,s->weapons,path,&result,e))) return false;
     if (result) {
         bot_ai_source_setup_failed(&s->source_setup,BOT_SOURCE_SETUP_FAILED_WEAPON_WEIGHTS,result);
         if(s->goals && !qa_bot_goals_free(goals,s->goals,e)) return false;
@@ -359,9 +362,10 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     if (!qa_bot_runtime_chat_allocate(b->runtime, &s->chat, e)) return false;
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_CHAT,&s->chat,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHAT_STATE);
-    if (!character_string(b, s, BOT_C_CHAT_FILE, path, e) ||
-        !character_string(b, s, BOT_C_CHAT_NAME, name, e) ||
-        !qa_bot_runtime_chat_load(b->runtime, s->chat, path, name, &result, e)) return false;
+    if (!s->source_settings &&
+        (!character_string(b,s,BOT_C_CHAT_FILE,path,e) ||
+         !character_string(b,s,BOT_C_CHAT_NAME,name,e) ||
+         !qa_bot_runtime_chat_load(b->runtime,s->chat,path,name,&result,e))) return false;
     if (result) {
         bot_ai_source_setup_failed(&s->source_setup,BOT_SOURCE_SETUP_FAILED_CHAT_FILE,result);
         if(s->chat && !qa_bot_runtime_chat_free(b->runtime,s->chat,e)) return false;

@@ -6,6 +6,7 @@
 #include "source_command.h"
 #include "source_storage.h"
 #include "source_player.h"
+#include "qa/text.h"
 
 void bot_ai_source_setup_init(bot_source_setup_state *state) {
     *state=(bot_source_setup_state){0};
@@ -26,6 +27,16 @@ void bot_ai_source_setup_failed(bot_source_setup_state *state,bot_source_setup_f
         .kind=BOT_SOURCE_SETUP_FAILED,.value.failure={.stage=stage,.error=error}};
 }
 static bool gender(qa_bots *b,bot_ai_state *s,char text[144],qa_error *e) {
+    if(s->source_settings) {
+        char info[1024];qa_bytes value={0};
+        if(!b->services.get_userinfo ||
+           !b->services.get_userinfo(b->services.context,s->view.actor,info,sizeof(info),e)) return false;
+        if(!qa_info_find(info,(qa_bytes){(const uint8_t *)"sex",3},0,&value))
+            qa_info_find(info,(qa_bytes){(const uint8_t *)"gender",6},0,&value);
+        size_t size=value.size<143?value.size:143;
+        if(size) memcpy(text,value.data,size);
+        text[size]=0;return true;
+    }
     const char *value;
     bool written;
     if(!qa_bot_runtime_character_string(b->runtime,s->character,BOT_C_GENDER,&value,&written,e))
@@ -49,8 +60,8 @@ bool bot_ai_source_setup_published(qa_bots *b,bot_ai_state *s,bool restart,bool 
     if(!qa_bot_moves_allocate(qa_bot_runtime_moves(b->runtime),&s->movement,e)) return false;
     if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_MOVEMENT,&s->movement,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_MOVE_STATE);
-    float walker;
-    if(!bot_ai_character_float(b,s,BOT_C_WALKER,0,1,&walker,e)) return false;
+    float walker=s->source_settings && s->source_settings->movement.walk_only?1:0;
+    if(!s->source_settings && !bot_ai_character_float(b,s,BOT_C_WALKER,0,1,&walker,e)) return false;
     if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_WALKER,&walker,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WALKER);
     ++b->count;
@@ -60,13 +71,14 @@ bool bot_ai_source_setup_published(qa_bots *b,bot_ai_state *s,bool restart,bool 
         b->services.configuration(b->services.context):NULL;
     if(!configuration) return bot_ai_fail(e,"Bot setup has no actual source cvar owner");
     const qa_cvar_view *test=qa_cvars_find(configuration,"bot_testichat");
-    if(test && test->integer!=0) {
+    if(!s->source_settings && test && test->integer!=0) {
         if(!qa_bot_library_variable_set(qa_bot_runtime_library(b->runtime),"bot_testichat","1",e) ||
            !bot_ai_source_chat_test(b,s,e)) return false;
     }
     if(!bot_ai_schedule(b,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_SCHEDULED);
-    if(interbreed && !qa_bot_goals_mutate(qa_bot_runtime_goals(b->runtime),s->goals,e)) return false;
+    if(interbreed && !s->source_settings &&
+       !qa_bot_goals_mutate(qa_bot_runtime_goals(b->runtime),s->goals,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_INTERBRED);
     if(restart && !bot_ai_session_read(b,s,e)) return false;
     s->source_setup.progress=(bot_source_setup_progress){.kind=BOT_SOURCE_SETUP_COMPLETE};
@@ -129,7 +141,7 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
             QA_BOT_SOURCE_TEAM,s->source_setup.team,sizeof(s->source_setup.team),e)) return false;
     bool cooperative;
     if(!bot_ai_cooperative(b,s,&cooperative,e)) return false;
-    if(!cooperative && !s->source_setup.map_restart) {
+    if(!s->source_settings && !cooperative && !s->source_setup.map_restart) {
         int32_t game_type;
         if(!b->services.source_game_type)
             return bot_ai_fail(e,"Bot setup requires its actual source GAME game type");

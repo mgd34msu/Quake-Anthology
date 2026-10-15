@@ -189,8 +189,9 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         !scratch || !out || (count && !candidates)) {
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"Invalid bot arsenal choice input"); return false;
     }
-    float best=0,authored_best=0; double best_rate=0;
-    int32_t choice=policy?*out:0,best_role=-1,authored_choice=0;size_t best_order=SIZE_MAX;
+    float best=0,authored_best=0; double best_rate=0,physical_rate=-1;
+    int32_t choice=policy?*out:0,best_role=-1,authored_choice=0,physical_choice=choice;
+    size_t best_order=SIZE_MAX;
     for (size_t i=0;i<count;++i) {
         const qa_bot_weapon_knowledge *c=candidates+i;
         int32_t role=qa_bot_weapon_role(c);
@@ -238,7 +239,6 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         bool ok=qa_bot_runtime_weapon_weight_view(runtime,handle,(uint32_t)role,&observed,
                                               &weight,&found,e);
         if (!ok) return false;
-        if (!found) continue;
         double damage=c->selected_projectile_damage;
         if(c->launch_velocity) {
             damage=fmax(damage,c->selected_splash_damage);
@@ -248,11 +248,20 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         }
         double rate=c->weapon.reload>0 && (!c->launch_velocity || c->has_cycle) ?
             damage*c->weapon.projectile_count/c->weapon.reload : 0;
+        if(!found) {
+            if(!policy || (c->melee && !policy->allow_melee) ||
+               (c->has_supply?(!c->owned || !c->available):
+                    (!owned(c,inventory) || ammunition(c,inventory)<c->weapon.ammo_amount)) ||
+               (c->ranged_limit && policy->range>c->maximum_range)) continue;
+            double physical=rate>0?rate:damage*c->weapon.projectile_count;
+            if(physical>physical_rate) {physical_rate=physical;physical_choice=c->weapon.number;}
+            continue;
+        }
         if (weight>best || (weight>0 && weight==best && role==best_role && rate>best_rate)) {
             best=weight; choice=c->weapon.number; best_role=role; best_rate=rate;
         }
     }
-    *out=authored_best>0?authored_choice:choice;
+    *out=authored_best>0?authored_choice:policy && best<=0?physical_choice:choice;
     return true;
 }
 int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,size_t count,

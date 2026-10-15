@@ -235,7 +235,9 @@ static bool topology(const qa_bots *bots, qa_error *error)
         if(state->counted) ++count;
         if (!qa_bot_runtime_closed(bots->runtime)) {
             if ((!state->retired && state->inuse && state->shutdown_phase!=BOT_SHUTDOWN_DONE &&
-                 (!state->character || !state->goals || !state->weapons || !state->chat)) ||
+                 ((!state->character && !(bot_ai_rerelease_behavior(bots) &&
+                     qa_bot_source_skill_count(bots->services.source_knowledge))) ||
+                  !state->goals || !state->weapons || !state->chat)) ||
                 (state->character && !qa_bot_runtime_character(bots->runtime, state->character)) ||
                 (state->goals && !qa_bot_goals_has_handle(qa_bot_runtime_goals(bots->runtime), state->goals)) ||
                 (state->weapons && !qa_bot_runtime_weapon_has_handle(bots->runtime, state->weapons)) ||

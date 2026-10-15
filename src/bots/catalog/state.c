@@ -130,7 +130,7 @@ static bool load_characters(qa_bot_catalog *c,qa_error *e)
         if(!bot_catalog_info_set(c,info,"topcolor",number,e)) return false;
         snprintf(number,sizeof(number),"%.9g",(double)character->pants_color);
         if(!bot_catalog_info_set(c,info,"bottomcolor",number,e) ||
-           !bot_catalog_info_set(c,info,"aifile","bots/default_c.c",e) ||
+           !bot_catalog_info_set(c,info,"aifile","bots/characters.txt",e) ||
            !store_info(c,&c->bots,c->bots.count,info,e)) return false;
         ++c->bots.count;
     }

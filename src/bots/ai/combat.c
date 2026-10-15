@@ -547,10 +547,11 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, uint32_t travel_flags,
         return qa_bot_moves_goal(qa_bot_runtime_moves(b->runtime),s->movement,&goal,
             travel_flags,result,e);
     }
-    float skill,jumper,croucher;
-    if (!bot_ai_character_float(b,s,BOT_C_ATTACK,0,1,&skill,e) ||
-        !bot_ai_character_float(b,s,BOT_C_JUMPER,0,1,&jumper,e) ||
-        !bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&croucher,e)) return false;
+    float skill=1,jumper=0,croucher=0;
+    if (!s->source_settings &&
+        (!bot_ai_character_float(b,s,BOT_C_ATTACK,0,1,&skill,e) ||
+         !bot_ai_character_float(b,s,BOT_C_JUMPER,0,1,&jumper,e) ||
+         !bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&croucher,e))) return false;
     if (!s->source_settings && skill < .2f) return true;
     if (!bot_ai_move_setup(b,s,e)) return false;
     qa_bot_entity_info info;bool observed;

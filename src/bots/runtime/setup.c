@@ -272,13 +272,15 @@ static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
     const qa_bot_variable *path;
     if (!bot_runtime_integer(r, "max_iteminfo", "256", &count, e) ||
         !bot_runtime_integer(r, "g_gametype", "0", &game_type, e) ||
-        !bot_runtime_integer(r, "max_levelitems", "256", &maximum, e) ||
-        !bot_runtime_variable(r, "itemconfig", "items.c", &path, e)) return false;
+        !bot_runtime_integer(r, "max_levelitems", "256", &maximum, e)) return false;
     if (count < 0) {
         count = 256;
         if (!qa_bot_library_variable_set(r->library, "max_iteminfo", "256", e)) return false;
     }
     if (maximum <= 0) return bot_runtime_fail(e, "max_levelitems must be positive");
+    if(r->services.source_knowledge)
+        return qa_bot_goals_reconfigure(r->goals,NULL,game_type,(uint32_t)maximum,e);
+    if(!bot_runtime_variable(r,"itemconfig","items.c",&path,e)) return false;
     qa_bot_items *items; qa_error local = {0};
     if (!qa_bot_items_load(r->library, path->string, (size_t)count, &items, &local)) {
         if (source_failure(r, &local)) {
@@ -310,7 +312,7 @@ static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
     ++r->chat_system->revision;
     uint64_t revision=r->chat_system->revision;
     bool ok = true;
-    for (size_t i = 0; ok && i < 4; ++i) {
+    for (size_t i = 0; ok && !r->services.source_knowledge && i < 4; ++i) {
         if(i==3) {
             const qa_bot_variable *nochat;
             if(!bot_runtime_variable(r,"nochat","0",&nochat,e)) {ok=false;break;}
