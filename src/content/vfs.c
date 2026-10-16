@@ -108,14 +108,14 @@ char *qa_vfs_normalize_path(const char *path, qa_error *error)
     const char *part = path;
     for (const char *cursor = path;; cursor++) {
         if (*cursor == ':') {
-            qa_error_set(error, QA_ERROR_ARGUMENT, (size_t)(cursor - path), "unsafe resource path");
+            qa_error_set(error, QA_ERROR_ARGUMENT, (size_t)(cursor - path), "unsafe resource path: %s", path);
             return NULL;
         }
         if (*cursor == '/' || *cursor == '\\' || *cursor == '\0') {
             size_t length = (size_t)(cursor - part);
             if (length == 0 || (length == 1 && part[0] == '.') ||
                 (length == 2 && part[0] == '.' && part[1] == '.')) {
-                qa_error_set(error, QA_ERROR_ARGUMENT, (size_t)(part - path), "unsafe resource path");
+                qa_error_set(error, QA_ERROR_ARGUMENT, (size_t)(part - path), "unsafe resource path: %s", path);
                 return NULL;
             }
             if (*cursor == '\0') break;
