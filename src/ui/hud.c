@@ -1266,10 +1266,17 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene,
         }
     }
     if (messages && !frame->weapon_only) {
-        size_t i = 0;
-        for (const hud_message *notice = hud->notices; notice; notice = notice->next, ++i) {
-            if (notice->starts > frame->time_ns) continue;
-            if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
+        enum { NOTICE_LIMIT = 6 };
+        const hud_message *notices[NOTICE_LIMIT];
+        size_t count = 0;
+        for (const hud_message *notice = hud->notices; notice; notice = notice->next) {
+            if (notice->starts > frame->time_ns || notice->until <= frame->time_ns) continue;
+            notices[count++ % NOTICE_LIMIT] = notice;
+        }
+        size_t first = count > NOTICE_LIMIT ? count - NOTICE_LIMIT : 0;
+        for (size_t i = first; i < count; ++i) {
+            const hud_message *notice = notices[i % NOTICE_LIMIT];
+            if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)(i - first) * 16, notice->text,
                 notice->chat ? (qa_vec4){.6f, 1, .6f, 1} : (qa_vec4){1, 1, 1, 1},
                 1, QA_FONT_ALIGN_LEFT, error)) return false;
         }
