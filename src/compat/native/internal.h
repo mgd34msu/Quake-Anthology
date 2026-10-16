@@ -230,6 +230,7 @@ struct native_region_slot {
 
 struct qa_native_declaration {
     size_t references;
+    qa_native_target target;
     uint8_t *json;
     size_t json_size;
     size_t primary_offset, primary_size;

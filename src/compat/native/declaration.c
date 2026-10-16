@@ -306,6 +306,47 @@ static bool movement_points(qa_native_declaration *declaration, const qa_native_
     return true;
 }
 
+static bool pickup_regions(qa_native_declaration *declaration, const qa_native_module *module,
+    qa_json_id primary, qa_error *error)
+{
+    const qa_json_document *d = declaration->document;
+    qa_json_id pickups = qa_json_get(d, primary, "pickups");
+    if (qa_json_type(d, pickups) != QA_JSON_OBJECT) return true;
+    uint64_t point;
+    if (!qa_json_u64(d, qa_json_get(d, pickups, "targetsReturn"), &point, error) ||
+        !append_region(declaration, module, "/pickups/targets", point, point, false, 0, 0, error)) return false;
+    qa_json_id ammo = qa_json_get(d, qa_json_get(d, pickups, "supply"), "ammo");
+    if (!qa_json_u64(d, qa_json_get(d, ammo, "entry"), &point, error) ||
+        !append_region(declaration, module, "/pickups/supply/ammo/function", point, point, false, 0, 0, error)) return false;
+    qa_json_id stop = qa_json_get(d, ammo, "stop");
+    if (stop != QA_JSON_NONE && qa_json_type(d, stop) != QA_JSON_NULL &&
+        (!qa_json_u64(d, stop, &point, error) ||
+         !append_region(declaration, module, "/pickups/supply/ammo/stop", point, point, false, 0, 0, error))) return false;
+    qa_json_id grants = qa_json_get(d, pickups, "grants");
+    for (size_t i = 0; i < qa_json_size(d, grants); ++i) {
+        qa_json_id grant = qa_json_at(d, grants, i), supply = qa_json_get(d, grant, "supply");
+        char path[128];
+        if (qa_json_string_equal(d, qa_json_get(d, supply, "kind"), "ammo")) {
+            uint64_t join;
+            if (!qa_json_u64(d, qa_json_get(d, supply, "entry"), &point, error) ||
+                !qa_json_u64(d, qa_json_get(d, qa_json_get(d, grant, "recipient"), "join"), &join, error)) return false;
+            snprintf(path, sizeof(path), "/pickups/grants/%zu/supply", i);
+            if (!append_region(declaration, module, path, point, join, false, 0, 0, error)) return false;
+        } else if (qa_json_string_equal(d, qa_json_get(d, supply, "kind"), "weapon")) {
+            if (!qa_json_u64(d, qa_json_get(d, supply, "settle"), &point, error)) return false;
+            snprintf(path, sizeof(path), "/pickups/grants/%zu/settle", i);
+            if (!append_region(declaration, module, path, point, point, false, 0, 0, error)) return false;
+        }
+        qa_json_id consumers = qa_json_get(d, grant, "consumers");
+        for (size_t j = 0; j < qa_json_size(d, consumers); ++j) {
+            if (!qa_json_u64(d, qa_json_get(d, qa_json_at(d, consumers, j), "entry"), &point, error)) return false;
+            snprintf(path, sizeof(path), "/pickups/grants/%zu/consumers/%zu/function", i, j);
+            if (!append_region(declaration, module, path, point, point, false, 0, 0, error)) return false;
+        }
+    }
+    return true;
+}
+
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,
                             qa_json_id value, const char *path, unsigned depth, qa_error *error) {
     if (depth > 64u)
@@ -397,6 +438,7 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         return native_fail(error, QA_ERROR_MEMORY, 0, "allocating native declaration");
     }
     declaration->references = 1;
+    declaration->target = module->info.image.target;
     if (json.size)
         memcpy(declaration->json, json.data, json.size);
     declaration->json_size = json.size;
@@ -413,7 +455,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         if (valid) {
             declaration->primary = root;
             valid = collect_regions(declaration, module, root, "", 0, error) &&
-                movement_points(declaration, module, root, error);
+                movement_points(declaration, module, root, error) &&
+                pickup_regions(declaration, module, root, error);
         }
         free(selected_path);
         if (!valid) { qa_native_declaration_destroy(declaration); return false; }
@@ -497,7 +540,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         declaration->primary_size = primary_source.size;
         valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
             inventory_regions(declaration, module, selected_primary, error) &&
-            movement_points(declaration, module, selected_primary, error);
+            movement_points(declaration, module, selected_primary, error) &&
+            pickup_regions(declaration, module, selected_primary, error);
     }
     for (size_t index = 0; index < module_count; ++index)
         free(paths[index]);
@@ -729,5 +773,130 @@ bool qa_native_declaration_source(const qa_native_declaration *declaration,
     if (!out || !declaration_value(declaration, json_pointer, &value, error))
         return false;
     *out = qa_json_source(declaration->document, value);
+    return true;
+}
+
+static bool signature_scalar(const qa_json_document *d, qa_json_id id, uint8_t pointers,
+    qa_native_type *out, size_t *bytes, qa_error *error)
+{
+    static const struct { const char *name; qa_native_value_type kind; uint8_t bytes; } types[] = {
+        {"int8",QA_NATIVE_I8,1},{"uint8",QA_NATIVE_U8,1},
+        {"int16",QA_NATIVE_I16,2},{"uint16",QA_NATIVE_U16,2},
+        {"int32",QA_NATIVE_I32,4},{"uint32",QA_NATIVE_U32,4},
+        {"int64",QA_NATIVE_I64,8},{"uint64",QA_NATIVE_U64,8},
+        {"float32",QA_NATIVE_F32,4},{"float64",QA_NATIVE_F64,8},
+        {"pointer",QA_NATIVE_ADDRESS,0}
+    };
+    for (size_t i = 0; i < sizeof(types)/sizeof(*types); ++i)
+        if (qa_json_string_equal(d, id, types[i].name)) {
+            *out = (qa_native_type){.kind = types[i].kind, .count = 1};
+            *bytes = types[i].bytes ? types[i].bytes : pointers;
+            return true;
+        }
+    return native_fail(error, QA_ERROR_FORMAT, 0, "Native ABI signature has an unknown scalar storage");
+}
+
+static bool signature_type(const qa_json_document *d, qa_json_id id, uint8_t pointers,
+    qa_arena *storage, qa_native_type *out, qa_error *error)
+{
+    qa_json_id kind = qa_json_get(d, id, "kind");
+    size_t bytes;
+    if (qa_json_string_equal(d, kind, "scalar"))
+        return signature_scalar(d, qa_json_get(d, id, "storage"), pointers, out, &bytes, error);
+    if (!qa_json_string_equal(d, kind, "aggregate"))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "Native ABI signature has no value layout");
+    qa_json_id layout = qa_json_get(d, id, "layout"), rows = qa_json_get(d, layout, "fields");
+    uint64_t width, length, alignment;
+    if (!qa_json_u64(d, qa_json_get(d, layout, "pointerBytes"), &width, error) ||
+        !qa_json_u64(d, qa_json_get(d, layout, "byteLength"), &length, error) ||
+        !qa_json_u64(d, qa_json_get(d, layout, "alignment"), &alignment, error)) return false;
+    size_t count = qa_json_size(d, rows);
+    if (width != pointers || !length || qa_json_type(d, rows) != QA_JSON_ARRAY || !count ||
+        !qa_json_string_equal(d, qa_json_get(d, layout, "byteOrder"), "little-endian") ||
+        count > SIZE_MAX/sizeof(qa_native_type))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "Native ABI aggregate differs from its source layout");
+    qa_native_type *fields = qa_arena_alloc(storage, count*sizeof(*fields), _Alignof(qa_native_type), error);
+    uint64_t *offsets = qa_arena_alloc(storage, count*sizeof(*offsets), _Alignof(uint64_t), error);
+    size_t *sizes = qa_arena_alloc(storage, count*sizeof(*sizes), _Alignof(size_t), error);
+    if (!fields || !offsets || !sizes) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_json_id row = qa_json_at(d, rows, i);
+        uint64_t repeats;
+        if (!signature_scalar(d, qa_json_get(d, row, "storage"), pointers, fields+i, sizes+i, error) ||
+            !qa_json_u64(d, qa_json_get(d, row, "byteOffset"), offsets+i, error) ||
+            !qa_json_u64(d, qa_json_get(d, row, "count"), &repeats, error)) return false;
+        if (!repeats || repeats > SIZE_MAX/sizes[i])
+            return native_fail(error, QA_ERROR_FORMAT, i, "Native ABI aggregate field count overflows");
+        fields[i].count = (size_t)repeats;
+        for (size_t j = i; j && offsets[j] < offsets[j-1]; --j) {
+            uint64_t at = offsets[j]; offsets[j] = offsets[j-1]; offsets[j-1] = at;
+            size_t size = sizes[j]; sizes[j] = sizes[j-1]; sizes[j-1] = size;
+            qa_native_type field = fields[j]; fields[j] = fields[j-1]; fields[j-1] = field;
+        }
+    }
+    uint64_t next = 0;
+    size_t natural = 1;
+    for (size_t i = 0; i < count; ++i) {
+        size_t align = sizes[i] < pointers ? sizes[i] : pointers;
+        if (align > natural) natural = align;
+        if (next > UINT64_MAX-(align-1))
+            return native_fail(error, QA_ERROR_FORMAT, i, "Native ABI aggregate offset overflows");
+        next = (next+align-1) & ~(uint64_t)(align-1);
+        uint64_t extent = sizes[i]*fields[i].count;
+        if (offsets[i] != next || extent > UINT64_MAX-next)
+            return native_fail(error, QA_ERROR_UNSUPPORTED, i, "Native ABI packed or sparse aggregate is unsupported");
+        next += extent;
+    }
+    if (next > UINT64_MAX-(natural-1) ||
+        ((next+natural-1) & ~(uint64_t)(natural-1)) != length || alignment != natural)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native ABI aggregate alignment is unsupported");
+    *out = (qa_native_type){.kind = QA_NATIVE_BYTES, .fields = fields, .field_count = count, .count = 1};
+    return true;
+}
+
+bool qa_native_declaration_signature(const qa_native_declaration *declaration, const char *path,
+    qa_arena *storage, qa_native_signature *out, qa_error *error)
+{
+    qa_json_id id;
+    if (!storage || !out || !declaration_value(declaration, path, &id, error)) return false;
+    const qa_json_document *d = declaration->document;
+    qa_json_id abi = qa_json_get(d, id, "abi"), call = qa_json_get(d, abi, "call");
+    const qa_native_target *target = &declaration->target;
+    const char *kind = target->os == QA_NATIVE_OS_WINDOWS ?
+        (target->pointer_bytes == 4 ? "windows-i386" : "windows-x86-64") :
+        (target->pointer_bytes == 4 ? "linux-i386" : "linux-x86-64");
+    const char *image = target->os == QA_NATIVE_OS_WINDOWS ?
+        (target->pointer_bytes == 4 ? "pe32" : "pe32+") :
+        (target->pointer_bytes == 4 ? "elf32" : "elf64");
+    uint64_t width;
+    if (!qa_json_u64(d, qa_json_get(d, abi, "pointerBytes"), &width, error)) return false;
+    qa_native_signature signature = {.abi = target->abi};
+    bool valid_call = false;
+    if (target->abi == QA_NATIVE_ABI_CDECL_I386) {
+        valid_call = qa_json_string_equal(d, call, "cdecl");
+        if (qa_json_string_equal(d, call, "stdcall")) signature.convention = QA_NATIVE_CALL_STDCALL;
+        if (qa_json_string_equal(d, call, "fastcall")) signature.convention = QA_NATIVE_CALL_FASTCALL;
+        if (qa_json_string_equal(d, call, "thiscall")) signature.convention = QA_NATIVE_CALL_THISCALL;
+        valid_call |= signature.convention != QA_NATIVE_CALL_DEFAULT;
+    } else if (target->abi == QA_NATIVE_ABI_MICROSOFT_X64) valid_call = qa_json_string_equal(d, call, "microsoft-x64");
+    else if (target->abi == QA_NATIVE_ABI_SYSTEM_V_I386) valid_call = qa_json_string_equal(d, call, "system-v-i386");
+    else if (target->abi == QA_NATIVE_ABI_SYSTEM_V_X64) valid_call = qa_json_string_equal(d, call, "system-v-x86-64");
+    if (width != target->pointer_bytes || !qa_json_string_equal(d, qa_json_get(d, abi, "kind"), kind) ||
+        !qa_json_string_equal(d, qa_json_get(d, abi, "image"), image) || !valid_call)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native ABI signature differs from the admitted module");
+    qa_json_id rows = qa_json_get(d, id, "parameters");
+    size_t count = qa_json_size(d, rows);
+    if (qa_json_type(d, rows) != QA_JSON_ARRAY || count > SIZE_MAX/sizeof(qa_native_type))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "Native ABI signature parameters are invalid");
+    qa_native_type *parameters = count ? qa_arena_alloc(storage, count*sizeof(*parameters), _Alignof(qa_native_type), error) : NULL;
+    if (count && !parameters) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (!signature_type(d, qa_json_at(d, rows, i), target->pointer_bytes, storage, parameters+i, error)) return false;
+    signature.parameters = parameters; signature.parameter_count = count;
+    qa_json_id result = qa_json_get(d, id, "result");
+    if (qa_json_string_equal(d, result, "void")) signature.result = (qa_native_type){.kind = QA_NATIVE_VOID, .count = 1};
+    else if (!signature_type(d, result, target->pointer_bytes, storage, &signature.result, error)) return false;
+    if (!qa_json_bool(d, qa_json_get(d, id, "variadic"), &signature.variadic, error)) return false;
+    *out = signature;
     return true;
 }

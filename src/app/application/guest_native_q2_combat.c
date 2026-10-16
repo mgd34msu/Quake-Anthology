@@ -52,13 +52,21 @@ typedef struct combat_frame {
     const qa_damage_request *request;
     qa_damage_observer *observer;
     qa_damage_result result;
-    qa_native_write_observer *health_watch, *velocity_watch, *armor_watch;
+    qa_native_write_observer *health_watch, *velocity_watch, *armor_watch, *flags_watch;
     qa_native_write_observer *pain_watch, *die_watch;
     double health;
     qa_armor armor;
     qa_vec3 velocity;
     bool active, reacting, entering;
 } combat_frame;
+typedef struct combat_pickup_frame {
+    combat_frame frame;
+    struct combat_pickup_frame *previous;
+    qa_pickup_execution *execution;
+    qa_protection_channel channel;
+    bool (*committed)(void *);
+    void *committed_context;
+} combat_pickup_frame;
 typedef struct combat_armor_hook {
     struct application_native_q2_combat *owner;
     qa_protection_channel channel;
@@ -87,6 +95,7 @@ struct application_native_q2_combat {
     qa_native_entry_observer *damage;
     combat_armor_hook armor[2];
     combat_frame *current, *retained;
+    combat_pickup_frame *pickups;
     combat_incoming *incoming;
     combat_deferred *deferred;
     struct application_q2_kex_damage *kex;
@@ -292,13 +301,25 @@ static bool armor_validate(void *opaque, const qa_armor *value, qa_error *error)
     bool ok = application_q2_combat_armor_validate(&record->source, value, error);
     --record->owner->engine->calls; record_leave(record); return ok;
 }
+static bool pickup_projection_active(const struct application_native_q2_combat *p, qa_actor_id actor)
+{
+    for (combat_pickup_frame *pickup = p->pickups; pickup; pickup = pickup->previous)
+        if (pickup->frame.active && qa_actor_id_equal(pickup->frame.record->source.actor, actor) &&
+            pickup->committed && !pickup->committed(pickup->committed_context)) return true;
+    return false;
+}
 static bool armor_write(void *opaque, const qa_armor *value, qa_error *error)
 {
     combat_record *record = opaque; ++record->calls; ++record->owner->engine->calls;
     bool ok = application_q2_combat_armor_write(&record->source, value, error);
-    if (ok) for (combat_frame *frame = record->owner->current; frame; frame = frame->previous)
+    if (ok && !pickup_projection_active(record->owner, record->source.actor))
+      for (combat_frame *frame = record->owner->current; frame; frame = frame->previous)
         if (frame->active && qa_actor_id_equal(frame->record->source.actor, record->source.actor) &&
             !application_q2_combat_armor_read(&frame->record->source, &frame->armor, error)) { ok = false; break; }
+    if (ok && !pickup_projection_active(record->owner, record->source.actor))
+      for (combat_pickup_frame *pickup = record->owner->pickups; pickup; pickup = pickup->previous)
+        if (pickup->frame.active && qa_actor_id_equal(pickup->frame.record->source.actor, record->source.actor) &&
+            !application_q2_combat_armor_read(&pickup->frame.record->source, &pickup->frame.armor, error)) { ok = false; break; }
     --record->owner->engine->calls; record_leave(record); return ok;
 }
 static bool empty_armor(void *opaque, double points, qa_regular_armor *out, bool *selected, qa_error *error)
@@ -322,8 +343,13 @@ static bool refresh_comparison_state(struct application_native_q2_combat *p, qa_
         qa_combat_state state;
         if (!state_read(frame->record, &state, error) ||
             !vector_read(p, frame->record->source.address + p->profile.velocity, &frame->velocity, error)) return false;
-        frame->health = state.health; frame->armor = state.armor;
+        frame->health = state.health;
+        if (!pickup_projection_active(p, frame->record->source.actor)) frame->armor = state.armor;
     }
+    for (combat_pickup_frame *pickup = p->pickups; pickup; pickup = pickup->previous)
+        if (pickup->frame.active && !pickup->frame.record->retired &&
+            !pickup_projection_active(p, pickup->frame.record->source.actor) &&
+            !application_q2_combat_armor_read(&pickup->frame.record->source, &pickup->frame.armor, error)) return false;
     return true;
 }
 static bool committed_health(void *opaque, qa_native_instance *instance,
@@ -368,7 +394,8 @@ static bool committed_armor(void *opaque, qa_native_instance *instance,
     const qa_native_write_event *event, qa_error *error)
 {
     (void)instance; (void)event; combat_frame *frame = opaque;
-    if (!frame->active || frame->reacting) return true;
+    if (!frame->active || frame->reacting ||
+        pickup_projection_active(frame->owner, frame->record->source.actor)) return true;
     qa_armor after;
     if (!application_q2_combat_armor_read(&frame->record->source, &after, error)) return false;
     qa_armor before = frame->armor; frame->armor = after;
@@ -396,7 +423,7 @@ static bool committed_callback(void *opaque, qa_native_instance *instance,
 static bool remove_watches(combat_frame *frame, qa_error *error)
 {
     qa_native_write_observer **bindings[] = {&frame->health_watch, &frame->velocity_watch,
-        &frame->armor_watch, &frame->pain_watch, &frame->die_watch};
+        &frame->armor_watch, &frame->flags_watch, &frame->pain_watch, &frame->die_watch};
     bool ok = true; qa_error first = {0};
     for (size_t i = 0; i < sizeof(bindings) / sizeof(*bindings); ++i) {
         qa_error current = {0};
@@ -405,6 +432,75 @@ static bool remove_watches(combat_frame *frame, qa_error *error)
     }
     if (!ok && error) *error = first;
     return ok;
+}
+static bool committed_pickup(void *opaque, qa_native_instance *instance,
+    const qa_native_write_event *event, qa_error *error)
+{
+    (void)instance; (void)event;
+    combat_pickup_frame *pickup = opaque;
+    combat_frame *frame = &pickup->frame;
+    combat_record *record = frame->record;
+    if (!frame->active || record->retired || !record->bound ||
+        !qa_pickup_current(pickup->execution) ||
+        pickup_projection_active(frame->owner, record->source.actor)) return true;
+    qa_armor after;
+    if (!application_q2_combat_armor_read(&record->source, &after, error)) return false;
+    qa_armor before = frame->armor; frame->armor = after;
+    struct application_native_q2_combat *p = frame->owner;
+    qa_actor_id actor = record->source.actor;
+    if (qa_combat_protection_owner(shared(p), actor, pickup->channel, NULL, NULL)) return true;
+    for (combat_frame *damage = p->current; damage; damage = damage->previous)
+        if (damage->active && qa_actor_id_equal(damage->record->source.actor, actor)) return true;
+    for (combat_pickup_frame *nested = p->pickups; nested != pickup; nested = nested->previous)
+        if (nested->frame.active && nested->channel == pickup->channel &&
+            qa_actor_id_equal(nested->frame.record->source.actor, actor)) return true;
+    bool regular = pickup->channel == QA_PROTECTION_REGULAR;
+    if (regular ? qa_regular_armor_equal(before.regular, after.regular) :
+        qa_powered_armor_equal(before.powered, after.powered)) return true;
+    qa_protection_store change = {.regular = regular, .powered = !regular,
+        .before = before, .after = after};
+    return qa_combat_pickup_store(shared(p), actor, p->engine->provider->owner, &change, error);
+}
+bool application_native_q2_combat_pickup(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_pickup_execution *execution, qa_protection_channel channel,
+    bool (*execute)(void *, qa_error *), void *context,
+    bool (*committed)(void *), void *committed_context, qa_error *error)
+{
+    struct application_native_q2_combat *p = engine->source_combat;
+    combat_record *record = p ? record_for(p, actor) : NULL;
+    if (!record || !record->bound || !p->active) return execute(context, error);
+    ++record->calls; ++engine->calls;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
+    combat_pickup_frame *pickup = storage ? qa_unified_frame_lease_alloc(storage, 1,
+        sizeof(*pickup), _Alignof(combat_pickup_frame), error) : NULL;
+    bool okay = pickup != NULL, retained = false;
+    if (!pickup) qa_unified_frame_lease_release(storage);
+    if (pickup) {
+        pickup->frame = (combat_frame){.owner = p, .storage = storage, .record = record, .active = true};
+        pickup->previous = p->pickups; pickup->execution = execution; pickup->channel = channel;
+        pickup->committed = committed; pickup->committed_context = committed_context;
+        p->pickups = pickup;
+        qa_native_address client = 0;
+        okay = application_q2_combat_armor_read(&record->source, &pickup->frame.armor, error) &&
+            pointer_read(p, record->source.address + p->profile.client_pointer, &client, error) &&
+            qa_native_observe_writes(native(p), record->source.address + p->profile.flags,
+                p->profile.kex ? 8 : 4, committed_pickup, pickup, &pickup->frame.flags_watch, error);
+        if (okay && client) okay = qa_native_observe_writes(native(p), client + p->profile.inventory,
+            (size_t)p->profile.inventory_count * 4, committed_pickup, pickup, &pickup->frame.armor_watch, error);
+        if (okay) okay = execute(context, error);
+        pickup->frame.active = false;
+        p->pickups = pickup->previous;
+        qa_error cleanup = {0};
+        if (remove_watches(&pickup->frame, &cleanup)) qa_unified_frame_lease_release(storage);
+        else {
+            if (okay && error) *error = cleanup;
+            okay = false;
+            pickup->frame.retained_next = p->retained; p->retained = &pickup->frame; retained = true;
+        }
+    }
+    --engine->calls;
+    if (!retained) record_leave(record);
+    return okay;
 }
 typedef struct original_reaction {
     qa_native_entry_observer *binding;
@@ -911,7 +1007,7 @@ bool application_native_q2_combat_suspend(struct application_native_q2 *engine, 
 {
     struct application_native_q2_combat *p = engine->source_combat;
     if (!p) return true;
-    if (p->current || p->incoming || p->deferred) return application_fail(error, QA_ERROR_ARGUMENT, "Native combat suspension requires drained source damage and reaction helpers");
+    if (p->current || p->incoming || p->deferred || p->pickups) return application_fail(error, QA_ERROR_ARGUMENT, "Native combat suspension requires drained source damage, pickup and reaction helpers");
     combat_record *record = p->records;
     while (record) {
         ++record->calls;

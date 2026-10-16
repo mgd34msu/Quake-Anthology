@@ -2,6 +2,7 @@
 #define QA_NATIVE_H
 
 #include "qa/actors.h"
+#include "qa/arena.h"
 #include "qa/json.h"
 #include "qa/qvm.h"
 
@@ -667,6 +668,9 @@ bool qa_native_declaration_string(const qa_native_declaration *declaration,
                                   const char *json_pointer, qa_buffer *out, qa_error *error);
 bool qa_native_declaration_source(const qa_native_declaration *declaration,
                                   const char *json_pointer, qa_bytes *out, qa_error *error);
+/* Cold ABI layouts borrow caller-owned arena storage. */
+bool qa_native_declaration_signature(const qa_native_declaration *, const char *json_pointer,
+    qa_arena *, qa_native_signature *, qa_error *);
 
 typedef enum qa_native_region_phase {
     QA_NATIVE_REGION_ENTER,

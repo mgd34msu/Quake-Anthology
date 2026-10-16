@@ -5,6 +5,9 @@
 struct application_native_q2;
 bool application_native_q2_combat_apply(struct application_native_q2 *,
     const qa_damage_request *, qa_damage_outcome *, qa_error *);
+bool application_native_q2_combat_pickup(struct application_native_q2 *, qa_actor_id,
+    qa_pickup_execution *, qa_protection_channel, bool (*execute)(void *, qa_error *), void *,
+    bool (*committed)(void *), void *, qa_error *);
 bool application_native_q2_combat_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_load(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_activate(struct application_native_q2 *, qa_error *);

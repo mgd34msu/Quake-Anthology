@@ -12,6 +12,7 @@
 #include "native_q2_client_outputs.h"
 #include "native_q2_source_actors.h"
 #include "native_q2_inventory_scanner.h"
+#include "guest_native_q2_primary_pickups.h"
 #include "native_q2_inventory_rows.h"
 #include <limits.h>
 
@@ -71,6 +72,7 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     if (!engine || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore requires an idle detached candidate owner");
     if (!application_q2_control_suspend(engine, error)) return false;
+    if (!application_native_q2_primary_pickups_suspend(engine, error)) return false;
     if (!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     if (!application_native_q2_callbacks_suspend(engine,error)) return false;
     if (!application_native_q2_source_actors_suspend(engine,error)) return false;
@@ -92,6 +94,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
         !qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_native_q2_attack_activate(engine, error)) return false;
     if (!application_native_q2_combat_activate(engine, error)) return false;
+    if (!application_native_q2_primary_pickups_activate(engine, error)) return false;
     if (engine->initialized && engine->map_ready &&
         !application_q2_control_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;

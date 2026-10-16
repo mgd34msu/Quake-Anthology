@@ -724,6 +724,18 @@ bool qa_combat_normalize_legacy_armor(qa_combat *combat, qa_actor_id actor, cons
     if (!qa_armor_validate(&normalized, error)) return false;
     *out = normalized; return true;
 }
+static bool primary_protection_owner(qa_combat *combat, const qa_combat_record *entry,
+    qa_protection_channel channel, qa_actor_owner *owner)
+{
+    if (entry->external) {
+        *owner = entry->binding.primary_protection[channel];
+        return entry->binding.has_primary_protection[channel];
+    }
+    const qa_actor_record *identity = qa_actors_get(combat->actors, entry->actor);
+    *owner = identity ? identity->owner : 0;
+    return identity && (channel == QA_PROTECTION_REGULAR || entry->power_inventory ||
+        entry->state.armor.powered.kind != QA_POWER_NONE);
+}
 bool qa_combat_reserve_protection(qa_combat *combat, qa_actor_id actor, qa_protection_channel channel,
                                  const qa_protection_claim *claim, qa_protection_lease *out, qa_error *error) {
     qa_combat_record *entry;
@@ -734,9 +746,8 @@ bool qa_combat_reserve_protection(qa_combat *combat, qa_actor_id actor, qa_prote
     if (!require_record(combat, actor, &entry, error)) return false;
     qa_combat_protection *slot = &entry->protection[channel];
     if (slot->reserved) return qa_combat_argument(error, "protection channel already reserved");
-    const qa_actor_record *identity = qa_actors_get(combat->actors, actor);
-    bool has_owner = entry->external ? entry->binding.has_primary_protection[channel] : channel == QA_PROTECTION_REGULAR || entry->power_inventory || entry->state.armor.powered.kind != QA_POWER_NONE;
-    qa_actor_owner owner = entry->external ? entry->binding.primary_protection[channel] : identity->owner;
+    qa_actor_owner owner;
+    bool has_owner = primary_protection_owner(combat, entry, channel, &owner);
     if ((claim->admission == QA_PROTECTION_CLAIM && has_owner) || (claim->admission == QA_PROTECTION_REPLACE_PRIMARY && (!has_owner || owner != claim->expected_owner)))
         return qa_combat_argument(error, "protection claim does not match primary ownership");
     if (entry->external && entry->binding.source_damage && !entry->binding.source_armor_stages[channel])
@@ -871,7 +882,10 @@ static bool pickup_store_current(qa_combat *combat, qa_actor_id actor, qa_actor_
     if (!require_record(combat, actor, &entry, error)) return false;
     for (unsigned c = 0; c != 2; ++c) if (c == QA_PROTECTION_REGULAR ? change->regular : change->powered) {
         qa_combat_protection *slot = &entry->protection[c];
-        if (!slot->bound || slot->claim.owner != owner) return qa_combat_argument(error, "protection store exceeds component authority");
+        qa_actor_owner primary;
+        bool owned = slot->reserved ? slot->bound && slot->claim.owner == owner :
+            primary_protection_owner(combat, entry, (qa_protection_channel)c, &primary) && primary == owner;
+        if (!owned) return qa_combat_argument(error, "protection store exceeds component authority");
     }
     qa_combat_state actual;
     if (!read_state(combat, entry, &actual, error)) return false;

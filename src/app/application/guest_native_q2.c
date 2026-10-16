@@ -11,6 +11,7 @@
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_primary_pickups.h"
 #include "guest_q2_control.h"
 #include "q3_product.h"
 #include "startup_flow.h"
@@ -100,6 +101,7 @@ static bool owner_returned(const application_provider *provider, bool own_loadin
         application_native_q2_stages_idle(engine->stages) &&
         application_native_q2_source_actors_returned(engine->source_actors) &&
         application_native_q2_inventory_scanner_returned(engine->inventory_scanner) &&
+        application_native_q2_primary_pickups_returned(engine->primary_pickups) &&
         application_native_q2_inventory_rows_idle(engine->inventory_rows) &&
         (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
@@ -111,6 +113,7 @@ bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine=provider?provider->state.native.q2_engine:NULL;
     return owner_returned(provider, false)&&(!engine||(application_native_q2_inventory_scanner_idle(engine->inventory_scanner)&&
+        application_native_q2_primary_pickups_idle(engine->primary_pickups) &&
         application_native_q2_source_actors_idle(engine->source_actors)));
 }
 
@@ -119,6 +122,7 @@ bool application_native_q2_loading_idle(const application_provider *provider)
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return engine && !provider->attached && engine->loading_phase && owner_returned(provider, true) &&
         application_native_q2_inventory_scanner_idle(engine->inventory_scanner) &&
+        application_native_q2_primary_pickups_idle(engine->primary_pickups) &&
         application_native_q2_source_actors_idle(engine->source_actors);
 }
 
@@ -320,7 +324,8 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         !application_native_q2_attack_prepare(engine, error) ||
         !application_native_q2_prediction_prepare(engine, error)) return false;
     if (!application_native_q2_combat_prepare(engine, error) ||
-        !application_q2_control_prepare(engine, error)) return false;
+        !application_q2_control_prepare(engine, error) ||
+        !application_native_q2_primary_pickups_prepare(engine, error)) return false;
     qa_ruleset_id dialect = provider->launch->selection.clock.kind;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
@@ -503,7 +508,7 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
                 &engine->application, &engine->application_context, error)) return false;
         qa_native_host_instance_options instance = {.declaration = engine->declaration,
             .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
-                engine->source_control != NULL || engine->primary_inventory != NULL ||
+                engine->source_control != NULL || engine->primary_inventory != NULL || engine->primary_pickups != NULL ||
                 application_native_q2_callbacks_observation_required(engine->callbacks),
             .runtime = provider->application->native_runtime_config,
             .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
@@ -669,6 +674,7 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
         application_native_q2_wire_begin(engine,error)&&
         application_native_q2_attack_activate(engine,error)&&
         application_native_q2_combat_activate(engine,error)&&
+        application_native_q2_primary_pickups_activate(engine,error)&&
         application_q2_control_activate(engine,error)&&
         qa_native_host_source_reconcile(provider->state.native.host,error)&&
         declared_initialize(engine,error)&&
@@ -812,6 +818,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     if (ok && !engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
     if (ok && !original) ok = application_native_q2_attack_activate(engine, error);
     if (ok && !original) ok = application_native_q2_combat_activate(engine, error);
+    if (ok && !original) ok = application_native_q2_primary_pickups_activate(engine, error);
     if (ok && !original) ok = application_q2_control_activate(engine, error);
     if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
     const char *source_entities = engine->entity_text;
@@ -892,6 +899,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
         if (!application_native_q2_config_clear(engine,error)) return false;
     }
     if(!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
+    if(!application_native_q2_primary_pickups_suspend(engine,error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
     if (!application_q2_control_suspend(engine, error)) return false;
@@ -912,6 +920,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
+    if (!application_native_q2_primary_pickups_close(engine, error)) return false;
     if (!application_native_q2_attack_suspend(engine, error) ||
         !application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_native_q2_stages_close(engine, error)) return false;

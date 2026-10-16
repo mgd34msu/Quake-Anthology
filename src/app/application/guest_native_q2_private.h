@@ -67,6 +67,7 @@ struct application_native_q2 {
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_inventory_rows *inventory_rows;
     struct application_native_q2_inventory_scanner *inventory_scanner;
+    struct application_native_q2_primary_pickups *primary_pickups;
     struct application_native_q2_attack *source_attack;
     struct application_native_q2_prediction_layout {
         uint32_t client_pointer, client_bytes;

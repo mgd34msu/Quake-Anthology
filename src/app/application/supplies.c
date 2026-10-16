@@ -6,6 +6,7 @@
 #include "qa/game_q2_combat.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_primary_pickups.h"
 #include "guest_q3_private.h"
 #include "guest_q3_pickups.h"
 #include "guest_q3_catalog.h"
@@ -827,7 +828,12 @@ static application_q3_pickups *original_q3_pickups(const supply_pair *pair) {
         engine->game->primary && engine->game->kind == QA_QVM_GAME && engine->game->vm
         ? engine->game->pickups : NULL;
 }
-static bool original_q3_take(void *opaque, const qa_pickup_offer *offer,
+static struct application_native_q2_primary_pickups *original_native_pickups(const supply_pair *pair) {
+    struct application_native_q2 *engine = pair->source->kind == APPLICATION_PROVIDER_NATIVE
+        ? pair->source->state.native.q2_engine : NULL;
+    return !pair->native && engine ? engine->primary_pickups : NULL;
+}
+static bool original_take(void *opaque, const qa_pickup_offer *offer,
     qa_pickup_execution *execution, qa_pickup_outcome *out, qa_error *error) {
     supply_pair *pair = opaque;
     *out = QA_PICKUP_REFUSED;
@@ -837,13 +843,16 @@ static bool original_q3_take(void *opaque, const qa_pickup_offer *offer,
         return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup lost its actual selected supply owner");
     ++owner->calls;
     application_q3_pickups *source = original_q3_pickups(pair);
+    struct application_native_q2_primary_pickups *native = original_native_pickups(pair);
     qa_supply_offer supplied = {0};
     qa_supply_options options = {0};
     bool accepted = false;
-    bool ok = supply_current(pair, offer->recipient, error) &&
-        application_q3_pickups_supply(source, offer, &supplied, &options, error);
-    if (ok && supplied.kind != QA_SUPPLY_AMMO && supplied.kind != QA_SUPPLY_WEAPON)
-        ok = application_fail(error, QA_ERROR_ARGUMENT, "Original QVM pickup has no static supply grant");
+    bool ok = supply_current(pair, offer->recipient, error) && (native ?
+        application_native_q2_primary_pickups_supply(native, offer, &supplied, &options, error) :
+        application_q3_pickups_supply(source, offer, &supplied, &options, error));
+    if (ok && supplied.kind != QA_SUPPLY_AMMO && supplied.kind != QA_SUPPLY_WEAPON &&
+        supplied.kind != QA_SUPPLY_AMMO_WEAPON)
+        ok = application_fail(error, QA_ERROR_ARGUMENT, "Original pickup has no static supply grant");
     if (ok) ok = qa_supply_apply(pair->supply, offer->recipient, &supplied, &options,
         &accepted, error) && supply_current(pair, offer->recipient, error);
     if (ok) *out = qa_pickup_current(execution)
@@ -870,7 +879,7 @@ static bool pickup_write_add(qa_pickup_write **writes, size_t *count,
     return true;
 }
 static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
-    if (!original_q3_pickups(pair)) return true;
+    if (!original_q3_pickups(pair) && !original_native_pickups(pair)) return true;
     const qa_supply_profile *profile = &pair->profile;
     if (profile->ammo_count > SIZE_MAX - profile->weapon_count)
         return application_fail(error, QA_ERROR_MEMORY, "Original pickup rule inventory overflows");
@@ -906,7 +915,7 @@ static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
         if (!ok) return false;
         if (!rule->write_count)
             return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickup has no destination");
-        rule->context = pair; rule->take = original_q3_take;
+        rule->context = pair; rule->take = original_take;
     }
     return true;
 }

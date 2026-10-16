@@ -1260,6 +1260,7 @@ add_library(qa_application STATIC
     src/app/application/guest_native_q2_equipment.c
     src/app/application/guest_q2_control.c
     src/app/application/guest_native_q2_attack.c
+    src/app/application/guest_native_q2_primary_pickups.c
     src/app/application/guest_native_q2_baseline.c
     src/app/application/guest_native_q2_calls.c
     src/app/application/guest_native_q2_clients.c
