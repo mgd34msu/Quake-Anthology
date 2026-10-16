@@ -53,7 +53,7 @@ struct qa_unified_channel {
     size_t directory_count, storage_bytes;
     uint64_t delivery_copied_bytes, delivery_copies;
     unsigned lane;
-    bool cumulative_pending, frame_ack_pending, closed, busy;
+    bool cumulative_pending, frame_ack_pending, closed, busy, timeouts;
 };
 bool qa_unified_channel_storage_prepare(qa_unified_channel *, qa_error *);
 outgoing *qa_unified_outgoing_acquire(qa_unified_channel *, size_t bytes, uint16_t fragments,
@@ -72,6 +72,7 @@ bool qa_unified_payload_write(qa_net_writer *, const channel_payload *);
 bool qa_unified_payload_read(qa_net_reader *, const channel_payload *);
 uint8_t qa_unified_payload_byte(const channel_payload *, size_t offset);
 bool qa_unified_channel_valid(const qa_unified_channel *, qa_error *);
+void qa_unified_channel_timeout_policy(qa_unified_channel *, bool enabled);
 typedef bool (*qa_unified_admit_delivery_fn)(void *, const qa_unified_delivery *);
 /* These operations borrow a decoded packet. Matching authenticates its token;
  * admission applies the configured datagram, message and fragment limits. */

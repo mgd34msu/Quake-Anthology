@@ -339,6 +339,7 @@ bool qa_net_connections_restart(qa_net_connections *, qa_net_client_id,
 bool qa_net_connections_received(qa_net_connections *, qa_net_client_id, uint64_t, qa_error *);
 bool qa_net_connections_rebind(qa_net_connections *, qa_net_client_id, const qa_net_address *, qa_error *);
 bool qa_net_connections_remove(qa_net_connections *, qa_net_client_id, qa_error *);
+bool qa_net_client_local(const qa_net_client *);
 bool qa_net_client_expired(const qa_net_client *, uint64_t now_ns, uint64_t timeout_ns);
 bool qa_net_client_owns_seat(const qa_net_client *, qa_net_seat_id);
 bool qa_net_client_id_equal(qa_net_client_id, qa_net_client_id);

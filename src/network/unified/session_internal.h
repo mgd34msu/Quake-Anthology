@@ -8,6 +8,7 @@
 
 #define QA_UNIFIED_FRAME_BACKUP 32u
 #define QA_UNIFIED_FRAME_HISTORY_BYTES (64u * 1024u * 1024u)
+void qa_unified_session_connection_policy(qa_unified_session *, const qa_net_client *);
 typedef struct qa_unified_frame_receipt {
     qa_unified_document *document;
     size_t bytes;

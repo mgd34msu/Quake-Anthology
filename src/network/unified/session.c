@@ -1,4 +1,5 @@
 #include "session_internal.h"
+#include "channel_internal.h"
 #include "qa/network_unified_frame.h"
 #include "qa/unified_frame_events.h"
 #include "channel_internal.h"
@@ -321,6 +322,9 @@ static bool rebind_peer(void *state, const qa_net_address *endpoint, qa_error *e
     if (s->entered || s->processing || !endpoint)
         return qa_unified_session_fail(e, QA_ERROR_ARGUMENT, "Production endpoint rebind is not idle");
     /* The sole generic connection table authenticates and owns this endpoint. */
+    qa_net_client client = *qa_net_connections_get(qa_network_connections(s->runtime), s->id);
+    client.endpoint = *endpoint;
+    qa_unified_session_connection_policy(s, &client);
     return true;
 }
 static bool receive_pending(const void *state)
@@ -333,6 +337,11 @@ qa_network_peer_ops qa_unified_session_operations(void)
 {
     return (qa_network_peer_ops){receive_peer, flush_peer, qa_unified_session_command,
         restart_peer, rebind_peer, close_peer, receive_pending};
+}
+
+void qa_unified_session_connection_policy(qa_unified_session *s, const qa_net_client *client)
+{
+    qa_unified_channel_timeout_policy(s->channel, !qa_net_client_local(client));
 }
 
 bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect *request, bool server,
@@ -359,6 +368,7 @@ bool qa_unified_session_attach(qa_network_runtime *runtime, const qa_net_connect
     }
     const qa_network_peer_ops ops = qa_unified_session_operations();
     if (!qa_network_attach(runtime, request, &ops, s, now, &s->id, e)) { qa_unified_session_release(s); return false; }
+    qa_unified_session_connection_policy(s, qa_net_connections_get(qa_network_connections(runtime), s->id));
     s->bound_source = true;
     *id = s->id; *out = s;
     return true;

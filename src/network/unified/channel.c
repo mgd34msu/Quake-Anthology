@@ -46,6 +46,8 @@ void qa_unified_channel_destroy(qa_unified_channel *c) {
 bool qa_unified_channel_closed(const qa_unified_channel *c) { return !c || c->closed; }
 uint32_t qa_unified_channel_received(const qa_unified_channel *c) { return c?c->reliable_received:0; }
 uint32_t qa_unified_channel_acknowledged(const qa_unified_channel *c) { return c?c->reliable_acknowledged:0; }
+void qa_unified_channel_timeout_policy(qa_unified_channel *c, bool enabled)
+{ c->timeouts=enabled; }
 
 bool qa_unified_channel_create(qa_unified_token token, const qa_unified_limits *limits,
                                 qa_unified_channel **out, qa_error *error) {
@@ -57,7 +59,7 @@ bool qa_unified_channel_create(qa_unified_token token, const qa_unified_limits *
         return error_message(error,QA_ERROR_ARGUMENT,"invalid unified channel capacity");
     qa_unified_channel *c=calloc(1,sizeof(*c));
     if (!c) return error_message(error,QA_ERROR_MEMORY,"allocating unified channel");
-    c->limits=l; c->token=token; c->next_reliable=1; c->next_frame=1;
+    c->limits=l; c->token=token; c->next_reliable=1; c->next_frame=1; c->timeouts=true;
     if (!qa_unified_channel_storage_prepare(c,error)) {
         qa_arena_destroy(&c->storage); free(c); return false;
     }
@@ -190,6 +192,7 @@ bool qa_unified_channel_frame(qa_unified_channel *c, qa_bytes payload,
 static bool elapsed(uint64_t now, uint64_t then, uint64_t duration) { return now>=then && now-then>=duration; }
 
 static bool expire(qa_unified_channel *c, uint64_t now, qa_error *error) {
+    if (!c->timeouts) return true;
     for (size_t i=0;i<64;++i) {
         if (c->assemblies[i] && c->assemblies[i]->received_count<c->assemblies[i]->fragments &&
             elapsed(now,c->assemblies[i]->started,c->limits.assembly_ns)) {
@@ -477,13 +480,14 @@ static bool send_reliable(qa_unified_channel *c, uint64_t now, qa_unified_send_f
             }
         }
         sent_fragment *s=qa_unified_sent_fragment(message,fragment);
-        if (s->attempts>=c->limits.maximum_transmissions) {
+        if (c->timeouts && s->attempts>=c->limits.maximum_transmissions) {
             close_channel(c); return error_message(error,QA_ERROR_IO,"unified reliable retry limit exceeded");
         }
         qa_unified_packet p=data_packet(c,message,QA_UNIFIED_RELIABLE,(uint16_t)fragment);
         qa_net_send_result result=send_packet(c,&p,send,context,error);
         if (result!=QA_NET_SEND_ACCEPTED) { c->reliable_cursor=index; return result==QA_NET_SEND_FULL; }
-        s->at=now; s->attempts++;
+        s->at=now;
+        if (s->attempts<c->limits.maximum_transmissions) ++s->attempts;
         if (fresh) message->next_fragment++;
         *progress=true; return true;
     }

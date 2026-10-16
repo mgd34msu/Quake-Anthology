@@ -273,6 +273,7 @@ bool qa_unified_session_restore(qa_bytes bytes, qa_network_runtime *runtime, con
     ok = ok && blob(&r, &channel) && qa_unified_channel_restore(channel, &s->channel, e) &&
         qa_unified_channel_descriptor(s->channel, &s->token, &s->limits, e) && blob(&r, &inputs);
     if(ok) {
+        qa_unified_session_connection_policy(s, client);
         s->frame_pool=qa_unified_frame_pool_create(0,(size_t)s->limits.reliable_window_messages+QA_UNIFIED_FRAME_BACKUP+4,e);
         ok=s->frame_pool!=NULL;
     }

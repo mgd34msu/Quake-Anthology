@@ -101,6 +101,7 @@
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
 #include "../src/network/unified/frame_internal.h"
+#include "../src/network/unified/channel_internal.h"
 #include "../src/bots/runtime/internal.h"
 #include "../src/bots/ai/internal.h"
 #include "../src/bots/ai/source_view.h"
@@ -7544,6 +7545,59 @@ static void test_dosbox_loopback(void)
     qa_net_transport_close(a);qa_net_transport_close(b);qa_net_dosbox_destroy(network);
 }
 
+static qa_net_send_result timeout_packet_send(void *context, qa_bytes packet, qa_error *error)
+{
+    (void)context; (void)packet; (void)error;
+    return QA_NET_SEND_ACCEPTED;
+}
+static bool timeout_packet_deliver(void *context, const qa_unified_delivery *delivery,
+    bool *accepted, qa_error *error)
+{
+    (void)error;
+    CHECK(delivery->payload.size == 2 && delivery->payload.data[0] == 42 && delivery->payload.data[1] == 43);
+    ++*(unsigned *)context;
+    *accepted = true;
+    return true;
+}
+static void test_unified_local_timeouts(void)
+{
+    qa_unified_limits limits = qa_unified_limits_default();
+    limits.datagram_bytes = 128; limits.message_bytes = 1024; limits.queued_reliable_bytes = 2048;
+    limits.queued_reliable_messages = limits.reliable_window_messages = 2;
+    limits.fragments = 16; limits.packets_per_flush = 4;
+    limits.maximum_transmissions = 2; limits.retry_ns = 1; limits.assembly_ns = 10;
+    for (unsigned local = 0; local < 2; ++local) {
+        qa_error error = {0}; qa_unified_channel *channel = NULL;
+        CHECK(qa_unified_channel_create((qa_unified_token){{0}}, &limits, &channel, &error));
+        qa_unified_channel_timeout_policy(channel, !local);
+        uint8_t value = 42, packet[128]; size_t size;
+        qa_unified_packet fragment = {.kind = QA_UNIFIED_RELIABLE, .sequence = 1,
+            .total_bytes = 2, .fragment_bytes = 1, .fragments = 2, .payload = {&value,1}};
+        unsigned delivered = 0;
+        CHECK(qa_unified_packet_encode(&fragment, packet, sizeof(packet), &size, &error));
+        CHECK(qa_unified_channel_receive(channel, (qa_bytes){packet,size}, 1,
+            timeout_packet_deliver, &delivered, &error));
+        CHECK(qa_unified_channel_flush(channel, 12, timeout_packet_send, NULL, NULL, &error) == (bool)local);
+        CHECK(qa_unified_channel_closed(channel) == !local);
+        if (local) {
+            value = 43; fragment.fragment = 1;
+            CHECK(qa_unified_packet_encode(&fragment, packet, sizeof(packet), &size, &error));
+            CHECK(qa_unified_channel_receive(channel, (qa_bytes){packet,size}, 12,
+                timeout_packet_deliver, &delivered, &error));
+            CHECK(delivered == 1 && qa_unified_channel_received(channel) == 1);
+        }
+        qa_unified_channel_destroy(channel); channel = NULL; error = (qa_error){0};
+        CHECK(qa_unified_channel_create((qa_unified_token){{0}}, &limits, &channel, &error));
+        qa_unified_channel_timeout_policy(channel, !local);
+        CHECK(qa_unified_channel_reliable(channel, (qa_bytes){&value,1}, NULL, &error));
+        CHECK(qa_unified_channel_flush(channel, 1, timeout_packet_send, NULL, NULL, &error));
+        CHECK(qa_unified_channel_flush(channel, 2, timeout_packet_send, NULL, NULL, &error));
+        CHECK(qa_unified_channel_flush(channel, 3, timeout_packet_send, NULL, NULL, &error) == (bool)local);
+        CHECK(qa_unified_channel_closed(channel) == !local);
+        qa_unified_channel_destroy(channel);
+    }
+}
+
 static void test_connection_expiry(void)
 {
     const uint64_t timeout = UINT64_C(30000000000), received = UINT64_C(1000000000);
@@ -9505,6 +9559,7 @@ int main(int argc, char **argv)
     test_render_resource_identity();
     test_platform_event_retirement();
     test_q2_command_angles();
+    test_unified_local_timeouts();
     test_connection_expiry();
     test_loopback_admission();
     test_browser_endpoint_probe();

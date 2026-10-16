@@ -244,9 +244,14 @@ bool qa_net_connections_remove(qa_net_connections *table, qa_net_client_id id, q
     return true;
 }
 
+bool qa_net_client_local(const qa_net_client *client)
+{
+    return client->attachment == QA_NET_LOCAL_SEAT || client->endpoint.kind == QA_NET_LOOPBACK;
+}
+
 bool qa_net_client_expired(const qa_net_client *client, uint64_t now_ns, uint64_t timeout_ns)
 {
-    return client != NULL && client->attachment != QA_NET_LOCAL_SEAT && client->endpoint.kind != QA_NET_LOOPBACK &&
+    return client != NULL && !qa_net_client_local(client) &&
         now_ns >= client->received_ns &&
         now_ns - client->received_ns > timeout_ns;
 }
