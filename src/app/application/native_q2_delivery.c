@@ -159,10 +159,9 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         clock.frame.kind!=source_kind ||
         (!original && (!qa_q2_combat_rules_read(source->state.q2,&rules) || rules.owner!=source->owner ||
             source_kind!=rules.edition ||
-            !qa_q2_bot_clock_read(source->state.q2,&now,&intermission,&started,error) ||
-            now!=clock.frame.time_ns)))
+            !qa_q2_bot_clock_read(source->state.q2,&now,&intermission,&started,error))))
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 delivery lost its real world or source clock");
-    now=clock.frame.time_ns;
+    if (original) now=clock.frame.time_ns;
     bool physical_rerelease=false;
     if (positional && physical->kind==APPLICATION_PROVIDER_Q2) {
         qa_q2_combat_rules physical_rules;
