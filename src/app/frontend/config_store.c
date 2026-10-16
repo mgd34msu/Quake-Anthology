@@ -41,8 +41,6 @@
 
 typedef struct config_seat {
     qa_input_seat *input,*publication_input;
-    qa_seat_console *publication_console;
-    qa_command_context publication_command;
     uint32_t logical;
     qa_ruleset_id movement_dialect;
     char *registry_instance;
@@ -2513,7 +2511,7 @@ bool frontend_config_store_local_seats_retire(frontend_config_store *manager,qa_
                     prepare_input_publication(source,seat,physical,error);
                 if (ok) publish_input(seat);
                 qa_input_seat_destroy(seat->input); seat->input=NULL;
-                seat->publication_input=NULL; seat->publication_console=NULL;
+                seat->publication_input=NULL;
                 if (!ok) { seat->input=captured; return false; }
                 qa_input_seat_destroy(captured);
             }
@@ -2751,13 +2749,7 @@ static bool prepare_input_publication(frontend_config_source *source,config_seat
     int32_t controller=f->input?qa_input_platform_controller(f->input,(unsigned)ordinal):-1;
     if ((controller>=0 && !qa_input_seat_remap_controller(seat->input,controller,error)) ||
         !qa_input_seat_configuration_ready(active,seat->input,error)) return false;
-    qa_command_context next=qa_input_seat_context(active);
-    next.registry=next.generation=0; next.actor=(qa_actor_id){0};
-    next.origin=QA_COMMAND_SEAT; next.seat=seat->logical; next.dialect=seat->movement_dialect;
-    qa_seat_console *console=f->seats[ordinal].console;
-    if (!console || !qa_input_seat_context_ready(active,&next,error) ||
-        !qa_seat_console_context_ready(console,&next,error)) return false;
-    seat->publication_command=next; seat->publication_input=active; seat->publication_console=console;
+    seat->publication_input=active;
     return true;
 }
 static bool prepare_candidate(void *context,qa_application *application,const qa_launch_snapshot *candidate,qa_error *error)
@@ -2783,8 +2775,7 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     for (frontend_config_source *source=manager->sources;source;source=source->next) {
         if (source->application!=application || source->published || source->candidate!=candidate) continue;
         for (size_t i=0;i<source->seat_count;++i) {
-            source->seats[i].publication_input=NULL; source->seats[i].publication_console=NULL;
-            source->seats[i].publication_command=(qa_command_context){0};
+            source->seats[i].publication_input=NULL;
         }
     }
     if (!frontend_remote_configs_ready(manager->clients,application,candidate,error)) return false;
@@ -2948,8 +2939,6 @@ static void source_release(void *context,qa_application *application,const qa_cv
 }
 static void publish_input(config_seat *seat)
 {
-    qa_input_seat_context_publish(seat->publication_input,&seat->publication_command);
-    qa_seat_console_context_publish(seat->publication_console,&seat->publication_command);
     qa_input_seat_configuration_publish(seat->publication_input,seat->input);
 }
 static void finish(void *context,qa_application *application,const qa_launch_snapshot *candidate,bool published)
@@ -2979,7 +2968,6 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
                 publish_input(seat);
                 qa_input_seat_destroy(seat->input); seat->input=NULL;
                 seat->publication_input=NULL;
-                seat->publication_console=NULL;
             }
             source->published=true; source->candidate=NULL;
         }
@@ -3006,7 +2994,7 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
             if (source->application==application && !source->published &&
                 (!candidate || source->candidate==candidate))
                 for (size_t i=0;i<source->seat_count;++i) {
-                    source->seats[i].publication_input=NULL; source->seats[i].publication_console=NULL;
+                    source->seats[i].publication_input=NULL;
                 }
     }
     discard_retained_input(manager);

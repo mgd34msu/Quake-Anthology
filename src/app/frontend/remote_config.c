@@ -26,8 +26,7 @@ typedef struct remote_input {
     qa_application *application;
     const qa_launch_snapshot *candidate;
     qa_input_seat *input,*publication_input;
-    qa_seat_console *publication_console;
-    qa_command_context source_command,publication_command;
+    qa_command_context source_command;
     uint32_t physical_seat,logical_seat;
     qa_ruleset_id movement;
     size_t references;
@@ -890,8 +889,7 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
 {
     for (remote_input *shared=owner?owner->inputs:NULL;shared;shared=shared->next) {
         if (shared->application!=application || shared->candidate!=candidate) continue;
-        shared->ready=false; shared->publication_input=NULL; shared->publication_console=NULL;
-        shared->publication_command=(qa_command_context){0};
+        shared->ready=false; shared->publication_input=NULL;
     }
     for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next) {
         if (row->application!=application || row->published || row->candidate!=candidate) continue;
@@ -908,16 +906,10 @@ bool frontend_remote_configs_ready(frontend_remote_configs *owner,qa_application
         if (shared->ready) continue;
         qa_frontend *f=owner->frontend;
         qa_input_seat *input=f->seats[row->physical_seat].input;
-        qa_seat_console *console=f->seats[row->physical_seat].console;
         int32_t controller=f->input?qa_input_platform_controller(f->input,row->physical_seat):-1;
         if ((controller>=0 && !qa_input_seat_remap_controller(row->input,controller,error)) ||
             !qa_input_seat_configuration_ready(input,row->input,error)) return false;
-        qa_command_context command=qa_input_seat_context(input);
-        command.registry=command.generation=0; command.actor=(qa_actor_id){0};
-        command.origin=QA_COMMAND_SEAT; command.seat=row->scope.seat; command.dialect=(row->movement);
-        if (!qa_input_seat_context_ready(input,&command,error) || !qa_seat_console_context_ready(console,&command,error)) return false;
-        shared->publication_input=input; shared->publication_console=console;
-        shared->publication_command=command; shared->ready=true;
+        shared->publication_input=input; shared->ready=true;
     }
     return true;
 }
@@ -926,8 +918,6 @@ void frontend_remote_configs_finish(frontend_remote_configs *owner,qa_applicatio
 {
     if (published) for (remote_input *shared=owner?owner->inputs:NULL;shared;shared=shared->next) {
         if (shared->application!=application || shared->candidate!=candidate) continue;
-        qa_input_seat_context_publish(shared->publication_input,&shared->publication_command);
-        qa_seat_console_context_publish(shared->publication_console,&shared->publication_command);
         qa_input_seat_configuration_publish(shared->publication_input,shared->input);
     }
     for (frontend_remote_config *row=owner?owner->rows:NULL;row;row=row->next) {
