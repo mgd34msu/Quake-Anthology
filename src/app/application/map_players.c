@@ -2693,6 +2693,102 @@ static bool record_actor_bind(struct application_player_roster *roster,
     record->actor=actor;return true;
 }
 
+static bool deathball_join_skin(qa_application *app, qa_mode_id mode,
+    application_player_record *record, bool resuming, qa_team_id *team,
+    qa_string_id *skin, qa_error *error)
+{
+    qa_mode_view view;
+    if (!qa_modes_read(app->modes, mode, &view, error)) return false;
+    if (!view.rules.enabled || view.rules.kind != QA_MODE_DEATHBALL) return true;
+    if (resuming) {
+        *skin = application_player_identity(record)->skin;
+        return true;
+    }
+    const qa_cvar_view *one = qa_cvars_find(app->cvars, "dball_team1_skin");
+    const qa_cvar_view *two = qa_cvars_find(app->cvars, "dball_team2_skin");
+    const char *skins[] = {one ? one->value : "male/ctf_r", two ? two->value : "male/ctf_b"};
+    size_t counts[2] = {0};
+    for (size_t i = 0; i < app->players->count; ++i) {
+        const application_player_record *other = &app->players->records[i];
+        if (other == record || other->retiring ||
+            !qa_actors_get(qa_session_actors(app->session), other->actor)) continue;
+        const char *appearance = application_player_skin(other);
+        if (!appearance || !strchr(appearance, '/')) continue;
+        if (!strcmp(appearance, skins[0])) ++counts[0];
+        else if (!strcmp(appearance, skins[1])) ++counts[1];
+    }
+    size_t selected = counts[0] > counts[1] ? 1 : 0;
+    if (!application_player_identity_text(record, NULL, NULL, skins[selected], error)) return false;
+    *skin = application_player_identity(record)->skin;
+    *team = view.rules.teams[selected];
+    return true;
+}
+
+static bool q2_admission_userinfo(qa_application *app, application_provider *source,
+    application_player_record *record, const char *prepared, qa_string_id skin,
+    bool reserving, qa_error *error)
+{
+    if (!skin && !prepared) return true;
+    const char *current = prepared;
+    if (!current && !qa_q2_player_userinfo_read(source->state.q2, record->actor, &current, error)) return false;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+    if (!storage) return false;
+    qa_arena *arena = qa_unified_frame_lease_arena(storage);
+    bool okay = true;
+    qa_bytes key, value;
+    if (skin) {
+        const char *appearance = qa_strings_cstr(qa_session_strings(app->session), skin);
+        if (strlen(appearance) < 64 && !strpbrk(appearance, "\\\"")) {
+            size_t capacity = source->component.clock.kind == QA_RULESET_Q2_RERELEASE ? 2048 : 512;
+            char *text = qa_arena_alloc(arena, capacity, 1, error);
+            okay = text != NULL;
+            size_t length = 0;
+            bool removed = false;
+            if (text) text[0] = 0;
+            char bounded[2048];
+            size_t current_size = strlen(current);
+            if (current_size >= capacity) current_size = capacity - 1;
+            memcpy(bounded, current, current_size); bounded[current_size] = 0;
+            for (const char *read = bounded; okay && qa_info_next(&read, &key, &value);) {
+                if (!removed && qa_info_key_equal(key, (qa_bytes){(const uint8_t *)"skin", 4}, 0)) {
+                    removed = true;
+                    continue;
+                }
+                okay = qa_info_append(text, capacity, &length, key, value, 0, error);
+            }
+            char selected[64];
+            size_t selected_size = 0;
+            for (const unsigned char *p = (const unsigned char *)appearance; *p; ++p) {
+                unsigned char byte = *p & 127u;
+                if (byte >= 32 && byte < 127) selected[selected_size++] = (char)byte;
+            }
+            if (okay && selected_size && length + selected_size + 6 < capacity)
+                okay = qa_info_append(text, capacity, &length,
+                    (qa_bytes){(const uint8_t *)"skin", 4},
+                    (qa_bytes){(const uint8_t *)selected, selected_size}, 0, error);
+            current = text;
+        }
+    }
+    if (okay) okay = qa_q2_player_userinfo(source->state.q2, record->actor, current, error) &&
+        qa_q2_player_userinfo_read(source->state.q2, record->actor, &current, error);
+    if (okay && skin) {
+        qa_info_find(current, (qa_bytes){(const uint8_t *)"skin", 4}, QA_INFO_LAST, &value);
+        char *actual_skin = qa_arena_alloc(arena, value.size + 1, 1, error);
+        okay = actual_skin != NULL;
+        if (actual_skin) {
+            if (value.size) memcpy(actual_skin, value.data, value.size);
+            actual_skin[value.size] = 0;
+            okay = application_player_identity_text(record, NULL, NULL, actual_skin, error);
+        }
+    }
+    if (okay && !reserving) {
+        char *copy = qa_arena_text(arena, current, error);
+        okay = copy && application_player_userinfo_adopt(record, copy, storage, error);
+    }
+    qa_unified_frame_lease_release(storage);
+    return okay;
+}
+
 static bool publish_player(qa_application *application, const qa_launch_choices *choices,
                            const qa_launch_seat *seat, application_player_record *record,
                            const application_player_carry *carry, size_t ordinal,
@@ -2708,6 +2804,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return application_fail(error, QA_ERROR_NOT_FOUND, "selected player character disappeared");
         uint32_t source_slot = record->source_slot;
         bool reserved_player = phase == PLAYER_ADMISSION_BEGIN;
+        qa_string_id deathball_skin = QA_STRING_NONE;
         bool initial_local_userinfo=!reserved_player && seat->local && !record->remote &&
             !carry->present && !carry->q3_client && !round;
         qa_actor_id source_actor = reserved_player ? record->actor : (qa_actor_id){0};
@@ -2840,7 +2937,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 if (seat->team != NULL && seat->team[0] != '\0' &&
                     !qa_strings_intern_cstr(qa_session_strings(application->session), seat->team, &team, error))
                     return false;
-                if (!qa_modes_join(application->modes, application->mode_ids[j], actor, team, seat->spectator, error))
+                if (((map_source->kind == APPLICATION_PROVIDER_Q2 || character->kind == APPLICATION_PROVIDER_Q2) &&
+                     !deathball_join_skin(application, application->mode_ids[j], record,
+                        false, &team, &deathball_skin, error)) ||
+                    !qa_modes_join(application->modes, application->mode_ids[j], actor, team, seat->spectator, error))
                     return false;
             }
             if (keep && carry->has_q2 && application->primary_mode_ready &&
@@ -2857,30 +2957,40 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             }
             if (!qa_combat_set_traits(application->combat, actor, &combat, error)) return false;
         }
-        if (!reserved_player && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
+        if (reserved_player && application->modes != NULL &&
+            (map_source->kind == APPLICATION_PROVIDER_Q2 || character->kind == APPLICATION_PROVIDER_Q2))
+            for (size_t j = 0; j < application->mode_count; ++j) {
+                qa_team_id team = 0;
+                if (!deathball_join_skin(application, application->mode_ids[j], record,
+                        true, &team, &deathball_skin, error)) return false;
+            }
+        if (map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
             char userinfo[2304];
             if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
                     false, userinfo, sizeof(userinfo), error)) return false;
             char initial_info[2304];
             const char *source_info=record->userinfo?record->userinfo:userinfo;
-            if (initial_local_userinfo && record->userinfo) {
+            if ((initial_local_userinfo || reserved_player) && record->userinfo) {
                 if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
                         initial_info,sizeof(initial_info),error)) return false;
                 source_info=initial_info;
             }
             const char *info = "";
             qa_q2_connection_result connection;
-            if (phase != PLAYER_ADMISSION_RESERVE) {
+            if (!reserved_player && phase != PLAYER_ADMISSION_RESERVE) {
                 if (!qa_q2_player_connect(map_source->state.q2,
                         source_info,seat->bot,&connection,error)) return false;
                 if (!connection.allowed) return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
                 info = connection.userinfo;
             }
-            if (!qa_q2_player_admit(map_source->state.q2, actor, &(qa_q2_player_admission){
+            if ((!reserved_player && !qa_q2_player_admit(map_source->state.q2, actor, &(qa_q2_player_admission){
                     .slot = record->client_slot, .seat = seat->id, .userinfo = info,
                     .initialize_inventory = true, .use_q2_weapons = arsenal == map_source,
                     .use_q2_inventory = arsenal == map_source,
-                    .bot = phase == PLAYER_ADMISSION_RESERVE ? false : seat->bot}, error)) return false;
+                    .bot = phase == PLAYER_ADMISSION_RESERVE ? false : seat->bot}, error)) ||
+                !q2_admission_userinfo(application, map_source, record,
+                    reserved_player ? source_info : NULL, deathball_skin,
+                    phase == PLAYER_ADMISSION_RESERVE, error)) return false;
         }
         if (phase == PLAYER_ADMISSION_RESERVE || qw_spectator) {
             if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q1 &&
@@ -2895,6 +3005,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     .initialize_inventory = map_source->kind != APPLICATION_PROVIDER_Q1,
                     .use_q2_weapons = arsenal == character,
                     .use_q2_inventory = arsenal == character, .bot = character != map_source}, error)) return false;
+            if (!qw_spectator && character->kind == APPLICATION_PROVIDER_Q2 &&
+                !q2_admission_userinfo(application, character, record, NULL, deathball_skin,
+                    true, error)) return false;
             if (!qw_spectator && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
                 (!qa_q2_items_admit_player(arsenal->state.q2, actor, true, error) ||
                  !qa_q2_weapon_bind(arsenal->state.q2, actor, QA_Q2_BLASTER, error))) return false;
@@ -3000,7 +3113,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     false, userinfo, sizeof(userinfo), error)) return false;
             const char *source_info = record->userinfo != NULL ? record->userinfo : userinfo;
             char initial_info[2304];
-            if (initial_local_userinfo && record->userinfo) {
+            if ((initial_local_userinfo || reserved_player) && record->userinfo) {
                 if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
                         initial_info,sizeof(initial_info),error)) return false;
                 source_info = initial_info;
@@ -3020,6 +3133,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 .use_q2_inventory = arsenal == character, .bot = seat->bot,
                 .carry = keep && carry->has_q2 && carry->character_owner == character->owner ? &q2 : NULL}, error)))
                 return false;
+            if (!q2_admission_userinfo(application, character, record,
+                    reserved_player ? source_info : NULL, deathball_skin,
+                    false, error)) return false;
             bool original_restored = false;
             if (!application_q2_original_player(character, record->client_slot, actor,
                     &original_restored, error)) return false;
