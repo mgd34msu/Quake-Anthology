@@ -24,6 +24,12 @@ typedef struct synchronous_layout {
     uint32_t axe, shotgun, super_shotgun, trace_attack, add_multi, apply_multi;
     const qa_qc_definition *point, *normal, *trace_target;
 } synchronous_layout;
+typedef struct environment_layout {
+    uint32_t water, postthink, hurt, door, secret, plat, train;
+    const qa_qc_definition *other, *world;
+    uint8_t *hazards;
+    uint32_t statement_count;
+} environment_layout;
 struct application_qc_combat_profile {
     const qa_qc_program *program;
     application_qc_call damage;
@@ -38,6 +44,7 @@ struct application_qc_combat_profile {
     application_qc_armor_stage armor;
     damage_scale scale;
     synchronous_layout synchronous;
+    environment_layout environment;
     qa_qc_inline_region regions[2];
     size_t region_count;
     bool armor_declared, empty_declared;
@@ -154,7 +161,7 @@ static bool call_layout(application_qc_combat_profile *profile, qa_error *error)
         (UINT64_C(1) << QC_INPUT_INFLICTOR) | (UINT64_C(1) << QC_INPUT_AMOUNT);
     return (found & required) == required || reject(error, "QC damage call omits an actual target, attacker, inflictor or amount");
 }
-static uint32_t synchronous_function(const qa_qc_program *program, const char *name,
+static uint32_t source_void_function(const qa_qc_program *program, const char *name,
     const qa_qc_value_type *parameters, size_t count, const uint8_t *written)
 {
     uint32_t index;
@@ -190,16 +197,168 @@ static void synchronous_prepare(application_qc_combat_profile *profile, const ui
         !layout->trace_target || layout->trace_target->type != QA_QC_ENTITY) {
         *layout = (synchronous_layout){0}; return;
     }
-    layout->axe = synchronous_function(program, "W_FireAxe", NULL, 0, written);
+    layout->axe = source_void_function(program, "W_FireAxe", NULL, 0, written);
     static const qa_qc_value_type trace_parameters[] = {QA_QC_FLOAT, QA_QC_VECTOR};
     static const qa_qc_value_type multi_parameters[] = {QA_QC_ENTITY, QA_QC_FLOAT};
-    layout->trace_attack = synchronous_function(program, "TraceAttack", trace_parameters, 2, written);
-    layout->add_multi = synchronous_function(program, "AddMultiDamage", multi_parameters, 2, written);
-    layout->apply_multi = synchronous_function(program, "ApplyMultiDamage", NULL, 0, written);
+    layout->trace_attack = source_void_function(program, "TraceAttack", trace_parameters, 2, written);
+    layout->add_multi = source_void_function(program, "AddMultiDamage", multi_parameters, 2, written);
+    layout->apply_multi = source_void_function(program, "ApplyMultiDamage", NULL, 0, written);
     if (layout->trace_attack && layout->add_multi && layout->apply_multi) {
-        layout->shotgun = synchronous_function(program, "W_FireShotgun", NULL, 0, written);
-        layout->super_shotgun = synchronous_function(program, "W_FireSuperShotgun", NULL, 0, written);
+        layout->shotgun = source_void_function(program, "W_FireShotgun", NULL, 0, written);
+        layout->super_shotgun = source_void_function(program, "W_FireSuperShotgun", NULL, 0, written);
     }
+}
+typedef enum environment_value_kind {
+    ENVIRONMENT_UNKNOWN, ENVIRONMENT_CONSTANT, ENVIRONMENT_DAMAGE, ENVIRONMENT_WATERLEVEL
+} environment_value_kind;
+typedef struct environment_value {
+    environment_value_kind kind;
+    float coefficient;
+    uint32_t entry;
+} environment_value;
+static bool environment_origin(const qa_qc_program *program, const qa_qc_function *function,
+    uint32_t *before, uint32_t *word, uint32_t *entry, const qa_qc_statement **out, qa_error *error)
+{
+    *out = NULL; *entry = *before;
+    while (*before > (uint32_t)function->first_statement) {
+        const qa_qc_statement *statement = qa_qc_program_statement(program, --*before);
+        if (called(statement->opcode) || statement->opcode == QA_QC_IF ||
+            statement->opcode == QA_QC_IFNOT || statement->opcode == QA_QC_GOTO ||
+            statement->opcode == QA_QC_RETURN || statement->opcode == QA_QC_DONE) return true;
+        qa_qc_statement_access access;
+        if (!qa_qc_program_statement_access(program, *before, &access, error)) return false;
+        bool writes = false;
+        for (uint32_t i = 0; i < access.write_count; ++i) writes |= access.write[i] == *word;
+        if (!writes) continue;
+        *entry = *before;
+        if (statement->opcode == QA_QC_STORE_F || statement->opcode == QA_QC_STORE_V) {
+            *word = statement->a + (*word - statement->b);
+            continue;
+        }
+        *out = statement; return true;
+    }
+    return true;
+}
+static bool environment_term(application_qc_combat_profile *profile, const qa_qc_function *function,
+    uint32_t before, uint32_t word, const uint8_t *written, environment_value *out, qa_error *error)
+{
+    *out = (environment_value){0};
+    const qa_qc_program *program = profile->program;
+    const qa_qc_statement *origin; uint32_t entry;
+    if (!environment_origin(program, function, &before, &word, &entry, &origin, error)) return false;
+    int32_t initial;
+    if (!origin) {
+        if (!written[word] && definition_at(program, word, QA_QC_FLOAT)) {
+            if (!qa_qc_program_initial_int(program, word, &initial, error)) return false;
+            float value; memcpy(&value, &initial, sizeof(value));
+            if (isfinite(value)) *out = (environment_value){ENVIRONMENT_CONSTANT, value, entry};
+        }
+    } else if (origin->opcode == QA_QC_LOAD_F && origin->a == profile->self->offset &&
+        !written[origin->b] && definition_at(program, origin->b, QA_QC_FIELD)) {
+        if (!qa_qc_program_initial_int(program, origin->b, &initial, error)) return false;
+        const qa_qc_game_fields *fields = qa_qc_program_resolved_fields(program);
+        if (fields->dmg && fields->dmg->type == QA_QC_FLOAT && initial == fields->dmg->offset)
+            *out = (environment_value){ENVIRONMENT_DAMAGE, 1, entry};
+        else if (fields->waterlevel && fields->waterlevel->type == QA_QC_FLOAT && initial == fields->waterlevel->offset)
+            *out = (environment_value){ENVIRONMENT_WATERLEVEL, 1, entry};
+    }
+    return true;
+}
+static bool environment_amount(application_qc_combat_profile *profile, const qa_qc_function *function,
+    uint32_t before, uint32_t word, const uint8_t *written, environment_value *out, qa_error *error)
+{
+    uint32_t source_before = before, source_word = word;
+    const qa_qc_statement *origin; uint32_t entry;
+    if (!environment_origin(profile->program, function, &before, &word, &entry, &origin, error)) return false;
+    if (!origin || origin->opcode != QA_QC_MUL_F)
+        return environment_term(profile, function, source_before, source_word, written, out, error);
+    environment_value a, b;
+    if (!environment_term(profile, function, before, origin->a, written, &a, error) ||
+        !environment_term(profile, function, before, origin->b, written, &b, error)) return false;
+    *out = (environment_value){0};
+    if (a.entry < entry) entry = a.entry;
+    if (b.entry < entry) entry = b.entry;
+    if (a.kind == ENVIRONMENT_CONSTANT && b.kind >= ENVIRONMENT_DAMAGE)
+        *out = (environment_value){b.kind, a.coefficient * b.coefficient, entry};
+    else if (b.kind == ENVIRONMENT_CONSTANT && a.kind >= ENVIRONMENT_DAMAGE)
+        *out = (environment_value){a.kind, a.coefficient * b.coefficient, entry};
+    return true;
+}
+static bool environment_entry_safe(const qa_qc_program *program, const qa_qc_function *function,
+    uint32_t entry, uint32_t call)
+{
+    for (uint32_t pc = (uint32_t)function->first_statement,
+        end = qa_qc_program_function_end(program, function); pc < end; ++pc) {
+        if (pc >= entry && pc <= call) continue;
+        const qa_qc_statement *statement = qa_qc_program_statement(program, pc);
+        int64_t target;
+        if (statement->opcode == QA_QC_GOTO) target = (int64_t)pc + (int16_t)statement->a;
+        else if (statement->opcode == QA_QC_IF || statement->opcode == QA_QC_IFNOT)
+            target = (int64_t)pc + (int16_t)statement->b;
+        else continue;
+        if (target > entry && target <= call) return false;
+    }
+    return true;
+}
+static bool environment_prepare(application_qc_combat_profile *profile, const uint8_t *written,
+    qa_error *error)
+{
+    const qa_qc_program *program = profile->program;
+    environment_layout *layout = &profile->environment;
+    layout->water = source_void_function(program, "WaterMove", NULL, 0, written);
+    layout->postthink = source_void_function(program, "PlayerPostThink", NULL, 0, written);
+    layout->hurt = source_void_function(program, "hurt_touch", NULL, 0, written);
+    layout->door = source_void_function(program, "door_blocked", NULL, 0, written);
+    layout->secret = source_void_function(program, "secret_blocked", NULL, 0, written);
+    layout->plat = source_void_function(program, "plat_crush", NULL, 0, written);
+    layout->train = source_void_function(program, "train_blocked", NULL, 0, written);
+    layout->other = qa_qc_program_find_global(program, "other");
+    layout->world = qa_qc_program_find_global(program, "world");
+    uint32_t functions[] = {layout->water, layout->postthink, layout->hurt, layout->door,
+        layout->secret, layout->plat, layout->train};
+    const damage_location *amount = NULL;
+    for (size_t i = 0; i < profile->location_count; ++i)
+        if (profile->locations[i].role == QC_INPUT_AMOUNT) {
+            if (amount || !profile->locations[i].parameter) return true;
+            amount = profile->locations + i;
+        }
+    if (!amount) return true;
+    qa_qc_program_info info = qa_qc_program_describe(program);
+    layout->hazards = calloc(info.statement_count, sizeof(*layout->hazards));
+    if (info.statement_count && !layout->hazards)
+        return application_fail(error, QA_ERROR_MEMORY, "Owning QC environmental call sites");
+    layout->statement_count = info.statement_count;
+    const qa_qc_function *damage = qa_qc_program_function(program, profile->damage.function);
+    const qa_qc_definition *damage_global = qa_qc_program_find_global(program, damage->name);
+    for (size_t i = 0; i < sizeof(functions) / sizeof(*functions); ++i) {
+        if (!functions[i]) continue;
+        const qa_qc_function *function = qa_qc_program_function(program, functions[i]);
+        for (uint32_t pc = (uint32_t)function->first_statement,
+            end = qa_qc_program_function_end(program, function); pc < end; ++pc) {
+            const qa_qc_statement *statement = qa_qc_program_statement(program, pc);
+            if (!called(statement->opcode) || statement->a != damage_global->offset ||
+                (uint32_t)(statement->opcode - QA_QC_CALL0) != profile->damage.argument_count) continue;
+            environment_value value;
+            if (!environment_amount(profile, function, pc, amount->word, written, &value, error)) return false;
+            if (value.kind == ENVIRONMENT_UNKNOWN || !environment_entry_safe(program, function, value.entry, pc)) continue;
+            qa_hazard hazard;
+            if (functions[i] == layout->water) {
+                if (value.kind == ENVIRONMENT_DAMAGE && value.coefficient == 1) hazard = QA_HAZARD_DROWN;
+                else if (value.kind == ENVIRONMENT_WATERLEVEL && value.coefficient == 10) hazard = QA_HAZARD_LAVA;
+                else if (value.kind == ENVIRONMENT_WATERLEVEL && value.coefficient == 4) hazard = QA_HAZARD_SLIME;
+                else continue;
+            } else if (functions[i] == layout->postthink) {
+                if (value.kind != ENVIRONMENT_CONSTANT || value.coefficient != 5) continue;
+                hazard = QA_HAZARD_FALL;
+            } else {
+                if (!(value.kind == ENVIRONMENT_DAMAGE && value.coefficient == 1) &&
+                    !(functions[i] == layout->plat && value.kind == ENVIRONMENT_CONSTANT && value.coefficient == 1)) continue;
+                hazard = functions[i] == layout->hurt ? QA_HAZARD_TRIGGER : QA_HAZARD_CRUSH;
+            }
+            layout->hazards[pc] = (uint8_t)(hazard + 1);
+        }
+    }
+    return true;
 }
 static bool immutable_layout(application_provider *provider, application_qc_combat_profile *profile,
     qa_error *error)
@@ -284,7 +443,10 @@ static bool immutable_layout(application_provider *provider, application_qc_comb
             }
         }
     }
-    if (ok) synchronous_prepare(profile, written);
+    if (ok) {
+        synchronous_prepare(profile, written);
+        ok = environment_prepare(profile, written, error);
+    }
     free(written);
     return ok && (reactions || reject(error, "QC combat has no typed original pain or death call sites"));
 }
@@ -377,7 +539,7 @@ void application_qc_combat_profile_free(application_qc_combat_profile *profile)
     if (!profile) return;
     application_qc_call_free(&profile->damage); application_qc_armor_free(&profile->armor);
     free(profile->locations); free(profile->reactions); free(profile->scale.scratch);
-    free(profile->scale.constants); free(profile->scale.initial); free(profile);
+    free(profile->scale.constants); free(profile->scale.initial); free(profile->environment.hazards); free(profile);
 }
 const qa_qc_inline_region *application_qc_combat_regions(const application_qc_combat_profile *profile, size_t *count)
 { *count = profile ? profile->region_count : 0; return profile ? profile->regions : NULL; }
@@ -895,6 +1057,30 @@ static bool synchronous_call(application_qc_combat *owner, qa_qc_instance *vm,
     qa_unified_frame_lease_release(attack.storage);
     return ok;
 }
+static bool source_geometry(application_qc_combat *owner, qa_actor_id target, qa_actor_id inflictor,
+    qa_vec3 *point, qa_vec3 *direction, bool *present, qa_error *error)
+{
+    struct application_qc_state *engine = owner->engine;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    const qa_qc_game_fields *fields = engine->field_bindings;
+    *present = false; *direction = qa_v3(0, 0, 0);
+    if (!fields->origin || fields->origin->type != QA_QC_VECTOR) return true;
+    uint32_t target_slot;
+    if (!qa_qc_actor_observation_slot(vm, target, &target_slot, error) ||
+        !qa_qc_actor_observation_vector(vm, target_slot, target, fields->origin->offset, point, error)) return false;
+    if (!qa_vec_finite(*point)) return true;
+    if (inflictor.registry) {
+        uint32_t source_slot; qa_vec3 minimum, maximum;
+        if (!fields->absmin || fields->absmin->type != QA_QC_VECTOR ||
+            !fields->absmax || fields->absmax->type != QA_QC_VECTOR) return true;
+        if (!qa_qc_actor_observation_slot(vm, inflictor, &source_slot, error) ||
+            !qa_qc_actor_observation_vector(vm, source_slot, inflictor, fields->absmin->offset, &minimum, error) ||
+            !qa_qc_actor_observation_vector(vm, source_slot, inflictor, fields->absmax->offset, &maximum, error)) return false;
+        if (!qa_vec_finite(minimum) || !qa_vec_finite(maximum)) return true;
+        *direction = qa_vec_normalize(qa_vec_sub(*point, qa_vec_scale(qa_vec_add(minimum, maximum), .5f)));
+    }
+    *present = true; return true;
+}
 static bool synchronous_request(application_qc_combat *owner, const qa_qc_call_event *event,
     int32_t target, qa_damage_request *request, qa_error *error)
 {
@@ -913,23 +1099,61 @@ static bool synchronous_request(application_qc_combat *owner, const qa_qc_call_e
             }
     }
     if (!present) return true;
-    struct application_qc_state *engine = owner->engine;
-    qa_qc_instance *vm = engine->provider->state.qc.instance;
-    uint32_t attacker_slot, target_slot; qa_vec3 minimum, maximum, origin;
-    const qa_qc_game_fields *fields = engine->field_bindings;
-    if (!fields->absmin || fields->absmin->type != QA_QC_VECTOR ||
-        !fields->absmax || fields->absmax->type != QA_QC_VECTOR ||
-        !fields->origin || fields->origin->type != QA_QC_VECTOR) return true;
-    if (!qa_qc_actor_observation_slot(vm, attack->actor, &attacker_slot, error) ||
-        !qa_qc_actor_observation_slot(vm, request->target, &target_slot, error) ||
-        !qa_qc_actor_observation_vector(vm, attacker_slot, attack->actor, fields->absmin->offset, &minimum, error) ||
-        !qa_qc_actor_observation_vector(vm, attacker_slot, attack->actor, fields->absmax->offset, &maximum, error) ||
-        !qa_qc_actor_observation_vector(vm, target_slot, request->target, fields->origin->offset, &origin, error)) return false;
-    if (!qa_vec_finite(minimum) || !qa_vec_finite(maximum) || !qa_vec_finite(origin)) return true;
+    qa_vec3 origin, direction;
+    if (!source_geometry(owner, request->target, attack->actor, &origin, &direction, &present, error)) return false;
+    if (!present) return true;
     request->attack.weapon = attack->weapon;
     request->point = point; request->normal = normal;
-    request->direction = qa_vec_normalize(qa_vec_sub(origin, qa_vec_scale(qa_vec_add(minimum, maximum), .5f)));
+    request->direction = direction;
     request->knockback = request->amount;
+    return true;
+}
+static bool environment_request(application_qc_combat *owner, const qa_qc_call_event *event,
+    int32_t target, int32_t inflictor, int32_t attacker, qa_damage_request *request, qa_error *error)
+{
+    const environment_layout *layout = &owner->profile->environment;
+    if (event->statement >= layout->statement_count || !layout->hazards[event->statement]) return true;
+    qa_hazard hazard = (qa_hazard)(layout->hazards[event->statement] - 1);
+    struct application_qc_state *engine = owner->engine;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    int32_t self;
+    if (!qa_qc_global_int(vm, owner->profile->self->offset, &self, error)) return false;
+    if (hazard != QA_HAZARD_TRIGGER && hazard != QA_HAZARD_CRUSH) {
+        int32_t world;
+        if (!layout->world || layout->world->type != QA_QC_ENTITY || target != self || inflictor || attacker) return true;
+        if (!qa_qc_global_int(vm, layout->world->offset, &world, error)) return false;
+        if (world) return true;
+    } else {
+        const qa_qc_game_fields *fields = engine->field_bindings;
+        const qa_qc_definition *callback = hazard == QA_HAZARD_TRIGGER ? fields->touch : fields->blocked;
+        if (!layout->other || layout->other->type != QA_QC_ENTITY || !callback ||
+            callback->type != QA_QC_FUNCTION || !inflictor || inflictor != self) return true;
+        int32_t other, function; uint32_t slot;
+        if (!qa_qc_global_int(vm, layout->other->offset, &other, error)) return false;
+        if (other != target) return true;
+        if (!qa_qc_actor_observation_slot(vm, request->attack.inflictor, &slot, error) ||
+            !qa_qc_actor_observation_int(vm, slot, request->attack.inflictor, callback->offset, &function, error)) return false;
+        if (function != (int32_t)event->caller) return true;
+        if (attacker != self) {
+            if (event->caller != layout->door || !fields->goalentity || fields->goalentity->type != QA_QC_ENTITY) return true;
+            int32_t goal;
+            if (!qa_qc_actor_observation_int(vm, slot, request->attack.inflictor, fields->goalentity->offset, &goal, error)) return false;
+            if (attacker != goal) return true;
+        }
+    }
+    request->attack.cause = (qa_damage_cause){.kind = QA_CAUSE_ENVIRONMENT, .source.hazard = hazard};
+    qa_vec3 point, direction; bool present;
+    if (!source_geometry(owner, request->target, request->attack.inflictor, &point, &direction, &present, error)) return false;
+    if (present) request->point = point;
+    if (present && inflictor) {
+        const qa_qc_definition *movetype = engine->field_bindings->movetype;
+        if (movetype && movetype->type == QA_QC_FLOAT) {
+            uint32_t slot; float movement;
+            if (!qa_qc_actor_observation_slot(vm, request->target, &slot, error) ||
+                !qa_qc_actor_observation_float(vm, slot, request->target, movetype->offset, &movement, error)) return false;
+            if (movement == 3) { request->direction = direction; request->knockback = request->amount; }
+        }
+    }
     return true;
 }
 static bool authored_request(application_qc_combat *owner, qa_actor_id target, qa_actor_id attacker,
@@ -1076,7 +1300,8 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
     if (!target.registry) return qa_qc_call_continue(next, error);
     qa_damage_request request;
     if (!authored_request(owner, target, attacker, inflictor, amount, &request, error) ||
-        !synchronous_request(owner, event, target_reference, &request, error)) return false;
+        !synchronous_request(owner, event, target_reference, &request, error) ||
+        !environment_request(owner, event, target_reference, inflictor_reference, attacker_reference, &request, error)) return false;
     qa_damage_outcome outcome = {0}; ++owner->calls;
     bool ok;
     if (!eligible(owner, target_slot)) {
