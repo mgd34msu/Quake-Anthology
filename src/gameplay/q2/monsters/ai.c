@@ -3454,7 +3454,10 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
       !(rerelease && (species == Q2M_INFANTRY || species == Q2M_CHICK ||
                      species == Q2M_CHICK_HEAT || species == Q2M_TANK ||
                      species == Q2M_TANK_COMMANDER || species == Q2M_GUNNER ||
-                     species == Q2M_GUN_COMMANDER)))
+                     species == Q2M_GUN_COMMANDER || species == Q2M_SOLDIER_LIGHT ||
+                     species == Q2M_SOLDIER || species == Q2M_SOLDIER_SS ||
+                     species == Q2M_SOLDIER_RIPPER || species == Q2M_SOLDIER_HYPER ||
+                     species == Q2M_SOLDIER_LASER)))
     return true;
   if (!apply_species_attack(context, move, error))
     return false;
@@ -3468,7 +3471,6 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     case Q2M_SOLDIER_RIPPER:
     case Q2M_SOLDIER_HYPER:
     case Q2M_SOLDIER_LASER:
-      break;
     case Q2M_GEKK:
     case Q2M_INFANTRY:
     case Q2M_GUNNER:
