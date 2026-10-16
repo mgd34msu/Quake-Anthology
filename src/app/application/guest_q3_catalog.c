@@ -265,7 +265,7 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
         application_q3_catalog_record *r = records + i;
         if (!c->live && (r->type == c->weapon_type || r->type == c->ammo_type) &&
             (r->tag < 0 || (r->type == c->weapon_type && !r->tag) ||
-             (!c->private_inventory && r->tag > 15))) {
+             (c->role == QA_QVM_GAME && !c->private_inventory && r->tag > 15))) {
             ok = fail(e, QA_ERROR_FORMAT, "Catalog item exceeds its original inventory representation");
             break;
         }
@@ -273,7 +273,7 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
         if (qa_id_index_find(&tags, (uint32_t)r->tag, (uint32_t)c->weapon_type)->value != i) continue;
         application_q3_catalog_weapon *w = weapons + weapon_count;
         *w = (application_q3_catalog_weapon){.weapon = r->tag, .label = r->pickup_name};
-        ok = r->tag > 0 && (c->private_inventory || r->tag <= 15);
+        ok = r->tag > 0 && (c->role != QA_QVM_GAME || c->private_inventory || r->tag <= 15);
         if (!ok) { fail(e, QA_ERROR_FORMAT, "Catalog weapon exceeds its original inventory representation"); break; }
         ok = item_id(c, r, true, storage, &w->item, e);
         qa_id_index_entry *ammo = qa_id_index_find(&tags, (uint32_t)r->tag, (uint32_t)c->ammo_type);

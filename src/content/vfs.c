@@ -1345,6 +1345,7 @@ static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *p
         return false;
     }
     if (vfs->pure_count == 0 && !vfs->q3_demo && !source->q3_demo) return true;
+    if (qa_archive_paths_equal(path, "qvm-compatibility.json", QA_ARCHIVE_CASE_INSENSITIVE)) return true;
     const char *extension = strrchr(path, '.');
     if (extension == NULL) return false;
     static const char *const allowed[] = {".cfg", ".menu", ".game", ".dm_68", ".dat"};
