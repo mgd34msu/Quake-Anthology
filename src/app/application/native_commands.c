@@ -197,9 +197,6 @@ bool application_native_q1_console_cheat(void *opaque, qa_actor_id actor,
         !source->state.q1 || !name || !enabled ||
         (strcmp(name, "god") && strcmp(name, "noclip") && strcmp(name, "fly")))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat requires its actual Source and toggle");
-    if (application->operation == APPLICATION_IDLE && qa_console_idle(application->console) &&
-        application_native_q1_console_idle(source) && application_native_q1_wire_idle(source))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat requires an entered Source command");
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(source->state.q1, &operation, error)) return false;
     qa_q1_source_client_view client;
