@@ -60,7 +60,7 @@ static bool invocation_current(frontend_unified_q3_commands *o,const qa_command_
         a->client==b->client && a->seat==b->seat && a->registry==b->registry && a->generation==b->generation &&
         qa_actor_id_equal(a->actor,b->actor);
     bool engine=!a->owner && a->cvar_view==qa_cvars_view_identity(qa_application_cvars(o->options.frontend->application)) &&
-        qa_console_invocation_delivered_view(call,o->constructor.cvar_view,o->receiver,o->receiver);
+        qa_console_invocation_delivered_view(call,o->constructor.cvar_view,o->constructor.owner,o->receiver);
     return call->console==o->console && qa_console_invocation_current(o->console,call) &&
         a->session==b->session && (source||engine) &&
         qa_application_command_context_active(o->options.frontend->application,a) ? true :
@@ -276,34 +276,21 @@ bool frontend_unified_q3_commands_create(const frontend_unified_q3_commands_opti
     if(!current(o,false,NULL,e)) { free(o); return false; }
     *out=o; return true;
 }
+static qa_command_result contributed(void *context,const qa_command_invocation *call,qa_error *e)
+{
+    return handle(context,call,e)?QA_COMMAND_HANDLED:QA_COMMAND_FAILED;
+}
 static bool bind(frontend_unified_q3_commands *o,size_t count,qa_error *e)
 {
     while(o->installed<count) {
         size_t i=o->installed;
-        qa_command_handler handler=i<q3n_cgame_local_command_count(o->product)?handle:NULL;
-        void *user=handler?o:NULL;
-        uint64_t owner; qa_command_handler actual_handler; void *actual_user;
-        if(qa_console_registration_read_context(o->console,&o->constructor,q3n_cgame_command_name(o->product,i),o->receiver,
-            &owner,&actual_handler,&actual_user)) {
-            if(owner!=o->receiver || actual_handler!=handler || actual_user!=user)
-                return fail(e,QA_ERROR_FORMAT,"Unified command prefix has a different actual callback owner");
-            ++o->installed; continue;
-        }
+        qa_command_fallback callback=i<q3n_cgame_local_command_count(o->product)?contributed:NULL;
+        qa_console_contribution owner={.receiver=o->constructor.owner,.lifetime_owner=o->receiver,
+            .cvar_view=o->constructor.cvar_view,.seat=o->constructor.seat,
+            .callback=callback,.user=callback?o:NULL};
         /* Q3 AddCommand names without CG handlers remain engine fallbacks. */
-        if(!qa_console_register_context(o->console,&o->constructor,q3n_cgame_command_name(o->product,i),NULL,o->receiver,o->receiver,
-            false,handler,user,e))return false;
+        if(!qa_console_contribute(o->console,q3n_cgame_command_name(o->product,i),&owner,e))return false;
         ++o->installed;
-    }
-    return true;
-}
-static bool bindings_current(const frontend_unified_q3_commands *o)
-{
-    for(size_t i=0;i<q3n_cgame_command_count(o->product);++i) {
-        uint64_t owner; qa_command_handler handler; void *user;
-        bool present=qa_console_registration_read_context(o->console,&o->constructor,q3n_cgame_command_name(o->product,i),o->receiver,&owner,&handler,&user);
-        if(i>=o->installed) { if(present)return false; continue; }
-        qa_command_handler expected=i<q3n_cgame_local_command_count(o->product)?handle:NULL;
-        if(!present || owner!=o->receiver || handler!=expected || user!=(expected?(void *)o:NULL))return false;
     }
     return true;
 }
@@ -312,7 +299,8 @@ bool frontend_unified_q3_commands_registration_ready(frontend_unified_q3_command
     return o && !o->busy && !o->resetting && o->registered && !o->closed && f && f->compiled &&
         f->compiled->stage==Q3N_COMPILED_INITIALIZATION &&
         f->compiled->source.owner==frontend_unified_q3_client_source(o->options.client) &&
-        q3n_frame_current(f) && current(o,false,NULL,e) && bindings_current(o) ? true :
+        q3n_frame_current(f) && current(o,false,NULL,e) &&
+        o->installed==q3n_cgame_command_count(o->product) ? true :
         fail(e,QA_ERROR_ARGUMENT,"Unified CG Init lost its actual installed console command rows");
 }
 bool frontend_unified_q3_commands_register(void *context,const q3n_frame *f,qa_error *e)
@@ -349,7 +337,8 @@ bool frontend_unified_q3_commands_video_reset(frontend_unified_q3_commands *o,qa
         return fail(e,QA_ERROR_ARGUMENT,"Unified CG video reset retains a command invocation or stale Source");
     o->resetting=true;
     while(o->installed) {
-        if(!qa_console_unregister_context(o->console,&o->constructor,q3n_cgame_command_name(o->product,o->installed-1),o->receiver))
+        if(!qa_console_uncontribute(o->console,q3n_cgame_command_name(o->product,o->installed-1),
+            o->constructor.owner,o->receiver))
             return fail(e,QA_ERROR_ARGUMENT,"Unified CG video command removal was refused");
         --o->installed;
     }
@@ -364,7 +353,8 @@ bool frontend_unified_q3_commands_destroy(frontend_unified_q3_commands **owned,q
         return fail(e,QA_ERROR_ARGUMENT,"Unified console retirement retains a CG or console invocation");
     o->retiring=true;
     while(o->installed) {
-        if(!qa_console_unregister_context(o->console,&o->constructor,q3n_cgame_command_name(o->product,o->installed-1),o->receiver))
+        if(!qa_console_uncontribute(o->console,q3n_cgame_command_name(o->product,o->installed-1),
+            o->constructor.owner,o->receiver))
             return fail(e,QA_ERROR_ARGUMENT,"Unified console callback retirement was refused");
         --o->installed;
     }
