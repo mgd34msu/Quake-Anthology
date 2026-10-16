@@ -102,7 +102,7 @@ struct application_control_frames {
     size_t *touch_heads, *touch_next;
     qa_stamp_set touch_marks;
     size_t touched_count;
-    bool draining;
+    bool draining, paused;
 };
 
 static control_group *group_take(struct application_control_frames *owner,size_t count,qa_error *error)
@@ -161,6 +161,41 @@ static void observe_player_light(application_control_record *record, const qa_us
     if (command->has_light_level) {
         record->player.light_level = command->light_level;
         record->player.has_light_level = true;
+    }
+}
+
+static void command_neutralize(qa_usercmd *command)
+{
+    command->forward_move = command->side_move = command->up_move = 0;
+    command->buttons = 0; command->offhand_buttons = 0;
+    command->impulse = command->weapon = 0;
+    command->has_arsenal = false; command->arsenal = (qa_usercmd_arsenal){0};
+}
+
+static void input_neutralize(control_input *input)
+{
+    command_neutralize(&input->latest);
+    command_neutralize(&input->unified.movement);
+    input->unified.arsenal = 0; input->unified.weapon = 0;
+    input->unified.has_arsenal = input->unified.use_holdable = input->unified.has_impulse = false;
+    input->unified.impulse = 0;
+    input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    input->frame_owned = false; input->owned_frame_number = 0;
+    input->q1_source_actor = (qa_actor_id){0}; input->q1_source_provider = 0;
+    input->q1_source_frame_number = input->q1_source_sequence = 0;
+    input->q1_source_deferred = false;
+}
+
+static void paused_input(qa_application *app, control_input *input)
+{
+    input_neutralize(input);
+    application_control_record *record = &app->controls[input->actor.slot];
+    if (record->active && qa_actor_id_equal(record->player.actor, input->actor)) {
+        record->player.buttons = record->player.previous_buttons = 0;
+        if (input->seen) {
+            record->player.command_sequence = input->sequence;
+            record->command_seen = true;
+        }
     }
 }
 
@@ -594,6 +629,25 @@ bool application_control_frames_abort(qa_application *app, qa_error *error)
     return ok;
 }
 
+bool qa_application_control_pause(qa_application *app, bool paused, qa_error *error)
+{
+    struct application_control_frames *owner = app ? app->control_frames : NULL;
+    if (!owner || owner->paused == paused) return true;
+    if (paused) {
+        if (!application_control_frames_abort(app, error)) return false;
+        while (owner->head) {
+            control_group *group = owner->head; owner->head = group->next;
+            group_release(group);
+        }
+        owner->tail = NULL;
+        for (control_input_slot *slot = owner->first_input; slot; slot = slot->next)
+            if (slot->value.actor.registry) paused_input(app, &slot->value);
+        application_snapshot_mutated(app);
+    }
+    owner->paused = paused;
+    return true;
+}
+
 struct application_control_mod_input *application_control_mod_head(const qa_application *app)
 { return app && app->control_frames ? app->control_frames->mod_inputs : NULL; }
 void application_control_mod_head_set(qa_application *app, struct application_control_mod_input *head)
@@ -779,8 +833,9 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q3 intake cannot interrupt a retained input turn");
-    control_group *group = deferred ? NULL : group_take(frames,1,error);
-    if (!deferred && !group)
+    bool paused = frames->paused || app->q1_paused;
+    control_group *group = deferred || paused ? NULL : group_take(frames,1,error);
+    if (!deferred && !paused && !group)
         return application_fail(error, QA_ERROR_MEMORY, "Allocating raw Q3 source command");
     qa_usercmd command;
     qa_usercmd_from_q3(raw, sequence, &command);
@@ -789,7 +844,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
         command.has_light_level = observation->has_light_level;
     }
     application_snapshot_mutated(app);
-    if (!qc_receipt(app, actor, ordinal, &command, error)) {
+    if (!paused && !qc_receipt(app, actor, ordinal, &command, error)) {
         group_release(group); application_fault(app, error); return false;
     }
     qa_q3_usercmd received = q3_source_command(&command, true);
@@ -811,6 +866,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     input->accepted_time_ns = input->source_time_ns = clock.frame.time_ns; input->qw_receipt_time_ns = 0; input->latest = command;
     observe_player_light(record, &command);
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    if (paused) { paused_input(app, input); return true; }
     if (group && original_q3(provider)) {
         bool ok = execute_original_q3_group(app, group, error);
         group_release(group);
@@ -871,16 +927,19 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if ((seen && sequence <= previous) || input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q2 input sequence or retained turn is invalid");
-    control_group *group = group_take(frames,1,error);
-    if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating physical Q2 input");
+    bool paused = frames->paused || app->q1_paused;
+    control_group *group = paused ? NULL : group_take(frames,1,error);
+    if (!paused && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating physical Q2 input");
     qa_usercmd command = *raw; command.sequence = sequence;
-    if (!qc_receipt(app, actor, 0, &command, error)) {
+    if (!paused && !qc_receipt(app, actor, 0, &command, error)) {
         group_release(group); application_fault(app, error); return false;
     }
-    *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = 1,
-        .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q2_SOURCE,
-        .source_time_ns = clock.frame.time_ns};
-    group->commands[0] = command;
+    if (group) {
+        *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = 1,
+            .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q2_SOURCE,
+            .source_time_ns = clock.frame.time_ns};
+        group->commands[0] = command;
+    }
     (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
@@ -888,6 +947,7 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     input->accepted_time_ns = input->source_time_ns = clock.frame.time_ns; input->qw_receipt_time_ns = 0;
     input->latest = command; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     observe_player_light(record, &command);
+    if (paused) { paused_input(app, input); return true; }
     if (frames->tail) frames->tail->next = group; else frames->head = group;
     frames->tail = group;
     return true;
@@ -963,8 +1023,8 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     for (const control_group *group = frames->head; group; group = group->next)
         if (qa_actor_id_equal(group->actor, actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Raw NQ input cannot replace queued selected input");
-    if (app->q1_paused) return true;
-    if (!qc_receipt(app, actor, 0, &command, error)) { application_fault(app, error); return false; }
+    bool paused = frames->paused || app->q1_paused;
+    if (!paused && !qc_receipt(app, actor, 0, &command, error)) { application_fault(app, error); return false; }
     (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = sequence; input->seen = true;
@@ -974,6 +1034,7 @@ bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     if (command.impulse) input->impulse = command.impulse;
     command.impulse = 0; input->latest = command;
     observe_player_light(record, &command);
+    if (paused) paused_input(app, input);
     return true;
 }
 
@@ -1003,7 +1064,6 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
             commands[i].milliseconds > 255 || commands[i].sequence != commands[0].sequence ||
             (seen && commands[i].sequence <= previous))
             return application_fail(error, QA_ERROR_ARGUMENT, "Raw QW group has invalid source commands or packet sequence");
-    if (app->q1_paused) return true;
     uint64_t receipt_time;
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         if (!application_qc_control_receipt_time(provider, actor, &receipt_time, error)) return false;
@@ -1020,24 +1080,28 @@ bool qa_application_control_qw_commands(qa_application *app, qa_actor_id actor,
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw QW intake cannot interrupt a retained turn");
-    control_group *group = group_take(frames,count,error);
-    if (!group) return application_fail(error, QA_ERROR_MEMORY, "Allocating raw QW source group");
-    *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = count,
+    bool paused = frames->paused || app->q1_paused;
+    control_group *group = paused ? NULL : group_take(frames,count,error);
+    if (!paused && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating raw QW source group");
+    if (group) *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = count,
         .quakeworld = true, .before_source = before_source(provider), .domain = CONTROL_COMMAND_QW_SOURCE,
         .source_time_ns = source_time};
+    qa_usercmd latest = {0};
     for (size_t i = 0; i < count; ++i) {
-        group->commands[i] = commands[i];
-        if (!qc_receipt(app, actor, (uint64_t)i, &group->commands[i], error)) {
+        latest = commands[i];
+        if (!paused && !qc_receipt(app, actor, (uint64_t)i, &latest, error)) {
             group_release(group); application_fault(app, error); return false;
         }
+        if (group) group->commands[i] = latest;
     }
     (void)input_enroll(frames, actor.slot);
     if (!qa_actor_id_equal(input->actor, actor)) *input = (control_input){.actor = actor};
     input->provider = provider->owner; input->sequence = commands[0].sequence; input->seen = true;
     input->retained = false; input->domain = CONTROL_COMMAND_QW_SOURCE; input->accepted_time_ns = input->source_time_ns = source_time;
     input->qw_receipt_time_ns = receipt_time;
-    input->latest = group->commands[count - 1]; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    input->latest = latest; input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     observe_player_light(record, &input->latest);
+    if (paused) { paused_input(app, input); return true; }
     if (frames->tail) frames->tail->next = group; else frames->head = group;
     frames->tail = group;
     return true;
@@ -1095,14 +1159,14 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
     control_input *input = &frames->inputs[actor.slot].value;
     if (input->turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified input cannot interrupt a prepared Source turn");
-    if (app->q1_paused) return true;
     qa_clock_state accepted_clock;
     if (!qa_session_clock(app->session, source->owner, &accepted_clock))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified command has no registered Source clock");
     bool retained = source_client(source) && source->component.clock.kind == QA_RULESET_NETQUAKE &&
         receipt.movement.kind == QA_RULESET_NETQUAKE;
-    control_group *group = retained ? NULL : group_take(frames,1,error);
-    if (!retained && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified command receipt");
+    bool paused = frames->paused || app->q1_paused;
+    control_group *group = retained || paused ? NULL : group_take(frames,1,error);
+    if (!retained && !paused && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified command receipt");
     qa_usercmd marker = {.kind = receipt.movement.kind, .sequence = receipt.sequence};
     if (group) {
         *group = (control_group){.lease = group->lease, .actor = actor, .provider = source->owner, .count = 1,
@@ -1117,6 +1181,7 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
     input->latest = marker; input->unified = receipt;
     observe_player_light(record, &receipt.movement);
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
+    if (paused) { paused_input(app, input); return true; }
     if (group) {
         if (frames->tail) frames->tail->next = group; else frames->head = group;
         frames->tail = group;
@@ -1193,12 +1258,12 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
             return application_fail(error, QA_ERROR_ARGUMENT, "Input group has invalid dialect, values or sequence");
         seen = true; sequence = commands[i].sequence;
     }
-    if (app->q1_paused) return true;
     qa_clock_state accepted_clock;
     if (!qa_session_clock(app->session, provider->owner, &accepted_clock))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected command has no registered Source clock");
+    bool paused = frames->paused || app->q1_paused;
     control_group *group = NULL;
-    if (!retained) {
+    if (!retained && !paused) {
         if (count > (SIZE_MAX - sizeof(*group)) / sizeof(*commands))
             return application_fail(error, QA_ERROR_MEMORY, "Input group is too large");
         group = group_take(frames,count,error);
@@ -1211,7 +1276,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     qa_usercmd latest = {0};
     for (size_t i = 0; i < count; ++i) {
         latest = commands[i];
-        if (!qc_receipt(app, actor, (uint64_t)i, &latest, error)) {
+        if (!paused && !qc_receipt(app, actor, (uint64_t)i, &latest, error)) {
             group_release(group); application_fault(app, error); return false;
         }
         if (group) group->commands[i] = latest;
@@ -1223,6 +1288,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
     input->arsenal = 0; input->weapon = 0;
     input->latest = latest;
     observe_player_light(record, &latest);
+    if (paused) { paused_input(app, input); return true; }
     if (retained) {
         for (size_t i = 0; i < count; ++i) if (commands[i].impulse) input->impulse = commands[i].impulse;
         input->latest.impulse = 0;
@@ -1241,7 +1307,7 @@ bool application_control_frames_receive_bot(qa_application *app, qa_actor_id act
         !weapon_owner(app, actor, arsenal, weapon))
         return application_fail(error, QA_ERROR_ARGUMENT, "Bot input needs its actual producer and selected item owner");
     if (!application_control_frames_receive(app, actor, command, 1, error)) return false;
-    if (app->q1_paused) return true;
+    if (app->control_frames->paused || app->q1_paused) return true;
     control_input *input = &app->control_frames->inputs[actor.slot].value;
     if (input->retained || input->domain == CONTROL_COMMAND_Q3_SOURCE) {
         input->arsenal = arsenal; input->weapon = weapon;

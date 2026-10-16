@@ -951,6 +951,8 @@ static bool frontend_step(qa_frontend *frontend,
             !qa_application_startup_pending(frontend->application))
             ok=qa_application_clients_drain(frontend->application,error);
         bool cinematic=!replay && frontend_cinematic_running(frontend);
+        if (ok && !replay && (!ready || cinematic || client_only || !*playing))
+            ok=qa_application_control_pause(frontend->application,false,error);
         uint64_t adjusted=raw_elapsed;
         if (ok && ready && !replay && !qa_application_should_stop(frontend->application)) {
             if (frontend->recipient_begin_generation==UINT64_MAX)
@@ -967,7 +969,9 @@ static bool frontend_step(qa_frontend *frontend,
                 frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
             bool menu_pause=false;
             if (ok && !replay) ok=menu_paused(frontend,&menu_pause,error);
-            bool paused=!replay && !client_only && (qa_application_q1_paused(frontend->application) || menu_pause);
+            bool paused=!replay && !client_only && *playing &&
+                (qa_application_q1_paused(frontend->application) || menu_pause);
+            if (ok && !replay) ok=qa_application_control_pause(frontend->application,paused,error);
             if (ok && !replay && !paused && adjusted>UINT64_MAX-frontend->time_ns)
                 ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
             if (ok) {
