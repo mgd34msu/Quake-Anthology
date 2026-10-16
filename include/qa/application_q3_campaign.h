@@ -3,6 +3,7 @@
 #include "qa/application_q3_client.h"
 #include "qa/application_client.h"
 #include "qa/filesystem.h"
+#include "qa/team_arena_campaign_progress.h"
 
 typedef struct qa_application_q3_campaign {
     qa_session *session;
@@ -30,6 +31,10 @@ typedef struct qa_application_q3_campaign {
 typedef struct qa_application_q3_setting {
     const char *name, *value;
 } qa_application_q3_setting;
+
+qa_team_arena_override_phase qa_application_q3_campaign_overrides(const qa_application *);
+bool qa_application_q3_campaign_overrides_set(qa_application *,
+    qa_team_arena_override_phase, qa_error *);
 
 /* Construct fresh selected source owners with these actual GAME startup
  * values before capacity admission and GAME Init. Settings and source metadata

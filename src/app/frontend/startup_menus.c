@@ -504,6 +504,9 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
     }
     if (request->map_command &&
         !qa_console_resume(qa_application_console(f->application),error)) return false;
+    if (!request->local_players && !request->map_command &&
+        !qa_application_q3_campaign_overrides_set(f->application,
+            request->team?QA_TEAM_ARENA_OVERRIDES_ACTIVE:QA_TEAM_ARENA_OVERRIDES_NONE,error)) return false;
     bool lobby = request->lobby, end = request->end_game, local_players = request->local_players;
     frontend_startup_launch_discard(f);
     if (lobby) {

@@ -13,6 +13,17 @@ typedef struct qa_team_arena_campaign_map {
     uint32_t team_members;
 } qa_team_arena_campaign_map;
 typedef struct qa_team_arena_setting { const char *name, *value; } qa_team_arena_setting;
+typedef enum qa_team_arena_override_phase {
+    QA_TEAM_ARENA_OVERRIDES_NONE,
+    QA_TEAM_ARENA_OVERRIDES_ACTIVE,
+    QA_TEAM_ARENA_OVERRIDES_RELEASED
+} qa_team_arena_override_phase;
+enum { QA_TEAM_ARENA_OVERRIDE_COUNT = 7, QA_TEAM_ARENA_TIMER_OVERRIDE = 2 };
+typedef struct qa_team_arena_override {
+    const char *name, *saved, *fallback;
+} qa_team_arena_override;
+extern const qa_team_arena_override qa_team_arena_overrides[QA_TEAM_ARENA_OVERRIDE_COUNT];
+bool qa_team_arena_overrides_release(qa_cvars *, qa_error *);
 typedef struct qa_team_arena_campaign_bot {
     const char *ai, *name, *team;
     uint32_t delay_ms;

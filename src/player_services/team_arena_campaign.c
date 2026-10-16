@@ -6,6 +6,16 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+const qa_team_arena_override qa_team_arena_overrides[QA_TEAM_ARENA_OVERRIDE_COUNT] = {
+    {"capturelimit", "ui_saveCaptureLimit", "8"},
+    {"fraglimit", "ui_saveFragLimit", "20"},
+    {"cg_drawTimer", "ui_drawTimer", "0"},
+    {"g_doWarmup", "ui_doWarmup", "0"},
+    {"g_warmup", "ui_Warmup", "20"},
+    {"sv_pure", "ui_pure", "0"},
+    {"g_friendlyFire", "ui_friendlyFire", "0"}
+};
+
 typedef struct tokens { char **fields; size_t count; } tokens;
 typedef struct section { char *name; tokens *rows; size_t count; } section;
 typedef struct sections { section *rows; size_t count; } sections;
@@ -350,20 +360,38 @@ const qa_team_arena_skirmish_view *qa_team_arena_skirmish_read(const qa_team_are
 bool qa_team_arena_source_baseline(const qa_cvars *source,qa_team_arena_setting out[7],qa_error *error)
 {
     if (!source || !out) return fail(error,QA_ERROR_ARGUMENT,"Team Arena baseline requires the actual GAME cvar owner");
-    static const char *const names[7]={"sv_maxclients","capturelimit","fraglimit","g_doWarmup","g_warmup","sv_pure","g_friendlyFire"};
-    static const char *const saved[7]={"ui_maxClients","ui_saveCaptureLimit","ui_saveFragLimit","ui_doWarmup","ui_Warmup","ui_pure","ui_friendlyFire"};
-    static const char *const defaults[7]={"0","8","20","0","20","0","0"};
-    for (size_t i=0;i<7;++i) {
-        const qa_cvar_view *value=qa_cvars_find(source,names[i]);
-        out[i]=(qa_team_arena_setting){saved[i],value?value->value:defaults[i]};
+    const qa_cvar_view *clients=qa_cvars_find(source,"sv_maxclients");
+    out[0]=(qa_team_arena_setting){"ui_maxClients",clients?clients->value:"0"};
+    size_t count=1;
+    for (size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i) {
+        if (i==QA_TEAM_ARENA_TIMER_OVERRIDE) continue;
+        const qa_team_arena_override *setting=qa_team_arena_overrides+i;
+        const qa_cvar_view *value=qa_cvars_find(source,setting->name);
+        out[count++]=(qa_team_arena_setting){setting->saved,value?value->value:setting->fallback};
     }
     return true;
 }
 bool qa_team_arena_client_baseline(const qa_cvars *source,qa_team_arena_setting *out,qa_error *error)
 {
     if (!source || !out) return fail(error,QA_ERROR_ARGUMENT,"Team Arena timer baseline requires the actual local CGAME cvar owner");
-    const qa_cvar_view *value=qa_cvars_find(source,"cg_drawTimer");
-    *out=(qa_team_arena_setting){"ui_drawTimer",value?value->value:"0"}; return true;
+    const qa_team_arena_override *setting=qa_team_arena_overrides+QA_TEAM_ARENA_TIMER_OVERRIDE;
+    const qa_cvar_view *value=qa_cvars_find(source,setting->name);
+    *out=(qa_team_arena_setting){setting->saved,value?value->value:setting->fallback}; return true;
+}
+bool qa_team_arena_overrides_release(qa_cvars *cvars,qa_error *error)
+{
+    char *values[QA_TEAM_ARENA_OVERRIDE_COUNT]={0};
+    bool ok=true;
+    for (size_t i=0;ok && i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i) {
+        const qa_team_arena_override *setting=qa_team_arena_overrides+i;
+        const qa_cvar_view *saved=qa_cvars_find(cvars,setting->saved);
+        values[i]=copy(saved?saved->value:setting->fallback,error);
+        ok=values[i]!=NULL;
+    }
+    for (size_t i=0;ok && i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i)
+        ok=qa_cvars_set(cvars,qa_team_arena_overrides[i].name,values[i],true,error);
+    for (size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i) free(values[i]);
+    return ok;
 }
 bool qa_team_arena_campaign_plan(qa_team_arena_campaign *campaign,const qa_team_arena_cursor *cursor,
     uint32_t skill,const char *player,const char *opponent,qa_team_arena_skirmish **out,qa_error *error)

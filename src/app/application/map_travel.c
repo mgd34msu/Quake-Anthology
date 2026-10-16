@@ -30,6 +30,24 @@ static struct application_map_state *map_state(qa_application *application,
     return application->map_state;
 }
 
+qa_team_arena_override_phase qa_application_q3_campaign_overrides(const qa_application *application)
+{
+    return application && application->map_state ? application->map_state->team_overrides :
+        QA_TEAM_ARENA_OVERRIDES_NONE;
+}
+
+bool qa_application_q3_campaign_overrides_set(qa_application *application,
+    qa_team_arena_override_phase phase, qa_error *error)
+{
+    struct application_map_state *state = map_state(application, error);
+    if (!state) return false;
+    if (phase == QA_TEAM_ARENA_OVERRIDES_RELEASED &&
+        state->team_overrides == QA_TEAM_ARENA_OVERRIDES_ACTIVE &&
+        !qa_team_arena_overrides_release(application->cvars, error)) return false;
+    state->team_overrides = phase;
+    return true;
+}
+
 qa_map_launch_policy qa_application_map_launch_command(const char *name)
 {
     static const struct {
@@ -1100,6 +1118,36 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
     return true;
 }
 
+static bool team_override_fields(qa_source_save_io *io, qa_application *application,
+    qa_team_arena_override_phase *phase)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t value = (uint32_t)*phase;
+    if (!qa_source_save_u32(io, &value)) return false;
+    if (value > QA_TEAM_ARENA_OVERRIDES_RELEASED)
+        return application_fail(io->error, QA_ERROR_FORMAT, "Invalid Team Arena override phase");
+    *phase = (qa_team_arena_override_phase)value;
+    if (*phase != QA_TEAM_ARENA_OVERRIDES_ACTIVE) return true;
+    for (size_t i = 0; i < QA_TEAM_ARENA_OVERRIDE_COUNT; ++i) {
+        const qa_team_arena_override *rule = qa_team_arena_overrides + i;
+        const qa_cvar_view *saved = reading ? NULL : qa_cvars_find(application->cvars, rule->saved);
+        const qa_cvar_view *current = reading ? NULL : qa_cvars_find(application->cvars, rule->name);
+        char *baseline = reading ? NULL : (char *)(saved ? saved->value : rule->fallback);
+        bool effective = current && (current->player_scoped || current->save_policy != QA_CVAR_SAVE_GAMEPLAY);
+        bool ok = qa_source_save_owned_text(io, &baseline) && qa_source_save_bool(io, &effective);
+        char *setting = reading ? NULL : (char *)(current ? current->value : rule->fallback);
+        if (ok && effective) ok = qa_source_save_owned_text(io, &setting);
+        if (ok && reading) {
+            ok = qa_cvars_set(application->cvars, rule->saved, baseline ? baseline : rule->fallback, true, io->error);
+            if (ok && effective)
+                ok = qa_cvars_set(application->cvars, rule->name, setting ? setting : rule->fallback, true, io->error);
+        }
+        if (reading) { free(baseline); free(setting); }
+        if (!ok) return false;
+    }
+    return true;
+}
+
 bool application_map_checkpoint_capture(qa_application *application, bool departed, qa_buffer *out,
                                          qa_error *error)
 {
@@ -1131,6 +1179,9 @@ bool application_map_checkpoint_capture(qa_application *application, bool depart
     size_t match_index = start_match ? application->map_state->match_mode_index : 0;
     if (ok) ok = qa_source_save_u32(&io, &policy) && qa_source_save_bool(&io, &start_match);
     if (ok && start_match) ok = qa_source_save_count(&io, &match_index, SIZE_MAX);
+    qa_team_arena_override_phase overrides = departed ? QA_TEAM_ARENA_OVERRIDES_NONE :
+        qa_application_q3_campaign_overrides(application);
+    if (ok) ok = team_override_fields(&io, application, &overrides);
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
@@ -1283,11 +1334,18 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
     size_t match_index = 0;
     if (ok && io.offset < io.input.size) ok = qa_source_save_bool(&io, &start_match);
     if (ok && start_match) ok = qa_source_save_count(&io, &match_index, SIZE_MAX);
+    qa_team_arena_override_phase overrides = QA_TEAM_ARENA_OVERRIDES_NONE;
+    if (ok && io.offset < io.input.size) ok = team_override_fields(&io, candidate, &overrides);
     if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok && !state && overrides != QA_TEAM_ARENA_OVERRIDES_NONE) {
+        state = calloc(1, sizeof(*state));
+        if (!state) ok = application_fail(error, QA_ERROR_MEMORY, "Retaining saved Team Arena overrides");
+    }
     if (ok && state) {
         state->map_launch = (qa_map_launch_policy)policy;
         state->start_match = start_match;
         state->match_mode_index = match_index;
+        state->team_overrides = overrides;
     }
     if (ok && state) ok = own_map_route(&state->route, &state->route, error);
     qa_source_save_dispose(&io);

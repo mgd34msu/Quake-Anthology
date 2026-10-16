@@ -23,10 +23,6 @@
 
 typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM, CAMPAIGN_Q2, CAMPAIGN_NONE } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
-static const char *const team_overrides[][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
-    {"cg_drawTimer","ui_drawTimer"},{"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},
-    {"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
-enum { TEAM_OVERRIDE_COUNT=sizeof(team_overrides)/sizeof(team_overrides[0]) };
 struct frontend_campaign {
     qa_frontend *frontend;
     const qa_launch_snapshot *publication;
@@ -38,7 +34,7 @@ struct frontend_campaign {
     int32_t match_start;
     campaign_kind kind;
     qa_cvar_handle nextmap, skill, selection, deathmatch, protocol;
-    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[TEAM_OVERRIDE_COUNT], result_fields[3];
+    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[QA_TEAM_ARENA_OVERRIDE_COUNT], result_fields[3];
     uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
     bool selection_valid;
@@ -83,14 +79,15 @@ bool frontend_campaign_archive_run(qa_frontend *f,qa_cvars *registry,
     bool (*write)(void *,qa_error *),void *context,qa_error *error)
 {
     frontend_campaign *owner=f?f->campaign:NULL;
-    if (!owner || owner->kind!=CAMPAIGN_TEAM || owner->result ||
+    if (!owner || owner->kind!=CAMPAIGN_TEAM ||
+        qa_application_q3_campaign_overrides(f->application)!=QA_TEAM_ARENA_OVERRIDES_ACTIVE ||
         !qa_cvars_same_store(owner->cvars,registry)) return write(context,error);
-    qa_cvar_assignment assignments[TEAM_OVERRIDE_COUNT];
+    qa_cvar_assignment assignments[QA_TEAM_ARENA_OVERRIDE_COUNT];
     size_t count=0;
-    for (size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) {
+    for (size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i) {
         const qa_cvar_view *saved=qa_cvars_read(registry,owner->saved_rules[i]);
-        if (saved && qa_cvars_resolve(registry,team_overrides[i][0]).slot)
-            assignments[count++]=(qa_cvar_assignment){team_overrides[i][0],saved->value};
+        if (saved && qa_cvars_resolve(registry,qa_team_arena_overrides[i].name).slot)
+            assignments[count++]=(qa_cvar_assignment){qa_team_arena_overrides[i].name,saved->value};
     }
     if (!count) return write(context,error);
     qa_cvars_value_scope *scope=NULL;
@@ -348,7 +345,8 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
     owner->protocol=qa_cvars_resolve(view.cvars,"protocol");
     campaign_result_bind(owner);
-    for(size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
+    for(size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i)
+        owner->saved_rules[i]=qa_cvars_resolve(view.cvars,qa_team_arena_overrides[i].saved);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
     f->campaign=owner;
@@ -557,12 +555,8 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     if (!qa_cvars_set(view->cvars,"ui_scoreScore",score,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTime",time,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTeam",teams,true,error) || !qa_application_q3_campaign_current(f->application,view)) return false;
-    for (size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) {
-        char *saved=campaign_copy(campaign_value(view->cvars,owner->saved_rules[i]),error);
-        if (!saved) return false;
-        bool ok=qa_cvars_set(view->cvars,team_overrides[i][0],saved,true,error) && qa_application_q3_campaign_current(f->application,view);
-        free(saved); if (!ok) return false;
-    }
+    if (!qa_application_q3_campaign_overrides_set(f->application,QA_TEAM_ARENA_OVERRIDES_RELEASED,error) ||
+        !qa_application_q3_campaign_current(f->application,view)) return false;
     owner->team_result=result; owner->result=true;
     owner->demo_checked=false; owner->demo_path=QA_STRING_NONE;
     if (result.new_high_score) {

@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_MAP_TRAVEL_PRIVATE_H
 #define QA_APPLICATION_MAP_TRAVEL_PRIVATE_H
 #include "map_private.h"
+#include "qa/team_arena_campaign_progress.h"
 
 struct application_map_state {
     qa_launch_draft *restart_draft;
@@ -22,6 +23,7 @@ struct application_map_state {
     qa_string_id load_nextserver;
     uint64_t entry_generation, save_request_revision;
     bool save_requested, fresh_entry, authored_autosave;
+    qa_team_arena_override_phase team_overrides;
 };
 bool application_map_level_entry(qa_application *, bool fresh, qa_error *);
 bool application_map_autosave_request(qa_application *, qa_error *);
