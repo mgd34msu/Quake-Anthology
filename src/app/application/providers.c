@@ -1315,12 +1315,14 @@ static bool q3_selected_objective_drop(void *context, qa_actor_id actor, qa_erro
     return handled || application_native_q3_objective_drop(context, actor, error);
 }
 static bool q3_selected_teleport_destination(void *context, qa_actor_id actor,
-    qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
+    qa_vec3 *origin, qa_vec3 *angles, bool *found, qa_error *error)
 {
     bool handled;
-    if (!application_q3_weapons_services_selected_spawn(context, actor, origin, angles, &handled, error))
+    if (!application_q3_weapons_services_selected_spawn(context, actor, origin, angles, found, &handled, error))
         return false;
-    return handled || application_q3_native_deathmatch_destination(context, actor, origin, angles, error);
+    if (handled) return true;
+    *found = application_q3_native_deathmatch_destination(context, actor, origin, angles, error);
+    return *found;
 }
 static bool q3_selected_client_effects(void *context, qa_actor_id actor,
     const qa_q3_selected_client_effects *before, const qa_q3_selected_client_effects *after,

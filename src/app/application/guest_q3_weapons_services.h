@@ -42,7 +42,7 @@ bool application_q3_weapons_services_pose(void *actual_role, qa_actor_id,
 bool application_q3_weapons_services_selected_damage(void *actual_native_q3_provider, qa_actor_id,
     float *, bool *handled, qa_error *);
 bool application_q3_weapons_services_selected_spawn(void *actual_native_q3_provider, qa_actor_id,
-    qa_vec3 *, qa_vec3 *, bool *handled, qa_error *);
+    qa_vec3 *, qa_vec3 *, bool *found, bool *handled, qa_error *);
 bool application_q3_weapons_services_selected_drop(void *actual_native_q3_provider, qa_actor_id,
     bool *handled, qa_error *);
 bool application_q3_weapons_services_selected_client_effects(void *actual_native_q3_provider,

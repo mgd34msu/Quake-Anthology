@@ -242,7 +242,7 @@ typedef struct qa_q3_hooks {
                              bool *accepted, qa_error *);
     bool (*death)(void *, qa_actor_id victim, const qa_damage_request *, qa_error *);
     bool (*respawn)(void *, qa_actor_id, qa_error *);
-    bool (*teleport_destination)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, qa_error *);
+    bool (*teleport_destination)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, bool *found, qa_error *);
     bool (*primary_attack_allowed)(void *, qa_actor_id);
     bool (*selected_damage_factor)(void *, qa_actor_id, float *, bool *handled, qa_error *);
     bool (*selected_weapon_fired)(void *, qa_actor_id, qa_q3_weapon, qa_error *);

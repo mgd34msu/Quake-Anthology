@@ -75,10 +75,11 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     if (!application_native_q2_callbacks_suspend(engine,error)) return false;
     if (!application_native_q2_source_actors_suspend(engine,error)) return false;
     if (!application_native_q2_stages_close(engine,error)) return false;
-    if (!application_native_q2_combat_suspend(engine, error)) return false;
+    if (!application_native_q2_attack_suspend(engine, error) ||
+        !application_native_q2_combat_suspend(engine, error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (!application_native_q2_inventory_detach(engine, i, error)) return false;
-    return application_native_q2_attack_suspend(engine, error);
+    return true;
 }
 
 bool application_native_q2_restore_finish(application_provider *provider, qa_error *error)

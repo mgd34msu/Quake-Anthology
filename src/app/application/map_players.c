@@ -1,4 +1,5 @@
 #include "map_players_private.h"
+#include "guest_native_q2_attack.h"
 #include "client_events.h"
 #include "qa/text.h"
 #include "guest_projection_private.h"
@@ -232,8 +233,11 @@ static bool selected_spawn_pose_read(void *context, qa_actor_id actor,
     qa_combat_state combat;
     if (!application_native_q2_input_read(spawn->source, actor, &physical, NULL, error) ||
         !qa_combat_read(app->combat, actor, &combat, error)) return false;
+    int32_t maximum_health = qa_source_to_i32(spawn->maximum_health); bool handled;
+    if (!application_native_q2_player_max_health_read(spawn->source->state.native.q2_engine,
+            actor, &maximum_health, &handled, error)) return false;
     *out = (qa_q3_selected_source_pose){.view_angles = physical.view_angles,
-        .view_height = physical.view_height, .max_health = qa_source_to_i32(spawn->maximum_health),
+        .view_height = physical.view_height, .max_health = maximum_health,
         .team = qa_team_color_number(qa_session_strings(app->session), combat.team, QA_TEAM_COLOR_ALIASES)};
     return true;
 }

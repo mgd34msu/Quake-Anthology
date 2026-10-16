@@ -367,17 +367,20 @@ bool application_q3_weapons_services_slice_finish(q3g_role *role, qa_actor_id ac
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Selected weapon slice replaced its original Source player");
     --s->calls; return ok;
 }
-static bool selected_qvm(void *context, qa_actor_id actor, uint32_t selection,
-    application_q3_weapons_services **out, bool *present, qa_error *error)
+static bool selected_original(void *context, qa_actor_id actor, uint32_t selection,
+    application_q3_weapons_services **out, struct application_native_q2 **native,
+    bool *present, qa_error *error)
 {
     application_provider *provider = context;
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->application ||
         !provider->constructed || !provider->attached || provider->close_pending || !provider->state.q3 || !out || !present)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 effect lost its real native provider");
     *out = NULL; *present = false;
+    if (native) *native = NULL;
     qa_application *app = provider->application;
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM) return true;
+    if (!physical || (physical->kind != APPLICATION_PROVIDER_QVM &&
+        !(native && physical->kind == APPLICATION_PROVIDER_NATIVE && physical->state.native.q2_engine))) return true;
     qa_q3_player_state player;
     if (!qa_q3_player_read(provider->state.q3, actor, &player) ||
         !(((selection & player.selections & QA_Q3_ARSENAL) &&
@@ -385,6 +388,9 @@ static bool selected_qvm(void *context, qa_actor_id actor, uint32_t selection,
           ((selection & player.selections & QA_Q3_EQUIPMENT) &&
             application_provider_for(app, actor, QA_ROLE_EQUIPMENT, "") == provider)))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 effect differs from its actual actor role");
+    if (physical->kind == APPLICATION_PROVIDER_NATIVE) {
+        *native = physical->state.native.q2_engine; *present = true; return true;
+    }
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
@@ -789,49 +795,52 @@ bool application_q3_weapons_services_selected_damage(void *context, qa_actor_id 
     float *out, bool *handled, qa_error *error)
 {
     application_q3_weapons_services *s; bool present;
-    if (!out || !handled || !selected_qvm(context, actor, QA_Q3_ARSENAL, &s, &present, error)) return false;
+    if (!out || !handled || !selected_original(context, actor, QA_Q3_ARSENAL, &s, NULL, &present, error)) return false;
     *handled = present;
     if (!present) return true;
     ++s->calls;
     bool ok = application_q3_weapons_damage_factor(s->role->weapons, actor, out, error);
     application_q3_weapons_services *after; bool still;
     if (ok) {
-        ok = selected_qvm(context, actor, QA_Q3_ARSENAL, &after, &still, error);
+        ok = selected_original(context, actor, QA_Q3_ARSENAL, &after, NULL, &still, error);
         if (ok && (!still || after != s)) ok = application_fail(error, QA_ERROR_NOT_FOUND,
             "Selected damage replaced its original GAME owner");
     }
     --s->calls; return ok;
 }
 bool application_q3_weapons_services_selected_spawn(void *context, qa_actor_id actor,
-    qa_vec3 *origin, qa_vec3 *angles, bool *handled, qa_error *error)
+    qa_vec3 *origin, qa_vec3 *angles, bool *found, bool *handled, qa_error *error)
 {
-    application_q3_weapons_services *s; bool present;
-    if (!origin || !angles || !handled ||
-        !selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &s, &present, error)) return false;
-    *handled = present;
+    application_q3_weapons_services *s; struct application_native_q2 *native; bool present;
+    if (!origin || !angles || !found || !handled ||
+        !selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &s, &native, &present, error)) return false;
+    *handled = present; *found = false;
     if (!present) return true;
+    if (native) return application_native_q2_player_spawn_point(native, actor, origin, angles, found, handled, error);
     ++s->calls;
     bool ok = application_q3_weapons_spawn_point(s->role->weapons, actor, origin, angles, error);
     application_q3_weapons_services *after; bool still;
     if (ok) {
-        ok = selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &after, &still, error);
+        ok = selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &after, NULL, &still, error);
         if (ok && (!still || after != s)) ok = application_fail(error, QA_ERROR_NOT_FOUND,
             "Selected spawn replaced its original GAME owner");
     }
-    --s->calls; return ok;
+    *found = ok; --s->calls; return ok;
 }
 bool application_q3_weapons_services_selected_drop(void *context, qa_actor_id actor,
     bool *handled, qa_error *error)
 {
-    application_q3_weapons_services *s; bool present;
-    if (!handled || !selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &s, &present, error)) return false;
+    application_q3_weapons_services *s; struct application_native_q2 *native; bool present;
+    if (!handled || !selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT,
+            &s, &native, &present, error)) return false;
     *handled = present;
     if (!present) return true;
+    if (native) return application_native_q2_player_objectives_drop(native, actor, handled, error);
     ++s->calls;
     bool ok = application_q3_weapons_drop_objectives(s->role->weapons, actor, error);
     application_q3_weapons_services *after; bool still;
     if (ok) {
-        ok = selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &after, &still, error);
+        ok = selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &after, NULL, &still, error);
         if (ok && (!still || after != s)) ok = application_fail(error, QA_ERROR_NOT_FOUND,
             "Selected objective drop replaced its original GAME owner");
     }
@@ -841,31 +850,37 @@ bool application_q3_weapons_services_selected_client_effects(void *context, qa_a
     const qa_q3_selected_client_effects *before, const qa_q3_selected_client_effects *after,
     bool *handled, qa_error *error)
 {
-    application_q3_weapons_services *s; bool present;
+    application_q3_weapons_services *s; struct application_native_q2 *native; bool present;
     if (!before || !after || !handled ||
-        !selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &s, &present, error)) return false;
+        !selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &s, &native, &present, error)) return false;
     *handled = present;
     if (!present) return true;
-    ++s->calls;
-    bool ok = before->max_health == after->max_health ||
-        application_q3_weapons_set_max_health(s->role->weapons, actor, after->max_health, error);
+    application_provider *provider = context;
+    qa_application *app = provider->application;
+    if (s) ++s->calls;
+    bool ok = true, applied;
+    if (before->max_health != after->max_health)
+        ok = native ? application_native_q2_player_max_health_write(native, actor, after->max_health, &applied, error) :
+            application_q3_weapons_set_max_health(s->role->weapons, actor, after->max_health, error);
     if (ok && before->teleport_bit != after->teleport_bit) {
-        qa_application *app = application(s); qa_body_state body;
-        application_provider *provider = context;
-        ok = qa_world_body_read(app->world, actor, &body, error) &&
+        qa_body_state body;
+        ok = qa_world_body_read(app->world, actor, &body, error);
+        if (ok) ok = native ? application_native_q2_player_teleport(native, actor, body.origin, body.velocity,
+                after->view_angles, after->pm_time_ms > 0 ? (uint32_t)after->pm_time_ms : 0, &applied, error) :
             application_q3_weapons_teleport_state(s->role->weapons, actor,
-                body.origin, body.velocity, after->view_angles, after->pm_time_ms, error) &&
-            qa_equipment_release_grapple(app->equipment, actor, error) &&
+                body.origin, body.velocity, after->view_angles, after->pm_time_ms, error);
+        if (ok) ok = qa_equipment_release_grapple(app->equipment, actor, error) &&
             qa_q3_release_grapple(provider->state.q3, actor, error);
     }
-    application_q3_weapons_services *current; bool still;
+    application_q3_weapons_services *current; struct application_native_q2 *current_native; bool still;
     if (ok) {
-        ok = selected_qvm(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &current, &still, error);
-        if (ok && (!still || current != s))
+        ok = selected_original(context, actor, QA_Q3_ARSENAL | QA_Q3_EQUIPMENT, &current, &current_native, &still, error);
+        if (ok && (!still || current != s || current_native != native))
             ok = application_fail(error, QA_ERROR_NOT_FOUND,
                 "Selected client effects replaced their original GAME owner");
     }
-    --s->calls; return ok;
+    if (s) --s->calls;
+    return ok;
 }
 
 typedef struct selected_inventory {

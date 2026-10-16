@@ -16,6 +16,7 @@
 #include "guest_qc_items.h"
 #include "guest_qc_item_weapons.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_attack.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q2_combat.h"
@@ -307,6 +308,9 @@ static bool restore_player_binding(void *opaque, qa_mode_id mode, qa_actor_id ac
     if (!application || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Restored match player requires its actual application owner");
     application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+        return application_native_q2_player_match_binding(provider->state.native.q2_engine,
+            mode, actor, owner, out, error);
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!provider || provider->application != application ||
         !provider->constructed || provider->close_pending || !engine || !engine->game ||

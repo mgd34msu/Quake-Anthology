@@ -584,7 +584,8 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
         application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error)&&
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
-            engine, slot, engine->clients[slot].actor, false, error);
+            engine, slot, engine->clients[slot].actor, false, error) &&
+        application_native_q2_player_match_admit(engine, engine->clients[slot].actor, error);
     ++engine->calls;
     if(!engine->callbacks) application_native_q2_visibility_invalidate(engine);
     bool ok = engine->callbacks || qa_native_host_client_begin(provider->state.native.host, slot, error);
@@ -595,7 +596,8 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
         application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error) &&
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
-            engine, slot, engine->clients[slot].actor, false, error);
+            engine, slot, engine->clients[slot].actor, false, error) &&
+        application_native_q2_player_match_admit(engine, engine->clients[slot].actor, error);
 }
 
 bool application_native_q2_clients_reconnect(application_provider *provider, qa_error *error)

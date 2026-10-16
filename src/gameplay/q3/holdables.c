@@ -334,11 +334,11 @@ bool q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdabl
             return false;
         if (!q3_actor_get(game, actor))
             return true;
-        qa_vec3 origin, angles;
+        qa_vec3 origin, angles; bool found;
         if (!game->options.hooks.teleport_destination(game->options.hooks.context, actor, &origin,
-                                                      &angles, error))
+                                                      &angles, &found, error))
             return false;
-        return !q3_actor_get(game, actor) || qa_q3_teleport(game, actor, origin, angles, error);
+        return !found || !q3_actor_get(game, actor) || qa_q3_teleport(game, actor, origin, angles, error);
     }
     case QA_Q3_H_INVULNERABILITY:
         entry->state.player.invulnerability_until = q3_add_time(game->now_ms, 10000);

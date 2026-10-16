@@ -18,13 +18,21 @@ typedef struct attack_item {
 } attack_item;
 typedef struct attack_factor {
     struct attack_factor *next, *previous;
+    struct application_native_q2_attack *owner;
     size_t storage_slot;
     unsigned calls;
     qa_actor_id actor;
     double factor, delay_flag;
     uint64_t clock_ns;
+    qa_match_lease match;
+    qa_actor_owner match_owner;
     bool available, retired, delay_available, clock_present;
 } attack_factor;
+typedef struct attack_team_command {
+    qa_string_id source;
+    qa_team_id team;
+    qa_command_tokens command;
+} attack_team_command;
 typedef struct attack_projectile {
     struct attack_projectile *next, *previous;
     size_t storage_slot;
@@ -120,7 +128,14 @@ struct application_native_q2_attack {
     uint32_t client_spawn;
     decision_group spawn_accepted;
     decision_field max_health;
-    bool client_spawn_declared;
+    decision_field player_score, player_velocity, player_view_angles, player_forward;
+    uint32_t player_spawn, player_objectives;
+    attack_team_command *player_teams;
+    size_t player_team_count;
+    qa_native_address player_result;
+    bool client_spawn_declared, max_health_declared, player_spawn_declared,
+        player_objectives_declared, player_objectives_entry, player_score_declared,
+        player_velocity_declared, player_view_angles_declared, player_forward_declared;
     uint8_t pointer_bytes;
     qa_native_value_type factor_type;
     qa_native_abi abi;
@@ -234,7 +249,7 @@ static attack_factor *factor_create(struct application_native_q2_attack *p, qa_a
             &p->factor_storage, p->factor_pool.first_capacity ? p->factor_pool.first_capacity : 1, error)) return NULL;
     size_t slot; attack_factor *factor = qa_pool_take(&p->factor_pool, &slot);
     if (!factor) { application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon modifier result"); return NULL; }
-    *factor = (attack_factor){.storage_slot = slot, .actor = actor, .factor = 1, .next = p->factors};
+    *factor = (attack_factor){.owner = p, .storage_slot = slot, .actor = actor, .factor = 1, .next = p->factors};
     if (factor->next) factor->next->previous = factor;
     p->factors = factor;
     qa_actor_index_put(&p->factor_index, actor, (size_t)(uintptr_t)factor);
@@ -249,6 +264,171 @@ static bool policy_entity(struct application_native_q2 *engine, qa_actor_id acto
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon policy has no actual Source player");
     if (!qa_native_entity_address(instance(p), slot, entity, error)) return false;
     *owner = p; return true;
+}
+bool application_native_q2_player_spawn_point(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_vec3 *origin, qa_vec3 *angles, bool *found, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (!p || !p->player_spawn_declared) return true;
+    qa_native_address entity, entry;
+    if (!policy_entity(engine, actor, &p, &entity, error)) return false;
+    uint8_t bytes[32] = {0};
+    if (!qa_native_write(instance(p), p->player_result, (qa_bytes){bytes, sizeof(bytes)}, error) ||
+        !qa_native_rva(instance(p), p->player_spawn, 1, &entry, error)) return false;
+    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+    qa_native_type parameters[] = {scalar(QA_NATIVE_ADDRESS), scalar(QA_NATIVE_ADDRESS),
+        scalar(QA_NATIVE_ADDRESS), scalar(QA_NATIVE_U8), scalar(QA_NATIVE_ADDRESS)};
+    qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = entity},
+        {.type = QA_NATIVE_ADDRESS, .as.address = p->player_result},
+        {.type = QA_NATIVE_ADDRESS, .as.address = p->player_result + 12},
+        {.type = QA_NATIVE_U8, .as.u8 = 1},
+        {.type = QA_NATIVE_ADDRESS, .as.address = p->player_result + 24}}, result;
+    size_t count = classic ? 3 : 5;
+    qa_native_signature sig = signature(p, parameters, count, classic ? QA_NATIVE_VOID : QA_NATIVE_U8);
+    if (!qa_native_invoke(instance(p), entry, &sig, arguments, count, &result, error) ||
+        !policy_entity(engine, actor, &p, &entity, error)) return false;
+    *handled = true; *found = classic || result.as.u8 != 0;
+    if (!*found) return true;
+    if (!qa_native_read(instance(p), p->player_result, bytes, 24, error)) return false;
+    *origin = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
+    *angles = qa_v3(qa_load_f32le(bytes + 12), qa_load_f32le(bytes + 16), qa_load_f32le(bytes + 20));
+    return true;
+}
+bool application_native_q2_player_objectives_drop(struct application_native_q2 *engine,
+    qa_actor_id actor, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (!p || !p->player_objectives_declared) return true;
+    qa_native_address entity, entry;
+    if (!policy_entity(engine, actor, &p, &entity, error)) return false;
+    if (p->player_objectives_entry) {
+        qa_native_type parameter = scalar(QA_NATIVE_ADDRESS);
+        qa_native_signature sig = signature(p, &parameter, 1, QA_NATIVE_VOID);
+        qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = entity}, ignored;
+        if (!qa_native_rva(instance(p), p->player_objectives, 1, &entry, error) ||
+            !qa_native_invoke(instance(p), entry, &sig, &argument, 1, &ignored, error) ||
+            !policy_entity(engine, actor, &p, &entity, error)) return false;
+    }
+    *handled = true; return true;
+}
+static bool player_integer_read(struct application_native_q2 *engine, qa_actor_id actor,
+    const decision_field *field, int32_t *out, bool *handled, qa_error *error)
+{
+    *handled = false;
+    if (!field) return true;
+    struct application_native_q2_attack *p;
+    qa_native_address entity;
+    double value;
+    if (!policy_entity(engine, actor, &p, &entity, error) ||
+        !decision_scalar(p, entity, field, &value, error)) return false;
+    if (value < INT32_MIN || value > INT32_MAX || trunc(value) != value)
+        return application_fail(error, QA_ERROR_FORMAT, "Native player value exceeds its signed Source integer");
+    *out = (int32_t)value; *handled = true; return true;
+}
+static bool player_integer_write(struct application_native_q2 *engine, qa_actor_id actor,
+    const decision_field *field, int32_t value, bool *handled, qa_error *error)
+{
+    *handled = false;
+    if (!field) return true;
+    struct application_native_q2_attack *p;
+    qa_native_address entity, address;
+    if (!policy_entity(engine, actor, &p, &entity, error) ||
+        !decision_field_address(p, entity, field, &address, error) ||
+        !application_native_q2_scalar_write(instance(p), address, field->encoding, value, error)) return false;
+    *handled = true; return true;
+}
+bool application_native_q2_player_max_health_read(struct application_native_q2 *engine,
+    qa_actor_id actor, int32_t *out, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    return player_integer_read(engine, actor, p && p->max_health_declared ? &p->max_health : NULL,
+        out, handled, error);
+}
+bool application_native_q2_player_max_health_write(struct application_native_q2 *engine,
+    qa_actor_id actor, int32_t value, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (p && p->max_health_declared && value <= 0)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native player maximum health requires a positive Source integer");
+    return player_integer_write(engine, actor, p && p->max_health_declared ? &p->max_health : NULL,
+        value, handled, error);
+}
+bool application_native_q2_player_score_read(struct application_native_q2 *engine,
+    qa_actor_id actor, int32_t *out, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    return player_integer_read(engine, actor, p && p->player_score_declared ? &p->player_score : NULL,
+        out, handled, error);
+}
+bool application_native_q2_player_score_write(struct application_native_q2 *engine,
+    qa_actor_id actor, int32_t value, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    return player_integer_write(engine, actor, p && p->player_score_declared ? &p->player_score : NULL,
+        value, handled, error);
+}
+static bool player_vector_write(struct application_native_q2_attack *p, qa_native_address address,
+    qa_vec3 value, qa_error *error)
+{
+    uint8_t bytes[12];
+    qa_store_f32le(bytes, value.x); qa_store_f32le(bytes + 4, value.y); qa_store_f32le(bytes + 8, value.z);
+    return qa_native_write(instance(p), address, (qa_bytes){bytes, sizeof(bytes)}, error);
+}
+static uint16_t player_coordinate_word(float value)
+{
+    return (uint16_t)(uint32_t)qa_source_to_i32(fmod(trunc((double)(value * 8.0f)), 65536.0));
+}
+bool application_native_q2_player_teleport(struct application_native_q2 *engine, qa_actor_id actor,
+    qa_vec3 origin, qa_vec3 velocity, qa_vec3 angles, uint32_t hold_ms, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (!p || !p->player_velocity_declared || !p->player_view_angles_declared) return true;
+    qa_native_address entity, client;
+    if (!policy_entity(engine, actor, &p, &entity, error) ||
+        !pointer_read(p, entity + p->client_pointer, &client, error)) return false;
+    bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+    size_t count = classic ? 40 : 64;
+    uint8_t state[64], command[12];
+    if (!qa_native_read(instance(p), client, state, count, error) ||
+        !qa_native_read(instance(p), client + p->command_angles, command, sizeof(command), error)) return false;
+    const float origins[] = {origin.x, origin.y, origin.z}, velocities[] = {velocity.x, velocity.y, velocity.z},
+        views[] = {angles.x, angles.y, angles.z};
+    for (size_t i = 0; i < 3; ++i) {
+        float delta = views[i] - qa_load_f32le(command + i * 4);
+        if (classic) {
+            qa_store_u16le(state + 4 + i * 2, player_coordinate_word(origins[i]));
+            qa_store_u16le(state + 10 + i * 2, player_coordinate_word(velocities[i]));
+            qa_store_u16le(state + 20 + i * 2, qa_angle_to_word(delta, QA_ANGLE_WORD_NATIVE));
+        } else {
+            qa_store_f32le(state + 4 + i * 4, origins[i]);
+            qa_store_f32le(state + 16 + i * 4, velocities[i]);
+            qa_store_f32le(state + 36 + i * 4, delta);
+        }
+        qa_store_f32le(state + (classic ? 28 : 52) + i * 4, views[i]);
+    }
+    if (classic) {
+        state[16] = (uint8_t)((state[16] & ~4u) | 32u);
+        uint32_t ticks = hold_ms / 8 + (hold_ms % 8 != 0);
+        state[17] = (uint8_t)(ticks < 255 ? ticks : 255);
+    } else {
+        qa_store_u16le(state + 28, (uint16_t)((qa_load_u16le(state + 28) & ~4u) | 32u));
+        qa_store_u16le(state + 30, (uint16_t)(hold_ms < 65535 ? hold_ms : 65535));
+    }
+    if (!player_vector_write(p, entity + 4, origin, error) ||
+        !player_vector_write(p, entity + 28, origin, error) ||
+        !player_vector_write(p, entity + p->player_velocity.offset, velocity, error) ||
+        !qa_native_write(instance(p), client, (qa_bytes){state, count}, error) ||
+        !player_vector_write(p, client + p->player_view_angles.offset, angles, error)) return false;
+    if (p->player_forward_declared) {
+        qa_vec3 forward;
+        qa_angle_vectors(angles, &forward, NULL, NULL, QA_ANGLE_VM_MATH);
+        if (!player_vector_write(p, client + p->player_forward.offset, forward, error)) return false;
+    }
+    *handled = true; return true;
 }
 bool application_native_q2_attack_available(struct application_native_q2 *engine,
     qa_actor_id actor, bool *out, qa_error *error)
@@ -304,11 +484,116 @@ bool application_native_q2_attack_clock_step(struct application_native_q2 *engin
 }
 static void factor_reclaim(struct application_native_q2_attack *p, attack_factor *factor)
 {
-    if (!factor->retired || factor->calls) return;
+    if (!factor->retired || factor->calls || factor->match_owner) return;
     if (factor->previous) factor->previous->next = factor->next;
     else p->factors = factor->next;
     if (factor->next) factor->next->previous = factor->previous;
     qa_pool_release(&p->factor_pool, factor->storage_slot);
+}
+static bool player_match_score(void *context, int32_t *out, qa_error *error)
+{
+    attack_factor *state = context;
+    bool handled;
+    return application_native_q2_player_score_read(state->owner->engine, state->actor, out, &handled, error);
+}
+static bool player_match_set_score(void *context, int32_t value, qa_error *error)
+{
+    attack_factor *state = context;
+    bool handled;
+    return application_native_q2_player_score_write(state->owner->engine, state->actor, value, &handled, error);
+}
+static bool player_match_team(void *context, qa_team_id *out, qa_error *error)
+{
+    attack_factor *state = context;
+    struct application_native_q2_attack *p = state->owner;
+    qa_application *app = p->engine->provider->application;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(app->combat, state->actor, &combat, error)) return false;
+    qa_strings *strings = qa_session_strings(app->session);
+    for (size_t i = 0; i < p->player_team_count; ++i)
+        if (qa_team_equal(strings, combat.team, qa_team_named(p->player_teams[i].source))) {
+            *out = p->player_teams[i].team; return true;
+        }
+    return qa_team_name(strings, combat.team, out, error);
+}
+static bool player_match_set_team(void *context, qa_team_id team, qa_error *error)
+{
+    attack_factor *state = context;
+    struct application_native_q2_attack *p = state->owner;
+    struct application_native_q2 *engine = p->engine;
+    qa_team_id current;
+    if (!player_match_team(state, &current, error)) return false;
+    if (current == team) return true;
+    const qa_command_tokens *tokens = NULL;
+    for (size_t i = 0; i < p->player_team_count; ++i)
+        if (p->player_teams[i].team == team) { tokens = &p->player_teams[i].command; break; }
+    if (!tokens)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native source has no declared command for the requested team");
+    qa_command_context command_context = engine->command_context;
+    command_context.actor = state->actor;
+    if (!qa_application_capture_command_context(engine->provider->application,
+        &command_context, &command_context, error)) return false;
+    qa_command_invocation command = {.console = engine->console, .context = command_context,
+        .argc = tokens->count, .argv = (const char *const *)tokens->values,
+        .args_text = tokens->args_text};
+    ++state->calls;
+    bool handled;
+    bool ok = application_native_q2_client_command(engine->provider, state->actor, &command, &handled, error);
+    --state->calls; factor_reclaim(p, state); return ok;
+}
+static bool player_match_unbind(struct application_native_q2_attack *p, attack_factor *state, qa_error *error)
+{
+    if (!state->match_owner) return true;
+    qa_application *app = p->engine->provider->application;
+    qa_match_lease lease;
+    bool present;
+    if (!qa_modes_player_lease(app->modes, state->match.mode, state->actor,
+        state->match_owner, state, &lease, &present, error) ||
+        (present && !qa_modes_unbind_player(app->modes, lease, error))) return false;
+    state->match = (qa_match_lease){0}; state->match_owner = 0; return true;
+}
+bool application_native_q2_player_match_binding(struct application_native_q2 *engine,
+    qa_mode_id mode, qa_actor_id actor, qa_actor_owner owner, qa_match_binding *out, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p || !p->player_score_declared)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native match has no original score declaration");
+    qa_application *app = engine->provider->application;
+    qa_native_address entity;
+    if (!policy_entity(engine, actor, &p, &entity, error)) return false;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+    if (!record || record->owner != owner)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native match binding has no live Source player owner");
+    attack_factor *state = factor_for(p, actor);
+    if (!state) state = factor_create(p, actor, error);
+    if (!state) return false;
+    if (state->match_owner && (state->match.mode.slot != mode.slot ||
+        state->match.mode.generation != mode.generation) && !player_match_unbind(p, state, error)) return false;
+    state->match.mode = mode; state->match.actor = actor; state->match_owner = owner;
+    *out = (qa_match_binding){.owner = owner, .context = state,
+        .score = player_match_score, .set_score = player_match_set_score,
+        .team = player_match_team, .set_team = player_match_set_team};
+    return true;
+}
+bool application_native_q2_player_match_admit(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p || !p->player_score_declared) return true;
+    qa_application *app = engine->provider->application;
+    if (!app->primary_mode_ready || application_world_provider(app, QA_ROLE_ENTITIES, "") != engine->provider)
+        return true;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+    if (!record) return application_fail(error, QA_ERROR_NOT_FOUND, "Native match admission has no live Source player");
+    qa_match_binding binding;
+    if (!application_native_q2_player_match_binding(engine, app->primary_mode, actor, record->owner, &binding, error)) return false;
+    attack_factor *state = binding.context;
+    bool present;
+    if (!qa_modes_player_lease(app->modes, app->primary_mode, actor, binding.owner, state,
+        &state->match, &present, error)) return false;
+    if (!present && !qa_modes_bind_player(app->modes, app->primary_mode, actor,
+        &binding, &state->match, error)) return false;
+    return true;
 }
 static attack_projectile *projectile_for(struct application_native_q2_attack *p, qa_actor_id actor)
 {
@@ -799,6 +1084,8 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
         !qa_native_bind_region(instance(p), p->delay_region, delay_capture, p, &p->delay_hook, error)) return false;
     if (p->delay_kind == ATTACK_DELAY_ANIMATION && !p->delay_result &&
         !qa_native_allocate(instance(p), 8, INT32_MIN + 14, &p->delay_result, error)) return false;
+    if (p->player_spawn_declared && !p->player_result &&
+        !qa_native_allocate(instance(p), 32, INT32_MIN + 15, &p->player_result, error)) return false;
     if (!p->spawn_hook) {
         qa_native_signature sig = signature(p, NULL, 0, QA_NATIVE_ADDRESS);
         if (!qa_native_rva(instance(p), p->spawn, 1, &entry, error) ||
@@ -1085,6 +1372,8 @@ void application_native_q2_attack_released(struct application_native_q2 *engine,
     if (lease) projectile_release(p, lease);
     attack_factor *factor = factor_for(p, actor);
     if (factor) {
+        qa_error error = {0};
+        if (!player_match_unbind(p, factor, &error)) application_fault(engine->provider->application, &error);
         qa_actor_index_remove(&p->factor_index, actor); factor->retired = true;
         factor_reclaim(p, factor);
     }
@@ -1095,6 +1384,8 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
     if (!p) return true;
     if (p->current||p->dispatch||p->projections) return application_fail(error, QA_ERROR_ARGUMENT, "Native attack close requires drained original weapon calls");
     p->active = false;
+    for (attack_factor *factor = p->factors; factor; factor = factor->next)
+        if (!player_match_unbind(p, factor, error)) return false;
     for (attack_hook *hook = p->weapons; hook; hook = hook->next) {
         if (hook->binding && !qa_native_unobserve_entry(hook->binding, error)) return false;
         hook->binding = NULL;
@@ -1108,6 +1399,8 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
     p->delay_hook = NULL;
     if (p->delay_result && !qa_native_free(instance(p), p->delay_result, error)) return false;
     p->delay_result = 0;
+    if (p->player_result && !qa_native_free(instance(p), p->player_result, error)) return false;
+    p->player_result = 0;
     for (attack_factor *factor = p->factors; factor; factor = factor->next) {
         factor->delay_available = false;
         factor->clock_present = false;
@@ -1226,7 +1519,7 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
         }
         size_t storage_slot; attack_factor *row = qa_pool_take(&prepared->factor_pool, &storage_slot);
         if (!row) { ok = application_fail(error, QA_ERROR_MEMORY, "Preparing native modifier continuation"); break; }
-        *row = (attack_factor){.storage_slot = storage_slot, .next = prepared->factors};
+        *row = (attack_factor){.owner = p, .storage_slot = storage_slot, .next = prepared->factors};
         if (row->next) row->next->previous = row;
         prepared->factors = row;
         ok = qa_source_save_actor(&io, &row->actor) && qa_source_save_f64(&io, &row->factor) &&

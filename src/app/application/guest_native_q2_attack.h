@@ -5,6 +5,24 @@ struct application_native_q2;
 struct application_native_q2_attack;
 struct application_native_q2_attack_restore;
 #include "qa/movement.h"
+#include "qa/modes.h"
+bool application_native_q2_player_spawn_point(struct application_native_q2 *, qa_actor_id,
+    qa_vec3 *, qa_vec3 *, bool *found, bool *handled, qa_error *);
+bool application_native_q2_player_objectives_drop(struct application_native_q2 *, qa_actor_id,
+    bool *handled, qa_error *);
+bool application_native_q2_player_max_health_read(struct application_native_q2 *, qa_actor_id,
+    int32_t *, bool *handled, qa_error *);
+bool application_native_q2_player_max_health_write(struct application_native_q2 *, qa_actor_id,
+    int32_t, bool *handled, qa_error *);
+bool application_native_q2_player_score_read(struct application_native_q2 *, qa_actor_id,
+    int32_t *, bool *handled, qa_error *);
+bool application_native_q2_player_score_write(struct application_native_q2 *, qa_actor_id,
+    int32_t, bool *handled, qa_error *);
+bool application_native_q2_player_teleport(struct application_native_q2 *, qa_actor_id,
+    qa_vec3 origin, qa_vec3 velocity, qa_vec3 angles, uint32_t hold_ms, bool *handled, qa_error *);
+bool application_native_q2_player_match_admit(struct application_native_q2 *, qa_actor_id, qa_error *);
+bool application_native_q2_player_match_binding(struct application_native_q2 *, qa_mode_id,
+    qa_actor_id, qa_actor_owner, qa_match_binding *, qa_error *);
 bool application_native_q2_attack_input_fields(struct application_native_q2 *,uint32_t,
     qa_actor_id,qa_movement_result *,qa_vec3 *command_angles,qa_error *);
 bool application_native_q2_attack_prepare(struct application_native_q2 *, qa_error *);

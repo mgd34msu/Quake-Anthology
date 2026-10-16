@@ -14,6 +14,14 @@ static void *decision_array(struct application_native_q2_attack *p,size_t count,
     if(out) memset(out,0,count*bytes);
     return out;
 }
+static bool decision_field_retain(struct application_native_q2_attack *p,decision_field field,
+    decision_field *out,qa_error *error)
+{
+    if(field.record==DECISION_CLIENT &&
+        (field.offset>p->client_bytes || field.bytes>p->client_bytes-field.offset))
+        return decision_fail(error,QA_ERROR_FORMAT,"Native weapon field exceeds its Source client record");
+    *out=field; return true;
+}
 static bool decision_field_prepare(struct application_native_q2_attack *p,qa_json_id node,
     uint8_t bytes,qa_native_value_type encoding,decision_field *out,qa_error *error)
 {
@@ -22,12 +30,19 @@ static bool decision_field_prepare(struct application_native_q2_attack *p,qa_jso
     qa_json_id record=qa_json_get(p->document,node,"record");
     if(qa_json_string_equal(p->document,record,"image")) field.record=DECISION_IMAGE;
     else if(qa_json_string_equal(p->document,record,"entity")) field.record=DECISION_ENTITY;
-    else if(qa_json_string_equal(p->document,record,"client")) {
-        field.record=DECISION_CLIENT;
-        if(field.offset>p->client_bytes || bytes>p->client_bytes-field.offset)
-            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon field exceeds its Source client record");
-    } else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision names another Source record");
-    *out=field; return true;
+    else if(qa_json_string_equal(p->document,record,"client")) field.record=DECISION_CLIENT;
+    else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision names another Source record");
+    return decision_field_retain(p,field,out,error);
+}
+static bool decision_member_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    const char *name,decision_record record,uint8_t bytes,qa_native_value_type encoding,
+    decision_field *out,bool *declared,qa_error *error)
+{
+    qa_json_id member=qa_json_get(p->document,node,name);
+    *declared=member!=QA_JSON_NONE && qa_json_type(p->document,member)!=QA_JSON_NULL;
+    if(!*declared) return true;
+    decision_field field={.record=record,.bytes=bytes,.encoding=encoding};
+    return word(p->document,node,name,&field.offset,error) && decision_field_retain(p,field,out,error);
 }
 static bool decision_scalar_type(struct application_native_q2_attack *p, qa_json_id encoding,
     decision_field *out, qa_error *error)
@@ -124,6 +139,53 @@ static bool decision_groups_prepare(struct application_native_q2_attack *p, qa_j
         if (!decision_group_prepare(p,qa_json_at(p->document,rows,i),*out+i,error)) return false;
     return true;
 }
+static bool decision_text_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    char **out,qa_error *error)
+{
+    qa_bytes source=qa_json_source(p->document,node),text;
+    char *storage=qa_arena_alloc(&p->decision_storage,source.size,1,error);
+    if(!storage || !qa_json_string_into(p->document,node,(uint8_t *)storage,source.size,&text,error)) return false;
+    if(memchr(text.data,0,text.size)) return decision_fail(error,QA_ERROR_FORMAT,"Native team text contains an embedded terminator");
+    *out=storage; return true;
+}
+static bool decision_team_identity(struct application_native_q2_attack *p,qa_json_id node,
+    qa_string_id *out,qa_error *error)
+{
+    *out=0;
+    if(qa_json_type(p->document,node)==QA_JSON_NULL) return true;
+    char *text;
+    return decision_text_prepare(p,node,&text,error) &&
+        qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session),text,out,error);
+}
+static bool decision_teams_prepare(struct application_native_q2_attack *p,qa_json_id match,qa_error *error)
+{
+    qa_json_id rows=qa_json_get(p->document,match,"teams");
+    if(rows==QA_JSON_NONE) return true;
+    if(qa_json_type(p->document,rows)!=QA_JSON_ARRAY)
+        return decision_fail(error,QA_ERROR_FORMAT,"Native match teams require their Source command roster");
+    p->player_team_count=qa_json_size(p->document,rows);
+    if(p->player_team_count) {
+        p->player_teams=decision_array(p,p->player_team_count,sizeof(*p->player_teams),_Alignof(attack_team_command),error);
+        if(!p->player_teams) return false;
+    }
+    for(size_t i=0;i<p->player_team_count;++i) {
+        attack_team_command *command=p->player_teams+i;
+        qa_json_id row=qa_json_at(p->document,rows,i),args=qa_json_get(p->document,row,"arguments");
+        if(!decision_team_identity(p,qa_json_get(p->document,row,"source"),&command->source,error) ||
+            !decision_team_identity(p,qa_json_get(p->document,row,"team"),&command->team,error)) return false;
+        size_t count=qa_json_size(p->document,args);
+        if(qa_json_type(p->document,args)!=QA_JSON_ARRAY || !count)
+            return decision_fail(error,QA_ERROR_FORMAT,"Native team command requires its original argument vector");
+        char **values=decision_array(p,count,sizeof(*values),_Alignof(char *),error);
+        if(!values) return false;
+        for(size_t j=0;j<count;++j)
+            if(!decision_text_prepare(p,qa_json_at(p->document,args,j),values+j,error)) return false;
+        qa_command_tokens literal={.values=values,.count=count,.borrowed=true};
+        if(!qa_command_tokens_copy(&literal,&command->command,true,
+            qa_arena_alloc_callback,&p->decision_storage,error)) return false;
+    }
+    return true;
+}
 static bool decision_descriptors_prepare(struct application_native_q2_attack *p,qa_json_id weapons,
     qa_json_id committed,qa_json_id decisions,qa_error *error)
 {
@@ -162,15 +224,40 @@ static bool decision_descriptors_prepare(struct application_native_q2_attack *p,
     }
     qa_json_id entity=qa_json_get(p->document,weapons,"entity"),root=qa_json_root(p->document);
     qa_json_id spawn=qa_json_get(p->document,weapons,"spawn");
+    qa_json_id max_health=qa_json_get(p->document,entity,"maxHealth");
     p->client_spawn_declared=spawn != QA_JSON_NONE;
+    p->max_health_declared=p->client_spawn_declared || max_health!=QA_JSON_NONE;
+    if(p->max_health_declared && !decision_scalar_prepare(p,max_health,&p->max_health,error)) return false;
     if (p->client_spawn_declared) {
         qa_json_id accepted=qa_json_get(p->document,spawn,"accepted");
         if (!word(p->document,spawn,"entry",&p->client_spawn,error) ||
-            (accepted != QA_JSON_NONE && !decision_group_prepare(p,accepted,&p->spawn_accepted,error)) ||
-            !decision_scalar_prepare(p,qa_json_get(p->document,entity,"maxHealth"),&p->max_health,error)) return false;
+            (accepted != QA_JSON_NONE && !decision_group_prepare(p,accepted,&p->spawn_accepted,error))) return false;
     }
+    qa_json_id player=qa_json_get(p->document,root,"player"),
+        objectives=qa_json_get(p->document,player,"objectives"),
+        match=qa_json_get(p->document,player,"match");
+    p->player_spawn_declared=qa_json_get(p->document,player,"spawn")!=QA_JSON_NONE;
+    if(p->player_spawn_declared && !word(p->document,player,"spawn",&p->player_spawn,error)) return false;
+    p->player_objectives_declared=objectives!=QA_JSON_NONE;
+    if(p->player_objectives_declared) {
+        qa_json_id kind=qa_json_get(p->document,objectives,"kind");
+        p->player_objectives_entry=qa_json_string_equal(p->document,kind,"entry");
+        if(p->player_objectives_entry) {
+            if(!word(p->document,objectives,"entry",&p->player_objectives,error)) return false;
+        } else if(!qa_json_string_equal(p->document,kind,"none"))
+            return decision_fail(error,QA_ERROR_FORMAT,"Native player objectives have another Source operation");
+    }
+    if(!decision_teams_prepare(p,match,error) ||
+        !decision_member_prepare(p,match,"score",DECISION_CLIENT,4,QA_NATIVE_I32,
+            &p->player_score,&p->player_score_declared,error) ||
+        !decision_member_prepare(p,player,"velocity",DECISION_ENTITY,12,QA_NATIVE_F32,
+            &p->player_velocity,&p->player_velocity_declared,error) ||
+        !decision_member_prepare(p,qa_json_get(p->document,weapons,"client"),"viewAngles",
+            DECISION_CLIENT,12,QA_NATIVE_F32,&p->player_view_angles,&p->player_view_angles_declared,error) ||
+        !decision_member_prepare(p,player,"forward",DECISION_CLIENT,12,QA_NATIVE_F32,
+            &p->player_forward,&p->player_forward_declared,error)) return false;
     if(!decision_scalar_prepare(p,qa_json_get(p->document,entity,"waterLevel"),&p->water_level,error) ||
-        !word(p->document,qa_json_get(p->document,root,"player"),"commandAngles",&p->command_angles,error)) return false;
+        !word(p->document,player,"commandAngles",&p->command_angles,error)) return false;
     if(p->command_angles>p->client_bytes || p->client_bytes-p->command_angles<12)
         return decision_fail(error,QA_ERROR_FORMAT,"Native Source command angles exceed its qualified client record");
     qa_arena_seal(&p->decision_storage); return true;

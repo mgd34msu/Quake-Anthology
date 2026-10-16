@@ -908,7 +908,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
-    if (!application_native_q2_combat_suspend(engine, error)) return false;
+    if (!application_native_q2_attack_suspend(engine, error) ||
+        !application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_native_q2_stages_close(engine, error)) return false;
     if (!application_native_q2_source_actors_close(engine, error)) return false;
     if(!application_native_q2_inventory_scanner_destroy(engine->inventory_scanner,error)) return false;
