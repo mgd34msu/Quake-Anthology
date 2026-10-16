@@ -1081,13 +1081,13 @@ static bool q1_team_face(qa_unified_player_ui *out, player_observation *o, qa_er
     }
     return application_fail(e, QA_ERROR_ARGUMENT, "Rogue team face lost its physical Source player");
 }
-static bool native_inventory_item(qa_unified_native_inventory *out, player_observation *o,
-    qa_item_id id, const char *label, double amount, qa_error *e)
+static void native_inventory_item(qa_unified_native_inventory *out,
+    qa_item_id id, const char *label, double amount)
 {
     qa_unified_native_inventory_item *row = out->items + out->item_count++;
+    row->item = id;
     row->count = amount;
     row->label = (char *)label;
-    return item(&row->item, o, id, e);
 }
 static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
 {
@@ -1138,11 +1138,13 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
                 for (size_t i = 0; ok && i < mixed.count; ++i) {
                     if (mixed.rows[i].count == 0) continue;
                     char *label = NULL;
-                    ok = application_unified_frame_string(o->lease, &label, mixed.rows[i].label, e) &&
-                        native_inventory_item(v, o, mixed.rows[i].item, label, mixed.rows[i].count, e);
+                    ok = application_unified_frame_string(o->lease, &label, mixed.rows[i].label, e);
+                    if (ok) native_inventory_item(v, mixed.rows[i].item, label, mixed.rows[i].count);
                 }
-                if (ok) ok = item(&v->selected, o, mixed.selected, e) &&
-                    native_inventory_presentation(&v->presentation, o, &mixed.selected_presentation, e);
+                if (ok) {
+                    v->selected = mixed.selected;
+                    ok = native_inventory_presentation(&v->presentation, o, &mixed.selected_presentation, e);
+                }
             }
             application_native_q2_inventory_readout_free(&mixed);
             if (!ok) return false;
@@ -1160,8 +1162,8 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
                 if (!v->items) ok = application_fail(e, QA_ERROR_MEMORY, "Retaining native inventory rows");
             }
             for (size_t i = 0; ok && i < native.count; ++i)
-                ok = native_inventory_item(v, o, native.items[i].item, native.items[i].label, native.items[i].count, e);
-            if (ok) ok = item(&v->selected, o, native.selected, e);
+                native_inventory_item(v, native.items[i].item, native.items[i].label, native.items[i].count);
+            if (ok) v->selected = native.selected;
             if (!ok) return false;
         }
     }

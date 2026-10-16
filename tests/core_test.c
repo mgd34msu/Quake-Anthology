@@ -17,6 +17,7 @@
 #include "qa/unified_frame_metadata.h"
 #include "qa/unified_frame_events.h"
 #include "qa/unified_frame_prediction.h"
+#include "qa/unified_frame_player.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/console_buffer.h"
 #include "qa/console_release.h"
@@ -4173,6 +4174,46 @@ static void test_metadata_retention(void)
     const qa_unified_frame_metadata *read=qa_unified_document_metadata(merged);
     CHECK(read->frame==65 && !strcmp(read->q1->level,"e1m1") && !strcmp(read->styles[0].pattern,"a"));
     qa_unified_document_destroy(merged);
+}
+
+static void test_native_inventory_names(void)
+{
+    qa_error error={0};qa_strings *names=NULL,*receiver=NULL;
+    qa_string_id provider,weapon,ammo,padding;
+    CHECK(qa_strings_create(&names,&error) && qa_strings_create(&receiver,&error));
+    CHECK(qa_strings_intern_cstr(names,"source:inventory",&provider,&error));
+    CHECK(qa_strings_intern_cstr(names,"q3:weapon/shotgun",&weapon,&error));
+    CHECK(qa_strings_intern_cstr(names,"q3:ammo/shotgun",&ammo,&error));
+    CHECK(qa_strings_intern_cstr(receiver,"receiver-only",&padding,&error));
+    qa_unified_frame *frame=qa_unified_frame_create(NULL,names,&error);CHECK(frame);
+    frame->epoch=1;frame->acknowledged_input=-1;
+    frame->world=qa_unified_world_frame_create(NULL,names,&error);CHECK(frame->world);
+    frame->world->source=(qa_source_frame){.provider=provider,.kind=QA_RULESET_Q2_RERELEASE,.phase=QA_FRAME_EXIT};
+    frame->world->actors=calloc(1,sizeof(*frame->world->actors));CHECK(frame->world->actors);
+    frame->world->actor_count=1;
+    qa_actor_id actor={.registry=7,.slot=1,.generation=1};
+    frame->world->actors[0]=(qa_unified_actor_state){.actor=actor,.owner=provider,.definition=provider};
+    frame->player=calloc(1,sizeof(*frame->player));CHECK(frame->player);
+    frame->player->actor=frame->player->ui_actor=actor;
+    qa_unified_native_inventory *inventory=calloc(1,sizeof(*inventory));CHECK(inventory);
+    frame->player->ui.native_inventory=inventory;
+    inventory->selected=weapon;inventory->item_count=2;
+    inventory->items=calloc(2,sizeof(*inventory->items));CHECK(inventory->items);
+    inventory->items[0]=(qa_unified_native_inventory_item){weapon,strdup("Shotgun"),1};
+    inventory->items[1]=(qa_unified_native_inventory_item){ammo,strdup("Shells"),7};
+    CHECK(inventory->items[0].label && inventory->items[1].label);
+    qa_unified_document *source=NULL,*decoded=NULL;qa_buffer wire={0};
+    CHECK(qa_unified_document_create_frame(&frame,&source,&error));
+    CHECK(qa_unified_document_encode(source,&wire,&error));
+    CHECK(qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){wire.data,wire.size},
+        receiver,NULL,NULL,&decoded,&error));
+    const qa_unified_native_inventory *read=qa_unified_document_frame(decoded)->player->ui.native_inventory;
+    CHECK(read && read->item_count==2 && read->selected==read->items[0].item);
+    CHECK(read->selected!=weapon && read->items[0].count==1 && read->items[1].count==7);
+    CHECK(!strcmp(qa_strings_cstr(receiver,read->items[0].item),"q3:weapon/shotgun"));
+    CHECK(!strcmp(qa_strings_cstr(receiver,read->items[1].item),"q3:ammo/shotgun"));
+    qa_unified_document_destroy(source);qa_unified_document_destroy(decoded);qa_buffer_free(&wire);
+    qa_strings_destroy(names);qa_strings_destroy(receiver);
 }
 
 static void test_metadata_names(void)
@@ -8699,6 +8740,7 @@ int main(int argc, char **argv)
     test_lightstyle_snapshot();
     test_metadata_retention();
     test_metadata_names();
+    test_native_inventory_names();
     test_files();
     test_shared_text_interpolation();
     test_localization_lookup_generation();

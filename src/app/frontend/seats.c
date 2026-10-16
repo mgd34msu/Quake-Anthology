@@ -227,6 +227,8 @@ bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
     const qa_inventory_entry *entries,size_t count,qa_item_id selected,
     const qa_unified_player_ui *received,const qa_strings *strings,qa_hud_data *out,qa_error *error)
 {
+    const qa_unified_native_inventory *native=received?received->native_inventory:NULL;
+    if(native) {count=native->item_count;selected=native->selected;}
     if(count>SIZE_MAX/sizeof(qa_hud_inventory_row))
         return frontend_fail(error,QA_ERROR_MEMORY,"HUD inventory row storage overflow");
     qa_arena *storage=&seat->frontend->frame.storage;
@@ -236,12 +238,14 @@ bool frontend_hud_inventory_rows(frontend_seat *seat,const qa_hud_frame *frame,
         seat->frontend->application,frame->actor,QA_ROLE_INVENTORY);
     size_t written=0;
     for(size_t i=0;i<count;++i) {
-        const qa_inventory_entry *entry=entries+i;
+        qa_inventory_entry projected={0};
+        if(native) projected=(qa_inventory_entry){.item=native->items[i].item,.count=native->items[i].count};
+        const qa_inventory_entry *entry=native?&projected:entries+i;
         if(entry->count<=0)continue;
-        const char *label=NULL;
+        const char *label=native?native->items[i].label:NULL;
         qa_item_definition definition={0}; bool defined=false;
         if(received) {
-            for(size_t j=0;j<received->item_count;++j)
+            for(size_t j=0;!label && j<received->item_count;++j)
                 if(received->items[j].id==entry->item) {label=received->items[j].label;break;}
             if(!label && received->weapon_status && received->weapon_status->item==entry->item)
                 label=received->weapon_status->label;

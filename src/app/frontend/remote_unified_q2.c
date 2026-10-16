@@ -877,14 +877,16 @@ static bool inventory_menu_read(void *context,qa_hud_data *out,qa_strings **stri
 {
     frontend_unified_q2 *o=context;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
+    const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+    const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
+    q2_native *native=inventory_native(o,&hud,&counts);
     *strings=o->replica->strings;
-    if(o->inventory_visible) {
+    if(o->inventory_visible || (native && received && received->player &&
+        received->player->ui.native_inventory)) {
         qa_actor_id player={0};uint32_t source_number;
         if(!frontend_remote_unified_player(o->replica,&player,&source_number)) return true;
         return inventory_rows(o,&(qa_hud_frame){.seat=d->physical_seat,.actor=player},out,e);
     }
-    const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
-    q2_native *native=inventory_native(o,&hud,&counts);
     return !native || frontend_inventory_menu_wire_rows(o->frontend->seats+d->physical_seat,
         &native->bank->hud_names,counts,256,hud->stats[12],out,e);
 }

@@ -603,7 +603,7 @@ static const qa_unified_record_layout qa_unified_q1_team_face_layout = QA_UNIFIE
 
 static const qa_unified_field qa_unified_native_inventory_fields[] = {
     QA_UNIFIED_ARRAY(qa_unified_native_inventory, items, item_count, qa_unified_native_inventory_item_layout, 65536),
-    QA_UNIFIED_FIELD(qa_unified_native_inventory, selected, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_native_inventory, selected, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_RECORD(qa_unified_native_inventory, presentation, qa_unified_inventory_presentation_layout),
 };
 static const qa_unified_record_layout qa_unified_native_inventory_layout = QA_UNIFIED_LAYOUT(qa_unified_native_inventory, qa_unified_native_inventory_fields);
@@ -626,7 +626,7 @@ static const qa_unified_field qa_unified_provider_state_fields[] = {
 const qa_unified_record_layout qa_unified_provider_layout = QA_UNIFIED_LAYOUT(qa_unified_provider_state, qa_unified_provider_state_fields);
 
 static const qa_unified_field qa_unified_native_inventory_item_fields[] = {
-    QA_UNIFIED_FIELD(qa_unified_native_inventory_item, item, QA_UNIFIED_FIELD_STRING),
+    QA_UNIFIED_FIELD(qa_unified_native_inventory_item, item, QA_UNIFIED_FIELD_NAME),
     QA_UNIFIED_FIELD(qa_unified_native_inventory_item, label, QA_UNIFIED_FIELD_STRING),
     QA_UNIFIED_FIELD(qa_unified_native_inventory_item, count, QA_UNIFIED_FIELD_F64),
 };

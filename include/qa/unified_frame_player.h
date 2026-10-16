@@ -47,7 +47,7 @@ typedef struct qa_unified_weapon_status {
     bool finite, has_ammo_to_start, low;
     double count;
 } qa_unified_weapon_status;
-typedef struct qa_unified_native_inventory_item { char *item, *label; double count; } qa_unified_native_inventory_item;
+typedef struct qa_unified_native_inventory_item { qa_item_id item; char *label; double count; } qa_unified_native_inventory_item;
 typedef enum qa_unified_inventory_presentation_kind {
     QA_UNIFIED_INVENTORY_PRESENTATION_NONE, QA_UNIFIED_INVENTORY_PRESENTATION_WEAPON,
     QA_UNIFIED_INVENTORY_PRESENTATION_AMMUNITION, QA_UNIFIED_INVENTORY_PRESENTATION_ITEM
@@ -65,7 +65,7 @@ typedef struct qa_unified_inventory_presentation {
 typedef struct qa_unified_native_inventory {
     qa_unified_native_inventory_item *items;
     size_t item_count;
-    char *selected;
+    qa_item_id selected;
     qa_unified_inventory_presentation presentation;
 } qa_unified_native_inventory;
 typedef struct qa_unified_q1_team_face { qa_string_id content; uint8_t colors; double frags; } qa_unified_q1_team_face;
