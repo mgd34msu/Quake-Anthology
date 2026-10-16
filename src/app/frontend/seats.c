@@ -721,7 +721,7 @@ static qa_ui_control button(frontend_seat *seat, qa_ui_id id, const char *label,
 static bool death_busy(frontend_seat *seat)
 {
     qa_application_travel_view travel;
-    return frontend_save_commands_pending(seat->frontend) ||
+    return seat->frontend->startup_launch || frontend_save_commands_pending(seat->frontend) ||
         qa_application_startup_pending(seat->frontend->application) ||
         qa_application_travel_read(seat->frontend->application,&travel);
 }
@@ -770,7 +770,7 @@ bool frontend_player_death_sync(frontend_seat *seat,qa_error *error)
     const qa_launch_snapshot *snapshot=qa_application_launch(f->application);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
     bool eligible=false,singleplayer=false; uint32_t logical;
-    if (choices && !f->options.dedicated && !frontend_network_remote(f) &&
+    if (choices && !f->startup_launch && !f->options.dedicated && !frontend_network_remote(f) &&
         frontend_network_save_authority(f)==QA_SAVE_OFFLINE &&
         qa_application_get_state(f->application)==QA_APPLICATION_RUNNING &&
         !qa_application_startup_pending(f->application) && qa_application_map_read(f->application,&map)) {
@@ -787,7 +787,8 @@ bool frontend_player_death_sync(frontend_seat *seat,qa_error *error)
     if (eligible && (!qa_application_control_camera(f->application,actor,&camera) || camera.cutscene ||
         !qa_combat_read(qa_application_combat(f->application),actor,&combat,&local))) eligible=false;
     if (!eligible || combat.health>0) {
-        if (seat->death_active && !qa_ui_close_all(seat->ui,now_ms(seat),error)) return false;
+        if (seat->death_active && qa_ui_menu_opened(seat->ui,FRONTEND_PLAYER_DEATH) &&
+            !qa_ui_close_all(seat->ui,now_ms(seat),error)) return false;
         seat->death_active=false; seat->death_actor=(qa_actor_id){0}; seat->death_message[0]=0;
         return true;
     }
