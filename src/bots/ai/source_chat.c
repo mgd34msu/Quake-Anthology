@@ -84,39 +84,8 @@ bool bot_ai_authored_chat_deliver(qa_bots *b,bot_ai_state *s,qa_error *e)
         CHAT_CALL(bot_ai_source_action_text(b,s,chat->team_only?QA_BOT_SAY_TEAM:QA_BOT_SAY,0,text?text:"",e));
     }
 }
-static bool authored_ctf(qa_bots *b,bot_ai_state *s,qa_error *e)
-{
-    if(b->source_goals.game_type!=4 || !b->source_goals.red_flag.area || !b->source_goals.blue_flag.area ||
-        s->player.dead || s->player.observer) return true;
-    int32_t self,team;
-    CHAT_CALL(bot_ai_source_client(b,s,&self,e));CHAT_CALL(bot_ai_source_team(b,self,&team,e));
-    if(team!=1 && team!=2) return true;
-    int32_t goal=bot_ai_long_term_goal(s);
-    uint32_t roles=(1u<<BOT_CHAT_CTF_DEFENSE)|(1u<<BOT_CHAT_CTF_OFFENSE);
-    if(!(s->authored_chat.emitted&roles)) {
-        if(goal==BOT_LTG_DEFEND) CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_DEFENSE,e));
-        else if(goal==BOT_LTG_GET_FLAG || goal==BOT_LTG_RUSH_BASE || goal==BOT_LTG_RETURN_FLAG ||
-            goal==BOT_LTG_ATTACK_BASE) CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_OFFENSE,e));
-    }
-    bool offense=(s->authored_chat.emitted&(1u<<BOT_CHAT_CTF_OFFENSE))!=0;
-    const qa_bot_goal *enemy=team==1?&b->source_goals.blue_flag:&b->source_goals.red_flag;
-    if(offense && b->time>0 && qa_vec_length(qa_vec_sub(bot_ai_origin(s),enemy->origin))<384)
-        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_CAMPING,e));
-    if(s->player.carrying_objective)
-        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_DELIVERING,e));
-    int32_t own_status=team==1?bot_ai_red_flag_status(s):bot_ai_blue_flag_status(s);
-    if(goal==BOT_LTG_RETURN_FLAG && own_status==2)
-        CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_RETURNING,e));
-    if(offense && s->view.enemy.registry) {
-        const qa_actor_player *target=qa_actors_player(qa_session_actors(b->services.shared.session),s->view.enemy);
-        if(target && target->present)
-            CHAT_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_ATTACKING,e));
-    }
-    return true;
-}
 bool bot_ai_authored_chat_step(qa_bots *b,bot_ai_state *s,qa_error *e)
 {
-    CHAT_CALL(authored_ctf(b,s,e));
     return bot_ai_authored_chat_deliver(b,s,e);
 }
 

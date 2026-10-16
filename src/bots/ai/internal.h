@@ -78,6 +78,13 @@ typedef struct bot_cooperative_cooldown {
     uint32_t client;
     float until;
 } bot_cooperative_cooldown;
+typedef enum bot_objective_role {
+    BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND
+} bot_objective_role;
+typedef struct bot_objective_goal {
+    qa_bot_goal goal;
+    bool active, found, holding, enemy;
+} bot_objective_goal;
 typedef struct bot_actor_memory {
     qa_actor_id actor;
     qa_bot_awareness awareness[64];
@@ -97,6 +104,7 @@ typedef struct bot_ai_state {
     bot_ai_view view;
     bot_ai_player player;
     bot_cooperative_state cooperative;
+    bot_objective_role objective_role;
     bot_authored_chat_state authored_chat;
     uint32_t character, goals, weapons, chat, movement;
     float admitted_skill;
@@ -171,6 +179,7 @@ bool bot_ai_cooperative(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_human_nearest(qa_bots *,bot_ai_state *,bool teammates_only,
     qa_vec3 *,float *distance_squared,bool *found,qa_error *);
 bool bot_ai_cooperative_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
+bool bot_ai_authored_objective_goal(qa_bots *,bot_ai_state *,bot_objective_goal *,qa_error *);
 void bot_ai_cooperative_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
 bool bot_ai_cooperative_cooldown_next(const qa_bots *,size_t *,bot_cooperative_cooldown *);
 void bot_ai_cooperative_cooldown_set(qa_bots *,const bot_cooperative_cooldown *);

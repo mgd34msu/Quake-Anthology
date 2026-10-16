@@ -572,6 +572,25 @@ bool qa_modes_object_home(qa_modes *m, qa_actor_id actor, qa_vec3 *origin,
     *bounds = object->spec.bounds;
     return true;
 }
+bool qa_modes_flag_read(qa_modes *m, qa_mode_id id, qa_team_id team,
+                        qa_mode_flag_view *out, qa_error *e) {
+    mode_instance *mode = mode_get(m, id);
+    if (!mode || !out)
+        return mode_fail(e, "flag state needs a mode and output");
+    *out = (qa_mode_flag_view){0};
+    int index = mode_team_index(mode, team);
+    if (index < 0 && team)
+        return true;
+    mode_object *base = mode_object_get(m, mode->bases[index < 0 ? 2 : index]);
+    if (!base || base->spec.kind != QA_MODE_OBJECT_FLAG)
+        return true;
+    mode_object *flag = mode_object_get(m, base->dropped_actor);
+    if (!flag)
+        flag = base;
+    out->actor = flag->actor;
+    out->home = base->spec.origin;
+    return qa_modes_object_read(m, out->actor, &out->object);
+}
 bool qa_modes_object_at(qa_modes *m, size_t index, qa_actor_id *actor, qa_mode_object_view *out,
                         qa_error *e) {
     if (!m || !actor || !out)

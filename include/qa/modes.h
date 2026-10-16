@@ -321,6 +321,11 @@ typedef struct qa_mode_object_view {
     int32_t frame, skin, health_fraction;
     bool visible;
 } qa_mode_object_view;
+typedef struct qa_mode_flag_view {
+    qa_actor_id actor;
+    qa_mode_object_view object;
+    qa_vec3 home;
+} qa_mode_flag_view;
 typedef struct qa_mode_spawnpoint {
     qa_actor_id actor;
     qa_vec3 origin, angles;
@@ -693,6 +698,7 @@ bool qa_modes_item_action(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id, qa_it
                           qa_error *);
 bool qa_modes_object_read(qa_modes *, qa_actor_id, qa_mode_object_view *);
 bool qa_modes_object_home(qa_modes *, qa_actor_id, qa_vec3 *, qa_bounds *, qa_error *);
+bool qa_modes_flag_read(qa_modes *, qa_mode_id, qa_team_id, qa_mode_flag_view *, qa_error *);
 bool qa_modes_object_at(qa_modes *, size_t index, qa_actor_id *, qa_mode_object_view *, qa_error *);
 bool qa_modes_object_reaction(qa_modes *, const qa_damage_outcome *, qa_error *);
 bool qa_modes_object_damage(qa_modes *, qa_mode_id, qa_damage_request *, bool *allowed, qa_error *);

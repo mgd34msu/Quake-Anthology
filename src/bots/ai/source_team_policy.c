@@ -638,6 +638,11 @@ static bool random_deadline(qa_bots *b, bot_ai_state *s, float wait, uint32_t of
 }
 bool bot_ai_source_team_policy(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!alive(b,s) || !qa_game_type_is_team(b->source_goals.game_type)) return true;
+    if(s->source_settings && b->services.modes && s->view.mode.generation) {
+        qa_mode_view mode;
+        if(!qa_modes_read(b->services.modes,s->view.mode,&mode,e)) return false;
+        if(!alive(b,s) || mode.rules.kind==QA_MODE_CTF) return true;
+    }
     const char *leader;int32_t client=-1;
     if(!bot_ai_storage_text(b,s,QA_BOT_SOURCE_TEAM_LEADER,&leader,e)) return false;
     if(*leader && !bot_ai_source_client_from_name(b,leader,&client,e)) return false;

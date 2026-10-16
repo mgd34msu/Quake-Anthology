@@ -528,6 +528,28 @@ static bool authored_chat_fields(qa_source_save_io *io,qa_bots *bots)
     }
     return true;
 }
+static bool objective_role_fields(qa_source_save_io *io,qa_bots *bots)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    uint32_t count=0,next=0;
+    if(!reading) for(size_t i=0;i<64;++i)
+        if(bots->source_cells[i] && bots->source_cells[i]->objective_role!=BOT_OBJECTIVE_NONE) ++count;
+    U(count);if(count>64) return false;
+    for(uint32_t i=0;i<count;++i) {
+        uint32_t client=0,role=0;
+        if(!reading) {
+            while(next<64 && (!bots->source_cells[next] ||
+                bots->source_cells[next]->objective_role==BOT_OBJECTIVE_NONE)) ++next;
+            client=next++;role=bots->source_cells[client]->objective_role;
+        }
+        U(client);U(role);
+        if(client>=64 || !bots->source_cells[client] ||
+            role==BOT_OBJECTIVE_NONE || role>BOT_OBJECTIVE_DEFEND) return false;
+        if(reading) bots->source_cells[client]->objective_role=(bot_objective_role)role;
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -536,7 +558,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
         cooperative_fields(&io,&view) && awareness_fields(&io,&view) && aim_fields(&io,&view) &&
-        authored_chat_fields(&io,&view) &&
+        authored_chat_fields(&io,&view) && objective_role_fields(&io,&view) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -555,7 +577,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
         cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && aim_fields(&io,&scratch) &&
-        authored_chat_fields(&io,&scratch) &&
+        authored_chat_fields(&io,&scratch) && objective_role_fields(&io,&scratch) &&
         scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])

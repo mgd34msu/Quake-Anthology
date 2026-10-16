@@ -322,6 +322,128 @@ bool bot_ai_cooperative_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *f
     return true;
 }
 
+static bool authored_objective_point(qa_bots *b,bot_ai_state *s,qa_actor_id actor,
+    qa_vec3 origin,int32_t type,bot_objective_goal *out,qa_error *e) {
+    uint32_t area;
+    SOURCE_CALL(bot_ai_point_area(b,s,origin,&area,e));
+    out->goal=(qa_bot_goal){.origin=origin,.area=(int32_t)area,
+        .mins={-8,-8,-8},.maxs={8,8,8},
+        .entity=actor.registry?b->services.entity_number(b->services.context,actor):-1};
+    out->found=true;
+    bot_ai_long_term_goal_set(s,type);
+    return true;
+}
+static bool authored_carrier_origin(qa_bots *b,bot_ai_state *s,qa_actor_id actor,
+    qa_vec3 *origin,bool *present,qa_error *e) {
+    *present=false;
+    if(!actor.registry || qa_actor_id_equal(actor,s->view.actor) || !bot_ai_live(b,actor)) return true;
+    qa_builtin_player_info player;
+    if(!b->services.shared.player_info(b->services.shared.context,actor,&player) ||
+        !player.connected || player.dead || player.spectator || !bot_ai_live(b,actor)) return true;
+    qa_body_state body;
+    SOURCE_CALL(qa_world_body_read(b->services.shared.world,actor,&body,e));
+    if(bot_ai_live(b,actor)) {*origin=body.origin;*present=true;}
+    return true;
+}
+static bool authored_hunt_carrier(qa_bots *b,bot_ai_state *s,qa_actor_id carrier,
+    qa_vec3 origin,bot_objective_goal *out,qa_error *e) {
+    SOURCE_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_ATTACKING,e));
+    return authored_objective_point(b,s,carrier,origin,BOT_LTG_RETURN_FLAG,out,e);
+}
+bool bot_ai_authored_objective_goal(qa_bots *b,bot_ai_state *s,bot_objective_goal *out,qa_error *e) {
+    *out=(bot_objective_goal){0};
+    if(!s->source_settings || !b->services.modes || !s->view.mode.generation) return true;
+    qa_mode_view mode;qa_team_id team;
+    SOURCE_CALL(qa_modes_read(b->services.modes,s->view.mode,&mode,e));
+    if(mode.rules.kind!=QA_MODE_CTF || !mode.rules.enabled) return true;
+    SOURCE_CALL(qa_modes_team(b->services.modes,s->view.mode,s->view.actor,&team,e));
+    if(!team) return true;
+    qa_mode_flag_view own,enemy={0};
+    SOURCE_CALL(qa_modes_flag_read(b->services.modes,s->view.mode,team,&own,e));
+    for(size_t i=0;i<3;++i) {
+        if(!mode.rules.teams[i] || mode.rules.teams[i]==team) continue;
+        qa_mode_flag_view flag;
+        SOURCE_CALL(qa_modes_flag_read(b->services.modes,s->view.mode,mode.rules.teams[i],&flag,e));
+        if(!flag.actor.registry) continue;
+        enemy=flag;
+        if(qa_actor_id_equal(flag.object.carrier,s->view.actor)) break;
+    }
+    if(!own.actor.registry || !enemy.actor.registry) return true;
+    out->active=true;
+    if(s->objective_role==BOT_OBJECTIVE_NONE) {
+        float random;SOURCE_CALL(bot_ai_random(b,&random,e));
+        s->objective_role=random<.25f?BOT_OBJECTIVE_DEFEND:BOT_OBJECTIVE_ATTACK;
+    }
+    SOURCE_CALL(bot_ai_authored_chat_emit(b,s,s->objective_role==BOT_OBJECTIVE_DEFEND?
+        BOT_CHAT_CTF_DEFENSE:BOT_CHAT_CTF_OFFENSE,e));
+    if(s->objective_role==BOT_OBJECTIVE_ATTACK && b->time>0 &&
+        qa_vec_length(qa_vec_sub(bot_ai_origin(s),enemy.home))<384)
+        SOURCE_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_CAMPING,e));
+    if(bot_ai_order_active(s) || bot_ai_ordered(s)) {out->active=false;return true;}
+    bot_ai_enemy_number_set(s,-1);s->view.enemy=(qa_actor_id){0};
+    bool target;
+    SOURCE_CALL(bot_ai_find_enemy(b,s,-1,&target,e));
+    out->enemy=target;
+    bot_ai_long_term_goal_set(s,BOT_LTG_NONE);
+    qa_vec3 own_origin=own.home;
+    bool own_visible=own.object.visible && (own.object.phase==QA_OBJECTIVE_HOME ||
+        own.object.phase==QA_OBJECTIVE_DROPPED);
+    if(own_visible) {
+        qa_body_state body;
+        SOURCE_CALL(qa_world_body_read(b->services.shared.world,own.actor,&body,e));
+        own_origin=body.origin;
+    }
+    if(enemy.object.phase==QA_OBJECTIVE_CARRIED &&
+        qa_actor_id_equal(enemy.object.carrier,s->view.actor)) {
+        SOURCE_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_DELIVERING,e));
+        bot_ai_rush_base_away_time_set(s,0);
+        bool at_home=own_visible && qa_vec_length(qa_vec_sub(own_origin,own.home))<=96;
+        out->holding=!at_home && qa_vec_length(qa_vec_sub(bot_ai_origin(s),own.home))<192;
+        return authored_objective_point(b,s,at_home?own.actor:(qa_actor_id){0},
+            at_home?own_origin:own.home,BOT_LTG_RUSH_BASE,out,e);
+    }
+    if(own_visible && qa_vec_length(qa_vec_sub(own_origin,own.home))>96) {
+        SOURCE_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_RETURNING,e));
+        return authored_objective_point(b,s,own.actor,own_origin,BOT_LTG_RETURN_FLAG,out,e);
+    }
+    qa_vec3 enemy_carrier={0};bool has_enemy_carrier=false;
+    if(own.object.phase==QA_OBJECTIVE_CARRIED)
+        SOURCE_CALL(authored_carrier_origin(b,s,own.object.carrier,&enemy_carrier,&has_enemy_carrier,e));
+    if(s->objective_role==BOT_OBJECTIVE_DEFEND) {
+        if(target) return true;
+        if(has_enemy_carrier)
+            return authored_hunt_carrier(b,s,own.object.carrier,enemy_carrier,out,e);
+        if(qa_vec_length(qa_vec_sub(bot_ai_origin(s),own.home))<384) return true;
+        return authored_objective_point(b,s,(qa_actor_id){0},own.home,BOT_LTG_DEFEND,out,e);
+    }
+    if(target) {
+        const qa_actor_player *identity=qa_actors_player(qa_session_actors(b->services.shared.session),s->view.enemy);
+        if(identity && identity->present)
+            SOURCE_CALL(bot_ai_authored_chat_emit(b,s,BOT_CHAT_CTF_ATTACKING,e));
+    }
+    if(enemy.object.visible && (enemy.object.phase==QA_OBJECTIVE_HOME ||
+        enemy.object.phase==QA_OBJECTIVE_DROPPED)) {
+        qa_body_state body;
+        SOURCE_CALL(qa_world_body_read(b->services.shared.world,enemy.actor,&body,e));
+        return authored_objective_point(b,s,enemy.actor,body.origin,BOT_LTG_GET_FLAG,out,e);
+    }
+    qa_vec3 our_carrier={0};bool has_our_carrier=false;
+    if(enemy.object.phase==QA_OBJECTIVE_CARRIED)
+        SOURCE_CALL(authored_carrier_origin(b,s,enemy.object.carrier,&our_carrier,&has_our_carrier,e));
+    if(has_our_carrier) {
+        if(qa_vec_length(qa_vec_sub(our_carrier,own.home))<192)
+            return !has_enemy_carrier || authored_hunt_carrier(b,s,own.object.carrier,enemy_carrier,out,e);
+        if(qa_vec_length(qa_vec_sub(bot_ai_origin(s),our_carrier))<160) return true;
+        return authored_objective_point(b,s,enemy.object.carrier,our_carrier,BOT_LTG_TEAM_ACCOMPANY,out,e);
+    }
+    if(bot_ai_ctf_roam_time(s)>b->time) return true;
+    if(qa_vec_length(qa_vec_sub(bot_ai_origin(s),enemy.home))<32) {
+        bot_ai_ctf_roam_time_set(s,b->time+8);
+        return true;
+    }
+    return authored_objective_point(b,s,(qa_actor_id){0},enemy.home,BOT_LTG_GET_FLAG,out,e);
+}
+
 static bool persistent_equipment(bot_ai_state *s) {
     if(s->team_arena && !bot_ai_inventory_value(s,41) && !bot_ai_inventory_value(s,42) &&
        !bot_ai_inventory_value(s,43) && !bot_ai_inventory_value(s,44)) return false;

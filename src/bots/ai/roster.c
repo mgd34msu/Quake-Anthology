@@ -448,6 +448,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     }
     bot_ai_senses_clear_client(b,(uint32_t)source_client,true);
     s->cooperative=(bot_cooperative_state){0};
+    s->objective_role=BOT_OBJECTIVE_NONE;
     s->authored_chat=(bot_authored_chat_state){
         .emitted=a->restart?1u<<BOT_CHAT_CONNECTED:0};
     s->acquired_source_client=(uint32_t)source_client;
