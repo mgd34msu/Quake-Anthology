@@ -155,7 +155,12 @@ static bool headers(void *context, qa_http_request_id id, const qa_http_response
     if (response->status >= 100 && response->status < 200) return true;
     job->status = response->status;
     if (response->status < 200 || response->status >= 300) {
-        qa_error_set(error, QA_ERROR_IO, 0, "LLM service returned HTTP %u", response->status); return false;
+        const char *advice = response->status == 401 || response->status == 403
+            ? "Check the selected provider's credential or sign in again."
+            : response->status == 429 ? "The service limit was reached. Try again later."
+            : response->status == 400 || response->status == 404 ? "Check the model and service settings."
+            : "Try again later.";
+        qa_error_set(error, QA_ERROR_IO, 0, "LLM service returned HTTP %u. %s", response->status, advice); return false;
     }
     if (job->kind == JOB_REQUEST && job->provider != QA_LLM_SUBSCRIPTION && !content_type(response->content_type))
         return llm_fail(error, "LLM service did not return an event stream");
