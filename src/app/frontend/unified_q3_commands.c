@@ -123,6 +123,15 @@ static bool dispatch(frontend_unified_q3_commands *o,const qa_command_invocation
         const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->options.replica);
         if (frontend_network_unified_local_domain(o->options.frontend,domain))
             (void)qa_application_player_actor(domain->application,domain->command_context.seat,&actor);
+        const char *first=call->argc>1?call->argv[1]:"";
+        if (!actor.registry && *first) {
+            qa_number_cursor cursor={.text={(const uint8_t *)first,strlen(first)}};
+            (void)qa_parse_decimal_i32_cursor(&cursor,QA_DECIMAL_SIGNED_WRAP,false);
+            bool numeric=cursor.offset && cursor.text.data[cursor.offset-1]>='0' &&
+                cursor.text.data[cursor.offset-1]<='9';
+            if (!numeric) return frontend_remote_unified_command(o->options.replica,name,
+                call->argv+1,call->argc-1,e);
+        }
         return q3n_cgame_weapon_command(f,call,actor,e);
     }
     if(q3n_cgame_command_equal(name,"viewpos")) {
