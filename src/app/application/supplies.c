@@ -1248,6 +1248,17 @@ bool application_supplies_for(application_supplies *owner, application_provider 
     if (!supply_current(pair, actor, error)) return false;
     *out = pair->supply; return true;
 }
+bool application_supplies_weapon_droppable(const application_provider *provider, qa_item_id item)
+{
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return item != qa_q3_weapon_item(provider->state.q3, QA_Q3_W_GAUNTLET, false) &&
+            item != qa_q3_weapon_item(provider->state.q3, QA_Q3_W_GRAPPLE, false);
+    if (provider->kind == APPLICATION_PROVIDER_Q1)
+        return item != qa_q1_weapon_item(provider->state.q1, QA_Q1_ROGUE_GRAPPLE) &&
+            item != qa_q1_weapon_item(provider->state.q1, QA_Q1_CTF_GRAPPLE);
+    return true;
+}
+
 bool application_supplies_weapon_sources(application_supplies *owner, application_provider *source,
     qa_actor_id actor, const qa_supply_weapon *selected, size_t selected_count,
     const qa_supply_weapon *original, size_t original_count, qa_arena *storage,

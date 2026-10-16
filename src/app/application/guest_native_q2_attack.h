@@ -23,6 +23,10 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     qa_native_address descriptor,qa_item_id *,qa_error *);
 bool application_native_q2_attack_weapon_contains(struct application_native_q2 *,
     qa_item_id, bool *, qa_error *);
+bool application_native_q2_attack_delay(struct application_native_q2 *, qa_actor_id,
+    qa_item_id item, uint64_t native_ns, uint64_t *, bool *handled, qa_error *);
+bool application_native_q2_attack_hand_grenade_item(struct application_native_q2 *,
+    qa_item_id *, qa_error *);
 const qa_json_document *application_native_q2_attack_declaration_read(const struct application_native_q2 *);
 bool application_native_q2_attack_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
 bool application_native_q2_attack_restore_prepare(struct application_native_q2 *, qa_bytes,

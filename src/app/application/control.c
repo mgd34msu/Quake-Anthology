@@ -17,6 +17,7 @@
 #include "native_q1_spectator.h"
 #include "guest_q3_components.h"
 #include "guest_q3_component_input.h"
+#include "guest_q3_weapons_services.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q1_bots.h"
@@ -1963,15 +1964,6 @@ static bool guest_weapon_delay_current(const guest_weapon_delay *delay, qa_actor
         application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon slice lost its source or selected arsenal");
 }
 
-static bool guest_weapon_firing_delay(void *context, qa_actor_id actor, int32_t input,
-    int32_t *out, qa_error *error)
-{
-    guest_weapon_delay *delay = context;
-    return guest_weapon_delay_current(delay, actor, error) &&
-        application_q3_weapons_delay(delay->weapons, actor, input, out, error) &&
-        guest_weapon_delay_current(delay, actor, error);
-}
-
 bool application_control_guest_weapon_step(qa_application *app, qa_actor_id actor,
     const qa_usercmd *command, const qa_q3_player *player, bool reached, qa_error *error)
 {
@@ -2001,7 +1993,8 @@ bool application_control_guest_weapon_step(qa_application *app, qa_actor_id acto
         qa_q3_arsenal_source source = {.view_angles = aim, .view_height = (float)player->viewheight,
             .health = (float)player->stats[0], .legs_animation = player->legsAnim,
             .torso_animation = player->torsoAnim, .legs_timer_ms = player->legsTimer,
-            .torso_timer_ms = player->torsoTimer, .context = &delay, .firing_delay = guest_weapon_firing_delay};
+            .torso_timer_ms = player->torsoTimer, .context = arsenal,
+            .firing_delay = application_q3_weapons_services_firing_delay};
         qa_q3_controls controls = {.attack = (applied.buttons & 1u) != 0,
             .use_holdable = (applied.buttons & 4u) != 0, .requested_weapon = (qa_q3_weapon)applied.weapon};
         okay = qa_q3_arsenal_source_step(arsenal->state.q3, actor, &controls,
@@ -2621,7 +2614,13 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         qa_q3_controls input = {.attack = attack,
             .use_holdable = context->unified_intent && context->unified_holdable,
             .requested_weapon = player.requested_weapon};
-        okay = !live(app, actor) || qa_q3_arsenal_step(arsenal->state.q3, actor, &input, (float)applied.milliseconds, error);
+        qa_q3_arsenal_source weapon_source = {.view_angles = physical.view_angles,
+            .view_height = physical.view_height, .health = (float)combat.health,
+            .legs_animation = player.legs_animation, .torso_animation = player.torso_animation,
+            .legs_timer_ms = player.legs_timer_ms, .torso_timer_ms = player.torso_timer_ms,
+            .context = arsenal, .firing_delay = application_q3_weapons_services_firing_delay};
+        okay = !live(app, actor) || qa_q3_arsenal_source_step(arsenal->state.q3, actor,
+            &input, (float)applied.milliseconds, &weapon_source, error);
     }
     return okay && (!live(app, actor) || native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error));
 }

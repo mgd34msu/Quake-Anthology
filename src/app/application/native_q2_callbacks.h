@@ -78,6 +78,8 @@ bool application_native_q2_callbacks_scalar_read(application_native_q2_callbacks
     qa_native_address, qa_native_value_type, double *, qa_error *);
 bool application_native_q2_callbacks_scalar_write(application_native_q2_callbacks *,
     qa_native_address, qa_native_value_type, double, qa_error *);
+bool application_native_q2_scalar_write(qa_native_instance *, qa_native_address,
+    qa_native_value_type, double, qa_error *);
 bool application_native_q2_callbacks_observation_required(const application_native_q2_callbacks *);
 bool application_native_q2_callbacks_entry(application_native_q2_callbacks *, qa_json_id,
     qa_native_address *, qa_error *);

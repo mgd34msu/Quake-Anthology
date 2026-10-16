@@ -3,22 +3,25 @@
 #include "guest_native_q2_input.h"
 #include "control_frame.h"
 #include "native_q2_inventory_scanner.h"
+#include "native_q2_callbacks.h"
+#include "supplies.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include "qa/pool.h"
+#include "qa/text.h"
 #include <math.h>
 
 typedef struct attack_item {
     qa_native_address descriptor, think;
-    qa_item_id item;
+    qa_item_id item, ammo;
 } attack_item;
 typedef struct attack_factor {
     struct attack_factor *next, *previous;
     size_t storage_slot;
     unsigned calls;
     qa_actor_id actor;
-    double factor;
-    bool available, retired;
+    double factor, delay_flag;
+    bool available, retired, delay_available;
 } attack_factor;
 typedef struct attack_projectile {
     struct attack_projectile *next, *previous;
@@ -96,6 +99,15 @@ typedef struct decision_frame {
     decision_projection *base;
     bool committed, reached;
 } decision_frame;
+typedef struct attack_delay_projection {
+    decision_field field;
+    double value;
+} attack_delay_projection;
+typedef struct attack_equipment_context {
+    qa_string_id implementation;
+    qa_item_id item;
+} attack_equipment_context;
+typedef enum attack_delay_kind { ATTACK_DELAY_NONE, ATTACK_DELAY_FLAG, ATTACK_DELAY_ANIMATION } attack_delay_kind;
 struct application_native_q2_attack {
     struct application_native_q2 *engine;
     qa_json_document *document;
@@ -128,6 +140,21 @@ struct application_native_q2_attack {
     size_t committed_count;
     decision_field water_level;
     uint32_t command_angles;
+    attack_delay_kind delay_kind;
+    decision_field delay_flag;
+    uint32_t delay_region, delay_entry;
+    qa_native_region_binding *delay_hook;
+    qa_native_address delay_result;
+    double *delay_factors, delay_baseline;
+    size_t delay_factor_count, delay_projection_count, delay_write_count;
+    attack_delay_projection *delay_projection;
+    decision_field *delay_writes;
+    attack_equipment_context *equipment_contexts;
+    size_t equipment_context_count;
+    qa_string_id hand_grenades;
+    qa_supply_weapon *source_weapons;
+    bool ammo_by_name;
+    uint32_t ammo_offset, ammo_label;
     qa_arena decision_storage;
     bool active, items_ready;
 };
@@ -222,6 +249,103 @@ static void projectile_release(struct application_native_q2_attack *p, attack_pr
     if (lease->next) lease->next->previous = lease->previous;
     qa_pool_release(&p->projectile_pool, lease->storage_slot);
 }
+static bool delay_prepare(struct application_native_q2_attack *p, qa_json_id weapons,
+    qa_json_id items, qa_error *error)
+{
+    const qa_json_document *doc = p->document;
+    qa_json_id delay = qa_json_get(doc, weapons, "delay");
+    if (qa_json_type(doc, delay) == QA_JSON_NULL) return true;
+    qa_json_id evaluate = qa_json_get(doc, delay, "evaluate");
+    qa_native_declared_region region;
+    if (!decision_scalar_prepare(p, qa_json_get(doc, delay, "flag"), &p->delay_flag, error) ||
+        !qa_native_declaration_find_region(p->engine->declaration, "/weapons/delay/region", &region, error)) return false;
+    p->delay_region = region.id;
+    if (qa_json_string_equal(doc, qa_json_get(doc, evaluate, "kind"), "source-flag")) {
+        p->delay_kind = ATTACK_DELAY_FLAG;
+        qa_json_id factors = qa_json_get(doc, evaluate, "factors");
+        p->delay_factor_count = qa_json_size(doc, factors);
+        if (qa_json_type(doc, factors) != QA_JSON_ARRAY || !p->delay_factor_count)
+            return application_fail(error, QA_ERROR_FORMAT, "Native firing modifier has no declared factors");
+        p->delay_factors = decision_array(p, p->delay_factor_count, sizeof(double), _Alignof(double), error);
+        if (!p->delay_factors) return false;
+        for (size_t i = 0; i < p->delay_factor_count; ++i)
+            if (!qa_json_number(doc, qa_json_at(doc, factors, i), p->delay_factors + i, error) ||
+                !isfinite(p->delay_factors[i]) || p->delay_factors[i] < 0)
+                return application_fail(error, QA_ERROR_FORMAT, "Native firing factor is not finite and nonnegative");
+    } else if (qa_json_string_equal(doc, qa_json_get(doc, evaluate, "kind"), "source-animation")) {
+        p->delay_kind = ATTACK_DELAY_ANIMATION;
+        qa_json_id projection = qa_json_get(doc, evaluate, "projection"), writes = qa_json_get(doc, evaluate, "writes");
+        if (!word(doc, evaluate, "entry", &p->delay_entry, error) ||
+            !qa_json_number(doc, qa_json_get(doc, evaluate, "baselineMilliseconds"), &p->delay_baseline, error)) return false;
+        if (!isfinite(p->delay_baseline) || p->delay_baseline <= 0 ||
+            qa_json_type(doc, projection) != QA_JSON_ARRAY || qa_json_type(doc, writes) != QA_JSON_ARRAY)
+            return application_fail(error, QA_ERROR_FORMAT, "Native animation delay has no valid baseline or field rosters");
+        p->delay_projection_count = qa_json_size(doc, projection);
+        p->delay_write_count = qa_json_size(doc, writes);
+        if (p->delay_projection_count > SIZE_MAX - p->delay_write_count - 1)
+            return application_fail(error, QA_ERROR_FORMAT, "Native animation delay field count overflows");
+        if (p->delay_projection_count) {
+            p->delay_projection = decision_array(p, p->delay_projection_count, sizeof(*p->delay_projection),
+                _Alignof(attack_delay_projection), error);
+            if (!p->delay_projection) return false;
+        }
+        if (p->delay_write_count) {
+            p->delay_writes = decision_array(p, p->delay_write_count, sizeof(*p->delay_writes), _Alignof(decision_field), error);
+            if (!p->delay_writes) return false;
+        }
+        for (size_t i = 0; i < p->delay_projection_count; ++i) {
+            qa_json_id row = qa_json_at(doc, projection, i);
+            if (!decision_scalar_prepare(p, qa_json_get(doc, row, "field"), &p->delay_projection[i].field, error) ||
+                !qa_json_number(doc, qa_json_get(doc, row, "value"), &p->delay_projection[i].value, error)) return false;
+        }
+        for (size_t i = 0; i < p->delay_write_count; ++i)
+            if (!decision_scalar_prepare(p, qa_json_at(doc, writes, i), p->delay_writes + i, error)) return false;
+    } else return application_fail(error, QA_ERROR_FORMAT, "Native firing delay has no supported original evaluator");
+    qa_json_id ammo = qa_json_get(doc, items, "ammo");
+    p->ammo_by_name = qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "name");
+    if (!p->ammo_by_name && !qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "index"))
+        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition has no declared name or index rule");
+    if (!word(doc, ammo, "offset", &p->ammo_offset, error) ||
+        (p->ammo_by_name && !word(doc, ammo, "label", &p->ammo_label, error))) return false;
+    if (p->ammo_offset > p->item_stride || (p->ammo_by_name ? p->pointer_bytes : 4u) > p->item_stride - p->ammo_offset ||
+        (p->ammo_by_name && (p->ammo_label > p->item_stride || p->pointer_bytes > p->item_stride - p->ammo_label)))
+        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition leaves its declared item descriptor");
+    p->source_weapons = decision_array(p, p->item_count, sizeof(*p->source_weapons), _Alignof(qa_supply_weapon), error);
+    if (!p->source_weapons) return false;
+    qa_strings *strings = qa_session_strings(p->engine->provider->application->session);
+    if (!qa_strings_intern_cstr(strings, "q2:equipment/hand-grenades", &p->hand_grenades, error)) return false;
+    qa_json_id contexts = qa_json_get(doc, weapons, "equipmentContexts");
+    if (qa_json_type(doc, contexts) != QA_JSON_ARRAY)
+        return application_fail(error, QA_ERROR_FORMAT, "Native firing equipment contexts are not a declared array");
+    p->equipment_context_count = qa_json_size(doc, contexts);
+    if (p->equipment_context_count) {
+        p->equipment_contexts = decision_array(p, p->equipment_context_count, sizeof(*p->equipment_contexts),
+            _Alignof(attack_equipment_context), error);
+        if (!p->equipment_contexts) return false;
+    }
+    for (size_t i = 0; i < p->equipment_context_count; ++i) {
+        qa_json_id row = qa_json_at(doc, contexts, i); qa_buffer provider = {0}, item = {0};
+        bool ok = qa_json_string(doc, qa_json_get(doc, row, "provider"), &provider, error) &&
+            qa_json_string(doc, qa_json_get(doc, row, "item"), &item, error) &&
+            qa_strings_intern(strings, (qa_bytes){provider.data, provider.size}, &p->equipment_contexts[i].implementation, error) &&
+            qa_strings_intern(strings, (qa_bytes){item.data, item.size}, &p->equipment_contexts[i].item, error);
+        qa_buffer_free(&provider); qa_buffer_free(&item);
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool delay_capture(void *opaque, qa_native_instance *native, const qa_native_region_event *event,
+    qa_native_region_decision *out, qa_error *error)
+{
+    struct application_native_q2_attack *p = opaque;
+    *out = (qa_native_region_decision){.action = QA_NATIVE_REGION_CONTINUE};
+    if (event->phase != QA_NATIVE_REGION_JOIN || !p->dispatch) return true;
+    attack_factor *factor = factor_for(p, p->dispatch->actor);
+    if (!factor) factor = factor_create(p, p->dispatch->actor, error);
+    if (!factor || !decision_scalar(p, p->dispatch->entity, &p->delay_flag, &factor->delay_flag, error)) return false;
+    factor->delay_available = true;
+    (void)native; return true;
+}
 bool application_native_q2_attack_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
@@ -292,7 +416,8 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
             p->item_count, sizeof(attack_hook), _Alignof(attack_hook), error)) return false;
     memset(p->items, 0, p->item_count * sizeof(*p->items));
     qa_arena_seal(&p->hook_storage);
-    if(!decision_descriptors_prepare(p,weapons,committed,decisions,error)) return false;
+    if(!delay_prepare(p,weapons,items,error) ||
+        !decision_descriptors_prepare(p,weapons,committed,decisions,error)) return false;
     qa_json_id provenance = qa_json_get(doc, weapons, "provenance");
     if (qa_json_type(doc, provenance) != QA_JSON_OBJECT)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -456,6 +581,59 @@ static bool free_entry(void *opaque, qa_native_instance *native, qa_native_entry
     (void)native;
     return qa_native_host_source_reconcile(p->engine->provider->state.native.host, error);
 }
+static bool item_identity(struct application_native_q2_attack *p, qa_native_address record,
+    qa_item_id *out, qa_error *error)
+{
+    qa_native_address name; qa_buffer text = {0}; *out = 0;
+    if (!pointer_read(p, record + p->item_classname, &name, error)) return false;
+    if (!name) return true;
+    if (!qa_native_read_string(instance(p), name, 1024, &text, error)) return false;
+    bool valid = text.size > 0;
+    for (size_t j = 0; j < text.size; ++j)
+        valid = valid && ((text.data[j] >= 'a' && text.data[j] <= 'z') ||
+            (j && ((text.data[j] >= '0' && text.data[j] <= '9') || text.data[j] == '_')));
+    bool ok = true;
+    if (valid) {
+        char qualified[1030]; snprintf(qualified, sizeof(qualified), "q2:%s", (char *)text.data);
+        ok = qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session), qualified, out, error);
+    }
+    qa_buffer_free(&text); return ok;
+}
+static bool item_ammo(struct application_native_q2_attack *p, attack_item *item, qa_error *error)
+{
+    qa_native_address descriptor = 0;
+    if (!p->ammo_by_name) {
+        uint8_t bytes[4];
+        if (!qa_native_read(instance(p), item->descriptor + p->ammo_offset, bytes, sizeof(bytes), error)) return false;
+        int32_t index = qa_load_i32le(bytes);
+        if (!index) return true;
+        if (index < 0 || (uint32_t)index >= p->item_count)
+            return application_fail(error, QA_ERROR_FORMAT, "Native weapon ammunition index leaves its source table");
+        if (!qa_native_rva(instance(p), (uint64_t)p->item_table + (uint64_t)(uint32_t)index * p->item_stride,
+            p->item_stride, &descriptor, error)) return false;
+    } else {
+        qa_native_address name; qa_buffer text = {0};
+        if (!pointer_read(p, item->descriptor + p->ammo_offset, &name, error)) return false;
+        if (!name) return true;
+        if (!qa_native_read_string(instance(p), name, 1024, &text, error)) return false;
+        if (!text.size) { qa_buffer_free(&text); return true; }
+        bool ok = true;
+        for (uint32_t i = 0; ok && i < p->item_count; ++i) {
+            qa_native_address record, label; qa_buffer value = {0};
+            ok = qa_native_rva(instance(p), (uint64_t)p->item_table + (uint64_t)i * p->item_stride,
+                p->item_stride, &record, error) && pointer_read(p, record + p->ammo_label, &label, error);
+            if (ok && label) ok = qa_native_read_string(instance(p), label, 1024, &value, error);
+            bool matches = ok && label && qa_text_bytes_equal((qa_bytes){text.data, text.size},
+                (qa_bytes){value.data, value.size}, true);
+            qa_buffer_free(&value);
+            if (matches) { descriptor = record; break; }
+        }
+        qa_buffer_free(&text); if (!ok) return false;
+    }
+    if (!descriptor) return application_fail(error, QA_ERROR_FORMAT, "Native weapon ammunition name has no source descriptor");
+    if (!item_identity(p, descriptor, &item->ammo, error)) return false;
+    return item->ammo || application_fail(error, QA_ERROR_FORMAT, "Native weapon ammunition has no source item identity");
+}
 bool application_native_q2_attack_activate(struct application_native_q2 *engine, qa_error *error)
 {
     struct application_native_q2_attack *p = engine->source_attack;
@@ -465,23 +643,18 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
     if (!p->items_ready) {
         p->count = 0;
         for (uint32_t i = 0; i < p->item_count; ++i) {
-            qa_native_address record, name, think; uint8_t flags[4]; qa_buffer text = {0};
+            qa_native_address record, think; uint8_t flags[4];
             if (!qa_native_rva(instance(p), (uint64_t)p->item_table + (uint64_t)i * p->item_stride, p->item_stride, &record, error) ||
                 !qa_native_read(instance(p), record + p->item_flags, flags, 4, error)) return false;
             if (!(qa_load_u32le(flags) & p->weapon_flag)) continue;
-            if (!pointer_read(p, record + p->item_classname, &name, error) ||
-                !pointer_read(p, record + p->weapon_think, &think, error)) return false;
-            if (!name || !think) return application_fail(error, QA_ERROR_FORMAT, "Native weapon descriptor lacks its original name or callback");
-            if (!qa_native_read_string(instance(p), name, 1024, &text, error)) return false;
-            bool valid = text.size > 0;
-            for (size_t j = 0; j < text.size; ++j)
-                valid = valid && ((text.data[j] >= 'a' && text.data[j] <= 'z') ||
-                    (j && ((text.data[j] >= '0' && text.data[j] <= '9') || text.data[j] == '_')));
-            if (!valid) { qa_buffer_free(&text); return application_fail(error, QA_ERROR_FORMAT, "Native weapon classname is not qualified"); }
-            char qualified[1030]; snprintf(qualified, sizeof(qualified), "q2:%s", (char *)text.data);
-            qa_buffer_free(&text); qa_item_id item;
-            if (!qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), qualified, &item, error)) return false;
-            p->items[p->count++] = (attack_item){record, think, item};
+            qa_item_id item;
+            if (!pointer_read(p, record + p->weapon_think, &think, error) || !item_identity(p, record, &item, error)) return false;
+            if (!item || !think) return application_fail(error, QA_ERROR_FORMAT, "Native weapon descriptor lacks its original name or callback");
+            p->items[p->count++] = (attack_item){.descriptor = record, .think = think, .item = item};
+        }
+        if (p->delay_kind != ATTACK_DELAY_NONE) for (size_t i = 0; i < p->count; ++i) {
+            if (!item_ammo(p, p->items + i, error)) return false;
+            p->source_weapons[i] = (qa_supply_weapon){p->items[i].item, p->items[i].ammo, true};
         }
         p->items_ready = true;
     }
@@ -514,6 +687,10 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
         decision_region *region=p->decisions+i;
         if(!region->binding&&!qa_native_bind_region(instance(p),region->id,decision_call,region,&region->binding,error)) return false;
     }
+    if (p->delay_kind != ATTACK_DELAY_NONE && !p->delay_hook &&
+        !qa_native_bind_region(instance(p), p->delay_region, delay_capture, p, &p->delay_hook, error)) return false;
+    if (p->delay_kind == ATTACK_DELAY_ANIMATION && !p->delay_result &&
+        !qa_native_allocate(instance(p), 8, INT32_MIN + 14, &p->delay_result, error)) return false;
     if (!p->spawn_hook) {
         qa_native_signature sig = signature(p, NULL, 0, QA_NATIVE_ADDRESS);
         if (!qa_native_rva(instance(p), p->spawn, 1, &entry, error) ||
@@ -646,6 +823,152 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     }
     return true;
 }
+static bool delay_item(struct application_native_q2_attack *p, qa_actor_id actor,
+    qa_item_id requested, qa_unified_frame_lease *storage, const attack_item **out, qa_error *error)
+{
+    *out = NULL;
+    if (!requested) return true;
+    for (size_t i = 0; i < p->count; ++i)
+        if (p->items[i].item == requested) { *out = p->items + i; return true; }
+    qa_application *app = p->engine->provider->application;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    if (!arsenal) return application_fail(error, QA_ERROR_NOT_FOUND, "Native firing delay has no selected arsenal");
+    qa_item_definition definition;
+    if (!qa_inventory_source_definition_read(app->inventory, actor, arsenal->owner, requested, &definition, error)) return false;
+    qa_supply_weapon selected = {requested, definition.ammo,
+        application_supplies_weapon_droppable(arsenal, requested)};
+    qa_item_id source;
+    if (!application_supplies_weapon_sources(app->supplies, p->engine->provider, actor,
+        &selected, 1, p->source_weapons, p->count, qa_unified_frame_lease_arena(storage), &source, error)) return false;
+    if (!source) return true;
+    for (size_t i = 0; i < p->count; ++i)
+        if (p->items[i].item == source) { *out = p->items + i; return true; }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Native firing delay lost its mapped original item");
+}
+typedef struct attack_delay_saved {
+    qa_native_address address;
+    uint8_t bytes[8];
+    size_t count;
+} attack_delay_saved;
+static bool delay_animation(struct application_native_q2_attack *p, qa_native_address entity,
+    const attack_factor *factor, qa_unified_frame_lease *storage, double *out, qa_error *error)
+{
+    size_t count = p->delay_projection_count + p->delay_write_count + 1, saved_count = 0;
+    attack_delay_saved *saved = qa_unified_frame_lease_alloc(storage, count, sizeof(*saved),
+        _Alignof(attack_delay_saved), error);
+    if (!saved) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && i < count; ++i) {
+        const decision_field *field = i < p->delay_projection_count ? &p->delay_projection[i].field :
+            i - p->delay_projection_count < p->delay_write_count ?
+                p->delay_writes + i - p->delay_projection_count : &p->delay_flag;
+        saved[i].count = field->bytes;
+        ok = decision_field_address(p, entity, field, &saved[i].address, error) &&
+            qa_native_read(instance(p), saved[i].address, saved[i].bytes, saved[i].count, error);
+        if (ok) ++saved_count;
+    }
+    for (size_t i = 0; ok && i < p->delay_projection_count; ++i)
+        ok = application_native_q2_scalar_write(instance(p), saved[i].address,
+            p->delay_projection[i].field.encoding, p->delay_projection[i].value, error);
+    if (ok) ok = application_native_q2_scalar_write(instance(p), saved[count - 1].address,
+        p->delay_flag.encoding, factor->delay_flag, error);
+    if (ok) {
+        qa_native_address entry;
+        qa_native_type parameters[] = {scalar(QA_NATIVE_ADDRESS), scalar(QA_NATIVE_ADDRESS)};
+        qa_native_signature sig = signature(p, parameters, 2, QA_NATIVE_ADDRESS);
+        qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = p->delay_result},
+            {.type = QA_NATIVE_ADDRESS, .as.address = entity}}, ignored;
+        uint8_t bytes[8];
+        ok = qa_native_rva(instance(p), p->delay_entry, 1, &entry, error) &&
+            qa_native_invoke(instance(p), entry, &sig, arguments, 2, &ignored, error) &&
+            qa_native_read(instance(p), p->delay_result, bytes, sizeof(bytes), error);
+        if (ok) {
+            uint64_t bits = qa_load_u64le(bytes); int64_t milliseconds;
+            memcpy(&milliseconds, &bits, sizeof(milliseconds));
+            if (milliseconds < 0 || milliseconds > INT64_C(9007199254740991))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Original animation delay exceeds its exact nonnegative interval");
+            else *out = (double)milliseconds / p->delay_baseline;
+        }
+    }
+    for (size_t i = saved_count; i > 0; --i) {
+        qa_error cleanup = {0};
+        if (!qa_native_write(instance(p), saved[i - 1].address,
+            (qa_bytes){saved[i - 1].bytes, saved[i - 1].count}, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
+        }
+    }
+    return ok;
+}
+bool application_native_q2_attack_delay(struct application_native_q2 *engine, qa_actor_id actor,
+    qa_item_id item, uint64_t native_ns, uint64_t *out, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (!p || !p->active || p->delay_kind == ATTACK_DELAY_NONE) return true;
+    attack_factor *factor = factor_for(p, actor);
+    if (!factor || !factor->delay_available)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Original firing modifier has not run for this actor");
+    qa_native_host *host = engine->provider->state.native.host;
+    uint32_t slot; qa_native_address entity;
+    if (!qa_native_host_slot_for_actor(host, actor, &slot))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native firing modifier lost its original actor");
+    if (!qa_native_entity_address(instance(p), slot, &entity, error)) return false;
+    qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
+    if (!storage) return false;
+    const attack_item *original = NULL;
+    bool ok = delay_item(p, actor, item, storage, &original, error), projected = false;
+    qa_native_address weapon = 0; uint8_t previous[8];
+    if (ok && original) {
+        qa_native_address client;
+        ok = pointer_read(p, entity + p->client_pointer, &client, error);
+        if (ok && !client) ok = application_fail(error, QA_ERROR_NOT_FOUND, "Native firing delay has no original client");
+        if (ok) {
+            weapon = client + p->weapon;
+            ok = qa_native_read(instance(p), weapon, previous, p->pointer_bytes, error);
+        }
+        if (ok) {
+            uint8_t bytes[8]; qa_store_u64le(bytes, original->descriptor);
+            projected = true;
+            ok = qa_native_write(instance(p), weapon, (qa_bytes){bytes, p->pointer_bytes}, error);
+        }
+    }
+    double multiplier = 0;
+    ++factor->calls; ++engine->calls;
+    if (ok && p->delay_kind == ATTACK_DELAY_FLAG) {
+        double index = factor->delay_flag;
+        if (index < 0 || index >= (double)p->delay_factor_count || trunc(index) != index)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Original firing flag has no declared source factor");
+        else multiplier = p->delay_factors[(size_t)index];
+    } else if (ok) ok = delay_animation(p, entity, factor, storage, &multiplier, error);
+    if (projected) {
+        qa_error cleanup = {0};
+        if (!qa_native_write(instance(p), weapon, (qa_bytes){previous, p->pointer_bytes}, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
+        }
+    }
+    if (ok) {
+        long double interval = (long double)native_ns * (long double)multiplier;
+        if (!isfinite(multiplier) || multiplier < 0 || interval > (long double)UINT64_MAX)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Original firing delay exceeds the shared interval");
+        else { *out = (uint64_t)interval; *handled = true; }
+    }
+    --engine->calls; --factor->calls; factor_reclaim(p, factor);
+    qa_unified_frame_lease_release(storage); return ok;
+}
+bool application_native_q2_attack_hand_grenade_item(struct application_native_q2 *engine,
+    qa_item_id *out, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *out = 0;
+    if (!p || p->delay_kind == ATTACK_DELAY_NONE) return true;
+    for (size_t i = 0; i < p->equipment_context_count; ++i)
+        if (p->equipment_contexts[i].implementation == p->hand_grenades) {
+            *out = p->equipment_contexts[i].item; return true;
+        }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Original source has no declared hand-grenade item context");
+}
 void application_native_q2_attack_released(struct application_native_q2 *engine, qa_actor_id actor)
 {
     struct application_native_q2_attack *p = engine->source_attack;
@@ -673,6 +996,11 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
         if(region->binding&&!qa_native_remove_region(region->binding,error)) return false;
         region->binding=NULL;
     }
+    if (p->delay_hook && !qa_native_remove_region(p->delay_hook, error)) return false;
+    p->delay_hook = NULL;
+    if (p->delay_result && !qa_native_free(instance(p), p->delay_result, error)) return false;
+    p->delay_result = 0;
+    for (attack_factor *factor = p->factors; factor; factor = factor->next) factor->delay_available = false;
     qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,&p->dispatcher_hook};
     for (size_t i = 0; i < 4; ++i) {
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;

@@ -4,6 +4,8 @@
 #include "guest_input_private.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
+#include "guest_native_q2_private.h"
+#include "guest_native_q2_attack.h"
 #include <ctype.h>
 
 static qa_application *application(application_q3_weapons_services *s)
@@ -399,13 +401,9 @@ bool application_q3_weapons_services_grenade_interval(void *context, qa_actor_id
         return application_fail(error, QA_ERROR_ARGUMENT, "Hand grenade cadence has no actual application");
     *handled = false;
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM) return true;
-    struct application_q3_guest *engine = q3g_engine(physical);
-    q3g_role *role = engine ? engine->game : NULL;
-    application_q3_weapons_services *s = role ? role->weapon_services : NULL;
-    if (role && !s) return true;
-    q3_weapon_actor source; qa_equipment_state equipment;
-    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
+    bool native_q2 = physical && physical->kind == APPLICATION_PROVIDER_NATIVE && physical->state.native.q2_engine;
+    if (!physical || (!native_q2 && physical->kind != APPLICATION_PROVIDER_QVM)) return true;
+    qa_equipment_state equipment;
     if (!app->equipment || !qa_equipment_read(app->equipment, actor, &equipment) ||
         !equipment.selection.grenades.enabled || equipment.sources.grenades != owner ||
         !application_equipment_runtime_owner_current(app->equipment_runtime, owner))
@@ -423,6 +421,17 @@ bool application_q3_weapons_services_grenade_interval(void *context, qa_actor_id
     if (!qa_q2_hand_grenade_read(game, actor, &grenade, &bound, error)) return false;
     if (!bound)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Hand grenade cadence lost its native action owner");
+    if (native_q2) {
+        qa_item_id item;
+        return application_native_q2_attack_hand_grenade_item(physical->state.native.q2_engine, &item, error) &&
+            application_native_q2_attack_delay(physical->state.native.q2_engine, actor, item, native, out, handled, error);
+    }
+    struct application_q3_guest *engine = q3g_engine(physical);
+    q3g_role *role = engine ? engine->game : NULL;
+    application_q3_weapons_services *s = role ? role->weapon_services : NULL;
+    if (role && !s) return true;
+    q3_weapon_actor source;
+    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     uint64_t milliseconds = native / UINT64_C(1000000);
     if (native % UINT64_C(1000000) >= UINT64_C(500000)) ++milliseconds;
     if (milliseconds > INT32_MAX)
@@ -534,8 +543,14 @@ bool application_q3_weapons_services_selected_delay(void *context, qa_actor_id a
     *handled = false;
     qa_application *app = provider->application;
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM ||
+    if (!physical || physical == provider ||
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider) return true;
+    if (physical->kind == APPLICATION_PROVIDER_NATIVE && physical->state.native.q2_engine) {
+        qa_item_id item;
+        return qa_application_weapon_read(app, actor, &item, error) &&
+            application_native_q2_attack_delay(physical->state.native.q2_engine, actor, item, native, out, handled, error);
+    }
+    if (physical->kind != APPLICATION_PROVIDER_QVM) return true;
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
@@ -557,6 +572,20 @@ bool application_q3_weapons_services_selected_delay(void *context, qa_actor_id a
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Selected cadence replaced its original or arsenal owner");
     if (ok) { *out = (uint64_t)result * UINT64_C(1000000); *handled = true; }
     --s->calls; return ok;
+}
+bool application_q3_weapons_services_firing_delay(void *context, qa_actor_id actor,
+    int32_t milliseconds, int32_t *out, qa_error *error)
+{
+    if (milliseconds < 0 || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected firing cadence needs a nonnegative interval");
+    uint64_t interval; bool handled;
+    if (!application_q3_weapons_services_selected_delay(context, actor,
+        (uint64_t)milliseconds * UINT64_C(1000000), &interval, &handled, error)) return false;
+    if (!handled) { *out = milliseconds; return true; }
+    interval /= UINT64_C(1000000);
+    if (interval > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Selected firing cadence exceeds its millisecond domain");
+    *out = (int32_t)interval; return true;
 }
 bool application_q3_weapons_services_q2_damage(void *context, qa_actor_id actor,
     float *out, bool *handled, qa_error *error)
@@ -998,18 +1027,6 @@ static bool prepare(void *context, qa_actor_id actor, const qa_qvm_call *call,
     qa_unified_frame_lease *storage, application_q3_weapon_preparation *out, qa_error *error)
 { application_q3_weapons_services *s = context; return application_guest_input_prepare_weapon(s->role, actor, call, storage, out, error); }
 
-static bool can_drop(const selected_inventory *view, qa_item_id item,
-    qa_strings *strings)
-{
-    if (view->provider->kind == APPLICATION_PROVIDER_Q3)
-        return item != qa_q3_weapon_item(view->provider->state.q3, QA_Q3_W_GAUNTLET, false) &&
-            item != qa_q3_weapon_item(view->provider->state.q3, QA_Q3_W_GRAPPLE, false);
-    if (view->provider->kind == APPLICATION_PROVIDER_Q1) {
-        const char *identity = qa_strings_cstr(strings, item);
-        return identity && strcmp(identity, "q1:weapon/rogue:grapple") && strcmp(identity, "q1:weapon/ctf:grapple");
-    }
-    return true;
-}
 static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapon_drop *out, qa_error *error)
 {
     application_q3_weapons_services *s = context;
@@ -1038,7 +1055,7 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
         }
         for (size_t i = 0; ok && i < view.weapon_count; ++i)
             selected_roster[i] = (qa_supply_weapon){view.weapons[i].item, view.weapons[i].ammo,
-                can_drop(&view, view.weapons[i].item, qa_session_strings(application(s)->session))};
+                application_supplies_weapon_droppable(view.provider, view.weapons[i].item)};
         for (size_t i = 0; ok && i < count; ++i)
             original_roster[i] = (qa_supply_weapon){catalog[i].item, catalog[i].ammo, true};
         if (ok) ok = application_supplies_weapon_sources(application(s)->supplies, s->role->engine->provider, actor,

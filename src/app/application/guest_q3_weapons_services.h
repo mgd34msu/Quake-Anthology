@@ -60,6 +60,8 @@ bool application_q3_weapons_services_q2_muzzle(void *actual_application,
     const qa_builtin_event *, qa_error *);
 bool application_q3_weapons_services_selected_delay(void *actual_native_provider,
     qa_actor_id, uint64_t native_ns, uint64_t *, bool *handled, qa_error *);
+bool application_q3_weapons_services_firing_delay(void *actual_native_provider,
+    qa_actor_id, int32_t milliseconds, int32_t *, qa_error *);
 bool application_q3_weapons_services_q2_damage(void *actual_native_q2_provider,
     qa_actor_id, float *, bool *handled, qa_error *);
 bool application_q3_weapons_services_q2_powerups(void *actual_native_q2_provider,

@@ -1906,12 +1906,17 @@ bool application_native_q2_callbacks_scalar_read(application_native_q2_callbacks
         return fail(e,"Native source scalar exceeds its finite safe-number representation");
     *out=result; return true;
 }
-bool application_native_q2_callbacks_scalar_write(application_native_q2_callbacks *o,
+bool application_native_q2_scalar_write(qa_native_instance *source,
     qa_native_address address,qa_native_value_type type,double number,qa_error *e)
 {
     size_t bytes=scalar_bytes(type); qa_native_value value; uint8_t raw[8]={0};
-    if(!bytes||!current(o,e)||!number_value(type,number,&value,e)) return false;
-    encoded(value,raw); return qa_native_write(instance(o),address,(qa_bytes){raw,bytes},e);
+    if(!bytes||!number_value(type,number,&value,e)) return false;
+    encoded(value,raw); return qa_native_write(source,address,(qa_bytes){raw,bytes},e);
+}
+bool application_native_q2_callbacks_scalar_write(application_native_q2_callbacks *o,
+    qa_native_address address,qa_native_value_type type,double number,qa_error *e)
+{
+    return current(o,e) && application_native_q2_scalar_write(instance(o),address,type,number,e);
 }
 bool application_native_q2_callbacks_observation_required(const application_native_q2_callbacks *o)
 {
