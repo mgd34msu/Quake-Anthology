@@ -264,7 +264,7 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
         bool ok = qa_native_host_q2_player(source->state.native.host, slot, &player, error);
         bool available = false;
         if (ok) ok = application_native_q2_attack_available(engine, actor, &available, error);
-        if (ok) *visible = available && player.stats[1] > 0;
+        if (ok) *visible = player.gunindex != 0 && available;
         return ok;
     }
     qa_actor_id health_actor = actor;
@@ -379,9 +379,10 @@ static bool q3_warning(qa_application *app, qa_application_equipment_view *view,
     return true;
 }
 
-static bool q1_visibility(qa_application *app, qa_application_equipment_view *view,
+static bool equipment_visibility(qa_application *app, qa_application_equipment_view *view,
     qa_error *error)
 {
+    if (view->selected && view->visible && !primary_visibility(app, view->actor, &view->visible, error)) return false;
     if (view->family != QA_GAME_Q1 || !view->visible) return true;
     qa_combat_state combat;
     if (!qa_combat_read_traits(app->combat, view->actor, &combat, error)) return false;
@@ -444,7 +445,7 @@ bool qa_application_equipment_source_read(qa_application *app,qa_actor_id actor,
         if(!qa_equipment_read(app->equipment,actor,&state))return false;
         if(state.weapon_slot.phase!=QA_WEAPON_SLOT_ACTIVE){view.pending=state.weapon_slot.next_item;view.pending_provider=state.weapon_slot.next_provider;}
         if(!view.pending)view.pending_provider=0;
-        if(!q1_visibility(app,&view,error))return false;
+        if(!equipment_visibility(app,&view,error))return false;
         if(!qa_application_equipment_current(app,&view))
             return application_fail(error,QA_ERROR_ARGUMENT,"Source weapon observation retired its actual registry binding");
         *out=view;*present=true;return true;
@@ -473,13 +474,13 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
             .view_model = gear.source.view_model,
             .q3_source = gear.gear.player, .has_q3_source = true,
             .q3_weapon = (qa_q3_weapon)gear.source.definition->presentation.weapon_index,
-            .q3_time_ms = gear.gear.time_ms, .selected = true, .equipment_slot = true,
+            .q3_time_ms = gear.gear.time_ms, .selected = true, .equipment_slot = true, .visible = true,
             .has_frame = true, .rate = 10,
             .has_weapon_status = true, .has_ammo_to_start = true};
         if (!view.item || !view.view_model || !qa_strings_text(qa_session_strings(app->session), view.view_model).size)
             return application_fail(error, QA_ERROR_NOT_FOUND,
                 "Active gear slot has no actual admitted weapon identity or authored view model");
-        if (!primary_visibility(app, actor, &view.visible, error)) return false;
+        if (!equipment_visibility(app, &view, error)) return false;
         if (!qa_application_equipment_current(app, &view))
             return application_fail(error, QA_ERROR_ARGUMENT, "Gear equipment observation changed its actual slot or source");
         *out = view; return true;
@@ -617,7 +618,7 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
     if (standard_q3 && view.family == QA_GAME_Q3 && !q3_warning(app,&view,q3_product,
         provider->kind==APPLICATION_PROVIDER_Q3?provider->state.q3:NULL,
         q3_weapons,q3_weapon_count,error)) return false;
-    if (!q1_visibility(app, &view, error)) return false;
+    if (!equipment_visibility(app, &view, error)) return false;
     if (!qa_application_equipment_current(app, &view))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation changed its actual actor or selected arsenal");
     *out = view; return true;
