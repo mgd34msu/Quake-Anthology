@@ -218,13 +218,14 @@ static bool send(const match_scope *scope, const char *text, qa_error *error)
         application_native_q3_send_command(scope->provider, -1, text, error) && live(scope, error);
 }
 
-static bool append(const match_scope *scope, const char *text, qa_error *error)
+static bool append(const match_scope *scope, const char *text, bool client, qa_error *error)
 {
     qa_console *console;
     qa_command_context context = {.owner = scope->owner, .dialect = QA_RULESET_Q3,
                                   .origin = QA_COMMAND_SERVER};
     if (!live(scope, error) ||
         !application_native_q3_console_at(scope->provider, &console, NULL, NULL)) return false;
+    if (client && !qa_console_context_read(console, &context, error)) return false;
     return application_unified_q3_console(scope->provider, false, text, error) &&
         qa_console_append(console, &context, text, error) && live(scope, error);
 }
@@ -322,7 +323,7 @@ static bool log_exit(match_scope *scope, const char *reason, qa_error *error)
     }
     if (single) {
         if (mode.rules.kind >= QA_MODE_CTF) won = mode.team_scores[0] > mode.team_scores[1];
-        if (!append(scope, won ? "spWin\n" : "spLose\n", error)) return false;
+        if (!append(scope, won ? "spWin\n" : "spLose\n", true, error)) return false;
     }
     return phase(scope, QA_MODE_EXIT_PENDING,
         scope->time_ns + (single ? UINT64_C(5000000000) : UINT64_C(1000000000)), error);
@@ -439,7 +440,7 @@ static bool tournament(match_scope *scope, qa_error *error)
     team.warmup_time_ms = signed_bits((uint32_t)team.warmup_time_ms + 10000u);
     if (!qa_q3_source_team_state_write(scope->game, &team, error) ||
         !application_native_q3_settings_force_set(scope->provider, APPLICATION_Q3_SETTING_G_RESTARTED, "1", error) ||
-        !live(scope, error) || !append(scope, "map_restart 0\n", error)) return false;
+        !live(scope, error) || !append(scope, "map_restart 0\n", false, error)) return false;
     if (!qa_q3_source_match_state_read(scope->game, &match, error)) return false;
     match.restarted = true;
     return qa_q3_source_match_state_write(scope->game, &match, error);
@@ -568,7 +569,7 @@ static bool exit_level(match_scope *scope, qa_error *error)
         !qa_q3_source_match_state_read(scope->game, &match, error)) return false;
     if (mode.rules.kind == QA_MODE_DUEL) {
         if (match.restarted) return true;
-        if (!remove_tournament_loser(scope, error) || !append(scope, "map_restart 0\n", error) ||
+        if (!remove_tournament_loser(scope, error) || !append(scope, "map_restart 0\n", false, error) ||
             !qa_q3_source_match_state_read(scope->game, &match, error)) return false;
         match.restarted = true;
         match.changemap = QA_STRING_NONE;
@@ -576,7 +577,7 @@ static bool exit_level(match_scope *scope, qa_error *error)
         return qa_q3_source_match_state_write(scope->game, &match, error) &&
             phase(scope, QA_MODE_FINISHED, 0, error);
     }
-    if (!append(scope, "vstr nextmap\n", error) ||
+    if (!append(scope, "vstr nextmap\n", false, error) ||
         !qa_q3_source_match_state_read(scope->game, &match, error)) return false;
     match.changemap = QA_STRING_NONE;
     match.intermission_time_ms = 0;
