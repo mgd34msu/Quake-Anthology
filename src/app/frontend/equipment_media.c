@@ -1,6 +1,7 @@
 #include "equipment_media_private.h"
 #include "view_settings.h"
 #include "equipment_held_stock.h"
+#include "../../presentation/q3_native/weapon.h"
 #include "equipment_icon.h"
 #include "../application/equipment_runtime.h"
 #include "qa/application_equipment_content.h"
@@ -9,6 +10,7 @@
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
 #include "qa/q3_assets_custody.h"
+#include "qa/q3_assets_save.h"
 #include "qa/game_q2_items.h"
 #include "qa/unified_frame_player.h"
 #include <stdio.h>
@@ -65,6 +67,73 @@ bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
     frontend_held_attachment_free(&attachment);
     qa_resource_release(resource);
     return ok;
+}
+
+static bool carrier_grip_present(void *context, qa_scene_model *model, qa_error *error)
+{
+    (void)error;
+    bool *present = context;
+    *present |= qa_scene_model_grip_defined(model);
+    return true;
+}
+
+bool frontend_held_carrier_prepare(const qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *parent, double seconds, frontend_held_carrier *out,
+    bool *animated, qa_error *error)
+{
+    *out = (frontend_held_carrier){0};
+    *animated = false;
+    if (parent->kind != QA_Q3_REF_MODEL || parent->model <= 0) return true;
+    qa_model_tag tag;
+    bool tagged;
+    if (!qa_q3_presentation_tag(assets, parent->model,
+        qa_q3_presentation_tag_id(assets, QA_Q3_TAG_WEAPON), parent->old_frame,
+        parent->frame, 1 - parent->back_lerp, &tag, &tagged, error)) return false;
+    if (tagged) return true;
+    qa_q3_asset_model_holder holder;
+    if (!qa_q3_assets_model_holder(assets, (size_t)parent->model - 1, &holder, error)) return false;
+    if (!holder.present || !holder.scenes[0]) return true;
+    if (!qa_scene_model_visit(holder.scenes[0], carrier_grip_present, animated, error)) return false;
+    if (!*animated) return true;
+    qa_scene_model_input pose = {.family = holder.provider.family,
+        .frame = (uint32_t)parent->frame, .old_frame = (uint32_t)parent->old_frame,
+        .skin = (uint32_t)parent->skin,
+        .back_lerp = parent->back_lerp, .previous_origin = parent->old_origin,
+        .flags = (uint32_t)parent->flags, .seconds = seconds};
+    pose.transform = qa_q3_ref_model_transform(parent);
+    *out = (frontend_held_carrier){.model = holder.scenes[0], .pose = pose};
+    return true;
+}
+
+bool frontend_held_carrier_sample(const frontend_held_carrier *carrier,
+    const qa_scene_view *view, qa_scene_frame *frame, qa_model_transform *out,
+    bool *visible, qa_error *error)
+{
+    qa_scene_model_input pose = carrier->pose;
+    pose.view = *view;
+    qa_model_transform socket;
+    if (!qa_scene_model_grip_sample(carrier->model, &pose, frame, &socket, visible, error)) return false;
+    if (!*visible) return true;
+    qa_model_transform hand = q3n_weapon_hand_grip(), alignment;
+    if (!qa_model_attachment_align(&hand, &socket, &alignment))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Animated carrier cannot align its Q3 hand registration");
+    qa_model_transform_compose(&pose.transform, &alignment, out);
+    return true;
+}
+
+void frontend_held_carrier_ref(const qa_model_transform *carrier,
+    const qa_q3_ref_entity *source, qa_q3_ref_entity *out)
+{
+    qa_model_transform local = qa_q3_ref_model_transform(source), world;
+    qa_model_transform_compose(carrier, &local, &world);
+    *out = *source;
+    out->origin = qa_v3(world.origin[0], world.origin[1], world.origin[2]);
+    out->old_origin = out->origin;
+    for (size_t i = 0; i < 3; ++i) {
+        out->axis[i] = qa_v3(world.axes[i][0] * world.scale[i],
+            world.axes[i][1] * world.scale[i], world.axes[i][2] * world.scale[i]);
+        out->non_normalized_axes |= world.scale[i] != 1;
+    }
 }
 
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,

@@ -490,6 +490,16 @@ static bool selected_parts(const q3n_selected_weapon_media *media,const q3n_sele
     if (!have_barrel) return true;
     barrel->custom_shader=shader; return selected_emit(media,draw,barrel,submitted,e);
 }
+qa_model_transform q3n_weapon_hand_grip(void)
+{
+    qa_model_transform grip;
+    qa_model_transform_identity(&grip);
+    grip.origin[0] = -2.9841071642362156f;
+    grip.origin[1] = -.7671715473899474f;
+    grip.origin[2] = -2.208833547738882f;
+    return grip;
+}
+
 bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_media *media,
     q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
     const q3n_selected_weapon_held *held,bool *submitted,qa_error *e)
@@ -498,9 +508,9 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected held Q3 weapon requires the actual authored torso");
     if (!selected_begin(owner,media,state,draw,submitted,e)) return false;
     if (!media->gun) return selected_end(owner,true);
-    int32_t flags=128|(held->personal_model?2:0); bool gun_found,have_barrel=false,have_flash=false;
+    int32_t flags=128|(held->personal_model?2:0); bool gun_found=held->carrier_grip,have_barrel=false,have_flash=false;
     qa_q3_ref_entity gun=selected_part(media->gun,flags,held->lighting_origin);
-    if (!q3n_attach(held->parent_assets,&gun,held->torso,qa_q3_presentation_tag_id(held->parent_assets, QA_Q3_TAG_WEAPON),Q3N_ATTACH_CHILD_POSE,
+    if (!held->carrier_grip && !q3n_attach(held->parent_assets,&gun,held->torso,qa_q3_presentation_tag_id(held->parent_assets, QA_Q3_TAG_WEAPON),Q3N_ATTACH_CHILD_POSE,
         Q3N_ATTACH_MISSING_SKIP,&gun_found,e)) return selected_end(owner,false);
     float spin_angle=barrel_spin(draw->time,&state->world_barrel.time,&state->world_barrel.angle,&state->world_barrel.spinning,draw->firing);
     qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);

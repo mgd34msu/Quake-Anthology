@@ -3,6 +3,7 @@
 
 #include "frame.h"
 #include "qa/hud.h"
+#include "qa/model.h"
 
 typedef struct q3n_weapon_settings {
     int32_t brass_time, fov, gun_frame;
@@ -85,8 +86,9 @@ typedef struct q3n_selected_weapon_held {
     const qa_q3_ref_entity *torso;
     qa_vec3 lighting_origin;
     int32_t powerups;
-    bool personal_model;
+    bool personal_model, carrier_grip;
 } q3n_selected_weapon_held;
+qa_model_transform q3n_weapon_hand_grip(void);
 /* Suppression requires success AND submitted. These entry points do not invoke
  * primary view/held replacement callbacks or manufacture a primary frame. */
 bool q3n_weapons_selected_view(q3n_weapons *, const q3n_selected_weapon_media *,

@@ -26,19 +26,6 @@ static bool current(const frontend_equipment_held_output *output)
         &output->source);
 }
 
-static void parent_transform(const qa_q3_ref_entity *parent, qa_model_transform *out)
-{
-    qa_model_transform_identity(out);
-    out->origin[0] = parent->origin.x;
-    out->origin[1] = parent->origin.y;
-    out->origin[2] = parent->origin.z;
-    for (size_t i = 0; i < 3; ++i) {
-        out->axes[i][0] = parent->axis[i].x;
-        out->axes[i][1] = parent->axis[i].y;
-        out->axes[i][2] = parent->axis[i].z;
-    }
-}
-
 bool frontend_equipment_held_output_create(qa_frontend *frontend,
     const qa_application_equipment_view *source, frontend_equipment_media *media,
     qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent,
@@ -108,7 +95,7 @@ static bool held_transform(frontend_equipment_held_output *output,const qa_scene
             .frame=(uint32_t)parent->frame,.old_frame=(uint32_t)parent->old_frame,
             .back_lerp=parent->back_lerp,.previous_origin=parent->old_origin,
             .flags=(uint32_t)parent->flags,.seconds=(double)output->frontend->time_ns*1e-9};
-        parent_transform(parent,&input.transform);
+        input.transform=qa_q3_ref_model_transform(parent);
         if (!qa_scene_model_grip_sample(output->carrier_scene,&input,frame,&socket,&found,error)) return false;
         authored=found;
         if (!found && qa_scene_model_grip_defined(output->carrier_scene)) {
@@ -125,8 +112,7 @@ static bool held_transform(frontend_equipment_held_output *output,const qa_scene
         memcpy(socket.origin,tag.origin,sizeof(socket.origin));
         memcpy(socket.axes,tag.axes,sizeof(socket.axes));
     }
-    qa_model_transform parent_pose,tagged;
-    parent_transform(parent,&parent_pose);
+    qa_model_transform parent_pose=qa_q3_ref_model_transform(parent),tagged;
     qa_model_transform_compose(&parent_pose,&socket,&tagged);
     qa_model_transform_compose(&tagged,authored?&retained->held->inverse_grip:&retained->held->alignment,
         &output->transform);

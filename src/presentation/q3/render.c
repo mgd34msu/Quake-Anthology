@@ -66,7 +66,7 @@ bool q3p_scene_snapshot(qa_q3_presentation *p, qa_error *error)
     return true;
 }
 
-static qa_model_transform entity_transform(const qa_q3_ref_entity *entity)
+qa_model_transform qa_q3_ref_model_transform(const qa_q3_ref_entity *entity)
 {
     qa_model_transform transform;
     qa_model_transform_identity(&transform);
@@ -382,7 +382,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     const q3p_model *model;
     if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     if (model && model->registration_bad) model = NULL;
-    qa_model_transform transform = entity_transform(entity);
+    qa_model_transform transform = qa_q3_ref_model_transform(entity);
     qa_scene_view view = weapon_view(&options->world.view, options->split_screen && !options->world.no_world && (entity->flags & QA_Q3_RF_FIRST_PERSON));
     if((!model||model->world) && (entity->flags&QA_Q3_RF_FIRST_PERSON))
         view=qa_scene_weapon_view(p->frame,view);

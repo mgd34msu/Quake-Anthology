@@ -103,6 +103,7 @@ typedef struct qa_q3_ref_entity {
     uint8_t color[4];
     bool non_normalized_axes;
 } qa_q3_ref_entity;
+qa_model_transform qa_q3_ref_model_transform(const qa_q3_ref_entity *);
 void qa_q3_ref_entity_remap(qa_q3_ref_entity *,qa_vec3 from_origin,const qa_vec3 from_axis[3],
     qa_vec3 to_origin,const qa_vec3 to_axis[3]);
 typedef struct qa_q3_refdef {

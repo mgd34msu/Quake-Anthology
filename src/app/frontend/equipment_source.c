@@ -915,14 +915,8 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
         .frame = owner->selection.frame, .old_frame = owner->selection.frame,
         .skin = owner->selection.has_skin ? owner->selection.skin : 0};
     memset(entity->color, 255, sizeof(entity->color)); qa_angle_axis(angles, entity->axis,QA_ANGLE_FLOAT_MATH);
-    qa_model_transform_identity(&owner->view_transform);
-    for (size_t i = 0; i < 3; ++i) {
-        owner->view_transform.axes[i][0] = entity->axis[i].x;
-        owner->view_transform.axes[i][1] = entity->axis[i].y;
-        owner->view_transform.axes[i][2] = entity->axis[i].z;
-    }
-    owner->view_transform.origin[0] = origin.x; owner->view_transform.origin[1] = origin.y;
-    owner->view_transform.origin[2] = origin.z; owner->view_ready = true;
+    owner->view_transform = qa_q3_ref_model_transform(entity);
+    owner->view_ready = true;
     return true;
 }
 

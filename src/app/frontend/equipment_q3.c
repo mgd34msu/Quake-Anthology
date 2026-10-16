@@ -6,6 +6,7 @@
 #include "q3_color_policy.h"
 #include "q3_render_policy.h"
 #include "material_movies.h"
+#include "equipment_media.h"
 
 struct frontend_equipment_q3_output {
     frontend_equipment_q3_presenter *presenter;
@@ -14,6 +15,7 @@ struct frontend_equipment_q3_output {
     qa_q3_presentation_assets *source_assets;
     qa_q3_ref_entity *source_passes;
     size_t count, base_count, pass_count, pass_capacity;
+    frontend_held_carrier carrier;
     bool view, source_style;
 };
 typedef struct equipment_q3_call {
@@ -280,7 +282,7 @@ static bool draw_output(frontend_equipment_q3_presenter *presenter, const qa_app
     void *context, bool (*current)(void *), frontend_equipment_q3_output *output, bool *submitted, qa_error *error)
 {
     if (submitted) *submitted = false;
-    if (!presenter || !source || !output || !submitted || !current || !current(context) ||
+    if (!presenter || !source || !output || !submitted || (!view && !held) || !current || !current(context) ||
         !source_current(presenter->owner, source) || !qa_actor_id_equal(source->actor, presenter->actor))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 draw lost its authentic presenter and recipient");
     output->presenter = presenter; output->source = *source; output->view = view != NULL;
@@ -298,8 +300,20 @@ static bool draw_output(frontend_equipment_q3_presenter *presenter, const qa_app
         q3n_selected_weapon_view actual = *view; actual.animations = animation.config;
         if (ok) ok = q3n_weapons_selected_view(presenter->owner->weapons, &media,
             &presenter->state, &request, &actual, submitted, error);
-    } else if (ok) ok = q3n_weapons_selected_held(presenter->owner->weapons, &media,
-        &presenter->state, &request, held, submitted, error);
+    } else if (ok) {
+        q3n_selected_weapon_held actual = *held;
+        if (media.gun) ok = frontend_held_carrier_prepare(held->parent_assets, held->torso,
+            (double)presenter->owner->frontend->time_ns * 1e-9,
+            &output->carrier, &actual.carrier_grip, error);
+        if (ok) ok = q3n_weapons_selected_held(presenter->owner->weapons, &media,
+            &presenter->state, &request, &actual, submitted, error);
+        if (ok && actual.carrier_grip) for (size_t i = 0; i < output->count; ++i) {
+            output->refs[i].flags = held->torso->flags;
+            output->refs[i].color[3] = held->torso->color[3];
+            output->refs[i].lighting_origin = held->torso->lighting_origin;
+            output->refs[i].shadow_plane = held->torso->shadow_plane;
+        }
+    }
     return ok;
 }
 
@@ -407,8 +421,20 @@ static bool output_submit(frontend_equipment_q3_output *output, qa_q3_presentati
         !presentation || !options || !frame || !qa_vec_finite(offset) || first_order > 1022 ||
         frontend_equipment_q3_output_count(output) > 1022 - first_order)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 submission lost its real reserved scene interval");
+    qa_q3_ref_entity posed[7];
+    const qa_q3_ref_entity *refs = output->refs;
+    if (output->carrier.model) {
+        qa_model_transform transform;
+        bool visible;
+        if (!frontend_held_carrier_sample(&output->carrier, &options->world.view,
+            frame, &transform, &visible, error)) return false;
+        if (!visible) return true;
+        for (size_t i = 0; i < output->count; ++i)
+            frontend_held_carrier_ref(&transform, output->refs + i, posed + i);
+        refs = posed;
+    }
     for (size_t i = 0; i < output->count; ++i) {
-        qa_q3_ref_entity ref = shifted(output->refs + i, offset);
+        qa_q3_ref_entity ref = shifted(refs + i, offset);
         if (!qa_vec_finite(ref.origin) || !qa_vec_finite(ref.old_origin) ||
             !qa_vec_finite(ref.lighting_origin) || !isfinite(ref.shadow_plane))
             return frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 view offset exceeds finite scene coordinates");
@@ -417,14 +443,14 @@ static bool output_submit(frontend_equipment_q3_output *output, qa_q3_presentati
     if (output->source_style) {
         for (size_t pass = 0; pass < output->pass_count; ++pass)
             for (size_t part = 0; part < output->base_count; ++part) {
-                qa_q3_ref_entity ref = shifted(output->refs + part, offset);
+                qa_q3_ref_entity ref = shifted(refs + part, offset);
                 if (!qa_q3_presentation_selected_registered_pass(presentation, output->presenter->owner->view.assets,
                     &ref, output->source_assets, output->source_passes + pass, options, first_order++, frame, error)) return false;
             }
         first = output->base_count;
     }
     for (size_t i = first; i < output->count; ++i) {
-        qa_q3_ref_entity ref = shifted(output->refs + i, offset);
+        qa_q3_ref_entity ref = shifted(refs + i, offset);
         if (!qa_q3_presentation_selected_registered(presentation, output->presenter->owner->view.assets,
             &ref, options, first_order++, frame, error)) return false;
     }

@@ -9,6 +9,15 @@
 #include "material_movies.h"
 
 typedef struct frontend_equipment_media frontend_equipment_media;
+typedef struct frontend_held_carrier {
+    qa_scene_model *model;
+    qa_scene_model_input pose;
+} frontend_held_carrier;
+bool frontend_held_carrier_prepare(const qa_q3_presentation_assets *,
+    const qa_q3_ref_entity *, double seconds, frontend_held_carrier *, bool *animated, qa_error *);
+bool frontend_held_carrier_sample(const frontend_held_carrier *, const qa_scene_view *,
+    qa_scene_frame *, qa_model_transform *, bool *visible, qa_error *);
+void frontend_held_carrier_ref(const qa_model_transform *, const qa_q3_ref_entity *, qa_q3_ref_entity *);
 typedef struct frontend_equipment_media_view {
     qa_actor_owner provider;
     qa_game_family family;

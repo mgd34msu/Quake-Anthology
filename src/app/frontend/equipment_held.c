@@ -1,4 +1,5 @@
 #include "equipment_held.h"
+#include "../../presentation/q3_native/weapon.h"
 #include "qa/json.h"
 
 #include <float.h>
@@ -230,11 +231,7 @@ bool frontend_held_model_prepare(const frontend_held_declaration *declaration,
     if (declaration->reference_frame >= model->frame_count)
         return fail(error, QA_ERROR_FORMAT, "Held reference frame exceeds source animation");
     frontend_held_model result = {0};
-    qa_model_transform socket;
-    qa_model_transform_identity(&socket);
-    socket.origin[0] = -2.9841071642362156f;
-    socket.origin[1] = -.7671715473899474f;
-    socket.origin[2] = -2.208833547738882f;
+    qa_model_transform socket = q3n_weapon_hand_grip();
     if (!qa_model_attachment_align(&declaration->grip, &socket, &result.alignment) ||
         !qa_model_transform_inverse(&declaration->grip, &result.inverse_grip))
         return fail(error, QA_ERROR_FORMAT, "Held grip cannot align to actual Q3 hand socket");
