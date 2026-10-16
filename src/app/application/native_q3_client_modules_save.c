@@ -130,9 +130,10 @@ static bool capture_module(const qa_application_content_graph *graph, native_cli
         if (actual->host || actual->artifact.path || actual->artifact.resource ||
             actual->declaration.path || actual->declaration.resource ||
             actual->body_declaration.path || actual->body_declaration.resource ||
-            actual->image || actual->module || actual->native_declaration ||
+            actual->image || actual->module || actual->native_declaration || actual->catalog ||
             actual->native || actual->vm || actual->equipment || actual->body ||
-            actual->body_profile.artifact_path || actual->body_profile.submissions)
+            actual->body_profile.artifact_path || actual->body_profile.submissions ||
+            actual->catalog_declaration.size)
             return application_fail(error, QA_ERROR_ARGUMENT, "Incomplete acquired CLIENT constructor cannot be captured");
         return true;
     }

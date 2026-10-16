@@ -4,6 +4,7 @@ static qa_command_result declared_command(void *,const qa_command_invocation *,q
 #include "qa/network_q3.h"
 #include "qa/q3_host_save.h"
 #include "qa/script.h"
+#include "qa/text.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -192,6 +193,11 @@ bool native_client_module_qualify(native_client_module *role, qa_error *error)
             if (role->kind == QA_QVM_CGAME) okay = application_q3_equipment_profile_read(role->image,
                 role->kind, role->abi, (qa_bytes){compatibility.equipment_presentation.data,
                     compatibility.equipment_presentation.size}, &role->profile, error);
+            if (okay && role->kind == QA_QVM_CGAME) {
+                qa_buffer_free(&role->catalog_declaration);
+                role->catalog_declaration = compatibility.primary;
+                compatibility.primary = (qa_buffer){0};
+            }
         }
         qa_qvm_compatibility_free(&compatibility); return okay;
     }
@@ -399,6 +405,11 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         if (!qa_qvm_create(role->image, &vm, &role->vm, error) ||
             !qa_q3_host_attach_qvm(role->host, role->vm, error)) return false;
         if (role->kind == QA_QVM_CGAME) {
+            if (!application_q3_catalog_create(role->image, role->vm, role->abi,
+                actual.descriptor->selection.instance, role->artifact.path,
+                qa_session_strings(owner->app->session),
+                (qa_bytes){role->catalog_declaration.data, role->catalog_declaration.size},
+                (qa_bytes){0}, false, &role->catalog, error)) return false;
             application_q3_equipment_module module = {.session = owner->app->session, .vm = role->vm,
                 .image = role->image, .profile = &role->profile, .receiver = actual.receiver.receiver,
                 .seat = actual.receiver.seat, .client = options.client};
@@ -635,6 +646,48 @@ bool qa_application_native_q3_client_modules_console_command(application_native_
             &reached, &revision, error)) return false;
     snapshot = (qa_command_tokens){.count = call->argc, .values = (char **)call->argv,
         .args_text = (char *)call->args_text, .borrowed = true};
+    char weapon[16];
+    char *arguments[] = {"weapon", weapon};
+    if (kind == QA_QVM_CGAME && role->catalog && call->argc > 1 &&
+        qa_text_ascii_equal(call->argv[0], "weapon") && *call->argv[1]) {
+        qa_number_cursor cursor = {.text = {(const uint8_t *)call->argv[1], strlen(call->argv[1])}};
+        (void)qa_parse_decimal_i32_cursor(&cursor, QA_DECIMAL_SIGNED_WRAP, false);
+        bool numeric = cursor.offset && cursor.text.data[cursor.offset - 1] >= '0' &&
+            cursor.text.data[cursor.offset - 1] <= '9';
+        if (!numeric) {
+            const application_q3_catalog_weapon *weapons;
+            size_t count;
+            if (!application_q3_catalog_weapons(role->catalog, &weapons, &count, error)) return false;
+            if (count > SIZE_MAX / sizeof(qa_item_definition))
+                return application_fail(error, QA_ERROR_MEMORY, "Acquired weapon catalog exceeds command storage");
+            qa_arena storage = {0};
+            qa_console_command_arena(call->console, &storage);
+            qa_item_definition *definitions = count ? qa_arena_alloc(&storage,
+                count * sizeof(*definitions), _Alignof(qa_item_definition), error) : NULL;
+            if (count && !definitions) { qa_arena_destroy(&storage); return false; }
+            for (size_t i = 0; i < count; ++i)
+                definitions[i] = (qa_item_definition){.item = weapons[i].item,
+                    .label = weapons[i].label, .weapon = true};
+            qa_item_name_match match;
+            bool okay = qa_item_name_resolve(qa_session_strings(owner->app->session),
+                definitions, count, call->argv + 1, call->argc - 1, true, &storage, &match, error);
+            if (okay && match.count > 1) {
+                qa_console_emit(call->console, &call->context, "Ambiguous weapon; use ");
+                qa_console_emit(call->console, &call->context, match.alternatives);
+                qa_console_emit(call->console, &call->context, "\n");
+                *result = 1;
+                qa_arena_destroy(&storage);
+                return console_current(role, call, error);
+            }
+            if (okay && match.count) {
+                snprintf(weapon, sizeof(weapon), "%i", weapons[match.index].weapon);
+                snapshot = (qa_command_tokens){.count = 2, .values = arguments,
+                    .args_text = weapon, .borrowed = true};
+            }
+            qa_arena_destroy(&storage);
+            if (!okay) return false;
+        }
+    }
     owner->command_role = role; owner->command_arguments = &snapshot; owner->command_revision = revision;
     bool okay = invoke(role, kind == QA_QVM_UI ? NATIVE_Q3_UI_CONSOLE_COMMAND : NATIVE_Q3_CG_CONSOLE_COMMAND,
         kind == QA_QVM_UI ? &milliseconds : NULL, kind == QA_QVM_UI ? 1 : 0, result, false, error);
@@ -790,6 +843,7 @@ bool native_client_module_close_executor(native_client_module *role, qa_error *e
         if (!application_q3_equipment_destroy(role->equipment, error)) return false;
         role->equipment = NULL;
     }
+    application_q3_catalog_destroy(role->catalog); role->catalog = NULL;
     if (role->native) {
         native_client_module *previous = role->owner->entered;
         role->owner->entered = role;
@@ -833,6 +887,7 @@ static bool consume(native_client_module *role, qa_error *error)
     native_client_opening_dispose(&role->declaration);
     native_client_opening_dispose(&role->body_declaration);
     qa_buffer_free(&role->saved_services);
+    qa_buffer_free(&role->catalog_declaration);
     role->ready = false; return true;
 }
 

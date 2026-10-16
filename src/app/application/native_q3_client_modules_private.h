@@ -5,6 +5,7 @@
 #include "native_q3_remote_role.h"
 #include "guest_q3_equipment.h"
 #include "guest_q3_body.h"
+#include "guest_q3_catalog.h"
 #include "qa/native_host.h"
 #include "native_process_owner.h"
 
@@ -24,6 +25,7 @@ typedef struct native_client_module {
     qa_qvm_image *image;
     qa_native_module *module;
     qa_native_declaration *native_declaration;
+    application_q3_catalog *catalog;
     application_q3_equipment_profile profile;
     application_q3_body_profile body_profile;
     qa_q3_host *host;
@@ -34,7 +36,7 @@ typedef struct native_client_module {
     application_q3_body *body;
     qa_application_q3_body_services body_services;
     qa_q3_host_client_services client;
-    qa_buffer saved_services;
+    qa_buffer saved_services, catalog_declaration;
     int32_t draw_arguments[3];
     uint64_t draw_revision;
     bool draw_entry;

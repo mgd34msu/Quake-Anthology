@@ -92,7 +92,7 @@ bool qa_qvm_compatibility_parse(qa_bytes json, const char *artifact_path,
         else { qa_qvm_error(error,QA_ERROR_FORMAT,i,"invalid QVM compatibility ABI profile"); goto finished; }
         qa_json_id primary = qa_json_get(document,entry,"primary"), equipment = qa_json_get(document,entry,"equipmentPresentation");
         qa_json_id collision = qa_json_get(document,entry,"collisionScene");
-        if ((primary != QA_JSON_NONE && entry_role != QA_QVM_GAME) || (equipment != QA_JSON_NONE && entry_role != QA_QVM_CGAME) ||
+        if ((primary != QA_JSON_NONE && entry_role == QA_QVM_UI) || (equipment != QA_JSON_NONE && entry_role != QA_QVM_CGAME) ||
             (collision != QA_JSON_NONE && entry_role != QA_QVM_CGAME)) {
             qa_qvm_error(error,QA_ERROR_FORMAT,i,"QVM compatibility interface belongs to another role"); goto finished;
         }

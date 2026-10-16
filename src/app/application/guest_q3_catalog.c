@@ -18,6 +18,7 @@ struct application_q3_catalog {
     qa_qvm_image *image;
     qa_qvm *vm;
     qa_qvm_abi abi;
+    qa_qvm_role role;
     qa_strings *strings;
     char *instance, *artifact_path;
     catalog_locator address, count;
@@ -320,7 +321,7 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
 bool application_q3_catalog_current(const application_q3_catalog *c, const qa_qvm_image *image, const qa_qvm *vm, qa_qvm_abi abi)
 {
     return c && image && vm && c->image == image && c->vm == vm && c->abi == abi &&
-        qa_qvm_get_role(vm) == QA_QVM_GAME && qa_qvm_get_abi(vm) == abi &&
+        qa_qvm_get_role(vm) == c->role && qa_qvm_get_abi(vm) == abi &&
         (qa_qvm_image_of(vm) == image) &&
         qa_qvm_read(vm, 0, NULL, 0, NULL);
 }
@@ -356,17 +357,21 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
     application_q3_catalog **out, qa_error *e)
 {
     if (!image || !vm || !instance || !artifact_path || !strings || !out || *out || (declared.size && !declared.data) || (items.size && !items.data) ||
-        qa_qvm_get_role(vm) != QA_QVM_GAME || qa_qvm_get_abi(vm) != abi || (qa_qvm_image_of(vm) != image))
-        return fail(e, QA_ERROR_ARGUMENT, "Catalog requires its actual GAME image, executor and empty owner");
+        (qa_qvm_get_role(vm) != QA_QVM_GAME && qa_qvm_get_role(vm) != QA_QVM_CGAME) ||
+        qa_qvm_get_abi(vm) != abi || (qa_qvm_image_of(vm) != image))
+        return fail(e, QA_ERROR_ARGUMENT, "Catalog requires its actual GAME or CGAME image, executor and empty owner");
+    qa_qvm_role role = qa_qvm_get_role(vm);
+    if (role == QA_QVM_CGAME && !declared.size && !items.size) return true;
     if (!qa_qvm_read(vm, 0, NULL, 0, e)) return false;
     application_q3_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining original source catalog");
-    qa_qvm_image_retain(image); c->image = image; c->vm = vm; c->abi = abi; c->strings = strings;
+    qa_qvm_image_retain(image); c->image = image; c->vm = vm; c->abi = abi;
+    c->role = role; c->strings = strings;
     c->instance = malloc(strlen(instance) + 1); c->artifact_path = malloc(strlen(artifact_path) + 1);
     if (!c->instance || !c->artifact_path) { application_q3_catalog_destroy(c); return fail(e, QA_ERROR_MEMORY, "Retaining source catalog namespace"); }
     strcpy(c->instance, instance); strcpy(c->artifact_path, artifact_path);
     bool source_roster = false; uint32_t roster_first = 0;
-    if (!declared.size && abi == QA_QVM_Q3_MODERN) {
+    if (role == QA_QVM_GAME && !declared.size && abi == QA_QVM_Q3_MODERN) {
 
         if (application_q3_reference_image(image, Q3_REFERENCE_BASE_GAME)) {
             c->source_address = 2552; c->source_count = 36;
@@ -379,8 +384,11 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
         }
     }
     qa_json_document *doc = NULL; bool ok = true;
-    if (declared.size) ok = qa_json_parse(QA_JSON_STRICT, declared, &doc, e) && primary(c, doc, e);
-    else if (items.size) {
+    if (declared.size) {
+        ok = qa_json_parse(QA_JSON_STRICT, declared, &doc, e);
+        if (ok) ok = role == QA_QVM_GAME ? primary(c, doc, e) :
+            layout(c, doc, qa_json_get(doc, qa_json_root(doc), "items"), e);
+    } else if (items.size) {
         uint32_t version;
         ok = qa_json_parse(QA_JSON_STRICT, items, &doc, e) &&
             word(doc, qa_json_get(doc, qa_json_root(doc), "version"), &version, e) && version == 1;
@@ -443,7 +451,7 @@ bool application_q3_catalog_records(application_q3_catalog *c,
     if (c && c->native) return application_q3_native_catalog_records(c->native, out, count, e);
     if (!out || !count || !c || !application_q3_catalog_current(c, c->image, c->vm, c->abi) ||
         (!c->table && !c->source_count))
-        return fail(e, QA_ERROR_ARGUMENT, "Catalog records require their actual retained GAME table");
+        return fail(e, QA_ERROR_ARGUMENT, "Catalog records require their actual retained module table");
     if (c->source_count) {
         if (!c->source_records_ready) {
             application_q3_catalog source = {
@@ -471,7 +479,7 @@ bool application_q3_catalog_weapons(application_q3_catalog *c,
 {
     if (c && c->native) return application_q3_native_catalog_weapons(c->native, out, count, e);
     if (!out || !count || !c || !application_q3_catalog_current(c, c->image, c->vm, c->abi))
-        return fail(e, QA_ERROR_ARGUMENT, "Catalog weapons require their actual retained GAME owner");
+        return fail(e, QA_ERROR_ARGUMENT, "Catalog weapons require their actual retained module owner");
     if (c->live && !refresh(c, true, true, e)) return false;
     *out = c->weapons; *count = c->weapon_count; return true;
 }
