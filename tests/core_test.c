@@ -3200,6 +3200,20 @@ static void test_q2_hud_configuration(void)
     CHECK(qa_hud_q2_names_set(&names,names.layout.player_skins,info,NULL,&error));
     CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].model),"custom"));
     CHECK(!strcmp(qa_strings_cstr(strings,names.players[0].skin),"tag"));
+    qa_string_id empty, sound;
+    CHECK(qa_strings_intern_cstr(strings,"",&empty,&error));
+    CHECK(qa_strings_intern_cstr(strings,"weapons/blastf1a.wav",&sound,&error));
+    for (unsigned rerelease=0;rerelease<2;++rerelease) {
+        CHECK(qa_hud_q2_names_configure(&names,qa_q2_default_protocol(rerelease!=0),NULL,&error));
+        uint32_t index=names.layout.sounds+1;
+        CHECK(qa_hud_q2_names_set(&names,index,sound,NULL,&error));
+        CHECK(names.values[index]==sound);
+        CHECK(qa_hud_q2_names_set(&names,index,empty,NULL,&error));
+        CHECK(names.values[index]==QA_STRING_NONE);
+        uint64_t revision=names.revision;
+        CHECK(qa_hud_q2_names_set(&names,index+1,empty,NULL,&error));
+        CHECK(names.values[index+1]==QA_STRING_NONE && names.revision==revision);
+    }
     qa_hud_q2_names_destroy(&names);qa_strings_destroy(strings);
 }
 static void test_q2_donor_save_metadata(void)

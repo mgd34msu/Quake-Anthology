@@ -283,8 +283,9 @@ bool qa_hud_q2_names_set(qa_hud_q2_names *names,uint32_t index,qa_string_id valu
 {
     if (weapons_changed) *weapons_changed = false;
     if(index>=names->layout.max_configs) return false;
-    if(names->values[index]==value) return true;
     const char *text=value?qa_strings_cstr(names->strings,value):"";
+    if(text && !*text) value=QA_STRING_NONE;
+    if(names->values[index]==value) return true;
     if(index==5&&!qa_hud_q2_program_update(names->status,text,names->rerelease,error)) return false;
     if(index>=names->layout.player_skins&&index-names->layout.player_skins<256) {
         uint32_t slot=index-names->layout.player_skins;
