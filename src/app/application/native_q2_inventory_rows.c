@@ -16,8 +16,8 @@
 #include <string.h>
 
 typedef struct original_slot {
-    qa_item_id item;
-    uint32_t index;
+    qa_item_id item, ammo;
+    uint32_t index, actions;
     char *icon;
     bool weapon, ammunition;
 } original_slot;
@@ -134,8 +134,21 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
         !word(doc, items, "weaponFlag", &weapon_flag, error) ||
         !word(doc, items, "ammunitionFlag", &ammo_flag, error)) return false;
     uint8_t pointer_bytes = qa_native_module_describe(owner->engine->provider->state.native.module).image.target.pointer_bytes;
+    uint64_t use_offset = (uint64_t)name_offset + 2u * pointer_bytes;
+    uint64_t drop_offset = (uint64_t)name_offset + 3u * pointer_bytes;
+    uint32_t declared_offset;
+    if (qa_json_get(doc, items, "use") != QA_JSON_NONE) {
+        if (!word(doc, items, "use", &declared_offset, error)) return false;
+        use_offset = declared_offset;
+    }
+    if (qa_json_get(doc, items, "drop") != QA_JSON_NONE) {
+        if (!word(doc, items, "drop", &declared_offset, error)) return false;
+        drop_offset = declared_offset;
+    }
     if (!count || !stride || flags_offset > stride || stride - flags_offset < 4 ||
         (pointer_bytes != 4 && pointer_bytes != 8) || !weapon_flag || !ammo_flag ||
+        use_offset > stride || pointer_bytes > stride - use_offset ||
+        drop_offset > stride || pointer_bytes > stride - drop_offset ||
         sizeof(original_slot) + sizeof(qa_item_id) > SIZE_MAX / count)
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory has an invalid command item table");
     original_slot *slots = calloc(count, sizeof(*slots) + sizeof(qa_item_id));
@@ -158,17 +171,12 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
         bool valid = okay && classname((qa_bytes){name.data, name.size});
         if (okay && !valid && (flags & weapon_flag))
             okay = application_fail(error, QA_ERROR_FORMAT, "Original inventory weapon has no qualified classname");
-        if (okay && valid) {
+        if (okay && (valid || i)) {
             qa_buffer decoded_icon = {0};
             okay = source_text(owner, (qa_bytes){icon.data, icon.size}, NULL, &decoded_icon, error);
             if (okay) { qa_buffer_free(&icon); icon = decoded_icon; }
-            char qualified[1030];
-            memcpy(qualified, "q2:", 3);
-            memcpy(qualified + 3, name.data, name.size);
-            qualified[name.size + 3] = 0;
             qa_item_id item;
-            if (okay) okay = qa_strings_intern_cstr(qa_session_strings(owner->engine->provider->application->session),
-                qualified, &item, error);
+            if (okay) okay = application_native_q2_inventory_item(owner->engine, i, &item, error);
             uint32_t source_index;
             if (okay) okay = application_native_q2_inventory_index(owner->engine, item, &source_index, error);
             if (okay && source_index != i)
@@ -177,7 +185,17 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
                 if (slots[j].item == item)
                     okay = application_fail(error, QA_ERROR_FORMAT, "Original inventory repeats an actual item classname");
             if (okay) {
-                slots[used++] = (original_slot){.item = item, .index = i, .icon = (char *)icon.data,
+                uint8_t use[8], drop[8];
+                okay = qa_native_read(instance(owner), at + use_offset, use, pointer_bytes, error) &&
+                    qa_native_read(instance(owner), at + drop_offset, drop, pointer_bytes, error);
+                qa_native_address use_callback = okay ? (pointer_bytes == 4 ? qa_load_u32le(use) : qa_load_u64le(use)) : 0;
+                qa_native_address drop_callback = okay ? (pointer_bytes == 4 ? qa_load_u32le(drop) : qa_load_u64le(drop)) : 0;
+                qa_item_id ammo = 0;
+                if (okay && (flags & weapon_flag))
+                    okay = application_native_q2_attack_weapon_ammo(owner->engine, item, &ammo, error);
+                if (!okay) { qa_buffer_free(&name); qa_buffer_free(&icon); break; }
+                slots[used++] = (original_slot){.item = item, .ammo = ammo, .index = i,
+                    .actions = (use_callback ? QA_ITEM_USE : 0u) | (drop_callback ? QA_ITEM_DROP : 0u), .icon = (char *)icon.data,
                     .weapon = (flags & weapon_flag) != 0, .ammunition = (flags & ammo_flag) != 0};
                 if (flags & ammo_flag) ammunition[ammunition_count++] = item;
                 icon = (qa_buffer){0};
@@ -210,13 +228,13 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     --owner->calls;
     if (!okay) { slots_free(slots, used); return false; }
     if(used>SIZE_MAX/sizeof(application_native_q2_inventory_row)||
-        used>SIZE_MAX/sizeof(qa_item_definition)) {
+        used>SIZE_MAX/sizeof(qa_item_admission)) {
         slots_free(slots,used);
         return application_fail(error,QA_ERROR_MEMORY,"Original inventory storage extent overflows");
     }
     owner->storage_bytes=used*sizeof(application_native_q2_inventory_row);
     if (!qa_arena_reserve(&owner->storage,owner->storage_bytes,error) ||
-        !qa_arena_reserve(&owner->commands,used*sizeof(qa_item_definition),error)) {slots_free(slots,used);return false;}
+        !qa_arena_reserve(&owner->commands,used*sizeof(qa_item_admission),error)) {slots_free(slots,used);return false;}
     for(size_t i=0;i<sizeof(owner->caches)/sizeof(*owner->caches);++i)
         qa_arena_init(&owner->caches[i].storage,0);
     owner->slots = slots;
@@ -275,6 +293,67 @@ static bool original_label(application_native_q2_inventory_rows *owner, uint32_t
     qa_buffer label = {0};
     if (!source_text(owner, (qa_bytes){(const uint8_t *)raw, strlen(raw)}, &owner->storage, &label, error)) return false;
     *out = (char *)label.data;
+    return true;
+}
+
+static bool original_definition(application_native_q2_inventory_rows *owner,
+    const original_slot *slot, qa_item_definition *out, qa_error *error)
+{
+    char *label;
+    if (!original_label(owner, slot->index, &label, error)) return false;
+    const char *display = *label ? label : qa_strings_cstr(
+        qa_session_strings(owner->engine->provider->application->session), slot->item);
+    *out = (qa_item_definition){.item = slot->item, .ammo = slot->ammo,
+        .owner = owner->engine->provider->owner, .label = display,
+        .weapon = slot->weapon, .actions = slot->actions};
+    return true;
+}
+
+static bool original_action(void *context, qa_item_id item, qa_item_action action, qa_error *error)
+{
+    application_native_q2_client *client = context;
+    bool handled;
+    return application_native_q2_inventory_item_action(client->inventory_engine,
+        client->actor, item, action, &handled, error);
+}
+
+bool application_native_q2_inventory_rows_admit(application_native_q2_inventory_rows *owner,
+    uint32_t slot, qa_error *error)
+{
+    if (!application_native_q2_inventory_rows_prepare(owner, error)) return false;
+    application_native_q2_client *client = owner->engine->clients + slot;
+    qa_inventory *inventory = owner->engine->provider->application->inventory;
+    if (qa_inventory_lease_current(inventory, client->inventory_definitions)) return true;
+    qa_arena_reset(&owner->commands); qa_arena_reset(&owner->storage);
+    qa_item_definition *definitions = qa_arena_alloc(&owner->commands,
+        owner->slot_count * sizeof(*definitions), _Alignof(qa_item_definition), error);
+    if (!definitions) return false;
+    for (size_t i = 0; i < owner->slot_count; ++i)
+        if (!original_definition(owner, owner->slots + i, definitions + i, error)) return false;
+    return qa_inventory_bind_definitions(inventory, client->actor, owner->engine->provider->owner,
+        definitions, owner->slot_count, original_action, client, &client->inventory_definitions, error);
+}
+
+bool application_native_q2_inventory_rows_group(application_native_q2_inventory_rows *owner,
+    qa_actor_id actor, uint64_t serial, const qa_inventory_source_group *saved,
+    qa_inventory_items *out, qa_error *error)
+{
+    if (!saved || !saved->definitions_only || !application_native_q2_inventory_rows_prepare(owner, error)) return false;
+    uint32_t slot = application_native_q2_client_slot(owner->engine, actor);
+    if (!slot || saved->owner != owner->engine->provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Restored original definitions lost their source client");
+    application_native_q2_client *client = owner->engine->clients + slot;
+    qa_arena_reset(&owner->commands); qa_arena_reset(&owner->storage);
+    qa_item_admission *items = qa_arena_alloc(&owner->commands,
+        owner->slot_count * sizeof(*items), _Alignof(qa_item_admission), error);
+    if (!items) return false;
+    memset(items, 0, owner->slot_count * sizeof(*items));
+    for (size_t i = 0; i < owner->slot_count; ++i)
+        if (!original_definition(owner, owner->slots + i, &items[i].definition, error)) return false;
+    client->inventory_engine = owner->engine; client->inventory_slot = slot;
+    client->inventory_definitions = (qa_inventory_lease){actor, serial};
+    *out = (qa_inventory_items){.owner = saved->owner, .items = items, .count = owner->slot_count,
+        .action_context = client, .invoke = original_action};
     return true;
 }
 

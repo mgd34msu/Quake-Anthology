@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "native_q2_inventory_source.h"
+#include "native_q2_inventory_rows.h"
 #include "guest_native_q2_attack.h"
 #include "unified_frame_private.h"
 #include "qa/text.h"
@@ -430,6 +431,14 @@ bool application_native_q2_weapon_request(application_provider *provider,qa_acto
     if(!*admitted||selected) return true;
     *admitted=false;
     struct application_native_q2 *engine=provider->state.native.q2_engine;
+    return application_native_q2_inventory_item_action(engine, actor, item, QA_ITEM_USE, admitted, error);
+}
+bool application_native_q2_inventory_item_action(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_item_id item, qa_item_action action, bool *handled, qa_error *error)
+{
+    application_native_q2_inventory_source source; uint32_t index;
+    if (!application_native_q2_inventory_source_read(engine, actor, &source, error) ||
+        !application_native_q2_inventory_index(engine, item, &index, error)) return false;
     uint32_t base = engine->hud_names.layout.items;
     if (index > UINT32_MAX - base || base + index >= engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Native weapon label leaves its real source configstring namespace");
@@ -437,13 +446,12 @@ bool application_native_q2_weapon_request(application_provider *provider,qa_acto
     if (!label) label = "";
     /* This is the original source label in its own native byte encoding. The
      * typed command owner copies it before invoking the mutable Source. */
-    const char *arguments[] = {"use", label};
+    const char *arguments[] = {action == QA_ITEM_USE ? "use" : "drop", label};
     qa_command_invocation command = {.argc = 2, .argv = arguments, .args_text = label};
-    bool handled;
     if (!application_native_q2_inventory_source_current(engine, &source, error) ||
-        !application_native_q2_client_command(provider, actor, &command, &handled, error) ||
+        !application_native_q2_client_command(engine->provider, actor, &command, handled, error) ||
         !application_native_q2_inventory_source_current(engine, &source, error)) return false;
-    *admitted = handled; return true;
+    return true;
 }
 static size_t inventory_count(void *opaque)
 {
@@ -518,15 +526,23 @@ bool application_native_q2_inventory_admit(struct application_native_q2 *engine,
             engine->provider->application->inventory, client->inventory_lease, client))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 inventory restore claim has not been published");
         client->inventory_prepared = false;
-        return true;
+        return !engine->inventory_rows ||
+            application_native_q2_inventory_rows_admit(engine->inventory_rows, slot, error);
     }
     qa_inventory_binding binding = inventory_binding(client);
     if (!qa_inventory_adopt_primary(engine->provider->application->inventory, client->actor, &binding, &client->inventory_lease, error)) return false;
-    client->inventory_bound = true; client->inventory_prepared = false; return true;
+    client->inventory_bound = true; client->inventory_prepared = false;
+    return !engine->inventory_rows ||
+        application_native_q2_inventory_rows_admit(engine->inventory_rows, slot, error);
 }
 bool application_native_q2_inventory_detach(struct application_native_q2 *engine, uint32_t slot, qa_error *error)
 {
     application_native_q2_client *client = &engine->clients[slot];
+    if (client->inventory_definitions.serial) {
+        if (!qa_inventory_close_items(engine->provider->application->inventory,
+                client->inventory_definitions, error)) return false;
+        client->inventory_definitions = (qa_inventory_lease){0};
+    }
     if (!client->inventory_bound) return true;
     if (client->inventory_prepared && !qa_inventory_primary_current(
         engine->provider->application->inventory, client->inventory_lease, client)) {
@@ -580,7 +596,12 @@ bool application_native_q2_inventory_finish(application_provider *provider, qa_e
             !qa_inventory_primary_current(provider->application->inventory, client->inventory_lease, client)))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 prepared inventory primary was not published");
     }
-    for (uint32_t i = 1; i < 257; ++i) engine->clients[i].inventory_prepared = false;
+    for (uint32_t i = 1; i < 257; ++i) {
+        application_native_q2_client *client = engine->clients + i;
+        client->inventory_prepared = false;
+        if (client->inventory_bound && engine->inventory_rows &&
+            !application_native_q2_inventory_rows_admit(engine->inventory_rows, i, error)) return false;
+    }
     return true;
 }
 

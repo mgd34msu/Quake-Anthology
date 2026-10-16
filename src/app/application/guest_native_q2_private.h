@@ -31,7 +31,7 @@ typedef struct application_native_q2_client {
     qa_actor_id protocol_fog_actor;
     struct application_native_q2 *inventory_engine;
     uint32_t inventory_slot;
-    qa_inventory_lease inventory_lease;
+    qa_inventory_lease inventory_lease, inventory_definitions;
     bool inventory_bound, inventory_prepared;
 } application_native_q2_client;
 

@@ -7,6 +7,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_inventory_rows.h"
 #include "native_q2_source_actors.h"
 #include "qa/application_network.h"
 #include "qa/frontend.h"
@@ -132,8 +133,14 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
             return qa_q2_game_inventory_group(provider->state.q2, actor, serial, saved, out, error);
         if (provider->kind == APPLICATION_PROVIDER_Q3)
             return qa_q3_game_inventory_group(provider->state.q3, actor, serial, saved, out, error);
-        if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&provider->state.native.q2_engine->callbacks)
-            return application_native_q2_callbacks_inventory_group(provider->state.native.q2_engine,actor,serial,saved,out,error);
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
+            struct application_native_q2 *engine = provider->state.native.q2_engine;
+            if (saved->definitions_only && engine->inventory_rows)
+                return application_native_q2_inventory_rows_group(engine->inventory_rows,
+                    actor, serial, saved, out, error);
+            if (engine->callbacks)
+                return application_native_q2_callbacks_inventory_group(engine, actor, serial, saved, out, error);
+        }
     }
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "Saved inventory group has no restored source callback owner");

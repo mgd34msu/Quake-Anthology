@@ -3,6 +3,7 @@
 #include "guest_native_q2_input.h"
 #include "control_frame.h"
 #include "native_q2_inventory_scanner.h"
+#include "native_q2_inventory_source.h"
 #include "native_q2_callbacks.h"
 #include "supplies.h"
 #include "map_players_private.h"
@@ -1546,6 +1547,28 @@ bool application_native_q2_attack_weapon_contains(struct application_native_q2 *
         if (*out) return application_fail(error, QA_ERROR_FORMAT, "Native weapon roster repeats its actual item identity");
         *out = true;
     }
+    return true;
+}
+bool application_native_q2_attack_weapon_ammo(struct application_native_q2 *engine,
+    qa_item_id item, qa_item_id *out, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon metadata is not prepared");
+    *out = 0;
+    if (p->items_ready) {
+        for (size_t i = 0; i < p->count; ++i) if (p->items[i].item == item) {
+            *out = p->items[i].ammo; break;
+        }
+        return true;
+    }
+    /* Restore binds inventory definitions before attack observers resume. */
+    uint32_t index;
+    attack_item value = {.item = item};
+    if (!application_native_q2_inventory_index(engine, item, &index, error) ||
+        !qa_native_rva(instance(p), (uint64_t)p->item_table + (uint64_t)index * p->item_stride,
+            p->item_stride, &value.descriptor, error) || !item_ammo(p, &value, error)) return false;
+    *out = value.ammo;
     return true;
 }
 bool application_native_q2_attack_item_read(struct application_native_q2 *engine, uint32_t slot,

@@ -44,6 +44,8 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     qa_native_address descriptor,qa_item_id *,qa_error *);
 bool application_native_q2_attack_weapon_contains(struct application_native_q2 *,
     qa_item_id, bool *, qa_error *);
+bool application_native_q2_attack_weapon_ammo(struct application_native_q2 *,
+    qa_item_id, qa_item_id *, qa_error *);
 bool application_native_q2_attack_weapon_source(struct application_native_q2 *, qa_actor_id,
     qa_item_id selected, qa_arena *, qa_item_id *, qa_error *);
 bool application_native_q2_attack_death_drop(struct application_native_q2 *, qa_actor_id,
