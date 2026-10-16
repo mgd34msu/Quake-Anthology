@@ -45,15 +45,8 @@ static bool physical_slot(struct application_native_q2 *engine, qa_actor_id acto
 {
     const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->provider->application->session), actor);
     if (!record) return application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 Engine admission requires a live full actor");
-    *present = false;
     uint32_t slot = 0;
-    if (record->owner == engine->provider->owner && record->has_source) {
-        slot = record->source_slot; *present = true;
-    } else {
-        slot = application_native_q2_client_slot(engine, actor);
-        *present = slot != 0;
-        if (!*present) *present = qa_native_host_slot_for_actor(engine->provider->state.native.host, actor, &slot);
-    }
+    *present = qa_native_host_slot_for_actor(engine->provider->state.native.host, actor, &slot);
     if (!*present) return true;
     qa_native_slot_binding binding;
     if (slot >= engine->wire_engine->capacity ||
