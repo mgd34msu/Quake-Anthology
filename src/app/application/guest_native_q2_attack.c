@@ -21,7 +21,8 @@ typedef struct attack_factor {
     unsigned calls;
     qa_actor_id actor;
     double factor, delay_flag;
-    bool available, retired, delay_available;
+    uint64_t clock_ns;
+    bool available, retired, delay_available, clock_present;
 } attack_factor;
 typedef struct attack_projectile {
     struct attack_projectile *next, *previous;
@@ -138,6 +139,12 @@ struct application_native_q2_attack {
     decision_projection *projections;
     decision_group *committed;
     size_t committed_count;
+    decision_group available;
+    decision_group *continuations;
+    size_t continuation_count;
+    decision_field clock;
+    double clock_milliseconds;
+    bool clock_declared, continuations_declared;
     decision_field water_level;
     uint32_t command_angles;
     attack_delay_kind delay_kind;
@@ -222,11 +229,73 @@ static attack_factor *factor_create(struct application_native_q2_attack *p, qa_a
             &p->factor_storage, p->factor_pool.first_capacity ? p->factor_pool.first_capacity : 1, error)) return NULL;
     size_t slot; attack_factor *factor = qa_pool_take(&p->factor_pool, &slot);
     if (!factor) { application_fail(error, QA_ERROR_MEMORY, "Retaining original weapon modifier result"); return NULL; }
-    *factor = (attack_factor){.storage_slot = slot, .actor = actor, .next = p->factors};
+    *factor = (attack_factor){.storage_slot = slot, .actor = actor, .factor = 1, .next = p->factors};
     if (factor->next) factor->next->previous = factor;
     p->factors = factor;
     qa_actor_index_put(&p->factor_index, actor, (size_t)(uintptr_t)factor);
     return factor;
+}
+static bool policy_entity(struct application_native_q2 *engine, qa_actor_id actor,
+    struct application_native_q2_attack **owner, qa_native_address *entity, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    uint32_t slot;
+    if (!p || !qa_native_host_slot_for_actor(engine->provider->state.native.host, actor, &slot))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon policy has no actual Source player");
+    if (!qa_native_entity_address(instance(p), slot, entity, error)) return false;
+    *owner = p; return true;
+}
+bool application_native_q2_attack_available(struct application_native_q2 *engine,
+    qa_actor_id actor, bool *out, qa_error *error)
+{
+    if (!engine->source_attack) { *out = true; return true; }
+    struct application_native_q2_attack *p;
+    qa_native_address entity;
+    return policy_entity(engine, actor, &p, &entity, error) &&
+        decision_matches(p, entity, &p->available, out, error);
+}
+bool application_native_q2_attack_continuing(struct application_native_q2 *engine,
+    qa_actor_id actor, bool *out, qa_error *error)
+{
+    if (!engine->source_attack || !engine->source_attack->continuations_declared) {
+        *out = true; return true;
+    }
+    struct application_native_q2_attack *p;
+    qa_native_address entity;
+    return policy_entity(engine, actor, &p, &entity, error) &&
+        decision_any(p, entity, p->continuations, p->continuation_count, out, error);
+}
+static bool clock_read(struct application_native_q2_attack *p, uint64_t *out, qa_error *error)
+{
+    double value;
+    if (!decision_scalar(p, 0, &p->clock, &value, error)) return false;
+    long double ns = (long double)value * p->clock_milliseconds * UINT64_C(1000000);
+    if (ns < 0 || ns >= 18446744073709551616.0L)
+        return application_fail(error, QA_ERROR_FORMAT, "Native level time exceeds its shared clock");
+    *out = (uint64_t)ns; return true;
+}
+bool application_native_q2_attack_clock_reset(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p || !p->clock_declared) return true;
+    attack_factor *state = factor_for(p, actor);
+    if (!state) state = factor_create(p, actor, error);
+    if (!state || !clock_read(p, &state->clock_ns, error)) return false;
+    state->clock_present = true; return true;
+}
+bool application_native_q2_attack_clock_step(struct application_native_q2 *engine,
+    qa_actor_id actor, uint64_t *time_ns, uint64_t *elapsed_ns, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine->source_attack;
+    if (!p || !p->clock_declared) return true;
+    if (!clock_read(p, time_ns, error)) return false;
+    attack_factor *state = factor_for(p, actor);
+    if (!state) state = factor_create(p, actor, error);
+    if (!state) return false;
+    *elapsed_ns = state->clock_present && *time_ns >= state->clock_ns ? *time_ns - state->clock_ns : 0;
+    state->clock_ns = *time_ns; state->clock_present = true;
+    return true;
 }
 static void factor_reclaim(struct application_native_q2_attack *p, attack_factor *factor)
 {
@@ -950,7 +1019,7 @@ bool application_native_q2_attack_delay(struct application_native_q2 *engine, qa
     }
     if (ok) {
         long double interval = (long double)native_ns * (long double)multiplier;
-        if (!isfinite(multiplier) || multiplier < 0 || interval > (long double)UINT64_MAX)
+        if (!isfinite(multiplier) || multiplier < 0 || interval >= 18446744073709551616.0L)
             ok = application_fail(error, QA_ERROR_FORMAT, "Original firing delay exceeds the shared interval");
         else { *out = (uint64_t)interval; *handled = true; }
     }
@@ -1000,7 +1069,10 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
     p->delay_hook = NULL;
     if (p->delay_result && !qa_native_free(instance(p), p->delay_result, error)) return false;
     p->delay_result = 0;
-    for (attack_factor *factor = p->factors; factor; factor = factor->next) factor->delay_available = false;
+    for (attack_factor *factor = p->factors; factor; factor = factor->next) {
+        factor->delay_available = false;
+        factor->clock_present = false;
+    }
     qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,&p->dispatcher_hook};
     for (size_t i = 0; i < 4; ++i) {
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;

@@ -5,6 +5,7 @@
 #include "guest_qc_item_weapons.h"
 #include "guest_native_q2_equipment.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_attack.h"
 #include "guest_q3_fire.h"
 #include "guest_q3_catalog.h"
 #include "guest_q3_weapon_models.h"
@@ -261,7 +262,9 @@ static bool primary_visibility(qa_application *app, qa_actor_id actor,
             return application_fail(error, QA_ERROR_ARGUMENT, "Gear visibility changed its primary Q2 binding");
         qa_q2_player player;
         bool ok = qa_native_host_q2_player(source->state.native.host, slot, &player, error);
-        if (ok) *visible = player.stats[1] > 0;
+        bool available = false;
+        if (ok) ok = application_native_q2_attack_available(engine, actor, &available, error);
+        if (ok) *visible = available && player.stats[1] > 0;
         return ok;
     }
     qa_actor_id health_actor = actor;

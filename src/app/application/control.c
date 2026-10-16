@@ -3,6 +3,7 @@
 #include "map_players_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_input.h"
+#include "guest_native_q2_attack.h"
 #include "native_q2_client_stages.h"
 #include "guest_input_private.h"
 #include "control_frame.h"
@@ -2570,7 +2571,14 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
     if (!unified_arsenal_input(app, actor, context, &applied, error)) return false;
     if (!live(app, actor)) return true;
     if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
-    bool attack = combat.health > 0 && !control->player.cutscene && (applied.buttons & 1u) &&
+    bool available;
+    uint64_t weapon_time_ns = source_time_ns;
+    uint64_t weapon_elapsed_ns = (uint64_t)applied.milliseconds * UINT64_C(1000000);
+    if (!application_native_q2_attack_available(source->state.native.q2_engine, actor, &available, error) ||
+        !application_native_q2_attack_clock_step(source->state.native.q2_engine, actor,
+            &weapon_time_ns, &weapon_elapsed_ns, error)) return false;
+    bool attack = available && source->state.native.q2_engine->input_arsenal_reached &&
+        combat.health > 0 && !control->player.cutscene && (applied.buttons & 1u) &&
         !source->state.native.q2_engine->input_arsenal_committed &&
         (!app->equipment || qa_equipment_primary_selected(app->equipment, actor));
     bool okay;
@@ -2586,8 +2594,8 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
         if (!qa_world_point_contents(app->world, &query, &contents, error) ||
             !native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
         qa_q1_game_operation operation = {0};
-        if (!qa_q1_game_command_begin(arsenal->state.q1, source_time_ns,
-            (uint64_t)applied.milliseconds * UINT64_C(1000000), &operation, error)) return false;
+        if (!qa_q1_game_command_begin(arsenal->state.q1, weapon_time_ns,
+            weapon_elapsed_ns, &operation, error)) return false;
         qa_q1_input input = {.view_angles = physical.view_angles, .attack = attack,
             .water_level = (uint8_t)(physical.water_level < 0 ? 0 : physical.water_level > 3 ? 3 : physical.water_level),
             .water_type = qa_collision_point_contents_export(contents.contents, QA_GAME_Q1, contents.q1_opaque_token)};
@@ -2620,7 +2628,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
             .legs_timer_ms = player.legs_timer_ms, .torso_timer_ms = player.torso_timer_ms,
             .context = arsenal, .firing_delay = application_q3_weapons_services_firing_delay};
         okay = !live(app, actor) || qa_q3_arsenal_source_step(arsenal->state.q3, actor,
-            &input, (float)applied.milliseconds, &weapon_source, error);
+            &input, (float)((double)weapon_elapsed_ns / 1000000.0), &weapon_source, error);
     }
     return okay && (!live(app, actor) || native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error));
 }

@@ -309,6 +309,20 @@ static bool declared_raw_think(struct application_native_q2 *engine,uint32_t slo
     engine->current_client=0; return ok;
 }
 
+static bool source_command_write(struct application_native_q2 *engine, qa_actor_id actor,
+    const qa_usercmd *accepted, uint8_t bytes[28], size_t *size, qa_error *error)
+{
+    qa_usercmd command = *accepted;
+    if ((command.buttons & 1u) && application_provider_for(engine->provider->application,
+            actor, QA_ROLE_ARSENAL, NULL) != engine->provider) {
+        bool continuing;
+        if (!application_native_q2_attack_continuing(engine, actor, &continuing, error)) return false;
+        if (!continuing) command.buttons &= ~1u;
+    }
+    *size = qa_native_q2_write_usercmd(&command, bytes);
+    return true;
+}
+
 bool application_native_q2_input_think(application_provider *provider, qa_actor_id actor,
     const qa_usercmd *command, const application_native_q2_input_stage *stage, qa_error *error)
 {
@@ -329,7 +343,8 @@ bool application_native_q2_input_think(application_provider *provider, qa_actor_
         for (size_t i = 0; i < 3; ++i) if (axes[i] < INT16_MIN || axes[i] > INT16_MAX)
             return application_fail(error, QA_ERROR_ARGUMENT, "Classic Q2 raw axis exceeds its Source short");
     }
-    uint8_t bytes[28]; size_t command_bytes = qa_native_q2_write_usercmd(command, bytes);
+    uint8_t bytes[28]; size_t command_bytes;
+    if (!source_command_write(engine, actor, command, bytes, &command_bytes, error)) return false;
     engine->input_stage=stage; engine->input_command=command; engine->current_command_sequence=command->sequence;
     bool ok=application_native_q2_client_think(provider,slot,(qa_bytes){bytes,command_bytes},error);
     engine->input_stage=NULL; engine->input_command=NULL; engine->current_command_sequence=0;
@@ -390,7 +405,8 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
         for (size_t i = 0; i < 3; ++i) if (axes[i] < INT16_MIN || axes[i] > INT16_MAX)
             return application_fail(error, QA_ERROR_ARGUMENT, "Classic Q2 movement axis exceeds its source short");
     }
-    uint8_t bytes[28]; size_t command_bytes = qa_native_q2_write_usercmd(command, bytes);
+    uint8_t bytes[28]; size_t command_bytes;
+    if (!source_command_write(engine, actor, command, bytes, &command_bytes, error)) return false;
     control->moving = true; engine->current_command_sequence = command->sequence;
     engine->movement_stage = stage;
     bool ok = application_native_q2_client_think(provider, slot,
@@ -574,7 +590,8 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
     bool ok = engine->callbacks || qa_native_host_client_begin(provider->state.native.host, slot, error);
     --engine->calls;
     if (ok) engine->clients[slot].begun = true;
-    return ok && application_native_q2_combat_team_refresh(engine, slot, error) &&
+    return ok && application_native_q2_attack_clock_reset(engine, engine->clients[slot].actor, error) &&
+        application_native_q2_combat_team_refresh(engine, slot, error) &&
         application_native_q2_callbacks_components_begin(engine,engine->clients[slot].actor,error) &&
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(

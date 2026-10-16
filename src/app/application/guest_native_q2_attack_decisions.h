@@ -29,19 +29,26 @@ static bool decision_field_prepare(struct application_native_q2_attack *p,qa_jso
     } else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon decision names another Source record");
     *out=field; return true;
 }
-static bool decision_scalar_prepare(struct application_native_q2_attack *p,qa_json_id node,
-    decision_field *out,qa_error *error)
+static bool decision_scalar_type(struct application_native_q2_attack *p, qa_json_id encoding,
+    decision_field *out, qa_error *error)
 {
     static const struct { const char *name; qa_native_value_type encoding; uint8_t bytes; } types[]={
         {"int8",QA_NATIVE_I8,1},{"uint8",QA_NATIVE_U8,1},{"int16",QA_NATIVE_I16,2},
         {"uint16",QA_NATIVE_U16,2},{"int32",QA_NATIVE_I32,4},{"uint32",QA_NATIVE_U32,4},
         {"int64",QA_NATIVE_I64,8},{"uint64",QA_NATIVE_U64,8},{"float32",QA_NATIVE_F32,4},
         {"float64",QA_NATIVE_F64,8}};
-    qa_json_id encoding=qa_json_get(p->document,node,"encoding");
     for(size_t i=0;i<sizeof(types)/sizeof(types[0]);++i)
-        if(qa_json_string_equal(p->document,encoding,types[i].name))
-            return decision_field_prepare(p,node,types[i].bytes,types[i].encoding,out,error);
+        if(qa_json_string_equal(p->document,encoding,types[i].name)) {
+            out->bytes = types[i].bytes; out->encoding = types[i].encoding; return true;
+        }
     return decision_fail(error,QA_ERROR_FORMAT,"Native weapon scalar has no Source encoding");
+}
+static bool decision_scalar_prepare(struct application_native_q2_attack *p,qa_json_id node,
+    decision_field *out,qa_error *error)
+{
+    decision_field type = {0};
+    return decision_scalar_type(p, qa_json_get(p->document,node,"encoding"), &type, error) &&
+        decision_field_prepare(p,node,type.bytes,type.encoding,out,error);
 }
 static bool decision_test_prepare(struct application_native_q2_attack *p,qa_json_id node,
     decision_test_descriptor *out,qa_error *error)
@@ -89,24 +96,53 @@ static bool decision_test_prepare(struct application_native_q2_attack *p,qa_json
     else return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has another Source comparison");
     return true;
 }
+static bool decision_group_prepare(struct application_native_q2_attack *p, qa_json_id row,
+    decision_group *group, qa_error *error)
+{
+    if (qa_json_type(p->document,row) != QA_JSON_ARRAY)
+        return decision_fail(error,QA_ERROR_FORMAT,"Native weapon tests require their Source conjunction");
+    group->count=qa_json_size(p->document,row);
+    if (group->count) {
+        group->tests=decision_array(p,group->count,sizeof(*group->tests),_Alignof(decision_test_descriptor),error);
+        if(!group->tests) return false;
+    }
+    for(size_t j=0;j<group->count;++j)
+        if(!decision_test_prepare(p,qa_json_at(p->document,row,j),group->tests+j,error)) return false;
+    return true;
+}
+static bool decision_groups_prepare(struct application_native_q2_attack *p, qa_json_id rows,
+    decision_group **out, size_t *count, qa_error *error)
+{
+    if (qa_json_type(p->document,rows) != QA_JSON_ARRAY)
+        return decision_fail(error,QA_ERROR_FORMAT,"Native weapon alternatives require their Source test roster");
+    *count=qa_json_size(p->document,rows);
+    if (*count) {
+        *out=decision_array(p,*count,sizeof(**out),_Alignof(decision_group),error);
+        if (!*out) return false;
+    }
+    for(size_t i=0;i<*count;++i)
+        if (!decision_group_prepare(p,qa_json_at(p->document,rows,i),*out+i,error)) return false;
+    return true;
+}
 static bool decision_descriptors_prepare(struct application_native_q2_attack *p,qa_json_id weapons,
     qa_json_id committed,qa_json_id decisions,qa_error *error)
 {
-    p->committed_count=qa_json_size(p->document,committed);
-    if(p->committed_count) {
-        p->committed=decision_array(p,p->committed_count,sizeof(*p->committed),_Alignof(decision_group),error);
-        if(!p->committed) return false;
-    }
-    for(size_t i=0;i<p->committed_count;++i) {
-        decision_group *group=p->committed+i;
-        qa_json_id row=qa_json_at(p->document,committed,i);
-        group->count=qa_json_size(p->document,row);
-        if(qa_json_type(p->document,row)!=QA_JSON_ARRAY || !group->count)
-            return decision_fail(error,QA_ERROR_FORMAT,"Native weapon commitment has an empty Source conjunction");
-        group->tests=decision_array(p,group->count,sizeof(*group->tests),_Alignof(decision_test_descriptor),error);
-        if(!group->tests) return false;
-        for(size_t j=0;j<group->count;++j)
-            if(!decision_test_prepare(p,qa_json_at(p->document,row,j),group->tests+j,error)) return false;
+    if (!decision_groups_prepare(p,committed,&p->committed,&p->committed_count,error)) return false;
+    qa_json_id active=qa_json_get(p->document,weapons,"active");
+    if (active != QA_JSON_NONE && !decision_group_prepare(p,active,&p->available,error)) return false;
+    qa_json_id continuations=qa_json_get(p->document,weapons,"continuations");
+    p->continuations_declared=continuations != QA_JSON_NONE;
+    if (p->continuations_declared &&
+        !decision_groups_prepare(p,continuations,&p->continuations,&p->continuation_count,error)) return false;
+    qa_json_id clock=qa_json_get(p->document,weapons,"time");
+    p->clock_declared=clock != QA_JSON_NONE;
+    if (p->clock_declared) {
+        p->clock.record=DECISION_IMAGE;
+        if (!word(p->document,clock,"address",&p->clock.offset,error) ||
+            !decision_scalar_type(p,qa_json_get(p->document,clock,"encoding"),&p->clock,error) ||
+            !qa_json_number(p->document,qa_json_get(p->document,clock,"milliseconds"),&p->clock_milliseconds,error)) return false;
+        if (!isfinite(p->clock_milliseconds) || p->clock_milliseconds <= 0)
+            return decision_fail(error,QA_ERROR_FORMAT,"Native level time requires its positive Source scale");
     }
     for(size_t i=0;i<p->decision_count;++i) {
         decision_region *region=p->decisions+i;
@@ -191,17 +227,27 @@ static bool decision_test(struct application_native_q2_attack *p,qa_native_addre
     }
     *out=test->at_most?actual<=test->expected:actual==test->expected; return true;
 }
-static bool decision_committed(struct application_native_q2_attack *p,qa_native_address entity,bool *out,qa_error *error)
+static bool decision_matches(struct application_native_q2_attack *p, qa_native_address entity,
+    const decision_group *group, bool *out, qa_error *error)
+{
+    *out=true;
+    for(size_t j=0;j<group->count&&*out;++j)
+        if(!decision_test(p,entity,group->tests+j,out,error)) return false;
+    return true;
+}
+static bool decision_any(struct application_native_q2_attack *p, qa_native_address entity,
+    const decision_group *groups, size_t count, bool *out, qa_error *error)
 {
     *out=false;
-    for(size_t i=0;i<p->committed_count;++i) {
-        const decision_group *group=p->committed+i; bool matches=true;
-        for(size_t j=0;matches&&j<group->count;++j)
-            if(!decision_test(p,entity,group->tests+j,&matches,error)) return false;
+    for(size_t i=0;i<count;++i) {
+        bool matches;
+        if (!decision_matches(p,entity,groups+i,&matches,error)) return false;
         if(matches) { *out=true; return true; }
     }
     return true;
 }
+static bool decision_committed(struct application_native_q2_attack *p,qa_native_address entity,bool *out,qa_error *error)
+{ return decision_any(p,entity,p->committed,p->committed_count,out,error); }
 static bool decision_store(struct application_native_q2_attack *p,const decision_saved *field,uint32_t bits,qa_error *error)
 {
     uint8_t bytes[4]; qa_store_u32le(bytes,bits);
@@ -286,18 +332,21 @@ static bool dispatcher_call(void *context,qa_native_instance *native,qa_native_e
     p->dispatch=frame.previous;
     const application_native_q2_input_stage *stage=p->engine->input_stage;
     qa_application *app=p->engine->provider->application;
-    if(ok&&frame.reached&&stage&&qa_actor_id_equal(stage->actor,actor)&&
+    if(ok&&stage&&qa_actor_id_equal(stage->actor,actor)&&
         application_provider_for(app,actor,QA_ROLE_MOVEMENT,NULL)==p->engine->provider&&
         application_provider_for(app,actor,QA_ROLE_ARSENAL,NULL)!=p->engine->provider) {
         if(!stage->current(stage->context,actor)||!stage->arsenal||!p->engine->input_command)
             return decision_fail(error,QA_ERROR_NOT_FOUND,"Native weapon decision lost its actual selected arsenal stage");
         bool previous=p->engine->input_arsenal;
         bool committed=p->engine->input_arsenal_committed;
+        bool reached=p->engine->input_arsenal_reached;
         p->engine->input_arsenal=true;
         p->engine->input_arsenal_committed=frame.committed;
+        p->engine->input_arsenal_reached=frame.reached;
         ok=stage->arsenal(stage->context,actor,p->engine->input_command,stage->time_ns,error);
         p->engine->input_arsenal=previous;
         p->engine->input_arsenal_committed=committed;
+        p->engine->input_arsenal_reached=reached;
     }
     return ok;
 }

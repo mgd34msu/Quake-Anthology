@@ -27,6 +27,14 @@ bool application_native_q2_attack_delay(struct application_native_q2 *, qa_actor
     qa_item_id item, uint64_t native_ns, uint64_t *, bool *handled, qa_error *);
 bool application_native_q2_attack_hand_grenade_item(struct application_native_q2 *,
     qa_item_id *, qa_error *);
+bool application_native_q2_attack_available(struct application_native_q2 *, qa_actor_id,
+    bool *, qa_error *);
+bool application_native_q2_attack_continuing(struct application_native_q2 *, qa_actor_id,
+    bool *, qa_error *);
+bool application_native_q2_attack_clock_step(struct application_native_q2 *, qa_actor_id,
+    uint64_t *time_ns, uint64_t *elapsed_ns, qa_error *);
+bool application_native_q2_attack_clock_reset(struct application_native_q2 *, qa_actor_id,
+    qa_error *);
 const qa_json_document *application_native_q2_attack_declaration_read(const struct application_native_q2 *);
 bool application_native_q2_attack_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
 bool application_native_q2_attack_restore_prepare(struct application_native_q2 *, qa_bytes,
