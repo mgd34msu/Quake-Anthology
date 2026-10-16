@@ -1822,7 +1822,7 @@ static bool apply_converted_as(cvar_target target,const char *name,const char *v
     cvar_alias *alias=find_alias(registry,target.values,name);
     cvar *entry=qac_cvars_find_values(registry,target.values,alias?alias->target:name);
     if (!entry) {
-        if (qac_q1(qa_cvars_dialect(registry)) && registry->options.role!=QA_CVAR_ROLE_ENGINE)
+        if (!canonical_value && qac_q1(qa_cvars_dialect(registry)) && registry->options.role!=QA_CVAR_ROLE_ENGINE)
             return qac_fail(error,QA_ERROR_NOT_FOUND,"Q1 Source cvar is not registered");
         if (!qa_cvars_name_valid(qa_cvars_dialect(registry),name)) return qac_fail(error,QA_ERROR_ARGUMENT,"invalid cvar name");
         entry=create_variable(target,name,"",error);

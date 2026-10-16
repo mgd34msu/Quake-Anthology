@@ -20,6 +20,7 @@
 #include "qa/unified_frame_prediction.h"
 #include "qa/unified_frame_player.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/cvars_save.h"
 #include "qa/console_buffer.h"
 #include "qa/console_release.h"
 #include "qa/console_dedicated_save.h"
@@ -6384,6 +6385,47 @@ static void test_shared_cvar_archive(void)
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 
+static void test_shared_cvar_save(void)
+{
+    qa_error error={0};
+    qa_cvar_options options={.dialect=QA_RULESET_NETQUAKE,
+        .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_ENGINE};
+    qa_cvars *engine=qa_cvars_create(&options,&error);
+    options.role=QA_CVAR_ROLE_GAME;
+    qa_cvars *q1=qa_cvars_create_view(engine,&options,&error);
+    options.dialect=QA_RULESET_Q3;
+    qa_cvars *donor=qa_cvars_create_view(engine,&options,&error);
+    CHECK(engine && q1 && donor);
+    static const char session[]="1 200 0 0 3 4";
+    CHECK(qa_cvars_register(donor,"session0","",0,7,NULL,&error));
+    CHECK(qa_cvars_declare_save_policy(donor,"session0",QA_CVAR_SAVE_GAMEPLAY,&error));
+    CHECK(qa_cvars_set(donor,"session0",session,true,&error));
+    qa_buffer saved={0};
+    CHECK(qa_cvars_save_capture(q1,&saved,&error));
+
+    options.dialect=QA_RULESET_NETQUAKE; options.role=QA_CVAR_ROLE_ENGINE;
+    qa_cvars *restored=qa_cvars_create(&options,&error);
+    options.role=QA_CVAR_ROLE_GAME;
+    qa_cvars *restored_q1=qa_cvars_create_view(restored,&options,&error);
+    CHECK(restored && restored_q1 && !qa_cvars_find(restored_q1,"session0"));
+    qa_cvars_restore *ticket=NULL;
+    CHECK(qa_cvars_save_prepare(restored_q1,(qa_bytes){saved.data,saved.size},&ticket,&error));
+    CHECK(qa_cvars_save_commit(ticket,&error));
+    CHECK(!strcmp(qa_cvars_find(restored,"session0")->value,session));
+    CHECK(!strcmp(qa_cvars_find(restored_q1,"session0")->value,session));
+    CHECK(qa_cvars_find(restored,"session0")->save_policy==QA_CVAR_SAVE_GAMEPLAY);
+    CHECK(!qa_cvars_set(restored_q1,"unregistered_q1_command_cvar","1",true,&error));
+    CHECK(error.code==QA_ERROR_NOT_FOUND && !qa_cvars_find(restored,"unregistered_q1_command_cvar"));
+    error=(qa_error){0}; options.dialect=QA_RULESET_Q3;
+    qa_cvars *restored_donor=qa_cvars_create_view(restored,&options,&error);
+    CHECK(restored_donor && qa_cvars_register(restored_donor,"session0","",0,7,NULL,&error));
+    CHECK(!strcmp(qa_cvars_find(restored_donor,"session0")->value,session));
+    CHECK(!strcmp(qa_cvars_find(restored_q1,"session0")->value,session));
+    qa_buffer_free(&saved);
+    qa_cvars_destroy(restored_donor); qa_cvars_destroy(restored_q1); qa_cvars_destroy(restored);
+    qa_cvars_destroy(donor); qa_cvars_destroy(q1); qa_cvars_destroy(engine);
+}
+
 typedef struct cvar_scope_fixture {
     qa_cvars *engine, *source, *q2;
     qa_cvars_value_scope *nested;
@@ -8988,6 +9030,7 @@ int main(int argc, char **argv)
     test_q3_received_commands();
     test_q3_command_cursors();
     test_shared_cvar_archive();
+    test_shared_cvar_save();
     test_cvar_value_scope();
     test_cvar_info_storage();
     test_common_compression();
