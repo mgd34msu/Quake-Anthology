@@ -16,6 +16,7 @@ bool qa_q2_protocol_repro(qa_net_protocol_id);
 bool qa_q2_protocol_enhanced(qa_net_protocol_id);
 
 #define QA_Q2_MAX_STATS 64
+#define QA_Q2_MAX_WHEEL_ITEMS 32
 #define QA_Q2_MAX_SEATS 8
 #define QA_Q2_MAX_AREABITS 8192
 

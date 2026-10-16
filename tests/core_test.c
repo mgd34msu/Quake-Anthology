@@ -7728,14 +7728,30 @@ static void test_q2_weapon_names(void)
         CHECK(!strcmp(qa_strings_cstr(strings, bound.names[0]), "weapon.md2"));
         if (i) {
             CHECK(qa_strings_intern_cstr(strings, "1|2|3|4|5|6|7|8", config + layout.wheel_weapons, &error));
-            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
-            CHECK(bound.warnings[0] == 7);
+            qa_hud_q2_wheel_config(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.wheel[0].warning == 7);
+            CHECK(bound.wheel[0].present && bound.wheel[0].item == 1 && bound.wheel[0].image == 2 &&
+                bound.wheel[0].ammo == 3 && bound.wheel[0].minimum == 4 && bound.wheel[0].powerup &&
+                bound.wheel[0].sort == 6 && bound.wheel[0].droppable);
+            uint32_t ammo = layout.wheel_weapons + QA_Q2_MAX_WHEEL_ITEMS + 3;
+            CHECK(qa_strings_intern_cstr(strings, "12|4", config + ammo, &error));
+            qa_hud_q2_wheel_config(strings, &layout, config, ammo, &bound);
+            CHECK(bound.ammo[3].present && bound.ammo[3].item == 12 && bound.ammo[3].image == 4);
+            uint32_t powerup = layout.wheel_weapons + 2 * QA_Q2_MAX_WHEEL_ITEMS + 2;
+            CHECK(qa_strings_intern_cstr(strings, "24|5|1|8|1|-1", config + powerup, &error));
+            qa_hud_q2_wheel_config(strings, &layout, config, powerup, &bound);
+            CHECK(bound.powerups[2].present && bound.powerups[2].toggle && bound.powerups[2].ammo == -1 &&
+                bound.powerups[2].item == 24 && bound.powerups[2].sort == 8 && bound.powerups[2].droppable);
+            config[powerup] = QA_STRING_NONE;
+            qa_hud_q2_wheel_config(strings, &layout, config, powerup, &bound);
+            CHECK(!bound.powerups[2].present);
             CHECK(qa_strings_intern_cstr(strings, "1|2|3|4|5|6|0", config + layout.wheel_weapons, &error));
-            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
-            CHECK(bound.warnings[0] == 0);
+            qa_hud_q2_wheel_config(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.wheel[0].warning == 0);
+            CHECK(!bound.wheel[0].present);
             CHECK(qa_strings_intern_cstr(strings, "incomplete", config + layout.wheel_weapons, &error));
-            qa_hud_q2_weapons_warning(strings, &layout, config, layout.wheel_weapons, &bound);
-            CHECK(bound.warnings[0] == 0);
+            qa_hud_q2_wheel_config(strings, &layout, config, layout.wheel_weapons, &bound);
+            CHECK(bound.wheel[0].warning == 0);
         }
     }
     free(config); qa_strings_destroy(strings);

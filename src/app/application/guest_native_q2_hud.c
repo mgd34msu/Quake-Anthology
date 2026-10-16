@@ -145,7 +145,7 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
             int32_t weapon = call->import->arguments[0].as.i32;
             if (weapon < 0 || weapon >= 32)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 weapon wheel index is invalid");
-            result->as.i32 = source->hud_names.weapons.warnings[weapon];
+            result->as.i32 = source->hud_names.weapons.wheel[weapon].warning;
         }
         return true;
     }

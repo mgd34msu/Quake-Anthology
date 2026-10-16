@@ -25,8 +25,17 @@ typedef struct qa_hud_q2_picture_names {
     qa_string_id digits[2][11], field, ping, inventory, conchars, marker, player_icon, tag;
 } qa_hud_q2_picture_names;
 bool qa_hud_q2_picture_names_bind(qa_strings *, qa_hud_q2_picture_names *, qa_error *);
-typedef struct qa_hud_q2_weapons { qa_string_id names[32], configs[32]; int32_t warnings[32]; size_t count; } qa_hud_q2_weapons;
-void qa_hud_q2_weapons_warning(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_hud_q2_weapons *);
+typedef struct qa_hud_q2_wheel_definition {
+    int32_t item, image, ammo, minimum, sort, warning;
+    bool present, powerup, toggle, droppable;
+} qa_hud_q2_wheel_definition;
+typedef struct qa_hud_q2_weapons {
+    qa_string_id names[QA_Q2_MAX_WHEEL_ITEMS], configs[QA_Q2_MAX_WHEEL_ITEMS];
+    qa_hud_q2_wheel_definition wheel[QA_Q2_MAX_WHEEL_ITEMS],
+        ammo[QA_Q2_MAX_WHEEL_ITEMS], powerups[QA_Q2_MAX_WHEEL_ITEMS];
+    size_t count;
+} qa_hud_q2_weapons;
+void qa_hud_q2_wheel_config(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_hud_q2_weapons *);
 bool qa_hud_q2_weapon_add(qa_strings *, const qa_q2_config_layout *, qa_string_id, qa_hud_q2_weapons *, qa_error *);
 bool qa_hud_q2_weapons_config(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, uint32_t, qa_string_id, qa_hud_q2_weapons *, bool *, qa_error *);
 bool qa_hud_q2_weapons_bind(qa_strings *, const qa_q2_config_layout *, const qa_string_id *, qa_hud_q2_weapons *, qa_error *);

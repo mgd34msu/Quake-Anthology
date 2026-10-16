@@ -186,25 +186,45 @@ bool qa_hud_q2_picture_names_bind(qa_strings *strings,qa_hud_q2_picture_names *n
         qa_hud_q2_player_picture_names(strings,"",&names->player_icon,&names->tag,error);
 }
 
-void qa_hud_q2_weapons_warning(qa_strings *strings, const qa_q2_config_layout *layout,
+static size_t wheel_fields(const char *text, int32_t fields[8])
+{
+    size_t count=0;
+    while (text && *text && count<8) {
+        const char *end=strchr(text,'|');
+        double value;qa_error ignored={0};
+        if (!qa_parse_number((qa_bytes){(const uint8_t *)text,end?(size_t)(end-text):strlen(text)},
+            &value,&ignored) || !isfinite(value) || value<INT32_MIN || value>INT32_MAX ||
+            trunc(value)!=value) return 0;
+        fields[count++]=(int32_t)value;
+        if (!end) return count;
+        text=end+1;
+    }
+    return 0;
+}
+void qa_hud_q2_wheel_config(qa_strings *strings, const qa_q2_config_layout *layout,
     const qa_string_id *config, uint32_t index, qa_hud_q2_weapons *weapons)
 {
     if (layout->wheel_weapons == UINT32_MAX || index < layout->wheel_weapons ||
-        index - layout->wheel_weapons >= 32) return;
-    int32_t warning = 0;
-    const char *text = qa_strings_cstr(strings, config[index]);
-    for (size_t i = 0; text && i < 6; ++i) {
-        text = strchr(text, '|');
-        if (text) ++text;
+        index - layout->wheel_weapons >= 3*QA_Q2_MAX_WHEEL_ITEMS) return;
+    uint32_t relative=index-layout->wheel_weapons,kind=relative/QA_Q2_MAX_WHEEL_ITEMS,
+        slot=relative%QA_Q2_MAX_WHEEL_ITEMS;
+    qa_hud_q2_wheel_definition value={.ammo=-1};
+    int32_t fields[8];size_t count=wheel_fields(qa_strings_cstr(strings,config[index]),fields);
+    if (kind==0 && count>=7) value.warning=fields[6];
+    if (count==(kind==0?8u:kind==1?2u:6u)) {
+        value.item=fields[0];value.image=fields[1];
+        value.present=value.item>=0 && value.item<256 && value.image>=0 &&
+            (uint32_t)value.image<layout->max_images;
+        if (kind==0) {
+            value.ammo=fields[2];value.minimum=fields[3];value.powerup=fields[4]!=0;
+            value.sort=fields[5];value.droppable=fields[7]!=0;
+        } else if (kind==2) {
+            value.toggle=fields[2]!=0;value.sort=fields[3];value.droppable=fields[4]!=0;
+            value.ammo=fields[5];
+        }
+        value.present=value.present && value.ammo>=-1 && value.ammo<QA_Q2_MAX_WHEEL_ITEMS;
     }
-    if (text && *text) {
-        const char *end = strchr(text, '|');
-        double value = 0; qa_error ignored = {0};
-        if (qa_parse_number((qa_bytes){(const uint8_t *)text, end ? (size_t)(end - text) : strlen(text)},
-                &value, &ignored) && isfinite(value) && value >= INT32_MIN && value <= INT32_MAX && trunc(value) == value)
-            warning = (int32_t)value;
-    }
-    weapons->warnings[index - layout->wheel_weapons] = warning;
+    (kind==0?weapons->wheel:kind==1?weapons->ammo:weapons->powerups)[slot]=value;
 }
 bool qa_hud_q2_weapon_add(qa_strings *strings, const qa_q2_config_layout *layout,
     qa_string_id name, qa_hud_q2_weapons *weapons, qa_error *error)
@@ -229,8 +249,8 @@ bool qa_hud_q2_weapons_bind(qa_strings *strings, const qa_q2_config_layout *layo
     for (uint32_t i = 1; i < layout->max_models; ++i)
         if (!qa_hud_q2_weapon_add(strings, layout, config[layout->models + i], &value, error)) return false;
     if (layout->wheel_weapons != UINT32_MAX)
-        for (uint32_t i = 0; i < 32; ++i)
-            qa_hud_q2_weapons_warning(strings, layout, config, layout->wheel_weapons + i, &value);
+        for (uint32_t i = 0; i < 3*QA_Q2_MAX_WHEEL_ITEMS; ++i)
+            qa_hud_q2_wheel_config(strings, layout, config, layout->wheel_weapons + i, &value);
     *out = value;
     return true;
 }
@@ -245,7 +265,7 @@ bool qa_hud_q2_weapons_config(qa_strings *strings, const qa_q2_config_layout *la
     }
     if (changed) *changed = models;
     if (models) return qa_hud_q2_weapons_bind(strings, layout, config, weapons, error);
-    qa_hud_q2_weapons_warning(strings, layout, config, index, weapons);
+    qa_hud_q2_wheel_config(strings, layout, config, index, weapons);
     return true;
 }
 bool qa_hud_q2_names_init(qa_hud_q2_names *names,qa_strings *strings,qa_error *error)
@@ -785,8 +805,8 @@ static bool execute(layout_context *c, const qa_hud_q2_program *program) {
             int32_t warning = 5;
             if (c->rerelease && c->options->weapons) {
                 int32_t weapon = stat_int(c, 53);
-                if (weapon >= 0 && weapon < 32 && c->options->weapons->warnings[weapon])
-                    warning = c->options->weapons->warnings[weapon];
+                if (weapon >= 0 && weapon < 32 && c->options->weapons->wheel[weapon].warning)
+                    warning = c->options->weapons->wheel[weapon].warning;
             }
             bool alternate = index == 1 ? value <= 0 || (value <= 25 && flash) : index == 3 && value <= warning && flash;
             if (stat_int(c, 15) & (index == 1 ? 1 : index == 3 ? 4 : 2)) picture(c, c->options->picture_names->field, c->x, c->y, 0, 0, false);
