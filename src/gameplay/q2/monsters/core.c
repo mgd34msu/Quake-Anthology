@@ -1849,6 +1849,10 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   monster->spawnflags = selected ? mission.ambush ? 1u : 0
       : q2_map_spawnflags(game->options.rules, options->spawnflags);
+  bool shielded_supertank = game->options.rules == QA_RULESET_Q2_RERELEASE &&
+      definition->species == Q2M_SUPERTANK && (definition->flags & Q2M_POWER_SHIELD);
+  if (shielded_supertank)
+    monster->spawnflags |= 8u;
   monster->old_frame = -1;
   monster->render_flags = (game->options.rules == QA_RULESET_Q2_CLASSIC ? 64u : 0u) |
       (game->options.rules == QA_RULESET_Q2_RERELEASE || game->options.product == QA_Q2_ROGUE ? 32768u : 0u);
@@ -1944,7 +1948,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     monster->skin = 4;
   else if (definition->species == Q2M_DAEDALUS)
     monster->skin = 2;
-  else if (definition->species == Q2M_BOSS5)
+  else if (definition->species == Q2M_BOSS5 || shielded_supertank)
     monster->skin = 2;
   else if (definition->species == Q2M_CHICK_HEAT)
     monster->skin = game->options.rules == QA_RULESET_Q2_RERELEASE ? 2 : 3;

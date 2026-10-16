@@ -518,7 +518,16 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
       for (size_t j = 0; j < sizeof(rerelease) / sizeof(*rerelease); ++j)
         if (!strcmp(row->classname, rerelease[j]->classname)) { *row = *rerelease[j]; break; }
     if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
-      if (row->species == Q2M_BRAIN) {
+      if (row->species == Q2M_BOSS5) {
+        const char *classname = row->classname;
+        for (size_t j = 0; j < count; ++j)
+          if (definitions[j].species == Q2M_SUPERTANK) {
+            *row = definitions[j];
+            row->classname = classname;
+            row->flags |= Q2M_POWER_SHIELD;
+            break;
+          }
+      } else if (row->species == Q2M_BRAIN) {
         row->flags |= Q2M_HAS_RANGED;
       } else if (row->species == Q2M_GLADIATOR) {
         row->bounds.maxs.z = 42;
