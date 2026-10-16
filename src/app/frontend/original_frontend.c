@@ -63,6 +63,16 @@ static bool original_create(qa_frontend_original_restore *operation,qa_error *er
 {
     qa_frontend *active=operation->active;
     qa_frontend_options options=active->options;
+    if (operation->save.family==QA_GAME_Q2) {
+        const qa_launch_snapshot *launch=qa_application_launch(active->application);
+        const qa_launch_choices *choices=launch?qa_launch_snapshot_choices(launch):NULL;
+        const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
+        const qa_launch_instance *source=binding?qa_launch_snapshot_find(launch,binding->instance):NULL;
+        const qa_product *product=qa_catalog_find(qa_application_catalog(active->application),operation->product);
+        if (source && product && source->selection.product==product->id &&
+            source->selection.runtime==QA_PROGRAM_NATIVE) options.original=true;
+    }
     options.game=operation->product; options.map=NULL; options.map_game=NULL;
     options.movement=NULL; options.character=NULL;
     options.mods=NULL; options.mod_count=0; options.startup=NULL; options.startup_count=0;
@@ -173,7 +183,8 @@ bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operatio
         source->options.game=NULL;
         bool begun=operation->save.family==QA_GAME_Q1?
             qa_application_q1_save_import(source->application,operation->save.state.q1,operation->product,error):
-            qa_application_q2_save_import(source->application,operation->save.state.q2,operation->product,error);
+            qa_application_q2_save_import(source->application,operation->save.state.q2,
+                operation->product,source->options.original,error);
         if (!begun) goto failed;
         operation->import_begun=true;
         save_destroy(operation);

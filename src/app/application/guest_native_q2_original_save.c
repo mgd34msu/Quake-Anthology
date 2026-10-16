@@ -496,7 +496,7 @@ bool qa_application_q2_save_import_ready(const qa_application *app,const qa_q2_s
 { return admit(app,save,key,error)!=NULL; }
 
 bool qa_application_q2_save_import(qa_application *app,const qa_q2_save_data *save,
-    const char *key,qa_error *error)
+    const char *key,bool original_module,qa_error *error)
 {
     if (!app || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_READY ||
         app->q1_original_save || app->q2_original_save || qa_application_launch(app) ||
@@ -525,7 +525,7 @@ bool qa_application_q2_save_import(qa_application *app,const qa_q2_save_data *sa
         world.explicit_spawn_point=true;
         ok=qa_launch_set_world(draft,&world,error) &&
             qa_launch_set_seat(draft,&(qa_launch_seat){.id=0,.name="Player 1",.local=true},error);
-        if (ok && (!product->builtin || (!save->server.rerelease &&
+        if (ok && (original_module || !product->builtin || (!save->server.rerelease &&
             !qa_q2_game_original_builtin_game((qa_bytes){save->game.data,save->game.size}))))
             ok=qa_launch_select_original(draft,"native:primary",error);
     }

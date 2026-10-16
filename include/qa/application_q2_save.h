@@ -15,6 +15,6 @@ bool qa_application_q2_save_capture(qa_application *, qa_save_purpose,
 bool qa_application_q2_save_import_ready(const qa_application *, const qa_q2_save_data *,
     const char *product, qa_error *);
 bool qa_application_q2_save_import(qa_application *, const qa_q2_save_data *,
-    const char *product, qa_error *);
+    const char *product, bool original_module, qa_error *);
 bool qa_application_q2_save_import_advance(qa_application *, bool *complete, qa_error *);
 #endif
