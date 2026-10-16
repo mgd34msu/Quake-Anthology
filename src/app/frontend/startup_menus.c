@@ -26,7 +26,7 @@ struct frontend_startup_launch {
     uint32_t seat;
     qa_map_launch_policy map_launch;
     bool arena, team, begun, end_game;
-    bool map_command, q2_map;
+    bool map_command;
     bool local_players, drop, admitted;
     bool lobby, join;
     qa_net_address endpoint;
@@ -170,7 +170,7 @@ bool frontend_startup_map_stage(frontend_seat *seat,qa_map_launch_policy policy,
     const qa_product *product=provider?
         qa_catalog_product(qa_launch_draft_catalog(draft),provider->product):NULL;
     if (!product) return frontend_fail(error,QA_ERROR_ARGUMENT,"Select a game before starting a map");
-    bool q3=product->family==QA_GAME_Q3,q2=product->family==QA_GAME_Q2;
+    bool q3=product->family==QA_GAME_Q3;
     if (!q3 && policy!=QA_MAP_LAUNCH_Q3_MAP)
         return frontend_fail(error,QA_ERROR_UNSUPPORTED,"That map command requires a Q3 game");
     char *path=frontend_launch_map_path(map,error);
@@ -188,7 +188,6 @@ bool frontend_startup_map_stage(frontend_seat *seat,qa_map_launch_policy policy,
             request->map_launch=q3?policy:QA_MAP_LAUNCH_DEFAULT;
             request->hosting.kind=FRONTEND_HOST_OFFLINE;
             request->map_command=true;
-            request->q2_map=q2;
         } else frontend_startup_launch_discard(seat->frontend);
     }
     free(path);
@@ -497,7 +496,7 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
         }
         if (!frontend_startup_menus_bind(f,error)) return false;
     }
-    if (request->map_command && !request->q2_map &&
+    if (request->map_command &&
         !qa_console_resume(qa_application_console(f->application),error)) return false;
     bool lobby = request->lobby, end = request->end_game, local_players = request->local_players;
     frontend_startup_launch_discard(f);
