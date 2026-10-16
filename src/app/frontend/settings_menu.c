@@ -699,8 +699,9 @@ static void server_pages(frontend_seat *seat,size_t page,size_t pages,setting_op
     item=button(seat,"Next page",operation);
     if(item) { item->enabled=page+1<pages; binding_of(item)->offset=1; }
 }
-static bool server_settings_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+static bool server_settings_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_error *error)
 {
+    (void)seat_id;
     frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
     frontend_server_settings settings; bool ready=server_read(seat,&settings);
     size_t pages=ready?(settings.definitions.count+6)/7:1;
@@ -721,10 +722,11 @@ static bool server_settings_menu(void *context,uint32_t id,qa_ui_menu *out,qa_er
     seat->controls[owner->count-1].enabled=ready;
     if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
     char title[64]; snprintf(title,sizeof(title),"Server settings %zu/%zu",owner->server_page+1,pages);
-    return finish(seat,id,copy_text(owner,title),out,error,false);
+    return finish(seat,FRONTEND_SERVER_SETTINGS,copy_text(owner,title),out,error,false);
 }
-static bool server_setting_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+static bool server_setting_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_error *error)
 {
+    (void)seat_id;
     frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
     frontend_server_settings settings; bool ready=server_read(seat,&settings);
     const qa_server_setting_definition *definition=ready && owner->server_selected?
@@ -738,7 +740,7 @@ static bool server_setting_menu(void *context,uint32_t id,qa_ui_menu *out,qa_err
             size_t count=definition->control.choices.count,selected=0;
             const char **labels=cache(owner,count,sizeof(*labels),_Alignof(const char *));
             const char **values=cache(owner,count,sizeof(*values),_Alignof(const char *));
-            if(!labels || !values) return finish(seat,id,definition->label,out,error,false);
+            if(!labels || !values) return finish(seat,FRONTEND_SERVER_SETTING,definition->label,out,error,false);
             for(size_t i=0;i<count;++i) {
                 labels[i]=definition->control.choices.items[i].label; values[i]=definition->control.choices.items[i].id;
                 if(!strcmp(draft,values[i])) selected=i;
@@ -766,10 +768,11 @@ static bool server_setting_menu(void *context,uint32_t id,qa_ui_menu *out,qa_err
         server_info(seat,"This setting is no longer available.");
     }
     if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
-    return finish(seat,id,definition?definition->label:"Server setting",out,error,false);
+    return finish(seat,FRONTEND_SERVER_SETTING,definition?definition->label:"Server setting",out,error,false);
 }
-static bool server_profiles_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+static bool server_profiles_menu(void *context,uint32_t seat_id,qa_ui_menu *out,qa_error *error)
 {
+    (void)seat_id;
     frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
     frontend_server_settings settings; bool ready=server_read(seat,&settings);
     qa_ui_control *item=control(seat,"Profile name",QA_UI_FIELD,SET_SERVER_PROFILE_NAME);
@@ -792,7 +795,7 @@ static bool server_profiles_menu(void *context,uint32_t id,qa_ui_menu *out,qa_er
     server_pages(seat,owner->server_profile_page,pages,SET_SERVER_PROFILE_PAGE);
     if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
     char title[64]; snprintf(title,sizeof(title),"Server profiles %zu/%zu",owner->server_profile_page+1,pages);
-    return finish(seat,id,copy_text(owner,title),out,error,false);
+    return finish(seat,FRONTEND_SERVER_PROFILES,copy_text(owner,title),out,error,false);
 }
 static int compare_size(const void *a,const void *b)
 {
