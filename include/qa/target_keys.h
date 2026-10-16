@@ -114,6 +114,8 @@
     X(PATH, "path") \
     X(PATHTARGET, "pathtarget") \
     X(PAUSETIME, "pausetime") \
+    X(POWER_ARMOR_POWER, "power_armor_power") \
+    X(POWER_ARMOR_TYPE, "power_armor_type") \
     X(PUNCHANGLE, "punchangle") \
     X(RADIUS, "radius") \
     X(RANDOM, "random") \

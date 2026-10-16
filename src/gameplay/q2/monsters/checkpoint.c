@@ -428,7 +428,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       (controller && saved->weapon_sound) ||
       saved->corpse_phase > Q2M_CORPSE_HOVER ||
       (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
-      saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
+      saved->initial_power_armor > QA_POWER_SHIELD ||
       saved->medic_tries > 2 ||
       saved->controller_kind > Q2M_CONTROLLER_BOT_GOAL ||
       ((saved->controller_kind == Q2M_CONTROLLER_VISUAL_CHILD ||

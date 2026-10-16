@@ -1665,7 +1665,10 @@ bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, double cells,
       return true;
     item=game->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_POWER];
   }
-  qa_inventory_entry entry = {.item = item, .count = cells, .capacity = cells};
+  qa_inventory_entry entry = {.item = item,
+                              .count = cells,
+                              .capacity = fmax(0, cells),
+                              .policy = QA_COUNT_SOURCE_INT32};
   qa_inventory_admission *admission;
   if (!qa_inventory_prepare_entries(inventory, id, &entry, 1, &admission, error))
     return false;
@@ -1722,6 +1725,28 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
       combat.armor.powered = (qa_powered_armor){
           .kind = QA_POWER_SHIELD,
           .cells = monster->definition->species == Q2M_WIDOW ? 500.0f : 750.0f};
+  }
+  if (monster->definition->species == Q2M_DAEDALUS)
+    combat.armor.powered = (qa_powered_armor){.kind = QA_POWER_SCREEN, .cells = 100};
+  if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
+    if (monster->definition->species == Q2M_GUN_COMMANDER)
+      combat.armor.powered = (qa_powered_armor){.kind = QA_POWER_SHIELD, .cells = 200};
+    qa_strings *strings = qa_session_strings(game->services.session);
+    qa_string_id type_key = game->field_keys[QA_TARGET_KEY_POWER_ARMOR_TYPE];
+    qa_string_id power_key = game->field_keys[QA_TARGET_KEY_POWER_ARMOR_POWER];
+    qa_string_id type = actor->entity ? q2_field_id(actor->entity, type_key)
+                                      : q2_actor_field(game, actor->id, type_key);
+    qa_string_id power = actor->entity ? q2_field_id(actor->entity, power_key)
+                                       : q2_actor_field(game, actor->id, power_key);
+    if (type) {
+      int32_t value = qa_parse_decimal_i32(qa_strings_cstr(strings, type),
+                                           QA_DECIMAL_ASCII_WRAP);
+      combat.armor.powered.kind = value == 0 ? QA_POWER_NONE
+                                 : value == 1 ? QA_POWER_SCREEN : QA_POWER_SHIELD;
+    }
+    if (power)
+      combat.armor.powered.cells = qa_parse_decimal_i32(
+          qa_strings_cstr(strings, power), QA_DECIMAL_ASCII_WRAP);
   }
   qa_q2_combat_power_armor_source(game, &combat.armor.powered);
   if (qa_combat_storage_serial(game->services.combat, actor->id)) {
@@ -2120,9 +2145,9 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       return false;
     }
     if (found) {
-      if (!isfinite(fuel.count) || fuel.count < 0) {
+      if (!isfinite(fuel.count)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
-                     "Q2 monster power reserve must be finite and nonnegative");
+                     "Q2 monster power reserve must be finite");
         return false;
       }
       monster->max_power_armor = fuel.count;
