@@ -6,9 +6,12 @@
 #include "accessibility.h"
 #include "ui_features_private.h"
 #include "music_sources.h"
+#include "startup_server_profile.h"
+#include "global_settings_storage.h"
 #include "qa/ui_library.h"
 #include "qa/application_rankings.h"
 #include "qa/arena.h"
+#include "qa/filesystem.h"
 #include "qa/text.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -22,7 +25,10 @@ typedef enum setting_operation {
     SET_CONTROLLER, SET_AUDIO_DEVICE, SET_GYRO_ENABLE, SET_GYRO_CALIBRATE,
     SET_GYRO_CANCEL, SET_GYRO_RESET, SET_GYRO_AXIS, SET_GYRO_SAVE, SET_LANGUAGE, SET_DOPPLER, SET_ENVIRONMENT,
     SET_PACKED_COLOR, SET_PREFERENCE, SET_PREFERENCES_RESET, SET_GAMEPLAY_RESET,
-    SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND, SET_LOCAL_JOIN, SET_LOCAL_DROP
+    SET_MATCH_SELECT, SET_MATCH_TEXT, SET_MATCH_COMMAND, SET_LOCAL_JOIN, SET_LOCAL_DROP,
+    SET_SERVER_OPEN, SET_SERVER_VALUE, SET_SERVER_APPLY, SET_SERVER_DEFAULT, SET_SERVER_PAGE,
+    SET_SERVER_PROFILE_NAME, SET_SERVER_PROFILE_SELECT, SET_SERVER_PROFILE_SAVE,
+    SET_SERVER_PROFILE_LOAD, SET_SERVER_PROFILE_PAGE
 } setting_operation;
 typedef enum match_operation {
     MATCH_JOIN, MATCH_FOLLOW, MATCH_CALL_VOTE, MATCH_YES, MATCH_NO, MATCH_ADD, MATCH_REMOVE
@@ -128,7 +134,13 @@ struct frontend_settings_menu {
     qa_display_backend backend;
     char match_target[257],match_bot[257];
     size_t match_team,match_vote,match_skill;
+    const char *server_selected;
+    char *server_draft;
+    size_t server_draft_capacity,server_page,server_profile_page;
+    char server_message[256],server_profile_name[129];
+    qa_fs_listing server_profiles;
 };
+static bool server_action(setting_binding *,const qa_ui_action *,qa_error *);
 static settings_cvar_store *settings_store_bind(frontend_settings_menu *owner,qa_cvars *cvars)
 {
     uint64_t identity=qa_cvars_view_identity(cvars),declarations=qa_cvars_declaration_revision(cvars);
@@ -275,6 +287,10 @@ static bool action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action
     double value=event->kind==QA_UI_CHANGE_NUMBER?event->value.number:0;
     qa_gamepad_tuning *live=qa_input_seat_gamepad_tuning(seat->input), tuning=*live;
     switch(binding->operation) {
+    case SET_SERVER_OPEN: case SET_SERVER_VALUE: case SET_SERVER_APPLY: case SET_SERVER_DEFAULT:
+    case SET_SERVER_PAGE: case SET_SERVER_PROFILE_NAME: case SET_SERVER_PROFILE_SELECT:
+    case SET_SERVER_PROFILE_SAVE: case SET_SERVER_PROFILE_LOAD: case SET_SERVER_PROFILE_PAGE:
+        return server_action(binding,event,error);
     case SET_LOCAL_JOIN:
         return event->kind!=QA_UI_ACTIVATE || frontend_startup_local_join_stage(seat,error);
     case SET_LOCAL_DROP:
@@ -512,6 +528,271 @@ static bool finish(frontend_seat *seat,qa_ui_id id,const char *title,qa_ui_menu 
     *out=(qa_ui_menu){.id=id,.title=title,.controls=seat->controls,.count=owner->count,.scrollable=true,
         .scroll_rect={64,sound?118:92,512,sound?298:300},.content_height=(float)count*(sound?38:28)};
     return true;
+}
+
+static void server_message(frontend_settings_menu *owner,const qa_error *error)
+{ snprintf(owner->server_message,sizeof(owner->server_message),"%s",error->message); }
+static bool server_read(frontend_seat *seat,frontend_server_settings *settings)
+{
+    qa_error error={0}; bool present=false;
+    if(!frontend_server_settings_read(seat->frontend,settings,&present,&error)) {
+        server_message(seat->settings_menu,&error); return false;
+    }
+    if(!present) snprintf(seat->settings_menu->server_message,sizeof(seat->settings_menu->server_message),
+        "Server settings require a running local host.");
+    return present;
+}
+static bool server_draft(frontend_settings_menu *owner,const char *text,qa_error *error)
+{
+    size_t size=strlen(text)+1;
+    if(size>owner->server_draft_capacity) {
+        char *value=realloc(owner->server_draft,size);
+        if(!value) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining requested server setting");
+        owner->server_draft=value; owner->server_draft_capacity=size;
+    }
+    memmove(owner->server_draft,text,size); return true;
+}
+static qa_settings_store server_store(const frontend_seat *seat)
+{ return frontend_global_settings_storage_user_store(seat->frontend->global_settings_storage); }
+static bool server_profiles_read(frontend_seat *seat)
+{
+    frontend_settings_menu *owner=seat->settings_menu;
+    qa_fs_listing_free(&owner->server_profiles);
+    qa_settings_store store=server_store(seat);
+    qa_fs_root *root=qa_vfs_mount_root(store.vfs,store.mount);
+    qa_error error={0}; qa_fs_entry_kind kind;
+    if(!root) {
+        snprintf(owner->server_message,sizeof(owner->server_message),"Server profile storage is unavailable.");
+        return false;
+    }
+    if(!qa_fs_root_status(root,"servers",&kind,NULL,&error) ||
+        (kind!=QA_FS_MISSING && !qa_fs_root_list(root,"servers",&owner->server_profiles,&error))) {
+        qa_fs_listing_free(&owner->server_profiles);
+        server_message(owner,&error); return false;
+    }
+    size_t count=0;
+    for(size_t i=0;i<owner->server_profiles.count;++i) {
+        qa_fs_entry entry=owner->server_profiles.entries[i];
+        size_t size=strlen(entry.name); char name[33],path[46];
+        bool valid=entry.kind==QA_FS_REGULAR && size>5 && size<=37 && !strcmp(entry.name+size-5,".json");
+        if(valid) {
+            memcpy(name,entry.name,size-5); name[size-5]=0;
+            valid=frontend_server_profile_path(name,path,NULL);
+        }
+        if(valid) owner->server_profiles.entries[count++]=entry;
+        else free(entry.name);
+    }
+    owner->server_profiles.count=count;
+    return true;
+}
+static bool server_profiles_open(void *context,uint32_t id,qa_error *error)
+{ (void)id; (void)error; (void)server_profiles_read(context); return true; }
+static bool server_apply(frontend_seat *seat)
+{
+    frontend_settings_menu *owner=seat->settings_menu; frontend_server_settings settings;
+    if(!server_read(seat,&settings)) return true;
+    const qa_server_setting_definition *definition=owner->server_selected?
+        qa_server_setting_find(&settings.definitions,owner->server_selected):NULL;
+    qa_error error={0}; qa_server_setting_status status;
+    if(!definition) snprintf(owner->server_message,sizeof(owner->server_message),"This setting is no longer available.");
+    else if(!qa_server_setting_write(definition,settings.source.cvars,owner->server_draft?owner->server_draft:"",&error) ||
+        !frontend_server_setting_read(seat->frontend,&settings,definition,&status,&error) ||
+        !server_draft(owner,status.desired,&error)) server_message(owner,&error);
+    else owner->server_message[0]=0;
+    return true;
+}
+static bool server_profile(frontend_seat *seat,bool save)
+{
+    frontend_settings_menu *owner=seat->settings_menu; frontend_server_settings settings;
+    if(!server_read(seat,&settings)) return true;
+    char path[46]; qa_error error={0}; qa_server_profile *profile=NULL; qa_buffer bytes={0}; bool found=false;
+    bool okay=frontend_server_profile_path(owner->server_profile_name,path,&error);
+    if(okay && save) okay=qa_server_profile_capture(settings.selection,settings.source.cvars,&profile,&error) &&
+        qa_server_profile_encode(profile,&bytes,&error) &&
+        qa_settings_write(server_store(seat),path,(qa_bytes){bytes.data,bytes.size},&error);
+    if(okay && !save) {
+        okay=qa_settings_load_server_profile(server_store(seat),path,settings.selection,&profile,&found,&error);
+        if(okay && !found) okay=frontend_fail(&error,QA_ERROR_NOT_FOUND,"The selected server profile does not exist.");
+        if(okay) okay=qa_server_profile_apply(profile,settings.selection,settings.source.cvars,&error);
+    }
+    qa_server_profile_destroy(profile); qa_buffer_free(&bytes);
+    if(!okay) server_message(owner,&error);
+    else {
+        snprintf(owner->server_message,sizeof(owner->server_message),"%s %s.",save?"Saved":"Loaded",owner->server_profile_name);
+        if(save) (void)server_profiles_read(seat);
+    }
+    return true;
+}
+static bool server_action(setting_binding *binding,const qa_ui_action *event,qa_error *error)
+{
+    frontend_seat *seat=binding->seat; frontend_settings_menu *owner=seat->settings_menu;
+    qa_error failure={0};
+    switch(binding->operation) {
+    case SET_SERVER_OPEN: {
+        if(event->kind!=QA_UI_ACTIVATE) return true;
+        frontend_server_settings settings;
+        if(!server_read(seat,&settings)) return true;
+        const qa_server_setting_definition *definition=qa_server_setting_find(&settings.definitions,binding->name);
+        qa_server_setting_status status;
+        if(!definition || !frontend_server_setting_read(seat->frontend,&settings,definition,&status,&failure) ||
+            !server_draft(owner,status.desired,&failure)) {
+            if(!definition) snprintf(owner->server_message,sizeof(owner->server_message),"This setting is no longer available.");
+            else server_message(owner,&failure);
+            return true;
+        }
+        owner->server_selected=definition->id; owner->server_message[0]=0;
+        return frontend_menu_open(seat,FRONTEND_SERVER_SETTING,error);
+    }
+    case SET_SERVER_VALUE: {
+        const char *text=NULL;
+        if(event->kind==QA_UI_CHANGE_TEXT || event->kind==QA_UI_SUBMIT) text=event->value.text?event->value.text:"";
+        if(event->kind==QA_UI_CHANGE_NUMBER) text=event->value.number!=0?"1":"0";
+        if(event->kind==QA_UI_SELECT && event->value.row<binding->value_count) text=binding->values[event->value.row];
+        if(text && !server_draft(owner,text,&failure)) { server_message(owner,&failure); return true; }
+        return event->kind!=QA_UI_SUBMIT || server_apply(seat);
+    }
+    case SET_SERVER_APPLY: return event->kind!=QA_UI_ACTIVATE || server_apply(seat);
+    case SET_SERVER_DEFAULT: {
+        if(event->kind!=QA_UI_ACTIVATE) return true;
+        frontend_server_settings settings;
+        if(!server_read(seat,&settings)) return true;
+        const qa_server_setting_definition *definition=owner->server_selected?
+            qa_server_setting_find(&settings.definitions,owner->server_selected):NULL;
+        if(definition && server_draft(owner,definition->default_value,&failure)) owner->server_message[0]=0;
+        else if(definition) server_message(owner,&failure);
+        return true;
+    }
+    case SET_SERVER_PAGE: case SET_SERVER_PROFILE_PAGE:
+        if(event->kind==QA_UI_ACTIVATE) {
+            size_t *page=binding->operation==SET_SERVER_PAGE?&owner->server_page:&owner->server_profile_page;
+            if(binding->offset) ++*page; else if(*page) --*page;
+        }
+        return true;
+    case SET_SERVER_PROFILE_NAME:
+        if(event->kind==QA_UI_CHANGE_TEXT || event->kind==QA_UI_SUBMIT)
+            snprintf(owner->server_profile_name,sizeof(owner->server_profile_name),"%s",event->value.text?event->value.text:"");
+        return true;
+    case SET_SERVER_PROFILE_SELECT:
+        if(event->kind==QA_UI_ACTIVATE) snprintf(owner->server_profile_name,sizeof(owner->server_profile_name),"%s",binding->name);
+        return true;
+    case SET_SERVER_PROFILE_SAVE: return event->kind!=QA_UI_ACTIVATE || server_profile(seat,true);
+    case SET_SERVER_PROFILE_LOAD: return event->kind!=QA_UI_ACTIVATE || server_profile(seat,false);
+    default: return true;
+    }
+}
+static void server_info(frontend_seat *seat,const char *label)
+{
+    qa_ui_control *item=button(seat,label,SET_CLOSE);
+    if(item) item->enabled=false;
+}
+static char *server_label(frontend_settings_menu *owner,const char *prefix,const char *value,const char *suffix)
+{
+    size_t size=strlen(prefix)+strlen(value)+strlen(suffix)+1;
+    char *text=cache(owner,size,1,1);
+    if(text) snprintf(text,size,"%s%s%s",prefix,value,suffix);
+    return text;
+}
+static void server_pages(frontend_seat *seat,size_t page,size_t pages,setting_operation operation)
+{
+    qa_ui_control *item=button(seat,"Previous page",operation);
+    if(item) item->enabled=page>0;
+    item=button(seat,"Next page",operation);
+    if(item) { item->enabled=page+1<pages; binding_of(item)->offset=1; }
+}
+static bool server_settings_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
+    frontend_server_settings settings; bool ready=server_read(seat,&settings);
+    size_t pages=ready?(settings.definitions.count+6)/7:1;
+    if(!pages) pages=1;
+    if(owner->server_page>=pages) owner->server_page=pages-1;
+    for(size_t i=owner->server_page*7;ready && i<settings.definitions.count && i<(owner->server_page+1)*7;++i) {
+        const qa_server_setting_definition *definition=settings.definitions.items[i];
+        qa_server_setting_status status; qa_error failure={0};
+        if(!frontend_server_setting_read(seat->frontend,&settings,definition,&status,&failure)) {
+            server_message(owner,&failure); continue;
+        }
+        char *prefix=server_label(owner,definition->label,": ","");
+        qa_ui_control *item=button(seat,prefix?server_label(owner,prefix,status.desired,status.pending?" (pending)":""):NULL,SET_SERVER_OPEN);
+        if(item) binding_of(item)->name=definition->id;
+    }
+    server_pages(seat,owner->server_page,pages,SET_SERVER_PAGE);
+    destination(seat,"Save or load server profile",FRONTEND_SERVER_PROFILES);
+    seat->controls[owner->count-1].enabled=ready;
+    if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
+    char title[64]; snprintf(title,sizeof(title),"Server settings %zu/%zu",owner->server_page+1,pages);
+    return finish(seat,id,copy_text(owner,title),out,error,false);
+}
+static bool server_setting_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
+    frontend_server_settings settings; bool ready=server_read(seat,&settings);
+    const qa_server_setting_definition *definition=ready && owner->server_selected?
+        qa_server_setting_find(&settings.definitions,owner->server_selected):NULL;
+    qa_server_setting_status status; qa_error failure={0};
+    if(definition && frontend_server_setting_read(seat->frontend,&settings,definition,&status,&failure)) {
+        const char *draft=owner->server_draft?owner->server_draft:"";
+        qa_ui_control *item=NULL;
+        if(definition->kind==QA_SERVER_SETTING_TOGGLE) item=toggle(seat,"Requested value",!strcmp(draft,"1"),SET_SERVER_VALUE);
+        else if(definition->kind==QA_SERVER_SETTING_CHOICE) {
+            size_t count=definition->control.choices.count,selected=0;
+            const char **labels=cache(owner,count,sizeof(*labels),_Alignof(const char *));
+            const char **values=cache(owner,count,sizeof(*values),_Alignof(const char *));
+            if(!labels || !values) return finish(seat,id,definition->label,out,error,false);
+            for(size_t i=0;i<count;++i) {
+                labels[i]=definition->control.choices.items[i].label; values[i]=definition->control.choices.items[i].id;
+                if(!strcmp(draft,values[i])) selected=i;
+            }
+            item=choice(seat,"Requested value",labels,values,count,selected,SET_SERVER_VALUE);
+        } else {
+            item=control(seat,"Requested value",QA_UI_FIELD,SET_SERVER_VALUE);
+            if(item) { item->value.field.text=draft; item->value.field.maximum=
+                definition->kind==QA_SERVER_SETTING_TEXT?definition->control.maximum_length:24; }
+        }
+        server_info(seat,server_label(owner,"Setting ID: ",definition->id,""));
+        server_info(seat,server_label(owner,"Desired: ",status.desired,""));
+        server_info(seat,server_label(owner,"Effective: ",status.effective,""));
+        server_info(seat,server_label(owner,"Default: ",definition->default_value,""));
+        server_info(seat,server_label(owner,status.pending?"Pending; applies at ":"Apply timing: ",
+            qa_server_setting_apply_name(definition->apply_at),""));
+        if(definition->kind==QA_SERVER_SETTING_NUMBER) {
+            char range[128]; snprintf(range,sizeof(range),"%s from %.12g to %.12g",definition->control.number.integer?"Whole numbers":"Numbers",
+                definition->control.number.minimum,definition->control.number.maximum);
+            server_info(seat,copy_text(owner,range));
+        }
+        button(seat,"Apply",SET_SERVER_APPLY); button(seat,"Use default",SET_SERVER_DEFAULT);
+    } else {
+        if(definition) server_message(owner,&failure);
+        server_info(seat,"This setting is no longer available.");
+    }
+    if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
+    return finish(seat,id,definition?definition->label:"Server setting",out,error,false);
+}
+static bool server_profiles_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; frontend_settings_menu *owner=seat->settings_menu; begin(seat);
+    frontend_server_settings settings; bool ready=server_read(seat,&settings);
+    qa_ui_control *item=control(seat,"Profile name",QA_UI_FIELD,SET_SERVER_PROFILE_NAME);
+    if(item) { item->value.field.text=owner->server_profile_name; item->value.field.maximum=32; }
+    server_info(seat,"A short name, such as league-night. No file paths.");
+    item=button(seat,"Save current desired settings",SET_SERVER_PROFILE_SAVE); if(item) item->enabled=ready;
+    item=button(seat,"Load and apply profile",SET_SERVER_PROFILE_LOAD); if(item) item->enabled=ready;
+    server_info(seat,"Loaded settings keep their normal apply timing.");
+    size_t pages=(owner->server_profiles.count+6)/7;
+    if(!pages) pages=1;
+    if(owner->server_profile_page>=pages) owner->server_profile_page=pages-1;
+    for(size_t i=owner->server_profile_page*7;i<owner->server_profiles.count && i<(owner->server_profile_page+1)*7;++i) {
+        const char *file=owner->server_profiles.entries[i].name; size_t size=strlen(file)-5;
+        char *name=cache(owner,size+1,1,1);
+        if(!name) break;
+        memcpy(name,file,size); name[size]=0;
+        item=button(seat,name,SET_SERVER_PROFILE_SELECT); if(item) binding_of(item)->name=name;
+    }
+    if(!owner->server_profiles.count) server_info(seat,"No saved server profiles.");
+    server_pages(seat,owner->server_profile_page,pages,SET_SERVER_PROFILE_PAGE);
+    if(owner->server_message[0]) server_info(seat,copy_text(owner,owner->server_message));
+    char title[64]; snprintf(title,sizeof(title),"Server profiles %zu/%zu",owner->server_profile_page+1,pages);
+    return finish(seat,id,copy_text(owner,title),out,error,false);
 }
 static int compare_size(const void *a,const void *b)
 {
@@ -904,7 +1185,9 @@ static bool network(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
 {
     frontend_seat *seat=context; (void)id; begin(seat);
     if(!frontend_network_remote(seat->frontend)) {
-        qa_ui_control *item=button(seat,"Server settings",SET_CLOSE); if(item) item->enabled=false;
+        frontend_server_settings settings;
+        destination(seat,"Server settings",FRONTEND_SERVER_SETTINGS);
+        seat->controls[seat->settings_menu->count-1].enabled=server_read(seat,&settings);
     }
     uint32_t ranking_slot;
     if(seat->rankings && qa_application_rankings(seat->frontend->application)) {
@@ -1164,6 +1447,7 @@ bool frontend_settings_create(frontend_seat *seat,qa_error *error)
     qa_arena_init(&owner->arena,4096); seat->settings_menu=owner;
     (void)settings_store_bind(owner,qa_application_cvars(seat->frontend->application));
     memcpy(owner->match_bot,"sarge",6); owner->match_skill=2;
+    memcpy(owner->server_profile_name,"default",8);
     const qa_ui_menu_registration registrations[]={
         {.id=FRONTEND_DISPLAY,.context=seat,.factory=display},
         {.id=FRONTEND_SOUND,.context=seat,.factory=sound},
@@ -1171,6 +1455,9 @@ bool frontend_settings_create(frontend_seat *seat,qa_error *error)
         {.id=FRONTEND_ALL_OPTIONS,.context=seat,.factory=all_options},
         {.id=FRONTEND_GRAPHICS,.context=seat,.factory=graphics,.close=close_fields},
         {.id=FRONTEND_NETWORK_OPTIONS,.context=seat,.factory=network,.close=close_fields},
+        {.id=FRONTEND_SERVER_SETTINGS,.context=seat,.factory=server_settings_menu},
+        {.id=FRONTEND_SERVER_SETTING,.context=seat,.factory=server_setting_menu},
+        {.id=FRONTEND_SERVER_PROFILES,.context=seat,.factory=server_profiles_menu,.open=server_profiles_open},
         {.id=FRONTEND_LANGUAGE,.context=seat,.factory=language},
         {.id=FRONTEND_GYRO,.context=seat,.factory=gyro,.close=close_gyro},
         {.id=FRONTEND_AUDIO_OPTIONS,.context=seat,.factory=audio_menu},
@@ -1183,5 +1470,7 @@ bool frontend_settings_create(frontend_seat *seat,qa_error *error)
 void frontend_settings_destroy(frontend_seat *seat)
 {
     if(!seat || !seat->settings_menu) return;
+    qa_fs_listing_free(&seat->settings_menu->server_profiles);
+    free(seat->settings_menu->server_draft);
     qa_arena_destroy(&seat->settings_menu->arena); free(seat->settings_menu); seat->settings_menu=NULL;
 }

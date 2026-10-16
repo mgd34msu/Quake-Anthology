@@ -164,6 +164,8 @@ Quake-style startup commands follow the options, for example `+set name Player`.
 
 Open **Find servers** from the startup menu for one browser covering every game. It starts with **All games**; use **Game filter** to narrow the list. Ping is the measured round-trip time in milliseconds. LAN discovery searches the supported games together, and a direct `host:port` query can detect the server protocol. Choose a game filter to edit that game's Internet master-server address.
 
+While hosting, open **Options → Network → Server settings** to edit the running server's rules. Each setting shows its desired and effective values and when it takes effect. Save and load named server profiles from that menu; the Content Library can also select a saved profile for the next launch. The console command `server_setting server:time-limit 15` uses the same settings and reports pending changes. `midiinfo` lists the MIDI input devices and current selection.
+
 Anthology sessions use `unified-1` by default. To run a dedicated server with a stdin console:
 
 ```sh
