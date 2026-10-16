@@ -3008,6 +3008,48 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
   case Q2M_MEDIC_COMMANDER:
     return q2m_medic_attack_move(context, distance, move, error);
   case Q2M_SUPERTANK:
+    if (rerelease) {
+      *move = Q2M_MOVE_NONE;
+      qa_body_state enemy;
+      bool present;
+      if (!attack_body(context, monster->enemy, &enemy, &present, error))
+        return false;
+      if (!q2m_alive(context) || !present)
+        return true;
+      float height = enemy.origin.z - context->body.origin.z;
+      bool chaingun, rocket, grenade;
+      if (!q2m_clear_flash_shot(context, 64, &chaingun, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (!q2m_clear_flash_shot(context, 70, &rocket, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (!q2m_clear_flash_shot(context, 261, &grenade, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (chaingun && (!rocket || distance <= 540.0f ||
+                       q2_rerelease_float(context->game, 0, 1) < 0.3f)) {
+        if (grenade && (distance >= 350.0f || height > 120.0f ||
+                        q2_rerelease_float(context->game, 0, 1) < 0.2f)) {
+          *move = Q2M_MOVE_supertank_move_attack4;
+        } else {
+          *move = Q2M_MOVE_supertank_move_attack1;
+          monster->timestamp_ns = q2m_after(context->game->now_ns,
+              (double)q2_rerelease_time_ms(context->game, 1500, 2700) / 1000.0);
+        }
+      } else if (rocket) {
+        *move = grenade && (height > 120.0f ||
+                            q2_rerelease_float(context->game, 0, 1) < 0.2f)
+                    ? Q2M_MOVE_supertank_move_attack4
+                    : Q2M_MOVE_supertank_move_attack2;
+      } else if (grenade) {
+        *move = Q2M_MOVE_supertank_move_attack4;
+      }
+      break;
+    }
     *move = distance <= 160.0f || q2m_random(context->game) < 0.3f
                 ? Q2M_MOVE_supertank_move_attack1
                 : Q2M_MOVE_supertank_move_attack2;
