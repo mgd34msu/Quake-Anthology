@@ -676,7 +676,8 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
 {
     if (qa_application_launch(frontend->application) &&
         qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) &&
-        !frontend_events_flush(frontend,error)) return false;
+        ((!frontend->options.dedicated && !frontend_scene_sync(frontend,error)) ||
+         !frontend_events_flush(frontend,error))) return false;
     frontend->preparing=true;
     bool prepared=qa_application_startup_advance(frontend->application,complete,error);
     frontend->preparing=false;
