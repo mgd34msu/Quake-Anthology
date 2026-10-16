@@ -517,6 +517,7 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
         qa_native_module_info module = qa_native_module_describe(provider->state.native.module);
         application_native_process_artifact artifact = {.resource = provider->launch->artifact,
             .acquisition = provider->launch->artifact_acquisition, .path = provider->launch->selection.artifact};
+        const size_t primary_artifact = 0;
         const qa_native_process_resources *capture = NULL;
         qa_bytes lower_recipe = {0};
         if (provider->application->native_restore_image && !engine->process.resources) {
@@ -529,10 +530,10 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
             if (!saved ||
                 !application_native_q2_save_resource_recipe(saved, &recipe, error) ||
                 !refs->resolve(refs->context, provider->launch->selection.instance,
-                    qa_resource_id(provider->launch->artifact), recipe, &capture, &lower_recipe, error)) return false;
+                    primary_artifact + 1, recipe, &capture, &lower_recipe, error)) return false;
         }
         if (!application_native_process_prepare(provider->application, provider->launch,
-            provider->owner, provider->owner, &artifact, 1, 0, &module.image,
+            provider->owner, provider->owner, &artifact, 1, primary_artifact, &module.image,
             NULL, NULL,
             process_current, engine, capture, lower_recipe, &engine->process, error)) return false;
         instance.process = &engine->process.process;
