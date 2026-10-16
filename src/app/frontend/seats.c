@@ -735,16 +735,17 @@ static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
         *out=(qa_ui_menu){.id=FRONTEND_HOME,.title="Paused",.controls=seat->controls,
             .count=count,.fullscreen=true}; return true;
     }
-    const char *labels[] = {"Play a game", "Load Game", "Options", "Library", "Quit"};
-    const qa_ui_id controls[] = {1, 10, 3, 14, 6};
-    for (size_t i = 0; i < 5; ++i) {
+    const char *labels[] = {"Play a game", "Find servers", "Load Game", "Options", "Library", "Quit"};
+    const qa_ui_id controls[] = {1, 12, 10, 3, 14, 6};
+    const size_t count = sizeof(controls) / sizeof(*controls);
+    for (size_t i = 0; i < count; ++i) {
         seat->controls[i] = button(seat, controls[i], labels[i], 118 + (float)i * 34);
         seat->controls[i].rect.x = 64;
         seat->controls[i].rect.width = 224;
         seat->controls[i].rect.height = 30;
     }
     *out = (qa_ui_menu){.id = FRONTEND_HOME, .title = "QUAKE", .controls = seat->controls,
-        .count = 5, .fullscreen = true, .narrow = true};
+        .count = count, .fullscreen = true, .narrow = true};
     return true;
 }
 static bool settings_open(void *context, uint32_t id, qa_error *error)
