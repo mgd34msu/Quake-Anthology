@@ -795,3 +795,29 @@ bool application_q3_guest_role_command(application_provider *provider,qa_qvm_rol
     q3g_role *role=find_role(provider,kind,seat,error);
     return role && role_console_command(role,time,text,NULL,handled,error);
 }
+
+bool application_guest_q3_client_weapon(application_provider *provider, qa_actor_id actor,
+    int32_t weapon, bool *handled, qa_error *error)
+{
+    *handled = false;
+    uint32_t seat;
+    if (!qa_application_player_seat(provider->application, actor, &seat)) return true;
+    struct application_q3_guest *engine = q3g_engine(provider);
+    for (application_provider *receiver = provider->application->live_providers;
+         receiver; receiver = receiver->next_live) {
+        struct application_q3_guest *owner = q3g_engine(receiver);
+        if (!receiver->attached || !receiver->constructed || receiver->close_pending || !owner) continue;
+        qa_id_index_cursor roles = q3g_role_lookup_begin(owner, QA_QVM_CGAME, seat);
+        q3g_role *role;
+        while ((role = q3g_role_lookup_next(owner, &roles))) {
+            if (!role->ready || role->retired || role->source_cleared || !role->initialized ||
+                !role->init_succeeded || !role->local_client || role->client_source != provider ||
+                role->client_engine != engine || role->client >= 64 ||
+                !qa_actor_id_equal(engine->clients[role->client].actor, actor)) continue;
+            char command[32];
+            snprintf(command, sizeof(command), "weapon %i", weapon);
+            return role_console_command(role, 0, command, NULL, handled, error);
+        }
+    }
+    return true;
+}

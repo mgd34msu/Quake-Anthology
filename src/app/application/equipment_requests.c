@@ -3,6 +3,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_catalog.h"
+#include "guest_q3_client_console.h"
 #include "guest_native_q2_private.h"
 #include "guest_qc_items.h"
 #include "guest_qc_item_weapons.h"
@@ -20,6 +21,30 @@ static void named_item_append(qa_item_definition *items, size_t *count,
     for (size_t i = 0; i < *count; ++i)
         if (items[i].item == item.item) return;
     items[(*count)++] = item;
+}
+
+static bool q3_item_weapon(application_provider *provider, qa_item_id item,
+    int32_t *weapon, qa_error *error)
+{
+    *weapon = -1;
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
+        for (int32_t i = 1; i < QA_Q3_WEAPON_COUNT; ++i)
+            if (qa_q3_weapon_item(provider->state.q3, (qa_q3_weapon)i, false) == item) {
+                *weapon = i; break;
+            }
+    } else if (provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
+        (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))) {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (engine && engine->game && engine->game->catalog) {
+            const application_q3_catalog_weapon *weapons;
+            size_t count;
+            if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error))
+                return false;
+            for (size_t i = 0; i < count; ++i)
+                if (weapons[i].item == item) { *weapon = weapons[i].weapon; break; }
+        }
+    }
+    return true;
 }
 
 static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *storage,
@@ -111,25 +136,8 @@ qa_command_result application_equipment_item_resolve(qa_application *app,
     if (selection && selected.weapon) {
         application_provider *provider = application_provider_lookup(app, selected.owner,
             APPLICATION_PROVIDER_PUBLISHED);
-        if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
-            for (int32_t i = 1; i < QA_Q3_WEAPON_COUNT; ++i)
-                if (qa_q3_weapon_item(provider->state.q3, (qa_q3_weapon)i, false) == selected.item) {
-                    resolved.q3_weapon = i; break;
-                }
-        } else if (provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
-            (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))) {
-            struct application_q3_guest *engine = q3g_engine(provider);
-            if (engine && engine->game && engine->game->catalog) {
-                const application_q3_catalog_weapon *weapons;
-                size_t weapon_count;
-                if (!application_q3_catalog_weapons(engine->game->catalog,
-                    &weapons, &weapon_count, error)) return QA_COMMAND_FAILED;
-                for (size_t i = 0; i < weapon_count; ++i)
-                    if (weapons[i].item == selected.item) {
-                        resolved.q3_weapon = weapons[i].weapon; break;
-                    }
-            }
-        }
+        if (!q3_item_weapon(provider, selected.item, &resolved.q3_weapon, error))
+            return QA_COMMAND_FAILED;
     }
     if (item) {
         const char *label = selected.label ? selected.label
@@ -228,11 +236,11 @@ bool application_equipment_primary_accepts(void *context,qa_actor_id actor,qa_ac
     if(provider->kind==APPLICATION_PROVIDER_QVM ||
         (provider->kind==APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)) {
         struct application_q3_guest *engine=q3g_engine(provider);
-        const application_q3_catalog_weapon *weapons=NULL; size_t n=0;
         if(!engine||!engine->game||!engine->game->catalog)
             return application_fail(e,QA_ERROR_NOT_FOUND,"Original weapon request lost its actual Source catalog");
-        if(!application_q3_catalog_weapons(engine->game->catalog,&weapons,&n,e)) return false;
-        for(size_t i=0;i<n;++i) if(weapons[i].item==item) declared=true;
+        int32_t weapon;
+        if(!q3_item_weapon(provider,item,&weapon,e)) return false;
+        declared=weapon>=0;
     } else if(provider->kind==APPLICATION_PROVIDER_QC) {
         if(provider->state.qc.qualified && provider->state.qc.qualified->items &&
             provider->state.qc.qualified->items->weapons)
@@ -279,9 +287,13 @@ bool application_equipment_primary_select(void *context,qa_actor_id actor,qa_act
     else if(provider->kind==APPLICATION_PROVIDER_QVM||
         (provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.engine)) {
         struct application_q3_guest *engine=q3g_engine(provider);
-        if(!engine||!engine->game||!engine->game->weapon_services)
-            return application_fail(e,QA_ERROR_UNSUPPORTED,"Original weapon request has no admitted Source request owner");
-        ok=application_q3_weapons_services_select_intent(engine->game->weapon_services,actor,owner,item,accepted,e);
+        if(engine->game->weapon_services)
+            ok=application_q3_weapons_services_select_intent(engine->game->weapon_services,actor,owner,item,accepted,e);
+        else {
+            int32_t weapon;
+            if(!q3_item_weapon(provider,item,&weapon,e)) return false;
+            ok=application_guest_q3_client_weapon(provider,actor,weapon,accepted,e);
+        }
     } else if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
         ok=application_native_q2_weapon_request(provider,actor,item,accepted,e);
     else if(provider->kind==APPLICATION_PROVIDER_Q2) {

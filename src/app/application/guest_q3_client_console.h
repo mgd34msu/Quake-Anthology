@@ -11,6 +11,8 @@ bool application_guest_q3_client_console_source(struct application_q3_guest *, s
     qa_application_startup_source *);
 bool application_guest_q3_client_console_at(struct application_q3_guest *, qa_qvm_role, uint32_t,
     qa_console **, qa_cvars **);
+bool application_guest_q3_client_weapon(application_provider *, qa_actor_id,
+    int32_t, bool *, qa_error *);
 bool application_guest_q3_client_console_globals(struct application_q3_guest *, qa_qvm_role, uint32_t,
     qa_script_defines **, qa_string_id *, qa_error *);
 bool application_guest_q3_client_console_idle(const struct application_q3_guest *);
