@@ -328,6 +328,13 @@ bool frontend_q3_source_image_admit(void *context,const qa_scene_image *image,ui
     if (no_bind && !qa_render_controls_source_dlight_read(controls,&dlight,error)) return false;
     return qa_render_controls_source_image_admit(controls,image,dlight?dlight:image,unit,error);
 }
+bool frontend_source_images_retire(qa_frontend *f,qa_scene_resources *bank,qa_error *error)
+{
+    if (!f || !bank) return true;
+    qa_render_controls *controls=f->cpu?qa_cpu_render_controls(f->cpu):
+        f->gl?qa_gl_render_controls(f->gl):NULL;
+    return qa_render_controls_source_bank_retire(controls,bank,error);
+}
 bool frontend_q3_source_no_bind_read(qa_frontend *f,const qa_cvars_edit *edit,bool *out,qa_error *error)
 {
     static const size_t offsets[] = {REF(r_nobind)};

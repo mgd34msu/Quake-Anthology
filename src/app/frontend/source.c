@@ -1007,6 +1007,7 @@ static bool source_free(frontend_source *source)
         if (!frontend_renderer_materials_adopt_movies(source->frontend,&expected,&source->shader_movies,&source->movies,&error)) return false;
     }
     if (!frontend_material_movies_destroy(&source->shader_movies,&error)) return false;
+    if (!frontend_source_images_retire(source->frontend,source->images,&error)) return false;
     if (source->assets && !qa_q3_assets_services_retire(source->assets,&error)) return false;
     qa_q3_presentation_assets_destroy(source->assets); source->assets=NULL;
     frontend_world_scratch_destroy(&source->world_scratch);

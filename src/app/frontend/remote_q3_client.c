@@ -203,6 +203,7 @@ static bool rebuild_media(frontend_remote_q3 *row,qa_error *error)
 {
     frontend_remote_q3_resources *v=&row->resources;
     if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
+    if (!frontend_source_images_retire(row->frontend,v->images,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
     frontend_world_scratch_destroy(&v->world_scratch);
@@ -532,6 +533,7 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
         if (!frontend_renderer_materials_adopt_movies(row->frontend,&expected,&row->shader_movies,&row->resources.movies,error)) return false;
     }
     if (!frontend_material_movies_destroy(&row->shader_movies,error)) return false;
+    if (!frontend_source_images_retire(row->frontend,v->images,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets);
     frontend_world_scratch_destroy(&v->world_scratch);

@@ -103,8 +103,11 @@ bool qa_gl_source_stage_state(qa_render_controls *, const qa_scene_state *, qa_e
 bool qa_cpu_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_view_read(qa_render_controls *, qa_scene_view *, qa_error *);
 bool qa_gl_source_image_admit(qa_render_controls *,const qa_scene_image *,const qa_scene_image *,uint32_t,qa_error *);
+bool qa_gl_source_bank_retire(qa_render_controls *,qa_scene_resources *,qa_error *);
 bool qa_gl_source_texture_border(qa_render_controls *,qa_vec4,qa_error *);
 bool qa_cpu_source_image_admit(qa_render_controls *,const qa_scene_image *,const qa_scene_image *,uint32_t,qa_error *);
+bool qa_cpu_source_bank_retire(qa_render_controls *,qa_scene_resources *,qa_error *);
+bool qa_render_source_texture_bank_retire(qa_render_source_texture *,qa_scene_resources *);
 size_t qa_cpu_source_images_metadata_count(const qa_render_controls *);
 size_t qa_cpu_source_texture_metadata_count(const qa_render_controls *);
 const qa_scene_image *qa_cpu_source_texture_metadata_at(const qa_render_controls *,size_t);

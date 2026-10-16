@@ -48,6 +48,7 @@ bool qa_render_controls_source_scene_limits_read(const qa_render_controls *,uint
     uint32_t *max_polyverts,bool *initialized,qa_error *);
 bool qa_render_controls_source_image_admit(qa_render_controls *,const qa_scene_image *,
     const qa_scene_image *binding,uint32_t texture_unit,qa_error *);
+bool qa_render_controls_source_bank_retire(qa_render_controls *,qa_scene_resources *,qa_error *);
 bool qa_render_controls_source_dlight_read(const qa_render_controls *,const qa_scene_image **,qa_error *);
 bool qa_render_controls_source_texture_border(qa_render_controls *,qa_vec4,qa_error *);
 bool qa_render_controls_source_texture_upload(qa_render_controls *,const qa_scene_image *registered_slot,

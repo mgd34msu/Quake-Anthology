@@ -13,6 +13,7 @@ bool frontend_q3_material_profile_initialize(qa_frontend *, qa_material_library 
 bool frontend_q3_material_ui_fullscreen_read(void *, bool *, qa_error *);
 bool frontend_q3_material_source_bind(qa_frontend *, qa_material_library *, qa_error *);
 bool frontend_q3_source_image_admit(void *,const qa_scene_image *,uint32_t texture_unit,qa_error *);
+bool frontend_source_images_retire(qa_frontend *,qa_scene_resources *,qa_error *);
 bool frontend_q3_source_no_bind_read(qa_frontend *,const qa_cvars_edit *,bool *,qa_error *);
 bool frontend_q3_source_restart_read(qa_frontend *,const qa_cvars_edit *,
     qa_render_source_restart_values *,qa_error *);

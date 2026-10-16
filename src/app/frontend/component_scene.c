@@ -457,6 +457,7 @@ static bool destroy(void **slot,qa_error *e)
     packets_clear(owner);
     pictures_clear(owner);
     qa_scene_frame_destroy(&owner->frame);
+    if (!frontend_source_images_retire(owner->frontend,owner->images,e)) return false;
     qa_q3_presentation_assets_destroy(owner->assets);
     qa_font_library_destroy(owner->fonts); qa_audio_bank_destroy(owner->sounds);
     qa_media_library_destroy(owner->media); qa_material_library_destroy(owner->materials);

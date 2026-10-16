@@ -153,6 +153,7 @@ static bool bank(frontend_unified_media *owner, qa_string_id content_name, unifi
             qa_id_index_remove_value(&owner->bank_index, QA_STRING_NONE, (uint64_t)(uintptr_t)row->product,
                 (size_t)(uintptr_t)row);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
+        if (!frontend_source_images_retire(owner->frontend,row->images,error)) return false;
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images);
         qa_id_index_destroy(&row->skin_index); qa_id_index_destroy(&row->model_index);
         free(row); return false;
@@ -570,6 +571,7 @@ bool frontend_unified_media_destroy(frontend_unified_media *owner, qa_error *err
         qa_id_index_destroy(&row->skin_index); qa_id_index_destroy(&row->model_index);
         qa_buffer_free(&row->saved_assets);
         qa_audio_bank_destroy(row->sounds); qa_font_library_destroy(row->fonts);
+        if (!frontend_source_images_retire(owner->frontend,row->images,error)) return false;
         qa_material_library_destroy(row->materials); qa_scene_resources_destroy(row->images); free(row);
     }
     qa_id_index_destroy(&owner->inline_index); qa_id_index_destroy(&owner->bank_index);

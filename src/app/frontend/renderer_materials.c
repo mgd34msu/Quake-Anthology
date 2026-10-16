@@ -442,6 +442,8 @@ static bool row_destroy(frontend_renderer_materials **slot,qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Retained renderer material owners remain borrowed");
     if(!frontend_material_movies_destroy(&owner->view.movies,error)) return false;
     qa_media_library_destroy(owner->view.media); owner->view.media=NULL;
+    if (!frontend_source_images_retire(owner->frontend,owner->view.images,error) ||
+        !frontend_source_images_retire(owner->frontend,owner->view.lightmap_images,error)) return false;
     qa_material_library_destroy(owner->view.library);
     qa_scene_resources_destroy(owner->view.images);
     qa_vfs_destroy(owner->view.mounts); qa_resource_pool_destroy(owner->pool);

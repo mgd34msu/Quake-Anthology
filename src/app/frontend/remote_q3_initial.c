@@ -197,6 +197,7 @@ bool frontend_remote_q3_initial_video_refresh(frontend_remote_q3_initial *owner,
         (v->movies && !qa_media_library_idle(v->movies)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Initial video media retains an actual renderer borrower");
     if (!frontend_material_movies_destroy(&owner->shader_movies,error)) return false;
+    if (!frontend_source_images_retire(owner->frontend,v->images,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); v->assets=NULL;
     qa_media_library_destroy(v->movies); v->movies=NULL;
@@ -462,6 +463,7 @@ bool frontend_remote_q3_initial_destroy(frontend_remote_q3_initial **out,qa_erro
         if (!frontend_renderer_materials_adopt_movies(owner->frontend,&expected,&owner->shader_movies,&owner->view.movies,error)) return false;
     }
     if (!frontend_material_movies_destroy(&owner->shader_movies,error)) return false;
+    if (!frontend_source_images_retire(owner->frontend,v->images,error)) return false;
     if (v->assets && !qa_q3_assets_services_retire(v->assets,error)) return false;
     qa_q3_presentation_assets_destroy(v->assets); qa_media_library_destroy(v->movies);
     qa_font_library_destroy(v->fonts); qa_audio_bank_destroy(v->sounds);

@@ -2,6 +2,7 @@
 #include "qa/q3_source_scene_bank.h"
 #include "qa/scene_world_save.h"
 #include "qa/q3_assets_custody.h"
+#include "qa/material_library_save.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -55,6 +56,22 @@ void qa_render_source_texture_release(qa_render_source_texture *texture)
     }
     qa_render_source_texture_init(texture);
 }
+bool qa_render_source_texture_bank_retire(qa_render_source_texture *texture,qa_scene_resources *bank)
+{
+    bool changed=false;
+    for (uint32_t i=0;i<texture->count;++i) {
+        if (texture->owners[i]!=bank) continue;
+        free(texture->pixels[i]); texture->pixels[i]=NULL;
+        qa_scene_image_release(texture->images[i]); texture->images[i]=NULL;
+        qa_scene_resources_destroy(texture->owners[i]); texture->owners[i]=NULL;
+        texture->levels[i]=(qa_scene_image_level){0};
+        texture->kinds[i]=QA_SCENE_RGBA8; texture->formats[i]=QA_Q3_TEXTURE_RGBA8;
+        changed=true;
+    }
+    while (texture->count && !texture->images[texture->count-1]) --texture->count;
+    if (changed) texture->view=(qa_scene_image){0};
+    return changed;
+}
 bool qa_render_source_texture_upload(qa_render_source_texture *texture,const qa_scene_image *image,
     qa_scene_resources *owner,qa_scene_filter filter,qa_error *error)
 {
@@ -86,13 +103,15 @@ bool qa_render_source_texture_clone(qa_render_source_texture *out,const qa_rende
     qa_render_source_texture_init(out);
     out->filter=texture->filter; out->wrap=texture->wrap; out->border=texture->border;
     out->magnification_linear=texture->magnification_linear;
+    out->count=texture->count;
     for (uint32_t i=0;i<texture->count;++i) {
-        if (!texture->images[i] || !texture->owners[i] || !qa_scene_resources_retain(texture->owners[i],error)) {
+        if (!texture->images[i]) continue;
+        if (!texture->owners[i] || !qa_scene_resources_retain(texture->owners[i],error)) {
             qa_render_source_texture_release(out); return false;
         }
         qa_scene_image_retain(texture->images[i]); out->images[i]=texture->images[i];
         out->owners[i]=texture->owners[i]; out->levels[i]=texture->levels[i];
-        out->kinds[i]=texture->kinds[i]; ++out->count;
+        out->kinds[i]=texture->kinds[i];
         out->formats[i]=texture->formats[i];
         if (texture->pixels[i]) {
             out->pixels[i]=malloc(texture->levels[i].bytes);
@@ -599,6 +618,29 @@ bool qa_render_controls_source_image_admit(qa_render_controls *controls,const qa
         qa_gl_source_image_admit(controls,image,binding,unit,error);
     return ok && (!image->source_after_upload_border ||
         qa_render_controls_source_texture_border(controls,image->source_upload_border,error));
+}
+bool qa_render_controls_source_bank_retire(qa_render_controls *controls,qa_scene_resources *bank,qa_error *error)
+{
+    if (!controls || !bank) return true;
+    if (!current(controls) || controls->ticket || controls->image_ticket)
+        return fail(error,"Source bank retirement requires the returned physical renderer");
+    qa_material_source_scratch *source=&controls->source;
+    if (source->entered && !qa_material_source_frame_end(source,source->frame,true,error)) return false;
+    bool okay=controls->backend==QA_RENDER_CONTROLS_CPU?
+        qa_cpu_source_bank_retire(controls,bank,error):qa_gl_source_bank_retire(controls,bank,error);
+    if (!okay) return false;
+    if (source->material && qa_material_library_resource_owner(source->material->library)==bank) {
+        const qa_material *material=source->material; source->material=NULL;
+        qa_material_release(material);
+    }
+    if (source->lightmap_owner==bank) {
+        qa_scene_image_release(source->lightmap); source->lightmap=NULL;
+        qa_scene_resources_destroy(source->lightmap_owner); source->lightmap_owner=NULL;
+    }
+    if (source->world && qa_scene_world_resource_owner(source->world)==bank) {
+        qa_scene_world_release(source->world); source->world=NULL;
+    }
+    return true;
 }
 bool qa_render_controls_source_dlight_read(const qa_render_controls *controls,const qa_scene_image **out,qa_error *error)
 {

@@ -489,6 +489,71 @@ bool qa_gl_source_image_admit(qa_render_controls *controls,const qa_scene_image 
     }
     return gl_check(renderer,"Source completed image admission",error);
 }
+bool qa_gl_source_bank_retire(qa_render_controls *controls,qa_scene_resources *bank,qa_error *error)
+{
+    qa_gl_renderer *renderer=controls->owner.gl;
+    if (!qa_display_make_current(renderer->options.display,error)) return false;
+    if (qa_scene_image_resource_owner(renderer->target)==bank && !gl_select_target(renderer,NULL,error)) return false;
+    GLint active=GL_TEXTURE0,bindings[2]={0};
+    renderer->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&active);
+    for (uint32_t unit=0;unit<2;++unit) {
+        gl_state_active_texture(renderer,GL_TEXTURE0+unit);
+        renderer->gl.GetIntegerv(GL_TEXTURE_BINDING_2D,bindings+unit);
+        if (qa_scene_image_resource_owner(renderer->bound[unit])==bank) {
+            qa_scene_image_release(renderer->bound[unit]); renderer->bound[unit]=NULL;
+            controls->attributes.actual_empty[unit]=true;
+        }
+    }
+    gl_state_active_texture(renderer,GL_TEXTURE0);
+    uint32_t zero_levels=controls->zero_texture.count;
+    bool okay=true;
+    if (qa_render_source_texture_bank_retire(&controls->zero_texture,bank)) {
+        gl_state_bind_texture(renderer,GL_TEXTURE_2D,0);
+        okay=source_storage_apply_bound(renderer,&controls->zero_texture,zero_levels,error);
+    }
+    render_resource_clear(&renderer->source_image_index);
+    render_resource_clear(&renderer->texture_index);
+    gl_texture_entry **cursor=&renderer->textures;
+    while (*cursor) {
+        gl_texture_entry *entry=*cursor;
+        if (entry->source_owner==bank || qa_scene_image_resource_owner(entry->image)==bank) {
+            *cursor=entry->next;
+            if (entry->source_admitted) renderer->source_images[entry->source_ordinal]=NULL;
+            for (uint32_t unit=0;unit<2;++unit) if ((GLuint)bindings[unit]==entry->name) bindings[unit]=0;
+            gl_state_delete_textures(renderer,1,&entry->name);
+            qa_render_source_texture_release(&entry->source_texture);
+            qa_scene_image_release(entry->image); qa_scene_resources_destroy(entry->source_owner); free(entry);
+            continue;
+        }
+        uint32_t levels=entry->source_texture.count;
+        if (qa_render_source_texture_bank_retire(&entry->source_texture,bank)) {
+            gl_state_bind_texture(renderer,GL_TEXTURE_2D,entry->name);
+            bool uploaded=source_storage_apply_bound(renderer,&entry->source_texture,levels,okay?error:NULL);
+            okay=uploaded && okay;
+        }
+        if (!gl_texture_resident(renderer,entry->image))
+            render_resource_put(&renderer->texture_index,entry->image->identity,entry->image->revision,NULL,entry);
+        cursor=&entry->next;
+    }
+    uint32_t count=0;
+    for (uint32_t i=0;i<renderer->source_image_count;++i) {
+        gl_texture_entry *entry=renderer->source_images[i];
+        if (!entry) continue;
+        bool used=qa_stamp_set_test(&controls->image_used,i);
+        entry->source_ordinal=count;
+        qa_stamp_set_restore_mark(&controls->image_used,count,used?controls->image_used.epoch:0);
+        renderer->source_images[count++]=entry;
+        source_index_admit(renderer,entry);
+    }
+    for (uint32_t i=count;i<renderer->source_image_count;++i) renderer->source_images[i]=NULL;
+    renderer->source_image_count=count;
+    for (uint32_t unit=0;unit<2;++unit) {
+        gl_state_active_texture(renderer,GL_TEXTURE0+unit);
+        gl_state_bind_texture(renderer,GL_TEXTURE_2D,(GLuint)bindings[unit]);
+    }
+    gl_state_active_texture(renderer,(GLenum)active);
+    return gl_check(renderer,"Retiring Source image bank",okay?error:NULL) && okay;
+}
 bool qa_gl_source_texture_border(qa_render_controls *controls,qa_vec4 color,qa_error *error)
 {
     qa_gl_renderer *renderer=controls->owner.gl;

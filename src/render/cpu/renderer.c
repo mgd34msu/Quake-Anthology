@@ -1454,6 +1454,52 @@ bool qa_cpu_source_image_admit(qa_render_controls *controls,const qa_scene_image
   if (unit==1) controls->attributes.texture_unit=0;
   return true;
 }
+bool qa_cpu_source_bank_retire(qa_render_controls *controls,qa_scene_resources *bank,qa_error *error)
+{
+  qa_cpu_renderer *renderer=controls->owner.cpu;
+  if (!cpu_brush_flush(renderer,error)) return false;
+  cpu_raster_flush(renderer);
+  for (uint32_t unit=0;unit<2;++unit) {
+    if (qa_scene_image_resource_owner(renderer->bound[unit])!=bank) continue;
+    qa_scene_image_release(renderer->bound[unit]); renderer->bound[unit]=NULL;
+    controls->attributes.actual_empty[unit]=true;
+  }
+  qa_render_source_texture_bank_retire(&controls->zero_texture,bank);
+  uint32_t next=0,previous=renderer->source_image_count;
+  render_resource_clear(&renderer->source_image_index);
+  for (uint32_t i=0;i<previous;++i) {
+    cpu_source_image *row=renderer->source_images+i;
+    bool used=qa_stamp_set_test(&controls->image_used,i);
+    if (row->owner==bank) {
+      qa_render_source_texture_release(&row->texture);
+      qa_scene_image_release(row->image); qa_scene_resources_destroy(row->owner);
+      continue;
+    }
+    qa_render_source_texture_bank_retire(&row->texture,bank);
+    if (next!=i) renderer->source_images[next]=*row;
+    qa_stamp_set_restore_mark(&controls->image_used,next,used?controls->image_used.epoch:0);
+    cpu_source_index_admit(renderer,renderer->source_images+next++);
+  }
+  for (uint32_t i=next;i<previous;++i) renderer->source_images[i]=(cpu_source_image){0};
+  renderer->source_image_count=next;
+  cpu_stream_image **stream=&renderer->stream_images;
+  while (*stream) {
+    cpu_stream_image *image=*stream;
+    if (qa_scene_image_resource_owner(image->image)!=bank) { stream=&image->next; continue; }
+    *stream=image->next;
+    render_resource_remove(&renderer->stream_image_index,image->image->identity,image->image->revision,NULL);
+    qa_scene_image_release(image->image); free((void *)image->level.pixels); free(image);
+  }
+  cpu_target **target=&renderer->targets;
+  while (*target) {
+    cpu_target *image=*target;
+    if (qa_scene_image_resource_owner(image->image)!=bank) { target=&image->next; continue; }
+    *target=image->next;
+    if (renderer->current==&image->framebuffer) renderer->current=&renderer->display;
+    qa_scene_image_release(image->image); buffer_destroy(&image->framebuffer); free(image);
+  }
+  return true;
+}
 typedef struct cpu_source_prepared_image {
   cpu_source_image row;
   const qa_scene_resource_policy *policy;

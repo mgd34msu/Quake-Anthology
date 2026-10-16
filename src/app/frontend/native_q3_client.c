@@ -933,6 +933,7 @@ static bool media_close(frontend_native_q3 *row,qa_error *e)
         if(!frontend_renderer_materials_adopt_movies(row->frontend,&expected,&row->shader_movies,&row->view.movies,e))return false;
     }
     if(!frontend_material_movies_destroy(&row->shader_movies,e))return false;
+    if (!frontend_source_images_retire(row->frontend,row->view.images,e)) return false;
     if(row->view.assets && !qa_q3_assets_services_retire(row->view.assets,e))return false;
     qa_q3_presentation_assets_destroy(row->view.assets); row->view.assets=NULL;
     qa_media_library_destroy(row->view.movies);
