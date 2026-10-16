@@ -1269,10 +1269,11 @@ static bool model_after(void *context,qa_actor_id actor,qa_string_id content,qa_
         input_value,frame_value,error);
 }
 static bool selected_weapon(void *context,const qa_unified_model_state *model_value,
-    const qa_scene_world_input *world_value,qa_scene_frame *frame_value,bool *submitted,qa_error *error)
+    const struct frontend_held_carrier *carrier,const qa_scene_world_input *world_value,
+    qa_scene_frame *frame_value,bool *submitted,qa_error *error)
 {
     return frontend_unified_q3_selected_weapon(((unified_presentation *)context)->q3,
-        model_value,world_value,frame_value,submitted,error);
+        model_value,carrier,world_value,frame_value,submitted,error);
 }
 static bool player_blend(void *context,qa_actor_id actor,bool present,const qa_vec4 *value,
     bool damage_present,const qa_vec4 *damage,qa_scene_rect viewport,qa_scene_frame *frame_value,qa_error *error)

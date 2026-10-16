@@ -490,6 +490,19 @@ static bool selected_parts(const q3n_selected_weapon_media *media,const q3n_sele
     if (!have_barrel) return true;
     barrel->custom_shader=shader; return selected_emit(media,draw,barrel,submitted,e);
 }
+static bool selected_attachments(const q3n_selected_weapon_media *media,
+    const q3n_selected_weapon_draw *draw,const qa_q3_ref_entity *gun,
+    const q3n_selected_weapon_attachment *attachments,size_t count,bool *submitted,qa_error *e)
+{
+    for (size_t i=0;i<count;++i) {
+        qa_q3_ref_entity part=selected_part(attachments[i].model,gun->flags,gun->lighting_origin);
+        bool found;
+        if (!q3n_attach(media->assets,&part,gun,attachments[i].tag,Q3N_ATTACH_CHILD_POSE,
+            Q3N_ATTACH_MISSING_SKIP,&found,e) ||
+            (found && !selected_emit(media,draw,&part,submitted,e))) return false;
+    }
+    return true;
+}
 qa_model_transform q3n_weapon_hand_grip(void)
 {
     qa_model_transform grip;
@@ -504,7 +517,8 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
     const q3n_selected_weapon_held *held,bool *submitted,qa_error *e)
 {
-    if (!held || !held->parent_assets || !held->torso || !qa_vec_finite(held->lighting_origin))
+    if (!held || (!held->carrier_grip && (!held->parent_assets || !held->torso)) ||
+        !qa_vec_finite(held->lighting_origin))
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected held Q3 weapon requires the actual authored torso");
     if (!selected_begin(owner,media,state,draw,submitted,e)) return false;
     if (!media->gun) return selected_end(owner,true);
@@ -535,6 +549,8 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
             if (okay && (held->powerups&4)) okay=selected_parts(media,draw,&gun,&barrel,have_barrel,media->battle_weapon,submitted,e);
             if (okay && (held->powerups&2)) okay=selected_parts(media,draw,&gun,&barrel,have_barrel,media->quad_weapon,submitted,e);
         }
+        if (okay) okay=selected_attachments(media,draw,&gun,held->attachments,
+            held->attachment_count,submitted,e);
         if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
     }
     return selected_end(owner,okay);
@@ -624,13 +640,8 @@ bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_we
         Q3N_ATTACH_MISSING_REQUIRED,&found,e)) return selected_end(owner,false);
     (void)barrel_spin(draw->time,&state->view_barrel.time,&state->view_barrel.angle,&state->view_barrel.spinning,draw->firing);
     bool okay=selected_emit(media,draw,&gun,submitted,e);
-    for (size_t i=0;okay && i<view->attachment_count;++i) {
-        const q3n_selected_weapon_attachment *attachment=view->attachments+i;
-        qa_q3_ref_entity part=selected_part(attachment->model,1|4|8,view->camera.origin);
-        okay=q3n_attach(media->assets,&part,&gun,attachment->tag,Q3N_ATTACH_CHILD_POSE,
-            Q3N_ATTACH_MISSING_SKIP,&found,e);
-        if (okay && found) okay=selected_emit(media,draw,&part,submitted,e);
-    }
+    if (okay) okay=selected_attachments(media,draw,&gun,view->attachments,
+        view->attachment_count,submitted,e);
     return selected_end(owner,okay);
 }
 static void colored(q3n_local_entity *le,qa_vec3 color,float byte_scale,uint8_t alpha,float fade,float fade_alpha)

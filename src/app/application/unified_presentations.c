@@ -244,7 +244,7 @@ static bool equipment(qa_application *app, const application_unified_source *sou
             .firing = firing, .horizontal_speed = local ? (float)hypot(body.velocity.x, body.velocity.y) : 0,
             .bob_cycle = local && e.has_q3_source ? e.q3_source.bobCycle : 0, .weapon = (int32_t)e.q3_weapon};
         row->weapon_item = e.item;
-        if (local && gear_selected) {
+        if (gear_selected) {
             const application_q3_grapple_definition *d = gear.source.definition;
             if (d->presentation.anchor_path) {
                 row->anchor = application_unified_frame_alloc(frame->lease, 1, sizeof(*row->anchor), error);

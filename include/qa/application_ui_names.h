@@ -43,7 +43,7 @@ typedef struct qa_application_ui_names {
     qa_string_id music, fog, debug_bounds, debug_graph, debug_graph_packet, colored_explosion, developer_message, source_pickup;
     qa_string_id q1_rerelease_debug;
     qa_string_id q1_temp_sounds[FRONTEND_FX_Q1_SOUND_COUNT], q1_beam_models[QA_Q1_BEAM_MODELS], talk_sound;
-    qa_string_id flare_image, material_default, material_ladder;
+    qa_string_id flare_image, material_default, material_ladder, tag_weapon;
     qa_string_id ranking_status, ranking_menu;
     qa_string_id client_counts[257];
     qa_string_id landing_sounds[3], q1_player_model, q2_health_icon, q2_help_icon, q2_talk_sound;

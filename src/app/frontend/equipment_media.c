@@ -77,6 +77,22 @@ static bool carrier_grip_present(void *context, qa_scene_model *model, qa_error 
     return true;
 }
 
+bool frontend_held_carrier_scene_prepare(qa_scene_model *model, const qa_scene_model_input *pose,
+    qa_string_id preferred_tag, frontend_held_carrier *out, bool *present, qa_error *error)
+{
+    *out = (frontend_held_carrier){0};
+    *present = false;
+    if (!model) return true;
+    qa_model_tag tag;
+    bool tagged = preferred_tag && qa_scene_model_lerp_tag(model, preferred_tag,
+        pose->old_frame, pose->frame, 1 - pose->back_lerp, &tag);
+    if (!tagged && !qa_scene_model_visit(model, carrier_grip_present, present, error)) return false;
+    *present |= tagged;
+    if (*present) *out = (frontend_held_carrier){.model = model, .pose = *pose,
+        .tag = tagged ? preferred_tag : QA_STRING_NONE};
+    return true;
+}
+
 bool frontend_held_carrier_prepare(const qa_q3_presentation_assets *assets,
     const qa_q3_ref_entity *parent, double seconds, frontend_held_carrier *out,
     bool *animated, qa_error *error)
@@ -93,16 +109,14 @@ bool frontend_held_carrier_prepare(const qa_q3_presentation_assets *assets,
     qa_q3_asset_model_holder holder;
     if (!qa_q3_assets_model_holder(assets, (size_t)parent->model - 1, &holder, error)) return false;
     if (!holder.present || !holder.scenes[0]) return true;
-    if (!qa_scene_model_visit(holder.scenes[0], carrier_grip_present, animated, error)) return false;
-    if (!*animated) return true;
     qa_scene_model_input pose = {.family = holder.provider.family,
         .frame = (uint32_t)parent->frame, .old_frame = (uint32_t)parent->old_frame,
         .skin = (uint32_t)parent->skin,
         .back_lerp = parent->back_lerp, .previous_origin = parent->old_origin,
         .flags = (uint32_t)parent->flags, .seconds = seconds};
     pose.transform = qa_q3_ref_model_transform(parent);
-    *out = (frontend_held_carrier){.model = holder.scenes[0], .pose = pose};
-    return true;
+    return frontend_held_carrier_scene_prepare(holder.scenes[0], &pose,
+        QA_STRING_NONE, out, animated, error);
 }
 
 bool frontend_held_carrier_sample(const frontend_held_carrier *carrier,
@@ -112,6 +126,17 @@ bool frontend_held_carrier_sample(const frontend_held_carrier *carrier,
     qa_scene_model_input pose = carrier->pose;
     pose.view = *view;
     qa_model_transform socket;
+    if (carrier->tag) {
+        qa_model_tag tag;
+        *visible = qa_scene_model_lerp_tag(carrier->model, carrier->tag,
+            pose.old_frame, pose.frame, 1 - pose.back_lerp, &tag);
+        if (!*visible) return true;
+        qa_model_transform_identity(&socket);
+        memcpy(socket.origin, tag.origin, sizeof(socket.origin));
+        memcpy(socket.axes, tag.axes, sizeof(socket.axes));
+        qa_model_transform_compose(&pose.transform, &socket, out);
+        return true;
+    }
     if (!qa_scene_model_grip_sample(carrier->model, &pose, frame, &socket, visible, error)) return false;
     if (!*visible) return true;
     qa_model_transform hand = q3n_weapon_hand_grip(), alignment;

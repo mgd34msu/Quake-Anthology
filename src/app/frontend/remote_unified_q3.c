@@ -8,6 +8,7 @@
 #include "remote_unified_save.h"
 #include "remote_unified_presentation.h"
 #include "remote_unified_render.h"
+#include "equipment_media.h"
 #include "q3_render_policy.h"
 #include "qa/q3_source_scene_bank.h"
 #include "../../presentation/q3_native/events.h"
@@ -83,6 +84,12 @@ struct unified_q3_ballistic {
     int32_t bolt_weapon;
     bool projectile, flash, bolt, last_fire;
     q3n_selected_weapon_state view_state;
+    const qa_unified_model_state *held_model;
+    qa_scene_frame *held_scene;
+    uint64_t held_sequence;
+    qa_q3_ref_entity *held_refs;
+    size_t held_count, held_capacity;
+    bool held_ready, held_submitted;
 };
 struct frontend_unified_q3 {
     qa_frontend *frontend;
@@ -493,6 +500,10 @@ typedef struct selected_weapon_call {
     qa_scene_frame *frame;
     int32_t time;
     uint32_t order;
+    const frontend_held_carrier *carrier;
+    qa_model_transform carrier_pose;
+    unified_q3_ballistic *held;
+    bool carrier_sampled, carrier_visible;
 } selected_weapon_call;
 static bool selected_weapon_current(void *context)
 { return frontend_unified_q3_current(((selected_weapon_call *)context)->owner); }
@@ -500,19 +511,106 @@ static bool selected_weapon_submit(void *context,qa_q3_presentation_assets *asse
     const qa_q3_ref_entity *ref,qa_error *e)
 {
     selected_weapon_call *call=context;
+    qa_q3_ref_entity posed;
+    if (call->carrier) {
+        if (!call->carrier_sampled) {
+            if (!frontend_held_carrier_sample(call->carrier,&call->options.world.view,call->frame,
+                &call->carrier_pose,&call->carrier_visible,e)) return false;
+            call->carrier_sampled=true;
+        }
+        if (!call->carrier_visible) return true;
+        frontend_held_carrier_ref(&call->carrier_pose,ref,&posed);
+        const qa_scene_model_input *parent=&call->carrier->pose;
+        posed.lighting_origin=qa_v3(parent->transform.origin[0],parent->transform.origin[1],parent->transform.origin[2]);
+        const float color[]={parent->color.x,parent->color.y,parent->color.z,parent->color.w};
+        for (size_t i=0;i<4;++i) posed.color[i]=(uint8_t)((float)posed.color[i]*fminf(1,fmaxf(0,color[i])));
+        ref=&posed;
+    }
     return qa_q3_presentation_completed_entity(call->bank->backend,assets,
         frontend_unified_media_world(call->owner->media),ref,call->time,&call->options,
         call->order++,call->frame,e);
 }
+static bool selected_weapon_collect(void *context,qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *ref,qa_error *e)
+{
+    selected_weapon_call *call=context;(void)assets;
+    if (call->held->held_count==call->held->held_capacity)
+        return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected held Q3 model parts");
+    call->held->held_refs[call->held->held_count++]=*ref;return true;
+}
+static bool selected_authored_media(frontend_unified_q3 *o,unified_q3_bank *b,
+    const qa_unified_model_state *model,bool view,qa_scene_frame *scene,
+    q3n_selected_weapon_media *media,q3n_selected_weapon_attachment **attachments,qa_error *e)
+{
+    *media=(q3n_selected_weapon_media){.assets=b->assets};*attachments=NULL;
+    bool okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->path),&media->gun,e);
+    if (okay && view) okay=qa_q3_register_model(b->assets,
+        qa_strings_cstr(o->replica->strings,model->anchor->path),&media->hands,e);
+    if (okay && model->attachment_count) {
+        *attachments=qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(**attachments),
+            _Alignof(q3n_selected_weapon_attachment),e);
+        okay=*attachments!=NULL;
+    }
+    for (size_t i=0;okay && i<model->attachment_count;++i) {
+        (*attachments)[i].tag=model->attachments[i].tag;
+        okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->attachments[i].path),
+            &(*attachments)[i].model,e);
+    }
+    return okay;
+}
+static bool selected_weapon_held(frontend_unified_q3 *o,unified_q3_bank *b,
+    const qa_unified_model_state *model,unified_q3_ballistic *state,
+    selected_weapon_call *call,bool *submitted,qa_error *e)
+{
+    const qa_unified_q3_weapon_view *wire=model->q3_weapon;
+    qa_scene_frame *scene=call->frame;
+    bool cached=state->held_ready && state->held_scene==scene &&
+        state->held_sequence==scene->sequence && state->held_model==model;
+    if (!cached) {
+        state->held_ready=false;state->held_count=0;state->held_submitted=false;
+        if (model->attachment_count>SIZE_MAX/sizeof(*state->held_refs)-7)
+            return frontend_unified_fail(e,QA_ERROR_MEMORY,"Selected held Q3 parts exceed scene storage");
+        state->held_capacity=7+model->attachment_count;
+        state->held_refs=qa_arena_alloc(&scene->storage,state->held_capacity*sizeof(*state->held_refs),
+            _Alignof(qa_q3_ref_entity),e);
+        if (!state->held_refs) return false;
+        q3n_selected_weapon_media media;
+        q3n_selected_weapon_attachment *attachments=NULL;
+        bool authored=model->anchor || model->attachment_count;
+        bool okay;
+        if (authored) okay=selected_authored_media(o,b,model,false,scene,&media,&attachments,e);
+        else {
+            q3n_selected_media_request load={.weapon=wire->weapon,.context=call,.current=selected_weapon_current};
+            okay=q3n_selected_media_prepare(b->selected_media,&load,&media,e);
+        }
+        qa_q3_player player={.product=b->source.product,.weapon=wire->weapon,.torsoAnim=wire->torso_animation};
+        q3n_selected_weapon_draw request={.player=&player,.time=wire->time_ms,
+            .presentation_weapon=wire->weapon,.has_last_fire=wire->has_last_fire_ms,
+            .last_fire=wire->last_fire_ms,.firing=wire->firing,.reduced_flashes=o->preferences.reduced_flashes,
+            .context=call,.current=selected_weapon_current,.submit=selected_weapon_collect};
+        q3n_selected_weapon_held held={.carrier_grip=true,
+            .attachments=attachments,.attachment_count=authored?model->attachment_count:0};
+        call->held=state;
+        if (okay) okay=q3n_weapons_selected_held(b->weapons,&media,&state->view_state,
+            &request,&held,&state->held_submitted,e);
+        if (!okay) return false;
+        state->held_scene=scene;state->held_sequence=scene->sequence;state->held_model=model;state->held_ready=true;
+    }
+    *submitted=state->held_submitted;
+    for (size_t i=0;i<state->held_count;++i)
+        if (!selected_weapon_submit(call,b->assets,state->held_refs+i,e)) return false;
+    return true;
+}
 bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified_model_state *model,
-    const qa_scene_world_input *world,qa_scene_frame *scene,bool *submitted,qa_error *e)
+    const frontend_held_carrier *carrier,const qa_scene_world_input *world,
+    qa_scene_frame *scene,bool *submitted,qa_error *e)
 {
     *submitted=false;
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     const qa_cvar_view *draw_gun=qa_cvars_read(qa_application_cvars(o->frontend->application),
         o->frontend->engine_cvars.hud.draw_gun);
-    if ((draw_gun && !draw_gun->integer) || world->view.clip_enabled ||
-        o->frontend->seats[domain->physical_seat].q1_chase) return true;
+    if (!carrier && ((draw_gun && !draw_gun->integer) || world->view.clip_enabled ||
+        o->frontend->seats[domain->physical_seat].q1_chase)) return true;
     qa_actor_id id;
     if (!actor(o,model->actor,&id,e) || !enter(o,id,e)) return false;
     unified_q3_bank *b=NULL;
@@ -525,7 +623,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
     unified_q3_ballistic *state=okay?ballistic_acquire(o,b,id,e):NULL;
     if(okay)okay=state!=NULL;
     const qa_unified_q3_weapon_view *wire=model->q3_weapon;
-    selected_weapon_call call={.owner=o,.bank=b,.frame=scene,.time=wire->time_ms};
+    selected_weapon_call call={.owner=o,.bank=b,.frame=scene,.time=wire->time_ms,.carrier=carrier};
     qa_scene_world_options recipient;
     if (okay) okay=qa_scene_world_options_read(frontend_unified_media_world(o->media),&recipient) &&
         backend_read(b,world->view.viewport,e) && qa_q3_presentation_frame(b->backend,scene,world->view.viewport,e);
@@ -534,6 +632,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             .ambient_scale=.6f,.directed_scale=1,.near_clip=4,.lod_scale=5,
             .split_screen=o->frontend->options.seats>1};
         qa_scene_state_default(&call.options.state);
+        if (carrier) return leave(o,selected_weapon_held(o,b,model,state,&call,submitted,e),e);
         qa_q3_player player={.product=product,.weapon=wire->weapon,.torsoAnim=wire->torso_animation};
         q3n_selected_weapon_draw request={.player=&player,.time=wire->time_ms,
             .presentation_weapon=wire->weapon,.has_last_fire=wire->has_last_fire_ms,
@@ -560,16 +659,8 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             if (okay) {camera.animations=animation.config;
                 okay=q3n_weapons_selected_view(b->weapons,&media,&state->view_state,&request,&camera,submitted,e);}
         } else {
-            media=(q3n_selected_weapon_media){.assets=b->assets};
-            okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->path),&media.gun,e) &&
-                qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->anchor->path),&media.hands,e);
-            q3n_selected_weapon_attachment *attachments=okay && model->attachment_count?
-                qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(*attachments),_Alignof(q3n_selected_weapon_attachment),e):NULL;
-            if(okay && model->attachment_count && !attachments)okay=false;
-            for (size_t i=0;okay && i<model->attachment_count;++i) {
-                attachments[i].tag=model->attachments[i].tag;
-                okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->attachments[i].path),&attachments[i].model,e);
-            }
+            q3n_selected_weapon_attachment *attachments;
+            okay=selected_authored_media(o,b,model,true,scene,&media,&attachments,e);
             q3n_selected_weapon_authored_view authored={.camera=camera,
                 .anchor_tag=model->anchor->tag,
                 .anchor_offset=model->anchor->offset,

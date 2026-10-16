@@ -86,6 +86,8 @@ typedef struct q3n_selected_weapon_held {
     const qa_q3_ref_entity *torso;
     qa_vec3 lighting_origin;
     int32_t powerups;
+    const q3n_selected_weapon_attachment *attachments;
+    size_t attachment_count;
     bool personal_model, carrier_grip;
 } q3n_selected_weapon_held;
 qa_model_transform q3n_weapon_hand_grip(void);

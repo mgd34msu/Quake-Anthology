@@ -5,6 +5,7 @@
 #include "remote_unified_prediction.h"
 #include "qa/unified_frame_visuals.h"
 typedef struct frontend_unified_render frontend_unified_render;
+struct frontend_held_carrier;
 bool frontend_unified_render_feedback(frontend_unified_render *, const qa_player_feedback *, double, qa_error *);
 
 bool frontend_unified_render_pending_current(const frontend_unified_render *);
@@ -38,7 +39,7 @@ typedef struct frontend_unified_render_children {
     void (*q1_status)(void *,qa_hud_q1_status *);
     bool (*source_model)(void *,qa_actor_id,uint32_t provider,qa_string_id instance,bool *owned,qa_error *);
     bool (*equipment_model)(void *,qa_actor_id,uint32_t provider,qa_string_id instance,bool slot,bool *owned,qa_error *);
-    bool (*selected_weapon)(void *,const qa_unified_model_state *,const qa_scene_world_input *,
+    bool (*selected_weapon)(void *,const qa_unified_model_state *,const struct frontend_held_carrier *,const qa_scene_world_input *,
         qa_scene_frame *,bool *submitted,qa_error *);
     bool (*view_origin)(void *,qa_actor_id,qa_vec3,float player_fov,qa_error *);
     bool (*entity_effects)(void *,const frontend_unified_render_entity_effects *,double,qa_error *);

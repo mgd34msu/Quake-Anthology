@@ -12,7 +12,10 @@ typedef struct frontend_equipment_media frontend_equipment_media;
 typedef struct frontend_held_carrier {
     qa_scene_model *model;
     qa_scene_model_input pose;
+    qa_string_id tag;
 } frontend_held_carrier;
+bool frontend_held_carrier_scene_prepare(qa_scene_model *, const qa_scene_model_input *,
+    qa_string_id preferred_tag, frontend_held_carrier *, bool *present, qa_error *);
 bool frontend_held_carrier_prepare(const qa_q3_presentation_assets *,
     const qa_q3_ref_entity *, double seconds, frontend_held_carrier *, bool *animated, qa_error *);
 bool frontend_held_carrier_sample(const frontend_held_carrier *, const qa_scene_view *,

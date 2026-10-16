@@ -10,6 +10,7 @@ typedef struct frontend_unified_q3 frontend_unified_q3;
 struct frontend_unified_events;
 struct frontend_unified_components;
 struct frontend_unified_render_equipment;
+struct frontend_held_carrier;
 bool frontend_unified_q3_create(qa_frontend *, frontend_remote_unified *, frontend_unified_media *, frontend_unified_q3 **, qa_error *);
 bool frontend_unified_q3_audio(frontend_unified_q3 *, uint64_t, void *, bool (*)(void *, qa_actor_id, uint64_t *, qa_error *), qa_error *);
 bool frontend_unified_q3_events(frontend_unified_q3 *, struct frontend_unified_events *, qa_error *);
@@ -24,7 +25,7 @@ void frontend_unified_q3_frame_commit(frontend_unified_q3 *);
 void frontend_unified_q3_frame_abort(frontend_unified_q3 *);
 bool frontend_unified_q3_world(frontend_unified_q3 *, const qa_scene_view *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *,const qa_unified_model_state *,
-    const qa_scene_world_input *,qa_scene_frame *,bool *submitted,qa_error *);
+    const struct frontend_held_carrier *,const qa_scene_world_input *,qa_scene_frame *,bool *submitted,qa_error *);
 bool frontend_unified_q3_reflected_world(frontend_unified_q3 *,const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_q3_lights(frontend_unified_q3 *, const qa_scene_view *, const qa_scene_world_input *, const qa_scene_light **, size_t *, qa_error *);
 /* The pre-WORLD sampler owns this actual shared Source bank. Component lights

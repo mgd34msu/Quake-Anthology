@@ -61,9 +61,11 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
         !qa_actor_id_equal(presenter->actor, source->actor))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear draw requires its actual presenter and recipient");
     const application_q3_grapple_definition *definition = presenter->owner->view.definition;
-    size_t attachments = view ? q3n_selected_authored_attachment_count(presenter->owner->view.media) : 0;
-    size_t capacity = view ? attachments + 1 : 7;
-    if ((view && attachments == SIZE_MAX) || capacity > SIZE_MAX / sizeof(qa_q3_ref_entity) ||
+    size_t attachments = q3n_selected_authored_attachment_count(presenter->owner->view.media);
+    if (attachments > SIZE_MAX - 7)
+        return frontend_fail(error, QA_ERROR_MEMORY, "Gear authored output exceeds address space");
+    size_t capacity = attachments + (view ? 1 : 7);
+    if (capacity > SIZE_MAX / sizeof(qa_q3_ref_entity) ||
         attachments > SIZE_MAX / sizeof(q3n_selected_weapon_attachment))
         return frontend_fail(error, QA_ERROR_MEMORY, "Gear authored output exceeds address space");
     qa_arena *storage=&presenter->owner->frontend->frame.storage;
@@ -105,6 +107,8 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
             &request, &actual, submitted, error);
     } else if (okay) {
         q3n_selected_weapon_held actual = *held;
+        actual.attachments = parts;
+        actual.attachment_count = attachments;
         if (media.gun) okay = frontend_held_carrier_prepare(held->parent_assets, held->torso,
             (double)presenter->owner->frontend->time_ns * 1e-9,
             &output->carrier, &actual.carrier_grip, error);
@@ -150,12 +154,9 @@ bool frontend_equipment_gear_output_source_style(frontend_equipment_gear_output 
     if (!q3n_selected_authored_read(output->presenter->owner->view.media, false, &media, error)) return false;
     if (!output->count || output->refs[0].model != media.gun || output->refs[0].custom_shader)
         return frontend_fail(error, QA_ERROR_FORMAT, "Gear source style has no genuine base gun");
-    size_t base = 1;
-    if (output->count > base && media.barrel && output->refs[base].model == media.barrel &&
-        !output->refs[base].custom_shader) ++base;
-    if (output->count > base && (output->count != base + 1 ||
-        output->refs[base].model != media.flash || output->refs[base].custom_shader))
-        return frontend_fail(error, QA_ERROR_FORMAT, "Gear source style contains unrelated native passes");
+    size_t base = output->count;
+    if (base > 1 && media.flash && output->refs[base - 1].model == media.flash &&
+        !output->refs[base - 1].custom_shader) --base;
     for (size_t i = 0; i < output->count; ++i) {
         output->refs[i].flags = parent->flags; output->refs[i].lighting_origin = parent->lighting_origin;
         output->refs[i].shadow_plane = parent->shadow_plane;
@@ -196,9 +197,11 @@ bool frontend_equipment_gear_output_submit(frontend_equipment_gear_output *outpu
     if (!output || !source_current(output) || !presentation || !options || !frame || !qa_vec_finite(offset) ||
         order > 1022 || frontend_equipment_gear_output_count(output) > 1022 - order)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear submission lost its actual registry, lease or orders");
-    qa_q3_ref_entity posed[7];
     const qa_q3_ref_entity *refs = output->refs;
     if (output->carrier.model) {
+        qa_q3_ref_entity *posed = qa_arena_alloc(&frame->storage,
+            output->count * sizeof(*posed), _Alignof(qa_q3_ref_entity), error);
+        if (!posed) return false;
         qa_model_transform transform;
         bool visible;
         if (!frontend_held_carrier_sample(&output->carrier, &options->world.view,

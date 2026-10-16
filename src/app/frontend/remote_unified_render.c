@@ -25,6 +25,8 @@
 
 typedef struct unified_render_model {
     const qa_unified_model_state *source;
+    const qa_unified_model_state *selected_weapon;
+    size_t actor_next;
     const qa_recipe_provider *body_source;
     const qa_unified_producer_sample *body_sample;
     qa_ruleset_id body_rules;
@@ -55,6 +57,7 @@ struct frontend_unified_render {
     qa_unified_frame_lease *storage;
     unified_render_model *models;
     qa_actor_index model_index;
+    qa_string_id weapon_tag;
     size_t model_count;
     const qa_font **world_text_fonts;
     qa_hud *hud;
@@ -191,7 +194,7 @@ static bool model_beam_read(unified_render_model *m, qa_error *e)
 static bool model_read(frontend_unified_render *r,const qa_unified_model_state *source,
     unified_render_model *m,qa_error *e)
 {
-    m->source=source;
+    m->source=source; m->actor_next=SIZE_MAX;
     if (source->body_provider) {
         const qa_executable_recipe *recipe = frontend_unified_media_recipe(r->media);
         for (size_t i = 0; i < qa_executable_recipe_provider_count(recipe); ++i) {
@@ -358,6 +361,7 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
     const qa_unified_frame *received=qa_unified_document_frame(frame);
     bool okay=received && received->world && received->player && received->visuals && qa_unified_document_retain(frame,&r->frame,e);
     if (!okay) { qa_unified_frame_lease_release(storage); return frontend_unified_fail(e,QA_ERROR_FORMAT,"Unified renderer requires its actual typed world/player/visual frame"); }
+    r->weapon_tag=qa_application_ui_names_read(f->application)->tag_weapon;
     r->seconds=received->world->presentation_seconds;
     r->milliseconds=qa_unified_world_frame_milliseconds(received->world);
     r->area_bits=(qa_bytes){received->world->area_bits.data,received->world->area_bits.size};
@@ -398,9 +402,20 @@ bool frontend_unified_render_create(qa_frontend *f,frontend_remote_unified *repl
         r->model_count=i+1;
         okay=model_read(r,received->visuals->models+i,r->models+i,e);
         size_t first;
-        if (okay && r->models[i].actor.registry &&
-            !qa_actor_index_find_retained(&r->model_index,r->models[i].actor,&first))
-            okay=qa_actor_index_remember(&r->model_index,r->models[i].actor,i,e);
+        if (okay && r->models[i].actor.registry) {
+            if (qa_actor_index_find_retained(&r->model_index,r->models[i].actor,&first)) {
+                r->models[i].actor_next=r->models[first].actor_next;
+                r->models[first].actor_next=i;
+            } else okay=qa_actor_index_remember(&r->model_index,r->models[i].actor,i,e);
+        }
+    }
+    for (size_t i=0;okay && i<count;++i) {
+        const unified_render_model *selected=r->models+i;
+        size_t first;
+        if (!selected->input.view_model || !selected->source->q3_weapon || selected->source->equipment_slot ||
+            !qa_actor_index_find_retained(&r->model_index,selected->actor,&first)) continue;
+        for (size_t k=first;k!=SIZE_MAX;k=r->models[k].actor_next)
+            if (r->models[k].native_held_weapon) r->models[k].selected_weapon=selected->source;
     }
     size_t text_count=received->visuals->world_text_count;
     if (okay && text_count) {
@@ -443,17 +458,12 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
     for (size_t i=0;okay && i<r->model_count;++i) {
         unified_render_model *m=r->models+i;
         float scale=m->input.family==QA_GAME_Q2 && m->scale==0?1:m->scale;
-        const qa_unified_frame *received=qa_unified_document_frame(r->frame);
-        bool native_hidden=false;
-        if (m->native_held_weapon && received->components)
-            for (size_t k=0;k<received->components->native_count;++k)
-                if (received->components->native[k].view && !received->components->native[k].view->weapon_visible) native_hidden=true;
-        if (!m->visible || native_hidden || m->input.color.w<=0 || scale==0 ||
+        if (!m->visible || m->input.color.w<=0 || scale==0 ||
             (reflected && m->input.view_model) ||
             (qa_actor_id_equal(m->actor,player) && !m->input.view_model && !reflected)) continue;
         if (m->input.view_model && m->source->q3_weapon && children && children->selected_weapon) {
             bool submitted=false;
-            if (!children->selected_weapon(children->context,m->source,world,frame,&submitted,e)) return false;
+            if (!children->selected_weapon(children->context,m->source,NULL,world,frame,&submitted,e)) return false;
             m->submitted=submitted;m->submitted_cycle=frame->sequence;
             continue;
         }
@@ -513,6 +523,14 @@ static bool unified_scene_visuals(void *context,const qa_scene_world_input *worl
                 frontend_legacy_model_input(frontend_unified_media_world(r->media),world,&input,e);
             if (okay && children && children->model)
                 okay=children->model(children->context,m->actor,m->source->content,m->source->path,&input,e);
+            if (okay && m->native_held_weapon && m->selected_weapon && children && children->selected_weapon) {
+                if (input.color.w<=0) continue;
+                frontend_held_carrier carrier; bool present,submitted=false;
+                okay=frontend_held_carrier_scene_prepare(m->media.scene,&input,r->weapon_tag,&carrier,&present,e);
+                if (okay && present) okay=children->selected_weapon(children->context,m->selected_weapon,
+                    &carrier,world,frame,&submitted,e);
+                if (okay && submitted) continue;
+            }
             if (okay) okay=qa_scene_model_submit(m->media.scene,&input,&r->frontend->frame,e);
             if (okay && children && children->model_after)
                 okay=children->model_after(children->context,m->actor,m->source->content,m->source->path,&input,&r->frontend->frame,e);
