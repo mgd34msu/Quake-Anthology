@@ -243,8 +243,8 @@ bool frontend_network_q2_output_packet(qa_application_network_q2 *publisher,
     switch(output->kind) {
     case QA_APPLICATION_EVENT_BUILTIN: {
         const qa_builtin_event *event=output->value.builtin;
-        if(event->kind==QA_BUILTIN_MESSAGE || event->kind==QA_BUILTIN_CENTERPRINT) {
-            if(!event->actor.registry) return true;
+        if((event->kind==QA_BUILTIN_MESSAGE || event->kind==QA_BUILTIN_CENTERPRINT) &&
+            event->actor.registry) {
             qa_error retired={0};
             if(!qa_application_network_q2_event_entity(publisher,event->provider,event->actor,
                 &packet.recipient_number,&retired)) return true;
