@@ -1907,8 +1907,11 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   monster->ignore_shots = definition->species == Q2M_CARRIER ||
                           definition->species == Q2M_MEDIC_COMMANDER ||
                           definition->species == Q2M_TANK_COMMANDER;
-  if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
-      (definition->species == Q2M_JORG || definition->species == Q2M_MAKRON))
+  if ((game->options.rules == QA_RULESET_Q2_RERELEASE &&
+       (definition->species == Q2M_JORG || definition->species == Q2M_MAKRON)) ||
+      (definition->species == Q2M_SUPERTANK &&
+       (game->options.rules == QA_RULESET_Q2_RERELEASE ||
+        game->options.product == QA_Q2_ROGUE)))
     monster->ignore_shots = true;
   monster->can_take_damage = true;
   if (species_is_soldier(definition->species) || species_is_soldierh(definition->species))
@@ -1972,6 +1975,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   if (game->options.rules == QA_RULESET_Q2_RERELEASE) {
     switch (definition->species) {
+    case Q2M_SUPERTANK:
+      if (game->player_runtime->rules.map_name &&
+          !strncmp(game->player_runtime->rules.map_name, "q64/", 4)) {
+        monster->spawnflags |= 16u;
+        monster->count = 10;
+      }
+      break;
     case Q2M_GEKK:
       monster->fly_thrusters = false;
       monster->fly_acceleration = 25.0f;
