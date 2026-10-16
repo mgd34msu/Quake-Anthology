@@ -287,11 +287,11 @@ q3_service_result q3_bot_navigation(q3_call *call, int32_t *result, qa_error *er
     int32_t code = call->service;
     if ((code < 300 || code > 318) && (code < 575 || code > 577)) return Q3_UNHANDLED;
     qa_bot_runtime *runtime = q3_bot_runtime(call);
+    if (code >= 310 && code <= 314) return bsp_query(call, runtime, result, error) ? Q3_COMPLETED : Q3_FAILED;
     if (code == 304 && !runtime) return Q3_COMPLETED;
     if (!runtime) { q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 bot runtime is unbound"); return Q3_FAILED; }
     if (code == 306) { *result = q3_float_bits(qa_bot_runtime_time(runtime)); return Q3_COMPLETED; }
     if (code == 303) return entity_info(call, runtime, error) ? Q3_COMPLETED : Q3_FAILED;
-    if (code >= 310 && code <= 314) return bsp_query(call, runtime, result, error) ? Q3_COMPLETED : Q3_FAILED;
     if (code == 318) return predict_movement(call, runtime, result, error) ? Q3_COMPLETED : Q3_FAILED;
     if ((code == 304 || code == 316 || code == 577) &&
         (!qa_bot_runtime_initialized(runtime) || !qa_bot_runtime_loaded(runtime))) return Q3_COMPLETED;
