@@ -8,7 +8,7 @@ typedef struct application_saved_instance_content {
     qa_launch_restored_instance source;
     qa_catalog *product_catalog;
     const qa_product *product;
-    uint64_t view;
+    uint64_t view, handle;
 } application_saved_instance_content;
 
 bool application_save_content_collect(qa_application *,
@@ -31,6 +31,13 @@ uint64_t application_save_content_launch_view(const qa_application_content_graph
 /* source.artifact_acquisition belongs to the current installed content owner. */
 bool application_save_content_instance(const qa_application_content_graph *,
     const char *, application_saved_instance_content *, qa_error *);
+/* Save-local handles distinguish retained generations with the same name. */
+bool application_save_content_instance_retain(qa_application_content_graph *,
+    const qa_launch_instance *, uint64_t *, qa_error *);
+bool application_save_content_instance_id(const qa_application_content_graph *,
+    const qa_launch_instance *, uint64_t *, qa_error *);
+bool application_save_content_instance_at(const qa_application_content_graph *,
+    uint64_t, application_saved_instance_content *, qa_error *);
 bool application_save_content_launch_resource(const qa_application_content_graph *,
     qa_product_id, const char *, const qa_resource **, qa_error *);
 size_t application_save_content_launch_resource_count(const qa_application_content_graph *);

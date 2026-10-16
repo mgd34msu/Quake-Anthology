@@ -426,6 +426,46 @@ static bool restored_selection_matches(const qa_launch_provider *requested,
         a->maximum_steps == b->maximum_steps;
 }
 
+static bool restored_content_retain(instance_owner *owner,
+    const qa_launch_restored_instance *saved, qa_error *error)
+{
+    owner->view.content = saved->content;
+    if (!saved->catalog || !saved->content ||
+        (saved->interface_count && !saved->interfaces) ||
+        saved->interface_count > SIZE_MAX / sizeof(qa_launch_resource))
+        return error_message(error, "saved provider content has an invalid interface inventory");
+    if (!launch_empty(saved->catalog, &owner->identity, error) ||
+        !qa_launch_set_provider(owner->identity, &saved->selection, error)) return false;
+    owner->view.selection = owner->identity->choices.providers[0];
+    owner->view.artifact = saved->artifact;
+    owner->view.declaration = saved->declaration;
+    qa_resource_retain((qa_resource *)saved->artifact);
+    qa_resource_retain((qa_resource *)saved->declaration);
+    if (saved->artifact) {
+        if (!retain_acquisition(saved->artifact_acquisition, &owner->artifact_acquisition, error) ||
+            owner->artifact_acquisition.resource_id != qa_resource_id(saved->artifact) ||
+            !qa_vfs_acquisition_retained(owner->view.content, &owner->artifact_acquisition, error)) return false;
+        owner->view.artifact_acquisition = &owner->artifact_acquisition;
+    }
+    if (!saved->interface_count) return true;
+    qa_launch_resource *interfaces = calloc(saved->interface_count, sizeof(*interfaces));
+    if (!interfaces) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain saved provider interfaces");
+        return false;
+    }
+    owner->view.interfaces = interfaces;
+    for (size_t i = 0; i < saved->interface_count; ++i) {
+        const qa_launch_resource *value = saved->interfaces + i;
+        if (!value->path || !value->resource || value->product != saved->selection.product)
+            return error_message(error, "saved provider interface has an invalid retained source");
+        const char *path = launch_text(owner->identity, value->path, error);
+        if (!path) return false;
+        interfaces[owner->view.interface_count++] = (qa_launch_resource){value->product, path, value->resource};
+        qa_resource_retain((qa_resource *)value->resource);
+    }
+    return true;
+}
+
 static bool restored_instance_content(qa_configuration_transaction *transaction,
     instance_owner *owner, const qa_launch_provider *selection, qa_error *error)
 {
@@ -433,44 +473,43 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
     bool ok = transaction->content->instance(transaction->content->context, selection, &saved, error);
     owner->view.content = saved.content;
     if (!ok) return false;
-    if (!saved.catalog || !saved.content ||
-        (saved.interface_count && !saved.interfaces) ||
-        (saved.behavior_count && !saved.behaviors) ||
-        saved.interface_count > SIZE_MAX / sizeof(qa_launch_resource) ||
-        saved.behavior_count > SIZE_MAX / sizeof(*saved.behaviors) ||
-        !restored_selection_matches(selection, transaction->candidate->draft->catalog, &saved))
+    if (!restored_selection_matches(selection, transaction->candidate->draft->catalog, &saved))
         return error_message(error, "saved provider content disagrees with its retained selection");
-    if (!launch_empty(saved.catalog, &owner->identity, error) ||
-        !qa_launch_set_provider(owner->identity, &saved.selection, error)) return false;
-    owner->view.selection = owner->identity->choices.providers[0];
-    owner->view.artifact = saved.artifact;
-    owner->view.declaration = saved.declaration;
-    qa_resource_retain((qa_resource *)saved.artifact);
-    qa_resource_retain((qa_resource *)saved.declaration);
-    if (saved.artifact) {
-        if (!retain_acquisition(saved.artifact_acquisition, &owner->artifact_acquisition, error) ||
-            owner->artifact_acquisition.resource_id != qa_resource_id(saved.artifact) ||
-            !qa_vfs_acquisition_retained(owner->view.content, &owner->artifact_acquisition, error)) return false;
-        owner->view.artifact_acquisition = &owner->artifact_acquisition;
-    }
-    qa_launch_resource *interfaces = calloc(saved.interface_count ? saved.interface_count : 1,
-                                             sizeof(*interfaces));
-    if (!interfaces) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain saved provider content identities");
+    return restored_content_retain(owner, &saved, error) &&
+        selected_behaviors(owner, &transaction->candidate->draft->choices, error) &&
+        instance_identity(owner, &transaction->candidate->draft->choices, error);
+}
+
+bool qa_launch_instance_restore_metadata(const qa_launch_restored_instance *saved, uint64_t roles,
+    qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!saved || !out || *out)
+        return error_message(error, "Metadata restoration requires its content and empty output");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) {
+        qa_vfs_destroy(saved->content);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained launch metadata");
         return false;
     }
-    owner->view.interfaces = interfaces;
-    for (size_t i = 0; i < saved.interface_count; ++i) {
-        const qa_launch_resource *value = saved.interfaces + i;
-        if (!value->path || !value->resource || value->product != saved.selection.product)
-            return error_message(error, "saved provider interface has an invalid retained source");
-        const char *path = launch_text(owner->identity, value->path, error);
-        if (!path) return false;
-        interfaces[owner->view.interface_count++] = (qa_launch_resource){value->product, path, value->resource};
-        qa_resource_retain((qa_resource *)value->resource);
+    owner->references = 1;
+    owner->view.storage = owner;
+    owner->view.roles = roles;
+    bool ok = restored_content_retain(owner, saved, error);
+    if (ok && saved->behavior_count && !saved->behaviors)
+        ok = error_message(error, "Saved trajectory metadata has no behavior inventory");
+    for (size_t i = 0; ok && i < saved->behavior_count; ++i) {
+        const qa_catalog_weapon_behavior *behavior = saved->behaviors[i];
+        if (!behavior) { ok = error_message(error, "Saved trajectory metadata has an empty behavior"); break; }
+        qa_launch_weapon_behavior choice = {.scope = {.kind = QA_SCOPE_DEFAULT_PLAYER},
+            .weapon = "", .instance = saved->selection.instance, .behavior = behavior->id,
+            .role = behavior->role, .enabled = true};
+        ok = qa_launch_set_weapon_behavior(owner->identity, &choice, error);
     }
-    if (!selected_behaviors(owner, &transaction->candidate->draft->choices, error)) return false;
-    return instance_identity(owner, &transaction->candidate->draft->choices, error);
+    if (ok) ok = selected_behaviors(owner, &owner->identity->choices, error) &&
+        instance_identity(owner, &owner->identity->choices, error) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner);
+    return ok;
 }
 
 static bool prepare_instance(qa_configuration_transaction *transaction, const qa_launch_provider *selection,
@@ -630,35 +669,7 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
             qa_resource_id(saved->declaration)) == saved->declaration) &&
         saved->interface_count <= SIZE_MAX / sizeof(qa_launch_resource) && !saved->behavior_count;
     if (!ok) error_message(error, "Saved private client descriptor leaves its real source selection");
-    if (ok) ok = launch_empty(saved->catalog, &owner->identity, error) &&
-        qa_launch_set_provider(owner->identity, b, error);
-    if (ok) {
-        owner->view.selection = owner->identity->choices.providers[0];
-        owner->view.artifact = saved->artifact; qa_resource_retain((qa_resource *)saved->artifact);
-        owner->view.declaration = saved->declaration; qa_resource_retain((qa_resource *)saved->declaration);
-        ok = retain_acquisition(saved->artifact_acquisition, &owner->artifact_acquisition, error) &&
-            owner->artifact_acquisition.resource_id == qa_resource_id(saved->artifact) &&
-            qa_vfs_acquisition_retained(owner->view.content, &owner->artifact_acquisition, error);
-        owner->view.artifact_acquisition = &owner->artifact_acquisition;
-    }
-    if (ok && saved->interface_count) {
-        qa_launch_resource *interfaces = calloc(saved->interface_count, sizeof(*interfaces));
-        owner->view.interfaces = interfaces;
-        ok = interfaces != NULL && saved->interfaces != NULL;
-        if (!ok) qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring private client profile inventory");
-        for (size_t i = 0; ok && i < saved->interface_count; ++i) {
-            const qa_launch_resource *resource = saved->interfaces + i;
-            if (!resource->resource || !resource->path || resource->product != b->product ||
-                qa_resource_pool_find(qa_vfs_resources(saved->content),
-                    qa_resource_id(resource->resource)) != resource->resource) {
-                ok = error_message(error, "Private client profile has an invalid true resource owner"); break;
-            }
-            const char *path = launch_text(owner->identity, resource->path, error);
-            if (!path) { ok = false; break; }
-            interfaces[owner->view.interface_count++] = (qa_launch_resource){b->product, path, resource->resource};
-            qa_resource_retain((qa_resource *)resource->resource);
-        }
-    }
+    if (ok) ok = restored_content_retain(owner, saved, error);
     if (ok) ok = instance_identity(owner, &owner->identity->choices, error);
     if (!ok && error && error->code == QA_OK)
         error_message(error, "Restored private descriptor identity differs from its actual retained content");

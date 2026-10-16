@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "source_trajectory.h"
 #include "guest_qc_internal.h"
+#include "save_content.h"
 #include "qa/application_players.h"
 #include "qa/pool.h"
 #include "qa/source_save.h"
@@ -73,30 +74,34 @@ static trajectory_source *source_find(struct application_trajectories *owner,
 {
     for (trajectory_source *source = owner->sources; source; source = source->next)
         if (source->instance == instance && source->name == name &&
-            (!identity || source->identity == identity)) return source;
+            (identity ? source->identity == identity : source->bindings != 0)) return source;
     return NULL;
 }
 
-static trajectory_source *source_prepare(qa_application *app, const qa_launch_instance *instance,
-    const qa_catalog_weapon_behavior *behavior, qa_error *error)
+static trajectory_source *source_create(qa_application *app, const qa_launch_instance *instance,
+    const qa_catalog_weapon_behavior *behavior, qa_qc_program *program, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(app->session);
     qa_string_id instance_name, behavior_name;
     if (!qa_strings_intern_cstr(strings, instance->selection.instance, &instance_name, error) ||
         !qa_strings_intern_cstr(strings, behavior->id, &behavior_name, error)) return NULL;
-    trajectory_source *existing = source_find(app->trajectories, instance_name, behavior_name, instance->identity);
-    if (existing && existing->behavior == behavior) return existing;
     trajectory_source *source = calloc(1, sizeof(*source));
     if (!source) { application_fail(error, QA_ERROR_MEMORY, "Allocating projectile donor state"); return NULL; }
     bool okay = qa_launch_instance_retain_metadata(instance, &source->descriptor, error);
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(source->descriptor);
-    application_provider *provider = instance->state;
-    if (okay && provider->kind == APPLICATION_PROVIDER_QC)
-        okay = application_trajectory_qc_create(app, descriptor, provider->state.qc.program,
+    qa_qc_program *loaded = NULL;
+    if (okay && instance->selection.runtime == QA_PROGRAM_QUAKEC) {
+        if (!program) {
+            okay = qa_qc_program_load(qa_resource_bytes(instance->artifact),
+                instance->selection.artifact, &loaded, error);
+            program = loaded;
+        }
+        if (okay) okay = application_trajectory_qc_create(app, descriptor, program,
             behavior, &source->runtime, error);
-    else if (okay)
+    } else if (okay)
         okay = application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected projectile donor requires a native or QVM trajectory adapter");
+    qa_qc_program_destroy(loaded);
     if (!okay) {
         (void)source_destroy(source, NULL);
         return NULL;
@@ -108,6 +113,21 @@ static trajectory_source *source_prepare(qa_application *app, const qa_launch_in
     source->next = app->trajectories->sources;
     app->trajectories->sources = source;
     return source;
+}
+
+static trajectory_source *source_prepare(qa_application *app, const qa_launch_instance *instance,
+    const qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    qa_strings *strings = qa_session_strings(app->session);
+    qa_string_id instance_name = qa_strings_find(strings,
+        (qa_bytes){(const uint8_t *)instance->selection.instance, strlen(instance->selection.instance)});
+    qa_string_id behavior_name = qa_strings_find(strings,
+        (qa_bytes){(const uint8_t *)behavior->id, strlen(behavior->id)});
+    trajectory_source *existing = source_find(app->trajectories, instance_name, behavior_name, instance->identity);
+    if (existing && existing->behavior == behavior) return existing;
+    application_provider *provider = instance->state;
+    qa_qc_program *program = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.program : NULL;
+    return source_create(app, instance, behavior, program, error);
 }
 
 static bool unused_sources(struct application_trajectories *owner, qa_error *error)
@@ -293,6 +313,19 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
     return qa_source_save_bytes(io, (void *)bytes->data, size);
 }
 
+bool application_trajectories_content_collect(qa_application *app,
+    qa_application_content_graph *graph, qa_error *error)
+{
+    struct application_trajectories *owner = app->trajectories;
+    for (trajectory_source *source = owner ? owner->sources : NULL; source; source = source->next) {
+        if (!source->bindings && !source->flights) continue;
+        uint64_t handle;
+        if (!application_save_content_instance_retain(graph,
+                qa_launch_instance_lease_view(source->descriptor), &handle, error)) return false;
+    }
+    return true;
+}
+
 bool application_trajectories_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
     struct application_trajectories *owner = app->trajectories;
@@ -323,6 +356,13 @@ bool application_trajectories_capture(qa_application *app, qa_buffer *out, qa_er
         }
         qa_buffer_free(&state);
     }
+    for (trajectory_source *source = owner->sources; okay && source; source = source->next) {
+        if (!source->bindings && !source->flights) continue;
+        uint64_t handle;
+        okay = application_save_content_instance_id(qa_application_content_graph_read(app),
+            qa_launch_instance_lease_view(source->descriptor), &handle, error) &&
+            qa_source_save_u64(&io, &handle);
+    }
     if (okay) okay = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return okay;
@@ -344,6 +384,54 @@ bool application_trajectories_restore_saved(qa_application *app, qa_bytes bytes,
     return true;
 }
 
+typedef struct saved_trajectory_source {
+    qa_string_id instance, name;
+    qa_bytes state;
+    application_trajectory_attachment *attachments;
+    size_t flights;
+    uint64_t content;
+} saved_trajectory_source;
+
+static trajectory_source *source_restore(qa_application *app,
+    const saved_trajectory_source *saved, qa_error *error)
+{
+    struct application_trajectories *owner = app->trajectories;
+    trajectory_source *source = source_find(owner, saved->instance, saved->name, 0);
+    if (!saved->content) {
+        if (!source) application_fail(error, QA_ERROR_NOT_FOUND,
+            "Saved projectile donor is not selected in the restored session");
+        return source;
+    }
+    const qa_application_content_graph *graph = qa_application_content_graph_read(app);
+    application_saved_instance_content content = {0}, selected = {0};
+    if (!application_save_content_instance_at(graph, saved->content, &content, error)) return NULL;
+    const char *instance = qa_strings_cstr(qa_session_strings(app->session), saved->instance);
+    const char *name = qa_strings_cstr(qa_session_strings(app->session), saved->name);
+    if (!instance || !name || strcmp(instance, content.source.selection.instance)) {
+        application_fail(error, QA_ERROR_FORMAT, "Saved projectile donor disagrees with its content name");
+        return NULL;
+    }
+    const qa_catalog_weapon_behavior *behavior = qa_catalog_weapon_behavior_find(
+        content.source.catalog, content.source.selection.product, name);
+    if (!behavior || behavior->unavailable || behavior->artifact_resource != content.source.artifact) {
+        application_fail(error, QA_ERROR_NOT_FOUND, "Saved projectile behavior is absent from its installed content");
+        return NULL;
+    }
+    if (source && source->behavior == behavior &&
+        application_save_content_instance(graph, instance, &selected, error) &&
+        selected.handle == saved->content) return source;
+    qa_vfs *view = NULL;
+    if (!qa_application_content_retain_view(qa_application_content_graph_read(app), content.view, &view, error)) return NULL;
+    content.source.content = view;
+    content.source.behaviors = &behavior;
+    content.source.behavior_count = 1;
+    qa_launch_instance_lease *lease = NULL;
+    if (!qa_launch_instance_restore_metadata(&content.source, QA_ROLE_BIT(QA_ROLE_TRAJECTORY), &lease, error)) return NULL;
+    source = source_create(app, qa_launch_instance_lease_view(lease), behavior, NULL, error);
+    qa_launch_instance_lease_release(lease);
+    return source;
+}
+
 bool application_trajectories_restore_finish(qa_application *app, qa_error *error)
 {
     qa_bytes saved = {app->trajectories_saved.data, app->trajectories_saved.size};
@@ -356,20 +444,39 @@ bool application_trajectories_restore_finish(qa_application *app, qa_error *erro
     bool okay = qa_source_save_reader(&io, app->session, saved, error) &&
         qa_source_save_bytes(&io, tag, sizeof(tag)) && !memcmp(tag, "QATR", 4) &&
         qa_source_save_count(&io, &count, saved.size);
+    saved_trajectory_source *sources = okay && count ? calloc(count, sizeof(*sources)) : NULL;
+    if (okay && count && !sources)
+        okay = application_fail(error, QA_ERROR_MEMORY, "Reading saved projectile sources");
+    size_t total = 0;
     for (size_t i = 0; okay && i < count; ++i) {
-        qa_string_id instance = 0, name = 0;
-        qa_bytes state = {0}; size_t flights = 0;
-        okay = qa_source_save_string(&io, &instance) && qa_source_save_string(&io, &name) &&
-            blob(&io, &state) && qa_source_save_count(&io, &flights, owner->flights.capacity);
-        trajectory_source *source = okay ? source_find(owner, instance, name, 0) : NULL;
-        if (okay && !source) okay = application_fail(error, QA_ERROR_NOT_FOUND,
-            "Saved projectile donor is not selected in the restored session");
-        if (okay) okay = source->runtime.restore(source->runtime.context, state, error);
-        for (size_t j = 0; okay && j < flights; ++j) {
-            application_trajectory_attachment attachment = {0};
-            okay = qa_source_save_actor(&io, &attachment.projectile) &&
-                qa_source_save_u64(&io, &attachment.handle) && qa_source_save_bool(&io, &attachment.retired);
-            if (!okay) break;
+        saved_trajectory_source *source = sources + i;
+        okay = qa_source_save_string(&io, &source->instance) && qa_source_save_string(&io, &source->name) &&
+            blob(&io, &source->state) && qa_source_save_count(&io, &source->flights, owner->flights.capacity - total);
+        if (!okay) break;
+        total += source->flights;
+        source->attachments = source->flights ? calloc(source->flights, sizeof(*source->attachments)) : NULL;
+        if (source->flights && !source->attachments) {
+            okay = application_fail(error, QA_ERROR_MEMORY, "Reading saved projectile attachments");
+            break;
+        }
+        for (size_t j = 0; okay && j < source->flights; ++j) {
+            application_trajectory_attachment *attachment = source->attachments + j;
+            okay = qa_source_save_actor(&io, &attachment->projectile) &&
+                qa_source_save_u64(&io, &attachment->handle) && qa_source_save_bool(&io, &attachment->retired);
+        }
+    }
+    /* Older checkpoints ended after the attachments and used selected donors. */
+    if (okay && io.offset < io.input.size)
+        for (size_t i = 0; okay && i < count; ++i)
+            okay = qa_source_save_u64(&io, &sources[i].content) && sources[i].content != 0;
+    if (okay) okay = qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    for (size_t i = 0; okay && i < count; ++i) {
+        saved_trajectory_source *saved_source = sources + i;
+        trajectory_source *source = source_restore(app, saved_source, error);
+        okay = source && source->runtime.restore(source->runtime.context, saved_source->state, error);
+        for (size_t j = 0; okay && j < saved_source->flights; ++j) {
+            application_trajectory_attachment attachment = saved_source->attachments[j];
             if (!qa_actors_get(qa_session_actors(app->session), attachment.projectile) ||
                 flight_find(app, attachment.projectile, NULL)) {
                 okay = application_fail(error, QA_ERROR_FORMAT, "Saved projectile attachment has no unique live actor");
@@ -383,8 +490,8 @@ bool application_trajectories_restore_finish(qa_application *app, qa_error *erro
             qa_actor_index_put(&owner->actors, attachment.projectile, slot);
         }
     }
-    if (okay) okay = qa_source_save_finish(&io, NULL);
-    qa_source_save_dispose(&io);
+    for (size_t i = 0; sources && i < count; ++i) free(sources[i].attachments);
+    free(sources);
     if (okay) qa_buffer_free(&app->trajectories_saved);
     return okay;
 }

@@ -677,7 +677,7 @@ bool application_trajectory_qc_create(qa_application *application, const qa_laun
     source->capacity = qa_actors_capacity(qa_session_actors(application->session)) + 1;
     qa_qc_profile profile = qa_qc_program_describe(program).api == QA_QC_API_QUAKEWORLD ?
         QA_QC_QUAKEWORLD : QA_QC_NETQUAKE;
-    const qa_product *product = qa_catalog_product(application->catalog, behavior->product);
+    const qa_product *product = qa_catalog_product(qa_launch_instance_catalog(launch), behavior->product);
     if (profile != QA_QC_QUAKEWORLD && product && product->edition == QA_EDITION_RERELEASE) profile = QA_QC_RERELEASE;
     source->stride = qa_qc_default_entity_layout(program, profile).stride_bytes;
     qa_bytes literals = qa_qc_program_strings(program);

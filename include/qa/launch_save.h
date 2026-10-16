@@ -18,6 +18,10 @@ typedef struct qa_launch_restored_instance {
     const qa_catalog_weapon_behavior *const *behaviors;
     size_t behavior_count;
 } qa_launch_restored_instance;
+/* Consumes one content reference and retains metadata without creating a
+ * provider, actor or execution owner. The caller resolves installed content. */
+bool qa_launch_instance_restore_metadata(const qa_launch_restored_instance *, uint64_t roles,
+    qa_launch_instance_lease **, qa_error *);
 typedef struct qa_launch_restore_content {
     void *context;
     /* Transfer the actual owning view, also on partial failure. All other

@@ -7,6 +7,7 @@
 #include "qa/application_q3_factory.h"
 #include "equipment_runtime.h"
 #include "events_save.h"
+#include "weapon_trajectories.h"
 #include "qa/map_sidecars.h"
 
 #include <stdlib.h>
@@ -64,6 +65,8 @@ typedef struct content_resource {
 } content_resource;
 typedef struct content_instance {
     application_saved_instance_content value;
+    const qa_launch_instance_storage *storage;
+    uint64_t identity;
     uint64_t catalog, product_catalog, artifact_pool, artifact, declaration_pool, declaration;
     qa_product_id product;
     content_resource *interfaces;
@@ -263,21 +266,31 @@ static bool copy_resource(qa_application_content_graph *g, qa_resource_pool *poo
     if (!out->value.path) return false;
     qa_resource_retain((qa_resource *)out->value.resource); out->retained = true; return true;
 }
+static size_t instance_index(const qa_application_content_graph *g, const qa_launch_instance *source)
+{
+    for (size_t i = 0; i < g->instance_count; ++i)
+        if (g->instances[i].storage == source->storage && g->instances[i].identity == source->identity) return i;
+    return SIZE_MAX;
+}
+
 static bool instance_collect(qa_application_content_graph *g, const qa_launch_instance *source,
     const application_provider *provider, qa_error *error)
 {
-    for (size_t i=0; source && i<g->instance_count; ++i)
-        if (!strcmp(g->instances[i].value.source.selection.instance,source->selection.instance)) return true;
+    if (!g || !source || !source->storage)
+        return fail(error, QA_ERROR_ARGUMENT, "Content instance requires its actual retained descriptor");
+    if (instance_index(g, source) != SIZE_MAX) return true;
     qa_catalog *catalog = qa_launch_instance_catalog(source);
-    if (!catalog || !provider || !provider->product_catalog || !provider->product ||
-        !add_catalog(g, catalog, error) || !add_catalog(g, provider->product_catalog, error) ||
+    qa_catalog *product_catalog = provider ? provider->product_catalog : catalog;
+    const qa_product *product = provider ? provider->product : qa_catalog_product(catalog, source->selection.product);
+    if (!catalog || !product_catalog || !product ||
+        !add_catalog(g, catalog, error) || !add_catalog(g, product_catalog, error) ||
         !add_view(g, source->content, error) ||
         !append((void **)&g->instances, &g->instance_count, sizeof(*g->instances), error)) return false;
     content_instance *row = &g->instances[g->instance_count - 1];
     row->catalog = qa_application_content_catalog_id(g, catalog);
-    row->product_catalog = qa_application_content_catalog_id(g, provider->product_catalog);
-    row->product = provider->product->id;
-    if (qa_catalog_product(provider->product_catalog, row->product) != provider->product)
+    row->product_catalog = qa_application_content_catalog_id(g, product_catalog);
+    row->product = product->id;
+    if (qa_catalog_product(product_catalog, row->product) != product)
         return fail(error, QA_ERROR_FORMAT, "Provider product has no actual retained catalog");
     row->value.view = qa_application_content_view_id(g, source->content);
     qa_launch_restored_instance *value = &row->value.source;
@@ -317,13 +330,34 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     value->interface_count = source->interface_count;
     for (size_t i = 0; i < source->interface_count; ++i)
         if (!copy_resource(g, pool, &source->interfaces[i], &row->interfaces[i], error)) return false;
-    row->value.product_catalog = provider->product_catalog; row->value.product = provider->product;
+    row->value.product_catalog = product_catalog; row->value.product = product;
     row->interface_values = value->interface_count ? calloc(value->interface_count, sizeof(*row->interface_values)) : NULL;
     if (value->interface_count && !row->interface_values)
         return fail(error, QA_ERROR_MEMORY, "Retaining provider interface descriptors");
     for (size_t i = 0; i < value->interface_count; ++i) row->interface_values[i] = row->interfaces[i].value;
     value->interfaces = row->interface_values;
+    row->storage = source->storage; row->identity = source->identity;
     return true;
+}
+
+bool application_save_content_instance_id(const qa_application_content_graph *g,
+    const qa_launch_instance *source, uint64_t *handle, qa_error *error)
+{
+    if (!g || !source || !source->storage || !handle)
+        return fail(error, QA_ERROR_ARGUMENT, "Content instance lookup requires its retained descriptor and output");
+    size_t index = instance_index(g, source);
+    if (index == SIZE_MAX)
+        return fail(error, QA_ERROR_NOT_FOUND, "Descriptor is absent from saved content inventory");
+    *handle = index + 1;
+    return true;
+}
+
+bool application_save_content_instance_retain(qa_application_content_graph *g,
+    const qa_launch_instance *source, uint64_t *handle, qa_error *error)
+{
+    if (!handle) return fail(error, QA_ERROR_ARGUMENT, "Content instance retention requires its handle output");
+    return instance_collect(g, source, NULL, error) &&
+        application_save_content_instance_id(g, source, handle, error);
 }
 
 static void projection_clear(qa_application_content_graph *g)
@@ -389,6 +423,7 @@ bool application_save_content_collect(qa_application *app, qa_application_conten
         const application_provider *provider = instance ? instance->state : NULL;
         ok = instance_collect(g, instance, provider, error);
     }
+    if (ok) ok = application_trajectories_content_collect(app, g, error);
     size_t actual_resources=qa_launch_snapshot_resource_count(launch);
     for (size_t i=0;ok && i<actual_resources;++i) {
         if (!append((void **)&g->resources,&g->resource_count,sizeof(*g->resources),error)) { ok=false; break; }
@@ -547,17 +582,24 @@ bool application_save_content_event_pool(qa_application_content_graph *g, uint64
 bool application_save_content_event_view(qa_application_content_graph *g, uint64_t id,
     qa_vfs **out, qa_error *error)
 { return qa_application_content_retain_view(g, id, out, error); }
+bool application_save_content_instance_at(const qa_application_content_graph *g, uint64_t handle,
+    application_saved_instance_content *out, qa_error *error)
+{
+    if (!g || !out || !handle || handle > g->instance_count)
+        return fail(error, QA_ERROR_ARGUMENT, "Saved instance handle is outside its content inventory");
+    const content_instance *row = g->instances + (size_t)handle - 1;
+    *out = row->value;
+    out->handle = handle;
+    out->source.artifact_acquisition = row->artifact ? &row->artifact_acquisition : NULL;
+    return true;
+}
 bool application_save_content_instance(const qa_application_content_graph *g, const char *name,
     application_saved_instance_content *out, qa_error *error)
 {
     if (!g || !name || !out) return fail(error, QA_ERROR_ARGUMENT, "Saved provider lookup has no actual graph/name/output");
     for (size_t i = 0; i < g->instance_count; ++i)
-        if (!strcmp(g->instances[i].value.source.selection.instance, name)) {
-            *out = g->instances[i].value;
-            out->source.artifact_acquisition = g->instances[i].artifact ?
-                &g->instances[i].artifact_acquisition : NULL;
-            return true;
-        }
+        if (!strcmp(g->instances[i].value.source.selection.instance, name))
+            return application_save_content_instance_at(g, i + 1, out, error);
     return fail(error, QA_ERROR_FORMAT, "Provider is absent from saved content inventory");
 }
 size_t application_save_content_launch_resource_count(const qa_application_content_graph *g) { return g ? g->resource_count : 0; }
