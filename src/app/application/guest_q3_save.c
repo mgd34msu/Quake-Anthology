@@ -926,28 +926,6 @@ bool application_guest_q3_save_actor_client(application_provider *provider,
     return true;
 }
 
-bool application_guest_q3_save_matches(application_provider *provider, qa_bytes bytes,
-    const qa_application_native_resource_refs *resources, qa_error *error)
-{
-    qa_bytes body;
-    if (!application_guest_checkpoint_body(provider, bytes, &body, error)) return false;
-    if (q3g_primary_role(provider->launch->selection.artifact) != QA_QVM_GAME)
-        return !body.size || application_fail(error, QA_ERROR_FORMAT, "CLIENT provider contains private presentation state");
-    q3g_restore *expected = calloc(1, sizeof(*expected));
-    if (!expected) return application_fail(error, QA_ERROR_MEMORY, "Qualifying native Q3 capability references");
-    expected->owns_text = true;
-    qa_source_save_io io = {0};
-    qa_buffer actual = {0};
-    bool ok = qa_source_save_reader(&io, provider->application->session, body, error) &&
-        saved_fields(&io, expected, provider) && qa_source_save_finish(&io, NULL) &&
-        capture_body(provider, resources, expected, &actual, error) &&
-        equal_bytes(body, (qa_bytes){actual.data, actual.size});
-    qa_source_save_dispose(&io);
-    qa_buffer_free(&actual);
-    saved_free(expected);
-    return ok || application_fail(error, QA_ERROR_FORMAT, "Q3 retained provider continuation changed");
-}
-
 bool application_guest_q3_native_restore_recipe(q3g_role *role,
     const qa_native_process_resources **capture, qa_bytes *recipe, qa_bytes *executor, qa_error *error)
 {
@@ -1347,11 +1325,6 @@ bool application_guest_q3_save_finish(application_provider *provider, qa_error *
         if (role->module && !qa_native_process_resources_options_read(role->process.resources,
             &role->process.process, error)) return false;
     }
-    qa_buffer actual = {0};
-    bool ok = capture_body(provider, provider->application->native_restore_resources, saved, &actual, error) &&
-        equal_bytes((qa_bytes){actual.data, actual.size}, (qa_bytes){saved->storage.data, saved->storage.size});
-    qa_buffer_free(&actual);
-    if (!ok) return application_fail(error, QA_ERROR_FORMAT, "Q3 candidate source continuation differs after owner reconnection");
     for (size_t i = 0; i < saved->role_count; ++i) {
         saved->roles[i].actual->initialized = (saved->roles[i].flags & ROLE_INITIALIZED) != 0;
         saved->roles[i].actual->init_succeeded = (saved->roles[i].flags & ROLE_INIT_SUCCEEDED) != 0;

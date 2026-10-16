@@ -324,11 +324,13 @@ bool qa_native_sysv_process_restore(qa_bytes encoded,
     if (okay && !primary_present)
         okay = guest_fail(error, QA_ERROR_FORMAT, 0, "System V cold process image witness lacks its actual source artifact");
     if (okay) {
-        size_t maximum = 0;
-        for (size_t i = 0; i < count; ++i)
-            if (records[i].maximum > maximum) maximum = records[i].maximum;
-        okay = guest_profile_artifacts_decode(profile, maximum, &owner->profile, error) &&
-            sysv_process_profile(owner, false, error);
+        guest_profile_image *images = calloc(count, sizeof(*images));
+        if (!images) okay = guest_fail(error, QA_ERROR_MEMORY, count, "qualifying installed System V provenance");
+        for (size_t i = 0; okay && i < count; ++i)
+            images[i] = (guest_profile_image){.provider = owner->images[i].provider,
+                .kind = GUEST_PROFILE_ELF, .owner.elf = owner->images[i].artifact};
+        if (okay) okay = guest_profile_artifacts_decode(profile, images, count, &owner->profile, error);
+        free(images);
     }
     if (okay) okay = guest_runtime_resources_decode(resources, &owner->resources, error) &&
         streams_match(owner, error);

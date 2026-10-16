@@ -10,6 +10,7 @@
 #include "../src/compat/native/guest/abi.h"
 #include "../src/compat/native/guest/memory_string.h"
 #include "../src/compat/native/guest/elf.h"
+#include "../src/compat/native/guest/profile/artifact.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -8503,6 +8504,59 @@ static void test_q2_weapon_names(void)
     free(config); qa_strings_destroy(strings);
 }
 
+static void test_native_saved_image_references(void)
+{
+    qa_error error = {0};
+    uint8_t bytes[128] = {0};
+    memcpy(bytes, "\x7f" "ELF", 4); bytes[4] = 2; bytes[5] = bytes[6] = 1;
+    qa_store_u16le(bytes + 16, 3); qa_store_u16le(bytes + 18, 62);
+    qa_store_u32le(bytes + 20, 1); qa_store_u64le(bytes + 24, 120);
+    qa_store_u64le(bytes + 32, 64); qa_store_u16le(bytes + 52, 64);
+    qa_store_u16le(bytes + 54, 56); qa_store_u16le(bytes + 56, 1);
+    qa_store_u32le(bytes + 64, 1); qa_store_u32le(bytes + 68, 5);
+    qa_store_u64le(bytes + 96, sizeof(bytes)); qa_store_u64le(bytes + 104, 4096);
+    qa_store_u64le(bytes + 112, 4096);
+    qa_bytes source = {bytes, sizeof(bytes)}; qa_native_image_info image;
+    CHECK(qa_native_inspect(source, &image, &error));
+    guest_elf *library = NULL, *program = NULL;
+    CHECK(guest_elf_open(source, &image, GUEST_ELF_LIBRARY, 0, 4096, &library, &error));
+    CHECK(guest_elf_open(source, &image, GUEST_ELF_PROGRAM, 8192, 4096, &program, &error));
+    const guest_profile_image installed[] = {
+        {.provider = 7, .kind = GUEST_PROFILE_ELF, .owner.elf = library},
+        {.provider = 8, .kind = GUEST_PROFILE_ELF, .owner.elf = program}};
+    guest_profile_artifacts *profile = NULL, *restored = NULL;
+    CHECK(guest_profile_artifacts_create(installed, 2, &profile, &error));
+    qa_buffer saved = {0};
+    CHECK(guest_profile_artifacts_checkpoint(profile, &saved, &error));
+    CHECK(saved.size == 12 + 2 * 32);
+    CHECK(qa_load_u64le(saved.data + 12 + 24) == 0 && qa_load_u64le(saved.data + 44 + 24) == 0);
+    CHECK(guest_profile_artifacts_decode((qa_bytes){saved.data, saved.size}, installed, 2, &restored, &error));
+    guest_profile_image_view view;
+    CHECK(guest_profile_artifacts_at(restored, 0, &view, &error) && view.image.elf == guest_elf_describe(library));
+    CHECK(guest_profile_artifacts_at(restored, 1, &view, &error) && view.image.elf == guest_elf_describe(program));
+    CHECK(guest_profile_artifacts_match(restored, installed, 2, &error));
+    guest_profile_artifacts_destroy(&restored);
+    uint8_t legacy[12 + 2 * (32 + sizeof(bytes))];
+    memcpy(legacy, saved.data, 12);
+    for (size_t i = 0; i < 2; ++i) {
+        uint8_t *row = legacy + 12 + i * (32 + sizeof(bytes));
+        memcpy(row, saved.data + 12 + i * 32, 32);
+        qa_store_u64le(row + 24, sizeof(bytes)); memcpy(row + 32, bytes, sizeof(bytes));
+    }
+    CHECK(guest_profile_artifacts_decode((qa_bytes){legacy, sizeof(legacy)}, installed, 2, &restored, &error));
+    CHECK(guest_profile_artifacts_match(restored, installed, 2, &error));
+    guest_profile_artifacts_destroy(&restored);
+    legacy[12 + 32] ^= 1;
+    CHECK(!guest_profile_artifacts_decode((qa_bytes){legacy, sizeof(legacy)}, installed, 2, &restored, &error) && !restored);
+    guest_profile_image swapped[] = {installed[1], installed[0]};
+    CHECK(!guest_profile_artifacts_decode((qa_bytes){saved.data, saved.size}, swapped, 2, &restored, &error) && !restored);
+    CHECK(!guest_profile_artifacts_decode((qa_bytes){saved.data, saved.size - 1}, installed, 2, &restored, &error) && !restored);
+    qa_buffer_free(&saved); guest_profile_artifacts_destroy(&profile);
+    CHECK(guest_elf_describe(library)->artifact.size == sizeof(bytes));
+    CHECK(guest_elf_describe(program)->role == GUEST_ELF_PROGRAM);
+    guest_elf_close(&program); guest_elf_close(&library);
+}
+
 static void test_native_export_visibility(void)
 {
     guest_elf_symbol symbol = {.name = "GetCGameAPI", .section = 1, .binding = 1};
@@ -9562,6 +9616,7 @@ int main(int argc, char **argv)
     test_shared_direction_angles();
     test_native_import_slot_identity();
     test_native_export_visibility();
+    test_native_saved_image_references();
     test_native_string_boundaries();
     test_native_resumable_budget();
     test_native_i386_call_conventions();

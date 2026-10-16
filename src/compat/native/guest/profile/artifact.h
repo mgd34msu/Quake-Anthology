@@ -19,24 +19,23 @@ typedef struct guest_profile_image_view {
     union { const guest_elf_view *elf; const guest_pe_view *pe; } image;
 } guest_profile_image_view;
 
-/* Preserve the actual prepared dependency order and inert image witnesses.
- * This is artifact provenance, not instruction or syscall admission. No image
- * is mapped, bound, initialized, or declared safe by these operations. */
+/* Borrow the installed image owners in their prepared dependency order.
+ * The process retains those owners while this table is in use. */
 bool guest_profile_artifacts_create(const guest_profile_image *, size_t,
     guest_profile_artifacts **, qa_error *);
 void guest_profile_artifacts_destroy(guest_profile_artifacts **);
 size_t guest_profile_artifacts_count(const guest_profile_artifacts *);
 bool guest_profile_artifacts_at(const guest_profile_artifacts *, size_t,
     guest_profile_image_view *, qa_error *);
-/* Compare genuine inert owners before loading/IFUNC or cold publication.
+/* Compare installed owner identities before loading/IFUNC or cold publication.
  * Mutable relocated RAM belongs to the real loaded-image/lower owners. */
 bool guest_profile_artifacts_match(const guest_profile_artifacts *,
     const guest_profile_image *, size_t, qa_error *);
 bool guest_profile_artifacts_checkpoint(const guest_profile_artifacts *,
     qa_buffer *, qa_error *);
-/* Complete detached decode revalidates original bytes through inert parsers.
- * It never opens a path, binds an import, maps RAM, or replays initialization. */
-bool guest_profile_artifacts_decode(qa_bytes, size_t,
+/* Bind saved image references to the installed owners. Older embedded image
+ * records remain readable; new checkpoints contain no installed asset bytes. */
+bool guest_profile_artifacts_decode(qa_bytes, const guest_profile_image *, size_t,
     guest_profile_artifacts **, qa_error *);
 
 #endif

@@ -291,9 +291,16 @@ bool qa_native_windows_process_restore(qa_bytes encoded,
         okay = guest_pe_open(source->bytes, &record->image, record->base,
             record->maximum, &row->artifact, error);
     }
-    if (okay) okay = guest_profile_artifacts_decode(provenance, owner->options.guest.maximum_backing_bytes,
-        &owner->provenance, error) && windows_process_artifacts(owner, false, error) &&
-        guest_windows_decode(runtime, image_resolve, owner, &owner->runtime, error) &&
+    if (okay) {
+        guest_profile_image *images = calloc(count, sizeof(*images));
+        if (!images) okay = guest_fail(error, QA_ERROR_MEMORY, count, "qualifying installed Windows provenance");
+        for (size_t i = 0; okay && i < count; ++i)
+            images[i] = (guest_profile_image){.provider = owner->images[i].id,
+                .kind = GUEST_PROFILE_PE, .owner.pe = owner->images[i].artifact};
+        if (okay) okay = guest_profile_artifacts_decode(provenance, images, count, &owner->provenance, error);
+        free(images);
+    }
+    if (okay) okay = guest_windows_decode(runtime, image_resolve, owner, &owner->runtime, error) &&
         runtime_matches(owner, error) && bindings->capabilities.current(bindings->capabilities.context, error);
     windows_restore_callbacks callbacks = {owner->runtime, bindings};
     windows_baseline source = {owner, NULL, records};

@@ -222,12 +222,11 @@ bool qa_native_sysv_program_restore(qa_bytes bytes, const qa_native_sysv_program
     }
     qa_bytes parts[5] = {{0}};
     for (size_t i = 0; okay && i < 5; ++i) okay = blob(&io, parts + i);
-    if (okay) okay = qa_source_save_finish(&io, NULL) &&
-        guest_profile_artifacts_decode(parts[0], bindings->maximum_image_bytes, &owner->provenance, error);
     guest_profile_image images[2] = {
         {.provider = owner->options.program.provider, .kind = GUEST_PROFILE_ELF, .owner.elf = owner->artifacts[0]},
         {.provider = owner->options.interpreter.provider, .kind = GUEST_PROFILE_ELF, .owner.elf = owner->artifacts[1]}};
-    if (okay) okay = guest_profile_artifacts_match(owner->provenance, images, count, error) &&
+    if (okay) okay = qa_source_save_finish(&io, NULL) &&
+        guest_profile_artifacts_decode(parts[0], images, count, &owner->provenance, error) &&
         ((count == 2) == (parts[3].size != 0));
     for (size_t i = 0; okay && i < owner->file_count; ++i) {
         program_file *entry = owner->files + i;
