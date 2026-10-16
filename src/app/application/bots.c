@@ -1205,12 +1205,8 @@ bool application_bots_prepare_requested(qa_application *application,const qa_lau
 }
 bool application_bots_construct_restored(application_bots *bots,qa_error *error) {
     if(!bot_behavior_prepare(bots,error)) return false;
-    if(!application_bots_runtime_create(bots,&bots->saved_requirements.runtime,&bots->runtime,error) ||
-       !application_bots_guests_construct_restored(bots,error)) return false;
-    if(!bots->saved_requirements.population) return true;
-    qa_bot_services ai=application_bots_services(bots);
-    return qa_bots_create_restored(bots->runtime,&ai,bots->saved_requirements.population_client_capacity,
-                                   &bots->population,error);
+    return application_bots_runtime_create(bots,&bots->saved_requirements.runtime,&bots->runtime,error) &&
+        application_bots_guests_construct_restored(bots,error);
 }
 bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime_options *given,
     qa_bot_runtime **out,qa_error *error) {

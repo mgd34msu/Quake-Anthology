@@ -508,8 +508,12 @@ bool application_bots_save_restore(qa_application *app,qa_bytes bytes,qa_error *
     }
     ok=ok && (!saved.name || (name && !strcmp(saved.name,name))) &&
         qa_bot_runtime_save_restore(app->session,bots->runtime,bots->saved_runtime,saved.name?&map:NULL,error) &&
-        application_bots_guests_restore(bots,error) &&
-        (!bots->population || qa_bots_population_restore(bots->population,bots->saved_population,error));
+        application_bots_guests_restore(bots,error);
+    if(ok && bots->saved_requirements.population) {
+        qa_bot_services services=application_bots_services(bots);
+        ok=qa_bots_create_restored(bots->runtime,&services,bots->saved_requirements.population_client_capacity,
+            &bots->population,error) && qa_bots_population_restore(bots->population,bots->saved_population,error);
+    }
     if(ok && bots->saved_catalogue.size)
         ok=application_bots_catalog_create(bots,error) && qa_bot_catalog_restore(bots->catalogue,bots->saved_catalogue,error);
     qa_bot_runtime_saved_map_free(&saved);if(ok) bots->runtime_restored=true;return ok;
