@@ -1,4 +1,5 @@
 #include "guest_q3_private.h"
+#include "equipment_requests.h"
 #include "qa/application_q3_body_entry.h"
 #include "guest_q3_client_console.h"
 #include "startup_flow.h"
@@ -733,16 +734,26 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
             actor=source.source_actor;
             source_owner=source.source_owner;
         }
+        qa_arena storage={0};
+        qa_console_command_arena(command->console,&storage);
         qa_application_item_selection selected;
-        qa_command_result result=qa_application_item_command(app,actor,command,&selected,error);
+        qa_command_result result=application_equipment_item_resolve(app,actor,command,
+            &storage,NULL,&selected,error);
+        qa_arena_destroy(&storage);
         if (result==QA_COMMAND_FAILED) return false;
         if (result==QA_COMMAND_HANDLED) {
-            if (!selected.item || selected.provider!=source_owner || selected.q3_weapon<0) {
+            if (!selected.item) {
                 *handled=true;
                 return true;
             }
-            snprintf(weapon,sizeof(weapon),"weapon %i",selected.q3_weapon);
-            text=weapon;
+            if (selected.provider==source_owner && selected.q3_weapon>=0) {
+                snprintf(weapon,sizeof(weapon),"weapon %i",selected.q3_weapon);
+                text=weapon;
+            } else {
+                result=qa_application_item_command(app,actor,command,NULL,error);
+                if (result==QA_COMMAND_FAILED) return false;
+                if (result==QA_COMMAND_HANDLED) { *handled=true; return true; }
+            }
         }
     }
     qa_command_tokens engine_prior;
