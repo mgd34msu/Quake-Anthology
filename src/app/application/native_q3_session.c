@@ -210,15 +210,9 @@ static bool initialize_client(const session_source *source, qa_actor_id actor,
         }
     }
     if (!session_commit(source, actor, slot, QA_Q3_CLIENT_SESSION_TEAM, &row, error)) return false;
-    if (qa_game_type_is_team(game_type) && auto_join) {
-        qa_q3_native_client client;
-        char text[128];
-        if (!qa_q3_client_read(source->game, actor, &client, error)) return false;
-        snprintf(text, sizeof(text), "cp \"%s^7 %s\n\"", client.netname,
-            row.team == 1 ? "joined the red team." : "joined the blue team.");
-        if (!application_native_q3_send_command(source->provider, -1, text, error) ||
-            !client_live(source, actor, slot, error)) return false;
-    }
+    if (qa_game_type_is_team(game_type) && auto_join &&
+        (!application_native_q3_client_team_announce(source->provider, actor, -1, error) ||
+         !client_live(source, actor, slot, error))) return false;
     if (!qa_q3_source_clock(source->game, &time, error)) return false;
     row.spectator_state = QA_Q3_SPECTATOR_FREE;
     row.spectator_time_ms = time;

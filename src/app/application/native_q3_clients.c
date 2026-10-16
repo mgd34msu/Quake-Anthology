@@ -330,6 +330,23 @@ static bool session(application_provider *provider, qa_actor_id actor,
     return qa_q3_client_session_read(provider->state.q3, actor, out, error);
 }
 
+bool application_native_q3_client_team_announce(application_provider *provider,
+    qa_actor_id actor, int32_t old_team, qa_error *error)
+{
+    uint32_t slot;
+    qa_q3_native_client client;
+    if (!source(provider, actor, &slot, error) ||
+        !qa_q3_client_read(provider->state.q3, actor, &client, error)) return false;
+    int32_t team = client.rule.session.team;
+    const char *announcement = team == 1 ? "joined the red team." : team == 2 ? "joined the blue team." :
+        team == 3 && old_team != 3 ? "joined the spectators." : team == 0 ? "joined the battle." : NULL;
+    if (!announcement) return true;
+    char text[128];
+    snprintf(text, sizeof(text), "cp \"%s^7 %s\n\"", client.netname, announcement);
+    return application_native_q3_send_command(provider, -1, text, error) &&
+        source(provider, actor, &slot, error);
+}
+
 static bool connection(application_provider *provider, qa_actor_id actor,
     qa_q3_client_connection state, qa_error *error)
 {
@@ -539,6 +556,17 @@ bool application_native_q3_client_connect(application_provider *provider, qa_act
             snprintf(text, sizeof(text), "print \"%s^7 connected\n\"", client.netname);
             ok = application_native_q3_send_command(provider, -1, text, error) &&
                  source(provider, actor, &slot, error);
+        }
+    }
+    if (ok) {
+        int32_t game_type;
+        qa_q3_client_session current;
+        ok = application_native_q3_settings_integer_at(provider,
+            APPLICATION_Q3_SETTING_G_GAMETYPE, &game_type, error);
+        if (ok && qa_game_type_is_team(game_type)) {
+            ok = session(provider, actor, &current, error);
+            if (ok && current.team != 3)
+                ok = application_native_q3_client_team_announce(provider, actor, -1, error);
         }
     }
     if (ok) ok = application_native_q3_rank(provider, error);
@@ -965,7 +993,6 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
     qa_q3_client_session sess;
     qa_q3_player_state player;
     qa_q3_source_client_counts ranks;
-    qa_q3_native_client persistent;
     qa_mode_id mode;
     qa_mode_view rules;
     bool q3_rules;
@@ -1053,15 +1080,7 @@ static bool set_team(application_provider *provider, qa_actor_id actor,
     if ((old_team == 1 || old_team == 2) &&
         (!application_native_q3_votes_check_team_leader(provider, old_team, error) ||
          !source(provider, actor, &slot, error))) return false;
-    if (!qa_q3_client_read(provider->state.q3, actor, &persistent, error)) return false;
-    const char *announcement = team == 1 ? "joined the red team." : team == 2 ? "joined the blue team." :
-        team == 3 && old_team != 3 ? "joined the spectators." : team == 0 ? "joined the battle." : NULL;
-    if (announcement) {
-        char text[128];
-        snprintf(text, sizeof(text), "cp \"%s^7 %s\n\"", persistent.netname, announcement);
-        if (!application_native_q3_send_command(provider, -1, text, error) ||
-            !source(provider, actor, &slot, error)) return false;
-    }
+    if (!application_native_q3_client_team_announce(provider, actor, old_team, error)) return false;
     bool ok = application_native_q3_client_userinfo_changed(provider, actor, error) &&
         application_native_q3_client_begin(provider, actor, NULL, NULL, error);
     if (ok && accepted) *accepted = true;

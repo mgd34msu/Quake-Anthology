@@ -20,6 +20,8 @@ bool application_native_q3_client_set_team(application_provider *, qa_actor_id,
 bool application_native_q3_client_stop_following_slot(application_provider *, uint32_t, qa_error *);
 bool application_native_q3_client_disconnect(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q3_client_userinfo_changed(application_provider *, qa_actor_id, qa_error *);
+bool application_native_q3_client_team_announce(application_provider *, qa_actor_id,
+    int32_t old_team, qa_error *);
 bool application_native_q3_client_command(application_provider *, qa_actor_id,
     const qa_command_invocation *, bool *handled, qa_error *);
 bool application_native_q3_source_client_command(application_provider *,qa_actor_id,
