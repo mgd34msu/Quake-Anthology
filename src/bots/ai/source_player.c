@@ -156,8 +156,13 @@ bool bot_ai_source_player_copy(qa_bots *bots,bot_ai_state *state,
 {
     if(!bots || !state || !source) return bot_ai_fail(error,"Source player copy requires its actual BotState owner");
     qa_q3_product product=bots->services.team_arena?QA_Q3_TEAM_ARENA:QA_Q3_ARENA;
-    if(source->product!=product)
-        return bot_ai_fail(error,"Bot player-state product differs from its actual GAME source");
+    if(source->product!=product) {
+        qa_error_set(error,QA_ERROR_FORMAT,0,
+            "Bot player-state product %d differs from GAME product %d for client %d actor %u/%llu",
+            (int)source->product,(int)product,source->clientNum,
+            state->view.actor.slot,(unsigned long long)state->view.actor.generation);
+        return false;
+    }
     qa_bot_source_record player;
     if(!qa_bot_source_record_alias(state->source_record,QA_BOT_SOURCE_PLAYER,468,&player,error)) return false;
     qa_q3_player observed=*source;
