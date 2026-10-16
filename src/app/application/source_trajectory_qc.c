@@ -606,6 +606,13 @@ static bool qc_qualify(trajectory_qc *source, const qa_catalog_weapon_behavior *
     return okay;
 }
 
+bool application_trajectory_qc_check(qa_qc_program *program,
+    const qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    trajectory_qc source = {.program = program};
+    return qc_qualify(&source, behavior, error);
+}
+
 static bool qc_model_literal(const char *text)
 {
     size_t size = strlen(text);

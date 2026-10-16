@@ -30,6 +30,9 @@ static void usage(FILE *stream)
           "       quake-anthology --optimize-aas FILE OUTPUT\n"
           "       quake-anthology --optimize-aas ARCHIVE MEMBER OUTPUT\n"
           "       quake-anthology weapon-behavior inspect PRODUCT [--artifact PATH] [options]\n"
+          "       quake-anthology weapon-behavior declare PRODUCT --id NAMESPACE:ID --role ROLE --fire CALLBACK [options]\n"
+          "       quake-anthology weapon-behavior declare-qvm PRODUCT --profile MOUNTED_JSON [options]\n"
+          "       quake-anthology weapon-behavior declare-native PRODUCT --profile MOUNTED_JSON [options]\n"
           "\n"
           "  --content-root PATH      Primary data root, default executable folder\n"
           "  --game-path PATH         Additional install folder, repeatable\n"
@@ -357,28 +360,14 @@ int main(int argc, char **argv)
         if (argc == 5) return inspect_archive(argv[2], argv[3], optimize_aas, argv[4]);
         usage(stderr); return 2;
     }
-    const char *behavior_product = NULL, *behavior_artifact = NULL;
-    if (argc > 1 && strcmp(argv[1], "weapon-behavior") == 0) {
-        if (argc < 4 || strcmp(argv[2], "inspect") || !argv[3][0] || argv[3][0] == '-') {
-            usage(stderr); return 2;
-        }
-        behavior_product = argv[3];
-        int count = 1;
-        for (int i = 4; i < argc; ++i) {
-            if (!strcmp(argv[i], "--help")) { usage(stdout); return 0; }
-            if (!strcmp(argv[i], "--artifact")) {
-                if (behavior_artifact || i + 1 == argc || !argv[i + 1][0] || argv[i + 1][0] == '-') {
-                    fputs("weapon-behavior: --artifact requires one mounted path\n", stderr); return 2;
-                }
-                behavior_artifact = argv[++i];
-            } else if (!strcmp(argv[i], "--content")) argv[count++] = "--content-root";
-            else if (!strcmp(argv[i], "--user-content")) argv[count++] = "--user-content-root";
-            else argv[count++] = argv[i];
-        }
-        argc = count; argv[argc] = NULL;
-    }
-    qa_frontend_options options;
+    qa_weapon_behavior_tool_command behavior = {0};
+    bool behavior_tool = false, tool_help = false;
     qa_error error = {0};
+    if (!qa_weapon_behavior_tool_arguments(&argc, argv, &behavior, &behavior_tool, &tool_help, &error)) {
+        report_error("weapon-behavior", &error); usage(stderr); return 2;
+    }
+    if (tool_help) { usage(stdout); return 0; }
+    qa_frontend_options options;
     if (!qa_frontend_options_parse(argc, argv, &options, &error)) {
         report_error("startup", &error);
         usage(stderr);
@@ -397,8 +386,8 @@ int main(int argc, char **argv)
         qa_frontend_options_destroy(&options);
         return report_error("game locations",&error);
     }
-    if (behavior_product) {
-        bool okay = qa_weapon_behavior_inspect(&options, behavior_product, behavior_artifact, stdout, &error);
+    if (behavior_tool) {
+        bool okay = qa_weapon_behavior_tool_run(&options, &behavior, stdout, &error);
         qa_frontend_options_destroy(&options);
         return okay ? 0 : report_error("weapon-behavior", &error);
     }

@@ -126,6 +126,25 @@ For an authored game type, use `--game-type PRODUCT/COMPONENT` instead of `--ori
 ./build/quake-anthology --game PRODUCT --game-type PRODUCT/COMPONENT
 ```
 
+Select a declared projectile behavior with `--weapon-behavior PRODUCT/ID`. Repeat the option for different projectile roles. To remember a default for later sessions, set `qts_weaponBehavior` to the same `PRODUCT/ID` in the console.
+
+Mod authors can inspect an installed program without running it:
+
+```sh
+./build/quake-anthology weapon-behavior inspect PRODUCT
+./build/quake-anthology weapon-behavior inspect PRODUCT --artifact vm/qagame.qvm
+```
+
+The report lists compiled callbacks and think assignments for QuakeC, instruction entries for QVMs, or section and segment ranges for native modules. It does not identify projectile roles automatically. Once the callbacks and layout are established from the mod's source, write a declaration into your user-content directory:
+
+```sh
+./build/quake-anthology weapon-behavior declare PRODUCT --id mymod:rocket --role rocket --fire CALLBACK
+./build/quake-anthology weapon-behavior declare-qvm PRODUCT --profile profiles/rocket.json
+./build/quake-anthology weapon-behavior declare-native PRODUCT --profile profiles/rocket.json
+```
+
+`--title TEXT` names a QuakeC declaration; `--activate CALLBACK` adds an optional activation callback. QVM and native profiles supply their own names, callbacks and private layout. Profile and artifact paths are relative to the selected product's mounted content. The tool checks the declaration through the runtime reader, replaces the matching entry, preserves other entries and prints the saved path. Native trajectory profiles currently support the Quake II rerelease Windows x64 API. These commands accept the same game-location options as a normal launch.
+
 ## Display, controls and configuration
 
 Use the in-game options for input bindings and other preferences. Startup options include:

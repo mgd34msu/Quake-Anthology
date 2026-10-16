@@ -742,6 +742,12 @@ static bool qvm_qualify(trajectory_qvm *source, const qa_catalog_weapon_behavior
     qa_json_destroy(document); return okay;
 }
 
+bool application_trajectory_qvm_check(qa_qvm_image *image,
+    const qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    trajectory_qvm source = {.image = image};
+    return qvm_qualify(&source, behavior, error);
+}
 
 bool application_trajectory_qvm_create(qa_application *application, const qa_launch_instance *launch,
     qa_qvm_image *image, const qa_catalog_weapon_behavior *behavior,

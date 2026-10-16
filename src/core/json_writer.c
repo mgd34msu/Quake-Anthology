@@ -124,6 +124,14 @@ void qa_json_writer_string(qa_json_writer *w, const char *text) {
     }
     qa_json_writer_bytes(w, (qa_bytes){(const uint8_t *)text, strlen(text)});
 }
+void qa_json_writer_value(qa_json_writer *w, const qa_json_document *document, qa_json_id id) {
+    qa_bytes source = qa_json_source(document, id);
+    if (!source.size) {
+        fail(w, QA_ERROR_ARGUMENT, "Missing parsed JSON value");
+        return;
+    }
+    if (value(w)) append(w, (const char *)source.data, source.size);
+}
 void qa_json_writer_number(qa_json_writer *w, double number) {
     if (!value(w))
         return;

@@ -10,6 +10,35 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool qa_application_weapon_behavior_check(const qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    if (!behavior || !behavior->artifact_resource || !behavior->artifact_path)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Trajectory declaration requires a mounted artifact");
+    qa_bytes bytes = qa_resource_bytes(behavior->artifact_resource);
+    if (behavior->runtime == QA_PROGRAM_QUAKEC) {
+        qa_qc_program *program = NULL;
+        bool okay = qa_qc_program_load(bytes, behavior->artifact_path, &program, error) &&
+            application_trajectory_qc_check(program, behavior, error);
+        qa_qc_program_destroy(program);
+        return okay;
+    }
+    if (behavior->runtime == QA_PROGRAM_QVM) {
+        qa_qvm_image *image = NULL;
+        bool okay = qa_qvm_image_load(bytes, &image, error) &&
+            application_trajectory_qvm_check(image, behavior, error);
+        qa_qvm_image_release(image);
+        return okay;
+    }
+    if (behavior->runtime == QA_PROGRAM_NATIVE) {
+        qa_native_module *module = NULL;
+        bool okay = qa_native_module_load(bytes, behavior->artifact_path, QA_NATIVE_Q2_GAME_API2023, &module, error) &&
+            application_trajectory_native_check(module, behavior, error);
+        qa_native_module_release(module);
+        return okay;
+    }
+    return application_fail(error, QA_ERROR_UNSUPPORTED, "Trajectory declaration has no guest runtime");
+}
+
 typedef struct trajectory_source {
     struct trajectory_source *next;
     qa_launch_instance_lease *descriptor;

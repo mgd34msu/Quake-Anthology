@@ -846,4 +846,8 @@ void qa_application_real_time(qa_application *, int64_t utc_ms);
 int64_t qa_application_utc_milliseconds(const qa_application *);
 int32_t qa_application_q3_calendar(const qa_application *, qa_q3_host_calendar *);
 
+/* Checks authored trajectory metadata against its retained artifact without
+ * executing guest code or creating an application/session. */
+bool qa_application_weapon_behavior_check(const qa_catalog_weapon_behavior *, qa_error *);
+
 #endif

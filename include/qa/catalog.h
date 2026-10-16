@@ -170,6 +170,8 @@ size_t qa_catalog_mod_count(const qa_catalog *);
 const qa_catalog_mod *qa_catalog_mod_at(const qa_catalog *, size_t);
 const qa_catalog_mod *qa_catalog_mod_find(const qa_catalog *, const char *key);
 size_t qa_catalog_weapon_behavior_count(const qa_catalog *);
+const char *qa_catalog_weapon_behavior_role_name(qa_builtin_projectile_role);
+bool qa_catalog_weapon_behavior_id_valid(const char *);
 const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_at(const qa_catalog *, size_t);
 const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_find(const qa_catalog *,
                                                                   qa_product_id, const char *id);

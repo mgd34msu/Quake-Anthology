@@ -1,6 +1,8 @@
 #include "weapon_behavior_tool.h"
 #include "qa/json_writer.h"
 #include "qa/qc.h"
+#include "qa/platform_services.h"
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct qc_inspection {
@@ -109,28 +111,70 @@ static bool inspect_native(qa_json_writer *writer, qa_bytes bytes, qa_error *err
     return writer_current(writer, error);
 }
 
-bool qa_weapon_behavior_inspect(const qa_frontend_options *options, const char *key,
+bool qa_weapon_behavior_tool_arguments(int *argc, char **argv,
+    qa_weapon_behavior_tool_command *command, bool *handled, bool *help, qa_error *error)
+{
+    *handled = *argc > 1 && !strcmp(argv[1], "weapon-behavior");
+    *help = false;
+    if (!*handled) return true;
+    for (int i = 2; i < *argc; ++i)
+        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { *help = true; return true; }
+    if (*argc < 4 || !argv[3][0] || argv[3][0] == '-') {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "weapon-behavior requires an action and installed product"); return false;
+    }
+    *command = (qa_weapon_behavior_tool_command){.product = argv[3]};
+    if (!strcmp(argv[2], "inspect")) command->action = QA_WEAPON_INSPECT;
+    else if (!strcmp(argv[2], "declare")) command->action = QA_WEAPON_DECLARE_QC;
+    else if (!strcmp(argv[2], "declare-qvm")) command->action = QA_WEAPON_DECLARE_QVM;
+    else if (!strcmp(argv[2], "declare-native")) command->action = QA_WEAPON_DECLARE_NATIVE;
+    else { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unknown weapon-behavior action: %s", argv[2]); return false; }
+    int count = 1;
+    for (int i = 4; i < *argc; ++i) {
+        const char **field = NULL;
+        if (!strcmp(argv[i], "--artifact")) field = &command->artifact;
+        else if (!strcmp(argv[i], "--id")) field = &command->id;
+        else if (!strcmp(argv[i], "--title")) field = &command->title;
+        else if (!strcmp(argv[i], "--role")) field = &command->role;
+        else if (!strcmp(argv[i], "--fire")) field = &command->fire;
+        else if (!strcmp(argv[i], "--activate")) field = &command->activate;
+        else if (!strcmp(argv[i], "--profile")) field = &command->profile;
+        if (field) {
+            if (*field || i + 1 == *argc || !argv[i + 1][0] || argv[i + 1][0] == '-') {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Option %s requires one value", argv[i]); return false;
+            }
+            *field = argv[++i];
+        } else if (!strcmp(argv[i], "--content")) argv[count++] = "--content-root";
+        else if (!strcmp(argv[i], "--user-content")) argv[count++] = "--user-content-root";
+        else argv[count++] = argv[i];
+    }
+    bool qc_fields = command->id || command->title || command->role || command->fire || command->activate;
+    bool profile_action = command->action == QA_WEAPON_DECLARE_QVM || command->action == QA_WEAPON_DECLARE_NATIVE;
+    if ((command->action == QA_WEAPON_INSPECT && qc_fields) ||
+        (command->action == QA_WEAPON_DECLARE_QC && (!command->id || !command->role || !command->fire)) ||
+        (profile_action && (!command->profile || qc_fields)) || (!profile_action && command->profile)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "declare needs --id, --role and --fire; declare-qvm/native need only --profile");
+        return false;
+    }
+    *argc = count; argv[count] = NULL;
+    return true;
+}
+
+static bool write_output(FILE *stream, qa_bytes output, qa_error *error)
+{
+    if (fwrite(output.data, 1, output.size, stream) == output.size && fputc('\n', stream) != EOF) return true;
+    qa_error_set(error, QA_ERROR_IO, 0, "Writing weapon behavior result"); return false;
+}
+
+static bool inspect_product(qa_catalog *catalog, const qa_product *product, qa_vfs *vfs,
     const char *artifact, FILE *stream, qa_error *error)
 {
-    qa_resource_pool *pool = qa_resource_pool_create(error);
-    if (!pool) return false;
-    qa_catalog *catalog = NULL;
-    qa_vfs *vfs = NULL;
     qa_resource *resource = NULL;
     qa_qc_program *qc = NULL;
     qa_qvm_image *qvm = NULL;
     qa_json_writer writer = {0};
     qa_buffer output = {0};
-    qa_catalog_options discovery = {.resources = pool,
-        .content_root = options->application.content_root, .user_root = options->application.user_root,
-        .install_roots = options->application.install_roots, .install_root_count = options->application.install_root_count,
-        .generation = options->application.catalog_generation, .discover_mods = true};
-    bool okay = qa_catalog_discover(&discovery, &catalog, error);
-    const qa_product *product = okay ? qa_catalog_find(catalog, key) : NULL;
-    if (okay && !product) {
-        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Installed product not found: %s", key); okay = false;
-    }
-    if (okay && !artifact) artifact = product->program;
+    bool okay = true;
+    if (!artifact) artifact = product->program;
     for (size_t i = 0; okay && !artifact && i < qa_catalog_weapon_behavior_count(catalog); ++i) {
         const qa_catalog_weapon_behavior *behavior = qa_catalog_weapon_behavior_at(catalog, i);
         if (behavior->product == product->id) artifact = behavior->artifact_path;
@@ -139,8 +183,7 @@ bool qa_weapon_behavior_inspect(const qa_frontend_options *options, const char *
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Product has no discovered program; select a mounted path with --artifact");
         okay = false;
     }
-    if (okay) okay = qa_catalog_open(catalog, product->id, &vfs, error) &&
-        qa_vfs_acquire(vfs, artifact, &resource, NULL, error);
+    if (okay) okay = qa_vfs_acquire(vfs, artifact, &resource, NULL, error);
     if (okay) {
         qa_bytes bytes = qa_resource_bytes(resource);
         qa_error qc_error = {0}, qvm_error = {0};
@@ -164,7 +207,7 @@ bool qa_weapon_behavior_inspect(const qa_frontend_options *options, const char *
                 qa_json_writer_key(&writer, "declared"); qa_json_writer_array(&writer);
                 for (size_t i = 0; i < qa_catalog_weapon_behavior_count(catalog); ++i) {
                     const qa_catalog_weapon_behavior *behavior = qa_catalog_weapon_behavior_at(catalog, i);
-                    if (behavior->product != product->id || strcmp(behavior->artifact_path, artifact)) continue;
+                    if (behavior->product != product->id || !behavior->artifact_path || strcmp(behavior->artifact_path, artifact)) continue;
                     qa_json_writer_object(&writer);
                     qa_json_writer_key(&writer, "id"); qa_json_writer_string(&writer, behavior->id);
                     qa_json_writer_key(&writer, "title"); qa_json_writer_string(&writer, behavior->title);
@@ -179,16 +222,173 @@ bool qa_weapon_behavior_inspect(const qa_frontend_options *options, const char *
             }
         }
     }
-    if (okay && (fwrite(output.data, 1, output.size, stream) != output.size || fputc('\n', stream) == EOF)) {
-        qa_error_set(error, QA_ERROR_IO, 0, "Writing weapon behavior inspection"); okay = false;
-    }
+    if (okay) okay = write_output(stream, (qa_bytes){output.data, output.size}, error);
     qa_buffer_free(&output);
     qa_json_writer_destroy(&writer);
     qa_qvm_image_release(qvm);
     qa_qc_program_destroy(qc);
     qa_resource_release(resource);
-    qa_vfs_destroy(vfs);
-    qa_catalog_release(catalog);
-    qa_resource_pool_destroy(pool);
+    return okay;
+}
+
+static bool text_field(const qa_json_document *document, qa_json_id object, const char *key,
+    qa_buffer *out, qa_error *error)
+{
+    if (!qa_json_string(document, qa_json_get(document, object, key), out, error)) return false;
+    if (out->size && !memchr(out->data, 0, out->size)) return true;
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Declaration %s requires nonempty text without NUL", key); return false;
+}
+
+static bool object_members(qa_json_writer *writer, const qa_json_document *document, qa_json_id object,
+    const char *skip, qa_error *error)
+{
+    for (size_t i = 0; i < qa_json_size(document, object); ++i) {
+        qa_buffer key = {0};
+        if (!qa_json_string(document, qa_json_key_at(document, object, i), &key, error)) return false;
+        const char *name = (const char *)key.data;
+        if (strcmp(name, "artifactDigest") && strcmp(name, "digest") && (!skip || strcmp(name, skip))) {
+            qa_json_writer_key(writer, name);
+            qa_json_writer_value(writer, document, qa_json_at(document, object, i));
+        }
+        qa_buffer_free(&key);
+    }
+    return writer_current(writer, error);
+}
+
+static bool declare_product(qa_catalog *catalog, const qa_product *product, qa_vfs *vfs,
+    const qa_weapon_behavior_tool_command *command, FILE *stream, qa_error *error)
+{
+    qa_program_kind runtime = command->action == QA_WEAPON_DECLARE_QC ? QA_PROGRAM_QUAKEC :
+        command->action == QA_WEAPON_DECLARE_QVM ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE;
+    const char *filename = runtime == QA_PROGRAM_QUAKEC ? "weapon-behaviors.json" :
+        runtime == QA_PROGRAM_QVM ? "qvm-weapon-behaviors.json" : "native-weapon-behaviors.json";
+    const char *list_name = runtime == QA_PROGRAM_QUAKEC ? "behaviors" : "profiles";
+    qa_resource *profile = NULL, *artifact = NULL, *previous = NULL;
+    qa_json_document *entry_document = NULL, *old_document = NULL;
+    qa_json_writer writer = {0};
+    qa_buffer entry_bytes = {0}, output = {0}, id = {0}, title = {0}, path = {0};
+    char *normalized = NULL, *explicit_path = NULL, *destination = NULL;
+    bool okay = true;
+    if (runtime == QA_PROGRAM_QUAKEC) {
+        qa_json_writer_object(&writer);
+        qa_json_writer_key(&writer, "id"); qa_json_writer_string(&writer, command->id);
+        qa_json_writer_key(&writer, "title"); qa_json_writer_string(&writer, command->title ? command->title : command->id);
+        qa_json_writer_key(&writer, "role"); qa_json_writer_string(&writer, command->role);
+        qa_json_writer_key(&writer, "aspect"); qa_json_writer_string(&writer, "trajectory");
+        qa_json_writer_key(&writer, "artifactPath");
+        qa_json_writer_string(&writer, command->artifact ? command->artifact : product->program ? product->program : "progs.dat");
+        qa_json_writer_key(&writer, "fireFunction"); qa_json_writer_string(&writer, command->fire);
+        if (command->activate) {
+            qa_json_writer_key(&writer, "activationFunction"); qa_json_writer_string(&writer, command->activate);
+        }
+        qa_json_writer_end(&writer);
+        okay = qa_json_writer_finish(&writer, &entry_bytes, error);
+        qa_json_writer_destroy(&writer); writer = (qa_json_writer){0};
+    } else okay = qa_vfs_acquire(vfs, command->profile, &profile, NULL, error);
+    qa_bytes source = profile ? qa_resource_bytes(profile) : (qa_bytes){entry_bytes.data, entry_bytes.size};
+    if (okay) okay = qa_json_parse(QA_JSON_STRICT, source, &entry_document, error);
+    qa_json_id entry = qa_json_root(entry_document);
+    if (okay) okay = text_field(entry_document, entry, "id", &id, error) &&
+        text_field(entry_document, entry, "title", &title, error) &&
+        text_field(entry_document, entry, "artifactPath", &path, error);
+    if (okay && runtime != QA_PROGRAM_QVM && !qa_catalog_weapon_behavior_id_valid((const char *)id.data)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Trajectory identity requires a namespace: %s", id.data); okay = false;
+    }
+    qa_builtin_projectile_role role = QA_BUILTIN_ROCKET;
+    while (okay && role <= QA_BUILTIN_GRAPPLE && !qa_json_string_equal(entry_document,
+        qa_json_get(entry_document, entry, "role"), qa_catalog_weapon_behavior_role_name(role))) ++role;
+    if (okay && (role > QA_BUILTIN_GRAPPLE ||
+        !qa_json_string_equal(entry_document, qa_json_get(entry_document, entry, "aspect"), "trajectory"))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Declaration has an unknown projectile role or aspect"); okay = false;
+    }
+    if (okay) { normalized = qa_archive_normalize_path((const char *)path.data, error); okay = normalized != NULL; }
+    if (okay && command->artifact) {
+        explicit_path = qa_archive_normalize_path(command->artifact, error); okay = explicit_path != NULL;
+        if (okay && strcmp(normalized, explicit_path)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "--artifact differs from the authored profile"); okay = false;
+        }
+    }
+    if (okay) okay = qa_vfs_acquire(vfs, normalized, &artifact, NULL, error);
+    if (okay) {
+        qa_catalog_weapon_behavior behavior = {.product = product->id, .runtime = runtime, .role = role,
+            .id = (const char *)id.data, .title = (const char *)title.data,
+            .artifact_path = normalized, .artifact_resource = artifact, .entry = source};
+        okay = qa_application_weapon_behavior_check(&behavior, error);
+    }
+    if (okay) {
+        qa_error issue = {0};
+        if (!qa_vfs_acquire(vfs, filename, &previous, NULL, &issue) && issue.code != QA_ERROR_NOT_FOUND) {
+            if (error) *error = issue;
+            okay = false;
+        }
+        if (okay && previous) okay = qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(previous), &old_document, error);
+    }
+    qa_json_id old_root = qa_json_root(old_document), old_entries = qa_json_get(old_document, old_root, list_name);
+    if (okay && old_document) {
+        uint64_t version;
+        okay = qa_json_u64(old_document, qa_json_get(old_document, old_root, "version"), &version, error) &&
+            version == 1 && qa_json_type(old_document, old_entries) == QA_JSON_ARRAY;
+        if (!okay && (!error || error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid existing weapon behavior document");
+    }
+    if (okay) {
+        qa_json_writer_object(&writer);
+        if (old_document) okay = object_members(&writer, old_document, old_root, list_name, error);
+        else { qa_json_writer_key(&writer, "version"); qa_json_writer_u64(&writer, 1); }
+        qa_json_writer_key(&writer, list_name); qa_json_writer_array(&writer);
+        for (size_t i = 0; okay && i < qa_json_size(old_document, old_entries); ++i) {
+            qa_json_id old = qa_json_at(old_document, old_entries, i);
+            if (qa_json_string_equal(old_document, qa_json_get(old_document, old, "id"), (const char *)id.data)) continue;
+            qa_json_writer_object(&writer);
+            okay = object_members(&writer, old_document, old, NULL, error);
+            qa_json_writer_end(&writer);
+        }
+        qa_json_writer_object(&writer);
+        if (okay) okay = object_members(&writer, entry_document, entry, NULL, error);
+        qa_json_writer_end(&writer);
+        qa_json_writer_end(&writer); qa_json_writer_end(&writer);
+        if (okay) okay = qa_json_writer_finish(&writer, &output, error);
+    }
+    qa_fs_root *root = okay ? qa_catalog_product_write_root(catalog, product->id) : NULL;
+    if (okay && !root) { qa_error_set(error, QA_ERROR_IO, 0, "Product has no writable user-content directory"); okay = false; }
+    uint64_t nonce = 0;
+    if (okay) okay = qa_fs_root_join(root, filename, &destination, error) &&
+        qa_platform_entropy_u64(&nonce, error) &&
+        qa_fs_root_replace(root, filename, (qa_bytes){output.data, output.size}, nonce, error);
+    if (okay) {
+        const char *prefix = runtime == QA_PROGRAM_QVM ? "qvm:" : "";
+        if (fprintf(stream, "Saved %s%s to %s\nSelect with --weapon-behavior %s/%s%s\n",
+            prefix, id.data, destination, product->key, prefix, id.data) < 0) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Writing declaration destination"); okay = false;
+        }
+    }
+    free(destination); free(explicit_path); free(normalized);
+    qa_buffer_free(&entry_bytes); qa_buffer_free(&output); qa_buffer_free(&id); qa_buffer_free(&title); qa_buffer_free(&path);
+    qa_json_writer_destroy(&writer); qa_json_destroy(old_document); qa_json_destroy(entry_document);
+    qa_resource_release(previous); qa_resource_release(artifact); qa_resource_release(profile);
+    return okay;
+}
+
+bool qa_weapon_behavior_tool_run(const qa_frontend_options *options,
+    const qa_weapon_behavior_tool_command *command, FILE *stream, qa_error *error)
+{
+    qa_resource_pool *pool = qa_resource_pool_create(error);
+    if (!pool) return false;
+    qa_catalog *catalog = NULL;
+    qa_vfs *vfs = NULL;
+    qa_catalog_options discovery = {.resources = pool,
+        .content_root = options->application.content_root, .user_root = options->application.user_root,
+        .install_roots = options->application.install_roots, .install_root_count = options->application.install_root_count,
+        .generation = options->application.catalog_generation, .discover_mods = true};
+    bool okay = qa_catalog_discover(&discovery, &catalog, error);
+    const qa_product *product = okay ? qa_catalog_find(catalog, command->product) : NULL;
+    if (okay && !product) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Installed product not found: %s", command->product); okay = false;
+    }
+    if (okay) okay = qa_catalog_open(catalog, product->id, &vfs, error);
+    if (okay) okay = command->action == QA_WEAPON_INSPECT ?
+        inspect_product(catalog, product, vfs, command->artifact, stream, error) :
+        declare_product(catalog, product, vfs, command, stream, error);
+    qa_vfs_destroy(vfs); qa_catalog_release(catalog); qa_resource_pool_destroy(pool);
     return okay;
 }

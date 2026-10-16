@@ -31,6 +31,9 @@ typedef struct application_trajectory_source {
 
 bool application_trajectory_entities_prepare(qa_application *, const char *const *,
     size_t, qa_buffer *, qa_error *);
+bool application_trajectory_qc_check(qa_qc_program *, const qa_catalog_weapon_behavior *, qa_error *);
+bool application_trajectory_qvm_check(qa_qvm_image *, const qa_catalog_weapon_behavior *, qa_error *);
+bool application_trajectory_native_check(qa_native_module *, const qa_catalog_weapon_behavior *, qa_error *);
 
 bool application_trajectory_qc_create(qa_application *, const qa_launch_instance *,
     qa_qc_program *, const qa_catalog_weapon_behavior *, application_trajectory_source *, qa_error *);

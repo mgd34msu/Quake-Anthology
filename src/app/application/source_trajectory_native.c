@@ -15,7 +15,7 @@
 
 enum { NATIVE_TRAJECTORY_CLIENT = 1, NATIVE_TRAJECTORY_TARGET = 2,
     NATIVE_TRAJECTORY_PROJECTILE = 4, NATIVE_TRAJECTORY_RETIRED = 8,
-    NATIVE_TRAJECTORY_ACTIVATED = 16 };
+    NATIVE_TRAJECTORY_ACTIVATED = 16, NATIVE_TRAJECTORY_CALLS = 64 };
 
 typedef struct native_trajectory_registration {
     uint32_t bytes, name, tag, callback;
@@ -49,6 +49,8 @@ typedef struct trajectory_native {
     qa_cvars_value_scope *provisioning_scope;
     qa_arena definitions;
     qa_buffer entities;
+    const char **initialization_classes;
+    size_t initialization_class_count;
     qa_q2_config_layout config_layout;
     qa_string_id *configstrings;
     qa_id_index resources;
@@ -912,7 +914,7 @@ static bool native_calls_parse(trajectory_native *source, const qa_json_document
         return application_fail(error, QA_ERROR_FORMAT, "Native trajectory source call has an unsupported ABI");
     qa_json_id calls = qa_json_get(document, object, "calls");
     *count = qa_json_size(document, calls);
-    if (qa_json_type(document, calls) != QA_JSON_ARRAY || !*count || *count > 64)
+    if (qa_json_type(document, calls) != QA_JSON_ARRAY || !*count || *count > NATIVE_TRAJECTORY_CALLS)
         return application_fail(error, QA_ERROR_FORMAT, "Native trajectory requires one to 64 declared source calls");
     *out = qa_arena_alloc(&source->definitions, *count * sizeof(**out), _Alignof(native_trajectory_entry), error);
     if (!*out) return false;
@@ -962,6 +964,60 @@ static bool native_cvars_parse(trajectory_native *source, const qa_json_document
             if (qa_text_ascii_equal(value->name, (*out)[j].name))
                 return application_fail(error, QA_ERROR_FORMAT, "Native trajectory declares a cvar twice");
     }
+    return true;
+}
+
+typedef struct native_declaration_range {
+    uint32_t rva, bytes;
+    bool executable, present;
+} native_declaration_range;
+
+typedef struct native_declaration_ranges {
+    uint64_t preferred_base;
+    native_declaration_range rows[2 * (4 + 2 * NATIVE_TRAJECTORY_CALLS)];
+    size_t count;
+} native_declaration_ranges;
+
+static void native_declaration_entry_ranges(native_declaration_ranges *ranges,
+    const native_trajectory_entry *entry)
+{
+    ranges->rows[ranges->count++] = (native_declaration_range){.rva = entry->rva,
+        .bytes = 1, .executable = true};
+    if (entry->registration_rva)
+        ranges->rows[ranges->count++] = (native_declaration_range){.rva = entry->registration_rva,
+            .bytes = entry->registration.bytes};
+}
+
+static bool native_declaration_range_visit(void *context, const qa_native_image_range *range,
+    qa_error *error)
+{
+    native_declaration_ranges *ranges = context; (void)error;
+    uint64_t start = range->address - ranges->preferred_base;
+    for (size_t i = 0; i < ranges->count; ++i) {
+        native_declaration_range *row = ranges->rows + i;
+        if ((row->executable ? range->executable : range->readable) &&
+            row->rva >= start && row->rva - start <= range->bytes &&
+            row->bytes <= range->bytes - (row->rva - start)) row->present = true;
+    }
+    return true;
+}
+
+static bool native_declaration_image(trajectory_native *source, qa_error *error)
+{
+    if (!qa_native_module_mutable_range(source->module, source->time_rva, 8, error)) return false;
+    native_declaration_ranges ranges = {.preferred_base = qa_native_module_describe(source->module).image.preferred_base};
+    native_declaration_entry_ranges(&ranges, &source->allocate);
+    native_declaration_entry_ranges(&ranges, &source->free_entity);
+    native_declaration_entry_ranges(&ranges, &source->touch);
+    native_declaration_entry_ranges(&ranges, &source->equipped);
+    for (size_t i = 0; i < source->equip_count; ++i) native_declaration_entry_ranges(&ranges, source->equip + i);
+    for (size_t i = 0; i < source->fire_count; ++i) native_declaration_entry_ranges(&ranges, source->fire + i);
+    qa_native_image_layout layout;
+    if (!qa_native_image_inspect_layout(qa_native_module_bytes(source->module), &layout,
+        native_declaration_range_visit, &ranges, error)) return false;
+    for (size_t i = 0; i < ranges.count; ++i)
+        if (!ranges.rows[i].present)
+            return application_fail(error, QA_ERROR_FORMAT, "Native trajectory callback or registration exceeds its source image permissions");
     return true;
 }
 
@@ -1053,8 +1109,24 @@ static bool native_declaration(trajectory_native *source, const qa_catalog_weapo
             okay = application_fail(error, QA_ERROR_FORMAT, "Native trajectory repeats an initialization class");
     }
     if (okay && worlds != 1) okay = application_fail(error, QA_ERROR_FORMAT, "Native trajectory requires one worldspawn initialization class");
-    if (okay) okay = application_trajectory_entities_prepare(source->application, names, count, &source->entities, error);
+    if (okay) {
+        source->initialization_classes = names;
+        source->initialization_class_count = count;
+        okay = native_declaration_image(source, error);
+    }
     qa_json_destroy(document); return okay;
+}
+
+bool application_trajectory_native_check(qa_native_module *module,
+    const qa_catalog_weapon_behavior *behavior, qa_error *error)
+{
+    if (!module || !behavior)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native trajectory checking requires its source module and declaration");
+    trajectory_native source = {.module = module};
+    qa_arena_init(&source.definitions, 16384);
+    bool okay = native_declaration(&source, behavior, error);
+    qa_arena_destroy(&source.definitions);
+    return okay;
 }
 
 static bool native_open_host(trajectory_native *source, qa_error *error)
@@ -1102,6 +1174,8 @@ bool application_trajectory_native_create(qa_application *application, const qa_
     bool okay = qa_strings_intern_cstr(qa_session_strings(application->session), behavior->id, &source->owner, error) &&
         qa_q2_codec_init(&codec, qa_q2_default_protocol(true), error) &&
         qa_q2_config_layout_read(&codec, &source->config_layout, error) && native_declaration(source, behavior, error);
+    if (okay) okay = application_trajectory_entities_prepare(application, source->initialization_classes,
+        source->initialization_class_count, &source->entities, error);
     if (okay) {
         source->configstrings = calloc(source->config_layout.max_configs, sizeof(*source->configstrings));
         okay = source->configstrings && qa_id_index_reserve(&source->resources,

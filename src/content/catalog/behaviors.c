@@ -2,6 +2,13 @@
 #include <stdio.h>
 
 size_t qa_catalog_weapon_behavior_count(const qa_catalog *c) { return c ? c->behavior_count : 0; }
+const char *qa_catalog_weapon_behavior_role_name(qa_builtin_projectile_role role)
+{
+    static const char *roles[] = {"rocket", "grenade", "nail", "bolt", "plasma", "energy", "grapple"};
+    return (unsigned)role < sizeof(roles) / sizeof(*roles) ? roles[role] : NULL;
+}
+bool qa_catalog_weapon_behavior_id_valid(const char *id)
+{ return id && *id && strchr(id, ':'); }
 const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_at(const qa_catalog *c, size_t i)
 { return c && i < c->behavior_count ? &c->behaviors[i] : NULL; }
 const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_find(const qa_catalog *c, qa_product_id product, const char *id)
@@ -45,7 +52,6 @@ static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
             default_path ? default_path : "progs.dat", error);
         if (!default_path) goto done;
     }
-    static const char *roles[] = {"rocket", "grenade", "nail", "bolt", "plasma", "energy", "grapple"};
     for (size_t i = 0; i < qa_json_size(doc, entries); ++i) {
         qa_json_id row = qa_json_at(doc, entries, i);
         const char *id = catalog_json_string(c, doc, qa_json_get(doc, row, "id"), NULL, error);
@@ -58,12 +64,13 @@ static bool read_document(qa_catalog *c, catalog_product *p, qa_vfs *view,
             snprintf(name, bytes, "qvm:%s", id); id = catalog_string(c, name, error); free(name);
             if (!id) goto done;
         }
-        if (!strchr(id, ':') || qa_catalog_weapon_behavior_find(c, p->view.id, id)) {
+        if (!qa_catalog_weapon_behavior_id_valid(id) || qa_catalog_weapon_behavior_find(c, p->view.id, id)) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid or repeated trajectory identity: %s", id); goto done;
         }
         size_t role = 0;
-        while (role < sizeof(roles) / sizeof(roles[0]) && !qa_json_string_equal(doc, qa_json_get(doc, row, "role"), roles[role])) ++role;
-        if (role == sizeof(roles) / sizeof(roles[0]) || !qa_json_string_equal(doc, qa_json_get(doc, row, "aspect"), "trajectory")) {
+        while (role <= QA_BUILTIN_GRAPPLE && !qa_json_string_equal(doc, qa_json_get(doc, row, "role"),
+            qa_catalog_weapon_behavior_role_name((qa_builtin_projectile_role)role))) ++role;
+        if (role > QA_BUILTIN_GRAPPLE || !qa_json_string_equal(doc, qa_json_get(doc, row, "aspect"), "trajectory")) {
             qa_error_set(error, QA_ERROR_FORMAT, 0, "unknown trajectory role or aspect"); goto done;
         }
         if (!catalog_grow((void **)&c->behaviors, &c->behavior_capacity, c->behavior_count + 1, sizeof(*c->behaviors), error)) goto done;
