@@ -161,6 +161,14 @@ static bool decision_descriptors_prepare(struct application_native_q2_attack *p,
         }
     }
     qa_json_id entity=qa_json_get(p->document,weapons,"entity"),root=qa_json_root(p->document);
+    qa_json_id spawn=qa_json_get(p->document,weapons,"spawn");
+    p->client_spawn_declared=spawn != QA_JSON_NONE;
+    if (p->client_spawn_declared) {
+        qa_json_id accepted=qa_json_get(p->document,spawn,"accepted");
+        if (!word(p->document,spawn,"entry",&p->client_spawn,error) ||
+            (accepted != QA_JSON_NONE && !decision_group_prepare(p,accepted,&p->spawn_accepted,error)) ||
+            !decision_scalar_prepare(p,qa_json_get(p->document,entity,"maxHealth"),&p->max_health,error)) return false;
+    }
     if(!decision_scalar_prepare(p,qa_json_get(p->document,entity,"waterLevel"),&p->water_level,error) ||
         !word(p->document,qa_json_get(p->document,root,"player"),"commandAngles",&p->command_angles,error)) return false;
     if(p->command_angles>p->client_bytes || p->client_bytes-p->command_angles<12)

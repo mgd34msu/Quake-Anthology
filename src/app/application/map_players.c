@@ -22,6 +22,7 @@
 #include "native_q3_remote_role.h"
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
+#include "native_q2_inventory_scanner.h"
 #include "native_q2_combat_policy.h"
 #include "native_q1_wire.h"
 #include "native_q1_wire_qw.h"
@@ -215,6 +216,57 @@ bool application_players_source_spawned(void *context, qa_actor_id actor, qa_err
     return admit_components(app, actor, error) &&
         (!scoped || application_native_q3_source_command_actor_current(source, actor) ||
          application_fail(error, QA_ERROR_ARGUMENT, "Completed spawn retired its captured Source client"));
+}
+
+typedef struct selected_spawn_pose {
+    application_provider *source;
+    double maximum_health;
+} selected_spawn_pose;
+
+static bool selected_spawn_pose_read(void *context, qa_actor_id actor,
+    qa_q3_selected_source_pose *out, qa_error *error)
+{
+    selected_spawn_pose *spawn = context;
+    qa_application *app = spawn->source->application;
+    qa_movement_result physical;
+    qa_combat_state combat;
+    if (!application_native_q2_input_read(spawn->source, actor, &physical, NULL, error) ||
+        !qa_combat_read(app->combat, actor, &combat, error)) return false;
+    *out = (qa_q3_selected_source_pose){.view_angles = physical.view_angles,
+        .view_height = physical.view_height, .max_health = qa_source_to_i32(spawn->maximum_health),
+        .team = qa_team_color_number(qa_session_strings(app->session), combat.team, QA_TEAM_COLOR_ALIASES)};
+    return true;
+}
+
+bool application_players_source_arsenal_spawned(application_provider *source,
+    qa_actor_id actor, double maximum_health, qa_error *error)
+{
+    qa_application *app = source->application;
+    if (application_world_provider(app, QA_ROLE_ENTITIES, "") != source) return true;
+    application_player_record *record = application_player_record_live(app->players, actor);
+    /* Initial admission and travel apply their carried state after ClientBegin. */
+    if (!record || app->operation == APPLICATION_CONFIGURING ||
+        record->source_begin_pending || record->deferred) return true;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (arsenal == source) return application_players_source_spawned(source, actor, error);
+    if (arsenal->kind == APPLICATION_PROVIDER_Q1) {
+        if (!qa_q1_grapple_release(arsenal->state.q1, actor, error) ||
+            !qa_q1_player_travel_reset(arsenal->state.q1, actor, (float)maximum_health, error)) return false;
+    } else if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        selected_spawn_pose pose = {.source = source, .maximum_health = maximum_health};
+        qa_q3_selected_source_services services = {.context = &pose, .pose = selected_spawn_pose_read};
+        if (!qa_q3_selected_source_respawn(arsenal->state.q3, actor, &services, error)) return false;
+    }
+    if (!application_supplies_source_spawned(source, actor, error) ||
+        !qa_equipment_respawn(app->equipment, actor, error)) return false;
+    struct application_native_q2 *engine = source->state.native.q2_engine;
+    if (engine->inventory_scanner) {
+        qa_item_id active;
+        if (!qa_application_weapon_read(app, actor, &active, error) ||
+            !application_native_q2_inventory_scanner_restore_selection(engine->inventory_scanner,
+                actor, active, error)) return false;
+    }
+    return application_players_source_spawned(source, actor, error);
 }
 
 static qa_mode_kind selected_mode(const qa_launch_choices *choices)

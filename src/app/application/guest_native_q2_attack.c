@@ -5,6 +5,7 @@
 #include "native_q2_inventory_scanner.h"
 #include "native_q2_callbacks.h"
 #include "supplies.h"
+#include "map_players_private.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
 #include "qa/pool.h"
@@ -116,13 +117,17 @@ struct application_native_q2_attack {
     uint32_t client_pointer, weapon, client_bytes, item_table, item_stride,
         item_count, item_classname, item_flags, weapon_flag, weapon_think;
     uint32_t spawn, free, factor_entry, factor_address;
+    uint32_t client_spawn;
+    decision_group spawn_accepted;
+    decision_field max_health;
+    bool client_spawn_declared;
     uint8_t pointer_bytes;
     qa_native_value_type factor_type;
     qa_native_abi abi;
     attack_item *items;
     size_t count;
     attack_hook *weapons;
-    qa_native_entry_observer *spawn_hook, *free_hook, *factor_hook;
+    qa_native_entry_observer *spawn_hook, *free_hook, *factor_hook, *client_spawn_hook;
     attack_factor *factors;
     attack_projectile *projectiles;
     qa_actor_index factor_index, projectile_index;
@@ -605,6 +610,34 @@ static bool factor_entry(void *opaque, qa_native_instance *native, qa_native_ent
     }
     --factor->calls; factor_reclaim(p, factor); (void)native; return ok;
 }
+static bool client_spawn_entry(void *opaque, qa_native_instance *native, qa_native_entry_observer *binding,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
+{
+    struct application_native_q2_attack *p = opaque;
+    if (count != 1 || arguments[0].type != QA_NATIVE_ADDRESS || !arguments[0].as.address)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original client spawn lacks its Source entity");
+    qa_native_address entity = arguments[0].as.address;
+    uint32_t slot;
+    if (!qa_native_entity_slot(native, entity, &slot, error)) return false;
+    qa_actor_id actor = slot < sizeof(p->engine->clients) / sizeof(*p->engine->clients)
+        ? p->engine->clients[slot].actor : (qa_actor_id){0};
+    ++p->engine->calls;
+    bool ok = qa_native_invoke_original(binding, arguments, count, result, error);
+    --p->engine->calls;
+    qa_application *app = p->engine->provider->application;
+    if (!ok || !actor.registry || !qa_actors_get(qa_session_actors(app->session), actor)) return ok;
+    qa_actor_id current;
+    if (!qa_native_host_source_actor(p->engine->provider->state.native.host, entity, false, &current, error)) return false;
+    if (!qa_actor_id_equal(current, actor)) return true;
+    bool accepted;
+    if (!decision_matches(p, entity, &p->spawn_accepted, &accepted, error)) return false;
+    if (!accepted) return true;
+    double maximum;
+    if (!decision_scalar(p, entity, &p->max_health, &maximum, error) ||
+        !application_players_source_arsenal_spawned(p->engine->provider, actor, maximum, error)) return false;
+    return !qa_actors_get(qa_session_actors(app->session), actor) ||
+        application_native_q2_attack_clock_reset(p->engine, actor, error);
+}
 static bool spawn_entry(void *opaque, qa_native_instance *native, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -734,6 +767,12 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
     }
     qa_native_type pointer = scalar(QA_NATIVE_ADDRESS);
     qa_native_signature weapon_sig = signature(p, &pointer, 1, QA_NATIVE_VOID);
+    if (p->client_spawn_declared && !p->client_spawn_hook) {
+        qa_native_address entry;
+        if (!qa_native_rva(instance(p), p->client_spawn, 1, &entry, error) ||
+            !qa_native_observe_entry(instance(p), entry, &weapon_sig, client_spawn_entry,
+                p, &p->client_spawn_hook, error)) return false;
+    }
     for (size_t i = 0; i < p->count; ++i) {
         attack_hook *hook = p->weapons;
         while (hook && hook->address != p->items[i].think) hook = hook->next;
@@ -1073,8 +1112,9 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
         factor->delay_available = false;
         factor->clock_present = false;
     }
-    qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,&p->dispatcher_hook};
-    for (size_t i = 0; i < 4; ++i) {
+    qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,
+        &p->dispatcher_hook, &p->client_spawn_hook};
+    for (size_t i = 0; i < sizeof(bindings) / sizeof(*bindings); ++i) {
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;
         *bindings[i] = NULL;
     }
@@ -1163,7 +1203,8 @@ bool application_native_q2_attack_restore_prepare(struct application_native_q2 *
         if (bytes.size) return application_fail(error, QA_ERROR_FORMAT, "Native attack continuation has no qualified owner");
         *out = NULL; return true;
     }
-    if (p->active || p->current || p->weapons || p->spawn_hook || p->free_hook || p->factor_hook || !engine->provider->state.native.host)
+    if (p->active || p->current || p->weapons || p->spawn_hook || p->free_hook || p->factor_hook ||
+        p->client_spawn_hook || !engine->provider->state.native.host)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native attack restore requires retired observers and real restored source storage");
     struct application_native_q2_attack_restore *prepared = calloc(1, sizeof(*prepared));
     if (!prepared) return application_fail(error, QA_ERROR_MEMORY, "Preparing native attack continuation");
