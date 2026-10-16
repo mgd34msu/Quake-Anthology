@@ -399,7 +399,7 @@ static bool access_name(q3_call *call,const char *name,q3_cvar_access *out,qa_er
 {
     qa_q3_host_options *options=&call->host->options;
     *out=(q3_cvar_access){.registry=named_owner(call,name),.command=options->command_context};
-    if (!options->console) return true;
+    if (!options->cvar_entry.entered) return true;
     return qa_console_cvar_context(options->console,&options->command_context,&out->command,error) &&
         qa_console_cvar_access(options->console,&out->command,name,&out->registry,&out->edit,error);
 }
@@ -420,7 +420,7 @@ static bool find(q3_cvar_access access,const char *name,const qa_cvar_view **out
 }
 static bool apply(q3_call *call,q3_cvar_access access,const qa_cvars_edit_command *command,qa_error *error)
 {
-    if (call->host->options.console)
+    if (call->host->options.cvar_entry.entered)
         return qa_console_cvar_apply(call->host->options.console,&access.command,command,error);
     switch (command->kind) {
     case QA_CVARS_EDIT_SET: return qa_cvars_set(access.registry,command->name,command->value,command->force,error);
@@ -657,7 +657,7 @@ bool qa_q3_host_cvar_cache_refresh(qa_q3_host *host,qa_error *error)
         host->options.role!=QA_QVM_CGAME)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Status refresh requires its returned actual CGAME host");
     ++host->calls;
-    bool ok=host->options.console?qa_console_cvar_enter(host->options.console,
+    bool ok=host->options.cvar_entry.entered?qa_console_cvar_enter(host->options.console,
         &host->options.command_context,NULL,NULL,refresh,host,error):refresh(host,NULL,error);
     --host->calls;
     if (!host->calls) qa_arena_reset(&host->scratch);
@@ -735,7 +735,7 @@ static bool info_pair(q3_call *call,const qa_command_context *command,char outpu
 static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *error)
 {
     qa_q3_host_options *options=&call->host->options;
-    if (!options->console) return qa_cvars_info(options->cvars,flags,1024,out,error);
+    if (!options->cvar_entry.entered) return qa_cvars_info(options->cvars,flags,1024,out,error);
     qa_command_context command;
     if (!qa_console_cvar_context(options->console,&options->command_context,&command,error)) return false;
     char output[1024]={0};
@@ -859,7 +859,7 @@ q3_service_result q3_cvars(q3_call *call,int32_t *result,qa_error *error)
     if (ui?!((trap>=3 && trap<=9) || trap==50 || trap==51):
         !(trap>=3 && trap<=(game?7:6))) return Q3_UNHANDLED;
     qa_q3_host_options *options=&call->host->options;
-    if (!options->console) return cvars_selected(call,result,error);
+    if (!options->cvar_entry.entered) return cvars_selected(call,result,error);
     cvar_operation operation={call,result};
     return qa_console_cvar_enter(options->console,&options->command_context,
         entered,call->host,operate,&operation,error)?Q3_COMPLETED:Q3_FAILED;
