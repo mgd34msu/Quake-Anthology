@@ -2,6 +2,7 @@
 #include "native_q2_inventory_source.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_combat.h"
 #include "native_q2_callbacks.h"
 #include "control_frame.h"
 #include "qa/native_observe.h"
@@ -10,9 +11,13 @@
 #include <math.h>
 
 typedef struct inventory_write_field { uint32_t offset, bytes; } inventory_write_field;
-enum { INVENTORY_ENTRY_GIVE = 8, INVENTORY_ENTRY_DEATH_DROP };
+enum { INVENTORY_ENTRY_GIVE = 8, INVENTORY_ENTRY_DEATH_DROP, INVENTORY_ENTRY_DROP_ALLOCATE };
 enum { INVENTORY_GIVE_WEAPONS = 6, INVENTORY_GIVE_AMMO,
-    INVENTORY_GIVE_UNKNOWN, INVENTORY_GIVE_AMMO_GRANT, INVENTORY_DEATH_DROP };
+    INVENTORY_GIVE_UNKNOWN, INVENTORY_GIVE_AMMO_GRANT, INVENTORY_DEATH_DROP,
+    INVENTORY_DROP_DEBIT, INVENTORY_DROP_CONSUMER };
+typedef enum inventory_drop_debit {
+    INVENTORY_DROP_PENDING, INVENTORY_DROP_ACCEPTED, INVENTORY_DROP_REFUSED
+} inventory_drop_debit;
 typedef struct inventory_selection {
     struct inventory_selection *next;
     qa_actor_id actor;
@@ -32,6 +37,14 @@ typedef struct inventory_frame {
     qa_actor_id actor;
     int32_t flags;
     bool named, dropping, giving, death_drop, has_named_row;
+    bool drop_weapon;
+    inventory_drop_debit drop_debit;
+    qa_actor_id drop_pickup;
+    application_native_q2_inventory_source drop_source;
+    qa_native_address drop_counter;
+    struct inventory_region *debit_region;
+    int32_t debit_before;
+    struct application_native_q2_resource_scope *consumer_scope;
     struct inventory_region *ammo_region;
     application_native_q2_inventory_source ammo_source;
     uint32_t ammo_index;
@@ -66,7 +79,7 @@ struct application_native_q2_inventory_scanner {
     application_native_q2_inventory_scanner_options options;
     inventory_write_field *writes;
     size_t write_count;
-    inventory_entry entries[10];
+    inventory_entry entries[11];
     inventory_region *regions;
     size_t entry_count, region_count;
     qa_arena readout_storage;
@@ -83,6 +96,7 @@ struct application_native_q2_inventory_scanner {
     uint32_t inventory, count, cursor, client_pointer, item_table, item_stride, item_count;
     uint32_t drop_weapon, drop_pending, death_ammo_index;
     qa_native_address drop_lookup_return;
+    uint32_t drop_free;
     int32_t empty;
     qa_native_abi abi;
     uint8_t pointer_bytes;
@@ -354,6 +368,7 @@ static bool navigate(application_native_q2_inventory_scanner *o, inventory_frame
 }
 static void frame_row(inventory_frame *frame, const application_native_q2_inventory_row *row)
 {
+    frame->drop_weapon = row->presentation.kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON;
     frame->named_row = *row;
     frame->named_row.label = NULL;
     frame->named_row.presentation = (application_native_q2_inventory_presentation){0};
@@ -367,21 +382,136 @@ static bool project_drop(application_native_q2_inventory_scanner *o, inventory_f
     uint32_t index = row->drop_index;
     if (index >= o->item_count || index >= o->count)
         return application_fail(e, QA_ERROR_FORMAT, "Native drop prototype leaves its item table");
+    qa_native_address current_weapon, pending_weapon;
     qa_unified_frame_lease *storage = frame_storage(o, frame, e);
     if (!storage || !source(o, frame->actor, &s, e) ||
         !qa_native_rva(instance(o), (uint64_t)o->item_table + (uint64_t)index * o->item_stride,
             o->item_stride, descriptor, e) ||
+        !application_native_q2_attack_drop_projection(o->engine, frame->actor, row->item, *descriptor,
+            row->presentation.kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON,
+            storage, &current_weapon, &pending_weapon, e) ||
         !save_bytes(o, storage, &s, o->inventory + index * 4, 4, &frame->restore, e) ||
         !save_bytes(o, storage, &s, o->drop_weapon, o->pointer_bytes, &frame->restore, e) ||
         !save_bytes(o, storage, &s, o->drop_pending, o->pointer_bytes, &frame->restore, e) ||
         (set_cursor && !save_bytes(o, storage, &s, o->cursor, 4, &frame->restore, e))) return false;
-    uint8_t zero[8] = {0};
+    uint8_t weapon[8], next[8];
+    if (o->pointer_bytes == 4) {
+        qa_store_u32le(weapon, (uint32_t)current_weapon); qa_store_u32le(next, (uint32_t)pending_weapon);
+    } else {
+        qa_store_u64le(weapon, current_weapon); qa_store_u64le(next, pending_weapon);
+    }
     if (!count_write(o, s.client + o->inventory + (uint64_t)index * 4, row, e) ||
-        !qa_native_write(instance(o), s.client + o->drop_weapon, (qa_bytes){zero, o->pointer_bytes}, e) ||
-        !qa_native_write(instance(o), s.client + o->drop_pending, (qa_bytes){zero, o->pointer_bytes}, e) ||
+        !qa_native_write(instance(o), s.client + o->drop_weapon, (qa_bytes){weapon, o->pointer_bytes}, e) ||
+        !qa_native_write(instance(o), s.client + o->drop_pending, (qa_bytes){next, o->pointer_bytes}, e) ||
         (set_cursor && !write_word(o, s.client + o->cursor, (int32_t)index, e))) return false;
+    frame->drop_source = s;
+    frame->drop_counter = s.client + o->inventory + (uint64_t)index * 4;
     frame_row(frame, row);
     return true;
+}
+static bool drop_pickup_address(application_native_q2_inventory_scanner *o, inventory_frame *frame,
+    qa_native_address *out, bool *present, qa_error *e)
+{
+    qa_native_host *host = o->engine->provider->state.native.host;
+    uint32_t slot; qa_native_slot_binding binding; bool active;
+    *present = false;
+    if (!frame->drop_pickup.registry ||
+        !qa_actors_get(qa_session_actors(o->engine->provider->application->session), frame->drop_pickup) ||
+        !qa_native_host_slot_for_actor(host, frame->drop_pickup, &slot)) return true;
+    if (!qa_native_slot(instance(o), slot, &binding, e)) return false;
+    if (!qa_actor_id_equal(binding.actor, frame->drop_pickup)) return true;
+    if (!qa_native_host_source_active(host, slot, &active, e)) return false;
+    if (!active) return true;
+    if (!qa_native_entity_address(instance(o), slot, out, e)) return false;
+    *present = true; return true;
+}
+static bool drop_pickup_free(application_native_q2_inventory_scanner *o, inventory_frame *frame,
+    const qa_native_region_event *event, qa_error *e)
+{
+    qa_native_address pickup, entry; bool present;
+    if (!drop_pickup_address(o, frame, &pickup, &present, e)) return false;
+    if (present) {
+        if (!address(o, o->drop_free, &entry, e)) return false;
+        qa_native_type parameter = {.kind = QA_NATIVE_ADDRESS, .count = 1};
+        qa_native_signature signature = {.abi = o->abi, .parameters = &parameter,
+            .parameter_count = 1, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+        qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = pickup};
+        qa_native_value result = {.type = QA_NATIVE_VOID};
+        bool okay = event ? qa_native_region_invoke(instance(o), event, entry, &signature,
+            &argument, 1, &result, e) : qa_native_invoke(instance(o), entry, &signature,
+            &argument, 1, &result, e);
+        if (!okay) return false;
+    }
+    frame->drop_pickup = (qa_actor_id){0}; return true;
+}
+static bool drop_consumer_end(inventory_frame *frame, qa_error *e)
+{
+    struct application_native_q2_resource_scope *scope = frame->consumer_scope;
+    frame->consumer_scope = NULL;
+    return !scope || application_native_q2_combat_resources_end(scope, e);
+}
+static bool drop_committed(void *context)
+{ return ((const inventory_frame *)context)->drop_debit == INVENTORY_DROP_ACCEPTED; }
+static bool drop_debit_region(application_native_q2_inventory_scanner *o, inventory_region *region,
+    inventory_frame *frame, const qa_native_region_event *event, qa_error *e)
+{
+    if (!frame->dropping) return true;
+    if (event->phase == QA_NATIVE_REGION_ENTER) {
+        if (!frame->drop_counter || !frame->has_named_row) return true;
+        if (!application_native_q2_inventory_source_current(o->engine, &frame->drop_source, e) ||
+            !read_word(o, frame->drop_counter, &frame->debit_before, e)) {
+            qa_error cleanup = {0};
+            frame->drop_debit = INVENTORY_DROP_REFUSED;
+            frame->drop_counter = 0;
+            (void)restore(o, &frame->restore, &cleanup);
+            (void)drop_pickup_free(o, frame, event, &cleanup);
+            return false;
+        }
+        frame->debit_region = region; return true;
+    }
+    if (frame->debit_region != region) return true;
+    frame->debit_region = NULL;
+    int32_t after = 0;
+    bool okay = application_native_q2_inventory_source_current(o->engine, &frame->drop_source, e) &&
+        read_word(o, frame->drop_counter, &after, e);
+    int64_t count = okay ? (int64_t)frame->debit_before - after : 0;
+    qa_error cleanup = {0};
+    if (!restore(o, &frame->restore, &cleanup)) {
+        if (okay && e) *e = cleanup;
+        okay = false;
+    }
+    frame->drop_counter = 0;
+    qa_native_address pickup; bool present = false;
+    if (okay) okay = drop_pickup_address(o, frame, &pickup, &present, e);
+    if (okay && (count <= 0 || !present)) okay = application_fail(e, QA_ERROR_ARGUMENT,
+        "Accepted original drop lacks its source allocation or positive debit");
+    bool accepted = false;
+    qa_pickup_cargo cargo = {.item = frame->named_row.item, .count = (double)count, .weapon = frame->drop_weapon};
+    if (okay) {
+        const qa_native_region_event *previous = o->command_event;
+        qa_actor_id previous_actor = o->command_actor;
+        o->command_event = event; o->command_actor = frame->actor;
+        okay = o->options.dropped(o->options.context, frame->actor, frame->drop_pickup, &cargo, &accepted, e);
+        o->command_event = previous; o->command_actor = previous_actor;
+    }
+    frame->drop_debit = okay && accepted ? INVENTORY_DROP_ACCEPTED : INVENTORY_DROP_REFUSED;
+    if (frame->drop_debit == INVENTORY_DROP_REFUSED) {
+        cleanup = (qa_error){0};
+        if (!drop_pickup_free(o, frame, event, &cleanup) && okay) { okay = false; if (e) *e = cleanup; }
+    }
+    return okay;
+}
+static bool drop_consumer_region(application_native_q2_inventory_scanner *o, inventory_frame *frame,
+    const qa_native_region_event *event, qa_native_region_decision *decision, qa_error *e)
+{
+    if (event->phase == QA_NATIVE_REGION_JOIN) return drop_consumer_end(frame, e);
+    if (!frame->dropping || frame->drop_debit == INVENTORY_DROP_PENDING) return true;
+    if (frame->drop_debit == INVENTORY_DROP_REFUSED || qa_combat_protection_owner(
+        o->engine->provider->application->combat, frame->actor, QA_PROTECTION_POWERED, NULL, NULL)) {
+        decision->action = QA_NATIVE_REGION_SKIP_TO_JOIN; return true;
+    }
+    return application_native_q2_combat_resources_begin(o->engine, frame->actor, NULL,
+        QA_PROTECTION_POWERED, drop_committed, frame, &frame->consumer_scope, e);
 }
 static bool death_drop_region(application_native_q2_inventory_scanner *o, inventory_frame *frame,
     const qa_native_region_event *event, qa_error *e)
@@ -423,6 +553,18 @@ static bool death_drop_region(application_native_q2_inventory_scanner *o, invent
 }
 static bool drop_lookup(application_native_q2_inventory_scanner *, inventory_entry *,
     const qa_native_value *, size_t, qa_native_value *, qa_error *);
+static bool drop_allocate(application_native_q2_inventory_scanner *o, inventory_entry *entry,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *e)
+{
+    inventory_frame *frame = o->frame;
+    if (!qa_native_invoke_original(entry->binding, arguments, count, result, e)) return false;
+    if (!frame || !frame->dropping || !frame->drop_counter || !frame->has_named_row ||
+        arguments[0].as.address != frame->drop_source.entity ||
+        result->type != QA_NATIVE_ADDRESS || !result->as.address) return true;
+    if (!application_native_q2_inventory_source_current(o->engine, &frame->drop_source, e)) return false;
+    return qa_native_host_source_actor(o->engine->provider->state.native.host,
+        result->as.address, true, &frame->drop_pickup, e);
+}
 static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *e)
 {
@@ -431,6 +573,7 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
         arguments[0].type != QA_NATIVE_ADDRESS || o->pending)
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner entry lost its exact source invocation");
     if (entry->kind == 7) return drop_lookup(o, entry, arguments, count, result, e);
+    if (entry->kind == INVENTORY_ENTRY_DROP_ALLOCATE) return drop_allocate(o, entry, arguments, count, result, e);
     inventory_frame frame = {.previous = o->frame, .flags = -1,
         .named = entry->kind == 4 || entry->kind == 5,
         .dropping = entry->kind == 5 || entry->kind == 6, .giving = entry->kind == INVENTORY_ENTRY_GIVE,
@@ -454,7 +597,10 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
         application_native_q2_inventory_readout_free(&r);
     }
     if (ok) ok = qa_native_invoke_original(binding, arguments, count, result, e);
-    qa_error cleanup = {0}; bool cleaned = restore(o, &frame.restore, &cleanup);
+    qa_error cleanup = {0}; bool cleaned = drop_consumer_end(&frame, &cleanup);
+    if (!restore(o, &frame.restore, &cleanup)) cleaned = false;
+    if (!ok && frame.drop_debit != INVENTORY_DROP_ACCEPTED &&
+        !drop_pickup_free(o, &frame, NULL, &cleanup)) cleaned = false;
     pending(o, &frame.restore); qa_unified_frame_lease_release(frame.storage);
     qa_arena_destroy(&frame.requested_storage);
     if (!cleaned && ok) { ok = false; if (e) *e = cleanup; }
@@ -631,6 +777,8 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
     inventory_frame *frame = o->frame;
     if (!frame || !frame->actor.registry || o->evaluating) return true;
     if (region->kind == INVENTORY_DEATH_DROP) return death_drop_region(o, frame, event, e);
+    if (region->kind == INVENTORY_DROP_DEBIT) return drop_debit_region(o, region, frame, event, e);
+    if (region->kind == INVENTORY_DROP_CONSUMER) return drop_consumer_region(o, frame, event, decision, e);
     if (region->kind >= INVENTORY_GIVE_WEAPONS) return give_region(o, region, frame, event, decision, e);
     if (region->kind == 4) {
         if (event->phase != QA_NATIVE_REGION_JOIN || !frame->dropping || frame->named) return true;
@@ -679,7 +827,16 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
         const application_native_q2_inventory_row *row = frame->named || frame->dropping ? frame->has_named_row ? &frame->named_row : NULL :
             chosen != SIZE_MAX ? r.rows + chosen : NULL;
         if (ok && row && row->selected) {
+            bool dispatch = true;
+            if (frame->dropping) {
+                qa_item_definition definition; bool found;
+                ok = qa_inventory_item_definition_find(o->engine->provider->application->inventory,
+                    frame->actor, NULL, row->item, &definition, &found, e);
+                dispatch = ok && found && (definition.actions & QA_ITEM_DROP);
+            }
+            if (!ok || !dispatch) { application_native_q2_inventory_readout_free(&r); return ok; }
             ok = restore(o, &frame->restore, e);
+            if (ok) frame->drop_counter = 0;
             if (ok) {
                 const qa_native_region_event *previous = o->command_event;
                 qa_actor_id previous_actor = o->command_actor;
@@ -741,14 +898,20 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         !options->give || !options->give_item || !options->give_ammo))
         return application_fail(e, QA_ERROR_FORMAT, "Native give commands require their declared grant regions and shared inventory services");
     qa_json_id drop = qa_json_get(d, root, "drop"), callbacks = qa_json_get(d, drop, "callbacks");
+    qa_json_id debits = qa_json_get(d, drop, "debits"), consumer = qa_json_get(d, drop, "consumer");
     bool drops = qa_json_get(d, drop, "named") != QA_JSON_NONE;
     size_t callback_count = drops ? qa_json_size(d, callbacks) : 0;
-    if (drops && qa_json_type(d, callbacks) != QA_JSON_ARRAY)
-        return application_fail(e, QA_ERROR_FORMAT, "Native drop callbacks must be an array");
-    size_t region_capacity = 7u + (gives ? 3u : 0u) + (death_drops ? 1u : 0u);
-    if (callback_count > SIZE_MAX - region_capacity || ammo_grant_count > SIZE_MAX - region_capacity - callback_count)
+    size_t debit_count = drops ? qa_json_size(d, debits) : 0;
+    bool consumes = drops && consumer != QA_JSON_NONE && qa_json_type(d, consumer) != QA_JSON_NULL;
+    if (drops && (qa_json_type(d, callbacks) != QA_JSON_ARRAY || qa_json_type(d, debits) != QA_JSON_ARRAY ||
+        !options->dropped || (consumes && qa_json_type(d, consumer) != QA_JSON_OBJECT)))
+        return application_fail(e, QA_ERROR_FORMAT, "Native drops require their declared callback, debit and shared cargo services");
+    size_t region_capacity = 7u + (gives ? 3u : 0u) + (death_drops ? 1u : 0u) + (consumes ? 1u : 0u);
+    if (callback_count > SIZE_MAX - region_capacity ||
+        ammo_grant_count > SIZE_MAX - region_capacity - callback_count ||
+        debit_count > SIZE_MAX - region_capacity - callback_count - ammo_grant_count)
         return application_fail(e, QA_ERROR_MEMORY, "Native command region count overflows");
-    region_capacity += callback_count + ammo_grant_count;
+    region_capacity += callback_count + ammo_grant_count + debit_count;
     if (region_capacity > SIZE_MAX / sizeof(*o->regions))
         return application_fail(e, QA_ERROR_MEMORY, "Native command region storage overflows");
     o->regions = qa_arena_alloc(&o->selection_storage,
@@ -805,6 +968,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
             !word(d, client, "cursor", &cursor_offset, e) ||
             !word(d, client, "weapon", &o->drop_weapon, e) ||
             !word(d, client, "pending", &o->drop_pending, e) ||
+            !word(d, drop, "free", &o->drop_free, e) ||
             !word(d, drop, "lookupReturn", &lookup_return, e) ||
             !address(o, lookup_return, &o->drop_lookup_return, e)) return false;
         if (pointer != o->client_pointer || inventory_offset != o->inventory || cursor_offset != o->cursor ||
@@ -849,6 +1013,15 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
             .parameter_count = 1, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
     }
+    if (drops) {
+        inventory_entry *entry = o->entries + o->entry_count++; uint32_t rva;
+        entry->owner = o; entry->kind = INVENTORY_ENTRY_DROP_ALLOCATE;
+        if (!word(d, drop, "allocate", &rva, e) || !address(o, rva, &entry->address, e)) return false;
+        entry->parameters[0] = (qa_native_type){.kind = QA_NATIVE_ADDRESS, .count = 1};
+        entry->parameters[1] = (qa_native_type){.kind = QA_NATIVE_ADDRESS, .count = 1};
+        entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
+            .parameter_count = 2, .result = {.kind = QA_NATIVE_ADDRESS, .count = 1}};
+    }
     if (!region_profile(o, 0, "/inventory/next/scan", 1, 1, e) ||
         !region_profile(o, 1, "/inventory/previous/scan", 1, -1, e) ||
         !region_profile(o, 2, "/inventory/use/call", 2, 0, e) ||
@@ -866,6 +1039,12 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
             char path[64]; snprintf(path, sizeof(path), "/drop/callbacks/%zu", i);
             if (!region_profile(o, o->region_count++, path, 5, 0, e)) return false;
         }
+        for (size_t i = 0; i < debit_count; ++i) {
+            char path[64]; snprintf(path, sizeof(path), "/drop/debits/%zu", i);
+            if (!region_profile(o, o->region_count++, path, INVENTORY_DROP_DEBIT, 0, e)) return false;
+        }
+        if (consumes && !region_profile(o, o->region_count++, "/drop/consumer",
+            INVENTORY_DROP_CONSUMER, 0, e)) return false;
     }
     if (gives) {
         if (!region_profile(o, o->region_count++, "/commands/give/weapons", INVENTORY_GIVE_WEAPONS, 0, e) ||

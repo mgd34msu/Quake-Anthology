@@ -846,6 +846,7 @@ static bool original_take(void *opaque, const qa_pickup_offer *offer,
     struct application_native_q2_primary_pickups *native = original_native_pickups(pair);
     qa_supply_offer supplied = {0};
     qa_supply_options options = {0};
+    qa_unified_frame_lease *storage = NULL;
     bool accepted = false;
     bool ok = supply_current(pair, offer->recipient, error) && (native ?
         application_native_q2_primary_pickups_supply(native, offer, &supplied, &options, error) :
@@ -853,10 +854,38 @@ static bool original_take(void *opaque, const qa_pickup_offer *offer,
     if (ok && supplied.kind != QA_SUPPLY_AMMO && supplied.kind != QA_SUPPLY_WEAPON &&
         supplied.kind != QA_SUPPLY_AMMO_WEAPON)
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original pickup has no static supply grant");
+    if (ok && offer->cargo_count == 1) {
+        const qa_pickup_cargo *cargo = offer->cargo;
+        qa_item_id ammo = cargo->item;
+        if (cargo->weapon) {
+            qa_item_definition weapon;
+            ok = qa_inventory_source_definition_read(owner->application->inventory, offer->recipient,
+                pair->arsenal->owner, cargo->item, &weapon, error);
+            if (ok) ammo = weapon.ammo;
+        }
+        if (ok) {
+            options.canonical = true;
+            supplied.item = supplied.kind == QA_SUPPLY_AMMO_WEAPON && cargo->weapon && ammo ? ammo : cargo->item;
+            supplied.weapon = cargo->weapon ? cargo->item : 0;
+            if (!cargo->weapon) supplied.kind = QA_SUPPLY_AMMO;
+            if (cargo->weapon && supplied.kind == QA_SUPPLY_WEAPON && !ammo) supplied.ammo_count = 0;
+            if (supplied.ammo_count) {
+                storage = application_control_storage_acquire(owner->application, error);
+                qa_pickup_grant *grants = storage ? qa_unified_frame_lease_alloc(storage, supplied.ammo_count,
+                    sizeof(*grants), _Alignof(qa_pickup_grant), error) : NULL;
+                ok = grants != NULL;
+                for (size_t i = 0; ok && i < supplied.ammo_count; ++i) {
+                    grants[i] = supplied.ammo[i]; grants[i].item = ammo ? ammo : cargo->item;
+                }
+                supplied.ammo = grants;
+            }
+        }
+    }
     if (ok) ok = qa_supply_apply(pair->supply, offer->recipient, &supplied, &options,
         &accepted, error) && supply_current(pair, offer->recipient, error);
     if (ok) *out = qa_pickup_current(execution)
         ? (accepted ? QA_PICKUP_ACCEPTED : QA_PICKUP_REFUSED) : QA_PICKUP_STALE;
+    qa_unified_frame_lease_release(storage);
     supplies_leave(owner);
     return ok;
 }
@@ -1256,6 +1285,37 @@ bool application_supplies_ammo_destination(application_supplies *owner,
         for (size_t j = 0; j < pair->profile.ammo[i].count; ++j)
             if (pair->profile.ammo[i].destinations[j] == item) present = true;
     *found = present;
+    return true;
+}
+bool application_supplies_ammo_source(application_supplies *owner,
+    application_provider *source, qa_actor_id actor, qa_item_id item,
+    const qa_item_id *available, size_t available_count, qa_item_id *out, qa_error *error)
+{
+    if (!owner || !source || !item || !out || (available_count && !available))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Ammo source requires its actual supply association and source roster");
+    *out = 0;
+    application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
+    supply_pair *pair = pair_find(owner, source, arsenal);
+    if (!pair || !supply_current(pair, actor, error))
+        return pair ? false : application_fail(error, QA_ERROR_ARGUMENT, "Ammo source lost its admitted supply pair");
+    qa_item_id preferred = 0, candidate = 0;
+    size_t matches = 0;
+    for (size_t i = 0; i < pair->profile.ammo_owner_count; ++i)
+        if (pair->profile.ammo_owners[i].item == item) {
+            preferred = pair->profile.ammo_owners[i].source; break;
+        }
+    for (size_t i = 0; i < pair->profile.ammo_count; ++i) {
+        const qa_supply_mapping *row = pair->profile.ammo + i;
+        bool contains = false;
+        for (size_t j = 0; j < row->count; ++j)
+            if (row->destinations[j] == item) { contains = true; break; }
+        if (!contains) continue;
+        if (row->source == item) for (size_t j = 0; j < available_count; ++j)
+            if (available[j] == item) { *out = item; return true; }
+        if (!preferred || row->source == preferred) { candidate = row->source; ++matches; }
+    }
+    if (matches == 1) for (size_t i = 0; i < available_count; ++i)
+        if (available[i] == candidate) { *out = candidate; break; }
     return true;
 }
 bool application_supplies_for(application_supplies *owner, application_provider *source,

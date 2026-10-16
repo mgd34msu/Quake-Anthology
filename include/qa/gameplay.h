@@ -474,6 +474,8 @@ bool qa_pickups_observe(qa_pickups *, qa_actor_id, qa_actor_owner,
                          const qa_pickup_observer *, qa_pickup_lease *, qa_error *);
 bool qa_pickups_observation_close(qa_pickups *, qa_pickup_lease, qa_error *);
 bool qa_pickups_observation_current(qa_pickups *, qa_pickup_lease);
+bool qa_pickups_cargo_set(qa_pickups *, qa_actor_id, const qa_pickup_cargo *, qa_error *);
+bool qa_pickups_cargo_read(const qa_pickups *, qa_actor_id, qa_pickup_cargo *);
 bool qa_pickups_inspect(qa_pickups *, qa_actor_id pickup, qa_actor_id recipient,
                          qa_pickup_observation *, bool *found, qa_error *);
 /* Source observers call this while their offer cargo remains borrowed. When

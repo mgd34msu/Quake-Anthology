@@ -5,7 +5,13 @@
 struct application_native_q2;
 bool application_native_q2_combat_apply(struct application_native_q2 *,
     const qa_damage_request *, qa_damage_outcome *, qa_error *);
-bool application_native_q2_combat_pickup(struct application_native_q2 *, qa_actor_id,
+struct application_native_q2_resource_scope;
+bool application_native_q2_combat_resources_begin(struct application_native_q2 *, qa_actor_id,
+    qa_pickup_execution *, qa_protection_channel, bool (*committed)(void *), void *,
+    struct application_native_q2_resource_scope **, qa_error *);
+/* Consumes the scope even if native binding removal needs retained cleanup. */
+bool application_native_q2_combat_resources_end(struct application_native_q2_resource_scope *, qa_error *);
+bool application_native_q2_combat_resources(struct application_native_q2 *, qa_actor_id,
     qa_pickup_execution *, qa_protection_channel, bool (*execute)(void *, qa_error *), void *,
     bool (*committed)(void *), void *, qa_error *);
 bool application_native_q2_combat_prepare(struct application_native_q2 *, qa_error *);

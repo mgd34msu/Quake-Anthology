@@ -2,6 +2,7 @@
 #include "native_q2_inventory_source.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_combat.h"
 #include "map_players_private.h"
 #include "supplies.h"
 #include "qa/application_equipment.h"
@@ -35,6 +36,8 @@ struct application_native_q2_inventory_rows {
     const qa_json_document *document;
     original_slot *slots;
     size_t slot_count;
+    const qa_item_id *ammunition;
+    size_t ammunition_count;
     uint32_t prototypes[6];
     qa_arena storage, commands;
     inventory_rows_cache caches[257];
@@ -133,11 +136,12 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
     uint8_t pointer_bytes = qa_native_module_describe(owner->engine->provider->state.native.module).image.target.pointer_bytes;
     if (!count || !stride || flags_offset > stride || stride - flags_offset < 4 ||
         (pointer_bytes != 4 && pointer_bytes != 8) || !weapon_flag || !ammo_flag ||
-        sizeof(original_slot) > SIZE_MAX / count)
+        sizeof(original_slot) + sizeof(qa_item_id) > SIZE_MAX / count)
         return application_fail(error, QA_ERROR_FORMAT, "Original inventory has an invalid command item table");
-    original_slot *slots = calloc(count, sizeof(*slots));
+    original_slot *slots = calloc(count, sizeof(*slots) + sizeof(qa_item_id));
     if (!slots) return application_fail(error, QA_ERROR_MEMORY, "Acquiring original inventory descriptors");
-    size_t used = 0;
+    qa_item_id *ammunition = (qa_item_id *)(slots + count);
+    size_t used = 0, ammunition_count = 0;
     bool okay = true;
     ++owner->calls;
     ++owner->engine->calls;
@@ -175,6 +179,7 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
             if (okay) {
                 slots[used++] = (original_slot){.item = item, .index = i, .icon = (char *)icon.data,
                     .weapon = (flags & weapon_flag) != 0, .ammunition = (flags & ammo_flag) != 0};
+                if (flags & ammo_flag) ammunition[ammunition_count++] = item;
                 icon = (qa_buffer){0};
             }
         }
@@ -216,6 +221,8 @@ bool application_native_q2_inventory_rows_prepare(application_native_q2_inventor
         qa_arena_init(&owner->caches[i].storage,0);
     owner->slots = slots;
     owner->slot_count = used;
+    owner->ammunition = ammunition;
+    owner->ammunition_count = ammunition_count;
     memcpy(owner->prototypes, prototypes, sizeof(prototypes));
     owner->document = doc;
     owner->prepared = true;
@@ -384,6 +391,19 @@ static bool row_count(application_native_q2_inventory_rows *owner,
             if (!qa_inventory_source_definition_read(app->inventory, source->actor,
                 item_owner, row->item, &definition, error)) return false;
             if (definition.actions & QA_ITEM_DROP) row->drop_index = owner->prototypes[4];
+        } else {
+            qa_item_id original = 0;
+            if (row->presentation.kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_WEAPON &&
+                application_supplies_weapon_droppable(arsenal, row->item)) {
+                if (!application_native_q2_attack_weapon_source(owner->engine, source->actor,
+                    row->item, storage, &original, error)) return false;
+            } else if (row->presentation.kind == APPLICATION_NATIVE_INVENTORY_PRESENTATION_AMMUNITION) {
+                if (!application_supplies_ammo_source(app->supplies, owner->engine->provider,
+                    source->actor, row->item, owner->ammunition, owner->ammunition_count,
+                    &original, error)) return false;
+            }
+            if (original && !application_native_q2_inventory_index(owner->engine,
+                original, &row->drop_index, error)) return false;
         }
     }
     return qa_inventory_count_read(app->inventory, source->actor, row->item, &row->count, error) &&
@@ -695,6 +715,45 @@ static bool give_ammo(void *context, qa_actor_id actor, qa_item_id item,
     application_native_q2_inventory_rows *owner = context;
     return application_supplies_cheat_ammo(owner->engine->provider, actor, item, set, amount, error);
 }
+typedef struct native_inventory_drop {
+    application_native_q2_inventory_rows *owner;
+    qa_actor_id actor;
+    const qa_pickup_cargo *cargo;
+    bool accepted;
+} native_inventory_drop;
+static bool drop_debit(void *context, qa_error *error)
+{
+    native_inventory_drop *drop = context;
+    return qa_inventory_consume(drop->owner->engine->provider->application->inventory,
+        drop->actor, drop->cargo->item, drop->cargo->count, &drop->accepted, error);
+}
+static bool dropped(void *context, qa_actor_id actor, qa_actor_id pickup,
+    const qa_pickup_cargo *cargo, bool *accepted, qa_error *error)
+{
+    application_native_q2_inventory_rows *owner = context;
+    qa_application *app = owner->engine->provider->application;
+    application_native_q2_inventory_source source;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    *accepted = false;
+    if (!owner_current(owner, error) || !application_native_q2_inventory_source_read(owner->engine, actor, &source, error)) return false;
+    uint64_t map_revision = app->map_revision, config_revision = owner->engine->config_changes.revision;
+    if (!player_current(owner, &source, arsenal, map_revision, config_revision, error)) return false;
+    ++owner->calls; ++owner->engine->calls;
+    native_inventory_drop drop = {.owner = owner, .actor = actor, .cargo = cargo};
+    bool okay = qa_pickups_cargo_set(app->pickups, pickup, cargo, error) &&
+        application_native_q2_combat_resources(owner->engine, actor, NULL, QA_PROTECTION_POWERED,
+            drop_debit, &drop, NULL, NULL, error);
+    if (okay) okay = player_current(owner, &source, arsenal, map_revision, config_revision, error);
+    if (!okay || !drop.accepted) {
+        qa_error cleanup = {0};
+        if (!qa_pickups_cargo_set(app->pickups, pickup, NULL, &cleanup)) {
+            if (okay && error) *error = cleanup;
+            okay = false;
+        }
+    }
+    if (okay) *accepted = drop.accepted;
+    --owner->engine->calls; --owner->calls; return okay;
+}
 
 bool application_native_q2_inventory_rows_create(struct application_native_q2 *engine,
     application_native_q2_inventory_rows **out, qa_error *error) {
@@ -725,5 +784,6 @@ static size_t storage_bytes(void *context)
 application_native_q2_inventory_scanner_options application_native_q2_inventory_rows_options(
     application_native_q2_inventory_rows *owner) {
     return (application_native_q2_inventory_scanner_options){.context = owner,.storage_bytes=storage_bytes,
-        .rows = rows, .action = action, .print = print, .give = give, .give_item = give_item, .give_ammo = give_ammo};
+        .rows = rows, .action = action, .print = print, .give = give, .give_item = give_item, .give_ammo = give_ammo,
+        .dropped = dropped};
 }

@@ -30,6 +30,9 @@ bool application_supplies_weapon_droppable(const application_provider *, qa_item
 /* Pure membership of the admitted selected supply's actual destination rows. */
 bool application_supplies_ammo_destination(application_supplies *, application_provider *,
     qa_actor_id, qa_item_id, bool *found, qa_error *);
+bool application_supplies_ammo_source(application_supplies *, application_provider *,
+    qa_actor_id, qa_item_id, const qa_item_id *available, size_t available_count,
+    qa_item_id *, qa_error *);
 bool application_supplies_source_for(void *actual_provider, qa_actor_id, qa_supply **, qa_error *);
 bool application_supplies_source_spawned(void *actual_provider, qa_actor_id, qa_error *);
 bool application_supplies_cheat_arsenal(void *, qa_actor_id, qa_q1_cheat_grant,

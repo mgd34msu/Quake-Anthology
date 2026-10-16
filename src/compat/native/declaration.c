@@ -347,6 +347,22 @@ static bool pickup_regions(qa_native_declaration *declaration, const qa_native_m
     return true;
 }
 
+static bool drop_regions(qa_native_declaration *declaration, const qa_native_module *module,
+    qa_json_id primary, qa_error *error)
+{
+    const qa_json_document *d = declaration->document;
+    qa_json_id drop = qa_json_get(d, primary, "drop");
+    if (qa_json_type(d, drop) != QA_JSON_OBJECT) return true;
+    const char *functions[] = {"allocate", "free"};
+    for (size_t i = 0; i < sizeof(functions) / sizeof(*functions); ++i) {
+        uint64_t point; char path[48];
+        if (!qa_json_u64(d, qa_json_get(d, drop, functions[i]), &point, error)) return false;
+        snprintf(path, sizeof(path), "/drop/%s/function", functions[i]);
+        if (!append_region(declaration, module, path, point, point, false, 0, 0, error)) return false;
+    }
+    return true;
+}
+
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,
                             qa_json_id value, const char *path, unsigned depth, qa_error *error) {
     if (depth > 64u)
@@ -456,7 +472,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
             declaration->primary = root;
             valid = collect_regions(declaration, module, root, "", 0, error) &&
                 movement_points(declaration, module, root, error) &&
-                pickup_regions(declaration, module, root, error);
+                pickup_regions(declaration, module, root, error) &&
+                drop_regions(declaration, module, root, error);
         }
         free(selected_path);
         if (!valid) { qa_native_declaration_destroy(declaration); return false; }
@@ -541,7 +558,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
             inventory_regions(declaration, module, selected_primary, error) &&
             movement_points(declaration, module, selected_primary, error) &&
-            pickup_regions(declaration, module, selected_primary, error);
+            pickup_regions(declaration, module, selected_primary, error) &&
+            drop_regions(declaration, module, selected_primary, error);
     }
     for (size_t index = 0; index < module_count; ++index)
         free(paths[index]);

@@ -415,7 +415,9 @@ pickup_registration *qa_pickups_registration_take(qa_pickups *service, qa_error 
     return &row->registration;
 }
 
-static pickup_observation_owner *observation_get(qa_pickups *service,qa_actor_id actor) {
+static bool cargo_valid(const qa_pickup_cargo *, size_t, qa_error *);
+
+static pickup_observation_owner *observation_get(const qa_pickups *service,qa_actor_id actor) {
     if(actor.slot>=service->observation_capacity) return NULL;
     pickup_observation_owner *owner=service->observations[actor.slot];
     return owner && owner->active && qa_actor_id_equal(owner->actor,actor)?owner:NULL;
@@ -432,30 +434,73 @@ bool qa_pickups_observe(qa_pickups *service,qa_actor_id actor,qa_actor_owner own
        !qa_actors_get(service->actors,actor)) return fail(e,QA_ERROR_ARGUMENT,"invalid pickup observation binding");
     if(service->serial==UINT64_MAX) return fail(e,QA_ERROR_ARGUMENT,"pickup observation identity exhausted");
     pickup_observation_owner *previous=actor.slot<service->observation_capacity?service->observations[actor.slot]:NULL;
-    if(previous && qa_actor_id_equal(previous->actor,actor) && previous->owner!=owner)
+    bool same_actor=previous && qa_actor_id_equal(previous->actor,actor);
+    if(same_actor && previous->observer.inspect && previous->owner!=owner)
         return fail(e,QA_ERROR_ARGUMENT,"pickup observation belongs to another source");
+    qa_pickup_cargo cargo=same_actor?previous->cargo:(qa_pickup_cargo){0};
+    bool has_cargo=same_actor && previous->has_cargo;
     pickup_observation_owner *binding=previous && !service->calls ? previous :
         qa_pickups_observation_take(service,e);
     if(!binding) return false;
     if(binding!=previous) observation_retire(service,previous);
     *binding=(pickup_observation_owner){.slot=binding->slot,.actor=actor,.owner=owner,
-        .serial=++service->serial,.observer=*observer,.active=true};
+        .serial=++service->serial,.observer=*observer,.cargo=cargo,.active=true,.has_cargo=has_cargo};
     service->observations[actor.slot]=binding;
     *out=(qa_pickup_lease){actor,binding->serial};sweep(service);return true;
 }
 bool qa_pickups_observation_close(qa_pickups *service,qa_pickup_lease lease,qa_error *e) {
     if(!service) return fail(e,QA_ERROR_ARGUMENT,"missing pickup observation service");
     pickup_observation_owner *owner=observation_get(service,lease.actor);
-    if(owner && owner->serial==lease.serial) observation_retire(service,owner);
+    if(owner && owner->observer.inspect && owner->serial==lease.serial) {
+        owner->observer=(qa_pickup_observer){0};owner->serial=0;
+        if(!owner->has_cargo) observation_retire(service,owner);
+    }
     sweep(service);return true;
 }
 bool qa_pickups_observation_current(qa_pickups *service,qa_pickup_lease lease) {
     if(!service || !qa_actors_get(service->actors,lease.actor)) return false;
     pickup_observation_owner *owner=observation_get(service,lease.actor);
-    return owner && owner->serial==lease.serial;
+    return owner && owner->observer.inspect && owner->serial==lease.serial;
+}
+bool qa_pickups_cargo_set(qa_pickups *service,qa_actor_id actor,const qa_pickup_cargo *value,qa_error *e) {
+    if(!service) return fail(e,QA_ERROR_ARGUMENT,"missing pickup cargo service");
+    pickup_observation_owner *owner=observation_get(service,actor);
+    if(!value) {
+        if(owner) {
+            owner->cargo=(qa_pickup_cargo){0};owner->has_cargo=false;
+            if(!owner->observer.inspect) observation_retire(service,owner);
+        }
+        sweep(service);return true;
+    }
+    qa_pickup_cargo cargo=*value;
+    const qa_actor_record *record=qa_actors_get(service->actors,actor);
+    if(!record || !cargo_valid(&cargo,1,e) || cargo.count<=0)
+        return fail(e,QA_ERROR_ARGUMENT,"invalid retained pickup cargo");
+    if(!owner) {
+        pickup_observation_owner *previous=service->observations[actor.slot];
+        if(previous && !service->calls) owner=previous;
+        else {
+            qa_pool *pool=&service->observation_storage->records;
+            if(pool->active==pool->capacity)
+                return fail(e,QA_ERROR_MEMORY,"pickup cargo storage is full");
+            owner=qa_pickups_observation_take(service,e);
+            if(!owner) return false;
+        }
+        if(owner!=previous) observation_retire(service,previous);
+        *owner=(pickup_observation_owner){.slot=owner->slot,.actor=actor,.owner=record->owner,.active=true};
+        service->observations[actor.slot]=owner;
+    }
+    owner->cargo=cargo;owner->has_cargo=true;
+    sweep(service);return true;
+}
+bool qa_pickups_cargo_read(const qa_pickups *service,qa_actor_id actor,qa_pickup_cargo *out) {
+    if(!service || !out || !qa_actors_get(service->actors,actor)) return false;
+    pickup_observation_owner *owner=observation_get(service,actor);
+    if(!owner || !owner->has_cargo) return false;
+    *out=owner->cargo;return true;
 }
 static bool observation_current(qa_pickups *service,pickup_observation_owner *owner,qa_actor_id recipient) {
-    return owner->active && observation_get(service,owner->actor)==owner &&
+    return owner->active && owner->observer.inspect && observation_get(service,owner->actor)==owner &&
         qa_actors_get(service->actors,owner->actor) && qa_actors_get(service->actors,recipient);
 }
 bool qa_pickups_inspect(qa_pickups *service,qa_actor_id pickup,qa_actor_id recipient,
@@ -464,7 +509,7 @@ bool qa_pickups_inspect(qa_pickups *service,qa_actor_id pickup,qa_actor_id recip
         return fail(e,QA_ERROR_ARGUMENT,"invalid pickup observation request");
     *found=false;
     pickup_observation_owner *owner=observation_get(service,pickup);
-    if(!owner || !qa_actors_get(service->actors,pickup)) return true;
+    if(!owner || !owner->observer.inspect || !qa_actors_get(service->actors,pickup)) return true;
     if(service->calls==SIZE_MAX || service->observation_calls==SIZE_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"pickup observation nesting exhausted");
     ++service->calls;++service->observation_calls;
@@ -738,6 +783,12 @@ static bool scope_open(qa_pickups *service, const qa_pickup_offer *offer, qa_pic
     if (!qa_actors_get(service->actors, offer->recipient) || !qa_actors_get(service->actors, offer->pickup)) return true;
     for (qa_pickup_execution *scope = service->scopes; scope; scope = scope->previous)
         if (qa_actor_id_equal(scope->offer.pickup, offer->pickup)) return true;
+    qa_pickup_cargo retained;
+    if (!execution->offer.cargo_count && qa_pickups_cargo_read(service, offer->pickup, &retained)) {
+        execution->offer.cargo = &retained;
+        execution->offer.cargo_count = 1;
+    }
+    offer = &execution->offer;
     if (!offer->item || (offer->override_count && !isfinite(offer->count)) || !resource_valid(offer->default_resource, true) ||
         offer->grant < QA_PICKUP_RESOURCE_GRANT || offer->grant > QA_PICKUP_SOURCE_EFFECT || !cargo_valid(offer->cargo, offer->cargo_count, e))
         return fail(e, QA_ERROR_ARGUMENT, "Invalid original pickup offer");
@@ -946,7 +997,7 @@ bool qa_pickups_run_source(qa_pickups *service, const qa_pickup_offer *offer,
         if (!qa_combat_pickup_begin(service->combat, offer->recipient, &combat_scope, e)) return false;
         qa_inventory_hold(service->inventory);
         ++service->calls;
-        bool ok = callback(context, offer, QA_PICKUP_SELECT_STALE, &execution, e);
+        bool ok = callback(context, &execution.offer, QA_PICKUP_SELECT_STALE, &execution, e);
         if (execution.failed) { if (e) *e = execution.failure; ok = false; }
         qa_inventory_unhold(service->inventory);
         qa_combat_pickup_end(&combat_scope, false, NULL);

@@ -114,6 +114,44 @@ static bool observation_fields(qa_source_save_io *io, qa_pickups *service, picku
     return owner->active && owner->observer.inspect;
 }
 
+static bool cargo_fields(qa_source_save_io *io, qa_pickups *service)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t count = 0;
+    if (reading) {
+        if (io->offset == io->input.size) return true;
+    } else {
+        for (uint32_t i = 0; i < service->observation_capacity; ++i) {
+            const pickup_observation_owner *owner = service->observations[i];
+            if (owner && owner->has_cargo) ++count;
+        }
+        if (!count) return true;
+    }
+    if (!qa_source_save_count(io, &count, qa_actors_capacity(service->actors))) return false;
+    uint32_t previous = 0, slot = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_actor_id actor = {0};
+        qa_pickup_cargo cargo = {0};
+        if (!reading) {
+            while (slot < service->observation_capacity &&
+                (!service->observations[slot] || !service->observations[slot]->has_cargo)) ++slot;
+            if (slot == service->observation_capacity) return fail(io->error, "Pickup cargo changed during capture");
+            actor = service->observations[slot++]->actor;
+            if (!qa_pickups_cargo_read(service, actor, &cargo))
+                return fail(io->error, "Pickup cargo has no live source allocation");
+        }
+        if (!qa_source_save_actor(io, &actor) || !qa_source_save_string(io, &cargo.item) ||
+            !qa_source_save_f64(io, &cargo.count) || !qa_source_save_bool(io, &cargo.weapon)) return false;
+        if (reading) {
+            if ((i && actor.slot <= previous) || !qa_actors_get(service->actors, actor))
+                return fail(io->error, "Saved pickup cargo has a missing or duplicate source allocation");
+            previous = actor.slot;
+            if (!qa_pickups_cargo_set(service, actor, &cargo, io->error)) return false;
+        }
+    }
+    return true;
+}
+
 static bool safe(qa_session *session, qa_pickups *service, qa_error *error)
 {
     return (session && service && service->actors == qa_session_actors(session) && qa_pickups_idle(service) &&
@@ -149,7 +187,8 @@ bool qa_persistence_pickups_capture(qa_session *session, qa_pickups *service, qa
     if (!qa_source_save_writer(&io, session, error)) return false;
     size_t registrations = 0, observations = 0;
     for (pickup_registration *r = service->registrations; r; r = r->next) ++registrations;
-    for (uint32_t i = 0; i < service->observation_capacity; ++i) if (service->observations[i]) ++observations;
+    for (uint32_t i = 0; i < service->observation_capacity; ++i)
+        if (service->observations[i] && service->observations[i]->observer.inspect) ++observations;
     uint64_t serial = service->serial; bool eligible = service->eligible != NULL;
     bool ok = signature(&io) && qa_source_save_u64(&io, &serial) && qa_source_save_bool(&io, &eligible) &&
         qa_source_save_count(&io, &registrations, SIZE_MAX / sizeof(pickup_registration));
@@ -159,10 +198,12 @@ bool qa_persistence_pickups_capture(qa_session *session, qa_pickups *service, qa
         else ok = registration_fields(&io, service, r, NULL);
     }
     if (ok) ok = qa_source_save_count(&io, &observations, qa_actors_capacity(service->actors));
-    for (uint32_t i = 0; ok && i < service->observation_capacity; ++i) if (service->observations[i]) {
-        pickup_observation_owner copy = *service->observations[i];
-        ok = observation_fields(&io, service, &copy, NULL);
-    }
+    for (uint32_t i = 0; ok && i < service->observation_capacity; ++i)
+        if (service->observations[i] && service->observations[i]->observer.inspect) {
+            pickup_observation_owner copy = *service->observations[i];
+            ok = observation_fields(&io, service, &copy, NULL);
+        }
+    if (ok) ok = cargo_fields(&io, service);
     if (ok) ok = safe(session, service, error) && serial == service->serial && qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid pickup continuation");
     qa_source_save_dispose(&io); return ok;
@@ -200,7 +241,8 @@ bool qa_persistence_pickups_restore(qa_session *session, qa_pickups *service,
         if (ok) { previous = owner->actor.slot; scratch->observations[owner->actor.slot] = owner; }
         else qa_pool_release(&scratch->observation_storage->records, owner->slot);
     }
-    if (ok) ok = persistence_serial_unique(serials, serial_count, error) && qa_source_save_finish(&io, NULL) && safe(session, service, error);
+    if (ok) ok = cargo_fields(&io, scratch) && persistence_serial_unique(serials, serial_count, error) &&
+        qa_source_save_finish(&io, NULL) && safe(session, service, error);
     for (pickup_registration *r = scratch->registrations; ok && r; r = r->next) {
         ok = qa_pickups_registration_index_reserve(scratch, r, error);
         if (ok) qa_pickups_registration_index_insert(scratch, r);

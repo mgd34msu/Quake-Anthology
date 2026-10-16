@@ -930,6 +930,17 @@ static bool delay_prepare(struct application_native_q2_attack *p, qa_json_id wea
     qa_json_id items, qa_error *error)
 {
     const qa_json_document *doc = p->document;
+    qa_json_id ammo = qa_json_get(doc, items, "ammo");
+    p->ammo_by_name = qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "name");
+    if (!p->ammo_by_name && !qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "index"))
+        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition has no declared name or index rule");
+    if (!word(doc, ammo, "offset", &p->ammo_offset, error) ||
+        (p->ammo_by_name && !word(doc, ammo, "label", &p->ammo_label, error))) return false;
+    if (p->ammo_offset > p->item_stride || (p->ammo_by_name ? p->pointer_bytes : 4u) > p->item_stride - p->ammo_offset ||
+        (p->ammo_by_name && (p->ammo_label > p->item_stride || p->pointer_bytes > p->item_stride - p->ammo_label)))
+        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition leaves its declared item descriptor");
+    p->source_weapons = decision_array(p, p->item_count, sizeof(*p->source_weapons), _Alignof(qa_supply_weapon), error);
+    if (!p->source_weapons) return false;
     qa_json_id delay = qa_json_get(doc, weapons, "delay");
     if (qa_json_type(doc, delay) == QA_JSON_NULL) return true;
     qa_json_id evaluate = qa_json_get(doc, delay, "evaluate");
@@ -978,17 +989,6 @@ static bool delay_prepare(struct application_native_q2_attack *p, qa_json_id wea
         for (size_t i = 0; i < p->delay_write_count; ++i)
             if (!decision_scalar_prepare(p, qa_json_at(doc, writes, i), p->delay_writes + i, error)) return false;
     } else return application_fail(error, QA_ERROR_FORMAT, "Native firing delay has no supported original evaluator");
-    qa_json_id ammo = qa_json_get(doc, items, "ammo");
-    p->ammo_by_name = qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "name");
-    if (!p->ammo_by_name && !qa_json_string_equal(doc, qa_json_get(doc, ammo, "kind"), "index"))
-        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition has no declared name or index rule");
-    if (!word(doc, ammo, "offset", &p->ammo_offset, error) ||
-        (p->ammo_by_name && !word(doc, ammo, "label", &p->ammo_label, error))) return false;
-    if (p->ammo_offset > p->item_stride || (p->ammo_by_name ? p->pointer_bytes : 4u) > p->item_stride - p->ammo_offset ||
-        (p->ammo_by_name && (p->ammo_label > p->item_stride || p->pointer_bytes > p->item_stride - p->ammo_label)))
-        return application_fail(error, QA_ERROR_FORMAT, "Native firing ammunition leaves its declared item descriptor");
-    p->source_weapons = decision_array(p, p->item_count, sizeof(*p->source_weapons), _Alignof(qa_supply_weapon), error);
-    if (!p->source_weapons) return false;
     qa_strings *strings = qa_session_strings(p->engine->provider->application->session);
     if (!qa_strings_intern_cstr(strings, "q2:equipment/hand-grenades", &p->hand_grenades, error)) return false;
     qa_json_id contexts = qa_json_get(doc, weapons, "equipmentContexts");
@@ -1391,7 +1391,7 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
             if (!item || !think) return application_fail(error, QA_ERROR_FORMAT, "Native weapon descriptor lacks its original name or callback");
             p->items[p->count++] = (attack_item){.descriptor = record, .think = think, .item = item};
         }
-        if (p->delay_kind != ATTACK_DELAY_NONE) for (size_t i = 0; i < p->count; ++i) {
+        for (size_t i = 0; i < p->count; ++i) {
             if (!item_ammo(p, p->items + i, error)) return false;
             p->source_weapons[i] = (qa_supply_weapon){p->items[i].item, p->items[i].ammo, true};
         }
@@ -1586,10 +1586,12 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     return true;
 }
 static bool source_item(struct application_native_q2_attack *p, qa_actor_id actor,
-    qa_item_id requested, qa_unified_frame_lease *storage, const attack_item **out, qa_error *error)
+    qa_item_id requested, qa_arena *storage, const attack_item **out, qa_error *error)
 {
     *out = NULL;
     if (!requested) return true;
+    if (!p || !p->active || !p->items_ready)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native weapon mapping has no admitted source roster");
     for (size_t i = 0; i < p->count; ++i)
         if (p->items[i].item == requested) { *out = p->items + i; return true; }
     qa_application *app = p->engine->provider->application;
@@ -1601,11 +1603,20 @@ static bool source_item(struct application_native_q2_attack *p, qa_actor_id acto
         application_supplies_weapon_droppable(arsenal, requested)};
     qa_item_id source;
     if (!application_supplies_weapon_sources(app->supplies, p->engine->provider, actor,
-        &selected, 1, p->source_weapons, p->count, qa_unified_frame_lease_arena(storage), &source, error)) return false;
+        &selected, 1, p->source_weapons, p->count, storage, &source, error)) return false;
     if (!source) return true;
     for (size_t i = 0; i < p->count; ++i)
         if (p->items[i].item == source) { *out = p->items + i; return true; }
     return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon mapping lost its mapped original item");
+}
+bool application_native_q2_attack_weapon_source(struct application_native_q2 *engine, qa_actor_id actor,
+    qa_item_id selected, qa_arena *storage, qa_item_id *out, qa_error *error)
+{
+    const attack_item *source;
+    *out = 0;
+    if (!source_item(engine->source_attack, actor, selected, storage, &source, error)) return false;
+    if (source) *out = source->item;
+    return true;
 }
 bool application_native_q2_attack_death_drop(struct application_native_q2 *engine, qa_actor_id actor,
     qa_unified_frame_lease *storage, qa_supply_weapon *out, int32_t *ammo_count, bool *handled, qa_error *error)
@@ -1619,10 +1630,8 @@ bool application_native_q2_attack_death_drop(struct application_native_q2 *engin
     *handled = true;
     if (!selected || !application_supplies_weapon_droppable(arsenal, selected)) return true;
     struct application_native_q2_attack *p = engine->source_attack;
-    if (!p || !p->active || !p->items_ready)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native death drop has no admitted source weapon mapping");
     const attack_item *original;
-    if (!source_item(p, actor, selected, storage, &original, error)) return false;
+    if (!source_item(p, actor, selected, qa_unified_frame_lease_arena(storage), &original, error)) return false;
     if (!original) return true;
     qa_item_definition definition; double count = 0;
     if (!qa_inventory_source_definition_read(app->inventory, actor, arsenal->owner, selected, &definition, error) ||
@@ -1631,6 +1640,30 @@ bool application_native_q2_attack_death_drop(struct application_native_q2 *engin
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected death-drop ammunition exceeds the native int32 field");
     *out = (qa_supply_weapon){.item = original->item, .ammo = original->ammo, .drop = true};
     *ammo_count = (int32_t)count; return true;
+}
+bool application_native_q2_attack_drop_projection(struct application_native_q2 *engine, qa_actor_id actor,
+    qa_item_id requested, qa_native_address descriptor, bool weapon, qa_unified_frame_lease *storage,
+    qa_native_address *current, qa_native_address *pending, qa_error *error)
+{
+    qa_application *app = engine->provider->application;
+    *current = 0; *pending = 0;
+    if (qa_inventory_item_owner(app->inventory, actor, requested, NULL, NULL)) return true;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    if (!arsenal || arsenal == engine->provider) return true;
+    qa_equipment_state slot; qa_item_id items[2] = {0};
+    bool has_slot = app->equipment && qa_equipment_read(app->equipment, actor, &slot);
+    if ((!has_slot || slot.weapon_slot.provider == arsenal->owner) &&
+        !qa_application_weapon_read(app, actor, items, error)) return false;
+    if (has_slot && slot.weapon_slot.next_provider == arsenal->owner) items[1] = slot.weapon_slot.next_item;
+    qa_native_address *outputs[2] = {current, pending};
+    for (size_t i = 0; i < 2; ++i) {
+        if (!items[i]) continue;
+        const attack_item *mapped;
+        if (!source_item(engine->source_attack, actor, items[i], qa_unified_frame_lease_arena(storage), &mapped, error)) return false;
+        if (mapped && !(weapon && items[i] != requested && mapped->descriptor == descriptor))
+            *outputs[i] = mapped->descriptor;
+    }
+    return true;
 }
 typedef struct attack_delay_saved {
     qa_native_address address;
@@ -1704,7 +1737,7 @@ bool application_native_q2_attack_delay(struct application_native_q2 *engine, qa
     qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
     if (!storage) return false;
     const attack_item *original = NULL;
-    bool ok = source_item(p, actor, item, storage, &original, error), projected = false;
+    bool ok = source_item(p, actor, item, qa_unified_frame_lease_arena(storage), &original, error), projected = false;
     qa_native_address weapon = 0; uint8_t previous[8];
     if (ok && original) {
         qa_native_address client;

@@ -371,7 +371,7 @@ static bool resources(void *context, qa_error *e)
     primary_grant *g = f->grant; size_t index = call->next;
     if (index < g->consumer_count) {
         call->next = index + 1;
-        bool ok = application_native_q2_combat_pickup(f->owner->engine, f->recipient.id,
+        bool ok = application_native_q2_combat_resources(f->owner->engine, f->recipient.id,
             f->execution, g->consumers[index].channel, resources, call, committed, f, e);
         call->next = index; return ok;
     }
@@ -520,7 +520,13 @@ static bool weapon_projection(primary_frame *f, qa_error *e)
     if (!application_supplies_for(application(o)->supplies, o->engine->provider, f->recipient.id, &supply, e)) return false;
     if (!supply) return true;
     bool owned;
-    if (!qa_supply_owns(supply, f->recipient.id, f->offer.item, &owned, e) || !current(f, e)) return false;
+    if (f->offer.cargo_count == 1) {
+        double count;
+        if (!qa_inventory_count_read(application(o)->inventory, f->recipient.id,
+            f->offer.cargo[0].item, &count, e)) return false;
+        owned = count > 0;
+    } else if (!qa_supply_owns(supply, f->recipient.id, f->offer.item, &owned, e)) return false;
+    if (!current(f, e)) return false;
     primary_item *row = item(o, f->descriptor);
     f->projected_counter = f->inventory.client + o->inventory_offset + (uint64_t)(row - o->items) * 4;
     if (!integer(o, f->projected_counter, 4, &f->projected_before, e)) return false;
@@ -575,7 +581,9 @@ bool application_native_q2_primary_pickups_supply(struct application_native_q2_p
         !qa_actor_id_equal(offer->pickup, f->pickup.id) || !qa_actor_id_equal(offer->recipient, f->recipient.id) || !current(f, e))
         return application_fail(e, QA_ERROR_ARGUMENT, "Native selected supply requires its held original item grant");
     *out = f->supply;
-    *options = (qa_supply_options){.selection = QA_PICKUP_SWITCH_IF_BETTER, .auto_switch = true,
+    *options = (qa_supply_options){.selection = f->supply.kind == QA_SUPPLY_AMMO_WEAPON ?
+        QA_PICKUP_SWITCH_ALWAYS : QA_PICKUP_SWITCH_IF_BETTER,
+        .auto_switch = true, .only_empty = f->supply.kind == QA_SUPPLY_AMMO_WEAPON,
         .quantity = f->ammo_descriptor ? quantity : NULL, .quantity_context = f};
     return true;
 }

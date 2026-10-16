@@ -31,7 +31,8 @@ typedef struct pickup_observation_owner {
     qa_actor_owner owner;
     uint64_t serial;
     qa_pickup_observer observer;
-    bool active;
+    qa_pickup_cargo cargo;
+    bool active, has_cargo;
 } pickup_observation_owner;
 typedef struct pickup_observation_storage {
     qa_arena arena;

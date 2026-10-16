@@ -44,8 +44,13 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     qa_native_address descriptor,qa_item_id *,qa_error *);
 bool application_native_q2_attack_weapon_contains(struct application_native_q2 *,
     qa_item_id, bool *, qa_error *);
+bool application_native_q2_attack_weapon_source(struct application_native_q2 *, qa_actor_id,
+    qa_item_id selected, qa_arena *, qa_item_id *, qa_error *);
 bool application_native_q2_attack_death_drop(struct application_native_q2 *, qa_actor_id,
     qa_unified_frame_lease *, qa_supply_weapon *, int32_t *ammo_count, bool *handled, qa_error *);
+bool application_native_q2_attack_drop_projection(struct application_native_q2 *, qa_actor_id,
+    qa_item_id, qa_native_address, bool weapon, qa_unified_frame_lease *,
+    qa_native_address *current, qa_native_address *pending, qa_error *);
 bool application_native_q2_attack_delay(struct application_native_q2 *, qa_actor_id,
     qa_item_id item, uint64_t native_ns, uint64_t *, bool *handled, qa_error *);
 bool application_native_q2_attack_hand_grenade_item(struct application_native_q2 *,
