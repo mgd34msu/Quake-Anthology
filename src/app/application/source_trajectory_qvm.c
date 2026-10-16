@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "native_q3_settings.h"
 #include "qa/binary.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/json.h"
 #include "qa/q3_host.h"
 #include "qa/source_save.h"
@@ -28,6 +29,7 @@ typedef struct trajectory_qvm {
     qa_qvm_options original;
     qa_qvm_abi abi;
     qa_cvars *cvars;
+    qa_cvars_value_scope *cvar_scopes[2];
     qa_q3_gamestate *configstrings;
     qa_buffer entities;
     qa_builtin_services services;
@@ -44,7 +46,7 @@ typedef struct trajectory_qvm {
     bool userinfo_ready[QVM_TRAJECTORY_CLIENTS];
     const char *const *arguments;
     size_t argument_count;
-    bool initialized, releasing, refreshed_once;
+    bool initialized, releasing, refreshed_once, cvars_active;
 } trajectory_qvm;
 
 static bool qvm_word_read(trajectory_qvm *source, uint32_t address, int32_t *value, qa_error *error)
@@ -95,22 +97,49 @@ static bool qvm_slot(trajectory_qvm *source, int32_t pointer, uint32_t *slot, qa
     return true;
 }
 
-static bool qvm_call(trajectory_qvm *source, const qa_qvm_call *call, int32_t command,
-    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+typedef struct trajectory_qvm_call {
+    trajectory_qvm *source;
+    const qa_qvm_call *call;
+    uint32_t entry;
+    const int32_t *arguments;
+    size_t count;
+    int32_t *result;
+} trajectory_qvm_call;
+
+static bool qvm_execute(void *context, qa_error *error)
 {
-    int32_t words[10] = {command};
-    if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
-    return call ? qa_qvm_invoke_source_callback(call, source->image, 0,
-        words, count + 1, result, error) :
-        qa_qvm_invoke(source->vm, 0, words, count + 1, result, error);
+    trajectory_qvm_call *invocation = context;
+    trajectory_qvm *source = invocation->source;
+    bool previous = source->cvars_active;
+    source->cvars_active = true;
+    bool okay = invocation->call ? qa_qvm_invoke_source_callback(invocation->call, source->image,
+        (int32_t)invocation->entry, invocation->arguments, invocation->count, invocation->result, error) :
+        qa_qvm_invoke(source->vm, invocation->entry, invocation->arguments, invocation->count,
+            invocation->result, error);
+    source->cvars_active = previous;
+    return okay;
 }
 
 static bool qvm_function(trajectory_qvm *source, const qa_qvm_call *call, uint32_t entry,
     const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
 {
-    return call ? qa_qvm_invoke_source_callback(call, source->image, (int32_t)entry,
-        arguments, count, result, error) :
-        qa_qvm_invoke(source->vm, entry, arguments, count, result, error);
+    trajectory_qvm_call invocation = {source, call, entry, arguments, count, result};
+    if (source->cvars_active) return qvm_execute(&invocation, error);
+    bool teams = false;
+    if (source->application->primary_mode_ready) {
+        qa_mode_view mode;
+        if (!qa_modes_read(source->application->modes, source->application->primary_mode, &mode, error)) return false;
+        teams = qa_game_type_is_team(application_q3_game_type(mode.rules.kind));
+    }
+    return qa_cvars_value_scope_run(source->cvar_scopes[teams], qvm_execute, &invocation, error);
+}
+
+static bool qvm_call(trajectory_qvm *source, const qa_qvm_call *call, int32_t command,
+    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+{
+    int32_t words[10] = {command};
+    if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
+    return qvm_function(source, call, 0, words, count + 1, result, error);
 }
 
 static bool qvm_time(trajectory_qvm *source, uint64_t time_ns, qa_error *error)
@@ -242,7 +271,7 @@ static bool qvm_syscall(void *context, const qa_qvm_call *call, int32_t trap,
         }
     }
     /* BotAISetup tests BLERR_NOERROR. An unavailable donor botlib must fail
-     * that setup normally, without changing the common bot_enable cvar. */
+     * that setup normally; the cvar scope preserves canonical bot_enable. */
     if (engine && code >= 200 && code <= 207) {
         if (code == 203) {
             int32_t destination, length;
@@ -272,10 +301,11 @@ static bool qvm_team(trajectory_qvm *source, qa_actor_id actor,
     *out = player->spectator ? 3 : 0;
     if (*out || !source->application->primary_mode_ready) return true;
     qa_mode_view mode; qa_team_id team;
-    if (!qa_modes_read(source->application->modes, source->application->primary_mode, &mode, error) ||
-        !qa_modes_team(source->application->modes, source->application->primary_mode, actor, &team, error)) return false;
-    if (mode.rules.teams[1] && team == mode.rules.teams[1]) *out = 1;
-    else if (mode.rules.teams[2] && team == mode.rules.teams[2]) *out = 2;
+    if (!qa_modes_read(source->application->modes, source->application->primary_mode, &mode, error)) return false;
+    if (!qa_game_type_is_team(application_q3_game_type(mode.rules.kind))) return true;
+    if (!qa_modes_team(source->application->modes, source->application->primary_mode, actor, &team, error)) return false;
+    if (mode.rules.teams[0] && team == mode.rules.teams[0]) *out = 1;
+    else if (mode.rules.teams[1] && team == mode.rules.teams[1]) *out = 2;
     return true;
 }
 
@@ -442,7 +472,7 @@ static bool qvm_launch(void *context, const qa_builtin_weapon_launch *launch,
     if (!qvm_project(source, NULL, launch->shooter, NULL, &shooter, error) ||
         !qvm_pointer(source, shooter, &pointer, error)) return false;
     if (source->activate && !(source->flags[shooter] & QVM_TRAJECTORY_ACTIVATED)) {
-        if (!qa_qvm_invoke(source->vm, source->activate, &pointer, 1, &result, error)) return false;
+        if (!qvm_function(source, NULL, source->activate, &pointer, 1, &result, error)) return false;
         source->flags[shooter] |= QVM_TRAJECTORY_ACTIVATED;
     }
     qa_q3_entity entity; qa_qvm_entity_shared shared;
@@ -456,7 +486,7 @@ static bool qvm_launch(void *context, const qa_builtin_weapon_launch *launch,
     if (!qa_qvm_write_entity(source->vm, pointer, true, &entity, error) ||
         !qa_qvm_write_shared_entity(source->vm, pointer, &shared, error)) return false;
     int32_t arguments[] = {pointer, pointer + (source->abi == QA_QVM_Q3_MODERN ? 488 : 476), pointer + 36};
-    if (!qa_qvm_invoke(source->vm, source->fire, arguments, 3, &result, error)) return false;
+    if (!qvm_function(source, NULL, source->fire, arguments, 3, &result, error)) return false;
     uint32_t slot; int32_t active;
     if (!qvm_slot(source, result, &slot, error) ||
         !qvm_word_read(source, (uint32_t)result + source->inuse, &active, error) ||
@@ -493,7 +523,7 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
     if (entry <= 0 || (uint32_t)entry >= count || instructions[entry].opcode != QA_QVM_ENTER)
         return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM projectile has an invalid think callback");
     if (!qvm_word_write(source, (uint32_t)pointer + source->nextthink, 0, error) ||
-        !qa_qvm_invoke(source->vm, (uint32_t)entry, &pointer, 1, &result, error) ||
+        !qvm_function(source, NULL, (uint32_t)entry, &pointer, 1, &result, error) ||
         !qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error)) return false;
     qa_q3_entity entity;
     if (!qa_qvm_read_entity(source->vm, pointer, true, &entity, error)) return false;
@@ -518,7 +548,7 @@ static bool qvm_private_release(trajectory_qvm *source, uint32_t slot, qa_error 
     } else {
         int32_t active;
         okay = qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error);
-        if (okay && active) okay = qa_qvm_invoke(source->vm, source->free_entity, &pointer, 1, &result, error);
+        if (okay && active) okay = qvm_function(source, NULL, source->free_entity, &pointer, 1, &result, error);
     }
     source->releasing = prior;
     if (okay) source->flags[slot] = 0;
@@ -637,6 +667,8 @@ static bool qvm_destroy(void *context, qa_error *error)
         if (source->host) qa_q3_host_qvm_consumed(source->host);
     }
     if (source->host && !qa_q3_host_destroy(source->host, error)) return false;
+    for (size_t i = 0; i < sizeof(source->cvar_scopes) / sizeof(source->cvar_scopes[0]); ++i)
+        qa_cvars_value_scope_destroy(source->cvar_scopes[i]);
     qa_cvars_destroy(source->cvars); qa_qvm_image_release(source->image);
     qa_buffer_free(&source->entities); free(source->configstrings); free(source->marks); free(source);
     return true;
@@ -721,6 +753,13 @@ bool application_trajectory_qvm_create(qa_application *application, const qa_lau
     qa_cvar_options cvars = {.dialect = QA_RULESET_Q3, .side = QA_CVAR_SIDE_SERVER,
         .role = QA_CVAR_ROLE_GAME, .declaration_save_policy = application_native_q3_cvar_save_policy};
     if (okay) okay = (source->cvars = qa_cvars_create_view(application->cvars, &cvars, error)) != NULL;
+    static const qa_cvar_assignment assignments[][2] = {
+        {{"g_gametype", "0"}, {"bot_enable", "0"}},
+        {{"g_gametype", "3"}, {"bot_enable", "0"}}
+    };
+    for (size_t i = 0; okay && i < sizeof(assignments) / sizeof(assignments[0]); ++i)
+        okay = qa_cvars_value_scope_create(source->cvars, assignments[i],
+            sizeof(assignments[i]) / sizeof(assignments[i][0]), &source->cvar_scopes[i], error);
     if (okay) {
         const qa_cvar_view *maximum = qa_cvars_find(source->cvars, "sv_maxclients");
         source->maximum_clients = maximum && maximum->integer > 0 ? (uint32_t)maximum->integer : 64;

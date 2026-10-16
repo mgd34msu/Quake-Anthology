@@ -145,9 +145,8 @@ static bool binding_namespace(const qa_q3_host *host,const q3_cvar_binding *bind
 {
     qa_cvars *registry=NULL; qa_q3_host_cvar_namespace reference=0;
     if (!namespace_resolve(host,binding->reference,&registry,error)) return false;
-    if (!registry || qa_cvars_dialect(registry)!=binding->dialect ||
-        !qa_cvars_observer_idle(registry))
-        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding namespace is absent or active");
+    if (!registry || qa_cvars_dialect(registry)!=binding->dialect)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 cvar binding namespace is absent");
     if (!namespace_reference(host,registry,&reference,error)) return false;
     if (reference!=binding->reference)
         return q3_fail(error,QA_ERROR_FORMAT,0,"Q3 cvar binding differs from its canonical namespace reference");

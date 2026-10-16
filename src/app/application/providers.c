@@ -949,7 +949,7 @@ static bool construct_q2(qa_application *application,
     return true;
 }
 
-static int32_t q3_game_type(qa_mode_kind kind)
+int32_t application_q3_game_type(qa_mode_kind kind)
 {
     switch (kind) {
     case QA_MODE_DUEL:
@@ -995,8 +995,8 @@ bool application_provider_seed_cvars(application_provider *provider, qa_cvars *c
             !seed_number(cvars, "teamplay", (float)profile.teamplay, error)) return false;
     }
     if (mode_unset) {
-        int32_t type = profile.family == QA_GAME_Q3 ? q3_game_type(profile.mode_kind) :
-            profile.cooperative ? 9 : profile.deathmatch ? q3_game_type(profile.mode_kind) : 8;
+        int32_t type = profile.family == QA_GAME_Q3 ? application_q3_game_type(profile.mode_kind) :
+            profile.cooperative ? 9 : profile.deathmatch ? application_q3_game_type(profile.mode_kind) : 8;
         qa_cvar_view effective;
         if (!qa_cvars_effective_view(cvars, "g_gametype", &effective, error) ||
             (effective.integer != type && !qa_cvars_set_number(cvars, "g_gametype", (float)type, error))) return false;
@@ -1352,7 +1352,7 @@ static bool construct_q3(qa_application *application,
     if (!native_profile(provider->launch, choices, &profile, error))
         return false;
     qa_q3_rules rules = qa_q3_default_rules();
-    rules.game_type = q3_game_type(profile.mode_kind);
+    rules.game_type = application_q3_game_type(profile.mode_kind);
     rules.friendly_fire = profile.friendly_fire;
     if (!provider->native_q3_console &&
         !(application->operation == APPLICATION_PERSISTING
