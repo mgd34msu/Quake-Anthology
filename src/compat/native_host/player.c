@@ -1,5 +1,41 @@
 #include "internal.h"
 
+bool qa_native_host_q2_parse_config(qa_native_host *host, int32_t index,
+    const char *text, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying || !text)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 config text requires a live cgame");
+    if (!native_host_string_buffer_write(host, &host->q2_hud_text, text, error)) return false;
+    qa_native_value args[] = {{.type = QA_NATIVE_I32, .as.i32 = index},
+        {.type = QA_NATIVE_ADDRESS, .as.address = host->q2_hud_text.address}};
+    return qa_native_call(host->instance, "ParseConfigString", args, 2, NULL, error);
+}
+
+bool qa_native_host_q2_hud_text(qa_native_host *host, uint32_t seat,
+    qa_native_q2_hud_text_kind kind, const char *text, bool flag, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying ||
+        !host->q2_seat_bound || host->q2_seat != seat || seat > INT32_MAX ||
+        kind < QA_NATIVE_Q2_HUD_CENTER || kind > QA_NATIVE_Q2_HUD_CLEAR_CENTER ||
+        (kind <= QA_NATIVE_Q2_HUD_NOTIFY && !text))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, seat, "Q2 HUD text requires its live cgame seat");
+    qa_native_value args[3] = {{.type = QA_NATIVE_I32, .as.i32 = (int32_t)seat}};
+    const char *entry = kind == QA_NATIVE_Q2_HUD_CLEAR_NOTIFY ? "ClearNotify" : "ClearCenterprint";
+    size_t count = 1;
+    if (kind <= QA_NATIVE_Q2_HUD_NOTIFY) {
+        if (!native_host_string_buffer_write(host, &host->q2_hud_text, text, error)) return false;
+        qa_native_value string = {.type = QA_NATIVE_ADDRESS, .as.address = host->q2_hud_text.address};
+        if (kind == QA_NATIVE_Q2_HUD_CENTER) {
+            args[1] = args[0]; args[0] = string; entry = "ParseCenterPrint";
+        } else {
+            args[1] = string; entry = "NotifyMessage";
+        }
+        args[2] = (qa_native_value){.type = QA_NATIVE_U8, .as.u8 = flag ? 1 : 0};
+        count = 3;
+    }
+    return qa_native_call(host->instance, entry, args, count, NULL, error);
+}
+
 bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     const qa_native_host_q2_hud_view *view, int32_t player_number,
     qa_bytes data, qa_bytes player, bool shared_inventory, qa_error *error)

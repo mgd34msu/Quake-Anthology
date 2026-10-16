@@ -154,37 +154,14 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         : application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 application import is unbound");
 }
 
-static bool parse_config(struct application_native_q2 *engine, int32_t index,
-    const char *text, qa_error *error)
+static bool hud_begin(application_provider *provider, uint32_t seat,
+    struct application_native_q2 **source_out, uint32_t *slot, qa_error *error)
 {
-    qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
-    qa_native_address address = 0;
-    size_t bytes = strlen(text) + 1;
-    bool ok = qa_native_allocate(instance, bytes, INT32_MIN + 10, &address, error) &&
-        qa_native_write(instance, address, (qa_bytes){(const uint8_t *)text, bytes}, error);
-    if (ok) {
-        qa_native_value args[] = {{.type = QA_NATIVE_I32, .as.i32 = index},
-            {.type = QA_NATIVE_ADDRESS, .as.address = address}};
-        ok = qa_native_call(instance, "ParseConfigString", args, 2, NULL, error);
-    }
-    if (address) {
-        qa_error cleanup = {0};
-        bool freed = qa_native_free(instance, address, &cleanup);
-        if (!freed && ok) { ok = false; if (error) *error = cleanup; }
-    }
-    return ok;
-}
-
-bool application_native_q2_draw_hud(application_provider *provider, uint32_t seat,
-    uint32_t milliseconds, qa_error *error)
-{
-    (void)milliseconds;
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || engine->profile != QA_NATIVE_Q2_CGAME_API2023 || engine->shutting_down ||
         !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD requires its idle cgame owner");
-    uint32_t slot;
-    struct application_native_q2 *source = application_native_q2_hud_source(engine, &slot, error);
+    struct application_native_q2 *source = application_native_q2_hud_source(engine, slot, error);
     if (!source) return false;
     bool admitted = false;
     for (size_t i = 1; i < 257; ++i)
@@ -207,7 +184,7 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         qa_strings *strings = qa_session_strings(engine->provider->application->session);
         if (value != prior && (qa_strings_text(strings, value).size || qa_strings_text(strings, prior).size)) {
             const char *text = value ? qa_strings_cstr(strings, value) : "";
-            ok = parse_config(engine, (int32_t)i, text, error);
+            ok = qa_native_host_q2_parse_config(provider->state.native.host, (int32_t)i, text, error);
             if (ok) ok=qa_hud_q2_names_set(&engine->hud_names,i,value,NULL,error);
         }
         link = rebound ? link + 1 : source->config_changes.slots[i].newer;
@@ -216,6 +193,33 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         engine->hud_source_owner = source->provider->owner;
         engine->hud_config_revision = source->config_changes.revision;
     }
+    if (!ok) { --source->calls; --engine->calls; return false; }
+    *source_out = source;
+    return true;
+}
+
+bool application_native_q2_hud_text(application_provider *provider, uint32_t seat,
+    qa_native_q2_hud_text_kind kind, const char *text, bool flag, qa_error *error)
+{
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    if (kind >= QA_NATIVE_Q2_HUD_CLEAR_NOTIFY && !engine->initialized) return true;
+    struct application_native_q2 *source;
+    uint32_t slot;
+    if (!hud_begin(provider, seat, &source, &slot, error)) return false;
+    bool ok = qa_native_host_q2_hud_text(provider->state.native.host, seat, kind, text, flag, error);
+    --source->calls; --engine->calls;
+    return ok;
+}
+
+bool application_native_q2_draw_hud(application_provider *provider, uint32_t seat,
+    uint32_t milliseconds, qa_error *error)
+{
+    (void)milliseconds;
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    struct application_native_q2 *source;
+    uint32_t slot;
+    if (!hud_begin(provider, seat, &source, &slot, error)) return false;
+    bool ok = true;
     uint8_t player_storage[296];
     qa_bytes player = {0}; qa_native_host_q2_hud_view view;
     bool shared_inventory = false;

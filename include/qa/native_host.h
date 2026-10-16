@@ -426,6 +426,17 @@ bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
     qa_bytes server_data, qa_bytes player_state, bool shared_inventory, qa_error *);
+typedef enum qa_native_q2_hud_text_kind {
+    QA_NATIVE_Q2_HUD_CENTER,
+    QA_NATIVE_Q2_HUD_NOTIFY,
+    QA_NATIVE_Q2_HUD_CLEAR_NOTIFY,
+    QA_NATIVE_Q2_HUD_CLEAR_CENTER
+} qa_native_q2_hud_text_kind;
+/* The flag is instant for centerprint and is_chat for notify. */
+bool qa_native_host_q2_hud_text(qa_native_host *, uint32_t seat,
+    qa_native_q2_hud_text_kind, const char *text, bool flag, qa_error *);
+bool qa_native_host_q2_parse_config(qa_native_host *, int32_t index,
+    const char *text, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

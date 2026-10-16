@@ -196,7 +196,7 @@ void native_host_temporary_free(qa_native_host *host, qa_native_address address)
         qa_native_free(host->instance, address, &ignored);
 }
 
-static bool string_buffer_write(qa_native_host *host, native_host_string_buffer *buffer,
+bool native_host_string_buffer_write(qa_native_host *host, native_host_string_buffer *buffer,
     const char *text, qa_error *error)
 {
     size_t bytes = strlen(text) + 1;
@@ -230,7 +230,7 @@ bool native_host_command_string(qa_native_host *host, size_t index, size_t count
 {
     native_host_string_buffer *buffer = &host->command_tail;
     if (index < count) buffer = &host->command_arguments[index];
-    if (!string_buffer_write(host, buffer, text, error)) return false;
+    if (!native_host_string_buffer_write(host, buffer, text, error)) return false;
     *out = buffer->address;
     return true;
 }
@@ -269,11 +269,11 @@ static bool cvar_bytes(qa_native_host *host,
     }
     bool changed = !record->published_valid || record->modification != view->modification_count;
     if (changed || record->value_text != view->value) {
-        if (!string_buffer_write(host, &record->value, view->value, error)) return false;
+        if (!native_host_string_buffer_write(host, &record->value, view->value, error)) return false;
         record->value_text = view->value;
     }
     if (view->latched_value && (changed || record->latched_text != view->latched_value)) {
-        if (!string_buffer_write(host, &record->latched, view->latched_value, error)) return false;
+        if (!native_host_string_buffer_write(host, &record->latched, view->latched_value, error)) return false;
     }
     record->latched_text = view->latched_value;
     qa_native_address name = record->name_address, value = record->value.address;

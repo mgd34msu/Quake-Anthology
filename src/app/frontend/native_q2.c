@@ -403,6 +403,15 @@ bool frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
         frontend_q2_print_policy policy = frontend_ui_q2_print_policy(
             print->kind == QA_Q2_SVC_CENTERPRINT, (uint32_t)print->level,
             source->profile != QA_NATIVE_Q2_GAME_API3, source->cvars, &source->hud_cvars);
+        bool handled = false;
+        uint32_t launch_seat;
+        if (!frontend->options.dedicated && !frontend->native_print &&
+            (policy.center || policy.notify) &&
+            frontend_seat_launch_id_read(frontend, seat, &launch_seat) &&
+            !qa_application_native_q2_hud_text(frontend->application, launch_seat,
+                policy.center ? QA_NATIVE_Q2_HUD_CENTER : QA_NATIVE_Q2_HUD_NOTIFY,
+                text, policy.center ? policy.center_policy.instant : policy.chat,
+                &handled, error)) return false;
         if (frontend->native_print) {
             qa_native_host_print output = {.kind = frontend->options.dedicated ? QA_NATIVE_HOST_PRINT_BROADCAST :
                 policy.center ? QA_NATIVE_HOST_PRINT_CENTER : QA_NATIVE_HOST_PRINT_CLIENT,
@@ -411,11 +420,11 @@ bool frontend_native_q2_print_event(qa_frontend *frontend, qa_actor_owner owner,
         } else if (frontend->options.dedicated) {
             fputs(text,stdout);
         } else if (policy.center) {
-            if (!qa_hud_center_print(frontend->seats[seat].hud, text, frontend->time_ns,
+            if (!handled && !qa_hud_center_print(frontend->seats[seat].hud, text, frontend->time_ns,
                 policy.duration_ns, policy.center_policy, error)) return false;
         } else {
             const char *console;
-            if (!frontend_ui_console_text(&frontend->frame.storage, text, policy.notify, &console, error) ||
+            if (!frontend_ui_console_text(&frontend->frame.storage, text, policy.notify && !handled, &console, error) ||
                 !qa_seat_console_print(frontend->seats[seat].console, console, error)) return false;
         }
     }

@@ -462,6 +462,8 @@ static void free_records(qa_native_host *host)
     qa_arena_destroy(&host->call_storage);
     qa_arena_destroy(&host->text_storage);
     native_host_command_dispose(host);
+    native_host_temporary_free(host, host->q2_hud_text.address);
+    host->q2_hud_text = (native_host_string_buffer){0};
     native_host_memory_state memory={.strings=host->strings, .cvar_records=host->cvar_records,
         .cvar_shadows=host->cvar_shadows};
     native_host_memory_dispose(&memory); host->strings=(qa_id_index){0};

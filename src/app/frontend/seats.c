@@ -74,6 +74,12 @@ static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error
     frontend_seat *seat = context;
     if (!qa_input_seat_set_focus(seat->input, kind, input_now_ms(seat), error)) return false;
     seat->chat_team = kind == QA_INPUT_CHAT && team;
+    uint32_t launch_seat;
+    bool handled;
+    if (kind == QA_INPUT_CONSOLE &&
+        frontend_seat_launch_id_read(seat->frontend, seat->id, &launch_seat) &&
+        !qa_application_native_q2_hud_text(seat->frontend->application, launch_seat,
+            QA_NATIVE_Q2_HUD_CLEAR_NOTIFY, NULL, false, &handled, error)) return false;
     return true;
 }
 static const char *ui_clipboard(void *context)

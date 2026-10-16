@@ -890,7 +890,14 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
                         "Terminal native Q2 cgame retirement requires drained retired ownership");
             } else {
                 ++engine->calls;
-                bool ok = qa_native_host_shutdown(provider->state.native.host, false, error);
+                bool ok = true;
+                for (size_t i = 1; ok && i < 257; ++i)
+                    if (engine->clients[i].reserved)
+                        ok = qa_native_host_q2_hud_text(provider->state.native.host,
+                            engine->clients[i].seat, QA_NATIVE_Q2_HUD_CLEAR_NOTIFY, NULL, false, error) &&
+                            qa_native_host_q2_hud_text(provider->state.native.host,
+                            engine->clients[i].seat, QA_NATIVE_Q2_HUD_CLEAR_CENTER, NULL, false, error);
+                if (ok) ok = qa_native_host_shutdown(provider->state.native.host, false, error);
                 --engine->calls;
                 if (qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_SHUT_DOWN)
                     engine->initialized = false;

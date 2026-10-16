@@ -258,6 +258,20 @@ static bool presentation_return(qa_application *app, bool ok, bool initialized,
     return ok;
 }
 
+bool qa_application_native_q2_hud_text(qa_application *app, uint32_t seat,
+    qa_native_q2_hud_text_kind kind, const char *text, bool flag, bool *handled, qa_error *error)
+{
+    *handled = false;
+    if (!app || app->destroy_requested || !qa_application_launch(app)) return true;
+    application_provider *provider = selected(app, seat, QA_ROLE_HUD);
+    if (!native_q2_hud(provider)) return true;
+    if (!ready(app, error)) return false;
+    app->operation = APPLICATION_ADVANCING;
+    bool ok = application_native_q2_hud_text(provider, seat, kind, text, flag, error);
+    *handled = ok;
+    return presentation_return(app, ok, true, error);
+}
+
 static bool initialize(q3g_role *role, qa_error *error)
 {
     if (role->initialized) return true;

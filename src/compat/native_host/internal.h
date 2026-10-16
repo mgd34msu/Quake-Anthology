@@ -125,6 +125,7 @@ struct qa_native_host {
     void *q2_application_context;
     uint32_t q2_seat;
     qa_native_address q2_hud_records;
+    native_host_string_buffer q2_hud_text;
     bool q2_seat_bound;
     qa_native_host_q3_bridge q3;
     qa_qvm_role q3_role;
@@ -219,6 +220,8 @@ bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa
 bool native_host_temporary_bytes(qa_native_host *, size_t, const void *, size_t, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 void native_host_temporary_free(qa_native_host *, qa_native_address);
+bool native_host_string_buffer_write(qa_native_host *, native_host_string_buffer *,
+    const char *, qa_error *);
 void native_host_command_dispose(qa_native_host *);
 bool native_host_command_string(qa_native_host *, size_t, size_t, const char *, qa_native_address *, qa_error *);
 bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bool,
