@@ -12,6 +12,7 @@
 #include "source_renderer_runtime.h"
 #include "q1_help.h"
 #include "ui_features.h"
+#include "startup_server_profile.h"
 #include <stdio.h>
 
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
@@ -203,6 +204,43 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
+    if (client_name(name,"midiinfo")) {
+        if (invocation->argc!=1) frontend_console_print(frontend,&invocation->context,"Usage: midiinfo\n");
+        else if (frontend->input) qa_input_platform_midi_info(frontend->input);
+        else frontend_console_print(frontend,&invocation->context,"Input devices are not active before signon.\n");
+        return true;
+    }
+    if (client_name(name,"server_setting")) {
+        if (invocation->argc!=3) {
+            frontend_console_print(frontend,&invocation->context,"Usage: server_setting <server:setting-id> <value>\n");
+            return true;
+        }
+        frontend_server_settings settings; bool present=false; qa_error failure={0};
+        if (invocation->context.origin==QA_COMMAND_REMOTE) return true;
+        if (!frontend_server_settings_read(frontend,&settings,&present,&failure)) goto setting_failed;
+        if (!present) { frontend_console_print(frontend,&invocation->context,"No local server running.\n"); return true; }
+        const qa_server_setting_definition *definition=qa_server_setting_find(&settings.definitions,invocation->argv[1]);
+        if (!definition) { frontend_console_print(frontend,&invocation->context,"No selected server setting.\n"); return true; }
+        qa_server_setting_status status;
+        if (!qa_server_setting_write(definition,settings.source.cvars,invocation->argv[2],&failure) ||
+            !frontend_server_setting_read(frontend,&settings,definition,&status,&failure)) goto setting_failed;
+        frontend_console_print(frontend,&invocation->context,definition->id);
+        frontend_console_print(frontend,&invocation->context," = ");
+        frontend_console_print(frontend,&invocation->context,status.desired);
+        if (status.pending) {
+            frontend_console_print(frontend,&invocation->context," (effective ");
+            frontend_console_print(frontend,&invocation->context,status.effective);
+            frontend_console_print(frontend,&invocation->context,"; ");
+            frontend_console_print(frontend,&invocation->context,qa_server_setting_apply_name(definition->apply_at));
+            frontend_console_print(frontend,&invocation->context,")");
+        }
+        frontend_console_print(frontend,&invocation->context,"\n");
+        return true;
+setting_failed:
+        frontend_console_print(frontend,&invocation->context,failure.message);
+        frontend_console_print(frontend,&invocation->context,"\n");
+        return true;
+    }
     bool sound_handled;
     if (!frontend_sound_command(frontend, invocation, &sound_handled, error)) return false;
     if (sound_handled) return true;
@@ -271,7 +309,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
     qa_console *console = qa_application_console(frontend->application);
     const char *names[] = {"quit", "help", "clear", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
-        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid",
+        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
         "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {

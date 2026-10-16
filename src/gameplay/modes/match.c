@@ -865,6 +865,9 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                             (qa_actor_id){0}, 0, QA_MODE_COUNTDOWN, v->remaining_seconds, e))
                 return false;
         if (v->remaining_seconds <= 0) {
+            if (m->options.hooks.match_start_settings && !MODE_CALLBACK(m,
+                    m->options.hooks.match_start_settings(m->options.hooks.context,
+                        v->id, &v->value.rules, e))) return false;
             for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
                 qa_actor_id actor = m->players_order.actors[ordinal];
                 mode_member *p = mode_member_get(m, v, actor);

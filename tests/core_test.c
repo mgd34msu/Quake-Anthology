@@ -27,6 +27,7 @@
 #include "qa/console_io.h"
 #include "qa/field.h"
 #include "qa/settings.h"
+#include "qa/settings_server_profile.h"
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
@@ -6393,6 +6394,117 @@ static void test_shared_cvar_archive(void)
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 
+static bool server_profile_test_desired(void *context, const char *name, const char **out, qa_error *error)
+{
+    (void)error;
+    const qa_cvar_view *row = qa_cvars_find(context, name);
+    if (!row) return false;
+    *out = row->latched_value ? row->latched_value : row->value;
+    return true;
+}
+static bool server_profile_test_initial(void *context, const char *name, const char *value, qa_error *error)
+{ return qa_cvars_set(context, name, value, true, error); }
+static void test_runtime_server_settings(void)
+{
+    qa_error error = {0};
+    qa_cvar_options options = {.dialect = QA_RULESET_Q2_CLASSIC,
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_ENGINE};
+    qa_cvars *engine = qa_cvars_create(&options, &error);
+    options.role = QA_CVAR_ROLE_GAME;
+    qa_cvars *cvars = qa_cvars_create_view(engine, &options, &error);
+    CHECK(engine && cvars);
+    qa_server_setting_selection selection = {.source = QA_SERVER_SOURCE_Q2,
+        .match = QA_MODE_Q2, .native_combat = true};
+    qa_server_setting_catalog catalog;
+    CHECK(qa_server_setting_definitions(selection, &catalog, &error));
+    const qa_server_setting_definition *health = qa_server_setting_find(&catalog, "server:q2.no-health");
+    const qa_server_setting_definition *powerups = qa_server_setting_find(&catalog, "server:q2.no-powerups");
+    const qa_server_setting_definition *friendly = qa_server_setting_find(&catalog, "server:friendly-fire");
+    const qa_server_setting_definition *time = qa_server_setting_find(&catalog, "server:time-limit");
+    CHECK(health && powerups && friendly && time);
+    CHECK(qa_cvars_set(cvars, "dmflags", "256", true, &error));
+    CHECK(qa_server_setting_write(health, cvars, "true", &error));
+    qa_server_setting_status status;
+    CHECK(qa_server_setting_read(health, cvars, NULL, &status, &error) &&
+        !strcmp(status.desired, "1") && !strcmp(status.effective, "0") && status.pending);
+    CHECK(qa_server_setting_read(friendly, cvars, NULL, &status, &error) &&
+        !strcmp(status.desired, "0") && !strcmp(status.effective, "0") && !status.pending);
+    CHECK(qa_server_setting_write(friendly, cvars, "1", &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 0);
+    CHECK(qa_server_setting_read(health, cvars, NULL, &status, &error) && status.pending && !strcmp(status.desired, "1"));
+    CHECK(qa_server_setting_write(powerups, cvars, "1", &error));
+    CHECK(qa_server_setting_write(friendly, cvars, "0", &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 256);
+    CHECK(qa_server_setting_read(powerups, cvars, NULL, &status, &error) && status.pending && !strcmp(status.desired, "1"));
+    CHECK(qa_server_setting_write(friendly, cvars, "1", &error));
+    CHECK(qa_server_setting_read(friendly, cvars, "256", &status, &error) &&
+        status.pending && !strcmp(status.desired, "1") && !strcmp(status.effective, "0"));
+    CHECK(qa_server_setting_read(friendly, cvars, NULL, &status, &error) && !status.pending);
+    CHECK(qa_server_setting_write(time, cvars, "3.50", &error));
+    CHECK(qa_cvars_find(cvars, "timelimit")->number == 3.5f);
+    double desired, effective;
+    CHECK(qa_server_setting_read(time, cvars, "2.5", &status, &error) && status.pending &&
+        qa_parse_atof(status.desired, &desired, &error) && qa_parse_atof(status.effective, &effective, &error) &&
+        desired == 3.5 && effective == 2.5);
+
+    qa_server_profile *profile = NULL, *parsed = NULL;
+    qa_buffer encoded = {0};
+    CHECK(qa_server_profile_capture(selection, cvars, &profile, &error));
+    size_t count; const qa_server_profile_override *overrides = qa_server_profile_overrides(profile, &count);
+    bool saved_pending = false;
+    for (size_t i = 0; i < count; ++i)
+        if (!strcmp(overrides[i].id, health->id)) saved_pending = !strcmp(overrides[i].value, "1");
+    CHECK(saved_pending && qa_server_profile_encode(profile, &encoded, &error));
+    CHECK(qa_server_profile_parse((qa_bytes){encoded.data, encoded.size}, selection, &parsed, &error));
+    CHECK(qa_cvars_set(cvars, "dmflags", "256", true, &error) &&
+        qa_cvars_set(cvars, "timelimit", "0", true, &error));
+    CHECK(qa_server_profile_apply(parsed, selection, cvars, &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 0 && qa_cvars_find(cvars, "timelimit")->number == 3.5f);
+    CHECK(qa_server_setting_read(health, cvars, NULL, &status, &error) && status.pending && !strcmp(status.desired, "1"));
+    CHECK(qa_server_setting_read(powerups, cvars, NULL, &status, &error) && status.pending && !strcmp(status.desired, "1"));
+    qa_server_profile_owner initial = {.context = cvars,
+        .read_desired = server_profile_test_desired, .write_initial = server_profile_test_initial};
+    CHECK(qa_server_profile_apply_startup(parsed, selection, &initial, &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 3 && !qa_cvars_find(cvars, "dmflags")->latched_value);
+    CHECK(qa_server_setting_write(health, cvars, "0", &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 3);
+    CHECK(qa_cvars_apply_latched(cvars, "dmflags", &error));
+    CHECK(qa_cvars_find(cvars, "dmflags")->integer == 2 && !qa_cvars_find(cvars, "dmflags")->latched_value);
+    CHECK(qa_cvars_set(cvars, "dmflags", "3", true, &error));
+
+    static const char q3_profile[] = "{\"version\":1,\"overrides\":["
+        "{\"id\":\"server:time-limit\",\"value\":\"20\"},"
+        "{\"id\":\"server:q3.game-type\",\"value\":\"4\"}]}";
+    qa_server_profile *unavailable = NULL;
+    CHECK(qa_server_profile_parse((qa_bytes){(const uint8_t *)q3_profile, sizeof(q3_profile) - 1},
+        (qa_server_setting_selection){.source = QA_SERVER_SOURCE_Q3}, &unavailable, &error));
+    CHECK(!qa_server_profile_apply(unavailable, selection, cvars, &error));
+    CHECK(qa_cvars_find(cvars, "timelimit")->number == 3.5f && qa_cvars_find(cvars, "dmflags")->integer == 3);
+    error = (qa_error){0};
+    CHECK(!qa_server_setting_write(time, cvars, "-1", &error));
+    CHECK(qa_cvars_find(cvars, "timelimit")->number == 3.5f);
+    qa_server_setting_definition absent = *time;
+    absent.target.name = "missing_server_setting_target";
+    CHECK(!qa_server_setting_write(&absent, cvars, "1", &error));
+    CHECK(!qa_cvars_find(cvars, absent.target.name));
+    error = (qa_error){0};
+    qa_server_setting_catalog rerelease;
+    CHECK(qa_server_setting_definitions((qa_server_setting_selection){.source = QA_SERVER_SOURCE_Q2_RERELEASE},
+        &rerelease, &error));
+    const qa_server_setting_definition *instant = qa_server_setting_find(&rerelease, "server:q2.instant-switch");
+    CHECK(instant && qa_cvars_set(cvars, instant->target.name, "0", true, &error));
+    CHECK(qa_server_setting_write(instant, cvars, "1", &error));
+    CHECK(qa_server_setting_read(instant, cvars, NULL, &status, &error) && status.pending &&
+        qa_parse_atof(status.desired, &desired, &error) && qa_parse_atof(status.effective, &effective, &error) &&
+        desired == 1 && effective == 0);
+    CHECK(qa_cvars_apply_latched(cvars, instant->target.name, &error));
+    CHECK(qa_server_setting_read(instant, cvars, NULL, &status, &error) && !status.pending &&
+        qa_parse_atof(status.effective, &effective, &error) && effective == 1);
+    qa_buffer_free(&encoded); qa_server_profile_destroy(unavailable);
+    qa_server_profile_destroy(parsed); qa_server_profile_destroy(profile);
+    qa_cvars_destroy(cvars); qa_cvars_destroy(engine);
+}
+
 static void test_shared_cvar_save(void)
 {
     qa_error error={0};
@@ -9148,6 +9260,7 @@ int main(int argc, char **argv)
     test_q3_received_commands();
     test_q3_command_cursors();
     test_shared_cvar_archive();
+    test_runtime_server_settings();
     test_shared_cvar_save();
     test_cvar_value_scope();
     test_cvar_info_storage();

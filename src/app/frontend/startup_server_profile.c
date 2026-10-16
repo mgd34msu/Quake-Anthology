@@ -1,5 +1,7 @@
 #include "startup_server_profile.h"
+#include "config_store.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 static bool fail(qa_error *error, qa_status code, const char *text)
@@ -18,6 +20,13 @@ static bool profile_path(const char *relative)
     for (size_t i = 1; i < length - 5; ++i)
         if (!alnum_ascii((unsigned char)name[i]) && name[i] != '_' && name[i] != '-') return false;
     return true;
+}
+
+bool frontend_server_profile_path(const char *name, char out[46], qa_error *error)
+{
+    if (!name || strlen(name)>32) return fail(error, QA_ERROR_ARGUMENT, "Use a server profile name of 1-32 letters, digits, underscores or dashes");
+    snprintf(out, 46, "servers/%s.json", name);
+    return profile_path(out) || fail(error, QA_ERROR_ARGUMENT, "Invalid server profile name");
 }
 
 bool frontend_startup_server_profile_select(const char *relative, char **retained, qa_error *error)
@@ -76,6 +85,27 @@ static bool selection(qa_catalog *catalog, const qa_launch_choices *choices,
         if (!strcmp(choices->modes[i].instance, match->instance)) { selected.match = choices->modes[i].rules.source; break; }
     *out = selected;
     return true;
+}
+
+bool frontend_server_settings_read(qa_frontend *frontend, frontend_server_settings *out,
+    bool *present, qa_error *error)
+{
+    *out = (frontend_server_settings){0};
+    *present = false;
+    const qa_launch_snapshot *launch = qa_application_launch(frontend->application);
+    if (!launch || frontend_network_remote(frontend)) return true;
+    if (!frontend_config_store_primary_server_read(frontend->config_store, &out->source, present, error))
+        return false;
+    return !*present || (selection(qa_launch_snapshot_catalog(launch), qa_launch_snapshot_choices(launch),
+        &out->selection, error) && qa_server_setting_definitions(out->selection, &out->definitions, error));
+}
+
+bool frontend_server_setting_read(qa_frontend *frontend, const frontend_server_settings *settings,
+    const qa_server_setting_definition *definition, qa_server_setting_status *out, qa_error *error)
+{
+    const char *effective = qa_application_server_setting_effective(frontend->application,
+        settings->source.scope.provider, definition->target.name);
+    return qa_server_setting_read(definition, settings->source.cvars, effective, out, error);
 }
 
 bool frontend_startup_server_profile_capture(qa_settings_store store, const char *relative,

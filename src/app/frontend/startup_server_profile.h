@@ -4,6 +4,17 @@
 #include "qa/settings_server_profile.h"
 #include "qa/application_startup_prepare.h"
 
+struct qa_frontend;
+typedef struct frontend_server_settings {
+    qa_application_startup_source source;
+    qa_server_setting_selection selection;
+    qa_server_setting_catalog definitions;
+} frontend_server_settings;
+bool frontend_server_settings_read(struct qa_frontend *, frontend_server_settings *, bool *present, qa_error *);
+bool frontend_server_setting_read(struct qa_frontend *, const frontend_server_settings *,
+    const qa_server_setting_definition *, qa_server_setting_status *, qa_error *);
+bool frontend_server_profile_path(const char *name, char out[46], qa_error *);
+
 /* The selection owner retains only this relative path in its existing state.
  * A NULL path clears it. Failed selection leaves the previous path untouched. */
 bool frontend_startup_server_profile_select(const char *relative, char **retained, qa_error *);

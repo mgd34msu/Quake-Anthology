@@ -2,6 +2,7 @@
 #include "save_private.h"
 #include "save_native_q2.h"
 #include "native_q2_callbacks.h"
+#include "native_q2_console.h"
 #include "guest_native_q2_private.h"
 #include "guest_qc_internal.h"
 #include "save_content.h"
@@ -1021,7 +1022,14 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         ok = application_players_advance(application, error);
     if (ok && application->modes != NULL) {
         uint64_t now = qa_session_elapsed(application->session);
-        for (size_t index = 0; ; ++index) {
+        for (size_t index=0;ok && index<application->provider_count;++index) {
+            application_provider *provider=application->providers[index];
+            if(provider && provider->kind==APPLICATION_PROVIDER_Q2 && provider->constructed &&
+                provider->attached && !provider->close_pending &&
+                application_native_q2_console_registry(provider))
+                ok=application_native_q2_source_modes_refresh(provider,error);
+        }
+        for (size_t index = 0; ok; ++index) {
             qa_mode_id mode;
             qa_mode_view view;
             qa_error enumeration = {0};

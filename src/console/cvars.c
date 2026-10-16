@@ -2023,18 +2023,36 @@ static bool stage_variable(cvar_target target,const char *name,const char *value
     if (!target_touch(target,error) || !name || !value) return false;
     return apply_converted(target,name,value,false,true,error);
 }
+static bool apply_latched_entry(cvar_target target,cvar *entry,qa_error *error)
+{
+    cvar *canonical=qac_cvars_canonical(entry);
+    if ((canonical->view.player_scoped && canonical->player!=target.registry->options.seat) ||
+        !canonical->view.latched_value) return true;
+    cvar_write write={.entry=entry,.value=canonical->view.latched_value,.clear_latch=true,.promote_details=true,
+        .explicit_value=canonical->pending_explicit,.mark=strcmp(canonical->view.value,canonical->view.latched_value)!=0};
+    return write_group(target,&write,1,error);
+}
 static bool apply_latched_variables(cvar_target target,const char *name,qa_error *error)
 {
     if (!target_touch(target,error)) return false;
     name=canonical_name(target.registry,target.values,name);
+    cvar *selected=name?qac_cvars_find_values(target.registry,target.values,name):NULL;
+    if (selected && selected->catalog_row!=QA_CVAR_CATALOG_NO_ROW &&
+        qa_cvar_catalog_rows[selected->catalog_row].not_stored) {
+        const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(target.registry,
+            target.values,selected->catalog_binding);
+        for (size_t i=0;conversion && i<conversion->operand_count;++i) {
+            uint16_t row=qa_cvar_catalog_operands[conversion->operand_first+i].row_index;
+            cvar *operand=qac_cvars_find_values(target.registry,target.values,
+                qa_cvar_catalog_string(qa_cvar_catalog_rows[row].name));
+            if (operand && !apply_latched_entry(target,operand,error)) return false;
+        }
+        return true;
+    }
     cvar *entries=target.registry->options.role==QA_CVAR_ROLE_ENGINE?canonical_values(target)->first:target.values->first;
     for (cvar *entry=entries;entry;entry=entry->next) {
-        cvar *canonical=qac_cvars_canonical(entry);
-        if ((canonical->view.player_scoped && canonical->player!=target.registry->options.seat) ||
-            !canonical->view.latched_value || (name && !qac_cvars_name_equal(target.registry,name,entry->view.name))) continue;
-        cvar_write write={.entry=entry,.value=canonical->view.latched_value,.clear_latch=true,.promote_details=true,
-            .explicit_value=canonical->pending_explicit,.mark=strcmp(canonical->view.value,canonical->view.latched_value)!=0};
-        if (!write_group(target,&write,1,error)) return false;
+        if (name && !qac_cvars_name_equal(target.registry,name,entry->view.name)) continue;
+        if (!apply_latched_entry(target,entry,error)) return false;
     }
     return true;
 }

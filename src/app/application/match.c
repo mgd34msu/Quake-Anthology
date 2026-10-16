@@ -120,6 +120,15 @@ static bool mode_source_frame(void *opaque, qa_mode_id mode, uint64_t *frame)
     return true;
 }
 
+static bool match_start_settings(void *opaque,qa_mode_id mode,qa_mode_rules *rules,qa_error *error)
+{
+    application_provider *source=application_mode_provider(opaque,mode);
+    qa_cvars *cvars=application_native_q2_console_registry(source);
+    if(!cvars || rules->source!=QA_MODE_LMCTF)return true;
+    return qa_cvars_apply_latched(cvars,"timelimit",error) &&
+        application_native_q2_source_mode_rules(source,rules,error);
+}
+
 static bool mode_source_match_limits(void *opaque, qa_mode_id mode, double *seconds,
     double *minutes, double *captures)
 {
@@ -389,6 +398,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
     return (qa_modes_hooks){.context = application,
                             .source_settings = application_native_mode_source_settings,
                             .source_cvar_set = mode_source_cvar_set,
+                            .match_start_settings = match_start_settings,
                             .chat_allowed = mode_chat_allowed,
                             .chat_item = mode_chat_item,
                             .layout = mode_layout,

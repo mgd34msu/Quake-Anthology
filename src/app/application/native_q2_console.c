@@ -135,6 +135,13 @@ struct application_native_q2_console {
     qa_cvar_handle cheats, password, spectator_password, deathmatch, max_spectators;
     qa_cvar_handle referee_password, rcon_password, skin_set, flag_init, maplist_file;
     qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
+    struct {
+        qa_cvar_handle time_limit, frag_limit, goal_limit, ctf_flags, referee_flags;
+        qa_cvar_handle runes, countdown_seconds, auto_lock;
+    } mode_cvars;
+    const qa_modes *mode_owner;
+    uint64_t mode_revision, mode_configuration;
+    size_t mode_count;
     qa_string_id help_lines[1000];
     size_t help_line_count;
     bool help_ready;
@@ -155,6 +162,15 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
     owner->flag_init = qa_cvars_resolve(owner->cvars, "flag_init");
     owner->maplist_file = qa_cvars_resolve(owner->cvars, "maplist_file");
+    owner->mode_cvars.time_limit = qa_cvars_resolve(owner->cvars, "timelimit");
+    owner->mode_cvars.frag_limit = qa_cvars_resolve(owner->cvars, "fraglimit");
+    owner->mode_cvars.goal_limit = qa_cvars_resolve(owner->cvars, "goallimit");
+    owner->mode_cvars.ctf_flags = qa_cvars_resolve(owner->cvars, "ctfflags");
+    owner->mode_cvars.referee_flags = qa_cvars_resolve(owner->cvars, "refset");
+    owner->mode_cvars.runes = qa_cvars_resolve(owner->cvars, "runes");
+    owner->mode_cvars.countdown_seconds = qa_cvars_resolve(owner->cvars, "countdown_time");
+    owner->mode_cvars.auto_lock = qa_cvars_resolve(owner->cvars, "autolock");
+    owner->mode_revision = 0;
     for (size_t i = 0; i < Q2_CTF_CVAR_COUNT; ++i)
         owner->ctf_cvars[i] = qa_cvars_resolve(owner->cvars, ctf[i].name);
     owner->weapon_cvars.infinite_ammo = qa_cvars_resolve(owner->cvars, "g_infinite_ammo");
@@ -774,22 +790,27 @@ static bool menu_help_prepare(application_provider *provider, qa_error *error) {
     }
     return okay;
 }
-bool application_native_q2_source_mode_rules(application_provider *provider, qa_mode_rules *rules,
-                                             qa_error *error) {
+static bool source_integer(const qa_cvar_view *value, int32_t *out, qa_error *error) {
+    if (!value || !out)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 setting has no source integer");
+    *out = value->integer;
+    return true;
+}
+static bool source_mode_rules(application_provider *provider, qa_mode_rules *rules,
+    uint32_t deathmatch_flags, qa_error *error) {
     if (!rules || rules->source < QA_MODE_Q2 || rules->source >= QA_MODE_Q3)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source settings require a Q2 mode owner");
-    float time;
-    int32_t frags;
-    if (!application_native_q2_source_number(provider, "timelimit", &time, error) ||
-        !application_native_q2_source_integer(provider, "fraglimit", &frags, error)) return false;
-    rules->time_limit_minutes = time;
-    rules->frag_limit = frags;
-    qa_cvars *cvars = application_native_q2_console_registry(provider);
+    struct application_native_q2_console *owner = provider->native_q2_console;
+    qa_cvars *cvars = owner->cvars;
+    const qa_cvar_view *time = qa_cvars_read(cvars, owner->mode_cvars.time_limit);
+    if (!time || !isfinite(time->number))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 setting has no finite source value");
+    if (!source_integer(qa_cvars_read(cvars, owner->mode_cvars.frag_limit), &rules->frag_limit, error)) return false;
+    rules->time_limit_minutes = time->number;
     const qa_cvar_view *captures = qa_cvars_read(cvars,
         provider->native_q2_console->ctf_cvars[Q2_CTF_CAPTURELIMIT]);
     if (captures && rules->source == QA_MODE_Q2_CTF) rules->capture_limit = captures->integer;
     if (rules->source == QA_MODE_Q2_CTF) {
-        struct application_native_q2_console *owner = provider->native_q2_console;
         const qa_cvar_view *value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_COMPETITION]);
         if (value && value->declared) rules->competition = value->integer;
         value = qa_cvars_read(cvars, owner->ctf_cvars[Q2_CTF_MATCHLOCK]);
@@ -806,37 +827,47 @@ bool application_native_q2_source_mode_rules(application_provider *provider, qa_
         if (value && value->declared)
             rules->forced_team = qa_text_ascii_equal(value->value, "red") ? rules->teams[0] :
                 qa_text_ascii_equal(value->value, "blue") ? rules->teams[1] : 0;
-        uint32_t flags = qa_q2_source_deathmatch_flags(cvars);
-        rules->force_join = (flags & UINT32_C(131072)) != 0;
-        rules->relics = (flags & UINT32_C(524288)) == 0;
+        rules->force_join = (deathmatch_flags & UINT32_C(131072)) != 0;
+        rules->relics = (deathmatch_flags & UINT32_C(524288)) == 0;
     }
     if (rules->source == QA_MODE_Q2_DEATHBALL &&
-        !application_native_q2_source_integer(provider, "goallimit", &rules->capture_limit, error)) return false;
+        !source_integer(qa_cvars_read(cvars, owner->mode_cvars.goal_limit), &rules->capture_limit, error)) return false;
     if (rules->source == QA_MODE_LMCTF) {
         if (!menu_help_prepare(provider, error)) return false;
         const qa_cvar_view *skin = qa_cvars_read(cvars, provider->native_q2_console->skin_set);
         if (skin && skin->integer > 3 && !qa_cvars_set(cvars, skin->name, "3", true, error))
             return false;
-        int32_t flags, referee, runes, automatic;
-        if (!application_native_q2_source_integer(provider, "ctfflags", &flags, error) ||
-            !application_native_q2_source_integer(provider, "refset", &referee, error) ||
-            !application_native_q2_source_integer(provider, "runes", &runes, error) ||
-            !application_native_q2_source_integer(provider, "countdown_time", &rules->countdown_seconds, error) ||
-            !application_native_q2_source_integer(provider, "autolock", &automatic, error)) return false;
+        int32_t flags=0, referee=0, runes=0, automatic=0;
+        if (!source_integer(qa_cvars_read(cvars, owner->mode_cvars.ctf_flags), &flags, error) ||
+            !source_integer(qa_cvars_read(cvars, owner->mode_cvars.referee_flags), &referee, error) ||
+            !source_integer(qa_cvars_read(cvars, owner->mode_cvars.runes), &runes, error) ||
+            !source_integer(qa_cvars_read(cvars, owner->mode_cvars.countdown_seconds), &rules->countdown_seconds, error) ||
+            !source_integer(qa_cvars_read(cvars, owner->mode_cvars.auto_lock), &automatic, error)) return false;
         rules->flags = (uint32_t)flags;
         rules->referee_flags = (uint32_t)referee;
         rules->rune_mask = runes;
         rules->auto_lock = automatic != 0;
     }
-    rules->friendly_fire = (qa_q2_source_deathmatch_flags(cvars) & 256u) == 0;
+    rules->friendly_fire = (deathmatch_flags & 256u) == 0;
     rules->ruleset = dialect(provider);
     return true;
+}
+bool application_native_q2_source_mode_rules(application_provider *provider, qa_mode_rules *rules,
+                                             qa_error *error) {
+    return source_mode_rules(provider, rules,
+        qa_q2_source_deathmatch_flags(application_native_q2_console_registry(provider)), error);
 }
 bool application_native_q2_source_modes_refresh(application_provider *provider, qa_error *error) {
     if (!application_native_q2_console_registry(provider) || !provider->constructed ||
         !provider->attached || provider->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 mode settings require their admitted source");
     qa_application *app = provider->application;
+    struct application_native_q2_console *owner = provider->native_q2_console;
+    uint64_t revision = qa_cvars_revision(owner->cvars);
+    uint64_t configuration = qa_application_configuration_generation(app);
+    if (revision && revision == owner->mode_revision && configuration == owner->mode_configuration &&
+        app->modes == owner->mode_owner && app->mode_count == owner->mode_count) return true;
+    uint32_t flags = qa_q2_source_deathmatch_flags(owner->cvars);
     for (size_t i = 0; i < app->mode_count; ++i) {
         qa_mode_id id = app->mode_ids[i];
         qa_mode_view view;
@@ -844,7 +875,7 @@ bool application_native_q2_source_modes_refresh(application_provider *provider, 
         if (!qa_modes_read(app->modes, id, &view, error)) return false;
         if (view.rules.source < QA_MODE_Q2 || view.rules.source >= QA_MODE_Q3) continue;
         qa_mode_rules rules = view.rules;
-        if (!application_native_q2_source_mode_rules(provider, &rules, error)) return false;
+        if (!source_mode_rules(provider, &rules, flags, error)) return false;
         if (rules.time_limit_minutes != view.rules.time_limit_minutes ||
             rules.frag_limit != view.rules.frag_limit || rules.capture_limit != view.rules.capture_limit ||
             rules.flags != view.rules.flags || rules.referee_flags != view.rules.referee_flags ||
@@ -858,6 +889,10 @@ bool application_native_q2_source_modes_refresh(application_provider *provider, 
             rules.friendly_fire != view.rules.friendly_fire || rules.ruleset != view.rules.ruleset)
             if (!qa_modes_configure(app->modes, id, &rules, error)) return false;
     }
+    owner->mode_revision = revision;
+    owner->mode_configuration = configuration;
+    owner->mode_owner = app->modes;
+    owner->mode_count = app->mode_count;
     return true;
 }
 bool application_native_q2_source_number(const application_provider *provider, const char *name,
@@ -867,12 +902,6 @@ bool application_native_q2_source_number(const application_provider *provider, c
     if (!value || !out || !isfinite(value->number))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 setting has no finite source value");
     *out = value->number;
-    return true;
-}
-static bool source_integer(const qa_cvar_view *value, int32_t *out, qa_error *error) {
-    if (!value || !out)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Q2 setting has no source integer");
-    *out = value->integer;
     return true;
 }
 bool application_native_q2_source_integer(const application_provider *provider, const char *name,

@@ -365,6 +365,18 @@ bool application_native_q3_settings_reset_cache(application_provider *provider,
     return register_cache(provider, build_date, true, error);
 }
 
+const char *qa_application_server_setting_effective(const qa_application *app,
+    qa_actor_owner provider_owner, const char *name)
+{
+    const application_provider *provider=application_provider_lookup(app,provider_owner,
+        APPLICATION_PROVIDER_PUBLISHED);
+    const struct application_native_q3_settings *owner=owner_at(provider);
+    if(!owner || !owner->initialized || !name)return NULL;
+    for(size_t i=0;i<definition_count(owner);++i)
+        if(ascii_equal(definition_at(owner,i)->name,name))return owner->snapshots[i].value;
+    return NULL;
+}
+
 const qa_cvar_view *application_native_q3_settings_live_at(const application_provider *provider,
     application_native_q3_setting setting)
 {

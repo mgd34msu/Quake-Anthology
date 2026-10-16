@@ -199,15 +199,21 @@ const qa_cvar_view *qac_cvars_project_alias(const qa_cvars *registry,
             alias?entry->view.value:entry->view.latched_value,
             detail?detail->latched_value:NULL,cache->latched,false,true);
     }
-    if (!alias && entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW &&
+    if (entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW &&
         qa_cvar_catalog_rows[entry->catalog_row].not_stored) {
         const qa_cvar_catalog_conversion *conversion=qac_cvars_conversion(registry,values,binding);
+        bool pending=false;
         for (size_t i=0;conversion && i<conversion->operand_count;++i) {
             uint16_t operand=qa_cvar_catalog_operands[conversion->operand_first+i].row_index;
             const char *operand_name=qa_cvar_catalog_string(qa_cvar_catalog_rows[operand].name);
             const cvar *record=qac_cvars_canonical(qac_cvars_find_values(registry,values,operand_name));
             view->explicit_value |= record && record->view.explicit_value;
+            pending |= record && record->view.latched_value;
         }
+        view->latched_value=pending?project_text(registry,values,binding,entry->view.value,
+            entry->view.value,NULL,cache->latched,false,true):NULL;
+        if (view->latched_value && view->value && !strcmp(view->latched_value,view->value))
+            view->latched_value=NULL;
     }
     cache->available=view->value && view->reset_value;
     if (cache->available) {

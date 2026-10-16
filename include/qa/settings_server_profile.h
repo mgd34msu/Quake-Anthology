@@ -3,6 +3,7 @@
 
 #include "qa/settings.h"
 #include "qa/modes.h"
+#include "qa/console.h"
 
 typedef enum qa_server_setting_source {
     QA_SERVER_SOURCE_NONE,
@@ -52,7 +53,19 @@ typedef struct qa_server_setting_catalog {
 /* Definitions are immutable. Selection derives from the independently chosen
  * WORLD ENTITIES, WORLD MODE and default-player COMBAT owners. */
 bool qa_server_setting_definitions(qa_server_setting_selection, qa_server_setting_catalog *, qa_error *);
+const qa_server_setting_definition *qa_server_setting_find(const qa_server_setting_catalog *, const char *id);
 bool qa_server_setting_parse(const qa_server_setting_definition *, const char *, qa_buffer *, qa_error *);
+typedef struct qa_server_setting_status {
+    /* Borrowed until the common cvar table or the consumed Source cache changes. */
+    const char *desired, *effective;
+    bool pending;
+} qa_server_setting_status;
+/* effective_override is the value actually consumed by a cached game module,
+ * or NULL to read the common table's current value. */
+bool qa_server_setting_read(const qa_server_setting_definition *, const qa_cvars *,
+    const char *effective_override, qa_server_setting_status *, qa_error *);
+bool qa_server_setting_write(const qa_server_setting_definition *, qa_cvars *, const char *, qa_error *);
+const char *qa_server_setting_apply_name(qa_server_setting_apply_at);
 
 typedef struct qa_server_profile qa_server_profile;
 typedef struct qa_server_profile_override { const char *id, *value; } qa_server_profile_override;
@@ -62,6 +75,10 @@ void qa_server_profile_destroy(qa_server_profile *);
 const qa_server_profile_override *qa_server_profile_overrides(const qa_server_profile *, size_t *);
 bool qa_settings_load_server_profile(qa_settings_store, const char *, qa_server_setting_selection,
     qa_server_profile **, bool *found, qa_error *);
+/* Capture desired values, including pending edits. Runtime apply validates all
+ * overrides before writing and uses the same timing rules as individual edits. */
+bool qa_server_profile_capture(qa_server_setting_selection, const qa_cvars *, qa_server_profile **, qa_error *);
+bool qa_server_profile_apply(const qa_server_profile *, qa_server_setting_selection, qa_cvars *, qa_error *);
 
 typedef struct qa_server_profile_owner {
     void *context;

@@ -465,6 +465,10 @@ qa_targets *qa_application_targets(qa_application *);
 qa_player_progress *qa_application_player_progress(qa_application *);
 qa_rankings *qa_application_rankings(qa_application *);
 qa_cvars *qa_application_cvars(qa_application *);
+/* Borrow the value last consumed by a native GAME cache, or NULL when the
+ * selected Source reads the common cvar table directly. */
+const char *qa_application_server_setting_effective(const qa_application *, qa_actor_owner,
+    const char *name);
 typedef struct qa_ui_preference_handles qa_ui_preference_handles;
 const qa_ui_preference_handles *qa_application_ui_preference_handles(const qa_application *);
 void qa_application_ui_preferences_bind(qa_application *);

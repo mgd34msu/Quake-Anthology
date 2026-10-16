@@ -1,7 +1,6 @@
 #include "internal.h"
 #include "qa/settings_server_profile.h"
 #include "qa/text.h"
-#include <stdio.h>
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 #define VALUE(name_) {QA_SERVER_SETTING_VALUE, name_, 0, false}
@@ -199,6 +198,79 @@ bool qa_server_setting_parse(const qa_server_setting_definition *definition,
     return retain(normalized, out, error);
 }
 
+static bool target_project(const qa_server_setting_target *target, const char *value,
+    const char **out, qa_error *error)
+{
+    if (target->kind == QA_SERVER_SETTING_VALUE) { *out = value; return true; }
+    double number;
+    if (!qa_parse_atof(value, &number, error)) return false;
+    bool enabled = ((uint32_t)qa_number_wrap_i32(number) & target->mask) != 0;
+    *out = enabled != target->inverted ? "1" : "0";
+    return true;
+}
+
+static bool target_merge(const qa_server_setting_target *target, const char *current,
+    const char *value, char buffer[32], const char **out, qa_error *error)
+{
+    if (target->kind == QA_SERVER_SETTING_VALUE) { *out = value; return true; }
+    double number;
+    if (!qa_parse_atof(current, &number, error)) return false;
+    uint32_t bits = (uint32_t)qa_number_wrap_i32(number);
+    bool enabled = (!strcmp(value, "1")) != target->inverted;
+    bits = enabled ? bits | target->mask : bits & ~target->mask;
+    if (!qa_format_number(bits, buffer, error)) return false;
+    *out = buffer;
+    return true;
+}
+
+bool qa_server_setting_read(const qa_server_setting_definition *definition, const qa_cvars *cvars,
+    const char *effective_override, qa_server_setting_status *out, qa_error *error)
+{
+    const qa_cvar_view *row = definition ? qa_cvars_find(cvars, definition->target.name) : NULL;
+    if (!row || !out) return settings_fail(error, "Server setting has no cvar owner");
+    qa_server_setting_status status;
+    if (!target_project(&definition->target, row->latched_value ? row->latched_value : row->value,
+        &status.desired, error) || !target_project(&definition->target,
+        effective_override ? effective_override : row->value, &status.effective, error)) return false;
+    status.pending = strcmp(status.desired, status.effective) != 0;
+    *out = status;
+    return true;
+}
+
+bool qa_server_setting_write(const qa_server_setting_definition *definition, qa_cvars *cvars,
+    const char *value, qa_error *error)
+{
+    qa_buffer normalized = {0};
+    if (!qa_server_setting_parse(definition, value, &normalized, error)) return false;
+    const qa_cvar_view *row = qa_cvars_find(cvars, definition->target.name);
+    if (!row) { qa_buffer_free(&normalized); return settings_fail(error, "Server setting has no cvar owner"); }
+    char desired_buffer[32], effective_buffer[32];
+    const char *desired, *effective;
+    bool ok = target_merge(&definition->target, row->latched_value ? row->latched_value : row->value,
+        (const char *)normalized.data, desired_buffer, &desired, error);
+    if (ok && definition->apply_at != QA_SERVER_SETTING_LIVE)
+        ok = qa_cvars_stage(cvars, definition->target.name, desired, error);
+    else if (ok) {
+        ok = target_merge(&definition->target, row->value, (const char *)normalized.data,
+            effective_buffer, &effective, error) &&
+            qa_cvars_set(cvars, definition->target.name, effective, true, error);
+        if (ok && strcmp(desired, effective)) ok = qa_cvars_stage(cvars, definition->target.name, desired, error);
+    }
+    qa_buffer_free(&normalized);
+    return ok;
+}
+
+const char *qa_server_setting_apply_name(qa_server_setting_apply_at when)
+{
+    switch (when) {
+    case QA_SERVER_SETTING_LIVE: return "live";
+    case QA_SERVER_SETTING_NEXT_MATCH: return "next-match";
+    case QA_SERVER_SETTING_NEXT_MAP: return "next-map";
+    case QA_SERVER_SETTING_RESTART: return "restart";
+    }
+    return "";
+}
+
 struct qa_server_profile {
     qa_server_profile_override *overrides;
     size_t count;
@@ -218,8 +290,9 @@ const qa_server_profile_override *qa_server_profile_overrides(const qa_server_pr
     return profile ? profile->overrides : NULL;
 }
 
-static const qa_server_setting_definition *find(const qa_server_setting_catalog *catalog, const char *id)
+const qa_server_setting_definition *qa_server_setting_find(const qa_server_setting_catalog *catalog, const char *id)
 {
+    if (!catalog || !id) return NULL;
     for (size_t i = 0; i < catalog->count; ++i)
         if (!strcmp(catalog->items[i]->id, id)) return catalog->items[i];
     return NULL;
@@ -263,7 +336,7 @@ bool qa_server_profile_parse(qa_bytes bytes, qa_server_setting_selection selecti
         ok = settings_object(document, entry, error) &&
             settings_string(document, qa_json_get(document, entry, "id"), &id, error) &&
             settings_string(document, qa_json_get(document, entry, "value"), &value, error);
-        const qa_server_setting_definition *definition = ok ? find(&catalog, id) : NULL;
+        const qa_server_setting_definition *definition = ok ? qa_server_setting_find(&catalog, id) : NULL;
         if (ok && !definition) ok = settings_fail(error, "Server profile setting has no selected owner");
         for (size_t j = 0; ok && j < profile->count; ++j)
             if (!strcmp(profile->overrides[j].id, id)) ok = settings_fail(error, "Duplicate server profile setting");
@@ -308,42 +381,79 @@ bool qa_settings_load_server_profile(qa_settings_store store, const char *path,
     return ok;
 }
 
+bool qa_server_profile_capture(qa_server_setting_selection selection, const qa_cvars *cvars,
+    qa_server_profile **out, qa_error *error)
+{
+    if (!out || *out) return settings_fail(error, "Server profile requires an empty output");
+    qa_server_setting_catalog catalog;
+    if (!qa_server_setting_definitions(selection, &catalog, error)) return false;
+    qa_server_profile *profile = calloc(1, sizeof(*profile));
+    if (profile && catalog.count) profile->overrides = calloc(catalog.count, sizeof(*profile->overrides));
+    if (!profile || (catalog.count && !profile->overrides)) {
+        qa_server_profile_destroy(profile);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Capturing server profile"); return false;
+    }
+    for (size_t i = 0; i < catalog.count; ++i) {
+        qa_server_setting_status status; qa_buffer value = {0};
+        const qa_server_setting_definition *definition = catalog.items[i];
+        if (!qa_server_setting_read(definition, cvars, NULL, &status, error) ||
+            !qa_server_setting_parse(definition, status.desired, &value, error)) {
+            qa_server_profile_destroy(profile); return false;
+        }
+        profile->overrides[profile->count++] = (qa_server_profile_override){definition->id, (char *)value.data};
+    }
+    *out = profile;
+    return true;
+}
+
+static bool profile_prepare(const qa_server_profile *profile, qa_server_setting_selection selection,
+    const qa_server_setting_definition **definitions, qa_buffer *values, qa_error *error)
+{
+    qa_server_setting_catalog catalog;
+    if (!profile || !qa_server_setting_definitions(selection, &catalog, error)) return false;
+    for (size_t i = 0; i < profile->count; ++i) {
+        definitions[i] = qa_server_setting_find(&catalog, profile->overrides[i].id);
+        if (!definitions[i]) return settings_fail(error, "Server profile setting has no selected owner");
+        if (!qa_server_setting_parse(definitions[i], profile->overrides[i].value, values + i, error)) return false;
+    }
+    return true;
+}
+
+bool qa_server_profile_apply(const qa_server_profile *profile, qa_server_setting_selection selection,
+    qa_cvars *cvars, qa_error *error)
+{
+    if (!profile) return settings_fail(error, "Missing server profile");
+    const qa_server_setting_definition *definitions[QA_SERVER_SETTING_MAX];
+    qa_buffer values[QA_SERVER_SETTING_MAX] = {{0}};
+    bool ok = profile_prepare(profile, selection, definitions, values, error);
+    for (size_t i = 0; ok && i < profile->count; ++i)
+        if (!qa_cvars_find(cvars, definitions[i]->target.name))
+            ok = settings_fail(error, "Server setting has no cvar owner");
+    for (size_t i = 0; ok && i < profile->count; ++i)
+        ok = qa_server_setting_write(definitions[i], cvars, (const char *)values[i].data, error);
+    for (size_t i = 0; i < profile->count; ++i) qa_buffer_free(values + i);
+    return ok;
+}
+
 bool qa_server_profile_apply_startup(const qa_server_profile *profile,
     qa_server_setting_selection selection, const qa_server_profile_owner *owner, qa_error *error)
 {
     if (!profile || !owner || !owner->read_desired || !owner->write_initial)
         return settings_fail(error, "Missing startup server setting owner");
-    qa_server_setting_catalog catalog;
-    if (!qa_server_setting_definitions(selection, &catalog, error)) return false;
     const qa_server_setting_definition *definitions[QA_SERVER_SETTING_MAX];
     qa_buffer values[QA_SERVER_SETTING_MAX] = {{0}};
-    bool ok = true;
+    bool ok = profile_prepare(profile, selection, definitions, values, error);
     for (size_t i = 0; ok && i < profile->count; ++i) {
-        definitions[i] = find(&catalog, profile->overrides[i].id);
-        if (!definitions[i]) { ok = settings_fail(error, "Server profile setting has no fresh selected owner"); break; }
         const char *desired = NULL;
-        ok = qa_server_setting_parse(definitions[i], profile->overrides[i].value, values + i, error) &&
-            owner->read_desired(owner->context, definitions[i]->target.name, &desired, error);
+        ok = owner->read_desired(owner->context, definitions[i]->target.name, &desired, error);
         if (ok && !desired) ok = settings_fail(error, "Server setting has no initial cvar owner");
     }
     for (size_t i = 0; ok && i < profile->count; ++i) {
         const qa_server_setting_target *target = &definitions[i]->target;
-        const char *value = (const char *)values[i].data;
-        char merged[32];
-        if (target->kind == QA_SERVER_SETTING_BIT) {
-            const char *desired = NULL;
-            if (!owner->read_desired(owner->context, target->name, &desired, error) || !desired) { ok = false; break; }
-            double number = 0;
-            if (!qa_parse_atof(desired, &number, error)) { ok = false; break; }
-            uint32_t bits = (uint32_t)qa_source_to_i32((float)number);
-            bool enabled = (!strcmp(value, "1")) != target->inverted;
-            bits = enabled ? bits | target->mask : bits & ~target->mask;
-            int32_t integer;
-            memcpy(&integer, &bits, sizeof(integer));
-            (void)snprintf(merged, sizeof(merged), "%d", integer);
-            value = merged;
-        }
-        ok = owner->write_initial(owner->context, target->name, value, error);
+        const char *desired = NULL, *value; char merged[32];
+        ok = owner->read_desired(owner->context, target->name, &desired, error) && desired &&
+            target_merge(target, desired, (const char *)values[i].data, merged, &value, error) &&
+            owner->write_initial(owner->context, target->name, value, error);
     }
     for (size_t i = 0; i < profile->count; ++i) qa_buffer_free(values + i);
     return ok;

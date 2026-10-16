@@ -359,6 +359,8 @@ typedef struct qa_modes_hooks {
     /* Strings are borrowed from the selected mode source during the call. */
     bool (*source_settings)(void *, qa_mode_id, qa_mode_source_settings *);
     bool (*source_cvar_set)(void *, qa_mode_id, qa_string_id, const char *, qa_error *);
+    /* Promote next-match settings before computing the new match duration. */
+    bool (*match_start_settings)(void *, qa_mode_id, qa_mode_rules *, qa_error *);
     bool (*chat_allowed)(void *, qa_mode_id, qa_actor_id, bool *, qa_error *);
     bool (*chat_item)(void *, qa_mode_id, qa_actor_id, qa_item_id, qa_string_id *, const char **);
     bool (*layout)(void *, qa_mode_id, qa_actor_id, const char *, bool visible,
