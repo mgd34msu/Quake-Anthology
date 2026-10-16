@@ -149,6 +149,7 @@ bool frontend_seats_recompose(qa_frontend *f,unsigned next,unsigned first,
     if (keyboard>=0 && mapped<0) mapped=0;
     if (!frontend_config_store_save(f->config_store,&failure) ||
         !frontend_config_store_local_seats_capture(f->config_store,&failure) ||
+        !frontend_network_local_players_retire(f,old_slots,next,&failure) ||
         !frontend_native_q3_destroy(f,&failure) ||
         !qa_input_platform_routes_reindex(f->input,old_slots,next,mapped,
             (double)f->wall_time_ns/1000000.0,&failure) ||

@@ -876,7 +876,7 @@ static bool clients_tick(qa_frontend_network *n, qa_error *error)
 }
 static bool clients_idle(const qa_frontend_network *n)
 {
-    for (uint32_t i = 0; i < n->frontend->options.seats; ++i) {
+    for (uint32_t i = 0; i < QA_NETWORK_MAX_SEATS; ++i) {
         const frontend_client_connection *local = n->clients + i;
         if (!qa_network_callbacks_idle(local->runtime) || !frontend_network_unified_idle(local->unified) ||
             !frontend_network_unified_client_idle(local->service) || !frontend_network_q1_client_idle(local->q1) ||
@@ -900,8 +900,31 @@ static bool client_connection_destroy(frontend_client_connection *client,qa_erro
 }
 static bool clients_destroy(qa_frontend_network *n, qa_error *error)
 {
-    for (uint32_t i=0;i<n->frontend->options.seats;++i)
+    for (uint32_t i=0;i<QA_NETWORK_MAX_SEATS;++i)
         if(!client_connection_destroy(n->clients+i,error)) return false;
+    return true;
+}
+
+bool frontend_network_local_players_retire(qa_frontend *f,const int *old_slots,unsigned count,qa_error *error)
+{
+    qa_frontend_network *n=f->network;
+    if (!n || !n->loopback || n->detached_transport) return true;
+    for (uint32_t i=0;i<f->options.seats;++i) {
+        bool retained=false;
+        for (unsigned slot=0;slot<count;++slot) retained|=old_slots[slot]==(int)i;
+        frontend_client_connection *local=n->clients+i;
+        if (retained || !local->runtime) continue;
+        uint32_t cursor=0;
+        const qa_net_client *peer;
+        while (qa_net_connections_next(qa_network_connections(n->runtime),&cursor,&peer)) {
+            if (!qa_net_address_equal(&peer->endpoint,&local->endpoint,true) ||
+                !qa_net_client_owns_seat(peer,local->seat)) continue;
+            qa_net_client_id client=peer->id;
+            if (!qa_network_detach(n->runtime,client,"Local player left",error)) return false;
+            break;
+        }
+        if (!client_connection_destroy(local,error)) return false;
+    }
     return true;
 }
 
@@ -4827,7 +4850,7 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
     if (!n) return frontend_fail(error, QA_ERROR_MEMORY, "allocating network frontend owner");
     n->input_serial=++next_input_serial;
     n->frontend = f; n->detached_transport=active!=NULL; n->nonce = qa_platform_time_ns();
-    for (uint32_t i=0;i<f->options.seats;++i)
+    for (uint32_t i=0;i<QA_NETWORK_MAX_SEATS;++i)
         client_connection_initialize(n->clients+i,n,i);
     if(f->options.network_connect) n->primary_client=n->clients;
     n->rotation_random = (uint32_t)n->nonce ^ (uint32_t)(n->nonce >> 32); f->network = n;

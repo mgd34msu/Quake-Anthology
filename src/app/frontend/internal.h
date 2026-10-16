@@ -587,6 +587,7 @@ bool frontend_network_stop_server(qa_frontend *, bool *, qa_error *);
 bool frontend_network_retire_connections(qa_frontend *, bool *, qa_error *);
 bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_retire_clients(qa_frontend *,qa_error *);
+bool frontend_network_local_players_retire(qa_frontend *,const int *old_slots,unsigned count,qa_error *);
 bool frontend_platform_drain(qa_frontend *, bool input_ready, qa_error *);
 typedef struct frontend_replay_timing {
     uint64_t wall_ns,time_ns,frame_before,frame_after;
