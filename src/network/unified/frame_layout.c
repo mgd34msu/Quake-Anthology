@@ -1969,7 +1969,8 @@ static bool q3_sources_check(const qa_unified_frame_q3 *section, uint64_t regist
             return frame_bad(error, "Typed Q3 source lost its actual owner or client bounds");
         for (size_t i = 0; i < source->entity_count; ++i) {
             const qa_unified_q3_entity *row = source->entities + i;
-            if (row->number > QA_Q3_ENTITY_WORLD || entities[row->number] || row->state.number != (int32_t)row->number ||
+            if (row->number > QA_Q3_ENTITY_WORLD || entities[row->number] ||
+                (row->linked && row->state.number != (int32_t)row->number) ||
                 !same_source(row->actor, registry) || !finite_record(&qa_q3_entity_layout, &row->state) ||
                 !finite_record(&qa_unified_vector_layout, &row->origin) ||
                 !qa_bounds_valid(row->link_bounds))

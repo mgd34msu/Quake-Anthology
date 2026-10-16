@@ -20,6 +20,7 @@
 #include "qa/unified_frame_events.h"
 #include "qa/unified_frame_prediction.h"
 #include "qa/unified_frame_player.h"
+#include "qa/unified_frame_q3.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/cvars_save.h"
 #include "qa/console_buffer.h"
@@ -4419,6 +4420,38 @@ static void test_item_name_resolution(void)
     CHECK(qa_strings_count(strings) == string_count);
     CHECK(strstr(retained_alternatives, names[0]) && strstr(retained_alternatives, names[1]));
     qa_arena_destroy(&storage); qa_strings_destroy(strings);
+}
+
+static void test_unified_q3_pending_client(void)
+{
+    qa_error error={0}; size_t bytes;
+    qa_actor_id player_actor={.registry=7,.slot=0,.generation=1};
+    qa_actor_id bot_actor={.registry=7,.slot=1,.generation=1};
+    qa_unified_actor_state actors[]={
+        {.actor=player_actor,.owner=1,.definition=1},
+        {.actor=bot_actor,.owner=1,.definition=1}
+    };
+    qa_unified_world_frame world={
+        .source={.provider=1,.kind=QA_RULESET_Q3,.phase=QA_FRAME_EXIT},
+        .actors=actors,.actor_count=2
+    };
+    qa_unified_frame_player player={.actor=player_actor};
+    qa_unified_q3_entity entity={.number=1,.actor=bot_actor};
+    qa_unified_q3_client client={.source_number=1,.client_slot=1,.actor=bot_actor};
+    qa_unified_q3_source source={.provider_name=1,.instance=1,.content=1,
+        .max_clients=2,.entities=&entity,.entity_count=1,.clients=&client,.client_count=1};
+    qa_unified_frame_q3 section={.sources=&source,.source_count=1};
+    qa_unified_frame frame={.epoch=1,.acknowledged_input=-1,.world=&world,.player=&player,.q3=&section};
+    CHECK(qa_unified_frame_check(&frame,&bytes,&error));
+    CHECK(entity.state.number==0 && client.state.clientNum==0);
+    entity.linked=true;
+    CHECK(!qa_unified_frame_check(&frame,&bytes,&error));
+    entity.state.number=1;
+    CHECK(qa_unified_frame_check(&frame,&bytes,&error));
+    entity.actor.registry=8;
+    CHECK(!qa_unified_frame_check(&frame,&bytes,&error));
+    entity.actor=bot_actor; entity.linked=false; entity.origin.x=NAN;
+    CHECK(!qa_unified_frame_check(&frame,&bytes,&error));
 }
 
 static void test_native_inventory_names(void)
@@ -9427,6 +9460,7 @@ int main(int argc, char **argv)
     test_metadata_retention();
     test_metadata_names();
     test_item_name_resolution();
+    test_unified_q3_pending_client();
     test_native_inventory_names();
     test_files();
     test_shared_text_interpolation();
