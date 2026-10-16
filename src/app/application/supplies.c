@@ -1211,7 +1211,8 @@ bool application_supplies_pickup_rule(application_supplies *owner,qa_actor_id ac
     application_provider *source = application_world_provider(owner->application, QA_ROLE_ENTITIES, "");
     application_provider *arsenal = application_provider_for(owner->application, actor, QA_ROLE_ARSENAL, "");
     supply_pair *pair = pair_find(owner, source, arsenal);
-    if (!pair || !arsenal || arsenal->owner != provider || !original_q3_pickups(pair) ||
+    if (!pair || !arsenal || arsenal->owner != provider ||
+        (!original_q3_pickups(pair) && !original_native_pickups(pair)) ||
         !pair_current(pair, actor, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved pickup rule differs from its actual Source and arsenal actor");
     const qa_pickup_rule *rule = NULL;
