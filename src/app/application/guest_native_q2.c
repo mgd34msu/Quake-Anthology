@@ -570,7 +570,7 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
                     .owner = provider->owner, .definition = engine->definition, .world_actor = engine->world_actor,
                     .binding_context = engine, .project_actor = application_native_q2_project,
                     .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind,
-                    .reserved_source_slot = engine->callbacks ? application_native_q2_callbacks_reserved_slot : NULL},
+                    .reserved_source_slot = application_native_q2_source_reserved_slot},
                 .services = {.engine = application_native_q2_services(engine),
                     .movement = application_native_q2_movement_services(engine),
                     .application = application_native_q2_import, .application_context = engine},

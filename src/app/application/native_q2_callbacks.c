@@ -2260,12 +2260,14 @@ bool application_native_q2_callbacks_finish_restore(struct application_native_q2
 }
 bool application_native_q2_callbacks_arrays_validate(struct application_native_q2 *n,qa_error *e)
 { return !n||!n->callbacks||(records_prepare(n->callbacks,e)&&application_native_q2_records_validate(n->callbacks->records,e)); }
-bool application_native_q2_callbacks_reserved_slot(void *context,uint32_t slot,bool *out,qa_error *e)
+bool application_native_q2_source_reserved_slot(void *context,uint32_t slot,bool *out,qa_error *e)
 {
     struct application_native_q2 *n=context;
     if(!n||!out) return application_fail(e,QA_ERROR_ARGUMENT,"Native source reservation requires its retained engine");
-    *out=false; application_native_q2_callbacks *o=n->callbacks;
-    if(!o) return true;
+    const qa_cvar_view *clients=qa_cvars_read(n->cvars,n->provider->q2_maxclients);
+    *out=slot>0 && clients && clients->integer>0 && slot<=(uint32_t)clients->integer;
+    application_native_q2_callbacks *o=n->callbacks;
+    if(*out||!o) return true;
     if(!current(o,e)||!records_prepare(o,e)) return false;
     const nqr_record *r=o->records->entity_record==SIZE_MAX?NULL:o->records->records+o->records->entity_record;
     *out=r&&slot>=r->first&&(uint64_t)slot<(uint64_t)r->first+r->capacity;

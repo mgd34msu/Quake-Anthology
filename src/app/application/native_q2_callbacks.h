@@ -126,7 +126,7 @@ bool application_native_q2_callbacks_capture(struct application_native_q2 *, qa_
 bool application_native_q2_callbacks_restore(struct application_native_q2 *, qa_bytes, qa_error *);
 bool application_native_q2_callbacks_finish_restore(struct application_native_q2 *, qa_error *);
 bool application_native_q2_callbacks_arrays_validate(struct application_native_q2 *, qa_error *);
-bool application_native_q2_callbacks_reserved_slot(void *,uint32_t,bool *,qa_error *);
+bool application_native_q2_source_reserved_slot(void *,uint32_t,bool *,qa_error *);
 bool application_native_q2_callbacks_userinfo_validate(struct application_native_q2 *,const char *,qa_error *);
 bool application_native_q2_callbacks_import(void *,const qa_native_import_call *,qa_native_value *,bool *,qa_error *);
 
