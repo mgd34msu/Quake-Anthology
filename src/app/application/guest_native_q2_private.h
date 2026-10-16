@@ -68,6 +68,11 @@ struct application_native_q2 {
     struct application_native_q2_inventory_rows *inventory_rows;
     struct application_native_q2_inventory_scanner *inventory_scanner;
     struct application_native_q2_attack *source_attack;
+    struct application_native_q2_prediction_layout {
+        uint32_t client_pointer, client_bytes;
+        uint32_t state, pending, shots, grenade, blew_up, end, priority, duck, run;
+        uint8_t pointer_bytes, boolean_bytes;
+    } prediction;
     struct application_native_q2_combat *source_combat;
     struct application_q2_control *source_control;
     qa_native_host_engine_services platform;
@@ -220,6 +225,7 @@ typedef struct application_native_q2_ui_inventory {
 bool application_native_q2_inventory_ui_read(application_provider *, qa_actor_id,
     qa_unified_frame_lease *, application_native_q2_ui_inventory *, qa_error *);
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *,qa_actor_id);
+bool application_native_q2_prediction_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_client_admitted(const struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_client_begun(const struct application_native_q2 *, qa_actor_id);
 void application_native_q2_client_unbind(struct application_native_q2 *, qa_actor_id);

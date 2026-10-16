@@ -35,7 +35,10 @@ typedef struct guest_pe_unwind {
 typedef struct guest_pe_view {
     qa_native_image_info image;
     uint64_t base;
-    uint32_t entry, header_bytes, section_alignment, file_alignment;
+    uint32_t entry, timestamp, header_bytes, section_alignment, file_alignment;
+    uint8_t codeview_guid[16];
+    uint32_t codeview_age;
+    bool has_codeview;
     uint16_t characteristics, dll_characteristics;
     guest_pe_directory directories[16];
     const guest_pe_section *sections;

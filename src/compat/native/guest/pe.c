@@ -105,6 +105,7 @@ static bool headers(guest_pe *pe, qa_error *error)
     pe->view.file_alignment = qa_load_u32le(optional + 36);
     pe->view.header_bytes = qa_load_u32le(optional + 60);
     pe->view.entry = qa_load_u32le(optional + 16);
+    pe->view.timestamp = qa_load_u32le(coff + 4);
     pe->view.characteristics = qa_load_u16le(coff + 18);
     pe->view.dll_characteristics = qa_load_u16le(optional + 70);
     uint32_t section_alignment = pe->view.section_alignment, file_alignment = pe->view.file_alignment;
@@ -539,6 +540,26 @@ void guest_pe_close(guest_pe **owner)
 const guest_pe_view *guest_pe_describe(const guest_pe *pe)
 { return pe ? &pe->view : NULL; }
 
+static void read_debug(guest_pe *pe)
+{
+    guest_pe_directory directory = pe->view.directories[6];
+    qa_bytes records;
+    qa_error ignored = {0};
+    if (!directory.bytes || directory.bytes % 28 ||
+        !guest_pe_range(pe, directory.rva, directory.bytes, &records, &ignored)) return;
+    for (size_t i = 0; i < records.size; i += 28) {
+        const uint8_t *record = records.data + i;
+        if (qa_load_u32le(record + 12) != 2 || qa_load_u32le(record + 16) < 24) continue;
+        qa_bytes codeview;
+        if (!guest_pe_range(pe, qa_load_u32le(record + 20), 24, &codeview, &ignored) ||
+            memcmp(codeview.data, "RSDS", 4)) continue;
+        memcpy(pe->view.codeview_guid, codeview.data + 4, sizeof(pe->view.codeview_guid));
+        pe->view.codeview_age = qa_load_u32le(codeview.data + 20);
+        pe->view.has_codeview = true;
+        return;
+    }
+}
+
 bool guest_pe_open(qa_bytes bytes, const qa_native_image_info *expected,
     uint64_t base, size_t maximum, guest_pe **out, qa_error *error)
 {
@@ -566,6 +587,7 @@ bool guest_pe_open(qa_bytes bytes, const qa_native_image_info *expected,
         !read_imports(pe, true, error) || !read_exports(pe, error) || !read_lifecycle(pe, error)) {
         guest_pe_close(&pe); return false;
     }
+    read_debug(pe);
     *out = pe;
     return true;
 }

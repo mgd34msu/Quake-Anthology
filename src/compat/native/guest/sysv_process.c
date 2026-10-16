@@ -592,8 +592,8 @@ bool qa_native_sysv_process_invoke_original(qa_native_sysv_process *owner, uint6
     const qa_native_signature *signature, const qa_native_value *arguments, size_t count,
     qa_native_value *result, qa_error *error)
 {
-    if (!owner || !id || owner->options.guest.backend != QA_NATIVE_GUEST_EMULATED)
-        return guest_fail(error, QA_ERROR_UNSUPPORTED, target, "original observed entry requires its actual emulated store scope");
+    if (!owner || !id)
+        return guest_fail(error, QA_ERROR_ARGUMENT, target, "original observed entry requires its process and observer");
     return process_invoke(owner, id, target, signature, arguments, count, result, error);
 }
 

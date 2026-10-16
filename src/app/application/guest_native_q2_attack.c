@@ -915,7 +915,7 @@ bool application_native_q2_attack_item_read(struct application_native_q2 *engine
 const qa_json_document *application_native_q2_attack_declaration_read(const struct application_native_q2 *engine)
 {
     const struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
-    return p && p->engine == engine && p->items_ready ? p->document : NULL;
+    return p && p->engine == engine ? p->document : NULL;
 }
 bool application_native_q2_attack_descriptor_item(struct application_native_q2 *engine,
     qa_native_address descriptor,qa_item_id *out,qa_error *error)

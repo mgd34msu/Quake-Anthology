@@ -624,6 +624,10 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
 bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                                 const qa_native_module *module, qa_native_declaration **out,
                                 qa_error *error);
+/* Supported stock modules use the same declaration reader. Unknown builds
+ * return success with no declaration; explicit content declarations win. */
+bool qa_native_declaration_builtin(const char *artifact_path, const qa_native_module *,
+    qa_native_declaration **out, qa_error *);
 void qa_native_declaration_destroy(qa_native_declaration *declaration);
 qa_bytes qa_native_declaration_primary(const qa_native_declaration *declaration);
 /* The original callback document is a distinct contract. A primary wrapper

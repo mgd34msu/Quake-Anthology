@@ -4,11 +4,7 @@
 #include "qa/native_host_q2_wire.h"
 #include <math.h>
 
-typedef struct prediction_layout {
-    uint32_t client_pointer, client_bytes;
-    uint32_t state, pending, shots, grenade, blew_up, end, priority, duck, run;
-    uint8_t pointer_bytes, boolean_bytes;
-} prediction_layout;
+typedef struct application_native_q2_prediction_layout prediction_layout;
 
 static bool fail(qa_error *error, qa_status code, const char *message)
 {
@@ -46,13 +42,27 @@ static bool member(const qa_json_document *doc, qa_json_id layout, const char *n
         "Native Q2 prediction lacks its artifact-qualified client member");
 }
 
-static bool layout_read(struct application_native_q2 *engine, qa_launch_role role,
-    prediction_layout *out, qa_error *error)
+static bool offset_read(const qa_json_document *doc, qa_json_id client,
+    const char *name, uint32_t width, uint32_t extent, uint32_t *out, qa_error *error)
+{
+    return word(doc, client, name, out, error) &&
+        ((*out <= extent && width <= extent - *out) ||
+         fail(error, QA_ERROR_FORMAT, "Native Q2 prediction member exceeds its client record"));
+}
+
+static bool animation_member(const qa_json_document *doc, qa_json_id animation,
+    const char *name, uint32_t width, uint32_t extent, uint32_t *out, qa_error *error)
+{
+    qa_json_id field = qa_json_get(doc, animation, name);
+    return qa_json_string_equal(doc, qa_json_get(doc, field, "record"), "client") &&
+        offset_read(doc, field, "offset", width, extent, out, error);
+}
+
+bool application_native_q2_prediction_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     const qa_json_document *doc = application_native_q2_attack_declaration_read(engine);
-    if (!doc) return fail(error, QA_ERROR_ARGUMENT,
-        "Native Q2 prediction requires its prepared original declaration index");
+    if (!doc) return true;
     qa_json_id root = qa_json_root(doc), weapons = qa_json_get(doc, root, "weapons");
     bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
     prediction_layout p = {.pointer_bytes = info.image.target.pointer_bytes,
@@ -74,25 +84,35 @@ static bool layout_read(struct application_native_q2 *engine, qa_launch_role rol
                 ok = fail(error, QA_ERROR_FORMAT, "Native Q2 prediction repeats or changes its client layout");
             client = candidate; found = true;
         }
-        if (ok && !found) ok = fail(error, QA_ERROR_UNSUPPORTED,
-            "Native Q2 prediction lacks the real declared private client");
-        if (ok && role == QA_ROLE_ARSENAL)
+        if (ok && found)
             ok = member(doc, client, "weaponstate", "int32", 4, p.client_bytes, &p.state, error) &&
                 member(doc, client, "newweapon", "pointer", p.pointer_bytes, p.client_bytes, &p.pending, error) &&
                 member(doc, client, "machinegun_shots", "int32", 4, p.client_bytes, &p.shots, error) &&
                 member(doc, client, "grenade_time", classic ? "float32" : "int64",
                     classic ? 4u : 8u, p.client_bytes, &p.grenade, error) &&
                 member(doc, client, "grenade_blew_up", classic ? "int32" : "bool8",
-                    p.boolean_bytes, p.client_bytes, &p.blew_up, error);
-        if (ok && role == QA_ROLE_CHARACTER)
-            ok = member(doc, client, "anim_end", "int32", 4, p.client_bytes, &p.end, error) &&
+                    p.boolean_bytes, p.client_bytes, &p.blew_up, error) &&
+                member(doc, client, "anim_end", "int32", 4, p.client_bytes, &p.end, error) &&
                 member(doc, client, "anim_priority", "int32", 4, p.client_bytes, &p.priority, error) &&
                 member(doc, client, "anim_duck", classic ? "int32" : "bool8",
                     p.boolean_bytes, p.client_bytes, &p.duck, error) &&
                 member(doc, client, "anim_run", classic ? "int32" : "bool8",
                     p.boolean_bytes, p.client_bytes, &p.run, error);
+        if (ok && !found) {
+            client = qa_json_get(doc, weapons, "client");
+            qa_json_id animation = qa_json_get(doc, weapons, "animation");
+            ok = offset_read(doc, client, "weaponstate", 4, p.client_bytes, &p.state, error) &&
+                offset_read(doc, client, "newweapon", p.pointer_bytes, p.client_bytes, &p.pending, error) &&
+                offset_read(doc, client, "machinegun_shots", 4, p.client_bytes, &p.shots, error) &&
+                offset_read(doc, client, "grenade_time", classic ? 4u : 8u, p.client_bytes, &p.grenade, error) &&
+                offset_read(doc, client, "grenade_blew_up", p.boolean_bytes, p.client_bytes, &p.blew_up, error) &&
+                animation_member(doc, animation, "end", 4, p.client_bytes, &p.end, error) &&
+                animation_member(doc, animation, "priority", 4, p.client_bytes, &p.priority, error) &&
+                animation_member(doc, animation, "duck", p.boolean_bytes, p.client_bytes, &p.duck, error) &&
+                animation_member(doc, animation, "run", p.boolean_bytes, p.client_bytes, &p.run, error);
+        }
     }
-    if (ok) *out = p;
+    if (ok) engine->prediction = p;
     return ok;
 }
 
@@ -159,8 +179,7 @@ bool qa_application_native_q2_prediction_read(qa_application *app, qa_actor_id a
     if (!value.source_slot || !engine->clients[value.source_slot].connected ||
         !engine->clients[value.source_slot].begun || engine->clients[value.source_slot].disconnect_started)
         return fail(error, QA_ERROR_NOT_FOUND, "Selected original Q2 role has no admitted client for this actor");
-    prediction_layout layout;
-    if (!layout_read(engine, role, &layout, error)) return false;
+    prediction_layout layout = engine->prediction;
     qa_native_instance *instance = qa_native_host_instance(engine->provider->state.native.host);
     qa_native_slot_binding binding;
     uint8_t bytes[8];

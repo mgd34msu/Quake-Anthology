@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "guest/pe.h"
+#include "builtin_primary_data.inc.c"
 
 static bool json_object(const qa_json_document *document, qa_json_id id, const char *name,
                         qa_error *error) {
@@ -477,6 +479,65 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     }
     *out = declaration;
     return true;
+}
+
+bool qa_native_declaration_builtin(const char *artifact_path, const qa_native_module *module,
+    qa_native_declaration **out, qa_error *error)
+{
+    if (!artifact_path || !module || !out || *out)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "Stock native declaration requires its module and empty output");
+    const qa_native_image_info *image = &module->info.image;
+    bool classic = module->info.profile == QA_NATIVE_Q2_GAME_API3 &&
+        image->format == QA_NATIVE_IMAGE_PE32 && image->image_bytes == 0x83000;
+    bool rerelease = module->info.profile == QA_NATIVE_Q2_GAME_API2023 &&
+        image->format == QA_NATIVE_IMAGE_PE32_PLUS && image->image_bytes == 0x2b2000;
+    if (!classic && !rerelease) return true;
+    guest_pe *pe = NULL;
+    if (!guest_pe_open((qa_bytes){module->bytes, module->size}, image,
+        image->preferred_base, (size_t)image->image_bytes, &pe, error)) return false;
+    const guest_pe_view *view = guest_pe_describe(pe);
+    uint32_t game_api = 0;
+    for (size_t i = 0; i < view->export_count; ++i) {
+        const guest_pe_export *entry = view->exports + i;
+        if (entry->name && !entry->forwarder && !strcmp(entry->name, "GetGameAPI")) {
+            game_api = entry->rva; break;
+        }
+    }
+    static const uint8_t rerelease_guid[16] = {
+        0x81,0xe8,0x46,0x17,0x42,0x21,0x00,0x46,0xac,0x82,0xf5,0xfd,0xaf,0xde,0xec,0xc1};
+    const char *profile = NULL;
+    if (classic && view->timestamp == UINT32_C(0x3627cf31) &&
+        view->entry == 0x3b8a0 && game_api == 0xbaa0)
+        profile = native_builtin_primary_xatrix;
+    else if (rerelease && view->timestamp == UINT32_C(0x68fa876f) &&
+        view->entry == 0x137a80 && game_api == 0x6bcd0 && view->has_codeview &&
+        view->codeview_age == 1 && !memcmp(view->codeview_guid, rerelease_guid, sizeof(rerelease_guid)))
+        profile = native_builtin_primary_q2rr;
+    guest_pe_close(&pe);
+    if (!profile) return true;
+    qa_buffer quoted = {0};
+    if (!qa_json_quote((qa_bytes){(const uint8_t *)artifact_path, strlen(artifact_path)}, &quoted, error)) return false;
+    const char *prefix = classic ? "{\"version\":1,\"modules\":[{\"apiVersion\":3,\"artifactPath\":" :
+        "{\"version\":1,\"modules\":[{\"apiVersion\":2023,\"artifactPath\":";
+    const char *middle = ",\"primary\":";
+    const char *suffix = "}]}";
+    qa_bytes parts[] = {{(const uint8_t *)prefix, strlen(prefix)},
+        {quoted.data, quoted.size}, {(const uint8_t *)middle, strlen(middle)},
+        {(const uint8_t *)profile, strlen(profile)}, {(const uint8_t *)suffix, strlen(suffix)}};
+    size_t size = 0;
+    bool okay = true;
+    for (size_t i = 0; okay && i < sizeof(parts) / sizeof(*parts); ++i)
+        okay = native_size_add(size, parts[i].size, &size);
+    uint8_t *json = okay ? malloc(size) : NULL;
+    if (!json) okay = native_fail(error, QA_ERROR_MEMORY, 0, "Preparing stock native compatibility declaration");
+    size_t cursor = 0;
+    for (size_t i = 0; okay && i < sizeof(parts) / sizeof(*parts); ++i) {
+        memcpy(json + cursor, parts[i].data, parts[i].size); cursor += parts[i].size;
+    }
+    if (okay) okay = qa_native_declaration_load((qa_bytes){json, size}, artifact_path, module, out, error);
+    free(json);
+    qa_buffer_free(&quoted);
+    return okay;
 }
 
 void qa_native_declaration_destroy(qa_native_declaration *declaration) {
