@@ -40,6 +40,13 @@ enum qa_mode_map_requirement {
     QA_MODE_MAP_BALL_SPAWN = 512u,
     QA_MODE_MAP_TAG = 1024u
 };
+typedef struct qa_mode_map_features {
+    uint32_t present, flag_teams, obelisk_teams, spawn_teams, deathball_spawn_teams;
+    bool q1_start, deathmatch_spawn, deathball_goal;
+} qa_mode_map_features;
+void qa_modes_map_features_add(qa_mode_map_features *,const char *classname,uint32_t spawnflags);
+uint32_t qa_modes_map_required(const qa_mode_rules *);
+const char *qa_modes_map_unavailable(const qa_mode_rules *,const qa_mode_map_features *);
 bool qa_modes_classify_entity(qa_modes *, qa_mode_id, const qa_mode_map_entity *,
                               qa_mode_map_admission *, qa_error *);
 /* Outputs only missing roles using authored spawn anchors. The map coordinator

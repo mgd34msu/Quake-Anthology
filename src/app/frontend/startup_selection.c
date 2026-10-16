@@ -5,6 +5,8 @@
 #include "qa/application_character_selection.h"
 #include "qa/monster_catalog.h"
 #include "qa/bsp.h"
+#include "qa/id_index.h"
+#include "qa/modes_map.h"
 #include "../application/guest_q3_grapple_profile.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -21,6 +23,24 @@ typedef struct startup_roster_rows {
     const char *source_label, *map;
     qa_resource *map_resource;
 } startup_roster_rows;
+typedef struct startup_map {
+    qa_string_id name;
+    const char *path, *resource_path, *label, *unavailable;
+    qa_mode_map_features features;
+    qa_bsp_family family;
+    bool authored, listed, prepared;
+} startup_map;
+typedef struct startup_maps {
+    qa_arena storage;
+    qa_id_index index;
+    qa_catalog *catalog;
+    qa_vfs *files;
+    startup_map *items;
+    size_t count, capacity;
+    qa_product_id geometry;
+    uint64_t catalog_generation, lookup_generation;
+    const char *unavailable;
+} startup_maps;
 struct frontend_startup_selection {
     qa_strings *names;
     qa_arena choice_storage;
@@ -39,6 +59,7 @@ struct frontend_startup_selection {
     q3_hook_metadata *hooks;
     size_t hook_count;
     frontend_config_weapon_binding_catalog weapon_bindings;
+    startup_maps maps;
 };
 
 static bool fail(qa_error *e, const char *message)
@@ -84,6 +105,128 @@ static bool append(frontend_startup_selection *s, const char *id, const char *la
         s->choices=grown; s->choice_capacity=capacity;
     }
     s->choices[s->count++] = (qa_ui_library_choice){key, title, reason}; return true;
+}
+
+static void maps_clear(startup_maps *maps)
+{
+    qa_vfs_destroy(maps->files); qa_catalog_release(maps->catalog);
+    qa_id_index_destroy(&maps->index); qa_arena_destroy(&maps->storage);
+    *maps = (startup_maps){0};
+}
+static startup_map *map_find(frontend_startup_selection *s, const char *path)
+{
+    qa_string_id name = qa_strings_find_ascii_lower(s->names, (qa_bytes){(const uint8_t *)path, strlen(path)});
+    qa_id_index_entry *entry = qa_id_index_find(&s->maps.index, name, 0);
+    return entry ? s->maps.items + entry->value : NULL;
+}
+static startup_map *map_add(frontend_startup_selection *s, const char *path,
+    const char *label, bool authored, bool installed, qa_error *error)
+{
+    startup_maps *maps = &s->maps;
+    startup_map *row = map_find(s, path);
+    if (row) {
+        if (installed) row->resource_path = path;
+        return row;
+    }
+    if (maps->count == maps->capacity) {
+        if (maps->capacity > SIZE_MAX / 2 / sizeof(*maps->items)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Startup map metadata exceeds addressable storage"); return NULL;
+        }
+        size_t capacity = maps->capacity ? maps->capacity * 2 : 1;
+        startup_map *items = qa_arena_grow(&maps->storage, maps->items, maps->count * sizeof(*items),
+            capacity * sizeof(*items), _Alignof(startup_map), error);
+        if (!items || !qa_id_index_reserve(&maps->index, capacity - maps->count, error)) return NULL;
+        maps->items = items; maps->capacity = capacity;
+    }
+    qa_string_id name;
+    if (!qa_strings_intern_ascii_lower(s->names, (qa_bytes){(const uint8_t *)path, strlen(path)}, &name, error)) return NULL;
+    const char *saved_path = qa_arena_text(&maps->storage, path, error);
+    const char *saved_label = qa_arena_text(&maps->storage, label && *label ? label : path, error);
+    if (!saved_path || !saved_label) return NULL;
+    row = maps->items + maps->count;
+    *row = (startup_map){.name = name, .path = saved_path, .resource_path = saved_path,
+        .label = saved_label, .authored = authored, .listed = authored || installed};
+    qa_id_index_insert(&maps->index, name, 0, maps->count++);
+    return row;
+}
+static int map_compare(const void *a, const void *b)
+{ return strcmp(((const startup_map *)a)->path, ((const startup_map *)b)->path); }
+static bool maps_bind(frontend_startup_selection *s, qa_ui_library *library, bool *changed, qa_error *error)
+{
+    const qa_launch_choices *choices = qa_ui_library_choices(library);
+    qa_catalog *catalog = qa_launch_draft_catalog(qa_ui_library_draft(library));
+    uint64_t generation = qa_catalog_generation(catalog);
+    uint64_t lookup = qa_vfs_lookup_generation(qa_catalog_files(catalog));
+    startup_maps *maps = &s->maps;
+    if (maps->catalog == catalog && maps->geometry == choices->world.geometry &&
+        maps->catalog_generation == generation && maps->lookup_generation == lookup) return true;
+    maps_clear(maps); *changed = true;
+    size_t starts_count, maps_count;
+    const qa_catalog_start *starts = qa_catalog_starts(catalog, choices->world.geometry, NULL, &starts_count);
+    const qa_catalog_map *installed = qa_catalog_maps(catalog, choices->world.geometry, &maps_count);
+    if (starts_count == SIZE_MAX || maps_count > SIZE_MAX - starts_count - 1 ||
+        starts_count + maps_count + 1 > SIZE_MAX / sizeof(*maps->items)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Startup map metadata exceeds addressable storage"); return false;
+    }
+    maps->capacity = starts_count + maps_count + 1;
+    maps->items = qa_arena_alloc(&maps->storage, maps->capacity * sizeof(*maps->items), _Alignof(startup_map), error);
+    maps->index.storage = &maps->storage;
+    if (!maps->items || !qa_id_index_reserve(&maps->index, maps->capacity, error)) return false;
+    for (size_t i = 0; i < starts_count; ++i)
+        if (!map_add(s, starts[i].path, starts[i].title, true, false, error)) return false;
+    size_t authored = maps->count;
+    for (size_t i = 0; i < maps_count; ++i)
+        if (!map_add(s, installed[i].path, installed[i].path, false, true, error)) return false;
+    if (maps->count > authored) qsort(maps->items + authored, maps->count - authored, sizeof(*maps->items), map_compare);
+    qa_id_index_clear(&maps->index);
+    for (size_t i = 0; i < maps->count; ++i) qa_id_index_insert(&maps->index, maps->items[i].name, 0, i);
+    qa_error unavailable = {0};
+    if (!qa_catalog_open(catalog, choices->world.geometry, &maps->files, &unavailable)) {
+        if (unavailable.code == QA_ERROR_MEMORY) { if (error) *error = unavailable; return false; }
+        maps->unavailable = qa_arena_text(&maps->storage, unavailable.message, error);
+        if (!maps->unavailable) return false;
+    }
+    qa_catalog_retain(catalog); maps->catalog = catalog; maps->geometry = choices->world.geometry;
+    maps->catalog_generation = generation; maps->lookup_generation = lookup;
+    return true;
+}
+static bool map_prepare(frontend_startup_selection *s, startup_map *row, bool *changed, qa_error *error)
+{
+    if (row->prepared) return true;
+    qa_resource *resource = NULL; qa_bsp_view bsp; qa_entities entities = {0}; qa_error failure = {0};
+    bool okay = !s->maps.unavailable && qa_vfs_acquire(s->maps.files, row->resource_path, &resource, NULL, &failure) &&
+        qa_bsp_open(qa_resource_bytes(resource), &bsp, &failure);
+    if (okay) {
+        row->family = bsp.family;
+        const qa_product *geometry = qa_catalog_product(s->maps.catalog, s->maps.geometry);
+        qa_entity_syntax syntax = bsp.family == QA_BSP_Q3 ? QA_ENTITY_Q3 :
+            bsp.family == QA_BSP_Q2 ? geometry && geometry->edition == QA_EDITION_RERELEASE ?
+                QA_ENTITY_Q2_RERELEASE : QA_ENTITY_Q2_CLASSIC : QA_ENTITY_Q1;
+        okay = qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes, syntax, &entities, &failure);
+    }
+    for (size_t i = 0; okay && i < entities.count; ++i) {
+        qa_bytes name, flags; qa_string_id id; int32_t spawnflags = 0;
+        if (!qa_entity_value(&entities, i, "classname", &name)) continue;
+        okay = qa_strings_intern(s->names, name, &id, &failure);
+        if (okay && qa_entity_value(&entities, i, "spawnflags", &flags))
+            okay = qa_bsp_value_integer(flags, &spawnflags, &failure);
+        if (okay) qa_modes_map_features_add(&row->features, qa_strings_cstr(s->names, id), (uint32_t)spawnflags);
+    }
+    qa_entities_free(&entities); qa_resource_release(resource);
+    if (!okay) {
+        if (failure.code == QA_ERROR_MEMORY) { if (error) *error = failure; return false; }
+        const char *reason = s->maps.unavailable ? s->maps.unavailable : failure.message;
+        if (row->authored && failure.code == QA_ERROR_NOT_FOUND) {
+            size_t size = strlen(row->path) + sizeof("Missing authored start map: ");
+            char *message = qa_arena_alloc(&s->maps.storage, size, 1, error);
+            if (!message) return false;
+            snprintf(message, size, "Missing authored start map: %s", row->path); reason = message;
+        }
+        row->unavailable = qa_arena_text(&s->maps.storage, reason, error);
+        if (!row->unavailable) return false;
+    }
+    row->prepared = true; *changed = true;
+    return true;
 }
 
 static const qa_launch_provider *provider(const qa_launch_choices *c, const char *instance)
@@ -299,6 +442,7 @@ bool frontend_startup_selection_create(qa_strings *strings, frontend_startup_sel
 void frontend_startup_selection_destroy(frontend_startup_selection *s)
 {
     if (!s) return;
+    maps_clear(&s->maps);
     clear_rows(s);
     qa_arena_destroy(&s->choice_storage);
     for (unsigned i=0;i<2;++i) {
@@ -420,6 +564,52 @@ static const char *rule_unavailable_for(qa_ui_library *library, const char *rule
 static const char *rule_unavailable(qa_ui_library *library, const char *rule)
 {
     return rule_unavailable_for(library, rule, qa_ui_library_mode_preference(library));
+}
+
+static const qa_mode_rules *map_rules(qa_ui_library *library)
+{
+    const qa_launch_mode *selected = mode(library);
+    if (!selected) return NULL;
+    const qa_launch_provider *owner = provider(qa_ui_library_choices(library), selected->instance);
+    /* External GAME modules own their own map/mode admission. */
+    return owner && owner->runtime == QA_PROGRAM_BUILTIN ? &selected->rules : NULL;
+}
+static bool map_choices(frontend_startup_selection *s, qa_ui_library *library, qa_error *error)
+{
+    bool changed = false;
+    if (!maps_bind(s, library, &changed, error)) return false;
+    const qa_mode_rules *rules = map_rules(library);
+    for (size_t i = 0; i < s->maps.count; ++i) {
+        const startup_map *row = s->maps.items + i;
+        if (!row->listed) continue;
+        const char *reason = row->unavailable;
+        if (!row->prepared) reason = "Checking map availability...";
+        else if (!reason && rules && row->family == QA_BSP_Q1 && !row->features.q1_start) {
+            if (!row->authored) continue;
+            reason = "The authored start map has no player starts";
+        } else if (!reason && rules) reason = qa_modes_map_unavailable(rules, &row->features);
+        if (!append(s, row->path, row->label, reason, error)) return false;
+    }
+    return true;
+}
+bool frontend_startup_selection_prepare_choices(void *context, qa_ui_library *library,
+    qa_ui_library_field field, const qa_ui_library_choice *visible, size_t count, bool *changed, qa_error *error)
+{
+    frontend_startup_selection *s = context;
+    *changed = false;
+    if (field != QA_UI_LIBRARY_MAP) return true;
+    if (!maps_bind(s, library, changed, error)) return false;
+    const char *selected = qa_ui_library_choices(library)->world.map;
+    startup_map *row = map_find(s, selected);
+    if (!row && *selected) row = map_add(s, selected, selected, false, false, error);
+    if (*selected && (!row || !map_prepare(s, row, changed, error))) return false;
+    /* Admission is bounded to the visible page and selected map. The shared
+     * readers inspect the BSP directory/entities, never decode geometry. */
+    for (size_t i = 0; i < count; ++i) {
+        row = map_find(s, visible[i].id);
+        if (row && !map_prepare(s, row, changed, error)) return false;
+    }
+    return true;
 }
 
 static bool install_source(qa_ui_library *library, const qa_product *p,
@@ -553,6 +743,9 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
     const qa_launch_equipment *gear = equipment(library);
     bool ok = true;
     switch (field) {
+    case QA_UI_LIBRARY_MAP:
+        ok = map_choices(s, library, e); *selected = c->world.map;
+        break;
     case QA_UI_LIBRARY_MODEL:
         ok = model_choices(s, library, e); *selected = model_selected(library);
         if (ok && **selected) ok = remember_model(s, role_product(library, QA_ROLE_CHARACTER), *selected, e);

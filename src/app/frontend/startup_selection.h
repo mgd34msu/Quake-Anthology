@@ -12,6 +12,8 @@ bool frontend_startup_selection_complete(qa_ui_library *, qa_error *);
 bool frontend_startup_monsters_select(qa_launch_draft *, const char *source, qa_error *);
 bool frontend_startup_selection_choices(void *, qa_ui_library *, qa_ui_library_field,
     const char *classname, const qa_ui_library_choice **, size_t *, const char **selected, qa_error *);
+bool frontend_startup_selection_prepare_choices(void *,qa_ui_library *,qa_ui_library_field,
+    const qa_ui_library_choice *,size_t,bool *,qa_error *);
 bool frontend_startup_selection_select(void *, qa_ui_library *, qa_ui_library_field,
     const char *classname, const char *choice, qa_error *);
 bool frontend_startup_selection_roster(void *, qa_ui_library *,

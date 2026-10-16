@@ -34,6 +34,8 @@ typedef struct qa_ui_library_services {
         const char *arena_map, int32_t bot_skill, qa_error *);
     bool (*choices)(void *, qa_ui_library *, qa_ui_library_field, const char *classname,
         const qa_ui_library_choice **, size_t *, const char **selected, qa_error *);
+    bool (*prepare_choices)(void *, qa_ui_library *, qa_ui_library_field,
+        const qa_ui_library_choice *visible,size_t count,bool *changed,qa_error *);
     bool (*select)(void *, qa_ui_library *, qa_ui_library_field, const char *classname,
         const char *choice, qa_error *);
     bool (*roster)(void *, qa_ui_library *, const qa_ui_library_roster_row **,

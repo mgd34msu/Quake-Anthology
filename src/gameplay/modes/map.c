@@ -4,6 +4,116 @@
 static bool named(const char *name, const char *a, const char *b, const char *c) {
     return !strcmp(name, a) || (b && !strcmp(name, b)) || (c && !strcmp(name, c));
 }
+typedef enum map_class_kind {
+    MAP_OTHER, MAP_FLAG, MAP_OBELISK, MAP_TAG, MAP_BALL, MAP_GOAL, MAP_SPEED,
+    MAP_LOCATION, MAP_HORDE_MANAGER, MAP_HORDE_POINT, MAP_PLAYER, MAP_BALL_START
+} map_class_kind;
+typedef struct map_class {
+    map_class_kind kind;
+    int team, horde;
+    bool q1_start, deathmatch, deathball_start;
+} map_class;
+static map_class classify(const char *name, uint32_t flags) {
+    map_class value = {.team = -1};
+    if (named(name, "item_flag_team1", "team_CTF_redflag", "info_flag_red"))
+        return (map_class){.kind = MAP_FLAG, .team = 0};
+    if (named(name, "item_flag_team2", "team_CTF_blueflag", "info_flag_blue"))
+        return (map_class){.kind = MAP_FLAG, .team = 1};
+    if (named(name, "item_flag", "team_CTF_neutralflag", NULL))
+        return (map_class){.kind = MAP_FLAG, .team = 2};
+    if (named(name, "team_redobelisk", "team_blueobelisk", "team_neutralobelisk"))
+        return (map_class){.kind = MAP_OBELISK, .team = !strcmp(name, "team_redobelisk") ? 0 :
+            !strcmp(name, "team_blueobelisk") ? 1 : 2};
+    if (named(name, "dm_tag_token", "dmatch_tag_token", NULL)) value.kind = MAP_TAG;
+    else if (!strcmp(name, "dm_dball_ball")) value.kind = MAP_BALL;
+    else if (!strcmp(name, "dm_dball_goal")) { value.kind = MAP_GOAL; value.team = flags & 1u ? 0 : 1; }
+    else if (!strcmp(name, "dm_dball_speed_change")) value.kind = MAP_SPEED;
+    else if (!strcmp(name, "target_location")) value.kind = MAP_LOCATION;
+    else if (!strcmp(name, "horde_manager")) value.kind = MAP_HORDE_MANAGER;
+    else {
+        static const char *const points[] = {
+            "info_monster_start", "info_monster_start_ranged", "info_monster_start_flying",
+            "info_monster_start_boss", "info_horde_ammo", "info_horde_item", "info_horde_key"
+        };
+        for (int i = 0; i < 7; ++i) if (!strcmp(name, points[i]))
+            return (map_class){.kind = MAP_HORDE_POINT, .team = -1, .horde = i};
+        if (named(name, "info_player_team1", "team_CTF_redplayer", "team_CTF_redspawn") ||
+            named(name, "info_player_red", "dm_dball_team1_start", NULL)) value.team = 0;
+        else if (named(name, "info_player_team2", "team_CTF_blueplayer", "team_CTF_bluespawn") ||
+            named(name, "info_player_blue", "dm_dball_team2_start", NULL)) value.team = 1;
+        value.deathmatch = !strcmp(name, "info_player_deathmatch");
+        value.q1_start = value.deathmatch || named(name, "info_player_start", "info_player_coop", "info_player_start2");
+        value.deathball_start = named(name, "dm_dball_team1_start", "dm_dball_team2_start", NULL);
+        if (value.team >= 0 || value.q1_start || named(name, "testplayerstart", "info_vote_destination", NULL))
+            value.kind = MAP_PLAYER;
+        else if (!strcmp(name, "dm_dball_ball_start")) value.kind = MAP_BALL_START;
+    }
+    return value;
+}
+void qa_modes_map_features_add(qa_mode_map_features *features, const char *classname, uint32_t flags) {
+    map_class value = classify(classname, flags);
+    uint32_t team = value.team >= 0 ? UINT32_C(1) << value.team : 0;
+    switch (value.kind) {
+    case MAP_FLAG: features->flag_teams |= team; features->present |= team; break;
+    case MAP_OBELISK: features->obelisk_teams |= team; features->present |= team; break;
+    case MAP_TAG: features->present |= QA_MODE_MAP_TAG; break;
+    case MAP_BALL: features->present |= QA_MODE_MAP_BALL; break;
+    case MAP_GOAL:
+        features->deathball_goal = true;
+        features->present |= value.team == 0 ? QA_MODE_MAP_RED_GOAL : QA_MODE_MAP_BLUE_GOAL;
+        break;
+    case MAP_HORDE_MANAGER: features->present |= QA_MODE_MAP_HORDE_CONTROLLER; break;
+    case MAP_HORDE_POINT:
+        if (value.horde <= QA_HORDE_BOSS) features->present |= QA_MODE_MAP_MONSTER_SPAWN;
+        break;
+    case MAP_PLAYER:
+        features->present |= QA_MODE_MAP_PLAYER_SPAWN;
+        features->spawn_teams |= team;
+        if (value.deathball_start) features->deathball_spawn_teams |= team;
+        features->q1_start |= value.q1_start;
+        features->deathmatch_spawn |= value.deathmatch;
+        break;
+    case MAP_BALL_START: features->present |= QA_MODE_MAP_BALL_SPAWN; break;
+    default: break;
+    }
+}
+uint32_t qa_modes_map_required(const qa_mode_rules *rules) {
+    uint32_t required = QA_MODE_MAP_PLAYER_SPAWN;
+    switch (rules->kind) {
+    case QA_MODE_CTF: case QA_MODE_OVERLOAD: required |= QA_MODE_MAP_RED | QA_MODE_MAP_BLUE; break;
+    case QA_MODE_ONE_FLAG: case QA_MODE_HARVESTER:
+        required |= QA_MODE_MAP_RED | QA_MODE_MAP_BLUE | QA_MODE_MAP_NEUTRAL; break;
+    case QA_MODE_HORDE: required |= QA_MODE_MAP_HORDE_CONTROLLER | QA_MODE_MAP_MONSTER_SPAWN; break;
+    case QA_MODE_DEATHBALL:
+        required |= QA_MODE_MAP_BALL | QA_MODE_MAP_RED_GOAL | QA_MODE_MAP_BLUE_GOAL | QA_MODE_MAP_BALL_SPAWN; break;
+    case QA_MODE_TAG: required |= QA_MODE_MAP_TAG; break;
+    default: break;
+    }
+    return rules->source == QA_MODE_LMCTF && (rules->flags & 256u) ? QA_MODE_MAP_PLAYER_SPAWN : required;
+}
+const char *qa_modes_map_unavailable(const qa_mode_rules *rules, const qa_mode_map_features *features) {
+    if (rules->kind == QA_MODE_DEATHBALL) {
+        if (!(features->present & QA_MODE_MAP_BALL)) return "DeathBall map is missing dm_dball_ball";
+        if (!(features->present & QA_MODE_MAP_BALL_SPAWN)) return "DeathBall map is missing dm_dball_ball_start";
+        if (!features->deathball_goal) return "DeathBall map is missing dm_dball_goal";
+        if (!(features->deathball_spawn_teams & 1u)) return "DeathBall map is missing dm_dball_team1_start";
+        if (!(features->deathball_spawn_teams & 2u)) return "DeathBall map is missing dm_dball_team2_start";
+    } else if (rules->kind == QA_MODE_HORDE) {
+        uint32_t required = qa_modes_map_required(rules) & ~(uint32_t)QA_MODE_MAP_PLAYER_SPAWN;
+        if ((features->present & required) != required)
+            return "Horde requires an authored horde_manager and monster spawn points";
+    } else if (rules->kind >= QA_MODE_CTF && rules->kind <= QA_MODE_HARVESTER) {
+        uint32_t teams = rules->kind >= QA_MODE_OVERLOAD ? features->obelisk_teams | features->flag_teams : features->flag_teams;
+        uint32_t required = qa_modes_map_required(rules) & (QA_MODE_MAP_RED | QA_MODE_MAP_BLUE | QA_MODE_MAP_NEUTRAL);
+        if ((teams & required) != required) return "This match requires authored team objectives";
+    }
+    bool deathmatch = rules->kind != QA_MODE_SINGLE_PLAYER && rules->kind != QA_MODE_COOPERATIVE &&
+        rules->kind != QA_MODE_HORDE && rules->kind != QA_MODE_DEATHBALL;
+    if (deathmatch && !features->deathmatch_spawn &&
+        !(qa_ruleset_read(rules->ruleset)->family == QA_GAME_Q3 && (features->spawn_teams & 3u) == 3u))
+        return "Deathmatch requires an authored player spawn";
+    return NULL;
+}
 bool qa_modes_classify_entity(qa_modes *m, qa_mode_id id, const qa_mode_map_entity *entity,
                               qa_mode_map_admission *out, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -11,6 +121,7 @@ bool qa_modes_classify_entity(qa_modes *m, qa_mode_id id, const qa_mode_map_enti
         !qa_vec_finite(entity->angles))
         return mode_fail(e, "invalid mode map entity");
     const char *name = entity->classname;
+    map_class value = classify(name, entity->spawnflags);
     *out = (qa_mode_map_admission){0};
     qa_mode_object_spec *spec = &out->object;
     *spec = (qa_mode_object_spec){.actor = entity->actor,
@@ -23,14 +134,8 @@ bool qa_modes_classify_entity(qa_modes *m, qa_mode_id id, const qa_mode_map_enti
                                   .authored = true,
                                   .retain_body = entity->inline_model,
                                   .has_bounds = entity->inline_model};
-    int team = -1;
-    if (named(name, "item_flag_team1", "team_CTF_redflag", "info_flag_red"))
-        team = 0;
-    else if (named(name, "item_flag_team2", "team_CTF_blueflag", "info_flag_blue"))
-        team = 1;
-    else if (named(name, "item_flag", "team_CTF_neutralflag", NULL))
-        team = 2;
-    if (team >= 0 && v->value.rules.kind >= QA_MODE_CTF &&
+    int team = value.team;
+    if (value.kind == MAP_FLAG && v->value.rules.kind >= QA_MODE_CTF &&
         v->value.rules.kind <= QA_MODE_HARVESTER) {
         out->role = QA_MODE_MAP_OBJECT;
         spec->kind =
@@ -38,73 +143,54 @@ bool qa_modes_classify_entity(qa_modes *m, qa_mode_id id, const qa_mode_map_enti
         spec->team = team < 2 ? v->value.rules.teams[team] : 0;
         return true;
     }
-    if (named(name, "team_redobelisk", "team_blueobelisk", "team_neutralobelisk") &&
+    if (value.kind == MAP_OBELISK &&
         (v->value.rules.kind == QA_MODE_OVERLOAD || v->value.rules.kind == QA_MODE_HARVESTER)) {
         out->role = QA_MODE_MAP_OBJECT;
         spec->kind = QA_MODE_OBJECT_OBELISK;
-        spec->team = !strcmp(name, "team_redobelisk")    ? v->value.rules.teams[0]
-                     : !strcmp(name, "team_blueobelisk") ? v->value.rules.teams[1]
-                                                         : 0;
+        spec->team = team < 2 ? v->value.rules.teams[team] : 0;
         return true;
     }
-    if (v->value.rules.kind == QA_MODE_TAG &&
-        named(name, "dm_tag_token", "dmatch_tag_token", NULL)) {
+    if (v->value.rules.kind == QA_MODE_TAG && value.kind == MAP_TAG) {
         out->role = QA_MODE_MAP_OBJECT;
         spec->kind = QA_MODE_OBJECT_TAG;
         return true;
     }
     if (v->value.rules.kind == QA_MODE_DEATHBALL) {
-        if (named(name, "dm_dball_ball", "dm_dball_goal", "dm_dball_speed_change")) {
+        if (value.kind == MAP_BALL || value.kind == MAP_GOAL || value.kind == MAP_SPEED) {
             out->role = QA_MODE_MAP_OBJECT;
-            spec->kind = !strcmp(name, "dm_dball_ball")   ? QA_MODE_OBJECT_BALL
-                         : !strcmp(name, "dm_dball_goal") ? QA_MODE_OBJECT_GOAL
-                                                          : QA_MODE_OBJECT_SPEED;
+            spec->kind = value.kind == MAP_BALL ? QA_MODE_OBJECT_BALL :
+                value.kind == MAP_GOAL ? QA_MODE_OBJECT_GOAL : QA_MODE_OBJECT_SPEED;
             spec->value = spec->kind == QA_MODE_OBJECT_GOAL ? entity->wait : entity->speed;
             if (spec->kind == QA_MODE_OBJECT_GOAL)
-                spec->team = v->value.rules.teams[entity->spawnflags & 1u ? 0 : 1];
+                spec->team = v->value.rules.teams[team];
             qa_angle_vectors(entity->angles, &spec->direction, NULL, NULL,QA_ANGLE_FLOAT_MATH);
             return true;
         }
     }
-    if (!strcmp(name, "target_location")) {
+    if (value.kind == MAP_LOCATION) {
         out->role = QA_MODE_MAP_OBJECT;
         spec->kind = QA_MODE_OBJECT_LOCATION;
         spec->value = (float)entity->count;
         return true;
     }
     if (v->value.rules.kind == QA_MODE_HORDE) {
-        if (!strcmp(name, "horde_manager")) {
+        if (value.kind == MAP_HORDE_MANAGER) {
             out->role = QA_MODE_MAP_HORDE_MANAGER;
             return true;
         }
-        static const char *points[] = {
-            "info_monster_start",      "info_monster_start_ranged", "info_monster_start_flying",
-            "info_monster_start_boss", "info_horde_ammo",           "info_horde_item",
-            "info_horde_key"};
-        for (int i = 0; i < 7; ++i)
-            if (!strcmp(name, points[i])) {
-                out->role = QA_MODE_MAP_HORDE_POINT;
-                out->horde = (qa_horde_point){.actor = entity->actor,
-                                              .kind = (qa_horde_point_kind)i,
-                                              .origin = entity->origin,
-                                              .angles = entity->angles,
-                                              .flags = entity->spawnflags,
-                                              .target = entity->target};
-                return true;
-            }
+        if (value.kind == MAP_HORDE_POINT) {
+            out->role = QA_MODE_MAP_HORDE_POINT;
+            out->horde = (qa_horde_point){.actor = entity->actor,
+                                          .kind = (qa_horde_point_kind)value.horde,
+                                          .origin = entity->origin,
+                                          .angles = entity->angles,
+                                          .flags = entity->spawnflags,
+                                          .target = entity->target};
+            return true;
+        }
     }
-    team = -1;
-    if (named(name, "info_player_team1", "team_CTF_redplayer", "team_CTF_redspawn") ||
-        named(name, "info_player_red", "dm_dball_team1_start", NULL))
-        team = 0;
-    else if (named(name, "info_player_team2", "team_CTF_blueplayer", "team_CTF_bluespawn") ||
-             named(name, "info_player_blue", "dm_dball_team2_start", NULL))
-        team = 1;
-    bool player = team >= 0 ||
-                  named(name, "info_player_deathmatch", "info_player_start", "info_player_coop") ||
-                  named(name, "info_player_start2", "testplayerstart", "info_vote_destination");
-    if (player ||
-        (v->value.rules.kind == QA_MODE_DEATHBALL && !strcmp(name, "dm_dball_ball_start"))) {
+    if (value.kind == MAP_PLAYER ||
+        (v->value.rules.kind == QA_MODE_DEATHBALL && value.kind == MAP_BALL_START)) {
         out->role = QA_MODE_MAP_SPAWN;
         out->spawn = (qa_mode_spawnpoint){.actor = entity->actor,
                                           .origin = entity->origin,
@@ -132,21 +218,8 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
     mode_instance *v = mode_get(m, id);
     if (!v || (n && !map) || (capacity && !out) || !count || !missing)
         return mode_fail(e, "invalid objective plan");
-    uint32_t required = QA_MODE_MAP_PLAYER_SPAWN, present = 0;
+    uint32_t required = qa_modes_map_required(&v->value.rules), present = 0;
     qa_mode_kind kind = v->value.rules.kind;
-    if (kind == QA_MODE_CTF || kind == QA_MODE_OVERLOAD)
-        required |= QA_MODE_MAP_RED | QA_MODE_MAP_BLUE;
-    else if (kind == QA_MODE_ONE_FLAG || kind == QA_MODE_HARVESTER)
-        required |= QA_MODE_MAP_RED | QA_MODE_MAP_BLUE | QA_MODE_MAP_NEUTRAL;
-    else if (kind == QA_MODE_HORDE)
-        required |= QA_MODE_MAP_HORDE_CONTROLLER | QA_MODE_MAP_MONSTER_SPAWN;
-    else if (kind == QA_MODE_DEATHBALL)
-        required |= QA_MODE_MAP_BALL | QA_MODE_MAP_RED_GOAL | QA_MODE_MAP_BLUE_GOAL |
-                    QA_MODE_MAP_BALL_SPAWN;
-    else if (kind == QA_MODE_TAG)
-        required |= QA_MODE_MAP_TAG;
-    if (v->value.rules.source == QA_MODE_LMCTF && (v->value.rules.flags & 256u))
-        required = QA_MODE_MAP_PLAYER_SPAWN;
     const qa_mode_spawnpoint *first = NULL, *red = NULL, *blue = NULL, *neutral = NULL;
     bool horde_loot[3] = {0};
     bool ordinary_spawn = false, team_spawn[2] = {0};

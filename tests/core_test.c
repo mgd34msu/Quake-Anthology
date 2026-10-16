@@ -34,6 +34,7 @@
 #include "qa/campaign.h"
 #include "../src/app/application/source_objectives.h"
 #include "../src/gameplay/modes/internal.h"
+#include "qa/modes_map.h"
 #include "qa/arena_progress.h"
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
@@ -2365,6 +2366,41 @@ static void test_chat_initial_aliases(void)
     CHECK(!chat_initial_asset_find(&library,8,false) && chat_initial_asset_find(&library,7,true)==&older);
     CHECK(library.chat_initial_aliases.count==1);
     qa_id_index_destroy(&library.chat_initial_aliases);
+}
+
+static void test_mode_map_features(void)
+{
+    qa_mode_rules rules={.kind=QA_MODE_FFA,.source=QA_MODE_Q1,.ruleset=QA_RULESET_NETQUAKE};
+    qa_mode_map_features features={0};
+    CHECK(qa_modes_map_unavailable(&rules,&features)!=NULL);
+    qa_modes_map_features_add(&features,"info_player_start",0);
+    CHECK(features.q1_start && qa_modes_map_unavailable(&rules,&features)!=NULL);
+    qa_modes_map_features_add(&features,"info_player_deathmatch",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
+    rules.kind=QA_MODE_CTF;rules.source=QA_MODE_Q2_CTF;
+    CHECK(qa_modes_map_unavailable(&rules,&features)!=NULL);
+    qa_modes_map_features_add(&features,"team_CTF_redflag",0);
+    qa_modes_map_features_add(&features,"info_flag_blue",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
+    rules.kind=QA_MODE_OVERLOAD;rules.source=QA_MODE_TEAM_ARENA;rules.ruleset=QA_RULESET_Q3;
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
+    features=(qa_mode_map_features){0};rules.kind=QA_MODE_FFA;
+    qa_modes_map_features_add(&features,"team_CTF_redplayer",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)!=NULL);
+    qa_modes_map_features_add(&features,"team_CTF_blueplayer",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
+    features=(qa_mode_map_features){0};rules.kind=QA_MODE_DEATHBALL;rules.source=QA_MODE_Q2_DEATHBALL;
+    const char *deathball[]={"dm_dball_ball","dm_dball_ball_start","dm_dball_goal","dm_dball_team1_start","dm_dball_team2_start"};
+    for (size_t i=0;i<sizeof(deathball)/sizeof(*deathball);++i) {
+        CHECK(qa_modes_map_unavailable(&rules,&features)!=NULL);
+        qa_modes_map_features_add(&features,deathball[i],0);
+    }
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
+    features=(qa_mode_map_features){0};rules.kind=QA_MODE_HORDE;rules.source=QA_MODE_Q1_HORDE;
+    qa_modes_map_features_add(&features,"horde_manager",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)!=NULL);
+    qa_modes_map_features_add(&features,"info_monster_start_flying",0);
+    CHECK(qa_modes_map_unavailable(&rules,&features)==NULL);
 }
 
 static void test_physical_prediction_command(void)
@@ -9260,6 +9296,7 @@ int main(int argc, char **argv)
     test_console_command_precedence();
     test_shared_video_mode_recovery();
     test_chat_initial_aliases();
+    test_mode_map_features();
     test_physical_prediction_command();
     test_shared_campaign_modes();
     test_source_objectives();

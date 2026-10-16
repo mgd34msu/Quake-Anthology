@@ -201,7 +201,7 @@ static bool selection_build(qa_ui_library *m,qa_ui_library_field field,qa_error 
     const qa_launch_choices *v=qa_ui_library_choices(m);
     if (!v) return true;
     if (field<=QA_UI_LIBRARY_CHARACTER && field!=QA_UI_LIBRARY_MAP) return product_choices(m,field,error);
-    if (field==QA_UI_LIBRARY_MAP) return map_choices(m,error);
+    if (field==QA_UI_LIBRARY_MAP && !m->services.choices) return map_choices(m,error);
     if (field==QA_UI_LIBRARY_DOPPLER) {
         if (!choices_reserve(m,2,error) || !choices_selected(m,v->world.doppler?"source":"disabled",error)) return false;
         return choice_add(m,"source","Game default",NULL,error) && choice_add(m,"disabled","Off",NULL,error);
@@ -232,7 +232,7 @@ static bool selection_choices(qa_ui_library *m,qa_ui_library_field field,qa_erro
     library_choice_cache *cache=m->fields+field;
     uint64_t draft_revision=qa_launch_draft_revision(m->draft),catalog_generation=qa_catalog_generation(m->catalog);
     const char *classname=m->monster_classname?m->monster_classname:"";
-    bool builtin=(field<=QA_UI_LIBRARY_CHARACTER || field==QA_UI_LIBRARY_DOPPLER ||
+    bool builtin=((field<=QA_UI_LIBRARY_CHARACTER && field!=QA_UI_LIBRARY_MAP) || field==QA_UI_LIBRARY_DOPPLER ||
         field==QA_UI_LIBRARY_SKILL || field==QA_UI_LIBRARY_MODE || !m->services.choices);
     uint64_t services_revision=!builtin && m->services.choices_revision?
         m->services.choices_revision(m->services.context,m,field,m->monster_classname):0;
@@ -256,6 +256,15 @@ static bool selection_choices(qa_ui_library *m,qa_ui_library_field field,qa_erro
         m->services.choices_revision(m->services.context,m,field,m->monster_classname):0;
     cache->mode=m->mode_preference; cache->valid=true;
     return true;
+}
+static bool prepare_choices(qa_ui_library *m, qa_ui_library_field field,
+    const qa_ui_library_choice *visible, size_t count, qa_error *error) {
+    if (!m->services.prepare_choices) return true;
+    bool changed = false;
+    if (!m->services.prepare_choices(m->services.context, m, field, visible, count, &changed, error)) return false;
+    if (!changed) return true;
+    m->fields[field].valid = false;
+    return selection_choices(m, field, error);
 }
 static const char *selected_label(qa_ui_library *m) {
     for (size_t i=0;i<m->choice_count;++i) if (!strcmp(m->selected,m->choices[i].id)) return m->choices[i].label;
@@ -704,9 +713,19 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *error)
     } else if (id==QA_UI_LIBRARY_CHOICES) {
         title=field_labels[m->field]; if (!selection_choices(m,m->field,error)) return false;
         size_t pages=(m->choice_count+6)/7; if (!pages) pages=1; if (m->page>=pages) m->page=pages-1;
+        size_t first=m->page*7, visible=m->choice_count-first;
+        if (visible>7) visible=7;
+        if (!prepare_choices(m,m->field,visible?m->choices+first:NULL,visible,error)) return false;
+        pages=(m->choice_count+6)/7; if (!pages) pages=1; if (m->page>=pages) m->page=pages-1;
         for (size_t i=m->page*7;i<m->choice_count && i<(m->page+1)*7;++i) {
             snprintf(m->labels[count],sizeof(m->labels[count]),"%s%.455s%s",!strcmp(m->selected,m->choices[i].id)?"> ":"",m->choices[i].label,m->choices[i].unavailable?" (unavailable)":"");
-            m->controls[count]=button(m,count+1,m->labels[count],(unsigned)count,true,m->choices[i].unavailable==NULL); ++count;
+            unsigned row=(unsigned)(i-m->page*7);
+            m->controls[count]=button(m,row+1,m->labels[count],row,true,m->choices[i].unavailable==NULL);
+            if (m->field==QA_UI_LIBRARY_MAP && m->choices[i].unavailable) {
+                m->controls[count++].rect.height=23;
+                m->controls[count]=text_control(m,200+row,m->choices[i].unavailable,74,142+(float)row*34,1,492,false);
+                m->controls[count++].value.text.overlay=true;
+            } else ++count;
         }
         if (pages>1) { m->controls[count++]=button(m,90,"Previous",7,true,true); snprintf(m->labels[count],sizeof(m->labels[count]),"Next (%zu/%zu)",m->page+1,pages); m->controls[count]=button(m,91,m->labels[count],8,true,true); ++count; }
     } else if (id==QA_UI_LIBRARY_ROSTER) {
@@ -898,6 +917,10 @@ bool qa_ui_library_select(qa_ui_library *m,qa_ui_library_field field,const char 
     if (!m || !choice || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection requires its authored field");
     char *id=copy_text(choice,error); if (!id) return false;
     if (!selection_choices(m,field,error)) { free(id); return false; }
+    for (size_t i=0;i<m->choice_count;++i) if (!strcmp(id,m->choices[i].id)) {
+        if (!prepare_choices(m,field,m->choices+i,1,error)) { free(id); return false; }
+        break;
+    }
     bool admitted=false;
     for (size_t i=0;i<m->choice_count;++i) if (!strcmp(id,m->choices[i].id) && !m->choices[i].unavailable) admitted=true;
     if (!admitted) { free(id); return ui_fail(error,"startup choice is unavailable for the selected field"); }
