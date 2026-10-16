@@ -345,7 +345,9 @@ static bool native_file(application_provider *provider, qa_bytes bytes,
     qa_buffer file={(uint8_t *)bytes.data,bytes.size};
     if (part==QA_NATIVE_RESTORE_GAME) { value.game=file; value.has_game=true; }
     else { value.level=file; value.has_level=true; }
-    return qa_native_checkpoint_restore(qa_native_host_instance(provider->state.native.host),&value,part,error);
+    qa_native_host *host=provider->state.native.host;
+    return qa_native_checkpoint_restore(qa_native_host_instance(host),&value,part,error) &&
+        (part!=QA_NATIVE_RESTORE_LEVEL || qa_native_host_source_reconcile(host,error));
 }
 
 bool application_q2_original_game(application_provider *provider, qa_error *error)
