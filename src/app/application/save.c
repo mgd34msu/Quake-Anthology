@@ -47,6 +47,7 @@
 #include "qa/map_sidecars.h"
 #include "guest_q3_components.h"
 #include "bots_npc.h"
+#include "weapon_trajectories.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -439,8 +440,21 @@ bool application_save_metadata_capture(qa_application *application, qa_buffer *o
     if (geometry_length > SIZE_MAX - size || presentation_length > SIZE_MAX - size - geometry_length)
         return application_fail(error, QA_ERROR_MEMORY, "application product identities exceed checkpoint extent");
     size += geometry_length + presentation_length;
+    qa_buffer trajectories = {0};
+    if (!application_trajectories_capture(application, &trajectories, error)) {
+        qa_buffer_free(&trajectories);
+        return false;
+    }
+    if (trajectories.size > SIZE_MAX - size) {
+        qa_buffer_free(&trajectories);
+        return application_fail(error, QA_ERROR_MEMORY, "application trajectories exceed checkpoint extent");
+    }
+    size += trajectories.size;
     qa_buffer buffer = {.data = malloc(size), .size = size};
-    if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "cannot encode application metadata");
+    if (!buffer.data) {
+        qa_buffer_free(&trajectories);
+        return application_fail(error, QA_ERROR_MEMORY, "cannot encode application metadata");
+    }
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
     qa_net_write_data(&writer, "QAAP", 4);
@@ -464,6 +478,8 @@ bool application_save_metadata_capture(qa_application *application, qa_buffer *o
         qa_net_write_u32(&writer, application->mode_ids[i].slot);
         qa_net_write_u64(&writer, application->mode_ids[i].generation);
     }
+    if (trajectories.size) qa_net_write_data(&writer, trajectories.data, trajectories.size);
+    qa_buffer_free(&trajectories);
     if (writer.failed || qa_net_writer_size(&writer) != size) {
         qa_buffer_free(&buffer);
         return application_fail(error, QA_ERROR_FORMAT, "application metadata codec size disagrees");
@@ -521,7 +537,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
         random.front >= 31 || random.rear >= 31 ||
         (map && !qa_strings_text(qa_session_strings(candidate->session), map).data) ||
         geometry_length > remaining || presentation_length > remaining - geometry_length ||
-        (uint64_t)count * 12 != remaining - geometry_length - presentation_length)
+        (uint64_t)count * 12 > remaining - geometry_length - presentation_length)
         return application_fail(error, QA_ERROR_FORMAT, "invalid saved application metadata fields");
     qa_product_id geometry, presentation;
     if (!restore_product(candidate, &reader, geometry_length, &geometry, error) ||
@@ -535,9 +551,18 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
         for (size_t j = 0; j < i; ++j)
             if (ids[j].slot == ids[i].slot && ids[j].generation == ids[i].generation) reader.failed = true;
     }
+    qa_bytes trajectories = {0};
+    if (!reader.failed && !qa_net_read_bytes(&reader, qa_net_reader_remaining(&reader), &trajectories)) {
+        free(ids);
+        return false;
+    }
     if (!qa_net_reader_finish(&reader) || ((flags & 4u) && !has_primary)) {
         free(ids);
         return application_fail(error, QA_ERROR_FORMAT, "application primary or ordered mode identities disagree");
+    }
+    if (!application_trajectories_restore_saved(candidate, trajectories, error)) {
+        free(ids);
+        return false;
     }
     /* Candidate-only publication: all allocations and product resolution have
      * succeeded. Mode codec validation still checks these actual identities. */
@@ -1984,6 +2009,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok && (candidate->map_revision != qa_save_image_metadata(image)->world_generation ||
         !persistence_safe(candidate)))
         ok = application_fail(error, QA_ERROR_FORMAT, "candidate application is not a complete idle saved world");
+    if (ok) ok = application_trajectories_configure(candidate, qa_application_launch(candidate), error) &&
+        application_trajectories_restore_finish(candidate, error);
     if (ok) ok = application_unified_events_restore_finish(candidate, error);
     if (ok && operation->ops->complete_state)
         ok=operation->ops->complete_state(operation->ops->context,candidate,image,error);

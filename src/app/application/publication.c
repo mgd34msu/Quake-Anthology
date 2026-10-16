@@ -24,6 +24,7 @@
 #include "native_q3_checkpoint.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
+#include "weapon_trajectories.h"
 #include "guest_q3_components.h"
 #include "world_bounds.h"
 #include "qa/game_q1_source_entities.h"
@@ -1368,7 +1369,8 @@ static bool retire_map_services(qa_application *application, bool carry,
         !application_bots_can_destroy(application))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "map retirement has borrowed guest or bot state");
-    if (!application_rankings_close(application, error) ||
+    if (!application_trajectories_destroy(application, error) ||
+        !application_rankings_close(application, error) ||
         !application_bots_shutdown(application,
             application_q3_world_restart_guest_shutdown(application,
                 application_world_provider(application, QA_ROLE_ENTITIES, "")), error))
@@ -1836,6 +1838,7 @@ void application_publication_publish(qa_application *application,
     } else if (ok) {
         ok = publish_travel(application, publication, &error);
     }
+    if (ok) ok = application_trajectories_configure(application, candidate, &error);
     if (publication != NULL) {
         publication->published = publication->published || ok;
         if (ok) ok = application_startup_program_publication_adopt(&publication->programs, &error);

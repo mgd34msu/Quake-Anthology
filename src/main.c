@@ -45,6 +45,7 @@ static void usage(FILE *stream)
           "  --weapons PRODUCT[/COMPONENT] Select player weapons independently\n"
           "  --monsters PRODUCT[/COMPONENT] Select authored monster replacements\n"
           "  --mod PRODUCT/COMPONENT   Enable independent addition, repeat to combine\n"
+          "  --weapon-behavior PRODUCT/BEHAVIOR Select projectile trajectory, repeat for other roles\n"
           "  --dedicated              Run server and stdin console without a window\n"
           "  --host ADDRESS --port N  Select server endpoint\n"
           "  --connect ADDRESS        Select remote endpoint\n"

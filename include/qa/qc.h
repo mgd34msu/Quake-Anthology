@@ -189,6 +189,7 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
                         qa_qc_program **out, qa_error *error);
 bool qa_qc_program_load_vfs(qa_vfs *vfs, const char *path,
                             qa_qc_program **out, qa_error *error);
+void qa_qc_program_retain(qa_qc_program *program);
 void qa_qc_program_destroy(qa_qc_program *program);
 qa_qc_program_info qa_qc_program_describe(const qa_qc_program *program);
 qa_bytes qa_qc_program_strings(const qa_qc_program *program);

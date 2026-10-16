@@ -194,6 +194,13 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             options->network_port = (uint16_t)number;
         }
         else if (!strcmp(arg, "--mod")) { if (!push(&options->mods, &options->mod_count, value, error)) goto fail; }
+        else if (!strcmp(arg, "--weapon-behavior")) {
+            const char *slash = strchr(value, '/');
+            if (!slash || slash == value || !slash[1]) {
+                frontend_fail(error, QA_ERROR_ARGUMENT, "--weapon-behavior needs PRODUCT/BEHAVIOR"); goto fail;
+            }
+            if (!push(&options->weapon_behaviors, &options->weapon_behavior_count, value, error)) goto fail;
+        }
         else if (!strcmp(arg, "--renderer")) {
             if (!strcmp(value, "gl")) options->display.backend = QA_DISPLAY_OPENGL;
             else if (!strcmp(value, "cpu")) options->display.backend = QA_DISPLAY_CPU;
@@ -222,7 +229,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
     if (options->original && options->game_type) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "select --original or --game-type"); goto fail;
     }
-    if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->weapons || options->monsters || options->mod_count)) {
+    if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->weapons || options->monsters || options->mod_count || options->weapon_behavior_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }
@@ -244,6 +251,7 @@ void qa_frontend_options_destroy(qa_frontend_options *options)
     if (!options) return;
     for (size_t i = 0; i < options->startup_count; ++i) free((void *)options->startup[i]);
     free((void *)options->startup); free((void *)options->mods);
+    free((void *)options->weapon_behaviors);
     free((void *)options->game_paths); free((void *)options->save_game_paths);
     options->game_paths=NULL; options->save_game_paths=NULL;
     options->game_path_count=options->save_game_path_count=0;
@@ -251,6 +259,7 @@ void qa_frontend_options_destroy(qa_frontend_options *options)
     options->install_locations=NULL;
     options->startup = NULL; options->startup_count = 0;
     options->mods = NULL; options->mod_count = 0;
+    options->weapon_behaviors = NULL; options->weapon_behavior_count = 0;
     free(options->native_bootstrap);
     options->native_bootstrap = NULL;
 }

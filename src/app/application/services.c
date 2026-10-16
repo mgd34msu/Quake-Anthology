@@ -14,6 +14,7 @@
 #include "qa/game_q1_bots.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
+#include "weapon_trajectories.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -507,6 +508,9 @@ bool application_actor_released(void *opaque, qa_session *session,
     remember_failure(application_equipment_runtime_actor_released(application->equipment_runtime,
                          released, &current), &current,
                      "gear source actor retirement failed", &ok, &first);
+    current = (qa_error){0};
+    remember_failure(application_trajectories_actor_released(application, released, &current),
+                     &current, "projectile behavior actor retirement failed", &ok, &first);
     current = (qa_error){0};
     remember_failure(application_q3_components_actor_released(application->components,released,&current),
                      &current,"component source actor retirement failed",&ok,&first);
@@ -2004,5 +2008,8 @@ qa_builtin_services application_builtin_services(qa_application *application,
                                  .player_control = builtin_player_control,
                                  .powerups = builtin_powerups,
                                  .motion_changed = builtin_motion_changed,
+                                 .weapon_launch = application_trajectory_launch,
+                                 .controls_trajectory = application_trajectory_controls,
+                                 .weapon_trajectory = application_trajectory_step,
                                  .actor_callback = builtin_actor_callback};
 }

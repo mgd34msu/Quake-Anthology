@@ -310,9 +310,14 @@ static bool find_name(const qc_name_index *index, const char *name, uint32_t *or
     return true;
 }
 
+void qa_qc_program_retain(qa_qc_program *program)
+{
+    if (program) ++program->references;
+}
+
 void qa_qc_program_destroy(qa_qc_program *program)
 {
-    if (program == NULL) return;
+    if (program == NULL || --program->references) return;
     free(program->source);
     free(program->statements);
     free(program->globals);
@@ -377,6 +382,7 @@ bool qa_qc_program_load(qa_bytes bytes, const char *source,
     if (program == NULL)
         return qc_fail(error, QA_ERROR_MEMORY, 0,
                        "allocating QuakeC program");
+    program->references = 1;
     program->source = qc_strdup(source, error);
     program->info = (qa_qc_program_info){
         .api = api,

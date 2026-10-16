@@ -81,6 +81,7 @@ typedef struct qc_builtin_target {
 } qc_builtin_target;
 
 struct qa_qc_program {
+    size_t references;
     char *source;
     qa_qc_program_info info;
     qa_qc_statement *statements;

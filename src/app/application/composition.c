@@ -4,6 +4,7 @@
 #include "qa/application_startup_prepare.h"
 #include "q3_product.h"
 #include "startup_flow.h"
+#include "weapon_trajectories.h"
 
 #include <stdlib.h>
 
@@ -148,6 +149,7 @@ bool application_composition_destroy(qa_application *application,
                                 "CLIENT preparation still retains the application");
     if (!qa_application_startup_abort(application, error)) return false;
     if (!application_publication_retry_cleanup(application, error)) return false;
+    if (!application_trajectories_destroy(application, error)) return false;
     if (application->configuration == NULL) return true;
     qa_configuration *configuration = application->configuration;
     application_operation previous = application->operation;

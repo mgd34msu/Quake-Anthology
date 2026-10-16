@@ -29,6 +29,8 @@ typedef struct qa_frontend_options {
     uint16_t network_port;
     const char **mods;
     size_t mod_count;
+    const char **weapon_behaviors;
+    size_t weapon_behavior_count;
     const char **startup;
     size_t startup_count;
     unsigned seats;

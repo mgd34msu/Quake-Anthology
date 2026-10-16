@@ -369,6 +369,8 @@ struct qa_application {
     qa_equipment *equipment;
     struct application_equipment_runtime *equipment_runtime;
     struct application_q3_components *components;
+    struct application_trajectories *trajectories;
+    qa_buffer trajectories_saved;
     qa_physics *physics;
     qa_resource *map_resource;
     struct qa_map_sidecars *map_sidecars;
