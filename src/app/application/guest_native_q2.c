@@ -751,7 +751,7 @@ static bool prepare_map_admission(application_provider *provider, const qa_bsp_v
     qa_strings *strings = qa_session_strings(provider->application->session);
     qa_string_id model_name;
     uint32_t models = engine->hud_names.layout.models;
-    if (!qa_strings_intern_cstr(strings, qa_resource_path(provider->application->map_resource), &model_name, error) ||
+    if (!qa_strings_intern_cstr(strings, qa_collision_map_name(qa_world_geometry(engine->world)), &model_name, error) ||
         !application_native_q2_config_update(engine, models + 1, model_name, error)) return false;
     size_t model_count = qa_bsp_record_count(map, QA_BSP_MODELS);
     for (uint32_t model = 1; model < model_count; ++model) {

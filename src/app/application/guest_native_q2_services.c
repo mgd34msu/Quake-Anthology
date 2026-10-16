@@ -247,6 +247,7 @@ static bool resource(void *opaque, qa_native_host_resource_kind kind, const char
     if (!*name) return true;
     uint32_t base = application_native_q2_resource_range(engine, kind).base, maximum = application_native_q2_resource_range(engine, kind).count;
     for (uint32_t i = 1; i < maximum; ++i) {
+        if (kind == QA_NATIVE_HOST_MODEL && engine->profile == QA_NATIVE_Q2_GAME_API2023 && i == 255) continue;
         const char *value = qa_strings_cstr(qa_session_strings(engine->provider->application->session), engine->hud_names.values[base + i]);
         if (value && !strcmp(value, name)) {
             if (!register_file(engine, kind, name, error)) return false;
