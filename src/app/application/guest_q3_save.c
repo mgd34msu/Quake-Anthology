@@ -421,7 +421,6 @@ typedef struct saved_role {
     saved_projection *projections;
     size_t projection_count;
     qa_bytes input, executor, services, native_host, resources;
-    qa_bytes lower_resources;
     qa_buffer input_storage, executor_storage, service_storage, native_host_storage, resource_storage;
     q3g_role *actual;
 } saved_role;
@@ -651,7 +650,7 @@ static bool native_role_plain(const q3g_role *role, qa_error *error)
 }
 
 static bool saved_collect(application_provider *provider,
-    const qa_application_native_resource_refs *resources, const q3g_restore *expected,
+    const qa_application_native_resource_refs *resources,
     q3g_restore **out, qa_error *error)
 {
     if (provider->kind != APPLICATION_PROVIDER_QVM &&
@@ -785,26 +784,13 @@ static bool saved_collect(application_provider *provider,
                     !qa_native_process_checkpoint(qa_native_host_instance(r->native), &row->executor_storage, error)))) {
                 saved_free(saved); return false;
             }
-            const saved_role *prior = NULL;
-            for (size_t k = 0; expected && k < expected->role_count; ++k)
-                if (expected->roles[k].owner == row->owner) prior = expected->roles + k;
-            if (prior) {
-                qa_bytes lower = prior->lower_resources;
-                const qa_native_process_resources *held = NULL;
-                if (!lower.size && (!resources || !resources->resolve ||
-                    !resources->resolve(resources->context, provider->launch->selection.instance,
-                        row->owner, prior->resources, &held, &lower, error))) { saved_free(saved); return false; }
-                if (!qa_native_process_resources_validate(r->process.resources, lower, error)) { saved_free(saved); return false; }
-                row->resources = prior->resources;
-            } else {
-                if (!resources || !resources->capture || !resources->resolve || !resources->attach) {
-                    saved_free(saved); return application_fail(error, QA_ERROR_ARGUMENT,
-                        "Native Q3 role capture requires its historical external capability graph");
-                }
-                if (!resources->capture(resources->context, provider->launch->selection.instance,
-                    row->owner, r->process.resources, &row->resource_storage, error)) { saved_free(saved); return false; }
-                row->resources = (qa_bytes){row->resource_storage.data, row->resource_storage.size};
+            if (!resources || !resources->capture || !resources->resolve || !resources->attach) {
+                saved_free(saved); return application_fail(error, QA_ERROR_ARGUMENT,
+                    "Native Q3 role capture requires its historical external capability graph");
             }
+            if (!resources->capture(resources->context, provider->launch->selection.instance,
+                row->owner, r->process.resources, &row->resource_storage, error)) { saved_free(saved); return false; }
+            row->resources = (qa_bytes){row->resource_storage.data, row->resource_storage.size};
             row->native_host = (qa_bytes){row->native_host_storage.data, row->native_host_storage.size};
         }
         row->services = (qa_bytes){row->service_storage.data, row->service_storage.size};
@@ -819,8 +805,6 @@ static bool saved_collect(application_provider *provider,
         saved_free(saved);
         return application_fail(error, QA_ERROR_FORMAT, "Original GAME console changes its actual engine ownership");
     }
-    /* Preserve legacy nested bytes for record matching; QA_SAVE_CVARS owns values. */
-    if (expected) saved->cvars = expected->cvars;
     *out = saved; return true;
 }
 
@@ -861,13 +845,13 @@ static bool clients_agree(application_provider *provider, qa_error *error)
 }
 
 static bool capture_body(application_provider *provider,
-    const qa_application_native_resource_refs *resources, const q3g_restore *expected,
+    const qa_application_native_resource_refs *resources,
     qa_buffer *out, qa_error *error)
 {
     if (!out || !owner(provider, error)) return false;
     q3g_restore *saved = NULL;
     qa_source_save_io io = {0};
-    bool ok = clients_agree(provider, error) && saved_collect(provider, resources, expected, &saved, error) &&
+    bool ok = clients_agree(provider, error) && saved_collect(provider, resources, &saved, error) &&
         qa_source_save_writer(&io, provider->application->session, error) &&
         saved_fields(&io, saved, provider) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); saved_free(saved);
@@ -885,7 +869,7 @@ bool application_guest_q3_save_capture(application_provider *provider,
         *out = (qa_buffer){0};
         return true;
     }
-    return capture_body(provider, resources, NULL, out, error);
+    return capture_body(provider, resources, out, error);
 }
 
 static bool equal_bytes(qa_bytes a, qa_bytes b)
@@ -949,7 +933,6 @@ bool application_guest_q3_native_restore_recipe(q3g_role *role,
         found->resources, capture, recipe, error)) return false;
     if (!recipe->data || !recipe->size)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q3 capability resolver returned no qualified recipe");
-    found->lower_resources = *recipe;
     *executor = found->executor;
     return true;
 }
