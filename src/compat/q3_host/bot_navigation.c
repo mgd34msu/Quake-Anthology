@@ -97,7 +97,7 @@ static bool predict_movement(q3_call *call, qa_bot_runtime *runtime, int32_t *re
         !qa_bot_runtime_predict_movement(runtime, prediction_entity, &query, &prediction, error)) return false;
     uint32_t entity = 0;
     if (prediction.trace.actor.registry &&
-        !qa_q3_host_actor_slot(call->host, prediction.trace.actor, &entity, error)) return false;
+        !q3_game_project_actor(call, prediction.trace.actor, &entity, error)) return false;
     uint64_t address = call->arguments[0]; q3_record record;
     if (!q3_record_open(call, address, 84, &record, error) ||
         !q3_write_vector(call, address, prediction.end, error) ||

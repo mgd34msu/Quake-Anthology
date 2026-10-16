@@ -536,7 +536,7 @@ bool qa_q3_host_actor(qa_q3_host *host, uint32_t number, bool create, qa_actor_i
     qa_actor_id actor = host->game->slots[number].actor;
     bool ok = true;
     if (actor.registry) ok = current(&host->game->slots[number], error);
-    else if (create) {
+    else if (create && !host->options.server.projected_entities) {
         ok = qa_session_allocate(host->options.session, host->options.owner, host->slot_definition, true,
                                    number, &actor, error) && qa_q3_host_bind_actor(host, number, actor, false, error);
         if (!ok && actor.registry && qa_actors_get(qa_session_actors(host->options.session), actor)) {
@@ -550,14 +550,26 @@ bool qa_q3_host_actor(qa_q3_host *host, uint32_t number, bool create, qa_actor_i
 
 bool qa_q3_host_actor_slot(const qa_q3_host *host, qa_actor_id actor, uint32_t *out, qa_error *error)
 {
-    if (host && !host->retired && host->game && out &&
-        qa_actors_get(qa_session_actors(host->options.session), actor)) {
+    if (host && !host->retired && host->game && out) {
         size_t number;
         if (qa_actor_index_find(&host->game->actor_slots, actor, &number)) {
             *out = (uint32_t)number; return true;
         }
     }
     return q3_fail(error, QA_ERROR_ARGUMENT, 0, "shared actor has no current Q3 source projection");
+}
+
+bool q3_game_project_actor(q3_call *call, qa_actor_id actor, uint32_t *out, qa_error *error)
+{
+    size_t number;
+    if (qa_actor_index_find(&call->host->game->actor_slots, actor, &number)) {
+        *out = (uint32_t)number;
+        return true;
+    }
+    const qa_q3_host_server_services *services = &call->host->options.server;
+    return services->project_actor
+        ? services->project_actor(services->context, call->source_call, actor, out, error)
+        : qa_q3_host_actor_slot(call->host, actor, out, error);
 }
 
 bool qa_q3_host_actor_released(qa_q3_host *host, qa_actor_record released, qa_error *error)

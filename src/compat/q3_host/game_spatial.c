@@ -57,7 +57,7 @@ static bool trace(q3_call *call, bool capsule, qa_error *error)
     qa_trace_result hit;
     if (!qa_world_trace(call->host->options.world, &query, &hit, error)) return false;
     uint32_t number = hit.fraction == 1 ? 1023 : 1022;
-    if (hit.hit == QA_TRACE_HIT_ACTOR && !qa_q3_host_actor_slot(call->host, hit.actor, &number, error)) return false;
+    if (hit.hit == QA_TRACE_HIT_ACTOR && !q3_game_project_actor(call, hit.actor, &number, error)) return false;
     q3_record output;
     return q3_record_open(call, call->arguments[0], 56, &output, error) &&
         qa_q3_abi_write_trace(&output.abi, 0, &hit, (int32_t)number, error);
@@ -119,7 +119,7 @@ static bool area_entities(q3_call *call, int32_t *result, qa_error *error)
     uint32_t *numbers = qa_arena_alloc(&call->host->scratch, count * sizeof(*numbers), _Alignof(uint32_t), error);
     if (!numbers) return false;
     for (size_t i = 0; i < count; ++i)
-        if (!qa_q3_host_actor_slot(call->host, actors[i], &numbers[i], error)) return false;
+        if (!q3_game_project_actor(call, actors[i], &numbers[i], error)) return false;
     q3_record output;
     if (!q3_record_open(call, call->arguments[2], count * 4, &output, error)) return false;
     for (size_t i = 0; i < count; ++i)
@@ -146,7 +146,8 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
     qa_actor_id actor;
     if (!qa_q3_host_actor(host, number, true, &actor, error)) return q3_game_end(&call, false);
     q3_entity_slot *slot = &host->game->slots[number];
-    if ((!slot->borrowed && !qa_world_unlink(host->options.world, actor, error)) ||
+    bool projected = host->options.server.projected_entities;
+    if ((!projected && !slot->borrowed && !qa_world_unlink(host->options.world, actor, error)) ||
         !same_actor(&call, number, actor, error) || !q3_game_entity_record(&call, number, &record, error) ||
         !actor_word(&call, number, actor, record.address + linked_offset, 0, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
@@ -160,19 +161,21 @@ bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
     if (!actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 464), bounds.mins, error) ||
         !actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 476), bounds.maxs, error) ||
         !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
-    bounds = shared.absolute_bounds;
-    qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
-    bool has_leaves;
-    qa_q3_visibility_entity visibility={0};
-    if(!qa_q3_leaf_visibility(host->options.world,actor,&bounds,
-        qa_world_trace_scratch(host->options.world,geometry),&visibility,slot->clusters,&has_leaves,error))
-        return q3_game_end(&call,false);
-    slot->has_visibility=true;slot->area=visibility.area;slot->area2=visibility.area2;
-    slot->last_cluster=visibility.last_cluster;slot->cluster_count=(uint32_t)visibility.cluster_count;
-    if(!has_leaves) return q3_game_end(&call,true);
-    if ((!slot->borrowed && !qa_world_link_bounds(host->options.world, actor, &bounds, error)) ||
-        !same_actor(&call, number, actor, error) ||
-        !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    if (!projected) {
+        bounds = shared.absolute_bounds;
+        qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
+        bool has_leaves;
+        qa_q3_visibility_entity visibility={0};
+        if(!qa_q3_leaf_visibility(host->options.world,actor,&bounds,
+            qa_world_trace_scratch(host->options.world,geometry),&visibility,slot->clusters,&has_leaves,error))
+            return q3_game_end(&call,false);
+        slot->has_visibility=true;slot->area=visibility.area;slot->area2=visibility.area2;
+        slot->last_cluster=visibility.last_cluster;slot->cluster_count=(uint32_t)visibility.cluster_count;
+        if(!has_leaves) return q3_game_end(&call,true);
+        if ((!slot->borrowed && !qa_world_link_bounds(host->options.world, actor, &bounds, error)) ||
+            !same_actor(&call, number, actor, error) ||
+            !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    }
     bool ok = actor_word(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 420),
                            (uint32_t)shared.linkcount + 1u, error) &&
         actor_word(&call, number, actor, record.address + linked_offset, 1, error);

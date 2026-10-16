@@ -307,7 +307,11 @@ void q3g_server_bind(q3g_role *role, qa_q3_host_options *options)
     options->common = (qa_q3_host_common_services){role, print, milliseconds, calendar,
         q3g_arguments, client_command, installed_mods, clipboard};
     if (role->kind != QA_QVM_GAME) return;
-    options->server = (qa_q3_host_server_services){role, 64, configstring, set_configstring,
-        userinfo, set_userinfo, user_command, drop_client, send_command, allocate_bot, free_bot,
-        bot_snapshot_entity, bot_console_message, bot_user_command, admit_actor, player_velocity, world_actor};
+    options->server = (qa_q3_host_server_services){.context = role, .maximum_clients = 64,
+        .configstring = configstring, .set_configstring = set_configstring,
+        .userinfo = userinfo, .set_userinfo = set_userinfo, .user_command = user_command,
+        .drop_client = drop_client, .send_command = send_command, .allocate_bot = allocate_bot,
+        .free_bot = free_bot, .bot_snapshot_entity = bot_snapshot_entity,
+        .bot_console_message = bot_console_message, .bot_user_command = bot_user_command,
+        .admit_actor = admit_actor, .player_velocity = player_velocity, .world_actor = world_actor};
 }

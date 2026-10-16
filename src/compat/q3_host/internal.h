@@ -253,6 +253,7 @@ bool q3_game_end(q3_call *, bool);
 bool q3_game_entity_record(q3_call *, uint32_t, q3_record *, qa_error *);
 bool q3_game_player_record(q3_call *, uint32_t, q3_record *, qa_error *);
 bool q3_game_pointer_slot(q3_call *, uint64_t, uint32_t *, qa_error *);
+bool q3_game_project_actor(q3_call *, qa_actor_id, uint32_t *, qa_error *);
 void q3_game_fields_clear(qa_q3_host *);
 void q3_game_fields_changed(void *, const qa_native_entity_event *);
 bool q3_game_fields_refresh(qa_q3_host *, qa_error *);

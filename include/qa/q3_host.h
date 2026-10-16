@@ -49,6 +49,12 @@ typedef struct qa_q3_host_common_services {
 typedef struct qa_q3_host_server_services {
     void *context;
     uint32_t maximum_clients;
+    /* Donor rows remain module ABI storage. Linking them never creates or
+     * replaces a canonical actor, body, visibility or portal owner. */
+    bool projected_entities;
+    /* Resolve a shared query result into a borrowed module row. The callback
+     * binds that row with qa_q3_host_bind_actor before returning its number. */
+    bool (*project_actor)(void *, const qa_qvm_call *, qa_actor_id, uint32_t *, qa_error *);
     bool (*configstring)(void *, uint32_t, const char **, qa_error *);
     bool (*set_configstring)(void *, uint32_t, const char *, qa_error *);
     bool (*userinfo)(void *, uint32_t, const char **, qa_error *);
@@ -334,6 +340,8 @@ bool qa_q3_host_player_cutscene_clear(qa_q3_host *, qa_actor_id, int32_t prior_p
  * projections never replace a foreign actor's body or collision authority. */
 bool qa_q3_host_bind_actor(qa_q3_host *, uint32_t, qa_actor_id, bool borrowed, qa_error *);
 bool qa_q3_host_actor(qa_q3_host *, uint32_t, bool create, qa_actor_id *, qa_error *);
+/* Reads the retained source projection, including during canonical release.
+ * actor_released removes it after source bookkeeping has consumed the row. */
 bool qa_q3_host_actor_slot(const qa_q3_host *, qa_actor_id, uint32_t *, qa_error *);
 bool qa_q3_host_actor_released(qa_q3_host *, qa_actor_record, qa_error *);
 /* Remove an idle borrowed source projection without releasing its shared actor. */
