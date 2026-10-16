@@ -213,7 +213,7 @@ static bool append_path(char **out, const char *prefix, qa_bytes component, bool
 static bool append_region(qa_native_declaration *declaration, const qa_native_module *module,
                           const char *path, uint64_t entry, uint64_t join, bool has_frame,
                           uint64_t frame_entry, uint64_t frame_exit, qa_error *error) {
-    if (entry > UINT32_MAX || join > UINT32_MAX || entry == join ||
+    if (entry > UINT32_MAX || join > UINT32_MAX ||
         (has_frame &&
          (frame_entry > UINT32_MAX || frame_exit > UINT32_MAX || frame_entry == frame_exit)))
         return native_fail(error, QA_ERROR_FORMAT, 0,
@@ -283,6 +283,29 @@ static bool inventory_regions(qa_native_declaration *declaration, const qa_nativ
             inventory_region(declaration, module, give, "entry", "ammo", "/commands/give/ammo", error);
     return ok;
 }
+static bool movement_points(qa_native_declaration *declaration, const qa_native_module *module,
+    qa_json_id primary, qa_error *error)
+{
+    const qa_json_document *document = declaration->document;
+    qa_json_id movement = qa_json_get(document, qa_json_get(document, primary, "world"), "movement");
+    qa_json_id loads = qa_json_get(document, movement, "speedLoads");
+    if (loads == QA_JSON_NONE) return true;
+    if (qa_json_type(document, loads) != QA_JSON_ARRAY)
+        return native_fail(error, QA_ERROR_FORMAT, 0, "native speed loads must be an array");
+    for (size_t i = 0; i < qa_json_size(document, loads); ++i) {
+        qa_json_id load = qa_json_at(document, loads, i);
+        uint64_t next, reg;
+        if (!qa_json_u64(document, qa_json_get(document, load, "next"), &next, error) ||
+            !qa_json_u64(document, qa_json_get(document, load, "register"), &reg, error)) return false;
+        if (reg >= (module->info.image.target.arch == QA_NATIVE_ARCH_X86_64 ? 16u : 8u))
+            return native_fail(error, QA_ERROR_FORMAT, i, "native speed load exceeds its SIMD register file");
+        char path[64];
+        snprintf(path, sizeof(path), "/world/movement/speedLoads/%zu", i);
+        if (!append_region(declaration, module, path, next, next, false, 0, 0, error)) return false;
+    }
+    return true;
+}
+
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,
                             qa_json_id value, const char *path, unsigned depth, qa_error *error) {
     if (depth > 64u)
@@ -389,7 +412,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         bool valid = callback_document(declaration, selected_path, module, error);
         if (valid) {
             declaration->primary = root;
-            valid = collect_regions(declaration, module, root, "", 0, error);
+            valid = collect_regions(declaration, module, root, "", 0, error) &&
+                movement_points(declaration, module, root, error);
         }
         free(selected_path);
         if (!valid) { qa_native_declaration_destroy(declaration); return false; }
@@ -472,7 +496,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         declaration->primary_offset = (size_t)(primary_source.data - declaration->json);
         declaration->primary_size = primary_source.size;
         valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
-            inventory_regions(declaration, module, selected_primary, error);
+            inventory_regions(declaration, module, selected_primary, error) &&
+            movement_points(declaration, module, selected_primary, error);
     }
     for (size_t index = 0; index < module_count; ++index)
         free(paths[index]);

@@ -26,7 +26,7 @@ static bool observe_regions(qa_native_instance *instance, qa_error *error)
         const qa_native_declared_region *region = &instance->regions[i].definition;
         uint32_t points[] = {region->entry_rva, region->join_rva,
             region->frame_entry_rva, region->frame_exit_rva};
-        size_t count = region->has_frame ? 4 : 2;
+        size_t count = region->has_frame ? 4 : region->entry_rva == region->join_rva ? 1 : 2;
         for (size_t j = 0; j < count; ++j) {
             uint64_t address = instance->image_base + points[j];
             if (!guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_INSTRUCTION,

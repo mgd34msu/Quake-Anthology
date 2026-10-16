@@ -3485,7 +3485,8 @@ bool application_control_velocity(qa_application *application, qa_actor_id actor
         return false;
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
-        source->state.native.q2_engine->profile == QA_NATIVE_Q2_GAME_API3) {
+        (source->state.native.q2_engine->profile == QA_NATIVE_Q2_GAME_API3 ||
+            application_q2_control_body_admitted(source->state.native.q2_engine))) {
         record->source_velocity_pending = true;
         if (++record->source_velocity_revision == 0) ++record->source_velocity_revision;
     }

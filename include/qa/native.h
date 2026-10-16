@@ -638,6 +638,7 @@ typedef struct qa_native_declared_region {
     uint32_t id;
     const char *path; /* Borrowed until declaration or instance destruction. */
     uint32_t entry_rva;
+    /* Equal entry/join RVAs observe one instruction boundary, in ENTER phase. */
     uint32_t join_rva;
     bool has_frame;
     uint32_t frame_entry_rva;

@@ -4,6 +4,7 @@
 #include "qa/native_observe.h"
 #include "qa/native_host_q2_wire.h"
 #include <limits.h>
+#include <stdio.h>
 
 /* API2023 x64 public pmove_t and trace_t, from rerelease/game.h and
  * compat/q2/rerelease/layouts.ts. These are public ABI fields, not mod offsets. */
@@ -22,6 +23,13 @@ typedef struct control_client {
     uint32_t slot;
 } control_client;
 
+typedef struct control_command {
+    struct control_command *previous;
+    qa_native_address player;
+    qa_q3_equipment_motion equipment;
+    bool applied;
+} control_command;
+
 typedef struct control_frame {
     struct control_frame *previous;
     control_client client;
@@ -29,8 +37,18 @@ typedef struct control_frame {
     qa_bounds accepted, requested;
     uint16_t previous_duck;
     uint8_t previous_height;
-    bool has_requested;
+    bool has_requested, original_running, equipment_active;
+    control_command *command;
+    qa_q3_equipment_motion equipment;
+    uint64_t prepared;
 } control_frame;
+
+typedef struct control_speed_load {
+    struct application_q2_control *owner;
+    uint32_t region;
+    uint8_t reg;
+    qa_native_region_binding *binding;
+} control_speed_load;
 
 struct application_q2_control {
     struct application_native_q2 *engine;
@@ -40,7 +58,10 @@ struct application_q2_control {
     qa_native_instance *native;
     uint32_t game_api_rva, pmove_rva, dimensions_rva, trace_rva, global_rva;
     qa_native_address trace, global;
-    qa_native_entry_observer *pmove_hook, *dimensions_hook;
+    qa_native_entry_observer *pmove_hook, *dimensions_hook, *think_hook;
+    control_speed_load *speed_loads;
+    size_t speed_load_count;
+    control_command *command;
     control_frame *current;
     qa_native_abi abi;
     bool active, raw_only;
@@ -231,6 +252,7 @@ static bool expansion_clear(struct application_q2_control *p, control_frame *fra
 
 static bool apply_dimensions(struct application_q2_control *p, control_frame *frame, qa_error *error)
 {
+    if (frame->equipment_active && frame->equipment.fixed_pose) return true;
     if (!frame_live(p, frame, error)) return false;
     uint8_t native_bounds[24], flags[2], height;
     qa_bounds desired = frame->requested;
@@ -279,6 +301,43 @@ static bool dimensions_entry(void *context, qa_native_instance *native, qa_nativ
 
 #include "guest_q2_control_input.h"
 
+static bool think_entry(void *context, qa_native_instance *native, qa_native_entry_observer *binding,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
+{
+    struct application_q2_control *p = context;
+    (void)native;
+    control_command command = {.previous = p->command, .player = arguments[0].as.address};
+    p->command = &command;
+    bool okay = qa_native_invoke_original(binding, arguments, count, result, error);
+    p->command = command.previous;
+    return okay;
+}
+
+static bool speed_load(void *context, qa_native_instance *native,
+    const qa_native_region_event *event, qa_native_region_decision *out, qa_error *error)
+{
+    (void)native; (void)error;
+    control_speed_load *load = context;
+    control_frame *frame = load->owner->current;
+    *out = (qa_native_region_decision){.action = QA_NATIVE_REGION_CONTINUE};
+    if (!frame || !frame->original_running || !frame->equipment_active ||
+        frame->equipment.speed_multiplier == 1 || event->phase != QA_NATIVE_REGION_ENTER) return true;
+    out->replace_state = true; out->state = event->state;
+    float value = qa_load_f32le(event->state.simd[load->reg]);
+    qa_store_f32le(out->state.simd[load->reg], (float)((double)value * frame->equipment.speed_multiplier));
+    return true;
+}
+
+static bool original_unmatched(struct application_q2_control *p, qa_native_entry_observer *binding,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
+{
+    control_frame *previous = p->current;
+    p->current = NULL;
+    bool okay = qa_native_invoke_original(binding, arguments, count, result, error);
+    p->current = previous;
+    return okay;
+}
+
 static bool pmove_entry(void *context, qa_native_instance *native, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -289,7 +348,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
     ++engine->calls;
     uint32_t slot = engine->current_client;
     if (!p->active || !slot || slot >= 257 || (p->raw_only && !engine->input_stage)) {
-        bool ok = qa_native_invoke_original(binding, arguments, count, result, error);
+        bool ok = original_unmatched(p, binding, arguments, count, result, error);
         --engine->calls; return ok;
     }
     control_frame frame = {.previous = p->current, .address = arguments[0].as.address};
@@ -297,9 +356,10 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
     qa_native_address player = 0;
     if (ok) ok = read_pointer(native, frame.address + RR_PM_PLAYER, &player, error);
     if (ok && player != frame.client.player) {
-        ok = qa_native_invoke_original(binding, arguments, count, result, error);
+        ok = original_unmatched(p, binding, arguments, count, result, error);
         --engine->calls; return ok;
     }
+    if (ok && p->command && p->command->player == frame.client.player) frame.command = p->command;
     if(p->raw_only) {
         qa_body_state source;
         if(ok) ok=frame_live(p,&frame,error)&&
@@ -311,9 +371,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
         bool selected=false;
         if(ok) ok=raw_move(&frame,&selected,error);
         if(ok&&selected) *result=(qa_native_value){.type=QA_NATIVE_VOID};
-        if(ok&&!selected) ok=frame_live(p,&frame,error)&&
-            qa_native_invoke_original(binding,arguments,count,result,error)&&
-            frame_live(p,&frame,error)&&raw_native_commit(&frame,error);
+        if(ok&&!selected) ok=frame_live(p,&frame,error)&&original_move(&frame,binding,arguments,count,result,error);
         p->current=frame.previous;
         --engine->calls; return ok;
     }
@@ -353,8 +411,7 @@ static bool pmove_entry(void *context, qa_native_instance *native, qa_native_ent
     bool selected=false;
     if(ok) ok=raw_move(&frame,&selected,error);
     if(ok&&selected) *result=(qa_native_value){.type=QA_NATIVE_VOID};
-    if (ok&&!selected) ok = frame_live(p, &frame, error) && qa_native_invoke_original(binding, arguments, count, result, error) &&
-        frame_live(p, &frame, error) && raw_native_commit(&frame,error);
+    if (ok&&!selected) ok = frame_live(p, &frame, error) && original_move(&frame,binding,arguments,count,result,error);
     if (projected) {
         qa_error cleanup = {0}; uint8_t current[4];
         bool retained = frame_live(p, &frame, &cleanup);
@@ -378,6 +435,31 @@ static bool declared_rva(struct application_native_q2 *engine, const char *path,
     *out = (uint32_t)value; return true;
 }
 
+static bool speed_loads_prepare(struct application_q2_control *p, qa_error *error)
+{
+    static const char prefix[] = "/world/movement/speedLoads/";
+    size_t count = qa_native_declaration_region_count(p->declaration);
+    for (size_t i = 0; i < count; ++i) {
+        qa_native_declared_region region;
+        if (!qa_native_declaration_region(p->declaration, i, &region, error)) return false;
+        if (!strncmp(region.path, prefix, sizeof(prefix) - 1)) ++p->speed_load_count;
+    }
+    if (!p->speed_load_count) return true;
+    p->speed_loads = calloc(p->speed_load_count, sizeof(*p->speed_loads));
+    if (!p->speed_loads) return application_fail(error, QA_ERROR_MEMORY, "Retaining original Pmove speed loads");
+    size_t next = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_native_declared_region region;
+        if (!qa_native_declaration_region(p->declaration, i, &region, error)) return false;
+        if (strncmp(region.path, prefix, sizeof(prefix) - 1)) continue;
+        char path[96]; snprintf(path, sizeof(path), "%s/register", region.path);
+        uint64_t reg;
+        if (!qa_native_declaration_u64(p->declaration, path, &reg, error)) return false;
+        p->speed_loads[next++] = (control_speed_load){.owner = p, .region = region.id, .reg = (uint8_t)reg};
+    }
+    return true;
+}
+
 bool application_q2_control_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     if (!engine) return application_fail(error, QA_ERROR_ARGUMENT, "Native movement producer has no source owner");
@@ -394,24 +476,21 @@ bool application_q2_control_prepare(struct application_native_q2 *engine, qa_err
         return application_fail(error, QA_ERROR_FORMAT, "Native body movement declaration differs from its original API2023 artifact");
     struct application_q2_control *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Retaining original native movement producer");
-    if(raw_only) {
-        p->engine=engine; p->module=engine->provider->state.native.module;
-        p->declaration=engine->declaration; p->abi=info.image.target.abi; p->raw_only=true;
-        engine->source_control=p; return true;
-    }
-    bool ok = declared_rva(engine, "/world/movement/gameApi", 1, &p->game_api_rva, error) &&
+    p->engine=engine; p->module=engine->provider->state.native.module;
+    p->declaration=engine->declaration; p->abi=info.image.target.abi; p->raw_only=raw_only;
+    bool ok = speed_loads_prepare(p, error);
+    if (ok && !raw_only) ok = declared_rva(engine, "/world/movement/gameApi", 1, &p->game_api_rva, error) &&
         declared_rva(engine, "/world/movement/pmove", 1, &p->pmove_rva, error) &&
         declared_rva(engine, "/world/movement/body/dimensions", 1, &p->dimensions_rva, error) &&
         declared_rva(engine, "/world/movement/body/trace", 1, &p->trace_rva, error) &&
         declared_rva(engine, "/world/movement/body/movementGlobal", 8, &p->global_rva, error);
-    if (ok) ok = qa_native_module_mutable_range(engine->provider->state.native.module, p->global_rva, 8, error);
-    if (ok && (p->pmove_rva == p->dimensions_rva || p->pmove_rva == p->trace_rva ||
+    if (ok && !raw_only) ok = qa_native_module_mutable_range(engine->provider->state.native.module, p->global_rva, 8, error);
+    if (ok && !raw_only && (p->pmove_rva == p->dimensions_rva || p->pmove_rva == p->trace_rva ||
         p->dimensions_rva == p->trace_rva || p->game_api_rva == p->pmove_rva ||
         p->game_api_rva == p->dimensions_rva || p->game_api_rva == p->trace_rva))
         ok = application_fail(error, QA_ERROR_FORMAT, "Declared native movement entries alias incompatible signatures");
-    if (!ok) { free(p); return false; }
-    p->engine = engine; p->module = engine->provider->state.native.module;
-    p->declaration = engine->declaration; p->abi = info.image.target.abi; engine->source_control = p;
+    if (!ok) { free(p->speed_loads); free(p); return false; }
+    engine->source_control = p;
     return true;
 }
 
@@ -433,7 +512,7 @@ bool application_q2_control_activate(struct application_native_q2 *engine, qa_er
         qa_native_host_profile(host) != QA_NATIVE_Q2_GAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native movement activation requires its initialized actual game host");
     qa_native_instance *native = qa_native_host_instance(host);
-    if ((p->pmove_hook || p->dimensions_hook) && (p->host != host || p->native != native))
+    if ((p->pmove_hook || p->dimensions_hook || p->think_hook) && (p->host != host || p->native != native))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native movement observers still own another source instance");
     if (p->active) return true;
     p->host = host; p->native = native;
@@ -459,6 +538,16 @@ bool application_q2_control_activate(struct application_native_q2 *engine, qa_er
             dimensions_entry, p, &p->dimensions_hook, error)) return false;
     if (!p->pmove_hook && !qa_native_observe_entry(native, pmove, pmove_signature,
             pmove_entry, p, &p->pmove_hook, error)) return false;
+    if (!p->think_hook) {
+        qa_native_address think;
+        if (!qa_native_entry_address(native, "ClientThink", &think, error)) return false;
+        const qa_native_signature *think_signature = qa_native_entry_signature(native, "ClientThink");
+        if (!qa_native_observe_entry(native, think, think_signature, think_entry, p, &p->think_hook, error)) return false;
+    }
+    for (size_t i = 0; i < p->speed_load_count; ++i) {
+        control_speed_load *load = p->speed_loads + i;
+        if (!load->binding && !qa_native_bind_region(native, load->region, speed_load, load, &load->binding, error)) return false;
+    }
     p->active = true; return true;
 }
 
@@ -466,9 +555,16 @@ bool application_q2_control_suspend(struct application_native_q2 *engine, qa_err
 {
     struct application_q2_control *p = engine ? engine->source_control : NULL;
     if (!p) return true;
-    if (p->current || engine->calls)
+    if (p->current || p->command || engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native movement suspension requires drained original calls");
     p->active = false;
+    for (size_t i = 0; i < p->speed_load_count; ++i) {
+        control_speed_load *load = p->speed_loads + i;
+        if (load->binding && !qa_native_remove_region(load->binding, error)) return false;
+        load->binding = NULL;
+    }
+    if (p->think_hook && !qa_native_unobserve_entry(p->think_hook, error)) return false;
+    p->think_hook = NULL;
     if (p->pmove_hook && !qa_native_unobserve_entry(p->pmove_hook, error)) return false;
     p->pmove_hook = NULL;
     if (p->dimensions_hook && !qa_native_unobserve_entry(p->dimensions_hook, error)) return false;
@@ -481,6 +577,6 @@ bool application_q2_control_close(struct application_native_q2 *engine, qa_error
     struct application_q2_control *p = engine ? engine->source_control : NULL;
     if (!p) return true;
     if (!application_q2_control_suspend(engine, error)) return false;
-    free(p); engine->source_control = NULL;
+    free(p->speed_loads); free(p); engine->source_control = NULL;
     return true;
 }

@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_GUEST_Q2_CONTROL_INPUT_H
 #define QA_APPLICATION_GUEST_Q2_CONTROL_INPUT_H
 #include "guest_native_q2_input.h"
+#include "qa/text.h"
 #include <math.h>
 
 /* Published Windows x64 API2023 pmove_t, from rerelease/game.h. */
@@ -138,17 +139,10 @@ static bool raw_store(control_frame *frame,uint8_t *bytes,const qa_movement_resu
     bytes[RR_PM_STEP]=result->step_clip?1u:0u; qa_store_f32le(bytes+RR_PM_IMPACT,result->impact_delta);
     return qa_native_write(frame->client.native,frame->address,(qa_bytes){bytes,RR_PM_BYTES},error);
 }
-static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
+static bool raw_input(control_frame *frame, uint8_t bytes[RR_PM_BYTES],
+    qa_movement_input *out, qa_error *error)
 {
-    struct application_native_q2 *engine=frame->client.engine;
-    const application_native_q2_input_stage *stage=engine->input_stage;
-    *handled=false;
-    if(!stage||application_provider_for(engine->provider->application,frame->client.actor,QA_ROLE_MOVEMENT,NULL)==engine->provider) return true;
-    *handled=true;
-    if(!qa_actor_id_equal(stage->actor,frame->client.actor)||!stage->current(stage->context,frame->client.actor)||!client_live(&frame->client,error))
-        return raw_fail(error,QA_ERROR_NOT_FOUND,"Original Pmove lost its genuine foreign movement Source stage");
-    uint8_t bytes[RR_PM_BYTES];
-    if(!qa_native_read(frame->client.native,frame->address,bytes,sizeof(bytes),error)) return false;
+    if(!qa_native_read(frame->client.native,frame->address,bytes,RR_PM_BYTES,error)) return false;
     qa_movement_input input=qa_movement_input_default(QA_RULESET_Q2_RERELEASE,frame->client.actor);
     /* Read only the incoming state; touch/view outputs are not initialized yet. */
     input.state.data.q2r=(qa_q2r_movement_state){.type=qa_load_i32le(bytes),.origin=load_vector(bytes+4),
@@ -164,6 +158,20 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
         client_live(&frame->client,error);
     if(present) input.view_offset=qa_v3(player.viewoffset[0],player.viewoffset[1],player.viewoffset[2]);
     if(!present) return false;
+    *out = input; return true;
+}
+static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
+{
+    struct application_native_q2 *engine=frame->client.engine;
+    const application_native_q2_input_stage *stage=engine->input_stage;
+    *handled=false;
+    if(!stage||application_provider_for(engine->provider->application,frame->client.actor,QA_ROLE_MOVEMENT,NULL)==engine->provider) return true;
+    *handled=true;
+    if(!qa_actor_id_equal(stage->actor,frame->client.actor)||!stage->current(stage->context,frame->client.actor)||!client_live(&frame->client,error))
+        return raw_fail(error,QA_ERROR_NOT_FOUND,"Original Pmove lost its genuine foreign movement Source stage");
+    uint8_t bytes[RR_PM_BYTES];
+    qa_movement_input input;
+    if (!raw_input(frame, bytes, &input, error)) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(engine);
     qa_movement_services services=movement.kernel;
     size_t movement_slot;
@@ -182,13 +190,80 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
 }
 static bool raw_native_commit(control_frame *frame,qa_error *error)
 {
-    if(!frame->client.engine->input_stage) return true;
+    if(!frame->client.engine->input_stage && !frame->equipment_active) return true;
     uint8_t bytes[RR_PM_BYTES];
     if(!qa_native_read(frame->client.native,frame->address,bytes,sizeof(bytes),error)) return false;
     qa_movement_result result={0};
     qa_movement_contact contacts[32]={0};
     if(!raw_result(frame,bytes,contacts,&result,error)) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(frame->client.engine);
-    return movement.commit(movement.context,frame->client.host,frame->address,&result,0,error);
+    return movement.commit(movement.context,frame->client.host,frame->address,&result,frame->prepared,error);
+}
+static bool original_move(control_frame *frame, qa_native_entry_observer *binding,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
+{
+    qa_native_instance *native = frame->client.native;
+    bool okay = true;
+    if (frame->command) {
+        control_command *command = frame->command;
+        if (!command->applied) {
+            uint8_t bytes[RR_PM_BYTES];
+            qa_movement_input input;
+            qa_native_host_movement_services movement = application_native_q2_movement_services(frame->client.engine);
+            okay = raw_input(frame, bytes, &input, error) &&
+                movement.prepare(movement.context, frame->client.host, frame->address, &input, &frame->prepared, error) &&
+                application_native_q2_equipment_prepare(frame->client.engine, frame->client.actor,
+                    &input, &command->equipment, &frame->prepared, error);
+            if (okay) {
+                store_vector(bytes + 16, input.state.data.q2r.velocity);
+                qa_store_u16le(bytes + 28, (uint16_t)input.state.data.q2r.flags);
+                qa_store_u16le(bytes + 32, (uint16_t)input.state.data.q2r.gravity);
+                okay = qa_native_write(native, frame->address + 16, (qa_bytes){bytes + 16, 18}, error);
+                if (okay) command->applied = true;
+            }
+        }
+        if (okay) {
+            frame->equipment = command->equipment;
+            frame->equipment_active = true;
+        }
+    }
+    bool pose = okay && frame->equipment_active && frame->equipment.fixed_pose;
+    uint8_t original_type[4], freeze[4], zero[12] = {0};
+    bool restore_type = false;
+    if (pose) {
+        okay = qa_native_read(native, frame->address, original_type, sizeof(original_type), error);
+        if (okay) {
+            qa_store_u32le(freeze, 6);
+            restore_type = true;
+            okay = qa_native_write(native, frame->address, (qa_bytes){freeze, sizeof(freeze)}, error) &&
+                qa_native_write(native, frame->address + 16, (qa_bytes){zero, sizeof(zero)}, error);
+        }
+    }
+    if (okay) {
+        frame->original_running = true;
+        okay = qa_native_invoke_original(binding, arguments, count, result, error);
+        frame->original_running = false;
+    }
+    if (okay) okay = frame_live(frame->client.engine->source_control, frame, error);
+    if (okay && pose) {
+        uint8_t bounds[24], flags[2], height = (uint8_t)(uint32_t)qa_source_to_i32(frame->equipment.pose.view_height);
+        store_vector(bounds, frame->equipment.pose.bounds.mins);
+        store_vector(bounds + 12, frame->equipment.pose.bounds.maxs);
+        okay = qa_native_read(native, frame->address + RR_PM_FLAGS, flags, sizeof(flags), error);
+        if (okay) {
+            qa_store_u16le(flags, (uint16_t)(qa_load_u16le(flags) | 1u));
+            okay = qa_native_write(native, frame->address + RR_PM_FLAGS, (qa_bytes){flags, sizeof(flags)}, error) &&
+                qa_native_write(native, frame->address + RR_PM_HEIGHT, (qa_bytes){&height, 1}, error) &&
+                qa_native_write(native, frame->address + RR_PM_MINS, (qa_bytes){bounds, sizeof(bounds)}, error);
+        }
+    }
+    if (restore_type) {
+        qa_error cleanup = {0};
+        if (!qa_native_write(native, frame->address, (qa_bytes){original_type, sizeof(original_type)}, &cleanup)) {
+            if (okay && error) *error = cleanup;
+            okay = false;
+        }
+    }
+    return okay && raw_native_commit(frame, error);
 }
 #endif

@@ -5,6 +5,7 @@
 #include "guest_native_q2_attack.h"
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
+#include "guest_q2_control.h"
 #include "guest_input_private.h"
 #include "qa/text.h"
 #include "native_q2_delivery.h"
@@ -413,6 +414,42 @@ qa_native_host_engine_services application_native_q2_services(struct application
         .source_after = engine->callbacks ? application_native_q2_callbacks_source_after : NULL};
 }
 
+bool application_native_q2_equipment_prepare(struct application_native_q2 *engine,
+    qa_actor_id actor, qa_movement_input *input, qa_q3_equipment_motion *equipment,
+    uint64_t *prepared, qa_error *error)
+{
+    qa_application *app = engine->provider->application;
+    *prepared = 0;
+    if (!application_control_guest_equipment(app, engine->provider, actor, NULL, equipment, error)) return false;
+    input->environment.speed_multiplier = (float)equipment->speed_multiplier;
+    input->environment.fixed_pose = equipment->fixed_pose;
+    input->environment.fixed_crouched = equipment->fixed_pose;
+    input->environment.pose = equipment->pose;
+    application_control_record *control = app->controls + actor.slot;
+    bool external_velocity = control->source_velocity_pending;
+    if (external_velocity && !qa_movement_set_velocity(&input->state,
+        qa_movement_velocity(&control->player.state), error)) return false;
+    bool classic = input->state.kind == QA_RULESET_Q2_CLASSIC;
+    int16_t *source_gravity = classic ? &input->state.data.q2.gravity : &input->state.data.q2r.gravity;
+    float gravity = app->equipment ? qa_equipment_gravity_scale(app->equipment, actor) : 1;
+    *source_gravity = (int16_t)(uint16_t)qa_source_to_i32((float)*source_gravity * gravity);
+    qa_equipment_state selected;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    bool custom_motion = external_velocity || (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) ||
+        (app->equipment && qa_equipment_read(app->equipment, actor, &selected) &&
+            selected.selection.grapple != QA_GRAPPLE_DISABLED);
+    if (custom_motion) {
+        bool suppressed = equipment->fixed_pose || equipment->speed_multiplier != 1 ||
+            (app->equipment && qa_equipment_prediction_suppressed(app->equipment, actor));
+        uint32_t flags = classic ? input->state.data.q2.flags : input->state.data.q2r.flags;
+        flags = suppressed ? flags | 64u : flags & ~64u;
+        if (classic) input->state.data.q2.flags = flags;
+        else input->state.data.q2r.flags = flags;
+    }
+    if (external_velocity) *prepared = control->source_velocity_revision;
+    return true;
+}
+
 static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_address record,
     qa_movement_input *input, uint64_t *prepared, qa_error *error)
 {
@@ -480,28 +517,7 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
     }
     if (input->state.kind == QA_RULESET_Q2_CLASSIC) {
         qa_q3_equipment_motion equipment;
-        if (!application_control_guest_equipment(app, engine->provider, actor, NULL, &equipment, error)) return false;
-        input->environment.speed_multiplier = (float)equipment.speed_multiplier;
-        input->environment.fixed_pose = equipment.fixed_pose;
-        input->environment.fixed_crouched = equipment.fixed_pose;
-        input->environment.pose = equipment.pose;
-        application_control_record *control = app->controls + actor.slot;
-        bool external_velocity = control->source_velocity_pending;
-        if (external_velocity && !qa_movement_set_velocity(&input->state,
-            qa_movement_velocity(&control->player.state), error)) return false;
-        float gravity = app->equipment ? qa_equipment_gravity_scale(app->equipment, actor) : 1;
-        input->state.data.q2.gravity = (int16_t)(uint16_t)qa_source_to_i32((float)input->state.data.q2.gravity * gravity);
-        qa_equipment_state selected;
-        application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
-        bool custom_motion = external_velocity || (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) ||
-            (app->equipment && qa_equipment_read(app->equipment, actor, &selected) &&
-                selected.selection.grapple != QA_GRAPPLE_DISABLED);
-        if (custom_motion) {
-            bool suppressed = equipment.fixed_pose || equipment.speed_multiplier != 1 ||
-                (app->equipment && qa_equipment_prediction_suppressed(app->equipment, actor));
-            input->state.data.q2.flags = suppressed ? input->state.data.q2.flags | 64u : input->state.data.q2.flags & ~64u;
-        }
-        if (external_velocity) *prepared = control->source_velocity_revision;
+        return application_native_q2_equipment_prepare(engine, actor, input, &equipment, prepared, error);
     }
     return true;
 }

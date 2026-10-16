@@ -5,6 +5,10 @@
 
 struct application_native_q2;
 struct application_q2_control;
+struct qa_q3_equipment_motion;
+
+bool application_native_q2_equipment_prepare(struct application_native_q2 *, qa_actor_id,
+    qa_movement_input *, struct qa_q3_equipment_motion *, uint64_t *prepared, qa_error *);
 
 /* The declaration admits the capability; activation owns actual source hooks. */
 bool application_q2_control_prepare(struct application_native_q2 *, qa_error *);
