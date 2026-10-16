@@ -118,6 +118,12 @@ typedef struct qa_native_host_q2_path_info {
     int32_t link_type, return_code;
 } qa_native_host_q2_path_info;
 
+typedef enum qa_native_host_restore_phase {
+    QA_NATIVE_HOST_RESTORE_CVARS,
+    QA_NATIVE_HOST_RESTORE_PRECACHES,
+    QA_NATIVE_HOST_RESTORE_COMPLETE
+} qa_native_host_restore_phase;
+
 typedef struct qa_native_host_engine_services {
     void *context;
     qa_strings *strings;
@@ -140,7 +146,7 @@ typedef struct qa_native_host_engine_services {
     uint64_t (*source_frame)(void *);
     bool (*extension)(void *, qa_native_profile, const char *, qa_native_address *, qa_error *);
     bool (*checkpoint)(void *, qa_buffer *, qa_error *);
-    bool (*restore)(void *, qa_bytes, qa_error *);
+    bool (*restore)(void *, qa_bytes, qa_native_host_restore_phase, qa_error *);
     void *frontend_lifetime;
     void (*release_frontend)(void *);
     qa_vfs *content_files;
@@ -480,14 +486,11 @@ bool qa_native_host_q3_bot_frame(qa_native_host *, int32_t level_time, qa_error 
 
 /* Explicit host continuation used by qa_native_options checkpoint callbacks. */
 bool qa_native_host_checkpoint(qa_native_host *, qa_buffer *, qa_error *);
-/* A LEVEL revisit retains the current GAME cvars while importing the departed
- * slot bindings and engine state. Ordinary full restore imports saved cvars. */
-bool qa_native_host_restore(qa_native_host *, qa_bytes, bool restore_cvars, qa_error *);
-/* Pure external Q2 import prefix, after GetGameAPI and before original Init.
- * Validates the complete HOST envelope and restores its actual cvar rows only;
- * source slots, message bytes and engine continuation are restored later by
- * qa_native_host_restore after original ReadGame/ReadLevel. */
-bool qa_native_host_restore_cvars(qa_native_host *, qa_bytes, qa_error *);
+/* Q2 imports cvars before Init and saved precache indices before map
+ * reconstruction. COMPLETE imports source slots and engine continuation after
+ * ReadLevel. A LEVEL revisit keeps current GAME cvars and saved LEVEL precaches. */
+bool qa_native_host_restore(qa_native_host *, qa_bytes, qa_native_host_restore_phase,
+    bool restore_cvars, qa_error *);
 typedef struct qa_native_host_reconstruction qa_native_host_reconstruction;
 /* Borrow a complete, distinct baseline host's real services while executing
  * original source map reconstruction. Both owners must outlive the phase.

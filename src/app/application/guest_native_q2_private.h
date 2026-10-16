@@ -202,7 +202,7 @@ bool application_native_q2_address(void *, qa_native_host *, qa_actor_id,
                                     qa_native_address *, bool *, qa_error *);
 bool application_native_q2_bind(void *, qa_native_host *, uint32_t, qa_actor_id, qa_error *);
 bool application_native_q2_capture_engine(void *, qa_buffer *, qa_error *);
-bool application_native_q2_restore_engine(void *, qa_bytes, qa_error *);
+bool application_native_q2_restore_engine(void *, qa_bytes, qa_native_host_restore_phase, qa_error *);
 bool application_native_q2_inventory_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_inventory_admit(struct application_native_q2 *, uint32_t, qa_error *);
 bool application_native_q2_inventory_detach(struct application_native_q2 *, uint32_t, qa_error *);

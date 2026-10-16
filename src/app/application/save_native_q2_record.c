@@ -181,9 +181,10 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
             application_native_q2_prepare_restore(provider, error);
     }
     if (ok)
-        ok = qa_native_host_restore_cvars(provider->state.native.host,
+        ok = qa_native_host_restore(provider->state.native.host,
                 snapshot.transition ? (qa_bytes){game.host.data, game.host.size} :
-                    (qa_bytes){snapshot.host.data, snapshot.host.size}, error) &&
+                    (qa_bytes){snapshot.host.data, snapshot.host.size},
+                QA_NATIVE_HOST_RESTORE_CVARS, true, error) &&
             application_startup_source_restore(provider, engine->console, engine->cvars,
                 &engine->command_context, error);
     if (ok) {
@@ -209,18 +210,24 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
     if (ok) ok = application_native_q2_baseline_services_prepare(app, options, &services, error);
     if (ok && ops->prepare_native_baseline)
         ok = ops->prepare_native_baseline(ops->context, app, provider->owner, services, error);
-    if (ok) ok = application_native_q2_scratch_prepare(provider, launch, services, &scratch, error);
+    if (ok) ok = application_native_q2_scratch_prepare(provider, launch, services,
+        snapshot.transition ? (qa_bytes){game.host.data, game.host.size} :
+            (qa_bytes){snapshot.host.data, snapshot.host.size}, &scratch, error);
     qa_native_instance *instance = provider->state.native.host
         ? qa_native_host_instance(provider->state.native.host) : NULL;
     if (ok) ok = qa_native_checkpoint_restore(instance,
         snapshot.transition ? &game : &snapshot, QA_NATIVE_RESTORE_GAME, error) &&
         application_native_q2_scratch_begin(scratch, error) &&
+        qa_native_host_restore(provider->state.native.host,
+            (qa_bytes){snapshot.host.data, snapshot.host.size},
+            QA_NATIVE_HOST_RESTORE_PRECACHES, false, error) &&
         application_native_q2_scratch_spawn(scratch, (const char *)parts[1].data,
             engine->entity_text, (const char *)parts[2].data, error) &&
         qa_native_checkpoint_restore(instance, &snapshot, QA_NATIVE_RESTORE_LEVEL, error) &&
         application_native_q2_scratch_end(scratch, error) &&
         qa_native_host_restore(provider->state.native.host,
-            (qa_bytes){snapshot.host.data, snapshot.host.size}, !snapshot.transition, error);
+            (qa_bytes){snapshot.host.data, snapshot.host.size},
+            QA_NATIVE_HOST_RESTORE_COMPLETE, !snapshot.transition, error);
     if (ok) {
         const char *name = source_text(provider, engine->map_name);
         const char *spawn = source_text(provider, engine->spawn_point);

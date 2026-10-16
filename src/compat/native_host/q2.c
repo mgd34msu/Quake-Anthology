@@ -215,6 +215,26 @@ static bool remember_inline_model(qa_native_host *host, int32_t resource, const 
     return true;
 }
 
+bool native_host_q2_models_restore(qa_native_host *host, qa_error *error)
+{
+    qa_q2_codec codec;
+    qa_q2_config_layout layout;
+    if (!qa_q2_codec_init(&codec, qa_q2_default_protocol(host->profile != QA_NATIVE_Q2_GAME_API3), error) ||
+        !qa_q2_config_layout_read(&codec, &layout, error)) return false;
+    if (host->models.count)
+        memset(host->model_entries, 0, (size_t)host->models.count * sizeof(*host->model_entries));
+    for (uint32_t index = 1; index < layout.max_models; ++index) {
+        qa_string_id name = 0;
+        if (!host->engine.configstring_get(host->engine.context,
+                (int32_t)(layout.models + index), &name, error)) return false;
+        const char *text = qa_strings_cstr(host->engine.strings, name);
+        uint32_t model;
+        if (text && text[0] == '*' &&
+            !remember_inline_model(host, (int32_t)index, text, &model, error)) return false;
+    }
+    return true;
+}
+
 static bool set_model(qa_native_host *host, const qa_native_import_call *call,
                       qa_error *error)
 {

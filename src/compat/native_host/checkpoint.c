@@ -243,10 +243,23 @@ bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     return ok;
 }
 
-static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_only, bool restore_cvars,
-                                qa_error *error)
+static bool restore_engine(qa_native_host *host, qa_bytes state,
+    qa_native_host_restore_phase phase, qa_error *error)
 {
-    if (!host || !host->instance || host->destroying || host->restoring || host->reconstruction ||
+    if (!state.size) return true;
+    if (!host->engine.restore)
+        return native_host_fail(error, QA_ERROR_UNSUPPORTED, 0,
+            "native engine checkpoint restore is unbound");
+    return host->engine.restore(host->engine.context, state, phase, error) &&
+        (host->kind != NATIVE_HOST_Q2_GAME || native_host_q2_models_restore(host, error));
+}
+
+static bool restore_checkpoint(qa_native_host *host, qa_bytes state,
+    qa_native_host_restore_phase phase, bool restore_cvars, qa_error *error)
+{
+    bool prefix_only = phase != QA_NATIVE_HOST_RESTORE_COMPLETE;
+    if (!host || !host->instance || host->destroying || host->restoring ||
+        (host->reconstruction && phase != QA_NATIVE_HOST_RESTORE_PRECACHES) ||
         !state.data || state.size < HOST_CHECKPOINT_HEADER)
         return native_host_fail(error, QA_ERROR_ARGUMENT, state.size,
                                 "native host checkpoint is truncated or host is busy");
@@ -279,10 +292,10 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint identity or sizes are invalid");
     qa_native_entity_table table = {0};
-    if (!cvars_only && (slot_count || retained_count) &&
+    if (!prefix_only && (slot_count || retained_count) &&
         !qa_native_entity_table_get(host->instance, &table, error))
         return false;
-    if ((!cvars_only && (slot_count > table.capacity || retained_count > table.capacity)) ||
+    if ((!prefix_only && (slot_count > table.capacity || retained_count > table.capacity)) ||
         slot_count > (io.input.size - io.offset) / HOST_CHECKPOINT_SLOT)
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint slot table is invalid");
@@ -322,7 +335,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
                 slots[index].creation_origin.y != 0 || slots[index].creation_origin.z != 0)) ||
             ((creation || slots[index].linked) && (host->kind != NATIVE_HOST_Q2_GAME || !slots[index].slot)) ||
             (index && slots[index].slot <= slots[index - 1].slot) ||
-            (!cvars_only && slots[index].slot >= table.capacity)) {
+            (!prefix_only && slots[index].slot >= table.capacity)) {
             free(slots);
             return native_host_fail(error, QA_ERROR_FORMAT, index,
                                     "native host checkpoint contains an invalid slot");
@@ -341,7 +354,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     }
     for (uint32_t index = 0; index < retained_count; ++index) {
         retained[index] = take_u32(&io);
-        if (!cvars_only && retained[index] >= table.capacity) {
+        if (!prefix_only && retained[index] >= table.capacity) {
             free(slots);
             free(retained);
             return native_host_fail(error, QA_ERROR_FORMAT, index,
@@ -356,7 +369,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
     qa_bytes registry, objects;
     if (!qa_source_save_span(&io, registry_extent, &registry) ||
         !qa_source_save_span(&io, memory_extent, &objects)) goto truncated;
-    bool bind_memory = host->kind != NATIVE_HOST_Q2_GAME && !cvars_only &&
+    bool bind_memory = host->kind != NATIVE_HOST_Q2_GAME && !prefix_only &&
         qa_native_process_restore_pending(host->instance);
     bool prepared = true;
     if (host->kind == NATIVE_HOST_Q2_GAME) {
@@ -388,7 +401,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         goto truncated;
     qa_bytes message;
     if (!qa_source_save_span(&io, (size_t)message_size, &message)) goto truncated;
-    if (!cvars_only && reference_count) {
+    if (!prefix_only && reference_count) {
         references = qa_arena_alloc(&reference_storage,
             (size_t)reference_count * sizeof(*references), _Alignof(qa_native_host_message_reference), error);
         if (!references) {
@@ -407,7 +420,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         if (reserved || offset > message_size || message_size - offset < 2 ||
             (i && offset < previous_offset + 2) || !saved.generation) goto truncated;
         previous_offset = offset;
-        if (!cvars_only) {
+        if (!prefix_only) {
             references[i].offset = (size_t)offset;
             if (!actors || !qa_actors_reference_saved(actors, saved, true, &references[i].actor, error)) {
                 free(slots); free(retained); qa_arena_destroy(&reference_storage);
@@ -422,9 +435,13 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         !qa_source_save_finish(&io, NULL)) goto truncated;
     qa_source_save_dispose(&io);
     host->restoring = true;
-    if (cvars_only) {
+    if (prefix_only) {
         bool ok=!cvars || qa_cvars_save_commit(cvars,error);
-        if (ok) { cvars=NULL; ok=native_host_refresh_cvars(host,error); }
+        if (ok) {
+            cvars = NULL;
+            ok = phase == QA_NATIVE_HOST_RESTORE_CVARS ? native_host_refresh_cvars(host, error) :
+                restore_engine(host, engine, phase, error);
+        }
         host->restoring = false;
         free(slots);
         free(retained);
@@ -526,13 +543,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_
         host->message_reference_count = (size_t)reference_count;
         host->message_failed = false;
     }
-    if (ok && engine.size) {
-        if (!host->engine.restore)
-            ok = native_host_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                                  "native engine checkpoint restore is unbound");
-        else
-            ok = host->engine.restore(host->engine.context, engine, error);
-    }
+    if (ok) ok = restore_engine(host, engine, phase, error);
     if (ok && host->engine.source_frame) {
         uint64_t frame = host->engine.source_frame(host->engine.context);
         for (size_t slot = 1; ok && slot < host->q2_lifetime_capacity; ++slot) {
@@ -567,25 +578,18 @@ truncated:
                             "native host checkpoint payload is truncated");
 }
 
-bool qa_native_host_restore(qa_native_host *host, qa_bytes state, bool restore_cvars, qa_error *error)
+bool qa_native_host_restore(qa_native_host *host, qa_bytes state,
+    qa_native_host_restore_phase phase, bool restore_cvars, qa_error *error)
 {
-    if (!host || host->callback_depth)
+    if (!host || host->callback_depth || (unsigned)phase > QA_NATIVE_HOST_RESTORE_COMPLETE ||
+        (phase != QA_NATIVE_HOST_RESTORE_COMPLETE && host->kind != NATIVE_HOST_Q2_GAME))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host restore requires an idle callback owner");
-    ++host->callback_depth;
-    bool ok = restore_checkpoint(host, state, false, restore_cvars, error);
-    --host->callback_depth;
-    return ok;
-}
-
-bool qa_native_host_restore_cvars(qa_native_host *host, qa_bytes state, qa_error *error)
-{
-    if (!host || host->callback_depth || host->kind != NATIVE_HOST_Q2_GAME ||
-        !host->cvars || !host->instance ||
-        qa_native_get_lifecycle(host->instance) != QA_NATIVE_LOADED)
+    if (phase == QA_NATIVE_HOST_RESTORE_CVARS && (!host->cvars || !host->instance ||
+        qa_native_get_lifecycle(host->instance) != QA_NATIVE_LOADED))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
             "native cvar import requires its idle loaded original Q2 GAME owner");
     ++host->callback_depth;
-    bool ok = restore_checkpoint(host, state, true, true, error);
+    bool ok = restore_checkpoint(host, state, phase, restore_cvars, error);
     --host->callback_depth;
     return ok;
 }

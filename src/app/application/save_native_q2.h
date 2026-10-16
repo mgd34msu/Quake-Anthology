@@ -20,7 +20,7 @@ bool application_source_baseline_ready(struct application_native_q2_scratch *, q
  * never initialized or map-published before original GAME reconstruction. */
 bool application_native_q2_scratch_prepare(struct application_provider *,
     const qa_launch_snapshot *, qa_application_native_baseline_services *,
-    struct application_native_q2_scratch **, qa_error *);
+    qa_bytes cvars, struct application_native_q2_scratch **, qa_error *);
 bool application_native_q2_scratch_begin(struct application_native_q2_scratch *, qa_error *);
 bool application_native_q2_scratch_spawn(struct application_native_q2_scratch *,
                                          const char *, const char *, const char *, qa_error *);

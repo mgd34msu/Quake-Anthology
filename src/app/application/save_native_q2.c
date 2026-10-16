@@ -155,7 +155,7 @@ bool application_source_baseline_ready(struct application_native_q2_scratch *scr
 
 bool application_native_q2_scratch_prepare(application_provider *target,
     const qa_launch_snapshot *snapshot, qa_application_native_baseline_services *services,
-    struct application_native_q2_scratch **out, qa_error *error)
+    qa_bytes cvars, struct application_native_q2_scratch **out, qa_error *error)
 {
     if (!target || target->kind != APPLICATION_PROVIDER_NATIVE || !target->state.native.q2_engine)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 baseline requires its actual GAME owner");
@@ -167,7 +167,9 @@ bool application_native_q2_scratch_prepare(application_provider *target,
         &engine->world_actor, error)) return false;
     app->physics->world_actor = engine->world_actor;
     if (!application_native_q2_activate(engine, error) ||
-        !application_native_q2_prepare_restore(scratch->source, error)) return false;
+        !application_native_q2_prepare_restore(scratch->source, error) ||
+        !qa_native_host_restore(scratch->source->state.native.host, cvars,
+            QA_NATIVE_HOST_RESTORE_CVARS, true, error)) return false;
     return true;
 }
 

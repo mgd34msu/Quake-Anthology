@@ -225,6 +225,7 @@ bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bo
                       qa_native_address *, qa_error *);
 bool native_host_refresh_cvars(qa_native_host *, qa_error *);
 bool native_host_restore_cvars(qa_native_host *, qa_error *);
+bool native_host_q2_models_restore(qa_native_host *, qa_error *);
 
 bool native_host_actor_for_address(qa_native_host *, qa_native_address, bool,
                                    qa_actor_id *, uint32_t *, qa_error *);

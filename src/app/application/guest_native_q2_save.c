@@ -32,12 +32,13 @@ static bool read_actor(qa_net_reader *reader, const qa_actor_registry *actors,
     qa_saved_actor_id saved;
     saved.generation = qa_net_read_u64(reader);
     saved.slot = qa_net_read_u32(reader);
-    *out = (qa_actor_id){0};
+    if (out) *out = (qa_actor_id){0};
     if (reader->failed) return false;
     if (present > 1)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation has an invalid actor presence");
     if (!present)
         return (!saved.slot && !saved.generation) || application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation has an invalid empty actor reference");
+    if (!out) return true;
     const qa_actor_record *actor = qa_actors_resolve_saved(actors, saved);
     if (!actor) return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 continuation actor is not restored");
     *out = actor->id;
@@ -238,7 +239,17 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
     return true;
 }
 
-bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error *error)
+static bool restore_configs(struct application_native_q2 *engine,
+    const qa_string_id *config, qa_error *error)
+{
+    if (!application_native_q2_config_clear(engine, error)) return false;
+    for (uint32_t i = 0; i < engine->hud_names.layout.max_configs; ++i)
+        if (!qa_hud_q2_names_set(&engine->hud_names, i, config[i], NULL, error)) return false;
+    return true;
+}
+
+bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes,
+    qa_native_host_restore_phase phase, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
     if (!engine || engine->current_client || engine->disconnect_client || engine->arguments.count || engine->shutting_down ||
@@ -253,17 +264,18 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         qa_net_read_u32(&reader) != engine->hud_names.layout.max_configs)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
     uint8_t initialized = qa_net_read_u8(&reader), map_ready = qa_net_read_u8(&reader);
-    qa_actor_id world;
+    bool precaches = phase == QA_NATIVE_HOST_RESTORE_PRECACHES;
+    qa_actor_id world = {0};
     const qa_actor_registry *actors = qa_session_actors(engine->provider->application->session);
     if (initialized > 1 || map_ready > 1 || (map_ready && !initialized))
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation lifecycle is invalid");
-    if (!read_actor(&reader, actors, &world, error)) return false;
+    if (!read_actor(&reader, actors, precaches ? NULL : &world, error)) return false;
     if (world.registry) {
         const qa_actor_record *record = qa_actors_get(actors, world);
         if (!record || record->owner != engine->provider->owner || !record->has_source || record->source_slot)
             return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation world actor differs from its source owner");
     }
-    if (map_ready && engine->profile != QA_NATIVE_Q2_CGAME_API2023 && !world.registry)
+    if (!precaches && map_ready && engine->profile != QA_NATIVE_Q2_CGAME_API2023 && !world.registry)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 ready continuation has no world actor");
     qa_source_frame frame = {.provider = engine->provider->owner,
         .kind = engine->provider->component.clock.kind};
@@ -274,8 +286,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation source clock is invalid");
     char *map = NULL, *spawn = NULL;
     qa_string_id *config = calloc(engine->hud_names.layout.max_configs, sizeof(*config));
-    application_native_q2_client *clients = calloc(257, sizeof(*clients));
-    bool ok = config && clients;
+    bool ok = config != NULL;
     if (!ok) application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 continuation restore");
     if (ok) ok = read_text(&reader, &map, error) && read_text(&reader, &spawn, error);
     for (uint32_t i = 0; ok && i < engine->hud_names.layout.max_configs; ++i) {
@@ -285,6 +296,13 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
             text, &config[i], error);
         free(text);
     }
+    if (precaches) {
+        if (ok) ok = restore_configs(engine, config, error);
+        free(config); free(map); free(spawn);
+        return ok;
+    }
+    application_native_q2_client *clients = ok ? calloc(257, sizeof(*clients)) : NULL;
+    if (ok && !clients) ok = application_fail(error, QA_ERROR_MEMORY, "Preparing native Q2 client restore");
     for (uint32_t i = 0; ok && i < 257; ++i) {
         application_native_q2_client *client = &clients[i]; qa_bytes layout;
         ok = read_actor(&reader, actors, &client->actor, error);
@@ -388,9 +406,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         engine->wire_engine = wire; wire = NULL;
         application_native_q2_visibility_destroy(&engine->visibility);
         engine->visibility = visibility; visibility = NULL;
-        ok=application_native_q2_config_clear(engine,error);
-        for (uint32_t i=0;ok && i<engine->hud_names.layout.max_configs;++i)
-            ok=qa_hud_q2_names_set(&engine->hud_names,i,config[i],NULL,error);
+        ok = restore_configs(engine, config, error);
         memcpy(engine->clients, clients, sizeof(engine->clients));
         qa_actor_index_clear(&engine->client_index);
         for (uint32_t slot = 1; slot < 257; ++slot)
