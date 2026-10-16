@@ -104,7 +104,7 @@ bool qa_application_qc_message_source_read(qa_application *app,qa_actor_owner id
     if(!app || !id || !out || !found) return application_fail(error,QA_ERROR_ARGUMENT,"QC message source requires its actual provider");
     *found=false; application_provider *p=owner(app,id);
     if(!p) return application_fail(error,QA_ERROR_ARGUMENT,"Protocol provider is no longer installed");
-    if(p->kind!=APPLICATION_PROVIDER_QC) return true;
+    if(p->kind!=APPLICATION_PROVIDER_QC || p->state.qc.engine->trajectory_only) return true;
     if(!source_ready(p) || !p->product->campaign || !p->state.qc.engine->clients)
         return application_fail(error,QA_ERROR_ARGUMENT,"QC message source is not returned and constructed");
     const struct application_qc_state *engine=p->state.qc.engine;
