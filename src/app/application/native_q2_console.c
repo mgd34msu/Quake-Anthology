@@ -93,6 +93,12 @@ static const q2_source_cvar rogue[] = {
     {"sv_stopspeed", "100", 0, QA_CVAR_SAVE_GAMEPLAY}, {"huntercam", "1", (uint32_t)QA_CVAR_SERVERINFO | (uint32_t)QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
     {"strong_mines", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"randomrespawn", "0", 0, QA_CVAR_SAVE_GAMEPLAY}, {"gamerules", "0", QA_Q2_CVAR_LATCH, QA_CVAR_SAVE_GAMEPLAY},
 };
+static const q2_source_cvar deathball[] = {
+    {"goallimit", "0", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"sv_stopspeed", "100", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"dball_team1_skin", "male/ctf_r", 0, QA_CVAR_SAVE_GAMEPLAY},
+    {"dball_team2_skin", "male/ctf_b", 0, QA_CVAR_SAVE_GAMEPLAY},
+};
 typedef enum q2_ctf_cvar {
     Q2_CTF_COMPETITION, Q2_CTF_MATCHLOCK, Q2_CTF_ELECTION_PERCENT,
     Q2_CTF_MATCHTIME, Q2_CTF_SETUPTIME, Q2_CTF_STARTTIME,
@@ -132,7 +138,7 @@ struct application_native_q2_console {
         qa_cvar_handle infinite_ammo, instant_switch, quick_switch, no_stack_double;
     } weapon_cvars;
     qa_cvar_handle combat_cvars[APPLICATION_Q2_COMBAT_SETTING_COUNT];
-    qa_cvar_handle cheats, password, spectator_password, deathmatch, max_spectators;
+    qa_cvar_handle cheats, password, spectator_password, deathmatch, deathmatch_flags, max_spectators;
     qa_cvar_handle referee_password, rcon_password, skin_set, flag_init, maplist_file;
     qa_cvar_handle ctf_cvars[Q2_CTF_CVAR_COUNT];
     struct {
@@ -157,6 +163,7 @@ static void source_cvars_bind(struct application_native_q2_console *owner) {
     owner->spectator_password = qa_cvars_resolve(owner->cvars, "spectator_password");
     owner->max_spectators = qa_cvars_resolve(owner->cvars, "maxspectators");
     owner->deathmatch = qa_cvars_resolve(owner->cvars, "deathmatch");
+    owner->deathmatch_flags = qa_cvars_resolve(owner->cvars, "dmflags");
     owner->referee_password = qa_cvars_resolve(owner->cvars, "refpassword");
     owner->rcon_password = qa_cvars_resolve(owner->cvars, "rcon_password");
     owner->skin_set = qa_cvars_resolve(owner->cvars, "skinset");
@@ -563,7 +570,7 @@ bool application_native_q2_console_prepare(application_provider *provider, const
         if (mode->rules.source == QA_MODE_LMCTF)
             okay = definitions(provider, lmctf, sizeof(lmctf) / sizeof(*lmctf), error);
         if (mode->rules.source == QA_MODE_Q2_DEATHBALL)
-            okay = qa_cvars_register(cvars, "goallimit", "0", 0, provider->owner, NULL, error);
+            okay = definitions(provider, deathball, sizeof(deathball) / sizeof(*deathball), error);
     }
     if (okay) {
         source_cvars_bind(provider->native_q2_console);
@@ -575,6 +582,25 @@ bool application_native_q2_console_prepare(application_provider *provider, const
     if (!okay) application_native_q2_console_destroy(provider, NULL);
     return okay;
 }
+static bool deathball_prepare(application_provider *provider, const qa_launch_choices *choices,
+                               qa_error *error) {
+    for (size_t i = 0; i < choices->mode_count; ++i) {
+        const qa_launch_mode *mode = &choices->modes[i];
+        if (!mode->rules.enabled || mode->rules.source != QA_MODE_Q2_DEATHBALL ||
+            strcmp(provider->launch->selection.instance, mode->instance)) continue;
+        qa_cvars *cvars = application_native_q2_console_registry(provider);
+        uint32_t flags = qa_q2_source_deathmatch_flags(cvars) | UINT32_C(0xe0140);
+        if (!qa_cvars_set_number(cvars, "sv_stopspeed", 0, error) ||
+            !qa_cvars_set_number(cvars, "dmflags", (float)flags, error)) return false;
+        if (dialect(provider) == QA_RULESET_Q2_RERELEASE &&
+            (!qa_cvars_set_number(cvars, "g_no_mines", 1, error) ||
+             !qa_cvars_set_number(cvars, "g_no_nukes", 1, error) ||
+             !qa_cvars_set_number(cvars, "g_dm_no_stack_double", 1, error) ||
+             !qa_cvars_set_number(cvars, "g_friendly_fire", 0, error))) return false;
+        break;
+    }
+    return true;
+}
 bool application_native_q2_console_finalize(application_provider *provider, qa_q2_options *rules,
                                             const qa_launch_choices *choices, qa_error *error) {
     qa_cvars *cvars = application_native_q2_console_registry(provider);
@@ -582,6 +608,7 @@ bool application_native_q2_console_finalize(application_provider *provider, qa_q
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 source options require their completed idle preparation");
     bool okay = application_q2_original_prepare(provider,error);
     if (okay) okay = application_startup_apply_latched(provider, cvars, error);
+    if (okay) okay = deathball_prepare(provider, choices, error);
     qa_cvar_view prepared_capacity;
     float capacity = 0;
     if (okay) okay = qa_cvars_effective_view(cvars, "maxclients", &prepared_capacity, error);
@@ -942,6 +969,11 @@ bool application_native_q2_source_weapon_input(application_provider *provider, q
         input->instant_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.instant_switch)->integer != 0;
         input->quick_switch = qa_cvars_read(owner->cvars, owner->weapon_cvars.quick_switch)->integer != 0;
         input->no_stack_double = qa_cvars_read(owner->cvars, owner->weapon_cvars.no_stack_double)->integer != 0;
+    } else if (classic_rogue(provider)) {
+        struct application_native_q2_console *owner = provider->native_q2_console;
+        input->no_stack_double =
+            ((uint32_t)qa_cvars_read(owner->cvars, owner->deathmatch_flags)->integer &
+             UINT32_C(0x40000)) != 0;
     }
     struct application_native_q2_console *owner = provider->native_q2_console;
     const qa_cvar_view *instant = qa_cvars_read(owner->cvars, owner->ctf_cvars[Q2_CTF_INSTANTWEAP]);

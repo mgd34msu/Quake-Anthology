@@ -1643,7 +1643,7 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
     qa_application *app = opaque;
     if (!app || session != app->session || !app->control_frames)
         return application_fail(error, QA_ERROR_ARGUMENT, "Command preparation lost its source owner");
-    application_control_world_gravity(app, NULL);
+    application_control_world_physics(app, NULL);
     if (!application_arsenal_prepare_frame(app, frames, count, error)) return false;
     if (!application_bots_frame_at(app, frames, count, host_ns, error)) return false;
     for (uint32_t i = 0; i < app->control_capacity; ++i) {

@@ -137,6 +137,8 @@ bool application_console_create(qa_application *application, qa_error *error)
     application->cvars = qa_cvars_create(&cvars, error);
     if (application->cvars == NULL) return false;
     application->bot_minplayers = qa_cvars_resolve(application->cvars, "bot_minplayers");
+    application->world_gravity = qa_cvars_resolve(application->cvars, "g_gravity");
+    application->world_stop_speed = qa_cvars_resolve(application->cvars, "sv_stopspeed");
     if (!qa_cvars_register(application->cvars, "sv_cheats", "", 0, 0, NULL, error)) return false;
     qa_console_options console = {.context = {.dialect = QA_RULESET_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,

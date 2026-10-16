@@ -1,5 +1,6 @@
 #include "qa/q2_sound.h"
 #include "internal.h"
+#include "entities/internal.h"
 #include "player/internal.h"
 #include "monsters/reinforcements.h"
 
@@ -667,8 +668,10 @@ bool qa_q2_physics_write(qa_q2_game *g, qa_actor_id id, const qa_physics_propert
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 does not own this actor's physics");
         return false;
     }
+    bool collision_changed = a->physics.solid != properties->solid ||
+        ((a->physics.flags ^ properties->flags) & (QA_PHYSICS_MONSTER | QA_PHYSICS_DEAD));
     a->physics = *properties;
-    return true;
+    return !a->entity || !collision_changed || q2_entity_solid(g, a, properties->solid, e);
 }
 static bool touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     if (g == NULL || contact == NULL) {

@@ -280,23 +280,20 @@ static const qa_product *provider_product(const qa_application *application,
                                     provider->launch->selection.product);
 }
 
-void application_control_world_gravity(qa_application *application,
+void application_control_world_physics(qa_application *application,
                                        qa_movement_profile *profile)
 {
-    application_provider *world = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    const qa_cvar_view *source = NULL;
-    if (world && world->kind == APPLICATION_PROVIDER_Q1 && world->state.q1)
-        source = qa_q1_source_read(world->state.q1, QA_Q1_SOURCE_GRAVITY);
-    else if (world && world->kind == APPLICATION_PROVIDER_QC && world->state.qc.engine) {
-        const struct application_qc_state *engine = world->state.qc.engine;
-        source = qa_cvars_read(engine->cvars, engine->cvar_handles.qw_movement[0]);
-    }
-    if (source)
-        application->physics->gravity = source->number;
-    if (profile && profile->kind == QA_RULESET_NETQUAKE)
+    const qa_cvar_view *gravity = qa_cvars_read(application->cvars, application->world_gravity);
+    const qa_cvar_view *stop_speed = qa_cvars_read(application->cvars, application->world_stop_speed);
+    if (gravity) application->physics->gravity = gravity->number;
+    if (stop_speed) application->physics->stop_speed = stop_speed->number;
+    if (profile && profile->kind == QA_RULESET_NETQUAKE) {
         profile->data.nq.parameters.gravity = application->physics->gravity;
-    else if (profile && profile->kind == QA_RULESET_QUAKEWORLD)
+        profile->data.nq.parameters.stop_speed = application->physics->stop_speed;
+    } else if (profile && profile->kind == QA_RULESET_QUAKEWORLD) {
         profile->data.qw.parameters.gravity = application->physics->gravity;
+        profile->data.qw.parameters.stop_speed = application->physics->stop_speed;
+    }
 }
 
 static qa_movement_profile selected_profile(
@@ -319,7 +316,7 @@ static qa_movement_profile selected_profile(
     else if (kind == QA_RULESET_Q3 && product != NULL)
         profile.data.q3.missionpack =
             strcmp(product->campaign, "missionpack") == 0;
-    application_control_world_gravity(application, &profile);
+    application_control_world_physics(application, &profile);
     return profile;
 }
 
@@ -527,7 +524,7 @@ static bool refresh_source_call(application_move_call *move, qa_movement_call *c
 {
     qa_body_state body; qa_combat_state combat;
     if (!live(move->application, call->actor)) return true;
-    application_control_world_gravity(move->application, call->profile);
+    application_control_world_physics(move->application, call->profile);
     if (!qa_world_body_read(move->application->world, call->actor, &body, error) ||
         !qa_combat_read_traits(move->application->combat, call->actor, &combat, error)) return false;
     application_control_record shadow = *move->control;
@@ -3719,7 +3716,7 @@ bool qa_application_control_prediction_read(qa_application *application,
     if (record->player.state.kind == QA_RULESET_Q3 || record->player.state.kind == QA_RULESET_Q2_CLASSIC ||
         record->player.state.kind == QA_RULESET_Q2_RERELEASE)
         result.input.shape.bounds = result.input.standing.bounds;
-    application_control_world_gravity(application, &result.input.profile);
+    application_control_world_physics(application, &result.input.profile);
     *out = result;
     return true;
 }

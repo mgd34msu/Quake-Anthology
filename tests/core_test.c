@@ -95,6 +95,7 @@
 #include "../src/app/frontend/shared_register.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
+#include "../src/app/application/control_frame.h"
 #include "../src/app/application/bots_log.h"
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
@@ -6546,6 +6547,28 @@ static void test_shared_cvar_archive(void)
     CHECK(qa_cvars_edit_finish(engine,&error));
     CHECK(qa_cvars_revision(engine)!=0 && qa_cvars_revision(client)!=0);
     CHECK(qa_cvars_find(engine,"fov")->number==120 && qa_cvars_find(client,"cg_fov")->number==120);
+    qa_physics physics = {.gravity = 800, .stop_speed = 100};
+    qa_application application = {.cvars = engine, .physics = &physics,
+        .world_gravity = qa_cvars_resolve(engine, "g_gravity"),
+        .world_stop_speed = qa_cvars_resolve(engine, "sv_stopspeed")};
+    qa_cvar_options world_options = {.dialect = QA_RULESET_Q2_CLASSIC,
+        .side = QA_CVAR_SIDE_SERVER, .role = QA_CVAR_ROLE_GAME};
+    qa_cvars *world = qa_cvars_create_view(engine, &world_options, &error);
+    CHECK(world && qa_cvars_register(world, "sv_gravity", "800", 0, 0, "", &error));
+    CHECK(qa_cvars_register(world, "sv_stopspeed", "100", 0, 0, "", &error));
+    CHECK(qa_cvars_set(world, "sv_gravity", "100", true, &error));
+    CHECK(qa_cvars_set(world, "sv_stopspeed", "0", true, &error));
+    qa_movement_profile movement = qa_movement_profile_default(QA_RULESET_NETQUAKE);
+    application_control_world_physics(&application, &movement);
+    CHECK(physics.gravity == 100 && physics.stop_speed == 0);
+    CHECK(movement.data.nq.parameters.gravity == 100 && movement.data.nq.parameters.stop_speed == 0);
+    CHECK(qa_cvars_set(engine, "g_gravity", "800", true, &error));
+    CHECK(qa_cvars_set(engine, "sv_stopspeed", "100", true, &error));
+    movement = qa_movement_profile_default(QA_RULESET_QUAKEWORLD);
+    application_control_world_physics(&application, &movement);
+    CHECK(physics.gravity == 800 && physics.stop_speed == 100);
+    CHECK(movement.data.qw.parameters.gravity == 800 && movement.data.qw.parameters.stop_speed == 100);
+    qa_cvars_destroy(world);
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 

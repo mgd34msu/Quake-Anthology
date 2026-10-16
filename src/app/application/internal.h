@@ -292,7 +292,7 @@ struct qa_application {
     qa_q3_product_policy q3_product;
     const qa_q3_product_policy *q3_product_preparing;
     qa_cvars *cvars;
-    qa_cvar_handle bot_minplayers;
+    qa_cvar_handle bot_minplayers, world_gravity, world_stop_speed;
     qa_ui_preference_handles ui_preference_handles;
     qa_application_ui_names ui_names;
     qa_id_index q2_view_weapons;

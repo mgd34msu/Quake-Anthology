@@ -426,10 +426,39 @@ bool qa_modes_plan_map(qa_modes *m, qa_mode_id id, const qa_mode_map_admission *
     }
     return true;
 }
+static bool deathball_map_ready(qa_modes *m, qa_error *e) {
+    qa_physics *physics = m->options.services.physics;
+    if (!physics || !m->options.services.actor_traits)
+        return true;
+    qa_string_id destination = qa_strings_find(qa_session_strings(m->options.services.session),
+        (qa_bytes){(const uint8_t *)"misc_teleporter_dest", sizeof("misc_teleporter_dest") - 1});
+    if (!destination)
+        return true;
+    if (!qa_builtin_observations(&m->options.services, &m->observations, e))
+        return false;
+    for (size_t i = 0; i < m->observations.count; ++i) {
+        qa_actor_id actor = m->observations.actors[i];
+        qa_builtin_actor_traits traits = {0};
+        qa_physics_properties properties;
+        if (!m->options.services.actor_traits(m->options.services.context, actor, &traits) ||
+            traits.classname != destination ||
+            !physics->services.read(physics->services.context, actor, &properties))
+            continue;
+        if (properties.solid == QA_PHYSICS_NOT_SOLID)
+            continue;
+        properties.solid = QA_PHYSICS_NOT_SOLID;
+        if (!MODE_CALLBACK(m, physics->services.write(physics->services.context,
+                                                     actor, &properties, e)))
+            return false;
+    }
+    return true;
+}
 bool qa_modes_start_relics(qa_modes *m, qa_mode_id id, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v)
         return mode_fail(e, "unknown relic mode");
+    if (v->value.rules.kind == QA_MODE_DEATHBALL)
+        return deathball_map_ready(m, e);
     if (v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_Q2_CTF &&
         v->value.rules.source != QA_MODE_LMCTF && v->value.rules.source != QA_MODE_ROGUE)
         return true;
