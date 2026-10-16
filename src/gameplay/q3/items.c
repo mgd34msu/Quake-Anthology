@@ -399,10 +399,20 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
         qa_trace_result trace;
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return false;
-        if (trace.start_solid && placed)
+        if (trace.start_solid) {
+            if (game->options.hooks.source_log) {
+                char warning[320];
+                snprintf(warning, sizeof(warning),
+                    "FinishSpawningItem: %s startsolid at (%g %g %g), hit %s actor %llu:%u:%llu model %u\n",
+                    items[input->item_index].classname, (double)input->origin.x,
+                    (double)input->origin.y, (double)input->origin.z,
+                    trace.hit == QA_TRACE_HIT_WORLD ? "world" : trace.hit == QA_TRACE_HIT_ACTOR ? "actor" : "none",
+                    (unsigned long long)trace.actor.registry, trace.actor.slot,
+                    (unsigned long long)trace.actor.generation, trace.model);
+                if (!game->options.hooks.source_log(game->options.hooks.context, warning, error)) return false;
+            }
             return true;
-        if (trace.start_solid)
-            return q3_fail(error, "Q3 item spawned inside solid geometry");
+        }
         body.origin = trace.end;
         body.ground = item_ground_actor(game, &trace);
         ground_entity_number = item_ground_number(game, &trace);
@@ -498,8 +508,8 @@ bool qa_q3_source_item_adopt(qa_q3_game *game, qa_actor_id actor,
     ++game->observation_depth;
     bool placed = false;
     bool okay = q3_item_bind_existing(game, actor, input, available, false, &placed, error);
-    if (okay && !placed && q3_actor_get(game, actor))
-        okay = q3_fail(error, "Q3 adopted item starts inside solid geometry");
+    if (okay && !placed && qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        okay = qa_session_release(game->options.services.session, actor, error);
     --game->observation_depth;
     return okay;
 }
@@ -538,8 +548,11 @@ static bool spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor
     qa_actor_id actor;
     if (!q3_spawn_actor(game, &spawn, &actor, error))
         return false;
-    if (!q3_item_bind_existing(game, actor, input, true, true, NULL, error))
+    bool placed = false;
+    if (!q3_item_bind_existing(game, actor, input, true, true, &placed, error))
         return q3_rollback_spawn(game, actor, error);
+    if (!placed && qa_actors_get(qa_session_actors(game->options.services.session), actor) &&
+        !qa_session_release(game->options.services.session, actor, error)) return false;
     if (!input->dropped && items[input->item_index].kind == QA_Q3_ITEM_TEAM &&
         q3_actor_get(game, actor) && game->options.hooks.objective_admitted &&
         !game->options.hooks.objective_admitted(game->options.hooks.context, actor,

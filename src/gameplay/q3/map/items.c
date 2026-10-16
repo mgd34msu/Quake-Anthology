@@ -90,7 +90,6 @@ static bool finish_item(qa_q3_game *game, qa_q3_map_actor_state *state,
                                available && !delayed_powerup, false, &placed, error))
         return q3_rollback_spawn(game, actor, error);
     if (!placed) {
-        q3_map_warn(game, actor, "Q3 authored item spawned inside solid geometry");
         return qa_session_release(game->options.services.session, actor, error);
     }
     state = q3_map_get(game, actor);

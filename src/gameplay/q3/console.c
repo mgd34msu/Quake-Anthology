@@ -176,6 +176,7 @@ static bool give(qa_q3_game *game, qa_actor_id actor, size_t argument_count, con
     if (!qa_q3_spawn_item(game, &(qa_q3_item_spawn){.item_index = index, .origin = body.origin},
                            &temporary, error))
         return false;
+    if (!q3_actor_get(game, temporary)) return true;
     bool accepted;
     bool okay = q3_item_touch(game, temporary, actor, true, &accepted, error);
     qa_error cleanup = {0};
