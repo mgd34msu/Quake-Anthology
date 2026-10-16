@@ -507,6 +507,7 @@ bool native_host_reconcile(qa_native_host *host, qa_error *error)
                 return false;
             continue;
         }
+        if (host->world.projected_entities && binding.kind == QA_NATIVE_SLOT_FREE) continue;
         bool in_range = slot < table.count;
         bool retained = slot < host->retained_capacity && host->retained_clients[slot];
         bool inuse = false;
