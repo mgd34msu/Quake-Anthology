@@ -12,6 +12,7 @@
 #include "chat.h"
 #include "accessibility.h"
 #include "save_menu.h"
+#include "save_commands.h"
 #include "menu_fonts.h"
 #include "q1_help.h"
 #include "settings_menu.h"
@@ -120,6 +121,15 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
         return !event->down ||
             ((event->repeat || qa_ui_close_all(seat->ui, now_ms(seat), error)) &&
              qa_seat_console_toggle(seat->console, true, event->repeat, error));
+    }
+    if (seat->death_active && qa_ui_menu_opened(seat->ui,FRONTEND_PLAYER_DEATH)) {
+        qa_ui_state state;
+        if (!qa_ui_state_read(seat->ui,&state,error)) return false;
+        bool back=event->kind==QA_INPUT_EVENT_KEY && event->input.code==QA_KEY_ESCAPE;
+        if (event->kind==QA_INPUT_EVENT_BUTTON)
+            back|=(event->input.kind==QA_PHYSICAL_MOUSE && event->input.code==3) ||
+                (event->input.kind==QA_PHYSICAL_BUTTON && (event->input.code==1 || event->input.code==6));
+        if (state.menu==FRONTEND_PLAYER_DEATH && back) { *consumed=true; return true; }
     }
     bool release=qa_input_client_key(event)>=0 && !event->down;
     if(release) {
@@ -708,6 +718,90 @@ static qa_ui_control button(frontend_seat *seat, qa_ui_id id, const char *label,
         .rect = {120, y, 400, 32}, .visible = true, .enabled = true,
         .context = seat, .action = menu_action};
 }
+static bool death_busy(frontend_seat *seat)
+{
+    qa_application_travel_view travel;
+    return frontend_save_commands_pending(seat->frontend) ||
+        qa_application_startup_pending(seat->frontend->application) ||
+        qa_application_travel_read(seat->frontend->application,&travel);
+}
+static bool death_action(void *context,uint32_t id,qa_ui_id control,const qa_ui_action *action,qa_error *error)
+{
+    frontend_seat *seat=context; qa_frontend *f=seat->frontend; (void)id;
+    if (action->kind!=QA_UI_ACTIVATE || death_busy(seat)) return true;
+    if (control==1) return frontend_menu_open(seat,FRONTEND_LOAD,error);
+    if (control==3) return frontend_startup_end_stage(seat,error);
+    if (control!=2) return true;
+    qa_application_map_view map; qa_application_startup_source source; bool present=false;
+    qa_error local={0};
+    bool okay=qa_application_map_read(f->application,&map) &&
+        frontend_config_store_primary_server_read(f->config_store,&source,&present,&local);
+    if (okay && present) {
+        qa_application_travel_request request={.provider=source.scope.provider,.cause=seat->death_actor,
+            .geometry=map.geometry,.expression=map.name,.new_unit=true};
+        okay=qa_application_queue_map_travel(f->application,&request,&local);
+    } else okay=false;
+    snprintf(seat->death_message,sizeof(seat->death_message),"%s",okay?"Restarting level...":
+        local.code!=QA_OK?local.message:"The current level is not available to restart");
+    return true;
+}
+static bool death_menu(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
+{
+    frontend_seat *seat=context; (void)id; (void)error;
+    static const char *const labels[]={"Load saved game","Restart level","End game"};
+    static const float positions[]={186,220,322};
+    bool busy=death_busy(seat);
+    for (unsigned i=0;i<3;++i) {
+        seat->controls[i]=button(seat,i+1,labels[i],positions[i]);
+        seat->controls[i].action=death_action;
+        seat->controls[i].enabled=!busy && (i!=0 || !frontend_save_menu_unavailable(seat,false));
+    }
+    size_t count=3;
+    if (*seat->death_message) seat->controls[count++]=(qa_ui_control){.id=4,.kind=QA_UI_TEXT,
+        .label=seat->death_message,.rect={64,390,512,44},.visible=true};
+    *out=(qa_ui_menu){.id=FRONTEND_PLAYER_DEATH,.title="You died",.controls=seat->controls,
+        .count=count,.fullscreen=true,.narrow=true};
+    return true;
+}
+bool frontend_player_death_sync(frontend_seat *seat,qa_error *error)
+{
+    if (!seat->ui || !seat->input || !seat->save_menu) return true;
+    qa_frontend *f=seat->frontend; qa_actor_id actor={0}; qa_application_map_view map;
+    const qa_launch_snapshot *snapshot=qa_application_launch(f->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+    bool eligible=false,singleplayer=false; uint32_t logical;
+    if (choices && !f->options.dedicated && !frontend_network_remote(f) &&
+        frontend_network_save_authority(f)==QA_SAVE_OFFLINE &&
+        qa_application_get_state(f->application)==QA_APPLICATION_RUNNING &&
+        !qa_application_startup_pending(f->application) && qa_application_map_read(f->application,&map)) {
+        for (size_t i=0;i<choices->mode_count;++i) if (choices->modes[i].primary_score)
+            singleplayer=choices->modes[i].rules.kind==QA_MODE_SINGLE_PLAYER;
+        const qa_launch_binding *binding=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+        const qa_launch_instance *instance=binding?qa_launch_snapshot_find(snapshot,binding->instance):NULL;
+        const qa_product *product=instance?qa_catalog_product(qa_application_catalog(f->application),instance->selection.product):NULL;
+        eligible=singleplayer && product && (product->family==QA_GAME_Q1 || product->family==QA_GAME_Q2) &&
+            frontend_seat_launch_id_read(f,seat->id,&logical) && qa_application_player_actor(f->application,logical,&actor);
+    }
+    qa_combat_state combat={0}; qa_application_camera_view camera; qa_error local={0};
+    if (eligible && (!qa_application_control_camera(f->application,actor,&camera) || camera.cutscene ||
+        !qa_combat_read(qa_application_combat(f->application),actor,&combat,&local))) eligible=false;
+    if (!eligible || combat.health>0) {
+        if (seat->death_active && !qa_ui_close_all(seat->ui,now_ms(seat),error)) return false;
+        seat->death_active=false; seat->death_actor=(qa_actor_id){0}; seat->death_message[0]=0;
+        return true;
+    }
+    if (!seat->death_active || !qa_actor_id_equal(seat->death_actor,actor)) {
+        if (!qa_ui_close_all(seat->ui,now_ms(seat),error)) return false;
+        seat->death_active=true; seat->death_actor=actor; seat->death_message[0]=0;
+        if (seat->wheel && !qa_hud_wheel_close(seat->wheel,false,error)) return false;
+    }
+    qa_ui_state state;
+    if (!qa_ui_state_read(seat->ui,&state,error)) return false;
+    if (!state.menu && qa_input_seat_focus(seat->input)!=QA_INPUT_CONSOLE)
+        return qa_ui_open(seat->ui,FRONTEND_PLAYER_DEATH,now_ms(seat),error);
+    return true;
+}
 static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id;
@@ -990,6 +1084,8 @@ static bool seats_create(qa_frontend *frontend, unsigned first, qa_error *error)
         if (!frontend_menu_font_selection(frontend, i, true, &ui.title_fonts, error)) return false;
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
+            !qa_ui_register(seat->ui,&(qa_ui_menu_registration){.id=FRONTEND_PLAYER_DEATH,
+                .context=seat,.factory=death_menu},error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_OPTIONS,
                 .context = seat, .factory = settings, .open = settings_open}, error) ||
             !frontend_settings_create(seat, error) || !frontend_q1_help_create(seat,error)) return false;

@@ -188,13 +188,15 @@ static bool refresh_entries(void *context,qa_error *error)
     if(!rebuild_entries(owner,saved_at,true,error)) { free(saved_at);return false; }
     owner->listing_error[0]=0;return true;
 }
-static const char *unavailable(void *context,bool saving)
+const char *frontend_save_menu_unavailable(frontend_seat *seat,bool saving)
 {
-    frontend_save_menu *owner=context;frontend_seat *seat=owner->seat;qa_error local={0};
+    frontend_save_menu *owner=seat->save_menu;qa_error local={0};
     bool ok=qa_application_save_policy(seat->frontend->application,frontend_network_save_authority(seat->frontend),
         seat->frontend->options.dedicated,!saving,QA_SAVE_MANUAL,&local);
     snprintf(owner->policy,sizeof(owner->policy),"%s",ok?"":local.message);return ok?NULL:owner->policy;
 }
+static const char *unavailable(void *context,bool saving)
+{ return frontend_save_menu_unavailable(((frontend_save_menu *)context)->seat,saving); }
 static bool pending(void *context)
 { return frontend_save_commands_pending(((frontend_save_menu *)context)->seat->frontend); }
 static bool write_save(void *context,const char *name,const char *overwrite,qa_error *error)

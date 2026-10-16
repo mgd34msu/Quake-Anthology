@@ -80,7 +80,7 @@ enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS,
     FRONTEND_SAVE, FRONTEND_SAVE_NAME, FRONTEND_SAVE_OVERWRITE, FRONTEND_GYRO,
     FRONTEND_AUDIO_OPTIONS, FRONTEND_GAMEPLAY_RESET, FRONTEND_MATCH, FRONTEND_Q1_HELP,
     FRONTEND_HOST_MENU = 260, FRONTEND_LOCAL_LOBBY, FRONTEND_INVENTORY,
-    FRONTEND_SERVER_SETTINGS, FRONTEND_SERVER_SETTING, FRONTEND_SERVER_PROFILES };
+    FRONTEND_SERVER_SETTINGS, FRONTEND_SERVER_SETTING, FRONTEND_SERVER_PROFILES, FRONTEND_PLAYER_DEATH };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
 bool frontend_network_content_visit(const qa_frontend *,const qa_application *,const qa_application_content_visitor *,qa_error *);
@@ -202,6 +202,9 @@ typedef struct frontend_seat {
     qa_ui_rankings *rankings;
     qa_ui_llm *assistance;
     frontend_save_menu *save_menu;
+    qa_actor_id death_actor;
+    bool death_active;
+    char death_message[256];
     frontend_content_library_menu *content_library;
     frontend_settings_menu *settings_menu;
     char *clipboard;
@@ -526,6 +529,7 @@ void frontend_console_print(void *, const qa_command_context *, const char *);
 void frontend_console_deliver(void *, const qa_command_context *, const char *);
 qa_command_result frontend_console_forward(void *,const qa_command_invocation *,qa_error *);
 bool frontend_menu_open(frontend_seat *, qa_ui_id, qa_error *);
+bool frontend_player_death_sync(frontend_seat *,qa_error *);
 bool frontend_game_menu(frontend_seat *, qa_error *);
 bool frontend_wheel_create(frontend_seat *, qa_error *);
 bool frontend_bindings_create(frontend_seat *, qa_error *);
