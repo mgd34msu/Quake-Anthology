@@ -341,7 +341,7 @@ bool qa_application_native_q2_source_clock_read(qa_application *app, qa_actor_ow
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile requires its actual emitting owner");
     application_provider *provider=application_provider_lookup(app,owner,APPLICATION_PROVIDER_LIVE);
     *found=false;
-    if (!provider || !provider->product || provider->product->family!=QA_GAME_Q2) return true;
+    if (!provider || provider->trajectory_only || !provider->product || provider->product->family!=QA_GAME_Q2) return true;
     if (provider->application!=app || !provider->constructed || provider->close_pending)
         return application_fail(error,QA_ERROR_ARGUMENT,"Q2 Source profile names an unavailable GAME owner");
     qa_ruleset_id edition;
