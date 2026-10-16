@@ -25,6 +25,18 @@ typedef enum qa_cvars_edit_kind {
  * Keeps flags, latched values, bindings and previously queued edit effects. */
 bool qa_cvars_assign(qa_cvars *, const char *, const char *, qa_ruleset_id, qa_error *);
 
+typedef struct qa_cvar_assignment { const char *name, *value; } qa_cvar_assignment;
+typedef struct qa_cvars_value_scope qa_cvars_value_scope;
+/* Bind temporary assignments once. Invocation uses the same canonical rows
+ * and alias conversions, then restores their scalar state even on failure.
+ * Working strings are reused; ordinary reads need no special context.
+ * Destroy the scope before releasing its registry. */
+bool qa_cvars_value_scope_create(qa_cvars *, const qa_cvar_assignment *, size_t,
+    qa_cvars_value_scope **, qa_error *);
+bool qa_cvars_value_scope_run(qa_cvars_value_scope *, bool (*)(void *, qa_error *),
+    void *, qa_error *);
+void qa_cvars_value_scope_destroy(qa_cvars_value_scope *);
+
 typedef struct qa_cvars_edit_command {
     qa_cvars_edit_kind kind;
     const char *name, *value, *description;

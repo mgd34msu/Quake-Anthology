@@ -606,16 +606,47 @@ static const char *source_name(const qa_cvars *registry, const char *name)
         !qa_cvars_name_valid(qa_cvars_dialect(registry), name) ? "BADNAME" : name;
 }
 
+void qac_cvars_scalar_free(cvar *entry)
+{
+    free((char *)entry->view.value); entry->view.value=NULL;
+    free((char *)entry->view.reset_value); entry->view.reset_value=NULL;
+    free((char *)entry->view.latched_value); entry->view.latched_value=NULL;
+    while (entry->details) {
+        cvar_detail *detail=entry->details; entry->details=detail->next;
+        free(detail->value); free(detail->latched_value); free(detail);
+    }
+}
+
+bool qac_cvars_scalar_copy(cvar *copy,const cvar *entry,qa_error *error)
+{
+    copy->details=NULL;
+    copy->view.value=qac_copy(entry->view.value,error);
+    copy->view.reset_value=qac_copy(entry->view.reset_value,error);
+    copy->view.latched_value=entry->view.latched_value?qac_copy(entry->view.latched_value,error):NULL;
+    copy->view.number=entry->view.number; copy->view.integer=entry->view.integer;
+    copy->view.explicit_value=entry->view.explicit_value; copy->pending_explicit=entry->pending_explicit;
+    if (!copy->view.value || !copy->view.reset_value || (entry->view.latched_value && !copy->view.latched_value)) goto failed;
+    cvar_detail **tail=&copy->details;
+    for (const cvar_detail *detail=entry->details;detail;detail=detail->next) {
+        cvar_detail *next=calloc(1,sizeof(*next));
+        if (!next) { qac_fail(error,QA_ERROR_MEMORY,"copying canonical enum detail"); goto failed; }
+        *tail=next; tail=&next->next;
+        next->binding=detail->binding; next->dialect=detail->dialect;
+        next->value=detail->value?qac_copy(detail->value,error):NULL;
+        next->latched_value=detail->latched_value?qac_copy(detail->latched_value,error):NULL;
+        if ((detail->value && !next->value) || (detail->latched_value && !next->latched_value)) goto failed;
+    }
+    return true;
+failed:
+    qac_cvars_scalar_free(copy); return false;
+}
+
 void qac_cvars_entry_free(cvar *entry)
 {
     if (!entry->canonical) {
-        free((char *)entry->view.value);
-        free((char *)entry->view.reset_value);
-        free((char *)entry->view.latched_value);
+        qac_cvars_scalar_free(entry);
         if (!entry->definition)
             for (size_t d = 0; d < QA_CVAR_CATALOG_DIALECTS; ++d) free(entry->defaults[d]);
-        while (entry->details) { cvar_detail *detail=entry->details; entry->details=detail->next;
-            free(detail->value); free(detail->latched_value); free(detail); }
     }
     free(entry->declaration_default);
     metadata_release(entry->metadata);
@@ -760,6 +791,143 @@ static bool record_affected(const qa_cvars *registry,const cvar_values *values,c
         if (qa_cvar_catalog_operands[conversion->operand_first+i].row_index==canonical->catalog_row) return true;
     return false;
 }
+typedef struct cvar_scope_row {
+    size_t ordinal;
+    cvar working, baseline;
+    bool active;
+} cvar_scope_row;
+typedef struct cvar_scope_metadata {
+    union { cvar *row; cvar_alias *alias; } entry;
+    bool alias, modified;
+    uint64_t modification_count;
+} cvar_scope_metadata;
+typedef struct cvar_scope_view {
+    qa_cvars *registry;
+    cvar_values *values;
+    uint64_t declarations;
+    uint32_t changed_flags;
+    bool userinfo_modified;
+} cvar_scope_view;
+typedef struct cvar_scope_assignment {
+    qa_cvar_handle handle;
+    char *value;
+} cvar_scope_assignment;
+struct qa_cvars_value_scope {
+    qa_cvars *registry;
+    qa_cvars_edit *edit;
+    cvar_scope_assignment *assignments;
+    size_t assignment_count;
+    cvar_scope_row *rows;
+    size_t row_count, row_capacity;
+    cvar_scope_metadata *metadata;
+    size_t metadata_count, metadata_capacity;
+    cvar_scope_view *views;
+    size_t view_count;
+    uint64_t views_revision;
+};
+
+static void scalar_swap(cvar *first,cvar *second)
+{
+#define SCALAR_SWAP(type,member) do { type previous=first->member; first->member=second->member; second->member=previous; } while (0)
+    SCALAR_SWAP(const char *,view.value);
+    SCALAR_SWAP(const char *,view.reset_value);
+    SCALAR_SWAP(const char *,view.latched_value);
+    SCALAR_SWAP(float,view.number);
+    SCALAR_SWAP(int32_t,view.integer);
+    SCALAR_SWAP(bool,view.explicit_value);
+    SCALAR_SWAP(bool,pending_explicit);
+    SCALAR_SWAP(cvar_detail *,details);
+#undef SCALAR_SWAP
+}
+static bool scope_metadata_add(qa_cvars_value_scope *scope,cvar *row,cvar_alias *alias,qa_error *error)
+{
+    for (size_t i=0;i<scope->metadata_count;++i) {
+        const cvar_scope_metadata *item=scope->metadata+i;
+        if (alias ? item->alias && item->entry.alias==alias : !item->alias && item->entry.row==row) return true;
+    }
+    if (scope->metadata_count==scope->metadata_capacity) {
+        size_t capacity=scope->metadata_capacity?scope->metadata_capacity*2:16;
+        if (capacity<scope->metadata_capacity || capacity>SIZE_MAX/sizeof(*scope->metadata))
+            return qac_fail(error,QA_ERROR_MEMORY,"temporary cvar metadata exceeds address space");
+        void *storage=realloc(scope->metadata,capacity*sizeof(*scope->metadata));
+        if (!storage) return qac_fail(error,QA_ERROR_MEMORY,"retaining temporary cvar metadata");
+        scope->metadata=storage; scope->metadata_capacity=capacity;
+    }
+    cvar_scope_metadata *item=scope->metadata+scope->metadata_count++;
+    item->alias=alias!=NULL;
+    if (alias) { item->entry.alias=alias; item->modified=alias->modified; item->modification_count=alias->modification_count; }
+    else { item->entry.row=row; item->modified=row->view.modified; item->modification_count=row->view.modification_count; }
+    return true;
+}
+static bool scope_metadata_collect(qa_cvars_value_scope *scope,const cvar *canonical,qa_error *error)
+{
+    for (size_t i=0;i<scope->view_count;++i) {
+        cvar_scope_view *view=scope->views+i;
+        for (cvar *row=view->values->first;row;row=row->next)
+            if ((row->ordinal==canonical->ordinal || record_affected(view->registry,view->values,row,canonical)) &&
+                !scope_metadata_add(scope,row,NULL,error)) return false;
+        for (cvar_alias *alias=view->values->aliases;alias;alias=alias->next)
+            if (alias_affected(view->registry,view->values,alias,canonical) &&
+                !scope_metadata_add(scope,NULL,alias,error)) return false;
+    }
+    return true;
+}
+static bool scope_scalar_equal(const cvar *first,const cvar *second)
+{
+    const char *a[]={first->view.value,first->view.reset_value,first->view.latched_value};
+    const char *b[]={second->view.value,second->view.reset_value,second->view.latched_value};
+    for (size_t i=0;i<3;++i)
+        if ((!a[i])!=(!b[i]) || (a[i] && strcmp(a[i],b[i]))) return false;
+    if (first->pending_explicit!=second->pending_explicit || first->view.explicit_value!=second->view.explicit_value) return false;
+    const cvar_detail *left=first->details,*right=second->details;
+    for (;left && right;left=left->next,right=right->next) {
+        if (left->binding!=right->binding || left->dialect!=right->dialect) return false;
+        const char *x[]={left->value,left->latched_value},*y[]={right->value,right->latched_value};
+        for (size_t i=0;i<2;++i)
+            if ((!x[i])!=(!y[i]) || (x[i] && strcmp(x[i],y[i]))) return false;
+    }
+    return !left && !right;
+}
+static bool scope_row_refresh(cvar_scope_row *row,const cvar *canonical,qa_error *error)
+{
+    if (row->baseline.view.value && scope_scalar_equal(&row->baseline,canonical)) return true;
+    cvar baseline={0},working={0};
+    if (!qac_cvars_scalar_copy(&baseline,canonical,error) || !qac_cvars_scalar_copy(&working,canonical,error)) {
+        qac_cvars_scalar_free(&baseline); qac_cvars_scalar_free(&working); return false;
+    }
+    qac_cvars_scalar_free(&row->baseline); qac_cvars_scalar_free(&row->working);
+    row->baseline=baseline; row->working=working; return true;
+}
+static bool scope_capture(cvar_target target,cvar *canonical,qa_error *error)
+{
+    qa_cvars_value_scope *scope=target.registry->store->value_scope;
+    if (!scope) return true;
+    size_t i=0;
+    while (i<scope->row_count && scope->rows[i].ordinal!=canonical->ordinal) ++i;
+    bool added=i==scope->row_count;
+    if (added) {
+        if (i==scope->row_capacity) {
+            size_t capacity=scope->row_capacity?scope->row_capacity*2:4;
+            if (capacity<scope->row_capacity || capacity>SIZE_MAX/sizeof(*scope->rows))
+                return qac_fail(error,QA_ERROR_MEMORY,"temporary cvar rows exceed address space");
+            void *storage=realloc(scope->rows,capacity*sizeof(*scope->rows));
+            if (!storage) return qac_fail(error,QA_ERROR_MEMORY,"retaining temporary cvar rows");
+            scope->rows=storage; scope->row_capacity=capacity;
+        }
+        cvar_scope_row *row=scope->rows+i;
+        *row=(cvar_scope_row){.ordinal=canonical->ordinal};
+        if (!scope_row_refresh(row,canonical,error)) return false;
+        ++scope->row_count;
+        if (!scope_metadata_collect(scope,canonical,error)) return false;
+    }
+    cvar_scope_row *row=scope->rows+i;
+    if (row->active) return true;
+    if (!scope_row_refresh(row,canonical,error)) return false;
+    scalar_swap(canonical,&row->working); row->active=true;
+    ++target.registry->store->projection_revision;
+    return true;
+}
+
 static bool receives_value(qa_cvars *registry,const cvar_values *values,const qa_cvar_view *view,bool bound)
 {
     if (bound) return true;
@@ -1112,6 +1280,7 @@ void qa_cvars_destroy(qa_cvars *registry)
     qa_cvars **link=&store->views;
     while (*link!=registry) link=&(*link)->next_view;
     *link=registry->next_view;
+    ++store->views_revision;
     if (store->last_view==registry) {
         store->last_view=store->views;
         while (store->last_view && store->last_view->next_view) store->last_view=store->last_view->next_view;
@@ -1226,18 +1395,24 @@ const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *registry,cvar_values
 const qa_cvar_view *qa_cvars_handle(const qa_cvars *registry,size_t handle)
 { return qac_cvars_values_handle(registry,qac_cvars_current_values(registry),handle); }
 
-static const qa_cvar_view *typed_read(const qa_cvars *registry,cvar_values *values,qa_cvar_handle handle)
+static cvar_name_node *typed_node(cvar_values *values,qa_cvar_handle handle)
 {
-    if (!handle.slot) return NULL;
-    if (!values) return NULL;
+    if (!handle.slot || !values) return NULL;
     size_t ordinal=(handle.slot>>1)-1;
     if (handle.slot&1) {
         cvar_alias *alias=ordinal<values->alias_capacity?values->alias_rows[ordinal]:NULL;
-        return alias?alias_view(registry,values,alias):NULL;
+        return alias?&alias->indexed_name:NULL;
     }
     cvar *entry=ordinal<values->row_capacity?values->rows[ordinal]:NULL;
-    return entry?qac_cvars_project(registry,values,entry):NULL;
+    return entry?&entry->indexed_name:NULL;
 }
+static const qa_cvar_view *typed_read(const qa_cvars *registry,cvar_values *values,qa_cvar_handle handle)
+{
+    cvar_name_node *node=typed_node(values,handle);
+    return !node?NULL:node->alias?alias_view(registry,values,node->owner.alias):
+        qac_cvars_project(registry,values,node->owner.entry);
+}
+
 static qa_cvar_handle typed_resolve(const qa_cvars *registry,cvar_values *values,const char *name)
 {
     const cvar_name_node *node=find_name(registry,values,name);
@@ -1475,6 +1650,10 @@ static bool write_group(cvar_target target,cvar_write *writes,size_t count,qa_er
 {
     /* All publications and noninvertible details are admitted before changing
      * the one scalar owner. Source callbacks run after the whole group commits. */
+    for (size_t i=0;i<count;++i) {
+        if (!scope_capture(target,qac_cvars_canonical(writes[i].entry),error)) return false;
+        if (target.registry->store->value_scope) writes[i].silent=true;
+    }
     size_t prepared=0;
     for (;prepared<count;++prepared) if (!write_prepare(target,&writes[prepared],error)) goto failed;
     typedef struct write_previous { const char *value, *reset, *latch; cvar_detail *details; cvar_detail proposed; } write_previous;
@@ -1596,22 +1775,11 @@ static bool set_canonical(cvar_target target,cvar *entry,const char *name,const 
     if (!write_policy(target,&write,name,flags,force,&accepted,error)) return false;
     return !accepted || write_group(target,&write,1,error);
 }
-static bool apply_converted_as(cvar_target target,const char *name,const char *value,
-    bool force,bool staged,bool silent,const qa_cvar_options *grammar,bool canonical_value,qa_error *error)
+static bool apply_resolved_as(cvar_target target,cvar *entry,cvar_alias *alias,
+    const char *name,const char *value,bool force,bool staged,bool silent,
+    const qa_cvar_options *grammar,bool canonical_value,qa_error *error)
 {
     qa_cvars *registry=target.registry;
-    cvar_alias *alias=find_alias(registry,target.values,name);
-    cvar *entry=qac_cvars_find_values(registry,target.values,alias?alias->target:name);
-    if (!entry) {
-        if (qac_q1(qa_cvars_dialect(registry)) && registry->options.role!=QA_CVAR_ROLE_ENGINE)
-            return qac_fail(error,QA_ERROR_NOT_FOUND,"Q1 Source cvar is not registered");
-        if (!qa_cvars_name_valid(qa_cvars_dialect(registry),name)) return qac_fail(error,QA_ERROR_ARGUMENT,"invalid cvar name");
-        entry=create_variable(target,name,"",error);
-        if (!entry) return false;
-        entry->view.console_created=true;
-        entry->view.flags=qa_cvars_dialect(registry)==QA_RULESET_Q3?QA_CVAR_USER_CREATED:qac_q2(qa_cvars_dialect(registry))?QA_Q2_CVAR_CUSTOM:0;
-        entry->flags_dialect=qac_cvars_view_options(registry,target.values).dialect;
-    }
     cvar *canonical=qac_cvars_canonical(entry);
     const qa_cvar_catalog_binding *binding=alias?alias->catalog_binding:entry->catalog_binding;
     qac_cvar_conversion_output converted;
@@ -1647,9 +1815,139 @@ static bool apply_converted_as(cvar_target target,const char *name,const char *v
     free(converted.allocated_value);
     return okay;
 }
+static bool apply_converted_as(cvar_target target,const char *name,const char *value,
+    bool force,bool staged,bool silent,const qa_cvar_options *grammar,bool canonical_value,qa_error *error)
+{
+    qa_cvars *registry=target.registry;
+    cvar_alias *alias=find_alias(registry,target.values,name);
+    cvar *entry=qac_cvars_find_values(registry,target.values,alias?alias->target:name);
+    if (!entry) {
+        if (qac_q1(qa_cvars_dialect(registry)) && registry->options.role!=QA_CVAR_ROLE_ENGINE)
+            return qac_fail(error,QA_ERROR_NOT_FOUND,"Q1 Source cvar is not registered");
+        if (!qa_cvars_name_valid(qa_cvars_dialect(registry),name)) return qac_fail(error,QA_ERROR_ARGUMENT,"invalid cvar name");
+        entry=create_variable(target,name,"",error);
+        if (!entry) return false;
+        entry->view.console_created=true;
+        entry->view.flags=qa_cvars_dialect(registry)==QA_RULESET_Q3?QA_CVAR_USER_CREATED:qac_q2(qa_cvars_dialect(registry))?QA_Q2_CVAR_CUSTOM:0;
+        entry->flags_dialect=qac_cvars_view_options(registry,target.values).dialect;
+    }
+    return apply_resolved_as(target,entry,alias,name,value,force,staged,silent,grammar,canonical_value,error);
+}
+
 static bool apply_converted(cvar_target target,const char *name,const char *value,
     bool force,bool staged,qa_error *error)
 { return apply_converted_as(target,name,value,force,staged,false,NULL,false,error); }
+
+static bool scope_metadata_prepare(qa_cvars_value_scope *scope,cvar_target target,qa_error *error)
+{
+    bool current=scope->views_revision==scope->registry->store->views_revision && scope->edit==target.edit;
+    for (size_t i=0;current && i<scope->view_count;++i)
+        current=scope->views[i].declarations==scope->views[i].values->declaration_revision;
+    if (!current) {
+        size_t count=0;
+        for (qa_cvars *view=scope->registry->store->views;view;view=view->next_view) ++count;
+        if (count>SIZE_MAX/sizeof(*scope->views)) return qac_fail(error,QA_ERROR_MEMORY,"temporary cvar views exceed address space");
+        void *storage=realloc(scope->views,count*sizeof(*scope->views));
+        if (count && !storage) return qac_fail(error,QA_ERROR_MEMORY,"retaining temporary cvar views");
+        scope->views=storage; scope->view_count=count; scope->metadata_count=0;
+        size_t i=0;
+        for (qa_cvars *view=scope->registry->store->views;view;view=view->next_view) {
+            cvar_values *values=qac_cvars_current_values(view);
+            scope->views[i++]=(cvar_scope_view){.registry=view,.values=values,.declarations=values->declaration_revision};
+        }
+        cvar_values *values=canonical_values(target);
+        for (i=0;i<scope->row_count;++i)
+            if (!scope_metadata_collect(scope,values->rows[scope->rows[i].ordinal],error)) return false;
+        scope->views_revision=scope->registry->store->views_revision; scope->edit=target.edit;
+    }
+    for (size_t i=0;i<scope->view_count;++i) {
+        cvar_scope_view *view=scope->views+i;
+        view->changed_flags=view->values->changed_flags;
+        view->userinfo_modified=view->values->userinfo_modified;
+    }
+    for (size_t i=0;i<scope->metadata_count;++i) {
+        cvar_scope_metadata *item=scope->metadata+i;
+        item->modified=item->alias?item->entry.alias->modified:item->entry.row->view.modified;
+        item->modification_count=item->alias?item->entry.alias->modification_count:item->entry.row->view.modification_count;
+    }
+    return true;
+}
+
+bool qa_cvars_value_scope_run(qa_cvars_value_scope *scope,bool (*run)(void *,qa_error *),void *context,qa_error *error)
+{
+    qa_cvars *registry=scope->registry;
+    cvar_target target=live_target(registry);
+    if (!scope_metadata_prepare(scope,target,error) || !mutation_begin(registry,error)) return false;
+    qa_cvars_value_scope *previous=registry->store->value_scope;
+    registry->store->value_scope=scope;
+    bool okay=true;
+    for (size_t i=0;okay && i<scope->assignment_count;++i) {
+        cvar_scope_assignment *assignment=scope->assignments+i;
+        cvar_name_node *node=typed_node(target.values,assignment->handle);
+        if (!node) { okay=qac_fail(error,QA_ERROR_NOT_FOUND,"temporary cvar registration was removed"); break; }
+        cvar_alias *alias=node->alias?node->owner.alias:NULL;
+        cvar *entry=alias?qac_cvars_source_row(registry,target.values,
+            canonical_values(target)->rows[alias->target_ordinal],error):node->owner.entry;
+        if (!entry) { okay=false; break; }
+        okay=apply_resolved_as(target,entry,alias,node->name,assignment->value,true,false,true,NULL,false,error);
+    }
+    if (okay && run) okay=run(context,error);
+    registry->store->value_scope=previous;
+    cvar_values *values=canonical_values(target);
+    for (size_t i=scope->row_count;i>0;--i) {
+        cvar_scope_row *row=scope->rows+i-1;
+        if (!row->active) continue;
+        scalar_swap(values->rows[row->ordinal],&row->working); row->active=false;
+    }
+    for (size_t i=0;i<scope->metadata_count;++i) {
+        cvar_scope_metadata *item=scope->metadata+i;
+        if (item->alias) { item->entry.alias->modified=item->modified; item->entry.alias->modification_count=item->modification_count; }
+        else { item->entry.row->view.modified=item->modified; item->entry.row->view.modification_count=item->modification_count; }
+    }
+    for (size_t i=0;i<scope->view_count;++i) {
+        cvar_scope_view *view=scope->views+i;
+        view->values->changed_flags=view->changed_flags; view->values->userinfo_modified=view->userinfo_modified;
+        for (size_t j=0;j<scope->row_count;++j) qac_cvars_refresh(view->registry,view->values->rows[scope->rows[j].ordinal]);
+    }
+    if (!target.edit) ++registry->store->revision;
+    return mutation_end(registry,okay,error);
+}
+
+void qa_cvars_value_scope_destroy(qa_cvars_value_scope *scope)
+{
+    if (!scope) return;
+    for (size_t i=0;i<scope->row_count;++i) {
+        qac_cvars_scalar_free(&scope->rows[i].working); qac_cvars_scalar_free(&scope->rows[i].baseline);
+    }
+    for (size_t i=0;i<scope->assignment_count;++i) free(scope->assignments[i].value);
+    qa_cvars_destroy(scope->registry);
+    free(scope->rows); free(scope->metadata); free(scope->views); free(scope->assignments); free(scope);
+}
+
+bool qa_cvars_value_scope_create(qa_cvars *registry,const qa_cvar_assignment *assignments,size_t count,
+    qa_cvars_value_scope **out,qa_error *error)
+{
+    if (!registry || !out || (count && !assignments) || count>SIZE_MAX/sizeof(cvar_scope_assignment))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"invalid temporary cvar assignments");
+    qa_cvars_value_scope *scope=calloc(1,sizeof(*scope));
+    if (!scope) return qac_fail(error,QA_ERROR_MEMORY,"allocating temporary cvar assignments");
+    if (!qa_cvars_retain(registry,error)) { free(scope); return false; }
+    scope->registry=registry;
+    scope->assignments=count?calloc(count,sizeof(*scope->assignments)):NULL;
+    if (count && !scope->assignments) { qac_fail(error,QA_ERROR_MEMORY,"retaining temporary cvar assignments"); goto failed; }
+    for (size_t i=0;i<count;++i) {
+        if (!assignments[i].name || !assignments[i].value) { qac_fail(error,QA_ERROR_ARGUMENT,"temporary cvar assignment has no name or value"); goto failed; }
+        qa_cvar_handle handle=qa_cvars_resolve(registry,source_name(registry,assignments[i].name));
+        if (!handle.slot) { qac_fail(error,QA_ERROR_NOT_FOUND,"temporary cvar assignment requires a registered name and value"); goto failed; }
+        char *value=qac_copy(assignments[i].value,error);
+        if (!value) goto failed;
+        scope->assignments[scope->assignment_count++]=(cvar_scope_assignment){handle,value};
+    }
+    if (!qa_cvars_value_scope_run(scope,NULL,NULL,error)) goto failed;
+    *out=scope; return true;
+failed:
+    qa_cvars_value_scope_destroy(scope); return false;
+}
 
 bool qac_cvars_restore_row(qa_cvars_edit *edit,const char *name,const char *value,
     const char *latch,qa_ruleset_id dialect,bool canonical_value,qa_error *error)

@@ -6384,6 +6384,95 @@ static void test_shared_cvar_archive(void)
     qa_cvars_destroy(client); qa_cvars_destroy(engine);
 }
 
+typedef struct cvar_scope_fixture {
+    qa_cvars *engine, *source, *q2;
+    qa_cvars_value_scope *nested;
+    const char *working;
+    unsigned calls;
+    bool fail, mutate;
+} cvar_scope_fixture;
+static bool cvar_scope_nested(void *context,qa_error *error)
+{
+    cvar_scope_fixture *fixture=context; (void)error;
+    CHECK(qa_cvars_find(fixture->engine,"sv_cheats")->integer==1);
+    CHECK(qa_cvars_find(fixture->q2,"dmflags")->integer==16);
+    CHECK(qa_cvars_find(fixture->source,"cg_fov")->integer==115);
+    return true;
+}
+static bool cvar_scope_body(void *context,qa_error *error)
+{
+    cvar_scope_fixture *fixture=context;
+    CHECK(qa_cvars_find(fixture->source,"cg_fov")->integer==115);
+    CHECK(qa_cvars_find(fixture->engine,"fov")->integer==115);
+    CHECK(qa_cvars_find(fixture->source,"g_gametype")->integer==0);
+    CHECK(qa_cvars_find(fixture->source,"bot_enable")->integer==0);
+    CHECK(qa_cvars_find(fixture->engine,"gamma")->number==.5f);
+    const char *working=qa_cvars_find(fixture->source,"scope_text")->value;
+    CHECK(!strcmp(working,"temporary"));
+    if (!fixture->mutate && fixture->working) CHECK(working==fixture->working);
+    fixture->working=working; ++fixture->calls;
+    CHECK(qa_cvars_value_scope_run(fixture->nested,cvar_scope_nested,fixture,error));
+    CHECK(qa_cvars_find(fixture->q2,"cheats")->integer==0);
+    CHECK(qa_cvars_find(fixture->source,"cg_fov")->integer==115);
+    if (fixture->mutate) {
+        CHECK(qa_cvars_set(fixture->source,"scope_text","changed by module",true,error));
+        CHECK(qa_cvars_set(fixture->source,"scope_other","changed by module",true,error));
+    }
+    if (fixture->fail) qa_error_set(error,QA_ERROR_FORMAT,0,"module command failed");
+    return !fixture->fail;
+}
+static void test_cvar_value_scope(void)
+{
+    qa_error error={0};
+    qa_cvars *engine=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_NETQUAKE,
+        .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_ENGINE},&error);
+    qa_cvars *source=qa_cvars_create_view(engine,&(qa_cvar_options){.dialect=QA_RULESET_Q3,
+        .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_GAME},&error);
+    qa_cvars *q2=qa_cvars_create_view(engine,&(qa_cvar_options){.dialect=QA_RULESET_Q2_RERELEASE,
+        .side=QA_CVAR_SIDE_SERVER,.role=QA_CVAR_ROLE_GAME},&error);
+    CHECK(engine && source && q2);
+    CHECK(qa_cvars_register(source,"scope_text","original",0,7,NULL,&error));
+    CHECK(qa_cvars_register(source,"scope_other","original",0,7,NULL,&error));
+    CHECK(qa_cvars_set(source,"g_gametype","8",true,&error));
+    CHECK(qa_cvars_set(q2,"cheats","0",true,&error));
+    CHECK(qa_cvars_set(q2,"dmflags","0",true,&error));
+    CHECK(qa_cvars_set(source,"bot_enable","1",true,&error));
+    CHECK(qa_cvars_set(source,"cg_fov","90",true,&error));
+    const qa_cvar_view before=*qa_cvars_find(source,"cg_fov");
+    const char *original_text=qa_cvars_find(source,"scope_text")->value;
+    qa_cvar_assignment values[]={{"fov","115"},{"g_gametype","0"},{"bot_enable","0"},
+        {"r_gamma","2"},{"scope_text","temporary"}};
+    qa_cvar_assignment permissions[]={{"cheats","1"},{"dmflags","16"}};
+    qa_cvars_value_scope *scope=NULL,*nested=NULL;
+    CHECK(qa_cvars_value_scope_create(source,values,sizeof(values)/sizeof(*values),&scope,&error));
+    CHECK(qa_cvars_value_scope_create(q2,permissions,2,&nested,&error));
+    cvar_scope_fixture fixture={.engine=engine,.source=source,.q2=q2,.nested=nested};
+    for (unsigned i=0;i<3;++i) CHECK(qa_cvars_value_scope_run(scope,cvar_scope_body,&fixture,&error));
+    CHECK(fixture.calls==3 && qa_cvars_find(source,"g_gametype")->integer==8);
+    CHECK(qa_cvars_find(source,"bot_enable")->integer==1);
+    CHECK(qa_cvars_find(source,"scope_text")->value==original_text);
+    const qa_cvar_view *after=qa_cvars_find(source,"cg_fov");
+    CHECK(after->value==before.value && after->modification_count==before.modification_count && after->modified==before.modified);
+    fixture.fail=fixture.mutate=true;
+    CHECK(!qa_cvars_value_scope_run(scope,cvar_scope_body,&fixture,&error) && error.code==QA_ERROR_FORMAT);
+    CHECK(qa_cvars_find(source,"scope_text")->value==original_text);
+    CHECK(!strcmp(qa_cvars_find(source,"scope_other")->value,"original"));
+    fixture.fail=fixture.mutate=false; fixture.working=NULL; error=(qa_error){0};
+    qa_cvars *late=qa_cvars_create_view(engine,&(qa_cvar_options){.dialect=QA_RULESET_Q3,
+        .side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_CGAME},&error);
+    CHECK(late && qa_cvars_value_scope_run(scope,cvar_scope_body,&fixture,&error));
+    qa_cvars_destroy(late);
+    qa_cvars_edit *edit=NULL;
+    CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    CHECK(qa_cvars_set(source,"cg_fov","100",true,&error));
+    CHECK(qa_cvars_value_scope_run(scope,cvar_scope_body,&fixture,&error));
+    CHECK(qa_cvars_find(source,"cg_fov")->integer==100);
+    CHECK(qa_cvars_edit_ready(edit,&error)); qa_cvars_edit_publish(edit);
+    CHECK(qa_cvars_edit_finish(engine,&error) && qa_cvars_find(source,"cg_fov")->integer==100);
+    qa_cvars_value_scope_destroy(nested); qa_cvars_value_scope_destroy(scope);
+    qa_cvars_destroy(q2); qa_cvars_destroy(source); qa_cvars_destroy(engine);
+}
+
 static void test_cvar_info_storage(void)
 {
     uint8_t color=7;
@@ -8899,6 +8988,7 @@ int main(int argc, char **argv)
     test_q3_received_commands();
     test_q3_command_cursors();
     test_shared_cvar_archive();
+    test_cvar_value_scope();
     test_cvar_info_storage();
     test_common_compression();
     test_medium_coverage();

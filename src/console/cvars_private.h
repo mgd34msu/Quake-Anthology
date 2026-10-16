@@ -137,8 +137,9 @@ struct cvar_store {
     qa_cvar_video_resolver video_resolver;
     void *video_user;
     qa_cvars *views, *last_view;
-    uint64_t revision, projection_revision, next_binding;
+    uint64_t revision, projection_revision, next_binding, views_revision;
     struct qa_cvars_edit *edit;
+    qa_cvars_value_scope *value_scope;
     size_t references;
     qa_arena metadata_storage;
     qa_arena name_storage; /* admitted guest names outlive metadata versions */
@@ -210,6 +211,8 @@ struct qa_cvars {
 };
 bool qac_cvars_touch(qa_cvars *, qa_error *);
 void qac_cvars_entry_free(cvar *);
+bool qac_cvars_scalar_copy(cvar *, const cvar *, qa_error *);
+void qac_cvars_scalar_free(cvar *);
 void qac_cvars_alias_free(cvar_alias *);
 cvar_alias *qac_cvars_alias_copy(qa_cvars *, const cvar_alias *, qa_error *);
 bool qac_cvars_metadata_replace(qa_cvars *, cvar_metadata **, const char *,

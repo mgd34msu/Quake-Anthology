@@ -536,23 +536,9 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
             if (!qac_cvars_metadata_retain(copy->metadata,error)) { free(copy); goto failed; }
             copy->projection=(cvar_projection){0};
             copy->next = NULL; copy->canonical = NULL;
-            copy->view.value = qac_copy(entry->view.value, error);
-            copy->view.reset_value = qac_copy(entry->view.reset_value, error);
-            copy->view.latched_value = entry->view.latched_value ? qac_copy(entry->view.latched_value, error) : NULL;
             copy->declaration_default = NULL;
-            memset(copy->defaults, 0, sizeof(copy->defaults)); copy->details=NULL;
-            cvar_detail **detail_tail=&copy->details;
-            for (const cvar_detail *detail=entry->details;detail;detail=detail->next) {
-                cvar_detail *next=calloc(1,sizeof(*next));
-                if (!next) { qac_cvars_entry_free(copy); qac_fail(error,QA_ERROR_MEMORY,"copying canonical enum detail"); goto failed; }
-                next->binding=detail->binding; next->dialect=detail->dialect;
-                next->value=detail->value?qac_copy(detail->value,error):NULL;
-                next->latched_value=detail->latched_value?qac_copy(detail->latched_value,error):NULL;
-                *detail_tail=next; detail_tail=&next->next;
-                if ((detail->value && !next->value) || (detail->latched_value && !next->latched_value)) { qac_cvars_entry_free(copy); goto failed; }
-            }
-            bool okay = copy->view.value && copy->view.reset_value &&
-                (!entry->view.latched_value || copy->view.latched_value);
+            memset(copy->defaults, 0, sizeof(copy->defaults));
+            bool okay=qac_cvars_scalar_copy(copy,entry,error);
             if (!entry->definition)
                 for (size_t d = 0; okay && d < QA_CVAR_CATALOG_DIALECTS; ++d)
                     if (entry->defaults[d] && !(copy->defaults[d] = qac_copy(entry->defaults[d], error))) okay = false;
@@ -814,6 +800,7 @@ qa_cvars *qac_cvars_store_create(const qa_cvar_options *options, qa_error *error
     store->active_dialect = options->dialect; store->references = 1;
     store->values.declaration_revision = 1;
     store->views = store->last_view = registry;
+    store->views_revision = 1;
     if (!qac_cvars_index_reserve(registry, &store->values, qa_cvar_catalog_binding_count, error) ||
         !qac_cvars_rows_reserve(&store->values, qa_cvar_catalog_binding_count, qa_cvar_catalog_binding_count, error)) goto failed;
     cvar **tail = &store->values.first;
@@ -891,6 +878,7 @@ qa_cvars *qa_cvars_create_view(qa_cvars *shared, const qa_cvar_options *options,
     if (edit && !qac_cvars_edit_add_view(edit, registry, error)) goto failed;
     registry->candidate_edit = edit;
     registry->store->last_view->next_view = registry; registry->store->last_view = registry;
+    ++registry->store->views_revision;
     ++registry->store->references;
     return registry;
 failed:
