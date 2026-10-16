@@ -29,7 +29,7 @@ static bool retained(const qa_application_engine_shutdown *loan)
 static bool callbacks_returned(const qa_application *app)
 {
     return app->operation == APPLICATION_IDLE && !app->q3_round_active && !app->frame_preparing &&
-        !app->failed_publications && !app->q1_original_save && !app->q2_original_save && !app->publication_started &&
+        !app->q1_original_save && !app->q2_original_save && !app->publication_started &&
         !app->destroy_requested && !app->finalizing && !app->engine_shutdown_provider &&
         app->console && app->cvars && qa_console_idle(app->console) &&
         application_rankings_idle(app) && application_bots_can_destroy(app) &&
@@ -70,6 +70,7 @@ bool qa_application_engine_shutdown_begin(qa_application *app,
     }
     if (!callbacks_returned(app) || app->startup_flow || app->client_preparation ||
         !qa_cvars_observer_idle(app->cvars) ||
+        !application_publication_retry_cleanup(app, error) ||
         !application_native_q2_baselines_destroy(app, error) || !application_guests_idle(app))
         return error && error->code != QA_OK ? false :
             application_fail(error, QA_ERROR_ARGUMENT, "ENGINE detach requires returned application callbacks");
@@ -92,6 +93,7 @@ bool qa_application_engine_shutdown_begin_candidate(qa_application *app,
         return true;
     }
     if (!callbacks_returned(app) ||
+        !application_publication_retry_cleanup(app, error) ||
         !application_startup_flow_retirement_ready(app, candidate, values, error))
         return error && error->code != QA_OK ? false :
             application_fail(error, QA_ERROR_ARGUMENT, "Candidate ENGINE shutdown retains entered callbacks");
