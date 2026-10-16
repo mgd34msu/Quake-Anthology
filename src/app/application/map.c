@@ -2922,19 +2922,8 @@ static bool q3_world_gravity(void *opaque, float gravity, qa_error *error)
 static void q3_diagnostic(void *opaque, qa_actor_id actor,
                           const char *message)
 {
-    application_provider *provider = opaque;
-    qa_error error = {0};
-    qa_string_id text;
-    if (!qa_strings_intern_cstr(
-            qa_session_strings(provider->application->session), message,
-            &text, &error) ||
-        !application_emit_q3_map(
-            provider,
-            &(qa_q3_map_event){.kind = QA_Q3_MAP_PRINT,
-                               .actor = actor,
-                               .text = text},
-            &error))
-        application_fault(provider->application, &error);
+    (void)actor;
+    (void)application_native_q3_console_print(opaque, message, NULL);
 }
 
 static qa_q3_map_options q3_map_options(application_provider *provider,
