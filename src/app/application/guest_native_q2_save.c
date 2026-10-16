@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_original_save.h"
 #include "guest_q2_control.h"
 #include "qa/network.h"
 #include "qa/native_observe.h"
@@ -100,6 +101,18 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
     if (engine->initialized && engine->map_ready &&
         !application_q2_control_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;
+    if (application_q2_original_source(provider)) {
+        qa_native_instance *native=qa_native_host_instance(provider->state.native.host);
+        qa_native_entity_table table;
+        if (!qa_native_entity_table_get(native,&table,error)) return false;
+        for (uint32_t slot=1;slot<table.count;++slot) {
+            qa_native_slot_binding binding;
+            if (!qa_native_slot(native,slot,&binding,error)) return false;
+            if (binding.kind==QA_NATIVE_SLOT_OWNED &&
+                !application_native_q2_bind(engine,provider->state.native.host,slot,binding.actor,error))
+                return false;
+        }
+    }
     if (!application_native_q2_visibility_validate(engine, error)) return false;
     if(!application_native_q2_callbacks_finish_restore(engine,error)) return false;
     if(engine->inventory_rows&&engine->map_ready&&

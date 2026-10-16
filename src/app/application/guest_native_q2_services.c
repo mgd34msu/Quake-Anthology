@@ -3,6 +3,7 @@
 #include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_original_save.h"
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
 #include "guest_q2_control.h"
@@ -627,9 +628,10 @@ bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slo
 {
     (void)host;
     struct application_native_q2 *engine = opaque;
-    return qa_session_bind_execution(engine->provider->application->session, actor,
-        engine->provider->owner, error) &&
-        (application_native_q2_source_actors_declared(engine) ?
+    if (!qa_session_bind_execution(engine->provider->application->session, actor,
+        engine->provider->owner, error)) return false;
+    if (!engine->map_ready && application_q2_original_source(engine->provider)) return true;
+    return application_native_q2_source_actors_declared(engine) ?
          application_native_q2_source_actors_admit(engine, slot, actor, error) :
-         application_native_q2_combat_admit(engine, slot, actor, true, error));
+         application_native_q2_combat_admit(engine, slot, actor, true, error);
 }
