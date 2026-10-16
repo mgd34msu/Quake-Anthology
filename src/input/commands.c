@@ -275,7 +275,10 @@ void qa_usercmd_build(const qa_input_command_intent *intent,
     qa_usercmd command = {.kind = kind, .sequence = frame->sequence,
         .angles = intent->angles, .milliseconds = (uint32_t)trunc(!physical && elapsed > 250 ? 100 : elapsed),
         .duration_ns = physical ? 0 : (uint64_t)(elapsed * 1000000.0),
-        .buttons = buttons, .server_time_ms = q3 ? (int32_t)frame->server_time_ms : 0,
+        .buttons = buttons,
+        .offhand_buttons = (action(intent, QA_INPUT_GRAPPLE) ? QA_USERCMD_GRAPPLE : 0) |
+            (action(intent, QA_INPUT_GRENADE) ? QA_USERCMD_GRENADE : 0),
+        .server_time_ms = q3 ? (int32_t)frame->server_time_ms : 0,
         .server_frame = physical || kind == QA_RULESET_Q2_RERELEASE ? (int32_t)frame->server_frame : 0,
         .acknowledged_server_seconds = kind == QA_RULESET_NETQUAKE ? frame->acknowledged_server_seconds : 0,
         .weapon = physical || q3 ? (uint8_t)(int32_t)frame->weapon : 0,
@@ -402,7 +405,8 @@ bool qa_usercmd_equal(const qa_usercmd *left, const qa_usercmd *right)
         !memcmp(&left->forward_move, &right->forward_move, sizeof(float)) &&
         !memcmp(&left->side_move, &right->side_move, sizeof(float)) &&
         !memcmp(&left->up_move, &right->up_move, sizeof(float)) &&
-        left->buttons == right->buttons && left->impulse == right->impulse &&
+        left->buttons == right->buttons && left->offhand_buttons == right->offhand_buttons &&
+        left->impulse == right->impulse &&
         left->light_level == right->light_level && left->has_light_level == right->has_light_level &&
         left->weapon == right->weapon;
 }

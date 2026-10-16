@@ -624,6 +624,24 @@ static bool command_jump(const qa_usercmd *command)
                                   (command->buttons & 8u) != 0);
 }
 
+static qa_equipment_controls command_equipment_controls(const application_move_call *move,
+    const qa_usercmd *command, const qa_body_state *body, qa_vec3 view_angles)
+{
+    const qa_player_state *player = &move->control->player;
+    return (qa_equipment_controls){
+        .view_angles = view_angles,
+        .previous_velocity = body->velocity,
+        .view_height = player->view_height,
+        .gravity = move->application->physics->gravity,
+        .grapple_held = (command->offhand_buttons & QA_USERCMD_GRAPPLE) != 0,
+        .grenade_held = (command->offhand_buttons & QA_USERCMD_GRENADE) != 0,
+        .jump = command_jump(command),
+        .primary_attack = (command->buttons & 1u) != 0,
+        .water_level = (uint8_t)(player->water_level < 0 ? 0 : player->water_level > 3 ? 3 : player->water_level),
+        .water_type = player->water_type,
+    };
+}
+
 static qa_q1_input q1_input(const qa_movement_call *call)
 {
     return (qa_q1_input){
@@ -2185,22 +2203,8 @@ static bool prepare_input(application_move_call *move,
         qa_equipment_state equipment;
         if (qa_equipment_read(application->equipment, record->player.actor,
                               &equipment)) {
-            qa_equipment_controls controls = {
-                .view_angles = record->player.view_angles,
-                .previous_velocity = body.velocity,
-                .view_height = record->player.view_height,
-                .gravity = application->physics->gravity,
-                .grapple_held = (input->command.buttons & 1u) != 0,
-                .grenade_held = (input->command.buttons & 1u) != 0,
-                .jump = command_jump(&input->command),
-                .primary_attack = (input->command.buttons & 1u) != 0,
-                .water_level = (uint8_t)(record->player.water_level < 0
-                                             ? 0
-                                             : record->player.water_level > 3
-                                                   ? 3
-                                                   : record->player.water_level),
-                .water_type = record->player.water_type,
-            };
+            qa_equipment_controls controls = command_equipment_controls(move,
+                &input->command, &body, record->player.view_angles);
             move->committed = true;
             if (!qa_equipment_input(application->equipment, record->player.actor,
                                     &controls, error)) return false;
@@ -2243,12 +2247,7 @@ static bool record_nq_equipment(application_move_call *move, qa_error *error)
     if (!app->equipment || !live(app, actor) || !qa_equipment_read(app->equipment, actor, &equipment)) return true;
     if (!qa_world_body_read(app->world, actor, &body, error)) return false;
     const qa_usercmd *command = &move->input->command;
-    qa_equipment_controls controls = {.view_angles = command->angles, .previous_velocity = body.velocity,
-        .view_height = move->control->player.view_height, .gravity = app->physics->gravity,
-        .grapple_held = (command->buttons & 1u) != 0, .grenade_held = (command->buttons & 1u) != 0,
-        .jump = command_jump(command), .primary_attack = (command->buttons & 1u) != 0,
-        .water_level = (uint8_t)(move->control->player.water_level < 0 ? 0 : move->control->player.water_level > 3 ? 3 : move->control->player.water_level),
-        .water_type = move->control->player.water_type};
+    qa_equipment_controls controls = command_equipment_controls(move, command, &body, command->angles);
     move->committed = true;
     return qa_equipment_input(app->equipment, actor, &controls, error);
 }
@@ -2700,7 +2699,7 @@ static bool control_move(qa_application *application,
             struct application_control_turn *prepared = *turn; *turn = NULL;
             if (!application_control_turn_abort(prepared, error)) return false;
         }
-        if (applied) { *applied = *command; applied->buttons = 0; }
+        if (applied) { *applied = *command; applied->buttons = 0; applied->offhand_buttons = 0; }
         if (!context->source_usercmd && !context->source_guestcmd && !context->source_qwcmd && !context->source_nqcmd && !context->source_q2cmd) {
             record->player.command_sequence = command->sequence;
             record->command_seen = true;

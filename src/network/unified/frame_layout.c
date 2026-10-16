@@ -1894,6 +1894,7 @@ static const qa_unified_field input_fields[] = {
     QA_UNIFIED_FIELD(qa_usercmd, side_move, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_usercmd, up_move, QA_UNIFIED_FIELD_F32),
     QA_UNIFIED_FIELD(qa_usercmd, buttons, QA_UNIFIED_FIELD_U32),
+    QA_UNIFIED_FIELD(qa_usercmd, offhand_buttons, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_usercmd, impulse, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_usercmd, light_level, QA_UNIFIED_FIELD_U8),
     QA_UNIFIED_FIELD(qa_usercmd, has_light_level, QA_UNIFIED_FIELD_BOOL),

@@ -320,6 +320,12 @@ bool qa_source_save_memory_delta(qa_source_save_io *io, uint8_t *memory,
 bool qa_source_save_usercmd(qa_source_save_io *io, qa_usercmd *command)
 {
     uint32_t kind = command->kind;
+    /* These bits are unused by the original command buttons. Keep the saved
+     * command layout while native protocol/module buttons remain unchanged. */
+    const uint32_t grapple = UINT32_C(1) << 30, grenade = UINT32_C(1) << 31;
+    uint32_t buttons = command->buttons |
+        ((command->offhand_buttons & QA_USERCMD_GRAPPLE) ? grapple : 0) |
+        ((command->offhand_buttons & QA_USERCMD_GRENADE) ? grenade : 0);
     if (!qa_source_save_u32(io, &kind) || kind > QA_RULESET_Q3 ||
         !qa_source_save_u64(io, &command->sequence) || !qa_source_save_u32(io, &command->milliseconds) ||
         !qa_source_save_u64(io, &command->duration_ns) ||
@@ -327,10 +333,15 @@ bool qa_source_save_usercmd(qa_source_save_io *io, qa_usercmd *command)
         !qa_source_save_f64(io, &command->acknowledged_server_seconds) || !qa_source_save_vec3(io, &command->angles)) return false;
     for (unsigned i = 0; i < 3; ++i) if (!qa_source_save_i32(io, &command->angle_words[i])) return false;
     if (!qa_source_save_f32(io, &command->forward_move) || !qa_source_save_f32(io, &command->side_move) ||
-        !qa_source_save_f32(io, &command->up_move) || !qa_source_save_u32(io, &command->buttons) ||
+        !qa_source_save_f32(io, &command->up_move) || !qa_source_save_u32(io, &buttons) ||
         !qa_source_save_u8(io, &command->impulse) || !qa_source_save_u8(io, &command->light_level) ||
         !qa_source_save_u8(io, &command->weapon)) return false;
     command->kind = (qa_ruleset_id)kind;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        command->buttons = buttons & ~(grapple | grenade);
+        command->offhand_buttons = (buttons & grapple ? QA_USERCMD_GRAPPLE : 0) |
+            (buttons & grenade ? QA_USERCMD_GRENADE : 0);
+    }
     return (isfinite(command->acknowledged_server_seconds) && qa_vec_finite(command->angles) &&
         isfinite(command->forward_move) && isfinite(command->side_move) && isfinite(command->up_move)) ||
         persistence_io_fail(io, QA_ERROR_FORMAT, "Nonfinite movement command");

@@ -22,6 +22,8 @@ typedef struct qa_usercmd_arsenal {
     uint8_t impulse;
 } qa_usercmd_arsenal;
 
+enum { QA_USERCMD_GRAPPLE = 1, QA_USERCMD_GRENADE = 2 };
+
 /* One engine command, retained unchanged from input through simulation and
  * prediction. Native byte/short widths are applied by protocol/module codecs. */
 typedef struct qa_usercmd {
@@ -36,6 +38,7 @@ typedef struct qa_usercmd {
     float forward_move, side_move, up_move;
     uint32_t buttons;
     uint8_t impulse, light_level, weapon;
+    uint8_t offhand_buttons;
     qa_actor_id actor;
     qa_actor_owner provider;
     qa_frame_phase phase;

@@ -218,7 +218,7 @@ static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_in
     if (reading) { seat->options.context.dialect=(qa_ruleset_id)dialect; seat->focus=(qa_input_focus)focus; }
     FIELD(bool,seat,focused); FIELD(u8,seat,impulse);
     if (!tuning(io,&seat->options.gamepad) || !gamepad(io,&seat->gamepad) || !pair(io,&seat->mouse)) return false;
-    for (size_t i=0;i<QA_INPUT_ACTION_COUNT;++i) if (!button(io,&seat->buttons[i])) return false;
+    for (size_t i=0;i<QA_INPUT_GRAPPLE;++i) if (!button(io,&seat->buttons[i])) return false;
     size_t count=seat->catcher_count;
     if (!qa_source_save_count(io,&count,reading?io->input.size/12:SIZE_MAX)) return false;
     if (reading) {
@@ -341,6 +341,14 @@ static bool release_ready(const qa_input_seat *seat,const qa_input_checkpoint_re
     return refs->release_ready && qa_input_release_scope_owned(seat->release,seat,&all,error) &&
         refs->release_ready(refs->context,&seat->options,seat->release,error);
 }
+static bool offhand_buttons(qa_source_save_io *io,qa_input_seat *seat)
+{
+    /* Older checkpoints end after the release state and have no offhand holds. */
+    if (io->direction==QA_SOURCE_SAVE_READ && io->offset==io->input.size) return true;
+    for (size_t i=QA_INPUT_GRAPPLE;i<QA_INPUT_ACTION_COUNT;++i)
+        if (!button(io,&seat->buttons[i])) return false;
+    return true;
+}
 bool qa_input_seat_checkpoint_ready(const qa_input_seat *seat,const qa_input_checkpoint_refs *refs,qa_error *error)
 {
     return seat && refs_ready(refs) && release_ready(seat,refs,error);
@@ -356,7 +364,7 @@ bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoi
         qa_source_save_u64(&io,&services) &&
         qa_source_save_u32(&io,&saved.options.seat) && qa_source_save_u32(&io,&saved.options.context.seat) &&
         continuation(&io,&saved,refs) && recipient_handoffs(&io,&saved,refs) &&
-        release_fields(&io,(qa_input_seat *)seat) && qa_source_save_finish(&io,out);
+        release_fields(&io,(qa_input_seat *)seat) && offhand_buttons(&io,&saved) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) fail(error,"Invalid retained input seat");
     qa_source_save_dispose(&io); return ok;
 }
@@ -378,8 +386,10 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
         saved->options.ui==seat->options.ui && saved->options.ui_user==seat->options.ui_user &&
         saved->options.before_ui==seat->options.before_ui && saved->options.before_ui_user==seat->options.before_ui_user &&
         saved->options.wheel==seat->options.wheel && saved->options.wheel_user==seat->options.wheel_user &&
+        saved->options.action_pressed==seat->options.action_pressed && saved->options.action_user==seat->options.action_user &&
         saved->options.context_ready==seat->options.context_ready && saved->options.context_user==seat->options.context_user &&
         continuation(&io,saved,refs) && recipient_handoffs(&io,saved,refs) && release_fields(&io,saved) &&
+        offhand_buttons(&io,saved) &&
         qa_source_save_finish(&io,NULL) && release_ready(saved,refs,error) &&
         qa_input_binding_text_prepare(saved,NULL,error);
     if (ok) {

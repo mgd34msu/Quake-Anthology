@@ -393,7 +393,8 @@ void qa_bot_input_intent(const qa_bot_input *input, qa_input_command_intent *out
         {QA_BOT_PATROL, QA_INPUT_BUTTON9}, {QA_BOT_FOLLOW_ME, QA_INPUT_BUTTON10},
         {QA_BOT_MOVE_FORWARD, QA_INPUT_FORWARD}, {QA_BOT_MOVE_BACK, QA_INPUT_BACK},
         {QA_BOT_MOVE_LEFT, QA_INPUT_MOVE_LEFT}, {QA_BOT_MOVE_RIGHT, QA_INPUT_MOVE_RIGHT},
-        {QA_BOT_JUMP, QA_INPUT_JUMP}, {QA_BOT_CROUCH, QA_INPUT_CROUCH}
+        {QA_BOT_JUMP, QA_INPUT_JUMP}, {QA_BOT_CROUCH, QA_INPUT_CROUCH},
+        {QA_BOT_GRAPPLE, QA_INPUT_GRAPPLE}, {QA_BOT_GRENADE, QA_INPUT_GRENADE}
     };
     for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
         if (flags & actions[i].source) intent.actions |= UINT64_C(1) << actions[i].action;

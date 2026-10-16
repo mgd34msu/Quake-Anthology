@@ -20,7 +20,8 @@ static const char *const actions[QA_INPUT_ACTION_COUNT] = {
     [QA_INPUT_BUTTON8] = "+button8", [QA_INPUT_BUTTON9] = "+button9",
     [QA_INPUT_BUTTON10] = "+button10", [QA_INPUT_BUTTON11] = "+button11",
     [QA_INPUT_BUTTON12] = "+button12", [QA_INPUT_BUTTON13] = "+button13",
-    [QA_INPUT_BUTTON14] = "+button14"
+    [QA_INPUT_BUTTON14] = "+button14",
+    [QA_INPUT_GRAPPLE] = "+grapple", [QA_INPUT_GRENADE] = "+grenade"
 };
 const char *qa_input_action_command(qa_input_action action) {
     return (unsigned)action < QA_INPUT_ACTION_COUNT ? actions[action] : NULL;
@@ -248,7 +249,8 @@ qa_input_console *qa_input_console_create(const qa_input_console_options *o, qa_
         QA_INPUT_MOVE_LEFT, QA_INPUT_MOVE_RIGHT, QA_INPUT_MOVE_UP, QA_INPUT_MOVE_DOWN,
         QA_INPUT_USE, QA_INPUT_CROUCH, QA_INPUT_WALK, QA_INPUT_SCORES,
         QA_INPUT_TURN_LEFT, QA_INPUT_TURN_RIGHT, QA_INPUT_LOOK_UP, QA_INPUT_LOOK_DOWN,
-        QA_INPUT_STRAFE, QA_INPUT_MLOOK, QA_INPUT_KLOOK, QA_INPUT_HOLSTER};
+        QA_INPUT_STRAFE, QA_INPUT_MLOOK, QA_INPUT_KLOOK, QA_INPUT_HOLSTER,
+        QA_INPUT_GRAPPLE, QA_INPUT_GRENADE};
     for (size_t i = 0; i < sizeof(order) / sizeof(*order); ++i) {
         for (unsigned down = 0; down < 2; ++down) {
             (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[order[i]] + 1);

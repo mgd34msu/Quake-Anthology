@@ -625,8 +625,13 @@ bool qa_input_seat_action(qa_input_seat *s, qa_input_action action, uint64_t sou
         if(button->count==capacity && !source_storage_prepare(s,button->count+1,
             s->binding_count,qa_strings_count(s->command_sources),error)) return false;
     }
-    if (down)
-        return qa_input_button_down(&s->buttons[action], source, time, error);
+    if (down) {
+        bool active=s->buttons[action].count!=0;
+        if (!qa_input_button_down(&s->buttons[action], source, time, error)) return false;
+        if (!active && s->options.action_pressed)
+            s->options.action_pressed(s->options.action_user,action);
+        return true;
+    }
     qa_input_button_up(&s->buttons[action], source, time, 10);
     return true;
 }

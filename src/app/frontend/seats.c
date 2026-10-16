@@ -28,6 +28,7 @@
 #include "view_settings.h"
 #include "config_store.h"
 #include "qa/application_network.h"
+#include "qa/application_equipment.h"
 #include "qa/application_engine_shutdown.h"
 #include "qa/game_q1_ui.h"
 #include "qa/hud_q2.h"
@@ -824,6 +825,22 @@ static bool player_sources(void *context,uint32_t id,qa_ui_menu *out,qa_error *e
         .count=count,.fullscreen=true};
     return true;
 }
+static void action_pressed(void *context,qa_input_action action)
+{
+    if (action!=QA_INPUT_GRAPPLE && action!=QA_INPUT_GRENADE) return;
+    frontend_seat *seat=context;
+    qa_frontend *f=seat->frontend;
+    uint32_t logical;
+    qa_actor_id actor;
+    uint8_t available=0;
+    if (frontend_seat_launch_id_read(f,seat->id,&logical) &&
+        qa_application_player_actor(f->application,logical,&actor))
+        available=qa_application_offhand_actions(f->application,actor);
+    uint8_t requested=action==QA_INPUT_GRAPPLE?QA_USERCMD_GRAPPLE:QA_USERCMD_GRENADE;
+    if (available&requested) return;
+    qa_command_context command=qa_input_seat_context(seat->input);
+    frontend_console_print(f,&command,"This session has no selected offhand action.\n");
+}
 static bool seat_services_create(frontend_seat *seat, qa_error *error)
 {
     qa_frontend *frontend = seat->frontend;
@@ -836,6 +853,7 @@ static bool seat_services_create(frontend_seat *seat, qa_error *error)
         .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
         .before_ui = source_input, .before_ui_user = seat,
         .context_ready=frontend_seat_context_ready,.context_user=seat,
+        .action_pressed=action_pressed,.action_user=seat,
         .wheel=frontend_wheel_command,.wheel_user=frontend};
     seat->input = qa_input_seat_create(&input, error);
     if (!seat->input || !qa_input_default_bindings(seat->input, (int32_t)i, error)) return false;
@@ -1102,7 +1120,8 @@ static bool input_services_encode(void *context, const qa_input_seat_options *op
         options->context.script || options->context.console_text ||
         options->ui!=input_handler || options->ui_user!=seat ||
         options->before_ui!=source_input || options->before_ui_user!=seat ||
-        options->context_ready!=frontend_seat_context_ready || options->context_user!=seat)
+        options->context_ready!=frontend_seat_context_ready || options->context_user!=seat ||
+        options->action_pressed!=action_pressed || options->action_user!=seat)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved input services differ from their actual frontend seat binding");
     *out=((uint64_t)seat->id+1)|(client?UINT64_C(256):0)|((uint64_t)options->context.dialect<<16); return true;
 }
@@ -1138,6 +1157,7 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
         .console=console,.cvars=cvars,
         .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat,
         .context_ready=frontend_seat_context_ready,.context_user=seat,
+        .action_pressed=action_pressed,.action_user=seat,
         .wheel=frontend_wheel_command,.wheel_user=seat->frontend};
     return true;
 }
@@ -1215,6 +1235,7 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
         if (!same_recipient_command(&command,&source.context.command)) return false;
         *options=(qa_input_seat_options){.seat=physical,.context=source.context.command,
             .console=source.context.console,.cvars=source.context.cvars,
+            .action_pressed=action_pressed,.action_user=seat,
             .wheel=frontend_wheel_command,.wheel_user=seat->frontend};
     }
     return true;

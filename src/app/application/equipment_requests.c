@@ -10,6 +10,14 @@
 #include "qa/application_qc_presentation.h"
 #include "qa/application_equipment.h"
 
+uint8_t qa_application_offhand_actions(const qa_application *app,qa_actor_id actor)
+{
+    qa_equipment_state state;
+    if (!app || !app->equipment || !qa_equipment_read(app->equipment,actor,&state)) return 0;
+    return (state.selection.binding==QA_EQUIPMENT_OFFHAND && state.selection.grapple!=QA_GRAPPLE_DISABLED
+        ? QA_USERCMD_GRAPPLE : 0) | (state.selection.grenades.enabled ? QA_USERCMD_GRENADE : 0);
+}
+
 static bool current(qa_application *app,application_provider *provider,qa_actor_id actor)
 {
     return app&&provider&&provider->constructed&&provider->attached&&!provider->close_pending&&

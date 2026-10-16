@@ -456,6 +456,10 @@ static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipme
         input->hand < QA_Q2_RIGHT_HAND || input->hand > QA_Q2_CENTER_HAND || input->water_level > 3)
         return mode_fail(e, "invalid equipment input");
     qa_equipment_state *s = &p->state;
+    qa_equipment_controls controls = *input;
+    if (s->selection.binding == QA_EQUIPMENT_WEAPON_SLOT)
+        controls.grapple_held = controls.primary_attack;
+    input = &controls;
     s->grapple_pressed |= input->grapple_held && !s->controls.grapple_held;
     s->grapple_released |= !input->grapple_held && s->controls.grapple_held;
     s->grenade_pressed |= input->grenade_held && !s->controls.grenade_held;

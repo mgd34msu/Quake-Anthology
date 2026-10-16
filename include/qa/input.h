@@ -155,6 +155,8 @@ typedef enum qa_input_action {
     QA_INPUT_NEXT_WEAPON,
     QA_INPUT_PREVIOUS_WEAPON,
     QA_INPUT_MENU,
+    QA_INPUT_GRAPPLE,
+    QA_INPUT_GRENADE,
     QA_INPUT_ACTION_COUNT
 } qa_input_action;
 typedef struct qa_input_action_sample {
@@ -400,6 +402,8 @@ typedef struct qa_input_seat_options {
     void *context_user;
     void (*wheel)(void *, qa_input_seat *, bool powerups, bool down);
     void *wheel_user;
+    void (*action_pressed)(void *, qa_input_action);
+    void *action_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
 qa_input_seat *qa_input_seat_bindings_create(qa_error *);

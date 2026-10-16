@@ -53,6 +53,7 @@ bool qa_application_equipment_read(qa_application *, qa_actor_id,
     qa_application_equipment_view *, qa_error *);
 bool qa_application_equipment_source_read(qa_application *,qa_actor_id,
     qa_application_equipment_view *,bool *present,qa_error *);
+uint8_t qa_application_offhand_actions(const qa_application *,qa_actor_id);
 bool qa_application_equipment_current(qa_application *, const qa_application_equipment_view *);
 /* Requests a weapon from its actual admitted provider through the canonical
  * slot handoff. Acceptance comes from that Source binding; declared item

@@ -2411,6 +2411,28 @@ static void test_physical_prediction_command(void)
         qa_usercmd converted;
         qa_input_command_convert(&command,NULL,&from,&to,(qa_input_axis_rule){0},&converted);
         CHECK(converted.has_light_level && converted.light_level==37);
+        qa_input_command_intent offhand=intent;
+        offhand.actions|=(UINT64_C(1)<<QA_INPUT_GRAPPLE)|(UINT64_C(1)<<QA_INPUT_GRENADE);
+        qa_usercmd held;
+        qa_usercmd_build(&offhand,&frame,300,&held);
+        CHECK(held.buttons==command.buttons && held.offhand_buttons==(QA_USERCMD_GRAPPLE|QA_USERCMD_GRENADE));
+        CHECK(!qa_usercmd_equal(&held,&command));
+        qa_input_command_convert(&held,NULL,&from,&to,(qa_input_axis_rule){0},&converted);
+        CHECK(converted.offhand_buttons==held.offhand_buttons);
+        qa_error error={0};qa_source_save_io io={0};qa_buffer saved={0},legacy={0};
+        CHECK(qa_source_save_writer(&io,NULL,&error));
+        CHECK(qa_source_save_usercmd(&io,&command) && qa_source_save_finish(&io,&legacy));
+        CHECK(qa_source_save_writer(&io,NULL,&error));
+        CHECK(qa_source_save_usercmd(&io,&held) && qa_source_save_finish(&io,&saved));
+        CHECK(saved.size==legacy.size);
+        qa_usercmd restored={0};
+        CHECK(qa_source_save_reader(&io,NULL,(qa_bytes){saved.data,saved.size},&error));
+        CHECK(qa_source_save_usercmd(&io,&restored) && qa_source_save_finish(&io,NULL));
+        CHECK(restored.buttons==command.buttons && restored.offhand_buttons==held.offhand_buttons);
+        CHECK(qa_source_save_reader(&io,NULL,(qa_bytes){legacy.data,legacy.size},&error));
+        CHECK(qa_source_save_usercmd(&io,&restored) && qa_source_save_finish(&io,NULL));
+        CHECK(restored.buttons==command.buttons && !restored.offhand_buttons);
+        qa_buffer_free(&saved);qa_buffer_free(&legacy);
     }
 }
 static void test_console_restore_pages(void)
@@ -7036,6 +7058,22 @@ static void test_shared_input_menu_defaults(void)
         qa_input_console *commands = qa_input_console_create(&(qa_input_console_options){
             .console = console, .owner = 1, .user = &seat, .seat = shared_input_seat}, &error);
         CHECK(commands);
+        CHECK(qa_console_execute_now(console,&context,"+grapple 701",&error));
+        CHECK(qa_console_execute_now(console,&context,"+grapple 702",&error));
+        CHECK(qa_console_execute_now(console,&context,"+grenade 703",&error));
+        CHECK(qa_input_seat_action_active(seat,QA_INPUT_GRAPPLE));
+        CHECK(qa_input_seat_action_active(seat,QA_INPUT_GRENADE));
+        CHECK(!qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
+        CHECK(qa_console_execute_now(console,&context,"-grapple 701",&error));
+        CHECK(qa_console_execute_now(console,&context,"-grenade 703",&error));
+        CHECK(qa_input_seat_action_active(seat,QA_INPUT_GRAPPLE));
+        CHECK(!qa_input_seat_action_active(seat,QA_INPUT_GRENADE));
+        CHECK(qa_console_execute_now(console,&context,"-grapple 702",&error));
+        CHECK(qa_console_execute_now(console,&context,"+attack 704",&error));
+        CHECK(!qa_input_seat_action_active(seat,QA_INPUT_GRAPPLE));
+        CHECK(!qa_input_seat_action_active(seat,QA_INPUT_GRENADE));
+        CHECK(qa_input_seat_action_active(seat,QA_INPUT_ATTACK));
+        CHECK(qa_console_execute_now(console,&context,"-attack 704",&error));
         if(dialect==QA_RULESET_Q2_CLASSIC || dialect==QA_RULESET_Q2_RERELEASE) {
             CHECK(qa_cvars_set(cvars,"name","$skin",true,&error));
             CHECK(qa_cvars_set(cvars,"skin","+showscores 900",true,&error));
