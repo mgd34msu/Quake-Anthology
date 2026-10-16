@@ -2969,6 +2969,8 @@ static bool select_species_attack(q2m_context *context, q2m_move_id *move,
     }
     break;
   case Q2M_GUNNER:
+    if (rerelease)
+      return q2m_gunner_attack_move(context, distance, move, error);
     *move = distance < 80.0f || q2m_random(context->game) > 0.5f
                 ? Q2M_MOVE_gunner_move_attack_chain
                 : Q2M_MOVE_gunner_move_attack_grenade;
@@ -3451,7 +3453,8 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
   if (move == Q2M_MOVE_NONE && species != Q2M_GEKK &&
       !(rerelease && (species == Q2M_INFANTRY || species == Q2M_CHICK ||
                      species == Q2M_CHICK_HEAT || species == Q2M_TANK ||
-                     species == Q2M_TANK_COMMANDER || species == Q2M_GUN_COMMANDER)))
+                     species == Q2M_TANK_COMMANDER || species == Q2M_GUNNER ||
+                     species == Q2M_GUN_COMMANDER)))
     return true;
   if (!apply_species_attack(context, move, error))
     return false;
@@ -3468,6 +3471,7 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
       break;
     case Q2M_GEKK:
     case Q2M_INFANTRY:
+    case Q2M_GUNNER:
     case Q2M_CHICK:
     case Q2M_CHICK_HEAT:
     case Q2M_TANK:

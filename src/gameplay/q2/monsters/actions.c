@@ -3634,6 +3634,107 @@ static bool mortar_direction(q2m_context *context, qa_vec3 target,
   return true;
 }
 
+static bool gunner_grenade_check(q2m_context *context, bool *available,
+                                 qa_error *error) {
+  *available = false;
+  bool clear;
+  if (!q2m_clear_flash_shot(context, 53, &clear, error))
+    return false;
+  if (!q2m_alive(context) || !clear)
+    return true;
+  qa_body_state enemy;
+  qa_builtin_actor_traits traits;
+  bool present;
+  if (!target_body(context, &enemy, &traits, &present) || !present ||
+      !q2m_alive(context))
+    return true;
+  q2m_context projection = *context;
+  projection.body.angles.y = context->monster->ideal_yaw;
+  projection.body.angles.z = 0;
+  qa_vec3 start;
+  if (!q2m_project_flash(&projection, 53, &start, error))
+    return false;
+  qa_vec3 target = context->monster->manual_steering
+                      ? context->monster->blind_fire_target : enemy.origin;
+  qa_vec3 delta = qa_vec_sub(target, start);
+  if (qa_vec_length(delta) < 100.0f)
+    return true;
+  float gravity = context->game->services.physics
+                      ? context->game->services.physics->gravity : 800.0f;
+  qa_vec3 direction;
+  return mortar_direction(context, target, start, qa_vec_normalize(delta),
+                           600.0f, gravity, false, &direction, available, error);
+}
+
+bool q2m_gunner_attack_move(q2m_context *context, float distance,
+                           q2m_move_id *move, qa_error *error) {
+  qa_q2_game *game = context->game;
+  struct qa_q2_monster *monster = context->monster;
+  finish_dodge_action(monster);
+  *move = Q2M_MOVE_NONE;
+  if (monster->attack_state == Q2M_BLIND) {
+    if (monster->timestamp_ns > game->now_ns)
+      return true;
+    float chance = monster->blind_fire_delay < 1.0f ? 1.0f
+                   : monster->blind_fire_delay < 7.5f ? 0.4f : 0.1f;
+    float draw = q2_rerelease_float(game, 0, 1);
+    monster->blind_fire_delay +=
+        4.1f + (float)q2_rerelease_time_ms(game, 0, 3000) / 1000.0f;
+    if (qa_vec_equal(monster->blind_fire_target, qa_v3(0, 0, 0)) || draw > chance)
+      return true;
+    monster->manual_steering = true;
+    bool grenade;
+    if (!gunner_grenade_check(context, &grenade, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (grenade) {
+      *move = q2_random_bounded(game, 2) != 0
+                  ? Q2M_MOVE_gunner_move_attack_grenade2
+                  : Q2M_MOVE_gunner_move_attack_grenade;
+      monster->attack_ns = q2m_after(game->now_ns,
+          (double)q2_rerelease_time_ms(game, 0, 2000) / 1000.0);
+    } else {
+      monster->manual_steering = false;
+    }
+    monster->timestamp_ns = q2m_after(game->now_ns,
+        (double)q2_rerelease_time_ms(game, 2000, 3000) / 1000.0);
+    return true;
+  }
+  bool chain = monster->hazard.registry != 0 || monster->timestamp_ns > game->now_ns;
+  if (!chain && distance <= 440.0f * 0.35f) {
+    if (!q2m_clear_flash_shot(context, 45, &chain, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
+  if (chain) {
+    *move = Q2M_MOVE_gunner_move_attack_chain;
+    return true;
+  }
+  bool grenade = false;
+  if (monster->timestamp_ns <= game->now_ns &&
+      q2_rerelease_float(game, 0, 1) <= 0.5f) {
+    if (!gunner_grenade_check(context, &grenade, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
+  if (grenade) {
+    *move = q2_random_bounded(game, 2) != 0
+                ? Q2M_MOVE_gunner_move_attack_grenade2
+                : Q2M_MOVE_gunner_move_attack_grenade;
+    monster->timestamp_ns = q2m_after(game->now_ns,
+        (double)q2_rerelease_time_ms(game, 2000, 3000) / 1000.0);
+  } else {
+    if (!q2m_clear_flash_shot(context, 45, &chain, error))
+      return false;
+    if (q2m_alive(context) && chain)
+      *move = Q2M_MOVE_gunner_move_attack_chain;
+  }
+  return true;
+}
+
 bool q2m_guncmdr_attack_move(q2m_context *context, q2m_move_id *move,
                             qa_error *error) {
   struct qa_q2_monster *monster = context->monster;

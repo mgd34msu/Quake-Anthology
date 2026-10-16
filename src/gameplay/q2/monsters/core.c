@@ -468,7 +468,8 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
   } else if (species == Q2M_GUNNER) {
     if (move_is(monster, Q2M_MOVE_gunner_move_attack_chain) ||
         move_is(monster, Q2M_MOVE_gunner_move_fire_chain) ||
-        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade))
+        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade) ||
+        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade2))
       return set_duck_bounds(context, false, error);
     move = Q2M_MOVE_gunner_move_duck;
   } else if (species == Q2M_GUN_COMMANDER) {
@@ -569,6 +570,7 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
     if (move_is(monster, Q2M_MOVE_gunner_move_attack_chain) ||
         move_is(monster, Q2M_MOVE_gunner_move_fire_chain) ||
         move_is(monster, Q2M_MOVE_gunner_move_attack_grenade) ||
+        move_is(monster, Q2M_MOVE_gunner_move_attack_grenade2) ||
         move_is(monster, Q2M_MOVE_gunner_move_pain1))
       return true;
     move = Q2M_MOVE_gunner_move_run;

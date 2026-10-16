@@ -450,7 +450,7 @@ static const q2m_definition rerelease_gunner =
     MONSTER("monster_gunner", "models/monsters/gunner/tris.md2",
             "rerelease/gunner:gunnerMoves", Q2M_GUNNER, Q2M_WALK,
             BOUNDS(-16, -16, -24, 16, 16, 32), 175, -70, 200, 1.15f, 0, 20,
-            Q2M_HAS_RANGED | Q2M_DUCKS | Q2M_SIDESTEPS | Q2M_JUMPS,
+            Q2M_HAS_RANGED | Q2M_DUCKS | Q2M_SIDESTEPS | Q2M_JUMPS | Q2M_BLIND_FIRE,
             Q2M_MOVE_gunner_move_stand, Q2M_MOVE_gunner_move_stand, Q2M_MOVE_gunner_move_walk,
             Q2M_MOVE_gunner_move_run, Q2M_MOVE_gunner_move_attack_chain,
             Q2M_MOVE_gunner_move_attack_grenade, Q2M_MOVE_NONE, Q2M_MOVE_gunner_move_pain1,
