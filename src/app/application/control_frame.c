@@ -893,6 +893,9 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     return true;
 }
 
+static bool unified_q2_source(const control_unified *, qa_ruleset_id,
+    const qa_usercmd *, uint64_t, qa_usercmd *, qa_error *);
+
 bool application_control_native_q2_weapon_frame(application_provider *source,
     qa_actor_id actor, qa_error *error)
 {
@@ -903,11 +906,21 @@ bool application_control_native_q2_weapon_frame(application_provider *source,
         !qa_session_active_frame(app->session, source->owner, &frame)) return true;
     const control_input *input = &frames->inputs[actor.slot].value;
     if (!input->seen || !qa_actor_id_equal(input->actor, actor) ||
-        input->provider != source->owner || input->domain != CONTROL_COMMAND_Q2_SOURCE) return true;
+        input->provider != source->owner || (input->domain != CONTROL_COMMAND_Q2_SOURCE &&
+        input->domain != CONTROL_COMMAND_UNIFIED)) return true;
     application_control_context current = {.actor = actor, .frame = frame,
         .path = APPLICATION_CONTROL_MIXED, .stage = APPLICATION_CONTROL_COMMAND,
         .retained = true, .source_q2cmd = true, .source_command = input->latest,
         .source_elapsed_ns = frame.elapsed_ns};
+    if (input->domain == CONTROL_COMMAND_UNIFIED) {
+        qa_usercmd selected;
+        qa_ruleset_id kind = qa_native_host_profile(source->state.native.host) == QA_NATIVE_Q2_GAME_API3
+            ? QA_RULESET_Q2_CLASSIC : QA_RULESET_Q2_RERELEASE;
+        if (!unified_command(app, actor, &input->unified, &selected, error) ||
+            !unified_q2_source(&input->unified, kind, &selected, frame.elapsed_ns,
+                &current.source_command, error)) return false;
+        unified_context(&current, &input->unified);
+    }
     const application_control_context *previous = frames->current;
     frames->current = &current;
     bool ok = application_control_native_q2_weapon_step(source, actor,
