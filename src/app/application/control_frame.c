@@ -1856,9 +1856,12 @@ static bool native_q2_command_move(void *context, const qa_movement_input *input
         input->state.kind != call->current->source_command.kind || call->movement == call->source)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove lost its selected Source command stage");
     qa_movement_result physical = {.state = input->state};
+    qa_usercmd source_command = input->command;
+    source_command.buttons = (source_command.buttons & ~1u) |
+        (call->current->source_command.buttons & 1u);
     qa_usercmd selected;
     if (!q2_selected_command(call->app, input->actor, call->source, &physical,
-            &input->command, &call->current->command, &selected, error)) return false;
+            &source_command, &call->current->command, &selected, error)) return false;
     uint64_t previous_elapsed = call->current->source_elapsed_ns;
     call->current->source_elapsed_ns = input->elapsed_ns;
     application_control_outcome moved = application_control_stage_move(call->app, input->actor, &selected, NULL, error);
