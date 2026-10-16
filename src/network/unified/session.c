@@ -258,7 +258,7 @@ static bool flush_peer(void *state, qa_network_runtime *runtime, qa_net_client_i
     s->entered = true; s->now_ns = now;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
     uint64_t timeout = s->server ? UINT64_C(30000000000) : UINT64_C(120000000000);
-    if (!s->closing && !s->disconnected && !s->timeout_pending && client && now >= client->received_ns && now - client->received_ns > timeout) {
+    if (!s->closing && !s->disconnected && !s->timeout_pending && qa_net_client_expired(client, now, timeout)) {
         s->timeout_pending = true; s->close_cause = 1; s->entered = false; return true;
     }
     bool ok = true;

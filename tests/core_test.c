@@ -7229,6 +7229,25 @@ static void test_dosbox_loopback(void)
     qa_net_transport_close(a);qa_net_transport_close(b);qa_net_dosbox_destroy(network);
 }
 
+static void test_connection_expiry(void)
+{
+    const uint64_t timeout = UINT64_C(30000000000), received = UINT64_C(1000000000);
+    qa_net_client client = {.attachment = QA_NET_REMOTE, .endpoint = {.kind = QA_NET_IPV4},
+        .received_ns = received};
+    CHECK(!qa_net_client_expired(NULL, UINT64_MAX, timeout));
+    CHECK(!qa_net_client_expired(&client, received - 1, timeout));
+    CHECK(!qa_net_client_expired(&client, received + timeout, timeout));
+    CHECK(qa_net_client_expired(&client, received + timeout + 1, timeout));
+    client.attachment = QA_NET_LOCAL_SEAT;
+    CHECK(!qa_net_client_expired(&client, UINT64_MAX, timeout));
+    client.attachment = QA_NET_REMOTE; client.endpoint.kind = QA_NET_LOOPBACK;
+    CHECK(!qa_net_client_expired(&client, UINT64_MAX, timeout));
+    client.attachment = QA_NET_HEADLESS;
+    CHECK(!qa_net_client_expired(&client, UINT64_MAX, timeout));
+    client.endpoint.kind = QA_NET_IPV6;
+    CHECK(qa_net_client_expired(&client, received + timeout + 1, timeout));
+}
+
 static void test_loopback_admission(void)
 {
     qa_error error = {0};
@@ -9015,6 +9034,7 @@ int main(int argc, char **argv)
     test_render_resource_identity();
     test_platform_event_retirement();
     test_q2_command_angles();
+    test_connection_expiry();
     test_loopback_admission();
     test_browser_endpoint_probe();
     test_dosbox_loopback();
