@@ -30,11 +30,18 @@ static application_provider *provider_read(qa_application *app, qa_actor_owner o
     if (p) return p;
     return app ? application_startup_flow_provider(app, owner) : NULL;
 }
-static struct application_native_client_role *row_read(application_provider *provider, uint32_t seat)
+static struct application_native_client_role *row_read(const application_provider *provider, uint32_t seat)
 {
     for (struct application_native_client_role *r = provider ? provider->native_client_roles : NULL; r; r = r->next)
         if (r->source.context.seat == seat) return r;
     return NULL;
+}
+bool application_native_client_command_current(const application_provider *provider,const qa_command_context *command)
+{
+    const struct application_native_client_role *row=row_read(provider,command->seat);
+    return row && !row->retiring && !provider->close_pending &&
+        command->generation==row->source.context.command.generation &&
+        command->cvar_view==row->source.context.command.cvar_view;
 }
 bool application_native_client_only(const application_provider *p)
 {

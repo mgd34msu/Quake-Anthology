@@ -3,6 +3,7 @@
 #include "guest_qc_profile.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
+#include "native_client_roles.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_postgame.h"
 #include "native_q1_console.h"
@@ -282,8 +283,7 @@ bool qa_application_command_context_active(const qa_application *application,
     if (application == NULL || context == NULL || application->session == NULL ||
         application->destroy_requested || application->state == QA_APPLICATION_FAULTED ||
         (!context->owner && application->engine_shutdown) ||
-        context->registry != qa_actors_identity(qa_session_actors(application->session)) ||
-        context->generation != application->command_generation)
+        context->registry != qa_actors_identity(qa_session_actors(application->session)))
         return false;
     if (context->owner != 0 && command_owner(application, context->owner) == NULL &&
         application_startup_flow_provider(application, context->owner) == NULL)
@@ -291,6 +291,11 @@ bool qa_application_command_context_active(const qa_application *application,
     application_provider *physical = context->owner ? command_owner(application, context->owner) : NULL;
     if (!physical && context->owner)
         physical = application_startup_flow_provider(application, context->owner);
+    /* Standalone CLIENTs keep their own command namespace while a local GAME
+     * publication changes its roster. Reconnecting still replaces that tuple. */
+    if (context->generation != application->command_generation &&
+        !(physical && physical->client_only_owned &&
+            application_native_client_command_current(physical,context))) return false;
     if (physical && physical->client_only_owned) {
         /* A standalone decoded CLIENT has its own observer namespace. Its
          * pending seat origin must never acquire the old local GAME actor. */
@@ -320,10 +325,11 @@ bool qa_application_capture_command_context(qa_application *application,
         !qa_application_command_context_active(application, &next))
         return application_fail(error, QA_ERROR_ARGUMENT, "command belongs to a retired publication");
     next.registry = qa_actors_identity(qa_session_actors(application->session));
-    next.generation = application->command_generation;
     application_provider *physical = next.owner ? command_owner(application, next.owner) : NULL;
     if (!physical && next.owner)
         physical = application_startup_flow_provider(application, next.owner);
+    if (!next.generation || !(physical && physical->client_only_owned))
+        next.generation = application->command_generation;
     if (!(physical && physical->client_only_owned) && next.actor.registry == 0 &&
         (next.origin == QA_COMMAND_LOCAL || next.origin == QA_COMMAND_SEAT))
         (void)qa_application_player_actor(application, next.seat, &next.actor);
