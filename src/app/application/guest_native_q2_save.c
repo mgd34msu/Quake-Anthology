@@ -105,7 +105,10 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
         qa_native_instance *native=qa_native_host_instance(provider->state.native.host);
         qa_native_entity_table table;
         if (!qa_native_entity_table_get(native,&table,error)) return false;
-        for (uint32_t slot=1;slot<table.count;++slot) {
+        /* ClientBegin binds reserved client edicts after inventory admission. */
+        const qa_cvar_view *clients=qa_cvars_read(engine->cvars,provider->q2_maxclients);
+        uint32_t first=clients && clients->integer>0?(uint32_t)clients->integer+1:1;
+        for (uint32_t slot=first;slot<table.count;++slot) {
             qa_native_slot_binding binding;
             if (!qa_native_slot(native,slot,&binding,error)) return false;
             if (binding.kind==QA_NATIVE_SLOT_OWNED &&
