@@ -560,6 +560,22 @@ static void entities(void)
     CHECK(!qa_entities_prepare_text((qa_bytes){(const uint8_t *)unquotable, strlen(unquotable)},
         QA_ENTITY_Q1, &preparation, &prepared, &error));
     CHECK(prepared.data == NULL && error.code == QA_ERROR_FORMAT);
+    const char *included[] = {"info_player_team1", "worldspawn"};
+    preparation = (qa_entity_prepare_options){.aliases = aliases, .alias_count = 2,
+        .include_classes = included, .include_count = 2, .unique_class = "worldspawn"};
+    CHECK(qa_entities_prepare_text((qa_bytes){(const uint8_t *)foreign, strlen(foreign)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(qa_entities_parse((qa_bytes){prepared.data, prepared.size}, QA_ENTITY_Q1, &result, &error));
+    CHECK(result.count == 2 && result.records[0].property_count == 4);
+    CHECK(equal_text(result.properties[1].value, "old") && equal_text(result.properties[2].value, "new"));
+    CHECK(qa_entity_value(&result, 1, "classname", &value) && equal_text(value, "info_player_team1"));
+    qa_entities_free(&result);
+    qa_buffer_free(&prepared);
+    const char *duplicate_world = "{ classname worldspawn } { classname worldspawn }";
+    CHECK(!qa_entities_prepare_text((qa_bytes){(const uint8_t *)duplicate_world, strlen(duplicate_world)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(!qa_entities_prepare_text((qa_bytes){(const uint8_t *)existing, strlen(existing)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
 }
 
 static void visibility(void)

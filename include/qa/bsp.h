@@ -268,9 +268,14 @@ typedef struct qa_entity_prepare_options {
     const char *required_class;
     const char *const *fallback_classes;
     size_t fallback_count;
+    const char *const *include_classes;
+    size_t include_count;
+    const char *unique_class;
 } qa_entity_prepare_options;
 /* Preserves ordered fields and duplicate keys. Appends renamed fallback spawns
- * only when required_class is absent. Output is NUL-terminated; size excludes it. */
+ * only when required_class is absent. An include list selects prepared classes;
+ * unique_class requires exactly one selected record of that class.
+ * Output is NUL-terminated; size excludes it. */
 bool qa_entities_prepare_text(qa_bytes, qa_entity_syntax, const qa_entity_prepare_options *,
     qa_buffer *, qa_error *);
 void qa_entities_free(qa_entities *entities);

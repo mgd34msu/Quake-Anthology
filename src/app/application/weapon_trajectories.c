@@ -42,6 +42,16 @@ struct application_trajectories {
     qa_pool flights;
 };
 
+bool application_trajectory_entities_prepare(qa_application *app, const char *const *classes,
+    size_t count, qa_buffer *out, qa_error *error)
+{
+    qa_bsp_view map;
+    if (!qa_bsp_open(qa_resource_bytes(app->map_resource), &map, error)) return false;
+    qa_entity_prepare_options options = {.include_classes = classes, .include_count = count,
+        .unique_class = "worldspawn"};
+    return qa_entities_prepare_text(map.lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1, &options, out, error);
+}
+
 static bool create(qa_application *app, qa_error *error)
 {
     if (app->trajectories) return true;

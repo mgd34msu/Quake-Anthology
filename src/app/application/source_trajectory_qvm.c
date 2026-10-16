@@ -696,57 +696,6 @@ static bool qvm_qualify(trajectory_qvm *source, const qa_catalog_weapon_behavior
     qa_json_destroy(document); return okay;
 }
 
-static bool qvm_initial_entities(trajectory_qvm *source, qa_error *error)
-{
-    qa_bsp_view bsp; qa_entities entities = {0};
-    if (!qa_bsp_open(qa_resource_bytes(source->application->map_resource), &bsp, error) ||
-        !qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1, &entities, error)) return false;
-    static const char *const classes[] = {"worldspawn", "info_player_start", "info_player_deathmatch",
-        "info_player_intermission", "team_CTF_redplayer", "team_CTF_blueplayer", "team_CTF_redspawn", "team_CTF_bluespawn"};
-    size_t size = 0, worlds = 0;
-    for (size_t row = 0; row < entities.count; ++row) {
-        qa_bytes classname = {0}; bool include = false;
-        if (qa_entity_value(&entities, row, "classname", &classname))
-            for (size_t i = 0; i < sizeof(classes) / sizeof(*classes); ++i)
-                if (classname.size == strlen(classes[i]) && !memcmp(classname.data, classes[i], classname.size)) {
-                    include = true; if (!i) ++worlds; break;
-                }
-        if (!include) continue;
-        size += 4;
-        const qa_entity_record *record = entities.records + row;
-        for (size_t i = 0; i < record->property_count; ++i) {
-            const qa_entity_property *property = entities.properties + record->first_property + i;
-            if (memchr(property->key.data, '"', property->key.size) || memchr(property->key.data, 0, property->key.size) ||
-                memchr(property->value.data, '"', property->value.size) || memchr(property->value.data, 0, property->value.size)) {
-                qa_entities_free(&entities);
-                return application_fail(error, QA_ERROR_FORMAT, "Unquotable trajectory QVM spawn field");
-            }
-            size += property->key.size + property->value.size + 6;
-        }
-    }
-    if (worlds != 1) { qa_entities_free(&entities); return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM requires one authored worldspawn"); }
-    uint8_t *text = malloc(size + 1);
-    if (!text) { qa_entities_free(&entities); return application_fail(error, QA_ERROR_MEMORY, "Preparing trajectory QVM spawn fields"); }
-    size_t offset = 0;
-    for (size_t row = 0; row < entities.count; ++row) {
-        qa_bytes classname = {0}; bool include = false;
-        if (qa_entity_value(&entities, row, "classname", &classname))
-            for (size_t i = 0; i < sizeof(classes) / sizeof(*classes); ++i)
-                if (classname.size == strlen(classes[i]) && !memcmp(classname.data, classes[i], classname.size)) { include = true; break; }
-        if (!include) continue;
-        text[offset++] = '{'; text[offset++] = '\n';
-        const qa_entity_record *record = entities.records + row;
-        for (size_t i = 0; i < record->property_count; ++i) {
-            const qa_entity_property *property = entities.properties + record->first_property + i;
-            text[offset++] = '"'; memcpy(text + offset, property->key.data, property->key.size); offset += property->key.size;
-            text[offset++] = '"'; text[offset++] = ' '; text[offset++] = '"';
-            memcpy(text + offset, property->value.data, property->value.size); offset += property->value.size;
-            text[offset++] = '"'; text[offset++] = '\n';
-        }
-        text[offset++] = '}'; text[offset++] = '\n';
-    }
-    text[offset] = 0; source->entities = (qa_buffer){text, offset}; qa_entities_free(&entities); return true;
-}
 
 bool application_trajectory_qvm_create(qa_application *application, const qa_launch_instance *launch,
     qa_qvm_image *image, const qa_catalog_weapon_behavior *behavior,
@@ -764,7 +713,11 @@ bool application_trajectory_qvm_create(qa_application *application, const qa_lau
     if (source->configstrings) qa_q3_gamestate_init(source->configstrings);
     bool okay = source->marks && source->configstrings &&
         qa_strings_intern_cstr(qa_session_strings(application->session), behavior->id, &source->owner, error) &&
-        qvm_qualify(source, behavior, error) && qvm_initial_entities(source, error);
+        qvm_qualify(source, behavior, error);
+    static const char *const classes[] = {"worldspawn", "info_player_start", "info_player_deathmatch",
+        "info_player_intermission", "team_CTF_redplayer", "team_CTF_blueplayer", "team_CTF_redspawn", "team_CTF_bluespawn"};
+    if (okay) okay = application_trajectory_entities_prepare(application, classes,
+        sizeof(classes) / sizeof(*classes), &source->entities, error);
     qa_cvar_options cvars = {.dialect = QA_RULESET_Q3, .side = QA_CVAR_SIDE_SERVER,
         .role = QA_CVAR_ROLE_GAME, .declaration_save_policy = application_native_q3_cvar_save_policy};
     if (okay) okay = (source->cvars = qa_cvars_create_view(application->cvars, &cvars, error)) != NULL;

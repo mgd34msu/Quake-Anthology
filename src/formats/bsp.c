@@ -1030,13 +1030,29 @@ static bool entity_text_prepare(entity_text_output *out, const qa_entities *enti
 {
     qa_bytes required = options->required_class ?
         (qa_bytes){(const uint8_t *)options->required_class, strlen(options->required_class)} : (qa_bytes){0};
+    qa_bytes unique = options->unique_class ?
+        (qa_bytes){(const uint8_t *)options->unique_class, strlen(options->unique_class)} : (qa_bytes){0};
     bool present = false;
+    size_t unique_count = 0;
     for (size_t i = 0; i < entities->count; ++i) {
         bool renamed;
         qa_bytes name = entity_prepared_class(entities, i, options, &renamed);
+        if (options->include_count) {
+            bool included = false;
+            for (size_t j = 0; j < options->include_count; ++j) {
+                const char *allowed = options->include_classes[j];
+                if (same_bytes(name, (qa_bytes){(const uint8_t *)allowed, strlen(allowed)})) {
+                    included = true; break;
+                }
+            }
+            if (!included) continue;
+        }
         present |= same_bytes(name, required);
+        if (options->unique_class && same_bytes(name, unique)) ++unique_count;
         if (!entity_text_record(out, entities, i, renamed ? &name : NULL, error)) return false;
     }
+    if (options->unique_class && unique_count != 1)
+        return fail(error, QA_ERROR_FORMAT, 0, "entity selection requires one unique class record");
     if (!options->required_class || present) return true;
     for (size_t i = 0; i < entities->count; ++i) {
         bool renamed;
@@ -1055,7 +1071,8 @@ bool qa_entities_prepare_text(qa_bytes text, qa_entity_syntax syntax,
     const qa_entity_prepare_options *options, qa_buffer *out, qa_error *error)
 {
     if (!options || !out || (options->alias_count && !options->aliases) ||
-        (options->fallback_count && (!options->fallback_classes || !options->required_class)))
+        (options->fallback_count && (!options->fallback_classes || !options->required_class)) ||
+        (options->include_count && !options->include_classes))
         return fail(error, QA_ERROR_ARGUMENT, 0, "invalid entity text preparation options");
     qa_entities entities = {0};
     entity_text_output output = {0};
