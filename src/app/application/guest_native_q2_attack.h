@@ -47,6 +47,8 @@ bool application_native_q2_attack_hand_grenade_item(struct application_native_q2
     qa_item_id *, qa_error *);
 bool application_native_q2_attack_available(struct application_native_q2 *, qa_actor_id,
     bool *, qa_error *);
+bool application_native_q2_attack_animation(struct application_native_q2 *, qa_actor_id,
+    bool *handled, qa_error *);
 bool application_native_q2_attack_continuing(struct application_native_q2 *, qa_actor_id,
     bool *, qa_error *);
 bool application_native_q2_attack_clock_step(struct application_native_q2 *, qa_actor_id,

@@ -472,7 +472,8 @@ bool application_q3_weapons_services_equipment_animation(void *context, qa_actor
     *handled = false;
     qa_application *app = provider->application;
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM) return true;
+    bool native_q2 = physical && physical->kind == APPLICATION_PROVIDER_NATIVE && physical->state.native.q2_engine;
+    if (!physical || (!native_q2 && physical->kind != APPLICATION_PROVIDER_QVM)) return true;
     qa_equipment_state equipment;
     if (!app->equipment || !qa_equipment_read(app->equipment, actor, &equipment) ||
         equipment.selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
@@ -481,6 +482,10 @@ bool application_q3_weapons_services_equipment_animation(void *context, qa_actor
         !qa_equipment_weapon_presented(app->equipment, actor, provider->owner)) return true;
     if (!application_equipment_runtime_owner_current(app->equipment_runtime, provider->owner))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Equipment animation retired its retained source");
+    if (native_q2) {
+        if (reverse) { *handled = true; return true; }
+        return application_native_q2_attack_animation(physical->state.native.q2_engine, actor, handled, error);
+    }
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;
@@ -516,9 +521,14 @@ bool application_q3_weapons_services_selected_fired(void *context, qa_actor_id a
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected attack animation lost its native arsenal");
     qa_application *app = provider->application;
     application_provider *physical = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    if (!physical || physical->kind != APPLICATION_PROVIDER_QVM) return true;
+    bool native_q2 = physical && physical->kind == APPLICATION_PROVIDER_NATIVE && physical->state.native.q2_engine;
+    if (!physical || physical == provider || (!native_q2 && physical->kind != APPLICATION_PROVIDER_QVM)) return true;
     if (application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider) return true;
     if (app->equipment && !qa_equipment_primary_selected(app->equipment, actor)) return true;
+    if (native_q2) {
+        bool handled;
+        return application_native_q2_attack_animation(physical->state.native.q2_engine, actor, &handled, error);
+    }
     struct application_q3_guest *engine = q3g_engine(physical);
     q3g_role *role = engine ? engine->game : NULL;
     application_q3_weapons_services *s = role ? role->weapon_services : NULL;

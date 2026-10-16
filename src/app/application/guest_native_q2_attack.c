@@ -117,6 +117,15 @@ typedef struct attack_equipment_context {
     qa_string_id implementation;
     qa_item_id item;
 } attack_equipment_context;
+typedef struct attack_animation_region {
+    uint32_t id;
+    qa_native_region_binding *binding;
+} attack_animation_region;
+typedef struct attack_animation_frame {
+    struct attack_animation_frame *previous;
+    qa_native_address entity;
+    bool pending, skipping;
+} attack_animation_frame;
 typedef enum attack_delay_kind { ATTACK_DELAY_NONE, ATTACK_DELAY_FLAG, ATTACK_DELAY_ANIMATION } attack_delay_kind;
 struct application_native_q2_attack {
     struct application_native_q2 *engine;
@@ -153,6 +162,12 @@ struct application_native_q2_attack {
     uint32_t dispatcher_entry, dispatcher_argument, dispatcher_count;
     qa_native_type dispatcher_parameters[16];
     qa_native_entry_observer *dispatcher_hook;
+    uint32_t animation_entry;
+    attack_animation_region *animation_regions;
+    size_t animation_region_count;
+    qa_native_entry_observer *animation_hook;
+    attack_animation_frame *animation_request, *animation_call;
+    bool animation_declared;
     decision_region *decisions;
     size_t decision_count;
     decision_frame *dispatch;
@@ -439,6 +454,63 @@ bool application_native_q2_attack_available(struct application_native_q2 *engine
     return policy_entity(engine, actor, &p, &entity, error) &&
         decision_matches(p, entity, &p->available, out, error);
 }
+static const qa_native_type animation_parameters[] = {
+    {.kind = QA_NATIVE_ADDRESS, .count = 1},
+    {.kind = QA_NATIVE_I32, .count = 1}, {.kind = QA_NATIVE_I32, .count = 1},
+    {.kind = QA_NATIVE_I32, .count = 1}, {.kind = QA_NATIVE_I32, .count = 1},
+    {.kind = QA_NATIVE_ADDRESS, .count = 1}, {.kind = QA_NATIVE_ADDRESS, .count = 1},
+    {.kind = QA_NATIVE_ADDRESS, .count = 1}};
+static bool animation_entry(void *context, qa_native_instance *native,
+    qa_native_entry_observer *binding, const qa_native_value *arguments,
+    size_t count, qa_native_value *result, qa_error *error)
+{
+    struct application_native_q2_attack *p = context;
+    if (native != instance(p) || binding != p->animation_hook || count != 8)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native attack animation differs from its original Source ABI");
+    attack_animation_frame *request = p->animation_request;
+    attack_animation_frame frame = {.previous = p->animation_call,
+        .skipping = request && request->pending && arguments[0].as.address == request->entity};
+    if (frame.skipping) request->pending = false;
+    p->animation_call = &frame;
+    bool okay = qa_native_invoke_original(binding, arguments, count, result, error);
+    p->animation_call = frame.previous;
+    return okay;
+}
+static bool animation_skip(void *context, qa_native_instance *native,
+    const qa_native_region_event *event, qa_native_region_decision *out, qa_error *error)
+{
+    (void)native; (void)error;
+    struct application_native_q2_attack *p = context;
+    *out = (qa_native_region_decision){.action = QA_NATIVE_REGION_CONTINUE};
+    if (event->phase == QA_NATIVE_REGION_ENTER && p->animation_call && p->animation_call->skipping)
+        out->action = QA_NATIVE_REGION_SKIP_TO_JOIN;
+    return true;
+}
+bool application_native_q2_attack_animation(struct application_native_q2 *engine,
+    qa_actor_id actor, bool *handled, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    *handled = false;
+    if (!p || !p->active || !p->animation_declared) return true;
+    qa_native_address entity, entry;
+    bool available;
+    if (!policy_entity(engine, actor, &p, &entity, error) ||
+        !decision_matches(p, entity, &p->available, &available, error)) return false;
+    *handled = true;
+    if (!available) return true;
+    if (!qa_native_rva(instance(p), p->animation_entry, 1, &entry, error)) return false;
+    qa_native_signature sig = signature(p, animation_parameters, 8, QA_NATIVE_VOID);
+    qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = entity},
+        {.type = QA_NATIVE_I32, .as.i32 = 0}, {.type = QA_NATIVE_I32, .as.i32 = 0},
+        {.type = QA_NATIVE_I32, .as.i32 = 0}, {.type = QA_NATIVE_I32, .as.i32 = 0},
+        {.type = QA_NATIVE_ADDRESS, .as.address = 0}, {.type = QA_NATIVE_ADDRESS, .as.address = 0},
+        {.type = QA_NATIVE_ADDRESS, .as.address = 0}}, ignored;
+    attack_animation_frame request = {.previous = p->animation_request, .entity = entity, .pending = true};
+    p->animation_request = &request;
+    bool okay = qa_native_invoke(instance(p), entry, &sig, arguments, 8, &ignored, error);
+    p->animation_request = request.previous;
+    return okay;
+}
 bool application_native_q2_attack_continuing(struct application_native_q2 *engine,
     qa_actor_id actor, bool *out, qa_error *error)
 {
@@ -705,6 +777,31 @@ static bool delay_capture(void *opaque, qa_native_instance *native, const qa_nat
     factor->delay_available = true;
     (void)native; return true;
 }
+static bool animation_prepare(struct application_native_q2_attack *p, qa_json_id weapons,
+    qa_error *error)
+{
+    const qa_json_document *doc = p->document;
+    qa_json_id animation = qa_json_get(doc, weapons, "attackAnimation");
+    if (animation == QA_JSON_NONE || qa_json_type(doc, animation) == QA_JSON_NULL) return true;
+    qa_json_id skip = qa_json_get(doc, animation, "skip");
+    if (!word(doc, animation, "entry", &p->animation_entry, error)) return false;
+    if (qa_json_type(doc, skip) != QA_JSON_ARRAY)
+        return application_fail(error, QA_ERROR_FORMAT, "Native attack animation has no declared skip regions");
+    p->animation_region_count = qa_json_size(doc, skip);
+    if (p->animation_region_count) {
+        p->animation_regions = decision_array(p, p->animation_region_count,
+            sizeof(*p->animation_regions), _Alignof(attack_animation_region), error);
+        if (!p->animation_regions) return false;
+    }
+    for (size_t i = 0; i < p->animation_region_count; ++i) {
+        char path[64]; snprintf(path, sizeof(path), "/weapons/attackAnimation/skip/%zu", i);
+        qa_native_declared_region region;
+        if (!qa_native_declaration_find_region(p->engine->declaration, path, &region, error)) return false;
+        p->animation_regions[i].id = region.id;
+    }
+    p->animation_declared = true;
+    return true;
+}
 bool application_native_q2_attack_prepare(struct application_native_q2 *engine, qa_error *error)
 {
     if (!engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
@@ -775,7 +872,7 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
             p->item_count, sizeof(attack_hook), _Alignof(attack_hook), error)) return false;
     memset(p->items, 0, p->item_count * sizeof(*p->items));
     qa_arena_seal(&p->hook_storage);
-    if(!delay_prepare(p,weapons,items,error) ||
+    if(!animation_prepare(p,weapons,error) || !delay_prepare(p,weapons,items,error) ||
         !decision_descriptors_prepare(p,weapons,committed,decisions,error)) return false;
     qa_json_id provenance = qa_json_get(doc, weapons, "provenance");
     if (qa_json_type(doc, provenance) != QA_JSON_OBJECT)
@@ -1075,6 +1172,17 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
         qa_native_signature dispatcher_sig=signature(p,p->dispatcher_parameters,p->dispatcher_count,QA_NATIVE_VOID);
         if(!qa_native_rva(instance(p),p->dispatcher_entry,1,&entry,error)||
             !qa_native_observe_entry(instance(p),entry,&dispatcher_sig,dispatcher_call,p,&p->dispatcher_hook,error)) return false;
+    }
+    if (p->animation_declared && !p->animation_hook) {
+        qa_native_signature animation_sig = signature(p, animation_parameters, 8, QA_NATIVE_VOID);
+        if (!qa_native_rva(instance(p), p->animation_entry, 1, &entry, error) ||
+            !qa_native_observe_entry(instance(p), entry, &animation_sig, animation_entry,
+                p, &p->animation_hook, error)) return false;
+    }
+    for (size_t i = 0; i < p->animation_region_count; ++i) {
+        attack_animation_region *region = p->animation_regions + i;
+        if (!region->binding && !qa_native_bind_region(instance(p), region->id,
+            animation_skip, p, &region->binding, error)) return false;
     }
     for(size_t i=0;i<p->decision_count;++i) {
         decision_region *region=p->decisions+i;
@@ -1382,7 +1490,8 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
 {
     struct application_native_q2_attack *p = engine->source_attack;
     if (!p) return true;
-    if (p->current||p->dispatch||p->projections) return application_fail(error, QA_ERROR_ARGUMENT, "Native attack close requires drained original weapon calls");
+    if (p->current||p->dispatch||p->projections||p->animation_request||p->animation_call)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native attack close requires drained original weapon calls");
     p->active = false;
     for (attack_factor *factor = p->factors; factor; factor = factor->next)
         if (!player_match_unbind(p, factor, error)) return false;
@@ -1395,6 +1504,11 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
         if(region->binding&&!qa_native_remove_region(region->binding,error)) return false;
         region->binding=NULL;
     }
+    for (size_t i = 0; i < p->animation_region_count; ++i) {
+        attack_animation_region *region = p->animation_regions + i;
+        if (region->binding && !qa_native_remove_region(region->binding, error)) return false;
+        region->binding = NULL;
+    }
     if (p->delay_hook && !qa_native_remove_region(p->delay_hook, error)) return false;
     p->delay_hook = NULL;
     if (p->delay_result && !qa_native_free(instance(p), p->delay_result, error)) return false;
@@ -1406,7 +1520,7 @@ bool application_native_q2_attack_suspend(struct application_native_q2 *engine, 
         factor->clock_present = false;
     }
     qa_native_entry_observer **bindings[] = {&p->factor_hook, &p->spawn_hook, &p->free_hook,
-        &p->dispatcher_hook, &p->client_spawn_hook};
+        &p->dispatcher_hook, &p->client_spawn_hook, &p->animation_hook};
     for (size_t i = 0; i < sizeof(bindings) / sizeof(*bindings); ++i) {
         if (*bindings[i] && !qa_native_unobserve_entry(*bindings[i], error)) return false;
         *bindings[i] = NULL;
