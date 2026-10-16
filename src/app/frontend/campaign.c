@@ -34,7 +34,7 @@ struct frontend_campaign {
     int32_t match_start;
     campaign_kind kind;
     qa_cvar_handle nextmap, skill, selection, deathmatch, protocol;
-    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[QA_TEAM_ARENA_OVERRIDE_COUNT], result_fields[3];
+    qa_cvar_handle archive[8], round_identity, time_to_beat, result_fields[3];
     uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
     bool selection_valid;
@@ -78,14 +78,13 @@ static const char *campaign_value(const qa_cvars *cvars,qa_cvar_handle handle)
 bool frontend_campaign_archive_run(qa_frontend *f,qa_cvars *registry,
     bool (*write)(void *,qa_error *),void *context,qa_error *error)
 {
-    frontend_campaign *owner=f?f->campaign:NULL;
-    if (!owner || owner->kind!=CAMPAIGN_TEAM ||
+    if (!f ||
         qa_application_q3_campaign_overrides(f->application)!=QA_TEAM_ARENA_OVERRIDES_ACTIVE ||
-        !qa_cvars_same_store(owner->cvars,registry)) return write(context,error);
+        !qa_cvars_same_store(qa_application_cvars(f->application),registry)) return write(context,error);
     qa_cvar_assignment assignments[QA_TEAM_ARENA_OVERRIDE_COUNT];
     size_t count=0;
     for (size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i) {
-        const qa_cvar_view *saved=qa_cvars_read(registry,owner->saved_rules[i]);
+        const qa_cvar_view *saved=qa_cvars_find(registry,qa_team_arena_overrides[i].saved);
         if (saved && qa_cvars_resolve(registry,qa_team_arena_overrides[i].name).slot)
             assignments[count++]=(qa_cvar_assignment){qa_team_arena_overrides[i].name,saved->value};
     }
@@ -345,8 +344,6 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
     owner->protocol=qa_cvars_resolve(view.cvars,"protocol");
     campaign_result_bind(owner);
-    for(size_t i=0;i<QA_TEAM_ARENA_OVERRIDE_COUNT;++i)
-        owner->saved_rules[i]=qa_cvars_resolve(view.cvars,qa_team_arena_overrides[i].saved);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
     f->campaign=owner;
