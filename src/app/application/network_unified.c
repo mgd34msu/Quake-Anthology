@@ -11,6 +11,7 @@
 #include "client_events.h"
 #include "control_frame.h"
 #include "qa/application_network.h"
+#include "qa/application_equipment.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_bots.h"
 #include "qa/game_q3_clients.h"
@@ -704,6 +705,13 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         qa_command_result host = qa_application_host_command(app, &command, error);
         okay = host != QA_COMMAND_FAILED;
         handled = host == QA_COMMAND_HANDLED;
+    }
+    if (okay && !handled) {
+        qa_command_result item = qa_application_item_command(app, player.actor, &command, NULL, error);
+        if (item != QA_COMMAND_UNHANDLED) {
+            qa_arena_destroy(&storage);
+            return item == QA_COMMAND_HANDLED;
+        }
     }
     if (okay && !handled && source->kind == APPLICATION_PROVIDER_QC &&
         strcmp(name, "kill") && strcmp(name, "suicide"))
