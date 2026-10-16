@@ -25,6 +25,7 @@
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "save_native_q2_record.h"
+#include "save_native_q2.h"
 #include "portals.h"
 #include "guest_q3_save.h"
 #include "save_content.h"
@@ -2051,6 +2052,10 @@ static void persistence_discard(void *opaque, void *value)
     candidate->native_restore_current = NULL;
     candidate->native_restore_resources = NULL;
     candidate->operation = APPLICATION_IDLE;
+    if (!application_native_q2_baselines_destroy(candidate, NULL)) {
+        operation->retained = value;
+        return;
+    }
     if (operation->ops->discard_services &&
         !operation->ops->discard_services(operation->ops->context, value, NULL)) {
         operation->retained = value;

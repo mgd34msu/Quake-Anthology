@@ -149,7 +149,7 @@ qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 bool frontend_save_commands_pending(const qa_frontend *f)
 { return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_restoring(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || cleanup_pending(f->save_commands)); }
+{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN); }
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
