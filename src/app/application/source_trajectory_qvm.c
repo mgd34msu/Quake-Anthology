@@ -521,7 +521,8 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
     bool *changed, qa_error *error)
 {
     trajectory_qvm *source = context; *changed = false;
-    uint32_t slot = (uint32_t)attachment->handle;
+    uint32_t slot;
+    if (!qa_q3_host_actor_slot(source->host, attachment->projectile, &slot, error)) return false;
     if (source->flags[slot] & QVM_TRAJECTORY_RETIRED) { attachment->retired = true; return true; }
     if (!qvm_time(source, time_ns, error) || !qvm_refresh(source, attachment->projectile, error)) return false;
     int32_t pointer, active, next, entry, result;
