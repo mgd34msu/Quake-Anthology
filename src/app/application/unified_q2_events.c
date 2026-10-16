@@ -6,7 +6,6 @@
 #include "qa/network_q2_messages.h"
 #include "qa/application_network_q2.h"
 #include "qa/native_host_q2_wire.h"
-#include "../../gameplay/q2/monsters/muzzle_data.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -172,17 +171,12 @@ static bool muzzle(q2_projection *p, const qa_q2_server_event *event, qa_unified
     if (!a.registry || (event->data.muzzle.monster && !present)) return true;
     qa_vec3 direction = {0};
     if (event->data.muzzle.monster) {
-        bool classic = p->engine->profile == QA_NATIVE_Q2_GAME_API3;
-        const qa_vec3 *offsets = classic ? q2m_classic_muzzle_offsets : q2m_rerelease_muzzle_offsets;
-        size_t count = classic ? sizeof(q2m_classic_muzzle_offsets) / sizeof(*offsets) : sizeof(q2m_rerelease_muzzle_offsets) / sizeof(*offsets);
-        if (event->data.muzzle.flash >= count) return application_fail(e, QA_ERROR_FORMAT, "Q2 monster muzzle exceeds its authentic Source offset table");
-        qa_vec3 right; qa_angle_vectors(angles, &direction, &right, NULL,QA_ANGLE_FLOAT_MATH);
-        qa_vec3 offset = qa_vec_scale(offsets[event->data.muzzle.flash], scale == 0 ? 1 : scale);
-        origin = qa_vec_add(origin, qa_vec_add(qa_vec_scale(direction, offset.x), qa_vec_scale(right, offset.y))); origin.z += offset.z;
+        qa_angle_vectors(angles, &direction, NULL, NULL, QA_ANGLE_FLOAT_MATH);
     }
     *out = (qa_unified_q2_muzzle){.actor = a, .entity = (uint16_t)event->data.muzzle.entity,
         .flash = (uint16_t)event->data.muzzle.flash, .monster = event->data.muzzle.monster,
         .silenced = event->data.muzzle.silenced, .has_pose = event->data.muzzle.monster,
+        .origin_is_actor = event->data.muzzle.monster,
         .origin = origin, .angles = angles, .direction = direction, .scale = scale};
     *reached = true; return true;
 }

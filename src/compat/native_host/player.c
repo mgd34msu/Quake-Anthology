@@ -1,5 +1,28 @@
 #include "internal.h"
 
+static bool hud_records(qa_native_host *host, qa_error *error)
+{
+    return host->q2_hud_records || qa_native_allocate(host->instance, 1536 + 296,
+        INT32_MIN + 9, &host->q2_hud_records, error);
+}
+
+bool qa_native_host_q2_monster_flash_offset(qa_native_host *host, uint16_t flash,
+    qa_vec3 *out, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, flash, "Q2 muzzle offset requires a live cgame");
+    if (!hud_records(host, error)) return false;
+    qa_native_address address = host->q2_hud_records + 1536;
+    qa_native_value args[] = {{.type = QA_NATIVE_U16, .as.u16 = flash},
+        {.type = QA_NATIVE_ADDRESS, .as.address = address}};
+    uint8_t bytes[12];
+    if (!qa_native_call(host->instance, "GetMonsterFlashOffset", args, 2, NULL, error) ||
+        !native_host_read(host, address, bytes, sizeof(bytes), error)) return false;
+    *out = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
+    return qa_vec_finite(*out) || native_host_fail(error, QA_ERROR_FORMAT, flash,
+        "Q2 cgame returned a nonfinite muzzle offset");
+}
+
 bool qa_native_host_q2_parse_config(qa_native_host *host, int32_t index,
     const char *text, qa_error *error)
 {
@@ -52,8 +75,7 @@ bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     qa_store_u32le(viewport + 8, (uint32_t)view->width); qa_store_u32le(viewport + 12, (uint32_t)view->height);
     qa_store_u32le(safe, (uint32_t)view->safe_x); qa_store_u32le(safe + 4, (uint32_t)view->safe_y);
     qa_store_u32le(safe + 8, (uint32_t)view->safe_width); qa_store_u32le(safe + 12, (uint32_t)view->safe_height);
-    if (!host->q2_hud_records &&
-        !qa_native_allocate(host->instance, 1536 + 296, INT32_MIN + 9, &host->q2_hud_records, error)) return false;
+    if (!hud_records(host, error)) return false;
     qa_native_address records = host->q2_hud_records;
     bool ok =
         native_host_write(host, records, data.data, data.size, error) &&

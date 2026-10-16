@@ -167,6 +167,7 @@ bool frontend_remote_q2_effects_current(const frontend_remote_q2_effects *owner,
         a->white == s->white && a->video_frame == s->video_frame && a->video_context == s->video_context &&
         a->context == s->context && a->current == s->current && a->actor == s->actor &&
         a->actor_pose == s->actor_pose && a->actor_live == s->actor_live && a->viewer == s->viewer && a->model == s->model && a->sound == s->sound &&
+        a->monster_flash_offset == s->monster_flash_offset && a->monster_flash_context == s->monster_flash_context &&
         a->hit_marker == s->hit_marker && a->controls == s->controls && a->frame_milliseconds == s->frame_milliseconds &&
         a->render_clock == s->render_clock &&
         a->footstep == s->footstep && a->trace == s->trace && q2fx_source_current(owner, error);
@@ -786,16 +787,40 @@ static bool monster_muzzle_at(frontend_remote_q2_effects *o, qa_actor_id actor_i
     }
     return true;
 }
-static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
-    uint32_t flash, double time, double server, qa_error *e)
+static const qa_vec3 *monster_default_offset(const frontend_remote_q2_effects *o, uint32_t flash)
 {
     bool rerelease=o->source.rules==QA_RULESET_Q2_RERELEASE;
     const qa_vec3 *offsets=rerelease?q2m_rerelease_muzzle_offsets:q2m_classic_muzzle_offsets;
     size_t size=rerelease?sizeof(q2m_rerelease_muzzle_offsets)/sizeof(*offsets):sizeof(q2m_classic_muzzle_offsets)/sizeof(*offsets);
-    if (!flash || flash>=size-1) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
+    return flash && flash<size-1?offsets+flash:NULL;
+}
+static bool monster_native_offset(frontend_remote_q2_effects *o, uint32_t flash,
+    qa_vec3 *out, bool *native, qa_error *e)
+{
+    *native=false;
+    if (o->source.monster_flash_offset && o->source.viewer && flash<=UINT16_MAX) {
+        qa_actor_id recipient;
+        if (!o->source.viewer(o->source.context,&recipient,e) ||
+            !o->source.monster_flash_offset(o->source.monster_flash_context,recipient,
+                (uint16_t)flash,out,native,e)) return false;
+        if (*native) return q2fx_source_current(o,e);
+    }
+    return true;
+}
+static bool monster_muzzle(frontend_remote_q2_effects *o, frontend_remote_q2_effects_pose pose,
+    uint32_t flash, double time, double server, qa_error *e)
+{
+    bool rerelease=o->source.rules==QA_RULESET_Q2_RERELEASE;
+    qa_vec3 offset;bool native;
+    if (!monster_native_offset(o,flash,&offset,&native,e)) return false;
+    if (!native) {
+        const qa_vec3 *fallback=monster_default_offset(o,flash);
+        if (!fallback) return q2fx_fail(e,QA_ERROR_FORMAT,"Received monster muzzle leaves its source offset table");
+        offset=*fallback;
+    }
     float scale=rerelease && pose.scale!=0?pose.scale:1;
     if (!isfinite(scale) || scale<=0) return q2fx_fail(e,QA_ERROR_FORMAT,"Q2 monster muzzle has invalid received scale");
-    qa_vec3 axis[3]; qa_angle_axis(pose.angles,axis,QA_ANGLE_FLOAT_MATH); qa_vec3 offset=qa_vec_scale(offsets[flash],scale);
+    qa_vec3 axis[3]; qa_angle_axis(pose.angles,axis,QA_ANGLE_FLOAT_MATH); offset=qa_vec_scale(offset,scale);
     qa_vec3 origin=qa_vec_sub(qa_vec_add(pose.origin,qa_vec_scale(axis[0],offset.x)),qa_vec_scale(axis[1],offset.y)); origin.z+=offset.z;
     return monster_muzzle_at(o,pose.actor,origin,&pose.angles,scale,flash,time,server,e);
 }
@@ -941,13 +966,28 @@ bool frontend_remote_q2_effects_monster_muzzle(frontend_remote_q2_effects *o,
 }
 bool frontend_remote_q2_effects_monster_muzzle_pose(frontend_remote_q2_effects *o,
     qa_actor_id actor_id,uint32_t flash,qa_vec3 origin,qa_vec3 angles,float scale,
-    double time,double server,qa_error *e)
+    bool origin_is_actor,double time,double server,qa_error *e)
 {
     if (!o || !frontend_remote_q2_effects_idle(o) || !actor_id.registry ||
         !isfinite(time) || !isfinite(server) || !qa_vec_finite(origin) || !qa_vec_finite(angles) ||
         !isfinite(scale) || scale<0 || !q2fx_source_current(o,e)) return false;
     ++o->busy;
-    bool ok=monster_muzzle_at(o,actor_id,origin,&angles,scale==0?1:scale,flash,time,server,e);
+    bool ok;
+    if (origin_is_actor) {
+        ok=monster_muzzle(o,(frontend_remote_q2_effects_pose){.actor=actor_id,
+            .origin=origin,.angles=angles,.scale=scale},flash,time,server,e);
+    } else {
+        qa_vec3 offset;bool native;
+        ok=monster_native_offset(o,flash,&offset,&native,e);
+        const qa_vec3 *fallback=monster_default_offset(o,flash);
+        if (ok && native && fallback) {
+            qa_vec3 axis[3];qa_angle_axis(angles,axis,QA_ANGLE_FLOAT_MATH);
+            qa_vec3 delta=qa_vec_scale(qa_vec_sub(offset,*fallback),scale==0?1:scale);
+            origin=qa_vec_sub(qa_vec_add(origin,qa_vec_scale(axis[0],delta.x)),qa_vec_scale(axis[1],delta.y));
+            origin.z+=delta.z;
+        }
+        if (ok) ok=monster_muzzle_at(o,actor_id,origin,&angles,scale==0?1:scale,flash,time,server,e);
+    }
     o->dirty=true; --o->busy; return ok && q2fx_source_current(o,e);
 }
 bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *o,qa_actor_id viewer,

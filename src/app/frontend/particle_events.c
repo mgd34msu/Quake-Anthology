@@ -760,6 +760,8 @@ static bool local_q2_create(qa_frontend *frontend,frontend_particle_owner *owner
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=frontend,
         .current=local_q2_source_current,.actor=local_q2_number_pose,.actor_pose=local_q2_pose,
         .actor_live=local_q2_actor_live,.viewer=local_q2_viewer,.model=local_q2_model,.sound=local_q2_sound,
+        .monster_flash_context=frontend->seats+owner->seat,
+        .monster_flash_offset=frontend_native_q2_monster_flash_offset,
         .controls=local_q2_controls,.frame_milliseconds=local_q2_interval,
         .render_clock=local_q2_render_clock,.trace=local_q2_trace};
     return frontend_remote_q2_effects_create(&source,&owner->q2_effects,error);

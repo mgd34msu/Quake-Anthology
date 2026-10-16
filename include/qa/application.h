@@ -438,6 +438,8 @@ bool qa_application_presentation_read(qa_application *, uint32_t seat,
 /* Deliver ring-consumed text to the selected native cgame, independent of GAME. */
 bool qa_application_native_q2_hud_text(qa_application *, uint32_t seat,
     qa_native_q2_hud_text_kind, const char *, bool flag, bool *handled, qa_error *);
+bool qa_application_native_q2_monster_flash_offset(qa_application *, uint32_t seat,
+    uint16_t flash, qa_vec3 *, bool *handled, qa_error *);
 bool qa_application_guest_menu_set(qa_application *, uint32_t seat,
                                      qa_application_guest_menu, bool *handled,
                                      qa_error *);

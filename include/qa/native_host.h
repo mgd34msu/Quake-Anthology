@@ -441,6 +441,8 @@ bool qa_native_host_q2_hud_text(qa_native_host *, uint32_t seat,
     qa_native_q2_hud_text_kind, const char *text, bool flag, qa_error *);
 bool qa_native_host_q2_parse_config(qa_native_host *, int32_t index,
     const char *text, qa_error *);
+bool qa_native_host_q2_monster_flash_offset(qa_native_host *, uint16_t flash,
+    qa_vec3 *, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

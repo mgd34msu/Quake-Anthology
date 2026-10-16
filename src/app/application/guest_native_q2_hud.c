@@ -154,6 +154,27 @@ bool application_native_q2_import(void *opaque, const qa_native_host_q2_applicat
         : application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 application import is unbound");
 }
 
+static bool hud_initialize(struct application_native_q2 *engine, qa_error *error)
+{
+    if (engine->initialized) return true;
+    if (!qa_native_host_initialize(engine->provider->state.native.host, 0, 0, false, error)) return false;
+    engine->initialized = true;
+    return qa_native_call(qa_native_host_instance(engine->provider->state.native.host),
+        "TouchPics", NULL, 0, NULL, error);
+}
+
+bool application_native_q2_monster_flash_offset(application_provider *provider,
+    uint16_t flash, qa_vec3 *out, qa_error *error)
+{
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    if (!application_native_q2_activate(engine, error)) return false;
+    ++engine->calls;
+    bool ok = hud_initialize(engine, error) &&
+        qa_native_host_q2_monster_flash_offset(provider->state.native.host, flash, out, error);
+    --engine->calls;
+    return ok;
+}
+
 static bool hud_begin(application_provider *provider, uint32_t seat,
     struct application_native_q2 **source_out, uint32_t *slot, qa_error *error)
 {
@@ -169,13 +190,7 @@ static bool hud_begin(application_provider *provider, uint32_t seat,
     if (!admitted) return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD cannot draw another seat");
     if (!application_native_q2_activate(engine, error)) return false;
     ++engine->calls; ++source->calls;
-    bool ok = true;
-    if (!engine->initialized) {
-        ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
-        if (ok) engine->initialized = true;
-        if (ok) ok = qa_native_call(qa_native_host_instance(provider->state.native.host),
-            "TouchPics", NULL, 0, NULL, error);
-    }
+    bool ok = hud_initialize(engine, error);
     bool rebound = engine->hud_source_owner != source->provider->owner;
     uint32_t link = rebound ? 1 : qa_q2_config_changes_begin(&source->config_changes, engine->hud_config_revision);
     while (ok && link && link <= engine->hud_names.layout.max_configs) {

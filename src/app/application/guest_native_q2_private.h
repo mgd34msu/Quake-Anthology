@@ -199,6 +199,7 @@ struct application_control_external_stage;
 bool application_native_q2_stage_move(application_provider *, qa_actor_id,
     const qa_usercmd *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_native_q2_draw_hud(application_provider *, uint32_t, uint32_t, qa_error *);
+bool application_native_q2_monster_flash_offset(application_provider *, uint16_t, qa_vec3 *, qa_error *);
 bool application_native_q2_hud_text(application_provider *, uint32_t,
     qa_native_q2_hud_text_kind, const char *, bool, qa_error *);
 struct application_native_q2 *application_native_q2_hud_source(struct application_native_q2 *,

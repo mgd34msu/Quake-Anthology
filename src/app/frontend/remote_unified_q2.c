@@ -468,6 +468,7 @@ static bool source_current(void *ctx,const frontend_remote_q2_effects_source *s,
         s->video_frame==expected.video_frame && s->video_context==expected.video_context &&
         s->current==expected.current && s->actor==expected.actor && s->actor_pose==expected.actor_pose &&
         s->actor_live==expected.actor_live && s->viewer==expected.viewer &&
+        s->monster_flash_offset==expected.monster_flash_offset && s->monster_flash_context==expected.monster_flash_context &&
         s->model==expected.model && s->sound==expected.sound && s->hit_marker==expected.hit_marker &&
         s->footstep==expected.footstep && s->trace==expected.trace && s->controls==expected.controls &&
         s->frame_milliseconds==expected.frame_milliseconds && s->render_clock==expected.render_clock && current(b->owner,e);
@@ -586,6 +587,8 @@ static frontend_remote_q2_effects_source source(q2_bank *b)
         .images=b->images,.materials=b->materials,.world=frontend_unified_media_world(b->owner->media),.white=qa_scene_white(b->images),.context=b,
         .video_frame=frontend_material_movies_frontend_resolve,.video_context=b->owner->frontend,
         .current=source_current,.actor_pose=full_pose,.actor_live=actor_live,.viewer=viewer,.model=model,.sound=sound,.hit_marker=hit,
+        .monster_flash_context=b->owner->frontend->seats+frontend_remote_unified_domain_read(b->owner->replica)->physical_seat,
+        .monster_flash_offset=frontend_native_q2_monster_flash_offset,
         .controls=controls,.frame_milliseconds=frame_milliseconds,.render_clock=render_clock,.trace=trace,.footstep=footstep};
 }
 static bool bank_name(frontend_unified_q2 *o,qa_string_id content_name,q2_activation *activation_owner,qa_string_id source_provider,
@@ -1279,7 +1282,7 @@ static bool muzzle_receive(frontend_unified_q2 *o,const qa_unified_presentation_
     if (!source_actor(o,m->actor,&a,e) || !a.registry || !source_bank(o,row,true,&b,e)) return false;
     double ms=row->seconds*1000;++o->busy;bool okay;
     if (!m->monster)okay=frontend_remote_q2_effects_actor_muzzle(b->effects,a,m->flash,false,m->silenced,ms,ms,e);
-    else if (m->has_pose)okay=frontend_remote_q2_effects_monster_muzzle_pose(b->effects,a,m->flash,m->origin,m->angles,m->scale,ms,ms,e);
+    else if (m->has_pose)okay=frontend_remote_q2_effects_monster_muzzle_pose(b->effects,a,m->flash,m->origin,m->angles,m->scale,m->origin_is_actor,ms,ms,e);
     else okay=frontend_remote_q2_effects_monster_muzzle(b->effects,a,m->flash,m->origin,m->direction,ms,ms,e);
     --o->busy;
     return okay;

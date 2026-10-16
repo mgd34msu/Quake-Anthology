@@ -32,7 +32,7 @@ typedef struct qa_unified_q2_temporary {
 typedef struct qa_unified_q2_muzzle {
     qa_actor_id actor;
     uint16_t entity, flash;
-    bool monster, silenced, has_pose;
+    bool monster, silenced, has_pose, origin_is_actor;
     qa_vec3 origin, direction, angles;
     float scale;
 } qa_unified_q2_muzzle;

@@ -21,6 +21,8 @@ static bool current(const frontend_remote_q2_effects_policy *t, bool parent)
         t->owner->source.protocol.flags!=t->source.protocol.flags || t->owner->source.current!=t->source.current ||
         t->owner->source.actor!=t->source.actor || t->owner->source.actor_pose!=t->source.actor_pose ||
         t->owner->source.viewer!=t->source.viewer ||
+        t->owner->source.monster_flash_offset!=t->source.monster_flash_offset ||
+        t->owner->source.monster_flash_context!=t->source.monster_flash_context ||
         t->owner->source.model!=t->source.model || t->owner->source.sound!=t->source.sound ||
         t->owner->source.hit_marker!=t->source.hit_marker || t->owner->source.controls!=t->source.controls ||
         t->owner->source.frame_milliseconds!=t->source.frame_milliseconds ||

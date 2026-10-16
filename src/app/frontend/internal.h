@@ -695,6 +695,8 @@ bool frontend_world_retired(void *, qa_application *, qa_error *);
 bool frontend_native_q2_services(void *, qa_application *, qa_actor_owner, qa_native_profile,
     qa_native_host_engine_services *, qa_native_host_q2_application_fn *, void **, qa_error *);
 bool frontend_native_q2_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
+bool frontend_native_q2_monster_flash_offset(void *, qa_actor_id, uint16_t,
+    qa_vec3 *, bool *handled, qa_error *);
 bool frontend_native_q2_world_text_font(qa_frontend *, qa_string_id,
     const qa_font **, qa_error *);
 void frontend_native_q2_retire_world(qa_frontend *);

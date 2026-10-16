@@ -1508,6 +1508,7 @@ static const qa_unified_field qa_unified_q2_muzzle_fields[] = {
     QA_UNIFIED_FIELD(qa_unified_q2_muzzle, monster, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_q2_muzzle, silenced, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_FIELD(qa_unified_q2_muzzle, has_pose, QA_UNIFIED_FIELD_BOOL),
+    QA_UNIFIED_FIELD(qa_unified_q2_muzzle, origin_is_actor, QA_UNIFIED_FIELD_BOOL),
     QA_UNIFIED_RECORD(qa_unified_q2_muzzle, origin, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_q2_muzzle, direction, qa_unified_vector_layout),
     QA_UNIFIED_RECORD(qa_unified_q2_muzzle, angles, qa_unified_vector_layout),

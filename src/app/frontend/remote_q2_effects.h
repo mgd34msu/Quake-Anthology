@@ -90,6 +90,9 @@ typedef struct frontend_remote_q2_effects_source {
     bool (*actor_pose)(void *, qa_actor_id, frontend_remote_q2_effects_pose *, qa_error *);
     bool (*actor_live)(void *, qa_actor_id, bool *, qa_error *);
     bool (*viewer)(void *, qa_actor_id *, qa_error *);
+    void *monster_flash_context;
+    bool (*monster_flash_offset)(void *, qa_actor_id recipient, uint16_t,
+        qa_vec3 *, bool *handled, qa_error *);
     /* acquire=false reads the already retained model cache, including genuine
      * missing-resource receipts. Restore and readiness never register models. */
     bool (*model)(void *, const char *, bool acquire, qa_scene_model **, qa_error *);
@@ -157,7 +160,7 @@ bool frontend_remote_q2_effects_monster_muzzle(frontend_remote_q2_effects *,
     double milliseconds, double server_milliseconds, qa_error *);
 bool frontend_remote_q2_effects_monster_muzzle_pose(frontend_remote_q2_effects *,
     qa_actor_id, uint32_t flash, qa_vec3 origin, qa_vec3 angles, float scale,
-    double milliseconds, double server_milliseconds, qa_error *);
+    bool origin_is_actor, double milliseconds, double server_milliseconds, qa_error *);
 bool frontend_remote_q2_effects_weapon_draw(frontend_remote_q2_effects *, qa_actor_id viewer,
     const qa_scene_model_input *weapon, qa_scene_frame *, qa_error *);
 bool frontend_remote_q2_effects_effect(frontend_remote_q2_effects *,

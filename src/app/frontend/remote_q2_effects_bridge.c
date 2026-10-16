@@ -34,6 +34,8 @@ static bool source_current(void *context, const frontend_remote_q2_effects_sourc
         source->frame_milliseconds != frame_milliseconds ||
         source->render_clock != render_clock ||
         source->viewer != viewer ||
+        source->monster_flash_offset != frontend_native_q2_monster_flash_offset ||
+        source->monster_flash_context != row->frontend->seats + row->options.domain.physical_seat ||
         source->footstep != remote_q2_footstep || source->trace != remote_q2_trace ||
         source->session != qa_application_session(row->options.domain.application) || source->identity != row->identity ||
         source->content_generation != row->content_generation || source->protocol.kind != row->options.domain.protocol.kind ||
@@ -272,6 +274,8 @@ bool remote_q2_effects_source_read(frontend_remote_q2 *row, frontend_remote_q2_e
         .rules = row->presentation_rules,
         .map = row->map, .files = row->content.mounts, .sounds = row->sounds, .images = row->images, .materials = row->materials, .world = row->world,
         .white = row->white, .context = row, .current = source_current, .actor = actor, .actor_pose = actor_pose, .viewer = viewer,
+        .monster_flash_context = row->frontend->seats + row->options.domain.physical_seat,
+        .monster_flash_offset = frontend_native_q2_monster_flash_offset,
         .video_frame = frontend_material_movies_frontend_resolve, .video_context = row->frontend,
         .model = model, .sound = remote_q2_effect_sound, .hit_marker = hit_marker,
         .controls = controls,

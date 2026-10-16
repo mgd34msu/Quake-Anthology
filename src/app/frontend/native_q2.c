@@ -55,6 +55,20 @@ struct frontend_native_q2 {
     bool prepared, restored;
 };
 
+bool frontend_native_q2_monster_flash_offset(void *context, qa_actor_id recipient,
+    uint16_t flash, qa_vec3 *out, bool *handled, qa_error *error)
+{
+    frontend_seat *seat = context;
+    qa_actor_id viewer;
+    uint32_t launch_seat;
+    *handled = false;
+    if (!frontend_seat_actor_read(seat->frontend, seat->id, &viewer) ||
+        !qa_actor_id_equal(viewer, recipient) ||
+        !frontend_seat_launch_id_read(seat->frontend, seat->id, &launch_seat)) return true;
+    return qa_application_native_q2_monster_flash_offset(seat->frontend->application,
+        launch_seat, flash, out, handled, error);
+}
+
 static bool source_files(frontend_native_q2 *source, qa_error *error)
 {
     if (source->images && source->sounds) return true;
