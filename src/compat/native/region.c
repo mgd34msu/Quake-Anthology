@@ -244,19 +244,8 @@ bool qa_native_region_invoke(qa_native_instance *instance,
     if (!declared)
         return native_fail(error, QA_ERROR_ARGUMENT, entry,
             "nested source entry lacks its actual whole-function declaration");
-    if (instance->guest && qa_native_guest_execution(instance->guest) == QA_NATIVE_GUEST_EMULATED) {
-        bool executable = false;
-        for (size_t i = 0; i < qa_native_guest_mapping_count(instance->guest); ++i) {
-            qa_native_guest_mapping mapping;
-            if (!qa_native_guest_mapping_at(instance->guest, i, &mapping, error)) return false;
-            if (entry >= mapping.base && entry - mapping.base < mapping.bytes &&
-                (mapping.permissions & QA_NATIVE_GUEST_EXECUTE)) { executable = true; break; }
-        }
-        if (!executable)
-            return native_fail(error, QA_ERROR_ARGUMENT, entry,
-                "nested source entry is outside actual executable guest storage");
-    } else return native_fail(error, QA_ERROR_UNSUPPORTED, entry,
-        "nested source invocation has no actual suspended execution owner");
+    if (!qa_native_range_check(instance, entry, 1, QA_NATIVE_MEMORY_EXECUTE, error))
+        return false;
     if (instance->active_depth == UINT32_MAX)
         return native_fail(error, QA_ERROR_ARGUMENT, entry, "nested source invocation depth exhausted");
     qa_native_address previous_entry = instance->region_invocation_entry;
