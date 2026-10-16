@@ -888,23 +888,28 @@ static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickups need their actual supply mappings");
     pair->pickup_rules = calloc(count, sizeof(*pair->pickup_rules));
     if (!pair->pickup_rules) return application_fail(error, QA_ERROR_MEMORY, "Owning selected original pickup rules");
-    pair->pickup_rule_count = count;
     for (size_t i = 0; i < count; ++i) {
         bool ammo = i < profile->ammo_count;
         const qa_supply_mapping *mapping = ammo ? profile->ammo + i : profile->weapons + i - profile->ammo_count;
-        qa_pickup_rule *rule = pair->pickup_rules + i;
-        qa_item_id *offered = malloc(sizeof(*offered));
-        if (!offered) return application_fail(error, QA_ERROR_MEMORY, "Retaining original pickup item identity");
-        *offered = mapping->source; rule->offered = offered; rule->offered_count = 1;
-        qa_bytes item = qa_strings_text(qa_session_strings(pair->owner->application->session), mapping->source);
-        if (!item.data || item.size > SIZE_MAX - 10)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup mapping has no retained item name");
-        char *name = malloc(item.size + 10);
-        if (!name) return application_fail(error, QA_ERROR_MEMORY, "Naming selected original pickup rule");
-        memcpy(name, "selected:", 9); memcpy(name + 9, item.data, item.size); name[item.size + 9] = 0;
-        bool named = intern(pair->owner, name, &rule->id, error); free(name);
-        if (!named) return false;
-        qa_pickup_write *writes = NULL;
+        qa_pickup_rule *rule = NULL;
+        for (size_t j = 0; j < pair->pickup_rule_count; ++j)
+            if (pair->pickup_rules[j].offered[0] == mapping->source) { rule = pair->pickup_rules + j; break; }
+        if (!rule) {
+            rule = pair->pickup_rules + pair->pickup_rule_count++;
+            qa_item_id *offered = malloc(sizeof(*offered));
+            if (!offered) return application_fail(error, QA_ERROR_MEMORY, "Retaining original pickup item identity");
+            *offered = mapping->source; rule->offered = offered; rule->offered_count = 1;
+            qa_bytes item = qa_strings_text(qa_session_strings(pair->owner->application->session), mapping->source);
+            if (!item.data || item.size > SIZE_MAX - 10)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup mapping has no retained item name");
+            char *name = malloc(item.size + 10);
+            if (!name) return application_fail(error, QA_ERROR_MEMORY, "Naming selected original pickup rule");
+            memcpy(name, "selected:", 9); memcpy(name + 9, item.data, item.size); name[item.size + 9] = 0;
+            bool named = intern(pair->owner, name, &rule->id, error); free(name);
+            if (!named) return false;
+            rule->context = pair; rule->take = original_take;
+        }
+        qa_pickup_write *writes = (qa_pickup_write *)rule->writes;
         bool ok = true;
         for (size_t j = 0; ok && j < mapping->count; ++j)
             ok = pickup_write_add(&writes, &rule->write_count, mapping->destinations[j], error);
@@ -915,7 +920,6 @@ static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
         if (!ok) return false;
         if (!rule->write_count)
             return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickup has no destination");
-        rule->context = pair; rule->take = original_take;
     }
     return true;
 }
