@@ -345,6 +345,14 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
     if (handled) *handled=false;
     if (!handled || !invocation || !invocation->argc || !invocation->argv) return false;
     const char *name=invocation->argv[0];
+    static const struct { const char *name, *action, *notice; } aliases[]={
+        {"iamacheater","arena-unlock","All levels unlocked at skill level 1\n"},
+        {"iamamonkey","arena-medals","All levels unlocked at 100\n"}};
+    const char *notice=NULL;
+    for (size_t i=0;i<sizeof(aliases)/sizeof(aliases[0]);++i)
+        if (qa_text_ascii_equal(name,aliases[i].name)) {
+            name=aliases[i].action; notice=aliases[i].notice; break;
+        }
     if (!strcmp(name,"cinematic") || !strcmp(name,"cinematicpause") || !strcmp(name,"stopcinematic")) {
         qa_frontend *f=context;
         if (!f || application!=f->application || f->source_restoring || f->capture) return false;
@@ -360,7 +368,15 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
     qa_application_q3_campaign view;
     bool postgame=!strcmp(name,"postgame") || !strcmp(name,"spPostgame");
     if (!qa_application_q3_campaign_read(application,f->campaign->source,&view,error)) return false;
-    if (!postgame && invocation->context.owner && invocation->context.owner!=view.source_owner) return true;
+    if (!postgame && invocation->context.owner && invocation->context.owner!=view.source_owner) {
+        uint32_t physical;
+        if (!frontend_command_seat_read(f,&invocation->context,&physical)) return true;
+        frontend_campaign_ui_view recipient;
+        if (!frontend_campaign_ui_read(f,physical,&recipient,error)) return false;
+        if (!recipient.installed || recipient.source.source_owner!=view.source_owner ||
+            invocation->console!=recipient.client.context.console ||
+            invocation->context.owner!=recipient.client.context.receiver) return true;
+    }
     if ((postgame && invocation->console!=view.console) ||
         (postgame && !qa_application_q3_campaign_postgame_context(application,&view,&invocation->context,error)) ||
         (!postgame && !qa_application_command_context_active(application,&invocation->context))) return false;
@@ -376,6 +392,7 @@ bool frontend_campaign_source_command(void *context,qa_application *application,
         frontend_fail(error, QA_ERROR_ARGUMENT, "No actual Team Arena skirmish is active");
     else ok = campaign_base_action(f, &view, name, error);
     f->campaign->draining = false;
+    if (ok && notice) qa_console_emit(invocation->console,&invocation->context,notice);
     return ok;
 }
 
