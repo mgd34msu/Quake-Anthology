@@ -182,10 +182,13 @@ static bool hud_begin(application_provider *provider, uint32_t seat,
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || engine->profile != QA_NATIVE_Q2_CGAME_API2023 || engine->shutting_down ||
-        !application_native_q2_idle(provider))
+        engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD requires its idle cgame owner");
     struct application_native_q2 *source = application_native_q2_hud_source(engine, slot, error);
     if (!source) return false;
+    if (source->calls || source->source_invocation ||
+        !qa_native_host_destroy_ready(source->provider->state.native.host))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 HUD source is executing game code");
     bool admitted = false;
     for (size_t i = 1; i < 257; ++i)
         if (engine->clients[i].reserved && engine->clients[i].seat == seat) admitted = true;
