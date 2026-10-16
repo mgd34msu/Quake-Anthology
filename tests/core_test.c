@@ -2732,6 +2732,13 @@ static void test_console_command_precedence(void)
         counts.callback_result=QA_COMMAND_HANDLED;
         CHECK(qa_console_execute_now(console,&context,"god",&error));
         CHECK(counts.called==4 && counts.forwarded==1);
+        counts.callback_result=QA_COMMAND_UNHANDLED;
+        static const char *const equipment[]={"use Rocket Launcher","drop shells","weapnext","weapprev"};
+        for(size_t equipment_index=0;equipment_index<sizeof(equipment)/sizeof(*equipment);++equipment_index) {
+            size_t called=counts.called,forwarded=counts.forwarded;
+            CHECK(qa_console_execute_now(console,&context,equipment[equipment_index],&error));
+            CHECK(counts.called==called+1 && counts.forwarded==forwarded+1);
+        }
         qa_console_destroy(console);qa_cvars_destroy(cvars);
     }
 }
