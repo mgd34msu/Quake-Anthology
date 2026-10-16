@@ -1646,6 +1646,10 @@ bool application_supplies_cheat_item(void *context, qa_actor_id actor, size_t ar
         if (okay) *handled = true;
     }
 done:
+    if (okay && !*handled && (pair->arsenal->kind == APPLICATION_PROVIDER_Q1 ||
+        pair->arsenal->kind == APPLICATION_PROVIDER_Q2 || pair->arsenal->kind == APPLICATION_PROVIDER_Q3))
+        okay = application_native_give_item(pair->source, actor, argc, argv, handled, error) &&
+            supply_current(pair, actor, error);
     qa_unified_frame_lease_release(view.storage);
     supplies_leave(owner); return okay;
 }
