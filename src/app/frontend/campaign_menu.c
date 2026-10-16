@@ -174,7 +174,7 @@ bool frontend_campaign_menu_sync(qa_frontend *f,qa_error *error)
     for (unsigned i=0;i<f->options.seats;++i) {
         frontend_ui_seat_features *state=frontend_ui_features_seat(f->seats+i); frontend_campaign_ui_view view;
         if (!state || !frontend_campaign_ui_read(f,i,&view,error)) return false;
-        if (view.action_pending) continue;
+        if (view.action_pending || qa_input_seat_focus(f->seats[i].input)==QA_INPUT_CONSOLE) continue;
         if (!view.installed || !view.result) { state->shown_result=false; continue; }
         if (!frontend_campaign_postgame_frame(f,i,&view,error)) return false;
         int32_t intermission=view.team?view.team_live.intermission_time_ms:0;
