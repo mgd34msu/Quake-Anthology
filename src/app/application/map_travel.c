@@ -1118,6 +1118,22 @@ static bool map_checkpoint_fields(qa_source_save_io *io, struct application_map_
     return true;
 }
 
+static bool effective_cvar_field(qa_source_save_io *io, qa_application *application,
+    const char *name)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    const qa_cvar_view *current = reading ? NULL : qa_cvars_find(application->cvars, name);
+    bool present = current && (current->player_scoped || current->save_policy != QA_CVAR_SAVE_GAMEPLAY);
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return true;
+    char *value = reading ? NULL : (char *)current->value;
+    bool ok = qa_source_save_owned_text(io, &value);
+    if (ok && reading)
+        ok = qa_cvars_set(application->cvars, name, value ? value : "", true, io->error);
+    if (reading) free(value);
+    return ok;
+}
+
 static bool team_override_fields(qa_source_save_io *io, qa_application *application,
     qa_team_arena_override_phase *phase)
 {
@@ -1127,24 +1143,33 @@ static bool team_override_fields(qa_source_save_io *io, qa_application *applicat
     if (value > QA_TEAM_ARENA_OVERRIDES_RELEASED)
         return application_fail(io->error, QA_ERROR_FORMAT, "Invalid Team Arena override phase");
     *phase = (qa_team_arena_override_phase)value;
-    if (*phase != QA_TEAM_ARENA_OVERRIDES_ACTIVE) return true;
-    for (size_t i = 0; i < QA_TEAM_ARENA_OVERRIDE_COUNT; ++i) {
-        const qa_team_arena_override *rule = qa_team_arena_overrides + i;
-        const qa_cvar_view *saved = reading ? NULL : qa_cvars_find(application->cvars, rule->saved);
-        const qa_cvar_view *current = reading ? NULL : qa_cvars_find(application->cvars, rule->name);
-        char *baseline = reading ? NULL : (char *)(saved ? saved->value : rule->fallback);
-        bool effective = current && (current->player_scoped || current->save_policy != QA_CVAR_SAVE_GAMEPLAY);
-        bool ok = qa_source_save_owned_text(io, &baseline) && qa_source_save_bool(io, &effective);
-        char *setting = reading ? NULL : (char *)(current ? current->value : rule->fallback);
-        if (ok && effective) ok = qa_source_save_owned_text(io, &setting);
-        if (ok && reading) {
-            ok = qa_cvars_set(application->cvars, rule->saved, baseline ? baseline : rule->fallback, true, io->error);
-            if (ok && effective)
-                ok = qa_cvars_set(application->cvars, rule->name, setting ? setting : rule->fallback, true, io->error);
+    if (*phase == QA_TEAM_ARENA_OVERRIDES_NONE) return true;
+    if (*phase == QA_TEAM_ARENA_OVERRIDES_ACTIVE) {
+        for (size_t i = 0; i < QA_TEAM_ARENA_OVERRIDE_COUNT; ++i) {
+            const qa_team_arena_override *rule = qa_team_arena_overrides + i;
+            const qa_cvar_view *saved = reading ? NULL : qa_cvars_find(application->cvars, rule->saved);
+            char *baseline = reading ? NULL : (char *)(saved ? saved->value : rule->fallback);
+            bool ok = qa_source_save_owned_text(io, &baseline);
+            if (ok && reading)
+                ok = qa_cvars_set(application->cvars, rule->saved, baseline ? baseline : rule->fallback, true, io->error);
+            if (reading) free(baseline);
+            if (!ok || !effective_cvar_field(io, application, rule->name)) return false;
         }
-        if (reading) { free(baseline); free(setting); }
-        if (!ok) return false;
     }
+    if (reading && io->offset == io->input.size) {
+        if (*phase == QA_TEAM_ARENA_OVERRIDES_ACTIVE) {
+            const qa_cvar_view *route = qa_cvars_find(application->cvars, "nextmap");
+            if ((!route || !*route->value) &&
+                !qa_cvars_set(application->cvars, "nextmap", "teamarena-results", true, io->error)) return false;
+            return qa_cvars_set(application->cvars, "ui_singlePlayerActive", "1", true, io->error);
+        }
+        return true;
+    }
+    static const char *const round_values[] = {
+        "nextmap", "ui_singlePlayerActive", "ui_teamArenaTimeToBeat", "g_spSkill"
+    };
+    for (size_t i = 0; i < sizeof(round_values) / sizeof(round_values[0]); ++i)
+        if (!effective_cvar_field(io, application, round_values[i])) return false;
     return true;
 }
 
