@@ -9,6 +9,7 @@ bool frontend_startup_menus_create(frontend_seat *, qa_error *);
 bool frontend_startup_menus_destroy(frontend_seat *, qa_error *);
 bool frontend_startup_launch_drain(qa_frontend *, qa_error *);
 bool frontend_startup_campaign_stage(frontend_seat *,const qa_application_q3_campaign *,bool advance,qa_error *);
+bool frontend_startup_map_stage(frontend_seat *,qa_map_launch_policy,const char *,qa_error *);
 void frontend_startup_launch_discard(qa_frontend *);
 bool frontend_startup_end_stage(frontend_seat *, qa_error *);
 bool frontend_startup_local_players_read(frontend_seat *,bool *join,bool *drop,qa_error *);

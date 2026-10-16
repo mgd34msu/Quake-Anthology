@@ -9,6 +9,7 @@
 #include "guest_qc_original_save.h"
 #include "qa/save.h"
 #include "qa/text.h"
+#include "q3_campaign_launch.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -312,7 +313,7 @@ static bool set_map_draft(qa_launch_draft *draft, const char *path,
     return ok;
 }
 
-static bool map_launch_draft(qa_application *application, qa_launch_draft *draft,
+bool application_q3_map_launch_prepare(qa_application *application, qa_launch_draft *draft,
     qa_map_launch_policy policy, qa_error *error)
 {
     if (policy == QA_MAP_LAUNCH_DEFAULT) return true;
@@ -346,6 +347,14 @@ static bool map_launch_draft(qa_application *application, qa_launch_draft *draft
             } else ++i;
         }
     return true;
+}
+
+bool application_q3_map_launch_finish(qa_application *application,
+    qa_map_launch_policy policy, qa_error *error)
+{
+    return policy == QA_MAP_LAUNCH_DEFAULT ||
+        qa_cvars_set(qa_application_cvars(application), "sv_cheats",
+            policy == QA_MAP_LAUNCH_Q3_DEVMAP ? "1" : "0", true, error);
 }
 
 bool application_campaign_restore_draft(qa_application *previous,
@@ -398,7 +407,7 @@ bool qa_application_load_map(qa_application *application,
         application_fail(error, QA_ERROR_ARGUMENT,
                          "initial map load requires a content preset");
     if (ok) ok=set_map_draft(draft,path,request,false,error);
-    if (ok && state->busy) ok=map_launch_draft(application,draft,state->map_launch,error);
+    if (ok && state->busy) ok=application_q3_map_launch_prepare(application,draft,state->map_launch,error);
     if (ok) {
         bool previous_force = application->map_force_reload;
         state->load_revision = state->revision;
@@ -864,9 +873,7 @@ bool qa_application_finish_travel_publication(qa_application *application,
         state->match_finished = true;
     }
     if (!qa_application_rankings_start(application, error)) return false;
-    if (state->map_launch != QA_MAP_LAUNCH_DEFAULT &&
-        !qa_cvars_set(qa_application_cvars(application), "sv_cheats",
-            state->map_launch == QA_MAP_LAUNCH_Q3_DEVMAP ? "1" : "0", true, error)) return false;
+    if (!application_q3_map_launch_finish(application, state->map_launch, error)) return false;
     state->publication_complete = false;
     state->match_finished = false;
     state->map_launch = QA_MAP_LAUNCH_DEFAULT;

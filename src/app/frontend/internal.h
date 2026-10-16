@@ -455,6 +455,7 @@ bool frontend_clipboard_read(void *,qa_buffer *,qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
+char *frontend_launch_map_path(const char *, qa_error *);
 bool frontend_launch_weapon_behavior_defaults(qa_frontend *, qa_launch_draft *, qa_error *);
 qa_mode_kind frontend_local_mode(qa_game_family, unsigned local_count, qa_mode_kind);
 bool frontend_launch_overlay(qa_launch_draft *, const char *, uint64_t, const char *,

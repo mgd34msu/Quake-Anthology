@@ -24,7 +24,9 @@ struct frontend_startup_launch {
     size_t setting_count;
     size_t source_setting_count;
     uint32_t seat;
+    qa_map_launch_policy map_launch;
     bool arena, team, begun, end_game;
+    bool map_command, q2_map;
     bool local_players, drop, admitted;
     bool lobby, join;
     qa_net_address endpoint;
@@ -151,6 +153,47 @@ static bool stage_selection(frontend_seat *seat,qa_ui_library *library,qa_launch
 static bool stage(void *context,qa_ui_library *library,qa_launch_draft *draft,bool authored,
     const char *arena_map,int32_t bot_skill,qa_error *error)
 { return stage_selection(context,library,draft,authored,arena_map,bot_skill,NULL,false,true,error); }
+bool frontend_startup_map_stage(frontend_seat *seat,qa_map_launch_policy policy,
+    const char *map,qa_error *error)
+{
+    if (!frontend_startup_selection_complete(seat->library,error)) return false;
+    qa_launch_draft *draft=qa_ui_library_draft(seat->library);
+    const qa_launch_choices *choices=qa_launch_draft_choices(draft);
+    const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
+    const qa_launch_provider *provider=NULL;
+    for (size_t i=0;binding && i<choices->provider_count;++i)
+        if (!strcmp(choices->providers[i].instance,binding->instance)) {
+            provider=choices->providers+i;
+            break;
+        }
+    const qa_product *product=provider?
+        qa_catalog_product(qa_launch_draft_catalog(draft),provider->product):NULL;
+    if (!product) return frontend_fail(error,QA_ERROR_ARGUMENT,"Select a game before starting a map");
+    bool q3=product->family==QA_GAME_Q3,q2=product->family==QA_GAME_Q2;
+    if (!q3 && policy!=QA_MAP_LAUNCH_Q3_MAP)
+        return frontend_fail(error,QA_ERROR_UNSUPPORTED,"That map command requires a Q3 game");
+    char *path=frontend_launch_map_path(map,error);
+    if (!path) return false;
+    bool ok=stage_selection(seat,NULL,draft,false,NULL,0,NULL,false,true,error);
+    if (ok) {
+        struct frontend_startup_launch *request=seat->frontend->startup_launch;
+        qa_launch_world world=qa_launch_draft_choices(request->draft)->world;
+        world.map=path;
+        world.start_command=NULL;
+        world.spawn_point=NULL;
+        world.explicit_spawn_point=false;
+        ok=qa_launch_set_world(request->draft,&world,error);
+        if (ok) {
+            request->map_launch=q3?policy:QA_MAP_LAUNCH_DEFAULT;
+            request->hosting.kind=FRONTEND_HOST_OFFLINE;
+            request->map_command=true;
+            request->q2_map=q2;
+        } else frontend_startup_launch_discard(seat->frontend);
+    }
+    free(path);
+    return ok;
+}
 bool frontend_startup_campaign_stage(frontend_seat *seat,const qa_application_q3_campaign *source,
     bool advance,qa_error *error)
 {
@@ -454,6 +497,8 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
         }
         if (!frontend_startup_menus_bind(f,error)) return false;
     }
+    if (request->map_command && !request->q2_map &&
+        !qa_console_resume(qa_application_console(f->application),error)) return false;
     bool lobby = request->lobby, end = request->end_game, local_players = request->local_players;
     frontend_startup_launch_discard(f);
     if (lobby) {
@@ -546,6 +591,8 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
         request->begun = true;
         return qa_application_startup_bootstrap(f->application,error);
     }
+    if (request->map_command &&
+        !qa_ui_close_all(f->seats[request->seat].ui,(double)f->time_ns/1000000.0,error)) return false;
     const qa_launch_choices *selected = qa_launch_draft_choices(request->draft);
     unsigned local=frontend_local_seat_count(selected);
     if (request->local_players) {
@@ -600,8 +647,9 @@ bool frontend_startup_launch_drain(qa_frontend *f, qa_error *error)
             }
         }
         request->begun = ok;
-        if (ok) ok = request->arena ? qa_application_q3_campaign_start(f->application, request->draft,
-            request->settings, request->source_setting_count, &failure) :
+        if (ok) ok = request->arena || request->map_launch!=QA_MAP_LAUNCH_DEFAULT ?
+            qa_application_q3_campaign_start(f->application, request->draft,
+                request->settings, request->source_setting_count, request->map_launch, &failure) :
             qa_application_apply(f->application, request->draft, &failure);
     }
     uint32_t seat = request->seat < f->options.seats ? request->seat : 0;

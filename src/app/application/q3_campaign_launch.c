@@ -18,6 +18,7 @@ struct application_q3_campaign_launch {
     uint64_t candidate_cvar_owner;
     bool shutdown_returned;
     bool original;
+    qa_map_launch_policy map_launch;
     qa_application_q3_setting *settings;
     size_t count;
 };
@@ -50,8 +51,14 @@ bool application_q3_campaign_launch_finish(qa_application *app,
 {
     struct application_q3_campaign_launch *state = app ? app->q3_campaign_launch : NULL;
     if (!state) return true;
-    (void)published;
-    (void)error;
+    bool okay = true;
+    if (published) {
+        for (size_t i = 0; okay && i < state->count; ++i)
+            if (named(state->settings[i].name, "sv_cheats"))
+                okay = qa_cvars_set(app->cvars, state->settings[i].name,
+                    state->settings[i].value, true, error);
+        if (okay) okay = application_q3_map_launch_finish(app, state->map_launch, error);
+    }
     app->q3_campaign_launch = NULL;
     qa_launch_snapshot_release(state->previous);
     for (size_t i = 0; i < state->count; ++i) {
@@ -61,7 +68,7 @@ bool application_q3_campaign_launch_finish(qa_application *app,
     free(state->settings);
     free(state->instance);
     free(state);
-    return true;
+    return okay;
 }
 
 bool application_q3_campaign_launch_cvars(application_provider *provider,
@@ -118,7 +125,8 @@ bool application_q3_campaign_launch_retired(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Campaign values require the actual completed Source Shutdown");
     for (size_t i = 0; i < state->count; ++i)
-        if (!qa_cvars_set(cvars, state->settings[i].name,
+        if (!named(state->settings[i].name, "sv_cheats") &&
+            !qa_cvars_set(cvars, state->settings[i].name,
                 state->settings[i].value, true, error)) return false;
     return true;
 }
@@ -139,7 +147,8 @@ bool application_q3_campaign_launch_admitted(qa_application *app,
 
 static bool campaign_launch(qa_application *app,
     const qa_application_q3_campaign *source, const qa_launch_draft *draft,
-    const qa_application_q3_setting *settings, size_t count, qa_error *error)
+    const qa_application_q3_setting *settings, size_t count,
+    qa_map_launch_policy map_launch, qa_error *error)
 {
     if (!app || !draft || (count && !settings) ||
         (app->state != QA_APPLICATION_READY && app->state != QA_APPLICATION_RUNNING) ||
@@ -178,8 +187,20 @@ static bool campaign_launch(qa_application *app,
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Campaign startup values require source names and values");
 
-    if (count > SIZE_MAX / sizeof(*settings))
+    qa_application_q3_setting map_settings[3];
+    size_t map_count = 0;
+    if (map_launch != QA_MAP_LAUNCH_DEFAULT) {
+        static const char *names[] = {"g_gametype", "g_doWarmup", "sv_maxclients"};
+        for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
+            qa_cvar_view value;
+            if (!qa_cvars_effective_view(app->cvars, names[i], &value, error)) return false;
+            map_settings[map_count++] = (qa_application_q3_setting){names[i],
+                value.latched_value ? value.latched_value : value.value};
+        }
+    }
+    if (count > SIZE_MAX / sizeof(*settings) - map_count)
         return application_fail(error, QA_ERROR_MEMORY, "Campaign startup settings exceed retained storage");
+    size_t total = count + map_count;
     struct application_q3_campaign_launch *state = calloc(1, sizeof(*state));
     if (!state) return application_fail(error, QA_ERROR_MEMORY, "Retaining campaign launch owner");
     *state = (struct application_q3_campaign_launch){
@@ -187,18 +208,19 @@ static bool campaign_launch(qa_application *app,
         .product = selection->product, .runtime = selection->runtime,
         .previous_cvars = source ? source->cvars : NULL,
         .previous_owner = source ? source->source_owner : 0,
-        .original = source && !source->native_source};
+        .original = source && !source->native_source, .map_launch = map_launch};
     if (state->previous) qa_launch_snapshot_retain(state->previous);
     app->q3_campaign_launch = state;
     state->instance = copy_text(selection->instance, error);
-    if (count) state->settings = calloc(count, sizeof(*state->settings));
-    bool copied = state->instance && (!count || state->settings);
+    if (total) state->settings = calloc(total, sizeof(*state->settings));
+    bool copied = state->instance && (!total || state->settings);
     if (!copied && (!error || error->code == QA_OK))
         application_fail(error, QA_ERROR_MEMORY, "Retaining campaign startup settings");
-    for (size_t i = 0; copied && i < count; ++i) {
+    for (size_t i = 0; copied && i < total; ++i) {
+        const qa_application_q3_setting *setting = i < count ? settings + i : map_settings + i - count;
         state->count = i + 1;
-        state->settings[i].name = copy_text(settings[i].name, error);
-        state->settings[i].value = copy_text(settings[i].value, error);
+        state->settings[i].name = copy_text(setting->name, error);
+        state->settings[i].value = copy_text(setting->value, error);
         copied = state->settings[i].name && state->settings[i].value;
     }
     if (!copied) {
@@ -247,11 +269,19 @@ bool qa_application_q3_campaign_launch(qa_application *app,
 {
     if (!source) return application_fail(error, QA_ERROR_ARGUMENT,
         "Campaign travel requires its current physical GAME cut");
-    return campaign_launch(app, source, draft, settings, count, error);
+    return campaign_launch(app, source, draft, settings, count, QA_MAP_LAUNCH_DEFAULT, error);
 }
 
 bool qa_application_q3_campaign_start(qa_application *app, const qa_launch_draft *draft,
-    const qa_application_q3_setting *settings, size_t count, qa_error *error)
+    const qa_application_q3_setting *settings, size_t count,
+    qa_map_launch_policy map_launch, qa_error *error)
 {
-    return campaign_launch(app, NULL, draft, settings, count, error);
+    if (map_launch == QA_MAP_LAUNCH_DEFAULT)
+        return campaign_launch(app, NULL, draft, settings, count, map_launch, error);
+    qa_launch_draft *prepared = NULL;
+    bool okay = qa_launch_draft_copy(draft, &prepared, error) &&
+        application_q3_map_launch_prepare(app, prepared, map_launch, error) &&
+        campaign_launch(app, NULL, prepared, settings, count, map_launch, error);
+    qa_launch_draft_destroy(prepared);
+    return okay;
 }

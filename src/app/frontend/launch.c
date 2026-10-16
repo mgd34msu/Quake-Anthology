@@ -294,7 +294,7 @@ bool frontend_launch_weapon_behavior_defaults(qa_frontend *frontend, qa_launch_d
     const qa_cvar_view *choice = qa_cvars_find(qa_application_cvars(frontend->application), "qts_weaponBehavior");
     return !choice || !*choice->value || qa_launch_select_weapon_behavior(draft, choice->value, error);
 }
-static char *launch_map_path(const char *input, qa_error *error)
+char *frontend_launch_map_path(const char *input, qa_error *error)
 {
     char *name = qa_vfs_normalize_path(input, error);
     if (!name) return NULL;
@@ -342,7 +342,7 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         }
     }
     if (!map) return frontend_fail(error, QA_ERROR_ARGUMENT, "launch product has no installed map");
-    char *selected_map = frontend->options.map ? launch_map_path(map, error) : NULL;
+    char *selected_map = frontend->options.map ? frontend_launch_map_path(map, error) : NULL;
     if (frontend->options.map && !selected_map) return false;
     if (selected_map) map = selected_map;
     qa_launch_draft *draft = NULL;

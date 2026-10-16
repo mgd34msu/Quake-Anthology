@@ -13,6 +13,7 @@
 #include "q1_help.h"
 #include "ui_features.h"
 #include "startup_server_profile.h"
+#include "startup_menus.h"
 #include <stdio.h>
 
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
@@ -244,11 +245,35 @@ setting_failed:
     bool sound_handled;
     if (!frontend_sound_command(frontend, invocation, &sound_handled, error)) return false;
     if (sound_handled) return true;
-    if (qa_application_map_launch_command(name)!=QA_MAP_LAUNCH_DEFAULT || client_name(name,"gamemap") ||
+    qa_map_launch_policy map_launch=qa_application_map_launch_command(name);
+    if (map_launch!=QA_MAP_LAUNCH_DEFAULT || client_name(name,"gamemap") ||
         client_name(name,"changelevel") || client_name(name,"killserver")) {
+        if (invocation->context.origin==QA_COMMAND_REMOTE) return true;
         qa_application_startup_source source; bool present=false,handled=false;
         if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
         if (!present) {
+            if (map_launch!=QA_MAP_LAUNCH_DEFAULT) {
+                if (invocation->argc!=2) {
+                    frontend_console_print(frontend,&invocation->context,"usage: ");
+                    frontend_console_print(frontend,&invocation->context,name);
+                    frontend_console_print(frontend,&invocation->context," <map>\n");
+                    return true;
+                }
+                uint32_t slot;
+                if (!frontend_command_seat_read(frontend,&invocation->context,&slot))
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"command requires a local player");
+                qa_error failure={0};
+                if (!frontend_startup_map_stage(frontend->seats+slot,map_launch,invocation->argv[1],&failure)) {
+                    frontend_console_print(frontend,&invocation->context,failure.message);
+                    frontend_console_print(frontend,&invocation->context,"\n");
+                    return true;
+                }
+                if (!qa_console_defer(invocation->console,error)) {
+                    frontend_startup_launch_discard(frontend);
+                    return false;
+                }
+                return true;
+            }
             frontend_console_print(frontend,&invocation->context,"No server running.\n");
             return true;
         }

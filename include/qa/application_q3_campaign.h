@@ -40,11 +40,11 @@ typedef struct qa_application_q3_setting {
 bool qa_application_q3_campaign_launch(qa_application *,
     const qa_application_q3_campaign *, const qa_launch_draft *,
     const qa_application_q3_setting *, size_t, qa_error *);
-/* Start from actual selected catalog/draft metadata, including the initial
- * launcher with no published GAME. Fresh source registries own the settings;
- * this entry does not borrow a previous GAME registry. */
+/* Start from selected catalog/draft metadata, including an initial launcher
+ * with no published GAME. Map-command policy shares the travel rules and
+ * retains startup values across provider initialization and config execution. */
 bool qa_application_q3_campaign_start(qa_application *, const qa_launch_draft *,
-    const qa_application_q3_setting *, size_t, qa_error *);
+    const qa_application_q3_setting *, size_t, qa_map_launch_policy, qa_error *);
 
 /* Borrows the actual published physical Q3 GAME without a player or
  * chosen-mode inference. Config root belongs to the source's actual retained
