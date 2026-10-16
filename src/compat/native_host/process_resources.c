@@ -1161,8 +1161,11 @@ static bool resource_file_fields(qa_source_save_io *io,const process_file *row,p
 }
 static bool resource_fields(qa_source_save_io *io, const qa_native_process_resources *owner, qa_native_process_resources *imported)
 {
+    /* Old recipes stored a launch serial here. A restored launch has a new
+     * serial; its current authority is supplied by the caller's binding. */
+    uint64_t reserved = 0;
     if (!match_bytes(io, "QNPR", 4) ||
-        !match_bytes(io, &owner->options.identity, sizeof(owner->options.identity)) ||
+        !qa_source_save_u64(io, &reserved) ||
         !match_u32(io, owner->options.receiver) || !match_u64(io, owner->options.service_owner) ||
         !match_u32(io, owner->options.policy.backend) ||
         !match_u64(io, owner->options.policy.maximum_image_bytes) || !match_u64(io, owner->options.policy.maximum_backing_bytes) ||
@@ -1418,7 +1421,6 @@ bool qa_native_process_resources_rebind(const qa_native_process_resources *captu
 {
     if (!capture || !bindings || !bindings->identity || !out || *out ||
         bindings->receiver != capture->options.receiver || bindings->service_owner != capture->options.service_owner ||
-        bindings->identity != capture->options.identity ||
         (bindings->current && !bindings->current(bindings->authority.context, error)))
         return fail(error, QA_ERROR_ARGUMENT, "Cold native resource binding differs from its prepared source");
     /* The capture's original execution row can already be retired. Its held
@@ -1427,6 +1429,7 @@ bool qa_native_process_resources_rebind(const qa_native_process_resources *captu
     qa_native_process_resources *copy = *out;
     if (bindings->authority.retain) bindings->authority.retain(bindings->authority.context);
     if (copy->options.authority.release) copy->options.authority.release(copy->options.authority.context);
+    copy->options.identity = bindings->identity;
     copy->options.authority = bindings->authority;
     copy->options.current = bindings->current;
     copy->captured = false; copy->file_cold = false;
