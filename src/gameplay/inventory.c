@@ -1,5 +1,7 @@
 #include "inventory_internal.h"
 #include "qa/operation.h"
+#include "qa/strings.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1544,6 +1546,110 @@ bool qa_inventory_item_definitions(qa_inventory *table, qa_actor_id actor,
     }
     *count = total;
     return !out || total <= capacity || fail(e, QA_ERROR_ARGUMENT, "Item definition output buffer is too small");
+}
+
+static bool item_label_matches(const char *label, const char *requested)
+{
+    for (;;) {
+        while (*label == ' ') ++label;
+        if (*label != *requested) return false;
+        if (!*label) return true;
+        ++label; ++requested;
+    }
+}
+
+static bool item_name_text(const qa_strings *strings, const qa_item_definition *items,
+    size_t count, const char *const *arguments, size_t argument_count, qa_arena *storage,
+    qa_buffer *folded, size_t *extent, qa_error *error)
+{
+    size_t size = 1;
+    for (size_t i = 0; i < argument_count; ++i) {
+        if (!arguments[i]) return fail(error, QA_ERROR_ARGUMENT, "Missing item name argument");
+        size_t length = strlen(arguments[i]);
+        if (length > SIZE_MAX - size) goto overflow;
+        size += length;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const char *identity = qa_strings_cstr(strings, items[i].item);
+        if (!identity || !items[i].label)
+            return fail(error, QA_ERROR_ARGUMENT, "Item names need registered identities and labels");
+        size_t name_size = strlen(identity) + 1, label_size = strlen(items[i].label) + 1;
+        if (name_size > SIZE_MAX - size || label_size > SIZE_MAX - size - name_size)
+            goto overflow;
+        size += name_size + label_size;
+    }
+    char *text = qa_arena_alloc(storage, size, 1, error);
+    if (!text) return false;
+    char *at = text;
+    for (size_t i = 0; i < argument_count; ++i)
+        for (const char *s = arguments[i]; *s; ++s)
+            if (*s != ' ') *at++ = *s;
+    *at++ = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const char *identity = qa_strings_cstr(strings, items[i].item);
+        size_t length = strlen(identity) + 1;
+        memcpy(at, identity, length); at += length;
+        length = strlen(items[i].label) + 1;
+        memcpy(at, items[i].label, length); at += length;
+    }
+    *extent = size;
+    /* Fold the request and all candidates in one arena allocation. Embedded
+     * terminators keep the strings distinct without per-row temporary buffers. */
+    return qa_utf8_lower_arena((qa_bytes){(const uint8_t *)text, (size_t)(at - text)},
+        storage, folded, error);
+overflow:
+    return fail(error, QA_ERROR_MEMORY, "Item command names exceed their storage extent");
+}
+
+bool qa_item_name_resolve(const qa_strings *strings, const qa_item_definition *items,
+    size_t count, const char *const *arguments, size_t argument_count, bool weapons_only,
+    qa_arena *storage, qa_item_name_match *out, qa_error *error)
+{
+    if (!strings || !storage || !out || (count && !items) || (argument_count && !arguments))
+        return fail(error, QA_ERROR_ARGUMENT, "Missing item name input or output");
+    *out = (qa_item_name_match){.index = SIZE_MAX};
+    if (!count || !argument_count) return true;
+    qa_buffer folded = {0};
+    size_t extent = 0;
+    if (!item_name_text(strings, items, count, arguments, argument_count, storage,
+        &folded, &extent, error)) return false;
+    const char *requested = (const char *)folded.data;
+    const char *at = requested + strlen(requested) + 1;
+    for (size_t i = 0; i < count; ++i) {
+        const char *identity = at, *label = identity + strlen(identity) + 1;
+        at = label + strlen(label) + 1;
+        if ((!weapons_only || items[i].weapon) && !strcmp(identity, requested)) {
+            *out = (qa_item_name_match){.index = i, .count = 1};
+            return true;
+        }
+    }
+    at = requested + strlen(requested) + 1;
+    for (size_t i = 0; i < count; ++i) {
+        const char *label = at + strlen(at) + 1;
+        at = label + strlen(label) + 1;
+        if ((!weapons_only || items[i].weapon) && item_label_matches(label, requested)) {
+            if (!out->count) out->index = i;
+            ++out->count;
+        }
+    }
+    if (out->count < 2) return true;
+    char *alternatives = qa_arena_alloc(storage, extent, 1, error);
+    if (!alternatives) return false;
+    char *next = alternatives;
+    at = requested + strlen(requested) + 1;
+    for (size_t i = 0; i < count; ++i) {
+        const char *label = at + strlen(at) + 1;
+        at = label + strlen(label) + 1;
+        if ((!weapons_only || items[i].weapon) && item_label_matches(label, requested)) {
+            if (next != alternatives) { memcpy(next, ", ", 2); next += 2; }
+            const char *identity = qa_strings_cstr(strings, items[i].item);
+            size_t length = strlen(identity);
+            memcpy(next, identity, length); next += length;
+        }
+    }
+    *next = 0;
+    out->alternatives = alternatives;
+    return true;
 }
 
 bool qa_inventory_item_definition_find(const qa_inventory *table, qa_actor_id actor,

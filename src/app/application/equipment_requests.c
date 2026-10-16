@@ -76,120 +76,44 @@ static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *s
     return true;
 }
 
-static bool item_label_matches(const char *label, const char *requested)
-{
-    for (;;) {
-        while (*label == ' ') ++label;
-        if (*label != *requested) return false;
-        if (!*label) return true;
-        ++label; ++requested;
-    }
-}
-
-static bool named_item_text(qa_application *app, const qa_command_invocation *command,
-    qa_item_definition *items, size_t count, qa_arena *storage, qa_buffer *folded,
-    size_t *extent, qa_error *error)
-{
-    size_t size = 1;
-    for (size_t i = 1; i < command->argc; ++i) {
-        size_t length = strlen(command->argv[i]);
-        if (length > SIZE_MAX - size) goto overflow;
-        size += length;
-    }
-    qa_strings *strings = qa_session_strings(app->session);
-    for (size_t i = 0; i < count; ++i) {
-        size_t identity = strlen(qa_strings_cstr(strings, items[i].item)) + 1;
-        size_t label = strlen(items[i].label) + 1;
-        if (identity > SIZE_MAX - size || label > SIZE_MAX - size - identity) goto overflow;
-        size += identity + label;
-    }
-    if (size > SIZE_MAX - 64) goto overflow;
-    *extent = size + 64;
-    char *text = qa_arena_alloc(storage, size, 1, error);
-    if (!text) return false;
-    char *at = text;
-    for (size_t i = 1; i < command->argc; ++i)
-        for (const char *s = command->argv[i]; *s; ++s)
-            if (*s != ' ') *at++ = *s;
-    *at++ = 0;
-    for (size_t i = 0; i < count; ++i) {
-        const char *identity = qa_strings_cstr(strings, items[i].item);
-        size_t length = strlen(identity) + 1;
-        memcpy(at, identity, length); at += length;
-        length = strlen(items[i].label) + 1;
-        memcpy(at, items[i].label, length);
-        items[i].label = at; at += length;
-    }
-    /* One conversion folds the request and every candidate, including UTF-8
-     * mod labels, without allocating a temporary string for each row. */
-    return qa_utf8_lower_arena((qa_bytes){(const uint8_t *)text, (size_t)(at - text)},
-        storage, folded, error);
-overflow:
-    return application_fail(error, QA_ERROR_MEMORY, "Item command names exceed their storage extent");
-}
-
 static qa_command_result named_item_dispatch(qa_application *app,
     const qa_command_invocation *command, qa_item_definition *items, size_t count,
     qa_arena *storage, qa_error *error)
 {
-    qa_buffer folded;
-    size_t extent = 0;
-    if (!named_item_text(app, command, items, count, storage, &folded, &extent, error))
-        return QA_COMMAND_FAILED;
-    const char *requested = (const char *)folded.data;
     bool weapon = qa_text_ascii_equal(command->argv[0], "weapon");
-    qa_item_definition *selected = NULL;
-    size_t matches = 0;
-    const char *at = requested + strlen(requested) + 1;
-    for (size_t i = 0; i < count; ++i) {
-        const char *identity = at;
-        const char *label = identity + strlen(identity) + 1;
-        at = label + strlen(label) + 1;
-        if (weapon && !items[i].weapon) continue;
-        if (!strcmp(identity, requested)) { selected = items + i; matches = 1; break; }
-    }
-    if (!selected) {
-        at = requested + strlen(requested) + 1;
-        for (size_t i = 0; i < count; ++i) {
-            const char *label = at + strlen(at) + 1;
-            at = label + strlen(label) + 1;
-            if ((!weapon || items[i].weapon) && item_label_matches(label, requested)) {
-                selected = items + i; ++matches;
-            }
-        }
-    }
-    if (!selected) return QA_COMMAND_UNHANDLED;
-    char *message = qa_arena_alloc(storage, extent, 1, error);
-    if (!message) return QA_COMMAND_FAILED;
-    if (matches > 1) {
-        size_t used = (size_t)snprintf(message, extent, "Ambiguous %s; use ",
-            weapon ? "weapon" : "item");
-        size_t included = 0;
-        at = requested + strlen(requested) + 1;
-        for (size_t i = 0; i < count; ++i) {
-            const char *label = at + strlen(at) + 1;
-            at = label + strlen(label) + 1;
-            if ((!weapon || items[i].weapon) && item_label_matches(label, requested))
-                used += (size_t)snprintf(message + used, extent - used, "%s%s",
-                    included++ ? ", " : "", qa_strings_cstr(qa_session_strings(app->session), items[i].item));
-        }
-        memcpy(message + used, "\n", 2);
+    qa_item_name_match match;
+    if (!qa_item_name_resolve(qa_session_strings(app->session), items, count,
+        command->argv + 1, command->argc - 1, weapon, storage, &match, error))
+        return QA_COMMAND_FAILED;
+    if (!match.count) return QA_COMMAND_UNHANDLED;
+    if (match.count > 1) {
+        size_t extent = strlen(match.alternatives) + 32;
+        char *message = qa_arena_alloc(storage, extent, 1, error);
+        if (!message) return QA_COMMAND_FAILED;
+        snprintf(message, extent, "Ambiguous %s; use %s\n", weapon ? "weapon" : "item",
+            match.alternatives);
         qa_console_emit(command->console, &command->context, message);
         return QA_COMMAND_HANDLED;
     }
+    qa_item_definition selected = items[match.index];
     bool use = !qa_text_ascii_equal(command->argv[0], "drop");
     qa_item_action action = use ? QA_ITEM_USE : QA_ITEM_DROP;
-    if (!weapon && (selected->actions & action)) {
+    if (!weapon && (selected.actions & action)) {
         return qa_inventory_item_action(app->inventory, command->context.actor,
-            selected->item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+            selected.item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
+    const char *label = qa_arena_text(storage, selected.label, error);
+    if (!label) return QA_COMMAND_FAILED;
     bool accepted = false;
-    if (use && selected->weapon) {
+    if (use && selected.weapon) {
         if (!qa_application_equipment_request_weapon(app, command->context.actor,
-            selected->owner, selected->item, &accepted, error)) return QA_COMMAND_FAILED;
+            selected.owner, selected.item, &accepted, error)) return QA_COMMAND_FAILED;
         if (accepted) return QA_COMMAND_HANDLED;
     }
-    snprintf(message, extent, "%s cannot be %s.\n", selected->label, use ? "used" : "dropped");
+    size_t extent = strlen(label) + 32;
+    char *message = qa_arena_alloc(storage, extent, 1, error);
+    if (!message) return QA_COMMAND_FAILED;
+    snprintf(message, extent, "%s cannot be %s.\n", label, use ? "used" : "dropped");
     qa_console_emit(command->console, &command->context, message);
     return QA_COMMAND_HANDLED;
 }

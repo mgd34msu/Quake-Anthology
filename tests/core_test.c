@@ -4,6 +4,7 @@
 
 #include <float.h>
 #include "qa/arena.h"
+#include "qa/inventory.h"
 #include "qa/native.h"
 #include "qa/native_guest.h"
 #include "../src/compat/native/guest/abi.h"
@@ -4355,6 +4356,69 @@ static void test_metadata_retention(void)
     const qa_unified_frame_metadata *read=qa_unified_document_metadata(merged);
     CHECK(read->frame==65 && !strcmp(read->q1->level,"e1m1") && !strcmp(read->styles[0].pattern,"a"));
     qa_unified_document_destroy(merged);
+}
+
+static void test_item_name_resolution(void)
+{
+    qa_error error = {0}; qa_strings *strings = NULL; qa_arena storage = {0};
+    CHECK(qa_strings_create(&strings, &error));
+    const char *names[] = {"q1:weapon/rocketlauncher", "q2:weapon_rocketlauncher",
+        "mod:weapon/eclair", "gear:grapple", "mod:item/grapple", "fixture:canonical-label"};
+    qa_item_id ids[6];
+    for (size_t i = 0; i < 6; ++i)
+        CHECK(qa_strings_intern_cstr(strings, names[i], ids + i, &error));
+    char rocket[] = "Rocket Launcher", eclair[] = "\xC3\x89" "CLAIR";
+    qa_item_definition items[] = {
+        {.item = ids[0], .owner = 10, .label = rocket, .weapon = true, .actions = QA_ITEM_USE},
+        {.item = ids[1], .owner = 20, .label = "Rocket Launcher", .weapon = true},
+        {.item = ids[2], .owner = 30, .label = eclair, .weapon = true},
+        {.item = ids[3], .owner = 40, .label = "Grapple", .weapon = true},
+        {.item = ids[4], .owner = 50, .label = "Grapple", .actions = QA_ITEM_DROP},
+        {.item = ids[5], .owner = 60, .label = "q2:weapon_rocketlauncher", .weapon = true}};
+    qa_item_definition original[6]; memcpy(original, items, sizeof(items));
+    size_t string_count = qa_strings_count(strings);
+    qa_item_name_match match;
+    const char *same_label[] = {"Rocket Launcher"};
+    CHECK(qa_item_name_resolve(strings, items, 6, same_label, 1, false, &storage, &match, &error));
+    CHECK(match.count == 2 && match.alternatives);
+    CHECK(strstr(match.alternatives, names[0]) && strstr(match.alternatives, names[1]));
+    CHECK(!strstr(match.alternatives, names[2]));
+    const char *retained_alternatives = match.alternatives;
+    const char *canonical[] = {"Q2:WEAPON_ROCKETLAUNCHER"};
+    CHECK(qa_item_name_resolve(strings, items, 6, canonical, 1, false, &storage, &match, &error));
+    CHECK(match.count == 1 && match.index == 1 && !match.alternatives);
+    const char *words[] = {" rOcKeT ", " lAuNcHeR "};
+    CHECK(qa_item_name_resolve(strings, items, 6, words, 2, false, &storage, &match, &error));
+    CHECK(match.count == 2 && strstr(match.alternatives, names[0]) &&
+        strstr(match.alternatives, names[1]));
+    const char *unicode[] = {"\xC3\xA9" "c", "lAiR"};
+    CHECK(qa_item_name_resolve(strings, items, 6, unicode, 2, false, &storage, &match, &error));
+    CHECK(match.count == 1 && match.index == 2);
+    const char *grapple[] = {"gRaPpLe"};
+    CHECK(qa_item_name_resolve(strings, items, 6, grapple, 1, true, &storage, &match, &error));
+    CHECK(match.count == 1 && match.index == 3);
+    CHECK(qa_item_name_resolve(strings, items, 6, grapple, 1, false, &storage, &match, &error));
+    CHECK(match.count == 2 && strstr(match.alternatives, names[3]) &&
+        strstr(match.alternatives, names[4]));
+    const char *nonweapon[] = {names[4]};
+    CHECK(qa_item_name_resolve(strings, items, 6, nonweapon, 1, true, &storage, &match, &error));
+    CHECK(match.count == 0 && match.index == SIZE_MAX && !match.alternatives);
+    CHECK(qa_item_name_resolve(strings, items, 6, nonweapon, 1, false, &storage, &match, &error));
+    CHECK(match.count == 1 && match.index == 4);
+    const char *missing[] = {"guest-only-action"}, *numeric[] = {"7"};
+    CHECK(qa_item_name_resolve(strings, items, 6, missing, 1, false, &storage, &match, &error));
+    CHECK(match.count == 0 && match.index == SIZE_MAX && !match.alternatives);
+    CHECK(qa_item_name_resolve(strings, items, 6, numeric, 1, true, &storage, &match, &error));
+    CHECK(match.count == 0 && match.index == SIZE_MAX && !match.alternatives);
+    CHECK(qa_item_name_resolve(strings, items, 6, NULL, 0, false, &storage, &match, &error));
+    CHECK(match.count == 0 && match.index == SIZE_MAX && !match.alternatives);
+    CHECK(qa_item_name_resolve(strings, NULL, 0, canonical, 1, true, &storage, &match, &error));
+    CHECK(match.count == 0 && match.index == SIZE_MAX && !match.alternatives);
+    CHECK(!memcmp(items, original, sizeof(items)));
+    CHECK(!strcmp(rocket, "Rocket Launcher") && !strcmp(eclair, "\xC3\x89" "CLAIR"));
+    CHECK(qa_strings_count(strings) == string_count);
+    CHECK(strstr(retained_alternatives, names[0]) && strstr(retained_alternatives, names[1]));
+    qa_arena_destroy(&storage); qa_strings_destroy(strings);
 }
 
 static void test_native_inventory_names(void)
@@ -9362,6 +9426,7 @@ int main(int argc, char **argv)
     test_lightstyle_snapshot();
     test_metadata_retention();
     test_metadata_names();
+    test_item_name_resolution();
     test_native_inventory_names();
     test_files();
     test_shared_text_interpolation();

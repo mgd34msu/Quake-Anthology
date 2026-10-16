@@ -37,6 +37,16 @@ typedef struct qa_item_definition {
     bool weapon;
     uint32_t actions;
 } qa_item_definition;
+typedef struct qa_item_name_match {
+    size_t index, count;
+    const char *alternatives;
+} qa_item_name_match;
+/* Canonical ids precede case-folded, space-insensitive labels. A missing name
+ * returns count=0 and index=SIZE_MAX; ambiguous names return their canonical
+ * alternatives in caller-owned storage. Definitions remain unchanged. */
+bool qa_item_name_resolve(const qa_strings *, const qa_item_definition *, size_t,
+    const char *const *arguments, size_t argument_count, bool weapons_only,
+    qa_arena *, qa_item_name_match *, qa_error *);
 typedef struct qa_item_admission { qa_item_definition definition; bool replace_primary; } qa_item_admission;
 typedef struct qa_inventory_items {
     qa_actor_owner owner;
