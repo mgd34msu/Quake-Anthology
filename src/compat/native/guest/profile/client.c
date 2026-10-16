@@ -315,8 +315,15 @@ static void scope_changed(const profile_scope *before, const profile_scope *afte
     if (old_stop != new_stop) { flush_point(old_stop); flush_point(new_stop); }
     size_t old_callbacks = before ? before->callback_count : 0;
     size_t new_callbacks = after ? after->callback_count : 0;
-    if (old_callbacks != new_callbacks || (old_callbacks &&
-        memcmp(before->callbacks, after->callbacks, old_callbacks * sizeof(*before->callbacks)))) {
+    bool callbacks_changed = old_callbacks != new_callbacks;
+    for (size_t i = 0; !callbacks_changed && i < old_callbacks; ++i) {
+        const guest_profile_guard_callback *a = before->callbacks + i, *b = after->callbacks + i;
+        callbacks_changed = a->id != b->id || a->address != b->address || a->readonly != b->readonly ||
+            a->scalar.count != b->scalar.count || a->scalar.result != b->scalar.result ||
+            a->scalar.result_bytes != b->scalar.result_bytes ||
+            memcmp(a->scalar.arguments, b->scalar.arguments, sizeof(a->scalar.arguments));
+    }
+    if (callbacks_changed) {
         flush_callbacks(before); flush_callbacks(after);
     }
     size_t old_interests = before ? before->interest_count : 0;
