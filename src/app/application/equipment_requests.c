@@ -9,6 +9,208 @@
 #include "native_maps.h"
 #include "qa/application_qc_presentation.h"
 #include "qa/application_equipment.h"
+#include "qa/text.h"
+
+#include <stdio.h>
+#include <string.h>
+
+static void named_item_append(qa_item_definition *items, size_t *count,
+    qa_item_definition item)
+{
+    for (size_t i = 0; i < *count; ++i)
+        if (items[i].item == item.item) return;
+    items[(*count)++] = item;
+}
+
+static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *storage,
+    qa_item_definition **out, size_t *count, qa_error *error)
+{
+    size_t definitions, weapons = 0;
+    if (!qa_inventory_item_definitions(app->inventory, actor, NULL, 0, &definitions, error))
+        return false;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    const application_q3_catalog_weapon *q3 = NULL;
+    if (arsenal && arsenal->kind == APPLICATION_PROVIDER_QC) {
+        weapons = arsenal->state.qc.qualified ? arsenal->state.qc.qualified->weapon_count : 11;
+    } else if (arsenal && (arsenal->kind == APPLICATION_PROVIDER_QVM ||
+        (arsenal->kind == APPLICATION_PROVIDER_NATIVE && arsenal->state.native.engine))) {
+        struct application_q3_guest *engine = q3g_engine(arsenal);
+        if (!application_q3_catalog_weapons(engine->game->catalog, &q3, &weapons, error))
+            return false;
+    }
+    qa_equipment_weapon_view gear;
+    bool has_gear = false;
+    if (app->equipment && !qa_equipment_weapon_view_read(app->equipment, actor,
+        &gear, &has_gear, error)) return false;
+    if (weapons == SIZE_MAX || definitions > SIZE_MAX - weapons - 1 ||
+        definitions + weapons + 1 > SIZE_MAX / sizeof(**out))
+        return application_fail(error, QA_ERROR_MEMORY, "Item command catalog exceeds its storage extent");
+    size_t capacity = definitions + weapons + (has_gear ? 1 : 0);
+    *out = capacity ? qa_arena_alloc(storage, capacity * sizeof(**out),
+        _Alignof(qa_item_definition), error) : NULL;
+    if (capacity && !*out) return false;
+    if (!qa_inventory_item_definitions(app->inventory, actor, *out, definitions, count, error))
+        return false;
+    for (size_t i = 0; i < weapons; ++i) {
+        qa_item_definition item;
+        if (q3) item = (qa_item_definition){.item = q3[i].item, .ammo = q3[i].ammo,
+            .owner = arsenal->owner, .label = q3[i].label, .weapon = true};
+        else {
+            const struct application_qc_profile *profile = arsenal->state.qc.qualified;
+            if (profile && !profile->weapon_values[i].ui_declared) continue;
+            qa_application_qc_weapon_ui_binding binding;
+            uint32_t via;
+            qa_error lookup = {0};
+            if (!application_qc_weapon_binding_at(arsenal->state.qc.engine, i, &binding, &via, &lookup)) {
+                if (lookup.code == QA_OK) break;
+                if (error) *error = lookup;
+                return false;
+            }
+            item = (qa_item_definition){.item = binding.item, .owner = arsenal->owner,
+                .label = binding.label, .weapon = true};
+        }
+        named_item_append(*out, count, item);
+    }
+    if (has_gear) named_item_append(*out, count, (qa_item_definition){.item = gear.item,
+        .owner = gear.source.owner, .label = gear.label, .weapon = true});
+    return true;
+}
+
+static bool item_label_matches(const char *label, const char *requested)
+{
+    for (;;) {
+        while (*label == ' ') ++label;
+        if (*label != *requested) return false;
+        if (!*label) return true;
+        ++label; ++requested;
+    }
+}
+
+static bool named_item_text(qa_application *app, const qa_command_invocation *command,
+    qa_item_definition *items, size_t count, qa_arena *storage, qa_buffer *folded,
+    size_t *extent, qa_error *error)
+{
+    size_t size = 1;
+    for (size_t i = 1; i < command->argc; ++i) {
+        size_t length = strlen(command->argv[i]);
+        if (length > SIZE_MAX - size) goto overflow;
+        size += length;
+    }
+    qa_strings *strings = qa_session_strings(app->session);
+    for (size_t i = 0; i < count; ++i) {
+        size_t identity = strlen(qa_strings_cstr(strings, items[i].item)) + 1;
+        size_t label = strlen(items[i].label) + 1;
+        if (identity > SIZE_MAX - size || label > SIZE_MAX - size - identity) goto overflow;
+        size += identity + label;
+    }
+    if (size > SIZE_MAX - 64) goto overflow;
+    *extent = size + 64;
+    char *text = qa_arena_alloc(storage, size, 1, error);
+    if (!text) return false;
+    char *at = text;
+    for (size_t i = 1; i < command->argc; ++i)
+        for (const char *s = command->argv[i]; *s; ++s)
+            if (*s != ' ') *at++ = *s;
+    *at++ = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const char *identity = qa_strings_cstr(strings, items[i].item);
+        size_t length = strlen(identity) + 1;
+        memcpy(at, identity, length); at += length;
+        length = strlen(items[i].label) + 1;
+        memcpy(at, items[i].label, length);
+        items[i].label = at; at += length;
+    }
+    /* One conversion folds the request and every candidate, including UTF-8
+     * mod labels, without allocating a temporary string for each row. */
+    return qa_utf8_lower_arena((qa_bytes){(const uint8_t *)text, (size_t)(at - text)},
+        storage, folded, error);
+overflow:
+    return application_fail(error, QA_ERROR_MEMORY, "Item command names exceed their storage extent");
+}
+
+static qa_command_result named_item_dispatch(qa_application *app,
+    const qa_command_invocation *command, qa_item_definition *items, size_t count,
+    qa_arena *storage, qa_error *error)
+{
+    qa_buffer folded;
+    size_t extent = 0;
+    if (!named_item_text(app, command, items, count, storage, &folded, &extent, error))
+        return QA_COMMAND_FAILED;
+    const char *requested = (const char *)folded.data;
+    bool weapon = qa_text_ascii_equal(command->argv[0], "weapon");
+    qa_item_definition *selected = NULL;
+    size_t matches = 0;
+    const char *at = requested + strlen(requested) + 1;
+    for (size_t i = 0; i < count; ++i) {
+        const char *identity = at;
+        const char *label = identity + strlen(identity) + 1;
+        at = label + strlen(label) + 1;
+        if (weapon && !items[i].weapon) continue;
+        if (!strcmp(identity, requested)) { selected = items + i; matches = 1; break; }
+    }
+    if (!selected) {
+        at = requested + strlen(requested) + 1;
+        for (size_t i = 0; i < count; ++i) {
+            const char *label = at + strlen(at) + 1;
+            at = label + strlen(label) + 1;
+            if ((!weapon || items[i].weapon) && item_label_matches(label, requested)) {
+                selected = items + i; ++matches;
+            }
+        }
+    }
+    if (!selected) return QA_COMMAND_UNHANDLED;
+    char *message = qa_arena_alloc(storage, extent, 1, error);
+    if (!message) return QA_COMMAND_FAILED;
+    if (matches > 1) {
+        size_t used = (size_t)snprintf(message, extent, "Ambiguous %s; use ",
+            weapon ? "weapon" : "item");
+        size_t included = 0;
+        at = requested + strlen(requested) + 1;
+        for (size_t i = 0; i < count; ++i) {
+            const char *label = at + strlen(at) + 1;
+            at = label + strlen(label) + 1;
+            if ((!weapon || items[i].weapon) && item_label_matches(label, requested))
+                used += (size_t)snprintf(message + used, extent - used, "%s%s",
+                    included++ ? ", " : "", qa_strings_cstr(qa_session_strings(app->session), items[i].item));
+        }
+        memcpy(message + used, "\n", 2);
+        qa_console_emit(command->console, &command->context, message);
+        return QA_COMMAND_HANDLED;
+    }
+    bool use = !qa_text_ascii_equal(command->argv[0], "drop");
+    qa_item_action action = use ? QA_ITEM_USE : QA_ITEM_DROP;
+    if (!weapon && (selected->actions & action)) {
+        return qa_inventory_item_action(app->inventory, command->context.actor,
+            selected->item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    }
+    bool accepted = false;
+    if (use && selected->weapon) {
+        if (!qa_application_equipment_request_weapon(app, command->context.actor,
+            selected->owner, selected->item, &accepted, error)) return QA_COMMAND_FAILED;
+        if (accepted) return QA_COMMAND_HANDLED;
+    }
+    snprintf(message, extent, "%s cannot be %s.\n", selected->label, use ? "used" : "dropped");
+    qa_console_emit(command->console, &command->context, message);
+    return QA_COMMAND_HANDLED;
+}
+
+qa_command_result application_equipment_named_command(qa_application *app,
+    const qa_command_invocation *command, qa_error *error)
+{
+    if (command->argc < 2 || !command->context.actor.registry ||
+        (!qa_text_ascii_equal(command->argv[0], "use") &&
+         !qa_text_ascii_equal(command->argv[0], "weapon") &&
+         !qa_text_ascii_equal(command->argv[0], "drop"))) return QA_COMMAND_UNHANDLED;
+    qa_arena storage = {0};
+    qa_console_command_arena(command->console, &storage);
+    qa_item_definition *items = NULL;
+    size_t count = 0;
+    qa_command_result result = named_items_read(app, command->context.actor, &storage,
+        &items, &count, error) ? named_item_dispatch(app, command, items, count, &storage, error)
+                             : QA_COMMAND_FAILED;
+    qa_arena_destroy(&storage);
+    return result;
+}
 
 uint8_t qa_application_offhand_actions(const qa_application *app,qa_actor_id actor)
 {

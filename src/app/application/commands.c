@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "equipment_requests.h"
 #include "guest_qc_profile.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
@@ -638,6 +639,10 @@ static qa_command_result command_dispatch(qa_application *application,
     if (host != QA_COMMAND_UNHANDLED) return host;
     bool handled = false;
     qa_actor_id actor = command.context.actor;
+    uint64_t inventory_revision = qa_inventory_revision(application->inventory, actor);
+    qa_command_result item = application_equipment_named_command(application, &command, error);
+    if (item == QA_COMMAND_FAILED) return item;
+    if (item == QA_COMMAND_HANDLED) { handled = true; goto command_handled; }
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
     uint32_t source_slot;
     if (!actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
@@ -658,11 +663,11 @@ static qa_command_result command_dispatch(qa_application *application,
             return QA_COMMAND_FAILED;
         if (handled) return QA_COMMAND_HANDLED;
     }
-    uint64_t inventory_revision = qa_inventory_revision(application->inventory, actor);
     if (actor.registry != 0 && application->primary_mode_ready &&
         !qa_modes_console_command(application->modes, application->primary_mode,
                                     actor, &command, &handled, error))
         return QA_COMMAND_FAILED;
+command_handled:
     if (handled && q3_command_named(command.argv[0], "drop") &&
         qa_inventory_revision(application->inventory, actor) != inventory_revision) {
         application_provider *character = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
