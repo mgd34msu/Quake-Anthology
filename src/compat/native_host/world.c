@@ -182,6 +182,12 @@ static bool fields_write(void *context, const qa_body_state *body, qa_error *err
         row->extended ? row->ground_offset : 0, body, error);
 }
 
+static bool borrowed_projection(const qa_native_host *host, const qa_native_slot_binding *binding)
+{
+    return binding->kind == QA_NATIVE_SLOT_BORROWED &&
+        !(binding->slot < host->retained_capacity && host->retained_clients[binding->slot]);
+}
+
 bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *error)
 {
     qa_native_slot_binding binding;
@@ -219,7 +225,7 @@ bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *erro
             &collision.owner, error)) return false;
     qa_entity_body_fields_prepare(&body);
     row->host = host; row->slot = slot; row->body = body; row->collision = collision;
-    if (binding.kind == QA_NATIVE_SLOT_BORROWED) return true;
+    if (borrowed_projection(host, &binding)) return true;
     if (!row->write || row->write == fields_write) {
         row->write_context = row; row->write = fields_write;
     }
@@ -736,7 +742,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     qa_native_slot_binding binding;
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
-    bool borrowed = binding.kind == QA_NATIVE_SLOT_BORROWED;
+    bool borrowed = borrowed_projection(host, &binding);
     const qa_native_host_entity_layout *layout = host->edict;
     qa_body_state body;
     if (!qa_entity_body_read(&host->q2_fields[slot].body, QA_ENTITY_CLIP_POSE, QA_ENTITY_BODY_ALL,
@@ -867,7 +873,7 @@ bool native_host_unlink(qa_native_host *host, qa_native_address address, qa_erro
     qa_native_slot_binding binding;
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
-    if (binding.kind != QA_NATIVE_SLOT_BORROWED && actor.registry && slot != 0 &&
+    if (!borrowed_projection(host, &binding) && actor.registry && slot != 0 &&
         !qa_world_unlink(host->world.world, actor, error))
         return false;
     if (host->profile == QA_NATIVE_Q2_GAME_API2023 && slot != 0 &&

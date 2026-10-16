@@ -293,6 +293,14 @@ static bool foreign_prepare(struct application_native_q2_attack *p,qa_error *err
         "foreign_actor",&p->foreign_classname,error))return false;
     p->foreign_ready=true;return true;
 }
+bool application_native_q2_client_body_bind(struct application_native_q2 *engine,
+    uint32_t slot,qa_error *error)
+{
+    struct application_native_q2_attack *p=engine->source_attack;
+    if(engine->callbacks||!p||!p->foreign.velocity||!p->foreign.ground)return true;
+    return qa_native_host_source_body_bind(engine->provider->state.native.host,slot,
+        p->foreign.velocity,p->foreign.ground,NULL,NULL,error);
+}
 bool application_native_q2_attack_input_fields(struct application_native_q2 *engine,uint32_t slot,
     qa_actor_id actor,qa_movement_result *out,qa_vec3 *command_angles,qa_error *error)
 {
@@ -1454,6 +1462,9 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
             !qa_native_observe_entry(instance(p), entry, &sig, factor_entry, p, &p->factor_hook, error)) return false;
     }
     if(!foreign_activate(p,error))return false;
+    for(uint32_t slot=1;slot<sizeof(engine->clients)/sizeof(*engine->clients);++slot)
+        if(engine->clients[slot].connected&&engine->clients[slot].begun&&
+            !application_native_q2_client_body_bind(engine,slot,error))return false;
     p->active = true; return true;
 }
 bool application_native_q2_attack_read(struct application_native_q2 *engine, qa_actor_id attacker,

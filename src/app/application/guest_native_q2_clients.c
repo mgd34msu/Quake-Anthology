@@ -587,6 +587,7 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
             engine, slot, engine->clients[slot].actor, false, error) &&
+        application_native_q2_client_body_bind(engine, slot, error) &&
         application_native_q2_player_match_admit(engine, engine->clients[slot].actor, error);
     ++engine->calls;
     if(!engine->callbacks) application_native_q2_visibility_invalidate(engine);
@@ -599,6 +600,7 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
         application_native_q2_inventory_admit(engine, slot, error) &&
         application_native_q2_combat_admit(
             engine, slot, engine->clients[slot].actor, false, error) &&
+        application_native_q2_client_body_bind(engine, slot, error) &&
         application_native_q2_player_match_admit(engine, engine->clients[slot].actor, error);
 }
 

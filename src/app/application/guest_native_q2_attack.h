@@ -4,6 +4,7 @@
 struct application_native_q2;
 struct application_native_q2_attack;
 struct application_native_q2_attack_restore;
+bool application_native_q2_client_body_bind(struct application_native_q2 *, uint32_t, qa_error *);
 #include "qa/movement.h"
 #include "qa/modes.h"
 bool application_native_q2_player_spawn_point(struct application_native_q2 *, qa_actor_id,

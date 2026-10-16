@@ -767,6 +767,7 @@ static bool retain_client(qa_native_host *host, uint32_t slot, bool retained, qa
         host->retained_clients = values;
         host->retained_capacity = table.capacity;
     }
+    if (host->retained_clients[slot] != retained) host->q2_fields_invalidated = true;
     host->retained_clients[slot] = retained;
     return true;
 }
