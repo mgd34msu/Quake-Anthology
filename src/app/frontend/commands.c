@@ -14,6 +14,7 @@
 #include "ui_features.h"
 #include "startup_server_profile.h"
 #include "startup_menus.h"
+#include "qa/text.h"
 #include <stdio.h>
 
 static const qa_ui_id menu_destinations[] = {FRONTEND_HOME, FRONTEND_LIBRARY, FRONTEND_MODS,
@@ -211,6 +212,39 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         else frontend_console_print(frontend,&invocation->context,"Input devices are not active before signon.\n");
         return true;
     }
+    if (client_name(name,"local_join") || client_name(name,"local_drop")) {
+        bool joining = client_name(name,"local_join");
+        const char *usage = joining ? "Usage: local_join\n" : "Usage: local_drop [player number]\n";
+        if (invocation->argc > (joining ? 1u : 2u)) {
+            frontend_console_print(frontend,&invocation->context,usage); return true;
+        }
+        if (invocation->context.origin == QA_COMMAND_REMOTE) return true;
+        uint32_t physical;
+        if (!joining && invocation->argc == 2) {
+            double number; qa_error ignored = {0};
+            const char *text = invocation->argv[1];
+            if (!qa_parse_number((qa_bytes){(const uint8_t *)text,strlen(text)},&number,&ignored) ||
+                !(number >= 1 && number <= QA_INPUT_LOCAL_SEATS) || number != (uint32_t)number) {
+                frontend_console_print(frontend,&invocation->context,usage); return true;
+            }
+            uint32_t logical;
+            const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(frontend->application));
+            if (!frontend_local_seat_read(choices,(unsigned)number - 1,&logical) ||
+                !frontend_seat_ordinal_read(frontend,logical,&physical)) {
+                frontend_console_print(frontend,&invocation->context,"That local player is not active.\n"); return true;
+            }
+        } else if (!frontend_command_seat_read(frontend,&invocation->context,&physical)) {
+            frontend_console_print(frontend,&invocation->context,"Command requires a local player.\n"); return true;
+        }
+        qa_error failure = {0};
+        bool staged = joining ? frontend_startup_local_join_stage(frontend->seats + physical,&failure) :
+            frontend_startup_local_drop_stage(frontend->seats + physical,&failure);
+        if (!staged) {
+            frontend_console_print(frontend,&invocation->context,failure.message);
+            frontend_console_print(frontend,&invocation->context,"\n");
+        }
+        return true;
+    }
     if (client_name(name,"server_setting")) {
         if (invocation->argc!=3) {
             frontend_console_print(frontend,&invocation->context,"Usage: server_setting <server:setting-id> <value>\n");
@@ -334,7 +368,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
     qa_console *console = qa_application_console(frontend->application);
     const char *names[] = {"quit", "help", "clear", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
-        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting",
+        "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting", "local_join", "local_drop",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
         "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
