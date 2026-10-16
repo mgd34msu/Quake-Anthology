@@ -79,9 +79,49 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
     bool transition = purpose == QA_SAVE_TRANSITION;
     qa_native_checkpoint_request request = {.game = !transition, .level = true, .host = true,
         .autosave = purpose == QA_SAVE_LEVEL_ENTRY, .transition = transition};
-    bool ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
-        request, &snapshot, error) && complete(&snapshot, error) &&
-        qa_native_checkpoint_encode(&snapshot, parts, error);
+    qa_native_host *host = provider->state.native.host;
+    qa_native_instance *instance = qa_native_host_instance(host);
+    const qa_native_host_entity_layout *layout = qa_native_host_source_layout(host);
+    uint8_t client_inuse[256][4];
+    uint32_t cleared = 0;
+    bool ok = true;
+    if (transition && engine->profile == QA_NATIVE_Q2_GAME_API3) {
+        const qa_cvar_view *maximum = qa_cvars_read(engine->cvars, provider->q2_maxclients);
+        if (!maximum || maximum->integer < 1 || maximum->integer > 256)
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 travel lost its source maximum clients");
+        /* SV_GameMap omits client body shells from the old level file. */
+        const uint8_t unused[4] = {0};
+        for (uint32_t slot = 1; ok && slot <= (uint32_t)maximum->integer; ++slot) {
+            qa_native_address address;
+            ok = qa_native_entity_address(instance, slot, &address, error) &&
+                qa_native_read(instance, address + layout->inuse, client_inuse[cleared], 4, error);
+            if (ok) {
+                ++cleared;
+                ok = qa_native_write(instance, address + layout->inuse, (qa_bytes){unused, 4}, error);
+            }
+        }
+    }
+    if (ok) ok = qa_native_checkpoint_capture(instance, request, &snapshot, error);
+    if (cleared) {
+        qa_error returned = {0};
+        qa_native_entity_table table;
+        bool restored = qa_native_entity_table_refresh(instance, &table, &returned);
+        if (restored) {
+            /* API3 fixes edict stride at Init; resolve the current exported base. */
+            for (uint32_t slot = 1; slot <= cleared; ++slot) {
+                qa_native_address address;
+                qa_error local = {0};
+                bool written = qa_native_entity_address(instance, slot, &address, &local) &&
+                    qa_native_write(instance, address + layout->inuse,
+                        (qa_bytes){client_inuse[slot - 1], 4}, &local);
+                if (!written && restored) returned = local;
+                restored = written && restored;
+            }
+        }
+        if (ok && !restored && error) *error = returned;
+        ok = ok && restored;
+    }
+    if (ok) ok = complete(&snapshot, error) && qa_native_checkpoint_encode(&snapshot, parts, error);
     if (ok && engine->process.resources) {
         if (!resources || !resources->capture || !resources->resolve || !resources->attach)
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 capture requires its external file capabilities");
