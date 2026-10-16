@@ -1,6 +1,8 @@
 #ifndef QA_APPLICATION_NATIVE_Q2_ATTACK_H
 #define QA_APPLICATION_NATIVE_Q2_ATTACK_H
 #include "qa/native_host.h"
+#include "qa/inventory.h"
+#include "qa/network_unified_frame_pool.h"
 struct application_native_q2;
 struct application_native_q2_attack;
 struct application_native_q2_attack_restore;
@@ -42,6 +44,8 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     qa_native_address descriptor,qa_item_id *,qa_error *);
 bool application_native_q2_attack_weapon_contains(struct application_native_q2 *,
     qa_item_id, bool *, qa_error *);
+bool application_native_q2_attack_death_drop(struct application_native_q2 *, qa_actor_id,
+    qa_unified_frame_lease *, qa_supply_weapon *, int32_t *ammo_count, bool *handled, qa_error *);
 bool application_native_q2_attack_delay(struct application_native_q2 *, qa_actor_id,
     qa_item_id item, uint64_t native_ns, uint64_t *, bool *handled, qa_error *);
 bool application_native_q2_attack_hand_grenade_item(struct application_native_q2 *,

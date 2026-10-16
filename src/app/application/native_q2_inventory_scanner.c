@@ -10,8 +10,9 @@
 #include <math.h>
 
 typedef struct inventory_write_field { uint32_t offset, bytes; } inventory_write_field;
-enum { INVENTORY_ENTRY_GIVE = 8, INVENTORY_GIVE_WEAPONS = 6,
-    INVENTORY_GIVE_AMMO, INVENTORY_GIVE_UNKNOWN, INVENTORY_GIVE_AMMO_GRANT };
+enum { INVENTORY_ENTRY_GIVE = 8, INVENTORY_ENTRY_DEATH_DROP };
+enum { INVENTORY_GIVE_WEAPONS = 6, INVENTORY_GIVE_AMMO,
+    INVENTORY_GIVE_UNKNOWN, INVENTORY_GIVE_AMMO_GRANT, INVENTORY_DEATH_DROP };
 typedef struct inventory_selection {
     struct inventory_selection *next;
     qa_actor_id actor;
@@ -30,7 +31,7 @@ typedef struct inventory_frame {
     struct inventory_frame *previous;
     qa_actor_id actor;
     int32_t flags;
-    bool named, dropping, giving, has_named_row;
+    bool named, dropping, giving, death_drop, has_named_row;
     struct inventory_region *ammo_region;
     application_native_q2_inventory_source ammo_source;
     uint32_t ammo_index;
@@ -65,7 +66,7 @@ struct application_native_q2_inventory_scanner {
     application_native_q2_inventory_scanner_options options;
     inventory_write_field *writes;
     size_t write_count;
-    inventory_entry entries[9];
+    inventory_entry entries[10];
     inventory_region *regions;
     size_t entry_count, region_count;
     qa_arena readout_storage;
@@ -80,7 +81,7 @@ struct application_native_q2_inventory_scanner {
     const qa_native_region_event *command_event;
     qa_actor_id command_actor;
     uint32_t inventory, count, cursor, client_pointer, item_table, item_stride, item_count;
-    uint32_t drop_weapon, drop_pending;
+    uint32_t drop_weapon, drop_pending, death_ammo_index;
     qa_native_address drop_lookup_return;
     int32_t empty;
     qa_native_abi abi;
@@ -382,6 +383,44 @@ static bool project_drop(application_native_q2_inventory_scanner *o, inventory_f
     frame_row(frame, row);
     return true;
 }
+static bool death_drop_region(application_native_q2_inventory_scanner *o, inventory_frame *frame,
+    const qa_native_region_event *event, qa_error *e)
+{
+    if (!frame->death_drop) return true;
+    if (event->phase == QA_NATIVE_REGION_JOIN) return restore(o, &frame->restore, e);
+    qa_unified_frame_lease *storage = frame_storage(o, frame, e);
+    if (!storage) return false;
+    qa_supply_weapon original = {0}; int32_t amount = 0; bool handled = false;
+    if (!application_native_q2_attack_death_drop(o->engine, frame->actor, storage,
+        &original, &amount, &handled, e)) return false;
+    if (!handled || !qa_actors_get(qa_session_actors(o->engine->provider->application->session), frame->actor)) return true;
+    application_native_q2_inventory_source s;
+    qa_native_address descriptor = 0; uint32_t weapon_index = 0, ammo_index = 0;
+    if (!source(o, frame->actor, &s, e)) return false;
+    if (original.item) {
+        if (!application_native_q2_inventory_index(o->engine, original.item, &weapon_index, e)) return false;
+        if (weapon_index >= o->item_count)
+            return application_fail(e, QA_ERROR_FORMAT, "Native death-drop weapon leaves its original descriptor table");
+        if (!qa_native_rva(instance(o), (uint64_t)o->item_table + (uint64_t)weapon_index * o->item_stride,
+            o->item_stride, &descriptor, e)) return false;
+    }
+    if (original.ammo) {
+        if (!application_native_q2_inventory_index(o->engine, original.ammo, &ammo_index, e)) return false;
+        if (ammo_index >= o->count)
+            return application_fail(e, QA_ERROR_FORMAT, "Native death-drop ammunition leaves its original counter table");
+    }
+    if (!save_bytes(o, storage, &s, o->drop_weapon, o->pointer_bytes, &frame->restore, e) ||
+        (o->death_ammo_index != UINT32_MAX && !save_bytes(o, storage, &s,
+            o->death_ammo_index, 4, &frame->restore, e)) ||
+        (original.ammo && !save_bytes(o, storage, &s, o->inventory + ammo_index * 4,
+            4, &frame->restore, e))) return false;
+    uint8_t pointer[8];
+    if (o->pointer_bytes == 4) qa_store_u32le(pointer, (uint32_t)descriptor);
+    else qa_store_u64le(pointer, descriptor);
+    return qa_native_write(instance(o), s.client + o->drop_weapon, (qa_bytes){pointer, o->pointer_bytes}, e) &&
+        (o->death_ammo_index == UINT32_MAX || write_word(o, s.client + o->death_ammo_index, (int32_t)ammo_index, e)) &&
+        (!original.ammo || write_word(o, s.client + o->inventory + (uint64_t)ammo_index * 4, amount, e));
+}
 static bool drop_lookup(application_native_q2_inventory_scanner *, inventory_entry *,
     const qa_native_value *, size_t, qa_native_value *, qa_error *);
 static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry_observer *binding,
@@ -394,7 +433,8 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
     if (entry->kind == 7) return drop_lookup(o, entry, arguments, count, result, e);
     inventory_frame frame = {.previous = o->frame, .flags = -1,
         .named = entry->kind == 4 || entry->kind == 5,
-        .dropping = entry->kind == 5 || entry->kind == 6, .giving = entry->kind == INVENTORY_ENTRY_GIVE};
+        .dropping = entry->kind == 5 || entry->kind == 6, .giving = entry->kind == INVENTORY_ENTRY_GIVE,
+        .death_drop = entry->kind == INVENTORY_ENTRY_DEATH_DROP};
     if (count > 1 && arguments[1].type == QA_NATIVE_I32) frame.flags = arguments[1].as.i32;
     if (arguments[0].as.address && !qa_native_host_source_actor(o->engine->provider->state.native.host,
         arguments[0].as.address, true, &frame.actor, e)) return false;
@@ -590,6 +630,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
     if (actual != instance(o) || event->region.id != region->id || !current(o, e)) return false;
     inventory_frame *frame = o->frame;
     if (!frame || !frame->actor.registry || o->evaluating) return true;
+    if (region->kind == INVENTORY_DEATH_DROP) return death_drop_region(o, frame, event, e);
     if (region->kind >= INVENTORY_GIVE_WEAPONS) return give_region(o, region, frame, event, decision, e);
     if (region->kind == 4) {
         if (event->phase != QA_NATIVE_REGION_JOIN || !frame->dropping || frame->named) return true;
@@ -690,6 +731,10 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     const qa_json_document *d = o->document; qa_json_id root = qa_json_root(d), inventory = qa_json_get(d, root, "inventory");
     qa_json_id commands = qa_json_get(d, root, "commands"), items = qa_json_get(d, commands, "items"); int64_t empty;
     qa_json_id give = qa_json_get(d, commands, "give"), ammo_grants = qa_json_get(d, give, "ammoGrants");
+    qa_json_id death_drop = qa_json_get(d, commands, "drop");
+    bool death_drops = death_drop != QA_JSON_NONE && qa_json_type(d, death_drop) != QA_JSON_NULL;
+    if (death_drops && qa_json_type(d, death_drop) != QA_JSON_OBJECT)
+        return application_fail(e, QA_ERROR_FORMAT, "Native death drop requires its original command declaration");
     bool gives = qa_json_type(d, give) != QA_JSON_NULL;
     size_t ammo_grant_count = gives ? qa_json_size(d, ammo_grants) : 0;
     if (gives && (qa_json_type(d, give) != QA_JSON_OBJECT || qa_json_type(d, ammo_grants) != QA_JSON_ARRAY ||
@@ -700,7 +745,7 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     size_t callback_count = drops ? qa_json_size(d, callbacks) : 0;
     if (drops && qa_json_type(d, callbacks) != QA_JSON_ARRAY)
         return application_fail(e, QA_ERROR_FORMAT, "Native drop callbacks must be an array");
-    size_t region_capacity = 7 + (gives ? 3 : 0);
+    size_t region_capacity = 7u + (gives ? 3u : 0u) + (death_drops ? 1u : 0u);
     if (callback_count > SIZE_MAX - region_capacity || ammo_grant_count > SIZE_MAX - region_capacity - callback_count)
         return application_fail(e, QA_ERROR_MEMORY, "Native command region count overflows");
     region_capacity += callback_count + ammo_grant_count;
@@ -785,6 +830,25 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
             .parameter_count = 1, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
     }
+    if (death_drops) {
+        inventory_entry *entry = o->entries + o->entry_count++; uint32_t rva, pointer, inventory_offset, weapon;
+        qa_json_id client = qa_json_get(d, commands, "client"), ammo_index = qa_json_get(d, client, "ammoIndex");
+        if (!word(d, client, "pointer", &pointer, e) || !word(d, client, "inventory", &inventory_offset, e) ||
+            !word(d, client, "weapon", &weapon, e) || !word(d, death_drop, "entry", &rva, e) ||
+            !address(o, rva, &entry->address, e)) return false;
+        o->death_ammo_index = UINT32_MAX;
+        if (qa_json_type(d, ammo_index) != QA_JSON_NULL && !word(d, client, "ammoIndex", &o->death_ammo_index, e)) return false;
+        if (pointer != o->client_pointer || inventory_offset != o->inventory ||
+            (drops && weapon != o->drop_weapon) || weapon > client_bytes || o->pointer_bytes > client_bytes - weapon ||
+            (o->death_ammo_index != UINT32_MAX &&
+                (o->death_ammo_index > client_bytes || client_bytes - o->death_ammo_index < 4)))
+            return application_fail(e, QA_ERROR_FORMAT, "Native death drop fields leave their original client layout");
+        o->drop_weapon = weapon;
+        entry->owner = o; entry->kind = INVENTORY_ENTRY_DEATH_DROP;
+        entry->parameters[0] = (qa_native_type){.kind = QA_NATIVE_ADDRESS, .count = 1};
+        entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
+            .parameter_count = 1, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+    }
     if (!region_profile(o, 0, "/inventory/next/scan", 1, 1, e) ||
         !region_profile(o, 1, "/inventory/previous/scan", 1, -1, e) ||
         !region_profile(o, 2, "/inventory/use/call", 2, 0, e) ||
@@ -825,6 +889,8 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
                 return application_fail(e, QA_ERROR_FORMAT, "Native ammunition descriptor has no valid source register");
         }
     }
+    if (death_drops && !region_profile(o, o->region_count++, "/commands/drop/eligibility",
+        INVENTORY_DEATH_DROP, 0, e)) return false;
     return true;
 }
 bool application_native_q2_inventory_scanner_activate(application_native_q2_inventory_scanner *o, qa_error *e)

@@ -1585,7 +1585,7 @@ bool application_native_q2_attack_descriptor_item(struct application_native_q2 *
     }
     return true;
 }
-static bool delay_item(struct application_native_q2_attack *p, qa_actor_id actor,
+static bool source_item(struct application_native_q2_attack *p, qa_actor_id actor,
     qa_item_id requested, qa_unified_frame_lease *storage, const attack_item **out, qa_error *error)
 {
     *out = NULL;
@@ -1594,7 +1594,7 @@ static bool delay_item(struct application_native_q2_attack *p, qa_actor_id actor
         if (p->items[i].item == requested) { *out = p->items + i; return true; }
     qa_application *app = p->engine->provider->application;
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
-    if (!arsenal) return application_fail(error, QA_ERROR_NOT_FOUND, "Native firing delay has no selected arsenal");
+    if (!arsenal) return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon mapping has no selected arsenal");
     qa_item_definition definition;
     if (!qa_inventory_source_definition_read(app->inventory, actor, arsenal->owner, requested, &definition, error)) return false;
     qa_supply_weapon selected = {requested, definition.ammo,
@@ -1605,7 +1605,32 @@ static bool delay_item(struct application_native_q2_attack *p, qa_actor_id actor
     if (!source) return true;
     for (size_t i = 0; i < p->count; ++i)
         if (p->items[i].item == source) { *out = p->items + i; return true; }
-    return application_fail(error, QA_ERROR_NOT_FOUND, "Native firing delay lost its mapped original item");
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Native weapon mapping lost its mapped original item");
+}
+bool application_native_q2_attack_death_drop(struct application_native_q2 *engine, qa_actor_id actor,
+    qa_unified_frame_lease *storage, qa_supply_weapon *out, int32_t *ammo_count, bool *handled, qa_error *error)
+{
+    qa_application *app = engine->provider->application;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+    *out = (qa_supply_weapon){0}; *ammo_count = 0; *handled = false;
+    if (!arsenal || arsenal == engine->provider) return true;
+    qa_item_id selected;
+    if (!qa_application_weapon_read(app, actor, &selected, error)) return false;
+    *handled = true;
+    if (!selected || !application_supplies_weapon_droppable(arsenal, selected)) return true;
+    struct application_native_q2_attack *p = engine->source_attack;
+    if (!p || !p->active || !p->items_ready)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native death drop has no admitted source weapon mapping");
+    const attack_item *original;
+    if (!source_item(p, actor, selected, storage, &original, error)) return false;
+    if (!original) return true;
+    qa_item_definition definition; double count = 0;
+    if (!qa_inventory_source_definition_read(app->inventory, actor, arsenal->owner, selected, &definition, error) ||
+        (definition.ammo && !qa_inventory_count_read(app->inventory, actor, definition.ammo, &count, error))) return false;
+    if (!isfinite(count) || count != trunc(count) || count < INT32_MIN || count > INT32_MAX)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected death-drop ammunition exceeds the native int32 field");
+    *out = (qa_supply_weapon){.item = original->item, .ammo = original->ammo, .drop = true};
+    *ammo_count = (int32_t)count; return true;
 }
 typedef struct attack_delay_saved {
     qa_native_address address;
@@ -1679,7 +1704,7 @@ bool application_native_q2_attack_delay(struct application_native_q2 *engine, qa
     qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
     if (!storage) return false;
     const attack_item *original = NULL;
-    bool ok = delay_item(p, actor, item, storage, &original, error), projected = false;
+    bool ok = source_item(p, actor, item, storage, &original, error), projected = false;
     qa_native_address weapon = 0; uint8_t previous[8];
     if (ok && original) {
         qa_native_address client;
