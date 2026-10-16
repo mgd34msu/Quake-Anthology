@@ -842,7 +842,8 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
     uint64_t frame = host->engine.source_frame ? host->engine.source_frame(host->engine.context) : 0;
     bool same_actor = qa_actor_id_equal(lifetime->actor, actor);
-    if (link_count == 0 || !same_actor || (host->engine.source_frame && !lifetime->present)) {
+    if (link_count == 0 || !same_actor ||
+        (host->engine.source_frame && (!lifetime->present || frame < lifetime->creation_frame))) {
         bool bot_registered = lifetime->bot_registered && same_actor;
         *lifetime = (native_host_q2_lifetime){.actor = actor, .bot_registered = bot_registered,
             .creation_origin = origin, .creation_frame = frame, .present = host->engine.source_frame != NULL};
@@ -859,8 +860,6 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
             return false;
     }
     if (host->engine.source_frame) {
-        if (frame < lifetime->creation_frame)
-            return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link moved before its Source creation frame");
         lifetime->origins[frame & 7u] = (qa_native_host_q2_origin){
             .source_frame = frame, .origin = origin, .present = true};
     }
