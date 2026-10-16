@@ -14,6 +14,7 @@
 #include "qa/operation.h"
 #include "qa/random.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/game_q2.h"
 #include "qa/network_unified_session.h"
 #include "qa/network_unified_control.h"
 #include "qa/unified_frame_metadata.h"
@@ -8363,6 +8364,26 @@ static void test_q2_player_media(void)
     qa_strings_destroy(strings);
 }
 
+static void test_q2_linked_models(void)
+{
+    const qa_q2_entity source = {.modelindex = 255, .modelindex2 = 133, .modelindex3 = 255,
+        .modelindex4 = 9, .renderfx = 4096, .skinnum = 0x1234, .alpha = .5f,
+        .frame = 12, .old_frame = 11, .origin = {10,20,30}};
+    qa_q2_entity body = qa_q2_linked_model_state(&source, 0, QA_RULESET_Q2_CLASSIC);
+    CHECK(body.modelindex == 255 && body.renderfx == source.renderfx && body.skinnum == source.skinnum);
+    qa_q2_entity linked = qa_q2_linked_model_state(&source, 1, QA_RULESET_Q2_CLASSIC);
+    CHECK(linked.modelindex == 5 && linked.renderfx == 32 && linked.alpha == .32f && linked.skinnum == 0);
+    CHECK(linked.frame == 12 && linked.old_frame == 11 && linked.origin[1] == 20);
+    linked = qa_q2_linked_model_state(&source, 1, QA_RULESET_Q2_RERELEASE);
+    CHECK(linked.modelindex == 133 && linked.renderfx == 0 && linked.alpha == 0 && linked.skinnum == 0);
+    linked = qa_q2_linked_model_state(&source, 2, QA_RULESET_Q2_CLASSIC);
+    CHECK(linked.modelindex == 255 && linked.renderfx == 0 && linked.alpha == 0);
+    qa_q2_entity custom = source; custom.modelindex2 = 255;
+    linked = qa_q2_linked_model_state(&custom, 1, QA_RULESET_Q2_CLASSIC);
+    CHECK(linked.modelindex == 255 && linked.renderfx == 0 && linked.alpha == 0);
+    CHECK(source.renderfx == 4096 && source.skinnum == 0x1234 && source.alpha == .5f);
+}
+
 static void test_q2_weapon_names(void)
 {
     qa_error error = {0}; qa_strings *strings = NULL;
@@ -9477,6 +9498,7 @@ int main(int argc, char **argv)
     test_native_string_boundaries();
     test_native_resumable_budget();
     test_native_i386_call_conventions();
+    test_q2_linked_models();
     test_q2_weapon_names();
     test_q2_player_media();
     test_literal_tokens();

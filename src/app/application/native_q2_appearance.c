@@ -103,18 +103,19 @@ bool application_native_q2_appearance_read(qa_application *app,
     if (!qa_native_host_q2_wire_entity((qa_native_host *)source->source.original.host,
             slot, &value.entity, error)) return false;
     const qa_q2_entity *state = &value.entity.state;
-    uint32_t indexes[] = {state->modelindex, state->modelindex2, state->modelindex3, state->modelindex4};
     value.skin = state->skinnum;
     bool ok = true;
     const qa_q2_player_media *media=engine->player_media+(state->skinnum&255u);
     uint32_t ordinal=(state->skinnum>>8)&255u;
     qa_string_id held=ordinal<engine->hud_names.weapons.count?media->weapons[ordinal]:media->weapons[0];
     for (unsigned i=0;i<4;++i) {
-        if (indexes[i]==Q2_CLIENT_MODEL) {
+        qa_q2_entity selected=qa_q2_linked_model_state(state,i,source->edition);
+        uint32_t index=selected.modelindex;
+        if (i<2 && index==Q2_CLIENT_MODEL) {
             value.models[i]=i?held:media->model;
             if (!i) {value.skin=0;value.skin_path=media->skin;}
-        } else if (indexes[i] && indexes[i]<engine->hud_names.layout.max_models)
-            value.models[i]=engine->hud_names.values[engine->hud_names.layout.models+indexes[i]];
+        } else if (index && index<engine->hud_names.layout.max_models)
+            value.models[i]=engine->hud_names.values[engine->hud_names.layout.models+index];
     }
     if (ok && !application_native_q2_appearance_current(app, &value))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Original Q2 appearance changed its physical Source or configstrings");

@@ -4,9 +4,24 @@
 #include "monsters/internal.h"
 #include "qa/game_q2_wire.h"
 #include "qa/game_q2_source.h"
+#include "qa/network_q2.h"
 #include "qa/text.h"
 #include "qa/input.h"
 #include <math.h>
+
+qa_q2_entity qa_q2_linked_model_state(const qa_q2_entity *source, unsigned model_slot,
+    qa_ruleset_id edition)
+{
+    qa_q2_entity state = *source;
+    if (!model_slot) return state;
+    state.modelindex = model_slot == 1 ? source->modelindex2 :
+        model_slot == 2 ? source->modelindex3 : model_slot == 3 ? source->modelindex4 : 0;
+    state.skinnum = 0; state.renderfx = 0; state.alpha = 0;
+    if (edition == QA_RULESET_Q2_CLASSIC && model_slot == 1 && state.modelindex != 255 && (state.modelindex & 128u)) {
+        state.modelindex &= 127u; state.renderfx = 32u; state.alpha = .32f;
+    }
+    return state;
+}
 
 #define Q2_STATUS_VITALS \
     "yb -24 xv 0 hnum xv 50 pic 0 " \

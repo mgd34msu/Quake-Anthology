@@ -5,6 +5,8 @@
 #include "qa/ruleset.h"
 
 typedef struct qa_q2_game qa_q2_game;
+typedef struct qa_q2_entity qa_q2_entity;
+qa_q2_entity qa_q2_linked_model_state(const qa_q2_entity *, unsigned model_slot, qa_ruleset_id);
 typedef struct qa_command_invocation qa_command_invocation;
 bool qa_q2_game_grant_arsenal(qa_q2_game *, qa_actor_id, bool ammo, qa_error *);
 bool qa_q2_game_give_item(qa_q2_game *, qa_actor_id, size_t, const char *const *, bool *handled,
