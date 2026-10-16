@@ -73,6 +73,7 @@ bool guest_elf_open(qa_bytes, const qa_native_image_info *, guest_elf_role, uint
     guest_elf **, qa_error *);
 void guest_elf_close(guest_elf **);
 const guest_elf_view *guest_elf_describe(const guest_elf *);
+bool guest_elf_symbol_exported(const guest_elf_symbol *);
 bool guest_elf_file_range(const guest_elf *, uint64_t, size_t, qa_bytes *, qa_error *);
 bool guest_elf_range(const guest_elf *, uint64_t, size_t, qa_bytes *, qa_error *);
 bool guest_elf_dynamic_value(const guest_elf *, uint64_t, uint64_t *);

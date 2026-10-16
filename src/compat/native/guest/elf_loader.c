@@ -150,9 +150,7 @@ static bool provider_retained(const guest_elf_loaded *owner, qa_error *error)
     for (unsigned pass = 0; pass < 3; ++pass)
         for (size_t i = 0; i < artifact->symbol_count; ++i) {
             const guest_elf_symbol *symbol = artifact->symbols + i;
-            if (!symbol->name[0] || !symbol->section ||
-                (symbol->binding != 1 && symbol->binding != 2 && symbol->binding != 10) ||
-                symbol->visibility == 1 || symbol->visibility == 2) continue;
+            if (!guest_elf_symbol_exported(symbol)) continue;
             unsigned phase = symbol->binding == 10 ? 1 : symbol->type == 10 ? 2 : 0;
             if (phase != pass) continue;
             size_t aliases = symbol->version && !symbol->hidden ? 2 : 1;

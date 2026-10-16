@@ -8,6 +8,7 @@
 #include "qa/native_guest.h"
 #include "../src/compat/native/guest/abi.h"
 #include "../src/compat/native/guest/memory_string.h"
+#include "../src/compat/native/guest/elf.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -7898,6 +7899,22 @@ static void test_q2_weapon_names(void)
     free(config); qa_strings_destroy(strings);
 }
 
+static void test_native_export_visibility(void)
+{
+    guest_elf_symbol symbol = {.name = "GetCGameAPI", .section = 1, .binding = 1};
+    CHECK(guest_elf_symbol_exported(&symbol));
+    symbol.binding = 2; symbol.visibility = 3;
+    CHECK(guest_elf_symbol_exported(&symbol));
+    symbol.binding = 0;
+    CHECK(!guest_elf_symbol_exported(&symbol));
+    symbol.binding = 1; symbol.visibility = 2;
+    CHECK(!guest_elf_symbol_exported(&symbol));
+    symbol.visibility = 0; symbol.section = 0;
+    CHECK(!guest_elf_symbol_exported(&symbol));
+    symbol.section = 1; symbol.name = "";
+    CHECK(!guest_elf_symbol_exported(&symbol));
+}
+
 static void test_native_string_boundaries(void)
 {
     qa_error error = {0};
@@ -8850,6 +8867,7 @@ int main(int argc, char **argv)
     test_shared_angle_wrapping();
     test_shared_direction_angles();
     test_native_import_slot_identity();
+    test_native_export_visibility();
     test_native_string_boundaries();
     test_native_resumable_budget();
     test_native_i386_call_conventions();

@@ -310,7 +310,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     if (!qa_native_module_load(qa_resource_bytes(provider->launch->artifact),
             provider->launch->selection.artifact, engine->profile,
             &provider->state.native.module, error)) return false;
-    if (provider->launch->declaration && !qa_native_declaration_load(
+    if (!cgame && provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
     if (!cgame && !engine->declaration && !qa_native_declaration_builtin(
@@ -393,6 +393,12 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         }
     }
     for (size_t i = 0; i < choices->seat_count; ++i) {
+        if (cgame) {
+            if (!choices->seats[i].local || choices->seats[i].bot) continue;
+            const qa_launch_binding *hud = qa_launch_binding_for(choices,
+                (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = choices->seats[i].id}, QA_ROLE_HUD, "");
+            if (!hud || strcmp(hud->instance, provider->launch->selection.instance)) continue;
+        }
         engine->clients[i + 1].reserved = true;
         engine->clients[i + 1].seat = choices->seats[i].id;
     }

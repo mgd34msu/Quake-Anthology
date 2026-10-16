@@ -804,7 +804,7 @@ add_library(qa_configuration STATIC
     src/session/configuration/presets.c
     src/session/configuration/transaction.c
     src/session/configuration/validate.c)
-target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session qa_persistence)
+target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session qa_persistence PRIVATE qa_native)
 
 add_library(qa_audio STATIC
     src/audio/bank.c

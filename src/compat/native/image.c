@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "guest/pe.h"
+#include "guest/elf.h"
 
 static bool span(qa_bytes bytes, size_t offset, size_t length) {
     return offset <= bytes.size && length <= bytes.size - offset;
@@ -339,6 +341,37 @@ bool native_image_soname(qa_bytes image, qa_bytes *out, qa_error *error) {
         return true;
     }
     return native_fail(error, QA_ERROR_FORMAT, 0, "original dependency SONAME has no admitted file segment");
+}
+
+bool qa_native_image_has_export(qa_bytes bytes, const char *name, bool *found, qa_error *error)
+{
+    qa_native_image_info info;
+    if (!name || !found)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "Native export inspection requires a name and output");
+    *found = false;
+    if (!qa_native_inspect(bytes, &info, error)) return false;
+    if (info.format == QA_NATIVE_IMAGE_PE32 || info.format == QA_NATIVE_IMAGE_PE32_PLUS) {
+        guest_pe *image = NULL;
+        uint64_t base = info.preferred_base ? info.preferred_base : UINT64_C(0x10000000);
+        if (!guest_pe_open(bytes, &info, base, SIZE_MAX, &image, error)) return false;
+        const guest_pe_view *view = guest_pe_describe(image);
+        for (size_t i = 0; i < view->export_count; ++i)
+            if (view->exports[i].rva && view->exports[i].name && !strcmp(view->exports[i].name, name)) {
+                *found = true; break;
+            }
+        guest_pe_close(&image);
+    } else {
+        guest_elf *image = NULL;
+        if (!guest_elf_open(bytes, &info, GUEST_ELF_LIBRARY, 0, SIZE_MAX, &image, error)) return false;
+        const guest_elf_view *view = guest_elf_describe(image);
+        for (size_t i = 0; i < view->symbol_count; ++i) {
+            const guest_elf_symbol *symbol = view->symbols + i;
+            bool exported = guest_elf_symbol_exported(symbol) && (!symbol->version || !symbol->hidden);
+            if (exported && !strcmp(symbol->name, name)) { *found = true; break; }
+        }
+        guest_elf_close(&image);
+    }
+    return true;
 }
 
 qa_native_target qa_native_host_target(void) {

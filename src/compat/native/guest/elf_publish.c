@@ -92,9 +92,7 @@ bool guest_elf_publication_open(const guest_elf_binding *binding,
     size_t exports = 0;
     for (size_t i = 0; i < image->symbol_count; ++i) {
         const guest_elf_symbol *symbol = image->symbols + i;
-        if (!symbol->name[0] || !symbol->section ||
-            (symbol->binding != 1 && symbol->binding != 2 && symbol->binding != 10) ||
-            symbol->visibility == 1 || symbol->visibility == 2) continue;
+        if (!guest_elf_symbol_exported(symbol)) continue;
         size_t added = symbol->version && !symbol->hidden ? 2 : 1;
         if (exports > SIZE_MAX / sizeof(guest_sysv_export) - added)
             return guest_fail(error, QA_ERROR_MEMORY, i, "ELF provider export ownership extent overflows");
@@ -114,9 +112,7 @@ bool guest_elf_publication_open(const guest_elf_binding *binding,
     for (unsigned pass = 0; okay && pass < 3; ++pass)
         for (size_t i = 0; okay && i < image->symbol_count; ++i) {
             const guest_elf_symbol *symbol = image->symbols + i;
-            if (!symbol->name[0] || !symbol->section ||
-                (symbol->binding != 1 && symbol->binding != 2 && symbol->binding != 10) ||
-                symbol->visibility == 1 || symbol->visibility == 2) continue;
+            if (!guest_elf_symbol_exported(symbol)) continue;
             unsigned phase = symbol->binding == 10 ? 1 : symbol->type == 10 ? 2 : 0;
             if (phase == pass) okay = append_export(binding, publication, i, error);
         }

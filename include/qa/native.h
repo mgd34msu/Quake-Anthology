@@ -68,6 +68,8 @@ typedef struct qa_native_image_info {
  * validated before a module is admitted to the owned guest process.
  */
 bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error);
+/* Reuses the inert image readers; no module initializer or source call runs. */
+bool qa_native_image_has_export(qa_bytes, const char *, bool *found, qa_error *);
 /* Packaging inspection for an executable, including ELF PIE. Module admission
  * continues to require a DLL/shared object through qa_native_inspect. */
 bool qa_native_inspect_program(qa_bytes image, qa_native_image_info *out, qa_error *error);

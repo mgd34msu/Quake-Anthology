@@ -572,3 +572,10 @@ bool guest_elf_open(qa_bytes source, const qa_native_image_info *expected, guest
     if (!okay) { guest_elf_close(&elf); return false; }
     *out = elf; return true;
 }
+
+bool guest_elf_symbol_exported(const guest_elf_symbol *symbol)
+{
+    return symbol->name[0] && symbol->section &&
+        (symbol->binding == 1 || symbol->binding == 2 || symbol->binding == 10) &&
+        symbol->visibility != 1 && symbol->visibility != 2;
+}

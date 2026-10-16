@@ -3,6 +3,8 @@
 #include "qa/vfs_view_save.h"
 #include "qa/launch_client.h"
 #include "qa/catalog_save.h"
+#include "qa/native.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdatomic.h>
 
@@ -1046,6 +1048,64 @@ static void discard_transaction(qa_configuration_transaction *t)
     --t->manager->transactions; free(t);
 }
 
+static bool native_client_roles(qa_launch_draft *draft, qa_error *error)
+{
+    size_t providers = draft->choices.provider_count;
+    const uint64_t game_roles = QA_ROLE_BIT(QA_ROLE_ENTITIES) |
+        QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL);
+    for (size_t i = 0; i < providers; ++i) {
+        qa_launch_provider source = draft->choices.providers[i];
+        const qa_product *product = qa_catalog_product(draft->catalog, source.product);
+        if (source.runtime != QA_PROGRAM_NATIVE || !product || product->family != QA_GAME_Q2 ||
+            source.clock.kind != QA_RULESET_Q2_RERELEASE ||
+            !(instance_roles(&draft->choices, source.instance) & game_roles)) continue;
+        bool probed = false;
+        for (size_t j = 0; j < draft->choices.seat_count; ++j) {
+            const qa_launch_seat *seat = draft->choices.seats + j;
+            if (!seat->local || seat->bot) continue;
+            qa_launch_scope scope = {.kind = QA_SCOPE_SEAT, .seat = seat->id};
+            const qa_launch_binding *hud = qa_launch_binding_for(&draft->choices,
+                scope, QA_ROLE_HUD, "");
+            if (!hud || strcmp(hud->instance, source.instance)) continue;
+            if (!probed) {
+                qa_vfs *files = NULL;
+                qa_resource *artifact = NULL;
+                bool found = false;
+                bool ok = qa_catalog_open(draft->catalog, source.product, &files, error) &&
+                    qa_vfs_acquire(files, source.artifact, &artifact, NULL, error) &&
+                    qa_native_image_has_export(qa_resource_bytes(artifact), "GetCGameAPI", &found, error);
+                qa_resource_release(artifact); qa_vfs_destroy(files);
+                if (!ok) return false;
+                if (!found) break;
+                probed = true;
+            }
+            size_t length = strlen(source.instance);
+            size_t suffix = sizeof(":cgame:seat:") + 10 + 1 + 3 * sizeof(size_t);
+            if (length > SIZE_MAX - suffix) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Native client instance name overflows");
+                return false;
+            }
+            char *name = malloc(length + suffix);
+            if (!name) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining native client instance name");
+                return false;
+            }
+            snprintf(name, length + suffix, "%s:cgame:seat:%" PRIu32, source.instance, seat->id);
+            for (size_t serial = 1; launch_provider(&draft->choices, name); ++serial)
+                snprintf(name, length + suffix, "%s:cgame:seat:%" PRIu32 ":%zu",
+                    source.instance, seat->id, serial);
+            qa_launch_provider client = source;
+            client.instance = name;
+            bool ok = qa_launch_set_provider(draft, &client, error) &&
+                qa_launch_bind(draft, &(qa_launch_binding){.scope = scope,
+                    .role = QA_ROLE_HUD, .instance = name}, error);
+            free(name);
+            if (!ok) return false;
+        }
+    }
+    return true;
+}
+
 static bool source_clock_policy(qa_launch_draft *draft, qa_error *error)
 {
     const qa_launch_binding *entities = qa_launch_binding_for(&draft->choices,
@@ -1082,6 +1142,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
     t->previous = manager->current; qa_launch_snapshot_retain(t->previous); ++manager->transactions;
     manager->busy = true;
     if (!qa_launch_draft_copy(draft, &s->draft, error)) goto fail;
+    if (!content && !native_client_roles(s->draft, error)) goto fail;
     if (!source_clock_policy(s->draft, error)) goto fail;
     const qa_launch_choices *v = &s->draft->choices;
     size_t count = v->provider_count;
