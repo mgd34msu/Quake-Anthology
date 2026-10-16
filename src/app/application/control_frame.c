@@ -1379,8 +1379,9 @@ const application_control_context *application_control_frame_current(const qa_ap
             actual.start_ns != current->frame.start_ns || actual.elapsed_ns != current->frame.elapsed_ns) return NULL;
     }
     if (current->path == APPLICATION_CONTROL_MIXED) {
-        uint64_t interval = current->source_usercmd || current->source_q2cmd || current->unified_command ? current->command.elapsed_ns :
-            current->command_only ? current->command.host_elapsed_ns : current->frame.elapsed_ns;
+        uint64_t interval = !current->command_only ? current->frame.elapsed_ns :
+            current->source_usercmd || current->source_q2cmd || current->unified_command ?
+                current->command.elapsed_ns : current->command.host_elapsed_ns;
         if (current->source_guestcmd && current->source_input_applied) {
             if (!application_guest_input_interval(app, actor, &interval)) return NULL;
         } else if (!current->source_usercmd && !current->source_q2cmd && !current->unified_command)
