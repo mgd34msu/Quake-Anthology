@@ -1665,6 +1665,9 @@ bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, double cells,
       return true;
     item=game->runtime_names[Q2_NAME_RESOURCE_Q2_MONSTER_POWER];
   }
+  if (!qa_inventory_has(inventory, id) &&
+      !qa_inventory_create_actor(inventory, id, NULL, 0, error))
+    return false;
   qa_inventory_entry entry = {.item = item,
                               .count = cells,
                               .capacity = fmax(0, cells),
