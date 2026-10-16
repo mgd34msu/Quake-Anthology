@@ -823,9 +823,14 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
         !provider->component.command_actor(provider->component.state, app->session, actor) ||
         !qa_session_clock(app->session, provider->owner, &clock))
         return application_fail(error, QA_ERROR_ARGUMENT, "Raw Q3 input has no actual source admission");
-    if (provider->kind == APPLICATION_PROVIDER_Q3 &&
-        (!qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
-         !application_native_q3_client_deferred(provider, actor, &deferred, error))) return false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        const char *reason;
+        bool dropping;
+        if (!qa_q3_native_client_slot(provider->state.q3, actor, &slot, error) ||
+            !application_native_q3_client_deferred(provider, actor, &deferred, error) ||
+            !application_native_q3_wire_drop_read(provider, slot, &reason, &dropping, error)) return false;
+        if (dropping) return true;
+    }
     bool seen; uint64_t previous;
     (void)application_control_frames_sequence(app, actor, &seen, &previous);
     if (seen && sequence <= previous)
@@ -1309,6 +1314,7 @@ bool application_control_frames_receive_bot(qa_application *app, qa_actor_id act
     if (!application_control_frames_receive(app, actor, command, 1, error)) return false;
     if (app->control_frames->paused || app->q1_paused) return true;
     control_input *input = &app->control_frames->inputs[actor.slot].value;
+    if (!qa_actor_id_equal(input->actor, actor) || input->sequence != command->sequence) return true;
     if (input->retained || input->domain == CONTROL_COMMAND_Q3_SOURCE) {
         input->arsenal = arsenal; input->weapon = weapon;
         if (app->control_frames->tail && qa_actor_id_equal(app->control_frames->tail->actor, actor) &&
