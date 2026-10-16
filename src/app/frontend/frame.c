@@ -81,8 +81,11 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
     const qa_launch_snapshot *snapshot = qa_application_launch(f->application);
     if (!snapshot || qa_application_startup_pending(f->application)) return true;
     bool remote=frontend_network_remote(f),menu=false;
-    for (uint32_t i=0;i<f->options.seats && !f->options.dedicated;++i)
-        menu|=qa_ui_menu_opened(f->seats[i].ui,FRONTEND_HOME);
+    for (uint32_t i=0;i<f->options.seats && !f->options.dedicated;++i) {
+        const frontend_seat *seat=f->seats+i;
+        menu|=qa_ui_menu_opened(seat->ui,FRONTEND_HOME) ||
+            (seat->death_active && qa_ui_menu_opened(seat->ui,FRONTEND_LOAD));
+    }
     qa_application_startup_source source; bool present=false;
     if (!frontend_config_store_primary_server_read(f->config_store,&source,&present,error)) return false;
     bool q3=present && source.scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME && !remote &&
