@@ -20,6 +20,7 @@
 #include "control_frame.h"
 #include "unified_events.h"
 #include "qa/game_q3_configstrings.h"
+#include "qa/game_q3_bots.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "qa/text.h"
@@ -263,6 +264,11 @@ static int32_t entity_number(void *opaque,qa_actor_id actor) {
 }
 static application_provider *bot_source(application_bots *bots) {
     return bots->source?bots->source:application_world_provider(bots->application,QA_ROLE_ENTITIES,"");
+}
+static bool bot_source_team_arena(application_provider *source) {
+    qa_q3_product product;
+    return source && source->kind==APPLICATION_PROVIDER_Q3 &&
+        qa_q3_bot_arsenal_product_read(source->state.q3,&product,NULL) && product==QA_Q3_TEAM_ARENA;
 }
 static bool bot_memory_allocate(void *opaque,uint32_t size,uint32_t *out,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=bot_source(bots);
@@ -1024,8 +1030,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
             .borrow_span=application_bots_memory_span},
         .behavior=qa_ruleset_read(bots->behavior),.source_knowledge=bots->source_knowledge,.hearing=bot_hearing,
-        .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
-            (source->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
+        .team_arena=bot_source_team_arena(source),
         .shared=application_builtin_services(application,application->world,application->physics),
         .modes=application->modes,.player=application_bot_player,.inventory=application_bot_inventory_update,
         .entity=application_bot_entity,.entity_actor=application_bot_actor,.entity_number=bot_entity_number,
@@ -1449,7 +1454,7 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
     }
     qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)source_client,
         .character_file=character,.name=name,.team=team,.skill=skill,.mode=app->primary_mode,
-        .team_arena=bots->population && provider->product && (provider->product->campaign_id == QA_CAMPAIGN_MISSIONPACK),
+        .team_arena=bot_source_team_arena(provider),
         .restart=restart};
     ++bots->calls;
     bool okay=qa_bots_admit_source(bots->population,&admission,accepted,error);
