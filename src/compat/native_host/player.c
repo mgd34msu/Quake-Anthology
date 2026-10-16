@@ -146,10 +146,8 @@ static bool player_prefix(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Q2 player observation requires a live source client");
     qa_native_address entity;
     if (!qa_native_entity_address(host->instance, slot, &entity, error)) return false;
-    size_t offset = host->profile == QA_NATIVE_Q2_GAME_API2023 ? NATIVE_Q2_RR_CLIENT :
-        host->pointer_bytes == 4 ? 84u : 88u;
     uint8_t pointer[8];
-    if (!native_host_read(host, entity + offset, pointer, host->pointer_bytes, error)) return false;
+    if (!native_host_read(host, entity + host->edict->client, pointer, host->pointer_bytes, error)) return false;
     *address = host->pointer_bytes == 4 ? qa_load_u32le(pointer) : qa_load_u64le(pointer);
     if (!*address) return native_host_fail(error, QA_ERROR_NOT_FOUND, slot, "Q2 source edict has no public player state");
     *bytes = host->profile == QA_NATIVE_Q2_GAME_API2023 ? 296u : 184u;

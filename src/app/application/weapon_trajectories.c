@@ -89,7 +89,8 @@ static trajectory_source *source_find(struct application_trajectories *owner,
 }
 
 static trajectory_source *source_create(qa_application *app, const qa_launch_instance *instance,
-    const qa_catalog_weapon_behavior *behavior, qa_qc_program *program, qa_qvm_image *image, qa_error *error)
+    const qa_catalog_weapon_behavior *behavior, qa_qc_program *program, qa_qvm_image *image,
+    qa_native_module *module, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(app->session);
     qa_string_id instance_name, behavior_name;
@@ -101,6 +102,7 @@ static trajectory_source *source_create(qa_application *app, const qa_launch_ins
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(source->descriptor);
     qa_qc_program *loaded = NULL;
     qa_qvm_image *loaded_image = NULL;
+    qa_native_module *loaded_module = NULL;
     if (okay && instance->selection.runtime == QA_PROGRAM_QUAKEC) {
         if (!program) {
             okay = qa_qc_program_load(qa_resource_bytes(instance->artifact),
@@ -116,11 +118,20 @@ static trajectory_source *source_create(qa_application *app, const qa_launch_ins
         }
         if (okay) okay = application_trajectory_qvm_create(app, descriptor, image,
             behavior, &source->runtime, error);
+    } else if (okay && instance->selection.runtime == QA_PROGRAM_NATIVE) {
+        if (!module) {
+            okay = qa_native_module_load(qa_resource_bytes(instance->artifact),
+                instance->selection.artifact, QA_NATIVE_Q2_GAME_API2023, &loaded_module, error);
+            module = loaded_module;
+        }
+        if (okay) okay = application_trajectory_native_create(app, descriptor, module,
+            behavior, &source->runtime, error);
     } else if (okay)
         okay = application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Selected projectile donor requires a native trajectory adapter");
+            "Selected projectile donor has no guest trajectory runtime");
     qa_qc_program_destroy(loaded);
     qa_qvm_image_release(loaded_image);
+    qa_native_module_release(loaded_module);
     if (!okay) {
         (void)source_destroy(source, NULL);
         return NULL;
@@ -147,7 +158,8 @@ static trajectory_source *source_prepare(qa_application *app, const qa_launch_in
     application_provider *provider = instance->state;
     qa_qc_program *program = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.program : NULL;
     qa_qvm_image *image = provider && provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.image : NULL;
-    return source_create(app, instance, behavior, program, image, error);
+    qa_native_module *module = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.module : NULL;
+    return source_create(app, instance, behavior, program, image, module, error);
 }
 
 static bool unused_sources(struct application_trajectories *owner, qa_error *error)
@@ -447,7 +459,7 @@ static trajectory_source *source_restore(qa_application *app,
     content.source.behavior_count = 1;
     qa_launch_instance_lease *lease = NULL;
     if (!qa_launch_instance_restore_metadata(&content.source, QA_ROLE_BIT(QA_ROLE_TRAJECTORY), &lease, error)) return NULL;
-    source = source_create(app, qa_launch_instance_lease_view(lease), behavior, NULL, NULL, error);
+    source = source_create(app, qa_launch_instance_lease_view(lease), behavior, NULL, NULL, NULL, error);
     qa_launch_instance_lease_release(lease);
     return source;
 }

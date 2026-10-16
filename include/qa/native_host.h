@@ -354,7 +354,7 @@ qa_native_profile qa_native_host_profile(const qa_native_host *);
 typedef struct qa_native_host_entity_layout {
     size_t bytes, inuse, linkcount, area, area2, flags;
     size_t mins, maxs, absmin, absmax, size, solid, clipmask, owner;
-    size_t cluster_count, clusters, headnode;
+    size_t cluster_count, clusters, headnode, client;
 } qa_native_host_entity_layout;
 const qa_native_host_entity_layout *qa_native_host_source_layout(const qa_native_host *);
 /* Load-reserved result storage shared by SDK imports and selected foreign

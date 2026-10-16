@@ -13,7 +13,7 @@ static const native_host_classic_layout classic32 = {
               .area = 176, .area2 = 180, .flags = 184,
               .mins = 188, .maxs = 200, .absmin = 212, .absmax = 224,
               .size = 236, .solid = 248, .clipmask = 252, .owner = 256,
-              .cluster_count = 104, .clusters = 108, .headnode = 172},
+              .cluster_count = 104, .clusters = 108, .headnode = 172, .client = 84},
     .trace = {.bytes = 56, .surface = 44, .contents = 48, .entity = 52},
     .pmove = {.bytes = 240, .touches = 52, .view_angles = 180, .view_height = 192,
               .mins = 196, .maxs = 208, .ground = 220, .water_type = 224,
@@ -26,7 +26,7 @@ static const native_host_classic_layout classic64 = {
               .area = 192, .area2 = 196, .flags = 200,
               .mins = 204, .maxs = 216, .absmin = 228, .absmax = 240,
               .size = 252, .solid = 264, .clipmask = 268, .owner = 272,
-              .cluster_count = 120, .clusters = 124, .headnode = 188},
+              .cluster_count = 120, .clusters = 124, .headnode = 188, .client = 88},
     .trace = {.bytes = 72, .surface = 48, .contents = 56, .entity = 64},
     .pmove = {.bytes = 384, .touches = 56, .view_angles = 312, .view_height = 324,
               .mins = 328, .maxs = 340, .ground = 352, .water_type = 360,
@@ -41,7 +41,8 @@ static const qa_native_host_entity_layout rerelease_edict = {
     .mins = NATIVE_Q2_RR_MINS, .maxs = NATIVE_Q2_RR_MAXS,
     .absmin = NATIVE_Q2_RR_ABSMIN, .absmax = NATIVE_Q2_RR_ABSMAX,
     .size = NATIVE_Q2_RR_SIZE, .solid = NATIVE_Q2_RR_SOLID,
-    .clipmask = NATIVE_Q2_RR_CLIPMASK, .owner = NATIVE_Q2_RR_OWNER};
+    .clipmask = NATIVE_Q2_RR_CLIPMASK, .owner = NATIVE_Q2_RR_OWNER,
+    .client = NATIVE_Q2_RR_CLIENT};
 
 static bool profile_is_q2_game(qa_native_profile profile)
 {

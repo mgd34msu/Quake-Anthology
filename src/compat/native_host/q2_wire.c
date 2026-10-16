@@ -184,7 +184,7 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
             qa_actor_id_equal(host->q2_lifetimes[slot].actor, value.binding.actor);
         const uint8_t *sv = bytes + NATIVE_Q2_RR_SV;
         value.bot = (qa_native_host_q2_bot_state){.registered = registered,
-            .player = qa_load_u64le(bytes + NATIVE_Q2_RR_CLIENT) != 0,
+            .player = qa_load_u64le(bytes + layout->client) != 0,
             .flags = qa_load_u64le(sv + 8), .item_id = qa_load_i32le(sv + 24),
             .armor = qa_load_i32le(sv + 32), .health = qa_load_i32le(sv + 36),
             .max_health = qa_load_i32le(sv + 40), .weapon = qa_load_i32le(sv + 48),
@@ -299,7 +299,7 @@ static bool visible_binding(qa_native_host *host, uint32_t slot, qa_actor_id act
     if (!inuse) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
         "Q2 visibility names an inactive Source edict");
     if (viewer) {
-        if (!native_host_read(host, *address + NATIVE_Q2_RR_CLIENT, pointer, host->pointer_bytes, error)) return false;
+        if (!native_host_read(host, *address + host->edict->client, pointer, host->pointer_bytes, error)) return false;
         qa_native_address client = host->pointer_bytes == 4 ? qa_load_u32le(pointer) : qa_load_u64le(pointer);
         if (!client) return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 visibility viewer has no actual Source client");
@@ -434,9 +434,7 @@ bool qa_native_host_q2_wire_ping(qa_native_host *host, uint32_t slot,
         before.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(before.actor, actor) ||
         !qa_native_entity_address(host->instance, slot, &entity, error))
         return false;
-    size_t client_offset = host->profile == QA_NATIVE_Q2_GAME_API2023 ? NATIVE_Q2_RR_CLIENT :
-        host->pointer_bytes == 4 ? 84u : 88u;
-    if (!native_host_read(host, entity + client_offset, pointer, host->pointer_bytes, error)) return false;
+    if (!native_host_read(host, entity + host->edict->client, pointer, host->pointer_bytes, error)) return false;
     qa_native_address client = host->pointer_bytes == 4 ? qa_load_u32le(pointer) : qa_load_u64le(pointer);
     size_t offset = host->profile == QA_NATIVE_Q2_GAME_API2023 ? 296u : 184u;
     if (!client || client > UINT64_MAX - offset ||
