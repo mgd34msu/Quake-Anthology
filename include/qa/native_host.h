@@ -201,6 +201,9 @@ typedef struct qa_native_host_world_services {
     bool (*bind_actor)(void *, qa_native_host *, uint32_t, qa_actor_id, qa_error *);
     void (*release_actor)(void *, qa_native_host *, uint32_t, qa_actor_id);
     bool (*reserved_source_slot)(void *, uint32_t, bool *, qa_error *);
+    /* Private module projections retain ABI rows and use the common world
+     * for queries without allocating or replacing canonical actors/bodies. */
+    bool projected_entities;
 } qa_native_host_world_services;
 
 typedef struct qa_native_host_movement_services {
@@ -320,6 +323,8 @@ typedef struct qa_native_host_q3_options {
 /* Creation outputs start empty. A failed factory with retained source or
  * process resources returns its host in *out; keep borrowed service contexts
  * alive until destroy_owned clears it. */
+/* Publish changed values from the common cvar table to retained guest records. */
+bool qa_native_host_refresh_cvars(qa_native_host *, qa_error *);
 bool qa_native_host_create_q2_game(qa_native_module *, const qa_native_host_q2_game_options *,
                                    qa_native_host **, qa_error *);
 bool qa_native_host_create_q2_cgame(qa_native_module *, const qa_native_host_q2_cgame_options *,

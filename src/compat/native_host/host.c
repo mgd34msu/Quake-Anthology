@@ -613,7 +613,7 @@ bool qa_native_host_initialize_begin(qa_native_host *host, int32_t level_time,
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native host adapter is required for initialization");
     if ((host->kind == NATIVE_HOST_Q2_GAME || host->kind == NATIVE_HOST_Q2_CGAME) &&
-        !native_host_refresh_cvars(host, error)) return false;
+        !qa_native_host_refresh_cvars(host, error)) return false;
     bool ok;
     if (host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) {
         bool restarting = qa_native_get_lifecycle(host->instance) == QA_NATIVE_RESTART_READY;
@@ -749,7 +749,7 @@ bool qa_native_host_server_command(qa_native_host *host, qa_error *error)
     if (!host || !profile_is_q2_game(host->profile))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "ServerCommand requires a Q2 game host");
-    return native_host_refresh_cvars(host, error) &&
+    return qa_native_host_refresh_cvars(host, error) &&
            qa_native_call(host->instance, "ServerCommand", NULL, 0, NULL, error) &&
            native_host_reconcile(host, error);
 }
@@ -1054,7 +1054,7 @@ bool qa_native_host_client_disconnect(qa_native_host *host, uint32_t slot, qa_er
 
 bool qa_native_host_client_command(qa_native_host *host, uint32_t slot, qa_error *error)
 {
-    return native_host_refresh_cvars(host, error) &&
+    return qa_native_host_refresh_cvars(host, error) &&
            client_entity_call(host, "ClientCommand", slot, error);
 }
 
@@ -1072,7 +1072,7 @@ bool qa_native_host_client_command_region(qa_native_host *host, uint32_t slot,
         return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
             "Native Q2 has no actual ClientCommand export");
     qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = entity};
-    return native_host_refresh_cvars(host, error) &&
+    return qa_native_host_refresh_cvars(host, error) &&
         qa_native_region_invoke(host->instance, event, entry, signature, &argument, 1, NULL, error) &&
         native_host_reconcile(host, error);
 }

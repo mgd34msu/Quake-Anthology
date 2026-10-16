@@ -444,7 +444,7 @@ static bool cvar_guest_modified(qa_native_host *host, native_host_cvar_record *r
     return true;
 }
 
-bool native_host_refresh_cvars(qa_native_host *host, qa_error *error)
+bool qa_native_host_refresh_cvars(qa_native_host *host, qa_error *error)
 {
     if (host->cvars && qa_cvars_view_identity(host->cvars) == host->cvar_view_identity)
         for (native_host_cvar_record *record = host->cvar_shadows; record; record = record->next)

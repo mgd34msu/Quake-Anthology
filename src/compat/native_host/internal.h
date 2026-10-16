@@ -226,7 +226,6 @@ void native_host_command_dispose(qa_native_host *);
 bool native_host_command_string(qa_native_host *, size_t, size_t, const char *, qa_native_address *, qa_error *);
 bool native_host_cvar(qa_native_host *, const char *, const char *, uint32_t, bool,
                       qa_native_address *, qa_error *);
-bool native_host_refresh_cvars(qa_native_host *, qa_error *);
 bool native_host_restore_cvars(qa_native_host *, qa_error *);
 bool native_host_q2_models_restore(qa_native_host *, qa_error *);
 

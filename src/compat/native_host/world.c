@@ -184,8 +184,9 @@ static bool fields_write(void *context, const qa_body_state *body, qa_error *err
 
 static bool borrowed_projection(const qa_native_host *host, const qa_native_slot_binding *binding)
 {
-    return binding->kind == QA_NATIVE_SLOT_BORROWED &&
-        !(binding->slot < host->retained_capacity && host->retained_clients[binding->slot]);
+    return host->world.projected_entities ||
+        (binding->kind == QA_NATIVE_SLOT_BORROWED &&
+         !(binding->slot < host->retained_capacity && host->retained_clients[binding->slot]));
 }
 
 bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *error)
@@ -193,8 +194,9 @@ bool native_host_fields_bind(qa_native_host *host, uint32_t slot, qa_error *erro
     qa_native_slot_binding binding;
     if (!slot || slot >= host->q2_field_capacity) return true;
     if (!qa_native_slot(host->instance, slot, &binding, error)) return false;
-    if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED) ||
-        !actor_live(host, binding.actor))
+    if (!host->world.projected_entities &&
+        ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED) ||
+         !actor_live(host, binding.actor)))
         return true;
     native_host_q2_fields *row = host->q2_fields + slot;
     qa_native_address address;
@@ -408,6 +410,10 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
             *out = projected;
             return true;
         }
+    }
+    if (host->world.projected_entities) {
+        *out = (qa_actor_id){0};
+        return true;
     }
     if(host->world.reserved_source_slot) {
         bool reserved=false;
@@ -719,6 +725,7 @@ bool native_host_q2_bot_register(qa_native_host *host, qa_native_address address
     qa_actor_id actor;
     if (!native_host_actor_for_address(host, address, true, &actor, &slot, error) ||
         !lifetime_capacity(host, slot, error)) return false;
+    if (!actor.registry && host->world.projected_entities) return true;
     if (!actor.registry)
         return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
             "Q2 bot registration requires an active source edict");
@@ -737,8 +744,11 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     uint32_t slot;
     if (!native_host_actor_for_address(host, address, true, &actor, &slot, error))
         return false;
-    if (!actor.registry || slot == 0)
+    if ((!actor.registry && !host->world.projected_entities) || slot == 0)
         return true;
+    if (host->world.projected_entities &&
+        (!native_host_fields_refresh(host, error) || !native_host_fields_bind(host, slot, error)))
+        return false;
     qa_native_slot_binding binding;
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
@@ -788,7 +798,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     qa_vec3 dimensions = {maximum.x - minimum.x, maximum.y - minimum.y,
                           maximum.z - minimum.z};
     qa_native_host_link_metadata metadata = {0};
-    if (!source_link_metadata(host, actor, absolute, &metadata, error))
+    if (!host->world.projected_entities && !source_link_metadata(host, actor, absolute, &metadata, error))
         return false;
     metadata.network_solid = solid == 3 ? 31u
                                         : solid == 2 && !(flags & 2u)
@@ -796,7 +806,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
                                                     ? pack_classic_solid(body.bounds)
                                                     : pack_rerelease_solid(body.bounds)
                                               : 0u;
-    if (host->engine.link_metadata &&
+    if (!host->world.projected_entities && host->engine.link_metadata &&
         !host->engine.link_metadata(host->engine.context, actor, &metadata, error))
         return false;
     if (metadata.cluster_count < -1 || metadata.cluster_count > 16)
