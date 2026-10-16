@@ -52,6 +52,9 @@ typedef struct qa_q3_host_server_services {
     /* Donor rows remain module ABI storage. Linking them never creates or
      * replaces a canonical actor, body, visibility or portal owner. */
     bool projected_entities;
+    /* Canonical spawn being authored by a donor call. It is not yet a
+     * target in that call's world view; the pointer is borrowed synchronously. */
+    const qa_actor_id *pending_spawn;
     /* Resolve a shared query result into a borrowed module row. The callback
      * binds that row with qa_q3_host_bind_actor before returning its number. */
     bool (*project_actor)(void *, const qa_qvm_call *, qa_actor_id, uint32_t *, qa_error *);

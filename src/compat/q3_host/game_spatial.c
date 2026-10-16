@@ -55,7 +55,9 @@ static bool trace(q3_call *call, bool capsule, qa_error *error)
         (call->arguments[3] && !q3_vector(call, call->arguments[3], &query.shape.bounds.maxs, error)) ||
         !pass_actor(call, q3_integer(call, 5), &query.pass_actor, error)) return false;
     qa_trace_result hit;
-    if (!qa_world_trace(call->host->options.world, &query, &hit, error)) return false;
+    const qa_actor_id *pending = call->host->options.server.pending_spawn;
+    if (!qa_world_trace_excluding(call->host->options.world, &query,
+        pending, pending ? 1 : 0, &hit, error)) return false;
     uint32_t number = hit.fraction == 1 ? 1023 : 1022;
     if (hit.hit == QA_TRACE_HIT_ACTOR && !q3_game_project_actor(call, hit.actor, &number, error)) return false;
     q3_record output;
@@ -113,6 +115,13 @@ static bool area_entities(q3_call *call, int32_t *result, qa_error *error)
     if (!qa_world_query(call->host->options.world, bounds, QA_COLLISION_BOTH,
                          actors, capacity, &count, &overflow, error)) return false;
     if (overflow) return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 actor query changed during snapshot");
+    const qa_actor_id *pending = call->host->options.server.pending_spawn;
+    if (pending && pending->registry) {
+        size_t kept = 0;
+        for (size_t i = 0; i < count; ++i)
+            if (!qa_actor_id_equal(actors[i], *pending)) actors[kept++] = actors[i];
+        count = kept;
+    }
     int32_t maximum = q3_integer(call, 3);
     if (maximum >= 0 && count > (size_t)maximum) count = (size_t)maximum;
     if (!count) return true;

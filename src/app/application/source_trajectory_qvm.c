@@ -34,6 +34,7 @@ typedef struct trajectory_qvm {
     qa_buffer entities;
     qa_builtin_services services;
     qa_actor_owner owner;
+    qa_actor_id pending_projectile;
     uint32_t fire, activate, allocate, free_entity, stride, level_time;
     uint32_t inuse, nextthink, think, health, maximum_clients;
     uint64_t time_ns, refreshed_time;
@@ -460,7 +461,7 @@ static bool qvm_initialize(trajectory_qvm *source, qa_error *error)
     source->initialized = true; return true;
 }
 
-static bool qvm_launch(void *context, const qa_builtin_weapon_launch *launch,
+static bool qvm_launch_inner(void *context, const qa_builtin_weapon_launch *launch,
     application_trajectory_attachment *attachment, qa_builtin_trajectory_update *update,
     bool *changed, qa_error *error)
 {
@@ -501,6 +502,18 @@ static bool qvm_launch(void *context, const qa_builtin_weapon_launch *launch,
     *attachment = (application_trajectory_attachment){.projectile = launch->projectile, .handle = slot};
     if (!qvm_trajectory(source, slot, update, error)) return false;
     *changed = true; return true;
+}
+
+static bool qvm_launch(void *context, const qa_builtin_weapon_launch *launch,
+    application_trajectory_attachment *attachment, qa_builtin_trajectory_update *update,
+    bool *changed, qa_error *error)
+{
+    trajectory_qvm *source = context;
+    qa_actor_id previous = source->pending_projectile;
+    source->pending_projectile = launch->projectile;
+    bool okay = qvm_launch_inner(context, launch, attachment, update, changed, error);
+    source->pending_projectile = previous;
+    return okay;
 }
 
 static bool qvm_step(void *context, application_trajectory_attachment *attachment,
@@ -772,6 +785,7 @@ bool application_trajectory_qvm_create(qa_application *application, const qa_lau
                 .calendar = qvm_calendar, .arguments = qvm_arguments},
             .server = {.context = source, .maximum_clients = source->maximum_clients,
                 .projected_entities = true, .project_actor = qvm_project_actor,
+                .pending_spawn = &source->pending_projectile,
                 .configstring = qvm_configstring, .set_configstring = qvm_set_configstring,
                 .userinfo = qvm_userinfo, .set_userinfo = qvm_set_userinfo, .user_command = qvm_user_command,
                 .drop_client = qvm_drop_client, .send_command = qvm_send_command},
