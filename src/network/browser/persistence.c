@@ -108,10 +108,13 @@ static bool browser_checkpoint_valid(const qa_server_browser *b)
         b->master_body.size > 1048576 || (b->master_body.size && !b->master_body.data) ||
         (!b->http_master && b->master_body.size) ||
         !b->capacity || b->capacity > 16384 || !b->records || !qa_browser_q3_valid(b) ||
-        !service_address_valid(&b->broadcast) || !service_address_valid(&b->master) ||
-        !qa_net_protocol_valid(b->broadcast_protocol, NULL) || !qa_net_protocol_valid(b->master_protocol, NULL) ||
-        (b->broadcasting && (!b->broadcast_timeout || !b->broadcast_query)) ||
+        !service_address_valid(&b->master) || !qa_net_protocol_valid(b->master_protocol, NULL) ||
         (b->master_pending && !b->master_timeout)) return false;
+    for (size_t i = 0; i < QA_BROWSER_PROTOCOLS; ++i) {
+        const browser_broadcast *broadcast = b->broadcasts + i;
+        if (broadcast->query && (!broadcast->timeout_ns || broadcast->protocol.kind != (qa_net_protocol)i ||
+            !service_address_valid(&broadcast->address) || !qa_net_protocol_valid(broadcast->protocol, NULL))) return false;
+    }
     for (uint32_t i = 0; i < b->capacity; ++i) {
         const browser_record *r = &b->records[i]; const qa_server_entry *e = &r->entry;
         if (!qa_browser_status_response_valid(b, r) || (e->has_ping && !e->available) ||
@@ -135,7 +138,8 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
 {
     if (!out || !browser_checkpoint_valid(b) || !qa_browser_http_valid(b, error))
         return qa_browser_fail(error, "Browser continuation requires idle callbacks and valid service ownership");
-    size_t fixed = 4194304 + (size_t)16384 * (12000 + 16384 + 65535) + 1048576 + 65536;
+    size_t fixed = 4194304 + (size_t)16384 * (12000 + 16384 + 65535) + 1048576 + 65536 +
+        QA_BROWSER_PROTOCOLS * 192u + 4u;
     if (b->q3->broadcast_count > (SIZE_MAX - fixed) / 16 ||
         b->q3->status_count > (SIZE_MAX - fixed - b->q3->broadcast_count * 16) / 160)
         return qa_browser_fail(error, "Q3 broadcasts exceed checkpoint allocation extent");
@@ -144,18 +148,26 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
         response_bytes += b->records[i].q3_response.size + b->records[i].status_response.size;
         if (b->records[i].occupied) ++records;
     }
-    size_t capacity = 4194304 + b->q3->broadcast_count * 16 + b->q3->status_count * 160 + b->capacity + records * 12000 + response_bytes +
+    size_t capacity = 4194304 + QA_BROWSER_PROTOCOLS * 192u + 4u +
+        b->q3->broadcast_count * 16 + b->q3->status_count * 160 + b->capacity + records * 12000 + response_bytes +
         b->master_body.size + (b->master_url ? strlen(b->master_url) + 1 : 0);
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding browser continuation"); return false; }
+    browser_broadcast empty = {0};
+    const browser_broadcast *first = &empty;
+    uint32_t additional = 0;
+    for (size_t i = 0; i < QA_BROWSER_PROTOCOLS; ++i) if (b->broadcasts[i].query) {
+        if (!first->query) first = b->broadcasts + i;
+        else ++additional;
+    }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
     bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) &&
         qa_net_write_u32(&w, b->capacity) && qa_net_write_u64(&w, b->next_query) &&
-        q3_save_address(&w, &b->broadcast) && q3_save_address(&w, &b->master) &&
-        service_save_protocol(&w, b->broadcast_protocol) && service_save_protocol(&w, b->master_protocol) &&
-        qa_net_write_u64(&w, b->broadcast_sent) && qa_net_write_u64(&w, b->broadcast_timeout) &&
+        q3_save_address(&w, &first->address) && q3_save_address(&w, &b->master) &&
+        service_save_protocol(&w, first->protocol) && service_save_protocol(&w, b->master_protocol) &&
+        qa_net_write_u64(&w, first->sent_ns) && qa_net_write_u64(&w, first->timeout_ns) &&
         qa_net_write_u64(&w, b->master_sent) && qa_net_write_u64(&w, b->master_timeout) &&
-        qa_net_write_u64(&w, b->broadcast_query) && qa_net_write_u8(&w, b->broadcasting) && qa_net_write_u8(&w, b->master_pending) &&
+        qa_net_write_u64(&w, first->query) && qa_net_write_u8(&w, first->query != 0) && qa_net_write_u8(&w, b->master_pending) &&
         qa_net_write_u64(&w, b->http_master) && qa_net_write_u32(&w, (uint32_t)b->master_body.size) &&
         qa_net_write_data(&w, b->master_body.data, b->master_body.size);
     if (ok && b->http_master) ok = qa_net_write_string(&w, b->master_url);
@@ -174,6 +186,16 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
             qa_net_write_u32(&w, (uint32_t)r->status_response.size) && qa_net_write_data(&w, r->status_response.data, r->status_response.size);
     }
     if (ok) ok = qa_browser_q3_save(&w, b);
+    if (ok && additional) {
+        ok = qa_net_write_u32(&w, additional);
+        for (size_t i = 0; ok && i < QA_BROWSER_PROTOCOLS; ++i) {
+            const browser_broadcast *broadcast = b->broadcasts + i;
+            if (!broadcast->query || broadcast == first) continue;
+            ok = q3_save_address(&w, &broadcast->address) && service_save_protocol(&w, broadcast->protocol) &&
+                qa_net_write_u64(&w, broadcast->sent_ns) && qa_net_write_u64(&w, broadcast->timeout_ns) &&
+                qa_net_write_u64(&w, broadcast->query);
+        }
+    }
     if (!ok || w.failed) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
 }
@@ -188,11 +210,16 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
     qa_server_browser *b = NULL;
     if (!qa_server_browser_create(http, capacity, hooks, &b, error)) return false;
     b->next_query = qa_net_read_u64(&r);
-    bool ok = q3_restore_address(&r, &b->broadcast) && q3_restore_address(&r, &b->master) &&
-        service_restore_protocol(&r, &b->broadcast_protocol) && service_restore_protocol(&r, &b->master_protocol);
-    b->broadcast_sent = qa_net_read_u64(&r); b->broadcast_timeout = qa_net_read_u64(&r);
-    b->master_sent = qa_net_read_u64(&r); b->master_timeout = qa_net_read_u64(&r); b->broadcast_query = qa_net_read_u64(&r);
-    b->broadcasting = q3_save_bool(&r); b->master_pending = q3_save_bool(&r);
+    browser_broadcast first = {0};
+    bool ok = q3_restore_address(&r, &first.address) && q3_restore_address(&r, &b->master) &&
+        service_restore_protocol(&r, &first.protocol) && service_restore_protocol(&r, &b->master_protocol);
+    first.sent_ns = qa_net_read_u64(&r); first.timeout_ns = qa_net_read_u64(&r);
+    b->master_sent = qa_net_read_u64(&r); b->master_timeout = qa_net_read_u64(&r); first.query = qa_net_read_u64(&r);
+    bool broadcasting = q3_save_bool(&r); b->master_pending = q3_save_bool(&r);
+    if (ok && broadcasting) {
+        if (!first.query) ok = qa_net_reader_fail(&r, "Stored LAN query has no request identity");
+        else b->broadcasts[first.protocol.kind] = first;
+    }
     b->http_master = qa_net_read_u64(&r);
     uint32_t body_size = qa_net_read_u32(&r);
     if (!r.failed && body_size <= 1048576 && body_size <= qa_net_reader_remaining(&r)) {
@@ -245,6 +272,20 @@ static bool browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t c
         }
     }
     if (ok) ok = qa_browser_q3_restore(&r, b);
+    if (ok && qa_net_reader_remaining(&r)) {
+        uint32_t additional = qa_net_read_u32(&r);
+        if (additional >= QA_BROWSER_PROTOCOLS)
+            ok = qa_net_reader_fail(&r, "Stored LAN queries exceed protocol capacity");
+        for (uint32_t i = 0; ok && i < additional; ++i) {
+            browser_broadcast broadcast = {0};
+            ok = q3_restore_address(&r, &broadcast.address) && service_restore_protocol(&r, &broadcast.protocol);
+            broadcast.sent_ns = qa_net_read_u64(&r); broadcast.timeout_ns = qa_net_read_u64(&r);
+            broadcast.query = qa_net_read_u64(&r);
+            if (ok && (!broadcast.query || b->broadcasts[broadcast.protocol.kind].query))
+                ok = qa_net_reader_fail(&r, "Repeated or inactive stored LAN query");
+            if (ok) b->broadcasts[broadcast.protocol.kind] = broadcast;
+        }
+    }
     if (!ok || !qa_net_reader_finish(&r) || !browser_checkpoint_valid(b) ||
         (attach_http && !qa_browser_restore_http(b, error))) {
         qa_server_browser_destroy(b); return qa_browser_fail(error, "Invalid browser continuation fields");

@@ -46,8 +46,10 @@ typedef struct frontend_network_menu_status {
  * the selected protocol family; response and master status are shared. */
 bool frontend_network_menu_status_read(const qa_frontend *,const frontend_network_menu_view *,
     qa_net_protocol_id,frontend_network_menu_status *,qa_error *);
+/* NULL lists every game; a representative protocol filters its game family.
+ * Each returned row keeps the actual protocol needed to query/connect. */
 bool frontend_network_menu_rows(const qa_frontend *, const frontend_network_menu_view *,
-    qa_net_protocol_id, qa_server_entry *, size_t capacity, size_t *count, qa_arena *, qa_error *);
+    const qa_net_protocol_id *, qa_server_entry *, size_t capacity, size_t *count, qa_arena *, qa_error *);
 bool frontend_network_menu_details_read(const qa_frontend *, const frontend_network_menu_view *,
     const qa_server_entry *, qa_arena *, qa_server_browser_details *, qa_error *);
 bool frontend_network_menu_details_current(const qa_frontend *, const frontend_network_menu_view *,
@@ -63,7 +65,7 @@ bool frontend_network_menu_preferences_read(const qa_frontend *, const frontend_
 bool frontend_network_menu_direct_read(const qa_frontend *, const frontend_network_menu_view *,
     const qa_server_entry *, char remote[256], bool *present, qa_error *);
 bool frontend_network_menu_query(qa_frontend *, const frontend_network_menu_view *,
-    qa_net_protocol_id, const char *remote, qa_error *);
+    const qa_net_protocol_id *, const char *remote, qa_error *);
 bool frontend_network_menu_scan(qa_frontend *, const frontend_network_menu_view *,
     qa_net_protocol_id, qa_error *);
 bool frontend_network_menu_master(qa_frontend *, const frontend_network_menu_view *,

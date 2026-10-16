@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <unicode/ucol.h>
 
-typedef enum browser_family { BROWSER_Q1, BROWSER_QW, BROWSER_Q2, BROWSER_Q3, BROWSER_FAMILIES } browser_family;
+typedef enum browser_family {
+    BROWSER_Q1, BROWSER_QW, BROWSER_Q2, BROWSER_Q3, BROWSER_FAMILIES,
+    BROWSER_ALL=BROWSER_FAMILIES, BROWSER_CHOICES
+} browser_family;
 typedef enum browser_sort {
     BROWSER_PING_LOW, BROWSER_PING_HIGH, BROWSER_NAME_AZ, BROWSER_NAME_ZA,
     BROWSER_MAP_AZ, BROWSER_MAP_ZA, BROWSER_PLAYERS_MOST, BROWSER_PLAYERS_FEWEST, BROWSER_SORTS
@@ -81,7 +84,23 @@ static bool same_protocol(qa_net_protocol_id a,qa_net_protocol_id b)
 { return a.kind==b.kind && a.revision==b.revision && a.flags==b.flags; }
 static bool selected(const browser_draft *draft,const browser_row *row)
 {
-    return draft->selected && qa_net_address_equal(&draft->selected_address,&row->entry.address,true);
+    return draft->selected && same_protocol(draft->selected_protocol,row->entry.protocol) &&
+        qa_net_address_equal(&draft->selected_address,&row->entry.address,true);
+}
+static char *address_draft(browser_draft *draft)
+{ return draft->addresses[draft->family==BROWSER_ALL?BROWSER_Q1:draft->family]; }
+static bool status_read(frontend_startup_server_browser *o,const frontend_network_menu_view *view,
+    frontend_network_menu_status *out,qa_error *e)
+{
+    *out=(frontend_network_menu_status){0};
+    unsigned first=o->draft.family==BROWSER_ALL?0:o->draft.family;
+    unsigned end=o->draft.family==BROWSER_ALL?BROWSER_FAMILIES:first+1;
+    for(unsigned i=first;i<end;++i) {
+        frontend_network_menu_status status;
+        if(!frontend_network_menu_status_read(o->seat->frontend,view,family_protocol(i),&status,e))return false;
+        if(i==first || status.receipt>out->receipt)*out=status;
+    }
+    return true;
 }
 static bool load_defaults(frontend_startup_server_browser *o,const frontend_network_menu_view *view,qa_error *e)
 {
@@ -200,7 +219,7 @@ static bool draft_fields(qa_source_save_io *io,const frontend_startup_server_bro
        !qa_source_save_u32(io,&physical) || physical!=o->seat->id)return false;
     const qa_ui_id ids[3]={o->menus.browser,o->menus.options,o->menus.details};
     for(unsigned i=0;i<3;++i)if(!qa_source_save_u64(io,menus+i) || menus[i]!=ids[i])return false;
-    if(!qa_source_save_u32(io,&draft->family) || draft->family>=BROWSER_FAMILIES ||
+    if(!qa_source_save_u32(io,&draft->family) || draft->family>=BROWSER_CHOICES ||
        !qa_source_save_u32(io,&draft->sort) || draft->sort>=BROWSER_SORTS ||
        !qa_source_save_count(io,&draft->page,SIZE_MAX) || !qa_source_save_count(io,&draft->details_page,SIZE_MAX) ||
        !qa_source_save_bool(io,&draft->favorites_only) || !qa_source_save_bool(io,&draft->hide_empty) ||
@@ -225,11 +244,7 @@ static bool draft_fields(qa_source_save_io *io,const frontend_startup_server_bro
         if(!qa_source_save_bytes(io,draft->selected_address.host.ipv4,4))return false;
     } else if(!qa_source_save_bytes(io,draft->selected_address.host.ipv6.bytes,16) ||
         !qa_source_save_u32(io,&draft->selected_address.host.ipv6.scope))return false;
-    qa_net_protocol_id family=family_protocol(draft->family);
-    return qa_net_protocol_valid(draft->selected_protocol,io->error) &&
-        (same_protocol(family,draft->selected_protocol) ||
-         (draft->family==BROWSER_Q2 && draft->selected_protocol.kind==QA_NET_Q2KEX_2023 &&
-          !draft->selected_protocol.revision && !draft->selected_protocol.flags));
+    return qa_net_protocol_valid(draft->selected_protocol,io->error);
 }
 bool frontend_startup_server_browser_idle(const frontend_startup_server_browser *o)
 { return !o || !o->busy; }
@@ -301,6 +316,7 @@ bool frontend_startup_server_browser_create(frontend_seat *seat,
     frontend_startup_server_browser *o=calloc(1,sizeof(*o));
     if(!o)return fail(e,QA_ERROR_MEMORY,"Retaining the physical startup server browser");
     o->seat=seat; o->ui=seat->ui; o->input=seat->input; o->console=seat->console; o->menus=*menus;
+    o->draft.family=BROWSER_ALL;
     qa_arena_init(&o->rows_storage,0);
     qa_arena_init(&o->details_storage,0);
     qa_arena_init(&o->work_storage,0);
@@ -420,14 +436,11 @@ static bool row_search(frontend_startup_server_browser *o,const frontend_network
 static bool refresh(frontend_startup_server_browser *o,const frontend_network_menu_view *view,qa_error *e)
 {
     if(!load_defaults(o,view,e))return false;
-    qa_net_protocol_id protocols[2]={family_protocol(o->draft.family),{.kind=QA_NET_Q2KEX_2023}};
-    size_t counts[2]={0},total=0,lanes=o->draft.family==BROWSER_Q2?2:1;
-    for(size_t lane=0;lane<lanes;++lane) {
-        if(!frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],NULL,0,counts+lane,
-            &o->seat->frontend->frame.storage,e))return false;
-        if(counts[lane]>SIZE_MAX-total)return fail(e,QA_ERROR_MEMORY,"Server inventory exceeds its retained extent");
-        total+=counts[lane];
-    }
+    qa_net_protocol_id family={0}; const qa_net_protocol_id *protocol=NULL;
+    if(o->draft.family!=BROWSER_ALL) { family=family_protocol(o->draft.family); protocol=&family; }
+    size_t total=0;
+    if(!frontend_network_menu_rows(o->seat->frontend,view,protocol,NULL,0,&total,
+        &o->seat->frontend->frame.storage,e))return false;
     clear_rows(o);
     if(total) {
         if(total>SIZE_MAX/sizeof(*o->rows) || total>SIZE_MAX/sizeof(*o->order))
@@ -438,39 +451,26 @@ static bool refresh(frontend_startup_server_browser *o,const frontend_network_me
         if(!rows || !order || !scratch)return false;
         o->rows=rows; o->order=order; o->scratch=scratch;
     }
-    for(size_t lane=0;lane<lanes;++lane) {
-        qa_arena_reset(&o->work_storage);
-        qa_server_entry *entries=counts[lane]?qa_arena_alloc(&o->work_storage,
-            counts[lane]*sizeof(*entries),_Alignof(qa_server_entry),e):NULL;
-        if(counts[lane] && !entries)return false;
-        size_t count=0; bool okay=frontend_network_menu_rows(o->seat->frontend,view,protocols[lane],entries,counts[lane],&count,
-            &o->seat->frontend->frame.storage,e);
-        if(okay && count>counts[lane])okay=fail(e,QA_ERROR_ARGUMENT,"Server inventory changed during observation");
-        for(size_t i=0;okay && i<count;++i) {
-            size_t target=0;
-            while(target<o->row_count && !qa_net_address_equal(&o->rows[target].entry.address,&entries[i].address,true))++target;
-            if(target==o->row_count) { o->rows[target]=(browser_row){.entry=entries[i]}; ++o->row_count; }
-            else {
-                browser_row *row=o->rows+target; uint32_t sources=row->entry.sources|entries[i].sources;
-                if((entries[i].available && !row->entry.available) ||
-                   (entries[i].available==row->entry.available && entries[i].updated_ns>row->entry.updated_ns))row->entry=entries[i];
-                row->entry.sources=sources;
-            }
-        }
-        if(!okay)return false;
-    }
+    qa_arena_reset(&o->work_storage);
+    qa_server_entry *entries=total?qa_arena_alloc(&o->work_storage,
+        total*sizeof(*entries),_Alignof(qa_server_entry),e):NULL;
+    if(total && !entries)return false;
+    size_t count=0;
+    if(!frontend_network_menu_rows(o->seat->frontend,view,protocol,entries,total,&count,
+        &o->seat->frontend->frame.storage,e))return false;
+    if(count>total)return fail(e,QA_ERROR_ARGUMENT,"Server inventory changed during observation");
+    for(size_t i=0;i<count;++i)o->rows[o->row_count++]=(browser_row){.entry=entries[i]};
     qa_buffer filter={0}; bool okay=trim_lower(o->draft.filter,&o->rows_storage,&filter,e); size_t used=0;
     for(size_t i=0;okay && i<o->row_count;++i) {
         browser_row *row=o->rows+i; row->has_ping=row->entry.has_ping;
         qa_buffer search={0};
         okay=qa_net_address_format(&row->entry.address,row->address,sizeof(row->address),e) && row_search(o,view,row,&search,e);
-        if(okay && selected(&o->draft,row))o->draft.selected_protocol=row->entry.protocol;
         if(okay && included(&o->draft,row,(qa_bytes){search.data,search.size},(qa_bytes){filter.data,filter.size}))o->order[used++]=i;
     }
     if(okay)okay=sort_rows(o,used,e) && frontend_network_menu_current(o->seat->frontend,view);
     if(okay) {
         frontend_network_menu_status status;
-        okay=frontend_network_menu_status_read(o->seat->frontend,view,family_protocol(o->draft.family),&status,e);
+        okay=status_read(o,view,&status,e);
         if(okay) {
             if(status.receipt && (o->status_network!=view->network || status.receipt!=o->status_receipt))
                 snprintf(o->draft.status,sizeof(o->draft.status),"%s",status.text);
@@ -484,17 +484,20 @@ static bool select_row(frontend_startup_server_browser *o,const frontend_network
 {
     if(o->draft.page>SIZE_MAX/3 || index>=3 || o->draft.page*3>=o->filtered_count ||
        index>=o->filtered_count-o->draft.page*3)return fail(e,QA_ERROR_ARGUMENT,"Selected server is outside the actual displayed page");
-    qa_net_address address=o->rows[o->order[o->draft.page*3+index]].entry.address;
+    const qa_server_entry *selection=&o->rows[o->order[o->draft.page*3+index]].entry;
+    qa_net_address address=selection->address; qa_net_protocol_id protocol=selection->protocol;
     if(!refresh(o,view,e))return false;
     const browser_row *row=NULL;
-    for(size_t i=0;i<o->row_count;++i)if(qa_net_address_equal(&address,&o->rows[i].entry.address,true)) { row=o->rows+i; break; }
+    for(size_t i=0;i<o->row_count;++i)
+        if(same_protocol(protocol,o->rows[i].entry.protocol) &&
+           qa_net_address_equal(&address,&o->rows[i].entry.address,true)) { row=o->rows+i; break; }
     if(!row)return true;
     char remote[256]; bool direct;
     if(!frontend_network_menu_direct_read(o->seat->frontend,view,&row->entry,remote,&direct,e))return false;
     if(!direct)snprintf(remote,sizeof(remote),"%s",row->address);
     o->draft.selected=true; o->draft.selected_protocol=row->entry.protocol; o->draft.selected_address=row->entry.address;
     snprintf(o->draft.selected_remote,sizeof(o->draft.selected_remote),"%s",remote);
-    snprintf(o->draft.addresses[o->draft.family],sizeof(o->draft.addresses[0]),"%s",remote);
+    snprintf(address_draft(&o->draft),sizeof(o->draft.addresses[0]),"%s",remote);
     return true;
 }
 static bool counted_detail(frontend_startup_server_browser *o,const qa_buffer *name,const char *middle,
@@ -579,14 +582,17 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
     qa_ui_id control,const qa_ui_action *event,qa_error *e)
 {
     frontend_startup_server_browser *o=context->owner; browser_draft *d=&o->draft;
-    qa_frontend *f=o->seat->frontend; qa_net_protocol_id protocol=family_protocol(d->family);
+    qa_frontend *f=o->seat->frontend; bool all=d->family==BROWSER_ALL;
+    qa_net_protocol_id family={0};
+    if(!all)family=family_protocol(d->family);
+    const qa_net_protocol_id *protocol=all?NULL:&family;
     if(context->id==o->menus.browser) {
         if(control==1 && event->kind==QA_UI_SELECT) {
-            if(event->value.row>=BROWSER_FAMILIES)return fail(e,QA_ERROR_ARGUMENT,"Unknown browser game family");
+            if(event->value.row>=BROWSER_CHOICES)return fail(e,QA_ERROR_ARGUMENT,"Unknown browser game family");
             d->family=(uint32_t)event->value.row; d->page=0; d->selected=false; return true;
         }
         if(control==2 && event->kind==QA_UI_CHANGE_TEXT)
-            return field_copy(d->addresses[d->family],sizeof(d->addresses[0]),event,e);
+            return field_copy(address_draft(d),sizeof(d->addresses[0]),event,e);
         if(control==6 && event->kind==QA_UI_CHANGE_TEXT) {
             if(!field_copy(d->filter,sizeof(d->filter),event,e))return false;
             d->page=0; return true;
@@ -594,26 +600,31 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
         if((control==2 && event->kind==QA_UI_SUBMIT) ||
            (control==3 && event->kind==QA_UI_ACTIVATE)) {
             char remote[256];
-            if(!trim_copy(d->addresses[d->family],remote,sizeof(remote),e))return false;
-            if(d->selected && !strcmp(remote,d->selected_remote))protocol=d->selected_protocol;
+            if(!trim_copy(address_draft(d),remote,sizeof(remote),e))return false;
+            if(d->selected && !strcmp(remote,d->selected_remote))protocol=&d->selected_protocol;
             if(!frontend_network_menu_query(f,view,protocol,remote,e))return false;
             snprintf(d->status,sizeof(d->status),"Query sent"); return true;
         }
         if(event->kind!=QA_UI_ACTIVATE)return true;
         switch(control) {
         case 4: {
-            qa_error kex_failure={0};
-            if(d->family==BROWSER_Q2)
-                (void)frontend_network_menu_scan(f,view,(qa_net_protocol_id){.kind=QA_NET_Q2KEX_2023},&kex_failure);
-            if(!frontend_network_menu_scan(f,view,protocol,e))return false;
-            snprintf(d->status,sizeof(d->status),"%s",kex_failure.code!=QA_OK?kex_failure.message:"Searching local network...");
+            qa_error failure={0}; unsigned first=all?0:d->family,end=all?BROWSER_FAMILIES:first+1;
+            for(unsigned i=first;i<end;++i) {
+                qa_error scan={0};
+                if(i==BROWSER_Q2 &&
+                   !frontend_network_menu_scan(f,view,(qa_net_protocol_id){.kind=QA_NET_Q2KEX_2023},&scan))failure=scan;
+                scan=(qa_error){0};
+                if(!frontend_network_menu_scan(f,view,family_protocol(i),&scan))failure=scan;
+            }
+            snprintf(d->status,sizeof(d->status),"%s",failure.code!=QA_OK?failure.message:"Searching local network...");
             return true;
         }
         case 5: {
             char remote[256]; bool added;
-            if(!trim_copy(d->addresses[d->family],remote,sizeof(remote),e))return false;
-            if(d->selected && !strcmp(remote,d->selected_remote))protocol=d->selected_protocol;
-            if(!frontend_network_menu_favorite(f,view,protocol,remote,&added,e))return false;
+            if(!trim_copy(address_draft(d),remote,sizeof(remote),e))return false;
+            if(d->selected && !strcmp(remote,d->selected_remote))protocol=&d->selected_protocol;
+            if(!protocol) { snprintf(d->status,sizeof(d->status),"Query or select a server first."); return true; }
+            if(!frontend_network_menu_favorite(f,view,*protocol,remote,&added,e))return false;
             snprintf(d->status,sizeof(d->status),"Favorite %s",added?"added":"removed"); return true;
         }
         case 7:return qa_ui_open(o->ui,o->menus.options,now(o),e);
@@ -627,9 +638,10 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
         case 12:d->favorites_only=!d->favorites_only; d->page=0; return true;
         case 13: {
             char remote[256]; frontend_network_menu_connection connection;
-            if(!trim_copy(d->addresses[d->family],remote,sizeof(remote),e))return false;
-            if(d->selected && !strcmp(remote,d->selected_remote))protocol=d->selected_protocol;
-            if(!frontend_network_menu_connection_read(f,view,protocol,remote,&connection,e))return false;
+            if(!trim_copy(address_draft(d),remote,sizeof(remote),e))return false;
+            if(d->selected && !strcmp(remote,d->selected_remote))protocol=&d->selected_protocol;
+            if(!protocol) { snprintf(d->status,sizeof(d->status),"Query or select a server first."); return true; }
+            if(!frontend_network_menu_connection_read(f,view,*protocol,remote,&connection,e))return false;
             if(!connection.available)return fail(e,QA_ERROR_UNSUPPORTED,connection.reason);
             if(!frontend_network_menu_connect(f,view,&connection,e))return false;
             snprintf(d->status,sizeof(d->status),"Connecting..."); return true;
@@ -650,11 +662,12 @@ static bool execute(browser_menu_context *context,const frontend_network_menu_vi
             d->page=0; return true;
         }
         if(control==4 && event->kind==QA_UI_CHANGE_TEXT)
-            return field_copy(d->masters[d->family],sizeof(d->masters[0]),event,e);
+            return all || field_copy(d->masters[d->family],sizeof(d->masters[0]),event,e);
         if(control==5 && event->kind==QA_UI_ACTIVATE) {
+            if(all)return true;
             char remote[2049];
             if(!trim_copy(d->masters[d->family],remote,sizeof(remote),e) ||
-               !frontend_network_menu_master(f,view,protocol,remote,e))return false;
+               !frontend_network_menu_master(f,view,*protocol,remote,e))return false;
             snprintf(d->status,sizeof(d->status),"Querying master..."); return true;
         }
         return control!=6 || event->kind!=QA_UI_ACTIVATE || qa_ui_close(o->ui,now(o),e);
@@ -680,7 +693,7 @@ static bool action(void *user,uint32_t seat,qa_ui_id control,const qa_ui_action 
         return fail(e,QA_ERROR_ARGUMENT,"Server browser action expired its actual Network owner");
     if(!okay)snprintf(o->draft.status,sizeof(o->draft.status),"%s",failure.message[0]?failure.message:"Server operation failed");
     frontend_network_menu_status status;
-    if(!frontend_network_menu_status_read(o->seat->frontend,&view,family_protocol(o->draft.family),&status,e))return false;
+    if(!status_read(o,&view,&status,e))return false;
     o->status_network=view.network; o->status_receipt=status.receipt;
     return true;
 }
@@ -731,8 +744,10 @@ static bool options_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     o->controls[1].value.checked=o->draft.hide_empty;
     o->controls[2]=button(context,3,"Hide full",64,186,512,true); o->controls[2].kind=QA_UI_TOGGLE;
     o->controls[2].value.checked=o->draft.hide_full;
-    o->controls[3]=field(context,4,"Master address or HTTP list",o->draft.masters[o->draft.family],2048,64,226,512);
-    o->controls[4]=button(context,5,"Find Internet servers",64,288,512,true);
+    bool all=o->draft.family==BROWSER_ALL;
+    o->controls[3]=field(context,4,"Master address or HTTP list",all?"":o->draft.masters[o->draft.family],2048,64,226,512);
+    o->controls[3].enabled=!all;
+    o->controls[4]=button(context,5,all?"Choose a game for Internet servers":"Find Internet servers",64,288,512,!all);
     o->controls[5]=button(context,6,"Back",64,356,512,true);
     *out=(qa_ui_menu){.id=context->id,.title="Server filters",.source_title=true,.controls=o->controls,.count=6};
     bool okay=frontend_network_menu_current(o->seat->frontend,&view); o->busy=was_busy; return okay;
@@ -744,17 +759,19 @@ static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     if(!o || !out || seat!=o->seat->id || context->id!=o->menus.browser || !read(o,&view,e))return false;
     bool was_busy=o->busy; o->busy=true;
     if(!refresh(o,&view,e)) { o->busy=was_busy; return false; }
-    static const char *families[]={"Quake","QuakeWorld","Quake II","Quake III Arena"};
+    static const char *families[]={"Quake","QuakeWorld","Quake II","Quake III Arena","All games"};
+    bool all=o->draft.family==BROWSER_ALL;
+    bool can_connect=!all || (o->draft.selected && !strcmp(address_draft(&o->draft),o->draft.selected_remote));
     size_t pages=o->filtered_count/3+(o->filtered_count%3!=0); if(!pages)pages=1;
     if(o->draft.page>=pages)o->draft.page=pages-1;
     size_t count=0;
-    o->controls[count]=button(context,1,"Game",64,108,512,true); o->controls[count].kind=QA_UI_CHOICE;
-    o->controls[count].value.choice.labels=families; o->controls[count].value.choice.count=BROWSER_FAMILIES;
+    o->controls[count]=button(context,1,"Game filter",64,108,512,true); o->controls[count].kind=QA_UI_CHOICE;
+    o->controls[count].value.choice.labels=families; o->controls[count].value.choice.count=BROWSER_CHOICES;
     o->controls[count++].value.choice.selected=o->draft.family;
-    o->controls[count++]=field(context,2,"Address",o->draft.addresses[o->draft.family],255,64,144,512);
+    o->controls[count++]=field(context,2,all?"Address (host:port)":"Address",address_draft(&o->draft),255,64,144,512);
     o->controls[count++]=button(context,3,"Query",64,180,160,true);
     o->controls[count++]=button(context,4,"Find LAN",240,180,160,true);
-    o->controls[count++]=button(context,5,"Favorite",416,180,160,true);
+    o->controls[count++]=button(context,5,"Favorite",416,180,160,can_connect);
     o->controls[count++]=field(context,6,"Filter",o->draft.filter,255,64,216,320);
     o->controls[count++]=button(context,7,o->draft.hide_empty||o->draft.hide_full?"Filters on":"Sort/filter",400,216,176,true);
     size_t start=o->draft.page*3;
@@ -772,7 +789,7 @@ static bool browser_factory(void *user,uint32_t seat,qa_ui_menu *out,qa_error *e
     snprintf(o->labels[3],sizeof(o->labels[3]),"Page %zu/%zu",o->draft.page+1,pages);
     o->controls[count++]=button(context,11,o->labels[3],64,358,240,true);
     o->controls[count++]=button(context,12,o->draft.favorites_only?"Favorites only":"All servers",320,358,256,true);
-    o->controls[count++]=button(context,13,"Connect",64,396,160,true);
+    o->controls[count++]=button(context,13,"Connect",64,396,160,can_connect);
     o->controls[count++]=button(context,14,"Details",240,396,160,true);
     o->controls[count++]=button(context,15,"Back",416,396,160,true);
     if(!o->filtered_count) {

@@ -162,6 +162,8 @@ Quake-style startup commands follow the options, for example `+set name Player`.
 
 ## Multiplayer
 
+Open **Find servers** from the startup menu for one browser covering every game. It starts with **All games**; use **Game filter** to narrow the list. Ping is the measured round-trip time in milliseconds. LAN discovery searches the supported games together, and a direct `host:port` query can detect the server protocol. Choose a game filter to edit that game's Internet master-server address.
+
 Anthology sessions use `unified-1` by default. To run a dedicated server with a stdin console:
 
 ```sh

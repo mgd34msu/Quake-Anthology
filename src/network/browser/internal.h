@@ -5,7 +5,14 @@
 #include "qa/pool.h"
 
 enum { QA_BROWSER_DATAGRAM_BYTES = UINT16_MAX, QA_BROWSER_HTTP_BYTES = 1048576,
-    QA_BROWSER_URL_BYTES = UINT16_MAX, QA_BROWSER_RESPONSE_PAGE_BYTES = 256 };
+    QA_BROWSER_URL_BYTES = UINT16_MAX, QA_BROWSER_RESPONSE_PAGE_BYTES = 256,
+    QA_BROWSER_PROTOCOLS = QA_NET_UNIFIED_1 + 1 };
+
+typedef struct browser_broadcast {
+    qa_net_address address;
+    qa_net_protocol_id protocol;
+    uint64_t sent_ns, timeout_ns, query;
+} browser_broadcast;
 
 typedef struct browser_q3_request {
     qa_browser_q3_request_id id;
@@ -52,10 +59,11 @@ struct qa_server_browser {
     browser_decode_storage *decoders;
     uint32_t capacity;
     uint64_t next_query;
-    qa_net_address broadcast, master;
-    qa_net_protocol_id broadcast_protocol, master_protocol;
-    uint64_t broadcast_sent, broadcast_timeout, master_sent, master_timeout, broadcast_query;
-    bool broadcasting, master_pending, callback;
+    browser_broadcast broadcasts[QA_BROWSER_PROTOCOLS];
+    qa_net_address master;
+    qa_net_protocol_id master_protocol;
+    uint64_t master_sent, master_timeout;
+    bool master_pending, callback;
     qa_http_request_id http_master;
     qa_buffer master_body;
     char *master_url;

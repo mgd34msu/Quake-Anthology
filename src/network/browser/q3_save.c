@@ -52,12 +52,16 @@ bool qa_browser_q3_valid(const qa_server_browser *b)
             if (b->records[j].occupied && b->records[j].entry.pending && b->records[j].query == record->query) return false;
         for (size_t j = 0; j < 48; ++j) if (b->q3->requests[j].id == record->query) return false;
         for (size_t j = 0; j < b->q3->broadcast_count; ++j) if (b->q3->broadcasts[j].query == record->query) return false;
-        if (b->broadcasting && b->broadcast_query == record->query) return false;
+        for (size_t j = 0; j < QA_BROWSER_PROTOCOLS; ++j)
+            if (b->broadcasts[j].query == record->query) return false;
     }
-    if (b->broadcasting) {
-        if (!b->broadcast_query || (b->next_query && b->broadcast_query >= b->next_query)) return false;
-        for (size_t i = 0; i < 48; ++i) if (b->q3->requests[i].id == b->broadcast_query) return false;
-        for (size_t i = 0; i < b->q3->broadcast_count; ++i) if (b->q3->broadcasts[i].query == b->broadcast_query) return false;
+    for (size_t i = 0; i < QA_BROWSER_PROTOCOLS; ++i) {
+        uint64_t id = b->broadcasts[i].query;
+        if (!id) continue;
+        if (b->next_query && id >= b->next_query) return false;
+        for (size_t j = 0; j < i; ++j) if (b->broadcasts[j].query == id) return false;
+        for (size_t j = 0; j < 48; ++j) if (b->q3->requests[j].id == id) return false;
+        for (size_t j = 0; j < b->q3->broadcast_count; ++j) if (b->q3->broadcasts[j].query == id) return false;
     }
     for (size_t i = 0; i < b->q3->broadcast_count; ++i) {
         uint64_t id = b->q3->broadcasts[i].query;

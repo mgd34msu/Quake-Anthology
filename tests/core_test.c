@@ -8909,6 +8909,7 @@ static void test_gtv_output_reuse(void)
 
 typedef struct browser_probe_capture {
     size_t sends;
+    size_t nq_queries, qw_queries, q2_queries;
     char challenge[32];
 } browser_probe_capture;
 static bool browser_probe_send(void *context, const qa_net_address *address, qa_bytes bytes, qa_error *error)
@@ -8916,6 +8917,13 @@ static bool browser_probe_send(void *context, const qa_net_address *address, qa_
     browser_probe_capture *capture = context;
     (void)address; (void)error;
     ++capture->sends;
+    qa_nq_control control; qa_bytes text; qa_error query_error = {0};
+    if (qa_nq_control_decode(bytes, &control, &query_error) && control.kind == QA_NQ_SERVER_INFO_REQUEST)
+        ++capture->nq_queries;
+    else if (qa_qw_oob_decode(bytes, &text, &query_error)) {
+        if (text.size == 7 && !memcmp(text.data, "status\n", 7)) ++capture->qw_queries;
+        if (text.size == 6 && !memcmp(text.data, "status", 6)) ++capture->q2_queries;
+    }
     qa_q3_connectionless command; qa_error ignored = {0};
     if (qa_q3_connectionless_decode(bytes, QA_Q3_SERVER, &command, &ignored) &&
         !strcmp(qa_q3_token(&command.tokens, 0), "getstatus"))
@@ -8979,6 +8987,87 @@ static void test_browser_endpoint_probe(void)
     CHECK(qa_server_browser_count(browser) == 2);
     qa_arena_destroy(&scratch); qa_server_browser_destroy(browser);
     CHECK(qa_http_destroy(http, &error));
+}
+
+static bool browser_lan_local(void *context, const qa_net_address *address)
+{
+    (void)context;
+    return address->kind == QA_NET_IPV4 && address->host.ipv4[0] == 10;
+}
+static void test_browser_lan_overlap(void)
+{
+    qa_error error = {0}; qa_http *http = NULL; qa_server_browser *browser = NULL;
+    browser_probe_capture capture = {0};
+    qa_browser_hooks hooks = {.context = &capture, .send = browser_probe_send, .local = browser_lan_local};
+    qa_net_address destination = {.kind = QA_NET_IPV4, .port = 26000, .host.ipv4 = {255,255,255,255}};
+    const qa_net_protocol protocols[] = {QA_NET_NQ15, QA_NET_QW28, QA_NET_Q2_34};
+    const uint64_t sent[] = {100,110,120}, timeout[] = {100,500,1000};
+    CHECK(qa_http_create(NULL, &http, &error));
+    CHECK(qa_server_browser_create(http, 16, &hooks, &browser, &error));
+    qa_buffer legacy = {0}, checkpoint = {0};
+    for (size_t i = 0; i < 3; ++i) {
+        CHECK(qa_server_browser_query(browser, &destination, (qa_net_protocol_id){.kind = protocols[i]},
+            true, sent[i], timeout[i], &error));
+        if (!i) CHECK(qa_server_browser_checkpoint(browser, &legacy, &error));
+    }
+    CHECK(capture.sends == 3 && capture.nq_queries == 1 && capture.qw_queries == 1 && capture.q2_queries == 1);
+    CHECK(qa_server_browser_checkpoint(browser, &checkpoint, &error));
+    qa_server_browser_destroy(browser); browser = NULL;
+    CHECK(qa_server_browser_restore_checkpoint((qa_bytes){checkpoint.data, checkpoint.size}, http, 16,
+        &hooks, &browser, &error));
+    qa_buffer_free(&checkpoint);
+
+    uint8_t replies[3][512]; size_t sizes[3]; qa_net_writer writer;
+    qa_net_writer_init(&writer, replies[0], sizeof(replies[0]), &error);
+    qa_nq_control nq = {.kind = QA_NQ_SERVER_INFO,
+        .data.server = {"10.0.0.1:26000", "nq-fixture", "e1m1", 1, 8, 3}};
+    CHECK(qa_nq_control_encode(&nq, &writer)); sizes[0] = qa_net_writer_size(&writer);
+    qa_net_writer_init(&writer, replies[1], sizeof(replies[1]), &error);
+    CHECK(qa_qw_oob_encode("n\\hostname\\qw-fixture\\map\\dm6\\maxclients\\8\n", false, &writer));
+    sizes[1] = qa_net_writer_size(&writer);
+    qa_net_writer_init(&writer, replies[2], sizeof(replies[2]), &error);
+    CHECK(qa_q2_status_write(&writer, &(qa_q2_status){
+        .server_info = "\\hostname\\q2-fixture\\mapname\\base1\\maxclients\\8"}, "print\n", sizeof(replies[2]) - 4));
+    sizes[2] = qa_net_writer_size(&writer);
+    qa_net_datagram packet = {.kind = QA_NET_POLL_PACKET,
+        .from = {.kind = QA_NET_IPV4, .port = 26000, .host.ipv4 = {10,0,0,1}},
+        .payload = {replies[0], sizes[0]}, .received_ns = 150};
+    bool recognized = false; qa_server_browser *old = NULL;
+    CHECK(qa_server_browser_restore_checkpoint((qa_bytes){legacy.data, legacy.size}, http, 16,
+        &hooks, &old, &error));
+    CHECK(qa_server_browser_receive(old, &packet, &recognized, &error) && recognized);
+    qa_server_entry entry;
+    CHECK(qa_server_browser_at(old, 0, &entry) && entry.protocol.kind == QA_NET_NQ15 && entry.ping_ns == 50);
+    qa_server_browser_destroy(old); qa_buffer_free(&legacy);
+
+    CHECK(qa_server_browser_query(browser, &destination, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+        true, 130, 200, &error));
+    for (size_t i = 0; i < 3; ++i) {
+        packet.payload = (qa_bytes){replies[i], sizes[i]};
+        CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized);
+        CHECK(qa_server_browser_at(browser, i, &entry) && entry.protocol.kind == protocols[i] &&
+            entry.sources == QA_SERVER_LAN && entry.available && entry.has_ping &&
+            entry.ping_ns == 150 - (i ? sent[i] : 130));
+    }
+    CHECK(qa_server_browser_count(browser) == 3);
+    qa_server_browser_expire(browser, 330);
+    packet.from.host.ipv4[3] = 2; packet.received_ns = 350;
+    for (size_t i = 0; i < 3; ++i) {
+        packet.payload = (qa_bytes){replies[i], sizes[i]};
+        CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized == (i != 0));
+    }
+    CHECK(qa_server_browser_count(browser) == 5);
+    qa_server_browser_expire(browser, 610);
+    packet.from.host.ipv4[3] = 3; packet.received_ns = 620;
+    for (size_t i = 1; i < 3; ++i) {
+        packet.payload = (qa_bytes){replies[i], sizes[i]};
+        CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized == (i == 2));
+    }
+    CHECK(qa_server_browser_count(browser) == 6);
+    qa_server_browser_expire(browser, 1120);
+    packet.from.host.ipv4[3] = 4; packet.received_ns = 1121;
+    CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && !recognized);
+    qa_server_browser_destroy(browser); CHECK(qa_http_destroy(http, &error));
 }
 
 int main(int argc, char **argv)
@@ -9045,6 +9134,7 @@ int main(int argc, char **argv)
     test_connection_expiry();
     test_loopback_admission();
     test_browser_endpoint_probe();
+    test_browser_lan_overlap();
     test_dosbox_loopback();
     test_loopback_nq_signon();
     test_kex_send_admission();

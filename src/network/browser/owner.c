@@ -213,9 +213,9 @@ static bool browser_query(qa_server_browser *browser, const qa_net_address *addr
     bool ok = browser->hooks.send(browser->hooks.context, address, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     browser->callback = false; if (!ok) return false;
     if (broadcast) {
-        browser->broadcast = *address; browser->broadcast_protocol = protocol;
-        browser->broadcast_sent = now; browser->broadcast_timeout = timeout;
-        browser->broadcast_query = query; browser->broadcasting = true;
+        browser->broadcasts[protocol.kind] = (browser_broadcast){
+            .address = *address, .protocol = protocol, .sent_ns = now,
+            .timeout_ns = timeout, .query = query};
     } else {
         browser_record *record = qa_browser_find(browser, address, protocol);
         record->entry.pending = true; record->entry.timed_out = false;
@@ -250,8 +250,11 @@ void qa_server_browser_expire(qa_server_browser *browser, uint64_t now) {
             record->entry.pending = false; record->entry.timed_out = true; qa_browser_changed(browser, &record->entry, QA_BROWSER_QUERY_EXPIRED);
         }
     }
-    if (browser->broadcasting && now >= browser->broadcast_sent && now - browser->broadcast_sent >= browser->broadcast_timeout)
-        browser->broadcasting = false;
+    for (size_t i = 0; i < QA_BROWSER_PROTOCOLS; ++i) {
+        browser_broadcast *broadcast = browser->broadcasts + i;
+        if (broadcast->query && now >= broadcast->sent_ns && now - broadcast->sent_ns >= broadcast->timeout_ns)
+            *broadcast = (browser_broadcast){0};
+    }
     if (browser->master_pending && now >= browser->master_sent && now - browser->master_sent >= browser->master_timeout)
         browser->master_pending = false;
     qa_browser_q3_expire(browser, now);
@@ -313,12 +316,18 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
         target = candidate; protocol = candidate->entry.protocol; sent = candidate->sent_ns; break;
     }
     if (!target) {
-        if (!browser->broadcasting || packet->received_ns < browser->broadcast_sent ||
-            packet->received_ns - browser->broadcast_sent >= browser->broadcast_timeout) return true;
-        qa_error ignored = {0};
-        protocol = browser->broadcast_protocol; sent = browser->broadcast_sent;
-        if (!qa_browser_status_decode(browser, packet->payload, protocol, &decoded, &challenge, &ignored) ||
-            (protocol.kind == QA_NET_Q3_68 && challenge != browser->broadcast_query)) return true;
+        bool matched = false;
+        for (size_t i = 0; i < QA_BROWSER_PROTOCOLS; ++i) {
+            const browser_broadcast *broadcast = browser->broadcasts + i;
+            if (!broadcast->query || packet->received_ns < broadcast->sent_ns ||
+                packet->received_ns - broadcast->sent_ns >= broadcast->timeout_ns) continue;
+            qa_error ignored = {0};
+            if (!qa_browser_status_decode(browser, packet->payload, broadcast->protocol,
+                &decoded, &challenge, &ignored) ||
+                (broadcast->protocol.kind == QA_NET_Q3_68 && challenge != broadcast->query)) continue;
+            protocol = broadcast->protocol; sent = broadcast->sent_ns; matched = true; break;
+        }
+        if (!matched) return true;
     }
     if (!target) {
         browser->callback = true;

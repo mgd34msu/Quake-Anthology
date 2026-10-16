@@ -8229,9 +8229,10 @@ static bool menu_resolve(const char *text, uint16_t port, qa_net_address *out, q
     return qa_net_address_resolve(text,port,4,out,error);
 }
 bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_menu_view *view,
-    qa_net_protocol_id protocol, qa_server_entry *rows, size_t capacity, size_t *count, qa_arena *scratch, qa_error *error)
+    const qa_net_protocol_id *protocol, qa_server_entry *rows, size_t capacity, size_t *count, qa_arena *scratch, qa_error *error)
 {
-    if(!count || (capacity && !rows) || !menu_admitted(f,view,error) || !qa_net_protocol_valid(protocol,error))
+    if(!count || (capacity && !rows) || !menu_admitted(f,view,error) ||
+        (protocol && !qa_net_protocol_valid(*protocol,error)))
         return false;
     size_t total=qa_server_browser_count(view->browser), listed=0;
     uint32_t *indices=total?qa_arena_alloc(scratch,total*sizeof(*indices),_Alignof(uint32_t),error):NULL;
@@ -8242,8 +8243,7 @@ bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_men
     for(size_t i=0;ok && i<listed;++i) {
         qa_server_entry entry;
         ok=qa_server_browser_at(view->browser,indices[i],&entry);
-        if(ok && entry.protocol.kind==protocol.kind && entry.protocol.revision==protocol.revision &&
-            entry.protocol.flags==protocol.flags) {
+        if(ok && (!protocol || menu_family(entry.protocol)==menu_family(*protocol))) {
             if(used<capacity) rows[used]=entry;
             ++used;
         }
@@ -8252,13 +8252,16 @@ bool frontend_network_menu_rows(const qa_frontend *f, const frontend_network_men
     *count=used; return menu_admitted(f,view,error);
 }
 bool frontend_network_menu_query(qa_frontend *f, const frontend_network_menu_view *view,
-    qa_net_protocol_id protocol, const char *remote, qa_error *error)
+    const qa_net_protocol_id *protocol, const char *remote, qa_error *error)
 {
     qa_net_address address;
-    if(!menu_mutable(f,view,error) || !qa_net_protocol_valid(protocol,error) ||
-        !menu_resolve(remote,menu_port(protocol),&address,error) || !menu_admitted(f,view,error)) return false;
-    if(!menu_preferences_direct(f->network,protocol,remote,&address,error) || !menu_admitted(f,view,error)) return false;
-    return qa_server_browser_query(f->network->browser,&address,protocol,false,f->wall_time_ns,
+    if(!menu_mutable(f,view,error) || (protocol && !qa_net_protocol_valid(*protocol,error)) ||
+        !menu_resolve(remote,menu_port(protocol?*protocol:f->options.network_protocol),&address,error) ||
+        !menu_admitted(f,view,error)) return false;
+    if(!protocol)return qa_server_browser_probe(f->network->browser,&address,f->wall_time_ns,
+        UINT64_C(5000000000),error) && menu_admitted(f,view,error);
+    if(!menu_preferences_direct(f->network,*protocol,remote,&address,error) || !menu_admitted(f,view,error)) return false;
+    return qa_server_browser_query(f->network->browser,&address,*protocol,false,f->wall_time_ns,
         UINT64_C(5000000000),error) && menu_admitted(f,view,error);
 }
 bool frontend_network_menu_scan(qa_frontend *f, const frontend_network_menu_view *view,
@@ -8304,7 +8307,7 @@ bool frontend_network_menu_favorite(qa_frontend *f, const frontend_network_menu_
     if(!added || !menu_mutable(f,view,error) || !qa_net_protocol_valid(protocol,error) ||
         !menu_resolve(remote,menu_port(protocol),&address,error) || !menu_admitted(f,view,error)) return false;
     qa_frontend_network *n=f->network;
-    bool removing=false; qa_net_protocol_id memberships[QA_NET_UNIFIED_1+1]; size_t membership_count=0;
+    bool removing=false;
     size_t count=qa_server_browser_count(n->browser);
     uint32_t *indices=count?qa_arena_alloc(&f->frame.storage,count*sizeof(*indices),_Alignof(uint32_t),error):NULL;
     if(count && !indices) return frontend_fail(error,QA_ERROR_MEMORY,"Reading actual favorite membership");
@@ -8312,15 +8315,14 @@ bool frontend_network_menu_favorite(qa_frontend *f, const frontend_network_menu_
     bool ok=qa_server_browser_list(n->browser,&filter,&f->frame.storage,indices,count,&listed,error);
     for(size_t i=0;ok && i<listed;++i) {
         ok=qa_server_browser_at(n->browser,indices[i],&existing);
-        if(ok && menu_family(existing.protocol)==menu_family(protocol) &&
+        if(ok && existing.protocol.kind==protocol.kind && existing.protocol.revision==protocol.revision &&
+            existing.protocol.flags==protocol.flags &&
             qa_net_address_equal(&existing.address,&address,true) && (existing.sources&QA_SERVER_FAVORITE)) {
-            if(membership_count>=sizeof(memberships)/sizeof(*memberships)) { ok=false; break; }
-            memberships[membership_count++]=existing.protocol; removing=true;
+            removing=true; break;
         }
     }
     if(!ok || !qa_server_browser_save(n->browser,&before,error)) return false;
-    if(removing) for(size_t i=0;ok && i<membership_count;++i)
-        ok=qa_server_browser_remove_source(n->browser,&address,memberships[i],QA_SERVER_FAVORITE,error);
+    if(removing)ok=qa_server_browser_remove_source(n->browser,&address,protocol,QA_SERVER_FAVORITE,error);
     else ok=qa_server_browser_add(n->browser,&address,protocol,QA_SERVER_FAVORITE,error);
     if(ok) ok=save_favorites(n,error);
     if(!ok) {
@@ -8483,9 +8485,10 @@ bool frontend_network_menu_direct_read(const qa_frontend *f,const frontend_netwo
 {
     if(!entry || !remote || !present || !menu_admitted(f,view,error)) return false;
     *present=false; remote[0]=0;
+    if(!(entry->sources&QA_SERVER_DIRECT) || menu_family(entry->protocol)<0)return true;
     frontend_network_menu_preferences preferences;
     if(!frontend_network_menu_preferences_read(f,view,entry->protocol,&preferences,error)) return false;
-    if(entry->sources&QA_SERVER_DIRECT) for(uint32_t i=0;i<preferences.direct_count;++i)
+    for(uint32_t i=0;i<preferences.direct_count;++i)
         if(qa_net_address_equal(&entry->address,&preferences.direct[i].address,true)) {
             memcpy(remote,preferences.direct[i].remote,256); *present=true; break;
         }
