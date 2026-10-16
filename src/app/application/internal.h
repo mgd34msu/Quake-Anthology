@@ -592,6 +592,8 @@ bool application_qc_input_abort(application_provider *, qa_actor_id,
 bool application_qc_input_idle(const application_provider *);
 bool application_qc_console_command(application_provider *, qa_actor_id, const char *,
                                       bool client_command, bool *handled, qa_error *);
+bool application_qc_game_command(application_provider *, const qa_command_invocation *,
+    bool *handled, qa_error *);
 qa_console *application_qc_console(application_provider *);
 bool application_q3_guest_actor_client(application_provider *, qa_actor_id, uint32_t *);
 bool application_guest_weapon_read(application_provider *, qa_actor_id, qa_item_id *, qa_error *);

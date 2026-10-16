@@ -483,8 +483,7 @@ static bool provider_command(application_provider *provider, const qa_command_in
     case APPLICATION_PROVIDER_Q3:
         return qa_q3_game_console_command(provider->state.q3, actor, command, handled, error);
     case APPLICATION_PROVIDER_QC:
-        return application_qc_console_command(provider, actor, command->raw,
-                                                 actor.registry != 0, handled, error);
+        return application_qc_game_command(provider, command, handled, error);
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE: {
         if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
@@ -680,9 +679,6 @@ command_handled:
         ? command_owner(application, command.context.owner)
         : application_provider_for(application, actor, command_role(command.argv[0]), "");
     if (!provider_command(provider, &command, &handled, error))
-        return QA_COMMAND_FAILED;
-    if (!handled && provider && provider->kind == APPLICATION_PROVIDER_QC &&
-        !application_qc_host_command(provider, invocation, &handled, error))
         return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }

@@ -646,6 +646,8 @@ static bool command_provider(application_provider *provider, const qa_command_in
         return qa_q1_game_console_command(provider->state.q1, command->context.actor, command, handled, error);
     if (provider->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_game_console_command(provider->state.q2, command->context.actor, command, handled, error);
+    if (provider->kind == APPLICATION_PROVIDER_QC)
+        return application_qc_game_command(provider, command, handled, error);
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return source ? application_native_q3_client_command(provider, command->context.actor, command, handled, error) :
             qa_q3_game_console_command(provider->state.q3, command->context.actor, command, handled, error);
@@ -656,8 +658,7 @@ static bool command_provider(application_provider *provider, const qa_command_in
             command->argv, command->argc, error);
         *handled = okay; return okay;
     }
-    return application_fail(error, QA_ERROR_UNSUPPORTED,
-        "Unified QC command requires its actual Source host command boundary");
+    return application_fail(error, QA_ERROR_UNSUPPORTED, "Unknown player command provider");
 }
 
 static int32_t command_color(const char *word)
@@ -691,11 +692,14 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
         words[i + 1] = arguments[i]; extent += strlen(arguments[i]) + (i != 0);
     }
     qa_arena storage = {0};
-    char *args = command_arguments_join(app->console, arguments, count, extent, &storage, error);
-    if (!args) { qa_arena_destroy(&storage); return false; }
+    size_t name_size = strlen(name);
+    char *raw = command_arguments_join(app->console, words, count + 1,
+        name_size + (count ? extent + 1 : 0), &storage, error);
+    if (!raw) { qa_arena_destroy(&storage); return false; }
+    char *args = raw + name_size + (count ? 1 : 0);
     const application_player_record *row = application_players_connection_read(app, client, seat);
     qa_command_invocation command = {.console = app->console, .argc = count + 1,
-        .argv = words, .args_text = args, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
+        .argv = words, .args_text = args, .raw = raw, .context = {.origin = row->remote ? QA_COMMAND_REMOTE : QA_COMMAND_LOCAL,
         .owner = source->owner, .actor = player.actor}};
     command.context.seat = row->seat;
     command.context.dialect = qa_product_ruleset(source->product, QA_GAME_Q3);
@@ -713,10 +717,6 @@ bool application_unified_player_command(qa_application *app, qa_net_client_id cl
             return item == QA_COMMAND_HANDLED;
         }
     }
-    if (okay && !handled && source->kind == APPLICATION_PROVIDER_QC &&
-        strcmp(name, "kill") && strcmp(name, "suicide"))
-        okay = application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Unified QC command requires its actual Source host command boundary");
     if (okay && !handled && source->kind == APPLICATION_PROVIDER_Q1 && !strcmp(name, "name")) {
         const char *value = count ? arguments[0] : "unconnected";
         char declared_name[46]; q1_name(value,declared_name);

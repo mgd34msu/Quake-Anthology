@@ -200,6 +200,14 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
     return application_qc_set_float(engine, reference, field, amount, error);
 }
 
+bool application_qc_game_command(application_provider *provider,
+    const qa_command_invocation *command, bool *handled, qa_error *error)
+{
+    if (!application_qc_console_command(provider, command->context.actor, command->raw,
+        command->context.actor.registry != 0, handled, error)) return false;
+    return *handled || application_qc_host_command(provider, command, handled, error);
+}
+
 bool application_qc_host_command(application_provider *provider,
     const qa_command_invocation *command, bool *handled, qa_error *error)
 {
@@ -216,8 +224,7 @@ bool application_qc_host_command(application_provider *provider,
     struct application_qc_state *engine = provider->state.qc.engine;
     if ((!god && !notarget && !noclip && !fly && !give) || !engine ||
         (engine->profile == QA_QC_QUAKEWORLD && (notarget || fly))) return true;
-    if (!qa_console_invocation_current(command->console, command) ||
-        !engine->initialized || !qa_qc_idle(provider->state.qc.instance) ||
+    if (!engine->initialized || !qa_qc_idle(provider->state.qc.instance) ||
         !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QC Host command lost its entered returned Source");
     qa_command_context context;
