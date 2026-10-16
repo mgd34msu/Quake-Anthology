@@ -94,8 +94,8 @@ bool frontend_server_settings_read(qa_frontend *frontend, frontend_server_settin
     *present = false;
     const qa_launch_snapshot *launch = qa_application_launch(frontend->application);
     if (!launch || frontend_network_remote(frontend)) return true;
-    if (!frontend_config_store_primary_server_read(frontend->config_store, &out->source, present, error))
-        return false;
+    out->cvars=frontend_config_store_primary_server_cvars(frontend->config_store,&out->provider);
+    *present=out->cvars!=NULL;
     return !*present || (selection(qa_launch_snapshot_catalog(launch), qa_launch_snapshot_choices(launch),
         &out->selection, error) && qa_server_setting_definitions(out->selection, &out->definitions, error));
 }
@@ -104,8 +104,8 @@ bool frontend_server_setting_read(qa_frontend *frontend, const frontend_server_s
     const qa_server_setting_definition *definition, qa_server_setting_status *out, qa_error *error)
 {
     const char *effective = qa_application_server_setting_effective(frontend->application,
-        settings->source.scope.provider, definition->target.name);
-    return qa_server_setting_read(definition, settings->source.cvars, effective, out, error);
+        settings->provider, definition->target.name);
+    return qa_server_setting_read(definition, settings->cvars, effective, out, error);
 }
 
 bool frontend_startup_server_profile_capture(qa_settings_store store, const char *relative,

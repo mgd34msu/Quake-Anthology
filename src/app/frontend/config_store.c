@@ -999,6 +999,13 @@ static frontend_config_source *published_primary(const frontend_config_store *ma
     frontend_config_source *source=published_source(manager,application,selected);
     return source && source->primary?source:NULL;
 }
+qa_cvars *frontend_config_store_primary_server_cvars(const frontend_config_store *manager,
+    qa_actor_owner *provider)
+{
+    frontend_config_source *source=published_primary(manager,manager->frontend->application);
+    *provider=source?source->scope.provider:0;
+    return source?source->cvars:NULL;
+}
 bool frontend_config_store_server_invocation_read(frontend_config_store *manager,
     const qa_command_invocation *call,qa_application_startup_source *out,qa_error *error)
 {

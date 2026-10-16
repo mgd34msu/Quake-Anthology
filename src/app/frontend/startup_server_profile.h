@@ -6,7 +6,8 @@
 
 struct qa_frontend;
 typedef struct frontend_server_settings {
-    qa_application_startup_source source;
+    qa_cvars *cvars;
+    qa_actor_owner provider;
     qa_server_setting_selection selection;
     qa_server_setting_catalog definitions;
 } frontend_server_settings;

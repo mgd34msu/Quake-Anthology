@@ -595,7 +595,7 @@ static bool server_apply(frontend_seat *seat)
         qa_server_setting_find(&settings.definitions,owner->server_selected):NULL;
     qa_error error={0}; qa_server_setting_status status;
     if(!definition) snprintf(owner->server_message,sizeof(owner->server_message),"This setting is no longer available.");
-    else if(!qa_server_setting_write(definition,settings.source.cvars,owner->server_draft?owner->server_draft:"",&error) ||
+    else if(!qa_server_setting_write(definition,settings.cvars,owner->server_draft?owner->server_draft:"",&error) ||
         !frontend_server_setting_read(seat->frontend,&settings,definition,&status,&error) ||
         !server_draft(owner,status.desired,&error)) server_message(owner,&error);
     else owner->server_message[0]=0;
@@ -607,13 +607,13 @@ static bool server_profile(frontend_seat *seat,bool save)
     if(!server_read(seat,&settings)) return true;
     char path[46]; qa_error error={0}; qa_server_profile *profile=NULL; qa_buffer bytes={0}; bool found=false;
     bool okay=frontend_server_profile_path(owner->server_profile_name,path,&error);
-    if(okay && save) okay=qa_server_profile_capture(settings.selection,settings.source.cvars,&profile,&error) &&
+    if(okay && save) okay=qa_server_profile_capture(settings.selection,settings.cvars,&profile,&error) &&
         qa_server_profile_encode(profile,&bytes,&error) &&
         qa_settings_write(server_store(seat),path,(qa_bytes){bytes.data,bytes.size},&error);
     if(okay && !save) {
         okay=qa_settings_load_server_profile(server_store(seat),path,settings.selection,&profile,&found,&error);
         if(okay && !found) okay=frontend_fail(&error,QA_ERROR_NOT_FOUND,"The selected server profile does not exist.");
-        if(okay) okay=qa_server_profile_apply(profile,settings.selection,settings.source.cvars,&error);
+        if(okay) okay=qa_server_profile_apply(profile,settings.selection,settings.cvars,&error);
     }
     qa_server_profile_destroy(profile); qa_buffer_free(&bytes);
     if(!okay) server_message(owner,&error);

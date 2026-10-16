@@ -88,6 +88,9 @@ bool frontend_config_store_stage_input(frontend_config_store *,const qa_console 
 bool frontend_config_store_apply_archive(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
     const qa_application_startup_source *,qa_cvars *,const qa_cvar_archive *,bool shared,qa_error *);
 frontend_config_source *frontend_config_store_named_source(const frontend_config_store *,const char *);
+/* Passive settings readers borrow the published server's common-table view;
+ * they do not enter or qualify a console command. */
+qa_cvars *frontend_config_store_primary_server_cvars(const frontend_config_store *,qa_actor_owner *);
 /* Read the selected WORLD ENTITIES profile before physical Source startup.
  * Uses the same retained product/global roots and archive namespace as prepare. */
 bool frontend_config_store_draft_archive(frontend_config_store *,const qa_launch_draft *,

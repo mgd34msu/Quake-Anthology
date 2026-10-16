@@ -222,7 +222,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
         const qa_server_setting_definition *definition=qa_server_setting_find(&settings.definitions,invocation->argv[1]);
         if (!definition) { frontend_console_print(frontend,&invocation->context,"No selected server setting.\n"); return true; }
         qa_server_setting_status status;
-        if (!qa_server_setting_write(definition,settings.source.cvars,invocation->argv[2],&failure) ||
+        if (!qa_server_setting_write(definition,settings.cvars,invocation->argv[2],&failure) ||
             !frontend_server_setting_read(frontend,&settings,definition,&status,&failure)) goto setting_failed;
         frontend_console_print(frontend,&invocation->context,definition->id);
         frontend_console_print(frontend,&invocation->context," = ");
