@@ -21,6 +21,7 @@ typedef struct shared_declaration {
 } shared_declaration;
 static const shared_declaration declarations[]={
     {"sv_autosave","1","Autosave on level entry",QA_CVAR_ARCHIVE,TOGGLE},
+    {"qts_weaponBehavior","","Default projectile trajectory PRODUCT/BEHAVIOR",QA_CVAR_ARCHIVE,ANY},
     {"fov","90","Field of view",QA_CVAR_ARCHIVE,ANY},
     {"viewsize","100","Quake view size, 30 through 120",QA_CVAR_ARCHIVE,FINITE},
     {"cl_sbar","0","QuakeWorld status display placement",QA_CVAR_ARCHIVE,FINITE},

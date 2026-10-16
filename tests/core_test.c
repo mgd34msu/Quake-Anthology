@@ -88,6 +88,7 @@
 #include "qa/network_q2_unicast.h"
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/app/frontend/shared_video.h"
+#include "../src/app/frontend/shared_register.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
 #include "../src/app/application/bots_log.h"
@@ -6360,6 +6361,13 @@ static void test_shared_cvar_archive(void)
     qa_cvar_options options={.dialect=QA_RULESET_NETQUAKE,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_ENGINE};
     qa_cvars *engine=qa_cvars_create(&options,&error);
     CHECK(engine && qa_cvars_register(engine,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
+    qa_cvar_archive_entry behavior={.name="qts_weaponBehavior",.value="donor/mod:rocket"};
+    CHECK(qa_cvar_archive_apply(engine,&(qa_cvar_archive){.entries=&behavior,.count=1},&error));
+    CHECK(frontend_shared_register(engine,NULL,(qa_audio_output_format){
+        .sample_rate=44100,.sample_bits=16,.channels=2},1,&error));
+    const qa_cvar_view *preference=qa_cvars_find(engine,"qts_weaponBehavior");
+    CHECK(preference && preference->save_policy==QA_CVAR_SAVE_SETTING &&
+        !strcmp(qa_cvars_archive_value(engine,preference),behavior.value));
     options.role=QA_CVAR_ROLE_CGAME;
     qa_cvars *client=qa_cvars_create_view(engine,&options,&error);
     CHECK(client && qa_cvars_register(client,"fov","90",QA_CVAR_ARCHIVE,0,"",&error));
