@@ -79,7 +79,7 @@ static trajectory_source *source_find(struct application_trajectories *owner,
 }
 
 static trajectory_source *source_create(qa_application *app, const qa_launch_instance *instance,
-    const qa_catalog_weapon_behavior *behavior, qa_qc_program *program, qa_error *error)
+    const qa_catalog_weapon_behavior *behavior, qa_qc_program *program, qa_qvm_image *image, qa_error *error)
 {
     qa_strings *strings = qa_session_strings(app->session);
     qa_string_id instance_name, behavior_name;
@@ -90,6 +90,7 @@ static trajectory_source *source_create(qa_application *app, const qa_launch_ins
     bool okay = qa_launch_instance_retain_metadata(instance, &source->descriptor, error);
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(source->descriptor);
     qa_qc_program *loaded = NULL;
+    qa_qvm_image *loaded_image = NULL;
     if (okay && instance->selection.runtime == QA_PROGRAM_QUAKEC) {
         if (!program) {
             okay = qa_qc_program_load(qa_resource_bytes(instance->artifact),
@@ -98,10 +99,18 @@ static trajectory_source *source_create(qa_application *app, const qa_launch_ins
         }
         if (okay) okay = application_trajectory_qc_create(app, descriptor, program,
             behavior, &source->runtime, error);
+    } else if (okay && instance->selection.runtime == QA_PROGRAM_QVM) {
+        if (!image) {
+            okay = qa_qvm_image_load(qa_resource_bytes(instance->artifact), &loaded_image, error);
+            image = loaded_image;
+        }
+        if (okay) okay = application_trajectory_qvm_create(app, descriptor, image,
+            behavior, &source->runtime, error);
     } else if (okay)
         okay = application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Selected projectile donor requires a native or QVM trajectory adapter");
+            "Selected projectile donor requires a native trajectory adapter");
     qa_qc_program_destroy(loaded);
+    qa_qvm_image_release(loaded_image);
     if (!okay) {
         (void)source_destroy(source, NULL);
         return NULL;
@@ -127,7 +136,8 @@ static trajectory_source *source_prepare(qa_application *app, const qa_launch_in
     if (existing && existing->behavior == behavior) return existing;
     application_provider *provider = instance->state;
     qa_qc_program *program = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.program : NULL;
-    return source_create(app, instance, behavior, program, error);
+    qa_qvm_image *image = provider && provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.image : NULL;
+    return source_create(app, instance, behavior, program, image, error);
 }
 
 static bool unused_sources(struct application_trajectories *owner, qa_error *error)
@@ -150,8 +160,8 @@ bool application_trajectories_configure(qa_application *app, const qa_launch_sna
     for (size_t i = 0; i < qa_launch_snapshot_instance_count(snapshot); ++i) {
         const qa_launch_instance *instance = qa_launch_snapshot_instance(snapshot, i);
         application_provider *provider = instance->state;
-        if (provider && provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.engine)
-            provider->state.qc.engine->trajectory_only = instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY);
+        if (provider)
+            provider->trajectory_only = instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY);
     }
     size_t count = 0;
     for (size_t i = 0; choices && i < choices->behavior_count; ++i) count += choices->behaviors[i].enabled;
@@ -427,7 +437,7 @@ static trajectory_source *source_restore(qa_application *app,
     content.source.behavior_count = 1;
     qa_launch_instance_lease *lease = NULL;
     if (!qa_launch_instance_restore_metadata(&content.source, QA_ROLE_BIT(QA_ROLE_TRAJECTORY), &lease, error)) return NULL;
-    source = source_create(app, qa_launch_instance_lease_view(lease), behavior, NULL, error);
+    source = source_create(app, qa_launch_instance_lease_view(lease), behavior, NULL, NULL, error);
     qa_launch_instance_lease_release(lease);
     return source;
 }

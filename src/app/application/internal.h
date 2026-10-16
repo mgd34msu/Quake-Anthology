@@ -95,6 +95,7 @@ typedef struct application_provider {
     qa_q1_game_operation q1_lifetime;
     bool constructed;
     bool client_only_owned;
+    bool trajectory_only;
     bool attached;
     bool component_attached;
     bool policy_attached;

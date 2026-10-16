@@ -507,7 +507,7 @@ static bool prepare_frame(void *opaque, qa_session *session, const qa_source_fra
 static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    if (engine->trajectory_only) return true;
+    if (engine->provider->trajectory_only) return true;
     if (session != engine->services.session)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC frame belongs to another session");
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
@@ -1122,7 +1122,7 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
                         const qa_source_frame *frame, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    if (engine->trajectory_only) return true;
+    if (engine->provider->trajectory_only) return true;
     qa_actor_owner execution;
     if (session != engine->services.session || !qa_session_execution(session, actor, &execution) ||
         execution != engine->provider->owner)
@@ -1201,7 +1201,7 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
 static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    if (engine->trajectory_only) { engine->has_frame = false; return true; }
+    if (engine->provider->trajectory_only) { engine->has_frame = false; return true; }
     (void)session; (void)frame;
     const qa_qc_definition *retouch = engine->global_bindings->force_retouch;
     if (retouch != NULL) {

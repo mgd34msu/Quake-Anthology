@@ -121,6 +121,7 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
 {
     (void)session;
     struct application_q3_guest *engine = state;
+    if (engine->provider->trajectory_only) return true;
     if (engine->restore_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Restored Q3 source owners have not finished qualification");
     if (engine->round.phase == Q3G_ROUND_FAILED)

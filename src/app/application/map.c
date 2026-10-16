@@ -3311,8 +3311,7 @@ bool application_map_publish(qa_application *application,
         if (instance->roles == 0 &&
             !(provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified))
             continue;
-        if (provider->kind == APPLICATION_PROVIDER_QC &&
-            instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY))
+        if (instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY))
             continue;
         if (provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_initialize_map(provider, &publication->map,

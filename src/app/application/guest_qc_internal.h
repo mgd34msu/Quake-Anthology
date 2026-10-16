@@ -74,7 +74,6 @@ typedef struct application_qc_command_export {
     uint32_t index;
 } application_qc_command_export;
 struct application_qc_state {
-    bool trajectory_only;
     struct application_qc_items *items;
     struct application_qc_combat *combat;
     struct application_qc_protection *protection;

@@ -136,6 +136,7 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
 {
     (void)session;
     struct application_native_q2 *engine = state;
+    if (engine->provider->trajectory_only) return true;
     engine->frame = *frame;
     if (!engine->map_ready) return true;
     application_native_q2_visibility_invalidate(engine);
@@ -152,6 +153,7 @@ static bool end_frame(void *state, qa_session *session, const qa_source_frame *f
 {
     (void)session; (void)frame;
     struct application_native_q2 *engine = state;
+    if (engine->provider->trajectory_only) return true;
     if (!engine->map_ready) return true;
     application_native_q2_visibility_invalidate(engine);
     if (engine->callbacks) return true;

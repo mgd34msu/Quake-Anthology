@@ -5,6 +5,7 @@
 #include "qa/builtin.h"
 #include "qa/launch.h"
 #include "qa/qc.h"
+#include "qa/qvm.h"
 
 typedef struct application_trajectory_attachment {
     qa_actor_id projectile;
@@ -29,5 +30,7 @@ typedef struct application_trajectory_source {
 
 bool application_trajectory_qc_create(qa_application *, const qa_launch_instance *,
     qa_qc_program *, const qa_catalog_weapon_behavior *, application_trajectory_source *, qa_error *);
+bool application_trajectory_qvm_create(qa_application *, const qa_launch_instance *,
+    qa_qvm_image *, const qa_catalog_weapon_behavior *, application_trajectory_source *, qa_error *);
 
 #endif
