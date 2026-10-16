@@ -3,10 +3,12 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q2_combat.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
 #include "guest_q3_private.h"
 #include "guest_q3_pickups.h"
+#include "guest_q3_catalog.h"
 #include "guest_q3_save.h"
 #include "map_players_private.h"
 #include "qa/application_supplies_save.h"
@@ -349,9 +351,13 @@ static bool intern(application_supplies *owner, const char *text, qa_item_id *ou
                     qa_error *error) {
     return qa_strings_intern_cstr(qa_session_strings(owner->application->session), text, out, error);
 }
+static size_t mapping_index(const qa_supply_mapping *rows, size_t count, qa_item_id source) {
+    for (size_t i = 0; i < count; ++i) if (rows[i].source == source) return i;
+    return SIZE_MAX;
+}
 static qa_supply_mapping *mapping(qa_supply_mapping *rows, size_t count, qa_item_id source) {
-    for (size_t i = 0; i < count; ++i) if (rows[i].source == source) return rows + i;
-    return NULL;
+    size_t i = mapping_index(rows, count, source);
+    return i == SIZE_MAX ? NULL : rows + i;
 }
 static bool append_mapping(qa_supply_mapping **rows, size_t *count, qa_item_id source,
     const qa_item_id *items, size_t item_count, qa_error *error) {
@@ -1345,52 +1351,57 @@ static bool source_item(const supply_pair *pair, qa_item_id item) {
             if (lists[list][i].source == item) return true;
     return false;
 }
-bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
-    qa_q1_cheat_grant category, bool *handled, qa_error *error) {
+typedef struct cheat_inventory {
+    qa_unified_frame_lease *storage;
+    qa_item_definition *definitions;
+    qa_inventory_entry *entries;
+    size_t definition_count, entry_count;
+} cheat_inventory;
+static bool cheat_pair(void *context, qa_actor_id actor, supply_pair **out, qa_error *error) {
     application_provider *publisher = context;
     qa_application *app = publisher ? publisher->application : NULL;
     application_supplies *owner = app ? app->supplies : NULL;
-    if (!handled || !owner || owner->calls == SIZE_MAX ||
-        (category != QA_Q1_CHEAT_WEAPONS && category != QA_Q1_CHEAT_AMMO) ||
-        !provider_current(owner, publisher))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat grant lost its actual supplier");
-    *handled = false;
+    if (!owner || owner->calls == SIZE_MAX || !provider_current(owner, publisher))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected cheat grant lost its actual supplier");
+    *out = NULL;
     application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (source && source == arsenal) return true;
     supply_pair *pair = pair_find(owner, source, arsenal);
-    if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Q1 cheat grant has no admitted supply pair");
+    if (!pair) return application_fail(error, QA_ERROR_ARGUMENT, "Selected cheat grant has no admitted supply pair");
     if (!supply_current(pair, actor, error)) return false;
-    if (source == arsenal) return true;
-    ++owner->calls;
-    size_t definition_count = 0, entry_count = 0, written = 0;
-    qa_item_definition *definitions = NULL;
-    qa_inventory_entry *entries = NULL;
-    qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
-    bool okay = storage && qa_inventory_entries(owner->inventory, actor, NULL, 0,
-        &entry_count, error) && supply_current(pair, actor, error);
-    if (okay && (entry_count > SIZE_MAX / sizeof(*definitions) ||
-        entry_count > SIZE_MAX / sizeof(*entries)))
+    *out = pair; return true;
+}
+static bool cheat_inventory_read(supply_pair *pair, qa_actor_id actor,
+    cheat_inventory *view, qa_error *error) {
+    application_supplies *owner = pair->owner;
+    if (!view->storage) view->storage = application_control_storage_acquire(owner->application, error);
+    size_t written = 0;
+    bool okay = view->storage && qa_inventory_entries(owner->inventory, actor, NULL, 0,
+        &view->entry_count, error) && supply_current(pair, actor, error);
+    if (okay && (view->entry_count > SIZE_MAX / sizeof(*view->definitions) ||
+        view->entry_count > SIZE_MAX / sizeof(*view->entries)))
         okay = application_fail(error, QA_ERROR_MEMORY, "Selected grant exceeds native inventory extent");
     if (okay) {
-        definitions = entry_count ? qa_unified_frame_lease_alloc(storage, entry_count,
-            sizeof(*definitions), _Alignof(qa_item_definition), error) : NULL;
-        entries = entry_count ? qa_unified_frame_lease_alloc(storage, entry_count,
-            sizeof(*entries), _Alignof(qa_inventory_entry), error) : NULL;
-        if (entry_count && (!definitions || !entries))
+        view->definitions = view->entry_count ? qa_unified_frame_lease_alloc(view->storage, view->entry_count,
+            sizeof(*view->definitions), _Alignof(qa_item_definition), error) : NULL;
+        view->entries = view->entry_count ? qa_unified_frame_lease_alloc(view->storage, view->entry_count,
+            sizeof(*view->entries), _Alignof(qa_inventory_entry), error) : NULL;
+        if (view->entry_count && (!view->definitions || !view->entries))
             okay = application_fail(error, QA_ERROR_MEMORY, "Retaining actual selected arsenal grant");
     }
     if (okay) {
-        okay = qa_inventory_entries(owner->inventory, actor, entries, entry_count,
+        okay = qa_inventory_entries(owner->inventory, actor, view->entries, view->entry_count,
             &written, error) && supply_current(pair, actor, error);
-        if (okay && written > entry_count)
+        if (okay && written > view->entry_count)
             okay = application_fail(error, QA_ERROR_ARGUMENT, "Selected grant inventory changed extent");
-        if (okay) entry_count = written;
+        if (okay) view->entry_count = written;
     }
-    for (size_t i = 0; okay && i < entry_count; ++i) {
+    for (size_t i = 0; okay && i < view->entry_count; ++i) {
         qa_item_definition definition;
         qa_error lookup = {0};
         bool found = qa_inventory_source_definition_read(owner->inventory, actor,
-            arsenal->owner, entries[i].item, &definition, &lookup);
+            pair->arsenal->owner, view->entries[i].item, &definition, &lookup);
         okay = supply_current(pair, actor, error);
         if (!okay) break;
         if (!found) {
@@ -1399,20 +1410,55 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
             okay = false;
             break;
         }
-        definitions[definition_count++] = definition;
+        view->definitions[view->definition_count++] = definition;
+    }
+    return okay;
+}
+static bool cheat_weapon(const cheat_inventory *view, qa_item_id item) {
+    for (size_t i = 0; i < view->definition_count; ++i)
+        if (view->definitions[i].weapon && view->definitions[i].item == item) return true;
+    return false;
+}
+static bool cheat_arsenal_item(const cheat_inventory *view, qa_item_id item) {
+    for (size_t i = 0; i < view->definition_count; ++i)
+        if (view->definitions[i].weapon && (view->definitions[i].item == item || view->definitions[i].ammo == item)) return true;
+    return false;
+}
+bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
+    qa_q1_cheat_grant category, bool *handled, qa_error *error) {
+    if (!handled || (category != QA_Q1_CHEAT_WEAPONS && category != QA_Q1_CHEAT_AMMO))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected arsenal grant has no category or result");
+    *handled = false;
+    supply_pair *pair;
+    if (!cheat_pair(context, actor, &pair, error)) return false;
+    if (!pair) return true;
+    application_supplies *owner = pair->owner;
+    ++owner->calls;
+    cheat_inventory view = {0};
+    bool okay = cheat_inventory_read(pair, actor, &view, error);
+    const application_q3_catalog_weapon *original = NULL; size_t original_count = 0;
+    if (okay && pair->source->kind == APPLICATION_PROVIDER_QVM) {
+        struct application_q3_guest *engine = q3g_engine(pair->source);
+        if (!engine || !engine->game)
+            okay = application_fail(error, QA_ERROR_NOT_FOUND, "Original cheat grant lost its actual source catalog");
+        else okay = application_q3_catalog_weapons(engine->game->catalog, &original, &original_count, error);
     }
     bool declared = false;
-    for (size_t i = 0; okay && i < entry_count; ++i) {
+    for (size_t i = 0; okay && i < view.entry_count; ++i) {
         bool weapon = false, ammunition = false;
-        for (size_t j = 0; j < definition_count; ++j) {
-            const qa_item_definition *definition = definitions + j;
-            if (definition->owner != arsenal->owner || !definition->weapon) continue;
+        for (size_t j = 0; j < view.definition_count; ++j) {
+            const qa_item_definition *definition = view.definitions + j;
+            if (definition->owner != pair->arsenal->owner || !definition->weapon) continue;
             declared = true;
-            weapon |= definition->item == entries[i].item;
-            ammunition |= definition->ammo && definition->ammo == entries[i].item;
+            weapon |= definition->item == view.entries[i].item;
+            ammunition |= definition->ammo && definition->ammo == view.entries[i].item;
         }
         if (category == QA_Q1_CHEAT_WEAPONS ? !weapon : weapon || !ammunition) continue;
-        qa_inventory_entry entry = entries[i];
+        qa_inventory_entry entry = view.entries[i];
+        bool native = false;
+        for (size_t j = 0; j < original_count; ++j)
+            if (original[j].item == entry.item || original[j].ammo == entry.item) { native = true; break; }
+        if (native) continue;
         entry.count = category == QA_Q1_CHEAT_WEAPONS ? 1 : entry.capacity;
         okay = qa_inventory_configure(owner->inventory, actor, &entry, NULL, NULL, error) &&
             supply_current(pair, actor, error);
@@ -1421,9 +1467,187 @@ bool application_supplies_cheat_arsenal(void *context, qa_actor_id actor,
         okay = application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected cheat grant has no admitted arsenal definitions");
     if (okay) *handled = true;
-    qa_unified_frame_lease_release(storage);
+    qa_unified_frame_lease_release(view.storage);
     supplies_leave(owner);
     return okay;
+}
+static bool cheat_name_equal(qa_arena *storage, const char *name, const char *requested,
+    bool *out, qa_error *error) {
+    qa_buffer lower = {0};
+    if (!qa_utf8_lower_arena((qa_bytes){(const uint8_t *)name, strlen(name)}, storage, &lower, error)) return false;
+    const char *left = (const char *)lower.data, *right = requested;
+    while (true) {
+        while (*left == ' ' || *left == '_') ++left;
+        while (*right == ' ' || *right == '_') ++right;
+        if (*left != *right) { *out = false; return true; }
+        if (!*left) { *out = true; return true; }
+        ++left; ++right;
+    }
+}
+static bool cheat_quantity(const char *text, bool *present, double *out, qa_error *error) {
+    *present = false;
+    const char *digits = text;
+    if (*digits == '-') ++digits;
+    if (!*digits) return true;
+    for (const char *at = digits; *at; ++at) if (*at < '0' || *at > '9') return true;
+    if (!qa_parse_atof(text, out, error)) return false;
+    *present = true; return true;
+}
+static bool cheat_write(supply_pair *pair, qa_actor_id actor, qa_inventory_entry entry,
+    double count, qa_error *error) {
+    entry.count = fmax(0, count);
+    entry.capacity = fmax(entry.capacity, entry.count);
+    return qa_inventory_configure(pair->owner->inventory, actor, &entry, NULL, NULL, error) &&
+        supply_current(pair, actor, error);
+}
+static bool cheat_request(qa_unified_frame_lease *storage, size_t argc,
+    const char *const *argv, char **out, qa_error *error) {
+    size_t bytes = 1;
+    for (size_t i = 0; i < argc; ++i) {
+        size_t length = strlen(argv[i]);
+        size_t separator = i != 0;
+        if (bytes > SIZE_MAX - separator || length > SIZE_MAX - bytes - separator)
+            return application_fail(error, QA_ERROR_MEMORY, "Selected grant name exceeds native extent");
+        bytes += length + separator;
+    }
+    char *joined = qa_unified_frame_lease_alloc(storage, bytes, 1, 1, error);
+    if (!joined || !qa_text_join_words(argv, argc, joined, bytes, error)) return false;
+    qa_buffer lower = {0};
+    if (!qa_utf8_lower_arena((qa_bytes){(const uint8_t *)joined, strlen(joined)},
+        qa_unified_frame_lease_arena(storage), &lower, error)) return false;
+    *out = (char *)lower.data; return true;
+}
+static bool cheat_missing(supply_pair *pair, qa_actor_id actor, qa_unified_frame_lease *storage,
+    const char *requested, qa_error *error) {
+    static const char prefix[] = "No selected-arsenal grant mapping for ";
+    size_t length = strlen(requested);
+    if (length > SIZE_MAX - sizeof(prefix) - 1)
+        return application_fail(error, QA_ERROR_MEMORY, "Selected grant message exceeds native extent");
+    size_t bytes = sizeof(prefix) + length + 1;
+    char *message = qa_unified_frame_lease_alloc(storage, bytes, 1, 1, error);
+    if (!message) return false;
+    snprintf(message, bytes, "%s%s\n", prefix, requested);
+    qa_command_context context = {.owner = pair->source->owner, .actor = actor,
+        .dialect = pair->source->component.clock.kind, .origin = QA_COMMAND_SERVER};
+    return qa_application_log_emit(pair->owner->application, &context, message,
+        QA_APPLICATION_LOG_CONSOLE, error);
+}
+bool application_supplies_cheat_ammo(void *context, qa_actor_id actor, qa_item_id source,
+    bool set, int32_t amount, qa_error *error) {
+    supply_pair *pair;
+    if (!cheat_pair(context, actor, &pair, error)) return false;
+    if (!pair) return true;
+    size_t index = mapping_index(pair->profile.ammo, pair->profile.ammo_count, source);
+    if (index == SIZE_MAX) return true;
+    const qa_supply_mapping *grant = pair->profile.ammo + index;
+    ++pair->owner->calls;
+    bool okay = true;
+    for (size_t i = 0; okay && i < grant->count; ++i) {
+        qa_item_id item = grant->destinations[i];
+        if (item == source) continue;
+        qa_inventory_entry entry;
+        okay = qa_inventory_entry_read(pair->owner->inventory, actor, item, &entry, error) &&
+            supply_current(pair, actor, error);
+        if (okay) okay = cheat_write(pair, actor, entry,
+            set ? amount : qa_number_wrap_i32(entry.count + amount), error);
+    }
+    supplies_leave(pair->owner); return okay;
+}
+bool application_supplies_cheat_item(void *context, qa_actor_id actor, size_t argc,
+    const char *const *argv, bool *handled, qa_error *error) {
+    if (!handled || (argc && !argv))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected grant has no arguments or result");
+    *handled = false;
+    supply_pair *pair;
+    if (!cheat_pair(context, actor, &pair, error)) return false;
+    if (!pair || !argc) return true;
+    application_supplies *owner = pair->owner;
+    ++owner->calls;
+    cheat_inventory view = {.storage = application_control_storage_acquire(owner->application, error)};
+    bool quantity_present = false; double quantity = 0; char *requested = NULL;
+    bool okay = view.storage && cheat_quantity(argv[argc - 1], &quantity_present, &quantity, error) &&
+        cheat_request(view.storage, argc - quantity_present, argv, &requested, error);
+    if (!okay) goto done;
+    if (okay && pair->arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        okay = qa_q3_selected_holdable_give(pair->arsenal->state.q3, actor, requested, handled, error) &&
+            supply_current(pair, actor, error);
+        if (!okay || *handled) goto done;
+    }
+    if (okay) okay = cheat_inventory_read(pair, actor, &view, error);
+    qa_strings *strings = qa_session_strings(owner->application->session);
+    qa_item_id named = 0;
+    qa_arena *storage = qa_unified_frame_lease_arena(view.storage);
+    for (size_t i = 0; okay && !named && i < view.definition_count; ++i) {
+        const qa_item_definition *definition = view.definitions + i;
+        if (!cheat_arsenal_item(&view, definition->item)) continue;
+        const char *identity = qa_strings_cstr(strings, definition->item); bool matches = false;
+        okay = (!identity || cheat_name_equal(storage, identity, requested, &matches, error)) &&
+            (matches || !definition->label || cheat_name_equal(storage, definition->label, requested, &matches, error));
+        if (okay && matches) named = definition->item;
+    }
+    for (size_t i = 0; okay && i < view.entry_count; ++i) {
+        qa_inventory_entry entry = view.entries[i];
+        if (!cheat_arsenal_item(&view, entry.item)) continue;
+        bool matches = entry.item == named;
+        const char *identity = qa_strings_cstr(strings, entry.item);
+        if (!matches && identity) {
+            const char *base = strrchr(identity, '/');
+            okay = cheat_name_equal(storage, identity, requested, &matches, error) &&
+                (matches || cheat_name_equal(storage, base ? base + 1 : identity, requested, &matches, error));
+        }
+        if (okay && matches) {
+            okay = cheat_write(pair, actor, entry, cheat_weapon(&view, entry.item) ? 1 :
+                quantity_present ? quantity : entry.capacity, error);
+            if (okay) *handled = true;
+            goto done;
+        }
+    }
+    if (okay) {
+        qa_item_id requested_item = qa_strings_find(strings,
+            (qa_bytes){(const uint8_t *)requested, strlen(requested)});
+        size_t weapon_index = mapping_index(pair->profile.weapons, pair->profile.weapon_count, requested_item);
+        size_t ammo_index = mapping_index(pair->profile.ammo, pair->profile.ammo_count, requested_item);
+        bool weapon = weapon_index != SIZE_MAX;
+        const qa_supply_mapping *grant = weapon ? pair->profile.weapons + weapon_index :
+            ammo_index != SIZE_MAX ? pair->profile.ammo + ammo_index : NULL;
+        const qa_q2_item_definition *source_definition = pair->source->kind == APPLICATION_PROVIDER_Q2 ?
+            qa_q2_item_lookup(pair->source->state.q2, requested) : NULL;
+        if (!grant) {
+            if ((source_definition && (source_definition->kind == QA_Q2_ITEM_WEAPON || source_definition->kind == QA_Q2_ITEM_AMMO)) ||
+                !strncmp(requested, "q1:weapon/", 10) || !strncmp(requested, "q1:ammo/", 8) ||
+                !strncmp(requested, "rogue:ammo/", 11)) {
+                okay = cheat_missing(pair, actor, view.storage,
+                    source_definition ? source_definition->name : requested, error);
+                if (okay) *handled = true;
+            }
+            goto done;
+        }
+        for (size_t i = 0; okay && i < grant->count; ++i) {
+            qa_inventory_entry entry;
+            okay = qa_inventory_entry_read(owner->inventory, actor, grant->destinations[i], &entry, error) &&
+                supply_current(pair, actor, error);
+            if (okay) okay = cheat_write(pair, actor, entry, weapon ? 1 : quantity_present ? quantity :
+                source_definition && source_definition->kind == QA_Q2_ITEM_AMMO ? entry.count + source_definition->quantity : entry.capacity, error);
+        }
+        if (okay && weapon && pair->source->kind == APPLICATION_PROVIDER_Q2) {
+            const qa_q2_item_definition *ammo = source_definition && source_definition->ammo ?
+                qa_q2_item_lookup(pair->source->state.q2, qa_strings_cstr(strings, source_definition->ammo)) : NULL;
+            size_t index = ammo ? mapping_index(pair->profile.ammo, pair->profile.ammo_count, ammo->item) : SIZE_MAX;
+            if (index != SIZE_MAX) {
+                qa_q2_combat_rules rules;
+                okay = qa_q2_combat_rules_read(pair->source->state.q2, &rules) && supply_current(pair, actor, error);
+                const qa_supply_mapping *ammo_grant = pair->profile.ammo + index;
+                for (size_t i = 0; okay && i < ammo_grant->count; ++i)
+                    okay = qa_inventory_give(owner->inventory, actor, ammo_grant->destinations[i],
+                        rules.deathmatch_flags & 8192u ? 1000 : ammo->quantity, NULL, error) && supply_current(pair, actor, error);
+            }
+            if (okay) okay = weapon_granted(pair, actor, grant->destinations, grant->count, QA_PICKUP_SWITCH_IF_BETTER, error);
+        }
+        if (okay) *handled = true;
+    }
+done:
+    qa_unified_frame_lease_release(view.storage);
+    supplies_leave(owner); return okay;
 }
 static bool starter_count(supply_pair *pair, qa_actor_id actor, qa_item_id item,
     double count, bool clamp, qa_error *error) {

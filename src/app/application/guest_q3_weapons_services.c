@@ -2,11 +2,11 @@
 #include "guest_q3_catalog.h"
 #include "guest_projection_private.h"
 #include "guest_input_private.h"
+#include "control_frame.h"
 #include "supplies.h"
 #include "equipment_runtime.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
-#include <ctype.h>
 
 static qa_application *application(application_q3_weapons_services *s)
 { return s->role->engine->provider->application; }
@@ -935,17 +935,6 @@ static bool inventory_read(application_q3_weapons_services *s, qa_actor_id actor
     return qa_inventory_entries(inventory, actor, out->entries, count, &out->entry_count, error) &&
         selection_current(s, actor, out->provider, error);
 }
-static bool weapon_item(const selected_inventory *view, qa_item_id item)
-{
-    for (size_t i = 0; i < view->weapon_count; ++i) if (view->weapons[i].item == item) return true;
-    return false;
-}
-static bool arsenal_item(const selected_inventory *view, qa_item_id item)
-{
-    for (size_t i = 0; i < view->weapon_count; ++i)
-        if (view->weapons[i].item == item || view->weapons[i].ammo == item) return true;
-    return false;
-}
 static bool catalog_read(application_q3_weapons_services *s, qa_arena *storage,
     application_q3_weapon_catalog_entry **out, size_t *count, qa_error *error)
 {
@@ -963,74 +952,36 @@ static bool catalog_read(application_q3_weapons_services *s, qa_arena *storage,
 }
 static bool give_category(void *context, qa_actor_id actor, application_q3_weapon_grant category, qa_error *error)
 {
-    application_q3_weapons_services *s = context; selected_inventory view = {0}; bool present = false;
+    application_q3_weapons_services *s = context; q3_weapon_actor source;
+    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     ++s->calls;
-    bool ok = inventory_read(s, actor, &view, &present, error);
-    application_q3_weapon_catalog_entry *catalog = NULL; size_t count = 0;
-    if (ok && present) ok = catalog_read(s, &view.storage, &catalog, &count, error);
-    for (size_t i = 0; ok && present && i < view.entry_count; ++i) {
-        qa_inventory_entry entry = view.entries[i]; bool original = false;
-        if (!arsenal_item(&view, entry.item) || ((category == APPLICATION_Q3_GIVE_WEAPONS) != weapon_item(&view, entry.item))) continue;
-        for (size_t j = 0; j < count; ++j)
-            if (entry.item == catalog[j].item || entry.item == catalog[j].ammo) { original = true; break; }
-        if (original) continue;
-        entry.count = category == APPLICATION_Q3_GIVE_WEAPONS ? 1 : entry.capacity;
-        ok = qa_inventory_configure(application(s)->inventory, actor, &entry, NULL, NULL, error) &&
-            selection_current(s, actor, view.provider, error);
-    }
-    inventory_free(&view); --s->calls; return ok;
-}
-static bool normalized(const char *name, const char *requested)
-{
-    while (true) {
-        while (*name == ' ' || *name == '_') ++name;
-        while (*requested == ' ' || *requested == '_') ++requested;
-        if (tolower((unsigned char)*name) != tolower((unsigned char)*requested)) return false;
-        if (!*name) return true;
-        ++name; ++requested;
-    }
+    bool handled;
+    bool ok = application_supplies_cheat_arsenal(s->role->engine->provider, actor,
+        category == APPLICATION_Q3_GIVE_WEAPONS ? QA_Q1_CHEAT_WEAPONS : QA_Q1_CHEAT_AMMO,
+        &handled, error);
+    --s->calls; return ok;
 }
 static bool give_named(void *context, qa_actor_id actor, qa_bytes bytes, bool *handled, qa_error *error)
 {
-    application_q3_weapons_services *s = context;
+    application_q3_weapons_services *s = context; q3_weapon_actor source;
     if (!handled || (bytes.size && !bytes.data) || bytes.size == SIZE_MAX ||
         (bytes.size && memchr(bytes.data, 0, bytes.size)))
         return application_fail(error, QA_ERROR_FORMAT, "Selected grant name is not a counted Source string");
+    if (!q3_weapon_services_source(s, actor, &source, error)) return false;
     *handled = false;
-    char *name = malloc(bytes.size + 1);
-    if (!name) return application_fail(error, QA_ERROR_MEMORY, "Retaining original named weapon grant");
-    if (bytes.size) memcpy(name, bytes.data, bytes.size);
-    name[bytes.size] = 0;
-    ++s->calls;
-    selected_inventory view = {0}; bool present = false;
-    application_provider *arsenal = NULL;
-    bool ok = native_selected(s, actor, &arsenal, &present, error);
-    if (ok && present && arsenal->kind == APPLICATION_PROVIDER_Q3) {
-        ok = qa_q3_selected_holdable_give(arsenal->state.q3, actor, name, handled, error) &&
-            selection_current(s, actor, arsenal, error);
-        if (!ok || *handled) { --s->calls; free(name); return ok; }
+    qa_unified_frame_lease *storage = application_control_storage_acquire(application(s), error);
+    if (!storage) return false;
+    char *name = qa_unified_frame_lease_alloc(storage, bytes.size + 1, 1, 1, error);
+    bool ok = name != NULL;
+    if (ok) {
+        if (bytes.size) memcpy(name, bytes.data, bytes.size);
+        name[bytes.size] = 0;
+        const char *arguments[] = {name};
+        ++s->calls;
+        ok = application_supplies_cheat_item(s->role->engine->provider, actor, 1, arguments, handled, error);
+        --s->calls;
     }
-    if (ok) ok = inventory_read(s, actor, &view, &present, error);
-    /* QVM passes its original ArgConcat string as one argument, so quantity
-     * is absent here, matching the donor's giveSelectedItem(actor, [name]). */
-    qa_item_id named = 0;
-    for (size_t i = 0; ok && present && !named && i < view.weapon_count; ++i) {
-        const char *identity = qa_strings_cstr(qa_session_strings(application(s)->session), view.weapons[i].item);
-        if ((identity && normalized(identity, name)) || (view.weapons[i].label && normalized(view.weapons[i].label, name))) named = view.weapons[i].item;
-    }
-    for (size_t i = 0; ok && present && i < view.entry_count; ++i) {
-        qa_inventory_entry entry = view.entries[i];
-        if (!arsenal_item(&view, entry.item)) continue;
-        const char *identity = qa_strings_cstr(qa_session_strings(application(s)->session), entry.item);
-        const char *base = identity ? strrchr(identity, '/') : NULL;
-        if (entry.item != named && (!identity || (!normalized(identity, name) && !normalized(base ? base + 1 : identity, name)))) continue;
-        entry.count = weapon_item(&view, entry.item) ? 1 : entry.capacity;
-        ok = qa_inventory_configure(application(s)->inventory, actor, &entry, NULL, NULL, error) &&
-            selection_current(s, actor, view.provider, error);
-        if (ok) *handled = true;
-        break;
-    }
-    inventory_free(&view); --s->calls; free(name); return ok;
+    qa_unified_frame_lease_release(storage); return ok;
 }
 static bool completed(void *context, qa_actor_id actor, bool reached, qa_error *error)
 {

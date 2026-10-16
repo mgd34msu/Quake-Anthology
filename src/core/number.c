@@ -57,6 +57,14 @@ int32_t qa_source_to_i32(double value) {
         ? (int32_t)value : INT32_MIN;
 }
 
+int32_t qa_number_wrap_i32(double value) {
+    if (!isfinite(value)) return 0;
+    double word = fmod(trunc(value), 4294967296.0);
+    if (word < 0) word += 4294967296.0;
+    return word <= INT32_MAX ? (int32_t)word :
+        -1 - (int32_t)(4294967295.0 - word);
+}
+
 static unsigned number_byte(qa_number_cursor *cursor) {
     if (cursor->offset > cursor->text.size) {
         cursor->overrun = true;

@@ -67,12 +67,10 @@ static bool location_read(const qa_json_document *doc, qa_json_id object,
     }
     if (!qa_json_string_equal(doc, kind, "register"))
         return application_fail(error, QA_ERROR_FORMAT, "Native KEX armor location is neither source register nor source stack");
-    static const char *const names[] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
-        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
-    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
-        if (i != QA_NATIVE_RSP && qa_json_string_equal(doc, qa_json_get(doc, object, "register"), names[i])) {
-            out->reg = (qa_native_register)i; return true;
-        }
+    uint8_t storage_bytes[8]; qa_bytes name;
+    if (qa_json_string_into(doc, qa_json_get(doc, object, "register"), storage_bytes,
+            sizeof(storage_bytes), &name, error) && qa_native_register_find(name, &out->reg) &&
+        out->reg != QA_NATIVE_RSP) return true;
     return application_fail(error, QA_ERROR_FORMAT, "Native KEX armor location has an unqualified processor register");
 }
 static bool value_read(struct application_q2_kex_damage *p, const qa_native_processor_state *state,

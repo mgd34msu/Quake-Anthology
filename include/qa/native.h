@@ -692,6 +692,8 @@ typedef enum qa_native_register {
     QA_NATIVE_REGISTER_COUNT
 } qa_native_register;
 
+bool qa_native_register_find(qa_bytes, qa_native_register *);
+
 typedef struct qa_native_processor_state {
     uint64_t registers[QA_NATIVE_REGISTER_COUNT];
     uint8_t simd[16][16]; /* XMM0-7 on i386; XMM0-15 on x86-64. */

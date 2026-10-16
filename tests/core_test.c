@@ -2242,6 +2242,12 @@ static void test_source_scalars(void)
     CHECK(qa_source_to_i32(INFINITY) == INT32_MIN);
     CHECK(qa_source_to_i32(NAN) == INT32_MIN);
     CHECK(qa_source_to_i32(1.9) == 1 && qa_source_to_i32(-1.9) == -1);
+    CHECK(qa_number_wrap_i32(1.9) == 1 && qa_number_wrap_i32(-1.9) == -1);
+    CHECK(qa_number_wrap_i32(2147483648.0) == INT32_MIN);
+    CHECK(qa_number_wrap_i32(4294967295.0) == -1);
+    CHECK(qa_number_wrap_i32(4294967296.0) == 0);
+    CHECK(qa_number_wrap_i32(-4294967297.0) == -1);
+    CHECK(qa_number_wrap_i32(INFINITY) == 0 && qa_number_wrap_i32(NAN) == 0);
     const double values[] = {0.0, -0.0, 0.5, 100.0, 16777217.0, -16777217.0,
         INT32_MIN, INT32_MAX, 0.66};
     for (size_t i = 0; i < sizeof(values) / sizeof(*values); ++i) {

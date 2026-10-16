@@ -2,6 +2,17 @@
 #include "guest/internal.h"
 #include "qa/source_save.h"
 
+bool qa_native_register_find(qa_bytes name, qa_native_register *out)
+{
+    static const char *const names[] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
+    for (size_t i = 0; i < QA_NATIVE_REGISTER_COUNT; ++i)
+        if (name.size == strlen(names[i]) && !memcmp(name.data, names[i], name.size)) {
+            *out = (qa_native_register)i; return true;
+        }
+    return false;
+}
+
 typedef struct native_signature_buffer {
     qa_arena storage;
     uint8_t *data;

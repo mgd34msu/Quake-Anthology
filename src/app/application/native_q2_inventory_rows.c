@@ -679,6 +679,22 @@ static bool print(void *context, qa_actor_id actor, const char *text, qa_error *
     --owner->engine->calls; --owner->calls;
     return okay;
 }
+static bool give(void *context, qa_actor_id actor, bool weapons, qa_error *error) {
+    application_native_q2_inventory_rows *owner = context;
+    bool handled;
+    return application_supplies_cheat_arsenal(owner->engine->provider, actor,
+        weapons ? QA_Q1_CHEAT_WEAPONS : QA_Q1_CHEAT_AMMO, &handled, error);
+}
+static bool give_item(void *context, qa_actor_id actor, const char *const *arguments,
+    size_t count, bool *handled, qa_error *error) {
+    application_native_q2_inventory_rows *owner = context;
+    return application_supplies_cheat_item(owner->engine->provider, actor, count, arguments, handled, error);
+}
+static bool give_ammo(void *context, qa_actor_id actor, qa_item_id item,
+    bool set, int32_t amount, qa_error *error) {
+    application_native_q2_inventory_rows *owner = context;
+    return application_supplies_cheat_ammo(owner->engine->provider, actor, item, set, amount, error);
+}
 
 bool application_native_q2_inventory_rows_create(struct application_native_q2 *engine,
     application_native_q2_inventory_rows **out, qa_error *error) {
@@ -709,5 +725,5 @@ static size_t storage_bytes(void *context)
 application_native_q2_inventory_scanner_options application_native_q2_inventory_rows_options(
     application_native_q2_inventory_rows *owner) {
     return (application_native_q2_inventory_scanner_options){.context = owner,.storage_bytes=storage_bytes,
-        .rows = rows, .action = action, .print = print};
+        .rows = rows, .action = action, .print = print, .give = give, .give_item = give_item, .give_ammo = give_ammo};
 }

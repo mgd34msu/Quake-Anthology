@@ -42,6 +42,9 @@ typedef struct application_native_q2_inventory_scanner_options {
         size_t *, bool *present, qa_error *);
     bool (*action)(void *, qa_actor_id, qa_item_id, qa_item_action, qa_error *);
     bool (*print)(void *, qa_actor_id, const char *, qa_error *);
+    bool (*give)(void *, qa_actor_id, bool weapons, qa_error *);
+    bool (*give_item)(void *, qa_actor_id, const char *const *, size_t, bool *handled, qa_error *);
+    bool (*give_ammo)(void *, qa_actor_id, qa_item_id, bool set, int32_t amount, qa_error *);
 } application_native_q2_inventory_scanner_options;
 typedef struct application_native_q2_inventory_readout {
     application_native_q2_inventory_row *rows;

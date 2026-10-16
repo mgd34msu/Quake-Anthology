@@ -50,16 +50,12 @@ static bool location_read(const qa_json_document *document, qa_json_id id,
         }
     if (!found) return fail(error, QA_ERROR_FORMAT, "Native region field has no scalar storage");
     if (qa_json_string_equal(document, kind, "register")) {
-        static const char *const registers[] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
-            "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"};
-        qa_json_id name = qa_json_get(document, id, "register"); found = false;
-        for (uint32_t i = 0; i < QA_NATIVE_REGISTER_COUNT; ++i)
-            if (i != QA_NATIVE_RSP && qa_json_string_equal(document, name, registers[i])) {
-                value.index = i; found = true; break;
-            }
-        if (!found || (recipe->target.pointer_bytes == 4 && (value.bytes > 4 || value.index >= QA_NATIVE_R8)))
+        uint8_t register_text[8]; qa_bytes name; qa_native_register reg;
+        if (!qa_json_string_into(document, qa_json_get(document, id, "register"),
+                register_text, sizeof(register_text), &name, error) || !qa_native_register_find(name, &reg) ||
+            reg == QA_NATIVE_RSP || (recipe->target.pointer_bytes == 4 && (value.bytes > 4 || reg >= QA_NATIVE_R8)))
             return fail(error, QA_ERROR_FORMAT, "Native region register exceeds its source architecture");
-        value.kind = REGION_REGISTER;
+        value.index = (uint32_t)reg; value.kind = REGION_REGISTER;
     } else {
         uint64_t offset;
         if (!integer(document, id, "offset", &offset, error)) return false;

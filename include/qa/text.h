@@ -101,6 +101,8 @@ int32_t qa_parse_decimal_i32_cursor(qa_number_cursor *, qa_decimal_rule, bool co
 /* Original x86 truncation, with INT32_MIN for nonfinite or out-of-range
  * operands. Float source arithmetic rounds before this boundary. */
 int32_t qa_source_to_i32(double value);
+/* Truncate to the low 32 bits at an explicitly wrapping integer boundary. */
+int32_t qa_number_wrap_i32(double value);
 /* Quake PF_ftos: integral values use %d; all others use %5.1f. */
 bool qa_format_quake_float(float value, char out[64], qa_error *error);
 /* Q3 bg_lib AddInt spelling, including its wrapped INT32_MIN digit bytes.

@@ -276,6 +276,11 @@ static bool inventory_regions(qa_native_declaration *declaration, const qa_nativ
         ok = inventory_region(declaration, module,
             qa_json_get(declaration->document, drop, "inventory"), "entry", "admitted",
             "/drop/inventory/admission", error);
+    qa_json_id give = qa_json_get(declaration->document,
+        qa_json_get(declaration->document, primary, "commands"), "give");
+    if (ok && give != QA_JSON_NONE)
+        ok = inventory_region(declaration, module, give, "entry", "weapons", "/commands/give/weapons", error) &&
+            inventory_region(declaration, module, give, "entry", "ammo", "/commands/give/ammo", error);
     return ok;
 }
 static bool collect_regions(qa_native_declaration *declaration, const qa_native_module *module,

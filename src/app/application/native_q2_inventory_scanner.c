@@ -10,6 +10,8 @@
 #include <math.h>
 
 typedef struct inventory_write_field { uint32_t offset, bytes; } inventory_write_field;
+enum { INVENTORY_ENTRY_GIVE = 8, INVENTORY_GIVE_WEAPONS = 6,
+    INVENTORY_GIVE_AMMO, INVENTORY_GIVE_UNKNOWN, INVENTORY_GIVE_AMMO_GRANT };
 typedef struct inventory_selection {
     struct inventory_selection *next;
     qa_actor_id actor;
@@ -28,7 +30,11 @@ typedef struct inventory_frame {
     struct inventory_frame *previous;
     qa_actor_id actor;
     int32_t flags;
-    bool named, dropping, has_named_row;
+    bool named, dropping, giving, has_named_row;
+    struct inventory_region *ammo_region;
+    application_native_q2_inventory_source ammo_source;
+    uint32_t ammo_index;
+    int32_t ammo_before;
     application_native_q2_inventory_row named_row;
     qa_buffer requested;
     qa_arena requested_storage;
@@ -49,6 +55,8 @@ typedef struct inventory_region {
     uint32_t id;
     unsigned kind;
     int direction;
+    qa_native_register descriptor;
+    bool set;
 } inventory_region;
 struct application_native_q2_inventory_scanner {
     struct application_native_q2 *engine;
@@ -57,7 +65,7 @@ struct application_native_q2_inventory_scanner {
     application_native_q2_inventory_scanner_options options;
     inventory_write_field *writes;
     size_t write_count;
-    inventory_entry entries[8];
+    inventory_entry entries[9];
     inventory_region *regions;
     size_t entry_count, region_count;
     qa_arena readout_storage;
@@ -385,7 +393,8 @@ static bool entry_call(void *opaque, qa_native_instance *actual, qa_native_entry
         return application_fail(e, QA_ERROR_ARGUMENT, "Native scanner entry lost its exact source invocation");
     if (entry->kind == 7) return drop_lookup(o, entry, arguments, count, result, e);
     inventory_frame frame = {.previous = o->frame, .flags = -1,
-        .named = entry->kind == 4 || entry->kind == 5, .dropping = entry->kind >= 5};
+        .named = entry->kind == 4 || entry->kind == 5,
+        .dropping = entry->kind == 5 || entry->kind == 6, .giving = entry->kind == INVENTORY_ENTRY_GIVE};
     if (count > 1 && arguments[1].type == QA_NATIVE_I32) frame.flags = arguments[1].as.i32;
     if (arguments[0].as.address && !qa_native_host_source_actor(o->engine->provider->state.native.host,
         arguments[0].as.address, true, &frame.actor, e)) return false;
@@ -523,6 +532,57 @@ static bool drop_lookup(application_native_q2_inventory_scanner *o, inventory_en
     application_native_q2_inventory_readout_free(&r);
     return ok;
 }
+static bool give_region(application_native_q2_inventory_scanner *o, inventory_region *region,
+    inventory_frame *frame, const qa_native_region_event *event,
+    qa_native_region_decision *decision, qa_error *e)
+{
+    if (!frame->giving) return true;
+    if (region->kind == INVENTORY_GIVE_AMMO_GRANT && event->phase == QA_NATIVE_REGION_ENTER) {
+        qa_native_address table, descriptor = event->state.registers[region->descriptor];
+        if (o->pointer_bytes == 4) descriptor = (uint32_t)descriptor;
+        if (!address(o, o->item_table, &table, e)) return false;
+        if (descriptor < table || (descriptor - table) % o->item_stride ||
+            (descriptor - table) / o->item_stride >= o->item_count ||
+            (descriptor - table) / o->item_stride >= o->count)
+            return application_fail(e, QA_ERROR_FORMAT, "Native ammunition grant has no actual source descriptor");
+        frame->ammo_index = (uint32_t)((descriptor - table) / o->item_stride);
+        if (!source(o, frame->actor, &frame->ammo_source, e) ||
+            !read_word(o, frame->ammo_source.client + o->inventory + (uint64_t)frame->ammo_index * 4,
+                &frame->ammo_before, e)) return false;
+        frame->ammo_region = region;
+        return true;
+    }
+    bool category = region->kind == INVENTORY_GIVE_WEAPONS || region->kind == INVENTORY_GIVE_AMMO;
+    if ((category && event->phase != QA_NATIVE_REGION_JOIN) ||
+        (region->kind == INVENTORY_GIVE_UNKNOWN && event->phase != QA_NATIVE_REGION_ENTER) ||
+        (region->kind == INVENTORY_GIVE_AMMO_GRANT &&
+            (event->phase != QA_NATIVE_REGION_JOIN || frame->ammo_region != region))) return true;
+    if (!qa_actors_get(qa_session_actors(o->engine->provider->application->session), frame->actor)) return true;
+    const qa_native_region_event *previous = o->command_event;
+    qa_actor_id previous_actor = o->command_actor;
+    o->command_event = event; o->command_actor = frame->actor;
+    bool ok;
+    if (category) ok = o->options.give(o->options.context, frame->actor,
+        region->kind == INVENTORY_GIVE_WEAPONS, e);
+    else if (region->kind == INVENTORY_GIVE_UNKNOWN) {
+        const qa_command_tokens *arguments = &o->engine->arguments;
+        bool handled = false;
+        ok = o->options.give_item(o->options.context, frame->actor,
+            arguments->count > 1 ? (const char *const *)(arguments->values + 1) : NULL,
+            arguments->count ? arguments->count - 1 : 0, &handled, e);
+        if (ok && handled) decision->action = QA_NATIVE_REGION_SKIP_TO_JOIN;
+    } else {
+        qa_item_id item; int32_t after;
+        frame->ammo_region = NULL;
+        ok = application_native_q2_inventory_source_current(o->engine, &frame->ammo_source, e) &&
+            read_word(o, frame->ammo_source.client + o->inventory + (uint64_t)frame->ammo_index * 4, &after, e) &&
+            application_native_q2_inventory_item(o->engine, frame->ammo_index, &item, e) &&
+            o->options.give_ammo(o->options.context, frame->actor, item, region->set,
+                region->set ? after : qa_i32_sub(after, frame->ammo_before), e);
+    }
+    o->command_event = previous; o->command_actor = previous_actor;
+    return ok;
+}
 static bool region_call(void *opaque, qa_native_instance *actual, const qa_native_region_event *event,
     qa_native_region_decision *decision, qa_error *e)
 {
@@ -530,6 +590,7 @@ static bool region_call(void *opaque, qa_native_instance *actual, const qa_nativ
     if (actual != instance(o) || event->region.id != region->id || !current(o, e)) return false;
     inventory_frame *frame = o->frame;
     if (!frame || !frame->actor.registry || o->evaluating) return true;
+    if (region->kind >= INVENTORY_GIVE_WEAPONS) return give_region(o, region, frame, event, decision, e);
     if (region->kind == 4) {
         if (event->phase != QA_NATIVE_REGION_JOIN || !frame->dropping || frame->named) return true;
         application_native_q2_inventory_readout r = {0}; size_t chosen = SIZE_MAX;
@@ -627,18 +688,28 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
     o->abi = info.image.target.abi; o->pointer_bytes = info.image.target.pointer_bytes;
     if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(o->declaration), &o->document, e)) return false;
     const qa_json_document *d = o->document; qa_json_id root = qa_json_root(d), inventory = qa_json_get(d, root, "inventory");
-    qa_json_id items = qa_json_get(d, qa_json_get(d, root, "commands"), "items"); int64_t empty;
+    qa_json_id commands = qa_json_get(d, root, "commands"), items = qa_json_get(d, commands, "items"); int64_t empty;
+    qa_json_id give = qa_json_get(d, commands, "give"), ammo_grants = qa_json_get(d, give, "ammoGrants");
+    bool gives = qa_json_type(d, give) != QA_JSON_NULL;
+    size_t ammo_grant_count = gives ? qa_json_size(d, ammo_grants) : 0;
+    if (gives && (qa_json_type(d, give) != QA_JSON_OBJECT || qa_json_type(d, ammo_grants) != QA_JSON_ARRAY ||
+        !options->give || !options->give_item || !options->give_ammo))
+        return application_fail(e, QA_ERROR_FORMAT, "Native give commands require their declared grant regions and shared inventory services");
     qa_json_id drop = qa_json_get(d, root, "drop"), callbacks = qa_json_get(d, drop, "callbacks");
     bool drops = qa_json_get(d, drop, "named") != QA_JSON_NONE;
     size_t callback_count = drops ? qa_json_size(d, callbacks) : 0;
     if (drops && qa_json_type(d, callbacks) != QA_JSON_ARRAY)
         return application_fail(e, QA_ERROR_FORMAT, "Native drop callbacks must be an array");
-    if (callback_count > SIZE_MAX / sizeof(*o->regions) - 7)
-        return application_fail(e, QA_ERROR_MEMORY, "Native drop region storage overflows");
+    size_t region_capacity = 7 + (gives ? 3 : 0);
+    if (callback_count > SIZE_MAX - region_capacity || ammo_grant_count > SIZE_MAX - region_capacity - callback_count)
+        return application_fail(e, QA_ERROR_MEMORY, "Native command region count overflows");
+    region_capacity += callback_count + ammo_grant_count;
+    if (region_capacity > SIZE_MAX / sizeof(*o->regions))
+        return application_fail(e, QA_ERROR_MEMORY, "Native command region storage overflows");
     o->regions = qa_arena_alloc(&o->selection_storage,
-        (7 + callback_count) * sizeof(*o->regions), _Alignof(inventory_region), e);
+        region_capacity * sizeof(*o->regions), _Alignof(inventory_region), e);
     if (!o->regions) return false;
-    memset(o->regions, 0, (7 + callback_count) * sizeof(*o->regions));
+    memset(o->regions, 0, region_capacity * sizeof(*o->regions));
     if (!word(d, inventory, "client", &o->client_pointer, e) || !word(d, inventory, "inventory", &o->inventory, e) ||
         !word(d, inventory, "count", &o->count, e) || !word(d, inventory, "cursor", &o->cursor, e) ||
         !qa_json_i64(d, qa_json_get(d, inventory, "empty"), &empty, e) || empty < INT32_MIN || empty > INT32_MAX ||
@@ -706,6 +777,14 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
                 .parameter_count = 1, .result = {.kind = i == 7 ? QA_NATIVE_ADDRESS : QA_NATIVE_VOID, .count = 1}};
         }
     }
+    if (gives) {
+        inventory_entry *entry = o->entries + o->entry_count++; uint32_t rva;
+        entry->owner = o; entry->kind = INVENTORY_ENTRY_GIVE;
+        if (!word(d, give, "entry", &rva, e) || !address(o, rva, &entry->address, e)) return false;
+        entry->parameters[0] = (qa_native_type){.kind = QA_NATIVE_ADDRESS, .count = 1};
+        entry->signature = (qa_native_signature){.abi = o->abi, .parameters = entry->parameters,
+            .parameter_count = 1, .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+    }
     if (!region_profile(o, 0, "/inventory/next/scan", 1, 1, e) ||
         !region_profile(o, 1, "/inventory/previous/scan", 1, -1, e) ||
         !region_profile(o, 2, "/inventory/use/call", 2, 0, e) ||
@@ -722,6 +801,28 @@ bool application_native_q2_inventory_scanner_create(struct application_native_q2
         for (size_t i = 0; i < callback_count; ++i) {
             char path[64]; snprintf(path, sizeof(path), "/drop/callbacks/%zu", i);
             if (!region_profile(o, o->region_count++, path, 5, 0, e)) return false;
+        }
+    }
+    if (gives) {
+        if (!region_profile(o, o->region_count++, "/commands/give/weapons", INVENTORY_GIVE_WEAPONS, 0, e) ||
+            !region_profile(o, o->region_count++, "/commands/give/ammo", INVENTORY_GIVE_AMMO, 0, e) ||
+            !region_profile(o, o->region_count++, "/commands/give/unknown", INVENTORY_GIVE_UNKNOWN, 0, e)) return false;
+        for (size_t i = 0; i < ammo_grant_count; ++i) {
+            char path[80]; snprintf(path, sizeof(path), "/commands/give/ammoGrants/%zu", i);
+            size_t index = o->region_count++;
+            if (!region_profile(o, index, path, INVENTORY_GIVE_AMMO_GRANT, 0, e)) return false;
+            inventory_region *region = o->regions + index;
+            qa_json_id grant = qa_json_at(d, ammo_grants, i), kind = qa_json_get(d, grant, "kind");
+            if (qa_json_string_equal(d, kind, "set")) region->set = true;
+            else if (!qa_json_string_equal(d, kind, "add"))
+                return application_fail(e, QA_ERROR_FORMAT, "Native ammunition grant has no declared set or add semantics");
+            qa_buffer name = {0};
+            bool parsed = qa_json_string(d, qa_json_get(d, grant, "descriptor"), &name, e);
+            if (parsed) parsed = qa_native_register_find((qa_bytes){name.data, name.size}, &region->descriptor);
+            qa_buffer_free(&name);
+            if (!parsed || region->descriptor == QA_NATIVE_RSP ||
+                (o->pointer_bytes == 4 && region->descriptor >= QA_NATIVE_R8))
+                return application_fail(e, QA_ERROR_FORMAT, "Native ammunition descriptor has no valid source register");
         }
     }
     return true;

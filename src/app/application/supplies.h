@@ -34,6 +34,8 @@ bool application_supplies_source_for(void *actual_provider, qa_actor_id, qa_supp
 bool application_supplies_source_spawned(void *actual_provider, qa_actor_id, qa_error *);
 bool application_supplies_cheat_arsenal(void *, qa_actor_id, qa_q1_cheat_grant,
     bool *handled, qa_error *);
+bool application_supplies_cheat_item(void *, qa_actor_id, size_t, const char *const *, bool *handled, qa_error *);
+bool application_supplies_cheat_ammo(void *, qa_actor_id, qa_item_id, bool set, int32_t amount, qa_error *);
 /* Resolve the actual retained selected rule during isolated gameplay import.
  * The pickup codec owns its lease serial and full declarations. */
 bool application_supplies_pickup_rule(application_supplies *,qa_actor_id,qa_actor_owner,
