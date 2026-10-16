@@ -1,5 +1,9 @@
 /* Team Arena cg_consolecmds.c, id Software; GPL-2.0-or-later. */
 #include "cgame_commands.h"
+#include "weapon.h"
+#include "qa/application_equipment.h"
+#include "qa/session.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +35,32 @@ const char *q3n_cgame_command_name(qa_q3_product product,size_t index)
 static unsigned char lower(unsigned char c) { return c>='A' && c<='Z'?(unsigned char)(c+32):c; }
 bool q3n_cgame_command_equal(const char *a,const char *b)
 { while(*a && *b && lower((unsigned char)*a)==lower((unsigned char)*b)) { ++a; ++b; } return !*a && !*b; }
+bool q3n_cgame_weapon_command(const q3n_frame *frame,const qa_command_invocation *command,
+    qa_actor_id actor,qa_error *error)
+{
+    if (actor.registry) {
+        qa_application_item_selection selected;
+        qa_command_result result=qa_application_item_command(frame->application,actor,command,&selected,error);
+        if (result==QA_COMMAND_FAILED) return false;
+        if (result==QA_COMMAND_HANDLED) {
+            if (selected.item && selected.q3_weapon>=0) {
+                bool same_source=selected.provider==frame->source.source_owner;
+                if (frame->compiled) {
+                    const char *requested=qa_strings_cstr(qa_session_strings(
+                        qa_application_session(frame->application)),selected.provider);
+                    const char *receiver=qa_strings_cstr(qa_session_strings(
+                        frame->compiled->source.basis.session),frame->compiled->source.basis.instance);
+                    same_source=requested && receiver && !strcmp(requested,receiver);
+                }
+                if (same_source) q3n_weapons_select(frame,selected.q3_weapon);
+            }
+            return true;
+        }
+    }
+    const char *value=command->argc>1?command->argv[1]:"";
+    q3n_weapons_select(frame,qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP));
+    return true;
+}
 static bool fail(qa_error *e,qa_status status,const char *text)
 { qa_error_set(e,status,0,"%s",text);return false; }
 static int32_t crosshair(const q3n_frame *f,const q3n_hud_state *hud)

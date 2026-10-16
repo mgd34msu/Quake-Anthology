@@ -127,7 +127,8 @@ static bool dispatch(frontend_remote_q3_commands *o,const qa_command_invocation 
     }
     if(q3n_cgame_command_equal(name,"+zoom") || q3n_cgame_command_equal(name,"-zoom")) { q3n_view_zoom(owners.view,*name=='+',f->time); return true; }
     if(q3n_cgame_command_equal(name,"weapnext") || q3n_cgame_command_equal(name,"weapprev")) { q3n_weapons_cycle(f,q3n_cgame_command_equal(name,"weapnext")?1:-1); return true; }
-    if(q3n_cgame_command_equal(name,"weapon")) { q3n_weapons_select(f,qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP)); return true; }
+    if(q3n_cgame_command_equal(name,"weapon"))
+        return q3n_cgame_weapon_command(f,call,(qa_actor_id){0},e);
     if(q3n_cgame_command_equal(name,"viewpos")) {
         snprintf(text,sizeof(text),"(%i %i %i) : %i\n",qa_source_to_i32(f->refdef.origin.x),qa_source_to_i32(f->refdef.origin.y),
             qa_source_to_i32(f->refdef.origin.z),qa_source_to_i32(f->view_angles.y)); qa_console_emit(call->console,&call->context,text); return true;

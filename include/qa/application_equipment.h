@@ -54,6 +54,17 @@ bool qa_application_equipment_read(qa_application *, qa_actor_id,
 bool qa_application_equipment_source_read(qa_application *,qa_actor_id,
     qa_application_equipment_view *,bool *present,qa_error *);
 uint8_t qa_application_offhand_actions(const qa_application *,qa_actor_id);
+typedef struct qa_application_item_selection {
+    qa_item_id item;
+    qa_actor_owner provider;
+    int32_t q3_weapon;
+} qa_application_item_selection;
+/* Execute the common use/weapon/drop command for an actual inventory actor.
+ * Accepted weapon requests return their provider and original Q3 ordinal, or
+ * q3_weapon=-1 for another source. Other outcomes leave item/provider zero.
+ * The command's captured console context is never rewritten. */
+qa_command_result qa_application_item_command(qa_application *, qa_actor_id,
+    const qa_command_invocation *, qa_application_item_selection *, qa_error *);
 bool qa_application_equipment_current(qa_application *, const qa_application_equipment_view *);
 /* Requests a weapon from its actual admitted provider through the canonical
  * slot handoff. Acceptance comes from that Source binding; declared item

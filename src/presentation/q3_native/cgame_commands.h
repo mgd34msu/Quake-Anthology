@@ -8,6 +8,8 @@
 #include "qa/console.h"
 
 bool q3n_cgame_command_equal(const char *, const char *);
+bool q3n_cgame_weapon_command(const q3n_frame *, const qa_command_invocation *,
+    qa_actor_id inventory_actor, qa_error *);
 size_t q3n_cgame_local_command_count(qa_q3_product);
 size_t q3n_cgame_command_count(qa_q3_product);
 const char *q3n_cgame_command_name(qa_q3_product, size_t);

@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
-#include "equipment_requests.h"
 #include "guest_qc_profile.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
@@ -640,7 +639,7 @@ static qa_command_result command_dispatch(qa_application *application,
     bool handled = false;
     qa_actor_id actor = command.context.actor;
     uint64_t inventory_revision = qa_inventory_revision(application->inventory, actor);
-    qa_command_result item = application_equipment_named_command(application, &command, error);
+    qa_command_result item = qa_application_item_command(application, actor, &command, NULL, error);
     if (item == QA_COMMAND_FAILED) return item;
     if (item == QA_COMMAND_HANDLED) { handled = true; goto command_handled; }
     application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");

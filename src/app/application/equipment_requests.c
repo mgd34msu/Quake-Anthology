@@ -77,8 +77,9 @@ static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *s
 }
 
 static qa_command_result named_item_dispatch(qa_application *app,
-    const qa_command_invocation *command, qa_item_definition *items, size_t count,
-    qa_arena *storage, qa_error *error)
+    qa_actor_id actor, const qa_command_invocation *command, qa_item_definition *items,
+    size_t count, qa_arena *storage, qa_application_item_selection *selection,
+    qa_error *error)
 {
     bool weapon = qa_text_ascii_equal(command->argv[0], "weapon");
     qa_item_name_match match;
@@ -99,16 +100,44 @@ static qa_command_result named_item_dispatch(qa_application *app,
     bool use = !qa_text_ascii_equal(command->argv[0], "drop");
     qa_item_action action = use ? QA_ITEM_USE : QA_ITEM_DROP;
     if (!weapon && (selected.actions & action)) {
-        return qa_inventory_item_action(app->inventory, command->context.actor,
+        return qa_inventory_item_action(app->inventory, actor,
             selected.item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     const char *label = qa_arena_text(storage, selected.label, error);
     if (!label) return QA_COMMAND_FAILED;
     bool accepted = false;
     if (use && selected.weapon) {
-        if (!qa_application_equipment_request_weapon(app, command->context.actor,
+        qa_application_item_selection requested = {.item = selected.item,
+            .provider = selected.owner, .q3_weapon = -1};
+        if (selection) {
+            application_provider *provider = application_provider_lookup(app, selected.owner,
+                APPLICATION_PROVIDER_PUBLISHED);
+            if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
+                for (int32_t i = 1; i < QA_Q3_WEAPON_COUNT; ++i)
+                    if (qa_q3_weapon_item(provider->state.q3, (qa_q3_weapon)i, false) == selected.item) {
+                        requested.q3_weapon = i; break;
+                    }
+            } else if (provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
+                (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))) {
+                struct application_q3_guest *engine = q3g_engine(provider);
+                if (engine && engine->game && engine->game->catalog) {
+                    const application_q3_catalog_weapon *weapons;
+                    size_t weapon_count;
+                    if (!application_q3_catalog_weapons(engine->game->catalog,
+                        &weapons, &weapon_count, error)) return QA_COMMAND_FAILED;
+                    for (size_t i = 0; i < weapon_count; ++i)
+                        if (weapons[i].item == selected.item) {
+                            requested.q3_weapon = weapons[i].weapon; break;
+                        }
+                }
+            }
+        }
+        if (!qa_application_equipment_request_weapon(app, actor,
             selected.owner, selected.item, &accepted, error)) return QA_COMMAND_FAILED;
-        if (accepted) return QA_COMMAND_HANDLED;
+        if (accepted) {
+            if (selection) *selection = requested;
+            return QA_COMMAND_HANDLED;
+        }
     }
     size_t extent = strlen(label) + 32;
     char *message = qa_arena_alloc(storage, extent, 1, error);
@@ -118,10 +147,12 @@ static qa_command_result named_item_dispatch(qa_application *app,
     return QA_COMMAND_HANDLED;
 }
 
-qa_command_result application_equipment_named_command(qa_application *app,
-    const qa_command_invocation *command, qa_error *error)
+qa_command_result qa_application_item_command(qa_application *app, qa_actor_id actor,
+    const qa_command_invocation *command, qa_application_item_selection *selection,
+    qa_error *error)
 {
-    if (command->argc < 2 || !command->context.actor.registry ||
+    if (selection) *selection = (qa_application_item_selection){.q3_weapon = -1};
+    if (command->argc < 2 || !actor.registry ||
         (!qa_text_ascii_equal(command->argv[0], "use") &&
          !qa_text_ascii_equal(command->argv[0], "weapon") &&
          !qa_text_ascii_equal(command->argv[0], "drop"))) return QA_COMMAND_UNHANDLED;
@@ -129,8 +160,9 @@ qa_command_result application_equipment_named_command(qa_application *app,
     qa_console_command_arena(command->console, &storage);
     qa_item_definition *items = NULL;
     size_t count = 0;
-    qa_command_result result = named_items_read(app, command->context.actor, &storage,
-        &items, &count, error) ? named_item_dispatch(app, command, items, count, &storage, error)
+    qa_command_result result = named_items_read(app, actor, &storage,
+        &items, &count, error) ? named_item_dispatch(app, actor, command, items, count,
+            &storage, selection, error)
                              : QA_COMMAND_FAILED;
     qa_arena_destroy(&storage);
     return result;

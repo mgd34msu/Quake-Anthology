@@ -3,5 +3,4 @@
 #include "internal.h"
 bool application_equipment_primary_accepts(void *,qa_actor_id,qa_actor_owner,qa_item_id,bool *,qa_error *);
 bool application_equipment_primary_select(void *,qa_actor_id,qa_actor_owner,qa_item_id,bool *,qa_error *);
-qa_command_result application_equipment_named_command(qa_application *,const qa_command_invocation *,qa_error *);
 #endif

@@ -1,6 +1,7 @@
 /* Compiled Unified CLIENT cg_consolecmds, id Software 1999-2005, GPL-2.0-or-later. */
 #include "unified_q3_commands.h"
 #include "internal.h"
+#include "network_session.h"
 #include "qa/binary.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/text.h"
@@ -117,7 +118,13 @@ static bool dispatch(frontend_unified_q3_commands *o,const qa_command_invocation
     }
     if(q3n_cgame_command_equal(name,"+zoom") || q3n_cgame_command_equal(name,"-zoom")) { q3n_view_zoom(owners.view,*name=='+',f->time); return true; }
     if(q3n_cgame_command_equal(name,"weapnext") || q3n_cgame_command_equal(name,"weapprev")) { q3n_weapons_cycle(f,q3n_cgame_command_equal(name,"weapnext")?1:-1); return true; }
-    if(q3n_cgame_command_equal(name,"weapon")) { q3n_weapons_select(f,qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP)); return true; }
+    if(q3n_cgame_command_equal(name,"weapon")) {
+        qa_actor_id actor={0};
+        const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->options.replica);
+        if (frontend_network_unified_local_domain(o->options.frontend,domain))
+            (void)qa_application_player_actor(domain->application,domain->command_context.seat,&actor);
+        return q3n_cgame_weapon_command(f,call,actor,e);
+    }
     if(q3n_cgame_command_equal(name,"viewpos")) {
         snprintf(text,sizeof(text),"(%i %i %i) : %i\n",qa_source_to_i32(f->refdef.origin.x),qa_source_to_i32(f->refdef.origin.y),
             qa_source_to_i32(f->refdef.origin.z),qa_source_to_i32(f->view_angles.y)); qa_console_emit(call->console,&call->context,text); return true;
