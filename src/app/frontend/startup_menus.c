@@ -228,8 +228,8 @@ bool frontend_startup_menus_create(frontend_seat *seat, qa_error *error)
             qa_session_strings(qa_application_session(seat->frontend->application)),
             &seat->startup_selection, error) ||
         !frontend_startup_arena_create(seat->frontend, &seat->startup_arena, error) ||
-        !frontend_host_menu_create(seat, seat->library, 260, &seat->host_menu, error) ||
-        !frontend_local_lobby_menu_create(seat->frontend->local_lobby,seat,261,error) ||
+        !frontend_host_menu_create(seat, seat->library, FRONTEND_HOST_MENU, &seat->host_menu, error) ||
+        !frontend_local_lobby_menu_create(seat->frontend->local_lobby,seat,FRONTEND_LOCAL_LOBBY,error) ||
         !frontend_content_library_services_create(seat, &seat->library_services, error) ||
         !frontend_content_library_services_bind_selection(seat->library_services,
             &(frontend_content_library_selection){.context = seat, .play_addon = addon,

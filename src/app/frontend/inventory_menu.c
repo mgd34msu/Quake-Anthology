@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { INVENTORY_MENU=262 };
 struct frontend_inventory_menu {
     frontend_seat *seat;
     void *source;
@@ -105,7 +104,7 @@ static bool factory(void *context,uint32_t physical,qa_ui_menu *out,qa_error *er
         .rect={64,376,512,32},.enabled=owner->selected!=QA_STRING_NONE,.visible=true,.context=owner,.action=action};
     owner->controls[2]=(qa_ui_control){.id=3,.kind=QA_UI_BUTTON,.label="Close",
         .rect={64,424,512,32},.enabled=true,.visible=true,.context=owner,.action=action};
-    *out=(qa_ui_menu){.id=INVENTORY_MENU,.title="Inventory",.controls=owner->controls,.count=3};
+    *out=(qa_ui_menu){.id=FRONTEND_INVENTORY,.title="Inventory",.controls=owner->controls,.count=3};
     return true;
 }
 static void closed(void *context,uint32_t physical)
@@ -125,7 +124,7 @@ bool frontend_inventory_menu_create(frontend_seat *seat,qa_error *error)
     else owner=calloc(1,sizeof(*owner));
     if(!owner) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the inventory menu");
     owner->seat=seat;
-    if(!qa_ui_register(seat->ui,&(qa_ui_menu_registration){INVENTORY_MENU,owner,factory,NULL,closed},error)) {
+    if(!qa_ui_register(seat->ui,&(qa_ui_menu_registration){FRONTEND_INVENTORY,owner,factory,NULL,closed},error)) {
         if(!features->inventory) free(owner);
         return false;
     }
@@ -186,9 +185,9 @@ bool frontend_inventory_menu_sync(frontend_seat *seat,qa_error *error)
     qa_ui_state state;
     if(!qa_ui_state_read(seat->ui,&state,error)) return false;
     double now=(double)seat->frontend->time_ns/1000000.;
-    bool ok=owner->visible?(qa_ui_menu_opened(seat->ui,INVENTORY_MENU) ||
-        qa_ui_open(seat->ui,INVENTORY_MENU,now,error)):
-        state.menu!=INVENTORY_MENU || qa_ui_close(seat->ui,now,error);
+    bool ok=owner->visible?(qa_ui_menu_opened(seat->ui,FRONTEND_INVENTORY) ||
+        qa_ui_open(seat->ui,FRONTEND_INVENTORY,now,error)):
+        state.menu!=FRONTEND_INVENTORY || qa_ui_close(seat->ui,now,error);
     if(ok) owner->pending=false;
     return ok;
 }
