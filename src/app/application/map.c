@@ -3003,6 +3003,7 @@ bool application_map_restore_bind(qa_application *application,
         return false;
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
+        if (provider->trajectory_only) continue;
         if (!provider->attached || !provider->constructed || provider->map_bound)
             return application_fail(error, QA_ERROR_ARGUMENT,
                                     "restored map binding requires fresh attached providers");
@@ -3197,7 +3198,7 @@ bool application_map_publish(qa_application *application,
     application->map_view_ready = true;
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
-        if (provider != NULL && provider->attached && provider->constructed &&
+        if (provider != NULL && !provider->trajectory_only && provider->attached && provider->constructed &&
             provider->kind == APPLICATION_PROVIDER_Q3 &&
             (!application_native_q3_settings_register(provider, error) ||
              (provider->map_bound &&
@@ -3217,7 +3218,7 @@ bool application_map_publish(qa_application *application,
     for (unsigned phase = 0; phase < 2; ++phase) {
         for (size_t index = 0; index < application->provider_count; ++index) {
             application_provider *provider = application->providers[index];
-            if (provider == NULL || !provider->attached || !provider->constructed ||
+            if (provider == NULL || provider->trajectory_only || !provider->attached || !provider->constructed ||
                 ((provider->kind == APPLICATION_PROVIDER_Q3) != (phase == 1)))
                 continue;
             if (unit) {
@@ -3291,7 +3292,7 @@ bool application_map_publish(qa_application *application,
         return false;
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
-        if (provider == publication->map_provider || !provider->attached ||
+        if (provider->trajectory_only || provider == publication->map_provider || !provider->attached ||
             !provider->constructed)
             continue;
         const qa_launch_instance *instance = qa_launch_snapshot_find(
@@ -3311,8 +3312,6 @@ bool application_map_publish(qa_application *application,
         if (instance->roles == 0 &&
             !(provider->kind == APPLICATION_PROVIDER_QC && provider->state.qc.qualified))
             continue;
-        if (instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY))
-            continue;
         if (provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_initialize_map(provider, &publication->map,
                 &publication->entities, current_map, spawn_point, error))
@@ -3329,7 +3328,7 @@ bool application_map_publish(qa_application *application,
         return false;
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
-        if (!provider->attached || !provider->constructed)
+        if (provider->trajectory_only || !provider->attached || !provider->constructed)
             continue;
         if (!application_guest_bots_admit(provider, error) ||
             !application_guest_clients_drain(provider, error))

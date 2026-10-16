@@ -776,7 +776,7 @@ static bool bot_random(void *opaque,float *out,qa_error *error) {
 static bool guest_bot_provider(const application_provider *provider) {
     uint64_t presentation=QA_ROLE_BIT(QA_ROLE_HUD)|QA_ROLE_BIT(QA_ROLE_MENU)|
         QA_ROLE_BIT(QA_ROLE_EFFECTS)|QA_ROLE_BIT(QA_ROLE_AUDIO)|QA_ROLE_BIT(QA_ROLE_MUSIC);
-    return provider->attached && provider->constructed && provider->product &&
+    return !provider->trajectory_only && provider->attached && provider->constructed && provider->product &&
         provider->product->family==QA_GAME_Q3 &&
         (provider->kind==APPLICATION_PROVIDER_QVM || provider->kind==APPLICATION_PROVIDER_NATIVE) &&
         (provider->launch->roles & ~presentation)!=0;

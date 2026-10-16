@@ -401,21 +401,21 @@ static bool construct_and_reserve(qa_application *application,
                 provider_catalog = saved.product_catalog;
                 product = saved.product;
             }
-            if (!image) {
+            if (!image && !provider->trajectory_only) {
                 qa_id_index_cursor cursor = application_provider_view_lookup_begin(application,
                     provider->owner, publication->removed);
                 application_provider *const *slot =
                     application_provider_removed_lookup_next(application, &cursor);
                 if (slot) admission->previous_activation = *slot;
             }
-            bool activation = product && (provider->event_activation_bound ||
+            bool activation = product && (provider->trajectory_only || provider->event_activation_bound ||
                 provider->event_activation_deferred || (image ? application_unified_event_owner_bind(application, provider, true, error) :
                 application_unified_event_owner_prepare(application, provider, admission->previous_activation, error)));
             if (product != NULL && !activation) {
                 okay = false;
                 break;
             }
-            if (product && !image) {
+            if (product && !image && !provider->trajectory_only) {
                 qa_console *console;
                 qa_cvars *cvars;
                 qa_command_context command;
@@ -427,9 +427,9 @@ static bool construct_and_reserve(qa_application *application,
             }
             bool original_q3 = product && product->family == QA_GAME_Q3 &&
                 (provider->kind == APPLICATION_PROVIDER_QVM || provider->kind == APPLICATION_PROVIDER_NATIVE);
-            if (cold && !original_q3) continue;
+            if (cold && !original_q3 && !provider->trajectory_only) continue;
             bool constructed = false;
-            if (product != NULL && image != NULL &&
+            if (product != NULL && image != NULL && !provider->trajectory_only &&
                 (provider->kind == APPLICATION_PROVIDER_QVM ||
                  (provider->kind == APPLICATION_PROVIDER_NATIVE && product->family == QA_GAME_Q3))) {
                 const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
@@ -446,6 +446,7 @@ static bool construct_and_reserve(qa_application *application,
             }
             admission->constructed = true;
         }
+        if (provider->trajectory_only) continue;
         if (image != NULL && provider->kind == APPLICATION_PROVIDER_Q2) {
             const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                 provider->launch->selection.instance);
@@ -1226,7 +1227,7 @@ static bool register_qc_callbacks(qa_application *application, bool restoring, q
 {
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
-        if (provider->kind != APPLICATION_PROVIDER_QC || !provider->constructed || !provider->attached)
+        if (provider->trajectory_only || provider->kind != APPLICATION_PROVIDER_QC || !provider->constructed || !provider->attached)
             continue;
         if (!restoring && application->map_view_ready && provider->state.qc.qualified &&
             !application_qc_initialize_addition(provider, error)) return false;
@@ -1383,7 +1384,7 @@ static bool retire_map_services(qa_application *application, bool carry,
             "Map retirement retains an actual acoustic world receipt");
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
-        if (!provider->constructed ||
+        if (provider->trajectory_only || !provider->constructed ||
             (terminal_world && terminal_native_q2(provider)))
             continue;
         if (carry && provider->kind == APPLICATION_PROVIDER_QC &&

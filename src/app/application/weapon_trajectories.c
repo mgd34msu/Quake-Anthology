@@ -179,12 +179,6 @@ bool application_trajectories_configure(qa_application *app, const qa_launch_sna
     qa_error *error)
 {
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    for (size_t i = 0; i < qa_launch_snapshot_instance_count(snapshot); ++i) {
-        const qa_launch_instance *instance = qa_launch_snapshot_instance(snapshot, i);
-        application_provider *provider = instance->state;
-        if (provider)
-            provider->trajectory_only = instance->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY);
-    }
     size_t count = 0;
     for (size_t i = 0; choices && i < choices->behavior_count; ++i) count += choices->behaviors[i].enabled;
     if (!count && !app->trajectories) return true;

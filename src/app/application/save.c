@@ -385,7 +385,7 @@ static bool restore_qc_bindings(void *context, qa_error *error)
     qa_application *candidate = context;
     for (size_t i = 0; i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
-        if (provider->kind == APPLICATION_PROVIDER_QC &&
+        if (!provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_bind_entities(provider, error)) return false;
     }
     return true;
@@ -398,10 +398,47 @@ bool application_save_foundation_finish(qa_application *candidate,
         candidate->session == NULL || !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "foundation restore requires an isolated prepared candidate");
     if (!qa_world_checkpoint_restore(candidate->world, &value->world,
-            restore_qc_bindings, candidate, error) ||
-        !qa_session_checkpoint_restore(candidate->session, &value->session, restore_think, candidate, error))
-        return false;
-    return true;
+            restore_qc_bindings, candidate, error)) return false;
+    bool redundant_clock = false;
+    for (size_t i = 0; i < value->session.component_count; ++i) {
+        application_provider *provider = application_provider_lookup(candidate,
+            value->session.components[i].owner, APPLICATION_PROVIDER_PUBLISHED);
+        if (provider && provider->trajectory_only) redundant_clock = true;
+    }
+    if (!redundant_clock)
+        return qa_session_checkpoint_restore(candidate->session, &value->session,
+            restore_think, candidate, error);
+    qa_session_checkpoint session = value->session;
+    session.components = session.component_count ? malloc(session.component_count * sizeof(*session.components)) : NULL;
+    session.scheduler.providers = session.scheduler.provider_count ?
+        malloc(session.scheduler.provider_count * sizeof(*session.scheduler.providers)) : NULL;
+    if ((session.component_count && !session.components) ||
+        (session.scheduler.provider_count && !session.scheduler.providers)) {
+        free(session.components);
+        free(session.scheduler.providers);
+        return application_fail(error, QA_ERROR_MEMORY, "Preparing restored Source component roster");
+    }
+    session.component_count = 0;
+    session.scheduler.provider_count = 0;
+    /* Old saves also carried an unused GAME clock beside the QATR donor. */
+    for (size_t i = 0; i < value->session.component_count; ++i) {
+        const qa_session_component_checkpoint *saved = value->session.components + i;
+        application_provider *provider = application_provider_lookup(candidate, saved->owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        if (!provider || !provider->trajectory_only)
+            session.components[session.component_count++] = *saved;
+    }
+    for (size_t i = 0; i < value->session.scheduler.provider_count; ++i) {
+        const qa_scheduler_provider_checkpoint *saved = value->session.scheduler.providers + i;
+        application_provider *provider = application_provider_lookup(candidate, saved->owner,
+            APPLICATION_PROVIDER_PUBLISHED);
+        if (!provider || !provider->trajectory_only)
+            session.scheduler.providers[session.scheduler.provider_count++] = *saved;
+    }
+    bool ok = qa_session_checkpoint_restore(candidate->session, &session, restore_think, candidate, error);
+    free(session.components);
+    free(session.scheduler.providers);
+    return ok;
 }
 
 #define APPLICATION_CHECKPOINT_HEADER 216u
@@ -739,6 +776,8 @@ static const char *provider_schema(const application_provider *provider)
     if (provider->kind == APPLICATION_PROVIDER_Q3) return "qa.q3.native";
     if (provider->kind == APPLICATION_PROVIDER_QC) return "qa.qc.guest";
     if (provider->kind == APPLICATION_PROVIDER_QVM) return "qa.q3.qvm";
+    if (provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_NATIVE)
+        return provider->product->family == QA_GAME_Q2 ? "qa.q2.external-native" : "qa.q3.external-native";
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
         return "qa.q3.external-native";
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
@@ -1390,7 +1429,9 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
     bool client = provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
         provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
     bool ok;
-    if (provider->kind == APPLICATION_PROVIDER_Q1)
+    if (provider->trajectory_only)
+        ok = true;
+    else if (provider->kind == APPLICATION_PROVIDER_Q1)
         ok = native_q1_capture(provider, purpose, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = application_native_q2_checkpoint_capture(provider, purpose, &state, error);
@@ -1410,7 +1451,7 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
         return application_fail(error, QA_ERROR_MEMORY, "allocating provider continuation");
     }
     memcpy(bytes.data, "QAPV", 4); qa_store_u32le(bytes.data + 4, provider->kind);
-    qa_store_u32le(bytes.data + 8, !client && provider->map_bound ? 1u : 0u);
+    qa_store_u32le(bytes.data + 8, !provider->trajectory_only && !client && provider->map_bound ? 1u : 0u);
     qa_store_u32le(bytes.data + 12, provider->q1_server_flags);
     qa_store_u32le(bytes.data + 16, provider->q2_server_flags);
     qa_store_u64le(bytes.data + 20, state.size);
@@ -1427,6 +1468,9 @@ static bool provider_restore(application_persistence *operation,
         qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
         qa_load_u32le(bytes.data + 8) > 1 || qa_load_u64le(bytes.data + 20) != bytes.size - 28)
         return application_fail(error, QA_ERROR_FORMAT, "invalid provider continuation header or extent");
+    /* Projectile continuations live in QATR, including for older saves that
+     * also serialized this unused provider GAME. */
+    if (provider->trajectory_only) return true;
     bool client = provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
         provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine && !client &&
@@ -1494,7 +1538,8 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             schema = provider_schema(provider);
             owner->backend = provider->kind == APPLICATION_PROVIDER_QC ? "quakec" :
                 provider->kind == APPLICATION_PROVIDER_QVM ? "qvm" :
-                (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
+                (provider->kind == APPLICATION_PROVIDER_NATIVE && (provider->state.native.engine ||
+                 (provider->trajectory_only && provider->product->family == QA_GAME_Q3)))
                     ? "native-owned" : "";
         }
         if (schema) {
@@ -1936,6 +1981,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         ok=operation->ops->reconnect(operation->ops->context, candidate, image, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
+        if (provider->trajectory_only) continue;
         if (provider->kind == APPLICATION_PROVIDER_Q2)
             ok = qa_q2_game_restore_finish(provider->state.q2, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q1)
@@ -1965,6 +2011,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         ok = application_match_intents_reconnect(candidate->match_intents, candidate, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
+        if (provider->trajectory_only) continue;
         if (provider->kind == APPLICATION_PROVIDER_Q3) {
             native_q3_record saved={0};
             ok = native_q3_saved_record(provider, image, &saved, error);

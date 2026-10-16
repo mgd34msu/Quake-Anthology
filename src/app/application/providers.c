@@ -193,6 +193,7 @@ bool application_provider_prepare(qa_application *application,
                                 "cannot allocate application provider");
     provider->application = application;
     provider->owner = owner;
+    provider->trajectory_only = launch->roles == QA_ROLE_BIT(QA_ROLE_TRAJECTORY);
     provider->trigger_teleport_class = trigger_teleport;
     if (!kind_for(launch, &provider->kind, error)) {
         free(provider);
@@ -205,7 +206,7 @@ bool application_provider_prepare(qa_application *application,
     }
     provider->launch = qa_launch_instance_lease_view(provider->launch_lease);
 
-    if (provider->kind == APPLICATION_PROVIDER_QC) {
+    if (!provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_QC) {
         if (launch->artifact == NULL ||
             !qa_qc_program_load(qa_resource_bytes(launch->artifact),
                                 launch->selection.artifact,
@@ -221,7 +222,7 @@ bool application_provider_prepare(qa_application *application,
             free(provider);
             return false;
         }
-    } else if (provider->kind == APPLICATION_PROVIDER_QVM) {
+    } else if (!provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_QVM) {
         if (launch->artifact == NULL ||
             !qa_qvm_image_load(qa_resource_bytes(launch->artifact),
                                &provider->state.qvm.image, error)) {
@@ -1041,6 +1042,8 @@ static bool provider_console_advance(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation needs its actual detached provider and world");
     *complete = true;
     *console = NULL; *cvars = NULL;
+    if (provider->trajectory_only)
+        return application_provider_product_bind(provider, catalog, product, error);
     if (provider->native_q1_console)
         return application_native_q1_console_at(provider, console, cvars, command);
     if (provider->native_q2_console)
@@ -1153,6 +1156,7 @@ bool application_provider_startup_source_at(application_provider *provider, size
     if (!provider || !provider->launch || !out || !found)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup enumeration requires its physical source owner");
     *found = false;
+    if (provider->trajectory_only) return true;
     if (provider->client_only_owned || application_native_client_only(provider))
         return application_native_client_role_source_at(provider, index, out, found, error);
     if ((provider->kind == APPLICATION_PROVIDER_QVM || provider->kind == APPLICATION_PROVIDER_NATIVE) &&
@@ -1575,6 +1579,7 @@ static bool construct_provider(qa_application *application,
                                 "invalid detached provider construction");
     provider->constructed = true;
     if (!application_provider_product_bind(provider, catalog, product, error)) return false;
+    if (provider->trajectory_only) return true;
     if (provider->client_only_owned || application_native_client_only(provider))
         return true;
     bool ok;
@@ -1670,6 +1675,11 @@ static bool deconstruct_provider(application_provider *provider, qa_error *error
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "cannot destroy an attached provider instance");
     if (!application_startup_source_deconstruct(provider, error)) return false;
+    if (provider->trajectory_only) {
+        provider->constructed = false;
+        provider->map_bound = false;
+        return true;
+    }
     if (provider->client_only_owned || application_native_client_only(provider)) {
         if (!application_native_client_roles_destroy(provider, error)) return false;
         provider->constructed = false;

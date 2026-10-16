@@ -1045,6 +1045,7 @@ static bool advance_providers(qa_application *app, struct application_startup_fl
         size_t ordinal = flow->provider_ordinal;
         size_t i = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
         application_provider *provider = flow->publication->next[i];
+        if (provider->trajectory_only) continue;
         if (provider->constructed && provider->attached) {
             if (provider->kind==APPLICATION_PROVIDER_Q3)
                 ok=application_native_q3_remote_roles_prepare(provider,choices,error);
