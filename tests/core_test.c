@@ -8423,19 +8423,32 @@ static void test_q2_linked_models(void)
     const qa_q2_entity source = {.modelindex = 255, .modelindex2 = 133, .modelindex3 = 255,
         .modelindex4 = 9, .renderfx = 4096, .skinnum = 0x1234, .alpha = .5f,
         .frame = 12, .old_frame = 11, .origin = {10,20,30}};
-    qa_q2_entity body = qa_q2_linked_model_state(&source, 0, QA_RULESET_Q2_CLASSIC);
+    qa_q2_entity body = qa_q2_model_presentation_state(&source, 0, QA_RULESET_Q2_CLASSIC);
     CHECK(body.modelindex == 255 && body.renderfx == source.renderfx && body.skinnum == source.skinnum);
-    qa_q2_entity linked = qa_q2_linked_model_state(&source, 1, QA_RULESET_Q2_CLASSIC);
+    qa_q2_entity linked = qa_q2_model_presentation_state(&source, 1, QA_RULESET_Q2_CLASSIC);
     CHECK(linked.modelindex == 5 && linked.renderfx == 32 && linked.alpha == .32f && linked.skinnum == 0);
     CHECK(linked.frame == 12 && linked.old_frame == 11 && linked.origin[1] == 20);
-    linked = qa_q2_linked_model_state(&source, 1, QA_RULESET_Q2_RERELEASE);
+    linked = qa_q2_model_presentation_state(&source, 1, QA_RULESET_Q2_RERELEASE);
     CHECK(linked.modelindex == 133 && linked.renderfx == 0 && linked.alpha == 0 && linked.skinnum == 0);
-    linked = qa_q2_linked_model_state(&source, 2, QA_RULESET_Q2_CLASSIC);
+    linked = qa_q2_model_presentation_state(&source, 2, QA_RULESET_Q2_CLASSIC);
     CHECK(linked.modelindex == 255 && linked.renderfx == 0 && linked.alpha == 0);
     qa_q2_entity custom = source; custom.modelindex2 = 255;
-    linked = qa_q2_linked_model_state(&custom, 1, QA_RULESET_Q2_CLASSIC);
+    linked = qa_q2_model_presentation_state(&custom, 1, QA_RULESET_Q2_CLASSIC);
     CHECK(linked.modelindex == 255 && linked.renderfx == 0 && linked.alpha == 0);
     CHECK(source.renderfx == 4096 && source.skinnum == 0x1234 && source.alpha == .5f);
+    qa_q2_entity translucent = {.modelindex = 7, .renderfx = 32};
+    body = qa_q2_model_presentation_state(&translucent, 0, QA_RULESET_Q2_CLASSIC);
+    CHECK(body.alpha == .7f && body.renderfx == 32 && translucent.alpha == 0);
+    body = qa_q2_model_presentation_state(&translucent, 0, QA_RULESET_Q2_RERELEASE);
+    CHECK(body.alpha == .3f && body.renderfx == 32);
+    translucent.renderfx |= 8;
+    body = qa_q2_model_presentation_state(&translucent, 0, QA_RULESET_Q2_CLASSIC);
+    CHECK(body.alpha == 0 && body.renderfx == 40);
+    body = qa_q2_model_presentation_state(&translucent, 0, QA_RULESET_Q2_RERELEASE);
+    CHECK(body.alpha == .3f && body.renderfx == 40);
+    translucent.alpha = .8f;
+    body = qa_q2_model_presentation_state(&translucent, 0, QA_RULESET_Q2_RERELEASE);
+    CHECK(body.alpha == .8f);
 }
 
 static void test_q2_weapon_names(void)

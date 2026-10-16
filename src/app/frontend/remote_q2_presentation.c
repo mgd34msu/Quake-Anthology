@@ -663,7 +663,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         qa_vec3 position = prior && !(current->renderfx & 64) ?
             qa_vec_lerp(vector(prior->origin), vector(current->origin), row->fraction) : vector(current->origin);
         qa_vec3 direction = prior ? angles_lerp(prior->angles, current->angles, row->fraction) : vector(current->angles);
-        qa_q2_entity packet = *current;
+        qa_q2_entity packet = qa_q2_model_presentation_state(current, 0, row->presentation_rules);
         if (current->effects & (UINT64_C(1) << 10)) packet.frame = auto_frame & 1;
         else if (current->effects & (UINT64_C(1) << 11)) packet.frame = 2 + (auto_frame & 1);
         else if (current->effects & (UINT64_C(1) << 12)) packet.frame = auto_frame;
@@ -679,8 +679,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
         if (current->effects & (UINT64_C(1) << 30)) { shell = true; shell_flags |= 131072; }
         if (remote_q2_rerelease_presentation(row) && (current->effects & (UINT64_C(1) << 32))) { shell = true; shell_flags |= 524288; }
         if (shell) packet.renderfx = 0;
-        if (packet.alpha == 0) {
-            if (current->renderfx == 32) packet.alpha = .7f;
+        if (current->alpha == 0) {
             if (current->effects & 128) { packet.renderfx |= 32; packet.alpha = .3f; }
             if (current->effects & (UINT64_C(1) << 24)) { packet.renderfx |= 32; packet.alpha = .6f; }
             if (current->effects & (UINT64_C(1) << 28)) {
@@ -716,7 +715,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
                 current->modelindex == 255, position, direction, error);
         }
         for (unsigned j = 1; ok && j < 4; ++j) {
-            qa_q2_entity attachment = qa_q2_linked_model_state(&packet, j, row->presentation_rules);
+            qa_q2_entity attachment = qa_q2_model_presentation_state(&packet, j, row->presentation_rules);
             if (!attachment.modelindex || attachment.modelindex >= row->hud_names.layout.max_models) continue;
             const char *linked_path;
             uint32_t linked_index = attachment.modelindex;
@@ -729,7 +728,7 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             } else {
                 linked_path = frontend_remote_q2_config(row, (uint16_t)(row->hud_names.layout.models + linked_index));
             }
-            qa_q2_entity attachment_old = prior ? qa_q2_linked_model_state(prior, j, row->presentation_rules) : attachment;
+            qa_q2_entity attachment_old = prior ? qa_q2_model_presentation_state(prior, j, row->presentation_rules) : attachment;
             ok = submit_model(row, linked_index, linked_path, linked_model, NULL, &view, &world, &attachment,
                 prior ? &attachment_old : NULL, false, false, position, direction, error);
         }

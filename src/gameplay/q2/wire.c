@@ -9,11 +9,18 @@
 #include "qa/input.h"
 #include <math.h>
 
-qa_q2_entity qa_q2_linked_model_state(const qa_q2_entity *source, unsigned model_slot,
+qa_q2_entity qa_q2_model_presentation_state(const qa_q2_entity *source, unsigned model_slot,
     qa_ruleset_id edition)
 {
     qa_q2_entity state = *source;
-    if (!model_slot) return state;
+    if (!model_slot) {
+        if (state.alpha == 0) {
+            if (edition == QA_RULESET_Q2_RERELEASE) {
+                if (state.renderfx & 32u) state.alpha = .3f;
+            } else if (state.renderfx == 32u) state.alpha = .7f;
+        }
+        return state;
+    }
     state.modelindex = model_slot == 1 ? source->modelindex2 :
         model_slot == 2 ? source->modelindex3 : model_slot == 3 ? source->modelindex4 : 0;
     state.skinnum = 0; state.renderfx = 0; state.alpha = 0;

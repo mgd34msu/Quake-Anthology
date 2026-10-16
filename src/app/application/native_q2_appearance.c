@@ -109,7 +109,7 @@ bool application_native_q2_appearance_read(qa_application *app,
     uint32_t ordinal=(state->skinnum>>8)&255u;
     qa_string_id held=ordinal<engine->hud_names.weapons.count?media->weapons[ordinal]:media->weapons[0];
     for (unsigned i=0;i<4;++i) {
-        qa_q2_entity selected=qa_q2_linked_model_state(state,i,source->edition);
+        qa_q2_entity selected=qa_q2_model_presentation_state(state,i,source->edition);
         uint32_t index=selected.modelindex;
         if (i<2 && index==Q2_CLIENT_MODEL) {
             value.models[i]=i?held:media->model;

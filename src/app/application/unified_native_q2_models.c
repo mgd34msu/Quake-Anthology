@@ -24,7 +24,7 @@ static void model(qa_unified_frame_visuals *out,
     const application_native_q2_appearance *view, unsigned index,
     qa_string_id content, qa_string_id path, bool held)
 {
-    qa_q2_entity selected = qa_q2_linked_model_state(&view->entity.state, index, view->source.edition);
+    qa_q2_entity selected = qa_q2_model_presentation_state(&view->entity.state, index, view->source.edition);
     const qa_q2_entity *state = &selected;
     bool rerelease = view->source.edition == QA_RULESET_Q2_RERELEASE;
     qa_unified_model_state *row = out->models + out->model_count++;
@@ -36,8 +36,7 @@ static void model(qa_unified_frame_visuals *out,
         .previous_origin = qa_v3(state->old_origin[0], state->old_origin[1], state->old_origin[2]),
         .angles = qa_v3(state->angles[0], state->angles[1], state->angles[2]),
         .visual.scale = rerelease && state->scale != 0 ? state->scale : 1,
-        .visual.alpha = index ? state->alpha != 0 ? state->alpha : 1 :
-            rerelease ? state->alpha != 0 ? state->alpha : (state->renderfx & 32u) ? .3f : 1 : 1,
+        .visual.alpha = state->alpha != 0 ? state->alpha : 1,
         .has_previous_origin = true, .has_alpha = true, .visual.visible = true, .native_held_weapon = held};
     row->path = path; row->content = content;
     row->skin_path = index || !qa_strings_text(qa_session_strings(view->source.session), path).size ? QA_STRING_NONE : view->skin_path;
