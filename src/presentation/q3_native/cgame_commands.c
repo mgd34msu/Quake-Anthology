@@ -35,6 +35,36 @@ const char *q3n_cgame_command_name(qa_q3_product product,size_t index)
 static unsigned char lower(unsigned char c) { return c>='A' && c<='Z'?(unsigned char)(c+32):c; }
 bool q3n_cgame_command_equal(const char *a,const char *b)
 { while(*a && *b && lower((unsigned char)*a)==lower((unsigned char)*b)) { ++a; ++b; } return !*a && !*b; }
+static bool remote_weapon_name(const q3n_frame *frame,const qa_command_invocation *command,
+    bool *handled,qa_error *error)
+{
+    *handled=false;
+    if (!frame->remote || command->argc<2) return true;
+    qa_strings *strings=qa_session_strings(frame->remote->source.basis.session);
+    qa_q3_model_names names;
+    if (!qa_q3_model_names_bind(strings,q3n_frame_product(frame),&names,error)) return false;
+    qa_item_definition definitions[QA_Q3_WEAPON_COUNT];
+    int32_t weapons[QA_Q3_WEAPON_COUNT];
+    size_t count=0,item_count;
+    const qa_q3_item *items=qa_q3_items(q3n_frame_product(frame),&item_count);
+    for (size_t i=0;i<item_count;++i) if (items[i].kind==QA_Q3_ITEM_WEAPON) {
+        definitions[count]=(qa_item_definition){.item=names.weapon_items[items[i].tag],
+            .label=items[i].name,.weapon=true};
+        weapons[count++]=items[i].tag;
+    }
+    qa_arena storage={0}; qa_item_name_match match;
+    qa_console_command_arena(command->console,&storage);
+    bool okay=qa_item_name_resolve(strings,definitions,count,command->argv+1,
+        command->argc-1,true,&storage,&match,error);
+    if (okay && match.count>1) {
+        qa_console_emit(command->console,&command->context,"Ambiguous weapon; use ");
+        qa_console_emit(command->console,&command->context,match.alternatives);
+        qa_console_emit(command->console,&command->context,"\n");
+    } else if (okay && match.count) q3n_weapons_select(frame,weapons[match.index]);
+    *handled=okay && match.count!=0;
+    qa_arena_destroy(&storage);
+    return okay;
+}
 bool q3n_cgame_weapon_command(const q3n_frame *frame,const qa_command_invocation *command,
     qa_actor_id actor,qa_error *error)
 {
@@ -57,6 +87,9 @@ bool q3n_cgame_weapon_command(const q3n_frame *frame,const qa_command_invocation
             return true;
         }
     }
+    bool handled;
+    if (!remote_weapon_name(frame,command,&handled,error)) return false;
+    if (handled) return true;
     const char *value=command->argc>1?command->argv[1]:"";
     q3n_weapons_select(frame,qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP));
     return true;

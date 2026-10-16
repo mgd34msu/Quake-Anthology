@@ -17,7 +17,9 @@
 #include "native_q3_wire_state.h"
 #include "qa/application_q3_client.h"
 #include "qa/application_q3_arsenal_client.h"
+#include "qa/application_equipment.h"
 #include "qa/game_q3_source.h"
+#include "qa/text.h"
 
 bool application_guest_frontend_rebind_ready(application_provider *provider,
     const qa_scene_frame *current_frame, void *current_context, qa_error *error)
@@ -713,11 +715,27 @@ bool application_q3_guest_console_command(application_provider *provider, const 
 }
 
 static bool role_console_command(q3g_role *role,int32_t time,const char *text,
-    bool *handled,qa_error *error)
+    const qa_command_invocation *command,bool *handled,qa_error *error)
 {
     qa_qvm_role kind=role->kind;
     if (!text || !handled || !role->initialized || !role->init_succeeded)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console export requires initialized client role");
+    char weapon[32];
+    if (kind==QA_QVM_CGAME && command && command->argc &&
+        qa_text_ascii_equal(command->argv[0],"weapon")) {
+        qa_application_item_selection selected;
+        qa_command_result result=qa_application_item_command(role->engine->provider->application,
+            command->context.actor,command,&selected,error);
+        if (result==QA_COMMAND_FAILED) return false;
+        if (result==QA_COMMAND_HANDLED) {
+            if (!selected.item || selected.provider!=role->engine->provider->owner || selected.q3_weapon<0) {
+                *handled=true;
+                return true;
+            }
+            snprintf(weapon,sizeof(weapon),"weapon %i",selected.q3_weapon);
+            text=weapon;
+        }
+    }
     qa_command_tokens engine_prior;
     if (!q3g_command_begin(role->engine, text, NULL, 0, &engine_prior, error)) return false;
     qa_command_tokens prior = role->arguments; role->arguments = role->engine->arguments;
@@ -746,7 +764,7 @@ qa_command_result q3g_declared_command(void *context,const qa_command_invocation
         return QA_COMMAND_FAILED;
     }
     bool handled=false;
-    if (!role_console_command(role,0,command->raw,&handled,error)) return QA_COMMAND_FAILED;
+    if (!role_console_command(role,0,command->raw,command,&handled,error)) return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
 
@@ -755,5 +773,5 @@ bool application_q3_guest_role_command(application_provider *provider,qa_qvm_rol
 {
     if (kind==QA_QVM_GAME) return application_q3_guest_console_command(provider,text,handled,error);
     q3g_role *role=find_role(provider,kind,seat,error);
-    return role && role_console_command(role,time,text,handled,error);
+    return role && role_console_command(role,time,text,NULL,handled,error);
 }
