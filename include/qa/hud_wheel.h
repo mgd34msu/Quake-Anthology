@@ -15,7 +15,7 @@ typedef struct qa_hud_wheel_item {
     qa_hud_wheel_identity identity;
     int32_t sort_order;
     const char *label;
-    bool owned, has_ammunition, has_count;
+    bool owned, has_ammunition, has_count, has_toggle, enabled;
     double count, warning_count;
     const qa_scene_image *icon, *selected_icon;
 } qa_hud_wheel_item;

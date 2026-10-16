@@ -6,6 +6,37 @@ static bool hud_records(qa_native_host *host, qa_error *error)
         INT32_MIN + 9, &host->q2_hud_records, error);
 }
 
+bool qa_native_host_q2_wheel_read(qa_native_host *host, qa_bytes player,
+    bool weapons, uint32_t ammo_mask, uint32_t powerup_mask,
+    qa_native_host_q2_wheel_state *out, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying ||
+        !out || !player.data || player.size != 296)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q2 wheel requires its actual player state");
+    if (!hud_records(host, error) ||
+        !native_host_write(host, host->q2_hud_records + 1536, player.data, player.size, error)) return false;
+    qa_native_value args[] = {{.type = QA_NATIVE_ADDRESS, .as.address = host->q2_hud_records + 1536},
+        {.type = QA_NATIVE_I32}}, result;
+    if (weapons) {
+        if (!qa_native_call(host->instance, "GetActiveWeaponWheelWeapon", args, 1, &result, error)) return false;
+        out->active = result.as.i32;
+        if (!qa_native_call(host->instance, "GetOwnedWeaponWheelWeapons", args, 1, &result, error)) return false;
+        out->owned = result.as.u32;
+    }
+    for (int32_t i = 0; i < QA_Q2_MAX_WHEEL_ITEMS; ++i) {
+        args[1].as.i32 = i;
+        if (ammo_mask & (UINT32_C(1) << i)) {
+            if (!qa_native_call(host->instance, "GetWeaponWheelAmmoCount", args, 2, &result, error)) return false;
+            out->ammo[i] = result.as.i16;
+        }
+        if (powerup_mask & (UINT32_C(1) << i)) {
+            if (!qa_native_call(host->instance, "GetPowerupWheelCount", args, 2, &result, error)) return false;
+            out->powerups[i] = result.as.i16;
+        }
+    }
+    return true;
+}
+
 bool qa_native_host_q2_monster_flash_offset(qa_native_host *host, uint16_t flash,
     qa_vec3 *out, qa_error *error)
 {

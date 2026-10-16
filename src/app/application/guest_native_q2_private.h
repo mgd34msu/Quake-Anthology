@@ -118,10 +118,12 @@ struct application_native_q2 {
     qa_actor_owner hud_source_owner;
     struct {
         qa_native_host_q2_hud_state state;
+        qa_native_host_q2_wheel_state wheel;
         qa_actor_id actor;
         qa_actor_owner source;
-        uint64_t frame, time_ns;
-        bool present;
+        uint64_t frame, time_ns, config_revision;
+        uint32_t wheel_ammo_mask, wheel_powerup_mask;
+        bool present, wheel_ready;
     } hud_observation;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
     bool host_constructing;
@@ -200,6 +202,9 @@ bool application_native_q2_stage_move(application_provider *, qa_actor_id,
     const qa_usercmd *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_native_q2_draw_hud(application_provider *, uint32_t, uint32_t, qa_error *);
 bool application_native_q2_monster_flash_offset(application_provider *, uint16_t, qa_vec3 *, qa_error *);
+struct qa_application_native_q2_wheel;
+bool application_native_q2_wheel_read(application_provider *, uint32_t, bool,
+    struct qa_application_native_q2_wheel *, qa_error *);
 bool application_native_q2_hud_text(application_provider *, uint32_t,
     qa_native_q2_hud_text_kind, const char *, bool, qa_error *);
 struct application_native_q2 *application_native_q2_hud_source(struct application_native_q2 *,

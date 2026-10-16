@@ -158,4 +158,13 @@ typedef struct qa_application_native_q2_hud {
 bool qa_application_native_q2_hud_read(qa_application *, qa_actor_id,
     qa_application_native_q2_hud *, bool *found, qa_error *);
 
+typedef struct qa_application_native_q2_wheel {
+    qa_actor_owner owner;
+    qa_item_id active, weapons[QA_Q2_MAX_WHEEL_ITEMS], powerups[QA_Q2_MAX_WHEEL_ITEMS];
+    const qa_hud_q2_weapons *definitions;
+    qa_native_host_q2_wheel_state state;
+} qa_application_native_q2_wheel;
+bool qa_application_native_q2_wheel_read(qa_application *, uint32_t seat, bool powerups,
+    qa_application_native_q2_wheel *, bool *handled, qa_error *);
+
 #endif

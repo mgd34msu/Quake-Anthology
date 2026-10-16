@@ -2,6 +2,7 @@
 #include "qa/arena.h"
 #include "qa/text.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -305,10 +306,15 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
             const qa_scene_image *icon = selected && item->selected_icon ? item->selected_icon : item->icon;
             if (icon) ok = draw_quad(&d, icon, x - 20, y - 20, 40, 40, (qa_vec4){0, 0, 1, 1}, tint);
             else ok = draw_text(&d, item->label, x, y - 8, tint);
-            if (ok && item->has_count) {
-                char count[32]; ok = qa_format_number(item->count, count, error);
-                qa_vec4 color = item->count <= item->warning_count ? options->accent : tint; color.w = opacity;
-                if (ok) ok = draw_text(&d, count, x, y + 24, color);
+            if (ok && (item->has_count || item->has_toggle)) {
+                char count[32],text[48];
+                ok = !item->has_count || qa_format_number(item->count, count, error);
+                if (!ok) break;
+                const char *toggle=item->enabled?"On":"Off";
+                if (item->has_count && item->has_toggle) snprintf(text,sizeof(text),"%s %s",count,toggle);
+                else snprintf(text,sizeof(text),"%s",item->has_count?count:toggle);
+                qa_vec4 color = item->has_count && item->count <= item->warning_count ? options->accent : tint; color.w = opacity;
+                if (ok) ok = draw_text(&d, text, x, y + 24, color);
             }
             if (ok && selected) ok = draw_text(&d, item->label, 320, 220, tint);
         }

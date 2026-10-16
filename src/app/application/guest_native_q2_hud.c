@@ -3,6 +3,8 @@
 #include "qa/tools.h"
 #include "control_frame.h"
 #include "native_q2_inventory_scanner.h"
+#include "native_q2_inventory_source.h"
+#include "qa/application_native_q2_presentation.h"
 #include <limits.h>
 
 struct application_native_q2 *application_native_q2_hud_source(
@@ -226,6 +228,68 @@ bool application_native_q2_hud_text(application_provider *provider, uint32_t sea
     return ok;
 }
 
+static void hud_observation_prepare(struct application_native_q2 *engine,
+    const struct application_native_q2 *source, uint32_t slot)
+{
+    if (engine->hud_observation.source == source->provider->owner &&
+        qa_actor_id_equal(engine->hud_observation.actor, source->clients[slot].actor) &&
+        engine->hud_observation.frame == source->frame.number &&
+        engine->hud_observation.config_revision == source->config_changes.revision) return;
+    memset(&engine->hud_observation, 0, sizeof(engine->hud_observation));
+    engine->hud_observation.actor = source->clients[slot].actor;
+    engine->hud_observation.source = source->provider->owner;
+    engine->hud_observation.frame = source->frame.number;
+    engine->hud_observation.time_ns = source->frame.time_ns;
+    engine->hud_observation.config_revision = source->config_changes.revision;
+}
+
+bool application_native_q2_wheel_read(application_provider *provider, uint32_t seat,
+    bool powerups, qa_application_native_q2_wheel *out, qa_error *error)
+{
+    struct application_native_q2 *engine = provider->state.native.q2_engine, *source;
+    uint32_t slot;
+    if (!hud_begin(provider, seat, &source, &slot, error)) return false;
+    hud_observation_prepare(engine, source, slot);
+    const qa_hud_q2_weapons *definitions = &source->hud_names.weapons;
+    uint32_t ammo_mask = 0, powerup_mask = 0;
+    *out = (qa_application_native_q2_wheel){.owner = source->provider->owner, .definitions = definitions};
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < QA_Q2_MAX_WHEEL_ITEMS; ++i) {
+        const qa_hud_q2_wheel_definition *weapon = definitions->wheel + i,
+            *powerup = definitions->powerups + i;
+        if (weapon->present && (!powerups || weapon->powerup)) {
+            if (weapon->ammo >= 0) ammo_mask |= UINT32_C(1) << weapon->ammo;
+            ok = application_native_q2_inventory_item(source, (uint32_t)weapon->item, out->weapons + i, error);
+        }
+        if (ok && powerups && powerup->present) {
+            powerup_mask |= UINT32_C(1) << i;
+            if (powerup->ammo >= 0) ammo_mask |= UINT32_C(1) << powerup->ammo;
+            ok = application_native_q2_inventory_item(source, (uint32_t)powerup->item, out->powerups + i, error);
+        }
+    }
+    uint32_t new_ammo = ammo_mask & ~engine->hud_observation.wheel_ammo_mask,
+        new_powerups = powerup_mask & ~engine->hud_observation.wheel_powerup_mask;
+    if (ok && (!engine->hud_observation.wheel_ready || new_ammo || new_powerups)) {
+        uint8_t storage[296];qa_bytes player;
+        ok = qa_native_host_q2_player_state(source->provider->state.native.host, slot, storage, &player, error) &&
+            qa_native_host_q2_wheel_read(provider->state.native.host, player,
+                !engine->hud_observation.wheel_ready, new_ammo, new_powerups,
+                &engine->hud_observation.wheel, error);
+        if (ok) {
+            engine->hud_observation.wheel_ready = true;
+            engine->hud_observation.wheel_ammo_mask |= new_ammo;
+            engine->hud_observation.wheel_powerup_mask |= new_powerups;
+        }
+    }
+    if (ok) {
+        out->state = engine->hud_observation.wheel;
+        if (out->state.active >= 0 && out->state.active < QA_Q2_MAX_WHEEL_ITEMS)
+            out->active = out->weapons[out->state.active];
+    }
+    --source->calls;--engine->calls;
+    return ok;
+}
+
 bool application_native_q2_draw_hud(application_provider *provider, uint32_t seat,
     uint32_t milliseconds, qa_error *error)
 {
@@ -254,18 +318,12 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         memcpy(data, source->clients[slot].layout, 1024);
         for (size_t i = 0; i < 256; ++i)
             qa_store_u16le(data + 1024 + i * 2, (uint16_t)source->clients[slot].inventory[i]);
-        bool observe = !engine->hud_observation.present ||
-            engine->hud_observation.source != source->provider->owner ||
-            !qa_actor_id_equal(engine->hud_observation.actor, source->clients[slot].actor) ||
-            engine->hud_observation.frame != source->frame.number;
+        hud_observation_prepare(engine, source, slot);
+        bool observe = !engine->hud_observation.present;
         ok = qa_native_host_q2_draw_hud(provider->state.native.host, seat, &view,
             (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, shared_inventory,
             observe ? &engine->hud_observation.state : NULL, error);
         if (ok && observe) {
-            engine->hud_observation.actor = source->clients[slot].actor;
-            engine->hud_observation.source = source->provider->owner;
-            engine->hud_observation.frame = source->frame.number;
-            engine->hud_observation.time_ns = source->frame.time_ns;
             engine->hud_observation.present = true;
         }
     }

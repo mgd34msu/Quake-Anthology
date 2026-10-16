@@ -426,6 +426,14 @@ bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
 typedef struct qa_native_host_q2_hud_state {
     int16_t layout_flags, hit_marker_damage;
 } qa_native_host_q2_hud_state;
+typedef struct qa_native_host_q2_wheel_state {
+    int32_t active;
+    uint32_t owned;
+    int16_t ammo[QA_Q2_MAX_WHEEL_ITEMS], powerups[QA_Q2_MAX_WHEEL_ITEMS];
+} qa_native_host_q2_wheel_state;
+bool qa_native_host_q2_wheel_read(qa_native_host *, qa_bytes player_state,
+    bool weapons, uint32_t ammo_mask, uint32_t powerup_mask,
+    qa_native_host_q2_wheel_state *, qa_error *);
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
     qa_bytes server_data, qa_bytes player_state, bool shared_inventory,

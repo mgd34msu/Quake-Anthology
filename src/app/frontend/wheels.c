@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/application_weapon_availability.h"
 #include "qa/application_equipment.h"
+#include "qa/application_native_q2_presentation.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -13,6 +14,9 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         !qa_application_player_actor(seat->frontend->application, launch_seat, &actor)) return true;
     qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
+    qa_application_native_q2_wheel native = {0};bool native_found;
+    if (!qa_application_native_q2_wheel_read(seat->frontend->application,launch_seat,
+        mode==QA_HUD_WHEEL_POWERUPS,&native,&native_found,error)) return false;
     size_t total;
     if (!qa_inventory_item_definitions(inventory, actor, NULL, 0, &total, error)) return false;
     if (!total) return true;
@@ -28,7 +32,18 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     size_t written = 0;
     for (size_t i = 0; i < total; ++i) {
         qa_item_definition definition = definitions[i];
-        if (definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) ||
+        const qa_hud_q2_wheel_definition *native_definition=NULL;
+        uint32_t native_slot=0;bool native_powerup=false;
+        if (native_found && definition.owner==native.owner) {
+            for (uint32_t j=0;j<QA_Q2_MAX_WHEEL_ITEMS && !native_definition;++j) {
+                if (native.weapons[j]==definition.item) {
+                    native_definition=native.definitions->wheel+j;native_slot=j;
+                } else if (native.powerups[j]==definition.item) {
+                    native_definition=native.definitions->powerups+j;native_slot=j;native_powerup=true;
+                }
+            }
+        }
+        if ((!native_definition && definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS)) ||
             (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
         double owned;
         if (!qa_inventory_count_read(inventory, actor, definition.item, &owned, error)) return false;
@@ -39,7 +54,7 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
             if (!qa_inventory_count_read(inventory, actor, definition.ammo, &ammo, error)) return false;
             ammunition = ammo > 0; amount = ammo;
         }
-        if (definition.weapon) {
+        if (definition.weapon && !native_definition) {
             bool available, found;
             if (!qa_application_weapon_availability_read(seat->frontend->application,actor,
                 &definition,&available,&found,error)) return false;
@@ -49,6 +64,20 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
             .identity = {.key = definition.item, .item = definition.item, .source_ordinal = (int32_t)i},
             .sort_order = (int32_t)i, .label = definition.label ? definition.label : "Item",
             .owned = owned > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
+        if (native_definition) {
+            qa_hud_wheel_item *row=rows+written-1;
+            int32_t native_count=native_powerup?native.state.powerups[native_slot]:
+                (native.state.owned&(UINT32_C(1)<<native_slot))!=0;
+            int32_t ammo=native_definition->ammo>=0?native.state.ammo[native_definition->ammo]:
+                native_powerup?native_count:-1;
+            row->owned=native_count>0;
+            row->has_ammunition=row->owned && (ammo==-1 ||
+                ammo>=(native_powerup?1:native_definition->minimum));
+            row->has_count=ammo!=-1 && !(native_definition->toggle && native_definition->ammo<0);
+            row->count=ammo;row->warning_count=native_definition->warning;
+            row->sort_order=native_definition->sort;row->identity.source_ordinal=(int32_t)native_slot;
+            row->has_toggle=native_definition->toggle;row->enabled=native_definition->toggle && native_count>1;
+        }
     }
     if (qa_inventory_definition_revision(inventory, actor) != revision) {
         size_t retained = 0;
@@ -56,7 +85,7 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
             qa_item_definition definition; bool found;
             if (!qa_inventory_item_definition_find(inventory, actor, NULL, rows[i].identity.item,
                 &definition, &found, error)) return false;
-            if (!found || definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) ||
+            if (!found || (mode==QA_HUD_WHEEL_WEAPONS && !definition.weapon) ||
                 (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
             rows[i].label = definition.label ? definition.label : "Item";
             rows[retained++] = rows[i];
@@ -75,6 +104,13 @@ static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
     if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         !qa_application_player_actor(seat->frontend->application, launch_seat, &actor)) return true;
     if (!qa_application_weapon_read(seat->frontend->application, actor, &weapon, error)) return false;
+    qa_application_native_q2_wheel native;bool native_found;
+    if (!qa_application_native_q2_wheel_read(seat->frontend->application,launch_seat,false,
+        &native,&native_found,error)) return false;
+    qa_actor_owner owner;
+    if (native_found && native.active && qa_inventory_item_owner(
+        qa_application_inventory(seat->frontend->application),actor,weapon,&owner,NULL) && owner==native.owner)
+        weapon=native.active;
     *out = weapon; return true;
 }
 static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
@@ -89,7 +125,7 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
     qa_item_definition definition; bool found;
     if (!qa_inventory_item_definition_find(qa_application_inventory(seat->frontend->application),
         actor, NULL, identity.item, &definition, &found, error)) return false;
-    if (found && definition.weapon == (mode == QA_HUD_WHEEL_WEAPONS) &&
+    if (found && (mode != QA_HUD_WHEEL_WEAPONS || definition.weapon) &&
         (mode != QA_HUD_WHEEL_POWERUPS || (definition.actions & QA_ITEM_USE))) {
         qa_command_context command=qa_input_seat_context(seat->input);
         command.actor=actor; command.seat=launch_seat;

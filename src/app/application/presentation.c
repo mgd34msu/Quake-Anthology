@@ -1,5 +1,6 @@
 #include "guest_q3_private.h"
 #include "guest_native_q2_private.h"
+#include "qa/application_native_q2_presentation.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_source.h"
@@ -268,6 +269,20 @@ bool qa_application_native_q2_hud_text(qa_application *app, uint32_t seat,
     if (!ready(app, error)) return false;
     app->operation = APPLICATION_ADVANCING;
     bool ok = application_native_q2_hud_text(provider, seat, kind, text, flag, error);
+    *handled = ok;
+    return presentation_return(app, ok, true, error);
+}
+
+bool qa_application_native_q2_wheel_read(qa_application *app, uint32_t seat, bool powerups,
+    qa_application_native_q2_wheel *out, bool *handled, qa_error *error)
+{
+    *handled = false;
+    if (!app || app->destroy_requested || !qa_application_launch(app)) return true;
+    application_provider *provider = selected(app, seat, QA_ROLE_HUD);
+    if (!native_q2_hud(provider)) return true;
+    if (!ready(app, error)) return false;
+    app->operation = APPLICATION_ADVANCING;
+    bool ok = application_native_q2_wheel_read(provider, seat, powerups, out, error);
     *handled = ok;
     return presentation_return(app, ok, true, error);
 }
