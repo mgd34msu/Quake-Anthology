@@ -1,7 +1,5 @@
 #include "native_q1_respawn.h"
 #include "map_players_private.h"
-#include "native_q1_console.h"
-#include "native_q1_wire.h"
 #include "native_q1_composition.h"
 #include "native_maps.h"
 #include "map_travel_private.h"
@@ -71,10 +69,6 @@ static bool begin_client(application_provider *provider, qa_actor_id actor,
     if (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
         app->operation != APPLICATION_CONFIGURING && app->operation != APPLICATION_PERSISTING)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 travel has no admitted application phase");
-    if (app->operation == APPLICATION_IDLE &&
-        application_native_q1_console_idle(provider) && application_native_q1_wire_idle(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-            "Q1 travel requires an admitted application or source command operation");
     *call = (source_call){.application = app, .provider = provider, .actor = actor};
     return qa_q1_game_operation_begin(provider->state.q1, &call->operation, error) &&
         client_current(call, error);
