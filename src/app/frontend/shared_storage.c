@@ -1,5 +1,6 @@
 #include "shared_storage.h"
 #include "shared_register.h"
+#include "campaign.h"
 #include "save_private.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
@@ -185,6 +186,15 @@ static bool archive_capture(const qa_cvars *registry,bool player,qa_cvar_archive
     }
     return true;
 }
+typedef struct archive_capture_request {
+    const qa_cvars *registry;
+    qa_cvar_archive *archive;
+} archive_capture_request;
+static bool archive_capture_global(void *context,qa_error *e)
+{
+    archive_capture_request *request=context;
+    return archive_capture(request->registry,false,request->archive,e);
+}
 bool frontend_shared_storage_seed_player(const frontend_shared_storage *owner,qa_cvars *shared,
     uint32_t seat,bool preserve_current,qa_cvar_archive *archive,qa_error *e)
 {
@@ -369,7 +379,8 @@ static bool selected_seat(const uint32_t *seats,size_t count,uint32_t seat)
     for (size_t i=0;i<count;++i) if (seats[i]==seat) return true;
     return false;
 }
-bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_cvars *shared,qa_error *e)
+bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_frontend *frontend,
+    qa_cvars *shared,qa_error *e)
 {
     size_t actual=qa_cvars_player_count(shared);
     if (owner->player_count>SIZE_MAX/sizeof(storage_player) || actual>SIZE_MAX/sizeof(storage_player)-owner->player_count)
@@ -384,7 +395,9 @@ bool frontend_shared_storage_save_archive(frontend_shared_storage *owner,qa_cvar
     }
     qa_cvar_archive global={0}; size_t capacity=owner->player_count+selected_count;
     storage_player *players=capacity?calloc(capacity,sizeof(*players)):NULL; size_t used=0;
-    bool ok=(!capacity || players) && archive_capture(shared,false,&global,e);
+    archive_capture_request request={shared,&global};
+    bool ok=(!capacity || players) &&
+        frontend_campaign_archive_run(frontend,shared,archive_capture_global,&request,e);
     if (!players && capacity) frontend_fail(e,QA_ERROR_MEMORY,"Capturing canonical player settings");
     for (size_t i=0;ok && i<owner->player_count;++i) {
         if (selected_seat(selected,selected_count,owner->players[i].seat)) continue;

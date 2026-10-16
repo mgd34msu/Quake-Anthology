@@ -13,6 +13,7 @@
 #include "qa/q3_product_policy.h"
 #include "qa/audio_save.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/application_network_q2.h"
 #include "qa/game_q2_bots.h"
 #include "qa/text.h"
@@ -78,6 +79,26 @@ static char *campaign_copy(const char *text,qa_error *error)
 }
 static const char *campaign_value(const qa_cvars *cvars,qa_cvar_handle handle)
 { const qa_cvar_view *value=qa_cvars_read(cvars,handle); return value?value->value:""; }
+bool frontend_campaign_archive_run(qa_frontend *f,qa_cvars *registry,
+    bool (*write)(void *,qa_error *),void *context,qa_error *error)
+{
+    frontend_campaign *owner=f?f->campaign:NULL;
+    if (!owner || owner->kind!=CAMPAIGN_TEAM || owner->result ||
+        !qa_cvars_same_store(owner->cvars,registry)) return write(context,error);
+    qa_cvar_assignment assignments[TEAM_OVERRIDE_COUNT];
+    size_t count=0;
+    for (size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) {
+        const qa_cvar_view *saved=qa_cvars_read(registry,owner->saved_rules[i]);
+        if (saved && qa_cvars_resolve(registry,team_overrides[i][0]).slot)
+            assignments[count++]=(qa_cvar_assignment){team_overrides[i][0],saved->value};
+    }
+    if (!count) return write(context,error);
+    qa_cvars_value_scope *scope=NULL;
+    if (!qa_cvars_value_scope_create(registry,assignments,count,&scope,error)) return false;
+    bool ok=qa_cvars_value_scope_run(scope,write,context,error);
+    qa_cvars_value_scope_destroy(scope);
+    return ok;
+}
 static bool campaign_match_record(qa_player_progress *profile,qa_game_family source,uint32_t seat,
     const char *round,const char *map,double score,qa_error *error)
 {

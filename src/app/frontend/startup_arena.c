@@ -371,9 +371,11 @@ bool frontend_startup_arena_prepare_settings(qa_cvars *server,qa_cvars *client,
             !baseline_apply(server,baseline,7,error)) return false;
     }
     if (!client) return true;
-    qa_team_arena_setting baseline;
-    if (!qa_team_arena_client_baseline(client,&baseline,error) ||
-        !baseline_apply(client,&baseline,1,error)) return false;
+    if (first_source) {
+        qa_team_arena_setting baseline;
+        if (!qa_team_arena_client_baseline(client,&baseline,error) ||
+            !baseline_apply(client,&baseline,1,error)) return false;
+    }
     for (size_t i=0;i<client_count;++i)
         if (!qa_cvars_set(client,client_rows[i].name,client_rows[i].value,true,error)) return false;
     return true;

@@ -6,6 +6,7 @@
 #include "client_registry.h"
 #include "authored_bindings.h"
 #include "config_weapon_defaults.h"
+#include "campaign.h"
 #include "remote_config.h"
 #include "neutral_config.h"
 #include "startup_menus.h"
@@ -700,6 +701,17 @@ bool frontend_config_store_cvar_edit(frontend_config_store *manager,qa_applicati
     *out=qa_cvars_prepared_edit(registry);
     return true;
 }
+typedef struct config_archive_request {
+    qa_cvars *registry;
+    qa_cvar_config_filter filter;
+    void *context;
+    qa_buffer *out;
+} config_archive_request;
+static bool config_archive_write(void *context,qa_error *error)
+{
+    config_archive_request *request=context;
+    return qa_cvars_config_filtered(request->registry,request->filter,request->context,request->out,error);
+}
 bool frontend_config_store_config_filtered(frontend_config_store *manager,qa_application *application,
     const qa_console *console,const qa_command_context *command,qa_cvars *registry,
     qa_cvar_config_filter filter,void *context,qa_buffer *out,qa_error *error)
@@ -707,7 +719,8 @@ bool frontend_config_store_config_filtered(frontend_config_store *manager,qa_app
     qa_cvars_edit *edit=NULL;
     if (!frontend_config_store_cvar_edit(manager,application,console,command,registry,&edit,error)) return false;
     if (edit && !qa_cvars_edit_enter(edit,registry,error)) return false;
-    bool ok=qa_cvars_config_filtered(registry,filter,context,out,error);
+    config_archive_request request={registry,filter,context,out};
+    bool ok=frontend_campaign_archive_run(manager->frontend,registry,config_archive_write,&request,error);
     if (edit && !qa_cvars_edit_leave(edit,registry,error)) return false;
     return ok;
 }
@@ -3404,7 +3417,7 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
         qa_cvars *engine=qa_application_cvars(manager->frontend->application);
         if (!manager->storage_seeded || !shared_storage_current(manager) || !qa_cvars_observer_idle(engine))
             return fail(error,QA_ERROR_ARGUMENT,"Shared archive lost its published ENGINE and retained store authorities");
-        if (!frontend_shared_storage_save_archive(manager->storage,engine,error)) return false;
+        if (!frontend_shared_storage_save_archive(manager->storage,manager->frontend,engine,error)) return false;
         qa_settings_store sticky={0};
         if (!frontend_shared_storage_input(manager->storage,&sticky))
             return fail(error,QA_ERROR_ARGUMENT,"Shared save lost its admitted optional sticky preference store");

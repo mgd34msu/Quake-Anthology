@@ -257,23 +257,6 @@ static qa_cvars *visible(void *context,const qa_command_context *command,size_t 
     if (row->movement!=row->client) { if (!ordinal) return row->movement; --ordinal; }
     return ordinal?NULL:row->client;
 }
-static bool edit(void *context,const qa_command_context *command,qa_cvars *registry,
-    qa_cvars_edit **out,qa_error *e)
-{
-    frontend_neutral_config *row=context;
-    if (!out || !active(row,command) || (registry!=row->client && registry!=row->mouse &&
-        registry!=row->movement && registry!=qa_application_cvars(row->owner->frontend->application)))
-        return fail(e,QA_ERROR_ARGUMENT,"Neutral cvar edit leaves its actual physical CLIENT");
-    *out=NULL;
-    frontend_shared_settings *shared=row->preparation?frontend_config_store_shared(row->owner->manager,
-        row->owner->frontend->application,NULL):NULL;
-    frontend_shared_values *values=frontend_shared_settings_values(shared);
-    if (registry==qa_application_cvars(row->owner->frontend->application) && frontend_shared_values_prepared(values)) {
-        qa_cvars *actual=NULL;
-        return frontend_shared_values_client_access(values,row->preparation,command,&actual,out,e) && actual==registry;
-    }
-    return qa_cvars_observer_idle(registry) || fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT cannot borrow an outstanding registry edit");
-}
 static bool input_context(void *context,uint32_t physical,const qa_command_context *command,qa_error *e)
 {
     frontend_neutral_config *row=context;
@@ -319,10 +302,9 @@ static bool config_command(void *context,const qa_command_invocation *invocation
     for (size_t i=0;ok;++i) {
         qa_cvars *registry=visible(row,&invocation->context,i);
         if (!registry) break;
-        qa_cvars_edit *prepared=NULL; qa_buffer values={0};
-        ok=edit(row,&invocation->context,registry,&prepared,e) && (prepared?
-            qa_cvars_edit_config_filtered(prepared,archive_visible,&filter,&values,e):
-            qa_cvars_config_filtered(registry,archive_visible,&filter,&values,e));
+        qa_buffer values={0};
+        ok=frontend_config_store_config_filtered(row->owner->manager,row->owner->frontend->application,
+            invocation->console,&invocation->context,registry,archive_visible,&filter,&values,e);
         if (ok && values.size>SIZE_MAX-text.size-1) ok=fail(e,QA_ERROR_MEMORY,"Neutral configuration text exceeds storage");
         uint8_t *next=ok?realloc(text.data,text.size+values.size+1):NULL;
         if (ok && !next) ok=fail(e,QA_ERROR_MEMORY,"Retaining neutral configuration text");

@@ -9,6 +9,8 @@ bool frontend_campaign_sync(qa_frontend *,qa_error *);
 bool frontend_campaign_match_complete(qa_frontend *,qa_actor_owner,qa_error *);
 bool frontend_campaign_source_command(void *,qa_application *,const qa_command_invocation *,bool *,qa_error *);
 bool frontend_campaign_ready(const qa_frontend *);
+bool frontend_campaign_archive_run(qa_frontend *,qa_cvars *,
+    bool (*)(void *,qa_error *),void *,qa_error *);
 void frontend_campaign_audio_stopped(qa_frontend *);
 bool frontend_campaign_destroy(qa_frontend *,qa_error *);
 #endif

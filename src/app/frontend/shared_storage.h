@@ -45,7 +45,7 @@ const qa_cvar_archive *frontend_shared_storage_player_archive(const frontend_sha
 bool frontend_shared_storage_seed_player(const frontend_shared_storage *,qa_cvars *,uint32_t seat,
     bool preserve_current,qa_cvar_archive *,qa_error *);
 bool frontend_shared_storage_apply_players(const frontend_shared_storage *,qa_cvars *,qa_error *);
-bool frontend_shared_storage_save_archive(frontend_shared_storage *,qa_cvars *,qa_error *);
+bool frontend_shared_storage_save_archive(frontend_shared_storage *,qa_frontend *,qa_cvars *,qa_error *);
 bool frontend_shared_storage_save_audio(frontend_shared_storage *,const frontend_shared_audio_preferences *,qa_error *);
 /* The supplied preference must come from the actual published view owner.
  * No explicit override leaves the existing file untouched. */
