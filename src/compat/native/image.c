@@ -374,6 +374,69 @@ bool qa_native_image_has_export(qa_bytes bytes, const char *name, bool *found, q
     return true;
 }
 
+bool qa_native_image_inspect_layout(qa_bytes bytes, qa_native_image_layout *out,
+    bool (*visit)(void *, const qa_native_image_range *, qa_error *), void *context,
+    qa_error *error)
+{
+    if (!out)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "Native layout inspection requires its output");
+    qa_native_image_info info;
+    if (!qa_native_inspect(bytes, &info, error)) return false;
+    bool okay = true;
+    if (info.format == QA_NATIVE_IMAGE_PE32 || info.format == QA_NATIVE_IMAGE_PE32_PLUS) {
+        guest_pe *image = NULL;
+        if (!guest_pe_open(bytes, &info, info.preferred_base, SIZE_MAX, &image, error)) return false;
+        const guest_pe_view *view = guest_pe_describe(image);
+        *out = (qa_native_image_layout){.image = info,
+            .entry_point = info.preferred_base + view->entry};
+        for (size_t i = 0; visit && okay && i < view->section_count; ++i) {
+            const guest_pe_section *section = view->sections + i;
+            qa_native_image_range range = {.kind = QA_NATIVE_IMAGE_SECTION, .name = section->name,
+                .address = info.preferred_base + section->rva, .bytes = section->bytes,
+                .file_offset = section->file_offset, .file_bytes = section->file_bytes,
+                .readable = (section->permissions & QA_NATIVE_GUEST_READ) != 0,
+                .writable = (section->permissions & QA_NATIVE_GUEST_WRITE) != 0,
+                .executable = (section->permissions & QA_NATIVE_GUEST_EXECUTE) != 0};
+            okay = visit(context, &range, error);
+        }
+        guest_pe_close(&image);
+    } else {
+        guest_elf *image = NULL;
+        if (!guest_elf_open(bytes, &info, GUEST_ELF_LIBRARY, 0, SIZE_MAX, &image, error)) return false;
+        const guest_elf_view *view = guest_elf_describe(image);
+        *out = (qa_native_image_layout){.image = info, .entry_point = view->entry};
+        for (size_t i = 0; visit && okay && i < view->section_count; ++i) {
+            const guest_elf_section *section = view->sections + i;
+            uint32_t permissions = 0;
+            if (section->flags & 2u)
+                for (size_t j = 0; j < view->segment_count; ++j) {
+                    const guest_elf_segment *segment = view->segments + j;
+                    if (segment->type == 1 && section->address >= segment->address &&
+                        section->address - segment->address <= segment->memory_bytes &&
+                        section->bytes <= segment->memory_bytes - (section->address - segment->address))
+                        permissions |= segment->flags;
+                }
+            qa_native_image_range range = {.kind = QA_NATIVE_IMAGE_SECTION, .name = section->name,
+                .address = section->address, .bytes = section->bytes, .file_offset = section->offset,
+                .file_bytes = section->type == 0 || section->type == 8 ? 0 : section->bytes,
+                .readable = (permissions & 4u) != 0, .writable = (permissions & 2u) != 0,
+                .executable = (permissions & 1u) != 0};
+            okay = visit(context, &range, error);
+        }
+        for (size_t i = 0; visit && okay && i < view->segment_count; ++i) {
+            const guest_elf_segment *segment = view->segments + i;
+            if (segment->type != 1) continue;
+            qa_native_image_range range = {.kind = QA_NATIVE_IMAGE_SEGMENT, .address = segment->address,
+                .bytes = segment->memory_bytes, .file_offset = segment->offset,
+                .file_bytes = segment->file_bytes, .readable = (segment->flags & 4u) != 0,
+                .writable = (segment->flags & 2u) != 0, .executable = (segment->flags & 1u) != 0};
+            okay = visit(context, &range, error);
+        }
+        guest_elf_close(&image);
+    }
+    return okay;
+}
+
 qa_native_target qa_native_host_target(void) {
     qa_native_target target = {0};
 #if defined(_WIN32)

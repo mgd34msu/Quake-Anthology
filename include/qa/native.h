@@ -68,6 +68,22 @@ typedef struct qa_native_image_info {
  * validated before a module is admitted to the owned guest process.
  */
 bool qa_native_inspect(qa_bytes image, qa_native_image_info *out, qa_error *error);
+typedef enum qa_native_image_range_kind {
+    QA_NATIVE_IMAGE_SECTION, QA_NATIVE_IMAGE_SEGMENT
+} qa_native_image_range_kind;
+typedef struct qa_native_image_range {
+    qa_native_image_range_kind kind;
+    const char *name; /* Borrowed only during the callback; NULL for segments. */
+    uint64_t address, bytes, file_offset, file_bytes;
+    bool readable, writable, executable;
+} qa_native_image_range;
+typedef struct qa_native_image_layout {
+    qa_native_image_info image;
+    uint64_t entry_point; /* Original virtual address, before runtime relocation. */
+} qa_native_image_layout;
+/* Visits the same inert PE/ELF records used by module admission. */
+bool qa_native_image_inspect_layout(qa_bytes, qa_native_image_layout *,
+    bool (*visit)(void *, const qa_native_image_range *, qa_error *), void *, qa_error *);
 /* Reuses the inert image readers; no module initializer or source call runs. */
 bool qa_native_image_has_export(qa_bytes, const char *, bool *found, qa_error *);
 /* Packaging inspection for an executable, including ELF PIE. Module admission

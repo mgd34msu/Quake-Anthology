@@ -213,6 +213,12 @@ const qa_qc_engine_globals *qa_qc_program_resolved_globals(const qa_qc_program *
 const qa_qc_function *qa_qc_program_function(const qa_qc_program *program,
                                              uint32_t index);
 uint32_t qa_qc_program_function_end(const qa_qc_program *, const qa_qc_function *);
+typedef struct qa_qc_think_binding {
+    uint32_t producer_function, think_function, statement;
+} qa_qc_think_binding;
+/* Reports immutable function stores to think, without inferring weapon roles. */
+bool qa_qc_program_inspect_think_bindings(const qa_qc_program *,
+    bool (*visit)(void *, const qa_qc_think_binding *, qa_error *), void *, qa_error *);
 const qa_qc_definition *qa_qc_program_find_global(const qa_qc_program *program,
                                                    const char *name);
 const qa_qc_definition *qa_qc_program_find_field(const qa_qc_program *program,

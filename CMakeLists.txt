@@ -1949,7 +1949,7 @@ if(WIN32)
     target_link_libraries(qa_tools PRIVATE ws2_32 Psapi)
 endif()
 
-add_executable(quake-anthology src/main.c)
+add_executable(quake-anthology src/main.c src/app/weapon_behavior_tool.c)
 set_target_properties(quake-anthology PROPERTIES ENABLE_EXPORTS ON)
 if(TARGET qa-native-profile-build)
     add_dependencies(quake-anthology qa-native-profile-build)

@@ -11,6 +11,7 @@
 #include "qa/platform_services.h"
 #include "qa/native_process_platform.h"
 #include "compat/native/guest/host_child.h"
+#include "app/weapon_behavior_tool.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -28,6 +29,7 @@ static void usage(FILE *stream)
           "       quake-anthology --inspect-nav ARCHIVE MEMBER [BSP_MEMBER]\n"
           "       quake-anthology --optimize-aas FILE OUTPUT\n"
           "       quake-anthology --optimize-aas ARCHIVE MEMBER OUTPUT\n"
+          "       quake-anthology weapon-behavior inspect PRODUCT [--artifact PATH] [options]\n"
           "\n"
           "  --content-root PATH      Primary data root, default executable folder\n"
           "  --game-path PATH         Additional install folder, repeatable\n"
@@ -355,6 +357,26 @@ int main(int argc, char **argv)
         if (argc == 5) return inspect_archive(argv[2], argv[3], optimize_aas, argv[4]);
         usage(stderr); return 2;
     }
+    const char *behavior_product = NULL, *behavior_artifact = NULL;
+    if (argc > 1 && strcmp(argv[1], "weapon-behavior") == 0) {
+        if (argc < 4 || strcmp(argv[2], "inspect") || !argv[3][0] || argv[3][0] == '-') {
+            usage(stderr); return 2;
+        }
+        behavior_product = argv[3];
+        int count = 1;
+        for (int i = 4; i < argc; ++i) {
+            if (!strcmp(argv[i], "--help")) { usage(stdout); return 0; }
+            if (!strcmp(argv[i], "--artifact")) {
+                if (behavior_artifact || i + 1 == argc || !argv[i + 1][0] || argv[i + 1][0] == '-') {
+                    fputs("weapon-behavior: --artifact requires one mounted path\n", stderr); return 2;
+                }
+                behavior_artifact = argv[++i];
+            } else if (!strcmp(argv[i], "--content")) argv[count++] = "--content-root";
+            else if (!strcmp(argv[i], "--user-content")) argv[count++] = "--user-content-root";
+            else argv[count++] = argv[i];
+        }
+        argc = count; argv[argc] = NULL;
+    }
     qa_frontend_options options;
     qa_error error = {0};
     if (!qa_frontend_options_parse(argc, argv, &options, &error)) {
@@ -374,6 +396,11 @@ int main(int argc, char **argv)
     if (!qa_frontend_options_resolve_locations(&options,&error)) {
         qa_frontend_options_destroy(&options);
         return report_error("game locations",&error);
+    }
+    if (behavior_product) {
+        bool okay = qa_weapon_behavior_inspect(&options, behavior_product, behavior_artifact, stdout, &error);
+        qa_frontend_options_destroy(&options);
+        return okay ? 0 : report_error("weapon-behavior", &error);
     }
     bool list = false;
     for (int i = 1; i < argc; ++i) list |= strcmp(argv[i], "--list-content") == 0;

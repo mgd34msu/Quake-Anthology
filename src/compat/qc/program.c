@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/hash.h"
+#include "qa/stamp.h"
 #include <stdio.h>
 
 #define QC_PROGRAM_VERSION 6
@@ -518,6 +519,49 @@ uint32_t qa_qc_program_function_end(const qa_qc_program *program,
             end = (uint32_t)candidate->first_statement;
     }
     return end;
+}
+
+bool qa_qc_program_inspect_think_bindings(const qa_qc_program *program,
+    bool (*visit)(void *, const qa_qc_think_binding *, qa_error *),
+    void *context, qa_error *error)
+{
+    if (!program || !visit)
+        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "QuakeC think inspection requires a program and visitor");
+    const qa_qc_definition *think = program->engine_fields.think;
+    if (!think) return true;
+    void *storage;
+    if (!allocate_records(&storage, program->info.global_words, sizeof(uint32_t), error)) return false;
+    qa_stamp_set reassigned;
+    qa_stamp_set_init(&reassigned, storage, program->info.global_words);
+    for (uint32_t i = 0; i < program->info.statement_count; ++i) {
+        const qa_qc_statement *statement = &program->statements[i];
+        if (statement->opcode == QA_QC_STORE_FN && statement->b < program->info.global_words)
+            qa_stamp_set_mark(&reassigned, statement->b);
+    }
+    bool okay = true;
+    for (uint32_t i = 1; okay && i < program->info.function_count; ++i) {
+        const qa_qc_function *producer = &program->functions[i];
+        if (producer->first_statement < 0 || producer->named_builtin) continue;
+        uint32_t end = qa_qc_program_function_end(program, producer);
+        for (uint32_t cursor = (uint32_t)producer->first_statement; okay && cursor + 1 < end; ++cursor) {
+            const qa_qc_statement *address = &program->statements[cursor];
+            const qa_qc_statement *store = address + 1;
+            if (address->opcode != QA_QC_ADDRESS || store->opcode != QA_QC_STOREP_FN ||
+                address->c != store->b || address->b >= program->info.global_words ||
+                store->a >= program->info.global_words || qa_stamp_set_test(&reassigned, store->a)) continue;
+            int32_t field = qa_load_i32le(program->initial_globals + (size_t)address->b * 4u);
+            int32_t target = qa_load_i32le(program->initial_globals + (size_t)store->a * 4u);
+            if (field != think->offset || target <= 0 || (uint32_t)target >= program->info.function_count) continue;
+            const qa_qc_function *callback = &program->functions[target];
+            if (callback->first_statement < 0 || callback->named_builtin) continue;
+            const qa_qc_definition *literal = qa_qc_program_find_global(program, callback->name);
+            if (!literal || literal->type != QA_QC_FUNCTION || literal->offset != store->a) continue;
+            qa_qc_think_binding binding = {i, (uint32_t)target, cursor + 1};
+            okay = visit(context, &binding, error);
+        }
+    }
+    free(storage);
+    return okay;
 }
 
 const qa_qc_definition *qa_qc_program_find_global(const qa_qc_program *program,
