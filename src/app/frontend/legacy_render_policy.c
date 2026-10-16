@@ -282,8 +282,9 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
     if (services->view_blend && (!scene_current(services,error) ||
         !services->view_blend(services->context,input,blend,error) || !scene_current(services,error))) return false;
     qa_scene_world_input opaque = *input;
-    if (policy->family == QA_GAME_Q1) opaque.legacy_phase = QA_LEGACY_WORLD_OPAQUE;
-    if (policy->family == QA_GAME_Q1 && input->q1_sky_environment &&
+    bool q1_world = policy->family == QA_GAME_Q1 && qa_scene_world_format(actual_world) == QA_BSP_Q1;
+    if (q1_world) opaque.legacy_phase = QA_LEGACY_WORLD_OPAQUE;
+    if (q1_world && input->q1_sky_environment &&
         !qa_scene_world_q1_sky_begin(actual_world, &opaque, frame, &opaque.q1_sky, error)) return false;
     if (!qa_scene_world_boxed_sky_begin(actual_world, &opaque, frame, &opaque.boxed_sky, error)) return false;
     if (!qa_scene_world_q2_alpha_begin(&opaque, frame, &opaque.q2_alpha, error)) return false;
@@ -302,7 +303,7 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
         !services->dlights(services->context, input, frame, blend, error))) return false;
     if (!scene_current(services, error) || !services->particles(services->context, input, frame, error) ||
         !scene_current(services, error)) return false;
-    if (policy->family == QA_GAME_Q1) {
+    if (q1_world) {
         qa_scene_world_input water = *input;
         water.legacy_phase = QA_LEGACY_WORLD_WATER;
         if (!qa_scene_world_submit(actual_world, &water, frame, error) ||
@@ -485,6 +486,11 @@ bool frontend_legacy_scene_submit_product(qa_frontend *frontend, qa_scene_world 
         frontend_legacy_render_policy_read(frontend, product, frontend_root_world_rules(frontend), &policy, error)) ||
         !scene_current(services, error)) return false;
     qa_scene_world_input input = *world;
+    if (qa_scene_world_format(actual_world) != QA_BSP_Q1) {
+        input.q1_sky_environment = NULL;
+        policy.texture_sort = false;
+        policy.mirror_alpha = 1;
+    }
     if (policy.family == QA_GAME_Q1 && input.q1_sky_environment) {
         float far_clip = input.q1_sky_environment->far_clip;
         if (!isfinite(far_clip) || far_clip <= 4)

@@ -1187,6 +1187,11 @@ qa_bounds qa_scene_world_bounds(const qa_scene_world *world)
     return world != NULL ? world->bounds : (qa_bounds){0};
 }
 
+qa_bsp_family qa_scene_world_format(const qa_scene_world *world)
+{
+    return world->bsp.family;
+}
+
 bool qa_scene_world_sample_light(const qa_scene_world *world, qa_vec3 point,
                                  qa_vec3 *ambient, qa_vec3 *directed, qa_vec3 *direction)
 {

@@ -968,6 +968,7 @@ bool qa_scene_world_q1_mirror_scope(const qa_scene_world *, const qa_scene_world
 bool qa_scene_world_q1_mirror_overlay(qa_scene_world *, const qa_scene_world_input *,
                                       float alpha, qa_scene_frame *, qa_error *);
 qa_bounds qa_scene_world_bounds(const qa_scene_world *);
+qa_bsp_family qa_scene_world_format(const qa_scene_world *);
 bool qa_scene_world_sky_drawn(const qa_scene_world *);
 bool qa_scene_world_remap(qa_scene_world *, const char *original, const char *replacement,
                           float time_offset, qa_error *);
