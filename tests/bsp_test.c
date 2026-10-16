@@ -539,6 +539,23 @@ static void entities(void)
     CHECK(qa_entity_value(&result, 1, "angle", &value) && equal_text(value, "90"));
     qa_entities_free(&result);
     qa_buffer_free(&prepared);
+    const char *team_spawns[] = {"team_CTF_redplayer", "team_CTF_blueplayer"};
+    preparation = (qa_entity_prepare_options){.required_class = "info_player_start",
+        .fallback_classes = team_spawns, .fallback_count = 2};
+    const char *teams = "{ classname worldspawn } "
+        "{ classname team_CTF_redplayer origin \"1 2 3\" angle 90 custom kept } "
+        "{ classname team_CTF_blueplayer origin \"4 5 6\" angle 270 } "
+        "{ classname team_CTF_redspawn origin \"7 8 9\" }";
+    CHECK(qa_entities_prepare_text((qa_bytes){(const uint8_t *)teams, strlen(teams)},
+        QA_ENTITY_Q1, &preparation, &prepared, &error));
+    CHECK(qa_entities_parse((qa_bytes){prepared.data, prepared.size}, QA_ENTITY_Q1, &result, &error));
+    CHECK(result.count == 6);
+    CHECK(qa_entity_value(&result, 4, "classname", &value) && equal_text(value, "info_player_start"));
+    CHECK(qa_entity_value(&result, 4, "origin", &value) && equal_text(value, "1 2 3"));
+    CHECK(qa_entity_value(&result, 4, "custom", &value) && equal_text(value, "kept"));
+    CHECK(qa_entity_value(&result, 5, "angle", &value) && equal_text(value, "270"));
+    qa_entities_free(&result);
+    qa_buffer_free(&prepared);
     const char *unquotable = "{ key unquoted\"value }";
     CHECK(!qa_entities_prepare_text((qa_bytes){(const uint8_t *)unquotable, strlen(unquotable)},
         QA_ENTITY_Q1, &preparation, &prepared, &error));

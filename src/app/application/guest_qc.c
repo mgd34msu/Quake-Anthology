@@ -1546,7 +1546,33 @@ bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view 
 {
     if (provider && provider->state.qc.qualified &&
         !application_qc_authored_map_ready(provider, error)) return false;
-    return load_map(provider, bsp, entities, map, spawn, true, error);
+    if (!bsp || bsp->family == QA_BSP_Q1)
+        return load_map(provider, bsp, entities, map, spawn, true, error);
+    static const char *const deathmatch_spawns[] = {
+        "info_player_start", "info_player_coop", "team_CTF_redplayer", "team_CTF_blueplayer",
+        "team_CTF_redspawn", "team_CTF_bluespawn"
+    };
+    static const char *const ordinary_spawns[] = {
+        "info_player_deathmatch", "team_CTF_redplayer", "team_CTF_blueplayer"
+    };
+    struct application_qc_state *engine = provider->state.qc.engine;
+    const qa_cvar_view *mode = qa_cvars_read(engine->cvars, engine->cvar_handles.deathmatch);
+    bool deathmatch = mode && mode->number != 0;
+    qa_entity_prepare_options options = {
+        .required_class = deathmatch ? "info_player_deathmatch" : "info_player_start",
+        .fallback_classes = deathmatch ? deathmatch_spawns : ordinary_spawns,
+        .fallback_count = deathmatch ? sizeof(deathmatch_spawns) / sizeof(*deathmatch_spawns) :
+            sizeof(ordinary_spawns) / sizeof(*ordinary_spawns)
+    };
+    qa_buffer text = {0};
+    qa_entities prepared = {0};
+    bool okay = qa_entities_prepare_text(bsp->lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1,
+        &options, &text, error) &&
+        qa_entities_parse((qa_bytes){text.data, text.size}, QA_ENTITY_Q1, &prepared, error) &&
+        load_map(provider, bsp, &prepared, map, spawn, true, error);
+    qa_entities_free(&prepared);
+    qa_buffer_free(&text);
+    return okay;
 }
 bool application_qc_initialize_map(application_provider *provider, const qa_bsp_view *bsp,
                                     const qa_entities *entities, qa_string_id map,
