@@ -101,7 +101,8 @@ static bool arenas(void *context, qa_ui_library *library,
 static const char *hosting_label(void *context)
 { return frontend_host_menu_label(((frontend_seat *)context)->host_menu); }
 static bool stage_selection(frontend_seat *seat,qa_ui_library *library,qa_launch_draft *draft,bool authored,
-    const char *arena_map,int32_t bot_skill,const qa_application_q3_campaign *previous,bool advance,qa_error *error)
+    const char *arena_map,int32_t bot_skill,const qa_application_q3_campaign *previous,bool advance,
+    bool defaults,qa_error *error)
 {
     qa_frontend *f = seat->frontend;
     if (f->startup_launch || qa_application_startup_pending(f->application))
@@ -137,6 +138,7 @@ static bool stage_selection(frontend_seat *seat,qa_ui_library *library,qa_launch
             ok = request->settings[i].name && request->settings[i].value;
         }
     }
+    if (ok && defaults) ok = frontend_launch_weapon_behavior_defaults(f, request->draft, error);
     if (ok) ok = frontend_startup_server_profile_capture(
         frontend_global_settings_storage_user_store(f->global_settings_storage),seat->server_profile_path,
         request->draft,&request->server_profile,error);
@@ -148,13 +150,13 @@ static bool stage_selection(frontend_seat *seat,qa_ui_library *library,qa_launch
 }
 static bool stage(void *context,qa_ui_library *library,qa_launch_draft *draft,bool authored,
     const char *arena_map,int32_t bot_skill,qa_error *error)
-{ return stage_selection(context,library,draft,authored,arena_map,bot_skill,NULL,false,error); }
+{ return stage_selection(context,library,draft,authored,arena_map,bot_skill,NULL,false,true,error); }
 bool frontend_startup_campaign_stage(frontend_seat *seat,const qa_application_q3_campaign *source,
     bool advance,qa_error *error)
 {
     qa_launch_draft *draft=NULL;
     bool ok=qa_launch_snapshot_draft_copy(source->publication,&draft,error) &&
-        stage_selection(seat,NULL,draft,true,NULL,0,source,advance,error);
+        stage_selection(seat,NULL,draft,true,NULL,0,source,advance,false,error);
     qa_launch_draft_destroy(draft);return ok;
 }
 bool frontend_startup_lobby_host_stage(frontend_seat *seat, qa_lobby_session *session,
@@ -166,8 +168,13 @@ bool frontend_startup_lobby_host_stage(frontend_seat *seat, qa_lobby_session *se
         !frontend_host_menu_read(seat->host_menu,draft,&hosting,error)) return false;
     if (hosting.kind == FRONTEND_HOST_OFFLINE)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Choose hosting connections before creating a lobby");
-    if (!qa_lobby_session_host(session,name,capacity,
-        &(qa_lobby_selection){.launch=draft},local,error)) return false;
+    qa_launch_draft *selection = NULL;
+    bool ok = qa_launch_draft_copy(draft, &selection, error) &&
+        frontend_launch_weapon_behavior_defaults(seat->frontend, selection, error) &&
+        qa_lobby_session_host(session,name,capacity,
+            &(qa_lobby_selection){.launch=selection},local,error);
+    qa_launch_draft_destroy(selection);
+    if (!ok) return false;
     frontend_local_lobby_hosting(seat->frontend->local_lobby,seat->id,&hosting);
     return true;
 }
@@ -179,7 +186,7 @@ static bool connection_stage(frontend_seat *seat, const qa_launch_draft *selecti
     qa_launch_draft *draft = NULL;
     bool staged = qa_launch_draft_rebase(selection,
         qa_application_catalog(f->application),&draft,error) &&
-        stage(seat,seat->library,draft,false,NULL,0,error);
+        stage_selection(seat,seat->library,draft,false,NULL,0,NULL,false,false,error);
     qa_launch_draft_destroy(draft);
     if (!staged) return false;
     struct frontend_startup_launch *request = f->startup_launch;

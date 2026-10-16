@@ -57,6 +57,61 @@ bool qa_launch_select_game_type(qa_launch_draft *d, const char *component, qa_er
             .role = QA_ROLE_ENTITIES, .instance = provider.instance}, error);
 }
 
+bool qa_launch_select_weapon_behavior(qa_launch_draft *draft, const char *selection, qa_error *error)
+{
+    if (!draft || !selection || !*selection) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Projectile behavior requires PRODUCT/BEHAVIOR");
+        return false;
+    }
+    qa_catalog *catalog = qa_launch_draft_catalog(draft);
+    const qa_product *product = NULL;
+    size_t prefix = 0, length = strlen(selection);
+    for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
+        const qa_product *candidate = qa_catalog_at(catalog, i);
+        const char *names[] = {candidate->key, candidate->identity};
+        for (size_t j = 0; j < sizeof(names) / sizeof(names[0]); ++j) {
+            size_t n = strlen(names[j]);
+            if (n > prefix && n < length && selection[n] == '/' && !strncmp(selection, names[j], n)) {
+                product = candidate;
+                prefix = n;
+            }
+        }
+    }
+    const qa_catalog_weapon_behavior *behavior = product ?
+        qa_catalog_weapon_behavior_find(catalog, product->id, selection + prefix + 1) : NULL;
+    if (!product || product->availability != QA_CONTENT_INSTALLED || !behavior || behavior->unavailable) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Projectile behavior is not available: %s%s%s", selection,
+            behavior && behavior->unavailable ? ": " : "", behavior && behavior->unavailable ? behavior->unavailable : "");
+        return false;
+    }
+    const qa_launch_choices *choices = qa_launch_draft_choices(draft);
+    for (size_t i = 0; i < choices->behavior_count; ++i) {
+        const qa_launch_weapon_behavior *previous = &choices->behaviors[i];
+        if (previous->scope.kind != QA_SCOPE_DEFAULT_PLAYER || *previous->weapon || previous->role != behavior->role)
+            continue;
+        for (size_t j = 0; j < choices->provider_count; ++j) {
+            const qa_launch_provider *provider = &choices->providers[j];
+            if (!strcmp(provider->instance, previous->instance) && previous->enabled &&
+                provider->product == product->id && provider->runtime == behavior->runtime &&
+                !strcmp(provider->artifact, behavior->artifact_path) && !strcmp(previous->behavior, behavior->id))
+                return true;
+        }
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Conflicting projectile behaviors for role %u: %s and %s",
+            (unsigned)behavior->role, previous->behavior, selection);
+        return false;
+    }
+    const qa_product *program = qa_catalog_product(catalog, product->program_product);
+    if (!program) program = product;
+    char instance[64];
+    snprintf(instance, sizeof(instance), "frontend:trajectory:%u", (unsigned)behavior->role);
+    qa_launch_provider provider = {.instance = instance, .product = product->id,
+        .runtime = behavior->runtime, .implementation = program->key, .artifact = behavior->artifact_path,
+        .clock = qa_clock_defaults(qa_product_ruleset(product, product->family))};
+    return qa_launch_set_provider(draft, &provider, error) &&
+        qa_launch_set_weapon_behavior(draft, &(qa_launch_weapon_behavior){
+            .scope = {.kind = QA_SCOPE_DEFAULT_PLAYER}, .weapon = "", .instance = instance,
+            .behavior = behavior->id, .role = behavior->role, .enabled = true}, error);
+}
 bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map, qa_error *error)
 {
     const qa_product *p = qa_catalog_product(d->catalog, product);
