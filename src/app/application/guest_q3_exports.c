@@ -723,12 +723,21 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
     char weapon[32];
     if (kind==QA_QVM_CGAME && command && command->argc &&
         qa_text_ascii_equal(command->argv[0],"weapon")) {
+        qa_application *app=role->engine->provider->application;
+        qa_actor_id actor=command->context.actor;
+        qa_actor_owner source_owner=role->engine->provider->owner;
+        if (role->local_client) {
+            qa_application_q3_client_context source;
+            if (!client_context_read(app,role->engine->provider->owner,
+                role->seat,false,&source,error)) return false;
+            actor=source.source_actor;
+            source_owner=source.source_owner;
+        }
         qa_application_item_selection selected;
-        qa_command_result result=qa_application_item_command(role->engine->provider->application,
-            command->context.actor,command,&selected,error);
+        qa_command_result result=qa_application_item_command(app,actor,command,&selected,error);
         if (result==QA_COMMAND_FAILED) return false;
         if (result==QA_COMMAND_HANDLED) {
-            if (!selected.item || selected.provider!=role->engine->provider->owner || selected.q3_weapon<0) {
+            if (!selected.item || selected.provider!=source_owner || selected.q3_weapon<0) {
                 *handled=true;
                 return true;
             }
