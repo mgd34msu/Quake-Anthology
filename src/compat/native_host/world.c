@@ -828,14 +828,15 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     if (host->profile == QA_NATIVE_Q2_GAME_API2023 &&
         !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 1u, error))
         return false;
+    native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
+    uint64_t frame = host->engine.source_frame ? host->engine.source_frame(host->engine.context) : 0;
+    bool same_actor = qa_actor_id_equal(lifetime->actor, actor);
+    if (link_count == 0 || !same_actor || (host->engine.source_frame && !lifetime->present)) {
+        bool bot_registered = lifetime->bot_registered && same_actor;
+        *lifetime = (native_host_q2_lifetime){.actor = actor, .bot_registered = bot_registered,
+            .creation_origin = origin, .creation_frame = frame, .present = host->engine.source_frame != NULL};
+    }
     if (link_count == 0) {
-        bool bot_registered = host->q2_lifetimes[slot].bot_registered &&
-            qa_actor_id_equal(host->q2_lifetimes[slot].actor, actor);
-        host->q2_lifetimes[slot] = (native_host_q2_lifetime){.actor = actor, .bot_registered = bot_registered};
-        if (host->engine.source_frame)
-            host->q2_lifetimes[slot] = (native_host_q2_lifetime){.actor = actor,
-                .creation_origin = origin, .creation_frame = host->engine.source_frame(host->engine.context),
-                .present = true, .bot_registered = bot_registered};
         bool copy_origin = host->profile == QA_NATIVE_Q2_GAME_API3;
         if (!copy_origin) {
             uint32_t render_effects;
@@ -847,10 +848,6 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
             return false;
     }
     if (host->engine.source_frame) {
-        native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
-        if (!lifetime->present || !qa_actor_id_equal(lifetime->actor, actor))
-            return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link lost its physical Source creation owner");
-        uint64_t frame = host->engine.source_frame(host->engine.context);
         if (frame < lifetime->creation_frame)
             return native_host_fail(error, QA_ERROR_FORMAT, slot, "Native Q2 link moved before its Source creation frame");
         lifetime->origins[frame & 7u] = (qa_native_host_q2_origin){
