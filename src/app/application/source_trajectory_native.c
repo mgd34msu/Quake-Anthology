@@ -1,4 +1,5 @@
 #include "source_trajectory.h"
+#include "source_trajectory_native_builtin.h"
 #include "internal.h"
 #include "map_players_private.h"
 #include "qa/binary.h"
@@ -967,14 +968,14 @@ static bool native_cvars_parse(trajectory_native *source, const qa_json_document
 static bool native_declaration(trajectory_native *source, const qa_catalog_weapon_behavior *behavior,
     qa_error *error)
 {
-    if (!behavior->entry.size)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native trajectory requires an explicit source callback and layout declaration");
     qa_native_module_info module = qa_native_module_describe(source->module);
     if (module.profile != QA_NATIVE_Q2_GAME_API2023 || module.image.target.abi != QA_NATIVE_ABI_MICROSOFT_X64 ||
         module.image.target.pointer_bytes != 8)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Declared native trajectory requires the API2023 Windows x64 source ABI");
     qa_json_document *document = NULL;
-    if (!qa_json_parse(QA_JSON_STRICT, behavior->entry, &document, error)) return false;
+    qa_bytes declaration = behavior->entry.size ? behavior->entry :
+        (qa_bytes){(const uint8_t *)application_native_q2eaks_trajectory, sizeof(application_native_q2eaks_trajectory) - 1};
+    if (!qa_json_parse(QA_JSON_STRICT, declaration, &document, error)) return false;
     qa_json_id root = qa_json_root(document);
     bool okay = qa_json_string_equal(document, qa_json_get(document, root, "kind"), "q2-api2023-trajectory") &&
         qa_json_string_equal(document, qa_json_get(document, root, "abi"), "windows-x86-64");
