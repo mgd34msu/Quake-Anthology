@@ -1335,6 +1335,18 @@ bool qa_vfs_set_mount_q3_demo(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_erro
     return true;
 }
 
+bool qa_vfs_q3_loose_path(const char *path)
+{
+    if (!path) return false;
+    if (qa_archive_paths_equal(path, "qvm-compatibility.json", QA_ARCHIVE_CASE_INSENSITIVE)) return true;
+    const char *extension = strrchr(path, '.');
+    if (!extension) return false;
+    static const char *const allowed[] = {".cfg", ".menu", ".game", ".dm_68", ".dat"};
+    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i)
+        if (qa_archive_paths_equal(extension, allowed[i], QA_ARCHIVE_CASE_INSENSITIVE)) return true;
+    return false;
+}
+
 static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *path)
 {
     if (source->user_overlay) return true;
@@ -1345,13 +1357,7 @@ static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *p
         return false;
     }
     if (vfs->pure_count == 0 && !vfs->q3_demo && !source->q3_demo) return true;
-    if (qa_archive_paths_equal(path, "qvm-compatibility.json", QA_ARCHIVE_CASE_INSENSITIVE)) return true;
-    const char *extension = strrchr(path, '.');
-    if (extension == NULL) return false;
-    static const char *const allowed[] = {".cfg", ".menu", ".game", ".dm_68", ".dat"};
-    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++)
-        if (qa_archive_paths_equal(extension, allowed[i], QA_ARCHIVE_CASE_INSENSITIVE)) return true;
-    return false;
+    return qa_vfs_q3_loose_path(path);
 }
 
 bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id id, qa_error *error)

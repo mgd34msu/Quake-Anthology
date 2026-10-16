@@ -3,6 +3,7 @@
 #include "qa/network_q3_pak_save.h"
 #include "qa/source_save.h"
 #include "qa/text.h"
+#include "qa/vfs.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -37,10 +38,6 @@ static bool suffix(const char *path, const char *ending) {
     for (size_t i = 0; i < length; ++i)
         if (lower((unsigned char)path[i]) != (unsigned char)ending[i]) return false;
     return true;
-}
-bool qa_q3_pure_loose_path(const char *path) {
-    return path && (suffix(path, ".cfg") || suffix(path, ".menu") || suffix(path, ".game")
-        || suffix(path, ".dm_68") || suffix(path, ".dat"));
 }
 static bool excludes_general(const char *path) {
     return suffix(path, ".shader") || suffix(path, ".txt") || suffix(path, ".cfg")
@@ -127,7 +124,7 @@ bool qa_q3_pak_record_packed(qa_q3_pak_references *refs, const qa_q3_pak_entry *
 }
 bool qa_q3_pak_record_loose(qa_q3_pak_references *refs, const char *path, qa_error *error) {
     if (!refs || !path) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 loose-file reference");
-    if (qa_q3_pure_loose_path(path)) return true;
+    if (qa_vfs_q3_loose_path(path)) return true;
     double random = refs->random(refs->random_context);
     if (!isfinite(random) || random < 0 || random > 1)
         return fail(error, QA_ERROR_ARGUMENT, "Q3 filesystem random value is outside zero through one");

@@ -7867,6 +7867,51 @@ static void test_nq_send_admission(void)
     qa_nq_channel_destroy(receiver);
 }
 
+static double q3_loose_reference_random(void *context)
+{
+    ++*(unsigned *)context;
+    return 1;
+}
+
+static void test_q3_pure_metadata(void)
+{
+    qa_error error = {0};
+    const qa_q3_pak_entry pack = {.game = "baseq3", .basename = "pak0",
+        .archive_path = "baseq3/pak0.pk3", .checksum = 17, .pure_checksum = 29};
+    const qa_q3_pak_entry *packs[] = {&pack};
+    unsigned loose_assets = 0;
+    qa_q3_pak_references *references;
+    CHECK(qa_q3_pak_references_create(packs, 1, 43, q3_loose_reference_random,
+        &loose_assets, &references, &error));
+    CHECK(qa_q3_pak_record_packed(references, &pack, "vm/cgame.qvm", &error));
+    CHECK(qa_q3_pak_record_packed(references, &pack, "vm/ui.qvm", &error));
+    CHECK(qa_q3_pak_record_loose(references, "QVM-COMPATIBILITY.JSON", &error));
+    CHECK(qa_q3_pak_record_loose(references, "q3config.cfg", &error));
+    CHECK(loose_assets == 0);
+    uint32_t loaded[] = {pack.pure_checksum};
+    qa_q3_pure_server server = {.enabled = true, .has_cgame = true, .has_ui = true,
+        .checksum_feed = 43, .checksum_feed_server_id = 2,
+        .cgame_checksum = 29, .ui_checksum = 29, .loaded = loaded, .loaded_count = 1};
+    char report[QA_Q3_COMMAND_CHARS], command[QA_Q3_BIG_INFO_CHARS];
+    qa_q3_tokens tokens;
+    qa_q3_pure_result result;
+    CHECK(qa_q3_pak_report(references, QA_Q3_PAK_REFERENCED_PURE_CHECKSUMS,
+        report, sizeof(report), &error));
+    snprintf(command, sizeof(command), "cp 2 %s", report);
+    CHECK(qa_q3_tokenize(command, &tokens, &error));
+    CHECK(qa_q3_verify_pure(&server, &tokens, &result, &error));
+    CHECK(result == QA_Q3_PURE_AUTHENTIC);
+    CHECK(qa_q3_pak_record_loose(references, "ordinary.json", &error));
+    CHECK(loose_assets == 1);
+    CHECK(qa_q3_pak_report(references, QA_Q3_PAK_REFERENCED_PURE_CHECKSUMS,
+        report, sizeof(report), &error));
+    snprintf(command, sizeof(command), "cp 2 %s", report);
+    CHECK(qa_q3_tokenize(command, &tokens, &error));
+    CHECK(qa_q3_verify_pure(&server, &tokens, &result, &error));
+    CHECK(result == QA_Q3_PURE_REJECTED);
+    qa_q3_pak_references_destroy(references);
+}
+
 static void test_q3_send_admission(void)
 {
     qa_error error = {0};
@@ -9425,6 +9470,7 @@ int main(int argc, char **argv)
     test_kex_userinfo_projection();
     test_kex_direct_delivery();
     test_nq_send_admission();
+    test_q3_pure_metadata();
     test_q3_send_admission();
     test_arena_progress_bound_store();
     test_event_ring_cold_growth();

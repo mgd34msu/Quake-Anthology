@@ -105,6 +105,9 @@ bool qa_vfs_link_at(const qa_vfs *, size_t, const char **source_prefix,
 size_t qa_vfs_resource_count(const qa_vfs *);
 const qa_resource *qa_vfs_resource_at(const qa_vfs *, size_t index, size_t *readers);
 void qa_vfs_clear_references(qa_vfs *vfs);
+/* Loose configuration and engine metadata permitted by Q3 pure mode, and
+ * excluded from its loose-asset rejection marker. */
+bool qa_vfs_q3_loose_path(const char *);
 /* Candidate-only accounting restoration. Caller first qualifies the complete
  * mount inventory/order; flags follow qa_vfs_mount_at search order. No file is
  * opened or marked through a synthetic acquisition. */

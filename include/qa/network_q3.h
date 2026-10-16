@@ -696,7 +696,6 @@ typedef enum qa_q3_pak_report_kind {
 /* Source reports truncate to 8191 bytes, or capacity-1 when the caller asks for
  * a shorter prefix. A successful call always terminates the output. */
 bool qa_q3_pak_report(const qa_q3_pak_references *, qa_q3_pak_report_kind, char *, size_t, qa_error *);
-bool qa_q3_pure_loose_path(const char *);
 bool qa_q3_pak_is_pure(uint32_t, const uint32_t *server_checksums, size_t);
 typedef enum qa_q3_pure_path_kind { QA_Q3_PURE_DIRECTORY, QA_Q3_PURE_PACKAGE } qa_q3_pure_path_kind;
 typedef struct qa_q3_pure_path { qa_q3_pure_path_kind kind; void *value; uint32_t checksum; } qa_q3_pure_path;
