@@ -9,6 +9,7 @@
 #include "guest_native_q2_attack.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/arena.h"
+#include "qa/text.h"
 #include <math.h>
 
 uint32_t application_native_q2_client_slot(const struct application_native_q2 *engine, qa_actor_id actor)
@@ -810,7 +811,9 @@ bool application_native_q2_game_command(application_provider *provider,
     if (!provider || !command || !handled ||
         !qa_application_command_context_active(provider->application, &command->context))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 GAME command requires its actual invocation");
-    if (command->context.actor.registry)
+    bool server_command = command->context.origin != QA_COMMAND_REMOTE && command->argc &&
+        qa_text_ascii_equal(command->argv[0], "sv");
+    if (command->context.actor.registry && !server_command)
         return application_native_q2_client_command(provider, command->context.actor, command, handled, error);
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !engine->initialized || engine->calls ||
