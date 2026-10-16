@@ -596,7 +596,8 @@ static bool clone_input(frontend_remote_config *row,qa_input_seat *live,qa_error
     shared->next=row->owner->inputs; row->owner->inputs=shared; row->staging=shared;
     qa_input_seat_options options={.context=row->command,.console=row->console,.cvars=row->q3_mouse,
         .gamepad=*qa_input_seat_gamepad_tuning(live),.seat=row->physical_seat,
-        .context_ready=input_context,.context_user=shared};
+        .context_ready=input_context,.context_user=shared,
+        .wheel=frontend_wheel_command,.wheel_user=row->owner->frontend};
     row->input=shared->input=qa_input_seat_create(&options,error);
     size_t count=qa_input_seat_binding_count(live);
     if (!row->input || count>SIZE_MAX/sizeof(qa_input_binding)) return false;

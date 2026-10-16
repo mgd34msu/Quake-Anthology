@@ -6478,6 +6478,14 @@ static qa_input_seat *shared_input_seat(void *user, const qa_command_context *co
     return context->seat == 0 ? *(qa_input_seat **)user : NULL;
 }
 
+typedef struct shared_input_wheel_state { size_t calls; bool powerups, down; } shared_input_wheel_state;
+static void shared_input_wheel(void *user, qa_input_seat *seat, bool powerups, bool down)
+{
+    shared_input_wheel_state *state = user;
+    CHECK(qa_input_seat_ordinal(seat) == 0);
+    ++state->calls; state->powerups = powerups; state->down = down;
+}
+
 static bool shared_input_menu(void *user, qa_input_seat *seat, qa_input_focus focus,
     const qa_input_event *event)
 {
@@ -6649,8 +6657,10 @@ static void test_shared_input_menu_defaults(void)
         qa_console *console = qa_console_create(&(qa_console_options){.context = context,
             .cvars = cvars, .disable_builtins = true}, &error);
         CHECK(console);
+        shared_input_wheel_state wheels = {0};
         qa_input_seat *seat = qa_input_seat_create(&(qa_input_seat_options){.context = context,
-            .console = console, .cvars = cvars, .gamepad = qa_gamepad_defaults()}, &error);
+            .console = console, .cvars = cvars, .gamepad = qa_gamepad_defaults(),
+            .wheel = shared_input_wheel, .wheel_user = &wheels}, &error);
         CHECK(seat);
         qa_input_console *commands = qa_input_console_create(&(qa_input_console_options){
             .console = console, .owner = 1, .user = &seat, .seat = shared_input_seat}, &error);
@@ -6669,6 +6679,25 @@ static void test_shared_input_menu_defaults(void)
         }
         const char *aliases[] = {"+scores", "+showscores"};
         double time = 0;
+        for (unsigned mode = 0; mode < 2; ++mode) {
+            qa_physical_input physical = {.kind = QA_PHYSICAL_KEY, .code = QA_KEY_F1 + 9};
+            CHECK(qa_input_seat_bind(seat, &(qa_input_binding){.input = physical,
+                .kind = QA_BIND_COMMAND, .command = mode ? "+powerupwheel" : "+weaponwheel"}, &error));
+            qa_input_event key = {.kind = QA_INPUT_EVENT_KEY, .input = physical,
+                .time_ms = time += 10, .down = true};
+            size_t drained;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(wheels.calls == mode * 2 + 1 && wheels.down && wheels.powerups == (mode != 0));
+            key.repeat = true; key.time_ms = time += 10;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(wheels.calls == mode * 2 + 1);
+            key.repeat = false; key.down = false; key.time_ms = time += 10;
+            CHECK(qa_input_seat_event(seat, &key, NULL, &error));
+            CHECK(qa_console_drain(console, 4096, &drained, &error));
+            CHECK(wheels.calls == mode * 2 + 2 && !wheels.down && wheels.powerups == (mode != 0));
+        }
         for (size_t alias = 0; alias < sizeof(aliases) / sizeof(*aliases); ++alias) {
             CHECK(qa_input_seat_bind(seat, &(qa_input_binding){.input = {.kind = QA_PHYSICAL_KEY,
                 .code = QA_KEY_TAB}, .kind = QA_BIND_COMMAND, .command = aliases[alias]}, &error));

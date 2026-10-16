@@ -153,13 +153,12 @@ bool frontend_wheel_create(frontend_seat *seat, qa_error *error)
 void frontend_wheel_command(void *context, qa_input_seat *input, bool powerups, bool down)
 {
     qa_frontend *frontend = context;
-    for (unsigned i = 0; i < frontend->options.seats; ++i) {
-        frontend_seat *seat = &frontend->seats[i];
-        if (seat->input != input || !seat->wheel) continue;
-        qa_error error = {0}; bool opened;
-        bool ok = down ? qa_hud_wheel_open(seat->wheel,
-            powerups ? QA_HUD_WHEEL_POWERUPS : QA_HUD_WHEEL_WEAPONS, &opened, &error) :
-            qa_hud_wheel_close(seat->wheel, true, &error);
-        if (!ok) frontend_print(frontend, error.message);
-    }
+    uint32_t ordinal = qa_input_seat_ordinal(input);
+    if (ordinal >= frontend->options.seats || !frontend->seats[ordinal].wheel) return;
+    frontend_seat *seat = &frontend->seats[ordinal];
+    qa_error error = {0}; bool opened;
+    bool ok = down ? qa_hud_wheel_open(seat->wheel,
+        powerups ? QA_HUD_WHEEL_POWERUPS : QA_HUD_WHEEL_WEAPONS, &opened, &error) :
+        qa_hud_wheel_close(seat->wheel, true, &error);
+    if (!ok) frontend_print(frontend, error.message);
 }

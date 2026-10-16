@@ -377,6 +377,7 @@ bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_c
         saved->options.context.origin==QA_COMMAND_SEAT &&
         saved->options.ui==seat->options.ui && saved->options.ui_user==seat->options.ui_user &&
         saved->options.before_ui==seat->options.before_ui && saved->options.before_ui_user==seat->options.before_ui_user &&
+        saved->options.wheel==seat->options.wheel && saved->options.wheel_user==seat->options.wheel_user &&
         saved->options.context_ready==seat->options.context_ready && saved->options.context_user==seat->options.context_user &&
         continuation(&io,saved,refs) && recipient_handoffs(&io,saved,refs) && release_fields(&io,saved) &&
         qa_source_save_finish(&io,NULL) && release_ready(saved,refs,error) &&

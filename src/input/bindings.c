@@ -172,8 +172,8 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
         const char *base = name + 1;
         if (qa_input_ascii_equal(base, "weaponwheel") || qa_input_ascii_equal(base, "wheel") ||
             qa_input_ascii_equal(base, "powerupwheel") || qa_input_ascii_equal(base, "wheel2")) {
-            if (c->options.wheel)
-                c->options.wheel(c->options.user, s,
+            if (s->options.wheel)
+                s->options.wheel(s->options.wheel_user, s,
                                  qa_input_ascii_equal(base, "powerupwheel") ||
                                      qa_input_ascii_equal(base, "wheel2"),
                                  down);

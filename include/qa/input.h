@@ -398,6 +398,8 @@ typedef struct qa_input_seat_options {
      * construction admits only an uncaptured ENGINE ordinal template. */
     bool (*context_ready)(void *, uint32_t seat, const qa_command_context *, qa_error *);
     void *context_user;
+    void (*wheel)(void *, qa_input_seat *, bool powerups, bool down);
+    void *wheel_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
 qa_input_seat *qa_input_seat_bindings_create(qa_error *);
@@ -538,7 +540,6 @@ typedef struct qa_input_console_options {
     void *user;
     qa_input_seat *(*seat)(void *, const qa_command_context *);
     void (*print)(void *, const char *);
-    void (*wheel)(void *, qa_input_seat *, bool powerups, bool down);
     void (*center)(void *, qa_input_seat *);
     /* Exact Source constructor. An uncaptured ENGINE adapter may use the
      * console's current constructor when cvar_view is zero. */

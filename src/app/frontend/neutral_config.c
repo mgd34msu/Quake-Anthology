@@ -571,7 +571,8 @@ static bool install(void *context,const qa_application_client_source *source,boo
         if (!live) return fail(e,QA_ERROR_ARGUMENT,"Neutral CLIENT lacks its actual physical input");
         qa_input_seat_options input={.seat=row->physical_seat,.context=row->command,
             .console=source->context.console,.cvars=row->mouse,.gamepad=*qa_input_seat_gamepad_tuning(live),
-            .context_ready=input_context,.context_user=row};
+            .context_ready=input_context,.context_user=row,
+            .wheel=frontend_wheel_command,.wheel_user=f};
         row->input=qa_input_seat_create(&input,e);
         const frontend_config_source *local_game=local_continuation(row,source,live);
         row->continuation=demo_continuation(row) || local_game;

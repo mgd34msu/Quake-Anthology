@@ -281,7 +281,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
     }
     if (frontend->options.dedicated) return true;
     qa_input_console_options input = {.console = console, .owner = QA_FRONTEND_COMMAND_OWNER,
-        .user = frontend, .seat = input_seat, .print = frontend_print, .center = center, .wheel = frontend_wheel_command};
+        .user = frontend, .seat = input_seat, .print = frontend_print, .center = center};
     frontend->input_commands = qa_input_console_create(&input, error);
     return frontend->input_commands != NULL;
 }

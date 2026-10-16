@@ -834,7 +834,8 @@ static bool seat_services_create(frontend_seat *seat, qa_error *error)
     qa_input_seat_options input = {.seat=i,.context = command, .console = qa_application_console(frontend->application),
         .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
         .before_ui = source_input, .before_ui_user = seat,
-        .context_ready=frontend_seat_context_ready,.context_user=seat};
+        .context_ready=frontend_seat_context_ready,.context_user=seat,
+        .wheel=frontend_wheel_command,.wheel_user=frontend};
     seat->input = qa_input_seat_create(&input, error);
     if (!seat->input || !qa_input_default_bindings(seat->input, (int32_t)i, error)) return false;
     qa_seat_console_options console = {.seat=i,.command = command, .commands = input.console,
@@ -1135,7 +1136,8 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
     *out=(qa_input_seat_options){.seat=seat->id,.context=command,
         .console=console,.cvars=cvars,
         .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat,
-        .context_ready=frontend_seat_context_ready,.context_user=seat};
+        .context_ready=frontend_seat_context_ready,.context_user=seat,
+        .wheel=frontend_wheel_command,.wheel_user=seat->frontend};
     return true;
 }
 static bool input_ui_encode(void *context, qa_input_ui_handler handler, void *user, uint64_t *out, qa_error *error)
@@ -1211,7 +1213,8 @@ static bool input_recipient_fields(void *context,qa_source_save_io *io,qa_input_
         command.registry=source.context.command.registry;
         if (!same_recipient_command(&command,&source.context.command)) return false;
         *options=(qa_input_seat_options){.seat=physical,.context=source.context.command,
-            .console=source.context.console,.cvars=source.context.cvars};
+            .console=source.context.console,.cvars=source.context.cvars,
+            .wheel=frontend_wheel_command,.wheel_user=seat->frontend};
     }
     return true;
 }
