@@ -336,7 +336,9 @@ static bool source_read(application_provider *provider,
 bool application_native_q3_remote_role_source_at(application_provider *provider, size_t index,
     qa_application_startup_source *out, bool *found, qa_error *error)
 {
-    if (!native_receiver(provider) || !out || !found)
+    /* Rollback also visits providers whose construction never started. */
+    if (!provider || !out || !found ||
+        (provider->native_q3_remote_roles && !native_receiver(provider)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT inventory requires its actual source owner");
     struct application_native_q3_remote_role *row = provider->native_q3_remote_roles;
     while (row && index) { row = row->next; --index; }
