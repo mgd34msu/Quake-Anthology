@@ -2637,7 +2637,8 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
             .view_height = physical.view_height, .health = (float)combat.health,
             .legs_animation = player.legs_animation, .torso_animation = player.torso_animation,
             .legs_timer_ms = player.legs_timer_ms, .torso_timer_ms = player.torso_timer_ms,
-            .context = arsenal, .firing_delay = application_q3_weapons_services_firing_delay};
+            .context = arsenal, .firing_delay = application_q3_weapons_services_firing_delay,
+            .firing_delay_is_modifier = true};
         okay = !live(app, actor) || qa_q3_arsenal_source_step(arsenal->state.q3, actor,
             &input, (float)((double)weapon_elapsed_ns / 1000000.0), &weapon_source, error);
     }

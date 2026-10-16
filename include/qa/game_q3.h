@@ -406,6 +406,9 @@ typedef struct qa_q3_arsenal_source {
     int32_t legs_animation, torso_animation, legs_timer_ms, torso_timer_ms;
     void *context;
     bool (*firing_delay)(void *, qa_actor_id, int32_t, int32_t *, qa_error *);
+    /* A modifier composes before this arsenal's persistent powerup; an
+     * original PM_Weapon result already includes its source powerups. */
+    bool firing_delay_is_modifier;
 } qa_q3_arsenal_source;
 /* A completed original movement slice supplies its actual source pose and
  * health. Only the selected arsenal changes; no source or body motion is replayed. */

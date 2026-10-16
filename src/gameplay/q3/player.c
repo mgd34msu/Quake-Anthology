@@ -1076,12 +1076,14 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     static const int32_t delay[QA_Q3_WEAPON_COUNT] = {400,  400, 100, 1000, 800,  800, 50,
                                                       1500, 100, 200, 400,  1000, 800, 30};
     int32_t add = delay[weapon];
-    if (player->persistent == QA_Q3_P_SCOUT)
+    qa_q3_powerup persistent = player->persistent;
+    bool persistent_delay = persistent == QA_Q3_P_SCOUT || persistent == QA_Q3_P_AMMOREGEN;
+    if (source && (!persistent_delay || source->firing_delay_is_modifier) &&
+        !source->firing_delay(source->context, actor, add, &add, error)) return false;
+    if (persistent == QA_Q3_P_SCOUT)
         add = (int32_t)((float)add / 1.5f);
-    else if (player->persistent == QA_Q3_P_AMMOREGEN || (!source && player->powerups[QA_Q3_P_HASTE]))
+    else if (persistent == QA_Q3_P_AMMOREGEN || (!source && player->powerups[QA_Q3_P_HASTE]))
         add = (int32_t)((float)add / 1.3f);
-    else if (source && !source->firing_delay(source->context, actor, add, &add, error))
-        return false;
     entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
     player = &entry->state.player;
