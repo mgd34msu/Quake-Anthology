@@ -474,8 +474,12 @@ static bool advisory_entity(void *opaque,qa_actor_id traveller,const qa_nav_bind
     (void)traveller;
     application_bots_npc *owner=opaque;
     *found=false;
-    const qa_nav_graph_view *graph=qa_nav_graph_read(owner->advisory_graph->graph);
-    const qa_nav_source_view *asset=qa_nav_asset_kex(graph->asset);
+    bool raw_model=false;
+    if(binding->raw_count==1) {
+        const qa_nav_graph_view *graph=qa_nav_graph_read(owner->advisory_graph->graph);
+        const qa_nav_source_view *asset=qa_nav_asset_kex(graph->asset);
+        raw_model=asset && asset->kind==QA_NAV_NAV3 && asset->version>=2;
+    }
     npc_native_rows rows;
     if(!native_rows_begin(owner->source,&rows,error)) return false;
     for(;;) {
@@ -484,7 +488,7 @@ static bool advisory_entity(void *opaque,qa_actor_id traveller,const qa_nav_bind
         if(!present) return true;
         if(!entity.bot.classname) continue;
         bool matches;
-        if(asset && asset->kind==QA_NAV_NAV3 && asset->version>=2 && binding->raw_count==1)
+        if(raw_model)
             matches=entity.state.modelindex==(uint32_t)binding->raw[0];
         else if(binding->has_model) {
             qa_actor_collision collision;
