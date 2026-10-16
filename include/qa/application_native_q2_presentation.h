@@ -152,7 +152,7 @@ typedef struct qa_application_native_q2_hud {
     int32_t inventory[256];
     uint64_t time_ns, frame_ns;
     int32_t server_frame, player_number;
-    bool original;
+    bool original, cgame;
 } qa_application_native_q2_hud;
 /* The actor's chosen HUD and CHARACTER supply data independently of map/mover. */
 bool qa_application_native_q2_hud_read(qa_application *, qa_actor_id,

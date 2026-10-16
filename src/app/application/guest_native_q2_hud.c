@@ -239,8 +239,20 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
         memcpy(data, source->clients[slot].layout, 1024);
         for (size_t i = 0; i < 256; ++i)
             qa_store_u16le(data + 1024 + i * 2, (uint16_t)source->clients[slot].inventory[i]);
+        bool observe = !engine->hud_observation.present ||
+            engine->hud_observation.source != source->provider->owner ||
+            !qa_actor_id_equal(engine->hud_observation.actor, source->clients[slot].actor) ||
+            engine->hud_observation.frame != source->frame.number;
         ok = qa_native_host_q2_draw_hud(provider->state.native.host, seat, &view,
-            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, shared_inventory, error);
+            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, shared_inventory,
+            observe ? &engine->hud_observation.state : NULL, error);
+        if (ok && observe) {
+            engine->hud_observation.actor = source->clients[slot].actor;
+            engine->hud_observation.source = source->provider->owner;
+            engine->hud_observation.frame = source->frame.number;
+            engine->hud_observation.time_ns = source->frame.time_ns;
+            engine->hud_observation.present = true;
+        }
     }
     --source->calls; --engine->calls;
     if (ok) engine->map_ready = provider->map_bound = true;

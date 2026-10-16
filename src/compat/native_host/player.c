@@ -38,7 +38,8 @@ bool qa_native_host_q2_hud_text(qa_native_host *host, uint32_t seat,
 
 bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     const qa_native_host_q2_hud_view *view, int32_t player_number,
-    qa_bytes data, qa_bytes player, bool shared_inventory, qa_error *error)
+    qa_bytes data, qa_bytes player, bool shared_inventory,
+    qa_native_host_q2_hud_state *observe, qa_error *error)
 {
     if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying ||
         !host->q2_seat_bound || host->q2_seat != seat || seat > INT32_MAX ||
@@ -54,17 +55,22 @@ bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     if (!host->q2_hud_records &&
         !qa_native_allocate(host->instance, 1536 + 296, INT32_MIN + 9, &host->q2_hud_records, error)) return false;
     qa_native_address records = host->q2_hud_records;
-    uint8_t projected[296];
-    if (shared_inventory) {
-        memcpy(projected, player.data, sizeof(projected));
-        /* The composed inventory is drawn once by the shared menu. */
-        qa_store_u16le(projected + 166 + 13 * 2,
-            (uint16_t)(qa_load_u16le(projected + 166 + 13 * 2) & ~2u));
-        player.data = projected;
-    }
     bool ok =
         native_host_write(host, records, data.data, data.size, error) &&
         native_host_write(host, records + 1536, player.data, player.size, error);
+    if (ok && observe) {
+        qa_native_value arg = {.type = QA_NATIVE_ADDRESS, .as.address = records + 1536}, result;
+        ok = qa_native_call(host->instance, "LayoutFlags", &arg, 1, &result, error);
+        if (ok) observe->layout_flags = result.as.i16;
+        if (ok) ok = qa_native_call(host->instance, "GetHitMarkerDamage", &arg, 1, &result, error);
+        if (ok) observe->hit_marker_damage = result.as.i16;
+    }
+    if (ok && shared_inventory) {
+        /* Query the actual state above, then suppress the duplicate stock panel. */
+        uint8_t flags[2];
+        qa_store_u16le(flags, (uint16_t)(qa_load_u16le(player.data + 166 + 13 * 2) & ~2u));
+        ok = native_host_write(host, records + 1536 + 166 + 13 * 2, flags, sizeof(flags), error);
+    }
     if (ok) {
         qa_native_value args[] = {
             {.type = QA_NATIVE_I32, .as.i32 = (int32_t)seat},

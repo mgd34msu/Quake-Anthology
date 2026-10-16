@@ -92,6 +92,7 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
         hud->product->family != QA_GAME_Q2) return true;
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
     hud_selection selected = {.hud = hud, .character = character};
+    bool cgame = false;
     qa_application_native_q2_hud_source *value = &selected.source;
     value->provider = value->data_provider = hud->owner;
     value->strings = qa_session_strings(app->session);
@@ -103,12 +104,20 @@ static bool hud_select(qa_application *app, qa_actor_id actor, hud_selection *ou
     } else if (hud->kind == APPLICATION_PROVIDER_NATIVE) {
         struct application_native_q2 *engine = hud->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
-            engine->profile != QA_NATIVE_Q2_GAME_API2023)) return true;
+            engine->profile != QA_NATIVE_Q2_GAME_API2023 &&
+            engine->profile != QA_NATIVE_Q2_CGAME_API2023)) return true;
+        cgame = engine->profile == QA_NATIVE_Q2_CGAME_API2023;
         value->edition = hud->component.clock.kind;
     } else return true;
-    selected.original = hud->kind == APPLICATION_PROVIDER_NATIVE ? hud :
+    selected.original = hud->kind == APPLICATION_PROVIDER_NATIVE && !cgame ? hud :
         character && character->product && character->product->family == QA_GAME_Q2 &&
         character->kind == APPLICATION_PROVIDER_NATIVE ? character : NULL;
+    if (cgame) {
+        const struct application_native_q2 *engine = hud->state.native.q2_engine;
+        if (!selected.original || !engine->hud_observation.present ||
+            engine->hud_observation.source != selected.original->owner ||
+            !qa_actor_id_equal(engine->hud_observation.actor, actor)) return true;
+    }
     if (selected.original) {
         struct application_native_q2 *engine = selected.original->state.native.q2_engine;
         if (!engine || (engine->profile != QA_NATIVE_Q2_GAME_API3 &&
@@ -253,6 +262,8 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
         .match_status = source->match_status, .strings = source->strings,
         .names = source->names, .configstrings = source->configstrings, .config_changes = source->config_changes,
         .configstring_count = source->configstring_count, .layout = ""};
+    value.cgame = hud->kind == APPLICATION_PROVIDER_NATIVE &&
+        hud->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
     application_provider *clock_owner = original ? original : hud;
     qa_clock_state clock;
     if (!qa_session_clock(app->session, clock_owner->owner, &clock)) return true;
@@ -311,6 +322,13 @@ bool qa_application_native_q2_hud_read(qa_application *app, qa_actor_id actor,
         }
         if (application_mode_layout_read(app, actor, &value.layout, &value.layout_revision))
             value.view.layouts |= 1;
+    }
+    if (value.cgame) {
+        const struct application_native_q2 *engine = hud->state.native.q2_engine;
+        value.stats[13] = engine->hud_observation.state.layout_flags;
+        value.view.hit_marker_damage = engine->hud_observation.state.hit_marker_damage;
+        value.time_ns = engine->hud_observation.time_ns;
+        value.server_frame = (int32_t)(uint32_t)engine->hud_observation.frame;
     }
     *out = value; *found = true;
     return true;

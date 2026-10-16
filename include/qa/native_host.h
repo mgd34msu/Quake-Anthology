@@ -423,9 +423,13 @@ bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
     uint8_t storage[296], qa_bytes *out, qa_error *);
 /* Source data is the original 1024-byte layout plus 256 signed short counts;
  * player_state is the public 296-byte KEX state. Copies live only during DrawHUD. */
+typedef struct qa_native_host_q2_hud_state {
+    int16_t layout_flags, hit_marker_damage;
+} qa_native_host_q2_hud_state;
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
-    qa_bytes server_data, qa_bytes player_state, bool shared_inventory, qa_error *);
+    qa_bytes server_data, qa_bytes player_state, bool shared_inventory,
+    qa_native_host_q2_hud_state *observe, qa_error *);
 typedef enum qa_native_q2_hud_text_kind {
     QA_NATIVE_Q2_HUD_CENTER,
     QA_NATIVE_Q2_HUD_NOTIFY,

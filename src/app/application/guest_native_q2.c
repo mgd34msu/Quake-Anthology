@@ -918,6 +918,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
             .cvars = engine->cvars, .owner_context = engine, .owner_idle = frontend_owner_idle};
         engine->application = NULL; engine->application_context = NULL;
         engine->hud_source_owner = 0;
+        engine->hud_observation.present = false;
         if (!application_native_q2_config_clear(engine,error)) return false;
     }
     if(!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;

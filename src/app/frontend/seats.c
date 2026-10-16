@@ -310,6 +310,18 @@ static bool hud_inventory_data(frontend_seat *seat,const qa_hud_frame *frame,qa_
         seat->q2_view.selected_item:out->selected_weapon;
     return frontend_inventory_rows_read(seat,frame->actor,selected,out,error);
 }
+static bool local_q2_marker_draw(local_q2_hud *hud, const qa_hud_frame *frame,
+    qa_scene_frame *scene, qa_error *error)
+{
+    frontend_seat *seat = hud->seat;
+    if (!seat->q2_hit_marker.count) return true;
+    const qa_application_native_q2_hud *source = hud->source;
+    qa_hud_q2_marker marker={.image=local_q2_picture(hud,seat->q2_hud_pictures.marker,error),
+        .now_ns=source->time_ns,.layout_flags=(uint32_t)(uint16_t)source->stats[13]};
+    qa_hud_q2_marker_settings(qa_application_cvars(seat->frontend->application),
+        &seat->frontend->engine_cvars.q2_marker,&marker);
+    return qa_hud_q2_marker_draw(&marker,&seat->q2_hit_marker,frame->safe_area,scene,error);
+}
 static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     qa_scene_frame *scene, qa_error *error)
 {
@@ -324,6 +336,14 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         seat->q2_hud_status_text=NULL;seat->q2_hud_config_revision=seat->q2_hud_layout_revision=UINT64_MAX;
         qa_hud_q2_names_clear(&seat->q2_hud_names);seat->q2_hud_image_count=0;
         if(!qa_hud_q2_picture_names_bind((qa_strings *)source->strings,&seat->q2_hud_pictures,error))return false;
+        (void)qa_scene_q2_picture(hud.media.images,(qa_strings *)source->strings,
+            seat->q2_hud_pictures.marker,QA_IMAGE_USAGE_PICTURE,
+            source->edition==QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,NULL);
+    }
+    if (source->cgame) {
+        if (source->view.hit_marker_damage)
+            qa_hud_q2_marker_hit(&seat->q2_hit_marker,source->time_ns,source->time_ns);
+        return local_q2_marker_draw(&hud,frame,scene,error);
     }
     qa_net_protocol_id protocol=source->original ? source->names->protocol :
         qa_q2_default_protocol(source->edition==QA_RULESET_Q2_RERELEASE);
@@ -397,12 +417,7 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
         .player_number = source->player_number, .server_frame = source->server_frame,
         .time_ns = source->time_ns, .frame_ns = source->frame_ns};
     if (!qa_hud_q2_draw(&options, &received, false, scene, error)) return false;
-    if (!seat->q2_hit_marker.count) return true;
-    qa_hud_q2_marker marker={.image=local_q2_picture(&hud,seat->q2_hud_pictures.marker,error),
-        .now_ns=source->time_ns,.layout_flags=(uint32_t)source->stats[13]};
-    qa_hud_q2_marker_settings(qa_application_cvars(seat->frontend->application),
-        &seat->frontend->engine_cvars.q2_marker,&marker);
-    return qa_hud_q2_marker_draw(&marker,&seat->q2_hit_marker,frame->safe_area,scene,error);
+    return local_q2_marker_draw(&hud,frame,scene,error);
 }
 static bool hud_weapon_data(frontend_seat *seat, const qa_hud_frame *frame, qa_hud_data *out,
     bool native_status, bool aggregate, bool *source_slot, qa_error *error)
@@ -466,7 +481,7 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
         (qa_vec4){1, .9f, .2f, 1} : (qa_vec4){1, 1, 1, 1};
     if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
-    if (frame->actor.registry && !source.source_hud && !frame->source_status_native && !frame->weapon_only) {
+    if (frame->actor.registry && !frame->source_status_native && !frame->weapon_only) {
         if (!qa_application_native_q2_hud_read(seat->frontend->application, frame->actor,
             &seat->q2_hud, &seat->q2_hud_active, error)) return false;
         if (seat->q2_hud_active) {

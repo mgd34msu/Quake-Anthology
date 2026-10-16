@@ -116,6 +116,13 @@ struct application_native_q2 {
     size_t network_recipient_users;
     struct application_q2_recipient_binding *network_recipient_binding;
     qa_actor_owner hud_source_owner;
+    struct {
+        qa_native_host_q2_hud_state state;
+        qa_actor_id actor;
+        qa_actor_owner source;
+        uint64_t frame, time_ns;
+        bool present;
+    } hud_observation;
     bool prepared, initialized, map_ready, shutting_down, activation_failed;
     bool host_constructing;
     /* The immutable restore image owns this span through persistence_finish. */
