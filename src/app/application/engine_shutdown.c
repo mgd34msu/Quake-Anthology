@@ -1,6 +1,7 @@
 #include "engine_shutdown.h"
 #include "rankings.h"
 #include "startup_flow.h"
+#include "save_native_q2.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/application_client_prepare.h"
 #include <stdlib.h>
@@ -68,8 +69,10 @@ bool qa_application_engine_shutdown_begin(qa_application *app,
         return true;
     }
     if (!callbacks_returned(app) || app->startup_flow || app->client_preparation ||
-        !qa_cvars_observer_idle(app->cvars) || !application_guests_idle(app))
-        return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE detach requires returned application callbacks");
+        !qa_cvars_observer_idle(app->cvars) ||
+        !application_native_q2_baselines_destroy(app, error) || !application_guests_idle(app))
+        return error && error->code != QA_OK ? false :
+            application_fail(error, QA_ERROR_ARGUMENT, "ENGINE detach requires returned application callbacks");
     return detach(app, NULL, NULL, out, error);
 }
 
