@@ -22,6 +22,10 @@
 
 typedef enum campaign_kind { CAMPAIGN_BASE, CAMPAIGN_TEAM, CAMPAIGN_Q2, CAMPAIGN_NONE } campaign_kind;
 typedef struct campaign_player { int32_t client,rank,score; } campaign_player;
+static const char *const team_overrides[][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
+    {"cg_drawTimer","ui_drawTimer"},{"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},
+    {"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
+enum { TEAM_OVERRIDE_COUNT=sizeof(team_overrides)/sizeof(team_overrides[0]) };
 struct frontend_campaign {
     qa_frontend *frontend;
     const qa_launch_snapshot *publication;
@@ -33,7 +37,7 @@ struct frontend_campaign {
     int32_t match_start;
     campaign_kind kind;
     qa_cvar_handle nextmap, skill, selection, deathmatch, protocol;
-    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[6], result_fields[3];
+    qa_cvar_handle archive[8], round_identity, time_to_beat, saved_rules[TEAM_OVERRIDE_COUNT], result_fields[3];
     uint64_t selection_modification, progression_revision, result_declarations;
     int32_t menu_selection;
     bool selection_valid;
@@ -56,8 +60,6 @@ struct frontend_campaign {
 };
 static const char *const base_archive_names[8]={"g_spScores1","g_spScores2","g_spScores3","g_spScores4",
     "g_spScores5","g_spAwards","g_spVideos","g_spCompletedRound"};
-static const char *const team_overrides[6][2]={{"capturelimit","ui_saveCaptureLimit"},{"fraglimit","ui_saveFragLimit"},
-    {"g_doWarmup","ui_doWarmup"},{"g_warmup","ui_Warmup"},{"sv_pure","ui_pure"},{"g_friendlyFire","ui_friendlyFire"}};
 static void campaign_result_bind(frontend_campaign *owner)
 {
     static const char *const names[]={"ui_scoreMap","ui_scoreScore","ui_scoreTime"};
@@ -325,7 +327,7 @@ bool frontend_campaign_sync(qa_frontend *f,qa_error *error)
     owner->time_to_beat=qa_cvars_resolve(view.cvars,"ui_teamArenaTimeToBeat");
     owner->protocol=qa_cvars_resolve(view.cvars,"protocol");
     campaign_result_bind(owner);
-    for(size_t i=0;i<6;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
+    for(size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) owner->saved_rules[i]=qa_cvars_resolve(view.cvars,team_overrides[i][1]);
     owner->cvar_revision=qa_cvars_revision(view.cvars);
     if (ok) ok=qa_application_q3_campaign_current(f->application,&view);
     f->campaign=owner;
@@ -534,7 +536,7 @@ static bool campaign_team_complete(qa_frontend *f,const qa_application_q3_campai
     if (!qa_cvars_set(view->cvars,"ui_scoreScore",score,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTime",time,true,error) || !qa_application_q3_campaign_current(f->application,view) ||
         !qa_cvars_set(view->cvars,"ui_scoreTeam",teams,true,error) || !qa_application_q3_campaign_current(f->application,view)) return false;
-    for (size_t i=0;i<6;++i) {
+    for (size_t i=0;i<TEAM_OVERRIDE_COUNT;++i) {
         char *saved=campaign_copy(campaign_value(view->cvars,owner->saved_rules[i]),error);
         if (!saved) return false;
         bool ok=qa_cvars_set(view->cvars,team_overrides[i][0],saved,true,error) && qa_application_q3_campaign_current(f->application,view);
