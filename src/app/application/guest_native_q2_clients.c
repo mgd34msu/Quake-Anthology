@@ -168,9 +168,10 @@ static bool physical_input_read(application_provider *provider, qa_actor_id acto
     *command_angles = qa_v3(0, 0, 0);
     uint32_t slot = source_client_slot(provider, actor);
     struct application_native_q2 *engine = slot ? provider->state.native.q2_engine : NULL;
-    bool reached=engine&&engine->input_arsenal&&engine->input_stage&&
-        qa_actor_id_equal(engine->input_stage->actor,actor)&&
-        engine->input_stage->current(engine->input_stage->context,actor);
+    const application_control_context *control = engine ?
+        application_control_frame_current(provider->application, actor) : NULL;
+    bool reached=engine&&engine->input_arsenal&&control&&control->source_q2cmd&&
+        qa_actor_id_equal(control->actor,actor)&&application_control_provider(control)==provider->owner;
     if (!out || !engine || !engine->initialized || !engine->map_ready || (engine->calls&&!reached) ||
         !qa_actors_get(qa_session_actors(provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 input read requires its live idle physical client");

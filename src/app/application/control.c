@@ -2531,17 +2531,21 @@ static bool native_q2_weapon_current(application_provider *source, application_p
         ? source->state.native.q2_engine : NULL;
     const application_control_context *current = app ? application_control_frame_current(app, actor) : NULL;
     const application_native_q2_input_stage *stage = engine ? engine->input_stage : NULL;
+    bool input = command && engine && current && current->command_only && stage && stage->current &&
+        qa_actor_id_equal(stage->actor, actor) && stage->time_ns == time_ns &&
+        stage->current(stage->context, actor) && engine->input_command == command &&
+        current->source_elapsed_ns == (uint64_t)command->milliseconds * UINT64_C(1000000);
+    bool frame = current && !current->command_only && !stage && engine &&
+        current->frame.number == engine->frame.number &&
+        current->source_elapsed_ns == engine->frame.elapsed_ns;
     if (!app || !command || !arsenal || arsenal == source || !live(app, actor) ||
         !source->constructed || !source->attached || source->close_pending ||
         !arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
-        !engine || !engine->input_arsenal || engine->input_command != command ||
-        !stage || !stage->current || !qa_actor_id_equal(stage->actor, actor) || stage->time_ns != time_ns ||
-        !stage->current(stage->context, actor) || !current || !current->source_q2cmd ||
-        !current->command_only || !current->retained || !qa_actor_id_equal(current->actor, actor) ||
-        current->command.provider != source->owner || current->command.time_ns != time_ns ||
-        current->command.kind != source->component.clock.kind ||
+        !engine || !engine->input_arsenal || (!input && !frame) || !current || !current->source_q2cmd ||
+        !current->retained || !qa_actor_id_equal(current->actor, actor) ||
+        application_control_provider(current) != source->owner || application_control_time(current) != time_ns ||
+        application_control_kind(current) != source->component.clock.kind ||
         current->source_command.kind != command->kind || current->source_command.sequence != command->sequence ||
-        current->source_elapsed_ns != (uint64_t)command->milliseconds * UINT64_C(1000000) ||
         application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
         application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") != source ||
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal ||
@@ -2584,7 +2588,7 @@ bool application_control_native_q2_weapon_step(application_provider *source, qa_
     if (!native_q2_weapon_current(source, arsenal, actor, command, source_time_ns, error)) return false;
     bool available;
     uint64_t weapon_time_ns = source_time_ns;
-    uint64_t weapon_elapsed_ns = (uint64_t)applied.milliseconds * UINT64_C(1000000);
+    uint64_t weapon_elapsed_ns = context->source_elapsed_ns;
     if (!application_native_q2_attack_available(source->state.native.q2_engine, actor, &available, error) ||
         !application_native_q2_attack_clock_step(source->state.native.q2_engine, actor,
             &weapon_time_ns, &weapon_elapsed_ns, error)) return false;

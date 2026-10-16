@@ -893,6 +893,29 @@ bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
     return true;
 }
 
+bool application_control_native_q2_weapon_frame(application_provider *source,
+    qa_actor_id actor, qa_error *error)
+{
+    qa_application *app = source->application;
+    struct application_control_frames *frames = app->control_frames;
+    qa_source_frame frame;
+    if (!frames || actor.slot >= frames->capacity ||
+        !qa_session_active_frame(app->session, source->owner, &frame)) return true;
+    const control_input *input = &frames->inputs[actor.slot].value;
+    if (!input->seen || !qa_actor_id_equal(input->actor, actor) ||
+        input->provider != source->owner || input->domain != CONTROL_COMMAND_Q2_SOURCE) return true;
+    application_control_context current = {.actor = actor, .frame = frame,
+        .path = APPLICATION_CONTROL_MIXED, .stage = APPLICATION_CONTROL_COMMAND,
+        .retained = true, .source_q2cmd = true, .source_command = input->latest,
+        .source_elapsed_ns = frame.elapsed_ns};
+    const application_control_context *previous = frames->current;
+    frames->current = &current;
+    bool ok = application_control_native_q2_weapon_step(source, actor,
+        &current.source_command, frame.time_ns, error);
+    frames->current = previous;
+    return ok;
+}
+
 bool qa_application_control_nq_command(qa_application *app, qa_actor_id actor,
     uint64_t sequence, const qa_q1_command *raw, qa_error *error)
 {

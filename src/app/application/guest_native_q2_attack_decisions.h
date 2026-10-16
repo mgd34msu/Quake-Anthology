@@ -427,10 +427,10 @@ static bool dispatcher_call(void *context,qa_native_instance *native,qa_native_e
     p->dispatch=frame.previous;
     const application_native_q2_input_stage *stage=p->engine->input_stage;
     qa_application *app=p->engine->provider->application;
-    if(ok&&stage&&qa_actor_id_equal(stage->actor,actor)&&
+    if(ok&&(!stage||qa_actor_id_equal(stage->actor,actor))&&
         application_provider_for(app,actor,QA_ROLE_MOVEMENT,NULL)==p->engine->provider&&
         application_provider_for(app,actor,QA_ROLE_ARSENAL,NULL)!=p->engine->provider) {
-        if(!stage->current(stage->context,actor)||!stage->arsenal||!p->engine->input_command)
+        if(stage&&(!stage->current(stage->context,actor)||!stage->arsenal||!p->engine->input_command))
             return decision_fail(error,QA_ERROR_NOT_FOUND,"Native weapon decision lost its actual selected arsenal stage");
         bool previous=p->engine->input_arsenal;
         bool committed=p->engine->input_arsenal_committed;
@@ -438,7 +438,8 @@ static bool dispatcher_call(void *context,qa_native_instance *native,qa_native_e
         p->engine->input_arsenal=true;
         p->engine->input_arsenal_committed=frame.committed;
         p->engine->input_arsenal_reached=frame.reached;
-        ok=stage->arsenal(stage->context,actor,p->engine->input_command,stage->time_ns,error);
+        ok=stage?stage->arsenal(stage->context,actor,p->engine->input_command,stage->time_ns,error):
+            application_control_native_q2_weapon_frame(p->engine->provider,actor,error);
         p->engine->input_arsenal=previous;
         p->engine->input_arsenal_committed=committed;
         p->engine->input_arsenal_reached=reached;
