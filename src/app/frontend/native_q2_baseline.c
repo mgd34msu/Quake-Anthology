@@ -61,6 +61,7 @@ static bool services(void *context, qa_application *application, qa_actor_owner 
         (frontend->application && frontend->application!=application))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"scratch frontend binds one actual native Q2 GAME application");
     frontend->application=application;
+    frontend_engine_cvars_bind(frontend);
     if (!frontend_audio_identities_prepare(frontend,error)) return false;
     if (!frontend->tools && !frontend_tools_create_diagnostics(frontend,engine->content_files,error)) return false;
     return frontend_native_q2_services(frontend,application,owner,profile,engine,out,application_context,error);
