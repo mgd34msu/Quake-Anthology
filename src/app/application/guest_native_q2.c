@@ -526,7 +526,8 @@ static bool load_host_advance(struct application_native_q2 *engine, size_t quant
         const size_t primary_artifact = 0;
         const qa_native_process_resources *capture = NULL;
         qa_bytes lower_recipe = {0};
-        if (provider->application->native_restore_image && !engine->process.resources) {
+        if (provider->application->native_restore_image &&
+            engine->profile != QA_NATIVE_Q2_CGAME_API2023 && !engine->process.resources) {
             const qa_application_native_resource_refs *refs = provider->application->native_restore_resources;
             const qa_save_record *saved = qa_save_image_find(provider->application->native_restore_image,
                 QA_SAVE_PROVIDER, provider->launch->selection.instance);

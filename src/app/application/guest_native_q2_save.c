@@ -88,6 +88,7 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
 bool application_native_q2_restore_finish(application_provider *provider, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (engine && engine->profile == QA_NATIVE_Q2_CGAME_API2023) return true;
     if (!engine || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore finish requires an idle source owner");
     if (!application_native_q2_resources_reconnect(engine, error)) return false;

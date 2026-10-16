@@ -716,8 +716,7 @@ static const char *provider_schema(const application_provider *provider)
     if (provider->kind == APPLICATION_PROVIDER_QVM) return "qa.q3.qvm";
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine)
         return "qa.q3.external-native";
-    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
-        provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
         return "qa.q2.external-native";
     return NULL;
 }
@@ -1363,6 +1362,8 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
                               qa_buffer *out, qa_error *error)
 {
     qa_buffer state = {0};
+    bool client = provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+        provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         ok = native_q1_capture(provider, purpose, &state, error);
@@ -1371,7 +1372,7 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_capture(provider, purpose, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-        ok = application_native_q2_save_capture(provider, purpose, resources, &state, error);
+        ok = client || application_native_q2_save_capture(provider, purpose, resources, &state, error);
     else ok = application_guest_checkpoint_capture(provider, resources, &state, error);
     if (!ok) return false;
     if (state.size > SIZE_MAX - 28) {
@@ -1384,11 +1385,12 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
         return application_fail(error, QA_ERROR_MEMORY, "allocating provider continuation");
     }
     memcpy(bytes.data, "QAPV", 4); qa_store_u32le(bytes.data + 4, provider->kind);
-    qa_store_u32le(bytes.data + 8, provider->map_bound ? 1u : 0u);
+    qa_store_u32le(bytes.data + 8, !client && provider->map_bound ? 1u : 0u);
     qa_store_u32le(bytes.data + 12, provider->q1_server_flags);
     qa_store_u32le(bytes.data + 16, provider->q2_server_flags);
     qa_store_u64le(bytes.data + 20, state.size);
-    memcpy(bytes.data + 28, state.data, state.size); qa_buffer_free(&state);
+    if (state.size) memcpy(bytes.data + 28, state.data, state.size);
+    qa_buffer_free(&state);
     *out = bytes;
     return true;
 }
@@ -1400,10 +1402,14 @@ static bool provider_restore(application_persistence *operation,
         qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
         qa_load_u32le(bytes.data + 8) > 1 || qa_load_u64le(bytes.data + 20) != bytes.size - 28)
         return application_fail(error, QA_ERROR_FORMAT, "invalid provider continuation header or extent");
-    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+    bool client = provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+        provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine && !client &&
         qa_load_u32le(bytes.data + 8) != 1)
         return application_fail(error, QA_ERROR_FORMAT, "native Q2 provider wrapper requires its actual ready map owner");
     qa_bytes state = {bytes.data + 28, bytes.size - 28};
+    if (client && state.size)
+        return application_fail(error, QA_ERROR_FORMAT, "Client presentation has no saved GAME state");
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
         ok = native_q1_restore(provider, error);
@@ -1412,7 +1418,7 @@ static bool provider_restore(application_persistence *operation,
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-        ok = application_native_q2_save_restore(provider,
+        ok = client || application_native_q2_save_restore(provider,
             operation->purpose == QA_SAVE_TRANSITION
                 ? saved_provider(operation->active, provider->launch->selection.instance) : NULL,
             state, operation->options, operation->ops, error);
@@ -1746,7 +1752,8 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
             application_provider *provider = candidate->providers[i];
             if (provider && provider->constructed && provider->attached &&
-                provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+                provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+                provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
                 ok = application_native_q2_prepare_restore(provider, error);
         }
         if (ok && operation->ops->prepare_content) {
