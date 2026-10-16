@@ -909,3 +909,9 @@ float qa_q2_grapple_gravity_scale(qa_q2_game *g, qa_actor_id id) {
                ? 0
                : 1;
 }
+bool qa_q2_grapple_prediction_suppressed(qa_q2_game *g, qa_actor_id id) {
+    q2_actor *a = g ? find(g, id) : NULL;
+    return a && g->options.rules == QA_RULESET_Q2_CLASSIC &&
+        q2_actor_live(g, a->grapples[QA_Q2_CTF_GRAPPLE].hook) &&
+        a->grapples[QA_Q2_CTF_GRAPPLE].phase == QA_Q2_GRAPPLE_HANG;
+}

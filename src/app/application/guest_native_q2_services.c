@@ -4,6 +4,8 @@
 #include "guest_native_q2_combat.h"
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
+#include "guest_input_private.h"
+#include "qa/text.h"
 #include "native_q2_delivery.h"
 #include "native_q2_callbacks.h"
 #include "unified_events.h"
@@ -411,9 +413,10 @@ qa_native_host_engine_services application_native_q2_services(struct application
 }
 
 static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_address record,
-    qa_movement_input *input, qa_error *error)
+    qa_movement_input *input, uint64_t *prepared, qa_error *error)
 {
     (void)record;
+    *prepared = 0;
     struct application_native_q2 *engine = opaque;
     qa_application *app = engine->provider->application;
     uint32_t slot = engine->current_client;
@@ -474,6 +477,31 @@ static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_addre
             input->environment.gravity_multiplier = control.gravity_multiplier;
         }
     }
+    if (input->state.kind == QA_RULESET_Q2_CLASSIC) {
+        qa_q3_equipment_motion equipment;
+        if (!application_control_guest_equipment(app, engine->provider, actor, NULL, &equipment, error)) return false;
+        input->environment.speed_multiplier = (float)equipment.speed_multiplier;
+        input->environment.fixed_pose = equipment.fixed_pose;
+        input->environment.fixed_crouched = equipment.fixed_pose;
+        input->environment.pose = equipment.pose;
+        application_control_record *control = app->controls + actor.slot;
+        bool external_velocity = control->source_velocity_pending;
+        if (external_velocity && !qa_movement_set_velocity(&input->state,
+            qa_movement_velocity(&control->player.state), error)) return false;
+        float gravity = app->equipment ? qa_equipment_gravity_scale(app->equipment, actor) : 1;
+        input->state.data.q2.gravity = (int16_t)(uint16_t)qa_source_to_i32((float)input->state.data.q2.gravity * gravity);
+        qa_equipment_state selected;
+        application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
+        bool custom_motion = external_velocity || (arsenal && arsenal->kind == APPLICATION_PROVIDER_Q3) ||
+            (app->equipment && qa_equipment_read(app->equipment, actor, &selected) &&
+                selected.selection.grapple != QA_GRAPPLE_DISABLED);
+        if (custom_motion) {
+            bool suppressed = equipment.fixed_pose || equipment.speed_multiplier != 1 ||
+                (app->equipment && qa_equipment_prediction_suppressed(app->equipment, actor));
+            input->state.data.q2.flags = suppressed ? input->state.data.q2.flags | 64u : input->state.data.q2.flags & ~64u;
+        }
+        if (external_velocity) *prepared = control->source_velocity_revision;
+    }
     return true;
 }
 
@@ -508,7 +536,7 @@ static bool movement_execute(void *opaque, qa_native_host *host, qa_native_addre
 }
 
 static bool movement_commit(void *opaque, qa_native_host *host, qa_native_address record,
-    const qa_movement_result *result, qa_error *error)
+    const qa_movement_result *result, uint64_t prepared, qa_error *error)
 {
     (void)record;
     struct application_native_q2 *engine = opaque;
@@ -522,8 +550,8 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
     const application_native_q2_input_stage *raw=engine->input_stage;
     if (raw && (!qa_actor_id_equal(raw->actor,result->actor) || !raw->current(raw->context,result->actor)))
         return application_fail(error,QA_ERROR_NOT_FOUND,"Native Q2 Pmove completion lost its raw Source stage");
-    if (raw && application_provider_for(app,result->actor,QA_ROLE_MOVEMENT,NULL)!=engine->provider)
-        return true;
+    bool selected_movement = raw &&
+        application_provider_for(app,result->actor,QA_ROLE_MOVEMENT,NULL)!=engine->provider;
     const application_control_external_stage *stage = engine->movement_stage;
     if (stage && (stage->application != app || !qa_actor_id_equal(stage->actor, result->actor) ||
         !stage->current || !stage->current(stage)))
@@ -533,11 +561,10 @@ static bool movement_commit(void *opaque, qa_native_host *host, qa_native_addres
     application_control_record *control = &app->controls[result->actor.slot];
     if (!control->active || !qa_actor_id_equal(control->player.actor, result->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove control generation differs");
-    control->player.state = result->state; control->player.bounds = result->bounds;
-    control->player.ground = result->ground; control->player.water_level = result->water_level;
-    control->player.water_type = result->water_type; control->player.view_height = result->view_height;
-    control->player.view_angles = result->view_angles; control->player.view_offset = result->view_offset;
-    if (raw) return qa_movement_result_copy(result, &control->result, error);
+    if (!selected_movement && raw && !qa_movement_result_copy(result, &control->result, error)) return false;
+    if (prepared && control->source_velocity_pending && control->source_velocity_revision == prepared)
+        control->source_velocity_pending = false;
+    if (!selected_movement) application_control_publish_motion(control, result);
     return true;
 }
 

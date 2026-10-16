@@ -880,6 +880,11 @@ float qa_equipment_gravity_scale(qa_equipment *g, qa_actor_id actor) {
                ? qa_q2_grapple_gravity_scale(p->grapple.q2, actor)
                : 1;
 }
+bool qa_equipment_prediction_suppressed(qa_equipment *g, qa_actor_id actor) {
+    equipment_actor *p = equipment_get(g, actor);
+    return p && p->state.selection.grapple == QA_GRAPPLE_Q2_CTF &&
+        qa_q2_grapple_prediction_suppressed(p->grapple.q2, actor);
+}
 static bool equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p || !p->items.q3 || !p->items.owner)

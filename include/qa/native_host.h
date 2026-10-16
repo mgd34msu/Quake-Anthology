@@ -203,14 +203,14 @@ typedef struct qa_native_host_movement_services {
     /* Supplies ownership, selected-provider policy, authored posture and time.
      * The adapter fills source state and command fields before this callback. */
     bool (*prepare)(void *, qa_native_host *, qa_native_address, qa_movement_input *,
-                    qa_error *);
+                    uint64_t *prepared, qa_error *);
     /* Optional selected movement execution at the actual SDK Pmove call.
      * The result owns its contacts and must use the physical Source dialect. */
     bool (*execute)(void *, qa_native_host *, qa_native_address,
                     const qa_movement_input *, const qa_movement_services *,
                     qa_movement_result *, qa_error *);
     bool (*commit)(void *, qa_native_host *, qa_native_address,
-                   const qa_movement_result *, qa_error *);
+                   const qa_movement_result *, uint64_t prepared, qa_error *);
 } qa_native_host_movement_services;
 
 typedef struct qa_native_host_q2_application_call {

@@ -169,14 +169,15 @@ static bool raw_move(control_frame *frame,bool *handled,qa_error *error)
     size_t movement_slot;
     qa_movement_result *physical=qa_native_host_movement_acquire(frame->client.host,&movement_slot,error);
     if(!physical) return false;
-    bool ok=movement.prepare(movement.context,frame->client.host,frame->address,&input,error)&&
+    uint64_t prepared=0;
+    bool ok=movement.prepare(movement.context,frame->client.host,frame->address,&input,&prepared,error)&&
         movement.execute(movement.context,frame->client.host,frame->address,&input,&services,physical,error);
     if(ok&&physical->status==QA_MOVEMENT_ACTOR_REMOVED&&
         !qa_actors_get(qa_session_actors(engine->provider->application->session),physical->actor)) {
         qa_native_host_movement_release(frame->client.host,movement_slot); return true;
     }
     if(ok) ok=frame_live(engine->source_control,frame,error)&&raw_store(frame,bytes,physical,error);
-    if(ok) ok=movement.commit(movement.context,frame->client.host,frame->address,physical,error);
+    if(ok) ok=movement.commit(movement.context,frame->client.host,frame->address,physical,prepared,error);
     qa_native_host_movement_release(frame->client.host,movement_slot); return ok;
 }
 static bool raw_native_commit(control_frame *frame,qa_error *error)
@@ -188,6 +189,6 @@ static bool raw_native_commit(control_frame *frame,qa_error *error)
     qa_movement_contact contacts[32]={0};
     if(!raw_result(frame,bytes,contacts,&result,error)) return false;
     qa_native_host_movement_services movement=application_native_q2_movement_services(frame->client.engine);
-    return movement.commit(movement.context,frame->client.host,frame->address,&result,error);
+    return movement.commit(movement.context,frame->client.host,frame->address,&result,0,error);
 }
 #endif

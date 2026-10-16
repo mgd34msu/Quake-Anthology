@@ -175,9 +175,11 @@ typedef struct application_control_record {
     qa_movement_result result;
     qa_vec3 saved_view_offset;
     qa_vec3 q2r_pml_origin;
+    uint64_t source_velocity_revision;
     int32_t saved_mode;
     bool active, moving, retired, saved_damageable;
     bool saved_mode_valid, command_seen, guest_mode_valid;
+    bool source_velocity_pending;
     int32_t guest_mode;
 } application_control_record;
 

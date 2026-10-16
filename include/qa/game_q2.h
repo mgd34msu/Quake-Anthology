@@ -468,6 +468,7 @@ bool qa_q2_mark_tesla_area(qa_q2_game *, qa_actor_id observer, qa_actor_id tesla
 bool qa_q2_grapple_configure(qa_q2_game *, const qa_q2_grapple_options *, qa_error *);
 bool qa_q2_grapple_read(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_q2_grapple_state *,
                         qa_error *);
+bool qa_q2_grapple_prediction_suppressed(qa_q2_game *, qa_actor_id);
 bool qa_q2_grapple_reset(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_error *);
 bool qa_q2_grapple_offhand(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, bool pressed, qa_error *);
 bool qa_q2_grapple_hold(qa_q2_game *, qa_actor_id, bool pressed, qa_error *);

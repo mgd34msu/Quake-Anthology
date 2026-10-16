@@ -133,6 +133,41 @@ static bool controls_signature(qa_source_save_io *io)
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual));
 }
 
+static bool controls_velocity_fields(qa_source_save_io *io, application_control_record *controls,
+    uint32_t capacity)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (reading && io->offset == io->input.size) return true;
+    size_t count = 0;
+    if (!reading) {
+        for (uint32_t i = 0; i < capacity; ++i)
+            if (controls[i].active && controls[i].source_velocity_pending) ++count;
+        if (!count) return true;
+    }
+    if (!qa_source_save_count(io, &count, capacity)) return false;
+    uint32_t cursor = 0, previous = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_actor_id actor = {0};
+        uint64_t revision = 0;
+        if (!reading) {
+            while (cursor < capacity && (!controls[cursor].active || !controls[cursor].source_velocity_pending)) ++cursor;
+            actor = controls[cursor].player.actor;
+            revision = controls[cursor++].source_velocity_revision;
+        }
+        if (!qa_source_save_actor(io, &actor) || !qa_source_save_u64(io, &revision)) return false;
+        if (actor.slot >= capacity || !controls[actor.slot].active ||
+            !qa_actor_id_equal(controls[actor.slot].player.actor, actor) || !revision ||
+            (i && actor.slot <= previous))
+            return application_fail(io->error, QA_ERROR_FORMAT, "saved pending velocity has no unique control owner or revision");
+        previous = actor.slot;
+        if (reading) {
+            controls[actor.slot].source_velocity_pending = true;
+            controls[actor.slot].source_velocity_revision = revision;
+        }
+    }
+    return true;
+}
+
 static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
     qa_source_save_io io = {0};
@@ -163,6 +198,7 @@ static bool application_controls_capture(qa_application *app, qa_buffer *out, qa
         }
     }
     if (ok) ok = application_control_frames_fields(&io, app, app->controls, NULL, error);
+    if (ok) ok = controls_velocity_fields(&io, app->controls, app->control_capacity);
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid control continuation");
     qa_source_save_dispose(&io); return ok;
@@ -210,6 +246,7 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
         }
     }
     if (ok) ok = application_control_frames_fields(&io, app, controls, &frames, error);
+    if (ok) ok = controls_velocity_fields(&io, controls, app->control_capacity);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) ok = application_control_records_prepare(controls, app->control_capacity, error);
     if (ok) {

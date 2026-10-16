@@ -158,6 +158,7 @@ bool qa_equipment_lmctf_command(qa_equipment *, qa_modes *, qa_mode_id, qa_actor
                                 bool native_slot, bool pressed, qa_error *);
 bool qa_equipment_q3_pull(qa_equipment *, qa_actor_id, qa_vec3 *velocity, bool *apply, qa_error *);
 float qa_equipment_gravity_scale(qa_equipment *, qa_actor_id);
+bool qa_equipment_prediction_suppressed(qa_equipment *, qa_actor_id);
 bool qa_equipment_publish_q3_items(qa_equipment *, qa_actor_id, qa_error *);
 bool qa_equipment_read(qa_equipment *, qa_actor_id, qa_equipment_state *);
 typedef struct qa_equipment_weapon_view {

@@ -244,7 +244,10 @@ bool application_control_outputs(const qa_application *app, qa_actor_id actor,
 void application_control_publish_motion(application_control_record *control,
                                         const qa_movement_result *result)
 {
-    control->player.state = result->state;
+    qa_movement_state state = result->state;
+    if (control->source_velocity_pending)
+        (void)qa_movement_set_velocity(&state, qa_movement_velocity(&control->player.state), NULL);
+    control->player.state = state;
     control->player.bounds = result->bounds;
     control->player.ground = result->ground;
     control->player.view_angles = result->view_angles;
@@ -365,7 +368,8 @@ static void state_body(application_control_record *record,
                        const qa_body_state *body, double health)
 {
     (void)qa_movement_set_origin(&record->player.state, body->origin, NULL);
-    (void)qa_movement_set_velocity(&record->player.state, body->velocity, NULL);
+    if (!record->source_velocity_pending)
+        (void)qa_movement_set_velocity(&record->player.state, body->velocity, NULL);
     qa_physics_properties props;
     qa_physics *physics = record->application->physics;
     bool grounded = qa_actor_reference_present(body->ground);
@@ -1905,7 +1909,12 @@ bool qa_application_control_admit(qa_application *application,
 bool application_control_guest_equipment(qa_application *app, application_provider *primary,
     qa_actor_id actor, application_q3_weapons *weapons, qa_q3_equipment_motion *out, qa_error *error)
 {
-    if (!app || !primary || primary->application != app || primary->kind != APPLICATION_PROVIDER_QVM ||
+    struct application_native_q2 *native = primary && primary->kind == APPLICATION_PROVIDER_NATIVE
+        ? primary->state.native.q2_engine : NULL;
+    bool native_primary = native && (native->profile == QA_NATIVE_Q2_GAME_API3 ||
+        native->profile == QA_NATIVE_Q2_GAME_API2023);
+    if (!app || !primary || primary->application != app ||
+        (primary->kind != APPLICATION_PROVIDER_QVM && !native_primary) ||
         !primary->constructed || !primary->attached || primary->close_pending || !out ||
         !live(app, actor) || actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
@@ -1917,32 +1926,34 @@ bool application_control_guest_equipment(qa_application *app, application_provid
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (!arsenal || !arsenal->constructed || !arsenal->attached || arsenal->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment motion lost its selected arsenal");
-    /* Original QVM primary equipment is independently owned by the selected
-     * native Q3 source. The primary built-in missionpack exception cannot
-     * occur for this admitted original GAME owner. */
+    /* Original primary equipment is independently owned by the selected
+     * native Q3 source. */
     if (arsenal->kind != APPLICATION_PROVIDER_Q3) { *out = motion; return true; }
     qa_q3_player_state player;
     if (!qa_q3_player_read(arsenal->state.q3, actor, &player) || !(player.selections & QA_Q3_ARSENAL))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment motion lost its actual arsenal player");
     bool available;
-    if (!weapons)
+    if (!native_primary && !weapons)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected equipment motion needs its original weapon availability profile");
-    if (!application_q3_weapons_available(weapons, actor, false, &available, error)) return false;
+    if (native_primary) {
+        if (!application_native_q2_attack_available(native, actor, &available, error)) return false;
+    } else if (!application_q3_weapons_available(weapons, actor, false, &available, error)) return false;
     if (!available) { *out = motion; return true; }
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
     if (!character || !character->constructed || !character->attached || character->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original equipment pose lost its selected character");
-    qa_movement_input postures = qa_movement_input_default(
-        character->component.clock.kind == QA_RULESET_Q3 ? QA_RULESET_Q3 : QA_RULESET_NETQUAKE, actor);
+    qa_movement_input postures = application_control_character_postures(character, actor);
     if (!qa_q3_selected_equipment_motion(arsenal->state.q3, actor, &postures.crouched, &motion, error)) return false;
     if (!live(app, actor) || application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal ||
         application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character ||
         application_world_provider(app, QA_ROLE_ENTITIES, "") != primary)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original equipment motion source changed during pose admission");
-    int32_t haste;
-    if (!application_q3_weapons_powerup_until(weapons, actor, APPLICATION_Q3_HASTE, &haste, error)) return false;
-    motion.speed_multiplier /= haste == 0 ? 1.0 : 1.3;
+    if (!native_primary) {
+        int32_t haste;
+        if (!application_q3_weapons_powerup_until(weapons, actor, APPLICATION_Q3_HASTE, &haste, error)) return false;
+        motion.speed_multiplier /= haste == 0 ? 1.0 : 1.3;
+    }
     *out = motion;
     return true;
 }
@@ -3472,6 +3483,12 @@ bool application_control_velocity(qa_application *application, qa_actor_id actor
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest velocity control is retired");
     if (!qa_movement_set_velocity(&record->player.state, velocity, error))
         return false;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (source && source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine &&
+        source->state.native.q2_engine->profile == QA_NATIVE_Q2_GAME_API3) {
+        record->source_velocity_pending = true;
+        if (++record->source_velocity_revision == 0) ++record->source_velocity_revision;
+    }
     if (qa_actor_id_equal(record->result.actor, actor))
         return qa_movement_set_velocity(&record->result.state, velocity, error);
     return true;
@@ -3873,6 +3890,7 @@ bool application_control_spawn_reset(qa_application *application, qa_actor_id ac
     qa_actor_player *identity = qa_actors_player(qa_session_actors(application->session), actor);
     if (identity) identity->disguised = false;
     record->player.flight = record->player.cutscene = false;
+    record->source_velocity_pending = false;
     record->cutscene_character = NULL;
     record->saved_mode_valid = false;
     application_control_body_reset(application, actor);

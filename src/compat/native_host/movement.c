@@ -340,7 +340,8 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     input.trace_policy = qa_collision_default_policy(QA_GAME_Q2);
     input.has_trace_policy = true;
     input.view_offset = (qa_vec3){0, 0, load_f32(bytes, layout->pmove.view_height)};
-    if (!host->movement.prepare(host->movement.context, host, address, &input, error))
+    uint64_t prepared = 0;
+    if (!host->movement.prepare(host->movement.context, host, address, &input, &prepared, error))
         return false;
     movement_bridge bridge = {.host = host, .source = host->movement.kernel};
     bridge.trace = bridge_pointer(host, bytes + layout->pmove.bytes - 2 * host->pointer_bytes);
@@ -431,7 +432,7 @@ bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error
     qa_store_u32le(bytes + layout->pmove.water_level, (uint32_t)movement->water_level);
     bool ok = native_host_write(host, address, bytes, layout->pmove.bytes, error);
     if (ok && host->movement.commit)
-        ok = host->movement.commit(host->movement.context, host, address, movement, error);
+        ok = host->movement.commit(host->movement.context, host, address, movement, prepared, error);
     qa_native_host_movement_release(host, movement_slot);
     return ok;
 }

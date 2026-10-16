@@ -423,6 +423,8 @@ static bool native_move(application_provider *provider, qa_actor_id actor,
             ok = player_motion_finite(slot, &state, view, offset, error);
             if (ok) ok = qa_world_body_read(engine->world, actor, &body, error);
             if (ok) {
+                if (control->source_velocity_pending)
+                    (void)qa_movement_set_velocity(&state, qa_movement_velocity(&control->player.state), NULL);
                 control->player.state = state; control->player.bounds = body.bounds;
                 control->player.view_angles = view; control->player.view_offset = offset;
                 qa_input_command_basis from={.kind=command->kind,.words=classic}, to={.kind=command->kind};
