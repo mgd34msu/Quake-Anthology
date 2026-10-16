@@ -881,8 +881,9 @@ static bool inventory_menu_read(void *context,qa_hud_data *out,qa_strings **stri
     const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
     q2_native *native=inventory_native(o,&hud,&counts);
     *strings=o->replica->strings;
-    if(o->inventory_visible || (native && received && received->player &&
-        received->player->ui.native_inventory)) {
+    const qa_unified_native_inventory *mixed=received && received->player?
+        received->player->ui.native_inventory:NULL;
+    if(o->inventory_visible || (mixed && mixed->visible)) {
         qa_actor_id player={0};uint32_t source_number;
         if(!frontend_remote_unified_player(o->replica,&player,&source_number)) return true;
         return inventory_rows(o,&(qa_hud_frame){.seat=d->physical_seat,.actor=player},out,e);
@@ -894,8 +895,12 @@ static void inventory_menu_sync(frontend_unified_q2 *o)
 {
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     const qa_unified_native_hud *hud=NULL;const int32_t *counts=NULL;
+    const qa_unified_frame *received=qa_unified_document_frame(o->frame);
+    const qa_unified_native_inventory *mixed=received && received->player?
+        received->player->ui.native_inventory:NULL;
     bool overlay=o->help_visible || o->score_visible || frontend_unified_q2_rr_help_visible(o->rr_hud);
-    bool visible=!overlay && (o->inventory_visible || inventory_native(o,&hud,&counts)!=NULL);
+    bool visible=!overlay && (o->inventory_visible || (mixed && mixed->visible) ||
+        inventory_native(o,&hud,&counts)!=NULL);
     frontend_inventory_menu_source(o->frontend->seats+d->physical_seat,o,inventory_menu_read,visible);
 }
 static bool native_configs(const qa_unified_component_q2 *row,const qa_unified_document *document,

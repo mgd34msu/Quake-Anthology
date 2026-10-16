@@ -4197,7 +4197,7 @@ static void test_native_inventory_names(void)
     frame->player->actor=frame->player->ui_actor=actor;
     qa_unified_native_inventory *inventory=calloc(1,sizeof(*inventory));CHECK(inventory);
     frame->player->ui.native_inventory=inventory;
-    inventory->selected=weapon;inventory->item_count=2;
+    inventory->selected=weapon;inventory->item_count=2;inventory->visible=true;
     inventory->items=calloc(2,sizeof(*inventory->items));CHECK(inventory->items);
     inventory->items[0]=(qa_unified_native_inventory_item){weapon,strdup("Shotgun"),1};
     inventory->items[1]=(qa_unified_native_inventory_item){ammo,strdup("Shells"),7};
@@ -4208,7 +4208,7 @@ static void test_native_inventory_names(void)
     CHECK(qa_unified_document_decode(QA_UNIFIED_FRAME_DOCUMENT,(qa_bytes){wire.data,wire.size},
         receiver,NULL,NULL,&decoded,&error));
     const qa_unified_native_inventory *read=qa_unified_document_frame(decoded)->player->ui.native_inventory;
-    CHECK(read && read->item_count==2 && read->selected==read->items[0].item);
+    CHECK(read && read->visible && read->item_count==2 && read->selected==read->items[0].item);
     CHECK(read->selected!=weapon && read->items[0].count==1 && read->items[1].count==7);
     CHECK(!strcmp(qa_strings_cstr(receiver,read->items[0].item),"q3:weapon/shotgun"));
     CHECK(!strcmp(qa_strings_cstr(receiver,read->items[1].item),"q3:ammo/shotgun"));

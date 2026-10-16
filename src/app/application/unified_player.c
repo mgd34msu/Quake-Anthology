@@ -1143,6 +1143,7 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
                 }
                 if (ok) {
                     v->selected = mixed.selected;
+                    v->visible = o->has_q2 && (o->q2.stats[13] & 2);
                     ok = native_inventory_presentation(&v->presentation, o, &mixed.selected_presentation, e);
                 }
             }
@@ -1163,7 +1164,10 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
             }
             for (size_t i = 0; ok && i < native.count; ++i)
                 native_inventory_item(v, native.items[i].item, native.items[i].label, native.items[i].count);
-            if (ok) v->selected = native.selected;
+            if (ok) {
+                v->selected = native.selected;
+                v->visible = o->has_q2 && (o->q2.stats[13] & 2);
+            }
             if (!ok) return false;
         }
     }

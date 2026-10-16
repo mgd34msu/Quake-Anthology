@@ -425,7 +425,7 @@ bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
  * player_state is the public 296-byte KEX state. Copies live only during DrawHUD. */
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
-    qa_bytes server_data, qa_bytes player_state, qa_error *);
+    qa_bytes server_data, qa_bytes player_state, bool shared_inventory, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

@@ -2,7 +2,7 @@
 
 bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     const qa_native_host_q2_hud_view *view, int32_t player_number,
-    qa_bytes data, qa_bytes player, qa_error *error)
+    qa_bytes data, qa_bytes player, bool shared_inventory, qa_error *error)
 {
     if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying ||
         !host->q2_seat_bound || host->q2_seat != seat || seat > INT32_MAX ||
@@ -18,6 +18,14 @@ bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     if (!host->q2_hud_records &&
         !qa_native_allocate(host->instance, 1536 + 296, INT32_MIN + 9, &host->q2_hud_records, error)) return false;
     qa_native_address records = host->q2_hud_records;
+    uint8_t projected[296];
+    if (shared_inventory) {
+        memcpy(projected, player.data, sizeof(projected));
+        /* The composed inventory is drawn once by the shared menu. */
+        qa_store_u16le(projected + 166 + 13 * 2,
+            (uint16_t)(qa_load_u16le(projected + 166 + 13 * 2) & ~2u));
+        player.data = projected;
+    }
     bool ok =
         native_host_write(host, records, data.data, data.size, error) &&
         native_host_write(host, records + 1536, player.data, player.size, error);

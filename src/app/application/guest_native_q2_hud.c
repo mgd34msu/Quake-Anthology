@@ -2,6 +2,7 @@
 #include "qa/hud_q2.h"
 #include "qa/tools.h"
 #include "control_frame.h"
+#include "native_q2_inventory_scanner.h"
 #include <limits.h>
 
 struct application_native_q2 *application_native_q2_hud_source(
@@ -217,17 +218,25 @@ bool application_native_q2_draw_hud(application_provider *provider, uint32_t sea
     }
     uint8_t player_storage[296];
     qa_bytes player = {0}; qa_native_host_q2_hud_view view;
+    bool shared_inventory = false;
     uint8_t data[1536] = {0};
     if (ok) ok = qa_native_host_q2_player_state(source->provider->state.native.host, slot, player_storage, &player, error);
     if (ok && !engine->platform.hud_view)
         ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 HUD viewport owner is absent");
     if (ok) ok = engine->platform.hud_view(engine->platform.context, seat, &view, error);
+    if (ok && source->inventory_scanner) {
+        application_native_q2_inventory_readout mixed = {0};
+        ok = application_native_q2_inventory_mixed_read(source->provider, source->clients[slot].actor,
+            &mixed, error);
+        if (ok) shared_inventory = mixed.present;
+        application_native_q2_inventory_readout_free(&mixed);
+    }
     if (ok) {
         memcpy(data, source->clients[slot].layout, 1024);
         for (size_t i = 0; i < 256; ++i)
             qa_store_u16le(data + 1024 + i * 2, (uint16_t)source->clients[slot].inventory[i]);
         ok = qa_native_host_q2_draw_hud(provider->state.native.host, seat, &view,
-            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, error);
+            (int32_t)slot - 1, (qa_bytes){data, sizeof(data)}, player, shared_inventory, error);
     }
     --source->calls; --engine->calls;
     if (ok) engine->map_ready = provider->map_bound = true;

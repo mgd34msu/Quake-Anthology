@@ -182,6 +182,7 @@ bool frontend_inventory_menu_sync(frontend_seat *seat,qa_error *error)
 {
     frontend_inventory_menu *owner=menu(seat);
     if(!owner || !owner->pending) return true;
+    if(owner->visible && qa_input_seat_focus(seat->input)==QA_INPUT_CONSOLE) return true;
     qa_ui_state state;
     if(!qa_ui_state_read(seat->ui,&state,error)) return false;
     double now=(double)seat->frontend->time_ns/1000000.;

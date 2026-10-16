@@ -67,6 +67,7 @@ typedef struct qa_unified_native_inventory {
     size_t item_count;
     qa_item_id selected;
     qa_unified_inventory_presentation presentation;
+    bool visible;
 } qa_unified_native_inventory;
 typedef struct qa_unified_q1_team_face { qa_string_id content; uint8_t colors; double frags; } qa_unified_q1_team_face;
 typedef struct qa_unified_player_ui {
