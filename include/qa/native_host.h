@@ -338,6 +338,12 @@ bool qa_native_host_terminal_retired(const qa_native_host *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
+typedef struct qa_native_host_entity_layout {
+    size_t bytes, inuse, linkcount, area, area2, flags;
+    size_t mins, maxs, absmin, absmax, size, solid, clipmask, owner;
+    size_t cluster_count, clusters, headnode;
+} qa_native_host_entity_layout;
+const qa_native_host_entity_layout *qa_native_host_source_layout(const qa_native_host *);
 /* Load-reserved result storage shared by SDK imports and selected foreign
  * movement. Nested imports retain distinct slots until their call completes. */
 qa_movement_result *qa_native_host_movement_acquire(qa_native_host *, size_t *slot,
@@ -360,6 +366,8 @@ bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);
  * callers must hold their source owner through synchronous callbacks. */
 bool qa_native_host_source_actor(qa_native_host *, qa_native_address, bool observe,
                                   qa_actor_id *, qa_error *);
+bool qa_native_host_source_address(qa_native_host *, qa_actor_id,
+    qa_native_address *, qa_error *);
 bool qa_native_host_source_reconcile(qa_native_host *, qa_error *);
 bool qa_native_host_source_active(qa_native_host *, uint32_t source_slot, bool *, qa_error *);
 /* Source clocks are published by the actual application source owner. These

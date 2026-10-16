@@ -3,6 +3,8 @@
 #include "qa/native_host.h"
 #include "qa/builtin.h"
 struct application_native_q2;
+bool application_native_q2_combat_apply(struct application_native_q2 *,
+    const qa_damage_request *, qa_damage_outcome *, qa_error *);
 bool application_native_q2_combat_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_load(struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_activate(struct application_native_q2 *, qa_error *);

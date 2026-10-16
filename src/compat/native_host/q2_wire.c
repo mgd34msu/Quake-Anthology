@@ -161,7 +161,7 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
     uint8_t bytes[NATIVE_Q2_RR_EDICT_BYTES];
     if (!qa_native_entity_address(host->instance, slot, &address, error) ||
         !native_host_read(host, address, bytes, host->edict->bytes, error)) return false;
-    const native_host_edict_layout *layout = host->edict;
+    const qa_native_host_entity_layout *layout = host->edict;
     bool classic = host->profile == QA_NATIVE_Q2_GAME_API3;
     value.in_use = classic ? qa_load_i32le(bytes + layout->inuse) != 0 : bytes[layout->inuse] != 0;
     value.linked = classic ? (slot < host->q2_lifetime_capacity &&

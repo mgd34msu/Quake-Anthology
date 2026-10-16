@@ -126,6 +126,15 @@ typedef struct attack_animation_frame {
     qa_native_address entity;
     bool pending, skipping;
 } attack_animation_frame;
+typedef struct attack_foreign_slot {
+    int32_t generation;
+    bool present, syncing, releasing;
+} attack_foreign_slot;
+typedef struct attack_foreign_fields {
+    uint32_t inuse, generation, velocity, ground, health, mass, damageable,
+        movetype, classname, svflags, solid, linked, absmin, absmax;
+    bool rerelease;
+} attack_foreign_fields;
 typedef enum attack_delay_kind { ATTACK_DELAY_NONE, ATTACK_DELAY_FLAG, ATTACK_DELAY_ANIMATION } attack_delay_kind;
 struct application_native_q2_attack {
     struct application_native_q2 *engine;
@@ -198,7 +207,12 @@ struct application_native_q2_attack {
     bool ammo_by_name;
     uint32_t ammo_offset, ammo_label;
     qa_arena decision_storage;
-    bool active, items_ready;
+    attack_foreign_fields foreign;
+    attack_foreign_slot *foreign_slots;
+    uint32_t foreign_capacity;
+    qa_string_id foreign_classname;
+    qa_native_address foreign_name;
+    bool active, items_ready, foreign_ready;
 };
 static bool word(const qa_json_document *doc, qa_json_id object, const char *name,
     uint32_t *out, qa_error *error)
@@ -230,6 +244,55 @@ static bool source_actor(struct application_native_q2_attack *p, qa_native_addre
     return out->registry != 0 || application_fail(error, QA_ERROR_NOT_FOUND, "Native attack actor is not in use");
 }
 #include "guest_native_q2_attack_decisions.h"
+static bool foreign_offset(struct application_native_q2_attack *p,qa_json_id fields,
+    const char *name,uint32_t *out,qa_error *error)
+{
+    if(!p->foreign.rerelease) {
+        if(qa_json_get(p->document,fields,name)==QA_JSON_NONE)return false;
+        return word(p->document,fields,name,out,error);
+    }
+    for(size_t i=0;i<qa_json_size(p->document,fields);++i) {
+        qa_json_id field=qa_json_at(p->document,fields,i);
+        if(qa_json_string_equal(p->document,qa_json_get(p->document,field,"name"),name))
+            return word(p->document,field,"byteOffset",out,error);
+    }
+    return false;
+}
+static bool foreign_prepare(struct application_native_q2_attack *p,qa_error *error)
+{
+    qa_json_id world=qa_json_get(p->document,qa_json_root(p->document),"world");
+    p->foreign.rerelease=p->engine->profile==QA_NATIVE_Q2_GAME_API2023;
+    qa_json_id fields=p->foreign.rerelease?
+        qa_json_get(p->document,qa_json_get(p->document,world,"edict"),"fields"):
+        qa_json_get(p->document,world,"fields");
+    struct {const char *classic,*rerelease;uint32_t *offset;} rows[]={
+        {"velocity","velocity",&p->foreign.velocity},
+        {"groundentity","groundentity",&p->foreign.ground},
+        {"health","health",&p->foreign.health},
+        {"mass","mass",&p->foreign.mass},
+        {"damageable","takedamage",&p->foreign.damageable},
+        {"movetype","movetype",&p->foreign.movetype},
+        {"classname","classname",&p->foreign.classname}};
+    for(size_t i=0;i<sizeof(rows)/sizeof(*rows);++i) {
+        qa_error local={0};
+        if(!foreign_offset(p,fields,p->foreign.rerelease?rows[i].rerelease:rows[i].classic,
+            rows[i].offset,&local)) {
+            if(local.code!=QA_OK){if(error)*error=local;return false;}
+            return true;
+        }
+    }
+    if(p->foreign.rerelease) {
+        qa_error local={0};
+        if(!foreign_offset(p,fields,"spawn_count",&p->foreign.generation,&local)||
+           !foreign_offset(p,fields,"shared.linked",&p->foreign.linked,&local)) {
+            if(local.code!=QA_OK){if(error)*error=local;return false;}
+            return true;
+        }
+    }
+    if(!qa_strings_intern_cstr(qa_session_strings(p->engine->provider->application->session),
+        "foreign_actor",&p->foreign_classname,error))return false;
+    p->foreign_ready=true;return true;
+}
 bool application_native_q2_attack_input_fields(struct application_native_q2 *engine,uint32_t slot,
     qa_actor_id actor,qa_movement_result *out,qa_vec3 *command_angles,qa_error *error)
 {
@@ -391,6 +454,181 @@ static bool player_vector_write(struct application_native_q2_attack *p, qa_nativ
     uint8_t bytes[12];
     qa_store_f32le(bytes, value.x); qa_store_f32le(bytes + 4, value.y); qa_store_f32le(bytes + 8, value.z);
     return qa_native_write(instance(p), address, (qa_bytes){bytes, sizeof(bytes)}, error);
+}
+static bool foreign_word_write(struct application_native_q2_attack *p,qa_native_address address,
+    uint64_t value,size_t width,qa_error *error)
+{
+    uint8_t bytes[8];qa_store_u64le(bytes,value);
+    return qa_native_write(instance(p),address,(qa_bytes){bytes,width},error);
+}
+static bool foreign_generation(struct application_native_q2_attack *p,qa_native_address address,
+    int32_t *generation,bool *inuse,qa_error *error)
+{
+    uint8_t bytes[4];size_t width=p->foreign.rerelease?1u:4u;
+    if(!qa_native_read(instance(p),address+p->foreign.inuse,bytes,width,error))return false;
+    *inuse=p->foreign.rerelease?bytes[0]!=0:qa_load_u32le(bytes)!=0;*generation=0;
+    if(p->foreign.rerelease) {
+        if(!qa_native_read(instance(p),address+p->foreign.generation,bytes,4,error))return false;
+        *generation=qa_load_i32le(bytes);
+    }
+    return true;
+}
+static bool foreign_client(struct application_native_q2_attack *p,uint32_t slot,qa_actor_id actor)
+{
+    return application_native_q2_client_slot(p->engine,actor)==slot&&slot>0&&slot<257&&
+        qa_actor_id_equal(p->engine->clients[slot].actor,actor);
+}
+static bool foreign_forget(struct application_native_q2_attack *p,uint32_t slot,
+    qa_actor_id actor,qa_error *error)
+{
+    qa_native_slot_binding binding;
+    if(!qa_native_slot(instance(p),slot,&binding,error))return false;
+    if(binding.kind==QA_NATIVE_SLOT_BORROWED&&qa_actor_id_equal(binding.actor,actor)) {
+        qa_native_slot_binding vacant={.kind=QA_NATIVE_SLOT_FREE,.slot=slot};
+        if(!qa_native_bind_slot(instance(p),&vacant,error))return false;
+    }
+    p->foreign_slots[slot]=(attack_foreign_slot){0};return true;
+}
+static bool foreign_sync_one(struct application_native_q2_attack *p,uint32_t slot,
+    qa_actor_id actor,qa_native_address address,bool *present,qa_error *error)
+{
+    attack_foreign_slot *row=p->foreign_slots+slot;
+    *present=row->present&&!row->releasing;
+    if(!*present||row->syncing)return true;
+    int32_t generation;bool inuse;
+    if(!foreign_generation(p,address,&generation,&inuse,error))return false;
+    if(!inuse||generation!=row->generation) {
+        *present=false;return foreign_forget(p,slot,actor,error);
+    }
+    row->syncing=true;
+    qa_world *world=p->engine->world;
+    qa_body_state body={0};qa_combat_state combat={0};qa_linked_body linked;
+    qa_combat *shared=p->engine->provider->application->combat;
+    bool ok=qa_world_body_read(world,actor,&body,error)&&
+        (!qa_combat_storage_serial(shared,actor)||qa_combat_read_traits(shared,actor,&combat,error));
+    bool is_linked=ok&&qa_world_linked(world,actor,&linked);
+    qa_bounds absolute=is_linked?linked.absolute_bounds:
+        (qa_bounds){qa_vec_add(body.origin,body.bounds.mins),qa_vec_add(body.origin,body.bounds.maxs)};
+    if(ok) ok=qa_native_host_source_body_write(p->engine->provider->state.native.host,slot,
+        p->foreign.velocity,p->foreign.ground,&body,error)&&
+        foreign_word_write(p,address+p->foreign.health,(uint32_t)qa_source_to_i32(combat.health),4,error)&&
+        foreign_word_write(p,address+p->foreign.mass,(uint32_t)qa_source_to_i32(combat.mass),4,error)&&
+        foreign_word_write(p,address+p->foreign.damageable,combat.can_take_damage?1u:0u,
+            p->foreign.rerelease?1u:4u,error)&&
+        foreign_word_write(p,address+p->foreign.movetype,0,4,error)&&
+        foreign_word_write(p,address+p->foreign.svflags,1,4,error)&&
+        foreign_word_write(p,address+p->client_pointer,0,p->pointer_bytes,error)&&
+        foreign_word_write(p,address+p->foreign.classname,p->foreign_name,p->pointer_bytes,error)&&
+        foreign_word_write(p,address+p->foreign.solid,2,p->foreign.rerelease?1u:4u,error)&&
+        player_vector_write(p,address+p->foreign.absmin,absolute.mins,error)&&
+        player_vector_write(p,address+p->foreign.absmax,absolute.maxs,error)&&
+        (!p->foreign.rerelease||foreign_word_write(p,address+p->foreign.linked,is_linked?1u:0u,1,error));
+    row->syncing=false;return ok;
+}
+static bool foreign_activate(struct application_native_q2_attack *p,qa_error *error)
+{
+    if(!p->foreign_ready)return true;
+    qa_native_host *host=p->engine->provider->state.native.host;
+    const qa_native_host_entity_layout *layout=qa_native_host_source_layout(host);
+    p->foreign.inuse=(uint32_t)layout->inuse;p->foreign.svflags=(uint32_t)layout->flags;
+    p->foreign.solid=(uint32_t)layout->solid;p->foreign.absmin=(uint32_t)layout->absmin;
+    p->foreign.absmax=(uint32_t)layout->absmax;
+    qa_native_entity_table table;
+    if(!qa_native_entity_table_get(instance(p),&table,error))return false;
+    if(table.capacity!=p->foreign_capacity) {
+        attack_foreign_slot *rows=calloc(table.capacity,sizeof(*rows));
+        if(table.capacity&&!rows)return application_fail(error,QA_ERROR_MEMORY,"Preparing native projection slot metadata");
+        free(p->foreign_slots);p->foreign_slots=rows;p->foreign_capacity=table.capacity;
+    } else if(table.capacity)memset(p->foreign_slots,0,(size_t)table.capacity*sizeof(*p->foreign_slots));
+    for(uint32_t slot=1;slot<table.count;++slot) {
+        qa_native_slot_binding binding;qa_native_address address;
+        if(!qa_native_slot(instance(p),slot,&binding,error))return false;
+        if(binding.kind!=QA_NATIVE_SLOT_BORROWED||foreign_client(p,slot,binding.actor))continue;
+        bool inuse;int32_t generation;
+        if(!qa_native_entity_address(instance(p),slot,&address,error)||
+            !foreign_generation(p,address,&generation,&inuse,error))return false;
+        if(inuse)p->foreign_slots[slot]=(attack_foreign_slot){.generation=generation,.present=true};
+    }
+    return qa_native_host_q2_retain_string(host,p->foreign_classname,&p->foreign_name,error);
+}
+bool application_native_q2_foreign_address(struct application_native_q2 *engine,qa_actor_id actor,
+    qa_native_address *out,bool *present,qa_error *error)
+{
+    struct application_native_q2_attack *p=engine->source_attack;
+    *out=0;*present=false;
+    if(!p||!p->active||!p->foreign_ready)return true;
+    qa_native_host *host=engine->provider->state.native.host;
+    uint32_t slot;
+    if(qa_native_host_slot_for_actor(host,actor,&slot)) {
+        qa_native_slot_binding binding;
+        if(!qa_native_slot(instance(p),slot,&binding,error))return false;
+        if(binding.kind!=QA_NATIVE_SLOT_BORROWED||foreign_client(p,slot,actor))return true;
+        if(!qa_native_entity_address(instance(p),slot,out,error)||
+            !foreign_sync_one(p,slot,actor,*out,present,error))return false;
+        if(*present)return true;
+    }
+    qa_native_value allocated={.type=QA_NATIVE_ADDRESS};
+    if(!qa_native_host_source_reconcile(host,error)||
+        !qa_native_invoke_original(p->spawn_hook,NULL,0,&allocated,error))return false;
+    qa_native_entity_table table;
+    if(!qa_native_entity_table_refresh(instance(p),&table,error)||
+        !qa_native_entity_slot(instance(p),allocated.as.address,&slot,error))return false;
+    if(slot>=p->foreign_capacity)
+        return application_fail(error,QA_ERROR_MEMORY,"Native projection exceeds its load-sized slot metadata");
+    qa_native_slot_binding borrowed={.kind=QA_NATIVE_SLOT_BORROWED,.slot=slot,.actor=actor,
+        .owner=engine->provider->owner,.source_slot=slot};
+    if(!qa_native_bind_slot(instance(p),&borrowed,error))return false;
+    bool inuse;int32_t generation;
+    if(!foreign_generation(p,allocated.as.address,&generation,&inuse,error))return false;
+    p->foreign_slots[slot]=(attack_foreign_slot){.generation=generation,.present=true};
+    *out=allocated.as.address;
+    if(foreign_sync_one(p,slot,actor,*out,present,error))return true;
+    qa_error cleanup={0};application_native_q2_foreign_released(engine,actor,&cleanup);return false;
+}
+bool application_native_q2_foreign_sync(struct application_native_q2 *engine,qa_error *error)
+{
+    struct application_native_q2_attack *p=engine->source_attack;
+    if(!p||!p->active||!p->foreign_ready)return true;
+    qa_native_entity_table table;
+    if(!qa_native_entity_table_get(instance(p),&table,error))return false;
+    for(uint32_t slot=1;slot<table.count;++slot) {
+        qa_native_slot_binding binding;qa_native_address address;bool present;
+        if(!qa_native_slot(instance(p),slot,&binding,error))return false;
+        if(binding.kind!=QA_NATIVE_SLOT_BORROWED||foreign_client(p,slot,binding.actor))continue;
+        if(!qa_native_entity_address(instance(p),slot,&address,error)||
+            !foreign_sync_one(p,slot,binding.actor,address,&present,error))return false;
+    }
+    return true;
+}
+bool application_native_q2_foreign_released(struct application_native_q2 *engine,qa_actor_id actor,
+    qa_error *error)
+{
+    struct application_native_q2_attack *p=engine->source_attack;
+    if(!p||!p->foreign_ready||!engine->provider->state.native.host)return true;
+    uint32_t slot;
+    if(!qa_native_host_slot_for_actor(engine->provider->state.native.host,actor,&slot)||
+        foreign_client(p,slot,actor)||slot>=p->foreign_capacity)return true;
+    attack_foreign_slot *row=p->foreign_slots+slot;
+    if(!row->present||row->releasing)return true;
+    if(qa_native_terminal(instance(p))||qa_native_get_lifecycle(instance(p))!=QA_NATIVE_INITIALIZED) {
+        *row=(attack_foreign_slot){0};return true;
+    }
+    qa_native_address address;int32_t generation;bool inuse;
+    if(!qa_native_entity_address(instance(p),slot,&address,error)||
+        !foreign_generation(p,address,&generation,&inuse,error))return false;
+    if(!inuse||generation!=row->generation)return foreign_forget(p,slot,actor,error);
+    row->releasing=true;
+    qa_native_value argument={.type=QA_NATIVE_ADDRESS,.as.address=address},result={.type=QA_NATIVE_VOID};
+    bool ok;
+    if(p->free_hook)ok=qa_native_invoke_original(p->free_hook,&argument,1,&result,error);
+    else {
+        qa_native_address entry;qa_native_type pointer=scalar(QA_NATIVE_ADDRESS);
+        qa_native_signature call=signature(p,&pointer,1,QA_NATIVE_VOID);
+        ok=qa_native_rva(instance(p),p->free,1,&entry,error)&&
+            qa_native_invoke(instance(p),entry,&call,&argument,1,&result,error);
+    }
+    row->releasing=false;
+    return ok&&foreign_forget(p,slot,actor,error);
 }
 static uint16_t player_coordinate_word(float value)
 {
@@ -824,6 +1062,7 @@ bool application_native_q2_attack_prepare(struct application_native_q2 *engine, 
         entries = qa_json_get(doc, qa_json_get(doc, root, "world"), "entries");
     qa_native_module_info info = qa_native_module_describe(engine->provider->state.native.module);
     p->pointer_bytes = info.image.target.pointer_bytes; p->abi = info.image.target.abi;
+    if(!foreign_prepare(p,error))return false;
     qa_json_id dispatcher=qa_json_get(doc,weapons,"dispatcher");
     if(!qa_json_string_equal(doc,qa_json_get(doc,dispatcher,"record"),"entity") ||
         !qa_json_string_equal(doc,qa_json_get(doc,qa_json_get(doc,dispatcher,"entry"),"kind"),"rva") ||
@@ -1058,10 +1297,18 @@ static bool free_entry(void *opaque, qa_native_instance *native, qa_native_entry
     struct application_native_q2_attack *p = opaque;
     if (count != 1 || arguments[0].type != QA_NATIVE_ADDRESS)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original G_FreeEdict lacks its source entity");
+    uint32_t slot;
+    if(!qa_native_entity_slot(instance(p),arguments[0].as.address,&slot,error))return false;
     ++p->engine->calls;
     bool ok = qa_native_invoke_original(binding, arguments, count, result, error);
     --p->engine->calls;
     if (!ok) return false;
+    if(slot<p->foreign_capacity&&p->foreign_slots[slot].present) {
+        int32_t generation;bool inuse;
+        if(!foreign_generation(p,arguments[0].as.address,&generation,&inuse,error))return false;
+        if(!inuse||generation!=p->foreign_slots[slot].generation)
+            p->foreign_slots[slot]=(attack_foreign_slot){0};
+    }
     (void)native;
     return qa_native_host_source_reconcile(p->engine->provider->state.native.host, error);
 }
@@ -1206,6 +1453,7 @@ bool application_native_q2_attack_activate(struct application_native_q2 *engine,
         if (!qa_native_rva(instance(p), p->factor_entry, 1, &entry, error) ||
             !qa_native_observe_entry(instance(p), entry, &sig, factor_entry, p, &p->factor_hook, error)) return false;
     }
+    if(!foreign_activate(p,error))return false;
     p->active = true; return true;
 }
 bool application_native_q2_attack_read(struct application_native_q2 *engine, qa_actor_id attacker,
@@ -1539,6 +1787,7 @@ bool application_native_q2_attack_close(struct application_native_q2 *engine, qa
     qa_arena_destroy(&p->projectile_storage);
     qa_arena_destroy(&p->hook_storage);
     qa_arena_destroy(&p->decision_storage);
+    free(p->foreign_slots);
     qa_json_destroy(p->document); free(p->decisions); free(p); engine->source_attack = NULL;
     return true;
 }

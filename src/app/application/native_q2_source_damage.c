@@ -2,6 +2,7 @@
 #include "native_q2_source_invocation.h"
 #include "native_q2_source_damage.h"
 #include "native_q2_client_stages.h"
+#include "guest_native_q2_combat.h"
 #include "control_frame.h"
 #include "qa/native_observe.h"
 #include "qa/persistence_fields.h"
@@ -91,10 +92,7 @@ static bool address_for(struct application_native_q2_source_damage *o,qa_actor_i
     qa_native_address *out,qa_error *e)
 {
     if(!actor.registry)return qa_native_entity_address(instance(o),0,out,e);
-    uint32_t slot;
-    if(qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&slot))
-        return qa_native_entity_address(instance(o),slot,out,e);
-    return application_fail(e,QA_ERROR_UNSUPPORTED,"Declared damage lacks its actual actor projection");
+    return qa_native_host_source_address(o->engine->provider->state.native.host,actor,out,e);
 }
 static bool vector_read(struct application_native_q2_source_damage *o,qa_native_address at,qa_vec3 *out,qa_error *e)
 {
@@ -332,16 +330,6 @@ static qa_combat_binding binding(declared_damage_actor *r)
         .write_armor=armor_write,.validate_armor=armor_validate,.normalize_legacy_armor=armor_normalize,
         .source_damage=execute_damage};
 }
-typedef struct declared_foreign_damage {
-    qa_combat *combat;
-    const qa_damage_request *request;
-    qa_damage_outcome *outcome;
-} declared_foreign_damage;
-static bool foreign_damage(void *context,qa_error *e)
-{
-    declared_foreign_damage *call=context;
-    return qa_combat_apply(call->combat,call->request,call->outcome,e);
-}
 static bool eligible(struct application_native_q2_source_damage *o,qa_actor_id actor)
 {
     if(!actor.registry)return true;
@@ -393,12 +381,11 @@ static bool incoming(void *context,qa_native_instance *native,qa_native_entry_ob
     r.amount=a[6].as.i32;r.knockback=a[7].as.i32;r.radius=(a[8].as.i32&1)!=0;
     if(!provenance(o,r.target,&r.attack,e))return false;
     declared_damage_actor *actor=actor_find(o,r.target);qa_damage_outcome outcome={0};
-    declared_foreign_damage foreign={app->combat,&r,&outcome};
     bool original=actor&&actor->bound;
     if(original)++actor->calls;
     ++o->engine->calls;++o->calls;
     bool ok=original?qa_combat_run_source(app->combat,&r,execute_damage,actor,&outcome,e):
-        application_native_q2_callbacks_transfer(o->engine->callbacks,foreign_damage,&foreign,e);
+        application_native_q2_combat_apply(o->engine,&r,&outcome,e);
     if(original)--actor->calls;
     --o->engine->calls;--o->calls;qa_damage_outcome_release(&outcome);actors_collect(o);
     if(ok)ok=application_native_q2_callbacks_source_before(o->engine,e);

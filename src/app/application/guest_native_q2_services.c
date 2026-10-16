@@ -2,6 +2,7 @@
 #include "native_q2_client_stages.h"
 #include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_attack.h"
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
 #include "guest_input_private.h"
@@ -599,8 +600,9 @@ bool application_native_q2_address(void *opaque, qa_native_host *host, qa_actor_
     if (slot) {
         if (!qa_native_entity_address(qa_native_host_instance(host), slot, out, error)) return false;
         *present = true;
+        return true;
     }
-    return true;
+    return application_native_q2_foreign_address(engine, actor, out, present, error);
 }
 
 bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slot,

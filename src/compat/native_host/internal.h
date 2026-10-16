@@ -86,14 +86,8 @@ typedef struct native_host_q2_fields {
     bool (*write)(void *, const qa_body_state *, qa_error *);
 } native_host_q2_fields;
 
-typedef struct native_host_edict_layout {
-    size_t bytes, inuse, linkcount, area, area2, flags;
-    size_t mins, maxs, absmin, absmax, size, solid, clipmask, owner;
-    size_t cluster_count, clusters, headnode;
-} native_host_edict_layout;
-
 typedef struct native_host_classic_layout {
-    native_host_edict_layout edict;
+    qa_native_host_entity_layout edict;
     struct {
         size_t bytes, surface, contents, entity;
     } trace;
@@ -110,7 +104,7 @@ struct qa_native_host {
     native_host_kind kind;
     qa_native_profile profile;
     size_t pointer_bytes;
-    const native_host_edict_layout *edict;
+    const qa_native_host_entity_layout *edict;
     const native_host_classic_layout *classic;
     qa_native_instance *instance;
     bool constructing, initializing;
@@ -235,8 +229,6 @@ bool native_host_restore_cvars(qa_native_host *, qa_error *);
 
 bool native_host_actor_for_address(qa_native_host *, qa_native_address, bool,
                                    qa_actor_id *, uint32_t *, qa_error *);
-bool native_host_address_for_actor(qa_native_host *, qa_actor_id, qa_native_address *,
-                                   qa_error *);
 bool native_host_reconcile(qa_native_host *, qa_error *);
 bool native_host_fields_refresh(qa_native_host *, qa_error *);
 bool native_host_fields_bind(qa_native_host *, uint32_t, qa_error *);

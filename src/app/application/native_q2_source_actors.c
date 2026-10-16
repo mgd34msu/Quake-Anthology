@@ -528,12 +528,7 @@ static bool address_for(struct application_native_q2_source_actors *o,qa_actor_i
     qa_native_address *out,qa_error *e)
 {
     *out=0;if(!actor.registry)return true;
-    if(!qa_actors_get(qa_session_actors(o->engine->provider->application->session),actor))
-        return application_fail(e,QA_ERROR_ARGUMENT,"Native reaction references a retired actor");
-    uint32_t slot;
-    if(qa_native_host_slot_for_actor(o->engine->provider->state.native.host,actor,&slot))
-        return qa_native_entity_address(instance(o),slot,out,e);
-    return application_fail(e,QA_ERROR_UNSUPPORTED,"Native reaction lacks its actual foreign actor projection");
+    return qa_native_host_source_address(o->engine->provider->state.native.host,actor,out,e);
 }
 typedef struct native_canonical_reaction {
     native_source_actor *actor;

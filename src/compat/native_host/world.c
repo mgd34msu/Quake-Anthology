@@ -115,10 +115,11 @@ static bool source_body_address(qa_native_host *host,uint32_t slot,uint32_t velo
     if(!host||host->kind!=NATIVE_HOST_Q2_GAME||!qa_native_entity_table_get(host->instance,&table,error)) return false;
     if(slot>=table.count||(velocity&&(velocity>table.stride||table.stride-velocity<12))||
         (ground&&(ground>table.stride||table.stride-ground<host->pointer_bytes))||table.stride<minimum_edict_size(host))
-        return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native owned body fields exceed its real source row");
+        return native_host_fail(error,QA_ERROR_FORMAT,slot,"Native body fields exceed its real source row");
     if(!qa_native_slot(host->instance,slot,binding,error)||!qa_native_entity_address(host->instance,slot,address,error)) return false;
-    if(binding->kind!=QA_NATIVE_SLOT_OWNED||binding->owner!=host->world.owner||binding->source_slot!=slot||!actor_live(host,binding->actor))
-        return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body requires its actual owned full actor binding");
+    if((binding->kind!=QA_NATIVE_SLOT_OWNED&&binding->kind!=QA_NATIVE_SLOT_BORROWED)||
+        binding->owner!=host->world.owner||binding->source_slot!=slot||!actor_live(host,binding->actor))
+        return native_host_fail(error,QA_ERROR_ARGUMENT,slot,"Native body requires its actual full actor binding");
     return true;
 }
 
@@ -131,7 +132,7 @@ bool qa_native_host_source_body_write(qa_native_host *host,uint32_t slot,uint32_
     if(!source_body_address(host,slot,velocity,ground,&address,&binding,error)) return false;
     if(ground&&body->ground.kind==QA_ACTOR_REFERENCE_SOURCE&&body->ground.value.source.owner==host->world.owner) {
         if(!qa_native_entity_address(host->instance,body->ground.value.source.slot,&target,error)) return false;
-    } else if(ground&&qa_actor_reference_present(body->ground)&&!native_host_address_for_actor(host,
+    } else if(ground&&qa_actor_reference_present(body->ground)&&!qa_native_host_source_address(host,
         qa_actor_reference_resolve(qa_session_actors(host->world.session),body->ground),&target,error)) return false;
     qa_native_address current_address;qa_native_slot_binding current_binding;
     if(!source_body_address(host,slot,velocity,ground,&current_address,&current_binding,error)) return false;
@@ -446,15 +447,20 @@ bool qa_native_host_slot_for_actor(const qa_native_host *host, qa_actor_id actor
     return true;
 }
 
-bool native_host_address_for_actor(qa_native_host *host, qa_actor_id actor,
+bool qa_native_host_source_address(qa_native_host *host, qa_actor_id actor,
                                    qa_native_address *out, qa_error *error)
 {
     if (!host || !out || !actor_live(host, actor))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live actor and native address output are required");
     uint32_t slot;
-    if (qa_native_host_slot_for_actor(host, actor, &slot))
-        return qa_native_entity_address(host->instance, slot, out, error);
+    bool bound = qa_native_host_slot_for_actor(host, actor, &slot);
+    if (bound) {
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(host->instance, slot, &binding, error)) return false;
+        if (binding.kind != QA_NATIVE_SLOT_BORROWED)
+            return qa_native_entity_address(host->instance, slot, out, error);
+    }
     if (host->world.address_for_actor) {
         bool present = false;
         if (!host->world.address_for_actor(host->world.binding_context, host, actor, out,
@@ -463,6 +469,8 @@ bool native_host_address_for_actor(qa_native_host *host, qa_actor_id actor,
         if (present)
             return true;
     }
+    if (qa_native_host_slot_for_actor(host, actor, &slot))
+        return qa_native_entity_address(host->instance, slot, out, error);
     return native_host_fail(error, QA_ERROR_NOT_FOUND, actor.slot,
                             "actor has no native source projection");
 }
@@ -729,7 +737,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     if (!qa_native_slot(host->instance, slot, &binding, error))
         return false;
     bool borrowed = binding.kind == QA_NATIVE_SLOT_BORROWED;
-    const native_host_edict_layout *layout = host->edict;
+    const qa_native_host_entity_layout *layout = host->edict;
     qa_body_state body;
     if (!qa_entity_body_read(&host->q2_fields[slot].body, QA_ENTITY_CLIP_POSE, QA_ENTITY_BODY_ALL,
         &body, error)) return false;
@@ -935,7 +943,7 @@ static bool trace_entity_address(qa_native_host *host, const qa_trace_result *tr
     }
     if (trace->hit == QA_TRACE_HIT_WORLD)
         return qa_native_entity_address(host->instance, 0, out, error);
-    return native_host_address_for_actor(host, trace->actor, out, error);
+    return qa_native_host_source_address(host, trace->actor, out, error);
 }
 
 static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
@@ -1044,8 +1052,8 @@ bool qa_native_host_source_touch_prepare(qa_native_host *host,bool rerelease,
         rerelease!=(host->profile==QA_NATIVE_Q2_GAME_API2023))
         return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Native touch requires its actual declared Q2 ABI and empty ticket slot");
     qa_native_address self,other=0;
-    if(!native_host_address_for_actor(host,contact->self,&self,error)||
-        (contact->other.registry&&!native_host_address_for_actor(host,contact->other,&other,error))) return false;
+    if(!qa_native_host_source_address(host,contact->self,&self,error)||
+        (contact->other.registry&&!qa_native_host_source_address(host,contact->other,&other,error))) return false;
     if(rerelease&&!contact->has_source_trace)
         return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Rerelease source touch requires its complete shared trace");
     uint8_t bytes[96]={0};size_t size=rerelease?96u:44u;
@@ -1231,7 +1239,7 @@ bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *c
              index < count && !(host->profile == QA_NATIVE_Q2_GAME_API3 && !requested);
              ++index) {
             qa_native_address address;
-            if (!native_host_address_for_actor(host, visit.actors[index], &address, error)) {
+            if (!qa_native_host_source_address(host, visit.actors[index], &address, error)) {
                 ok = false;
                 break;
             }

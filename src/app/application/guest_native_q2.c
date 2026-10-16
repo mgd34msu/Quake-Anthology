@@ -137,8 +137,9 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     application_native_q2_visibility_invalidate(engine);
     if (engine->callbacks) return true;
     ++engine->calls;
-    bool ok = engine->profile != QA_NATIVE_Q2_GAME_API2023 ||
-        qa_native_host_prep_frame(engine->provider->state.native.host, error);
+    bool ok = application_native_q2_foreign_sync(engine, error) &&
+        (engine->profile != QA_NATIVE_Q2_GAME_API2023 ||
+         qa_native_host_prep_frame(engine->provider->state.native.host, error));
     --engine->calls;
     return ok;
 }
@@ -151,7 +152,8 @@ static bool end_frame(void *state, qa_session *session, const qa_source_frame *f
     application_native_q2_visibility_invalidate(engine);
     if (engine->callbacks) return true;
     ++engine->calls;
-    bool ok = qa_native_host_run_frame(engine->provider->state.native.host, true, error);
+    bool ok = application_native_q2_foreign_sync(engine, error) &&
+        qa_native_host_run_frame(engine->provider->state.native.host, true, error);
     --engine->calls;
     return ok && application_native_q2_visibility_complete(engine, error);
 }
@@ -186,6 +188,9 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
 {
     (void)session;
     struct application_native_q2 *engine = state;
+    qa_error error = {0};
+    if (!application_native_q2_foreign_released(engine, actor.id, &error))
+        application_fault(engine->provider->application, &error);
     application_native_q2_stages_released(engine, actor.id);
     application_native_q2_source_actors_released(engine, actor.id);
     application_native_q2_wire_released(engine, actor.id);
@@ -193,7 +198,6 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
     application_native_q2_attack_released(engine, actor.id);
     application_native_q2_combat_released(engine, actor.id);
     application_native_q2_inventory_scanner_release(engine->inventory_scanner,actor.id);
-    qa_error error = {0};
     if (engine->provider->state.native.host &&
         !qa_native_host_actor_released(engine->provider->state.native.host, actor, &error))
         application_fault(engine->provider->application, &error);

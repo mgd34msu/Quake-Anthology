@@ -144,7 +144,7 @@ static bool contact_address(qa_native_host *host, qa_trace_hit hit, qa_actor_id 
     }
     if (hit == QA_TRACE_HIT_WORLD)
         return qa_native_entity_address(host->instance, 0, out, error);
-    return native_host_address_for_actor(host, actor, out, error);
+    return qa_native_host_source_address(host, actor, out, error);
 }
 
 typedef struct movement_bridge {

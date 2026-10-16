@@ -34,7 +34,7 @@ static const native_host_classic_layout classic64 = {
     .cvar = {.bytes = 48, .string = 8, .latched = 16, .flags = 24,
              .modified = 28, .value = 32, .next = 40}};
 
-static const native_host_edict_layout rerelease_edict = {
+static const qa_native_host_entity_layout rerelease_edict = {
     .bytes = NATIVE_Q2_RR_EDICT_BYTES, .inuse = NATIVE_Q2_RR_INUSE,
     .linkcount = NATIVE_Q2_RR_LINKCOUNT, .area = NATIVE_Q2_RR_AREANUM,
     .area2 = NATIVE_Q2_RR_AREANUM2, .flags = NATIVE_Q2_RR_SVFLAGS,
@@ -539,6 +539,11 @@ qa_native_instance *qa_native_host_instance(qa_native_host *host)
 qa_native_profile qa_native_host_profile(const qa_native_host *host)
 {
     return host ? host->profile : QA_NATIVE_Q2_GAME_API3;
+}
+
+const qa_native_host_entity_layout *qa_native_host_source_layout(const qa_native_host *host)
+{
+    return host ? host->edict : NULL;
 }
 
 bool qa_native_host_source_public_bytes(qa_native_host *host, uint32_t slot,

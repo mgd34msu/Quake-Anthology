@@ -3,6 +3,7 @@
 #include "guest_native_q2_combat_state.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat_kex.h"
+#include "native_q2_callbacks.h"
 #include "qa/native_observe.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/source_save.h"
@@ -95,6 +96,23 @@ static qa_native_instance *native(struct application_native_q2_combat *p)
 { return qa_native_host_instance(p->engine->provider->state.native.host); }
 static qa_combat *shared(struct application_native_q2_combat *p)
 { return p->engine->provider->application->combat; }
+typedef struct native_shared_damage {
+    qa_combat *combat;
+    const qa_damage_request *request;
+    qa_damage_outcome *outcome;
+} native_shared_damage;
+static bool shared_damage(void *context, qa_error *error)
+{
+    native_shared_damage *call = context;
+    return qa_combat_apply(call->combat, call->request, call->outcome, error);
+}
+bool application_native_q2_combat_apply(struct application_native_q2 *engine,
+    const qa_damage_request *request, qa_damage_outcome *outcome, qa_error *error)
+{
+    native_shared_damage call = {engine->provider->application->combat, request, outcome};
+    return engine->callbacks ? application_native_q2_callbacks_transfer(engine->callbacks,
+        shared_damage, &call, error) : shared_damage(&call, error);
+}
 static void reactions_destroy(combat_reactions *reactions)
 {
     qa_id_index_destroy(&reactions->index);
@@ -251,10 +269,7 @@ static bool address_for(struct application_native_q2_combat *p, qa_actor_id acto
     qa_native_address *out, qa_error *error)
 {
     if (!actor.registry) return qa_native_entity_address(native(p), 0, out, error);
-    uint32_t slot;
-    if (qa_native_host_slot_for_actor(p->engine->provider->state.native.host, actor, &slot))
-        return qa_native_entity_address(native(p), slot, out, error);
-    return application_fail(error, QA_ERROR_UNSUPPORTED, "Native damage needs an original body projection for its foreign actor");
+    return qa_native_host_source_address(p->engine->provider->state.native.host, actor, out, error);
 }
 static bool health_write(void *opaque, double value, qa_error *error)
 {
@@ -621,21 +636,38 @@ static bool damage_entry(void *opaque, qa_native_instance *instance, qa_native_e
         p->current->entering = false;
         return qa_native_invoke_original(binding, arguments, count, result, error);
     }
-    uint8_t damageable[4];
     qa_native_address target = fields[APPLICATION_Q2_TARGET].as.address;
-    size_t extent = p->profile.kex ? 1 : 4;
-    if (!target || target > UINT64_MAX - p->profile.damageable ||
-        !qa_native_read(native(p), target + p->profile.damageable, damageable, extent, error)) return false;
-    if (!(p->profile.kex ? damageable[0] : qa_load_u32le(damageable)))
-        return qa_native_invoke_original(binding, arguments, count, result, error);
+    qa_actor_id target_actor;
+    uint32_t target_slot;
+    qa_native_slot_binding target_binding;
+    if (!actor_at(p, target, &target_actor, error) ||
+        !qa_native_entity_slot(native(p), target, &target_slot, error) ||
+        !qa_native_slot(native(p), target_slot, &target_binding, error)) return false;
+    bool projected = target_binding.kind == QA_NATIVE_SLOT_BORROWED &&
+        application_native_q2_client_slot(p->engine, target_binding.actor) != target_slot;
+    qa_application *app = p->engine->provider->application;
+    application_provider *combat = application_provider_for(app, target_actor, QA_ROLE_COMBAT, NULL);
+    bool original = !projected && combat == p->engine->provider;
+    if (original) {
+        uint8_t damageable[4]; size_t extent = p->profile.kex ? 1 : 4;
+        if (target > UINT64_MAX - p->profile.damageable ||
+            !qa_native_read(native(p), target + p->profile.damageable, damageable, extent, error)) return false;
+        if (!(p->profile.kex ? damageable[0] : qa_load_u32le(damageable)))
+            return qa_native_invoke_original(binding, arguments, count, result, error);
+    } else {
+        if (!qa_combat_storage_serial(shared(p), target_actor)) {
+            *result = (qa_native_value){.type = QA_NATIVE_VOID}; return true;
+        }
+        qa_combat_state traits;
+        if (!qa_combat_read_traits(shared(p), target_actor, &traits, error)) return false;
+        if (!traits.can_take_damage) {
+            *result = (qa_native_value){.type = QA_NATIVE_VOID}; return true;
+        }
+    }
     ++p->engine->calls;
-    qa_damage_request request = {0}; qa_actor_id attacker, inflictor;
-    bool ok = actor_at(p, fields[APPLICATION_Q2_TARGET].as.address, &request.target, error) &&
-        actor_at(p, fields[APPLICATION_Q2_ATTACKER].as.address, &attacker, error) &&
+    qa_damage_request request = {.target = target_actor}; qa_actor_id attacker, inflictor;
+    bool ok = actor_at(p, fields[APPLICATION_Q2_ATTACKER].as.address, &attacker, error) &&
         actor_at(p, fields[APPLICATION_Q2_INFLICTOR].as.address, &inflictor, error);
-    if (ok && application_provider_for(p->engine->provider->application, request.target,
-        QA_ROLE_COMBAT, NULL) != p->engine->provider)
-        ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Incoming native damage requires a qualified selected combat projection");
     uint32_t flags = (uint32_t)fields[APPLICATION_Q2_FLAGS].as.i32;
     qa_damage_cause cause; qa_native_address client;
     if (ok) ok = application_q2_combat_cause_read(&p->profile, &fields[APPLICATION_Q2_CAUSE], flags, &cause, error) &&
@@ -646,21 +678,28 @@ static bool damage_entry(void *opaque, qa_native_instance *instance, qa_native_e
         request.attack.cause = cause; request.radius = (flags & 1) != 0;
         request.amount = fields[APPLICATION_Q2_AMOUNT].as.i32;
         request.knockback = fields[APPLICATION_Q2_KNOCKBACK].as.i32;
+        application_provider *movement = application_provider_for(app, request.target, QA_ROLE_MOVEMENT, NULL);
+        request.attack.combat_provider = combat ? combat->owner : 0;
+        request.attack.movement_provider = movement ? movement->owner : 0;
     }
     if (ok) ok = vector_read(p, fields[APPLICATION_Q2_DIRECTION].as.address, &request.direction, error) &&
         vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &request.point, error) &&
         vector_read(p, fields[APPLICATION_Q2_NORMAL].as.address, &request.normal, error);
     combat_incoming incoming = {.previous = p->incoming, .binding = binding,
         .arguments = arguments, .count = count, .target = request.target};
-    if (ok) {
+    if (ok && original) {
         combat_record *record = record_for(p, request.target);
         if (!record || !record->bound) ok = application_fail(error, QA_ERROR_NOT_FOUND, "Incoming native damage has no published source combat primary");
         else { incoming.record = record; ++record->calls; }
     }
     if (ok) {
-        p->incoming = &incoming; qa_damage_outcome outcome = {0};
-        ok = qa_combat_run_source(shared(p), &request, incoming_damage, &incoming, &outcome, error);
-        qa_damage_outcome_release(&outcome); p->incoming = incoming.previous;
+        qa_damage_outcome outcome = {0};
+        if (original) {
+            p->incoming = &incoming;
+            ok = qa_combat_run_source(shared(p), &request, incoming_damage, &incoming, &outcome, error);
+            p->incoming = incoming.previous;
+        } else ok = application_native_q2_combat_apply(p->engine, &request, &outcome, error);
+        qa_damage_outcome_release(&outcome);
         if (ok) ok = refresh_comparison_state(p, error);
     }
     if (ok) *result = (qa_native_value){.type = QA_NATIVE_VOID};
