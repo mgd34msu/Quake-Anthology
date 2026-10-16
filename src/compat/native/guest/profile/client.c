@@ -565,8 +565,10 @@ static void clean(ptr_uint_t encoded)
     }
     scope->pending_count = 0; scope->pending_at = 0;
     uint64_t bad;
+    bool bypass_boundary = scope->boundary_bypass == (uint64_t)(ptr_uint_t)pc;
+    scope->boundary_bypass = 0;
     const guest_profile_guard_callback *callback = scope_callback(scope, (uint64_t)(ptr_uint_t)pc);
-    if (callback) {
+    if (callback && !bypass_boundary) {
         if (!range((uint64_t)(ptr_uint_t)pc, 1, QA_NATIVE_GUEST_EXECUTE, &bad))
             reject(&cpu, fp, pc, GUEST_PROFILE_GUARD_FETCH, QA_NATIVE_GUEST_EXECUTE, 0, bad, 1);
         if (callback->id == scope->bypass) scope->bypass = 0;
@@ -577,8 +579,6 @@ static void clean(ptr_uint_t encoded)
             redirect(&cpu, fp, import_entry);
         }
     }
-    bool bypass_boundary = scope->boundary_bypass == (uint64_t)(ptr_uint_t)pc;
-    scope->boundary_bypass = 0;
     if (!bypass_boundary) for (size_t i = 0; i < scope->interest_count; ++i) {
         const guest_profile_interest *interest = scope->interests + i;
         if (interest->kind != GUEST_PROFILE_INTEREST_INSTRUCTION || interest->address != (uint64_t)(ptr_uint_t)pc) continue;
@@ -778,7 +778,7 @@ static dr_signal_action_t signal_event(void *context, dr_siginfo_t *information)
             return DR_SIGNAL_REDIRECT;
         }
         const guest_profile_guard_callback *callback = scope_callback(scope, pc);
-        if (callback && range(pc, 1, QA_NATIVE_GUEST_EXECUTE, NULL)) {
+        if (callback && pc != scope->boundary_bypass && range(pc, 1, QA_NATIVE_GUEST_EXECUTE, NULL)) {
             if (callback->id == scope->bypass) scope->bypass = 0;
             else {
                 if (dr_get_thread_id(context) != owner_thread) dr_abort();
