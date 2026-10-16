@@ -78,7 +78,9 @@ static bool temporary_release(qa_native_instance *instance, native_process_tempo
 static bool temporary_file(native_process_temporary *temporary, const char *name,
     qa_bytes bytes, char **out, qa_error *error) {
     qa_fs_stream *stream = NULL;
-    if (!qa_fs_root_stream_open(temporary->root, name, QA_FS_STREAM_WRITE, false, &stream, NULL, error))
+    uint64_t initial_size;
+    if (!qa_fs_root_stream_open(temporary->root, name, QA_FS_STREAM_WRITE, false,
+        &stream, &initial_size, error))
         return false;
     bool okay = true;
     size_t offset = 0;
