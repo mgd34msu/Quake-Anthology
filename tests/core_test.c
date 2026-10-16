@@ -29,6 +29,8 @@
 #include "qa/json.h"
 #include "qa/json_writer.h"
 #include "qa/campaign.h"
+#include "../src/app/application/source_objectives.h"
+#include "../src/gameplay/modes/internal.h"
 #include "qa/arena_progress.h"
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
@@ -2761,6 +2763,116 @@ static void test_shared_campaign_modes(void)
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_COOPERATIVE) == QA_MODE_COOPERATIVE);
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_HARVESTER) == QA_MODE_HARVESTER);
     CHECK(qa_mode_from_game_type(-1) == QA_MODE_FFA);
+}
+
+typedef struct source_objective_fixture {
+    double scalar;
+    qa_actor_id carrier, target;
+    uint64_t location;
+    size_t changes;
+} source_objective_fixture;
+static bool source_objective_current(void *context, bool callback, qa_error *error)
+{ (void)context; (void)callback; (void)error; return true; }
+static bool source_objective_normalize(void *context, size_t index, double *value, qa_error *error)
+{ (void)context; (void)index; (void)value; (void)error; return true; }
+static bool source_objective_locations(void *context, size_t index,
+    application_source_objective_location out[3], qa_error *error)
+{
+    (void)error; CHECK(index == 0);
+    source_objective_fixture *fixture = context;
+    memset(out, 0, sizeof(*out) * 3);
+    out[0].address = fixture->location; return true;
+}
+static bool source_objective_read(void *context, size_t index,
+    const application_source_objective_location locations[3], double *value,
+    qa_actor_id *carrier, qa_actor_id *target, qa_error *error)
+{
+    (void)locations; (void)error; CHECK(index == 0);
+    source_objective_fixture *fixture = context;
+    *value = fixture->scalar; *carrier = fixture->carrier; *target = fixture->target; return true;
+}
+static bool source_objective_write(void *context, size_t index,
+    const application_source_objective_location locations[3], double value,
+    qa_actor_id carrier, qa_actor_id target, qa_error *error)
+{
+    (void)locations; (void)error; CHECK(index == 0);
+    source_objective_fixture *fixture = context;
+    fixture->scalar = value; fixture->carrier = carrier; fixture->target = target; return true;
+}
+static bool source_objective_change(void *context, size_t index, double value,
+    const qa_objective_state *request, qa_error *error)
+{
+    (void)error; CHECK(index == 0);
+    source_objective_fixture *fixture = context;
+    ++fixture->changes; fixture->scalar = value;
+    fixture->carrier = request->carrier; fixture->target = request->target; return true;
+}
+static void test_source_objectives(void)
+{
+    qa_error error = {0}; qa_session *session = NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 2, .component_capacity = 1}, &session, &error));
+    qa_strings *strings = qa_session_strings(session);
+    qa_actor_id actor;
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session), 1, 1, &actor, &error));
+    mode_objective slots[4] = {0};
+    qa_modes modes = {.options.services.session = session, .objective_capacity = 4,
+        .objectives = slots, .next_serial = 1};
+    static const char owned_json[] = "[{\"id\":\"fixture:flag\",\"role\":\"owned\",\"campaignGate\":true,\"botGoal\":true,"
+        "\"state\":{\"values\":[{\"value\":10,\"stage\":\"home\",\"complete\":false},{\"value\":20,\"stage\":\"done\",\"complete\":true}]},"
+        "\"carrier\":{},\"target\":{},\"change\":{}}]";
+    static const char borrowed_json[] = "[{\"id\":\"fixture:flag\",\"role\":\"borrowed\",\"writable\":true,"
+        "\"state\":{\"values\":[{\"value\":100,\"stage\":\"home\",\"complete\":false},{\"value\":200,\"stage\":\"done\",\"complete\":true}]},"
+        "\"carrier\":{},\"target\":{}}]";
+    static const char readonly_json[] = "[{\"id\":\"fixture:flag\",\"role\":\"borrowed\",\"writable\":false,"
+        "\"state\":{\"values\":[{\"value\":100,\"stage\":\"home\",\"complete\":false},{\"value\":200,\"stage\":\"done\",\"complete\":true}]},"
+        "\"carrier\":{},\"target\":{}}]";
+    qa_json_document *owned_doc = NULL, *borrowed_doc = NULL, *readonly_doc = NULL;
+    CHECK(qa_json_parse(QA_JSON_STRICT, (qa_bytes){(const uint8_t *)owned_json, sizeof(owned_json) - 1}, &owned_doc, &error));
+    CHECK(qa_json_parse(QA_JSON_STRICT, (qa_bytes){(const uint8_t *)borrowed_json, sizeof(borrowed_json) - 1}, &borrowed_doc, &error));
+    CHECK(qa_json_parse(QA_JSON_STRICT, (qa_bytes){(const uint8_t *)readonly_json, sizeof(readonly_json) - 1}, &readonly_doc, &error));
+    source_objective_fixture owner = {.scalar = 10, .location = 1}, borrower = {.location = 2}, readonly = {.location = 3};
+    application_source_objective_services services = {.context = &owner, .current = source_objective_current,
+        .normalize = source_objective_normalize, .locate = source_objective_locations,
+        .read = source_objective_read, .write = source_objective_write, .change = source_objective_change};
+    application_source_objectives *owned = NULL, *borrowed = NULL, *read_only = NULL;
+    CHECK(application_source_objectives_create(strings, 1, owned_doc, qa_json_root(owned_doc), &services, &owned, &error));
+    services.context = &borrower;
+    CHECK(application_source_objectives_create(strings, 2, borrowed_doc, qa_json_root(borrowed_doc), &services, &borrowed, &error));
+    services.context = &readonly;
+    CHECK(application_source_objectives_create(strings, 3, readonly_doc, qa_json_root(readonly_doc), &services, &read_only, &error));
+    CHECK(application_source_objectives_activate(owned, &modes, &error));
+    CHECK(application_source_objectives_activate(borrowed, &modes, &error) && borrower.scalar == 100);
+    CHECK(application_source_objectives_activate(read_only, &modes, &error) && readonly.scalar == 100);
+    qa_string_id id, home, done;
+    CHECK(qa_strings_intern_cstr(strings, "fixture:flag", &id, &error) &&
+        qa_strings_intern_cstr(strings, "home", &home, &error) && qa_strings_intern_cstr(strings, "done", &done, &error));
+    qa_objective_state state = {.stage = done, .phase = QA_OBJECTIVE_COMPLETE, .complete = true, .carrier = actor, .target = actor};
+    CHECK(qa_modes_change_objective(&modes, (qa_mode_id){0}, id, &state, &error));
+    CHECK(owner.scalar == 20 && owner.changes == 1);
+    CHECK(application_source_objectives_refresh(borrowed, &modes, &error));
+    CHECK(borrower.scalar == 200 && qa_actor_id_equal(borrower.carrier, actor) && qa_actor_id_equal(borrower.target, actor));
+    borrower.scalar = 100; borrower.carrier = (qa_actor_id){0};
+    CHECK(application_source_objectives_flush(borrowed, &modes, &error));
+    CHECK(owner.scalar == 10 && owner.changes == 2 && !owner.carrier.registry && qa_actor_id_equal(owner.target, actor));
+    CHECK(qa_modes_objective(&modes, (qa_mode_id){0}, id, &state, &error) && state.stage == home && !state.complete);
+    readonly.scalar = 200;
+    CHECK(!application_source_objectives_flush(read_only, &modes, &error) && owner.scalar == 10 && owner.changes == 2);
+    ++readonly.location;
+    CHECK(application_source_objectives_flush(read_only, &modes, &error) && readonly.scalar == 100 && owner.changes == 2);
+    borrower.scalar = 777;
+    CHECK(!application_source_objectives_flush(borrowed, &modes, &error));
+    CHECK(application_source_objectives_suspend(borrowed, &error));
+    CHECK(application_source_objectives_activate(borrowed, &modes, &error) && borrower.scalar == 100);
+    CHECK(application_source_objectives_suspend(owned, &error));
+    CHECK(!qa_modes_objective(&modes, (qa_mode_id){0}, id, &state, &error));
+    CHECK(application_source_objectives_activate(owned, &modes, &error));
+    CHECK(application_source_objectives_sync(borrowed, &modes, &error));
+    CHECK(application_source_objectives_ready(owned, &error) && application_source_objectives_ready(borrowed, &error));
+    CHECK(application_source_objectives_suspend(read_only, &error) && application_source_objectives_suspend(borrowed, &error) &&
+        application_source_objectives_suspend(owned, &error));
+    application_source_objectives_destroy(read_only); application_source_objectives_destroy(borrowed); application_source_objectives_destroy(owned);
+    qa_json_destroy(readonly_doc); qa_json_destroy(borrowed_doc); qa_json_destroy(owned_doc);
+    CHECK(qa_session_destroy(session, &error));
 }
 
 static void test_debug_geometry_wire(void)
@@ -8729,6 +8841,7 @@ int main(int argc, char **argv)
     test_chat_initial_aliases();
     test_physical_prediction_command();
     test_shared_campaign_modes();
+    test_source_objectives();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();
     test_shared_angle_basis();

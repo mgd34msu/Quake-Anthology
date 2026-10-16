@@ -1334,6 +1334,7 @@ add_library(qa_application STATIC
     src/app/application/guest_qc_pickups.c
     src/app/application/guest_qc_item_weapons.c
     src/app/application/guest_qc_objectives.c
+    src/app/application/source_objectives.c
     src/app/application/guest_qc_armor.c
     src/app/application/guest_qc_protection.c
     src/app/application/guest_qc_combat.c

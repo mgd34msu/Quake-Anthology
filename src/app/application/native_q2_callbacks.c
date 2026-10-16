@@ -11,6 +11,7 @@
 #include "native_q2_source_invocation.h"
 #include "native_q2_pickups.h"
 #include "native_q2_visibility.h"
+#include "source_objectives.h"
 #include "qa/source_save.h"
 #include "qa/native_observe.h"
 #include "control_frame.h"
@@ -137,6 +138,11 @@ typedef struct native_protection_descriptor {
     qa_json_id call, region;
     bool bound, regular, check, scale;
 } native_protection_descriptor;
+typedef struct native_objective {
+    qa_json_id state, carrier, target, change;
+    qa_native_value_type encoding;
+    bool has_carrier, has_target;
+} native_objective;
 struct application_native_q2_callbacks {
     struct application_native_q2 *engine;
     qa_json_document *document;
@@ -149,6 +155,8 @@ struct application_native_q2_callbacks {
     native_protection_descriptor *protection_descriptors;
     application_native_q2_protection_declaration *protection_rows;
     size_t protection_count;
+    application_source_objectives *objectives;
+    native_objective *objective_rows;
     struct { qa_json_id *calls; size_t count; } stages[NATIVE_CALLBACK_STAGE_COUNT];
     bool descriptors_bound;
     qa_arena storage;
@@ -1704,6 +1712,161 @@ static bool descriptors_bind(application_native_q2_callbacks *o,qa_error *e)
     o->descriptors_bound=true;
     return true;
 }
+static bool objective_current(void *context, bool callback, qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    return current(o, e) && (!callback || (o->engine->initialized && o->engine->map_ready));
+}
+static bool objective_normalize(void *context, size_t index, double *value, qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    qa_native_value encoded_value;
+    if (!number_value(o->objective_rows[index].encoding, *value, &encoded_value, e)) return false;
+    double normalized = result_number(encoded_value);
+    if (o->objective_rows[index].encoding != QA_NATIVE_F32 &&
+        o->objective_rows[index].encoding != QA_NATIVE_F64 && normalized != *value)
+        return fail(e, "Native objective stage is not representable by its integer storage");
+    *value = normalized; return true;
+}
+static bool objective_locations(void *context, size_t index,
+    application_source_objective_location out[3], qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    const native_objective *row = o->objective_rows + index;
+    memset(out, 0, 3 * sizeof(*out));
+    return application_native_q2_callbacks_address(o, row->state, &out[0].address, e) &&
+        (!row->has_carrier || application_native_q2_callbacks_address(o, row->carrier, &out[1].address, e)) &&
+        (!row->has_target || application_native_q2_callbacks_address(o, row->target, &out[2].address, e));
+}
+static bool objective_actor_read(application_native_q2_callbacks *o, qa_native_address storage,
+    qa_actor_id *out, qa_error *e)
+{
+    qa_native_address address;
+    if (!pointer_read(o, storage, &address, e)) return false;
+    if (!address) { *out = (qa_actor_id){0}; return true; }
+    return qa_native_host_source_actor(o->engine->provider->state.native.host, address, false, out, e);
+}
+static bool objective_read(void *context, size_t index, const application_source_objective_location locations[3],
+    double *value, qa_actor_id *carrier, qa_actor_id *target, qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    const native_objective *row = o->objective_rows + index;
+    return application_native_q2_callbacks_scalar_read(o, locations[0].address, row->encoding, value, e) &&
+        (!row->has_carrier || objective_actor_read(o, locations[1].address, carrier, e)) &&
+        (!row->has_target || objective_actor_read(o, locations[2].address, target, e));
+}
+static bool objective_pointer_write(application_native_q2_callbacks *o, qa_native_address storage,
+    qa_actor_id actor, qa_error *e)
+{
+    qa_native_address address = 0;
+    if (actor.registry) {
+        uint32_t slot;
+        qa_native_slot_binding binding;
+        bool direct = false;
+        if (qa_actor_id_equal(actor, o->engine->world_actor)) {
+            slot = 0; direct = true;
+        } else if (qa_native_host_slot_for_actor(o->engine->provider->state.native.host, actor, &slot)) {
+            if (!qa_native_slot(instance(o), slot, &binding, e)) return false;
+            direct = binding.kind == QA_NATIVE_SLOT_OWNED || binding.kind == QA_NATIVE_SLOT_WORLD;
+        }
+        if (direct) {
+            if (!qa_native_entity_address(instance(o), slot, &address, e)) return false;
+        } else {
+            if (o->records->entity_record == SIZE_MAX)
+                return fail(e, "Native objective actor requires its declared entity projection");
+            if (!application_native_q2_callbacks_record(o, actor, o->records->entity_record + 1, &address, e)) return false;
+        }
+    }
+    uint8_t bytes[8];
+    if (o->target.pointer_bytes == 4) qa_store_u32le(bytes, (uint32_t)address);
+    else qa_store_u64le(bytes, address);
+    return qa_native_write(instance(o), storage, (qa_bytes){bytes, o->target.pointer_bytes}, e);
+}
+static bool objective_write(void *context, size_t index, const application_source_objective_location locations[3],
+    double value, qa_actor_id carrier, qa_actor_id target, qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    const native_objective *row = o->objective_rows + index;
+    return application_native_q2_callbacks_scalar_write(o, locations[0].address, row->encoding, value, e) &&
+        (!row->has_carrier || objective_pointer_write(o, locations[1].address, carrier, e)) &&
+        (!row->has_target || objective_pointer_write(o, locations[2].address, target, e));
+}
+static bool objective_change(void *context, size_t index, double value,
+    const qa_objective_state *request, qa_error *e)
+{
+    application_native_q2_callbacks *o = context;
+    double time, returned;
+    if (!application_native_q2_callbacks_time_read(o, &time, e)) return false;
+    application_q3_mod_value values[Q3_MOD_VALUE_COUNT] = {0};
+    values[Q3_MOD_SELF] = (application_q3_mod_value){.kind = Q3_MOD_VALUE_ACTOR, .as.actor = request->target};
+    values[Q3_MOD_OTHER] = (application_q3_mod_value){.kind = Q3_MOD_VALUE_ACTOR, .as.actor = request->carrier};
+    values[Q3_MOD_ACTIVATOR] = values[Q3_MOD_SELF];
+    values[Q3_MOD_AMOUNT] = (application_q3_mod_value){.kind = Q3_MOD_VALUE_SCALAR, .as.scalar = value};
+    values[Q3_MOD_TIME] = (application_q3_mod_value){.kind = Q3_MOD_VALUE_SCALAR, .as.scalar = time};
+    application_native_callback_inputs inputs = {.values = values};
+    return application_native_q2_callbacks_call(o, o->objective_rows[index].change, &inputs, &returned, e);
+}
+static bool objective_input_available(application_native_q2_callbacks *o, qa_json_id node, qa_error *e)
+{
+    const qa_json_document *d = o->document;
+    qa_json_id kind = qa_json_get(d, node, "kind"), raw = qa_json_get(d, node, "value");
+    application_q3_mod_input input_name = Q3_MOD_VALUE_COUNT;
+    qa_json_id source_input = QA_JSON_NONE;
+    if (qa_json_string_equal(d, kind, "actor") || qa_json_string_equal(d, kind, "client") ||
+        qa_json_string_equal(d, kind, "userinfo") || qa_json_string_equal(d, kind, "time"))
+        source_input = qa_json_get(d, node, "input");
+    else if (qa_json_string_equal(d, qa_json_get(d, raw, "kind"), "input"))
+        source_input = qa_json_get(d, raw, "name");
+    if (source_input != QA_JSON_NONE) {
+        input_name = application_native_q2_callbacks_input_index(o, source_input);
+        if (input_name == Q3_MOD_VALUE_COUNT)
+            return fail(e, "Native objective change names an undeclared input");
+    }
+    if (input_name != Q3_MOD_VALUE_COUNT && input_name != Q3_MOD_SELF && input_name != Q3_MOD_OTHER &&
+        input_name != Q3_MOD_ACTIVATOR && input_name != Q3_MOD_AMOUNT && input_name != Q3_MOD_TIME)
+        return fail(e, "Native objective change references an unavailable source input");
+    qa_json_kind type = qa_json_type(d, node);
+    if (type == QA_JSON_OBJECT || type == QA_JSON_ARRAY)
+        for (size_t i = 0; i < qa_json_size(d, node); ++i)
+            if (!objective_input_available(o, qa_json_at(d, node, i), e)) return false;
+    return true;
+}
+static bool objectives_prepare(application_native_q2_callbacks *o, qa_error *e)
+{
+    const qa_json_document *d = o->document;
+    qa_json_id rows = qa_json_get(d, qa_json_root(d), "objectives");
+    if (rows == QA_JSON_NONE || o->objectives) return true;
+    if (qa_json_type(d, rows) != QA_JSON_ARRAY) return fail(e, "Native objectives require an array");
+    size_t count = qa_json_size(d, rows);
+    if (!count) return true;
+    free(o->objective_rows);
+    o->objective_rows = calloc(count, sizeof(*o->objective_rows));
+    if (!o->objective_rows) return application_fail(e, QA_ERROR_MEMORY, "Binding native objective storage");
+    for (size_t i = 0; i < count; ++i) {
+        native_objective *row = o->objective_rows + i;
+        qa_json_id object = qa_json_at(d, rows, i), storage = qa_json_get(d, qa_json_get(d, object, "state"), "storage");
+        row->state = qa_json_get(d, storage, "address");
+        row->carrier = qa_json_get(d, object, "carrier"); row->target = qa_json_get(d, object, "target");
+        row->change = qa_json_get(d, object, "change");
+        row->has_carrier = qa_json_type(d, row->carrier) != QA_JSON_NULL;
+        row->has_target = qa_json_type(d, row->target) != QA_JSON_NULL;
+        if (!scalar_type(d, qa_json_get(d, storage, "encoding"), &row->encoding) ||
+            !address_shape(o, row->state, false, e) ||
+            (row->has_carrier && !address_shape(o, row->carrier, false, e)) ||
+            (row->has_target && !address_shape(o, row->target, false, e))) return false;
+        if (qa_json_string_equal(d, qa_json_get(d, object, "role"), "owned") &&
+            qa_json_type(d, row->change) != QA_JSON_NULL &&
+            (qa_json_type(d, row->change) != QA_JSON_OBJECT || row->change >= o->record_node_count ||
+                !o->call_descriptors[row->change].bound || !objective_input_available(o, row->change, e)))
+            return fail(e, "Native objective change requires its declared original call");
+    }
+    application_source_objective_services services = {.context = o, .current = objective_current,
+        .normalize = objective_normalize, .locate = objective_locations, .read = objective_read,
+        .write = objective_write, .change = objective_change};
+    return application_source_objectives_create(qa_session_strings(o->engine->provider->application->session),
+        o->engine->provider->owner, d, rows, &services, &o->objectives, e);
+}
+
 static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
 {
     struct application_native_q2 *n=o->engine;
@@ -1729,7 +1892,7 @@ static bool components_prepare(application_native_q2_callbacks *o,qa_error *e)
             .session=app->session,.pickups=app->pickups,.owner=n->provider->owner};
         if(!application_native_q2_pickups_create(&options,&o->pickups,e)) return false;
     }
-    return true;
+    return objectives_prepare(o,e);
 }
 static bool admission_validate(application_native_q2_callbacks *o,qa_error *e)
 {
@@ -1827,6 +1990,7 @@ bool application_native_q2_callbacks_close(struct application_native_q2 *n,qa_er
     }
     o->scratch_tail=NULL;qa_arena_destroy(&o->storage);
     application_native_q2_source_invocation_destroy(n);
+    application_source_objectives_destroy(o->objectives); free(o->objective_rows);
     descriptors_clear(o);
     free(o->registrations); free(o->record_nodes); free(o->input_nodes); free(o->protection_rows);
     qa_json_destroy(o->document); free(o); n->callbacks=NULL; return true;
@@ -1932,6 +2096,7 @@ bool application_native_q2_callbacks_observation_required(const application_nati
     return qa_json_size(o->document,qa_json_get(o->document,root,"pickups"))!=0||
         o->protection_count!=0||
         qa_json_size(o->document,qa_json_get(o->document,root,"sourceActors"))!=0||
+        qa_json_size(o->document,qa_json_get(o->document,root,"objectives"))!=0||
         qa_json_size(o->document,qa_json_get(o->document,qa_json_get(o->document,root,"items"),"storage"))!=0;
 }
 bool application_native_q2_callbacks_source_before(void *context,qa_error *e)
@@ -1941,6 +2106,8 @@ bool application_native_q2_callbacks_source_before(void *context,qa_error *e)
         !region_current(n->callbacks->active_region,e)) return false;
     bool committed=!n||!n->callbacks||!n->callbacks->records||application_native_q2_records_lifecycle(n->callbacks->records)||
         application_native_q2_records_commit(n->callbacks->records,e);
+    if(committed&&n&&n->callbacks&&application_source_objectives_active(n->callbacks->objectives))
+        committed=application_source_objectives_refresh(n->callbacks->objectives,n->provider->application->modes,e);
     return committed&&(!n||!n->callbacks||!n->callbacks->active_region||
         region_current(n->callbacks->active_region,e));
 }
@@ -1949,6 +2116,8 @@ bool application_native_q2_callbacks_source_after(void *context,qa_error *e)
     struct application_native_q2 *n=context;
     bool refreshed=!n||!n->callbacks||!n->callbacks->records||application_native_q2_records_lifecycle(n->callbacks->records)||
         application_native_q2_records_refresh(n->callbacks->records,e);
+    if(refreshed&&n&&n->callbacks&&application_source_objectives_active(n->callbacks->objectives))
+        refreshed=application_source_objectives_flush(n->callbacks->objectives,n->provider->application->modes,e);
     return refreshed&&(!n||!n->callbacks||!n->callbacks->active_region||
         region_current(n->callbacks->active_region,e));
 }
@@ -1989,6 +2158,7 @@ bool application_native_q2_callbacks_capture(struct application_native_q2 *n,qa_
     if(!out) return false;
     if(!n||!n->callbacks) { *out=(qa_buffer){0}; return true; }
     if(!application_native_q2_callbacks_current(n->callbacks)) return application_fail(e,QA_ERROR_ARGUMENT,"Native callbacks retain a reached transfer at capture");
+    if(!application_source_objectives_ready(n->callbacks->objectives,e)) return false;
     application_native_q2_callbacks *o=n->callbacks;
     qa_buffer children[4]={{0}}; qa_source_save_io io={0};
     bool ok=application_native_q2_records_checkpoint(o->records,children,e)&&
@@ -2027,6 +2197,7 @@ bool application_native_q2_callbacks_restore(struct application_native_q2 *n,qa_
     if(!children[0].size||(children[1].size!=0)!=(o->protection!=NULL)||
         (children[2].size!=0)!=(o->weapons!=NULL)||(children[3].size!=0)!=(o->pickups!=NULL))
         return fail(e,"Native saved components differ from their acquired declaration");
+    if(!application_source_objectives_suspend(o->objectives,e)) return false;
     qa_buffer weapons={0};
     if(children[2].size) {
         weapons.data=malloc(children[2].size);
@@ -2157,6 +2328,7 @@ bool application_native_q2_callbacks_register(struct application_native_q2 *n,qa
         if(application_native_q2_client_admitted(n,client->actor)&&
             !application_native_q2_pickups_bind(o->pickups,client->actor,e)) return false;
     }
+    if(!application_source_objectives_activate(o->objectives,n->provider->application->modes,e)) return false;
     qa_json_id rows=qa_json_get(o->document,qa_json_root(o->document),"callbacks");
     size_t count=qa_json_size(o->document,rows);
     if(!count) return true;
@@ -2208,7 +2380,8 @@ bool application_native_q2_callbacks_suspend(struct application_native_q2 *n,qa_
     application_native_q2_callbacks *o=n?n->callbacks:NULL;
     if(!o) return true;
     if(o->calls) return application_fail(e,QA_ERROR_ARGUMENT,"Native callback registration retains an entered invocation");
-    if(!application_native_q2_weapon_stage_suspend(o->weapons,e)) return false;
+    if(!application_source_objectives_suspend(o->objectives,e)||
+        !application_native_q2_weapon_stage_suspend(o->weapons,e)) return false;
     for(native_skip *skip=o->skips;skip;skip=skip->next) {
         if(skip->binding&&!qa_native_remove_region(skip->binding,e)) return false;
         skip->binding=NULL;
