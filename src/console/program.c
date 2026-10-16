@@ -544,8 +544,7 @@ static bool publish_context(qa_console_program *program, const qa_command_contex
         value.cvar_view != prepared->cvar_view ||
         value.dialect != prepared->dialect || value.origin != prepared->origin || value.seat != prepared->seat ||
         value.direct != prepared->direct || value.console_text != prepared->console_text ||
-        !text_equal(value.script, prepared->script) ||
-        (value.actor.registry == 0) != (source->actor.registry == 0))
+        !text_equal(value.script, prepared->script))
         return qac_fail(error, QA_ERROR_ARGUMENT, "published command context changed its qualified scope");
     value.script = published->script; *published = value; return true;
 }
