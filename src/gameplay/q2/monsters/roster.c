@@ -434,12 +434,6 @@ static const q2m_definition definitions[] = {
             Q2M_MOVE_infantry_move_attack1, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_infantry_move_pain1,
             Q2M_MOVE_infantry_move_pain2, Q2M_MOVE_NONE, Q2M_MOVE_infantry_move_death1, Q2M_MOVE_NONE,
             Q2M_ATTACK_BULLET, Q2M_ATTACK_NONE, 3, 0, 0),
-    MONSTER("monster_tank_stand", "models/monsters/tank/tris.md2",
-            "rerelease/tank:tankMoves", Q2M_TANK_STAND, Q2M_STATIONARY,
-            BOUNDS(-32, -32, -16, 32, 32, 64), 1, 0, 750, 1, 0, 0,
-            Q2M_NO_GIB | Q2M_DO_NOT_COUNT, Q2M_MOVE_tank_move_stand, Q2M_MOVE_tank_move_stand,
-            Q2M_MOVE_tank_move_stand, Q2M_MOVE_tank_move_stand, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE,
-            Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_MOVE_NONE, Q2M_ATTACK_NONE, Q2M_ATTACK_NONE, 0, 0, 0),
 };
 
 static const q2m_definition rerelease_jorg = MONSTER(

@@ -219,7 +219,6 @@ static const monster_source_binding monster_bindings[] = {
     {"monster_supertank", 3, 51},
     {"monster_tank", 3, 73},
     {"monster_tank_commander", 3, 73},
-    {"monster_tank_stand", 3, 3},
     {"monster_turret", 3, 44},
     {"monster_widow", 3, 74},
     {"monster_widow2", 3, 75},
@@ -792,11 +791,6 @@ static bool summons_record(qa_q2_game *game, q2_original_record_io *io,
     return true;
 }
 
-static bool statue(const struct qa_q2_monster *m)
-{
-    return m->definition->species == Q2M_TANK_STAND;
-}
-
 static bool stationary_source(const q2_original_record_io *io, const struct qa_q2_monster *m)
 {
     return m->definition->locomotion == Q2M_STATIONARY ||
@@ -831,10 +825,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
         if (m->definition->species == Q2M_TURRET && (m->spawnflags & 128u)) use = "turret_activate";
         break;
     }
-    if (statue(m)) {
-        think = "Think_TankStand";
-        use = "Use_Boss3";
-    } else if (m->turret_attached) {
+    if (m->turret_attached) {
         think = actor->entity && actor->entity->think == Q2ET_TURRET_LINK ?
             "turret_driver_link" : "turret_driver_think";
         due = actor->entity ? actor->entity->due_ns : 0;
@@ -862,12 +853,12 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     static const char *const think_names[] = {
         "monster_think", "walkmonster_start_go", "flymonster_start_go", "swimmonster_start_go",
         "monster_triggered_spawn", "M_FliesOn", "M_FliesOff", "monster_dead_think", "hover_deadthink",
-        NULL, NULL /* Former boss3 prop slot. */, "Think_TankStand", "turret_driver_link", "turret_driver_think",
+        NULL, NULL /* Former boss3 prop slot. */, NULL /* Former tank prop slot. */, "turret_driver_link", "turret_driver_think",
         "stationarymonster_start_go", "BossExplode", "BossExplode2", "WidowExplode", "stationarymonster_triggered_spawn"
     };
     size_t selected = sizeof(think_names) / sizeof(*think_names);
     for (size_t i = 0; i < sizeof(think_names) / sizeof(*think_names); ++i) {
-        if (i == 10) continue;
+        if (i == 10 || i == 11) continue;
         bool matches = false;
         if (!q2_original_function_matches(game, io, "think", 436, think_names[i], &matches)) return false;
         if (matches) { selected = i; break; }
@@ -875,10 +866,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     if (selected == sizeof(think_names) / sizeof(*think_names))
         return monster_error(io, "think", "Unknown native monster Source schedule");
     if (!q2_original_scalar(io, "nextthink", Q2_ORIGINAL_TIME, 428, 428, 428, &due)) return false;
-    bool is_statue = selected == 11;
-    if (is_statue != statue(m) ||
-        (selected == 11 && m->definition->species != Q2M_TANK_STAND) ||
-        ((selected == 12 || selected == 13) && m->definition->species != Q2M_TURRET_DRIVER) ||
+    if (((selected == 12 || selected == 13) && m->definition->species != Q2M_TURRET_DRIVER) ||
         (selected == 14 && !stationary_source(io, m)) ||
         (selected == 18 && !stationary_source(io, m)) ||
         (selected == 15 && m->definition->species != Q2M_SUPERTANK && m->definition->species != Q2M_JORG) ||
@@ -892,7 +880,7 @@ static bool schedule_record(qa_q2_game *game, q2_original_record_io *io,
     m->death_ns = selected >= 15 && selected <= 17 ? due : 0;
     m->start_phase = (selected >= 1 && selected <= 3) || selected == 14 ? Q2M_START_PENDING :
         selected == 4 || selected == 18 ? Q2M_START_TRIGGER : Q2M_START_ACTIVE;
-    use = is_statue ? "Use_Boss3" : q2m_actor_scripted_use(m) ? "actor_use" : "monster_use";
+    use = q2m_actor_scripted_use(m) ? "actor_use" : "monster_use";
     if (selected == 9 && !m->corpse) {
         bool dormant = false;
         const char *spawn_use = stationary_source(io, m) ? "stationarymonster_triggered_spawn_use" :
@@ -1068,7 +1056,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
             integer_float(io, "monsterinfo.health_scaling", 65535, &m->health_scaling);
     bool wall_dormant = m->definition->species == Q2M_TURRET && (m->spawnflags & 128u) &&
         m->start_phase == Q2M_START_MANUAL;
-    const q2m_move *source_move = !io->reading && (statue(m) || m->turret_attached || wall_dormant) ? NULL : m->move;
+    const q2m_move *source_move = !io->reading && (m->turret_attached || wall_dormant) ? NULL : m->move;
     if (okay) okay = move_record(io, io->edition == QA_RULESET_Q2_RERELEASE ?
         "monsterinfo.active_move" : "monsterinfo.currentmove", 772, m, &source_move);
     if (okay && io->reading) m->move = source_move;
@@ -1096,7 +1084,7 @@ bool q2_original_monster_record(qa_q2_game *game, q2_original_record_io *io,
     }
     if (okay) okay = monster_callbacks_record(game, io, m, bindings) && schedule_record(game, io, actor, m) &&
         summons_record(game, io, m);
-    if (okay && io->reading && !m->move && (statue(m) || m->turret_attached ||
+    if (okay && io->reading && !m->move && (m->turret_attached ||
         (m->definition->species == Q2M_TURRET && (m->spawnflags & 128u) && m->start_phase == Q2M_START_MANUAL)))
         m->move = q2m_move_find(m, definition->initial_move);
     if (okay && io->reading && !m->move)

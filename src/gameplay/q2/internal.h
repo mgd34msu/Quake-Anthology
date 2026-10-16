@@ -337,6 +337,7 @@
     X(RR_DROP_CURRENT_WEAPON, "$g_cant_drop_weapon") \
     X(FUNC_DOOR, "func_door") \
     X(MONSTER_BOSS3_STAND, "monster_boss3_stand") \
+    X(MONSTER_TANK_STAND, "monster_tank_stand") \
     X(MISC_NUKE, "misc_nuke") \
     X(MISC_NUKE_CORE, "misc_nuke_core") \
     X(RESOURCE_MODELS_OBJECTS_CORE_TRIS_MD2, "models/objects/core/tris.md2") \

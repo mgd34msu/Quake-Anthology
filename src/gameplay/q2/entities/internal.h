@@ -8,10 +8,14 @@ static inline bool q2_entity_makron_torso(const q2_entity_state *s) {
     return s->kind == Q2E_SCENERY && s->scenery == Q2S_ANIMATION &&
            s->animation_first == 346 && s->animation_end == 365;
 }
-static inline bool q2_entity_boss3_stand(const q2_entity_state *s) {
-    return s->kind == Q2E_SCENERY && s->scenery == Q2S_ANIMATION &&
-           s->animation_first == 414 && s->animation_end == 474;
-}
+typedef struct q2_boss_stand {
+    q2_runtime_name classname, model;
+    const char *think;
+    int first, end, skin;
+    float default_scale, initial_delay;
+    qa_bounds bounds;
+} q2_boss_stand;
+const q2_boss_stand *q2_entity_boss_stand(const qa_q2_game *, const q2_entity_state *);
 typedef struct q2_entity_record {
     q2_entity_state state;
     q2_mover mover;

@@ -404,6 +404,25 @@ out:
     q2_scratch_release(g, &frame);
     return okay;
 }
+const q2_boss_stand *q2_entity_boss_stand(const qa_q2_game *g,
+                                         const q2_entity_state *s) {
+    static const q2_boss_stand stands[] = {
+        {.classname = Q2_NAME_MONSTER_BOSS3_STAND,
+         .model = Q2_NAME_RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2,
+         .think = "Think_Boss3Stand", .first = 414, .end = 474, .skin = -1,
+         .bounds = {{-32, -32, 0}, {32, 32, 90}}},
+        {.classname = Q2_NAME_MONSTER_TANK_STAND,
+         .model = Q2_NAME_RESOURCE_MODELS_MONSTERS_TANK_TRIS_MD2,
+         .think = "Think_TankStand", .first = 0, .end = 30, .skin = 2,
+         .default_scale = 1.5f, .initial_delay = .1f,
+         .bounds = {{-32, -32, -16}, {32, 32, 64}}}
+    };
+    for (size_t i = 0; i < sizeof(stands) / sizeof(*stands); ++i)
+        if (s->classname == g->runtime_names[stands[i].classname])
+            return stands + i;
+    return NULL;
+}
+
 bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
     q2_entity_state *s = a->entity;
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), s->classname);
@@ -443,7 +462,8 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
                  {"misc_nuke", Q2S_NUKE},
                  {"misc_nuke_core", Q2S_NUKE},
                  {"target_mal_laser", Q2S_MAL_LASER}};
-    *handled = s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND] || light_orb(g, s);
+    const q2_boss_stand *stand = q2_entity_boss_stand(g, s);
+    *handled = stand || light_orb(g, s);
     if (*handled)
         s->scenery = Q2S_ANIMATION;
     for (size_t i = 0; !*handled && i < sizeof(names) / sizeof(*names); i++)
@@ -599,22 +619,33 @@ bool q2_scenery_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
             return !q2_actor_live(g, a->id) || q2_entity_schedule(g, a, Q2ET_SCENERY,
                 rerelease && !orb ? (float)g->frame_ns / Q2_NS : .1f);
         }
-        if (s->classname == g->runtime_names[Q2_NAME_MONSTER_BOSS3_STAND]) {
+        if (stand) {
             if (g->options.deathmatch)
                 return qa_session_release(g->services.session, a->id, e);
             a->physics.motion = QA_PHYSICS_STEP;
             s->usable = true;
-            s->animation_first = 414;
-            s->animation_end = 474;
-            s->visual.frame = 414;
-            if (!model_resource(g, a,
-                    g->runtime_names[Q2_NAME_RESOURCE_MODELS_MONSTERS_BOSS3_RIDER_TRIS_MD2],
-                    (qa_bounds){{-32, -32, 0}, {32, 32, 90}}, QA_PHYSICS_BOX, e))
+            s->animation_first = stand->first;
+            s->animation_end = stand->end;
+            s->visual.frame = stand->first;
+            qa_bounds bounds = stand->bounds;
+            if (stand->skin >= 0)
+                s->visual.skin = stand->skin;
+            if (stand->default_scale != 0) {
+                s->visual.scale = q2_field_float(g, s,
+                    g->field_keys[QA_TARGET_KEY_SCALE], stand->default_scale);
+                if (s->visual.scale == 0)
+                    s->visual.scale = stand->default_scale;
+                bounds.mins = qa_vec_scale(bounds.mins, s->visual.scale);
+                bounds.maxs = qa_vec_scale(bounds.maxs, s->visual.scale);
+            }
+            if (!model_resource(g, a, g->runtime_names[stand->model],
+                                bounds, QA_PHYSICS_BOX, e))
                 return false;
             return !q2_actor_live(g, a->id) ||
-                   animate(g, a, 414, 474,
-                       g->options.rules == QA_RULESET_Q2_RERELEASE ?
-                           (float)g->frame_ns / Q2_NS : .1f, e);
+                   animate(g, a, stand->first, stand->end,
+                       stand->initial_delay != 0 ? stand->initial_delay :
+                           g->options.rules == QA_RULESET_Q2_RERELEASE ?
+                               (float)g->frame_ns / Q2_NS : .1f, e);
         }
         if (!strcmp(name, "viewthing")) {
             s->visual.render_flags = 64;
@@ -821,7 +852,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
     case Q2S_BLACKHOLE:
         return qa_session_release(g->services.session, a->id, e);
     case Q2S_ANIMATION: {
-        if (!q2_entity_boss3_stand(s))
+        if (!q2_entity_boss_stand(g, s))
             return true;
         bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
         qa_body_state body;
@@ -972,7 +1003,7 @@ bool q2_scenery_think(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *e) {
         return q2_entity_show(g, a, e) &&
                (!q2_actor_live(g, a->id) ||
                 q2_entity_schedule(g, a, Q2ET_SCENERY,
-                    torso || q2_entity_boss3_stand(s) ? .1f : (float)g->frame_ns / Q2_NS));
+                    torso || q2_entity_boss_stand(g, s) ? .1f : (float)g->frame_ns / Q2_NS));
     }
     case Q2S_SATELLITE:
         s->visual.frame++;

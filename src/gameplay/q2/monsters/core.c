@@ -1255,7 +1255,6 @@ static qa_bounds monster_bounds(const qa_q2_game *game, const q2m_definition *de
     else if (definition->species == Q2M_FLYER) bounds.maxs.z = 16;
     else if (definition->species == Q2M_GLADIATOR || definition->species == Q2M_GLADB)
       bounds.maxs.z = 42;
-    else if (definition->species == Q2M_TANK_STAND) bounds.maxs.z = 72;
   }
   return bounds;
 }
@@ -1859,8 +1858,6 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   if (game->options.rules == QA_RULESET_Q2_RERELEASE &&
       (definition->species == Q2M_TANK || definition->species == Q2M_TANK_COMMANDER) &&
       (monster->spawnflags & 8u) && monster->entity_scale == 0)
-    monster->entity_scale = 1.5f;
-  if (definition->species == Q2M_TANK_STAND && options->scale == 0.0f)
     monster->entity_scale = 1.5f;
   monster->animation_scale = definition->scale *
       (monster->entity_scale != 0 ? monster->entity_scale : 1);
