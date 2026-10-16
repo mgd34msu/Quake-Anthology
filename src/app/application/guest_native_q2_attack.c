@@ -549,7 +549,7 @@ static bool foreign_activate(struct application_native_q2_attack *p,qa_error *er
             !foreign_generation(p,address,&generation,&inuse,error))return false;
         if(inuse)p->foreign_slots[slot]=(attack_foreign_slot){.generation=generation,.present=true};
     }
-    return qa_native_host_q2_retain_string(host,p->foreign_classname,&p->foreign_name,error);
+    return qa_native_host_retain_string(host,p->foreign_classname,&p->foreign_name,error);
 }
 bool application_native_q2_foreign_address(struct application_native_q2 *engine,qa_actor_id actor,
     qa_native_address *out,bool *present,qa_error *error)

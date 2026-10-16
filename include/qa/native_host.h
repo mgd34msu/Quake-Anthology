@@ -223,6 +223,8 @@ typedef struct qa_native_host_q2_application_call {
 bool qa_native_host_q2_call_string(const qa_native_host_q2_application_call *,
     size_t index, const char **text, qa_error *);
 bool qa_native_host_string_span(qa_native_host *, qa_native_address, const char **, qa_error *);
+/* Immutable source return storage remains valid through this host's lifetime. */
+bool qa_native_host_retain_string(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
 
 /* These callbacks own services whose state is outside gameplay authority:
  * localization, clipboard, debug presentation, bot navigation and cgame UI. */
@@ -418,8 +420,6 @@ bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
 bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
     const qa_native_host_q2_hud_view *, int32_t player_number,
     qa_bytes server_data, qa_bytes player_state, qa_error *);
-/* Immutable source return storage remains valid through this host's lifetime. */
-bool qa_native_host_q2_retain_string(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

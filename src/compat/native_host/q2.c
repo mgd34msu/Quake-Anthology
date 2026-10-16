@@ -121,7 +121,7 @@ static bool configstring_get(qa_native_host *host, int32_t index,
     qa_string_id value = QA_STRING_NONE;
     if (!host->engine.configstring_get(host->engine.context, index, &value, error))
         return false;
-    return native_host_string_id_address(host, value, out, error);
+    return qa_native_host_retain_string(host, value, out, error);
 }
 
 static bool configstring_set(qa_native_host *host, const qa_native_import_call *call,
@@ -339,7 +339,7 @@ static bool command_import(qa_native_host *host, const qa_native_import_call *ca
     if ((dispatch == QA_NATIVE_Q2_IMPORT_argv)) {
         int32_t index = native_argument_i32(call, 0);
         if (index < 0 || (size_t)index >= command.count)
-            return native_host_string_id_address(host, host->empty_string, &result->as.address, error);
+            return qa_native_host_retain_string(host, host->empty_string, &result->as.address, error);
         slot = (size_t)index;
         text = command.arguments[slot];
     } else {

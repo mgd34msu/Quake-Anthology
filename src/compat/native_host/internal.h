@@ -216,7 +216,6 @@ bool native_host_read_vec3(qa_native_host *, qa_native_address, qa_vec3 *, qa_er
 bool native_host_write_vec3(qa_native_host *, qa_native_address, qa_vec3, qa_error *);
 bool native_host_text_read(qa_native_host *, qa_native_address, bool, qa_bytes *, qa_error *);
 bool native_host_string_read(qa_native_host *, qa_native_address, qa_bytes *, qa_error *);
-bool native_host_string_id_address(qa_native_host *, qa_string_id, qa_native_address *, qa_error *);
 bool native_host_temporary_bytes(qa_native_host *, size_t, const void *, size_t, qa_native_address *, qa_error *);
 bool native_host_temporary_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 void native_host_temporary_free(qa_native_host *, qa_native_address);

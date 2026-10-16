@@ -142,9 +142,11 @@ static char *copy_text(const char *text)
     return copy;
 }
 
-bool native_host_string_id_address(qa_native_host *host, qa_string_id name,
+bool qa_native_host_retain_string(qa_native_host *host, qa_string_id name,
     qa_native_address *out, qa_error *error)
 {
+    if (!host || !host->instance || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native string requires its live host");
     if (!name) name = host->empty_string;
     qa_id_index_cursor cursor = qa_id_index_begin(&host->strings, name, 0);
     size_t address;
@@ -263,7 +265,7 @@ static bool cvar_bytes(qa_native_host *host,
                        uint8_t bytes[56], qa_error *error)
 {
     if (!record->name_address) {
-        if (!native_host_string_id_address(host, record->name_id, &record->name_address, error)) return false;
+        if (!qa_native_host_retain_string(host, record->name_id, &record->name_address, error)) return false;
     }
     bool changed = !record->published_valid || record->modification != view->modification_count;
     if (changed || record->value_text != view->value) {

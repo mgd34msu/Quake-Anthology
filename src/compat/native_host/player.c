@@ -1,13 +1,5 @@
 #include "internal.h"
 
-bool qa_native_host_q2_retain_string(qa_native_host *host, qa_string_id name,
-    qa_native_address *out, qa_error *error)
-{
-    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying || !out)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native Q2 string requires its live cgame host");
-    return native_host_string_id_address(host, name, out, error);
-}
-
 bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
     const qa_native_host_q2_hud_view *view, int32_t player_number,
     qa_bytes data, qa_bytes player, qa_error *error)
