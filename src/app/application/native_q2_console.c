@@ -605,7 +605,7 @@ bool application_native_q2_console_finalize(application_provider *provider, qa_q
 bool application_native_q2_console_scripts(application_provider *provider,
                                            const application_q2_source_scripts *scripts, qa_error *error) {
     struct application_native_q2_console *owner = provider ? provider->native_q2_console : NULL;
-    if (!owner || !application_native_q2_console_idle(provider) || qa_console_pending(owner->console))
+    if (!owner || !application_native_q2_console_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 scripts require their retained idle preparation owner");
     if (!scripts) {
         memset(&owner->scripts, 0, sizeof(owner->scripts));
