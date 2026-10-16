@@ -2423,6 +2423,7 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
     p->joystick = NULL;
     p->joystick_instance = -1;
     p->joystick_rumble = (input_motor_output){0};
+    report(p, "\n------- Input Initialization -------\n");
     if (integer(p, INPUT_CVAR_JOYSTICK, 0) != 0) {
         if (p->windows_joystick) {
             if (!qa_source_joystick_release(&p->source, time, source_key, p, error))
@@ -2441,9 +2442,20 @@ static bool restart_devices(qa_input_platform *p, double time, qa_error *error) 
             struct seat_route *r = route_for(p, p->joystick_instance);
             if (r && !qa_input_seat_release_device(r->seat, p->joystick_instance, time, error))
                 return false;
+            const char *name = SDL_JoystickName(p->joystick);
+            int axes = SDL_JoystickNumAxes(p->joystick);
+            int buttons = SDL_JoystickNumButtons(p->joystick);
+            char message[512];
+            snprintf(message, sizeof(message),
+                "Joystick SDL instance %d found\nName:    %.255s\nAxes:    %d\nButtons: %d\n",
+                p->joystick_instance, name ? name : "Unknown", axes < 0 ? 0 : axes,
+                buttons < 0 ? 0 : buttons);
+            report(p, message);
         } else
-            report(p, "No source joystick found.\n");
-    }
+            report(p, "No joystick found.\n");
+    } else
+        report(p, "Joystick is not active.\n");
+    report(p, "------------------------------------\n");
     if (!midi_release(p, time, error))
         return false;
     p->midi_channel = integer(p, INPUT_CVAR_MIDI_CHANNEL, 1);
