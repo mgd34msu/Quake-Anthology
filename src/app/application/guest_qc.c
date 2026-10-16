@@ -1283,7 +1283,7 @@ static bool declared_regions(application_provider *provider,qa_qc_inline_region 
     const qa_qc_inline_region *parts[]={
         application_qc_item_weapons_regions(provider,&sizes[0]),
         application_qc_protection_regions(profile?profile->protection:NULL,&sizes[1]),
-        application_qc_combat_regions(profile?profile->combat:NULL,&sizes[2])};
+        application_qc_combat_regions(provider->state.qc.combat_profile,&sizes[2])};
     for(size_t i=0;i<sizeof(parts)/sizeof(parts[0]);++i){
         if(sizes[i]>SIZE_MAX-total)return application_fail(error,QA_ERROR_MEMORY,"QC admitted Source region count overflows");
         total+=sizes[i];

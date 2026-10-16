@@ -17,6 +17,8 @@ typedef struct application_qc_armor_stage {
 
 bool application_qc_armor_parse(const qa_qc_program *, const qa_json_document *,
     qa_json_id, application_qc_armor_stage *, qa_error *);
+bool application_qc_armor_compile(const qa_qc_program *, const application_qc_call *,
+    application_qc_armor_stage *, bool *found, qa_error *);
 bool application_qc_armor_inputs(const qa_qc_program *, const application_qc_call *,
     const application_qc_armor_stage *, bool standalone, qa_error *);
 void application_qc_armor_free(application_qc_armor_stage *);

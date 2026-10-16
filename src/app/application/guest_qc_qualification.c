@@ -140,6 +140,8 @@ static void free_calls(application_qc_calls *calls)
 }
 void application_qc_release_qualification(application_provider *provider)
 {
+    application_qc_combat_profile_free(provider->state.qc.combat_profile);
+    provider->state.qc.combat_profile = NULL;
     struct application_qc_profile *profile = provider->state.qc.qualified;
     if (!profile) return;
     for (size_t i = 0; profile->fields && i < profile->field_count; ++i) {
@@ -165,7 +167,6 @@ void application_qc_release_qualification(application_provider *provider)
         free(profile->weapon_values[i].label);
     application_qc_items_profile_free(profile->items);
     application_qc_pickups_profile_free(profile->pickups);
-    application_qc_combat_profile_free(profile->combat);
     application_qc_protection_profile_free(profile->protection);
     application_qc_objectives_release(profile);
     free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
@@ -592,7 +593,8 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
 {
     if (!provider || !provider->state.qc.program || provider->state.qc.qualified || !provider->launch->selection.artifact)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QC qualification owner");
-    if (!provider->launch->declaration) return true;
+    if (!provider->launch->declaration)
+        return application_qc_combat_qualify(provider, NULL, QA_JSON_NONE, error);
     qa_json_document *doc;
     if (!qa_json_parse(QA_JSON_STRICT, qa_resource_bytes(provider->launch->declaration), &doc, error)) return false;
     struct application_qc_profile *profile = calloc(1, sizeof(*profile));

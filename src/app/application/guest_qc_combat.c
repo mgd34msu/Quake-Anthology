@@ -220,21 +220,30 @@ static bool immutable_layout(application_provider *provider, application_qc_comb
     return ok && (reactions || reject(error, "QC combat has no typed original pain or death call sites"));
 }
 static bool scale_parse(application_qc_combat_profile *, const qa_json_document *, qa_json_id, qa_error *);
-bool application_qc_combat_qualify(application_provider *provider, const qa_json_document *doc,
-    qa_json_id root, qa_error *error)
+static bool combat_profile_prepare(application_provider *provider, const qa_json_document *doc,
+    qa_json_id root, application_qc_combat_profile *profile, qa_error *error)
 {
-    if (root == QA_JSON_NONE) return true;
-    if (qa_json_type(doc, root) != QA_JSON_OBJECT || !provider->state.qc.qualified)
+    bool declared = root != QA_JSON_NONE;
+    if (declared && (qa_json_type(doc, root) != QA_JSON_OBJECT || !provider->state.qc.qualified))
         return reject(error, "QC combat requires its actual declaration and qualified program");
-    application_qc_combat_profile *profile = calloc(1, sizeof(*profile));
-    if (!profile) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat declaration");
-    provider->state.qc.qualified->combat = profile; profile->program = provider->state.qc.program;
     uint64_t inputs = (UINT64_C(1) << QC_INPUT_SELF) | (UINT64_C(1) << QC_INPUT_ATTACKER) |
         (UINT64_C(1) << QC_INPUT_INFLICTOR) | (UINT64_C(1) << QC_INPUT_AMOUNT) |
         (UINT64_C(1) << QC_INPUT_KNOCKBACK) | (UINT64_C(1) << QC_INPUT_POINT) |
         (UINT64_C(1) << QC_INPUT_DIRECTION) | (UINT64_C(1) << QC_INPUT_NORMAL) | (UINT64_C(1) << QC_INPUT_TIME);
-    if (!application_qc_call_parse(doc, qa_json_get(doc, root, "damage"), profile->program,
-        inputs, false, &profile->damage, error) || !call_layout(profile, error)) return false;
+    if (declared) {
+        if (!application_qc_call_parse(doc, qa_json_get(doc, root, "damage"), profile->program,
+            inputs, false, &profile->damage, error)) return false;
+    } else {
+        const qa_qc_function *damage = qa_qc_program_find_function(profile->program, "T_Damage", &profile->damage.function);
+        if (!damage || damage->first_statement <= 0 || damage->named_builtin || damage->parameter_count != 4)
+            return false;
+        static const application_qc_input_id arguments[] = {
+            QC_INPUT_SELF, QC_INPUT_INFLICTOR, QC_INPUT_ATTACKER, QC_INPUT_AMOUNT};
+        profile->damage.argument_count = 4;
+        for (size_t i = 0; i < 4; ++i)
+            profile->damage.arguments[i] = (application_qc_value){.kind = QC_VALUE_INPUT, .source = arguments[i]};
+    }
+    if (!call_layout(profile, error)) return false;
     profile->health = qa_qc_program_find_field(profile->program, "health");
     profile->takedamage = qa_qc_program_find_field(profile->program, "takedamage");
     profile->flags = qa_qc_program_find_field(profile->program, "flags");
@@ -253,17 +262,19 @@ bool application_qc_combat_qualify(application_provider *provider, const qa_json
         profile->pain->type != QA_QC_FUNCTION || !profile->die || profile->die->type != QA_QC_FUNCTION ||
         !profile->self || profile->self->type != QA_QC_ENTITY || !immutable_layout(provider, profile, error))
         return reject(error, "QC combat lacks its actual typed Source reaction and armor layout");
-    qa_json_id armor = qa_json_get(doc, root, "armorStage");
+    qa_json_id armor = declared ? qa_json_get(doc, root, "armorStage") : QA_JSON_NONE;
     if (armor != QA_JSON_NONE) {
         if (!application_qc_armor_parse(profile->program, doc, armor, &profile->armor, error) ||
             profile->armor.region.function != profile->damage.function ||
             !application_qc_armor_inputs(profile->program, &profile->damage, &profile->armor, false, error)) return false;
         profile->armor_declared = true;
-    }
-    if (!scale_parse(profile, doc, qa_json_get(doc, root, "damageScale"), error)) return false;
+    } else if (!application_qc_armor_compile(profile->program, &profile->damage,
+        &profile->armor, &profile->armor_declared, error)) return false;
+    if (!declared && !profile->armor_declared) return false;
+    if (!scale_parse(profile, doc, declared ? qa_json_get(doc, root, "damageScale") : QA_JSON_NONE, error)) return false;
     if (profile->scale.declared) profile->regions[profile->region_count++] = profile->scale.region;
     if (profile->armor_declared) profile->regions[profile->region_count++] = profile->armor.region;
-    qa_json_id empty = qa_json_get(doc, root, "emptyArmor");
+    qa_json_id empty = declared ? qa_json_get(doc, root, "emptyArmor") : QA_JSON_NONE;
     if (empty != QA_JSON_NONE) {
         if (!application_mod_item_identity(doc, qa_json_get(doc, empty, "item"),
             qa_session_strings(provider->application->session), &profile->empty_item, error) ||
@@ -274,6 +285,22 @@ bool application_qc_combat_qualify(application_provider *provider, const qa_json
         if (!known) return reject(error, "QC empty armor is not a Source Q1 armor identity");
         profile->empty_declared = true;
     }
+    return true;
+}
+bool application_qc_combat_qualify(application_provider *provider, const qa_json_document *doc,
+    qa_json_id root, qa_error *error)
+{
+    application_qc_combat_profile *profile = calloc(1, sizeof(*profile));
+    if (!profile) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat metadata");
+    profile->program = provider->state.qc.program;
+    qa_error reason = {0};
+    if (!combat_profile_prepare(provider, doc, root, profile, &reason)) {
+        application_qc_combat_profile_free(profile);
+        if (root == QA_JSON_NONE && reason.code != QA_ERROR_MEMORY) return true;
+        if (error) *error = reason;
+        return false;
+    }
+    provider->state.qc.combat_profile = profile;
     return true;
 }
 void application_qc_combat_profile_free(application_qc_combat_profile *profile)
@@ -322,7 +349,7 @@ static bool held(const application_qc_combat *owner, qa_error *error)
     struct application_qc_state *engine = owner->engine;
     return (engine && engine->provider->state.qc.engine == engine &&
         engine->provider->state.qc.program == owner->profile->program &&
-        engine->provider->state.qc.qualified && engine->provider->state.qc.qualified->combat == owner->profile &&
+        engine->provider->state.qc.combat_profile == owner->profile &&
         engine->provider->state.qc.instance) || reject(error, "QC combat lost its actual retained Source owner");
 }
 static bool current(combat_actor *actor, qa_error *error)
@@ -468,8 +495,7 @@ static qa_combat_binding binding(combat_actor *actor)
 }
 bool application_qc_combat_create(struct application_qc_state *engine, qa_error *error)
 {
-    const struct application_qc_profile *qualified = engine->provider->state.qc.qualified;
-    const application_qc_combat_profile *profile = qualified ? qualified->combat : NULL;
+    const application_qc_combat_profile *profile = engine->provider->state.qc.combat_profile;
     if (!profile) return true;
     if (engine->combat) return held(engine->combat, error);
     engine->combat = calloc(1, sizeof(*engine->combat));
@@ -528,7 +554,7 @@ bool application_qc_combat_health_owned(const struct application_qc_state *engin
 {
     application_qc_combat *owner = engine ? engine->combat : NULL;
     if (!owner || field != owner->profile->health || owner->profile->program != engine->provider->state.qc.program ||
-        !engine->provider->state.qc.qualified || engine->provider->state.qc.qualified->combat != owner->profile) return false;
+        engine->provider->state.qc.combat_profile != owner->profile) return false;
     combat_actor *actor = find(owner, id); uint32_t slot; int32_t reference; qa_error error = {0};
     return actor && actor->bound && !actor->retired && !actor->restoring &&
         qa_combat_primary_current(engine->services.combat, id, actor->serial, actor) &&
@@ -1402,5 +1428,5 @@ bool application_qc_combat_damage_scale_declared(const struct application_qc_sta
     return owner && owner->engine == engine && owner->profile->scale.declared &&
         engine->provider->state.qc.engine == engine && engine->provider->state.qc.instance &&
         engine->provider->state.qc.program == owner->profile->program &&
-        engine->provider->state.qc.qualified && engine->provider->state.qc.qualified->combat == owner->profile;
+        engine->provider->state.qc.combat_profile == owner->profile;
 }

@@ -118,6 +118,7 @@ typedef struct application_provider {
             qa_qc_game *game;
             struct application_qc_state *engine;
             struct application_qc_profile *qualified;
+            struct application_qc_combat_profile *combat_profile;
         } qc;
         struct {
             qa_q3_host *host;
