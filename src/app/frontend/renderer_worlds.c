@@ -1,5 +1,6 @@
 #include "renderer_worlds.h"
 #include "renderer_registries.h"
+#include "q3_render_policy.h"
 #include "qa/render_controls.h"
 #include "qa/material_source_scratch.h"
 #include "qa/scene_resource_save.h"
@@ -108,8 +109,9 @@ bool frontend_renderer_worlds_idle(const frontend_renderer_worlds *owner)
     if(owner) for(size_t i=0;i<owner->count;++i) if(!row_idle(&owner->rows[i])) return false;
     return true;
 }
-static void dispose_row(renderer_world_row *row)
+static bool dispose_row(qa_frontend *f,renderer_world_row *row,qa_error *error)
 {
+    if(row->view.private_heaps && !frontend_source_images_retire(f,row->view.images,error)) return false;
     qa_scene_world_destroy((qa_scene_world *)row->view.world);
     if(row->view.private_heaps) {
         qa_material_library_destroy(row->view.materials);
@@ -118,6 +120,7 @@ static void dispose_row(renderer_world_row *row)
     }
     qa_resource_release((qa_resource *)row->view.resource);
     *row=(renderer_world_row){0};
+    return true;
 }
 bool frontend_renderer_worlds_destroy(frontend_renderer_worlds **slot,qa_error *error)
 {
@@ -126,7 +129,8 @@ bool frontend_renderer_worlds_destroy(frontend_renderer_worlds **slot,qa_error *
     if(!owner->frontend || owner->frontend->capture || owner->frontend->resource_inventory ||
         !frontend_renderer_worlds_idle(owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Retained renderer worlds remain borrowed");
-    for(size_t i=owner->count;i>0;--i) dispose_row(&owner->rows[i-1]);
+    for(size_t i=owner->count;i>0;--i)
+        if(!dispose_row(owner->frontend,&owner->rows[i-1],error)) return false;
     free(owner->rows); free(owner); *slot=NULL; return true;
 }
 bool frontend_renderer_worlds_prune(qa_frontend *f,qa_error *error)
@@ -146,7 +150,7 @@ bool frontend_renderer_worlds_prune(qa_frontend *f,qa_error *error)
             if(j==SIZE_MAX) return false;
         }
         if(found) { ++i; continue; }
-        dispose_row(&owner->rows[i]);
+        if(!dispose_row(f,&owner->rows[i],error)) return false;
         memmove(owner->rows+i,owner->rows+i+1,(owner->count-i-1)*sizeof(*owner->rows));
         --owner->count;
     }

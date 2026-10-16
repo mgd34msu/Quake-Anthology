@@ -83,6 +83,7 @@ static bool dispose(frontend_root_resources **slot,qa_error *error)
     }
     if (!frontend_material_movies_destroy(&owner->movies,error)) return false;
     qa_media_library_destroy(owner->media); owner->media=NULL;
+    if (!frontend_source_images_retire(f,owner->images,error)) return false;
     for (unsigned i=0;i<4;++i) {
         frontend_world_scratch_destroy(owner->scratch+i);
         qa_application_visual_visibility_destroy(owner->visibility[i][0]);
@@ -241,6 +242,7 @@ bool frontend_root_resources_sync(qa_frontend *f,qa_error *error)
     qa_scene_frame_reset(&f->frame,f->frame_number);
     if (!dispose(&f->root_resources,error)) goto fail;
     /* Older imported graphs without a media child still own this exact tuple. */
+    if (!frontend_source_images_retire(f,f->images,error)) goto fail;
     qa_scene_world_destroy(f->scene_world); qa_audio_bank_destroy(f->sounds);
     qa_resource_release(f->map_resource); free(f->map_name);
     qa_material_library_destroy(f->materials); qa_scene_resources_destroy(f->images); qa_vfs_destroy(f->mounts);
