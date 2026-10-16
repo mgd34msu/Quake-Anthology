@@ -748,6 +748,19 @@ static bool prepare_map_admission(application_provider *provider, const qa_bsp_v
     if (engine->map_admission_prepared) return true;
     if (!application_unified_event_registration_clear(provider->application, provider->owner, error)) return false;
     if (!application_native_q2_config_clear(engine,error)) return false;
+    qa_native_host_engine_services services = application_native_q2_services(engine);
+    uint32_t models = engine->hud_names.layout.models;
+    if (!services.configstring_set(services.context, (int32_t)(models + 1),
+            qa_resource_path(provider->application->map_resource), error)) return false;
+    size_t model_count = qa_bsp_record_count(map, QA_BSP_MODELS);
+    for (uint32_t model = 1; model < model_count; ++model) {
+        uint32_t index = model + 1;
+        if (engine->profile == QA_NATIVE_Q2_GAME_API2023 && index >= 255) ++index;
+        char inline_name[32];
+        snprintf(inline_name, sizeof(inline_name), "*%u", model);
+        if (!services.configstring_set(services.context,
+                (int32_t)(models + index), inline_name, error)) return false;
+    }
     if (provider->attached) provider->application->physics->world_actor = engine->world_actor;
     for (size_t i = 1; i < 257; ++i) {
         engine->clients[i].protocol_fog = (qa_q2_wire_fog){0};
