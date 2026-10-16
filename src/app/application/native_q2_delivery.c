@@ -134,8 +134,7 @@ static bool capture(application_provider *source, qa_vec3 origin, qa_vec3 line_e
         !source->product || source->product->family!=QA_GAME_Q2 ||
         (original ? (!engine || !engine->calls || !engine->initialized || !engine->map_ready ||
             engine->world!=app->world) :
-            (source->kind!=APPLICATION_PROVIDER_Q2 || !source->state.q2 ||
-             (qa_session_safe(app->session) && qa_combat_idle(app->combat)))) ||
+            (source->kind!=APPLICATION_PROVIDER_Q2 || !source->state.q2)) ||
         (!original && (kind<QA_BUILTIN_Q2_MULTICAST_PVS || kind>QA_BUILTIN_Q2_MULTICAST_PHS_LINE)) ||
         (original && message->target==QA_NATIVE_HOST_MULTICAST &&
             (message->destination<0 || message->destination>2)) ||
