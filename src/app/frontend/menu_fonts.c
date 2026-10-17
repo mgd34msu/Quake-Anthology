@@ -2,6 +2,7 @@
 #include "ui_features_private.h"
 #include "qa/image.h"
 #include "qa/text.h"
+#include "qa/ui_preferences.h"
 #include "../../render/scene/resources_internal.h"
 
 bool frontend_world_text_draw(qa_frontend *f, const qa_scene_view *view,
@@ -256,4 +257,18 @@ bool frontend_console_font_selection(qa_frontend *f, uint32_t seat, qa_font_sele
     if (!f || !f->ui_features) return frontend_fail(error, QA_ERROR_ARGUMENT, "Console font selection lost its actual roots");
     return qa_font_selection_init(out, seat, f->classic, f->ui_features->console, f->ui_features->fallbacks,
         f->ui_features->fallback_count, error);
+}
+bool frontend_q2_hud_font_options(qa_frontend *f, uint32_t seat, bool rerelease,
+    qa_hud_q2_options *options, qa_error *error)
+{
+    options->font_line_height = rerelease ? 10 : 8;
+    if (!rerelease) return true;
+    qa_ui_preferences preferences;
+    if (!qa_ui_preferences_read(qa_application_cvars(f->application),
+        qa_application_ui_preference_handles(f->application), seat, &preferences, error)) return false;
+    bool ok = preferences.typeface == QA_UI_TYPEFACE_BOLD
+        ? frontend_menu_font_selection(f, seat, true, &options->fonts, error)
+        : frontend_console_font_selection(f, seat, &options->fonts, error);
+    if (ok && !options->fonts.primary) options->fonts.primary = options->fonts.classic;
+    return ok;
 }

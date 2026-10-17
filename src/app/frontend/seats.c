@@ -414,10 +414,12 @@ static bool hud_source_draw(void *context, const qa_hud_frame *frame,
     if (!qa_hud_q2_program_prepare_images(seat->q2_hud_layout,hud.media.images,
         source->edition==QA_RULESET_Q2_RERELEASE,QA_SCENE_NEAREST,error)) return false;
     qa_hud_q2_options options = {.viewport = frame->safe_area, .scale = frame->scale,
-        .fonts = seat->fonts, .font_line_height = 8, .white = qa_scene_white(hud.media.images),
+        .fonts = seat->fonts, .white = qa_scene_white(hud.media.images),
         .context = &hud, .configstring = local_q2_config, .picture = local_q2_picture,
         .binding = local_q2_binding,.status=seat->q2_hud_names.status,.names=hud.names,
         .picture_names=&seat->q2_hud_pictures,.weapons=&hud.names->weapons,.config_picture=local_q2_config_picture};
+    if (!frontend_q2_hud_font_options(seat->frontend, seat->id,
+        source->edition == QA_RULESET_Q2_RERELEASE, &options, error)) return false;
     options.fonts.classic = seat->q2_hud_classic;
     const qa_cvar_view *use_font = source->hud_cvars ?
         qa_cvars_read(source->cvars, source->hud_cvars->use_font) : NULL;

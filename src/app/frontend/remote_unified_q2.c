@@ -9,6 +9,7 @@
 #include "remote_q2_footsteps.h"
 #include "ui_features.h"
 #include "inventory_menu.h"
+#include "menu_fonts.h"
 #include "received_music.h"
 #include "material_movies.h"
 #include "legacy_render_policy.h"
@@ -1918,10 +1919,12 @@ static bool status_draw(frontend_unified_q2 *o,q2_native *v,const qa_unified_nat
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(o->replica);
     if (!qa_hud_q2_program_prepare_images((qa_hud_q2_program *)layout,
         v->bank->images,v->bank->hud_names.rerelease,QA_SCENE_LINEAR_MIPMAP_LINEAR,e)) return false;
-    qa_hud_q2_options options={.viewport=viewport,.scale=1,.font_line_height=8,
+    qa_hud_q2_options options={.viewport=viewport,.scale=1,
         .white=qa_scene_white(v->bank->images),.fonts=o->frontend->seats[d->physical_seat].fonts,
         .table=&o->table,.context=v,.configstring=native_config,.picture=native_picture,
         .config_picture=native_config_picture,.picture_names=&v->bank->picture_names,.weapons=&v->bank->hud_names.weapons,.status=v->bank->hud_names.status,.names=&v->bank->hud_names};
+    if (!frontend_q2_hud_font_options(o->frontend,d->physical_seat,
+        v->bank->hud_names.rerelease,&options,e)) return false;
     options.fonts.classic=v->font;
     const qa_cvar_view *use_font=qa_cvars_read(d->cvars,o->replica->legacy_cvars.hud.use_font);
     options.use_font=v->bank->hud_names.rerelease && use_font && use_font->integer!=0;

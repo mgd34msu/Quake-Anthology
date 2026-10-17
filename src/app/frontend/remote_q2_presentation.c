@@ -9,6 +9,7 @@
 #include "qa/scene_effects.h"
 #include "qa/game_q2.h"
 #include "inventory_menu.h"
+#include "menu_fonts.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -776,16 +777,21 @@ bool frontend_remote_q2_draw(qa_frontend *f, uint32_t seat, float stereo,
             if (f->frame.commands[i].kind == QA_SCENE_COMMAND_DRAW)
                 f->frame.commands[i].data.draw.state.cull = QA_CULL_NONE;
     if (ok && row->classic) {
-        qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .font_line_height = 8, .white = row->white,
+        qa_hud_q2_options options = {.viewport = view.viewport, .scale = 1, .white = row->white,
             .fonts = f->seats[seat].fonts, .table = &row->hud_table, .context = row,
             .configstring = hud_config, .picture = remote_q2_picture_read,
             .config_picture=hud_config_picture,.picture_names=&row->hud_pictures,.weapons=&row->hud_names.weapons,.status=row->hud_names.status,.names=&row->hud_names};
+        bool rerelease = remote_q2_rerelease_presentation(row);
+        ok = frontend_q2_hud_font_options(f, seat, rerelease, &options, error);
         options.fonts.classic = row->classic;
+        const qa_cvar_view *use_font = qa_cvars_read(row->options.domain.cvars,
+            row->cvar_handles.legacy.hud.use_font);
+        options.use_font = rerelease && use_font && use_font->integer != 0;
         qa_hud_q2_frame hud = {.protocol = row->options.domain.protocol, .stats = frame->player.stats,
             .stat_count = QA_Q2_MAX_STATS, .inventory = row->inventory, .inventory_count = 256,
             .layout = row->hud_overlay, .player_number = player_number,
             .server_frame = row->frame.server_frame, .time_ns = row->sample_ns, .frame_ns = (uint64_t)(row->frame_ms * 1000000)};
-        ok = qa_hud_q2_draw(&options, &hud, false, &f->frame, error);
+        if (ok) ok = qa_hud_q2_draw(&options, &hud, false, &f->frame, error);
     }
     if (ok) ok = hit_marker_draw(row, &frame->player, view.viewport, error);
     --row->busy;
