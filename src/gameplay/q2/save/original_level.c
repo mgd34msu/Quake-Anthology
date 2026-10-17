@@ -320,6 +320,8 @@ bool qa_q2_game_original_read_client(qa_q2_game *game, uint32_t slot,
             client.persistent.health = health;
             client.persistent.maximum_health = maximum_health;
         }
+        if (game->options.rules == QA_RULESET_Q2_RERELEASE)
+            client.player.rule.fog = current->rule.fog;
         qa_q2_player_checkpoint saved = {.present = true, .value = client.player};
         okay = qa_q2_player_restore(game, actor, &saved, error) &&
             qa_q2_player_carry_restore(game, actor, &client.persistent, error);
