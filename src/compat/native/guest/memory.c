@@ -456,8 +456,18 @@ bool guest_callback_failure(qa_native_guest *guest,const qa_error *error)
 }
 bool guest_publish(qa_native_guest *guest, const qa_native_guest_commit *commit, qa_error *error)
 {
-    if (guest->options.backend == QA_NATIVE_GUEST_EMULATED &&
-        !guest_uc(guest, uc_ctl_flush_tb(guest->cpu), error)) return false;
+    if (guest->options.backend == QA_NATIVE_GUEST_EMULATED && commit->bytes)
+        for (size_t i = 0; i < guest->mapping_count; ++i) {
+            const qa_native_guest_mapping *mapping = &guest->mappings[i];
+            if (mapping->backing != commit->backing ||
+                !(mapping->permissions & QA_NATIVE_GUEST_EXECUTE)) continue;
+            bool overlaps = commit->backing_offset >= mapping->backing_offset ?
+                commit->backing_offset - mapping->backing_offset < mapping->bytes :
+                mapping->backing_offset - commit->backing_offset < commit->bytes;
+            if (!overlaps) continue;
+            if (!guest_uc(guest, uc_ctl_flush_tb(guest->cpu), error)) return false;
+            break;
+        }
     if (!guest->observe) return true;
     if (guest->publication_depth == UINT_MAX)
         return guest_fail(error, QA_ERROR_ARGUMENT, commit->address, "native guest publication depth exhausted");

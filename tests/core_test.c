@@ -9150,6 +9150,50 @@ static void test_native_resumable_budget(void)
     CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
 }
 
+static void test_native_executable_alias_writes(void)
+{
+    qa_error error={0};qa_native_guest *guest=NULL;
+    qa_native_guest_options options={
+        .image={.format=QA_NATIVE_IMAGE_ELF64,
+            .target={.os=QA_NATIVE_OS_LINUX,.arch=QA_NATIVE_ARCH_X86_64,
+                .abi=QA_NATIVE_ABI_SYSTEM_V_X64,.pointer_bytes=8}},
+        .allocation_base=UINT64_C(0x200000),
+        .maximum_backing_bytes=2*QA_NATIVE_GUEST_PAGE,.backend=QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options,&guest,&error));
+    const uint64_t writable=UINT64_C(0x100000),executable=UINT64_C(0x400000);
+    const uint8_t code[]={0xb8,17,0,0,0,0x90};
+    qa_native_guest_mapping backing,alias;
+    CHECK(qa_native_guest_map(guest,writable,2*QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_WRITE,(qa_bytes){code,sizeof(code)},&backing,&error));
+    CHECK(qa_native_guest_alias(guest,executable,QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,backing.backing,0,&alias,&error));
+    qa_native_guest_run_result result;qa_native_guest_cpu cpu;
+    CHECK(qa_native_guest_run(guest,executable,executable+5,8,8,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==17);
+    const uint8_t changed=43;
+    CHECK(qa_native_guest_write(guest,writable+QA_NATIVE_GUEST_PAGE,(qa_bytes){&changed,1},&error));
+    CHECK(qa_native_guest_run(guest,executable,executable+5,8,8,&result,&error));
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==17);
+    CHECK(qa_native_guest_write(guest,writable+1,(qa_bytes){&changed,1},&error));
+    CHECK(qa_native_guest_run(guest,executable,executable+5,8,8,&result,&error));
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==43);
+    /* Write the same backing through its RW alias, then enter cached RX code. */
+    const uint8_t writer[]={0xc6,0x04,0x25,0x01,0x00,0x10,0x00,85,
+        0xe9,0xe3,0xff,0xff,0xff};
+    CHECK(qa_native_guest_write(guest,writable+16,(qa_bytes){writer,sizeof(writer)},&error));
+    CHECK(qa_native_guest_run(guest,executable+16,executable+5,16,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==85);
+    CHECK(qa_native_guest_protect(guest,alias.id,QA_NATIVE_GUEST_READ,&error));
+    const uint8_t protected_change=102;
+    CHECK(qa_native_guest_write(guest,writable+1,(qa_bytes){&protected_change,1},&error));
+    CHECK(qa_native_guest_protect(guest,alias.id,QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,&error));
+    CHECK(qa_native_guest_run(guest,executable,executable+5,8,8,&result,&error));
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==102);
+    CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
+}
+
 static void test_native_i386_call_conventions(void)
 {
     qa_error error = {0};
@@ -10030,6 +10074,7 @@ int main(int argc, char **argv)
     test_native_saved_image_references();
     test_native_string_boundaries();
     test_native_resumable_budget();
+    test_native_executable_alias_writes();
     test_native_i386_call_conventions();
     test_q2_linked_models();
     test_q2_weapon_names();
