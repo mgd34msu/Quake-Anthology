@@ -74,8 +74,7 @@ static bool moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity
     bot_move_record *state=bot_move_state(moves,handle,e);
     if(!state) return false;
     if(!bot_move_word(state,BM_LAST_REACHABILITY) ||
-       bot_move_float(state,BM_REACHABILITY_TIME)<=moves->time ||
-       bot_move_word(state,BM_AREA)==bot_move_word(state,BM_LAST_GOAL_AREA)) return true;
+       bot_move_float(state,BM_REACHABILITY_TIME)<=moves->time) return true;
     bot_travel travel;
     if(!bot_travel_begin(moves,state,&travel,e)) return false;
     bot_reach reach;bool found;
@@ -94,6 +93,7 @@ static bool moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity
             qa_navigation_train_ride(ground,reach.graph_edge,&travel.graph->profile,&ride) &&
             !qa_navigation_train_at_stop(ground,&ride.arrival,&travel.graph->profile);
     } else if(ground->kind==QA_NAV_ENTITY_ELEVATOR) {
+        if(bot_move_word(state,BM_AREA)==bot_move_word(state,BM_LAST_GOAL_AREA)) return true;
         *out=fabsf(truncf(bot_move_vector(state,BM_ORIGIN).z-reach.end.z))>=
             bot_variable(&travel,BOT_BARRIER);
     }

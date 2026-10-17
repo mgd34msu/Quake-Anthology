@@ -1,5 +1,70 @@
 #include "internal.h"
 
+static bool train_travel(bot_travel *t,const bot_reach *reach,uint32_t goal_area,
+    qa_bot_move_result *out,bool *handled,qa_error *e) {
+    *handled=false;
+    if(reach->graph_edge->mode!=QA_NAV_MOVER || !reach->graph_edge->has_entity) return true;
+    bot_move_record *state=t->state;
+    qa_vec3 origin=bot_move_vector(state,BM_ORIGIN),end=origin;
+    end.z-=3;
+    qa_trace_result floor;
+    if(!bot_trace_box(t,origin,end,bot_move_word(state,BM_PRESENCE),
+        bot_move_integer(state,BM_ENTITY),&floor,e)) return false;
+    qa_actor_id ground=!floor.start_solid && !floor.all_solid && floor.fraction<1 &&
+        floor.hit==QA_TRACE_HIT_ACTOR ? floor.actor : (qa_actor_id){0};
+    qa_nav_train_step step;
+    if(!qa_navigation_train_step(t->runtime,t->moves->workspace,t->actor,
+        reach->graph_edge->id,origin,ground,&step,e)) return false;
+    if(step.stage==QA_NAV_TRAIN_ABSENT) return true;
+    if(step.stage==QA_NAV_TRAIN_APPROACH) {
+        uint32_t area;
+        if(!qa_bot_navigation_fuzzy(t->navigation,origin,&area,e)) return false;
+        if((area==reach->area && area!=qa_bot_navigation_source_area(t->navigation,
+                reach->graph_edge->from)) || goal_area!=bot_move_word(state,BM_LAST_GOAL_AREA)) {
+            bot_move_set_reach(state,0);
+            return true;
+        }
+    }
+    *handled=true;
+    *out=(qa_bot_move_result){.travel_type=(int32_t)reach->type};
+    if(step.stage==QA_NAV_TRAIN_EXIT &&
+       qa_vec_length(bot_horizontal(origin,reach->end))<=20 && fabsf(origin.z-reach->end.z)<=64) {
+        bot_move_set_reach(state,0);
+        return true;
+    }
+    float deadline=bot_move_float(state,BM_REACHABILITY_TIME);
+    bool waiting=step.stage==QA_NAV_TRAIN_WAIT || step.stage==QA_NAV_TRAIN_RIDE;
+    if(waiting) {
+        /* The saved reach timer and origin become a no-progress deadline while
+         * waiting or riding. Slow trains accumulate the same eight-unit progress
+         * threshold instead of having to move that far in one think. */
+        if(qa_vec_length(qa_vec_sub(origin,bot_move_vector(state,BM_LAST_ORIGIN)))>8) {
+            bot_move_write_vector(state,BM_LAST_ORIGIN,origin);
+            deadline=t->moves->time+4;
+        } else deadline=fminf(deadline,t->moves->time+4);
+        bot_move_write_float(state,BM_REACHABILITY_TIME,deadline);
+    }
+    if(step.stage==QA_NAV_TRAIN_UNAVAILABLE || deadline<t->moves->time) {
+        out->failure=true;
+        bot_move_set_reach(state,0);
+        return true;
+    }
+    if(waiting) {
+        out->flags=QA_BOT_MOVE_WAITING;
+        if(step.stage==QA_NAV_TRAIN_RIDE) out->flags|=QA_BOT_MOVE_ON_ELEVATOR;
+    } else {
+        out->direction=qa_vec_normalize(bot_horizontal(origin,step.target));
+        if(!bot_blocked(t,out->direction,true,out,e) ||
+           !bot_move_action(t,out->direction,400,e)) return false;
+        bot_move_write_vector(state,BM_LAST_ORIGIN,origin);
+    }
+    /* A moving train can cross unrelated source areas before its arrival.
+     * Keep the retained edge until the actual exit, rather than complete the
+     * route from that transient area observation. */
+    bot_move_write_word(state,BM_AREA,
+        qa_bot_navigation_source_area(t->navigation,reach->graph_edge->from));
+    return true;
+}
 static bool travel(bot_travel *t, const bot_reach *reach, bool airborne, qa_bot_move_result *out,
                    bool *changed, qa_error *e) {
     *changed = true;
@@ -8,6 +73,9 @@ static bool travel(bot_travel *t, const bot_reach *reach, bool airborne, qa_bot_
         *out = (qa_bot_move_result){.failure = true};
         return true;
     }
+    bool train;
+    if(!train_travel(t,reach,bot_move_word(t->state,BM_LAST_GOAL_AREA),out,&train,e)) return false;
+    if(train) return true;
     bool weapon_required =
         mode == QA_NAV_ROCKET_JUMP || mode == QA_NAV_BFG_JUMP ||
         (mode == QA_NAV_GRAPPLE && truncf(bot_variable(t, BOT_OFFHAND_GRAPPLE)) == 0);
@@ -332,6 +400,16 @@ static bool move_goal(bot_travel *t, const qa_bot_move_goal_source *goal, uint32
         return false;
     if (grounded)
         bot_move_write_word(state,BM_FLAGS,bot_move_word(state,BM_FLAGS) | (QA_BOT_MOVE_ON_GROUND));
+    bot_reach retained;
+    bool present;
+    if(!bot_reach_read(t,bot_move_word(state,BM_LAST_REACHABILITY),&retained,&present,e)) return false;
+    if(present && retained.graph_edge->mode==QA_NAV_MOVER) {
+        uint32_t area;
+        if(!bot_goal_area(goal,&area,e)) return false;
+        qa_bot_move_result moved;bool train;
+        if(!train_travel(t,&retained,area,&moved,&train,e)) return false;
+        if(train) return bot_result_copy(out,&moved,e);
+    }
     if (bot_move_word(state,BM_FLAGS) & QA_BOT_MOVE_ON_GROUND) {
         bool stop;
         if (!standing_entity(t, out, &stop, e))

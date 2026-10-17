@@ -239,9 +239,9 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
             return false;
         }
         for (size_t i = 0; i < count; ++i) {
-            if (!qa_vec_finite(points[i]) || !nav_route_point(route, points[i], e)) return false;
+            if (!qa_vec_finite(points[i]) || (route && !nav_route_point(route, points[i], e))) return false;
         }
-        route->travel_seconds += seconds;
+        if(route) route->travel_seconds += seconds;
         return true;
     }
     if (!p->initialized && !begin(p, actor, from, e))
@@ -271,11 +271,11 @@ bool nav_predict(nav_prediction *p, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
         p->input.state = result->state;
         p->input.current_bounds = result->bounds;
         p->input.has_current_bounds = true;
-        if (!nav_route_point(route, origin, e))
+        if (route && !nav_route_point(route, origin, e))
             return false;
         seconds += 0.016f;
         if (nav_distance(origin, to) <= 8 && grounded) {
-            route->travel_seconds += seconds;
+            if(route) route->travel_seconds += seconds;
             *admitted = true;
             return true;
         }
