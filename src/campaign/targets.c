@@ -341,6 +341,13 @@ bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_t
     *out = fields;
     return true;
 }
+bool qa_targets_authored_order(const qa_targets *targets, qa_actor_id actor, uint32_t *order) {
+    if (!binding(targets, actor)) return false;
+    const target_index *entry = &targets->indexed[actor.slot];
+    if (!qa_actor_id_equal(entry->actor, actor)) return false;
+    *order = entry->order;
+    return true;
+}
 static bool set_target_field(qa_targets *targets, qa_actor_id actor, qa_string_id name,
                               bool targetname, qa_error *error) {
     if (!targets || !valid_string(targets, name))

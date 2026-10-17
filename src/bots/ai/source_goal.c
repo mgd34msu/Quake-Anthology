@@ -243,61 +243,113 @@ void bot_ai_unblock_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal) {
     if(bot_ai_live(b,actor) && b->services.entity_number(b->services.context,actor)==goal->entity) {
         bot_cooperative_cooldown row={.actor=actor,.client=s->acquired_source_client,.until=b->time+20};
         bot_ai_cooperative_cooldown_set(b,&row);
+        if(qa_actor_id_equal(s->interaction.nearby.candidate,actor))
+            s->interaction.nearby.candidate=(qa_actor_id){0};
     }
-    s->interaction=(bot_interaction_state){.until=b->time+8};
+    s->interaction.target=(qa_actor_id){0};s->interaction.until=b->time+8;
 }
-bool bot_ai_interactable_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
-    *found=false;s->interaction.target=(qa_actor_id){0};
-    if(!s->source_settings || b->time>=s->interaction.until ||
-       !b->services.shared.targets || bot_ai_order_active(s) || bot_ai_ordered(s)) return true;
-    if(b->services.modes && s->view.mode.generation) {
+typedef struct bot_interactable_query {
+    qa_bots *bots;
+    bot_ai_state *state;
+    qa_targets *targets;
+    qa_strings *strings;
+    const qa_string_id *keys;
+    float best_distance;
+    uint32_t best_order;
+    bool unblock;
+} bot_interactable_query;
+static bool interactable_evaluate(bot_interactable_query *query,qa_actor_id actor,qa_error *e) {
+    qa_bots *b=query->bots;bot_ai_state *s=query->state;bot_interaction_state *state=&s->interaction;
+    uint32_t order;
+    if(!qa_targets_authored_order(query->targets,actor,&order)) return true;
+    qa_authored_target fields;qa_linked_body body;
+    if(!qa_targets_read(query->targets,actor,&fields) ||
+       qa_bot_source_item_read(b->services.source_knowledge,fields.classname) ||
+       !qa_world_linked(b->services.shared.world,actor,&body)) return true;
+    qa_vec3 center=qa_vec_add(body.state.origin,
+        qa_vec_scale(qa_vec_add(body.state.bounds.mins,body.state.bounds.maxs),.5f));
+    qa_vec3 delta=qa_vec_sub(center,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
+    bool targetname=qa_strings_text(query->strings,fields.targetname).size!=0;
+    bool button=query->unblock && !targetname && distance<=1024*1024;
+    if(distance>96*96 && !button) return true;
+    qa_builtin_actor_traits traits;
+    if(b->services.shared.actor_traits &&
+       b->services.shared.actor_traits(b->services.shared.context,actor,&traits) &&
+       (traits.player || traits.monster)) return true;
+    double flags=0,health=0;
+    qa_targets_number(query->targets,actor,query->keys[QA_TARGET_KEY_SPAWNFLAGS],&flags);
+    if(qa_combat_has(b->services.shared.combat,actor)) {
+        qa_combat_state combat;
+        SOURCE_CALL(qa_combat_read_traits(b->services.shared.combat,actor,&combat,e));
+        health=combat.health;
+    } else qa_targets_number(query->targets,actor,query->keys[QA_TARGET_KEY_HEALTH],&health);
+    if(!bot_ai_live(b,actor)) return true;
+    qa_bot_source_interaction kind=qa_bot_source_interaction_read(b->services.source_knowledge,
+        fields.classname,(uint32_t)qa_source_to_i32(flags),health>0,targetname);
+    if(distance<=96*96 && (kind==QA_BOT_SOURCE_INTERACTION_USE || kind==QA_BOT_SOURCE_INTERACTION_PUSH))
+        state->nearby.use=true;
+    if(button && kind==QA_BOT_SOURCE_INTERACTION_PUSH && distance<=query->best_distance) {
+        const bot_actor_memory *memory=bot_ai_memory_read(b,actor);
+        if(memory && memory->unreachable_until[s->acquired_source_client]>b->time) return true;
+        if(distance==query->best_distance && (order>query->best_order ||
+           (order==query->best_order && actor.slot>=state->nearby.candidate.slot))) return true;
+        state->nearby.candidate=actor;state->nearby.center=center;
+        state->nearby.bounds=(qa_bounds){qa_vec_sub(body.absolute_bounds.mins,center),
+            qa_vec_sub(body.absolute_bounds.maxs,center)};
+        state->nearby.distance_squared=distance;query->best_distance=distance;query->best_order=order;
+    }
+    return true;
+}
+static bool interactables_prepare(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    bot_interaction_state *state=&s->interaction;
+    if(state->nearby.prepared) return true;
+    state->nearby.prepared=true;state->nearby.use=false;state->nearby.candidate=(qa_actor_id){0};
+    if(!b->services.shared.targets) return true;
+    bool unblock=b->time<state->until && !bot_ai_order_active(s) && !bot_ai_ordered(s);
+    if(unblock && b->services.modes && s->view.mode.generation) {
         qa_mode_view mode;
         SOURCE_CALL(qa_modes_read(b->services.modes,s->view.mode,&mode,e));
         if(mode.rules.kind==QA_MODE_CTF || mode.rules.kind==QA_MODE_ONE_FLAG) {
             for(size_t i=0;i<3;++i) {
                 qa_mode_flag_view flag;
                 SOURCE_CALL(qa_modes_flag_read(b->services.modes,s->view.mode,mode.rules.teams[i],&flag,e));
-                if(flag.actor.registry) return true;
+                if(flag.actor.registry) {unblock=false;break;}
             }
         }
     }
-    qa_targets *targets=b->services.shared.targets;
-    qa_strings *strings=qa_session_strings(b->services.shared.session);
-    const qa_string_id *keys=qa_targets_field_keys(targets);
-    qa_target_cursor cursor={0};qa_actor_id actor,best={0};qa_linked_body best_body={0};
-    qa_vec3 center={0};float best_distance=1024*1024+1;
-    while(qa_targets_next_authored(targets,0,&cursor,&actor)) {
-        qa_authored_target fields;qa_linked_body body;
-        if(!qa_targets_read(targets,actor,&fields) || qa_strings_text(strings,fields.targetname).size ||
-           qa_bot_source_item_read(b->services.source_knowledge,fields.classname) ||
-           !qa_world_linked(b->services.shared.world,actor,&body)) continue;
-        qa_builtin_actor_traits traits;
-        if(b->services.shared.actor_traits &&
-           b->services.shared.actor_traits(b->services.shared.context,actor,&traits) &&
-           (traits.player || traits.monster)) continue;
-        const bot_actor_memory *memory=bot_ai_memory_read(b,actor);
-        if(memory && memory->unreachable_until[s->acquired_source_client]>b->time) continue;
-        double flags=0,health=0;
-        qa_targets_number(targets,actor,keys[QA_TARGET_KEY_SPAWNFLAGS],&flags);
-        if(qa_combat_has(b->services.shared.combat,actor)) {
-            qa_combat_state combat;
-            SOURCE_CALL(qa_combat_read_traits(b->services.shared.combat,actor,&combat,e));
-            health=combat.health;
-        } else qa_targets_number(targets,actor,keys[QA_TARGET_KEY_HEALTH],&health);
-        if(!bot_ai_live(b,actor) || qa_bot_source_interaction_read(b->services.source_knowledge,
-           fields.classname,(uint32_t)qa_source_to_i32(flags),health>0,false)!=QA_BOT_SOURCE_INTERACTION_PUSH)
-            continue;
-        qa_vec3 point=qa_vec_add(body.state.origin,
-            qa_vec_scale(qa_vec_add(body.state.bounds.mins,body.state.bounds.maxs),.5f));
-        qa_vec3 delta=qa_vec_sub(point,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
-        if(distance<=1024*1024 && distance<best_distance) {
-            best=actor;best_body=body;center=point;best_distance=distance;
-        }
+    float range=unblock?1024:96;
+    qa_vec3 reach=qa_v3(range,range,range),origin=bot_ai_origin(s);
+    qa_bounds bounds={qa_vec_sub(origin,reach),qa_vec_add(origin,reach)};
+    qa_world_actor_snapshot snapshot={0};
+    /* BOTH captures linked nonsolid/body-only controls too, without requiring
+     * a collision descriptor as the filtered visitor does. */
+    if(!qa_world_snapshot_capture(b->services.shared.world,bounds,QA_COLLISION_BOTH,
+        QA_WORLD_ORDER_SPATIAL,&snapshot,e)) return false;
+    bot_interactable_query query={.bots=b,.state=s,.targets=b->services.shared.targets,
+        .strings=qa_session_strings(b->services.shared.session),.best_distance=1024*1024+1,
+        .best_order=UINT32_MAX,.unblock=unblock};
+    query.keys=qa_targets_field_keys(query.targets);
+    bool okay=true;
+    for(size_t i=0;i<snapshot.count;++i) {
+        if(!interactable_evaluate(&query,snapshot.actors[i],e)) {okay=false;break;}
+        if(!alive(b,s) || (!unblock && state->nearby.use)) break;
     }
-    if(!best.registry) return true;
-    if(best_distance<=40*40) {s->interaction.until=0;return true;}
-    qa_bounds bounds={qa_vec_sub(best_body.absolute_bounds.mins,center),
-        qa_vec_sub(best_body.absolute_bounds.maxs,center)};
+    qa_world_snapshot_release(&snapshot);return okay;
+}
+bool bot_ai_interactables_use(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    if(!s->source_settings || s->player.dead || s->player.observer || s->player.intermission) return true;
+    SOURCE_CALL(interactables_prepare(b,s,e));
+    return !s->interaction.nearby.use || action(b,s,QA_BOT_USE,e);
+}
+bool bot_ai_interactable_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
+    *found=false;s->interaction.target=(qa_actor_id){0};
+    if(!s->source_settings || b->time>=s->interaction.until || bot_ai_order_active(s) || bot_ai_ordered(s))
+        return true;
+    SOURCE_CALL(interactables_prepare(b,s,e));
+    qa_actor_id best=s->interaction.nearby.candidate;
+    if(!bot_ai_live(b,best)) return true;
+    if(s->interaction.nearby.distance_squared<=40*40) {s->interaction.until=0;return true;}
+    qa_vec3 center=s->interaction.nearby.center;qa_bounds bounds=s->interaction.nearby.bounds;
     qa_vec3 origin;uint32_t area;
     SOURCE_CALL(qa_bot_navigation_best(navigation(b,s),center,bounds,&origin,&area,e));
     if(!bot_ai_live(b,best)) return true;

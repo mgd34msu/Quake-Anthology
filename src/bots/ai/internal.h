@@ -114,6 +114,14 @@ typedef struct bot_progress_memory {
 typedef struct bot_interaction_state {
     qa_actor_id target;
     float until;
+    /* Both authored interaction consumers share one projection per AI think. */
+    struct {
+        qa_actor_id candidate;
+        qa_vec3 center;
+        qa_bounds bounds;
+        float distance_squared;
+        bool prepared, use;
+    } nearby;
 } bot_interaction_state;
 typedef enum bot_objective_role {
     BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND
@@ -225,6 +233,7 @@ bool bot_ai_human_nearest(qa_bots *,bot_ai_state *,bool teammates_only,
     qa_vec3 *,float *distance_squared,bool *found,qa_error *);
 bool bot_ai_cooperative_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
 bool bot_ai_interactable_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
+bool bot_ai_interactables_use(qa_bots *,bot_ai_state *,qa_error *);
 void bot_ai_unblock_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
 bool bot_ai_authored_objective_goal(qa_bots *,bot_ai_state *,bot_objective_goal *,qa_error *);
 void bot_ai_cooperative_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);

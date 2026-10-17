@@ -466,6 +466,7 @@ bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *ar
 }
 bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     s->progress.pursuing=false;
+    s->interaction.nearby.prepared=false;
     s->hazard.floor.valid=false;s->hazard.floor.recovering=false;s->hazard.floor.side_flipped=false;
     if(!s->source_span.data && !bot_ai_source_alias_bind(b,s,e)) return false;
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
@@ -565,6 +566,8 @@ finished:
         ok = bot_ai_source_action_weapon(b,s,e);
     if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
         ok=bot_ai_trigger(b,s,e);
+    if(ok && !s->retired && bot_ai_live(b,s->view.actor))
+        ok=bot_ai_interactables_use(b,s,e);
     if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
         ok=bot_ai_authored_chat_step(b,s,e);
     if(!ok) return false;

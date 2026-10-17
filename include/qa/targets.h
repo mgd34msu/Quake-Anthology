@@ -117,6 +117,7 @@ void qa_targets_monster_route(qa_targets *, qa_actor_id, qa_string_id, qa_actor_
 qa_authored_monster *qa_targets_monster(qa_targets *, qa_actor_id);
 bool qa_targets_monster_lookup(void *targets, qa_actor_id, qa_monster_mission *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
+bool qa_targets_authored_order(const qa_targets *, qa_actor_id, uint32_t *order);
 /* The binding owns the field. Name setters notify at the committed store;
  * the wrapper also reconciles a callback that mutates then returns failure. */
 bool qa_targets_set_targetname(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
