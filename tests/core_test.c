@@ -4829,6 +4829,15 @@ static void test_literal_tokens(void)
         CHECK(!strcmp(frame.args_text,arena.args_text));
         CHECK(!strcmp(span.args_text,arena.args_text));
         qa_command_tokens_free(&arena); qa_command_tokens_free(&frame); qa_command_tokens_free(&span);
+        char path[256],command[sizeof(path)+16];
+        memset(path,'a',sizeof(path)-1);path[0]='/';path[sizeof(path)-1]=0;
+        for (unsigned quoted=0;quoted<2;++quoted) {
+            int length=snprintf(command,sizeof(command),quoted?"load \"%s\"":"load %s",path);
+            CHECK(length>0 && (size_t)length<sizeof(command));
+            CHECK(qa_command_tokenize(command,dialect,false,&arena,qa_arena_alloc_callback,&token_storage,&error));
+            CHECK(arena.count==2 && !strcmp(arena.values[0],"load") && !strcmp(arena.values[1],path));
+            qa_command_tokens_free(&arena);
+        }
         qa_arena_destroy(&token_storage);
     }
     const struct {
