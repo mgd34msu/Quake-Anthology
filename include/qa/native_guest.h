@@ -75,6 +75,10 @@ typedef struct qa_native_guest_processor_exception {
     uint32_t vector, error_code;
     bool has_error_code, software_interrupt;
 } qa_native_guest_processor_exception;
+typedef struct qa_native_guest_invalid_instruction {
+    /* Available diagnostic window, not a decoded length; zero for unreadable code. */
+    uint8_t bytes[15], byte_count;
+} qa_native_guest_invalid_instruction;
 
 /* Callback addresses identify caller-owned executable entries. A
  * callback decodes its genuine ABI and updates the real CPU continuation.
@@ -168,7 +172,7 @@ bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void 
 typedef enum qa_native_guest_stop_kind {
     QA_NATIVE_GUEST_RETURN, QA_NATIVE_GUEST_BUDGET, QA_NATIVE_GUEST_PROGRAM_STOP,
     QA_NATIVE_GUEST_HALT, QA_NATIVE_GUEST_MEMORY_FAULT,
-    QA_NATIVE_GUEST_PROCESSOR_EXCEPTION
+    QA_NATIVE_GUEST_PROCESSOR_EXCEPTION, QA_NATIVE_GUEST_INVALID_INSTRUCTION
 } qa_native_guest_stop_kind;
 typedef struct qa_native_guest_run_result {
     qa_native_guest_stop_kind kind;
@@ -180,6 +184,7 @@ typedef struct qa_native_guest_run_result {
     union {
         qa_native_guest_fault memory;
         qa_native_guest_processor_exception processor;
+        qa_native_guest_invalid_instruction invalid_instruction;
     } detail;
 } qa_native_guest_run_result;
 
@@ -190,10 +195,11 @@ typedef struct qa_native_guest_run_result {
  * successful resumable stop, including budget zero. Emulated counts include
  * stopped callback/observer dispatch and nested execution. remaining is bounded
  * by every enclosing run; the caller chooses the next operation's budget.
- * Emulated HALT, MEMORY_FAULT and PROCESSOR_EXCEPTION retain readable CPU state
+ * Emulated HALT, MEMORY_FAULT, PROCESSOR_EXCEPTION and INVALID_INSTRUCTION retain CPU state
  * for an explicit next run. The backend supplies the real continuation and
  * committed instruction prefixes; whole-register or RAM rollback is not implied.
- * Callback, unsupported-instruction and dependency failures remain terminal.
+ * INVALID_INSTRUCTION includes deliberate invalid opcodes and decoder limitations.
+ * Callback and dependency failures remain terminal.
  * The caller prepares the actual ABI
  * stack/registers before this raw operation and retains them until RETURN. */
 bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, size_t,

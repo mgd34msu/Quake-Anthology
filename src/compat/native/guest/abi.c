@@ -1,6 +1,7 @@
 #include "abi.h"
 #include "internal.h"
 #include "unicorn_abi_fp.h"
+#include <stdio.h>
 
 typedef enum location_kind { INTEGER, VECTOR, STACK } location_kind;
 typedef struct location {
@@ -871,6 +872,17 @@ bool guest_abi_call_step(guest_abi_call *call, size_t quantum, bool *returned, q
             "native guest %s vector %u, error 0x%x (%s), before ABI return",
             fault->software_interrupt ? "software interrupt" : "processor exception",
             fault->vector, fault->error_code, fault->has_error_code ? "present" : "absent");
+        okay = false;
+    } else if (okay && execution.kind == QA_NATIVE_GUEST_INVALID_INSTRUCTION) {
+        const qa_native_guest_invalid_instruction *invalid = &execution.detail.invalid_instruction;
+        char bytes[sizeof(invalid->bytes) * 3] = {0};
+        size_t offset = 0;
+        for (size_t i = 0; i < invalid->byte_count; ++i)
+            offset += (size_t)snprintf(bytes + offset, sizeof(bytes) - offset,
+                "%s%02x", i ? " " : "", (unsigned)invalid->bytes[i]);
+        qa_error_set(error, QA_ERROR_FORMAT, (size_t)execution.instruction,
+            "native guest invalid instruction before ABI return (diagnostic bytes: %s)",
+            invalid->byte_count ? bytes : "unavailable");
         okay = false;
     } else if (okay) {
         okay = qa_native_guest_cpu_read(guest, &cpu, error);

@@ -369,20 +369,50 @@ bool qa_native_guest_instructions(qa_native_guest *guest, qa_native_guest_instru
     return true;
 }
 
+static size_t executable_bytes(const qa_native_guest *guest, uint64_t instruction,
+    uint32_t access, uint8_t *out, size_t capacity)
+{
+    uint64_t maximum = guest->options.image.target.pointer_bytes == 4 ? UINT32_MAX : UINT64_MAX;
+    size_t count = 0;
+    while (count < capacity && instruction <= maximum - count) {
+        uint64_t address = instruction + count;
+        const qa_native_guest_mapping *mapping = guest_mapping(guest, address);
+        if (!mapping || (mapping->permissions & access) != access) break;
+        const guest_backing *backing = guest_backing_at(guest, mapping->backing);
+        uint64_t offset = mapping->backing_offset + address - mapping->base;
+        if (!backing || offset >= backing->bytes ||
+            (backing->file && offset >= backing->source.accessible_bytes)) break;
+        size_t amount = capacity - count;
+        uint64_t available = mapping->bytes - (address - mapping->base);
+        if (available < amount) amount = (size_t)available;
+        available = backing->bytes - offset;
+        if (available < amount) amount = (size_t)available;
+        if (backing->file) {
+            available = backing->source.accessible_bytes - offset;
+            if (available < amount) amount = (size_t)available;
+        }
+        if (amount - 1 > maximum - address) amount = (size_t)(maximum - address) + 1;
+        memcpy(out + count, backing->data + offset, amount);
+        count += amount;
+    }
+    return count;
+}
+
 static bool syscall_opcode(const qa_native_guest *guest, uint64_t instruction)
 {
     static const uint8_t opcode[2] = {0x0f, 0x05};
-    if (instruction > UINT64_MAX - 2) return false;
-    for (size_t i = 0; i < sizeof(opcode); ++i) {
-        qa_native_guest_mapping *mapping = guest_mapping(guest, instruction + i);
-        if (!mapping || !(mapping->permissions & QA_NATIVE_GUEST_EXECUTE)) return false;
-        guest_backing *backing = guest_backing_at(guest, mapping->backing);
-        uint64_t offset = mapping->backing_offset + instruction + i - mapping->base;
-        if (!backing || offset >= backing->bytes ||
-            (backing->file && offset >= backing->source.accessible_bytes) ||
-            backing->data[offset] != opcode[i]) return false;
-    }
-    return true;
+    uint8_t bytes[sizeof(opcode)];
+    return executable_bytes(guest, instruction, QA_NATIVE_GUEST_EXECUTE, bytes, sizeof(bytes)) == sizeof(bytes) &&
+        !memcmp(bytes, opcode, sizeof(bytes));
+}
+
+static qa_native_guest_invalid_instruction instruction_bytes(const qa_native_guest *guest,
+    uint64_t instruction)
+{
+    qa_native_guest_invalid_instruction window = {0};
+    window.byte_count = (uint8_t)executable_bytes(guest, instruction,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, window.bytes, sizeof(window.bytes));
+    return window;
 }
 
 static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
@@ -530,6 +560,12 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
             completed.kind = QA_NATIVE_GUEST_PROCESSOR_EXCEPTION;
             okay = guest_uc(guest, qa_unicorn_x86_exception_take(guest->cpu,
                 &completed.detail.processor), error);
+        } else if (okay && code == UC_ERR_INSN_INVALID) {
+            /* Pinned x86 reports both illegal and unknown decoder cases as
+             * EXCP06_ILLOP; acknowledge delivery without inventing a distinction. */
+            qa_native_guest_processor_exception exception;
+            okay = guest_uc(guest, qa_unicorn_x86_exception_take(guest->cpu, &exception), error);
+            completed.kind = QA_NATIVE_GUEST_INVALID_INSTRUCTION;
         } else if (okay) okay = guest_uc(guest, code, error);
         bool halted = false;
         if (okay && code == UC_ERR_OK && !boundary_fetch)
@@ -537,9 +573,12 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         guest->faulting = false;
         if (okay) okay = instruction_pointer(guest, &instruction, false, error);
         if (okay && (completed.kind == QA_NATIVE_GUEST_MEMORY_FAULT ||
-                     completed.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION)) {
-            completed.instruction = completed.kind == QA_NATIVE_GUEST_MEMORY_FAULT ?
-                instruction : frame.instruction;
+                     completed.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION ||
+                     completed.kind == QA_NATIVE_GUEST_INVALID_INSTRUCTION)) {
+            completed.instruction = completed.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION ?
+                frame.instruction : instruction;
+            if (completed.kind == QA_NATIVE_GUEST_INVALID_INSTRUCTION)
+                completed.detail.invalid_instruction = instruction_bytes(guest, instruction);
             break;
         }
         if (okay && halted) {

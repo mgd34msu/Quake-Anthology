@@ -9236,6 +9236,11 @@ static void test_native_guest_halt(void)
     CHECK(result.detail.memory.address==fault.address && result.detail.memory.access==fault.access);
     CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
 }
+static bool native_test_stop_syscall(void *context,qa_native_guest *guest,
+    const qa_native_guest_syscall *request,qa_native_guest_syscall_result *result,qa_error *error)
+{
+    (void)guest;(void)error;*(uint64_t *)context=request->instruction;result->stop=true;return true;
+}
 static void test_native_guest_architectural_stops(void)
 {
     qa_error error={0};qa_native_guest *guest=NULL;
@@ -9244,13 +9249,14 @@ static void test_native_guest_architectural_stops(void)
             .target={.os=QA_NATIVE_OS_LINUX,.arch=QA_NATIVE_ARCH_X86_64,
                 .abi=QA_NATIVE_ABI_SYSTEM_V_X64,.pointer_bytes=8}},
         .allocation_base=UINT64_C(0x200000),
-        .maximum_backing_bytes=QA_NATIVE_GUEST_PAGE,.backend=QA_NATIVE_GUEST_EMULATED};
+        .maximum_backing_bytes=3*QA_NATIVE_GUEST_PAGE,.backend=QA_NATIVE_GUEST_EMULATED};
     CHECK(qa_native_guest_create(&options,&guest,&error));
     const uint64_t entry=UINT64_C(0x100000);
     const uint8_t code[]={0xb9,0,0,0,0,0xb8,7,0,0,0,0x31,0xd2,0xf7,0xf1,
         0xb8,43,0,0,0,0x90,
         [32]=0xcc,0xb8,57,0,0,0,0x90,
-        [48]=0x48,0xa1,0,0,0x50,0,0,0,0,0,0xb8,85,0,0,0,0x90};
+        [48]=0x48,0xa1,0,0,0x50,0,0,0,0,0,0xb8,85,0,0,0,0x90,
+        [64]=0x0f,0x0b,0xb8,99,0,0,0,0x90};
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest,entry,QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,(qa_bytes){code,sizeof(code)},&mapping,&error));
@@ -9286,6 +9292,34 @@ static void test_native_guest_architectural_stops(void)
     CHECK(qa_native_guest_run(guest,cpu.instruction,entry+63,64,64,&result,&error));
     CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
     CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==85);
+    CHECK(qa_native_guest_run(guest,entry+64,entry+71,64,64,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION && result.instruction==entry+64 &&
+        result.detail.invalid_instruction.byte_count>=2 && result.detail.invalid_instruction.bytes[0]==0x0f &&
+        result.detail.invalid_instruction.bytes[1]==0x0b && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.instruction==entry+64);
+    CHECK(qa_native_guest_run(guest,cpu.instruction,entry+71,64,64,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION);
+    cpu.instruction=entry+66;
+    CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+    CHECK(qa_native_guest_run(guest,cpu.instruction,entry+71,64,64,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.registers[QA_NATIVE_RAX]==99);
+    const uint8_t invalid[]={0x0f,0x0b,[16]=0x0f,0x05};const uint64_t execute_only=UINT64_C(0x300000);
+    CHECK(qa_native_guest_map(guest,execute_only,QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_EXECUTE,(qa_bytes){invalid,sizeof(invalid)},&mapping,&error));
+    CHECK(qa_native_guest_run(guest,execute_only,execute_only+2,64,64,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION &&
+        result.detail.invalid_instruction.byte_count==0 && !qa_native_guest_terminal(guest));
+    uint64_t syscall=0;
+    CHECK(qa_native_guest_run_program(guest,execute_only+16,0,64,64,native_test_stop_syscall,
+        &syscall,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_PROGRAM_STOP && syscall==execute_only+16);
+    uint8_t boundary[QA_NATIVE_GUEST_PAGE]={0};boundary[sizeof(boundary)-2]=0x0f;boundary[sizeof(boundary)-1]=0x0b;
+    const uint64_t final=UINT64_C(0x400000);
+    CHECK(qa_native_guest_map(guest,final,QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,(qa_bytes){boundary,sizeof(boundary)},&mapping,&error));
+    CHECK(qa_native_guest_run(guest,final+sizeof(boundary)-2,final+sizeof(boundary),64,64,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION && result.detail.invalid_instruction.byte_count==2);
     CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
 }
 static void test_native_i386_call_conventions(void)
