@@ -934,6 +934,11 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
             ((spawn.team_restriction & 2) && team != 1) ||
             ((spawn.team_restriction & 4) && team != 2))
             return true;
+        float handicap = (float)player->handicap;
+        if (game->options.hooks.source_handicap)
+            handicap = game->options.hooks.source_handicap(game->options.hooks.context,
+                offer->recipient, handicap);
+        if (!isfinite(handicap) || handicap <= 0 || handicap > 100) handicap = 100;
         if (!pickup_log(call, offer, item, error))
             return false;
         if (!pickup_original_live(game, offer, &entity, &recipient))
@@ -941,9 +946,9 @@ static bool pickup_original_body(void *context, const qa_pickup_offer *offer, bo
         player = &recipient->state.player;
         player->persistent = (qa_q3_powerup)item->tag;
         player->persistent_item = offer->pickup;
-        player->max_health = player->handicap;
+        player->max_health = (int32_t)handicap;
         if (player->persistent == QA_Q3_P_GUARD) {
-            player->max_health = qa_i32_add(player->max_health, player->max_health);
+            player->max_health = (int32_t)(handicap * 2.0f);
             if (!qa_combat_set_health(game->options.services.combat, offer->recipient,
                                       player->max_health, error))
                 return false;

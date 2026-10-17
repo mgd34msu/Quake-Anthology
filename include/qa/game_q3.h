@@ -252,6 +252,7 @@ typedef struct qa_q3_hooks {
      * Unhandled requests continue through this GAME's inventory action. */
     bool (*inventory_weapon_request)(void *, qa_actor_id, qa_item_id, bool *handled, qa_error *);
     int32_t (*source_team)(void *, qa_actor_id);
+    float (*source_handicap)(void *, qa_actor_id, float fallback);
     /* Original red/blue numbers paired with the common mode team identities. */
     void (*source_team_mapping)(void *, qa_team_source_value out[2]);
     int32_t (*entity_number)(void *, qa_actor_id);

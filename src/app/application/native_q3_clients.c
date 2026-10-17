@@ -29,6 +29,21 @@
 #include <stdio.h>
 #include <string.h>
 
+float application_native_q3_client_handicap(void *opaque, qa_actor_id actor, float fallback)
+{
+    application_provider *provider = opaque;
+    uint32_t slot;
+    const char *info;
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
+        !qa_q3_native_client_slot(provider->state.q3, actor, &slot, NULL) ||
+        !application_native_q3_wire_source_userinfo_read(provider, slot, &info, NULL))
+        return fallback;
+    char value[1024];
+    qa_q3_client_info_value(info, "handicap", value, sizeof(value));
+    double number;
+    return qa_parse_atof(value, &number, NULL) ? (float)number : 0;
+}
+
 static int32_t difference(int32_t left, int32_t right)
 {
     uint32_t bits = (uint32_t)left - (uint32_t)right;
