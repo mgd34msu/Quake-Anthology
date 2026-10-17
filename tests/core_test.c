@@ -38,6 +38,7 @@
 #include "qa/script.h"
 #include "qa/campaign.h"
 #include "../src/app/application/source_objectives.h"
+#include "../src/app/application/map_travel_private.h"
 #include "../src/gameplay/modes/internal.h"
 #include "qa/modes_map.h"
 #include "qa/arena_progress.h"
@@ -3114,18 +3115,22 @@ static void test_source_objectives(void)
     CHECK(application_source_objectives_activate(owned, &modes, &error));
     CHECK(application_source_objectives_activate(borrowed, &modes, &error) && borrower.scalar == 100);
     CHECK(application_source_objectives_activate(read_only, &modes, &error) && readonly.scalar == 100);
+    bool gates_complete = true;
+    CHECK(qa_modes_campaign_gates(&modes, &gates_complete, &error) && !gates_complete);
     qa_string_id id, home, done;
     CHECK(qa_strings_intern_cstr(strings, "fixture:flag", &id, &error) &&
         qa_strings_intern_cstr(strings, "home", &home, &error) && qa_strings_intern_cstr(strings, "done", &done, &error));
     qa_objective_state state = {.stage = done, .phase = QA_OBJECTIVE_COMPLETE, .complete = true, .carrier = actor, .target = actor};
     CHECK(qa_modes_change_objective(&modes, (qa_mode_id){0}, id, &state, &error));
     CHECK(owner.scalar == 20 && owner.changes == 1);
+    CHECK(qa_modes_campaign_gates(&modes, &gates_complete, &error) && gates_complete);
     CHECK(application_source_objectives_refresh(borrowed, &modes, &error));
     CHECK(borrower.scalar == 200 && qa_actor_id_equal(borrower.carrier, actor) && qa_actor_id_equal(borrower.target, actor));
     borrower.scalar = 100; borrower.carrier = (qa_actor_id){0};
     CHECK(application_source_objectives_flush(borrowed, &modes, &error));
     CHECK(owner.scalar == 10 && owner.changes == 2 && !owner.carrier.registry && qa_actor_id_equal(owner.target, actor));
     CHECK(qa_modes_objective(&modes, (qa_mode_id){0}, id, &state, &error) && state.stage == home && !state.complete);
+    CHECK(qa_modes_campaign_gates(&modes, &gates_complete, &error) && !gates_complete);
     readonly.scalar = 200;
     CHECK(!application_source_objectives_flush(read_only, &modes, &error) && owner.scalar == 10 && owner.changes == 2);
     ++readonly.location;
@@ -3144,6 +3149,75 @@ static void test_source_objectives(void)
     application_source_objectives_destroy(read_only); application_source_objectives_destroy(borrowed); application_source_objectives_destroy(owned);
     qa_json_destroy(readonly_doc); qa_json_destroy(borrowed_doc); qa_json_destroy(owned_doc);
     CHECK(qa_session_destroy(session, &error));
+}
+
+static void test_campaign_travel_continuation(void)
+{
+    qa_error error = {0};
+    char directory[] = "/tmp/qa-core-campaign-travel-XXXXXX";
+    CHECK(mkdtemp(directory));
+    qa_resource_pool *resources = qa_resource_pool_create(&error);
+    CHECK(resources);
+    qa_catalog *catalog = NULL;
+    CHECK(qa_catalog_discover(&(qa_catalog_options){.resources = resources,
+        .content_root = directory, .generation = 1}, &catalog, &error));
+    qa_application apps[3] = {0};
+    for (size_t i = 0; i < 3; ++i) {
+        apps[i].state = QA_APPLICATION_READY;
+        apps[i].catalog = catalog;
+        CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 2,
+            .component_capacity = 1}, &apps[i].session, &error));
+        apps[i].campaign_unit = qa_campaign_unit_create(qa_session_strings(apps[i].session), &error);
+        CHECK(apps[i].campaign_unit);
+    }
+    qa_application *source = &apps[0], *restored = &apps[1], *legacy = &apps[2];
+    source->map_state = calloc(1, sizeof(*source->map_state));
+    CHECK(source->map_state);
+    struct application_map_state *state = source->map_state;
+    CHECK(qa_q2_travel_parse("base2$exit", &state->route, &error));
+    CHECK(qa_strings_intern_cstr(qa_session_strings(source->session), "campaign-source",
+        &state->provider, &error));
+    state->revision = 7;
+    state->origin = APPLICATION_TRAVEL_CAMPAIGN;
+    state->pending = state->gates_blocked = state->level_recorded = true;
+    state->carry_players = state->complete_campaign = true;
+    qa_application_travel_view travel;
+    CHECK(!qa_application_travel_read(source, &travel));
+    CHECK(application_map_travel_retained_read(source, &travel) && travel.revision == 7 &&
+        !strcmp(travel.target.name, "base2") && !strcmp(travel.target.spawn_point, "exit"));
+    qa_buffer saved = {0};
+    CHECK(application_map_checkpoint_capture(source, false, &saved, &error));
+    CHECK(application_map_checkpoint_restore(restored, (qa_bytes){saved.data, saved.size}, &error));
+    CHECK(restored->map_state->origin == APPLICATION_TRAVEL_CAMPAIGN &&
+        restored->map_state->level_recorded && restored->map_state->gates_blocked &&
+        !qa_application_travel_read(restored, &travel));
+    CHECK(application_map_travel_retained_read(restored, &travel) && travel.revision == 7 &&
+        travel.carry_players && travel.complete_campaign && !strcmp(travel.target.name, "base2") &&
+        !strcmp(travel.target.spawn_point, "exit"));
+    CHECK(!strcmp(qa_strings_cstr(qa_session_strings(restored->session), travel.provider), "campaign-source"));
+    CHECK(saved.size > sizeof(uint32_t) + 1);
+    CHECK(application_map_checkpoint_restore(legacy,
+        (qa_bytes){saved.data, saved.size - sizeof(uint32_t) - 1}, &error));
+    CHECK(legacy->map_state->origin == APPLICATION_TRAVEL_MANUAL &&
+        !legacy->map_state->level_recorded && qa_application_travel_read(legacy, &travel) &&
+        travel.revision == 7 && !strcmp(travel.target.name, "base2"));
+    CHECK(qa_application_queue_map_travel(restored,
+        &(qa_application_travel_request){.expression = "override"}, &error));
+    CHECK(qa_application_travel_read(restored, &travel) && travel.revision == 8 &&
+        !strcmp(travel.target.name, "maps/override.bsp") && !travel.carry_players && !travel.complete_campaign);
+    CHECK(restored->map_state->origin == APPLICATION_TRAVEL_MANUAL && !restored->map_state->level_recorded);
+    CHECK(application_map_travel_retained_read(source, &travel) && travel.revision == 7 &&
+        source->map_state->gates_blocked && source->map_state->level_recorded);
+    qa_buffer_free(&saved);
+    for (size_t i = 0; i < 3; ++i) {
+        qa_travel_route_free(&apps[i].map_state->route);
+        free(apps[i].map_state);
+        qa_campaign_unit_destroy(apps[i].campaign_unit);
+        CHECK(qa_session_destroy(apps[i].session, &error));
+    }
+    qa_catalog_release(catalog);
+    qa_resource_pool_destroy(resources);
+    CHECK(rmdir(directory) == 0);
 }
 
 static void test_debug_geometry_wire(void)
@@ -10420,6 +10494,7 @@ int main(int argc, char **argv)
     test_physical_prediction_command();
     test_shared_campaign_modes();
     test_source_objectives();
+    test_campaign_travel_continuation();
     test_debug_geometry_wire();
     test_debug_geometry_lifetime();
     test_shared_angle_basis();

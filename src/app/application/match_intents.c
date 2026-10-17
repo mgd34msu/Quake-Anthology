@@ -4,6 +4,7 @@
 #include "native_q3_clients.h"
 #include "startup_flow.h"
 #include "mode_identity.h"
+#include "map_travel_private.h"
 #include "qa/launch_identity.h"
 #include "qa/source_save.h"
 
@@ -101,7 +102,7 @@ bool application_match_intents_idle(const application_match_intents *state) {
 static bool restart_owned_by_travel(application_match_intents *state, qa_application *app) {
     qa_application_travel_view travel;
     if ((state->stage == MATCH_MAP_WAIT && state->revision) ||
-        (app && qa_application_travel_read(app, &travel))) {
+        (app && application_map_travel_retained_read(app, &travel))) {
         application_q3_restart_cancel(state->restart);
         return true;
     }
@@ -218,6 +219,13 @@ static bool config_intent(qa_match_intent_kind kind) {
     return kind == QA_MATCH_GAME_TYPE || kind == QA_MATCH_WARMUP ||
            kind == QA_MATCH_TIME_LIMIT || kind == QA_MATCH_FRAG_LIMIT;
 }
+static void travel_override(application_match_intents *state, const qa_application *app) {
+    const struct application_map_state *travel = app ? app->map_state : NULL;
+    if (state->stage == MATCH_MAP_AFTER || !travel || !travel->pending ||
+        travel->origin == APPLICATION_TRAVEL_MATCH) return;
+    if (state->stage != MATCH_MAP_EMPTY && !config_intent(state->kind)) clear(state);
+    application_q3_restart_cancel(state->restart);
+}
 bool application_match_intents_enqueue(application_match_intents *state, qa_application *app,
     const qa_match_intent *intent, qa_error *error) {
     if (state && intent && intent->kind == QA_MATCH_RESTART_MAP) {
@@ -294,7 +302,7 @@ static bool prepare_inner(application_match_intents *state, qa_application *app,
     if (state->stage == MATCH_MAP_UNRESOLVED) {
         if (!qualify(state, app, true, error)) return false;
         qa_application_travel_view travel;
-        if (qa_application_travel_read(app, &travel))
+        if (!config_intent(state->kind) && qa_application_travel_read(app, &travel))
             return application_fail(error, QA_ERROR_ARGUMENT, "ordinary travel is already pending");
         application_next_map_plan next = {0};
         bool okay = config_intent(state->kind) ?
@@ -317,6 +325,9 @@ bool application_match_intents_prepare(application_match_intents *state, qa_appl
     bool *consumed, qa_error *error) {
     if (!state || state->busy || !consumed) return application_fail(error, QA_ERROR_ARGUMENT, "match intent execution cannot reenter");
     *consumed = false;
+    travel_override(state, app);
+    if (state->stage != MATCH_MAP_EMPTY && state->stage != MATCH_MAP_AFTER &&
+        !config_intent(state->kind) && application_map_campaign_active(app)) return true;
     state->busy = true;
     bool okay = prepare_inner(state, app, consumed, error);
     state->busy = false;
@@ -335,7 +346,7 @@ bool application_match_intents_travel_read(const application_match_intents *stat
 static bool travel_matches(application_match_intents *state, qa_application *app,
                             uint64_t revision, qa_error *error) {
     qa_application_travel_view travel;
-    if (!revision || !qa_application_travel_read(app, &travel) || travel.revision != revision ||
+    if (!revision || !application_map_travel_retained_read(app, &travel) || travel.revision != revision ||
         travel.provider != state->owner || travel.geometry != state->product ||
         travel.target.kind != QA_TRAVEL_MAP || !travel.target.name ||
         strcmp(travel.target.name, state->plan.map) || travel.target.new_unit ||
@@ -481,6 +492,7 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
 }
 bool application_match_intents_reconnect(application_match_intents *state, qa_application *app, qa_error *error) {
     if (!state || state->busy) return application_fail(error, QA_ERROR_ARGUMENT, "match map reconnect cannot reenter");
+    travel_override(state, app);
     if (!application_q3_restart_reconnect(state->restart, app, error)) return false;
     if (state->stage == MATCH_MAP_EMPTY) return true;
     bool after = state->stage == MATCH_MAP_AFTER;

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "match_intents.h"
 #include "rankings.h"
+#include "map_travel_private.h"
 #include "qa/application_startup_prepare.h"
 
 bool qa_application_prepare_frame(qa_application *app, qa_error *error)
@@ -25,6 +26,9 @@ bool qa_application_prepare_frame(qa_application *app, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "frame preparation requires its actual idle driver boundary");
 
+    if (!application_map_travel_prepare(app, error)) return false;
+    if (qa_application_travel_read(app, &travel) && travel.target.kind == QA_TRAVEL_MAP)
+        return true;
     if (!app->match_intents) return true;
     app->frame_preparing = true;
     bool consumed = false;

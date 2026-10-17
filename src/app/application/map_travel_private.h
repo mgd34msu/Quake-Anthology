@@ -3,6 +3,12 @@
 #include "map_private.h"
 #include "qa/team_arena_campaign_progress.h"
 
+typedef enum application_travel_origin {
+    APPLICATION_TRAVEL_MANUAL,
+    APPLICATION_TRAVEL_CAMPAIGN,
+    APPLICATION_TRAVEL_MATCH
+} application_travel_origin;
+
 struct application_map_state {
     qa_launch_draft *restart_draft;
     qa_travel_route route;
@@ -14,7 +20,9 @@ struct application_map_state {
     qa_q2_landmark landmark;
     qa_string_id nextserver;
     qa_map_launch_policy map_launch;
+    application_travel_origin origin;
     bool pending, busy, has_landmark, carry_players, complete_campaign;
+    bool gates_blocked, level_recorded;
     bool loading, load_carry, load_new_unit;
     bool publication_complete, match_finished;
     bool start_match;
@@ -25,6 +33,9 @@ struct application_map_state {
     bool save_requested, fresh_entry, authored_autosave;
     qa_team_arena_override_phase team_overrides;
 };
+bool application_map_campaign_active(const qa_application *);
+bool application_map_travel_prepare(qa_application *, qa_error *);
+bool application_map_travel_retained_read(const qa_application *, qa_application_travel_view *);
 bool application_map_level_entry(qa_application *, bool fresh, qa_error *);
 bool application_map_autosave_request(qa_application *, qa_error *);
 void application_map_load_finish(qa_application *, bool published);

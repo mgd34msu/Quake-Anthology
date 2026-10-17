@@ -853,10 +853,7 @@ static bool q1_level_travel(void *opaque, qa_string_id map, qa_actor_id cause,
                                              .actor = cause,
                                              .text = map,
                                              .code = 2},
-                          error) &&
-           application_record_level(provider,
-                                    provider->application->current_map,
-                                    error);
+                          error);
 }
 
 static bool q1_level_achievement(void *opaque, qa_actor_id player,
@@ -2280,10 +2277,7 @@ static bool q2_transition(void *opaque, qa_actor_id source,
             .expression = destination, .landmark = landmark, .new_unit = end_unit,
             .carry_players = true, .complete_campaign = true}, error))
         return false;
-    return emit_map_event(provider, event, error) &&
-           application_record_level(provider,
-                                    provider->application->current_map,
-                                    error);
+    return emit_map_event(provider, event, error);
 }
 
 static bool q2_server_flags(void *opaque, bool write, bool cross_unit,

@@ -155,6 +155,9 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
                         qa_error *error)
 {
     qa_application *application = opaque;
+    if ((intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP ||
+         intent->kind == QA_MATCH_RESTART_MAP || (intent->kind == QA_MATCH_START && intent->map)) &&
+        application_map_campaign_active(application)) return true;
     application_provider *source = application_mode_provider(application, intent->mode);
     if (source && source->kind == APPLICATION_PROVIDER_Q2) {
         if (intent->kind == QA_MATCH_NEXT_MAP)
@@ -737,6 +740,7 @@ bool qa_application_prepare_match_travel(qa_application *application,
         !qa_world_idle(application->world) || !qa_combat_idle(application->combat))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "match travel requires idle shared owners");
+    if (!application_map_travel_prepare(application, error)) return false;
     if (application->match_intents == NULL)
         return true;
     bool consumed = false;
@@ -747,6 +751,7 @@ bool qa_application_prepare_match_travel(qa_application *application,
         return false;
     if (consumed)
         return true;
+    if (application_map_campaign_active(application)) return true;
     const application_next_map_plan *plan = NULL;
     qa_application_travel_request request;
     if (!application_match_intents_travel_read(application->match_intents,
