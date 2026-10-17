@@ -814,7 +814,7 @@ static bool canonical_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error 
                 .velocity=target.velocity,.presence=target.presence==4?4:2,.on_ground=target.grounded,
                 .maximum_frames=(int32_t)fminf(ceilf(flight*10),200),.frame_time=.1f};
             qa_bot_movement_prediction result;
-            if(!b->services.predict_motion(b->services.context,enemy,&query,&result,&predicted,e)) return false;
+            if(!b->services.predict_motion(b->services.context,s->view.actor,enemy,&query,&result,&predicted,e)) return false;
             if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy)) return true;
             if(predicted) aim=qa_vec_add(result.end,qa_v3(0,0,8));
         }
@@ -1138,7 +1138,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
                     qa_bot_movement_prediction_query query={.origin=origin,.velocity=velocity,.presence=4,
                         .maximum_frames=(int32_t)fminf(ceilf(flight*10),200),.frame_time=.1f};
                     qa_bot_movement_prediction prediction;bool available;
-                    SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,bot_ai_enemy_actor(b,s),
+                    SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,s->view.actor,bot_ai_enemy_actor(b,s),
                         &query,&prediction,&available,e));
                     if(!available) return bot_ai_fail(e,"Selected source aim target has no retained movement prediction owner");
                     best=qa_vec_add(prediction.end,qa_v3(0,0,8));
@@ -1159,7 +1159,7 @@ bool bot_ai_source_aim(qa_bots *b,bot_ai_state *s,qa_error *e) {
                         .maximum_frames=qa_source_to_i32((distance*10)/selected.weapon.speed),.frame_time=.1f};
                     qa_bot_movement_prediction prediction;bool available;
                     qa_actor_id actor=bot_ai_enemy_actor(b,s);
-                    SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,actor,&query,&prediction,&available,e));
+                    SOURCE_ATTACK_CALL(b->services.predict_motion(b->services.context,s->view.actor,actor,&query,&prediction,&available,e));
                     if(!available) return bot_ai_fail(e,"Source aim target has no retained movement prediction owner");
                     best=prediction.end;
                 } else if(skill>.4f) {

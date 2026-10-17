@@ -109,6 +109,7 @@ bool qa_bot_navigation_alternatives(qa_bot_navigation *, const qa_bot_nav_route_
                                     qa_bot_alternative_goal *, size_t capacity,
                                     size_t *, qa_error *);
 typedef struct qa_bot_movement_prediction_query {
+    qa_actor_id actor; /* Zero uses the navigation binding's movement actor. */
     qa_actor_id pass_actor;
     qa_vec3 origin, velocity, command_move;
     uint32_t presence, stop_events, stop_area;
@@ -130,8 +131,9 @@ typedef struct qa_bot_movement_prediction {
         uint32_t last_area, area, plane;
     } trace;
 } qa_bot_movement_prediction;
-/* Replays selected movement on detached state. An actorless map binding uses
- * its graph profile; pass_actor only excludes that actor from collision traces. */
+/* Replays selected movement on detached state. A query actor overrides the
+ * binding; actorless predictions use the graph profile. pass_actor only
+ * excludes that actor from collision traces. */
 bool qa_bot_navigation_predict_movement(qa_bot_navigation *,
                                         const qa_bot_movement_prediction_query *,
                                         qa_bot_movement_prediction *, qa_error *);

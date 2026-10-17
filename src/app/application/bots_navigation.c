@@ -1,5 +1,6 @@
 #include "bots_private.h"
 #include "bots_npc.h"
+#include "control_frame.h"
 #include "native_q3_console.h"
 #include "qa/bots_memory.h"
 #include "qa/game_q3_wire.h"
@@ -60,16 +61,21 @@ bool application_bot_movement_input(void *opaque,qa_actor_id actor,qa_movement_i
     qa_combat_state combat;qa_body_state body;
     if(!qa_combat_read_traits(application->combat,actor,&combat,error) ||
        !qa_world_body_read(application->world,actor,&body,error)) return false;
+    application_provider *character=application_provider_for(application,actor,QA_ROLE_CHARACTER,NULL);
+    qa_movement_input postures=application_control_character_postures(character,actor);
     *out=(qa_movement_input){.actor=actor,.state=view.state,.profile=view.profile,
         .shape={QA_SHAPE_BOX,view.bounds},.current_bounds=view.bounds,.has_current_bounds=true,
-        .standing={control->player.standing_bounds,view.view_height},
-        .crouched={view.bounds,view.view_height},.dead={view.bounds,view.view_height},
+        .standing=postures.standing,.crouched=postures.crouched,.dead=postures.dead,
+        .invulnerability_bounds=postures.invulnerability_bounds,.q1_solid=postures.q1_solid,
         .time_ns=qa_session_elapsed(application->session),.prediction=true,.view_offset=view.view_offset,
         .q2r_pml_origin=&control->q2r_pml_origin,.environment=qa_movement_environment_default()};
     out->environment.health=combat.health;
+    out->environment.invulnerable=combat.invulnerable;
     out->environment.flight=view.flight;
     out->environment.gravity_multiplier=view.gravity_multiplier;
+    out->environment.has_mode=view.player_mode_set;out->environment.mode=view.player_mode;
     out->environment.has_body_bounds=true;out->environment.body_bounds=body.bounds;
+    application_control_world_physics(application,&out->profile);
     return true;
 }
 static qa_actor_id source_actor(void *opaque,int32_t number) {
@@ -817,7 +823,7 @@ bool application_bots_guest_admit(qa_application *application,qa_actor_id actor,
     target->next=bots->targets;bots->targets=target;
     application_bot_target_index_bind(bots,target);return true;
 }
-bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
+bool application_bot_predict_motion(void *opaque,qa_actor_id requester,qa_actor_id actor,
                                      const qa_bot_movement_prediction_query *query,
                                      qa_bot_movement_prediction *out,bool *available,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;*available=false;
@@ -826,31 +832,12 @@ bool application_bot_predict_motion(void *opaque,qa_actor_id actor,
     application_provider *movement=application_provider_for(application,actor,QA_ROLE_MOVEMENT,NULL);
     if(!movement || (movement->kind!=APPLICATION_PROVIDER_Q1 && movement->kind!=APPLICATION_PROVIDER_Q2 &&
                      movement->kind!=APPLICATION_PROVIDER_Q3)) return true;
-    application_bot_target *target=application_bot_target_find(bots,actor);
-    if(target && target->predicting)
-        return application_fail(error,QA_ERROR_ARGUMENT,"target movement prediction reentered its workspace");
-    if(!target) {
-        target=application_bot_target_take(bots,error);
-        if(!target) return false;
-        application_bot_seat seat={.actor=actor};
-        if(!application_bot_navigation_bind(bots,&seat,error)) {application_bot_target_drop(bots,target);return false;}
-        target->actor=actor;target->movement=movement;target->profile=control.profile;
-        target->bounds=control.bounds;target->navigation=seat.navigation;
-        target->next=bots->targets;bots->targets=target;
-        application_bot_target_index_bind(bots,target);
-    } else if(target->movement!=movement ||
-              memcmp(&target->profile,&control.profile,sizeof(control.profile)) ||
-              memcmp(&target->bounds,&control.bounds,sizeof(control.bounds))) {
-        application_bot_seat seat={.actor=actor};
-        if(!application_bot_navigation_bind(bots,&seat,error)) return false;
-        qa_bot_navigation_destroy(target->navigation);target->navigation=seat.navigation;
-        target->movement=movement;target->profile=control.profile;target->bounds=control.bounds;
-    }
-    target->predicting=true;
+    const application_bot_seat *owner=application_bot_seat_find(bots,requester);
+    if(!owner || !owner->navigation) return true;
+    qa_bot_movement_prediction_query selected=*query;selected.actor=actor;
     ++bots->calls;
-    bool ok=qa_bot_navigation_predict_movement(target->navigation,query,out,error);
+    bool ok=qa_bot_navigation_predict_movement(owner->navigation,&selected,out,error);
     --bots->calls;
-    target->predicting=false;
     *available=qa_actors_get(qa_session_actors(application->session),actor)!=NULL;
     if(!*available) {if(error)*error=(qa_error){0};return true;}
     return ok;

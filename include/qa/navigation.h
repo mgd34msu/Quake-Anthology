@@ -354,7 +354,7 @@ typedef struct qa_nav_prediction_result {
     qa_vec3 end, velocity;
     uint32_t end_area, frames, stop_event;
     float seconds;
-    bool grounded, has_bounds, has_trace;
+    bool grounded, crouched, has_bounds, has_trace;
     int32_t water_level;
     qa_bounds bounds;
     qa_trace_query last_query;

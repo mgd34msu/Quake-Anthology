@@ -10,7 +10,8 @@ bool qa_bot_navigation_predict_movement(qa_bot_navigation *n,
     double milliseconds = floor((double)frame_time * 1000 + .5);
     if (!isfinite(milliseconds) || milliseconds < 1 || milliseconds > UINT32_MAX)
         return bot_nav_fail(e, "bot movement prediction must advance representable source time");
-    qa_nav_prediction_query q = {.actor = n->actor, .pass_actor = query->pass_actor,
+    qa_nav_prediction_query q = {.actor = query->actor.registry ? query->actor : n->actor,
+        .pass_actor = query->pass_actor,
         .origin = query->origin,
         .velocity = query->velocity, .command_move = query->command_move,
         .presence = query->presence, .on_ground = query->on_ground, .world_only = query->world_only,
@@ -50,11 +51,8 @@ bool qa_bot_navigation_predict_movement(qa_bot_navigation *n,
             }
         }
     }
-    if (result->has_bounds) {
-        qa_bounds crouched = qa_bot_navigation_presence(n, 4);
-        value.presence = result->bounds.maxs.z - result->bounds.mins.z <=
-            crouched.maxs.z - crouched.mins.z ? 4 : 2;
-    }
+    if (result->has_bounds)
+        value.presence = result->crouched ? 4 : 2;
     if (result->end_area == QA_NAV_NO_INDEX &&
         !qa_bot_navigation_point(n, result->end, &value.end_area, e)) return false;
     if ((result->stop_event & (4 | 8 | 16)) &&

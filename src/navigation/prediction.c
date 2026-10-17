@@ -87,20 +87,19 @@ static bool begin(nav_prediction *p, qa_actor_id actor, qa_vec3 origin, qa_error
     if (actor.registry) {
         if (!n->services.movement_input(n->services.context, actor, &p->input, e)) return false;
         if (!qa_actor_id_equal(p->input.actor, actor) ||
-            p->input.state.kind != n->graph->view.profile.movement.kind ||
-            p->input.profile.kind != n->graph->view.profile.movement.kind) {
+            p->input.state.kind != p->input.profile.kind) {
             qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                          "Navigation prediction does not match the actor's selected movement");
             return false;
         }
     } else {
         p->input = qa_movement_input_default(n->graph->view.profile.movement.kind, actor);
+        p->input.profile = n->graph->view.profile.movement;
+        p->input.has_trace_policy = true;
+        p->input.trace_policy = n->graph->view.profile.policy;
+        p->input.shape = n->graph->view.profile.shape;
     }
-    p->input.profile = n->graph->view.profile.movement;
     p->input.prediction = true;
-    p->input.has_trace_policy = true;
-    p->input.trace_policy = n->graph->view.profile.policy;
-    p->input.shape = n->graph->view.profile.shape;
     p->pml_origin = p->input.q2r_pml_origin == NULL ? origin : *p->input.q2r_pml_origin;
     p->input.q2r_pml_origin = &p->pml_origin;
     if (!qa_movement_set_origin(&p->input.state, origin, e) ||
@@ -394,6 +393,11 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
         out->water_level = result->water_level;
         out->has_bounds = true;
         out->bounds = result->bounds;
+        qa_bounds crouched = q->actor.registry ? p.input.crouched.bounds :
+            n->graph->view.profile.has_crouched_shape ? n->graph->view.profile.crouched_shape.bounds :
+            n->graph->view.profile.shape.bounds;
+        out->crouched = result->bounds.maxs.z - result->bounds.mins.z <=
+            crouched.maxs.z - crouched.mins.z;
         out->velocity = qa_movement_velocity(&result->state);
         ok = prediction_stop(n, w, q, result, start, was_grounded, frame, p.damaging_fall, &end,
                              &out->end_area, &out->stop_event, e);

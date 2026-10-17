@@ -1444,6 +1444,16 @@ static void test_visibility_phs_union(void)
     }
 }
 
+static bool navigation_selected_input(void *context, qa_actor_id actor,
+    qa_movement_input *out, qa_error *error)
+{
+    (void)error;
+    const qa_movement_input *selected = context;
+    CHECK(qa_actor_id_equal(actor, selected->actor));
+    *out = *selected;
+    return true;
+}
+
 static void aas_reachability_generate(const qa_aas_view *source, bool water,
     const qa_bsp_view *geometry, qa_collision_geometry *collision,
     qa_nav_variable_read variable,void *context,qa_nav_asset **out)
@@ -1470,7 +1480,9 @@ static void aas_reachability_generate(const qa_aas_view *source, bool water,
         .crouched_shape={.kind=QA_SHAPE_BOX,.bounds={{-16,-16,-24},{16,16,16}}},
         .has_crouched_shape=true,.policy=qa_collision_ruleset_policy(QA_RULESET_Q3),
         .maximum_step=18,.minimum_floor_normal=.7f,.maximum_drop=400};
-    qa_navigation_services services={.world=world,.topology_geometry_only=true};
+    qa_movement_input selected={0};
+    qa_navigation_services services={.context=&selected,.world=world,.topology_geometry_only=true,
+        .movement_input=navigation_selected_input};
     qa_nav_graph *graph=NULL;qa_navigation *navigation=NULL;
     CHECK(qa_nav_graph_from_asset(&(qa_nav_map){.format=QA_BSP_29},asset,&profile,
         &services,NULL,&graph,&error));
@@ -1488,6 +1500,20 @@ static void aas_reachability_generate(const qa_aas_view *source, bool water,
         CHECK(qa_navigation_predict(navigation,workspace,&query,&scaled,&error));
         CHECK(fabsf(normal.velocity.z+80)<.001f && fabsf(scaled.velocity.z+40)<.001f &&
             scaled.end.z>normal.end.z);
+        qa_actor_id actor;
+        CHECK(qa_actors_allocate(actors,1,1,&actor,&error));
+        selected=qa_movement_input_default(QA_RULESET_NETQUAKE,actor);
+        selected.profile.data.nq.parameters.gravity=400;
+        selected.standing.bounds=selected.shape.bounds=(qa_bounds){{-8,-8,-8},{8,8,16}};
+        selected.crouched.bounds=(qa_bounds){{-8,-8,-8},{8,8,0}};
+        query.actor=actor;query.environment=NULL;
+        CHECK(qa_navigation_predict(navigation,workspace,&query,&normal,&error));
+        CHECK(fabsf(normal.velocity.z+40)<.001f && !normal.crouched &&
+            qa_bounds_equal(normal.bounds,selected.standing.bounds));
+        selected.profile.data.nq.parameters.gravity=200;
+        CHECK(qa_navigation_predict(navigation,workspace,&query,&scaled,&error));
+        CHECK(fabsf(scaled.velocity.z+20)<.001f && scaled.end.z>normal.end.z && !scaled.crouched);
+        CHECK(qa_actors_release(actors,actor,&error));
         qa_nav_prediction_result_free(&normal);qa_nav_prediction_result_free(&scaled);
         qa_nav_workspace_destroy(workspace);
     }

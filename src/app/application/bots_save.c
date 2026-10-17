@@ -416,7 +416,7 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
             if(!target) return false;
             *link=target;link=&target->next;
         }
-        if(target->predicting || !qa_source_save_actor(io,&target->actor) || !target->actor.registry ||
+        if(!qa_source_save_actor(io,&target->actor) || !target->actor.registry ||
             !provider_field(io,bots->application,&target->movement,false) ||
             !qa_persistence_movement_profile(io,&target->profile) || !qa_persistence_bounds(io,&target->bounds) ||
             !binding(io,bots,target->actor,&target->navigation) || !target->navigation) return false;
@@ -591,7 +591,7 @@ static bool agreement(application_bots *bots,qa_error *error) {
     }
     for(application_bot_target *t=bots->targets;t;t=t->next) {
         application_bot_graph *g=binding_graph(bots,t->navigation);
-        if(!g || t->predicting || !qa_actor_id_equal(t->actor,qa_bot_navigation_actor(t->navigation)) ||
+        if(!g || !qa_actor_id_equal(t->actor,qa_bot_navigation_actor(t->navigation)) ||
             t->movement!=g->movement ||
             memcmp(&t->bounds,&g->bounds,sizeof(t->bounds)))
             return application_fail(error,QA_ERROR_FORMAT,"Application target navigation differs from saved cache policy");
