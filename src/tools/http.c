@@ -701,8 +701,10 @@ void qa_http_handoff_publish(qa_http *active, qa_http *candidate) {
         http_transfer *t = candidate->transfers; candidate->transfers = t->next; transfer_free(t);
     }
     CURLM *empty = candidate->multi; candidate->multi = active->multi; active->multi = empty;
-    qa_platform_events *events = candidate->events; candidate->events = active->events; active->events = events;
-    bool owns_events = candidate->owns_events; candidate->owns_events = active->owns_events; active->owns_events = owns_events;
+    if (active->owns_events || candidate->owns_events) {
+        qa_platform_events *events = candidate->events; candidate->events = active->events; active->events = events;
+        bool owns_events = candidate->owns_events; candidate->owns_events = active->owns_events; active->owns_events = owns_events;
+    }
     uint64_t source_id = candidate->source_id; candidate->source_id = active->source_id; active->source_id = source_id;
     candidate->time_ns = active->time_ns;
     candidate->terminal_sequence = active->terminal_sequence; active->terminal_sequence = 0;

@@ -94,6 +94,9 @@ qa_platform_events *qa_platform_events_create(qa_error *);
  * Record headers, leases and alignment are sized by the queue itself. */
 qa_platform_events *qa_platform_events_create_reserved(uint32_t retained_records,
     size_t retained_payload_bytes, qa_error *);
+/* Exchange retained contents at an idle handoff. Borrowers keep the same queue
+ * objects; cursors must have returned before their contents move. */
+void qa_platform_events_exchange(qa_platform_events *, qa_platform_events *);
 void qa_platform_events_destroy(qa_platform_events *);
 void qa_platform_events_reset(qa_platform_events *);
 qa_platform_event_result qa_platform_events_admit(qa_platform_events *,

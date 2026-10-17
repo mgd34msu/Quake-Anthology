@@ -540,8 +540,8 @@ bool frontend_platform_handoff_prepare(const qa_frontend *active,const qa_fronte
 }
 void frontend_platform_handoff_publish(qa_frontend *candidate,qa_platform_events **events)
 {
-    qa_platform_events_destroy(candidate->platform_events);
-    candidate->platform_events=*events; *events=NULL;
+    qa_platform_events_exchange(candidate->platform_events,*events);
+    qa_platform_events_destroy(*events); *events=NULL;
 }
 bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *error)
 {

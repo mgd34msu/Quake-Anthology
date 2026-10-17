@@ -44,6 +44,13 @@ qa_platform_events *qa_platform_events_create_reserved(uint32_t retained_records
     return events;
 }
 
+void qa_platform_events_exchange(qa_platform_events *first, qa_platform_events *second)
+{
+    qa_platform_events temporary = *first;
+    *first = *second;
+    *second = temporary;
+}
+
 void qa_platform_events_reset(qa_platform_events *events)
 {
     while (events->first) {

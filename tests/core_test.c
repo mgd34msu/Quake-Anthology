@@ -8336,6 +8336,19 @@ static void test_platform_event_retirement(void)
     CHECK(ordinal == retained + QA_PLATFORM_EVENT_CAPACITY);
     CHECK(qa_platform_events_statistics(events).records == 0);
     CHECK(qa_platform_events_statistics(events).bytes == 0);
+    qa_platform_events *replacement = qa_platform_events_create(&error);
+    qa_platform_events *borrowed = events;
+    line.time_ns = 9000;
+    CHECK(replacement && qa_platform_events_push(replacement, &line,
+        (qa_bytes){packet, sizeof(packet)}, (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+    qa_platform_events_exchange(events, replacement);
+    qa_platform_events_destroy(replacement);
+    cursor = (qa_platform_event_cursor){0};
+    CHECK(qa_platform_events_read(borrowed, &cursor, &event, &bytes));
+    CHECK(event.kind == QA_PLATFORM_EVENT_CONSOLE_LINE && event.time_ns == 9000);
+    CHECK(bytes.size == sizeof(packet) && !memcmp(bytes.data, packet, sizeof(packet)));
+    qa_platform_events_consume(borrowed, &cursor);
+    CHECK(!qa_platform_events_read(borrowed, &cursor, &event, &bytes));
     qa_platform_events_destroy(events);
 }
 
