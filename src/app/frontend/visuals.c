@@ -1305,7 +1305,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
 }
 
 /* CL_ParseStatic owns derived render poses, not live edicts. The source
- * retains the signon bytes; this cache is rebuilt from them on map change. */
+ * retains the signon records; this cache is rebuilt from them on map change. */
 static bool static_model_prepare(qa_frontend *frontend, frontend_visual_owner *owner,
     const qa_q1_entity *baseline, const qa_application_qc_message_source *qc,
     const char *const names[255], size_t count, qa_error *error)
@@ -1367,21 +1367,6 @@ static bool static_source_prepare(qa_frontend *frontend, qa_actor_owner provider
         owner->static_revision = frontend->map_revision;
     }
     if (!count) return true;
-    if (!owner->static_nq && !owner->static_qw) {
-        if (qc) {
-            if (qw) { if (!(owner->static_qw = qa_qw_decoder_create(qc->protocol, error))) return false; }
-            else if (!qa_nq_decoder_create(qc->protocol, qc->options, &owner->static_nq, error)) return false;
-        } else if (qw) {
-            qa_application_network_qw_world clock;
-            if (!qa_application_network_qw_world_read(frontend->application, &clock, error) ||
-                !(owner->static_qw = qa_qw_decoder_create(clock.protocol, error))) return false;
-        } else {
-            qa_application_network_q1_world clock;
-            if (!qa_application_network_q1_world_read(frontend->application, provider, &clock, error) ||
-                !qa_nq_decoder_create(clock.protocol, (qa_nq_options){.standard_quake = clock.standard_quake},
-                    &owner->static_nq, error)) return false;
-        }
-    }
     if (owner->static_signon < count) {
         const char *qw_names[255] = {0}, **names = qw_names; size_t name_count = 0;
         if (!qc) {
@@ -1401,9 +1386,29 @@ static bool static_source_prepare(qa_frontend *frontend, qa_actor_owner provider
             if (!(qc ? qa_application_qc_message_signon_at(frontend->application, qc, owner->static_signon, &event, error) :
                 qw ? qa_application_network_qw_signon_at(frontend->application, owner->static_signon, &event, error) :
                 qa_application_network_q1_signon_at(frontend->application, provider, owner->static_signon, &event, error))) return false;
-            uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
-            qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-            if (!qa_application_protocol_event_encode(&event, &writer)) return false;
+            if (event.nq || event.qw) {
+                const qa_q1_entity *baseline = event.nq && event.nq->op == QA_NQ_STATIC ?
+                    &event.nq->data.entity : event.qw && event.qw->kind == QA_QW_STATIC ?
+                    &event.qw->data.baseline : NULL;
+                if (baseline && !static_model_prepare(frontend, owner, baseline, qc, names, name_count, error)) return false;
+                ++owner->static_signon;
+                continue;
+            }
+            if (!owner->static_nq && !owner->static_qw) {
+                if (qc) {
+                    if (qw) { if (!(owner->static_qw = qa_qw_decoder_create(qc->protocol, error))) return false; }
+                    else if (!qa_nq_decoder_create(qc->protocol, qc->options, &owner->static_nq, error)) return false;
+                } else if (qw) {
+                    qa_application_network_qw_world clock;
+                    if (!qa_application_network_qw_world_read(frontend->application, &clock, error) ||
+                        !(owner->static_qw = qa_qw_decoder_create(clock.protocol, error))) return false;
+                } else {
+                    qa_application_network_q1_world clock;
+                    if (!qa_application_network_q1_world_read(frontend->application, provider, &clock, error) ||
+                        !qa_nq_decoder_create(clock.protocol, (qa_nq_options){.standard_quake = clock.standard_quake},
+                            &owner->static_nq, error)) return false;
+                }
+            }
             qa_net_reader reader; qa_net_reader_init(&reader, event.payload, error);
             while (qa_net_reader_remaining(&reader)) {
                 if (qw) {

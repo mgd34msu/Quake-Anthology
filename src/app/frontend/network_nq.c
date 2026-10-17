@@ -79,6 +79,13 @@ static bool batch_message(nq_batch *batch, const qa_nq_message *message, qa_nq_o
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
     qa_nq_message value = *message;
     if (value.op == QA_NQ_CLIENTDATA) value.data.clientdata = wire_clientdata(batch->protocol, value.data.clientdata);
+    if (value.op == QA_NQ_STATIC || value.op == QA_NQ_BASELINE) {
+        if (value.op == QA_NQ_STATIC && batch->protocol.kind == QA_NET_NQ15 &&
+            (value.data.entity.model > 255 || value.data.entity.frame > 255)) return true;
+        value.data.entity = wire_entity(batch->protocol, value.data.entity, true);
+    }
+    if (value.op == QA_NQ_STATICSOUND && batch->protocol.kind == QA_NET_NQ15 &&
+        value.data.sound.index > 255) return true;
     if (!qa_nq_write(&writer, batch->protocol, options, &value, NULL, 0)) return false;
     return batch_bytes(batch, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
@@ -188,10 +195,14 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
         if (!qa_application_network_q1_signon_count(host->frontend->application, host->owner, &count, error)) return false;
         for (size_t i = 0; i < count; ++i) {
             qa_application_protocol_event event;
+            if (!qa_application_network_q1_signon_at(host->frontend->application, host->owner, i, &event, error)) return false;
+            if (event.nq) {
+                if (!batch_message(&batch, event.nq, options, error)) return false;
+                continue;
+            }
             uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
             qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-            if (!qa_application_network_q1_signon_at(host->frontend->application, host->owner, i, &event, error) ||
-                !qa_application_protocol_event_encode(&event, &writer) ||
+            if (!qa_application_protocol_event_encode(&event, &writer) ||
                 !source_convert_values(host, protocol, baselines, baseline_count, event.payload, options, batch_source_emit, &batch, error)) return false;
         }
         for (size_t i = 0; i < baseline_count; ++i) {

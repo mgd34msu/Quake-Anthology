@@ -899,6 +899,7 @@ static bool emit_message(application_provider *p, const qa_builtin_event *event,
         if (!qa_q1_source_respawn_options_read(p->state.q1, &options, &seconds, error)) return false;
         standard = options.program != QA_Q1_HIPNOTIC && options.program != QA_Q1_ROGUE &&
             options.program != QA_Q1_MG3;
+        if (signon) selected_protocol.kind = QA_NET_FITZ666;
     }
     qa_application_protocol_event record = {.provider = p->owner, .dialect = QA_RULESET_NETQUAKE,
         .time_ns = event->time_ns, .recipient = recipient, .origin = event->origin,

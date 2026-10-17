@@ -2,6 +2,7 @@
 #include "event_stream.h"
 #include "qa/source_save.h"
 #include "qa/game_q1_wire.h"
+#include "qa/network_q1_nq.h"
 #include <string.h>
 
 static application_provider *source_owner(const qa_application *app, qa_actor_owner owner)
@@ -179,6 +180,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
     size_t maximum = bytes.size >= 12 ? (bytes.size - 12) / 78 : 0;
     bool ok = qa_source_save_bytes(&io, magic, 4) && !memcmp(magic, "QAQS", 4) &&
         qa_source_save_count(&io, &count, maximum);
+    qa_nq_decoder *native_nq = NULL;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_event_transaction transaction;
         ok = qa_event_ring_begin(app->event_ring, &transaction);
@@ -199,7 +201,24 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
                 ok = application_fail(error, QA_ERROR_FORMAT, "Saved Q1 signon source owner is absent");
             else {
                 record->signon_source_serial = provider->launch->identity;
-                ok = record_valid(app, record, error);
+                if (native_source(provider) && record->event.dialect == QA_RULESET_NETQUAKE) {
+                    qa_net_protocol_id protocol = {.kind = QA_NET_FITZ666};
+                    if (!native_nq) ok = qa_nq_decoder_create(protocol,
+                        (qa_nq_options){.standard_quake = true}, &native_nq, error);
+                    qa_nq_message *message = ok ? qa_event_ring_alloc(&transaction,
+                        sizeof(*message), _Alignof(qa_nq_message), error) : NULL;
+                    if (ok && !message) ok = application_fail(error, QA_ERROR_MEMORY, "Restoring typed Q1 signon service");
+                    if (ok) {
+                        qa_net_reader reader; qa_net_reader_init(&reader, record->event.payload, error);
+                        ok = qa_nq_read(native_nq, &reader, message) && qa_net_reader_finish(&reader);
+                    }
+                    if (ok) {
+                        record->event.nq = message;
+                        record->event.encoding_protocol = protocol;
+                        record->event.standard_quake = true;
+                    }
+                }
+                if (ok) ok = record_valid(app, record, error);
             }
         }
         if (ok) {
@@ -212,6 +231,7 @@ bool application_q1_signon_restore(qa_application *app, qa_bytes bytes, qa_error
     }
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (!ok) application_q1_signon_destroy(app);
+    qa_nq_decoder_destroy(native_nq);
     qa_source_save_dispose(&io);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid original Q1 signon continuation");
     return ok;

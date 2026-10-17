@@ -8558,6 +8558,39 @@ static void test_nq_extended_appearance(void)
         qa_nq_decoder_destroy(decoder);
     }
 }
+static void test_nq_static_signon_projection(void)
+{
+    const qa_net_protocol protocols[]={QA_NET_NQ15,QA_NET_FITZ666};
+    for(size_t i=0;i<sizeof(protocols)/sizeof(protocols[0]);++i) {
+        qa_error error={0};uint8_t bytes[256];qa_net_writer writer;
+        qa_nq_message source={.op=QA_NQ_STATIC};qa_q1_entity_init(&source.data.entity);
+        source.data.entity.model=i ? 351 : 200;
+        source.data.entity.origin[0]=224;source.data.entity.origin[1]=1606;
+        source.data.entity.origin[2]=-548;source.data.entity.angles[1]=180;
+        qa_application_protocol_event event={.nq=&source,.standard_quake=true,
+            .encoding_protocol={.kind=protocols[i]}};
+        qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+        CHECK(qa_application_protocol_event_encode(&event,&writer));
+        qa_nq_decoder *decoder=NULL;
+        CHECK(qa_nq_decoder_create((qa_net_protocol_id){.kind=QA_NET_FITZ666},
+            (qa_nq_options){.standard_quake=true},&decoder,&error));
+        qa_net_reader reader;qa_net_reader_init(&reader,event.payload,&error);
+        qa_nq_message restored;
+        CHECK(qa_nq_read(decoder,&reader,&restored) && restored.op==QA_NQ_STATIC);
+        CHECK(restored.data.entity.model==source.data.entity.model &&
+            restored.data.entity.scale==QA_Q1_SCALE_DEFAULT &&
+            restored.data.entity.origin[0]==224 && restored.data.entity.origin[1]==1606 &&
+            restored.data.entity.origin[2]==-548 && restored.data.entity.angles[1]==-180);
+        CHECK(qa_net_reader_finish(&reader));
+        qa_nq_decoder_destroy(decoder);
+        if(i) {
+            event.encoding_protocol=(qa_net_protocol_id){.kind=QA_NET_NQ15};
+            qa_net_writer_init(&writer,bytes,sizeof(bytes),&error);
+            CHECK(!qa_application_protocol_event_encode(&event,&writer));
+            CHECK(error.code!=QA_OK);
+        }
+    }
+}
 static void test_loopback_nq_signon(void)
 {
     const qa_net_protocol protocols[] = {QA_NET_NQ15, QA_NET_FITZ666, QA_NET_RMQ999};
@@ -11713,6 +11746,7 @@ int main(int argc, char **argv)
     test_browser_lan_overlap();
     test_dosbox_loopback();
     test_nq_extended_appearance();
+    test_nq_static_signon_projection();
     test_loopback_nq_signon();
     test_kex_send_admission();
     test_kex_userinfo_projection();
