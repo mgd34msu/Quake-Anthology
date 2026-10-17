@@ -1,6 +1,7 @@
 #include "guest_q3_reference.h"
 #include "guest_q3_weapon_profile.h"
 #include "guest_q3_private.h"
+#include "guest_q3_catalog.h"
 #include "qa/json.h"
 
 static bool u32(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
@@ -354,8 +355,29 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     application_q3_weapon_profile *p, qa_error *error)
 {
 
-    if (!application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) return true;
-    *p = (application_q3_weapon_profile){.present = true, .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
+    bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    if (!base && !application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) return true;
+    const application_q3_catalog_weapon *actual = NULL;
+    if (!catalog && !application_q3_catalog_weapons(role->catalog, &actual, &count, error)) return false;
+    if (base) *p = (application_q3_weapon_profile){.present = true, .entity_stride = 808, .client_stride = 776, .client_pointer = 516,
+        .dispatcher = 73821, .request = 73644, .selection_offset = 144,
+        .pointer_global = true, .pointer_base = 961696, .indirection_count = 1,
+        .predicate_count = 1, .settled_count = 2, .accepted_count = 1, .catalog_count = count,
+        .movement_move = 75433, .movement_slice = 74710, .movement_duck = 72850, .movement_global = 961696,
+        .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
+        .body_trace = true, .locomotion = {75331, 75401}, .max_health = 208, .persistent_max_health = 548,
+        .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
+            .flags = 12, .respawn_flag = 512, .excluded_count = 5}, .powerups = {316, 324, 336},
+        .animation = {68268, 7, 8}, .water_entity = 788, .water_movement = 208,
+        .damage = {133602, 1296924, {133622, 133654}}, .context_count = 1,
+        .delay = {.entry = 74337, .join = 74353, .input_count = 1, .result_offset = 12},
+        .delay_global = 961696, .teleport_entry = 78919, .spawn = 87345, .view = 87959,
+        .teleport = {.entry = 79090, .join = 79264, .result_offset = -1},
+        .objectives = {.entry = 79090, .join = 79239, .result_offset = -1},
+        .drop = {.entry = 98632, .weapon = 192, .ammo = 376, .region = {98633, 98736}},
+        .give = {.entry = 91735, .weapons = 91849, .ammo = 91899, .name = 24, .item = 36, .named = {92098, 92109}},
+        .has_match = true, .score = 248, .team_count = 3};
+    else *p = (application_q3_weapon_profile){.present = true, .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
         .dispatcher = 33648, .request = 33226, .selection_offset = 144,
         .pointer_global = true, .pointer_base = 1091860, .indirection_count = 1,
         .predicate_count = 1, .settled_count = 2, .accepted_count = 1, .catalog_count = count,
@@ -382,12 +404,15 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     if (!p->indirections || !p->predicates || !p->settled || !p->accepted || (count && !p->catalog) ||
         !p->availability.excluded || !p->contexts || !p->delay_inputs || !p->teams)
         return application_fail(error, QA_ERROR_MEMORY, "Retaining authored original weapon profile");
-    p->predicates[0] = (application_q3_weapon_predicate){34044, false};
+    p->predicates[0] = (application_q3_weapon_predicate){base ? 74104 : 34044, false};
     p->settled[0] = (application_q3_weapon_test){.offset = 44, .at_most = true};
     p->settled[1] = (application_q3_weapon_test){.offset = 148};
     p->accepted[0] = (application_q3_weapon_test){.offset = 148, .value = 2};
-    if (count) memcpy(p->catalog, catalog, count * sizeof(*catalog));
-    const int32_t excluded[] = {1, 2, 4, 7, 8}; memcpy(p->availability.excluded, excluded, sizeof(excluded));
+    if (catalog && count) memcpy(p->catalog, catalog, count * sizeof(*catalog));
+    else for (size_t i = 0; i < count; ++i)
+        p->catalog[i] = (application_q3_weapon_catalog_entry){actual[i].weapon, actual[i].item, actual[i].ammo};
+    const int32_t excluded[] = {1, 2, 4, base ? 5 : 7, base ? 6 : 8};
+    memcpy(p->availability.excluded, excluded, sizeof(excluded));
     *p->delay_inputs = 12; p->delay.inputs = p->delay_inputs;
     qa_strings *strings = qa_session_strings(role->engine->provider->application->session);
     const char *sources[] = {"q3:1", "q3:2", NULL}, *teams[] = {"team:red", "team:blue", NULL},

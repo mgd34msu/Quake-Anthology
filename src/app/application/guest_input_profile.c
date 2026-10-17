@@ -72,7 +72,17 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
     if (!role->image) { *out = p; return true; }
     if (!primary.size) {
 
-        if (application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME)) {
+        if (application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME)) {
+            p.client_think = 80328; p.run_client = 80387; p.client_spawn = 89754;
+            p.input_present = p.has_modes = true;
+            p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;
+            const int32_t intermission[] = {5, 6};
+            p.intermission_modes = malloc(sizeof(intermission));
+            if (!p.intermission_modes)
+                return application_fail(error, QA_ERROR_MEMORY, "Retaining original input intermission modes");
+            memcpy(p.intermission_modes, intermission, sizeof(intermission));
+            p.intermission_count = sizeof(intermission) / sizeof(*intermission);
+        } else if (application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME)) {
             static const application_q3_weapon_profile source = {
                 .entity_stride = 856, .client_stride = 872, .client_pointer = 516,
                 .movement_move = 22369, .movement_slice = 21620};
