@@ -830,12 +830,12 @@ bool frontend_music_policy_world_cd(frontend_music_policy *owner, unsigned track
     return true;
 }
 bool frontend_music_policy_source_play(frontend_music_policy *owner,const char *cue,qa_error *e) {
-    if (!frontend_music_policy_idle(owner) || !owner->external_player || !cue || !nonempty(cue) ||
+    if (!frontend_music_policy_idle(owner) || !owner->external_player || !cue ||
         owner->frontend->capture || owner->frontend->source_restoring)
         return fail(e,"Received music requires its actual returned source-owned policy");
     owner->busy=true;
     bool ok;
-    if(!strcmp(cue,"0")){
+    if(!nonempty(cue) || !strcmp(cue,"0")){
         music_state next={0};qa_audio_music_selection *selection=NULL;
         ok=state_copy(owner,&owner->state,&next,e);
         if(ok){manual_state(&next);next.track=cue_name(owner,cue,e);next.looping=false;ok=next.track!=NULL;}
