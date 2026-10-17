@@ -120,6 +120,8 @@ bool bot_ai_source_action_trigger(qa_bots *bots,bot_ai_state *state,
     qa_bot_actions *actions=qa_bot_runtime_actions(bots->runtime);
     qa_bot_input input;
     if(!qa_bot_actions_read(actions,client,&input,error)) return false;
+    if(state->source_settings && state->hazard.escaping)
+        input.action_flags&=~(uint32_t)QA_BOT_ATTACK;
     if(!bot_ai_live(bots,bot_ai_enemy_actor(bots,state))) {
         bot_ai_flag_set(state,BOT_AI_ATTACKED,false);bot_ai_fire_shoot_time_set(state,0);
     } else {

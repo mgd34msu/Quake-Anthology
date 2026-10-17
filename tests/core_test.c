@@ -2575,6 +2575,17 @@ static void test_physical_prediction_command(void)
             .numeric_policy=QA_INPUT_COMMAND_PHYSICAL_PREDICTION,.weapon=239,
             .server_time_ms=123,.acknowledged_server_seconds=4.5,
             .delta_angles={10,20,30},.delta_angle_words={-32768,32767,-5}};
+        for (unsigned down=0;down<2;++down) {
+            qa_bot_input swim={.action_flags=down?QA_BOT_MOVE_DOWN:QA_BOT_MOVE_UP};
+            qa_input_command_intent swimming;
+            qa_bot_input_intent(&swim,&swimming);
+            qa_usercmd vertical;
+            qa_usercmd_build(&swimming,&frame,16,&vertical);
+            if (kind==QA_RULESET_Q2_RERELEASE) CHECK(vertical.buttons==(down?16u:8u));
+            else CHECK(down?vertical.up_move<0:vertical.up_move>0);
+            if (kind==QA_RULESET_NETQUAKE || kind==QA_RULESET_QUAKEWORLD)
+                CHECK(!(vertical.buttons&2u));
+        }
         qa_usercmd command;
         qa_usercmd_build(&intent,&frame,300,&command);
         CHECK(command.sequence==UINT32_MAX && command.server_frame==-1 && command.weapon==239);

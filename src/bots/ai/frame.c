@@ -11,6 +11,7 @@
 #include "source_behavior_state.h"
 #include "source_selectors.h"
 #include "source_flags.h"
+#include "qa/collision_bits.h"
 
 bool bot_ai_source_intermission(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
@@ -45,11 +46,13 @@ static bool ready(qa_bots *b, bot_ai_state *s) {
 static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_live(b, s->view.actor)) { s->retired = true; return true; }
     int32_t held=bot_ai_firing_weapon_number(s);
+    uint64_t spawn=s->player.spawn_sequence;
     qa_q3_player source;
     qa_bot_player observed=bot_ai_player_sample(s);
     bool ok=b->services.player(b->services.context,s->view.actor,&observed,&source,e);
     bot_ai_player_observe(s,&observed);
     if(!ok) return false;
+    if(observed.dead || observed.spawn_sequence!=spawn) s->hazard=(bot_hazard_memory){0};
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
     if(!bot_ai_source_player_copy(b,s,&source,e)) return false;
     if(s->source_settings && held!=source.weapon) bot_ai_trigger_clear(s);
@@ -73,6 +76,66 @@ static bool submit(qa_bots *b, bot_ai_state *s, const qa_bot_input *input,
 static bool delta_angles(qa_bots *b,bot_ai_state *s,int32_t out[3],qa_error *e) {
     for(int32_t i=0;i<3;++i)
         if(!bot_ai_source_player_slot(b,s,BOT_PS_DELTA_ANGLES,i,out+i,e)) return false;
+    return true;
+}
+static bool hazard_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,qa_error *e) {
+    if(!s->source_settings || !b->services.shared.player_control) return true;
+    if(s->player.dead || s->player.observer || s->player.intermission ||
+       s->view.decision==QA_BOT_RESPAWNING || s->view.decision==QA_BOT_OBSERVER ||
+       s->view.decision==QA_BOT_INTERMISSION) return true;
+    qa_builtin_player_control control;
+    if(!b->services.shared.player_control(b->services.shared.context,0,s->view.actor,&control,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    if(control.player->cutscene) return true;
+    bool grounded=control.ground->hit!=QA_TRACE_HIT_NONE;
+    int32_t water_level=control.player->water_level;
+    qa_body_state body;
+    if(!qa_world_body_read(b->services.shared.world,s->view.actor,&body,e)) return false;
+    qa_bot_navigation *navigation=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
+    uint32_t danger=(1u<<QA_CONTENT_LAVA)|(1u<<QA_CONTENT_SLIME);
+    int32_t center,feet;
+    qa_vec3 foot=body.origin;foot.z+=fminf(0,body.bounds.mins.z*(5.0f/6.0f));
+    if(!qa_bot_navigation_contents(navigation,body.origin,&center,e) ||
+       !qa_bot_navigation_contents(navigation,foot,&feet,e)) return false;
+    if(!(((uint32_t)center|(uint32_t)feet)&danger)) {
+        s->hazard.escaping=false;
+        if(grounded && water_level==0) {
+            s->hazard.safe_origin=body.origin;s->hazard.has_safe_origin=true;
+        }
+        return true;
+    }
+    if(!s->hazard.escaping) {
+        if(!qa_bot_moves_reset(qa_bot_runtime_moves(b->runtime),s->movement,e)) return false;
+    }
+    qa_vec3 exit=s->hazard.safe_origin;
+    bool found=s->hazard.has_safe_origin;
+    for(unsigned i=0;!found && i<12;++i) {
+        qa_vec3 direction;
+        qa_angle_vectors(qa_v3(0,(float)i*30,0),&direction,NULL,NULL,QA_ANGLE_FLOAT_MATH);
+        qa_vec3 point=qa_vec_ma(body.origin,96,direction),below=point;
+        below.z+=body.bounds.mins.z;
+        int32_t contents,floor;
+        if(!qa_bot_navigation_contents(navigation,point,&contents,e)) return false;
+        if((uint32_t)contents&(danger|(1u<<QA_CONTENT_SOLID))) continue;
+        if(!qa_bot_navigation_contents(navigation,below,&floor,e)) return false;
+        if((uint32_t)floor&danger) continue;
+        exit=point;found=true;
+    }
+    s->hazard.escaping=found;
+    input->action_flags&=~(uint32_t)(QA_BOT_JUMP|QA_BOT_DELAYED_JUMP|QA_BOT_MOVE_UP|
+        QA_BOT_MOVE_DOWN|QA_BOT_CROUCH);
+    input->direction.z=0;
+    if(water_level>=3) input->action_flags|=QA_BOT_MOVE_UP;
+    if(found) {
+        qa_vec3 direction=qa_v3(exit.x-body.origin.x,exit.y-body.origin.y,0);
+        qa_vec3 angles=qa_vec_angles(direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
+        angles.x=0;angles.z=input->view_angles.z;
+        input->direction=qa_vec_normalize(direction);input->speed=400;input->view_angles=angles;
+        input->action_flags&=~(uint32_t)(QA_BOT_MOVE_FORWARD|QA_BOT_MOVE_BACK|QA_BOT_MOVE_LEFT|
+            QA_BOT_MOVE_RIGHT|QA_BOT_ATTACK);
+        bot_ai_view_angles_set(s,angles);bot_ai_view_ideal_set(s,angles);
+        bot_source_vec3_write(s->source_span.data+QA_BOT_SOURCE_VIEW_SPEED,qa_v3(0,0,0));
+    }
     return true;
 }
 bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa_error *e) {
@@ -107,6 +170,8 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if(!bot_ai_source_action_view(b,s,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!bot_ai_source_action_input(b,s,(float)time/1000,&input,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    if(!hazard_input(b,s,&input,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     bool ok=true;
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);

@@ -86,6 +86,10 @@ typedef struct bot_cooperative_cooldown {
     uint32_t client;
     float until;
 } bot_cooperative_cooldown;
+typedef struct bot_hazard_memory {
+    qa_vec3 safe_origin;
+    bool has_safe_origin, escaping;
+} bot_hazard_memory;
 typedef enum bot_objective_role {
     BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND
 } bot_objective_role;
@@ -112,6 +116,7 @@ typedef struct bot_ai_state {
     bot_ai_view view;
     bot_ai_player player;
     bot_cooperative_state cooperative;
+    bot_hazard_memory hazard;
     bot_objective_role objective_role;
     bot_authored_chat_state authored_chat;
     uint32_t character, goals, weapons, chat, movement;
