@@ -206,6 +206,16 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
+    if (client_name(name,"status")) {
+        qa_command_result result = frontend_network_client_only(frontend) ? QA_COMMAND_UNHANDLED :
+            qa_application_host_command(frontend->application,invocation,error);
+        if (result == QA_COMMAND_UNHANDLED)
+            result = frontend_console_forward(frontend,invocation,error);
+        if (result == QA_COMMAND_UNHANDLED)
+            return qa_application_log_emit(frontend->application,&invocation->context,
+                "Server is not running.\n",QA_APPLICATION_LOG_CONSOLE,error);
+        return result != QA_COMMAND_FAILED;
+    }
     if (client_name(name,"midiinfo")) {
         if (invocation->argc!=1) frontend_console_print(frontend,&invocation->context,"Usage: midiinfo\n");
         else if (frontend->input) qa_input_platform_midi_info(frontend->input);
@@ -370,7 +380,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting", "local_join", "local_drop",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
-        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver"};
+        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver", "status"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         bool engine_command = !client_name(names[i], "weapnext") && !client_name(names[i], "weapprev");
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,

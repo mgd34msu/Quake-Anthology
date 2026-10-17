@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "guest_q3_private.h"
 #include "guest_qc_profile.h"
+#include "map_players_private.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
 #include "native_client_roles.h"
@@ -15,10 +17,15 @@
 #include "qa/application_equipment.h"
 #include "qa/application_network.h"
 #include "qa/application_network_qw.h"
+#include "qa/game_q1_bots.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_wire.h"
+#include "qa/native_host_q2_wire.h"
 #include "qa/command_lexer.h"
 #include "qa/text.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static application_provider *command_owner(const qa_application *application, uint64_t owner)
@@ -193,13 +200,152 @@ static bool host_reply(application_provider *source, const qa_command_invocation
             QA_APPLICATION_LOG_CONSOLE, error);
 }
 
+typedef struct host_status_player {
+    const char *name;
+    uint32_t slot;
+    int32_t score, ping;
+} host_status_player;
+
+static int host_status_order(const void *first, const void *second)
+{
+    const host_status_player *a = first, *b = second;
+    return (a->slot > b->slot) - (a->slot < b->slot);
+}
+
+static qa_command_result host_status(qa_application *app,
+    const qa_command_invocation *command, qa_error *error)
+{
+    if (!q3_command_named(command->argv[0], "status")) return QA_COMMAND_UNHANDLED;
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    qa_application_map_view map;
+    if (!source || !source->constructed || !qa_application_map_read(app, &map))
+        return QA_COMMAND_UNHANDLED;
+    if (command->argc != 1)
+        return host_reply(source, command, command->context.actor, "Usage: status\n", error)
+            ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    bool q1 = source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_QC;
+    uint32_t max_clients = 0;
+    if (source->kind == APPLICATION_PROVIDER_Q1 &&
+        !qa_q1_bot_max_clients(source->state.q1, &max_clients, error))
+        return QA_COMMAND_FAILED;
+    if (source->kind == APPLICATION_PROVIDER_QC)
+        max_clients = source->state.qc.engine->max_clients;
+    qa_arena storage = {0};
+    qa_console_command_arena(command->console, &storage);
+    size_t capacity = app->players ? app->players->count : 0, count = 0;
+    host_status_player *players = capacity ? qa_arena_alloc(&storage,
+        capacity * sizeof(*players), _Alignof(host_status_player), error) : NULL;
+    bool okay = !capacity || players;
+    for (size_t i = 0; okay && i < capacity; ++i) {
+        const application_player_record *record = app->players->records + i;
+        if (record->retiring) continue;
+        const qa_actor_player *identity = application_player_identity(record);
+        host_status_player *player = players + count++;
+        *player = (host_status_player){.name = application_player_name(record),
+            .slot = record->client_slot + (q1 ? 1u : 0u), .ping = identity->ping};
+        if (!player->name) player->name = "unnamed";
+        if (source->kind == APPLICATION_PROVIDER_Q1) {
+            qa_q1_source_client_view actual;
+            if (qa_q1_source_client_read(source->state.q1, record->actor, &actual)) {
+                player->slot = actual.slot + 1;
+                player->name = actual.name;
+            }
+            continue;
+        }
+        if (source->kind == APPLICATION_PROVIDER_QC) {
+            struct application_qc_state *engine = source->state.qc.engine;
+            const application_qc_client *actual = application_qc_client_for_actor(engine, record->actor);
+            if (actual && actual->connected) {
+                player->slot = (uint32_t)(actual - engine->clients);
+                const qa_qc_definition *netname = engine->field_bindings ? engine->field_bindings->netname : NULL;
+                if (netname && netname->type == QA_QC_STRING) {
+                    qa_qc_instance *instance = source->state.qc.instance;
+                    int32_t reference, name;
+                    okay = qa_qc_slot_reference(instance, player->slot, &reference, error) &&
+                        qa_qc_entity_int(instance, reference, netname->offset, &name, error) &&
+                        qa_qc_string(instance, name, &player->name, error);
+                }
+            }
+            continue;
+        }
+        if (record->deferred || record->source_begin_pending) continue;
+        if (app->primary_mode_ready) {
+            qa_mode_player_view mode; bool found;
+            okay = qa_modes_player_read_optional(app->modes, app->primary_mode,
+                record->actor, &mode, &found, error);
+            if (okay && found) player->score = mode.state.score;
+        }
+        if (!okay) break;
+        if (source->kind == APPLICATION_PROVIDER_Q2) {
+            qa_q2_player_info actual;
+            if (qa_q2_player_read(source->state.q2, record->actor, &actual) && actual.connected) {
+                player->slot = actual.slot; player->score = actual.score; player->ping = actual.ping;
+                player->name = qa_arena_text(&storage, actual.name, error);
+                okay = player->name != NULL;
+            }
+        } else if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
+            struct application_native_q2 *engine = source->state.native.q2_engine;
+            uint32_t slot = application_native_q2_client_slot(engine, record->actor);
+            if (slot && engine->clients[slot].connected) {
+                qa_q2_player state;
+                okay = qa_native_host_q2_wire_player(source->state.native.host, slot,
+                    record->actor, &state, error) &&
+                    qa_native_host_q2_wire_ping(source->state.native.host, slot,
+                        record->actor, &player->ping, error);
+                if (okay) { player->slot = slot - 1; player->score = state.stats[14]; }
+            }
+        } else if (source->kind == APPLICATION_PROVIDER_Q3) {
+            qa_q3_source_binding binding;
+            if (record->client_slot < QA_Q3_NATIVE_CLIENTS) {
+                okay = qa_q3_source_binding_read(source->state.q3, record->client_slot, &binding, error);
+                if (okay && qa_actor_id_equal(binding.actor, record->actor)) {
+                    qa_q3_player state; qa_q3_native_client client;
+                    okay = qa_q3_wire_player_read(source->state.q3, record->client_slot, &state, error) &&
+                        qa_q3_client_slot_read(source->state.q3, record->client_slot, &client, error);
+                    if (okay) {
+                        player->score = state.persistant[0]; player->ping = state.ping;
+                        player->name = qa_arena_text(&storage, client.netname, error);
+                        okay = player->name != NULL;
+                    }
+                }
+            }
+        } else {
+            uint32_t slot;
+            if (application_q3_guest_actor_client(source, record->actor, &slot)) {
+                struct application_q3_guest *engine = q3g_engine(source);
+                qa_q3_player state;
+                okay = qa_q3_host_source_player(engine->game->host, slot, &state, error);
+                if (okay) { player->slot = slot; player->score = state.persistant[0]; player->ping = state.ping; }
+            }
+        }
+    }
+    if (okay && count > 1) qsort(players, count, sizeof(*players), host_status_order);
+    const char *map_name = map.name;
+    size_t extent = strlen(map_name) + 128;
+    for (size_t i = 0; okay && i < count; ++i) extent += strlen(players[i].name) + 96;
+    char *text = okay ? qa_arena_alloc(&storage, extent, 1, error) : NULL;
+    if (text) {
+        size_t used = q1 ? (size_t)snprintf(text, extent,
+            "map: %s\nplayers: %zu active (%u max)\n", map_name, count, max_clients) :
+            (size_t)snprintf(text, extent, "map: %s\nnum score ping name\n", map_name);
+        for (size_t i = 0; i < count; ++i)
+            used += q1 ? (size_t)snprintf(text + used, extent - used, "#%u %s\n",
+                players[i].slot, players[i].name) :
+                (size_t)snprintf(text + used, extent - used, "%u %d %d %s\n",
+                    players[i].slot, players[i].score, players[i].ping, players[i].name);
+        okay = host_reply(source, command, command->context.actor, text, error);
+    } else okay = false;
+    qa_arena_destroy(&storage);
+    return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+}
+
 static qa_command_result q1_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
     const char *name = command->argv[0];
-    bool status = q3_command_named(name, "status"), ping = q3_command_named(name, "ping");
+    bool ping = q3_command_named(name, "ping");
     bool pause = q3_command_named(name, "pause");
-    if (!status && !ping && !pause) return QA_COMMAND_UNHANDLED;
+    if (!ping && !pause) return QA_COMMAND_UNHANDLED;
     application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (!source || (source->kind != APPLICATION_PROVIDER_Q1 && source->kind != APPLICATION_PROVIDER_QC) ||
         (command->context.owner && command->context.owner != source->owner)) return QA_COMMAND_UNHANDLED;
@@ -207,7 +353,7 @@ static qa_command_result q1_host_command(qa_application *application,
     if (!actor.registry && command->context.origin != QA_COMMAND_SERVER) return QA_COMMAND_UNHANDLED;
     if (command->argc != 1) {
         char usage[32];
-        snprintf(usage, sizeof(usage), "Usage: %s\n", status ? "status" : ping ? "ping" : "pause");
+        snprintf(usage, sizeof(usage), "Usage: %s\n", ping ? "ping" : "pause");
         return host_reply(source, command, actor, usage, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     if (pause) {
@@ -236,24 +382,19 @@ static qa_command_result q1_host_command(qa_application *application,
         }
         return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
-    qa_application_network_q1_world world;
     qa_application_network_q1_status_player players[255];
     size_t count;
-    if (!qa_application_network_q1_world_read(application, source->owner, &world, error) ||
-        !qa_application_network_q1_status(application, source->owner, players, &count, error))
+    if (!qa_application_network_q1_status(application, source->owner, players, &count, error))
         return QA_COMMAND_FAILED;
-    size_t extent = strlen(world.map) + 128;
+    size_t extent = 128;
     for (size_t i = 0; i < count; ++i) extent += strlen(players[i].name) + 32;
     qa_arena storage = {0};
     qa_console_command_arena(command->console, &storage);
     char *text = qa_arena_alloc(&storage, extent, 1, error);
     if (!text) { qa_arena_destroy(&storage); return QA_COMMAND_FAILED; }
-    size_t used = status ? (size_t)snprintf(text, extent,
-        "map: %s\nplayers: %zu active (%u max)\n", world.map, count, world.max_clients) :
-        (size_t)snprintf(text, extent, "Client ping times:\n");
+    size_t used = (size_t)snprintf(text, extent, "Client ping times:\n");
     for (size_t i = 0; i < count; ++i)
-        used += (size_t)snprintf(text + used, extent - used, status ? "#%u %s\n" : "%u %s\n",
-            status ? players[i].source_slot : 0, players[i].name);
+        used += (size_t)snprintf(text + used, extent - used, "%u %s\n", 0u, players[i].name);
     bool okay = host_reply(source, command, actor, text, error);
     qa_arena_destroy(&storage);
     return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
@@ -262,6 +403,8 @@ static qa_command_result q1_host_command(qa_application *application,
 qa_command_result qa_application_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
+    qa_command_result status = host_status(application, command, error);
+    if (status != QA_COMMAND_UNHANDLED) return status;
     qa_command_result q1 = q1_host_command(application, command, error);
     if (q1 != QA_COMMAND_UNHANDLED) return q1;
     if (command->context.origin == QA_COMMAND_REMOTE) return QA_COMMAND_UNHANDLED;

@@ -352,8 +352,7 @@ static bool operator_command(void *opaque, const qa_command_invocation *invocati
         !qa_console_invocation_current(owner->console,invocation) ||
         !qa_application_command_context_active(app,&invocation->context) || !provider->state.q2)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 operator command has no admitted source");
-    bool dump = !strcmp(invocation->argv[0], "dumpuser");
-    if (dump && invocation->argc != 2) {
+    if (invocation->argc != 2) {
         qa_console_emit(owner->console, &invocation->context, "Usage: dumpuser <player name|slot>\n");
         return true;
     }
@@ -381,49 +380,36 @@ static bool operator_command(void *opaque, const qa_command_invocation *invocati
     }
     ++owner->calls;
     bool okay = true;
-    if (!dump) {
-        const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
-        qa_console_emit(owner->console, &invocation->context, "map              : ");
-        if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, map ? map : "");
-        if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, "\nnum score ping name\n");
-        for (size_t i = 0; i < count && active(owner, &invocation->context); ++i) {
-            char line[128];
-            snprintf(line, sizeof(line), "%u %d %d %s\n", players[i].info.slot,
-                players[i].info.score, players[i].info.ping, players[i].info.name);
-            qa_console_emit(owner->console, &invocation->context, line);
+    const char *target = invocation->argv[1];
+    bool numeric = *target != 0;
+    for (const char *p = target; *p; ++p) numeric &= *p >= '0' && *p <= '9';
+    q2_operator_player *selected = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        if (numeric ? strtoul(target, NULL, 10) == players[i].info.slot : !strcmp(target, players[i].info.name)) {
+            selected = &players[i];
+            break;
         }
+    }
+    if (!selected) {
+        qa_console_emit(owner->console, &invocation->context, "Player ");
+        if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, target);
+        if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, " is not on the server\n");
     } else {
-        const char *target = invocation->argv[1];
-        bool numeric = *target != 0;
-        for (const char *p = target; *p; ++p) numeric &= *p >= '0' && *p <= '9';
-        q2_operator_player *selected = NULL;
-        for (size_t i = 0; i < count; ++i) {
-            if (numeric ? strtoul(target, NULL, 10) == players[i].info.slot : !strcmp(target, players[i].info.name)) {
-                selected = &players[i];
-                break;
-            }
-        }
-        if (!selected) {
-            qa_console_emit(owner->console, &invocation->context, "Player ");
-            if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, target);
-            if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, " is not on the server\n");
-        } else {
-            qa_console_emit(owner->console, &invocation->context, "userinfo\n--------\n");
-            const char *cursor=selected->userinfo; qa_bytes key,value;
-            while (*cursor && active(owner,&invocation->context) && qa_info_next(&cursor,&key,&value)) {
-                char *name=(char *)key.data,*text=(char *)value.data;
-                char *name_end=name+key.size,*value_end=text+value.size;
-                char name_separator=*name_end,value_separator=*value_end;
-                *name_end=0; *value_end=0;
-                qa_console_emit(owner->console, &invocation->context, name);
-                char padding[21];
-                size_t spaces = key.size < 20 ? 20 - key.size : 1;
-                memset(padding, ' ', spaces); padding[spaces] = 0;
-                if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, padding);
-                if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, text);
-                if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, "\n");
-                *name_end=name_separator; *value_end=value_separator;
-            }
+        qa_console_emit(owner->console, &invocation->context, "userinfo\n--------\n");
+        const char *cursor=selected->userinfo; qa_bytes key,value;
+        while (*cursor && active(owner,&invocation->context) && qa_info_next(&cursor,&key,&value)) {
+            char *name=(char *)key.data,*text=(char *)value.data;
+            char *name_end=name+key.size,*value_end=text+value.size;
+            char name_separator=*name_end,value_separator=*value_end;
+            *name_end=0; *value_end=0;
+            qa_console_emit(owner->console, &invocation->context, name);
+            char padding[21];
+            size_t spaces = key.size < 20 ? 20 - key.size : 1;
+            memset(padding, ' ', spaces); padding[spaces] = 0;
+            if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, padding);
+            if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, text);
+            if (active(owner, &invocation->context)) qa_console_emit(owner->console, &invocation->context, "\n");
+            *name_end=name_separator; *value_end=value_separator;
         }
     }
     if (!active(owner, &invocation->context))
@@ -483,9 +469,7 @@ bool application_native_q2_console_create_restored(application_provider *provide
     application_provider *prior = application->startup_preinit_provider;
     if (application->operation == APPLICATION_PERSISTING)
         application->startup_preinit_provider = provider;
-    bool registered = qa_console_register_context(owner->console, &options.context, "status", "Print Q2 source map and connected players",
-            provider->owner, provider->owner, true, operator_command, owner, error) &&
-        qa_console_register_context(owner->console, &options.context, "dumpuser", "Print a Q2 source player's userinfo",
+    bool registered = qa_console_register_context(owner->console, &options.context, "dumpuser", "Print a Q2 source player's userinfo",
             provider->owner, provider->owner, true, operator_command, owner, error);
     application->startup_preinit_provider = prior;
     if (!registered) {
