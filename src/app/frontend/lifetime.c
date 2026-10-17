@@ -749,7 +749,6 @@ static bool create_frontend(const qa_frontend_options *options,bool launch_game,
         !frontend_event_prepare(frontend,error)) goto fail;
     frontend->sdl_subsystems = SDL_INIT_TIMER | SDL_INIT_EVENTS;
     if (!options->dedicated) frontend->sdl_subsystems |= SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC;
-    if (!options->dedicated && options->audio) frontend->sdl_subsystems |= SDL_INIT_AUDIO;
     if (SDL_InitSubSystem(frontend->sdl_subsystems)) {
         frontend->sdl_subsystems = 0;
         qa_error_set(error, QA_ERROR_IO, 0, "SDL initialization: %s", SDL_GetError()); goto fail;

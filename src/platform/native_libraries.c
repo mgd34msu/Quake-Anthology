@@ -19,15 +19,21 @@ static const library_names libraries[] = {
 #if defined(_WIN32)
     {"vorbisfile", "QUAKE_VORBISFILE_LIBRARY", {"libvorbisfile-3.dll", "vorbisfile.dll"}},
     {"theoradec", "QUAKE_THEORA_LIBRARY", {"libtheoradec-1.dll", "theoradec.dll"}},
-    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"freetype.dll", "libfreetype-6.dll", "freetype6.dll"}}
+    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"freetype.dll", "libfreetype-6.dll", "freetype6.dll"}},
+    {"sdl2", "QUAKE_SDL2_LIBRARY", {"SDL2.dll"}},
+    {"sdl3", "QUAKE_SDL3_LIBRARY", {"SDL3.dll"}}
 #elif defined(__APPLE__)
     {"vorbisfile", "QUAKE_VORBISFILE_LIBRARY", {"libvorbisfile.3.dylib", "libvorbisfile.dylib"}},
     {"theoradec", "QUAKE_THEORA_LIBRARY", {"libtheoradec.2.dylib", "libtheoradec.dylib"}},
-    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"libfreetype.6.dylib", "libfreetype.dylib"}}
+    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"libfreetype.6.dylib", "libfreetype.dylib"}},
+    {"sdl2", "QUAKE_SDL2_LIBRARY", {"libSDL2-2.0.0.dylib", "libSDL2.dylib", "SDL2.framework/SDL2"}},
+    {"sdl3", "QUAKE_SDL3_LIBRARY", {"libSDL3.0.dylib", "libSDL3.dylib", "SDL3.framework/SDL3"}}
 #else
     {"vorbisfile", "QUAKE_VORBISFILE_LIBRARY", {"libvorbisfile.so.3", "libvorbisfile.so"}},
     {"theoradec", "QUAKE_THEORA_LIBRARY", {"libtheoradec.so.2", "libtheoradec.so"}},
-    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"libfreetype.so.6", "libfreetype.so"}}
+    {"freetype", "QUAKE_FREETYPE_LIBRARY", {"libfreetype.so.6", "libfreetype.so"}},
+    {"sdl2", "QUAKE_SDL2_LIBRARY", {"libSDL2-2.0.so.0", "libSDL2.so"}},
+    {"sdl3", "QUAKE_SDL3_LIBRARY", {"libSDL3.so.0", "libSDL3.so"}}
 #endif
 };
 

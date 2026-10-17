@@ -6,7 +6,9 @@
 typedef enum qa_platform_library_kind {
     QA_PLATFORM_LIBRARY_VORBISFILE,
     QA_PLATFORM_LIBRARY_THEORADEC,
-    QA_PLATFORM_LIBRARY_FREETYPE
+    QA_PLATFORM_LIBRARY_FREETYPE,
+    QA_PLATFORM_LIBRARY_SDL2,
+    QA_PLATFORM_LIBRARY_SDL3
 } qa_platform_library_kind;
 
 typedef struct qa_platform_library qa_platform_library;

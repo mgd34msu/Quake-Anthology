@@ -35,6 +35,20 @@ find_package(Threads REQUIRED)
 option(QA_ALLOCATION_GATE "Measure engine-owned frame heap calls with ELF link-time wrapping" OFF)
 
 find_package(SDL2 2.0.18 REQUIRED)
+find_package(SDL3 3.2 CONFIG QUIET COMPONENTS Headers)
+if(NOT TARGET SDL3::Headers)
+    include(FetchContent)
+    FetchContent_Declare(qa_sdl3_headers
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.16
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR qa_headers_only)
+    FetchContent_MakeAvailable(qa_sdl3_headers)
+    add_library(SDL3::Headers INTERFACE IMPORTED)
+    set_target_properties(SDL3::Headers PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${qa_sdl3_headers_SOURCE_DIR}/include"
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${qa_sdl3_headers_SOURCE_DIR}/include")
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
 pkg_check_modules(OGG REQUIRED IMPORTED_TARGET ogg)
@@ -811,6 +825,8 @@ add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c
     src/audio/device.c
+    src/audio/device_sdl2.c
+    src/audio/device_sdl3.c
     src/audio/engine.c
     src/audio/environments.c
     src/audio/mixer.c
@@ -820,7 +836,7 @@ add_library(qa_audio STATIC
     src/audio/reverb.c
     src/audio/streams.c
     src/audio/wavelet.c)
-target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 qa_display)
+target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 SDL3::Headers qa_display)
 target_include_directories(qa_audio SYSTEM PRIVATE ${VORBISFILE_INCLUDE_DIRS})
 target_compile_options(qa_audio PRIVATE ${VORBISFILE_CFLAGS_OTHER})
 
