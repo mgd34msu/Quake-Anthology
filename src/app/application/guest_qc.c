@@ -228,7 +228,7 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
     }
     if (!precache || !engine->loading)
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC resource was not precached");
-    if (index >= (engine->profile == QA_QC_RERELEASE ? 65536u : 256u))
+    if (index > UINT16_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "QuakeC source precache table is full");
     application_qc_resource entry = {.kind = kind, .value.index = index};
     if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session), name, &entry.name, error)) return false;

@@ -43,6 +43,16 @@ bool qa_q1_profile(uint32_t v, uint32_t flags, qa_net_protocol_id *out, qa_error
     *out = p; return true;
 }
 void qa_q1_entity_init(qa_q1_entity *s) { memset(s, 0, sizeof(*s)); s->scale = QA_Q1_SCALE_DEFAULT; }
+uint8_t qa_q1_alpha_encode(float alpha)
+{
+    if (alpha == 0) return QA_Q1_ALPHA_DEFAULT;
+    return (uint8_t)floorf(fmaxf(1, fminf(255, alpha * 254 + 1)) + 0.5f);
+}
+uint8_t qa_q1_scale_encode(float scale)
+{
+    if (scale == 0 || !isfinite(scale)) return QA_Q1_SCALE_DEFAULT;
+    return (uint8_t)(int32_t)fmod(trunc((double)scale * QA_Q1_SCALE_DEFAULT), 256);
+}
 static bool read_profile(qa_net_reader *r, qa_net_protocol_id p)
 {
     if (!r || r->failed) return false;

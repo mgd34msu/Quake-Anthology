@@ -155,6 +155,25 @@ static bool q1_entity_reference(struct application_qc_state *engine, qa_actor_id
 {
     return application_network_q1_qc_entity(engine, entity, NULL, out, error);
 }
+static bool q1_wire_appearance(struct application_qc_state *engine, int32_t reference,
+    uint8_t *alpha, uint8_t *scale, qa_error *error)
+{
+    float value = 0;
+    if (engine->field_bindings->alpha &&
+        !application_qc_float(engine, reference, engine->field_bindings->alpha, &value, error)) return false;
+    if (!isfinite(value))
+        return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source alpha");
+    *alpha = qa_q1_alpha_encode(value);
+    if (scale) {
+        value = 0;
+        if (engine->field_bindings->scale &&
+            !application_qc_float(engine, reference, engine->field_bindings->scale, &value, error)) return false;
+        if (!isfinite(value))
+            return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source scale");
+        *scale = qa_q1_scale_encode(value);
+    }
+    return true;
+}
 bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
     qa_q1_entity *out, qa_error *error)
 {
@@ -166,13 +185,14 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
     if (!application_network_q1_qc_entity(engine, entity, &physical, &reference, error)) return false;
     qa_q1_entity value; qa_q1_entity_init(&value); value.number = physical;
     float movetype;
-    if (!q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &value.model, error) ||
-        !q1_wire_scalar(engine, reference, engine->field_bindings->frame, 255, &value.frame, error) ||
+    if (!q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, UINT16_MAX, &value.model, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->frame, UINT16_MAX, &value.frame, error) ||
         !q1_wire_scalar(engine, reference, engine->field_bindings->colormap, 255, &value.colormap, error) ||
         !q1_wire_scalar(engine, reference, engine->field_bindings->skin, 255, &value.skin, error) ||
         !q1_wire_scalar(engine, reference, engine->field_bindings->effects, 255, &value.effects, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->origin, value.origin, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error) ||
+        !q1_wire_appearance(engine, reference, &value.alpha, &value.scale, error) ||
         !application_qc_float(engine, reference, engine->field_bindings->movetype, &movetype, error) || !isfinite(movetype)) return false;
     value.step = movetype == 4;
     if (!qa_actors_get(qa_session_actors(app->session), entity))
@@ -201,26 +221,26 @@ bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id play
     return true;
 }
 bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owner,
-    bool models, const char *names[255], size_t *count, uint32_t *player_model, qa_error *error)
+    bool models, const char **names, size_t capacity, size_t *count, uint32_t *player_model, qa_error *error)
 {
     if (q1_native(app)) return q1_native_owner(owner, error) &&
-        application_native_q1_wire_precache(app, owner, models, names, count, player_model, error);
+        application_native_q1_wire_precache(app, owner, models, names, capacity, count, player_model, error);
     struct application_qc_state *engine = q1_host(app, owner, error);
-    if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
+    if (!count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
     if (!engine) return false;
-    const char *retained[255] = {0}; size_t extent = 0;
     qa_qc_resource_kind kind = models ? QA_QC_RESOURCE_MODEL : QA_QC_RESOURCE_SOUND;
-    for (size_t i = 0; i < engine->resource_count; ++i) {
-        const application_qc_resource *resource = &engine->resources[i]; if (resource->kind != kind) continue;
-        uint32_t index = resource->value.index;
+    size_t extent = engine->precache.counts[kind] ? engine->precache.counts[kind] - 1 : 0;
+    if (names && capacity < extent)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 precache observation exceeds its output capacity");
+    for (size_t i = 0; i < extent; ++i) {
+        const application_qc_resource *resource = application_qc_resource_at(engine, kind, (uint32_t)i + 1);
+        if (!resource) return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache has an unrepresented index");
         const char *name = qa_strings_cstr(qa_session_strings(engine->services.session), resource->name);
-        if (!index || index > 255 || !name || !*name || retained[index - 1])
+        if (!name || !*name)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache ordering differs from admitted wire indices");
-        retained[index - 1] = name; if (index > extent) extent = index;
+        if (names) names[i] = name;
     }
-    for (size_t i = 0; i < extent; ++i) if (!retained[i])
-        return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache has an unrepresented index");
-    memcpy(names, retained, sizeof(retained)); *count = extent;
+    *count = extent;
     if (player_model) *player_model = models ? engine->precache.player_model : 0;
     return true;
 }
@@ -261,7 +281,7 @@ bool qa_application_network_q1_bounds(qa_application *app, qa_actor_id player,
     if (!q1_entity_reference(engine, entity, &reference, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->absmin, minimum, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->absmax, maximum, error) ||
-        !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &index, error) ||
+        !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, UINT16_MAX, &index, error) ||
         !q1_wire_string(engine, reference, engine->field_bindings->model, &name, error)) return false;
     for (unsigned axis = 0; axis < 3; ++axis)
         if (minimum[axis] > maximum[axis])
@@ -385,6 +405,7 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
         if (!value.weapon_model)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source weapon model is not in its ordered precache");
     }
+    if (!q1_wire_appearance(engine, reference, &value.weapon_alpha, NULL, error)) return false;
     *out = value; return true;
 }
 bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
@@ -615,12 +636,11 @@ bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
     value.colormap = 0;
     if (entity->number <= engine->max_clients) {
         value.colormap = entity->number; value.model = engine->precache.player_model;
-        if (!value.model || value.model > 255)
+        if (!value.model)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source player baseline lacks its original precached model");
+        value.alpha = QA_Q1_ALPHA_DEFAULT; value.scale = QA_Q1_SCALE_DEFAULT;
     }
-    uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = value};
-    if (!qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, (qa_nq_options){.standard_quake = true}, &message, NULL, 0)) return false;
+    value.lerp_finish = 0;
     *out = value; return true;
 }
 bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id player,
@@ -639,7 +659,7 @@ bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id 
     if (binding.kind == QA_QC_SLOT_BORROWED) {
         uint32_t model; const char *name;
         if (!q1_entity_reference(engine, binding.actor, &reference, error) ||
-            !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, 255, &model, error) ||
+            !q1_wire_scalar(engine, reference, engine->field_bindings->modelindex, UINT16_MAX, &model, error) ||
             !q1_wire_string(engine, reference, engine->field_bindings->model, &name, error)) return false;
         if (model && *name && !qa_application_network_q1_entity(app, player, binding.actor, &value, error)) return false;
     } else if (!qa_qc_slot_reference(vm, source_slot, &reference, error)) return false;

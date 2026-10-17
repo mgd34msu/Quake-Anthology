@@ -15,6 +15,8 @@ enum {
  * was not queued. The owner closes a failed connection before retrying a
  * multi-message command whose earlier emissions may already be queued. */
 typedef bool (*qa_q1_emit_fn)(void *, qa_bytes, qa_error *);
+uint8_t qa_q1_alpha_encode(float);
+uint8_t qa_q1_scale_encode(float);
 
 typedef struct qa_q1_entity {
     uint32_t number, model, frame, colormap, skin, effects;

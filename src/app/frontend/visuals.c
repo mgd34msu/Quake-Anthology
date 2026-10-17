@@ -1368,9 +1368,19 @@ static bool static_source_prepare(qa_frontend *frontend, qa_actor_owner provider
         }
     }
     if (owner->static_signon < count) {
-        const char *names[255] = {0}; size_t name_count = 0;
-        if (!qc && !(qw ? qa_application_network_qw_precache(frontend->application, true, names, &name_count, error) :
-            qa_application_network_q1_precache(frontend->application, provider, true, names, &name_count, NULL, error))) return false;
+        const char *qw_names[255] = {0}, **names = qw_names; size_t name_count = 0;
+        if (!qc) {
+            if (qw) {
+                if (!qa_application_network_qw_precache(frontend->application, true, names, &name_count, error)) return false;
+            } else {
+                if (!qa_application_network_q1_precache(frontend->application, provider, true,
+                    NULL, 0, &name_count, NULL, error)) return false;
+                names = name_count ? qa_arena_alloc(&frontend->frame.storage,
+                    name_count * sizeof(*names), _Alignof(const char *), error) : NULL;
+                if ((name_count && !names) || !qa_application_network_q1_precache(frontend->application,
+                    provider, true, names, name_count, &name_count, NULL, error)) return false;
+            }
+        }
         while (owner->static_signon < count) {
             qa_application_protocol_event event;
             if (!(qc ? qa_application_qc_message_signon_at(frontend->application, qc, owner->static_signon, &event, error) :

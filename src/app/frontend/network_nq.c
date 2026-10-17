@@ -54,10 +54,32 @@ static bool batch_bytes(nq_batch *batch, qa_bytes bytes, qa_error *error)
     if (bytes.size) memcpy(batch->bytes + batch->size, bytes.data, bytes.size);
     batch->size += bytes.size; return true;
 }
+static qa_q1_entity wire_entity(qa_net_protocol_id protocol, qa_q1_entity value, bool baseline)
+{
+    if (protocol.kind == QA_NET_NQ15) {
+        value.model = baseline && value.model > 255 ? 0 : value.model & 255;
+        value.frame = baseline && value.frame > 255 ? 0 : value.frame & 255;
+        value.alpha = QA_Q1_ALPHA_DEFAULT; value.scale = QA_Q1_SCALE_DEFAULT;
+        value.lerp_finish = 0;
+    } else if (baseline && protocol.kind != QA_NET_RMQ999) value.scale = QA_Q1_SCALE_DEFAULT;
+    return value;
+}
+static qa_q1_clientdata wire_clientdata(qa_net_protocol_id protocol, qa_q1_clientdata value)
+{
+    if (protocol.kind == QA_NET_NQ15) {
+        value.weapon_frame &= 255; value.armor &= 255; value.weapon_model &= 255;
+        value.ammo &= 255; value.shells &= 255; value.nails &= 255;
+        value.rockets &= 255; value.cells &= 255;
+        value.weapon_alpha = QA_Q1_ALPHA_DEFAULT;
+    }
+    return value;
+}
 static bool batch_message(nq_batch *batch, const qa_nq_message *message, qa_nq_options options, qa_error *error)
 {
     uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-    if (!qa_nq_write(&writer, batch->protocol, options, message, NULL, 0)) return false;
+    qa_nq_message value = *message;
+    if (value.op == QA_NQ_CLIENTDATA) value.data.clientdata = wire_clientdata(batch->protocol, value.data.clientdata);
+    if (!qa_nq_write(&writer, batch->protocol, options, &value, NULL, 0)) return false;
     return batch_bytes(batch, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
 }
 static bool batch_source_emit(void *context, qa_bytes bytes, qa_error *error)
@@ -94,7 +116,8 @@ static bool status_messages(nq_batch *batch, qa_application_network_q1_status_pl
     return true;
 }
 static bool capture_baselines(frontend_nq_host *host, qa_actor_id player,
-    const qa_application_network_q1_world *world, qa_q1_entity **saved, size_t *saved_count, qa_error *error)
+    const qa_application_network_q1_world *world, qa_net_protocol_id protocol,
+    qa_q1_entity **saved, size_t *saved_count, qa_error *error)
 {
     qa_q1_entity *values = NULL; size_t count = 0, capacity = 0;
     uint32_t cursor = 0; bool present; qa_actor_id actor; qa_q1_entity entity;
@@ -106,7 +129,7 @@ static bool capture_baselines(frontend_nq_host *host, qa_actor_id player,
             if (!next) { frontend_fail(error, QA_ERROR_MEMORY, "Retaining NetQuake peer baselines"); goto fail; }
             values = next; capacity = grown;
         }
-        values[count++] = entity;
+        values[count++] = wire_entity(protocol, entity, true);
     }
     for (;;) {
         if (!qa_application_network_q1_entity_next(host->frontend->application, player,
@@ -123,11 +146,22 @@ static bool capture_baselines(frontend_nq_host *host, qa_actor_id player,
             if (!next) { frontend_fail(error, QA_ERROR_MEMORY, "Retaining NetQuake peer baselines"); goto fail; }
             values = next; capacity = grown;
         }
-        values[count++] = entity;
+        values[count++] = wire_entity(protocol, entity, true);
     }
     free(*saved); *saved = values; *saved_count = count; return true;
 fail:
     free(values); return false;
+}
+static bool precache_names(frontend_nq_host *host, bool models,
+    const char ***names, size_t *count, qa_error *error)
+{
+    qa_frontend *frontend = host->frontend;
+    if (!qa_application_network_q1_precache(frontend->application, host->owner, models,
+        NULL, 0, count, NULL, error)) return false;
+    *names = *count ? qa_arena_alloc(&frontend->frame.storage,
+        *count * sizeof(**names), _Alignof(const char *), error) : NULL;
+    return (!*count || *names) && qa_application_network_q1_precache(frontend->application,
+        host->owner, models, *names, *count, count, NULL, error);
 }
 static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t slot,
     qa_net_protocol_id protocol, const qa_q1_entity *baselines, size_t baseline_count, uint8_t stage,
@@ -138,9 +172,9 @@ static bool signon_payload(frontend_nq_host *host, qa_actor_id actor, uint32_t s
     nq_batch batch = {.emit = emit, .context = output, .host = host, .protocol = protocol}; qa_nq_options options = {.standard_quake = world.standard_quake};
     qa_nq_message message;
     if (stage == 1) {
-        const char *models[255], *sounds[255]; size_t model_count, sound_count;
-        if (!qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, NULL, error) ||
-            !qa_application_network_q1_precache(host->frontend->application, host->owner, false, sounds, &sound_count, NULL, error)) return false;
+        const char **models, **sounds; size_t model_count, sound_count;
+        if (!precache_names(host, true, &models, &model_count, error) ||
+            !precache_names(host, false, &sounds, &sound_count, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_SERVERINFO, .data.serverinfo = {.protocol = protocol,
             .max_clients = (uint8_t)world.max_clients, .game_type = world.deathmatch ? 1 : 0, .level = world.level,
             .models = models, .sounds = sounds, .model_count = model_count, .sound_count = sound_count}};
@@ -198,7 +232,8 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
     if(!qa_net_client_id_equal(id,peer->client))return frontend_fail(error,QA_ERROR_ARGUMENT,"NetQuake signon uses another peer identity");
     qa_actor_id actor;qa_application_network_q1_world world;
     if(!peer_actor(peer,&actor,error)||!qa_application_network_q1_world_read(host->frontend->application,host->owner,&world,error))return false;
-    if(stage==1&&!capture_baselines(host,actor,&world,&peer->baselines,&peer->baseline_count,error))return false;
+    if(stage==1&&!capture_baselines(host,actor,&world,host->frontend->options.network_protocol,
+        &peer->baselines,&peer->baseline_count,error))return false;
     if(stage==3&&(!qa_application_remote_player_begin(host->frontend->application,peer->client,peer->seat,error)||
         !peer_actor(peer,&actor,error)))return false;
     return signon_payload(host,actor,peer->source_slot,host->frontend->options.network_protocol,
@@ -859,8 +894,9 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
         if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
     }
     message.op = QA_NQ_CLIENTDATA;
-    if (!qa_application_network_q1_clientdata(host->frontend->application, actor, &message.data.clientdata, error) ||
-        !qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
+    if (!qa_application_network_q1_clientdata(host->frontend->application, actor, &message.data.clientdata, error)) return false;
+    message.data.clientdata = wire_clientdata(protocol, message.data.clientdata);
+    if (!qa_nq_write(writer, protocol, options, &message, NULL, 0)) return false;
     qa_collision_geometry *geometry = qa_world_geometry(qa_application_world(host->frontend->application));
     size_t extent = qa_collision_q1_pvs_bytes(geometry);
     uint8_t *pvs = extent ? qa_arena_alloc(&host->frontend->frame.storage, extent, 1, error) : NULL;
@@ -876,6 +912,7 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
             &present, &entity_actor, &entity, error);
         if (!ok || !present) break;
         if (!qa_actor_id_equal(actor, entity_actor)) {
+            if (protocol.kind == QA_NET_NQ15 && entity.model > 255) continue;
             qa_bounds bounds; bool modeled, visible;
             ok = qa_application_network_q1_bounds(host->frontend->application, actor, entity_actor, &bounds, &modeled, error);
             if (!ok) break;
@@ -885,6 +922,8 @@ static bool frame_payload(frontend_nq_host *host,qa_actor_id actor,uint64_t firs
             if (!ok) break;
             if (!visible) continue;
         }
+        if (protocol.kind != QA_NET_NQ15 && entity.alpha == 1 && !entity.effects) continue;
+        entity = wire_entity(protocol, entity, false);
         qa_q1_entity empty; qa_q1_entity_init(&empty); empty.number = entity.number;
         const qa_q1_entity *saved = baseline(baselines, baseline_count, entity.number);
         uint8_t encoded[64]; qa_net_writer item; qa_net_writer_init(&item, encoded, sizeof(encoded), error);
@@ -1017,7 +1056,7 @@ static bool nq_demo_seed(void *context,const frontend_demo_sink *sink,qa_error *
     qa_application_network_q1_world world;
     if(!nq_demo_current(record)||!nq_demo_angles(record,error)||
         !qa_application_network_q1_world_read(host->frontend->application,host->owner,&world,error)||
-        !capture_baselines(host,record->actor,&world,&record->baselines,&record->baseline_count,error))return false;
+        !capture_baselines(host,record->actor,&world,record->protocol,&record->baselines,&record->baseline_count,error))return false;
     nq_demo_output output={record,sink};
     for(uint8_t stage=1;stage<=3;++stage) {
         if(!signon_payload(host,record->actor,record->slot,record->protocol,record->baselines,
@@ -1120,9 +1159,12 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         source.owner != host->owner || source.protocol.kind != QA_NET_NQ15 ||
         source.protocol.flags || source.protocol.revision)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its primary classic source owner");
-    uint32_t client_slots, entity_slots; const char *models[255]; size_t model_count; uint32_t player_model = 0;
+    uint32_t client_slots, entity_slots; size_t model_count; uint32_t player_model = 0;
     if (!qa_application_network_q1_extents(host->frontend->application, host->owner, &client_slots, &entity_slots, error) ||
-        !qa_application_network_q1_precache(host->frontend->application, host->owner, true, models, &model_count, &player_model, error)) return false;
+        !qa_application_network_q1_precache(host->frontend->application, host->owner, true,
+            NULL, 0, &model_count, &player_model, error)) return false;
+    uint32_t baseline_player_model = host->frontend->options.network_protocol.kind == QA_NET_NQ15 &&
+        player_model > 255 ? 0 : player_model;
     if (host->composition != host->generation)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host changes its launch generation");
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {
@@ -1161,9 +1203,10 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = *e};
             if (!e->number || e->number > UINT16_MAX || e->number >= entity_slots || e->model > model_count ||
                 (j && e->number <= p->baselines[j - 1].number) || e->effects || e->step ||
-                (j < client_slots && (e->number != j + 1 || e->model != player_model || e->colormap != e->number)) ||
-                (j >= client_slots && (!e->model || e->colormap)) ||
-                !qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+                (j < client_slots && (e->number != j + 1 || e->model != baseline_player_model || e->colormap != e->number)) ||
+                (j >= client_slots && (e->colormap ||
+                    (!e->model && host->frontend->options.network_protocol.kind != QA_NET_NQ15))) ||
+                !qa_nq_write(&writer, host->frontend->options.network_protocol,
                     (qa_nq_options){.standard_quake = true}, &message, NULL, 0))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake baseline lacks its original source wire admission");
         }

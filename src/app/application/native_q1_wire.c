@@ -485,7 +485,8 @@ static bool source_current(application_native_q1_wire_source *source, qa_ruleset
         source->receipt.entity_slots <= source->receipt.client_slots ||
         (packet && (source->receipt.client_slots > 255 ||
             source->receipt.entity_slots > UINT16_MAX + 1u ||
-            source->receipt.model_count > 256 || source->receipt.sound_count > 256)))
+            (dialect == QA_RULESET_QUAKEWORLD &&
+                (source->receipt.model_count > 256 || source->receipt.sound_count > 256)))))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "Native Q1 source exceeds the original protocol extent");
     if (!p->native_q1_wire || !p->native_q1_wire->readers ||
@@ -619,7 +620,7 @@ qa_cvars *application_native_q1_wire_cvars(qa_application *app, qa_actor_owner o
 }
 static void vector(float out[3], qa_vec3 value) { out[0] = value.x; out[1] = value.y; out[2] = value.z; }
 static bool entity_read(qa_application *app, application_native_q1_wire_source *source,
-    qa_actor_id actor, bool baseline, qa_q1_entity *out, qa_error *error) {
+    qa_actor_id actor, qa_q1_entity *out, qa_error *error) {
     uint32_t slot;
     if (!qa_q1_wire_actor_slot(&source->receipt, actor, &slot) || !slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 entity has no physical source edict");
@@ -632,13 +633,15 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
     qa_q1_entity value; qa_q1_entity_init(&value);
     uint32_t frame = (uint32_t)visual.visual.frame;
     value.number = slot; value.model = model;
-    value.frame = baseline && (frame & UINT32_C(0xff00)) ? 0 : (uint8_t)frame;
+    value.frame = frame;
     value.skin = (uint8_t)visual.visual.skin; value.effects = (uint8_t)visual.visual.effects;
     uint32_t client_slot;
     bool player = qa_q1_native_client_slot(source->provider->state.q1, actor, &client_slot, NULL);
     qa_q1_presentation presentation;
-    value.colormap = player ? slot : qa_q1_game_presentation(source->provider->state.q1, actor,
-        &presentation) ? (uint8_t)presentation.visual.colormap : 0;
+    bool source_visual = qa_q1_game_presentation(source->provider->state.q1, actor, &presentation);
+    value.colormap = player ? slot : source_visual ? (uint8_t)presentation.visual.colormap : 0;
+    value.alpha = qa_q1_alpha_encode(source_visual ? presentation.visual.alpha : visual.visual.alpha);
+    value.scale = qa_q1_scale_encode(source_visual ? presentation.visual.scale : visual.visual.scale);
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
                  physics.motion == QA_PHYSICS_STEP;
@@ -656,20 +659,22 @@ bool application_native_q1_wire_entity(qa_application *app, qa_actor_id recipien
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
     uint32_t slot;
-    bool okay = client(&source, recipient, &slot, error) && entity_read(app, &source, actor, false, out, error);
+    bool okay = client(&source, recipient, &slot, error) && entity_read(app, &source, actor, out, error);
     application_native_q1_wire_end(&source); return okay;
 }
 bool application_native_q1_wire_precache(qa_application *app, qa_actor_owner owner, bool models,
-    const char *names[255], size_t *count, uint32_t *player_model_index, qa_error *error) {
-    if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 precache inventory");
+    const char **names, size_t capacity, size_t *count, uint32_t *player_model_index, qa_error *error) {
+    if (!count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q1 precache inventory");
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_begin(app, owner, &source, error)) return false;
     const qa_string_id *rows = models ? source.receipt.models : source.receipt.sounds;
     size_t length = models ? source.receipt.model_count : source.receipt.sound_count;
-    bool okay = true;
-    for (size_t i = 1; i < length; ++i) {
-        names[i - 1] = text(app, rows[i]);
-        if (!names[i - 1]) { okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 declaration lost its source string"); break; }
+    bool okay = !names || capacity >= length - 1;
+    if (!okay) application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 precache observation exceeds its output capacity");
+    for (size_t i = 1; okay && i < length; ++i) {
+        const char *name = text(app, rows[i]);
+        if (!name || !*name) { okay = application_fail(error, QA_ERROR_FORMAT, "Native Q1 declaration lost its source string"); break; }
+        if (names) names[i - 1] = name;
     }
     if (okay) {
         *count = length - 1;
@@ -750,6 +755,9 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         vector(value.punch, row->player.state.kind == QA_RULESET_NETQUAKE
             ? row->player.state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
+        qa_q1_presentation presentation;
+        if (qa_q1_game_presentation(source.provider->state.q1, actor, &presentation))
+            value.weapon_alpha = qa_q1_alpha_encode(presentation.visual.alpha);
         *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lost its actual source player or selected control");
@@ -794,16 +802,15 @@ bool application_native_q1_wire_baseline(qa_application *app, qa_actor_id recipi
     qa_q1_entity value = *entity;
     qa_actor_id actor;
     if (okay && qa_q1_wire_actor_at(&source.receipt, entity->number, &actor))
-        okay = entity_read(app, &source, actor, true, &value, error);
+        okay = entity_read(app, &source, actor, &value, error);
     else if (okay && entity->number > source.receipt.client_slots) okay = false;
     if (okay && entity->number <= source.receipt.client_slots) {
         okay = player_model(&source, &value.model);
         value.colormap = entity->number;
+        value.alpha = QA_Q1_ALPHA_DEFAULT; value.scale = QA_Q1_SCALE_DEFAULT;
     }
     if (okay) {
-        value.model = value.model > 255 ? 0 : value.model;
-        value.frame = value.frame > 255 ? 0 : value.frame;
-        value.effects = 0; value.alpha = 0; value.scale = 16;
+        value.effects = 0;
         value.lerp_finish = 0; value.step = false; *out = value;
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q1 baseline has no source row or declared player model");
@@ -820,12 +827,10 @@ bool application_native_q1_wire_client_baseline(qa_application *app, qa_actor_id
     if (okay) {
         qa_actor_id actor;
         if (qa_q1_wire_actor_at(&source.receipt, physical, &actor))
-            okay = entity_read(app, &source, actor, true, &value, error);
+            okay = entity_read(app, &source, actor, &value, error);
         if (okay) okay = player_model(&source, &value.model);
         value.number = physical; value.colormap = physical;
-        value.model = value.model > 255 ? 0 : value.model;
-        value.frame = value.frame > 255 ? 0 : value.frame;
-        value.effects = 0; value.alpha = 0; value.scale = 16;
+        value.effects = 0; value.alpha = QA_Q1_ALPHA_DEFAULT; value.scale = QA_Q1_SCALE_DEFAULT;
         value.step = false; value.lerp_finish = 0;
         if (okay) *out = value;
     } else if (error && error->code == QA_OK)
@@ -1333,7 +1338,7 @@ bool application_native_q1_wire_entity_next(qa_application *app, qa_actor_id rec
             uint32_t physical = (*cursor)++;
             if (!qa_q1_wire_actor_at(&source.receipt, physical, &candidate)) continue;
             qa_q1_entity value;
-            if (!entity_read(app, &source, candidate, false, &value, error)) { okay = false; break; }
+            if (!entity_read(app, &source, candidate, &value, error)) { okay = false; break; }
             if (!value.model) continue;
             *actor = candidate; *out = value; *present = true; break;
         }
@@ -1432,7 +1437,7 @@ bool application_native_q1_wire_bounds(qa_application *app, qa_actor_id recipien
     application_native_q1_wire_source source = {0};
     if (!application_native_q1_wire_begin(app, 0, &source, error)) return false;
     uint32_t slot; qa_linked_body linked; qa_q1_entity entity;
-    bool okay = client(&source, recipient, &slot, error) && entity_read(app, &source, actor, false, &entity, error) &&
+    bool okay = client(&source, recipient, &slot, error) && entity_read(app, &source, actor, &entity, error) &&
         qa_world_linked(app->world, actor, &linked);
     if (okay) { *out = linked.absolute_bounds; *has_model = entity.model != 0; }
     else if (error && error->code == QA_OK) application_fail(error, QA_ERROR_NOT_FOUND, "Native Q1 source body is not linked");

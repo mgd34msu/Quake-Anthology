@@ -7720,6 +7720,57 @@ static void test_loopback_admission(void)
     CHECK(qa_net_transport_collect(b, 4, &event, &error) && event.packet.kind == QA_NET_POLL_EMPTY);
     qa_net_transport_close(a); qa_net_transport_close(b); qa_net_loopback_close(hub);
 }
+static void test_nq_extended_appearance(void)
+{
+    CHECK(qa_q1_alpha_encode(0) == QA_Q1_ALPHA_DEFAULT);
+    CHECK(qa_q1_alpha_encode(-1) == 1 && qa_q1_alpha_encode(0.5f) == 128);
+    CHECK(qa_q1_alpha_encode(1) == 255 && qa_q1_alpha_encode(2) == 255);
+    CHECK(qa_q1_scale_encode(0) == QA_Q1_SCALE_DEFAULT);
+    CHECK(qa_q1_scale_encode(1.5f) == 24 && qa_q1_scale_encode(16) == 0);
+    CHECK(qa_q1_scale_encode(-1) == 240);
+    CHECK(qa_q1_scale_encode(INFINITY) == QA_Q1_SCALE_DEFAULT);
+    const qa_net_protocol protocols[] = {QA_NET_FITZ666, QA_NET_RMQ999};
+    for (size_t p = 0; p < sizeof(protocols) / sizeof(protocols[0]); ++p) {
+        qa_error error = {0};
+        qa_net_protocol_id protocol = {.kind = protocols[p]};
+        if (protocol.kind == QA_NET_RMQ999) protocol.flags = QA_Q1_EDICTSCALE;
+        qa_nq_options options = {.standard_quake = true};
+        qa_q1_entity baseline; qa_q1_entity_init(&baseline);
+        baseline.number = 300; baseline.model = 301; baseline.frame = 400;
+        baseline.alpha = qa_q1_alpha_encode(0.5f);
+        baseline.scale = protocol.kind == QA_NET_RMQ999 ? qa_q1_scale_encode(1.5f) : QA_Q1_SCALE_DEFAULT;
+        uint8_t bytes[256]; qa_net_writer writer;
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = baseline};
+        CHECK(qa_nq_write(&writer, protocol, options, &message, NULL, 0));
+        qa_q1_entity entity = baseline;
+        entity.model = 600; entity.frame = 700; entity.alpha = qa_q1_alpha_encode(0.75f);
+        entity.scale = qa_q1_scale_encode(2);
+        CHECK(qa_nq_write_entity(&writer, protocol, &entity, &baseline, 0));
+        qa_q1_clientdata client = {.viewheight = 22, .health = 100, .weapon_frame = 450,
+            .weapon_model = 500, .armor = 600, .ammo = 700, .shells = 800,
+            .nails = 900, .rockets = 1000, .cells = 1100, .weapon = 1,
+            .weapon_alpha = qa_q1_alpha_encode(0.25f)};
+        CHECK(qa_nq_write_clientdata(&writer, protocol, &client, true));
+        qa_nq_decoder *decoder;
+        CHECK(qa_nq_decoder_create(protocol, options, &decoder, &error));
+        qa_net_reader reader; qa_net_reader_init(&reader,
+            (qa_bytes){bytes, qa_net_writer_size(&writer)}, &error);
+        CHECK(qa_nq_read(decoder, &reader, &message) && message.op == QA_NQ_BASELINE);
+        CHECK(message.data.entity.model == baseline.model && message.data.entity.frame == baseline.frame &&
+            message.data.entity.alpha == baseline.alpha && message.data.entity.scale == baseline.scale);
+        CHECK(qa_nq_read(decoder, &reader, &message) && message.op == QA_NQ_ENTITY);
+        CHECK(message.data.entity.model == entity.model && message.data.entity.frame == entity.frame &&
+            message.data.entity.alpha == entity.alpha && message.data.entity.scale == entity.scale);
+        CHECK(qa_nq_read(decoder, &reader, &message) && message.op == QA_NQ_CLIENTDATA);
+        CHECK(message.data.clientdata.weapon_model == client.weapon_model &&
+            message.data.clientdata.weapon_frame == client.weapon_frame &&
+            message.data.clientdata.weapon_alpha == client.weapon_alpha &&
+            message.data.clientdata.ammo == client.ammo && message.data.clientdata.cells == client.cells);
+        CHECK(qa_net_reader_finish(&reader));
+        qa_nq_decoder_destroy(decoder);
+    }
+}
 static void test_loopback_nq_signon(void)
 {
     const qa_net_protocol protocols[] = {QA_NET_NQ15, QA_NET_FITZ666, QA_NET_RMQ999};
@@ -9702,6 +9753,7 @@ int main(int argc, char **argv)
     test_browser_endpoint_probe();
     test_browser_lan_overlap();
     test_dosbox_loopback();
+    test_nq_extended_appearance();
     test_loopback_nq_signon();
     test_kex_send_admission();
     test_kex_userinfo_projection();
