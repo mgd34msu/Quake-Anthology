@@ -1054,10 +1054,6 @@ static size_t automatic_target(const qa_audio_device_options *options, const siz
         if (target < recent)
             target = recent;
     }
-    /* Source DMA paints a bounded lead over playback. A missed pump must
-     * not turn a past loading stall into seconds of future sound latency. */
-    if (target > mixahead)
-        target = mixahead;
     size_t maximum = options->maximum_queued_frames;
     return target > maximum ? maximum : (size_t)target;
 }

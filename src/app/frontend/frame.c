@@ -42,6 +42,7 @@
 #include "qa/application_network.h"
 #include "qa/text.h"
 #include "qa/ruleset.h"
+#include "qa/platform_services.h"
 #include <stdio.h>
 #ifdef QA_ALLOCATION_GATE
 #include "qa/allocation_gate.h"
@@ -618,11 +619,14 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     if (okay) frontend_network_events_consume(frontend);
     return okay;
 }
-static bool audio_output(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
+static bool audio_output(qa_frontend *frontend, uint64_t elapsed_ns,
+    uint64_t work_started_ns, qa_error *error)
 {
     if (frontend->device) {
         size_t mixed;
-        return qa_audio_device_pump_auto(frontend->device, frontend->audio, 0, &mixed, error);
+        double measured_work_ms=(double)(qa_platform_time_ns()-work_started_ns)/1000000;
+        return qa_audio_device_pump_auto(frontend->device, frontend->audio,
+            measured_work_ms, &mixed, error);
     }
     uint64_t duration = elapsed_ns < UINT64_C(250000000) ? elapsed_ns : UINT64_C(250000000);
     uint64_t samples = duration * 48000 + frontend->silent_audio_remainder;
@@ -1036,9 +1040,10 @@ static bool frontend_step(qa_frontend *frontend,
                     if (!ok) *playing=false;
                 }
             }
+            uint64_t audio_work_started_ns=qa_platform_time_ns();
             if (ok) ok=frontend_events(frontend,error);
             if(ok) ok=frontend_music_cue_drain(frontend,error);
-            if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
+            if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,audio_work_started_ns,error);
             frontend->stepping=false;
             if (ok) ok=frontend_cinematic_drain(frontend,error);
         }
@@ -1081,6 +1086,7 @@ static bool frontend_step(qa_frontend *frontend,
                     frontend_print(frontend, "\n");
                 }
             }
+            uint64_t audio_work_started_ns=qa_platform_time_ns();
             if (ok && !qa_application_should_stop(frontend->application)) {
                 ok = qa_profiler_push(profiler, frontend->profiler_labels[FRONTEND_PROFILE_EVENTS], error);
                 if (ok) ok = frontend_profiler_end(profiler,
@@ -1098,7 +1104,7 @@ static bool frontend_step(qa_frontend *frontend,
                     if (ok) qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
                     if (ok) ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) &&
                          qa_audio_engine_end_loop_frame(frontend->audio, error) &&
-                         audio_output(frontend, adjusted, error);
+                         audio_output(frontend, adjusted, audio_work_started_ns, error);
                     ok = frontend_profiler_end(profiler, ok, error);
                 }
             }
