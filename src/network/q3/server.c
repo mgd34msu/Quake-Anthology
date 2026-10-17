@@ -78,11 +78,11 @@ bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_re
     qa_q3_server_world world = p->hooks.world(p->hooks.context);
     qa_q3_server_state *state = &p->state;
     state->message_acknowledge = cursor.header.message_acknowledge;
-    if (state->message_acknowledge < 0) return fail(e, QA_ERROR_FORMAT, "Negative Q3 client message acknowledgement");
+    if (state->message_acknowledge < 0) return true;
     int32_t ack = cursor.header.reliable_acknowledge;
     if ((int64_t)ack < (int64_t)p->reliable.sequence - 64) {
         p->reliable.acknowledged = p->reliable.sequence;
-        return fail(e, QA_ERROR_FORMAT, "Q3 client reliable acknowledgement was overwritten");
+        return true;
     }
     if (ack < 0 || ack > p->reliable.sequence) return fail(e, QA_ERROR_FORMAT, "Q3 client reliable acknowledgement is outside history");
     p->reliable.acknowledged = ack;

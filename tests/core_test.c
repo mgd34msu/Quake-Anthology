@@ -9783,6 +9783,73 @@ typedef struct q3_command_test {
 } q3_command_test;
 static uint64_t q3_test_generation(void *context) { (void)context; return 1; }
 static bool q3_test_ok(void *context,qa_error *error) { (void)context;(void)error;return true; }
+typedef struct q3_ack_test { unsigned commands, drops; } q3_ack_test;
+static qa_q3_server_world q3_ack_world(void *context)
+{ (void)context;return (qa_q3_server_world){.generation=1,.server_id=1}; }
+static bool q3_ack_command(void *context,const qa_q3_command *command,bool allowed,qa_error *error)
+{
+    (void)error;q3_ack_test *test=context;
+    CHECK(allowed && command->sequence==(int32_t)(test->commands+1));
+    ++test->commands;return true;
+}
+static bool q3_ack_move(void *context,const qa_q3_usercmd *command,qa_error *error)
+{ (void)context;(void)command;(void)error;return true; }
+static bool q3_ack_drop(void *context,const char *reason,qa_error *error)
+{ (void)reason;(void)error;++((q3_ack_test *)context)->drops;return true; }
+static qa_net_send_result q3_ack_send(void *context,const qa_net_address *to,qa_bytes bytes,qa_error *error)
+{ (void)context;(void)to;(void)bytes;(void)error;return QA_NET_SEND_ACCEPTED; }
+static const char *q3_ack_lookup(void *context,int32_t sequence)
+{ (void)sequence;return context; }
+static void q3_ack_packet(qa_q3_server_peer *peer,qa_q3_channel *client,
+    int32_t message_ack,int32_t reliable_ack,int32_t command,const char *server_command)
+{
+    qa_error error={0};uint8_t bytes[256];qa_q3_writer writer;
+    qa_q3_writer_init(&writer,bytes,sizeof(bytes),false,&error);
+    CHECK(qa_q3_write_bits(&writer,1,32));
+    CHECK(qa_q3_write_bits(&writer,(uint32_t)message_ack,32));
+    CHECK(qa_q3_write_bits(&writer,(uint32_t)reliable_ack,32));
+    if(command) {
+        CHECK(qa_q3_write_bits(&writer,4,8));
+        CHECK(qa_q3_write_bits(&writer,(uint32_t)command,32));
+        CHECK(qa_q3_write_string(&writer,"ackcheck",false));
+    }
+    CHECK(qa_q3_write_bits(&writer,5,8));
+    size_t size=qa_q3_writer_size(&writer);
+    CHECK(qa_q3_xor_client(bytes,size,0,q3_ack_lookup,(void *)server_command,&error));
+    CHECK(qa_q3_channel_begin(client,(qa_bytes){bytes,size},&error));
+    bool present;qa_bytes packet;qa_q3_receive_kind kind;
+    CHECK(qa_q3_channel_prepare(client,&present,&packet,&error) && present);
+    CHECK(qa_q3_server_peer_receive(peer,packet,&kind,&error));
+    CHECK(kind==QA_Q3_PACKET_MESSAGE && error.code==QA_OK);
+    qa_q3_channel_sent(client,packet);
+}
+static void test_q3_stale_ack_keeps_peer(void)
+{
+    qa_error error={0};q3_ack_test test={0};qa_q3_server_peer *peer=NULL;qa_q3_channel *client=NULL;
+    qa_net_address remote={.kind=QA_NET_IPV4,.port=27960,.host.ipv4={127,0,0,1}};
+    qa_q3_server_hooks hooks={.context=&test,.world=q3_ack_world,.command=q3_ack_command,
+        .enter_world=q3_ack_move,.think=q3_ack_move,.resend_gamestate=q3_test_ok,
+        .pure_rejected_snapshot=q3_test_ok,.drop=q3_ack_drop,.send=q3_ack_send};
+    CHECK(qa_q3_server_peer_create((qa_q3_identity){0},QA_Q3_ARENA,&remote,0,1234,&hooks,&peer,&error));
+    CHECK(qa_q3_channel_create(QA_Q3_CLIENT,1234,&client,&error));
+    q3_ack_packet(peer,client,-1,0,1,"");
+    CHECK(test.commands==0 && test.drops==0 && qa_q3_server_peer_reliable_acknowledged(peer)==0);
+    q3_ack_packet(peer,client,0,0,1,"");
+    CHECK(test.commands==1 && test.drops==0);
+    for(unsigned i=0;i<64;++i)
+        CHECK(qa_q3_server_peer_command(peer,"print",NULL,UINT32_MAX,0,&error));
+    q3_ack_packet(peer,client,0,64,0,"print");
+    CHECK(qa_q3_server_peer_reliable_acknowledged(peer)==64);
+    CHECK(qa_q3_server_peer_command(peer,"print",NULL,UINT32_MAX,0,&error));
+    CHECK(qa_q3_server_peer_reliable_sequence(peer)==65);
+    q3_ack_packet(peer,client,0,0,2,"print");
+    CHECK(test.commands==1 && test.drops==0 && qa_q3_server_peer_reliable_acknowledged(peer)==65);
+    q3_ack_packet(peer,client,0,1,2,"print");
+    CHECK(test.commands==2 && test.drops==0 && qa_q3_server_peer_reliable_acknowledged(peer)==1);
+    q3_ack_packet(peer,client,0,65,3,"print");
+    CHECK(test.commands==3 && test.drops==0 && qa_q3_server_peer_state(peer)->phase==QA_Q3_CONNECTED);
+    qa_q3_channel_destroy(client);qa_q3_server_peer_destroy(peer);
+}
 static bool q3_test_download_size(void *context,int32_t size,int32_t *out,qa_error *error)
 { (void)context;(void)error;*out=size;return true; }
 static bool q3_test_gamestate(void *context,const qa_q3_gamestate *state,qa_error *error)
@@ -10705,6 +10772,7 @@ int main(int argc, char **argv)
     test_nq_send_admission();
     test_q3_pure_metadata();
     test_q3_send_admission();
+    test_q3_stale_ack_keeps_peer();
     test_arena_progress_bound_store();
     test_event_ring_cold_growth();
     test_q3_reliable_event_references();
