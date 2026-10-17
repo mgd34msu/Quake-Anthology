@@ -455,8 +455,8 @@ bool frontend_unified_q3_runtime_factory_scene_submit(frontend_unified_q3_runtim
 { return o && frontend_unified_q3_runtime_scene_submit(o->runtime,world,frame,e); }
 bool frontend_unified_q3_runtime_factory_hud(frontend_unified_q3_runtime_factory *o,bool *rendered,qa_error *e)
 { return o && frontend_unified_q3_runtime_hud(o->runtime,rendered,e); }
-bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *o,bool complete,qa_error *e)
-{ return o && frontend_unified_q3_runtime_frame_end(o->runtime,complete,e) &&
+bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *o,qa_error *e)
+{ return o && frontend_unified_q3_runtime_frame_end(o->runtime,e) &&
     frontend_music_cue_drain(o->options.frontend,e); }
 bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runtime_factory *o,qa_audio_listener *out,bool *present,qa_error *e)
 {

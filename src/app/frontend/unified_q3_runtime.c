@@ -896,7 +896,7 @@ bool frontend_unified_q3_runtime_hud(frontend_unified_q3_runtime *o,bool *render
     if(okay)*rendered=o->rendered=true;
     return end(o,okay,e);
 }
-bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *o,bool completed,qa_error *e)
+bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *o,qa_error *e)
 {
     if(!o || !o->prepared || !frontend_unified_q3_runtime_idle(o))return fail(e,"Unified CG frame end still retains a child callback");
     qa_q3_presentation_supplement_release(&o->supplement);o->scene_prepared=false;o->scene_submitted=false;
@@ -905,7 +905,6 @@ bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *o,bool c
     memset(o->packet_handled,0,sizeof(o->packet_handled));memset(o->packet_actors,0,sizeof(o->packet_actors));
     o->scene_bank=NULL;o->scene_light_count=0;
     o->prepared=false; o->prediction_prepared=false;o->prediction_applied=false; o->information_prepared=false;
-    if(!completed)o->faulted=true;
     return true;
 }
 bool frontend_unified_q3_runtime_command_call(frontend_unified_q3_runtime *o,const q3n_compiled_frame *r,

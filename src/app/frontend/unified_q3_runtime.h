@@ -122,7 +122,7 @@ bool frontend_unified_q3_runtime_scene_view_weapon(const frontend_unified_q3_run
 bool frontend_unified_q3_runtime_scene_submit(frontend_unified_q3_runtime *,
     const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_q3_runtime_hud(frontend_unified_q3_runtime *,bool *rendered,qa_error *);
-bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *, bool completed, qa_error *);
+bool frontend_unified_q3_runtime_frame_end(frontend_unified_q3_runtime *, qa_error *);
 bool frontend_unified_q3_runtime_command_call(frontend_unified_q3_runtime *,const q3n_compiled_frame *,
     void *,bool (*)(void *,const q3n_frame *,const frontend_unified_q3_runtime_owners *,qa_error *),qa_error *);
 bool frontend_unified_q3_runtime_load_deferred(frontend_unified_q3_runtime *,const q3n_frame *,qa_error *);

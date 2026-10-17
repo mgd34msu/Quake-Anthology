@@ -80,7 +80,7 @@ bool frontend_unified_q3_runtime_factory_scene_view_weapon(const frontend_unifie
 bool frontend_unified_q3_runtime_factory_scene_submit(frontend_unified_q3_runtime_factory *,
     const qa_scene_world_input *,qa_scene_frame *,qa_error *);
 bool frontend_unified_q3_runtime_factory_hud(frontend_unified_q3_runtime_factory *,bool *rendered,qa_error *);
-bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *,bool completed,qa_error *);
+bool frontend_unified_q3_runtime_factory_frame_end(frontend_unified_q3_runtime_factory *,qa_error *);
 bool frontend_unified_q3_runtime_factory_listener(const frontend_unified_q3_runtime_factory *,qa_audio_listener *,bool *present,qa_error *);
 
 #endif

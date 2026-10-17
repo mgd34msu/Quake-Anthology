@@ -911,13 +911,13 @@ static bool camera(void *context,qa_scene_view *view,float *fov,bool *owned,qa_e
     selected.projection=qa_scene_projection(r->fov_x,r->fov_y,receipt.near_clip,receipt.far_clip);
     *view=selected; *fov=r->fov_x; *owned=true; return true;
 }
-static bool q3_factories_frame_end(unified_presentation *p,bool completed,qa_error *error)
+static bool q3_factories_frame_end(unified_presentation *p,qa_error *error)
 {
     bool okay=true;
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next)
         if (row->cg_prepared) {
             qa_error child_error={0};
-            if (frontend_unified_q3_runtime_factory_frame_end(row->factory,completed,&child_error)) row->cg_prepared=false;
+            if (frontend_unified_q3_runtime_factory_frame_end(row->factory,&child_error)) row->cg_prepared=false;
             else { if (okay && error) *error=child_error; okay=false; }
         }
     return okay;
@@ -1301,7 +1301,7 @@ static bool draw(void *context, frontend_remote_unified *replica, float stereo, 
         if (present) { *listener=received; source_listener=true; }
     }
     qa_error returned={0};
-    if (!q3_factories_frame_end(p,okay,&returned)) {
+    if (!q3_factories_frame_end(p,&returned)) {
         if (okay && error) *error=returned;
         okay=false;
     }
