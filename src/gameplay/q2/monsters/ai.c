@@ -4417,7 +4417,37 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
       bool selected = false, started = false, visible;
       if (!q2m_check_attack(context, &selected, &started, &visible, error))
         return false;
-      return !q2m_alive(context) || !selected || started || attack_selected(context, error);
+      if (!q2m_alive(context))
+        return true;
+      if (selected && !started && !attack_selected(context, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      bool rerelease = context->game->options.rules == QA_RULESET_Q2_RERELEASE;
+      if (!rerelease && context->game->options.product != QA_Q2_ROGUE)
+        return true;
+      bool current_enemy = q2_actor_live(context->game, monster->enemy);
+      if (!q2m_visible(context, monster->enemy, &visible, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      if (current_enemy && visible) {
+        if (!run_sighting(context, error))
+          return false;
+      } else if (!selected || (rerelease && current_enemy)) {
+        bool found;
+        if (!q2m_find_target(context, &found, error))
+          return false;
+        if (!q2m_alive(context) || found || !rerelease || !current_enemy)
+          return true;
+        monster->lost_sight = true;
+      }
+      if (q2m_alive(context) && rerelease && current_enemy &&
+          monster->sound_target.present && !selected) {
+        bool found;
+        return q2m_find_target(context, &found, error);
+      }
+      return true;
     }
     bool found;
     if (!q2m_find_target(context, &found, error))
