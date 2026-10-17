@@ -103,7 +103,6 @@ static bool owner_returned(const application_provider *provider, bool own_loadin
         application_native_q2_inventory_scanner_returned(engine->inventory_scanner) &&
         application_native_q2_primary_pickups_returned(engine->primary_pickups) &&
         application_native_q2_inventory_rows_idle(engine->inventory_rows) &&
-        (!engine->console || qa_console_idle(engine->console)) &&
         (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host) ||
             (own_loading && engine->loading_phase &&
