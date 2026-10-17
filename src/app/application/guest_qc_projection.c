@@ -73,7 +73,15 @@ bool application_qc_project_body_store(struct application_qc_state *engine, qa_q
     qa_qc_entity_layout layout = qa_qc_default_entity_layout(engine->provider->state.qc.program, engine->profile);
     qa_qc_slot_binding binding;
     if (!qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
-    if (binding.kind != QA_QC_SLOT_BORROWED || !controls_body(engine, actor)) return true;
+    if (binding.kind != QA_QC_SLOT_BORROWED) return true;
+    if (!controls_body(engine, actor)) {
+        const qa_actor_record *source = qa_actors_get(qa_session_actors(engine->services.session), actor);
+        const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+        if (!source || source->owner != engine->provider->owner ||
+            !client || !client->connected || !client->primary_character ||
+            application_provider_for(engine->provider->application, actor, QA_ROLE_CHARACTER, "") != engine->provider)
+            return true;
+    }
     const qa_qc_game_fields *fields = qa_qc_game_resolved_fields(engine->provider->state.qc.game);
     if (!fields)
         return application_fail(error, QA_ERROR_NOT_FOUND, "QuakeC body store lost its retained game fields");
