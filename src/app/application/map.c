@@ -26,6 +26,7 @@
 #include "control_frame.h"
 #include "qa/stamp.h"
 #include "qa/text.h"
+#include "qa/monster_catalog.h"
 
 #include <float.h>
 #include <math.h>
@@ -36,6 +37,34 @@
 static bool monster_path_read(application_provider *, qa_actor_id, qa_q1_path_state *);
 static bool monster_path_change(application_provider *, qa_actor_id, const qa_q1_path_change *, qa_error *);
 static bool monster_path_touch(application_provider *, qa_actor_id, qa_actor_id, bool *, qa_error *);
+
+static qa_ruleset_id map_authored_rules(const application_provider *provider)
+{
+    const qa_product *geometry = qa_catalog_product(provider->application->catalog,
+        provider->application->map_geometry);
+    return qa_product_ruleset(geometry, provider->product->family);
+}
+
+static uint32_t map_inhibition_flags(qa_ruleset_id rules)
+{
+    return qa_ruleset_read(rules)->family == QA_GAME_Q1 ? 0xf00u :
+        rules == QA_RULESET_Q2_RERELEASE ? 0xff00u : 0x1f00u;
+}
+
+static bool map_entity_inhibited(qa_ruleset_id rules, qa_campaign_id campaign,
+    bool deathmatch, bool cooperative, int skill, uint32_t flags)
+{
+    if (rules == QA_RULESET_QUAKEWORLD || deathmatch)
+        return (flags & 2048u) != 0;
+    if (rules == QA_RULESET_Q2_RERELEASE) {
+        if (cooperative ? (flags & 4096u) != 0 : (flags & 16384u) != 0)
+            return true;
+    } else if (rules == QA_RULESET_Q2_CLASSIC && campaign == QA_CAMPAIGN_ROGUE && cooperative) {
+        if (flags & 4096u) return true;
+        if ((flags & 1792u) == 1792u) return false;
+    }
+    return (flags & (skill == 0 ? 256u : skill == 1 ? 512u : 1024u)) != 0;
+}
 
 static const qa_entity_property *entity_properties(const qa_entities *entities,
                                                    size_t index,
@@ -245,7 +274,8 @@ bool application_map_prepare_content(qa_application *application,
     if (publication->map_provider == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected entity provider is absent");
-    qa_ruleset_id entities = publication->map_provider->component.clock.kind;
+    const qa_product *geometry = qa_catalog_product(application->catalog, choices->world.geometry);
+    qa_ruleset_id entities = qa_product_ruleset(geometry, publication->map_provider->product->family);
     qa_entity_syntax syntax = entities == QA_RULESET_Q2_CLASSIC ? QA_ENTITY_Q2_CLASSIC :
         entities == QA_RULESET_Q2_RERELEASE ? QA_ENTITY_Q2_RERELEASE :
         entities == QA_RULESET_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
@@ -1621,7 +1651,7 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         row->placement = QA_MONSTER_PLACED;
         return qa_targets_monster_barriers_set(app->targets, actor, NULL, 0, error);
     }
-    if (map->kind == APPLICATION_PROVIDER_Q1 && monster_teleport_staging(map, &query.body)) {
+    if (qa_ruleset_read(row->source)->family == QA_GAME_Q1 && monster_teleport_staging(map, &query.body)) {
         row->placement = QA_MONSTER_TELEPORT; row->placement_origin = query.body.origin;
         return true;
     }
@@ -1633,9 +1663,10 @@ static bool monster_started(void *opaque, qa_actor_id actor, qa_error *error)
         row->placement = QA_MONSTER_PLACED;
         return true;
     }
-    bool shape = map->kind == APPLICATION_PROVIDER_Q1 ?
+    bool shape = qa_ruleset_read(row->source)->family == QA_GAME_Q1 ?
         qa_q1_monster_shape(authored, &query.authored_bounds, &query.authored_flags) :
-        qa_q2_monster_shape(map->state.q2, authored, &query.authored_bounds, &query.authored_flags);
+        map->kind == APPLICATION_PROVIDER_Q2 &&
+            qa_q2_monster_shape(map->state.q2, authored, &query.authored_bounds, &query.authored_flags);
     if (!shape || !monster_medium(&query, query.body.origin, &query.medium, error))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Authored monster has no native placement shape");
     query.storage = application_control_storage_acquire(app, error);
@@ -1870,20 +1901,19 @@ static bool q2_monster_path_advance(void *opaque, qa_actor_id actor,
 
 static bool monster_route(application_provider *map_provider,
                              const qa_launch_choices *choices,
-                             const char *authored,
+                             const char *authored, qa_ruleset_id rules,
                              application_provider **provider_out,
                              const char **classname_out, bool *monster_out,
                              qa_error *error)
 {
     *provider_out = map_provider;
     *classname_out = authored;
-    qa_bounds bounds;
-    uint32_t flags;
-    if (map_provider->kind == APPLICATION_PROVIDER_Q1)
-        *monster_out = qa_q1_monster_shape(authored, &bounds, &flags);
-    else if (map_provider->kind == APPLICATION_PROVIDER_Q2)
-        *monster_out = qa_q2_monster_shape(map_provider->state.q2, authored, &bounds, &flags);
-    else *monster_out = strncmp(authored, "monster_", 8) == 0;
+    size_t count;
+    qa_game_family family = qa_ruleset_read(rules)->family;
+    const qa_monster_catalog_slot *slots = qa_monster_catalog_slots(family, &count);
+    *monster_out = family == QA_GAME_Q3 && strncmp(authored, "monster_", 8) == 0;
+    for (size_t i = 0; i < count; ++i)
+        if (!strcmp(authored, slots[i].classname)) { *monster_out = true; break; }
     const qa_launch_monster *selection = NULL, *fallback = NULL;
     for (size_t index = 0; index < choices->monster_count; ++index) {
         const qa_launch_monster *candidate = &choices->monsters[index];
@@ -2117,6 +2147,8 @@ static bool q1_spawn_map(application_provider *provider,
     qa_arena_init(&arena, 4096);
     qa_q1_options source;
     double seconds;
+    qa_ruleset_id rules = map_authored_rules(provider);
+    const qa_product *geometry = qa_catalog_product(provider->application->catalog, choices->world.geometry);
     bool ok = true;
     for (size_t index = 0; ok && index < entities->count; ++index) {
         qa_arena_reset(&arena);
@@ -2132,9 +2164,8 @@ static bool q1_spawn_map(application_provider *provider,
             ok = false;
             break;
         }
-        bool inhibited = source.rules == QA_RULESET_QUAKEWORLD ? (flags & 2048u) != 0 :
-            source.deathmatch ? (flags & 2048u) != 0 :
-            (flags & (source.skill == 0 ? 256u : source.skill == 1 ? 512u : 1024u)) != 0;
+        bool inhibited = map_entity_inhibited(rules, geometry->campaign_id,
+            source.deathmatch != 0, source.coop, source.skill, flags);
         if (inhibited) {
             ok = qa_q1_wire_slot_free(provider->state.q1, binding->source_slot, error);
             continue;
@@ -2142,7 +2173,7 @@ static bool q1_spawn_map(application_provider *provider,
         const char *authored = arena_text(&arena, name, error), *classname;
         application_provider *selected;
         bool monster;
-        ok = authored && monster_route(provider, choices, authored, &selected, &classname, &monster, error) &&
+        ok = authored && monster_route(provider, choices, authored, rules, &selected, &classname, &monster, error) &&
             native_entity_spawn(provider, selected, authored, classname, monster,
                 entities, index, true, binding->source_slot, &arena, &binding->actor, error);
         if (ok && (!binding->actor.registry || selected != provider))
@@ -2413,10 +2444,10 @@ static bool q2_property_id(application_provider *provider,
     return qa_strings_intern(strings, value, out, error);
 }
 
-static bool authored_spawnflags(application_provider *provider, const qa_entities *entities,
+static bool authored_spawnflags(qa_ruleset_id rules, const qa_entities *entities,
     size_t index, uint32_t *out, qa_error *error)
 {
-    if (qa_ruleset_read(provider->component.clock.kind)->family != QA_GAME_Q2)
+    if (qa_ruleset_read(rules)->family != QA_GAME_Q2)
         return entity_u32(entities, index, "spawnflags", 0, out, error);
     qa_bytes value = {0};
     (void)qa_entity_value(entities, index, "spawnflags", &value);
@@ -2426,7 +2457,7 @@ static bool authored_spawnflags(application_provider *provider, const qa_entitie
 }
 
 static bool monster_authored_fields(application_provider *map, const qa_entities *entities,
-    size_t index, uint32_t ordinal, qa_authored_monster *row, qa_error *error)
+    size_t index, uint32_t ordinal, qa_ruleset_id rules, qa_authored_monster *row, qa_error *error)
 {
     static const char *const q1_ordinary[] = {
         "monster_army_infected", "monster_knight_infected", "monster_enforcer_infected", "monster_hell_knight_infected",
@@ -2439,7 +2470,7 @@ static bool monster_authored_fields(application_provider *map, const qa_entities
         "monster_gunner", "monster_parasite", "monster_flyer", "monster_floater", "monster_hover", "monster_mutant", "monster_chick",
         "monster_tank", "monster_tank_commander", "monster_flipper", "monster_brain", "monster_gekk", "monster_chick_heat",
         "monster_soldier_ripper", "monster_soldier_hypergun", "monster_soldier_lasergun", "monster_stalker", "monster_daedalus"};
-    *row = (qa_authored_monster){.owner = map->owner, .source = map->component.clock.kind,
+    *row = (qa_authored_monster){.owner = map->owner, .source = rules,
         .ordinal = ordinal};
     if (!q2_property_id(map, entities, index, "classname", &row->fields.classname, error) ||
         !q2_property_id(map, entities, index, "targetname", &row->fields.targetname, error) ||
@@ -2451,22 +2482,22 @@ static bool monster_authored_fields(application_provider *map, const qa_entities
         !q2_property_id(map, entities, index, "itemtarget", &row->item_target, error) ||
         !q2_property_id(map, entities, index, "healthtarget", &row->health_target, error) ||
         !q2_property_id(map, entities, index, "combattarget", &row->combat_target, error) ||
-        !authored_spawnflags(map, entities, index, &row->spawnflags, error) ||
+        !authored_spawnflags(rules, entities, index, &row->spawnflags, error) ||
         !entity_float(entities, index, "delay", 0, &row->fields.delay_seconds, error) ||
         !entity_float(entities, index, "wait", 0, &row->fields.wait_seconds, error) ||
         !entity_vector(entities, index, "origin", qa_v3(0, 0, 0), &row->authored_origin, NULL, error)) return false;
     row->route = row->fields.target;
-    row->activation = map->kind == APPLICATION_PROVIDER_Q2 && (row->spawnflags & 2u) ?
+    qa_game_family family = qa_ruleset_read(rules)->family;
+    row->activation = family == QA_GAME_Q2 && (row->spawnflags & 2u) ?
         QA_MONSTER_DORMANT : QA_MONSTER_ACTIVE;
     const char *classname = qa_strings_cstr(qa_session_strings(map->application->session), row->fields.classname);
-    const char *const *ordinary = map->kind == APPLICATION_PROVIDER_Q1 ? q1_ordinary : q2_ordinary;
-    size_t count = map->kind == APPLICATION_PROVIDER_Q1 ? sizeof(q1_ordinary) / sizeof(*q1_ordinary) :
+    const char *const *ordinary = family == QA_GAME_Q1 ? q1_ordinary : q2_ordinary;
+    size_t count = family == QA_GAME_Q1 ? sizeof(q1_ordinary) / sizeof(*q1_ordinary) :
         sizeof(q2_ordinary) / sizeof(*q2_ordinary);
     bool supported = false;
     for (size_t i = 0; i < count; ++i) if (classname && !strcmp(classname, ordinary[i])) { supported = true; break; }
-    uint32_t inhibition = map->kind == APPLICATION_PROVIDER_Q1 ? 0xf00u :
-        map->product->edition == QA_EDITION_RERELEASE ? 0xff00u : 0x1f00u;
-    uint32_t flags = map->kind == APPLICATION_PROVIDER_Q1 ?
+    uint32_t inhibition = map_inhibition_flags(rules);
+    uint32_t flags = family == QA_GAME_Q1 ?
         classname && !strcmp(classname, "monster_zombie") ? 2u : 1u : 3u;
     if (!supported || (row->spawnflags & ~(inhibition | flags)) ||
         (classname && !strcmp(classname, "monster_zombie") && (row->spawnflags & 1u)))
@@ -2482,6 +2513,7 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
     qa_actor_id *out, qa_error *error)
 {
     *out = (qa_actor_id){0};
+    qa_ruleset_id rules = has_source ? map_authored_rules(map_provider) : map_provider->component.clock.kind;
     application_provider *entity_provider = !authored_monster && map_provider->kind == APPLICATION_PROVIDER_Q2 ?
         map_provider : actor_provider;
     qa_string_id definition;
@@ -2538,7 +2570,7 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
                       actor) != NULL) {
         qa_q2_item_spawn item = {.classname = authored};
         int32_t count;
-        if (!authored_spawnflags(map_provider, entities, index, &item.spawnflags, error) ||
+        if (!authored_spawnflags(rules, entities, index, &item.spawnflags, error) ||
             !entity_i32(entities, index, "count", 0, &count, error) ||
             !entity_float(entities, index, "delay", 0, &item.delay, error) ||
             !q2_property_id(map_provider, entities, index, "target",
@@ -2565,7 +2597,7 @@ static bool q2_spawn_native_fields(application_provider *map_provider,
         if (authored_monster) {
             ok = qa_q2_monster_spawn(actor_provider->state.q2, actor, &options, error);
             handled = ok;
-        } else if (!authored_spawnflags(map_provider, entities, index, &options.spawnflags, error) ||
+        } else if (!authored_spawnflags(rules, entities, index, &options.spawnflags, error) ||
             !entity_float(entities, index, "scale", 0, &options.scale,
                           error) ||
             !entity_float(entities, index, "health_multiplier", 0,
@@ -2614,7 +2646,8 @@ static bool native_entity_spawn(application_provider *map_provider,
     qa_authored_monster authored_row = {0};
     const qa_authored_monster *mission = NULL;
     if (monster && (actor_provider != map_provider || strcmp(authored, selected_classname))) {
-        if (!monster_authored_fields(map_provider, entities, index, source_slot, &authored_row, error)) return false;
+        qa_ruleset_id rules = has_source ? map_authored_rules(map_provider) : map_provider->component.clock.kind;
+        if (!monster_authored_fields(map_provider, entities, index, source_slot, rules, &authored_row, error)) return false;
         mission = &authored_row;
     }
     if (actor_provider->kind == APPLICATION_PROVIDER_Q2)
@@ -2676,7 +2709,8 @@ static bool q2_spawn_fields(application_provider *map_provider,
     application_provider *selected = NULL;
     bool monster = false;
     bool ok = (authored = arena_text(arena, name, error)) != NULL;
-    if (ok) ok = monster_route(map_provider, choices, authored, &selected, &classname, &monster, error) &&
+    qa_ruleset_id rules = has_source ? map_authored_rules(map_provider) : map_provider->component.clock.kind;
+    if (ok) ok = monster_route(map_provider, choices, authored, rules, &selected, &classname, &monster, error) &&
         native_entity_spawn(map_provider, selected, authored, classname, monster,
             entities, index, has_source, source_slot, arena, out, error);
     qa_unified_frame_lease_release(storage);
@@ -2729,22 +2763,6 @@ static bool q2_spawn(void *opaque, const char *classname, qa_vec3 origin,
                            &entities, 0, false, UINT32_MAX, NULL, out, error);
 }
 
-static bool q2_map_entity_inhibited(const qa_q2_options *rules, uint32_t flags)
-{
-    if (rules->deathmatch)
-        return (flags & 2048u) != 0;
-    if (rules->rules == QA_RULESET_Q2_RERELEASE) {
-        if (rules->cooperative ? (flags & 4096u) != 0 : (flags & 16384u) != 0)
-            return true;
-    } else if (rules->product == QA_Q2_ROGUE && rules->cooperative) {
-        if (flags & 4096u)
-            return true;
-        if ((flags & 1792u) == 1792u)
-            return false;
-    }
-    return (flags & (rules->skill == 0 ? 256u : rules->skill == 1 ? 512u : 1024u)) != 0;
-}
-
 static bool q2_spawn_map(application_provider *provider,
                          const qa_launch_choices *choices,
                          const qa_entities *entities,
@@ -2753,8 +2771,9 @@ static bool q2_spawn_map(application_provider *provider,
     int32_t clients, skill;
     if (!application_native_q2_source_integer(provider, "maxclients", &clients, error) ||
         !application_native_q2_source_integer(provider, "skill", &skill, error)) return false;
-    qa_q2_options source = {.rules = provider->component.clock.kind,
-        .product = provider->product->campaign_id == QA_CAMPAIGN_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE,
+    const qa_product *geometry = qa_catalog_product(provider->application->catalog, choices->world.geometry);
+    qa_q2_options source = {.rules = map_authored_rules(provider),
+        .product = geometry->campaign_id == QA_CAMPAIGN_ROGUE ? QA_Q2_ROGUE : QA_Q2_BASE,
         .skill = skill < 0 ? 0 : skill > 3 ? 3 : skill};
     if (source.rules == QA_RULESET_Q2_RERELEASE) {
         int32_t deathmatch, cooperative;
@@ -2789,7 +2808,7 @@ static bool q2_spawn_map(application_provider *provider,
     for (size_t index = 0; index < entities->count; ++index) {
         uint32_t flags = 0;
         if (index) {
-            if (!authored_spawnflags(provider, entities, index, &flags, error)) {
+            if (!authored_spawnflags(source.rules, entities, index, &flags, error)) {
                 ok = false;
                 break;
             }
@@ -2815,9 +2834,10 @@ static bool q2_spawn_map(application_provider *provider,
                         flags |= 4096u;
                 }
             }
-            if (q2_map_entity_inhibited(&source, flags))
+            if (map_entity_inhibited(source.rules, geometry->campaign_id,
+                source.deathmatch, source.cooperative, source.skill, flags))
                 continue;
-            flags &= ~(source.rules == QA_RULESET_Q2_RERELEASE ? 0xff00u : 0x1f00u);
+            flags &= ~map_inhibition_flags(source.rules);
         }
         uint32_t source_slot = 0;
         if (index && !qa_q2_wire_spawn_slot(provider->state.q2, &source_slot, error)) {
