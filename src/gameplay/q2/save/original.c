@@ -774,11 +774,8 @@ bool q2_original_config_layout(qa_ruleset_id edition, const qa_q2_save_level *le
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Original Q2 resource table differs from its actual GAME edition");
         return false;
     }
-    /* The shared layout reads only protocol and wire_flags, not frame state. */
-    qa_q2_codec codec;
-    codec.protocol = (qa_net_protocol_id){.kind = edition == QA_RULESET_Q2_RERELEASE ? QA_NET_Q2KEX_2023 : QA_NET_Q2_34};
-    codec.wire_flags = 0;
-    return qa_q2_config_layout_read(&codec, layout, error);
+    qa_q2_save_level defaults = {.rerelease=edition == QA_RULESET_Q2_RERELEASE};
+    return qa_q2_save_config_layout(level ? level : &defaults, layout, error);
 }
 
 static int32_t resource_index(const qa_q2_save_level *level, uint32_t base,

@@ -63,14 +63,14 @@ static bool original_create(qa_frontend_original_restore *operation,qa_error *er
 {
     qa_frontend *active=operation->active;
     qa_frontend_options options=active->options;
+    const qa_product *selected_product=qa_catalog_find(qa_application_catalog(active->application),operation->product);
     if (operation->save.family==QA_GAME_Q2) {
         const qa_launch_snapshot *launch=qa_application_launch(active->application);
         const qa_launch_choices *choices=launch?qa_launch_snapshot_choices(launch):NULL;
         const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
             (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
         const qa_launch_instance *source=binding?qa_launch_snapshot_find(launch,binding->instance):NULL;
-        const qa_product *product=qa_catalog_find(qa_application_catalog(active->application),operation->product);
-        if (source && product && source->selection.product==product->id &&
+        if (source && selected_product && source->selection.product==selected_product->id &&
             source->selection.runtime==QA_PROGRAM_NATIVE) options.original=true;
     }
     options.game=operation->product; options.map=NULL; options.map_game=NULL;
@@ -79,7 +79,7 @@ static bool original_create(qa_frontend_original_restore *operation,qa_error *er
     options.seats=1; options.menu=false;
     options.network_host=NULL; options.network_connect=NULL; options.network_port=0;
     options.network_protocol=operation->save.family==QA_GAME_Q1?
-        (qa_net_protocol_id){QA_NET_NQ15,0,0}:qa_q2_default_protocol(operation->save.state.q2->server.rerelease);
+        (qa_net_protocol_id){QA_NET_NQ15,0,0}:qa_q2_default_protocol(selected_product?selected_product->edition==QA_EDITION_RERELEASE:operation->save.state.q2->server.rerelease);
     options.application.player_profile_root=NULL;
     options.application.actor_capacity=qa_actors_capacity(
         qa_session_actors(qa_application_session(active->application)));

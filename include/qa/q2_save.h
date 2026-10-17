@@ -48,6 +48,8 @@ typedef struct qa_q2_save_level {
     qa_buffer game;
     bool rerelease;
     uint32_t file_signature;
+    /* Original engine config table. Non-Q2 protocols retain the edition default. */
+    qa_net_protocol_id config_protocol;
     qa_q2_save_configstrings configstrings;
     uint16_t portal_count; /* Actual rerelease CM portal extent. */
     int32_t portal_open[QA_Q2_SAVE_AREA_PORTALS];
@@ -62,6 +64,7 @@ typedef struct qa_q2_save_data {
 
 /* One physical config table, compacted into occupied row spans. Continuation
  * rows retain Source bytes and share their actual string backing. */
+bool qa_q2_save_config_layout(const qa_q2_save_level *, qa_q2_config_layout *, qa_error *);
 uint32_t qa_q2_save_configstring_count(const qa_q2_save_level *);
 uint32_t qa_q2_save_configstring_width(const qa_q2_save_level *);
 const char *qa_q2_save_configstring(const qa_q2_save_level *, uint32_t);

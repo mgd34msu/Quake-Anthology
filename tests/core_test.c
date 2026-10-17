@@ -3584,6 +3584,73 @@ static void test_q2_donor_save_metadata(void)
     const char future[]="{\"save_version\":2,\"game\":{},\"clients\":[]}";
     CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)future,sizeof(future)-1}));
     qa_error error={0};
+    const qa_net_protocol_id protocols[]={{.kind=QA_NET_Q2_34},{.kind=QA_NET_Q2REPRO_1038},
+        {.kind=QA_NET_Q2PRO_36,.revision=1024}};
+    const uint32_t terminals[]={2080,12448,13630};
+    for (size_t i=0;i<sizeof(protocols)/sizeof(*protocols);++i) {
+        qa_q2_save_level format={.config_protocol=protocols[i]};
+        qa_q2_config_layout layout;
+        CHECK(qa_q2_save_config_layout(&format,&layout,&error) && layout.max_configs==terminals[i]);
+        uint8_t source[128]={0};size_t cursor=8;
+        qa_store_u32le(source,UINT32_C(0x32564153));qa_store_u32le(source+4,1);
+        qa_store_u16le(source+cursor,(uint16_t)(layout.models+1));cursor+=2;
+        memcpy(source+cursor,"*1",3);cursor+=3;
+        qa_store_u16le(source+cursor,(uint16_t)(layout.sounds+2));cursor+=2;
+        memcpy(source+cursor,"world/test.wav",15);cursor+=15;
+        qa_store_u16le(source+cursor,(uint16_t)terminals[i]);cursor+=2;
+        source[cursor++]=2;source[cursor++]=5;source[cursor++]=128;
+        qa_q2_save_level actual={.rerelease=i!=1},roundtrip={0},checkpoint={0};
+        CHECK(qa_q2_save_level_decode((qa_bytes){source,cursor},&actual,&error));
+        CHECK(actual.rerelease==(i==1) && actual.config_protocol.kind==protocols[i].kind);
+        CHECK(qa_q2_save_configstring_count(&actual)==terminals[i]);
+        CHECK(qa_q2_save_configstring_width(&actual)==(i==1?96:64));
+        CHECK(!strcmp(qa_q2_save_configstring(&actual,layout.models+1),"*1"));
+        CHECK(!strcmp(qa_q2_save_configstring(&actual,layout.sounds+2),"world/test.wav"));
+        CHECK(actual.portal_count==16 && actual.portal_open[0] && !actual.portal_open[1] &&
+            actual.portal_open[2] && actual.portal_open[15] && actual.portal_open[16]);
+        qa_buffer encoded={0},saved={0};qa_source_save_io io={0};
+        CHECK(qa_q2_save_level_encode(&actual,&encoded,&error));
+        CHECK(encoded.size==cursor && !memcmp(encoded.data,source,cursor));
+        CHECK(qa_q2_save_level_copy(&actual,&roundtrip,&error));
+        CHECK(roundtrip.config_protocol.kind==protocols[i].kind &&
+            qa_q2_save_configstring_count(&roundtrip)==terminals[i]);
+        CHECK(qa_source_save_writer(&io,NULL,&error));
+        CHECK(qa_q2_save_configstrings_io(&io,&actual) && qa_source_save_finish(&io,&saved));
+        CHECK(qa_source_save_reader(&io,NULL,(qa_bytes){saved.data,saved.size},&error));
+        CHECK(qa_q2_save_configstrings_io(&io,&checkpoint) && qa_source_save_finish(&io,NULL));
+        CHECK(qa_q2_save_configstring_count(&checkpoint)==terminals[i] &&
+            !strcmp(qa_q2_save_configstring(&checkpoint,layout.sounds+2),"world/test.wav"));
+        if (i!=2) {
+            qa_net_protocol_id retained=actual.config_protocol;
+            actual.config_protocol=(qa_net_protocol_id){0};qa_buffer legacy={0};
+            CHECK(qa_source_save_writer(&io,NULL,&error));
+            CHECK(qa_q2_save_configstrings_io(&io,&actual) && qa_source_save_finish(&io,&legacy));
+            CHECK(legacy.size==saved.size && !memcmp(legacy.data,saved.data,saved.size));
+            actual.config_protocol=retained;qa_buffer_free(&legacy);
+        }
+        qa_q2_save_level invalid={0};source[cursor]=1;
+        CHECK(!qa_q2_save_level_decode((qa_bytes){source,cursor+1},&invalid,&error));
+        CHECK(!invalid.configstrings.count && !invalid.configstrings.bytes.data);
+        qa_q2_save_level_dispose(&checkpoint);qa_q2_save_level_dispose(&roundtrip);
+        qa_q2_save_level_dispose(&actual);qa_buffer_free(&encoded);qa_buffer_free(&saved);
+    }
+    {
+        uint8_t source[160]={0};size_t cursor=17;
+        qa_store_u32le(source,UINT32_C(0x32565353));qa_store_u32le(source+4,1);
+        qa_store_u64le(source+8,UINT64_C(123456789));source[16]=2;
+        const char *parts[]={"A q2repro comment longer than classic fixed padding","base1","game","baseq2",""};
+        for (size_t i=0;i<sizeof(parts)/sizeof(*parts);++i) {
+            size_t size=strlen(parts[i])+1;memcpy(source+cursor,parts[i],size);cursor+=size;
+        }
+        qa_q2_save_server server={0},copy={0};qa_buffer encoded={0};
+        CHECK(qa_q2_save_server_decode((qa_bytes){source,cursor},&server,&error));
+        CHECK(!server.rerelease && !server.autosave && server.save_kind==2 &&
+            server.timestamp==UINT64_C(123456789) && server.cvar_count==1);
+        CHECK(qa_q2_save_server_copy(&server,&copy,&error));
+        CHECK(qa_q2_save_server_encode(&copy,&encoded,&error));
+        CHECK(encoded.size==cursor && !memcmp(encoded.data,source,cursor));
+        qa_buffer_free(&encoded);qa_q2_save_server_dispose(&copy);qa_q2_save_server_dispose(&server);
+    }
     size_t configs=(size_t)QA_Q2_SAVE_CONFIGSTRINGS*QA_Q2_SAVE_CONFIGSTRING_BYTES;
     qa_buffer donor={.size=configs+QA_Q2_SAVE_AREA_PORTALS};
     donor.data=calloc(donor.size,1);CHECK(donor.data);
@@ -3629,10 +3696,24 @@ static void test_q2_donor_save_metadata(void)
     for (size_t i=0;i<QA_Q2_SAVE_AREA_PORTALS;++i)
         CHECK(read->levels[0].portal_open[i]==level.portal_open[i]);
     qa_q2_save_destroy(read);
-    CHECK(qa_fs_root_remove(root,"slot/server.ssv",&error));
-    CHECK(qa_fs_root_remove(root,"slot/game.ssv",&error));
+    save.server.file_signature=UINT32_C(0x32565353);
+    level.file_signature=UINT32_C(0x32564153);level.config_protocol=qa_q2_default_protocol(false);
+    level.portal_count=QA_Q2_SAVE_AREA_PORTALS;
+    CHECK(qa_q2_save_directory_write(root,"slot",&save,3,&error));
+    read=NULL;CHECK(qa_q2_save_directory_read(root,"slot",&read,&error));
+    CHECK(!read->server.rerelease && read->server.file_signature==save.server.file_signature &&
+        read->levels[0].config_protocol.kind==QA_NET_Q2_34);
+    for (size_t i=0;i<QA_Q2_SAVE_AREA_PORTALS;++i)
+        CHECK(read->levels[0].portal_open[i]==level.portal_open[i]);
+    qa_q2_save_destroy(read);
     CHECK(qa_fs_root_remove(root,"slot/base1.sav",&error));
     CHECK(qa_fs_root_remove(root,"slot/base1.sv2",&error));
+    read=NULL;CHECK(qa_q2_save_directory_read(root,"slot",&read,&error));
+    CHECK(!read->level_count && !read->server.rerelease &&
+        read->server.file_signature==UINT32_C(0x32565353));
+    qa_q2_save_destroy(read);
+    CHECK(qa_fs_root_remove(root,"slot/server.ssv",&error));
+    CHECK(qa_fs_root_remove(root,"slot/game.ssv",&error));
     qa_fs_root_close(root);
     CHECK(rmdir(slot)==0 && rmdir(directory)==0);
     qa_buffer_free(&save.game);qa_q2_save_level_dispose(&level);qa_buffer_free(&donor);

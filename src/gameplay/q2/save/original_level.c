@@ -679,6 +679,8 @@ static bool write_level(qa_q2_game *g, bool transition,
 static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, qa_error *error)
 {
     if (game->options.rules != QA_RULESET_Q2_CLASSIC) return true;
+    qa_q2_config_layout layout;
+    if (!q2_original_config_layout(game->options.rules, engine, &layout, error)) return false;
     /* SP_worldspawn order is also the high byte of s.skinnum. */
     static const char *const base[] = {"#w_blaster.md2", "#w_shotgun.md2", "#w_sshotgun.md2",
         "#w_machinegun.md2", "#w_chaingun.md2", "#a_grenades.md2", "#w_glauncher.md2",
@@ -691,8 +693,8 @@ static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, q
         game->options.product == QA_Q2_ROGUE ? sizeof(rogue) / sizeof(rogue[0]) : 0;
     size_t count = sizeof(base) / sizeof(base[0]) + more, ordinal = 0;
     uint32_t last = 0;
-    for (uint32_t i = 1; i < 256; ++i) {
-        const char *entry = qa_q2_save_configstring(engine, 32 + i);
+    for (uint32_t i = 1; i < layout.max_models; ++i) {
+        const char *entry = qa_q2_save_configstring(engine, layout.models + i);
         if (*entry) last = i;
         if (*entry != '#') continue;
         const char *expected = ordinal < sizeof(base) / sizeof(base[0]) ? base[ordinal] :
@@ -702,10 +704,10 @@ static bool original_player_models(qa_q2_game *game, qa_q2_save_level *engine, q
         ++ordinal;
     }
     while (ordinal < count) {
-        if (++last >= 256) return level_error(error, last, "Q2 original player models exceed CS_MODELS");
+        if (++last >= layout.max_models) return level_error(error, last, "Q2 original player models exceed CS_MODELS");
         const char *name = ordinal < sizeof(base) / sizeof(base[0]) ? base[ordinal] :
             extra[ordinal - sizeof(base) / sizeof(base[0])];
-        if (!qa_q2_save_configstring_set(engine, 32 + last, name, error)) return false;
+        if (!qa_q2_save_configstring_set(engine, layout.models + last, name, error)) return false;
         ++ordinal;
     }
     return true;

@@ -439,11 +439,12 @@ bool application_q2_original_configure(qa_application_network_q2 *owner,qa_error
     qa_application *app=owner?owner->app:NULL;
     struct application_q2_original_save *stage=app?app->q2_original_save:NULL;
     if (!stage) return true;
+    const qa_q2_save_level *level=current_level(stage);
     if (!stage->game_read || !stage->level_read || stage->failed ||
         app->state!=QA_APPLICATION_RUNNING || owner->config_count!=
-            (stage->save->server.rerelease?QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS:QA_Q2_SAVE_CONFIGSTRINGS))
+            (stage->save->server.rerelease?QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS:QA_Q2_SAVE_CONFIGSTRINGS) ||
+        (level && owner->config_count!=qa_q2_save_configstring_count(level)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 namespace lost its actual completed GAME/LEVEL");
-    const qa_q2_save_level *level=current_level(stage);
     if (level && owner->host.source.kind==QA_APPLICATION_NATIVE_Q2_BUILTIN) {
         for (uint32_t i=0;i<owner->config_count;++i) {
             const char *text=qa_q2_save_configstring(level,i);
@@ -473,7 +474,8 @@ static const qa_product *admit(const qa_application *app,const qa_q2_save_data *
 {
     const qa_product *product=app && app->catalog && key?qa_catalog_find(app->catalog,key):NULL;
     if (!original_product(product) || product->availability!=QA_CONTENT_INSTALLED ||
-        !save || save->server.rerelease!=(product->edition==QA_EDITION_RERELEASE) ||
+        !save || (!(save->server.file_signature==UINT32_C(0x32565353) && !save->level_count) &&
+            save->server.rerelease!=(product->edition==QA_EDITION_RERELEASE)) ||
         !save->game.data || !save->game.size ||
         (save->level_count && !save->levels) || (save->server.cvar_count && !save->server.cvars)) {
         application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 save requires its selected installed GAME"); return NULL;
@@ -509,6 +511,7 @@ bool qa_application_q2_save_import(qa_application *app,const qa_q2_save_data *sa
     struct application_q2_original_save *stage=calloc(1,sizeof(*stage));
     if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 constructor");
     stage->product=product->id; stage->save=copy_save(save,error);
+    if (stage->save) stage->save->server.rerelease=product->edition==QA_EDITION_RERELEASE;
     bool ok=stage->save && qa_q2_travel_parse(save->server.map_command,&stage->route,error);
     qa_launch_draft *draft=NULL;
     if (ok) {
@@ -527,7 +530,7 @@ bool qa_application_q2_save_import(qa_application *app,const qa_q2_save_data *sa
         world.explicit_spawn_point=true;
         ok=qa_launch_set_world(draft,&world,error) &&
             qa_launch_set_seat(draft,&(qa_launch_seat){.id=0,.name="Player 1",.local=true},error);
-        if (ok && (original_module || !product->builtin || (!save->server.rerelease &&
+        if (ok && (original_module || !product->builtin || (product->edition!=QA_EDITION_RERELEASE &&
             !qa_q2_game_original_builtin_game((qa_bytes){save->game.data,save->game.size}))))
             ok=qa_launch_select_original(draft,"native:primary",error);
     }

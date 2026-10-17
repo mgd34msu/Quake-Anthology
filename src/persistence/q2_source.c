@@ -8,15 +8,38 @@
 #define Q2_LEVEL_BYTES (Q2_LEVEL_STRINGS + QA_Q2_SAVE_AREA_PORTALS * 4)
 #define Q2_SERVER_REPRO_SIGNATURE UINT32_C(0x32565353)
 #define Q2_LEVEL_REPRO_SIGNATURE UINT32_C(0x32564153)
+#define Q2_CONFIG_PROTOCOL_ESCAPE UINT32_MAX
+
+static qa_net_protocol_id config_protocol(const qa_q2_save_level *level)
+{
+    return level && qa_q2_protocol_valid(level->config_protocol) ? level->config_protocol :
+        qa_q2_default_protocol(level && level->rerelease);
+}
+
+bool qa_q2_save_config_layout(const qa_q2_save_level *level,
+    qa_q2_config_layout *layout, qa_error *error)
+{
+    if (!level || !layout)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II config layout requires its level/output");
+    /* The layout reader uses protocol/wire_flags, never codec frame state. */
+    qa_q2_codec codec;
+    codec.protocol = config_protocol(level);
+    /* A saved Q2PRO layout is the extended GAME table, independently of the
+     * transport that originally published it. */
+    codec.wire_flags = codec.protocol.kind == QA_NET_Q2PRO_36 ? 8 : 0;
+    return qa_q2_config_layout_read(&codec, layout, error);
+}
 
 uint32_t qa_q2_save_configstring_count(const qa_q2_save_level *level)
 {
-    return level->rerelease ? QA_Q2_SAVE_RERELEASE_CONFIGSTRINGS : QA_Q2_SAVE_CONFIGSTRINGS;
+    qa_q2_config_layout layout;
+    return qa_q2_save_config_layout(level, &layout, NULL) ? layout.max_configs : 0;
 }
 
 uint32_t qa_q2_save_configstring_width(const qa_q2_save_level *level)
 {
-    return level->rerelease ? QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
+    return qa_q2_protocol_rerelease(config_protocol(level)) ?
+        QA_Q2_SAVE_RERELEASE_CONFIGSTRING_BYTES : QA_Q2_SAVE_CONFIGSTRING_BYTES;
 }
 
 const char *qa_q2_save_configstring(const qa_q2_save_level *level, uint32_t index)
@@ -160,8 +183,21 @@ bool qa_q2_save_level_copy(const qa_q2_save_level *source, qa_q2_save_level *out
 bool qa_q2_save_configstrings_io(qa_source_save_io *io, qa_q2_save_level *level)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    qa_net_protocol_id protocol = reading ? (qa_net_protocol_id){0} : config_protocol(level);
+    uint32_t signature = !reading && protocol.kind == QA_NET_Q2PRO_36 && protocol.revision >= 1024 ?
+        Q2_CONFIG_PROTOCOL_ESCAPE : level->file_signature;
     if (!qa_source_save_bool(io, &level->rerelease) ||
-        !qa_source_save_u32(io, &level->file_signature)) return false;
+        !qa_source_save_u32(io, &signature)) return false;
+    if (signature == Q2_CONFIG_PROTOCOL_ESCAPE) {
+        uint32_t kind = (uint32_t)protocol.kind;
+        if (!qa_source_save_u32(io, &level->file_signature) ||
+            !qa_source_save_u32(io, &kind) || !qa_source_save_u32(io, &protocol.revision) ||
+            !qa_source_save_u32(io, &protocol.flags)) return false;
+        protocol.kind = (qa_net_protocol)kind;
+        if (protocol.kind != QA_NET_Q2PRO_36 || protocol.revision < 1024 || level->rerelease)
+            return persistence_io_fail(io, QA_ERROR_FORMAT, "Campaign Q2 config protocol is not an extended GAME table");
+    } else if (reading) level->file_signature = signature;
+    if (reading) level->config_protocol = protocol;
     uint32_t rows = qa_q2_save_configstring_count(level), width = qa_q2_save_configstring_width(level);
     size_t count = reading ? 0 : level->configstrings.count;
     if (!qa_source_save_count(io, &count, rows)) return false;
@@ -209,19 +245,24 @@ void qa_q2_save_server_dispose(qa_q2_save_server *server)
     *server = (qa_q2_save_server){0};
 }
 
+static bool server_variable(const qa_q2_save_server *server)
+{
+    return server->rerelease || server->file_signature == Q2_SERVER_REPRO_SIGNATURE;
+}
+
 static bool cvar_text(const qa_q2_save_server *server, const char *text)
 {
     uintptr_t begin = (uintptr_t)server->cvar_text.data, at = (uintptr_t)text;
     if (!text || !begin || at < begin || at - begin >= server->cvar_text.size) return false;
     size_t remaining = server->cvar_text.size - (size_t)(at - begin);
-    if (!server->rerelease && remaining < QA_Q2_SAVE_CVAR_BYTES) return false;
-    return memchr(text, 0, server->rerelease ? remaining : QA_Q2_SAVE_CVAR_BYTES) != NULL;
+    if (!server_variable(server) && remaining < QA_Q2_SAVE_CVAR_BYTES) return false;
+    return memchr(text, 0, server_variable(server) ? remaining : QA_Q2_SAVE_CVAR_BYTES) != NULL;
 }
 
 static bool server_text(const qa_q2_save_server *server, qa_error *error)
 {
-    size_t comment = server->rerelease ? sizeof(server->comment) : QA_Q2_SAVE_COMMENT_BYTES;
-    size_t map = server->rerelease ? sizeof(server->map_command) : QA_Q2_SAVE_MAP_COMMAND_BYTES;
+    size_t comment = server_variable(server) ? sizeof(server->comment) : QA_Q2_SAVE_COMMENT_BYTES;
+    size_t map = server_variable(server) ? sizeof(server->map_command) : QA_Q2_SAVE_MAP_COMMAND_BYTES;
     if (!memchr(server->comment, 0, comment) || !memchr(server->map_command, 0, map) ||
         !server->map_command[0] || (server->cvar_count && !server->cvars))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II server save fields are unterminated or absent");
@@ -291,7 +332,9 @@ static bool rerelease_server_decode(qa_bytes bytes, qa_q2_save_server *server, q
             return persistence_fail(error, QA_ERROR_FORMAT, "Quake II EVAS autosave field is invalid");
         server->save_kind = bytes.data[4]; cursor = 5;
     }
-    server->rerelease = true; server->autosave = server->save_kind == 1;
+    /* SSV2 is also written by classic GAMEs; only a SAV2 table identifies its
+     * edition. A save without levels is resolved by the selected GAME. */
+    server->rerelease = !repro; server->autosave = server->save_kind == 1;
     qa_bytes text;
     if (!read_text(bytes, &cursor, &text, repro, error)) return false;
     if (text.size >= sizeof(server->comment))
@@ -394,7 +437,7 @@ bool qa_q2_save_server_encode(const qa_q2_save_server *server, qa_buffer *out, q
     if (repro && strlen(server->map_command) >= QA_Q2_SAVE_MAP_BYTES)
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 map command exceeds the original reader");
     size_t size;
-    if (server->rerelease) {
+    if (server_variable(server)) {
         size = (repro ? 20 : 21) + strlen(server->comment) + strlen(server->map_command);
         for (size_t i = 0; i < server->cvar_count; ++i) {
             size_t name = strlen(server->cvars[i].name), value = strlen(server->cvars[i].value);
@@ -412,7 +455,7 @@ bool qa_q2_save_server_encode(const qa_q2_save_server *server, qa_buffer *out, q
     }
     qa_buffer bytes = {.data = malloc(size), .size = size};
     if (!bytes.data) return persistence_fail(error, QA_ERROR_MEMORY, "Writing Quake II server.ssv");
-    if (server->rerelease) {
+    if (server_variable(server)) {
         size_t cursor;
         if (repro) {
             qa_store_u32le(bytes.data, Q2_SERVER_REPRO_SIGNATURE); qa_store_u32le(bytes.data + 4, 1);
@@ -499,76 +542,95 @@ static bool write_file(qa_fs_root *root, const char *directory, const char *name
     return ok;
 }
 
+static bool level_records(qa_bytes bytes, bool repro, const qa_q2_save_level *format,
+    uint8_t *table, uint16_t *portals, size_t *portal_at, qa_error *error)
+{
+    uint32_t rows = qa_q2_save_configstring_count(format), width = qa_q2_save_configstring_width(format);
+    qa_q2_config_layout layout = {0};
+    if (repro && !qa_q2_save_config_layout(format, &layout, error)) return false;
+    size_t cursor = repro ? 8 : 0;
+    /* Each Source writer visits physical rows in ascending order. */
+    int32_t previous = -1;
+    for (;;) {
+        size_t index_bytes = repro ? 2 : 4;
+        if (bytes.size - cursor < index_bytes)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 lacks its terminator");
+        int32_t index = repro ? qa_load_u16le(bytes.data + cursor) : qa_load_i32le(bytes.data + cursor);
+        cursor += index_bytes;
+        if (index == (repro ? (int32_t)rows : -1)) break;
+        if (index < 0 || (uint32_t)index >= rows || (!repro && index <= previous) || cursor == bytes.size)
+            return persistence_fail(error, QA_ERROR_FORMAT, "Quake II config row leaves its physical table");
+        qa_bytes text;
+        if (repro) {
+            if (!read_text(bytes, &cursor, &text, true, error)) return false;
+            size_t extent = width;
+            if ((uint32_t)index >= 5 && (uint32_t)index < layout.air_accelerate)
+                extent = (size_t)(layout.air_accelerate - (uint32_t)index) * width;
+            else if ((uint32_t)index >= layout.player_skins + 256)
+                extent = (size_t)(rows - (uint32_t)index) * width;
+            if (text.size >= extent)
+                return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 config string exceeds the original reader");
+        } else {
+            uint8_t size = bytes.data[cursor++];
+            if (size > width || size > bytes.size - cursor)
+                return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row is truncated or too wide");
+            text = (qa_bytes){bytes.data + cursor, size}; cursor += size;
+        }
+        if (table) {
+            memcpy(table + (size_t)index * width, text.data, text.size);
+            if (repro) table[(size_t)index * width + text.size] = 0;
+        }
+        previous = index;
+    }
+    size_t count_bytes = repro ? 1 : 2;
+    if (bytes.size - cursor < count_bytes)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 lacks its portal count");
+    *portals = repro ? bytes.data[cursor] : qa_load_u16le(bytes.data + cursor); cursor += count_bytes;
+    if (*portals > (repro ? QA_Q2_SAVE_AREA_PORTALS / 8 : QA_Q2_SAVE_AREA_PORTALS) || bytes.size - cursor != *portals)
+        return persistence_fail(error, QA_ERROR_FORMAT, "Quake II portal bytes leave the loaded CM extent");
+    *portal_at = cursor;
+    return true;
+}
+
 bool qa_q2_save_level_decode(qa_bytes bytes, qa_q2_save_level *level, qa_error *error)
 {
     if (!level || !bytes.data) return persistence_fail(error, QA_ERROR_ARGUMENT, "Quake II .sv2 requires its actual bytes");
     bool repro = bytes.size >= 4 && qa_load_u32le(bytes.data) == Q2_LEVEL_REPRO_SIGNATURE;
     if (repro && (bytes.size < 8 || qa_load_u32le(bytes.data + 4) != 1))
         return persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 header is invalid");
+    qa_q2_save_level format = *level;
+    format.config_protocol = qa_q2_default_protocol(level->rerelease);
+    format.file_signature = repro ? Q2_LEVEL_REPRO_SIGNATURE : 0;
     if (!repro && !level->rerelease) {
         bool donor_portals = bytes.size == Q2_LEVEL_STRINGS + QA_Q2_SAVE_AREA_PORTALS;
         if (bytes.size != Q2_LEVEL_BYTES && !donor_portals)
             return persistence_fail(error, QA_ERROR_FORMAT, "Quake II .sv2 has an invalid configstring/portal extent");
-        if (!qa_q2_save_configstrings_capture(level, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
+        if (!qa_q2_save_configstrings_capture(&format, (qa_bytes){bytes.data, Q2_LEVEL_STRINGS}, error)) return false;
         for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
-            level->portal_open[i] = donor_portals ? bytes.data[Q2_LEVEL_STRINGS + i] != 0 :
+            format.portal_open[i] = donor_portals ? bytes.data[Q2_LEVEL_STRINGS + i] != 0 :
                 qa_load_i32le(bytes.data + Q2_LEVEL_STRINGS + i * 4);
-        level->portal_count = 0; level->file_signature = 0; return true;
+        format.portal_count = 0; *level = format; return true;
     }
-    qa_q2_save_level format = *level;
-    format.rerelease = true; format.file_signature = repro ? Q2_LEVEL_REPRO_SIGNATURE : 0;
-    uint32_t rows = qa_q2_save_configstring_count(&format), width = qa_q2_save_configstring_width(&format);
-    qa_q2_config_layout layout = {0};
     if (repro) {
-        qa_q2_codec codec = {.protocol = qa_q2_default_protocol(true)};
-        if (!qa_q2_config_layout_read(&codec, &layout, error)) return false;
+        const qa_net_protocol_id protocols[] = {{.kind=QA_NET_Q2_34}, {.kind=QA_NET_Q2REPRO_1038},
+            {.kind=QA_NET_Q2PRO_36,.revision=1024}};
+        size_t matches = 0;
+        for (size_t i = 0; i < sizeof(protocols) / sizeof(*protocols); ++i) {
+            qa_q2_save_level candidate = {.config_protocol=protocols[i]};
+            uint16_t portals; size_t cursor;
+            if (!level_records(bytes, true, &candidate, NULL, &portals, &cursor, NULL)) continue;
+            format.config_protocol = protocols[i]; ++matches;
+        }
+        if (matches != 1)
+            return persistence_fail(error, QA_ERROR_FORMAT, matches ?
+                "Quake II SAV2 config layout is ambiguous" : "Quake II SAV2 has no valid original config table");
+        format.rerelease = qa_q2_protocol_rerelease(format.config_protocol);
     }
+    uint32_t rows = qa_q2_save_configstring_count(&format), width = qa_q2_save_configstring_width(&format);
     qa_buffer table = {.data = calloc(rows, width), .size = (size_t)rows * width};
-    if (!table.data) return persistence_fail(error, QA_ERROR_MEMORY, "Reading Quake II rerelease config rows");
-    size_t cursor = repro ? 8 : 0; bool ok = true;
-    /* Each Source writer visits physical rows in ascending order. */
-    int32_t previous = -1;
-    for (;;) {
-        size_t index_bytes = repro ? 2 : 4;
-        if (bytes.size - cursor < index_bytes) { ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its terminator"); break; }
-        int32_t index = repro ? qa_load_u16le(bytes.data + cursor) : qa_load_i32le(bytes.data + cursor);
-        cursor += index_bytes;
-        if (index == (repro ? (int32_t)rows : -1)) break;
-        if (index < 0 || (uint32_t)index >= rows || (!repro && index <= previous) || cursor == bytes.size) {
-            ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row leaves its physical table"); break;
-        }
-        qa_bytes text;
-        if (repro) {
-            if (!read_text(bytes, &cursor, &text, true, error)) { ok = false; break; }
-            size_t extent = width;
-            if ((uint32_t)index >= 5 && (uint32_t)index < layout.air_accelerate)
-                extent = (size_t)(layout.air_accelerate - (uint32_t)index) * width;
-            else if ((uint32_t)index >= layout.player_skins + 256)
-                extent = (size_t)(rows - (uint32_t)index) * width;
-            if (text.size >= extent) {
-                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 config string exceeds the original reader"); break;
-            }
-        } else {
-            uint8_t size = bytes.data[cursor++];
-            if (size > width || size > bytes.size - cursor) {
-                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease config row is truncated or too wide"); break;
-            }
-            text = (qa_bytes){bytes.data + cursor, size}; cursor += size;
-        }
-        memcpy(table.data + (size_t)index * width, text.data, text.size);
-        if (repro) table.data[(size_t)index * width + text.size] = 0;
-        previous = index;
-    }
-    uint16_t portals = 0;
-    if (ok) {
-        size_t count_bytes = repro ? 1 : 2;
-        if (bytes.size - cursor < count_bytes) ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease .sv2 lacks its portal count");
-        else {
-            portals = repro ? bytes.data[cursor] : qa_load_u16le(bytes.data + cursor); cursor += count_bytes;
-            if (portals > (repro ? QA_Q2_SAVE_AREA_PORTALS / 8 : QA_Q2_SAVE_AREA_PORTALS) || bytes.size - cursor != portals)
-                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portal bytes leave the loaded CM extent");
-        }
-    }
+    if (!table.data) return persistence_fail(error, QA_ERROR_MEMORY, "Reading Quake II config rows");
+    uint16_t portals = 0; size_t cursor = 0;
+    bool ok = level_records(bytes, repro, &format, table.data, &portals, &cursor, error);
     if (ok) ok = qa_q2_save_configstrings_capture(&format, (qa_bytes){table.data, table.size}, error);
     if (ok) {
         for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
@@ -589,7 +651,7 @@ bool qa_q2_save_level_encode(const qa_q2_save_level *level, qa_buffer *out, qa_e
     bool repro = level->file_signature == Q2_LEVEL_REPRO_SIGNATURE;
     size_t portal_bytes = repro ? ((size_t)level->portal_count + 7) / 8 : level->portal_count;
     size_t size = Q2_LEVEL_BYTES;
-    if (level->rerelease) {
+    if (level->rerelease || repro) {
         if (level->portal_count > QA_Q2_SAVE_AREA_PORTALS) {
             qa_buffer_free(&table); return persistence_fail(error, QA_ERROR_FORMAT, "Quake II rerelease portals exceed CM capacity");
         }
@@ -604,7 +666,7 @@ bool qa_q2_save_level_encode(const qa_q2_save_level *level, qa_buffer *out, qa_e
     }
     qa_buffer bytes = {.data = malloc(size), .size = size};
     if (!bytes.data) { qa_buffer_free(&table); return persistence_fail(error, QA_ERROR_MEMORY, "Writing original Quake II .sv2"); }
-    if (!level->rerelease) {
+    if (!level->rerelease && !repro) {
         memcpy(bytes.data, table.data, Q2_LEVEL_STRINGS);
         for (size_t i = 0; i < QA_Q2_SAVE_AREA_PORTALS; ++i)
             qa_store_u32le(bytes.data + Q2_LEVEL_STRINGS + i * 4, (uint32_t)level->portal_open[i]);
@@ -684,6 +746,14 @@ bool qa_q2_save_directory_read(qa_fs_root *root, const char *directory,
             read_file(root, directory, name, ".sv2", &engine, error) &&
             qa_q2_save_level_decode((qa_bytes){engine.data, engine.size}, level, error);
         qa_buffer_free(&engine);
+        if (ok && save->server.file_signature == Q2_SERVER_REPRO_SIGNATURE) {
+            if (level->file_signature != Q2_LEVEL_REPRO_SIGNATURE)
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II SSV2 level lacks its SAV2 container");
+            else if (save->level_count == 1) save->server.rerelease = level->rerelease;
+            else if (save->server.rerelease != level->rerelease ||
+                qa_q2_save_configstring_count(save->levels) != qa_q2_save_configstring_count(level))
+                ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II SAV2 levels use different GAME tables");
+        }
         if (ok && !level->game.size)
             ok = persistence_fail(error, QA_ERROR_FORMAT, "Quake II saved LEVEL file is empty");
     }
