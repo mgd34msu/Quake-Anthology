@@ -28,6 +28,7 @@ static bool resource(qa_qc_game *game, qa_qc_builtin builtin, qa_error *error) {
     if (!qa_qc_arg_string(game->vm, 0, &name, error) || !qa_qc_arg_int(game->vm, 0, &id, error)) return false;
     if (builtin == QA_QC_BUILTIN_PRECACHE_FILE) return qa_qc_return_int(game->vm, id, error);
     if (!game->loading) return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC precache outside loading");
+    if ((unsigned char)name[0] <= ' ') return qc_game_fail(error, QA_ERROR_ARGUMENT, "Bad string");
     qa_qc_game_resource cached;
     return game->options.resource(game->options.context,
         builtin == QA_QC_BUILTIN_PRECACHE_MODEL ? QA_QC_RESOURCE_MODEL : QA_QC_RESOURCE_SOUND,
