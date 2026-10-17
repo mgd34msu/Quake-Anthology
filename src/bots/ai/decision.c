@@ -156,6 +156,10 @@ bool bot_ai_source_reached_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *
     *done=false;
     if(!qa_bot_goals_source_status(goals(b),(int32_t)s->view.client,goal,&status,e)) return false;
     if(status!=QA_BOT_GOAL_NATIVE) {*done=status==QA_BOT_GOAL_UNAVAILABLE;return true;}
+    if(s->source_settings && (goal->flags&QA_BOT_GOAL_ROAM) && !(goal->flags&QA_BOT_GOAL_ITEM)) {
+        qa_vec3 delta=qa_vec_sub(goal->origin,bot_ai_origin(s));
+        *done=qa_vec_dot(delta,delta)<=64*64;return true;
+    }
     bool touching=qa_bot_goal_touching(bot_ai_origin(s),goal);
     if(goal->flags&QA_BOT_GOAL_ITEM) {
         if(touching) {
@@ -389,22 +393,62 @@ static float objective_nearby_range(qa_bots *b,bot_ai_state *s,float range) {
     }
     return range;
 }
+static bool authored_roam_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *goal,bool *found,qa_error *e) {
+    *found=false;
+    qa_bot_navigation *nav=navigation(b,s);
+    qa_navigation *runtime=qa_bot_navigation_runtime(nav);
+    const qa_nav_graph_view *graph=qa_navigation_graph(runtime);
+    *goal=(qa_bot_goal){.entity=-1,.flags=QA_BOT_GOAL_ROAM,
+        .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8)};
+    if(graph->node_count) {
+        qa_nav_route_query query={.travel_flags=bot_ai_travel_flags(s),.has_travel_flags=true};
+        for(unsigned attempt=0;attempt<8;++attempt) {
+            float random;DECISION_CALL(bot_ai_random(b,&random,e));
+            size_t index=(size_t)((double)random*(double)graph->node_count);
+            if(index>=graph->node_count) index=graph->node_count-1;
+            const qa_nav_node *node=graph->nodes+index;
+            qa_vec3 delta=qa_vec_sub(node->origin,bot_ai_origin(s));
+            if(qa_vec_dot(delta,delta)>4096*4096) continue;
+            bool allowed;
+            DECISION_CALL(qa_navigation_node_allowed(runtime,s->view.actor,node->id,&query,&allowed,e));
+            if(!allowed) continue;
+            goal->origin=node->origin;
+            goal->area=(int32_t)qa_bot_navigation_source_area(nav,node->id);
+            *found=true;break;
+        }
+    } else {
+        float angle,distance;DECISION_CALL(bot_ai_random(b,&angle,e));
+        DECISION_CALL(bot_ai_random(b,&distance,e));
+        qa_vec3 direction;
+        qa_angle_vectors(qa_v3(0,fminf(floorf(angle*360),359),0),&direction,NULL,NULL,QA_ANGLE_FLOAT_MATH);
+        goal->origin=qa_vec_ma(bot_ai_origin(s),320+fminf(floorf(distance*320),319),direction);
+        *found=true;
+    }
+    if(*found) {
+        DECISION_CALL(qa_bot_goals_push(goals(b),s->goals,goal,found,e));
+        if(*found) bot_ai_long_term_until_set(s,b->time+(graph->node_count?20.0f:4.0f));
+    }
+    return true;
+}
 bool bot_ai_source_item_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *found, qa_error *e) {
     if(!qa_bot_goals_top(goals(b),s->goals,false,goal,found,e)) return false;
+    bool done=false;
     if(!*found) bot_ai_long_term_until_set(s,0);
     else {
-        bool done;
         if(!bot_ai_source_reached_goal(b,s,goal,&done,e)) return false;
         if(done) {
             if(!bot_ai_choose_weapon(b,s,e)) return false;
             bot_ai_long_term_until_set(s,0);
         }
     }
-    if(bot_ai_long_term_until(s)<b->time) {
+    if(bot_ai_long_term_until(s)<b->time || (s->source_settings && (!*found || done))) {
         if(!qa_bot_goals_pop(goals(b),s->goals,e) || !choose(b,s,false,NULL,0,found,e)) return false;
         if(*found) bot_ai_long_term_until_set(s,b->time+20);
-        else if(!qa_bot_goals_avoid_clear(goals(b),s->goals,e) ||
-                !qa_bot_moves_reset_avoid(moves(b),s->movement,false,e)) return false;
+        else {
+            if(!qa_bot_goals_avoid_clear(goals(b),s->goals,e) ||
+               !qa_bot_moves_reset_avoid(moves(b),s->movement,false,e)) return false;
+            if(s->source_settings) DECISION_CALL(authored_roam_goal(b,s,goal,found,e));
+        }
         if(!qa_bot_goals_top(goals(b),s->goals,false,goal,found,e)) return false;
     } else *found=true;
     return true;
@@ -717,6 +761,18 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool 
                         qa_bot_move_result *result, qa_error *e) {
     memset(result,0,sizeof(*result));
     DECISION_CALL(bot_ai_move_setup(b,s,e));
+    if(s->source_settings && (goal->flags&QA_BOT_GOAL_ROAM) &&
+       !(goal->flags&QA_BOT_GOAL_ITEM) && !goal->area) {
+        qa_vec3 direction=qa_vec_sub(goal->origin,bot_ai_origin(s));direction.z=0;
+        result->direction=qa_vec_normalize(direction);
+        result->ideal_view_angles=qa_vec_angles(result->direction,QA_DIRECTION_FLOAT_RATIO,QA_VECTOR_SOURCE);
+        result->flags=QA_BOT_MOVE_VIEW;
+        bool moved;
+        DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,result->direction,400,
+            QA_BOT_DIRECTION_WALK,&moved,e));
+        result->failure=!moved;
+        return movement_result(b,s,activate,result,e);
+    }
     DECISION_CALL(qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e));
     if(result->failure) bot_ai_cooperative_failed(b,s,goal);
     return movement_result(b,s,activate,result,e);
