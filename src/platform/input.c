@@ -598,6 +598,7 @@ void qa_input_platform_replace(qa_input_platform *previous, qa_input_platform *r
             (void)stop_device(previous, instance, NULL);
     }
     if (previous->joystick && previous->joystick_instance != replacement->joystick_instance &&
+        !device(previous, previous->joystick_instance) &&
         !device(replacement, previous->joystick_instance) && SDL_JoystickHasRumble(previous->joystick))
         (void)source_motor(previous, 0, 0, 0, NULL);
     previous->native_replaced = true;
