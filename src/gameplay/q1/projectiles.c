@@ -152,6 +152,10 @@ bool q1_sprite_explosion(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->state.projectile.kind != Q1_OGRE_GRENADE &&
         entity->state.projectile.kind != Q1_VORE_BALL) entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->kind = Q1_TIMER;
+    return q1_sprite_continue(g, entity, error);
+}
+bool q1_sprite_continue(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     if (!q1_sprite_prepare(g, entity, error))
         return false;
     entity = q1_entity(g, id);

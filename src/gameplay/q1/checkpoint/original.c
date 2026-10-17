@@ -509,11 +509,12 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
 }
 static bool original_explosion_sprite(const qa_strings *strings, const q1_actor *entity) {
     const char *model = qa_strings_cstr(strings, entity->model);
-    return entity->map && entity->map->kind == Q1_MAP_ADDON_EXPLOSION && model &&
+    return entity->map && (entity->map->kind == Q1_MAP_ADDON_EXPLOSION ||
+        entity->map->kind == Q1_MAP_BARREL) && model &&
         !strcmp(model, "progs/s_explod.spr") && (entity->think == Q1_THINK_SPRITE ||
             (entity->think == Q1_THINK_MAP && entity->map->action == Q1_MAP_REMOVE));
 }
-static bool map_functions(const qa_strings *strings, const q1_actor *entity, bool damageable,
+static bool map_functions(qa_q1_program program, const qa_strings *strings, const q1_actor *entity, bool damageable,
     qa_q1_save_record *record, qa_error *error) {
     bool targeted = qa_strings_text(strings, entity->targetname).size != 0;
     const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL, *tick = NULL;
@@ -536,7 +537,10 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_WALL: case Q1_MAP_GATE: use = "func_wall_use"; break;
     case Q1_MAP_PATH: touch = "t_movetarget"; break;
     case Q1_MAP_LIGHTNING: use = "lightning_use"; break;
-    case Q1_MAP_BARREL: die = "barrel_explode"; break;
+    case Q1_MAP_BARREL:
+        return callback(record, "th_die", program == QA_Q1_MG1 || program == QA_Q1_MG3 ?
+                "barrel_detonate" : "barrel_explode", error) &&
+            callback(record, "touch", original_explosion_sprite(strings, entity) ? "SUB_Null" : NULL, error);
     case Q1_MAP_DOOR:
         touch = "door_touch"; use = "door_use"; blocked = "door_blocked";
         if (entity->max_health > 0) die = "door_killed";
@@ -967,6 +971,7 @@ static const char *sprite_classname(const qa_q1_game *game, const q1_actor *enti
     return name;
 }
 static q1_map_kind original_map_kind(qa_q1_program program, const char *classname) {
+    if (classname && !strcmp(classname, "explo_box")) return Q1_MAP_BARREL;
     q1_map_kind kind = classname ? q1_map_classify(classname) : Q1_MAP_FIELDS;
     if (kind == Q1_MAP_COUNTER &&
         (program == QA_Q1_DOPA || program == QA_Q1_MG1 || program == QA_Q1_MG3))
@@ -1021,7 +1026,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         source_entity = *entity;
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
-            if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON || kind == Q1_MAP_BARREL)
+            if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON ||
+                (kind == Q1_MAP_BARREL && game->options.program != QA_Q1_MG1 && game->options.program != QA_Q1_MG3))
                 physics.enemy = entity->activator;
             if (kind == Q1_MAP_SIGIL || kind == Q1_MAP_ADDON_TOSS)
                 source_entity.source_netname = entity->map->netname;
@@ -1167,7 +1173,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->map->action == Q1_MAP_DELAYED_USE &&
             !actor(receipt,record,"enemy",entity->activator,false,error)) return false;
         if (!FIELDS(receipt, record, entity->map, map_fields, error) ||
-            !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
+            !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(game->options.program, qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE &&
             !FIELDS(receipt, record, entity->map, particle_tele_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_ROTATE &&
@@ -1657,7 +1663,8 @@ static bool original_classify(qa_q1_program program, const qa_q1_save_record *re
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
     if (explosion || hammer_base || hammer_bolt) kind = Q1_TIMER;
-    if (map == Q1_MAP_ADDON_EXPLOSION && (explosion || (think && !strncmp(think, "s_explode", 9))))
+    if ((map == Q1_MAP_ADDON_EXPLOSION || map == Q1_MAP_BARREL) &&
+        (explosion || (think && !strncmp(think, "s_explode", 9))))
         kind = Q1_MAP;
     if (pickup_record_kind(record)!=UINT32_MAX) kind=Q1_PICKUP;
     if (projectile) name = projectile->native_classname;
@@ -2145,7 +2152,7 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_MULTI: case Q1_MAP_ADDON_COUNTER:
         return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
     case Q1_MAP_HURT: return action==Q1_MAP_REARM;
-    case Q1_MAP_BARREL: return action==Q1_MAP_BARREL_EXPLODE;
+    case Q1_MAP_BARREL: return action==Q1_MAP_BARREL_EXPLODE || action==Q1_MAP_REMOVE;
     case Q1_MAP_DELAY: return action==Q1_MAP_DELAYED_USE;
     case Q1_MAP_CHANGELEVEL: return action==Q1_MAP_BEGIN_LEVEL;
     case Q1_MAP_DOOR: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_DOWN;
@@ -2401,7 +2408,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
             if (classname && !strcmp(classname,source.name) &&
                 (source.map==Q1_MAP_DOOR || source.map==Q1_MAP_BUTTON || source.map==Q1_MAP_SECRET_DOOR))
                 defaults=source.map;
-            if (!map_functions(admission->strings,&entity,damage!=0,&callbacks,error)) goto done;
+            if (!map_functions(program,admission->strings,&entity,damage!=0,&callbacks,error)) goto done;
         } else if (program==QA_Q1_HIPNOTIC && (source.hammer_base || entity.think==Q1_THINK_HAMMER_BOLT)) {
             if (source.hammer_base) {
                 if (!ADMIT_FIELDS(admission,&entity.state.projectile,hammer_base_fields,error)) goto done;

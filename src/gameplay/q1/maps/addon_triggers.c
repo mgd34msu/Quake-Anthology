@@ -116,13 +116,7 @@ static bool explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e->physics.motion = QA_PHYSICS_STATIONARY;
     e->map->action = Q1_MAP_IDLE;
     e->map->touch_enabled = false;
-    if (!q1_sprite_prepare(g, e, error))
-        return false;
-    e = trigger(g, id);
-    if (!e || !q1_link(g, e, error))
-        return e == NULL;
-    e = trigger(g, id);
-    return !e || q1_schedule(g, e, .1, Q1_THINK_SPRITE, error);
+    return q1_sprite_continue(g, e, error);
 }
 static bool change_targets(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;

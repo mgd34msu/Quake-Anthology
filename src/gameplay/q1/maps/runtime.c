@@ -1472,11 +1472,20 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         break;
     case Q1_MAP_BARREL: {
         bool small = q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_EXPLOBOX2]);
-        if (!q1_model(g, entity, small ? g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXBOX2_BSP] : g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXPLOB_BSP], error) ||
+        bool mg_barrel = g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_MG3;
+        qa_string_id model = small ? g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXBOX2_BSP] :
+            g->runtime_names[Q1_NAME_RESOURCE_MAPS_B_EXPLOB_BSP];
+        if (mg_barrel) {
+            if (small || !state->mdl) state->mdl = model;
+            model = state->mdl;
+            entity->physics.motion = QA_PHYSICS_PUSH;
+            entity->classname = g->runtime_names[Q1_NAME_EXPLO_BOX];
+        }
+        if (!q1_model(g, entity, model, error) ||
             !qa_combat_set_health(g->services.combat, entity->id, 20, error) ||
             !q1_map_damageable(g, entity, true, error))
             return false;
-        entity->physics.solid = QA_PHYSICS_BOX;
+        entity->physics.solid = mg_barrel ? QA_PHYSICS_BRUSH : QA_PHYSICS_BOX;
         entity->aimed_damage = true;
         body.bounds = (qa_bounds){{0, 0, 0}, {32, 32, small ? 32 : 64}};
         body.origin.z += 2;
@@ -1676,10 +1685,17 @@ bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *o
                q1_map_multi_fire(g, entity, outcome->request.attack.attacker, error);
     if (entity->map->kind != Q1_MAP_BARREL)
         return true;
-    entity->activator = q1_ref_from(g, outcome->request.attack.attacker);
-    entity->classname=g->runtime_names[Q1_NAME_EXPLO_BOX];
+    bool addon = g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_MG3;
+    if (addon) {
+        if (q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_EXPLOBOX]) ||
+            q1_classnamed(g, entity->id, g->runtime_names[Q1_NAME_MISC_EXPLOBOX2]))
+            entity->physics.enemy = q1_ref_from(g, outcome->request.attack.attacker);
+    } else {
+        entity->activator = q1_ref_from(g, outcome->request.attack.attacker);
+        entity->classname = g->runtime_names[Q1_NAME_EXPLO_BOX];
+    }
     return q1_map_damageable(g, entity, false, error) &&
-           q1_map_schedule(g, entity, .3, Q1_MAP_BARREL_EXPLODE, error);
+           q1_map_schedule(g, entity, addon ? .15 : .3, Q1_MAP_BARREL_EXPLODE, error);
 }
 bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
@@ -1803,25 +1819,68 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
     case Q1_MAP_BARREL_EXPLODE: {
-        if (!q1_radius(g, entity->id, q1_ref_actor(g, entity->activator), 160, (qa_actor_id){0}, QA_Q1_WEAPON_COUNT,
-                       error))
-            return false;
-        if (!q1_alive(g, entity->id))
-            return true;
+        qa_actor_id id = entity->id;
+        bool addon = g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_MG3;
         qa_body_state body;
-        if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
-            !q1_sound_resource(g, entity->id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], 0, 1, 1, error))
+        if (addon) {
+            if (!qa_world_body_read(g->services.world, id, &body, error))
+                return false;
+            entity = q1_entity(g, id);
+            if (!entity)
+                return true;
+            body.origin.z += 32;
+            if (!qa_world_body_write(g->services.world, id, &body, error))
+                return false;
+            entity = q1_entity(g, id);
+            if (!entity)
+                return true;
+        }
+        if (!q1_radius(g, id, addon ? id : q1_ref_actor(g, entity->activator), 160,
+                (qa_actor_id){0}, QA_Q1_WEAPON_COUNT, error))
             return false;
-        if (!q1_alive(g, entity->id))
+        entity = q1_entity(g, id);
+        if (!entity)
             return true;
-        if (!q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id,
-                       qa_vec_add(body.origin, qa_v3(0, 0, 32)), 0, 0, error))
+        if (!q1_sound_resource(g, id, g->runtime_names[Q1_NAME_RESOURCE_WEAPONS_R_EXP3_WAV], addon ? 2 : 0, 1, 1, error))
             return false;
-        if (!q1_alive(g, entity->id))
+        entity = q1_entity(g, id);
+        if (!entity)
             return true;
-        g->activator = entity->activator;
-        return q1_map_targets(g, entity, q1_ref_actor(g, g->activator), error) &&
-            (!q1_alive(g, entity->id) || q1_remove(g, entity, error));
+        if (!qa_world_body_read(g->services.world, id, &body, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity)
+            return true;
+        if (addon) {
+            qa_builtin_event particles = {.kind = QA_BUILTIN_PARTICLES, .family = QA_GAME_Q1,
+                .provider = g->options.provider, .actor = id, .origin = body.origin,
+                .code = 75, .count = 255, .time_ns = g->time_ns};
+            if (!qa_builtin_emit(&g->services, &particles, error)) return false;
+        } else if (!q1_effect(g, QA_BUILTIN_EXPLOSION, id,
+            qa_vec_add(body.origin, qa_v3(0, 0, 32)), 0, 0, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity)
+            return true;
+        if (!addon) {
+            if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+            entity = q1_entity(g, id);
+            if (!entity) return true;
+            body.origin.z += 32;
+            if (!qa_world_body_write(g->services.world, id, &body, error)) return false;
+            entity = q1_entity(g, id);
+            if (!entity) return true;
+        }
+        g->activator = addon ? entity->physics.enemy : entity->activator;
+        if (!q1_map_targets(g, entity, q1_ref_actor(g, g->activator), error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity)
+            return true;
+        entity->physics.motion = QA_PHYSICS_STATIONARY;
+        entity->map->action = Q1_MAP_IDLE;
+        entity->map->touch_enabled = false;
+        return q1_sprite_continue(g, entity, error);
     }
     default:
         return q1_map_fail(error, "unknown Q1 map continuation");
