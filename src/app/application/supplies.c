@@ -5,6 +5,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q2_combat.h"
 #include "guest_qc_internal.h"
+#include "guest_qc_pickups.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_primary_pickups.h"
 #include "guest_q3_private.h"
@@ -833,6 +834,10 @@ static struct application_native_q2_primary_pickups *original_native_pickups(con
         ? pair->source->state.native.q2_engine : NULL;
     return !pair->native && engine ? engine->primary_pickups : NULL;
 }
+static struct application_qc_state *original_qc_pickups(const supply_pair *pair) {
+    return !pair->native && pair->source->kind == APPLICATION_PROVIDER_QC &&
+        application_qc_pickups_source_present(pair->source) ? pair->source->state.qc.engine : NULL;
+}
 static bool original_take(void *opaque, const qa_pickup_offer *offer,
     qa_pickup_execution *execution, qa_pickup_outcome *out, qa_error *error) {
     supply_pair *pair = opaque;
@@ -844,11 +849,13 @@ static bool original_take(void *opaque, const qa_pickup_offer *offer,
     ++owner->calls;
     application_q3_pickups *source = original_q3_pickups(pair);
     struct application_native_q2_primary_pickups *native = original_native_pickups(pair);
+    struct application_qc_state *qc = original_qc_pickups(pair);
     qa_supply_offer supplied = {0};
     qa_supply_options options = {0};
     qa_unified_frame_lease *storage = NULL;
     bool accepted = false;
-    bool ok = supply_current(pair, offer->recipient, error) && (native ?
+    bool ok = supply_current(pair, offer->recipient, error) && (qc ?
+        application_qc_pickups_supply(qc, offer, &supplied, &options, error) : native ?
         application_native_q2_primary_pickups_supply(native, offer, &supplied, &options, error) :
         application_q3_pickups_supply(source, offer, &supplied, &options, error));
     if (ok && supplied.kind != QA_SUPPLY_AMMO && supplied.kind != QA_SUPPLY_WEAPON &&
@@ -908,27 +915,34 @@ static bool pickup_write_add(qa_pickup_write **writes, size_t *count,
     return true;
 }
 static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
-    if (!original_q3_pickups(pair) && !original_native_pickups(pair)) return true;
+    struct application_qc_state *qc = original_qc_pickups(pair);
+    if (!original_q3_pickups(pair) && !original_native_pickups(pair) && !qc) return true;
     const qa_supply_profile *profile = &pair->profile;
     if (profile->ammo_count > SIZE_MAX - profile->weapon_count)
         return application_fail(error, QA_ERROR_MEMORY, "Original pickup rule inventory overflows");
     size_t count = profile->ammo_count + profile->weapon_count;
+    qa_item_id cargo = qc ? application_qc_pickups_cargo_item(pair->source) : 0;
+    if (cargo && count == SIZE_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "Original pickup rule inventory overflows");
+    if (cargo) ++count;
     if (!count || count > SIZE_MAX / sizeof(*pair->pickup_rules))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected original pickups need their actual supply mappings");
     pair->pickup_rules = calloc(count, sizeof(*pair->pickup_rules));
     if (!pair->pickup_rules) return application_fail(error, QA_ERROR_MEMORY, "Owning selected original pickup rules");
     for (size_t i = 0; i < count; ++i) {
+        bool backpack = cargo && i == count - 1;
         bool ammo = i < profile->ammo_count;
-        const qa_supply_mapping *mapping = ammo ? profile->ammo + i : profile->weapons + i - profile->ammo_count;
+        const qa_supply_mapping *mapping = backpack ? NULL : ammo ? profile->ammo + i : profile->weapons + i - profile->ammo_count;
+        qa_item_id source_item = backpack ? cargo : mapping->source;
         qa_pickup_rule *rule = NULL;
         for (size_t j = 0; j < pair->pickup_rule_count; ++j)
-            if (pair->pickup_rules[j].offered[0] == mapping->source) { rule = pair->pickup_rules + j; break; }
+            if (pair->pickup_rules[j].offered[0] == source_item) { rule = pair->pickup_rules + j; break; }
         if (!rule) {
             rule = pair->pickup_rules + pair->pickup_rule_count++;
             qa_item_id *offered = malloc(sizeof(*offered));
             if (!offered) return application_fail(error, QA_ERROR_MEMORY, "Retaining original pickup item identity");
-            *offered = mapping->source; rule->offered = offered; rule->offered_count = 1;
-            qa_bytes item = qa_strings_text(qa_session_strings(pair->owner->application->session), mapping->source);
+            *offered = source_item; rule->offered = offered; rule->offered_count = 1;
+            qa_bytes item = qa_strings_text(qa_session_strings(pair->owner->application->session), source_item);
             if (!item.data || item.size > SIZE_MAX - 10)
                 return application_fail(error, QA_ERROR_ARGUMENT, "Original pickup mapping has no retained item name");
             char *name = malloc(item.size + 10);
@@ -940,8 +954,11 @@ static bool pickup_rules_build(supply_pair *pair, qa_error *error) {
         }
         qa_pickup_write *writes = (qa_pickup_write *)rule->writes;
         bool ok = true;
-        for (size_t j = 0; ok && j < mapping->count; ++j)
+        for (size_t j = 0; ok && mapping && j < mapping->count; ++j)
             ok = pickup_write_add(&writes, &rule->write_count, mapping->destinations[j], error);
+        for (size_t j = 0; ok && backpack && j < profile->weapon_count; ++j)
+            for (size_t k = 0; ok && k < profile->weapons[j].count; ++k)
+                ok = pickup_write_add(&writes, &rule->write_count, profile->weapons[j].destinations[k], error);
         for (size_t j = 0; ok && !ammo && j < profile->ammo_count; ++j)
             for (size_t k = 0; ok && k < profile->ammo[j].count; ++k)
                 ok = pickup_write_add(&writes, &rule->write_count, profile->ammo[j].destinations[k], error);

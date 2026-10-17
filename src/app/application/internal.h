@@ -119,6 +119,7 @@ typedef struct application_provider {
             struct application_qc_state *engine;
             struct application_qc_profile *qualified;
             struct application_qc_combat_profile *combat_profile;
+            struct application_qc_pickups *pickup_profile;
         } qc;
         struct {
             qa_q3_host *host;

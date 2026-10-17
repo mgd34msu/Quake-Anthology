@@ -477,6 +477,7 @@ static bool schedule_think(struct application_qc_state *engine, qa_actor_id acto
 static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *event, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
+    if (!application_qc_pickups_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_combat_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_items_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_store_declared(engine, vm, event, error)) return false;
@@ -1308,6 +1309,8 @@ static bool declared_replace(void *opaque,qa_qc_instance *vm,const qa_qc_call_ev
     qa_qc_call_next next,qa_error *error)
 {
     struct application_qc_state *engine=opaque;bool handled=false;
+    if(!application_qc_pickups_replace(engine,vm,event,next,&handled,error))return false;
+    if(handled)return true;
     if(!application_qc_item_weapons_replace(engine,vm,event,next,&handled,error))return false;
     if(handled)return true;
     if(!application_qc_combat_replace(engine,vm,event,next,&handled,error))return false;
@@ -1317,6 +1320,8 @@ static bool declared_inline(void *opaque,qa_qc_instance *vm,const qa_qc_inline_e
     qa_qc_inline_next next,qa_error *error)
 {
     struct application_qc_state *engine=opaque;bool handled=false;
+    if(!application_qc_pickups_inline(engine,vm,event,next,&handled,error))return false;
+    if(handled)return true;
     if(!application_qc_item_weapons_inline(engine,vm,event,next,&handled,error))return false;
     if(handled)return true;
     if(!application_qc_combat_inline(engine,vm,event,next,&handled,error))return false;
@@ -1329,11 +1334,12 @@ static bool declared_left(void *opaque,qa_qc_instance *vm,const qa_qc_call_event
 static bool declared_regions(application_provider *provider,qa_qc_inline_region **out,size_t *count,qa_error *error)
 {
     const struct application_qc_profile *profile=provider->state.qc.qualified;
-    size_t sizes[3]={0},total=0;
+    size_t sizes[4]={0},total=0;
     const qa_qc_inline_region *parts[]={
         application_qc_item_weapons_regions(provider,&sizes[0]),
         application_qc_protection_regions(profile?profile->protection:NULL,&sizes[1]),
-        application_qc_combat_regions(provider->state.qc.combat_profile,&sizes[2])};
+        application_qc_combat_regions(provider->state.qc.combat_profile,&sizes[2]),
+        application_qc_pickups_regions(provider,&sizes[3])};
     for(size_t i=0;i<sizeof(parts)/sizeof(parts[0]);++i){
         if(sizes[i]>SIZE_MAX-total)return application_fail(error,QA_ERROR_MEMORY,"QC admitted Source region count overflows");
         total+=sizes[i];
@@ -1640,6 +1646,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (application_qc_has_source_admission(engine) || engine->input_scope || engine->parked_inputs ||
         engine->client_think_time || !qa_world_idle(engine->world) ||
         !application_qc_combat_idle(engine) || !application_qc_protection_idle(engine) ||
+        !application_qc_pickups_idle(engine) ||
         !qa_inventory_idle(engine->services.inventory) ||
         !qa_pickups_idle(engine->services.pickups) ||
         (engine->console && !qa_console_idle(engine->console)) ||

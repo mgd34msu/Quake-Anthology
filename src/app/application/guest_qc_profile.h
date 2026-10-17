@@ -105,7 +105,6 @@ struct application_qc_profile {
     struct application_qc_objectives *objectives;
     struct application_qc_protection_profile *protection;
     struct application_qc_items *items;
-    struct application_qc_pickups *pickups;
     application_qc_bound_field *fields;
     size_t field_count;
     uint32_t maximum_clients;

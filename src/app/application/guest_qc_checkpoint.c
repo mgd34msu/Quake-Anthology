@@ -1,4 +1,5 @@
 #include "guest_qc_profile.h"
+#include "guest_qc_pickups.h"
 #include "qa/persistence_content.h"
 #include "qa/source_save.h"
 #include "qa/cvars_save.h"
@@ -242,7 +243,8 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
 {
     struct application_qc_state *engine = opaque;
     if (out == NULL || engine->has_frame || application_qc_has_source_admission(engine) ||
-        engine->input_scope || engine->parked_inputs || engine->client_think_time)
+        engine->input_scope || engine->parked_inputs || engine->client_think_time ||
+        !application_qc_pickups_idle(engine))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine checkpoint requires an idle frame");
     if (!engine_console_safe(engine, error)) return false;
     if (!application_qc_capture_client_outputs(engine, error) ||
@@ -404,7 +406,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
 {
     struct application_qc_state *engine = opaque;
     if (bytes.size > QC_ENGINE_LIMIT || engine->has_frame || application_qc_has_source_admission(engine) ||
-        engine->input_scope || engine->parked_inputs || engine->client_think_time)
+        engine->input_scope || engine->parked_inputs || engine->client_think_time ||
+        !application_qc_pickups_idle(engine))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC engine restore requires an idle frame");
     if (!engine_console_safe(engine, error) || !application_qc_callbacks_ready(engine, error)) return false;
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
