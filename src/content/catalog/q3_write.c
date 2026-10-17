@@ -14,35 +14,15 @@ struct qa_catalog_write_resolver {
     bool component;
 };
 
-static bool fail(qa_error *error, const char *message)
-{
-    qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", message); return false;
-}
-
 static bool mapped_root(void *context, const qa_fs_stream_reference *reference,
     qa_fs_root **out, qa_error *error)
 {
     qa_catalog_write_resolver *resolver = context;
     if (out) *out = NULL;
     if (!resolver || !out || !qa_fs_stream_reference_valid(reference, error)) return false;
-    if (resolver->component) {
-        /* The selected component names the destination on restore. */
-        qa_fs_root_retain(resolver->root); *out = resolver->root; return true;
-    }
-    const qa_catalog_mount *mount = qa_catalog_product_write_mount(resolver->catalog, resolver->product);
-    qa_fs_root *root = qa_catalog_product_write_root(resolver->catalog, resolver->product);
-    const qa_fs_object_reference *origins = NULL; size_t count = 0;
-    if (!mount || root != resolver->root ||
-        !qa_vfs_mount_root_references(qa_catalog_files(resolver->catalog), mount->id, &origins, &count))
-        return fail(error, "Writable resolver lost its exact selected product root");
-    bool found = false;
-    for (size_t i = 0; i < count; ++i)
-        if (origins[i].platform == reference->root.platform &&
-            !memcmp(origins[i].words, reference->root.words, sizeof(reference->root.words))) {
-            found = true; break;
-        }
-    if (!found) return fail(error, "Writable source root is outside the selected product's admitted lineage");
-    qa_fs_root_retain(root); *out = root; return true;
+    /* Restore relative files beneath the selected product or component, even
+     * when its writable directory moved or was recreated since the save. */
+    qa_fs_root_retain(resolver->root); *out = resolver->root; return true;
 }
 
 static char *name_write(char *out, const char *name)

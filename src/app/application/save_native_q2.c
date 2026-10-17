@@ -14,7 +14,7 @@
 
 struct application_native_q2_scratch {
     qa_application *candidate, *application;
-    application_provider *target, *source;
+    application_provider *target, *source, *world_source;
     const qa_launch_snapshot *snapshot;
     qa_application_native_baseline_services services;
     qa_fs_root *write_root;
@@ -114,13 +114,33 @@ bool application_source_baseline_prepare(application_provider *target,
         !application_provider_prepare(app, target->launch, &scratch->source, error) ||
         !application_provider_product_bind(scratch->source, target->product_catalog,
             target->product, error)) return false;
-    app->providers = calloc(1, sizeof(*app->providers));
+    application_provider *map_source = NULL;
+    if (target_q3 && target_q3->game) {
+        map_source = application_world_provider(candidate, QA_ROLE_ENTITIES, "");
+        if (!map_source)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source baseline has no selected map owner");
+        if (map_source != target &&
+            (!application_provider_prepare(app, map_source->launch, &scratch->world_source, error) ||
+             !application_provider_product_bind(scratch->world_source, map_source->product_catalog,
+                map_source->product, error))) return false;
+    }
+    size_t provider_count = scratch->world_source ? 2 : 1;
+    app->providers = calloc(provider_count, sizeof(*app->providers));
     if (!app->providers) return application_fail(error, QA_ERROR_MEMORY, "retaining native baseline provider roster");
-    app->providers[0] = scratch->source;
-    app->provider_count = 1;
+    app->providers[0] = scratch->world_source ? scratch->world_source : scratch->source;
+    if (scratch->world_source) app->providers[1] = scratch->source;
+    app->provider_count = provider_count;
     if (!application_provider_roster_index(app, app->providers, app->provider_count, error)) return false;
     app->routing_providers = app->providers;
-    app->routing_provider_count = 1;
+    app->routing_provider_count = provider_count;
+    if (scratch->world_source) {
+        application_provider *source = scratch->world_source;
+        if (!application_unified_event_owner_bind(app, source, false, error) ||
+            !application_provider_construct(app, source, world,
+                source->product_catalog, source->product, qa_launch_snapshot_choices(snapshot), error) ||
+            !qa_session_add(app->session, &source->component, error)) return false;
+        source->component_attached = source->attached = true;
+    }
     if (target_q3 && target_q3->game) {
         qa_console *console = NULL;
         qa_cvars *cvars = NULL;
@@ -140,6 +160,8 @@ bool application_source_baseline_prepare(application_provider *target,
     if (target_q3 && target_q3->game &&
         !application_bots_prepare(app, qa_launch_snapshot_choices(snapshot), &map, NULL, error))
         return false;
+    if (scratch->world_source &&
+        !application_map_baseline_world_begin(scratch->world_source, &map, error)) return false;
     return true;
 }
 
@@ -221,10 +243,17 @@ bool application_native_q2_baselines_destroy(qa_application *candidate, qa_error
             if (scratch->source && scratch->source->kind == APPLICATION_PROVIDER_NATIVE &&
                 scratch->source->state.native.q2_engine &&
                 !application_native_q2_loading_cancel(scratch->source, error)) return false;
+            if (scratch->world_source && scratch->world_source->kind == APPLICATION_PROVIDER_NATIVE &&
+                scratch->world_source->state.native.q2_engine &&
+                !application_native_q2_loading_cancel(scratch->world_source, error)) return false;
             if (!application_composition_destroy(scratch->application, error)) return false;
             if (scratch->source) {
                 if (!application_provider_close(scratch->application, scratch->source, error)) return false;
                 scratch->source = NULL;
+            }
+            if (scratch->world_source) {
+                if (!application_provider_close(scratch->application, scratch->world_source, error)) return false;
+                scratch->world_source = NULL;
             }
             if (!qa_application_destroy(scratch->application, error)) return false;
             scratch->application = NULL;

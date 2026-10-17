@@ -192,8 +192,12 @@ bool q3g_command_begin(struct application_q3_guest *,const char *,const char *co
     qa_command_tokens *,qa_error *);
 void q3g_command_end(struct application_q3_guest *,qa_command_tokens);
 bool q3g_world_begin(struct application_q3_guest *, qa_error *);
+bool application_q3_player_entity_text(qa_bytes, qa_buffer *, qa_error *);
 qa_qvm_role q3g_primary_role(const char *);
+bool q3g_source_idle(const struct application_q3_guest *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
+bool q3g_projection_after_free(q3g_role *, int32_t pointer, qa_error *);
+bool q3g_projection_actor_released(q3g_role *, qa_actor_record, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                       const char *path, bool primary, q3g_role **, qa_error *);
 bool q3g_role_create_client(struct application_q3_guest *, qa_qvm_role, uint32_t seat,

@@ -10,6 +10,7 @@
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
+#include "guest_input_private.h"
 #include "native_q3_wire.h"
 #include "qa/game_q3_source_types.h"
 #include "q3_sound_events.h"
@@ -83,9 +84,20 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     else {
         int32_t words[10] = {command};
         if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
-        ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
-            qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
-            qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
+        qa_qvm_binding bot_setup = 0;
+        ok = true;
+        if (role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
+            ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
+        if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
+                qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
+                qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
+        if (bot_setup) {
+            qa_error cleanup = {0};
+            if (!qa_qvm_unbind(role->vm, bot_setup, &cleanup)) {
+                if (ok && error) *error = cleanup;
+                ok = false;
+            }
+        }
     }
     if (drawing) {
         if (role->body) application_q3_body_draw_end(role->body);
@@ -410,8 +422,15 @@ bool q3g_world_begin(struct application_q3_guest *engine, qa_error *error)
         engine->game->kind != QA_QVM_GAME || engine->restore_pending ||
         application->operation == APPLICATION_PERSISTING ||
         engine->world != application->world || !application->physics ||
-        application->physics->world != engine->world ||
-        application->physics->world_actor.registry)
+        application->physics->world != engine->world)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Original Q3 world admission requires its fresh primary map owner");
+    if (application_world_provider(application, QA_ROLE_ENTITIES, "") != provider)
+        return qa_actors_get(qa_session_actors(application->session),
+            application->physics->world_actor) != NULL ||
+            application_fail(error, QA_ERROR_ARGUMENT,
+                "Original Q3 supplemental admission requires its loaded canonical world");
+    if (application->physics->world_actor.registry)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Original Q3 world admission requires its fresh primary map owner");
     qa_string_id definition;
@@ -422,6 +441,16 @@ bool q3g_world_begin(struct application_q3_guest *engine, qa_error *error)
         return false;
     return qa_world_body_create(engine->world, application->physics->world_actor,
                                 &(qa_body_state){0}, error);
+}
+
+bool application_q3_player_entity_text(qa_bytes source, qa_buffer *out, qa_error *error)
+{
+    static const char *const classes[] = {"worldspawn", "info_player_start", "info_player_deathmatch",
+        "info_player_intermission", "team_CTF_redplayer", "team_CTF_blueplayer",
+        "team_CTF_redspawn", "team_CTF_bluespawn"};
+    qa_entity_prepare_options options = {.include_classes = classes,
+        .include_count = sizeof(classes) / sizeof(*classes), .unique_class = "worldspawn"};
+    return qa_entities_prepare_text(source, QA_ENTITY_Q1, &options, out, error);
 }
 
 bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp_view *map,
@@ -441,11 +470,19 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     if (!qa_cvars_set(map_cvars,"mapname",path,true,error) ||
         !qa_cvars_set(map_cvars,"sv_mapname",path,true,error)) return false;
     qa_bytes text = map->lumps[QA_BSP_ENTITIES].bytes;
-    if (text.size == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Q3 entity text exceeds capacity");
-    char *copy = malloc(text.size + 1);
-    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 map entity text");
-    if (text.size) memcpy(copy, text.data, text.size);
-    copy[text.size] = 0;
+    char *copy;
+    if (application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider) {
+        if (text.size == SIZE_MAX) return application_fail(error, QA_ERROR_MEMORY, "Q3 entity text exceeds capacity");
+        copy = malloc(text.size + 1);
+        if (!copy) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 map entity text");
+        if (text.size) memcpy(copy, text.data, text.size);
+        copy[text.size] = 0;
+    } else {
+        qa_buffer prepared = {0};
+        if (!application_q3_player_entity_text(text, &prepared, error)) return false;
+        copy = (char *)prepared.data;
+        text = (qa_bytes){prepared.data, prepared.size};
+    }
     if (engine->map_ready) {
         if (engine->game) {
             q3g_role *replacement;
@@ -504,7 +541,7 @@ bool application_q3_guest_actor_released(application_provider *provider, qa_acto
     for (q3g_role *role = engine->roles; role; role = role->next) {
         application_q3_weapons_services_actor_released(role->weapon_services, actor);
         if (!application_q3_combat_actor_released(role->combat, actor, error)) return false;
-        if (role->host && !qa_q3_host_actor_released(role->host, actor, error)) return false;
+        if (role->host && !q3g_projection_actor_released(role, actor, error)) return false;
     }
     size_t slot;
     if (qa_actor_index_find_retained(&engine->client_actors, actor.id, &slot)) {
@@ -638,13 +675,10 @@ bool application_q3_guest_retire_map(application_provider *provider, qa_error *e
     return ok;
 }
 
-bool application_q3_guest_idle(const application_provider *provider)
+bool q3g_source_idle(const struct application_q3_guest *engine)
 {
-    const struct application_q3_guest *engine = !provider ? NULL :
-        provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.engine :
-        provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.engine : NULL;
     if (!engine) return true;
-    if (engine->calls || engine->entered_role || !application_guest_q3_console_idle(engine)) return false;
+    if (engine->calls || engine->entered_role) return false;
     for (const q3g_role *role = engine->roles; role; role = role->next) {
         if (role->equipment && !application_q3_equipment_idle(role->equipment)) return false;
         if (role->body && !application_q3_body_idle(role->body)) return false;
@@ -657,4 +691,12 @@ bool application_q3_guest_idle(const application_provider *provider)
         if (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))) return false;
     }
     return true;
+}
+
+bool application_q3_guest_idle(const application_provider *provider)
+{
+    const struct application_q3_guest *engine = !provider ? NULL :
+        provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.engine :
+        provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.engine : NULL;
+    return q3g_source_idle(engine) && application_guest_q3_console_idle(engine);
 }

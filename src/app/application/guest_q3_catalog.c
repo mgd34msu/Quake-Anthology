@@ -25,6 +25,8 @@ struct application_q3_catalog {
     uint32_t stride, fields[4];
     int32_t weapon_type, ammo_type;
     bool table, live, private_inventory, selected, records_full;
+    bool bot_product_known;
+    qa_q3_product bot_product;
     qa_item_source_value *selection;
     size_t selection_count;
     qa_item_id *stored;
@@ -41,6 +43,7 @@ struct application_q3_catalog {
     size_t weapon_count;
     guest_inventory_weapon *inventory;
     size_t inventory_count;
+    uint64_t items_revision;
 };
 static bool fail(qa_error *e, qa_status status, const char *text)
 { qa_error_set(e, status, 0, "%s", text); return false; }
@@ -316,6 +319,7 @@ static bool refresh(application_q3_catalog *c, bool full_records, bool roster, q
     c->weapons = weapons; c->weapon_count = weapon_count;
     c->inventory = inventory; c->inventory_count = weapon_count;
     c->published = candidate;
+    ++c->items_revision;
     return true;
 }
 bool application_q3_catalog_current(const application_q3_catalog *c, const qa_qvm_image *image, const qa_qvm *vm, qa_qvm_abi abi)
@@ -338,7 +342,7 @@ bool application_q3_catalog_create_native(q3g_role *role, qa_bytes declaration,
         return fail(e, QA_ERROR_ARGUMENT, "Native catalog requires its retained declaration and empty owner");
     application_q3_catalog *c = calloc(1, sizeof(*c));
     if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining native GAME catalog");
-    c->native_role = role;
+    c->native_role = role; c->items_revision=1;
     if (!application_q3_native_catalog_create(role, declaration, &c->native, e)) {
         free(c); return false;
     }
@@ -367,6 +371,8 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
     if (!c) return fail(e, QA_ERROR_MEMORY, "Retaining original source catalog");
     qa_qvm_image_retain(image); c->image = image; c->vm = vm; c->abi = abi;
     c->role = role; c->strings = strings;
+    c->bot_product_known = role == QA_QVM_GAME && abi == QA_QVM_Q3_MODERN && missionpack;
+    c->bot_product = missionpack ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     c->instance = malloc(strlen(instance) + 1); c->artifact_path = malloc(strlen(artifact_path) + 1);
     if (!c->instance || !c->artifact_path) { application_q3_catalog_destroy(c); return fail(e, QA_ERROR_MEMORY, "Retaining source catalog namespace"); }
     strcpy(c->instance, instance); strcpy(c->artifact_path, artifact_path);
@@ -375,6 +381,7 @@ bool application_q3_catalog_create(qa_qvm_image *image, qa_qvm *vm, qa_qvm_abi a
 
         if (application_q3_reference_image(image, Q3_REFERENCE_BASE_GAME)) {
             c->source_address = 2552; c->source_count = 36;
+            c->bot_product_known = true; c->bot_product = QA_Q3_ARENA;
         } else if (application_q3_reference_image(image, Q3_REFERENCE_THREEWAVE_GAME)) {
             c->source_address = 5304; c->source_count = 50;
             source_roster = true; roster_first = 1;
@@ -485,6 +492,13 @@ bool application_q3_catalog_weapons(application_q3_catalog *c,
 }
 bool application_q3_catalog_standard(const application_q3_catalog *c)
 { return c && !c->native && !c->table; }
+bool application_q3_catalog_bot_product(const application_q3_catalog *c, qa_q3_product *out)
+{
+    if (!c || !out || !c->bot_product_known ||
+        !application_q3_catalog_current(c, c->image, c->vm, c->abi)) return false;
+    *out = c->bot_product;
+    return true;
+}
 bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id item,
     const char **out, qa_error *e)
 {
@@ -499,7 +513,7 @@ bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id ite
         /* source_count is installed only with the qualified SDK item layout. */
         ammo_type = 2;
     } else if (c->table) {
-        if ((c->live || !c->record_count) && !refresh(c, false, false, e)) return false;
+        if ((c->live || !c->record_count) && !refresh(c, true, true, e)) return false;
         records = c->records; count = c->record_count; ammo_type = c->ammo_type;
     } else return fail(e, QA_ERROR_NOT_FOUND, "GAME catalog has no retained Source ammo records");
     qa_arena *storage = c->storage + (1 - c->published);
@@ -511,6 +525,47 @@ bool application_q3_catalog_ammo_label(application_q3_catalog *c, qa_item_id ite
         if (actual == item) { *out = records[i].pickup_name; return true; }
     }
     return fail(e, QA_ERROR_NOT_FOUND, "Ammo item is absent from the actual Source catalog");
+}
+bool application_q3_catalog_items_revision(application_q3_catalog *c,uint64_t *out,qa_error *e)
+{
+    const application_q3_catalog_weapon *weapons;size_t count;
+    if (!application_q3_catalog_weapons(c,&weapons,&count,e)) return false;
+    *out=c->items_revision;return true;
+}
+bool application_q3_catalog_item_definitions(application_q3_catalog *c,qa_actor_owner owner,
+    qa_arena *storage,qa_item_definition **out,size_t *count,qa_error *e)
+{
+    const application_q3_catalog_weapon *weapons;size_t used;
+    if (!application_q3_catalog_weapons(c,&weapons,&used,e)) return false;
+    if (used>SIZE_MAX/(2*sizeof(qa_item_definition)))
+        return fail(e,QA_ERROR_MEMORY,"Original item definitions exceed native storage");
+    qa_item_definition *definitions=used?qa_arena_alloc(storage,used*2*sizeof(*definitions),
+        _Alignof(qa_item_definition),e):NULL;
+    if (used && !definitions) return false;
+    for (size_t i=0;i<used;++i) {
+        const char *label=qa_arena_text(storage,weapons[i].label,e);
+        if (!label) return false;
+        definitions[i]=(qa_item_definition){.item=weapons[i].item,.ammo=weapons[i].ammo,
+            .owner=owner,.label=label,.weapon=true};
+    }
+    size_t total=used;
+    for (size_t i=0;i<used;++i) {
+        qa_item_id ammo=definitions[i].ammo;
+        if (!ammo) continue;
+        bool known=false;
+        for (size_t k=0;k<total;++k) if (definitions[k].item==ammo) known=true;
+        if (known) continue;
+        const char *label=NULL;qa_error observed={0};
+        if (!application_q3_catalog_ammo_label(c,ammo,&label,&observed)) {
+            if (observed.code!=QA_ERROR_NOT_FOUND) {if(e)*e=observed;return false;}
+            qa_strings *strings=c->native?qa_session_strings(c->native_role->engine->provider->application->session):c->strings;
+            label=qa_strings_cstr(strings,ammo);
+        }
+        label=qa_arena_text(storage,label,e);
+        if (!label) return false;
+        definitions[total++]=(qa_item_definition){.item=ammo,.owner=owner,.label=label};
+    }
+    *out=definitions;*count=total;return true;
 }
 bool application_q3_catalog_inventory_read(void *context, q3g_role *role,
     const guest_inventory_weapon **out, size_t *count, qa_error *e)

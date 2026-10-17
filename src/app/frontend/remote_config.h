@@ -58,7 +58,7 @@ bool frontend_remote_configs_fresh_input(const frontend_remote_configs *,qa_appl
 bool frontend_remote_config_acquire(const frontend_remote_config *,frontend_client_registry **,qa_error *);
 bool frontend_remote_config_reset_bindings(frontend_remote_config *,int32_t controller,qa_error *);
 bool frontend_remote_config_prepare(frontend_remote_configs *,qa_application *,const qa_launch_snapshot *,
-    const qa_application_startup_source *,void **,qa_error *);
+    const qa_application_startup_source *,void **,bool restored,qa_error *);
 bool frontend_remote_config_advance(frontend_remote_config *,qa_console *,bool *,qa_error *);
 bool frontend_remote_config_release_phase(frontend_remote_config *,qa_error *);
 bool frontend_remote_config_script_read(frontend_remote_config *,const qa_command_context *,const char *,qa_bytes *,void **,qa_error *);

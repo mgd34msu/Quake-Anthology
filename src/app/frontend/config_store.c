@@ -2553,7 +2553,7 @@ static bool prepare_source_row(void *context,qa_application *application,const q
     const qa_command_context *command=authority?&authority->command:NULL;
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
     if (authority && client_scope(authority->scope))
-        return frontend_remote_config_prepare(manager->clients,application,candidate,authority,phase,error);
+        return frontend_remote_config_prepare(manager->clients,application,candidate,authority,phase,restored,error);
     if (!phase || *phase || !selected || !console || !cvars || !command || !game_scope(authority->scope) ||
         authority->scope.provider!=command->owner || frontend_config_store_source_context(manager,command))
         return fail(error,QA_ERROR_ARGUMENT,"Source configuration requires its fresh actual console and registry");

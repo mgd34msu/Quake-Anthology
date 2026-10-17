@@ -10,6 +10,7 @@
 #include "native_q2_console.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_original_save.h"
+#include "guest_q3_private.h"
 #include "map_travel_private.h"
 #include "map_players_private.h"
 #include "portals.h"
@@ -253,6 +254,17 @@ static application_provider *publication_provider(qa_application *application,
     return NULL;
 }
 
+static qa_entity_syntax map_entity_syntax(qa_application *application,
+    const qa_launch_choices *choices, const application_provider *provider)
+{
+    const qa_product *geometry = qa_catalog_product(application->catalog, choices->world.geometry);
+    qa_ruleset_id entities = qa_product_ruleset(geometry,
+        qa_ruleset_read(provider->component.clock.kind)->family);
+    return entities == QA_RULESET_Q2_CLASSIC ? QA_ENTITY_Q2_CLASSIC :
+        entities == QA_RULESET_Q2_RERELEASE ? QA_ENTITY_Q2_RERELEASE :
+        entities == QA_RULESET_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
+}
+
 bool application_map_prepare_content(qa_application *application,
                                        application_publication *publication,
                                        qa_error *error)
@@ -274,14 +286,9 @@ bool application_map_prepare_content(qa_application *application,
     if (publication->map_provider == NULL)
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected entity provider is absent");
-    const qa_product *geometry = qa_catalog_product(application->catalog, choices->world.geometry);
-    qa_ruleset_id entities = qa_product_ruleset(geometry,
-        qa_ruleset_read(publication->map_provider->component.clock.kind)->family);
-    qa_entity_syntax syntax = entities == QA_RULESET_Q2_CLASSIC ? QA_ENTITY_Q2_CLASSIC :
-        entities == QA_RULESET_Q2_RERELEASE ? QA_ENTITY_Q2_RERELEASE :
-        entities == QA_RULESET_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
     if (!qa_entities_parse(publication->map.lumps[QA_BSP_ENTITIES].bytes,
-                           syntax, &publication->entities, error))
+            map_entity_syntax(application, choices, publication->map_provider),
+            &publication->entities, error))
         return false;
     publication->entities_parsed = true;
     return true;
@@ -3071,6 +3078,64 @@ static bool q3_spawn_map(application_provider *provider,
     return true;
 }
 
+bool application_map_baseline_world_begin(application_provider *provider,
+    const qa_bsp_view *map, qa_error *error)
+{
+    qa_application *app = provider->application;
+    const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    qa_entities entities = {0};
+    if (!qa_entities_parse(map->lumps[QA_BSP_ENTITIES].bytes,
+        map_entity_syntax(app, choices, provider), &entities, error)) return false;
+    bool ok;
+    if (provider->kind > APPLICATION_PROVIDER_Q3) {
+        ok = application_guest_spawn_map(provider, map, &entities, app->current_map, QA_STRING_NONE, error);
+    } else {
+        qa_bytes name = {0};
+        ok = entities.count && qa_entity_value(&entities, 0, "classname", &name) &&
+            qa_text_bytes_equal(name, (qa_bytes){(const uint8_t *)"worldspawn", 10}, false);
+        if (!ok) application_fail(error, QA_ERROR_FORMAT, "Baseline map has no authored worldspawn");
+        if (ok && provider->kind == APPLICATION_PROVIDER_Q1) {
+            size_t models = qa_bsp_record_count(map, QA_BSP_MODELS);
+            uint32_t slot;
+            ok = models && models - 1 <= UINT32_MAX && entities.count <= UINT32_MAX;
+            if (!ok) application_fail(error, QA_ERROR_FORMAT, "Baseline Q1 map exceeds its native world extent");
+            if (ok) ok = q1_begin_map(provider, provider->product, app->current_map, false, error) &&
+                qa_q1_wire_begin_world(provider->state.q1, choices->world.map,
+                    (uint32_t)(models - 1), (uint32_t)entities.count, error) &&
+                qa_q1_wire_authored_allocate(provider->state.q1, 0, &slot, error);
+            qa_arena arena;
+            qa_arena_init(&arena, 4096);
+            qa_actor_id actor;
+            if (ok) ok = native_entity_spawn(provider, provider, "worldspawn", "worldspawn", false,
+                &entities, 0, true, slot, &arena, &actor, error) &&
+                qa_q1_game_maps_finish(provider->state.q1, error);
+            qa_arena_destroy(&arena);
+        } else if (ok && provider->kind == APPLICATION_PROVIDER_Q2) {
+            qa_q2_entity_services services = q2_entity_services(provider, choices);
+            services.spawn = q2_spawn;
+            qa_actor_id actor;
+            ok = qa_q2_begin_map(provider->state.q2, app->current_map, QA_STRING_NONE, error) &&
+                qa_q2_entities_configure(provider->state.q2, &services, error) &&
+                application_q2_original_game(provider, error) &&
+                q2_spawn_fields(provider, choices, &entities, 0, true, 0, NULL, &actor, error) &&
+                qa_q2_entities_post_spawn(provider->state.q2, error) &&
+                application_q2_original_level(provider, error);
+            if (ok) app->physics->world_actor = actor;
+        } else if (ok) {
+            entities.count = 1;
+            ok = q3_begin_map(provider, choices, error) &&
+                application_native_q3_settings_source_init(provider, error) &&
+                application_native_q3_ipfilters_init(provider, error) &&
+                application_native_q3_settings_install(provider, error) &&
+                q3_spawn_map(provider, &entities, error);
+        }
+        if (ok) provider->map_bound = true;
+    }
+    qa_entities_free(&entities);
+    return ok;
+}
+
 bool application_q3_round_map_prepare(qa_application *application,
     application_provider *provider, qa_entities *out, qa_error *error)
 {
@@ -3333,6 +3398,10 @@ bool application_map_publish_advance(qa_application *application,
         if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine&&
             provider->state.native.q2_engine->profile!=QA_NATIVE_Q2_CGAME_API2023&&
             !application_native_q2_initialize_supplemental(provider,current_map,spawn_point,error))
+            return false;
+        struct application_q3_guest *q3 = q3g_engine(provider);
+        if (q3 && q3->game && !application_q3_guest_spawn_map(provider,
+            &publication->map, &publication->entities, current_map, spawn_point, error))
             return false;
     }
     if (publication->map_provider->kind == APPLICATION_PROVIDER_Q3 &&

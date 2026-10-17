@@ -42,6 +42,11 @@ typedef struct guest_projection_actor {
     size_t storage_slot;
     uint32_t slot;
     qa_inventory_lease inventory_lease;
+    qa_inventory_lease items_lease;
+    qa_item_admission *items;
+    size_t item_count;
+    uint64_t items_revision, items_inventory_revision;
+    bool items_prepared, definitions_only;
     bool inventory_bound, inventory_prepared;
 } guest_projection_actor;
 typedef struct application_guest_projection {
@@ -60,6 +65,8 @@ typedef struct application_guest_projection {
     const application_q3_combat_profile *state;
     bool has_inventory, inventory_public, located_inventory;
 } application_guest_projection;
+guest_projection_actor *application_guest_projection_actor_acquire(application_guest_projection *,
+    qa_actor_id,uint32_t slot,qa_error *);
 
 bool application_guest_projection_prepare(q3g_role *, qa_bytes, qa_error *);
 bool application_guest_projection_close(q3g_role *, qa_error *);
@@ -68,6 +75,8 @@ bool application_guest_projection_admit(q3g_role *, qa_actor_id, qa_error *);
 bool application_guest_inventory_catalog_bind(q3g_role *, const guest_inventory_catalog_services *, qa_error *);
 bool application_guest_projection_inventory_binding(q3g_role *, qa_actor_id,
     uint64_t saved_serial, qa_inventory_binding *, qa_error *);
+bool application_guest_projection_inventory_group(q3g_role *,qa_actor_id,uint64_t,
+    const qa_inventory_source_group *,qa_inventory_items *,qa_error *);
 bool application_guest_projection_detach(q3g_role *, qa_actor_id, qa_error *);
 bool application_guest_projection_profile_read(q3g_role *, qa_bytes, application_guest_projection *, qa_error *);
 void application_guest_projection_profile_free(application_guest_projection *);

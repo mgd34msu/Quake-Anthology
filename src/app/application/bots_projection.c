@@ -55,13 +55,13 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
         if(!application_bot_weapon_slot(arsenal,(int32_t)player.weapon,weapon,error)) return false;
         *phase=player.phase==QA_Q2_ACTIVATING?1:
             player.phase==QA_Q2_DROPPING?2:player.phase==QA_Q2_FIRING?3:0;
-    } else if(arsenal->kind==APPLICATION_PROVIDER_Q3) {
-        qa_q3_player_state player;
-        if(!qa_q3_player_read(arsenal->state.q3,actor,&player))
+    } else if(application_bot_arsenal_supported(arsenal)) {
+        int32_t time;bool present;
+        if(!application_bot_q3_weapon_state(arsenal,actor,weapon,phase,&time,&present,error)) return false;
+        if(!present)
             return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 weapon continuation is absent");
-        if((unsigned)player.weapon_phase>3)
+        if((uint32_t)*phase>3)
             return application_fail(error,QA_ERROR_FORMAT,"bot selected Q3 weapon phase is outside its source states");
-        *weapon=(int32_t)player.weapon;*phase=(int32_t)player.weapon_phase;
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected original arsenal has no native bot weapon observation");
     return true;
 }
@@ -182,6 +182,17 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
             .presence=2,.current_weapon=ps->weapon,.weapon_state=ps->weaponState};
         if(state) *state=*ps;
         out->eye.z+=(float)ps->viewheight;
+        application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
+        if(arsenal && arsenal->kind>APPLICATION_PROVIDER_Q3 && application_bot_arsenal_supported(arsenal)) {
+            bool present;
+            if(!application_bot_q3_weapon_state(arsenal,actor,&out->current_weapon,&out->weapon_state,
+                    &out->weapon_time_ms,&present,error)) return false;
+            if(!present) return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 arsenal actor is absent");
+            if(state) {
+                state->weapon=out->current_weapon;state->weaponState=out->weapon_state;
+                state->weaponTime=out->weapon_time_ms;
+            }
+        }
         return true;
     }
     if(source && source->kind==APPLICATION_PROVIDER_Q3) return native_player(bots,source,actor,out,state,error);
@@ -228,6 +239,11 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         out->deaths=player.deaths;out->spawn_sequence=player.spawn_count;out->grapple_pull=player.grapple_pull;
         out->teleported=player.teleport_lock_ms>0;
         out->air_time=(float)player.air_out_time/1000;
+    } else if(arsenal && application_bot_arsenal_supported(arsenal)) {
+        bool present;
+        if(!application_bot_q3_weapon_state(arsenal,actor,&out->current_weapon,&out->weapon_state,
+                &out->weapon_time_ms,&present,error)) return false;
+        if(!present) return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 arsenal actor is absent");
     }
     if(control.state.kind==QA_RULESET_Q3) {
         memcpy(out->delta_angles,control.state.data.q3.delta_angle_words,sizeof(out->delta_angles));

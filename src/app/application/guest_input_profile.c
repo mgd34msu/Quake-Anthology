@@ -49,6 +49,18 @@ static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa
     const uint32_t entries[] = {p->client_think, p->run_client, p->client_spawn};
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
         if (!entry(code, count, entries[i], error)) return false;
+    if (p->bot_setup.entry) {
+        if (!entry(code, count, p->bot_setup.entry, error) ||
+            !entry(code, count, p->bot_setup.connect, error)) return false;
+        uint32_t call = p->bot_setup.call;
+        if (call <= p->bot_setup.connect || call >= count - 1 ||
+            code[call].opcode != QA_QVM_CONST || code[call].operand != (int32_t)p->bot_setup.entry ||
+            code[call + 1].opcode != QA_QVM_CALL)
+            return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup differs from its original Connect call");
+        for (uint32_t pc = p->bot_setup.connect + 1; pc <= call; ++pc)
+            if (code[pc].opcode == QA_QVM_ENTER)
+                return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup call leaves its original Connect function");
+    }
     const application_q3_weapon_profile *source = p->source;
     if (!source) return application_fail(error, QA_ERROR_FORMAT, "Guest input has no qualified source movement declaration");
     if (source->present) return true;
@@ -70,9 +82,15 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
     application_guest_input_profile p = {.source = application_q3_weapons_profile(role->weapons)};
     if (!role->image) { *out = p; return true; }
+    bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    if (base) {
+        p.bot_setup.entry = 56212;
+        p.bot_setup.connect = 84729;
+        p.bot_setup.call = 84804;
+    }
     if (!primary.size) {
 
-        if (application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME)) {
+        if (base) {
             p.client_think = 80328; p.run_client = 80387; p.client_spawn = 89754;
             p.input_present = p.has_modes = true;
             p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;

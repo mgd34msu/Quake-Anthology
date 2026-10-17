@@ -26,7 +26,7 @@ typedef struct application_q3_pickup_profile {
     qa_qvm_abi abi;
     uint32_t entity_stride, client_stride;
     struct { uint32_t inuse, client, health, item, count, flags; } fields;
-    uint32_t dropped_flag, touch, free, item_argument, player_argument;
+    uint32_t dropped_flag, touch, allocate, free, item_argument, player_argument;
     int32_t weapon_type, ammo_type, *objective_types;
     size_t objective_count;
     application_q3_pickup_function gate, targets;

@@ -5,6 +5,7 @@
 #include "guest_q3_control.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_projection_private.h"
+#include "bots_private.h"
 #include "qa/q3_abi.h"
 #include "qa/qvm_save.h"
 #include "qa/source_save.h"
@@ -107,6 +108,42 @@ static bool slot_player(application_guest_input *input, uint32_t slot,
     *present = true; return true;
 }
 
+static bool borrowed_native_bot(application_guest_input *input, qa_actor_id actor)
+{
+    application_provider *provider = input->role->engine->provider;
+    application_bots *bots = provider->application->bots;
+    if (!input->profile.bot_setup.entry || !bots || !bots->population ||
+        application_bot_source(bots) == provider) return false;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(provider->application->session), actor);
+    qa_bot_admission admission;
+    return record && record->owner != provider->owner &&
+        qa_bots_admission_read(bots->population, actor, &admission, NULL) &&
+        qa_actor_id_equal(admission.actor, actor);
+}
+
+static bool bot_setup(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+{
+    application_guest_input *input = context;
+    int32_t slot;
+    if (!qa_qvm_call_argument(call, 0, &slot, error)) return false;
+    if (slot < 0) return qa_qvm_proceed(call, result, error);
+    qa_actor_id actor;
+    if (!qa_q3_host_actor(input->role->host, (uint32_t)slot, false, &actor, error)) return false;
+    if (!borrowed_native_bot(input, actor))
+        return qa_qvm_proceed(call, result, error);
+    /* The selected native AI has already completed setup for this actor. */
+    *result = 1;
+    return true;
+}
+
+bool application_guest_input_bot_setup_bind(q3g_role *role, qa_qvm_binding *out, qa_error *error)
+{
+    application_guest_input *input = role->input;
+    if (!input || !input->profile.bot_setup.entry) return true;
+    return qa_qvm_bind_function(role->vm, input->profile.bot_setup.entry, false,
+        bot_setup, input, out, error);
+}
+
 static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
     application_guest_input *input = context;
@@ -136,8 +173,24 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
         if (parent->spawning && parent->slot == scope.slot &&
             qa_actor_id_equal(parent->actor, scope.actor))
             return qa_qvm_proceed(call, result, error);
+    bool accepted_command = input->in_command && input->command &&
+        qa_actor_id_equal(input->command_actor, scope.actor);
+    if (call->instruction == input->profile.run_client && !accepted_command &&
+        borrowed_native_bot(input, scope.actor)) {
+        *result = 0;
+        return true;
+    }
     input->scope = &scope;
     bool ok = qa_qvm_proceed(call, result, error);
+    if (ok && call->instruction == input->profile.client_think && accepted_command &&
+        borrowed_native_bot(input, scope.actor) && current(input, &scope, call)) {
+        /* Q3 defers bot Think to RunClient. Consume the accepted native command
+         * here, before the secondary GAME's independent frame pass. */
+        int32_t entity = (int32_t)(scope.data.entities_address +
+            (uint64_t)scope.slot * scope.data.entity_stride), ignored;
+        ok = qa_qvm_invoke_source_callback(call, input->role->image,
+            (int32_t)input->profile.run_client, &entity, 1, &ignored, error);
+    }
     if (ok && !current(input, &scope, call)) ok = cancel_client(call, call, error);
     input->scope = scope.previous;
     return ok;
@@ -1002,9 +1055,9 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     if (!qa_q3_host_source_player(input->role->host, slot, &player, error)) return false;
     int32_t before_time = player.commandTime;
     qa_q3_usercmd raw = *source;
-    bool primary = application_world_provider(app, QA_ROLE_ENTITIES, "") == guest;
+    bool selected_arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == guest;
     bool request_pending = false;
-    if (primary && input->role->weapon_services) {
+    if (selected_arsenal && input->role->weapon_services) {
         int32_t requested; bool pending;
         if (!application_q3_weapons_services_request(input->role->weapon_services,
                 actor, &requested, &pending, error)) return false;
@@ -1034,7 +1087,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     input->command = command; input->stage = stage; input->input_applied = false;
     input->command_projected = false;
     bool ok = application_q3_guest_client_think(guest, slot, &raw, error);
-    if (ok && primary && input->role->weapon_services &&
+    if (ok && selected_arsenal && input->role->weapon_services &&
         qa_actors_get(qa_session_actors(app->session), actor) &&
         engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
         qa_actor_id_equal(engine->clients[slot].actor, actor))

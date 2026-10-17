@@ -35,7 +35,7 @@ bool application_q3_guest_client_reserve(application_provider *provider, uint32_
         !engine->game || !engine->game->initialized || engine->restore_pending || engine->calls ||
         engine->draining_clients || provider->application->operation != APPLICATION_CONFIGURING ||
         !qa_session_safe(provider->application->session) || !qa_world_idle(engine->world) ||
-        !application_q3_guest_idle(provider) ||
+        !q3g_source_idle(engine) ||
         (engine->round.phase != Q3G_ROUND_NONE &&
          (engine->round.phase != Q3G_ROUND_SETTLING || engine->round.completed_frames != 3)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client reservation requires its genuine prejoin cut");

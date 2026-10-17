@@ -91,6 +91,8 @@ static bool declared(q3g_role *role,qa_bytes bytes,application_q3_pickup_profile
         u32(d,qa_json_get(d,at,"free"),&p->free,e)&&function(d,gate,&p->gate,e)&&function(d,qa_json_get(d,at,"targets"),&p->targets,e)&&
         u32(d,qa_json_get(d,gate,"itemArgument"),&p->item_argument,e)&&u32(d,qa_json_get(d,gate,"playerArgument"),&p->player_argument,e)&&
         integer(d,qa_json_get(d,items,"weaponType"),&p->weapon_type,e)&&integer(d,qa_json_get(d,items,"ammoType"),&p->ammo_type,e);
+    qa_json_id allocate=qa_json_get(d,at,"allocate");
+    if(ok&&allocate!=QA_JSON_NONE&&qa_json_type(d,allocate)!=QA_JSON_NULL)ok=u32(d,allocate,&p->allocate,e);
     void *allocation=NULL;
     if(ok){ok=list(d,qa_json_get(d,at,"objectiveTypes"),&allocation,&p->objective_count,sizeof(*p->objective_types),e);p->objective_types=allocation;}
     for(size_t i=0;ok&&i<p->objective_count;++i)ok=integer(d,qa_json_at(d,qa_json_get(d,at,"objectiveTypes"),i),p->objective_types+i,e);
@@ -171,6 +173,7 @@ static bool qualify(application_q3_pickup_profile *p,qa_error *e)
     uint32_t fields[]={p->fields.inuse,p->fields.client,p->fields.health,p->fields.item,p->fields.count,p->fields.flags};
     for(size_t i=0;i<6;++i)if(fields[i]%4||fields[i]>p->entity_stride-4)return application_fail(e,QA_ERROR_FORMAT,"Pickup field leaves its actual entity record");
     if(p->touch>=n||p->free>=n||code[p->touch].opcode!=QA_QVM_ENTER||code[p->free].opcode!=QA_QVM_ENTER||
+        (p->allocate&&(p->allocate>=n||code[p->allocate].opcode!=QA_QVM_ENTER))||
         !qualify_function(code,n,&p->gate,e)||!qualify_function(code,n,&p->targets,e))return application_fail(e,QA_ERROR_FORMAT,"Pickup lifecycle callback is not its actual Source function");
     uint32_t gate_end=p->gate.entry+1;while(gate_end<n&&code[gate_end].opcode!=QA_QVM_ENTER)++gate_end;
     for(size_t i=0;i<p->grant_count;++i){application_q3_pickup_grant *g=p->grants+i;

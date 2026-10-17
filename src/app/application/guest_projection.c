@@ -6,6 +6,8 @@
 #include "guest_native_q2_private.h"
 #include "guest_q3_combat_state.h"
 #include "control_frame.h"
+#include "guest_q3_catalog.h"
+#include "guest_q3_weapons_services.h"
 
 static guest_projection_actor *actor_context(application_guest_projection *p, qa_actor_id actor)
 {
@@ -21,6 +23,22 @@ static guest_projection_actor *actor_take(application_guest_projection *p, qa_er
     guest_projection_actor *context = qa_pool_take(&p->actor_pool, &slot);
     if (context) *context = (guest_projection_actor){.storage_slot = slot};
     return context;
+}
+guest_projection_actor *application_guest_projection_actor_acquire(application_guest_projection *p,
+    qa_actor_id actor,uint32_t slot,qa_error *error)
+{
+    guest_projection_actor *context=actor_context(p,actor);
+    if (context) {
+        if (!context->inventory_bound && !context->items_lease.serial) context->slot=slot;
+        return context;
+    }
+    context=actor_take(p,error);
+    if (!context) return NULL;
+    context->projection=p;context->actor=actor;context->slot=slot;context->next=p->actors;
+    if (!qa_actor_index_remember(&p->actor_contexts,actor,(size_t)(uintptr_t)context,error)) {
+        qa_pool_release(&p->actor_pool,context->storage_slot);return NULL;
+    }
+    p->actors=context;return context;
 }
 
 static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
@@ -360,6 +378,107 @@ static qa_inventory_binding inventory_binding(guest_projection_actor *context)
         .checked_count = inventory_checked_count, .items_revision = inventory_items_revision,
         .acquire = context->projection->public_inventory.acquisition_entry ? inventory_acquire : NULL};
 }
+static size_t items_count(void *opaque)
+{ return ((guest_projection_actor *)opaque)->item_count; }
+static bool items_checked_count(void *opaque,size_t *out,qa_error *error)
+{
+    qa_q3_host_game_data data;
+    if (!current(opaque,&data,error)) return false;
+    *out=items_count(opaque);return true;
+}
+static bool items_revision(void *opaque,uint64_t *out,qa_error *error)
+{
+    guest_projection_actor *context=opaque;qa_q3_host_game_data data;
+    if (!current(context,&data,error)) return false;
+    *out=context->items_revision;return true;
+}
+static bool items_at(void *opaque,size_t index,qa_inventory_entry *out,qa_error *error)
+{
+    guest_projection_actor *context=opaque;
+    application_guest_projection *p=context->projection;
+    if (index>=context->item_count || !inventory_refresh(p,error)) return false;
+    qa_item_id item=context->items[index].definition.item;
+    for (size_t i=0;i<p->inventory_count;++i)
+        if (p->inventory[i].item==item) return inventory_at(context,i,out,error);
+    return application_fail(error,QA_ERROR_NOT_FOUND,"Original item no longer has its source inventory field");
+}
+static qa_inventory_binding items_binding(guest_projection_actor *context)
+{
+    qa_inventory_binding binding=inventory_binding(context);
+    binding.count=items_count;binding.checked_count=items_checked_count;binding.at=items_at;
+    binding.items_revision=items_revision;
+    return binding;
+}
+static bool items_invoke(void *opaque,qa_item_id item,qa_item_action action,qa_error *error)
+{
+    guest_projection_actor *context=opaque;
+    q3g_role *role=context->projection->role;
+    if (action!=QA_ITEM_USE)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original weapon has no requested item action");
+    bool admitted;
+    return application_q3_weapons_services_select_intent(role->weapon_services,context->actor,
+        role->engine->provider->owner,item,&admitted,error) && admitted;
+}
+static bool items_close(guest_projection_actor *context,qa_error *error)
+{
+    qa_inventory *inventory=context->projection->role->engine->provider->application->inventory;
+    if (context->items_lease.serial && qa_inventory_lease_current(inventory,context->items_lease) &&
+        !qa_inventory_close_items(inventory,context->items_lease,error)) return false;
+    context->items_lease=(qa_inventory_lease){0};context->items_prepared=false;
+    return true;
+}
+static bool items_metadata(guest_projection_actor *context,qa_item_definition **out,qa_error *error)
+{
+    application_guest_projection *p=context->projection;
+    q3g_role *role=p->role;
+    qa_arena *storage=qa_unified_frame_lease_arena(p->storage);
+    qa_item_definition *definitions;size_t count;
+    if (!application_q3_catalog_item_definitions(role->catalog,role->engine->provider->owner,
+        storage,&definitions,&count,error)) return false;
+    qa_item_admission *items=count?qa_arena_alloc(storage,count*sizeof(*items),_Alignof(qa_item_admission),error):NULL;
+    if (count && !items) return false;
+    for (size_t i=0;i<count;++i) {
+        definitions[i].actions=definitions[i].weapon && role->weapon_services?QA_ITEM_USE:0;
+        items[i]=(qa_item_admission){.definition=definitions[i]};
+    }
+    context->items=items;context->item_count=count;
+    *out=definitions;return true;
+}
+static bool items_admit(guest_projection_actor *context,bool primary,qa_error *error)
+{
+    q3g_role *role=context->projection->role;
+    qa_application *app=role->engine->provider->application;
+    uint64_t revision;
+    if (!application_q3_catalog_items_revision(role->catalog,&revision,error)) return false;
+    if (qa_inventory_lease_current(app->inventory,context->items_lease) &&
+        context->definitions_only==primary && context->items_revision==revision &&
+        context->items_inventory_revision==context->projection->inventory_items_revision) return true;
+    if (!items_close(context,error)) return false;
+    qa_item_definition *definitions;
+    if (!items_metadata(context,&definitions,error)) return false;
+    context->definitions_only=primary;
+    if (!context->item_count) return true;
+    bool okay;
+    if (primary) okay=qa_inventory_bind_definitions(app->inventory,context->actor,
+        role->engine->provider->owner,definitions,context->item_count,items_invoke,context,
+        &context->items_lease,error);
+    else {
+        for (size_t i=0;i<context->item_count;++i) {
+            qa_inventory_entry entry;bool found;
+            if (!qa_inventory_entry_find(app->inventory,context->actor,context->items[i].definition.item,
+                &entry,&found,error)) return false;
+            context->items[i].replace_primary=found;
+        }
+        qa_inventory_items group={.owner=role->engine->provider->owner,.items=context->items,
+            .count=context->item_count,.state=items_binding(context),.action_context=context,.invoke=items_invoke};
+        okay=qa_inventory_bind_items(app->inventory,context->actor,&group,&context->items_lease,error);
+    }
+    if (okay) {
+        if (!application_q3_catalog_items_revision(role->catalog,&context->items_revision,error)) return false;
+        context->items_inventory_revision=context->projection->inventory_items_revision;
+    }
+    return okay;
+}
 
 bool application_guest_inventory_project(q3g_role *role, qa_actor_id actor,
     qa_item_id item, int32_t count, guest_inventory_projection_word out[2], size_t *out_count,
@@ -504,28 +623,27 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
     qa_q3_host_game_data data;
     if (!qa_q3_host_game_data_read(role->host, &data))
         return application_fail(error, QA_ERROR_FORMAT, "Guest admission requires located source records");
-    if (slot >= data.client_count || application_provider_for(app, actor, QA_ROLE_INVENTORY, NULL) != role->engine->provider)
-        return true;
+    bool primary=application_provider_for(app,actor,QA_ROLE_INVENTORY,NULL)==role->engine->provider;
+    bool arsenal=application_provider_for(app,actor,QA_ROLE_ARSENAL,NULL)==role->engine->provider;
+    if (slot>=data.client_count) return true;
+    if (!primary && !arsenal) {
+        guest_projection_actor *context=p?actor_context(p,actor):NULL;
+        return !context || items_close(context,error);
+    }
     if (!p || !p->has_inventory)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest inventory requires a qualified original storage interface");
     if (!inventory_refresh(p, error)) return false;
-    guest_projection_actor *context = actor_context(p, actor);
-    if (!context) {
-        context = actor_take(p, error);
-        if (!context) return application_fail(error, QA_ERROR_MEMORY, "Retaining guest actor projection ownership");
-        context->next = p->actors; context->projection = p; context->actor = actor; context->slot = slot;
-        if (!qa_actor_index_remember(&p->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
-            qa_pool_release(&p->actor_pool, context->storage_slot); return false;
-        }
-        p->actors = context;
-    }
-    if (!context->inventory_bound) {
+    guest_projection_actor *context=application_guest_projection_actor_acquire(p,actor,slot,error);
+    if (!context) return false;
+    if (!qa_inventory_has(app->inventory,actor) &&
+        !qa_inventory_create_actor(app->inventory,actor,NULL,0,error)) return false;
+    if (primary && !context->inventory_bound) {
         qa_inventory_binding binding = inventory_binding(context);
         if (!qa_inventory_adopt_primary(app->inventory, actor, &binding, &context->inventory_lease, error)) return false;
         context->inventory_bound = true;
         context->inventory_prepared = false;
     }
-    return true;
+    return arsenal?items_admit(context,primary,error):items_close(context,error);
 }
 
 bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_error *error)
@@ -534,6 +652,7 @@ bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_e
     if (!p) return true;
     qa_application *app = role->engine->provider->application;
     guest_projection_actor *context = actor_context(p, actor);
+    if (context && !items_close(context,error)) return false;
     if (context && context->inventory_bound) {
         bool unpublished = context->inventory_prepared &&
             !qa_inventory_primary_current(app->inventory, context->inventory_lease, context);
@@ -565,24 +684,43 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
         (context->inventory_bound && context->inventory_lease.serial != serial)))
         return application_fail(error, QA_ERROR_FORMAT,
                                 "Restored guest inventory differs from its source lease");
-    if (!context) {
-        context = actor_take(projection, error);
-        if (!context)
-            return application_fail(error, QA_ERROR_MEMORY,
-                                    "Retaining restored guest inventory callback context");
-        size_t storage_slot = context->storage_slot;
-        *context = temporary; context->storage_slot = storage_slot;
-        context->next = projection->actors;
-        if (!qa_actor_index_remember(&projection->actor_contexts, actor, (size_t)(uintptr_t)context, error)) {
-            qa_pool_release(&projection->actor_pool, context->storage_slot); return false;
-        }
-        projection->actors = context;
-    }
+    if (!context) context=application_guest_projection_actor_acquire(projection,actor,slot,error);
+    if (!context) return false;
     context->inventory_lease = (qa_inventory_lease){actor, serial};
     if (!context->inventory_bound)
         context->inventory_prepared = true;
     context->inventory_bound = true;
     *out = inventory_binding(context);
+    return true;
+}
+bool application_guest_projection_inventory_group(q3g_role *role,qa_actor_id actor,uint64_t serial,
+    const qa_inventory_source_group *saved,qa_inventory_items *out,qa_error *error)
+{
+    application_guest_projection *p=role?role->projection:NULL;
+    if (!p || !p->has_inventory || !saved || !out || !serial ||
+        saved->owner!=role->engine->provider->owner)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Restored original items lack their source inventory owner");
+    if (!inventory_refresh(p,error)) return false;
+    uint32_t slot;
+    if (!qa_q3_host_actor_slot(role->host,actor,&slot,error)) return false;
+    guest_projection_actor *context=application_guest_projection_actor_acquire(p,actor,slot,error);
+    qa_q3_host_game_data data;
+    if (!context || !current(context,&data,error)) return false;
+    if (context->items_lease.serial && context->items_lease.serial!=serial)
+        return application_fail(error,QA_ERROR_FORMAT,"Restored original item lease changed source ownership");
+    qa_item_definition *definitions;
+    if (!items_metadata(context,&definitions,error)) return false;
+    for (size_t i=0;i<context->item_count;++i)
+        for (size_t j=0;j<saved->count;++j)
+            if (context->items[i].definition.item==saved->items[j].definition.item)
+                context->items[i].replace_primary=saved->items[j].replace_primary;
+    context->definitions_only=saved->definitions_only;
+    context->items_lease=(qa_inventory_lease){actor,serial};context->items_prepared=true;
+    if (!application_q3_catalog_items_revision(role->catalog,&context->items_revision,error)) return false;
+    context->items_inventory_revision=p->inventory_items_revision;
+    *out=(qa_inventory_items){.owner=saved->owner,.items=context->items,.count=context->item_count,
+        .action_context=context,.invoke=items_invoke};
+    if (!saved->definitions_only) out->state=items_binding(context);
     return true;
 }
 
@@ -605,15 +743,16 @@ bool application_guest_inventory_restore_finish(application_provider *provider, 
     for (q3g_role *role = engine->roles; role; role = role->next)
         if (role->projection)
             for (guest_projection_actor *context = role->projection->actors; context; context = context->next)
-                if (context->inventory_prepared && (!context->inventory_bound ||
+                if ((context->items_prepared && !qa_inventory_lease_current(provider->application->inventory,
+                    context->items_lease)) || (context->inventory_prepared && (!context->inventory_bound ||
                     !qa_inventory_primary_current(provider->application->inventory,
-                                                   context->inventory_lease, context)))
+                                                   context->inventory_lease, context))))
                     return application_fail(error, QA_ERROR_FORMAT,
                                             "Restored guest primary inventory was not published");
     for (q3g_role *role = engine->roles; role; role = role->next)
         if (role->projection)
             for (guest_projection_actor *context = role->projection->actors; context; context = context->next)
-                context->inventory_prepared = false;
+                context->inventory_prepared = context->items_prepared = false;
     return true;
 }
 

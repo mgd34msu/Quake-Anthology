@@ -660,7 +660,7 @@ static bool copy_registry(qa_cvars *destination,const qa_cvars *source,qa_error 
         fail(error,QA_ERROR_ARGUMENT,"CLIENT continuation changed its canonical backing table");
 }
 bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_application *application,
-    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,void **out,qa_error *error)
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,void **out,bool restored,qa_error *error)
 {
     if (!owner || !application || !candidate || !source || !source->descriptor || !out || *out ||
         !source->console || !source->cvars || !source->scope.provider ||
@@ -678,7 +678,7 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     frontend_remote_config *row=calloc(1,sizeof(*row));
     if (!row) return fail(error,QA_ERROR_MEMORY,"Retaining actual CLIENT configuration");
     row->owner=owner; row->application=application; row->candidate=candidate;
-    row->scope=source->scope; row->console=source->console; row->command=source->command;
+    row->scope=source->scope; row->console=source->console; row->cvars=source->cvars; row->command=source->command;
     row->declaration_owner=source->declaration_owner; row->physical_seat=(uint32_t)ordinal;
     /* Link before a heap handoff: constructor failure must leave the taken
      * physical owner reachable until the core enters checked retirement. */
@@ -703,7 +703,6 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     if (row->hosted) {
         row->hosted_cvars=game_source.cvars;
         if (!qa_cvars_retain(row->hosted_cvars,error)) return false;
-        row->cvars=source->cvars;
         if (!qa_cvars_retain(row->cvars,error)) return false;
         row->owned=row->cvars;
         frontend_client_registry_context callback={row,retain_context,release_context,true};
@@ -713,7 +712,6 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
         if (!row->keys || !frontend_key_profile_retain(row->keys,error)) { row->keys=NULL; return false; }
         row->files=frontend_key_profile_files(row->keys);
     } else {
-        row->cvars=source->cvars;
         if (!qa_cvars_retain(row->cvars,error)) return false;
         row->owned=row->cvars;
         qa_q3_product_policy policy;
@@ -769,17 +767,23 @@ bool frontend_remote_config_prepare(frontend_remote_configs *owner,qa_applicatio
     if (!row->input && !clone_input(row,f->seats[ordinal].input,error)) return false;
     if (old) {
         if (!frontend_authored_bindings_clone(old->authored,&row->authored,error)) return false;
-    } else if (row->hosted) {
+    } else if (row->hosted || restored) {
         if (!frontend_config_source_clone_bindings(hosted,row->scope.seat,&row->authored,error)) return false;
     } else row->authored=frontend_authored_bindings_create(error);
     if (!row->authored) return false;
-    if (!old && !row->hosted && !selected_defaults(row,true,error)) return false;
+    if (!restored && !old && !row->hosted && !selected_defaults(row,true,error)) return false;
     if (!f->input_config && !frontend_input_profile_bind_store(f,frontend_config_files_catalog(row->files),
         frontend_config_files_product(row->files),frontend_config_files_store(row->files,false),error)) return false;
-    qa_application_startup_source linked;
-    if (!frontend_remote_config_tuple(row,&linked) ||
-        !frontend_config_store_shared_begin(owner->manager,application,candidate,&linked,error)) return false;
+    if (!restored) {
+        qa_application_startup_source linked;
+        if (!frontend_remote_config_tuple(row,&linked) ||
+            !frontend_config_store_shared_begin(owner->manager,application,candidate,&linked,error)) return false;
+    }
     if (!install_commands(row,error)) return false;
+    if (restored) {
+        row->configured=row->released=row->initial_variables=true;
+        return true;
+    }
     if (row->hosted) {
         row->hosted_pending=!frontend_authored_bindings_completed(row->authored);
         row->configured=!row->hosted_pending; row->released=true; return true;

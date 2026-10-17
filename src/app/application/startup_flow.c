@@ -230,13 +230,6 @@ bool qa_application_startup_source_read(qa_application *app, const qa_launch_sna
         out->descriptor = instance;
         return true;
     }
-    application_publication *publication = app->startup_publication;
-    bool prepared = false;
-    if (publication && publication->candidate == snapshot && !publication->published)
-        for (size_t i = 0; i < publication->next_count; ++i)
-            if (publication->next[i] == provider) { prepared = true; break; }
-    if (!provider->constructed || (!provider->attached && !prepared))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Startup source has no prepared or installed physical console");
     qa_application_startup_source physical;
     bool found = false;
     for (size_t i = 0;; ++i) {

@@ -3,7 +3,11 @@
 #include "native_q3_wire_state.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_console.h"
+#include "guest_q3_component_clients.h"
+#include "map_players_private.h"
 #include "unified_q3_events.h"
+#include "source_projection.h"
+#include "qa/text.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
 {
@@ -195,6 +199,12 @@ static bool drop_client(void *context, uint32_t client, const char *reason, qa_e
 {
     q3g_role *role = context;
     if (client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "invalid dropped Q3 client");
+    application_provider *provider = role->engine->provider;
+    qa_actor_id actor = role->engine->clients[client].actor;
+    if (application_player_record_find(provider->application->players, actor))
+        return application_guest_client_drop(provider, client, reason, error) &&
+            application_clients_reject(provider->application, provider->owner, actor,
+                role->engine->clients[client].retirement_reason, NULL, error);
     if (role->server.drop_client &&
         !role->server.drop_client(role->server.context, client, reason, error)) return false;
     return application_guest_client_drop(role->engine->provider, client, reason, error);
@@ -267,6 +277,9 @@ static bool bot_user_command(void *context, int32_t client, const qa_q3_usercmd 
     if (client < 0 || client >= 64 || !role->engine->clients[client].bot)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 bot user command");
     if (!application_guest_bots_admit(role->engine->provider, error)) return false;
+    const qa_actor_record *actor = qa_actors_get(
+        qa_session_actors(role->engine->provider->application->session), role->engine->clients[client].actor);
+    if (!actor || actor->owner != role->engine->provider->owner) return true;
     bool prior = role->engine->round.source_entry;
     role->engine->round.source_entry = true;
     bool ok = application_q3_guest_client_think(role->engine->provider, (uint32_t)client, command, error);
@@ -299,6 +312,110 @@ static qa_actor_id world_actor(void *context)
     q3g_role *role = context;
     return role->server.world_actor ? role->server.world_actor(role->server.context) : (qa_actor_id){0};
 }
+
+static bool projection_span(void *context, uint64_t address, size_t size,
+    qa_bytes *out, qa_error *error)
+{
+    q3g_role *role = context;
+    if (address > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 source projection exceeds its QVM pointer word");
+    return qa_qvm_span(role->vm, (int32_t)address, 0, size, out, error);
+}
+
+static bool projection_write(void *context, uint64_t address, qa_bytes bytes,
+    bool private_fields, qa_error *error)
+{
+    q3g_role *role = context;
+    if (address > UINT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 source projection exceeds its QVM address word");
+    return private_fields ? qa_qvm_source_bytes_write(role->vm, role->image,
+        (uint32_t)address, bytes, error) : qa_qvm_write(role->vm, (uint32_t)address, bytes, error);
+}
+
+static bool projection_invoke(void *context, const qa_qvm_call *call, uint32_t entry,
+    const int32_t *arguments, size_t count, int32_t *out, qa_error *error)
+{
+    q3g_role *role = context;
+    q3g_role *previous = role->engine->entered_role;
+    role->engine->entered_role = role;
+    ++role->engine->calls;
+    bool okay = call ? qa_qvm_invoke_source_callback(call, role->image, (int32_t)entry,
+        arguments, count, out, error) : qa_qvm_invoke(role->vm, entry, arguments, count, out, error);
+    --role->engine->calls;
+    role->engine->entered_role = previous;
+    return okay;
+}
+
+static bool projection_read(q3g_role *role, application_source_projection *out)
+{
+    if (!role->vm) return false;
+    const application_q3_combat_definition *combat = role->artifact ?
+        application_q3_combat_profile_definition(role->artifact->combat_profile) : NULL;
+    const application_q3_pickup_profile *pickup = &role->pickup_profile;
+    if (!combat && (!pickup->present || !pickup->allocate)) return false;
+    *out = (application_source_projection){.host = role->host, .abi = role->abi,
+        .entity_stride = combat ? combat->entity_stride : pickup->entity_stride,
+        .inuse = combat ? combat->fields.inuse : pickup->fields.inuse,
+        .health = combat ? combat->fields.health : pickup->fields.health,
+        .takedamage = combat ? combat->fields.takedamage : 0,
+        .allocate = combat ? combat->callbacks.allocate : pickup->allocate,
+        .free = combat ? combat->callbacks.free : pickup->free,
+        .context = role, .span = projection_span, .write = projection_write,
+        .invoke = projection_invoke};
+    return true;
+}
+
+bool q3g_project_actor(void *context, const qa_qvm_call *call, qa_actor_id actor,
+    uint32_t *out, qa_error *error)
+{
+    q3g_role *role = context;
+    application_source_projection projection;
+    if (!projection_read(role, &projection))
+        return role->server.project_actor ? role->server.project_actor(role->server.context,
+            call, actor, out, error) : qa_q3_host_actor_slot(role->host, actor, out, error);
+    qa_application *application = role->engine->provider->application;
+    qa_actor_player *player = qa_actors_player(qa_session_actors(application->session), actor);
+    bool client = player && player->present;
+    qa_body_state body; qa_combat_state combat = {0}; bool created;
+    if (qa_combat_has(application->combat, actor) &&
+        !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
+    if (client) {
+        if (!qa_q3_host_actor_slot(role->host, actor, out, error)) return false;
+    } else if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !application_source_projection_borrow(&projection, call, actor, out, &created, error)) return false;
+    projection.can_take_damage = combat.can_take_damage;
+    int32_t health = qa_source_to_i32(combat.health);
+    return application_source_projection_publish(&projection, *out, client ? NULL : &body, &health,
+        (uint64_t)(uint32_t)role->engine->milliseconds * UINT64_C(1000000), error);
+}
+
+bool q3g_projection_after_free(q3g_role *role, int32_t pointer, qa_error *error)
+{
+    application_source_projection projection;
+    if (!projection_read(role, &projection)) return true;
+    qa_q3_host_game_data data; uint32_t slot;
+    if (!application_source_projection_slot(&projection, (uint32_t)pointer, &slot, error) ||
+        !qa_q3_host_game_data_read(role->host, &data)) return false;
+    if (slot < data.client_count) return true;
+    qa_actor_id actor;
+    if (!qa_q3_host_actor(role->host, slot, false, &actor, error)) return false;
+    const qa_actor_record *record = qa_actors_get(
+        qa_session_actors(role->engine->provider->application->session), actor);
+    return !record || record->owner == role->engine->provider->owner ||
+        (application_source_projection_keep(&projection, slot, error) &&
+            q3g_project_actor(role, NULL, actor, &slot, error));
+}
+
+bool q3g_projection_actor_released(q3g_role *role, qa_actor_record actor, qa_error *error)
+{
+    application_source_projection projection; uint32_t slot = 0; qa_q3_host_game_data data;
+    bool borrowed = actor.owner != role->engine->provider->owner &&
+        projection_read(role, &projection) && qa_q3_host_actor_slot(role->host, actor.id, &slot, NULL) &&
+        qa_q3_host_game_data_read(role->host, &data) && slot >= data.client_count && slot < QA_Q3_ENTITY_WORLD;
+    return qa_q3_host_actor_released(role->host, actor, error) &&
+        (!borrowed || application_source_projection_release(&projection, NULL, slot, error));
+}
+
 void q3g_server_bind(q3g_role *role, qa_q3_host_options *options)
 {
     role->common = options->common; role->server = options->server;
@@ -308,6 +425,7 @@ void q3g_server_bind(q3g_role *role, qa_q3_host_options *options)
         q3g_arguments, client_command, installed_mods, clipboard};
     if (role->kind != QA_QVM_GAME) return;
     options->server = (qa_q3_host_server_services){.context = role, .maximum_clients = 64,
+        .project_actor = q3g_project_actor,
         .configstring = configstring, .set_configstring = set_configstring,
         .userinfo = userinfo, .set_userinfo = set_userinfo, .user_command = user_command,
         .drop_client = drop_client, .send_command = send_command, .allocate_bot = allocate_bot,

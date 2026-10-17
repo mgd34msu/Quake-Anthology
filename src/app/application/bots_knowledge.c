@@ -56,12 +56,11 @@ bool application_bots_knowledge_update(application_bots *bots,qa_actor_id actor,
     uint32_t handle;
     if(!qa_bots_source_weapon_handle(bots->population,actor,&handle,error)) return false;
     application_provider *provider=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
-    if(provider && provider->kind!=APPLICATION_PROVIDER_Q1 && provider->kind!=APPLICATION_PROVIDER_Q2 &&
-       provider->kind!=APPLICATION_PROVIDER_Q3)
-        return application_fail(error,QA_ERROR_UNSUPPORTED,"Knowledge inventory has no admitted native selected arsenal");
-    if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
-        qa_q3_player_state state;
-        if(!qa_q3_player_read(provider->state.q3,actor,&state)) provider=NULL;
+    if(!application_bot_arsenal_supported(provider)) provider=NULL;
+    if(provider && provider->kind!=APPLICATION_PROVIDER_Q1 && provider->kind!=APPLICATION_PROVIDER_Q2) {
+        int32_t weapon,phase,time;bool present;
+        if(!application_bot_q3_weapon_state(provider,actor,&weapon,&phase,&time,&present,error)) return false;
+        if(!present) provider=NULL;
     }
     application_bot_knowledge_owner *owner=bots->knowledge_owner;
     if(!owner) {

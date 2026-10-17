@@ -1,5 +1,6 @@
 #include "guest_q3_combat_profile.h"
 #include "guest_q3_grapple_profile.h"
+#include "guest_q3_reference.h"
 #include "qa/json.h"
 #include <limits.h>
 #include <math.h>
@@ -255,26 +256,35 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
 static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     bool *found, qa_error *error)
 {
+    bool base = application_q3_reference_image(p->image, Q3_REFERENCE_BASE_GAME);
     application_q3_grapple_profile *grapple = NULL;
-    if (!application_q3_grapple_profile_create(p->image, QA_QVM_GAME, p->abi,
+    if (!base && !application_q3_grapple_profile_create(p->image, QA_QVM_GAME, p->abi,
         p->path, strings, &grapple, error)) return false;
-    if (!grapple) { *found = false; return true; }
-    const application_q3_grapple_definition *source = application_q3_grapple_profile_definition(grapple);
-    bool threewave = !strcmp(source->id, "threewave-1.7");
-    bool lrctf = !strcmp(source->id, "lrctf-1.2");
+    if (!base && !grapple) { *found = false; return true; }
+    const application_q3_grapple_definition *source = grapple ? application_q3_grapple_profile_definition(grapple) : NULL;
+    bool threewave = source && !strcmp(source->id, "threewave-1.7");
+    bool lrctf = source && !strcmp(source->id, "lrctf-1.2");
     application_q3_combat_definition *d = &p->definition;
-    *found = threewave || lrctf;
+    *found = base || threewave || lrctf;
     if (!*found) { application_q3_grapple_profile_destroy(grapple); return true; }
-    d->entity_stride = source->entity_stride; d->client_stride = source->client_stride;
-    d->fields.inuse = source->fields.inuse; d->fields.health = source->fields.health;
-    d->fields.takedamage = source->fields.takedamage; d->fields.parent = source->fields.parent;
-    d->fields.client = source->fields.client;
-    d->callbacks.allocate = source->callbacks.allocate; d->callbacks.free = source->callbacks.free;
-    d->callbacks.damage = source->callbacks.damage; d->grapple_method = source->damage_method;
+    if (base) {
+        d->entity_stride = 808; d->client_stride = 776;
+        d->fields.inuse = 520; d->fields.health = 732; d->fields.takedamage = 736;
+        d->fields.parent = 600; d->fields.client = 516;
+        d->callbacks.allocate = 129588; d->callbacks.free = 129805; d->callbacks.damage = 101144;
+        d->grapple_method = 23;
+    } else {
+        d->entity_stride = source->entity_stride; d->client_stride = source->client_stride;
+        d->fields.inuse = source->fields.inuse; d->fields.health = source->fields.health;
+        d->fields.takedamage = source->fields.takedamage; d->fields.parent = source->fields.parent;
+        d->fields.client = source->fields.client;
+        d->callbacks.allocate = source->callbacks.allocate; d->callbacks.free = source->callbacks.free;
+        d->callbacks.damage = source->callbacks.damage; d->grapple_method = source->damage_method;
+    }
     d->damage_call.count = Q3_DAMAGE_WORDS;
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) d->damage_call.positions[i] = (uint32_t)i;
-    d->reactions.flags = 536; d->reactions.pain = threewave ? 712 : 728;
-    d->reactions.die = threewave ? 716 : 732;
+    d->reactions.flags = 536; d->reactions.pain = lrctf ? 728 : 712;
+    d->reactions.die = lrctf ? 732 : 716;
     d->reactions.pain_call = (application_q3_reaction_call){3, 0, 2};
     d->reactions.die_call = (application_q3_reaction_call){5, 0, 3};
     d->damage_flags.radius = 1; d->damage_flags.no_armor = 2; d->damage_flags.no_knockback = 4;
@@ -282,8 +292,8 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     d->state.health_stat = 0; d->state.team_stat = 3; d->state.notarget = 32;
     d->state.invulnerable = 16; d->state.no_knockback = 2048;
     d->state.mass_kind = Q3_COMBAT_MASS_CONSTANT; d->state.mass.constant = 200;
-    d->armor.check = threewave ? 161690 : 139839; d->armor.points_stat = threewave ? 6 : 3;
-    d->armor.protection = .66; d->armor.call.count = Q3_ARMOR_WORDS;
+    d->armor.check = base ? 100625 : threewave ? 161690 : 139839; d->armor.points_stat = threewave ? 6 : 3;
+    d->armor.protection = base ? .66f : .66; d->armor.call.count = Q3_ARMOR_WORDS;
     for (size_t i = 0; i < Q3_ARMOR_WORDS; ++i) d->armor.call.positions[i] = (uint32_t)i;
     application_q3_grapple_profile_destroy(grapple);
     p->teams = calloc(2, sizeof(*p->teams));

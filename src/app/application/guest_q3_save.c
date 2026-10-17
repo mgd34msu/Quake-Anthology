@@ -1055,11 +1055,19 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
     if (ok && base->entity_text) {
         const qa_bsp_view *map = qa_collision_bsp(qa_world_geometry(world));
         qa_bytes source = map ? map->lumps[QA_BSP_ENTITIES].bytes : (qa_bytes){0};
+        qa_buffer prepared = {0};
+        const qa_launch_binding *entities = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+        if (map && entities && strcmp(entities->instance, provider->launch->selection.instance)) {
+            ok = application_q3_player_entity_text(source, &prepared, error);
+            if (ok) source = (qa_bytes){prepared.data, prepared.size};
+        }
         const uint8_t *end = source.size ? memchr(source.data, 0, source.size) : NULL;
         size_t length = end ? (size_t)(end - source.data) : source.size;
-        if (!map || strlen(base->entity_text) != length ||
-            (length && memcmp(base->entity_text, source.data, length)))
+        if (ok && (!map || strlen(base->entity_text) != length ||
+            (length && memcmp(base->entity_text, source.data, length))))
             ok = application_fail(error, QA_ERROR_FORMAT, "Q3 entity parser belongs to different immutable map source text");
+        qa_buffer_free(&prepared);
     }
     if (ok) {
         memcpy(saved->seats, base->seats, sizeof(saved->seats));
@@ -1249,7 +1257,6 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         role->committed = (row->flags & ROLE_COMMITTED) != 0;
         if (row->projection_count && (!role->projection || !role->projection->has_inventory))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 source projections lack their actual immutable declaration");
-        guest_projection_actor **tail = role->projection ? &role->projection->actors : NULL;
         for (size_t j = 0; j < row->projection_count; ++j) {
             saved_projection *record = row->projections + j;
             if (record->bound) {
@@ -1257,16 +1264,13 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
                 if (!qa_q3_host_actor_slot(role->host, record->actor, &slot, error) || slot != record->slot)
                     return application_fail(error, QA_ERROR_FORMAT, "Q3 source projection changes its selected actor or client slot");
             }
-            guest_projection_actor *context = calloc(1, sizeof(*context));
-            if (!context) return application_fail(error, QA_ERROR_MEMORY, "Restoring Q3 private inventory lease contexts");
-            *context = (guest_projection_actor){.projection = role->projection, .actor = record->actor,
-                .slot = record->slot, .inventory_bound = record->bound, .inventory_prepared = record->bound,
-                .inventory_lease = {record->serial ? record->actor : (qa_actor_id){0}, record->serial}};
-            if (!qa_actor_index_remember(&role->projection->actor_contexts,
-                record->actor, (size_t)(uintptr_t)context, error)) {
-                free(context); return false;
-            }
-            *tail = context; tail = &context->next;
+            guest_projection_actor *context = application_guest_projection_actor_acquire(
+                role->projection, record->actor, record->slot, error);
+            if (!context) return false;
+            context->inventory_bound = record->bound;
+            context->inventory_prepared = record->bound;
+            context->inventory_lease = (qa_inventory_lease){
+                record->serial ? record->actor : (qa_actor_id){0}, record->serial};
         }
     }
     saved->imported = true;

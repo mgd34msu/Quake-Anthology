@@ -5,6 +5,7 @@
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
 #include "guest_q3_body_save.h"
+#include "guest_q3_reference.h"
 #include "qa/source_save.h"
 
 typedef struct function_inventory {
@@ -185,23 +186,39 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         ok = application_q3_weapons_services_restore(role->weapon_services, request_bytes, error);
     if (ok && (pickup_bytes.size != 0) != (role->pickups != NULL))
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved pickup owner differs from its actual Source profile");
-    if (ok && role->pickups)
-        ok = application_q3_pickups_restore(role->pickups, pickup_bytes, error);
     size_t combat_count = 0;
     uint64_t combat_sequence = 0;
     if (ok) ok = qa_source_save_count(&io, &combat_count, 3) && qa_source_save_u64(&io, &combat_sequence);
-    if (ok && combat_count != functions.combat_count)
+    size_t combat_first = functions.input_count + functions.weapons_count;
+    size_t pickups_first = combat_first + functions.combat_count;
+    bool added_base_combat = ok && !combat_count && functions.combat_count == 3 &&
+        functions.pickups_count == 5 && pickup_bytes.size == 8 && pickup_bytes.data[7] == 1 &&
+        role->pickup_profile.entity_stride == 808 && role->pickup_profile.client_stride == 776 &&
+        functions.descriptors[combat_first + 1].instruction == role->pickup_profile.free &&
+        application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    if (ok && combat_count != functions.combat_count && !added_base_combat)
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved combat hooks differ from their retained source artifact");
-    if (ok && !role->combat && combat_sequence)
+    if (ok && !combat_count && combat_sequence)
         ok = application_fail(error, QA_ERROR_FORMAT, "Absent Source combat cannot own an attack sequence");
     for (size_t i = 0; ok && i < combat_count; ++i)
-        ok = qa_source_save_u64(&io, bindings + functions.input_count + functions.weapons_count + i);
+        ok = qa_source_save_u64(&io, bindings + combat_first + i);
     size_t pickups_count = 0;
-    if (ok) ok = qa_source_save_count(&io, &pickups_count, functions.pickups_count);
-    if (ok && pickups_count != functions.pickups_count)
+    if (ok) ok = qa_source_save_count(&io, &pickups_count, functions.pickups_count + added_base_combat);
+    if (ok && pickups_count != functions.pickups_count + added_base_combat)
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved pickup hooks differ from their actual Source constructor");
-    for (size_t i = 0; ok && i < pickups_count; ++i)
-        ok = qa_source_save_u64(&io, bindings + functions.input_count + functions.weapons_count + functions.combat_count + i);
+    for (size_t i = 0; ok && i < pickups_count; ++i) {
+        size_t destination = added_base_combat && i == functions.pickups_count ?
+            combat_first + 1 : pickups_first + i;
+        ok = qa_source_save_u64(&io, bindings + destination);
+    }
+    uint8_t pickup_import[8];
+    if (ok && added_base_combat) {
+        memcpy(pickup_import, pickup_bytes.data, sizeof(pickup_import));
+        pickup_import[7] = 0;
+        pickup_bytes = (qa_bytes){pickup_import, sizeof(pickup_import)};
+    }
+    if (ok && role->pickups)
+        ok = application_q3_pickups_restore(role->pickups, pickup_bytes, error);
     bool present = false;
     size_t count = 0;
     if (ok) ok = qa_source_save_bool(&io, &present) &&
@@ -210,6 +227,9 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved equipment callbacks differ from the genuine artifact constructor");
     for (size_t i = 0; ok && i < count; ++i)
         ok = qa_source_save_u64(&io, bindings + functions.input_count + functions.weapons_count + functions.combat_count + functions.pickups_count + i);
+    for (size_t i = 0; ok && i < functions.count; ++i)
+        if (!bindings[i] && !(added_base_combat && (i == combat_first || i == combat_first + 2)))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved source callback identity is absent");
     if (ok) ok = state_fields(&io, &state) && qa_source_save_finish(&io, NULL) &&
         application_q3_equipment_state_qualify(role->equipment, &state, error) &&
         qa_qvm_restore_candidate_bindings(role->vm, executor, functions.descriptors,

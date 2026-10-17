@@ -4,6 +4,7 @@
 #include "guest_q3_damage_scope.h"
 #include "guest_q3_private.h"
 #include "control_frame.h"
+#include "source_projection.h"
 #include "qa/pool.h"
 
 typedef struct combat_actor {
@@ -123,9 +124,9 @@ static qa_combat_binding binding(combat_actor *actor)
         .primary_protection = {actor->owner->role->engine->provider->owner, 0}};
 }
 static bool pointer_actor(application_q3_combat *owner, int32_t pointer,
-    combat_actor **out, qa_error *error)
+    qa_actor_id *out, qa_error *error)
 {
-    *out = NULL;
+    *out = (qa_actor_id){0};
     if (!pointer) return true;
     qa_q3_host_game_data table;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
@@ -139,18 +140,7 @@ static bool pointer_actor(application_q3_combat *owner, int32_t pointer,
     uint8_t inuse[4];
     if (!qa_qvm_read(owner->role->vm, (uint32_t)pointer + d->fields.inuse, inuse, sizeof(inuse), error)) return false;
     if (!qa_load_i32le(inuse)) return true;
-    qa_actor_id actor;
-    if (!qa_q3_host_actor(owner->role->host, slot, true, &actor, error)) return false;
-    if (!actor.registry) return true;
-    combat_actor *at = actor_find(owner, actor);
-    if ((!at || !at->bound) && !application_q3_combat_admit(owner, actor, error)) return false;
-    at = actor_find(owner, actor);
-    if (!at || !at->bound || !application_q3_combat_actor_current(&at->source, error))
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Damage target has no admitted original combat primary");
-    bool live;
-    if (!application_q3_combat_actor_live(&at->source, &live, error)) return false;
-    if (live) *out = at;
-    return true;
+    return qa_q3_host_actor(owner->role->host, slot, true, out, error);
 }
 static bool vector(application_q3_combat *owner, int32_t pointer, qa_vec3 *out, qa_error *error)
 {
@@ -225,20 +215,17 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     int32_t words[Q3_DAMAGE_WORDS];
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i)
         if (!qa_qvm_call_argument(call, d->damage_call.positions[i], words + i, error)) return false;
-    combat_actor *target;
-    if (!pointer_actor(owner, words[Q3_DAMAGE_TARGET], &target, error)) return false;
-    if (!target) return qa_qvm_proceed(call, result, error);
-    qa_damage_request request = {.target = target->source.actor, .amount = words[Q3_DAMAGE_AMOUNT],
+    qa_actor_id target_id;
+    if (!pointer_actor(owner, words[Q3_DAMAGE_TARGET], &target_id, error)) return false;
+    if (!target_id.registry) return qa_qvm_proceed(call, result, error);
+    qa_damage_request request = {.target = target_id, .amount = words[Q3_DAMAGE_AMOUNT],
         .knockback = (words[Q3_DAMAGE_DIRECTION] && !((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.no_knockback)) ?
             words[Q3_DAMAGE_AMOUNT] : 0,
         .radius = ((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.radius) != 0};
     if (!vector(owner, words[Q3_DAMAGE_DIRECTION], &request.direction, error) ||
         !vector(owner, words[Q3_DAMAGE_POINT], &request.point, error)) return false;
-    combat_actor *attacker, *inflictor;
-    if (!pointer_actor(owner, words[Q3_DAMAGE_ATTACKER], &attacker, error) ||
-        !pointer_actor(owner, words[Q3_DAMAGE_INFLICTOR], &inflictor, error)) return false;
-    if (attacker) request.attack.attacker = attacker->source.actor;
-    if (inflictor) request.attack.inflictor = inflictor->source.actor;
+    if (!pointer_actor(owner, words[Q3_DAMAGE_ATTACKER], &request.attack.attacker, error) ||
+        !pointer_actor(owner, words[Q3_DAMAGE_INFLICTOR], &request.attack.inflictor, error)) return false;
     qa_application *app = owner->role->engine->provider->application;
     qa_clock_state clock;
     if (!qa_session_clock(app->session, owner->role->engine->provider->owner, &clock) ||
@@ -255,9 +242,27 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     request.attack.cause = (qa_damage_cause){.kind = QA_CAUSE_Q3,
         .source.q3 = {words[Q3_DAMAGE_METHOD], application_q3_combat_canonical_flags(d, (uint32_t)words[Q3_DAMAGE_FLAGS])}};
     if (!qa_attack_next(&owner->sequence, &request.attack, error)) return false;
+    qa_damage_outcome outcome = {0};
+    if (combat && combat != owner->role->engine->provider) {
+        ++owner->calls;
+        bool ok = !qa_combat_has(shared(owner), target_id) ||
+            qa_combat_apply(shared(owner), &request, &outcome, error);
+        --owner->calls;
+        qa_damage_outcome_release(&outcome);
+        if (ok && qa_actors_get(qa_session_actors(app->session), target_id)) {
+            uint32_t slot;
+            ok = q3g_project_actor(owner->role, call, target_id, &slot, error);
+        }
+        if (ok) *result = 0;
+        return ok;
+    }
+    combat_actor *target = actor_find(owner, target_id);
+    if ((!target || !target->bound) && !application_q3_combat_admit(owner, target_id, error)) return false;
+    target = actor_find(owner, target_id);
+    if (!target || !target->bound || !application_q3_combat_actor_current(&target->source, error))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Damage target has no admitted original combat primary");
     entered_damage entered = {.owner = owner, .actor = target, .call = call,
         .flags = (uint32_t)words[Q3_DAMAGE_FLAGS], .original = request};
-    qa_damage_outcome outcome = {0};
     ++owner->calls; ++target->calls;
     bool ok = qa_combat_run_source(shared(owner), &request, entered_source, &entered, &outcome, error);
     --target->calls; --owner->calls; qa_damage_outcome_release(&outcome); actors_collect(owner);
@@ -287,7 +292,8 @@ static bool freed(void *context, const qa_qvm_call *call, int32_t *result, qa_er
         if (!application_q3_combat_actor_live(&actor->source, &live, error) ||
             (!live && !qa_session_release(owner->role->engine->provider->application->session, released, error))) return false;
     }
-    return application_q3_pickups_after_free(owner->role->pickups, call, pointer, error);
+    return q3g_projection_after_free(owner->role, pointer, error) &&
+        application_q3_pickups_after_free(owner->role->pickups, call, pointer, error);
 }
 static bool armor_stage(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
@@ -396,6 +402,9 @@ bool application_q3_combat_admit(application_q3_combat *owner, qa_actor_id id, q
 {
     if (!owner || owner->role->retired || !owner->role->host || !owner->role->vm)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat admission requires its retained live Source owner");
+    application_provider *authority = application_provider_for(
+        owner->role->engine->provider->application, id, QA_ROLE_COMBAT, "");
+    if (authority && authority != owner->role->engine->provider) return true;
     combat_actor *actor = actor_find(owner, id);
     if (actor && actor->bound) return application_q3_combat_actor_current(&actor->source, error);
     if (!actor) { actor = actor_create(owner, id, error); if (!actor) return false; }

@@ -77,8 +77,7 @@ static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
         if(!qa_source_save_u32(io,&entry->handle) || entry->handle>INT32_MAX ||
            !qa_source_save_actor(io,&entry->actor) || !entry->actor.registry ||
            !provider_field(io,bots->application,&entry->provider,true) ||
-           (entry->provider->kind!=APPLICATION_PROVIDER_Q1 && entry->provider->kind!=APPLICATION_PROVIDER_Q2 &&
-            entry->provider->kind!=APPLICATION_PROVIDER_Q3))
+           !application_bot_arsenal_supported(entry->provider))
             goto invalid;
     }
     if(reading && count) {

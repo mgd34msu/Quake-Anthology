@@ -141,6 +141,9 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
             if (engine->callbacks)
                 return application_native_q2_callbacks_inventory_group(engine, actor, serial, saved, out, error);
         }
+        struct application_q3_guest *guest=q3g_engine(provider);
+        if (guest && guest->game)
+            return application_guest_projection_inventory_group(guest->game,actor,serial,saved,out,error);
     }
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "Saved inventory group has no restored source callback owner");

@@ -90,7 +90,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
         return application_fail(error,QA_ERROR_ARGUMENT,"bot action contains nonfinite movement");
     application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
     qa_item_id requested_item=0;qa_actor_owner requested_owner=0;
-    if(arsenal && (arsenal->kind==APPLICATION_PROVIDER_Q1 || arsenal->kind==APPLICATION_PROVIDER_Q2) &&
+    if(arsenal && arsenal->kind!=APPLICATION_PROVIDER_Q3 && application_bot_arsenal_supported(arsenal) &&
        !application_bot_weapon_resolve(bots,actor,input->weapon,&requested_item,error)) return false;
     if(requested_item) requested_owner=arsenal->owner;
     if (!application_bot_seat_live(bots, seat)) return true;

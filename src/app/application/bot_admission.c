@@ -130,6 +130,8 @@ bool application_players_bot_connect(qa_application *app, uint32_t physical,
             else if (okay) okay = application_players_native_q3_retire(app, source, actor, error);
         }
     }
+    if (okay && *accepted)
+        okay = application_players_bot_sources_connect(app, record, first_time, accepted, error);
     if (okay && *accepted && record->character != source &&
         record->character->kind == APPLICATION_PROVIDER_Q2)
         okay = qa_q2_player_userinfo(record->character->state.q2, actor, record->userinfo, error);

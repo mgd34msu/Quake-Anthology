@@ -2,8 +2,10 @@
 #define QA_APPLICATION_GUEST_Q3_CATALOG_H
 
 #include "qa/gameplay.h"
+#include "qa/game_q3_product.h"
 #include "qa/qvm.h"
 #include "qa/strings.h"
+#include "qa/inventory.h"
 
 typedef struct application_q3_catalog application_q3_catalog;
 struct q3g_role;
@@ -42,9 +44,15 @@ bool application_q3_catalog_weapons(application_q3_catalog *,
     const application_q3_catalog_weapon **, size_t *, qa_error *);
 bool application_q3_catalog_ammo_label(application_q3_catalog *, qa_item_id,
     const char **, qa_error *);
+bool application_q3_catalog_items_revision(application_q3_catalog *,uint64_t *,qa_error *);
+bool application_q3_catalog_item_definitions(application_q3_catalog *,qa_actor_owner,
+    qa_arena *,qa_item_definition **,size_t *,qa_error *);
 /* True only for the actual default roster constructor, independently of
  * labels or item identities read from a declared original table. */
 bool application_q3_catalog_standard(const application_q3_catalog *);
+/* Original bot rules require admitted executable semantics, not the default
+ * item roster that can also serve otherwise unknown GAME artifacts. */
+bool application_q3_catalog_bot_product(const application_q3_catalog *, qa_q3_product *);
 bool application_q3_catalog_current(const application_q3_catalog *,
     const qa_qvm_image *, const qa_qvm *, qa_qvm_abi);
 /* Direct checked projection callback; context is this retained catalog. */

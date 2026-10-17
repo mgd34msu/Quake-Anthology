@@ -190,6 +190,13 @@ qa_actor_id application_bot_client_actor(application_bots *,int32_t);
 qa_bot_navigation *application_bot_navigation(void *,int32_t);
 bool application_bot_movement_input(void *,qa_actor_id,qa_movement_input *,qa_error *);
 bool application_bot_inventory(application_bots *,qa_actor_id,const qa_bot_inventory_target *,qa_error *);
+typedef struct application_bot_q3_arsenal {
+    qa_q3_product product;
+    qa_item_id weapons[QA_Q3_WEAPON_COUNT], ammo[QA_Q3_WEAPON_COUNT];
+} application_bot_q3_arsenal;
+bool application_bot_arsenal_supported(const application_provider *);
+bool application_bot_q3_arsenal_read(application_provider *,application_bot_q3_arsenal *,bool *,qa_error *);
+bool application_bot_q3_weapon_state(application_provider *,qa_actor_id,int32_t *,int32_t *,int32_t *,bool *,qa_error *);
 bool application_bot_weapon_slot(application_provider *,int32_t source,int32_t *,qa_error *);
 bool application_bot_weapon_resolve(application_bots *,qa_actor_id,int32_t slot,qa_item_id *,qa_error *);
 qa_actor_id application_bot_actor(void *,int32_t);

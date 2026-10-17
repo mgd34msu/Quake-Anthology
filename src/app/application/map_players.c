@@ -671,25 +671,25 @@ static bool q3_initial_userinfo(qa_application *application,qa_catalog *catalog,
 }
 
 static bool q3_initial_bot_userinfo(qa_application *app,
-    application_player_record *record, const qa_launch_seat *seat, qa_error *error)
+    application_player_record *record, const qa_launch_seat *seat, const char *userinfo, qa_error *error)
 {
     char character[160];
     float skill;
-    if (!record->userinfo ||
-        !application_bots_initial_settings(app, seat, character, sizeof(character), &skill, error))
+    if (!application_bots_initial_settings(app, seat, character, sizeof(character), &skill, error))
         return false;
     if (strchr(character, '\\') || strchr(character, '"') || strchr(character, ';'))
         return application_fail(error, QA_ERROR_FORMAT, "Q3 bot character path cannot be represented by source userinfo");
-    size_t length = strlen(record->userinfo);
-    char suffix[224];
-    int added = snprintf(suffix, sizeof(suffix), "\\characterfile\\%s\\skill\\%.9g", character, (double)skill);
-    if (added < 0 || (size_t)added >= sizeof(suffix) || length >= 1024 - (size_t)added)
+    size_t length = strlen(userinfo);
+    if (length >= 1024)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 bot initial userinfo exceeds its source extent");
-    char *text = malloc(length + (size_t)added + 1);
-    if (!text) return application_fail(error, QA_ERROR_MEMORY, "cannot retain Q3 bot initial source settings");
-    memcpy(text, record->userinfo, length);
-    memcpy(text + length, suffix, (size_t)added + 1);
-    return application_player_userinfo_adopt(record,text,NULL,error);
+    char text[1024], skill_text[32];
+    memcpy(text, userinfo, length + 1);
+    snprintf(skill_text, sizeof(skill_text), "%.9g", (double)skill);
+    if (!qa_q3_info_set(text, sizeof(text), "characterfile", character, QA_Q3_INFO_STRICT, NULL, error) ||
+        !qa_q3_info_set(text, sizeof(text), "skill", skill_text, QA_Q3_INFO_STRICT, NULL, error)) return false;
+    char *copy = player_text(text);
+    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "cannot retain Q3 bot initial source settings");
+    return application_player_userinfo_adopt(record,copy,NULL,error);
 }
 
 static bool qw_info_add(char text[512], const char *key, const char *value, qa_error *error)
@@ -985,13 +985,6 @@ bool application_players_prepare(qa_application *application,
                                                 provider == publication->map_provider, error)) {
                 application_players_dispose(travel);
                 return false;
-            }
-            if (provider != NULL && provider != publication->map_provider &&
-                provider->kind > APPLICATION_PROVIDER_Q3 &&
-                provider->launch->selection.clock.kind == QA_RULESET_Q3) {
-                application_players_dispose(travel);
-                return application_fail(error, QA_ERROR_UNSUPPORTED,
-                    "secondary guest player/map ownership is not qualified");
             }
         }
         record_seat_set(travel->roster, travel->roster->records + i, seat->id);
@@ -2798,6 +2791,126 @@ static bool reject_player(qa_application *app,application_provider *provider,
     if(denial)*denial=retained;
     return true;
 }
+
+static bool original_clients_admit(qa_application *application, const qa_launch_choices *choices,
+    const qa_launch_seat *seat, application_player_record *record,
+    const application_player_carry *carry, bool defer_source_begin, bool initial_local_userinfo,
+    bool connect_only, bool first_time,
+    const application_q3_round_player_admission *round,
+    bool *round_accepted, const char **denial, qa_error *error)
+{
+    qa_actor_id actor = record->actor;
+    application_provider *map_source = application->players->map_provider;
+    application_provider *character = record->character;
+    bool bot = application_player_identity(record)->bot;
+    for (size_t j = 0; j < application->provider_count; ++j) {
+        application_provider *provider = application->providers[j];
+        if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
+        if (connect_only &&
+            provider->component.clock.kind != QA_RULESET_Q3) continue;
+        bool selected = provider == map_source &&
+            (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_RULESET_Q3);
+        for (size_t k = 0; k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
+            selected |= application_provider_for(application, actor, player_roles[k], "") == provider;
+        if (!selected) continue;
+        bool continued = false;
+        for (size_t k = 0; carry && k < carry->guest_count; ++k)
+            continued |= carry->guests[k].owner == provider->owner &&
+                carry->guests[k].identity == provider->launch->identity;
+        if (provider->kind == APPLICATION_PROVIDER_QC) {
+            if (provider->component.clock.kind == QA_RULESET_QUAKEWORLD &&
+                !qw_initial_userinfo(application, record, error)) return false;
+            const application_qc_client *client = application_qc_client_for_actor(
+                provider->state.qc.engine, actor);
+            if (client && client->connected && !defer_source_begin && !provider->state.qc.qualified) {
+                if (application_qc_classic_qw(provider->state.qc.engine) &&
+                    !client->spawned && !client->prepared &&
+                    !application_qc_prepare_player(provider, actor, error)) return false;
+                if (!application_qc_begin_player(provider, actor, error)) return false;
+                continue;
+            }
+            if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
+                (provider, record->client_slot + 1, seat->id, actor,
+                 application_player_name(record), seat->spectator, !continued,
+                 provider == character, error)) return false;
+            if (defer_source_begin) record->source_begin_pending = true;
+        } else if (provider->component.clock.kind == QA_RULESET_Q3) {
+            if (round) {
+                bool accepted = false;
+                if (provider != character ||
+                    !application_q3_guest_round_reconnect(provider,
+                        record->source_slot, actor, &accepted, error)) return false;
+                if (round_accepted) *round_accepted = accepted;
+                if (!accepted) {
+                    const char *reason;
+                    if (!application_q3_guest_round_denial_read(provider, record->source_slot, &reason, error))
+                        return false;
+                    return reject_player(application, provider, record, reason, round_accepted, denial, error);
+                }
+                continue;
+            }
+            struct application_q3_guest *engine = q3g_engine(provider);
+            bool connected = engine && record->client_slot < 64 &&
+                engine->clients[record->client_slot].connected &&
+                qa_actor_id_equal(engine->clients[record->client_slot].actor, actor);
+            if (!connected) {
+                char userinfo[1024];
+                if (!record->userinfo && !application_character_userinfo(application, application->catalog,
+                    choices, seat, QA_GAME_Q3, false, userinfo, sizeof(userinfo), error)) return false;
+                bool accepted = false;
+                application_q3_world_startup startup;
+                bool replaced = carry && carry->q3_client && provider == map_source &&
+                    application_q3_world_restart_source(application, provider, &startup);
+                if (!connect_only && (!carry || !carry->q3_client) && bot &&
+                    !q3_initial_bot_userinfo(application, record, seat,
+                        record->userinfo ? record->userinfo : userinfo, error)) return false;
+                if (!application_q3_guest_client_connect(provider, record->client_slot, actor,
+                    record->userinfo ? record->userinfo : userinfo,
+                    connect_only ? first_time : !continued && !replaced,
+                    bot, &accepted, error)) return false;
+                if (!accepted)
+                    return reject_player(application, provider, record, NULL, round_accepted, denial, error);
+                if (replaced && !application_q3_guest_client_carry(provider, record->client_slot,
+                    actor, &carry->q3_command, error)) return false;
+            }
+            if (!connect_only) {
+                if (defer_source_begin) record->source_begin_pending = true;
+                else if (!application_q3_guest_client_begin(provider, record->client_slot, error)) return false;
+            }
+        } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine != NULL) {
+            char userinfo[2304];
+            if (!application_character_userinfo(application, application->catalog, choices, seat, QA_GAME_Q2,
+                false, userinfo, sizeof(userinfo), error)) return false;
+            char initial_info[2304];
+            const char *source_info = record->userinfo ? record->userinfo : userinfo;
+            if (initial_local_userinfo && record->userinfo) {
+                if (!application_character_q2_initial_userinfo(record->userinfo, userinfo,
+                    initial_info, sizeof(initial_info), error)) return false;
+                source_info = initial_info;
+            }
+            struct application_native_q2 *engine = provider->state.native.q2_engine;
+            bool accepted = application_native_q2_client_admitted(engine, actor) &&
+                application_native_q2_client_slot(engine, actor) == record->client_slot + 1;
+            if (!accepted && !application_native_q2_client_admit(provider, record->client_slot + 1,
+                actor, source_info, "", seat->bot, &accepted, error)) return false;
+            if (!accepted)
+                return reject_player(application, provider, record, NULL, round_accepted, denial, error);
+            if (defer_source_begin) record->source_begin_pending = true;
+            else if (!application_native_q2_client_begin(provider, record->client_slot + 1, error)) return false;
+        } else return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "selected native Q2 guest client admission is not installed");
+    }
+    return true;
+}
+
+bool application_players_bot_sources_connect(qa_application *application,
+    application_player_record *record, bool first_time, bool *accepted, qa_error *error)
+{
+    return original_clients_admit(application, qa_launch_snapshot_choices(qa_application_launch(application)),
+        NULL, record, NULL, false, false, true, first_time,
+        NULL, accepted, NULL, error);
+}
+
 static bool publish_player(qa_application *application, const qa_launch_choices *choices,
                            const qa_launch_seat *seat, application_player_record *record,
                            const application_player_carry *carry, size_t ordinal,
@@ -2931,7 +3044,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             bool selected = provider == map_source;
             for (size_t k = 0; !selected && k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
                 selected = application_provider_for(application, actor, player_roles[k], "") == provider;
-            if (selected && !application_q3_guest_client_reserve(provider,
+            if (!reserved_player && selected && !application_q3_guest_client_reserve(provider,
                     record->client_slot, actor, error)) return false;
         }
         if (!reserved_player && application->modes != NULL) {
@@ -3020,7 +3133,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!qw_spectator && arsenal->kind == APPLICATION_PROVIDER_Q2 && arsenal != character && arsenal != map_source &&
                 (!qa_q2_items_admit_player(arsenal->state.q2, actor, true, error) ||
                  !qa_q2_weapon_bind(arsenal->state.q2, actor, QA_Q2_BLASTER, error))) return false;
-            if (!qw_spectator && !application_supplies_admit(application->supplies, map_source, actor, error)) return false;
+            if (!qw_spectator && !q3g_engine(arsenal) &&
+                !application_supplies_admit(application->supplies, map_source, actor, error)) return false;
             if (!admit_control(application, actor, body.angles, error)) return false;
             combat.can_take_damage = false;
             record->source_begin_pending = true;
@@ -3092,6 +3206,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             (!q1_initial_travel(application, map_source, actor, carry, carry_players, error) ||
              !qa_combat_read_traits(application->combat, actor, &combat, error))) return false;
         bool selected_spawn = false;
+        bool original_restored = false;
         if (character->kind == APPLICATION_PROVIDER_Q2) {
             char userinfo[2304];
             if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
@@ -3121,9 +3236,18 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!q2_admission_userinfo(application, character, record,
                     reserved_player ? source_info : NULL, deathball_skin,
                     false, error)) return false;
-            bool original_restored = false;
             if (!application_q2_original_player(character, record->client_slot, actor,
                     &original_restored, error)) return false;
+        }
+        bool source_accepted = true;
+        if (!original_clients_admit(application, choices, seat, record, carry,
+            defer_source_begin, initial_local_userinfo, false, false,
+            round, &source_accepted, denial, error)) return false;
+        if (!source_accepted) {
+            if (round_accepted) *round_accepted = false;
+            return true;
+        }
+        if (character->kind == APPLICATION_PROVIDER_Q2) {
             if (map_source->kind <= APPLICATION_PROVIDER_Q3) {
                 if (!application_supplies_admit(application->supplies, map_source, actor, error) ||
                     (map_source != character &&
@@ -3137,91 +3261,6 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 !qa_q2_player_spawn(character->state.q2, actor, false, landmark, error))
                 return false;
             found = !record->deferred;
-        }
-        for (size_t j = 0; j < application->provider_count; ++j) {
-            application_provider *provider = application->providers[j];
-            if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
-            bool selected = provider == map_source &&
-                (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_RULESET_Q3);
-            for (size_t k = 0; k < sizeof(player_roles) / sizeof(player_roles[0]); ++k)
-                selected |= application_provider_for(application, actor, player_roles[k], "") == provider;
-            if (!selected) continue;
-            bool continued = false;
-            for (size_t k = 0; k < carry->guest_count; ++k)
-                continued |= carry->guests[k].owner == provider->owner &&
-                    carry->guests[k].identity == provider->launch->identity;
-            if (provider->kind == APPLICATION_PROVIDER_QC) {
-                if (provider->component.clock.kind == QA_RULESET_QUAKEWORLD &&
-                    !qw_initial_userinfo(application, record, error)) return false;
-                if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
-                    (provider, record->client_slot + 1, seat->id, actor,
-                                                application_player_name(record), seat->spectator, !continued,
-                                                provider == character, error))
-                    return false;
-                if (defer_source_begin) record->source_begin_pending = true;
-            } else if (provider->component.clock.kind == QA_RULESET_Q3) {
-                if (round) {
-                    bool accepted = false;
-                    if (provider != character ||
-                        !application_q3_guest_round_reconnect(provider,
-                            record->source_slot, actor, &accepted, error))
-                        return false;
-                    if (round_accepted) *round_accepted = accepted;
-                    if (!accepted) {
-                        const char *reason;
-                        if(!application_q3_guest_round_denial_read(provider,record->source_slot,&reason,error))return false;
-                        return reject_player(application,provider,record,reason,round_accepted,denial,error);
-                    }
-                    continue;
-                }
-                char userinfo[1024];
-                if (!record->userinfo && !application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q3,
-                        false, userinfo, sizeof(userinfo), error)) return false;
-                bool accepted = false;
-                application_q3_world_startup startup;
-                bool replaced = carry->q3_client && provider == map_source &&
-                    application_q3_world_restart_source(application, provider, &startup);
-                if (!round && !carry->q3_client && application_player_identity(record)->bot && provider == map_source &&
-                    !q3_initial_bot_userinfo(application, record, seat, error)) return false;
-                if (!application_q3_guest_client_connect(provider, record->client_slot, actor,
-                                                          record->userinfo != NULL ? record->userinfo : userinfo,
-                                                          !continued && !replaced, seat->bot, &accepted, error))
-                    return false;
-                if (!accepted)
-                    return reject_player(application,provider,record,NULL,round_accepted,denial,error);
-                if (replaced &&
-                    !application_q3_guest_client_carry(provider, record->client_slot,
-                        actor, &carry->q3_command, error)) return false;
-                if (defer_source_begin) record->source_begin_pending = true;
-                else if (!application_q3_guest_client_begin(provider, record->client_slot, error))
-                    return false;
-            } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
-                       provider->state.native.q2_engine != NULL) {
-                char userinfo[2304];
-                if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
-                        false, userinfo, sizeof(userinfo), error)) return false;
-                char initial_info[2304];
-                const char *source_info=record->userinfo?record->userinfo:userinfo;
-                if (initial_local_userinfo && record->userinfo) {
-                    if (!application_character_q2_initial_userinfo(record->userinfo,userinfo,
-                            initial_info,sizeof(initial_info),error)) return false;
-                    source_info=initial_info;
-                }
-                bool accepted = false;
-                if (!application_native_q2_client_admit(provider, record->client_slot + 1,
-                    actor,source_info,
-                    "", seat->bot, &accepted, error))
-                    return false;
-                if (!accepted)
-                    return reject_player(application,provider,record,NULL,round_accepted,denial,error);
-                if (defer_source_begin) record->source_begin_pending = true;
-                else if (!application_native_q2_client_begin(provider,
-                                                             record->client_slot + 1, error))
-                    return false;
-            } else {
-                return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                        "selected native Q2 guest client admission is not installed");
-            }
         }
         if (!application_supplies_admit(application->supplies, map_source, actor, error)) return false;
         if (!selected_spawn && map_source->kind != APPLICATION_PROVIDER_QC &&
@@ -4201,7 +4240,7 @@ bool application_players_bot_allocate(qa_application *app,
     application_provider *arsenal = current_seat_provider(app, &seat, QA_ROLE_ARSENAL);
     if (!character || character->kind > APPLICATION_PROVIDER_Q3 ||
         !movement || movement->kind > APPLICATION_PROVIDER_Q3 ||
-        !arsenal || arsenal->kind > APPLICATION_PROVIDER_Q3)
+        !arsenal || !application_bot_arsenal_supported(arsenal))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "catalogue bot selected roles require native admission owners");
     uint32_t offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t physical;
@@ -5357,18 +5396,23 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     qa_actor_id actor = record->actor;
     application->operation = APPLICATION_CONFIGURING;
     bool ok = true;
+    bool sources_begun = false;
+    bool accepted = true;
+    qa_launch_seat launch_seat = {.id = record->seat, .actor = record->configured_actor,
+        .name = application_player_name(record), .team = application_player_team(record),
+        .bot = application_player_identity(record)->bot,
+        .spectator = application_player_identity(record)->spectator};
+    application_player_carry carry = {0};
     if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q1) {
-        qa_launch_seat launch_seat = {.id = record->seat, .actor = record->configured_actor,
-            .name = application_player_name(record), .team = application_player_team(record), .bot = application_player_identity(record)->bot,
-            .spectator = application_player_identity(record)->spectator};
-        application_player_carry carry = {0};
         size_t index = (size_t)(record - application->players->records);
-        ok = application_player_qw_spectator(application->players->map_provider, record)
+        bool spectator = application_player_qw_spectator(application->players->map_provider, record);
+        ok = spectator
             ? application_native_q1_spectator_begin(application->players->map_provider, actor, error)
             : publish_player(application, qa_launch_snapshot_choices(qa_application_launch(application)),
                 &launch_seat, record, &carry, index, false, false, NULL, false,
-                PLAYER_ADMISSION_BEGIN, NULL, NULL, NULL, error);
-        if (ok && application->modes) {
+                PLAYER_ADMISSION_BEGIN, NULL, &accepted, NULL, error);
+        sources_begun = !spectator;
+        if (ok && accepted && application->modes) {
             qa_string_id name;
             ok = qa_strings_intern_cstr(qa_session_strings(application->session), application_player_name(record), &name, error) &&
                 qa_modes_player(application->modes, &(qa_match_player){.actor = actor,
@@ -5377,24 +5421,13 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     } else if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_begin(application->players->map_provider,
                                                 actor, NULL, NULL, error);
-    for (size_t i = 0; ok && i < application->provider_count; ++i) {
-        application_provider *provider = application->providers[i];
-        if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
-        bool selected = provider == application->players->map_provider &&
-            (provider->kind == APPLICATION_PROVIDER_QC || provider->component.clock.kind == QA_RULESET_Q3);
-        for (size_t j = 0; j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
-            selected |= application_provider_for(application, actor, player_roles[j], "") == provider;
-        if (selected) {
-            if (provider->kind == APPLICATION_PROVIDER_QC)
-                ok = application_qc_begin_player(provider, actor, error);
-            else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
-                provider->state.native.q2_engine != NULL)
-                ok = application_native_q2_client_begin(provider, record->client_slot + 1, error);
-            else if (provider->component.clock.kind == QA_RULESET_Q3)
-                ok = application_q3_guest_client_begin(provider, record->client_slot, error);
-        }
-        if (ok && !qa_actors_get(qa_session_actors(application->session), actor))
-            ok = application_fail(error, QA_ERROR_ARGUMENT, "remote player retired during source begin");
+    if (ok && !sources_begun)
+        ok = original_clients_admit(application, qa_launch_snapshot_choices(qa_application_launch(application)),
+            &launch_seat, record, &carry, false, false, false, false,
+            NULL, &accepted, NULL, error);
+    if (ok && !accepted) {
+        application->operation = APPLICATION_IDLE;
+        return true;
     }
     if (ok) {
         qa_body_state body;

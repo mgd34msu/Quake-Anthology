@@ -333,7 +333,7 @@ static bool freed(void *context,const qa_qvm_call *call,int32_t *out,qa_error *e
     int32_t inuse;if(!word(o,(uint32_t)pointer+o->profile->fields.inuse,&inuse,e))return false;
     if(!inuse){const qa_actor_record *record=qa_actors_get(qa_session_actors(application(o)->session),actor);
         if(record&&record->owner==o->role->engine->provider->owner&&!qa_session_release(application(o)->session,actor,e))return false;}
-    return application_q3_pickups_after_free(o,call,pointer,e);
+    return q3g_projection_after_free(o->role,pointer,e)&&application_q3_pickups_after_free(o,call,pointer,e);
 }
 static bool quantity(void *context,const qa_inventory_entry *entry,qa_supply_quantity *out,qa_error *e)
 {

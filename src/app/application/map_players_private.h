@@ -202,6 +202,8 @@ bool application_players_source_disconnect(qa_application *,application_provider
 bool application_players_character_disconnect(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_component_retire(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
+bool application_players_bot_sources_connect(qa_application *, application_player_record *,
+    bool first_time, bool *accepted, qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
 bool application_player_equipment_selection(qa_application *, const qa_launch_choices *,
     qa_actor_id, uint32_t seat, qa_equipment_selection *, qa_equipment_source_selection *, qa_error *);

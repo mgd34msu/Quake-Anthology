@@ -582,7 +582,7 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             ok=application_fail(e,QA_ERROR_ARGUMENT,"Queued component drop changed its full primary client identity");break;
         }
         application_provider *source=a->source;
-        if(!request->transport&&source->kind!=APPLICATION_PROVIDER_Q3&&!q3g_engine(source)) {
+        if(!request->transport&&source->kind!=APPLICATION_PROVIDER_Q3) {
             if(p->remote) {
                 if(!a->transport_drop) {ok=application_fail(e,QA_ERROR_UNSUPPORTED,"Component remote drop has no actual transport owner");break;}
                 if(!a->transport_drop(a->transport_context,request->component,request->actor,request->reason,e)) {ok=false;break;}
@@ -619,13 +619,6 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             else if(source->kind==APPLICATION_PROVIDER_NATIVE&&source->state.native.q2_engine)
                 ok=application_players_source_disconnect(app,source,request->actor,e);
             else if(q3g_engine(source)) {
-                q3g_role *game=q3g_engine(source)->game;
-                if(!request->transport) {
-                    ok=!game->server.drop_client||game->server.drop_client(game->server.context,
-                        request->slot,request->reason,e);
-                    if(!ok) break;
-                    request->transport=true;
-                }
                 if(qa_actors_get(qa_session_actors(app->session),request->actor))
                     ok=application_guest_client_drop(source,request->slot,request->reason,e)&&
                         application_guest_clients_drain(source,e);

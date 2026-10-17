@@ -7,7 +7,8 @@
 typedef struct application_source_projection {
     qa_q3_host *host;
     qa_qvm_abi abi;
-    uint32_t entity_stride, inuse, health, allocate, free;
+    uint32_t entity_stride, inuse, health, takedamage, allocate, free;
+    bool can_take_damage;
     void *context;
     bool (*span)(void *, uint64_t address, size_t, qa_bytes *, qa_error *);
     bool (*write)(void *, uint64_t address, qa_bytes, bool private_fields, qa_error *);
@@ -27,5 +28,6 @@ bool application_source_projection_keep(const application_source_projection *,
     uint32_t slot, qa_error *);
 bool application_source_projection_release(const application_source_projection *,
     const qa_qvm_call *, uint32_t slot, qa_error *);
+bool q3g_project_actor(void *, const qa_qvm_call *, qa_actor_id, uint32_t *, qa_error *);
 
 #endif

@@ -2,6 +2,9 @@
 #include "qa/game_q2_bots.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_bots.h"
+#include "guest_q3_private.h"
+#include "guest_q3_catalog.h"
+#include "guest_q3_weapons.h"
 #include "qa/text.h"
 #include <limits.h>
 #include <math.h>
@@ -10,6 +13,60 @@
 static double count(application_bots *bots,qa_actor_id actor,qa_item_id item) {
     qa_inventory_entry entry;
     return item && qa_inventory_entry_read(bots->application->inventory,actor,item,&entry,NULL)?entry.count:0;
+}
+static q3g_role *q3_guest_arsenal(const application_provider *provider) {
+    if(!provider || (provider->kind!=APPLICATION_PROVIDER_QVM &&
+       (provider->kind!=APPLICATION_PROVIDER_NATIVE || !provider->state.native.engine))) return NULL;
+    struct application_q3_guest *engine=provider->kind==APPLICATION_PROVIDER_QVM?
+        provider->state.qvm.engine:provider->state.native.engine;
+    qa_q3_product product;
+    return engine && engine->game && !engine->game->retired &&
+        application_q3_catalog_bot_product(engine->game->catalog,&product)?engine->game:NULL;
+}
+bool application_bot_arsenal_supported(const application_provider *provider) {
+    return provider && (provider->kind==APPLICATION_PROVIDER_Q1 || provider->kind==APPLICATION_PROVIDER_Q2 ||
+        provider->kind==APPLICATION_PROVIDER_Q3 || q3_guest_arsenal(provider));
+}
+bool application_bot_q3_arsenal_read(application_provider *provider,
+    application_bot_q3_arsenal *out,bool *found,qa_error *error) {
+    *out=(application_bot_q3_arsenal){0};*found=false;
+    if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
+        if(!qa_q3_bot_arsenal_product_read(provider->state.q3,&out->product,error)) return false;
+        int maximum=out->product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
+        for(int source=1;source<=maximum;++source) {
+            out->weapons[source]=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
+            out->ammo[source]=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
+        }
+    } else {
+        q3g_role *role=q3_guest_arsenal(provider);
+        if(!role) return true;
+        if(!application_q3_catalog_bot_product(role->catalog,&out->product)) return true;
+        const application_q3_catalog_weapon *weapons;size_t length;
+        if(!application_q3_catalog_weapons(role->catalog,&weapons,&length,error)) return false;
+        int maximum=out->product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
+        for(size_t i=0;i<length;++i) {
+            int32_t source=weapons[i].weapon;
+            if(source<=0 || source>maximum) continue;
+            out->weapons[source]=weapons[i].item;out->ammo[source]=weapons[i].ammo;
+        }
+    }
+    *found=true;return true;
+}
+bool application_bot_q3_weapon_state(application_provider *provider,qa_actor_id actor,
+    int32_t *weapon,int32_t *phase,int32_t *time,bool *found,qa_error *error) {
+    *weapon=*phase=*time=0;*found=false;
+    if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state player;
+        if(!qa_q3_player_read(provider->state.q3,actor,&player)) return true;
+        *weapon=(int32_t)player.weapon;*phase=(int32_t)player.weapon_phase;*time=player.weapon_time_ms;
+    } else {
+        q3g_role *role=q3_guest_arsenal(provider);
+        if(!role) return true;
+        application_q3_weapon_prediction player;
+        if(!application_q3_weapons_prediction_read(role->weapons,actor,&player,error)) return false;
+        *weapon=player.source_weapon;*phase=player.state;*time=player.time_ms;
+    }
+    *found=true;return true;
 }
 static float q2_spread(float endpoint,float range,float degrees) {
     float angular=range>0?atanf(endpoint/range)*(180.0f/3.14159265358979323846f):0;
@@ -36,20 +93,20 @@ static qa_vec3 q2_launch_velocity(const qa_bot_weapon_knowledge *knowledge,qa_ve
 static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *error) {
     application_provider *provider=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
     bots->knowledge_count=0;
-    if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
+    application_bot_q3_arsenal q3;bool has_q3;
+    if(!application_bot_q3_arsenal_read(provider,&q3,&has_q3,error)) return false;
+    if(has_q3) {
         uint32_t handle;
         if(!qa_bots_source_weapon_handle(bots->population,actor,&handle,error)) return false;
-        qa_q3_product product;
-        if(!qa_q3_bot_arsenal_product_read(provider->state.q3,&product,error)) return false;
-        int maximum=product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
+        int maximum=q3.product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
         for(int source=1;source<=maximum;++source) {
+            if(!q3.weapons[source]) continue;
             qa_bot_weapon_knowledge value={.personality_role=source,.has_supply=true};bool found;
             if(!qa_bot_runtime_weapon_info(bots->runtime,handle,(uint32_t)source,
                     &value.weapon,&value.projectile,&found,error)) return false;
             if(!found || !value.weapon.valid) continue;
             value.selected_projectile_damage=value.projectile.damage;
-            value.supply_weapon=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
-            value.supply_ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
+            value.supply_weapon=q3.weapons[source];value.supply_ammo=q3.ammo[source];
             value.ammo_per_shot=value.supply_ammo?1:0;
             value.owned=count(bots,actor,value.supply_weapon)>0;
             value.available=value.owned && (!value.supply_ammo || count(bots,actor,value.supply_ammo)!=0);
@@ -139,7 +196,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
                 value->travel_modes=QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP);
             if(fact.grapple) value->travel_modes=QA_NAV_CAPABILITY(QA_NAV_GRAPPLE);
         }
-    } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected bot arsenal has no native observation adapter");
+    }
     return true;
 }
 bool application_bot_arsenal(void *opaque,qa_actor_id actor,const qa_bot_weapon_knowledge **out,
@@ -158,11 +215,12 @@ void application_bot_arsenal_end(void *opaque,void *lease) {
 }
 bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa_bot_inventory_target *inventory,qa_error *error) {
     application_provider *provider=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
-    if(!provider || provider->kind>APPLICATION_PROVIDER_Q3)
-        return application_fail(error,QA_ERROR_UNSUPPORTED,"Bot inventory has no actual native selected arsenal");
-    if(provider->kind==APPLICATION_PROVIDER_Q3) {
-        qa_q3_player_state player;
-        if(!qa_q3_player_read(provider->state.q3,actor,&player)) actor=(qa_actor_id){0};
+    application_bot_q3_arsenal q3;bool has_q3;
+    if(!application_bot_q3_arsenal_read(provider,&q3,&has_q3,error)) return false;
+    if(has_q3) {
+        int32_t weapon,phase,time;bool present;
+        if(!application_bot_q3_weapon_state(provider,actor,&weapon,&phase,&time,&present,error)) return false;
+        if(!present) actor=(qa_actor_id){0};
     }
     for(int32_t index=0;index<200;++index)
         if(!qa_bot_inventory_write(inventory,index,0,error)) return false;
@@ -173,7 +231,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
         !application_bot_integer(combat.armor.regular.kind!=QA_ARMOR_NONE?combat.armor.regular.points:0,&armor,error))) return false;
     if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,health,error) ||
        !qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,armor,error)) return false;
-    if(provider->kind==APPLICATION_PROVIDER_Q1) {
+    if(provider && provider->kind==APPLICATION_PROVIDER_Q1) {
         double time,started;bool intermission;
         if(!qa_q1_bot_clock_read(provider->state.q1,&time,&intermission,&started,error)) return false;
         if(!qa_bot_inventory_write(inventory,QA_BOT_INV_QUAD,
@@ -188,7 +246,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             if(!qa_bot_inventory_write(inventory,65+source,usable,error) ||
                !qa_bot_inventory_write(inventory,97+source,ammunition,error)) return false;
         }
-    } else if(provider->kind==APPLICATION_PROVIDER_Q2) {
+    } else if(provider && provider->kind==APPLICATION_PROVIDER_Q2) {
         uint32_t registered_count;
         if(!qa_q2_bot_arsenal_definition_count(provider->state.q2,&registered_count,error)) return false;
         for(uint32_t ordinal=0;ordinal<registered_count;++ordinal) {
@@ -202,10 +260,8 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
             if(!qa_bot_inventory_write(inventory,(int32_t)(65+ordinal),fact.owned,error) ||
                !qa_bot_inventory_write(inventory,(int32_t)(97+ordinal),ammunition,error)) return false;
         }
-    } else {
-        qa_q3_product product;
-        if(!qa_q3_bot_arsenal_product_read(provider->state.q3,&product,error)) return false;
-        int maximum=product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
+    } else if(has_q3) {
+        int maximum=q3.product==QA_Q3_ARENA?QA_Q3_W_GRAPPLE:QA_Q3_WEAPON_COUNT-1;
         static const int weapon_indices[QA_Q3_WEAPON_COUNT]={0,4,6,5,7,8,9,10,11,13,14,15,16,17};
         static const int ammo_indices[QA_Q3_WEAPON_COUNT]={0,0,19,18,20,23,22,24,21,25,0,26,27,28};
         static const int weapons[]={QA_Q3_W_GAUNTLET,QA_Q3_W_SHOTGUN,QA_Q3_W_MACHINEGUN,
@@ -214,7 +270,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
         for(size_t index=0;index<sizeof(weapons)/sizeof(*weapons);++index) {
             int source=weapons[index];
             if(source>maximum) continue;
-            qa_item_id item=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
+            qa_item_id item=q3.weapons[source];
             if(!qa_bot_inventory_write(inventory,weapon_indices[source],count(bots,actor,item)>0,error)) return false;
         }
         static const int ammunition[]={QA_Q3_W_SHOTGUN,QA_Q3_W_MACHINEGUN,QA_Q3_W_GRENADE,
@@ -223,7 +279,7 @@ bool application_bot_inventory(application_bots *bots,qa_actor_id actor,const qa
         for(size_t index=0;index<sizeof(ammunition)/sizeof(*ammunition);++index) {
             int source=ammunition[index];
             if(source>maximum) continue;
-            qa_item_id ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
+            qa_item_id ammo=q3.ammo[source];
             int32_t ammo_count;
             if (!application_bot_integer(count(bots,actor,ammo),&ammo_count,error) ||
                 !qa_bot_inventory_write(inventory,ammo_indices[source],ammo_count,error)) return false;
@@ -248,7 +304,11 @@ bool application_bot_weapon_slot(application_provider *provider,int32_t source,i
                 *slot=(int32_t)ordinal+1;break;
             }
         }
-    } else if(provider->kind==APPLICATION_PROVIDER_Q3) *slot=source;
+    } else {
+        application_bot_q3_arsenal q3;bool found;
+        if(!application_bot_q3_arsenal_read(provider,&q3,&found,error)) return false;
+        if(found && source>0 && source<QA_Q3_WEAPON_COUNT && q3.weapons[source]) *slot=source;
+    }
     return true;
 }
 bool application_bot_weapon_resolve(application_bots *bots,qa_actor_id actor,int32_t slot,
@@ -273,14 +333,13 @@ bool application_bot_weapon_resolve(application_bots *bots,qa_actor_id actor,int
         qa_q2_bot_weapon_fact fact;bool found;
         if(!qa_q2_bot_weapon_read(provider->state.q2,actor,definition->weapon,&fact,&found,error)) return false;
         if(found && fact.available) *out=fact.item;
-    } else if(provider->kind==APPLICATION_PROVIDER_Q3 && slot<QA_Q3_WEAPON_COUNT) {
-        qa_q3_product product;
-        if(!qa_q3_bot_arsenal_product_read(provider->state.q3,&product,error)) return false;
-        if(product==QA_Q3_ARENA && slot>QA_Q3_W_GRAPPLE) return true;
-        qa_q3_player_state player;
-        if(!qa_q3_player_read(provider->state.q3,actor,&player)) return true;
-        qa_item_id item=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)slot,false);
-        qa_item_id ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)slot,true);
+    } else if(slot<QA_Q3_WEAPON_COUNT) {
+        application_bot_q3_arsenal q3;bool found,present;int32_t weapon,phase,time;
+        if(!application_bot_q3_arsenal_read(provider,&q3,&found,error)) return false;
+        if(!found || !q3.weapons[slot]) return true;
+        if(!application_bot_q3_weapon_state(provider,actor,&weapon,&phase,&time,&present,error)) return false;
+        if(!present) return true;
+        qa_item_id item=q3.weapons[slot],ammo=q3.ammo[slot];
         if(count(bots,actor,item)>0 && (!ammo || count(bots,actor,ammo)!=0)) *out=item;
     }
     return true;

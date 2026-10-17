@@ -11,6 +11,8 @@
 #include "guest_q3_private.h"
 #include "guest_q3_pickups.h"
 #include "guest_q3_catalog.h"
+#include "guest_q3_weapons_services.h"
+#include "guest_projection_private.h"
 #include "guest_q3_save.h"
 #include "map_players_private.h"
 #include "qa/application_supplies_save.h"
@@ -669,6 +671,17 @@ static bool provider_current(const application_supplies *owner,
     return provider && provider->application == owner->application && provider->launch &&
         provider->product && provider->constructed && provider->attached && !provider->close_pending;
 }
+static q3g_role *original_q3_arsenal(const application_provider *provider) {
+    struct application_q3_guest *engine = provider && provider->kind == APPLICATION_PROVIDER_QVM
+        ? provider->state.qvm.engine : NULL;
+    q3g_role *role = engine ? engine->game : NULL;
+    qa_q3_product product;
+    return role && engine->provider == provider && role->primary && role->kind == QA_QVM_GAME &&
+        role->ready && !role->retired && !role->source_cleared && role->vm && role->projection &&
+        role->weapons && role->weapon_services && application_q3_catalog_bot_product(role->catalog, &product) &&
+        product == QA_Q3_ARENA
+        ? role : NULL;
+}
 static supply_pair *pair_find(application_supplies *owner, application_provider *source,
     application_provider *arsenal) {
     for (supply_pair *pair = owner->pairs; pair; pair = pair->next)
@@ -733,6 +746,7 @@ static bool original_player_current(application_provider *provider, qa_actor_id 
     } else {
         struct application_q3_guest *engine = q3g_engine(provider);
         uint32_t slot;
+        if (application_guest_q3_save_actor_client(provider, actor, &slot)) return true;
         if (engine && engine->provider == provider && engine->game && engine->game->primary &&
             engine->game->initialized && !engine->game->retired && engine->game->host &&
             qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) &&
@@ -782,12 +796,8 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
         struct application_q3_guest *engine = q3g_engine(source);
         uint32_t slot = record->client_slot;
         if (engine && slot < sizeof(engine->clients)/sizeof(*engine->clients) &&
-            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) {
-            uint32_t restored_slot;
-            if (application_guest_q3_save_actor_client(source, actor, &restored_slot) &&
-                restored_slot == slot) return true;
+            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor))
             return original_player_current(source, actor, error);
-        }
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Supply actor differs from its actual physical source client");
 }
@@ -801,10 +811,7 @@ static bool pair_current(supply_pair *pair, qa_actor_id actor, qa_error *error) 
         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != pair->arsenal)
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected supply association is no longer current");
     if (!source_player_current(pair->source, actor, error)) return false;
-    if (pair->native && pair->source == pair->arsenal &&
-        pair->arsenal->kind != APPLICATION_PROVIDER_Q1 && pair->arsenal->kind != APPLICATION_PROVIDER_Q2 &&
-        pair->arsenal->kind != APPLICATION_PROVIDER_Q3)
-        return original_player_current(pair->arsenal, actor, error);
+    if (pair->source == pair->arsenal) return true;
     if (pair->arsenal->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_player_view player;
         if (qa_q1_player_read(pair->arsenal->state.q1, actor, &player)) return true;
@@ -815,13 +822,69 @@ static bool pair_current(supply_pair *pair, qa_actor_id actor, qa_error *error) 
         qa_q3_player_state player;
         if (qa_q3_player_read(pair->arsenal->state.q3, actor, &player) &&
             (player.selections & QA_Q3_ARSENAL)) return true;
-    }
+    } else if (original_q3_arsenal(pair->arsenal))
+        return original_player_current(pair->arsenal, actor, error);
     return application_fail(error, QA_ERROR_ARGUMENT, "Selected supply has no actual native arsenal actor");
 }
 static bool supply_current(void *opaque, qa_actor_id actor, qa_error *error) {
     supply_pair *pair = opaque;
     return pair_current(pair, actor, error) && (actor_find(pair->owner, pair, actor) != NULL ||
         application_fail(error, QA_ERROR_ARGUMENT, "Selected supply actor was not admitted"));
+}
+typedef struct q3_supply_arsenal {
+    const application_q3_catalog_weapon *weapons;
+    size_t count;
+    application_q3_catalog_weapon native[QA_Q3_WEAPON_COUNT - 1];
+} q3_supply_arsenal;
+static bool q3_arsenal_read(supply_pair *pair, q3_supply_arsenal *out, qa_error *error) {
+    *out = (q3_supply_arsenal){0};
+    application_provider *arsenal = pair->arsenal;
+    if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        int limit = arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK
+            ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
+        out->weapons = out->native;
+        for (int weapon = QA_Q3_W_GAUNTLET; weapon < limit; ++weapon)
+            out->native[out->count++] = (application_q3_catalog_weapon){.weapon = weapon,
+                .item = qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)weapon, false),
+                .ammo = qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)weapon, true)};
+        return true;
+    }
+    q3g_role *role = original_q3_arsenal(arsenal);
+    return role ? application_q3_catalog_weapons(role->catalog, &out->weapons, &out->count, error) :
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Selected Q3 supply has no admitted original catalog");
+}
+static const application_q3_catalog_weapon *q3_arsenal_weapon(const q3_supply_arsenal *arsenal,
+    int32_t weapon) {
+    for (size_t i = 0; i < arsenal->count; ++i)
+        if (arsenal->weapons[i].weapon == weapon) return arsenal->weapons + i;
+    return NULL;
+}
+static bool q3_active_weapon(supply_pair *pair, qa_actor_id actor, int32_t *out, qa_error *error) {
+    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_player_state player;
+        if (!qa_q3_player_read(pair->arsenal->state.q3, actor, &player))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 pickup receipt lost its arsenal actor");
+        *out = player.weapon;
+        return true;
+    }
+    q3g_role *role = original_q3_arsenal(pair->arsenal);
+    application_q3_weapon_prediction prediction;
+    if (!role) return application_fail(error, QA_ERROR_NOT_FOUND, "Original Q3 supply lost its actual weapon owner");
+    if (!application_q3_weapons_prediction_read(role->weapons, actor, &prediction, error)) return false;
+    *out = prediction.source_weapon;
+    return true;
+}
+static bool q3_request_weapon(supply_pair *pair, qa_actor_id actor,
+    const application_q3_catalog_weapon *weapon, qa_error *error) {
+    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3)
+        return qa_q3_player_request_weapon(pair->arsenal->state.q3, actor,
+            (qa_q3_weapon)weapon->weapon, error) && supply_current(pair, actor, error);
+    q3g_role *role = original_q3_arsenal(pair->arsenal);
+    bool admitted = false;
+    if (!role) return application_fail(error, QA_ERROR_NOT_FOUND, "Original Q3 supply lost its actual weapon owner");
+    return application_q3_weapons_services_select_intent(role->weapon_services, actor,
+        pair->arsenal->owner, weapon->item, &admitted, error) && supply_current(pair, actor, error) &&
+        (admitted || application_fail(error, QA_ERROR_NOT_FOUND, "Selected original supply weapon was not admitted"));
 }
 static application_q3_pickups *original_q3_pickups(const supply_pair *pair) {
     struct application_q3_guest *engine = q3g_engine(pair->source);
@@ -1084,8 +1147,8 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
         !source->constructed || !arsenal->constructed || source->close_pending || arsenal->close_pending ||
         !source->product || !arsenal->product ||
         (source != arsenal && arsenal->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind != APPLICATION_PROVIDER_Q2 &&
-         arsenal->kind != APPLICATION_PROVIDER_Q3))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Supply preparation needs actual source and native arsenal owners");
+         arsenal->kind != APPLICATION_PROVIDER_Q3 && !original_q3_arsenal(arsenal)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Supply preparation needs actual source and qualified arsenal owners");
     if (pair_find(owner, source, arsenal)) return true;
     supply_pair *pair = calloc(1, sizeof(*pair));
     if (!pair) return application_fail(error, QA_ERROR_MEMORY, "Allocating selected supply pair");
@@ -1216,6 +1279,8 @@ bool application_supplies_admit(application_supplies *owner, application_provide
             ok = qa_q2_items_admit_player(arsenal->state.q2, actor, false, error);
         else if (arsenal->kind == APPLICATION_PROVIDER_Q3)
             ok = qa_q3_inventory_admit(arsenal->state.q3, actor, error);
+        else if (original_q3_arsenal(arsenal))
+            ok = application_guest_actor_admit(arsenal, actor, error);
         if (ok) ok = pair_current(pair, actor, error);
     }
     if (ok) ok = pair->native || (admission_entries(pair, actor, storage, &entries, &count, error) &&
@@ -1353,6 +1418,14 @@ bool application_supplies_weapon_droppable(const application_provider *provider,
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         return item != qa_q1_weapon_item(provider->state.q1, QA_Q1_ROGUE_GRAPPLE) &&
             item != qa_q1_weapon_item(provider->state.q1, QA_Q1_CTF_GRAPPLE);
+    q3g_role *role = original_q3_arsenal(provider);
+    if (role) {
+        const application_q3_catalog_weapon *weapons; size_t count;
+        if (!application_q3_catalog_weapons(role->catalog, &weapons, &count, NULL)) return false;
+        for (size_t i = 0; i < count; ++i)
+            if (weapons[i].item == item)
+                return weapons[i].weapon != QA_Q3_W_GAUNTLET && weapons[i].weapon != QA_Q3_W_GRAPPLE;
+    }
     return true;
 }
 
@@ -1413,26 +1486,26 @@ static int q2_rank(supply_pair *pair, qa_item_id item) {
         if (qa_q2_weapon_item(pair->arsenal->state.q2, q2_pickup_order[i], false) == item) return (int)i;
     return -1;
 }
-static bool arsenal_item(supply_pair *pair, qa_item_id item) {
+static bool arsenal_item(supply_pair *pair, qa_item_id item, bool *out, qa_error *error) {
     application_provider *arsenal = pair->arsenal;
+    *out = false;
     if (arsenal->kind == APPLICATION_PROVIDER_Q1) {
         for (int weapon = QA_Q1_AXE; weapon < QA_Q1_WEAPON_COUNT; ++weapon)
-            if (qa_q1_weapon_item(arsenal->state.q1, (qa_q1_weapon)weapon) == item) return true;
+            if (qa_q1_weapon_item(arsenal->state.q1, (qa_q1_weapon)weapon) == item) { *out = true; return true; }
         for (int ammo = QA_Q1_SHELLS; ammo < QA_Q1_AMMO_COUNT; ++ammo)
-            if (qa_q1_ammo_item(arsenal->state.q1, (qa_q1_ammo)ammo) == item) return true;
+            if (qa_q1_ammo_item(arsenal->state.q1, (qa_q1_ammo)ammo) == item) { *out = true; return true; }
     } else if (arsenal->kind == APPLICATION_PROVIDER_Q2) {
         for (int weapon = QA_Q2_BLASTER; weapon < QA_Q2_WEAPON_COUNT; ++weapon) {
             if (qa_q2_weapon_item(arsenal->state.q2, (qa_q2_weapon)weapon, false) == item ||
-                qa_q2_weapon_item(arsenal->state.q2, (qa_q2_weapon)weapon, true) == item) return true;
+                qa_q2_weapon_item(arsenal->state.q2, (qa_q2_weapon)weapon, true) == item) { *out = true; return true; }
         }
-    } else if (arsenal->kind == APPLICATION_PROVIDER_Q3) {
-        int limit = (arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
-            ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
-        for (int weapon = QA_Q3_W_GAUNTLET; weapon < limit; ++weapon)
-            if (qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)weapon, false) == item ||
-                qa_q3_weapon_item(arsenal->state.q3, (qa_q3_weapon)weapon, true) == item) return true;
+    } else if (arsenal->kind == APPLICATION_PROVIDER_Q3 || original_q3_arsenal(arsenal)) {
+        q3_supply_arsenal roster;
+        if (!q3_arsenal_read(pair, &roster, error)) return false;
+        for (size_t i = 0; i < roster.count; ++i)
+            if (roster.weapons[i].item == item || roster.weapons[i].ammo == item) { *out = true; break; }
     }
-    return false;
+    return true;
 }
 static bool source_item(const supply_pair *pair, qa_item_id item) {
     const qa_supply_mapping *lists[] = {pair->profile.weapons, pair->profile.ammo};
@@ -1587,7 +1660,7 @@ static bool cheat_quantity(const char *text, bool *present, double *out, qa_erro
 static bool cheat_write(supply_pair *pair, qa_actor_id actor, qa_inventory_entry entry,
     double count, qa_error *error) {
     entry.count = fmax(0, count);
-    entry.capacity = fmax(entry.capacity, entry.count);
+    if (!original_q3_arsenal(pair->arsenal)) entry.capacity = fmax(entry.capacity, entry.count);
     return qa_inventory_configure(pair->owner->inventory, actor, &entry, NULL, NULL, error) &&
         supply_current(pair, actor, error);
 }
@@ -1738,7 +1811,8 @@ bool application_supplies_cheat_item(void *context, qa_actor_id actor, size_t ar
     }
 done:
     if (okay && !*handled && (pair->arsenal->kind == APPLICATION_PROVIDER_Q1 ||
-        pair->arsenal->kind == APPLICATION_PROVIDER_Q2 || pair->arsenal->kind == APPLICATION_PROVIDER_Q3))
+        pair->arsenal->kind == APPLICATION_PROVIDER_Q2 || pair->arsenal->kind == APPLICATION_PROVIDER_Q3 ||
+        original_q3_arsenal(pair->arsenal)))
         okay = application_native_give_item(pair->source, actor, argc, argv, handled, error) &&
             supply_current(pair, actor, error);
     qa_unified_frame_lease_release(view.storage);
@@ -1827,8 +1901,9 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
         ok = application_fail(error, QA_ERROR_ARGUMENT,
             "Selected arsenal reset changed its retained inventory extent");
     for (size_t i = 0; ok && i < read_count; ++i) {
-        bool selected = arsenal_item(pair, entries[i].item);
-        bool clear = selected && (arsenal->kind == APPLICATION_PROVIDER_Q3 ||
+        bool selected;
+        if (!arsenal_item(pair, entries[i].item, &selected, error)) { ok = false; break; }
+        bool clear = selected && (arsenal->kind == APPLICATION_PROVIDER_Q3 || original_q3_arsenal(arsenal) ||
             (arsenal->kind == APPLICATION_PROVIDER_Q2 && family != QA_GAME_Q2));
         clear |= source->kind <= APPLICATION_PROVIDER_Q3 &&
             source_item(pair, entries[i].item) && !selected;
@@ -1873,17 +1948,23 @@ bool application_supplies_spawn(application_supplies *owner, application_provide
             &(qa_q2_weapon_state){.weapon = active, .phase = QA_Q2_ACTIVATING,
                 .gun_rate = 10, .kick_seconds = 0.2f}, error) && supply_current(pair, actor, error) &&
             qa_q2_clear_input(arsenal->state.q2, actor, error) && supply_current(pair, actor, error);
-    } else if (ok && arsenal->kind == APPLICATION_PROVIDER_Q3) {
+    } else if (ok && (arsenal->kind == APPLICATION_PROVIDER_Q3 || original_q3_arsenal(arsenal))) {
         qa_q3_weapon active = family == QA_GAME_Q1 ? QA_Q3_W_SHOTGUN : QA_Q3_W_MACHINEGUN;
-        ok = starter_count(pair, actor, qa_q3_weapon_item(arsenal->state.q3, QA_Q3_W_GAUNTLET, false),
-            1, false, error) &&
-            starter_count(pair, actor, qa_q3_weapon_item(arsenal->state.q3, active, false), 1, false, error) &&
-            starter_count(pair, actor, qa_q3_weapon_item(arsenal->state.q3, active, true),
-                family == QA_GAME_Q1 ? 25 : 100, false, error);
+        q3_supply_arsenal roster;
+        ok = q3_arsenal_read(pair, &roster, error);
+        const application_q3_catalog_weapon *gauntlet = ok ? q3_arsenal_weapon(&roster, QA_Q3_W_GAUNTLET) : NULL;
+        const application_q3_catalog_weapon *starter = ok ? q3_arsenal_weapon(&roster, active) : NULL;
+        if (ok && (!gauntlet || !starter || !starter->ammo))
+            ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Selected Q3 starter has no actual catalog weapon or ammunition");
+        if (ok) ok = starter_count(pair, actor, gauntlet->item, 1, false, error) &&
+            starter_count(pair, actor, starter->item, 1, false, error) &&
+            starter_count(pair, actor, starter->ammo, family == QA_GAME_Q1 ? 25 : 100, false, error);
         qa_q3_player_state player;
-        if (ok && !qa_q3_player_read(arsenal->state.q3, actor, &player))
+        if (ok && arsenal->kind != APPLICATION_PROVIDER_Q3)
+            ok = q3_request_weapon(pair, actor, starter, error);
+        else if (ok && !qa_q3_player_read(arsenal->state.q3, actor, &player))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 starter lost its actual arsenal state");
-        if (ok) {
+        if (ok && arsenal->kind == APPLICATION_PROVIDER_Q3) {
             player.weapon = player.requested_weapon = active;
             player.weapon_phase = QA_Q3_READY;
             player.weapon_time_ms = 0;
@@ -1936,47 +2017,52 @@ static bool q2_weapon_receipts(supply_pair *pair, qa_actor_id actor,
     }
     return true;
 }
-static int q3_weapon_limit(const supply_pair *pair) {
-    return (pair->arsenal->product->campaign_id == QA_CAMPAIGN_MISSIONPACK)
-        ? QA_Q3_WEAPON_COUNT : QA_Q3_W_GRAPPLE + 1;
-}
 static bool q3_best_weapon(supply_pair *pair, qa_actor_id actor,
-    const qa_pickup_receipt *receipts, size_t count, qa_q3_weapon *out, qa_error *error) {
+    const qa_pickup_receipt *receipts, size_t count, int32_t *out, qa_error *error) {
     *out = QA_Q3_W_NONE;
-    for (int weapon = q3_weapon_limit(pair) - 1; weapon > QA_Q3_W_NONE; --weapon) {
-        qa_item_id item = qa_q3_weapon_item(pair->arsenal->state.q3, (qa_q3_weapon)weapon, false);
+    q3_supply_arsenal arsenal;
+    if (!q3_arsenal_read(pair, &arsenal, error)) return false;
+    int32_t ceiling = INT32_MAX;
+    for (size_t i = 0; i < arsenal.count; ++i) {
+        const application_q3_catalog_weapon *next = NULL;
+        for (size_t j = 0; j < arsenal.count; ++j)
+            if (arsenal.weapons[j].weapon < ceiling && (!next || arsenal.weapons[j].weapon > next->weapon))
+                next = arsenal.weapons + j;
+        if (!next) break;
+        application_q3_catalog_weapon weapon = *next;
+        ceiling = weapon.weapon;
         double owned;
-        if (!qa_inventory_count_read(pair->owner->inventory, actor, item, &owned, error) ||
+        if (!qa_inventory_count_read(pair->owner->inventory, actor, weapon.item, &owned, error) ||
             !supply_current(pair, actor, error)) return false;
         if (owned <= 0) continue;
-        qa_item_id ammo = qa_q3_weapon_item(pair->arsenal->state.q3, (qa_q3_weapon)weapon, true);
-        if (ammo) {
+        if (weapon.ammo) {
             double available = 0; bool found = false;
-            for (size_t i = 0; i < count; ++i)
-                if (receipts[i].item == ammo) { available = receipts[i].before; found = true; break; }
-            if (!found && (!qa_inventory_count_read(pair->owner->inventory, actor, ammo, &available, error) ||
+            for (size_t j = 0; j < count; ++j)
+                if (receipts[j].item == weapon.ammo) { available = receipts[j].before; found = true; break; }
+            if (!found && (!qa_inventory_count_read(pair->owner->inventory, actor, weapon.ammo, &available, error) ||
                 !supply_current(pair, actor, error))) return false;
             if (available <= 0) continue;
         }
-        *out = (qa_q3_weapon)weapon; break;
+        *out = weapon.weapon;
+        break;
     }
     return true;
 }
 static bool q3_weapon_receipts(supply_pair *pair, qa_actor_id actor,
     const qa_item_id *items, size_t count, qa_pickup_selection_mode selection, qa_error *error) {
     if (selection == QA_PICKUP_SWITCH_NEVER) return true;
-    qa_q3_player_state player;
-    if (!qa_q3_player_read(pair->arsenal->state.q3, actor, &player))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 pickup receipt lost its arsenal actor");
-    qa_q3_weapon next = QA_Q3_W_NONE;
-    for (int weapon = q3_weapon_limit(pair) - 1; next == QA_Q3_W_NONE && weapon > QA_Q3_W_NONE; --weapon) {
-        qa_item_id item = qa_q3_weapon_item(pair->arsenal->state.q3, (qa_q3_weapon)weapon, false);
-        for (size_t i = 0; i < count; ++i)
-            if (items[i] == item) { next = (qa_q3_weapon)weapon; break; }
+    int32_t active;
+    q3_supply_arsenal arsenal;
+    if (!q3_active_weapon(pair, actor, &active, error) || !q3_arsenal_read(pair, &arsenal, error)) return false;
+    const application_q3_catalog_weapon *next = NULL;
+    for (size_t i = 0; i < arsenal.count; ++i) {
+        const application_q3_catalog_weapon *weapon = arsenal.weapons + i;
+        if (next && weapon->weapon <= next->weapon) continue;
+        for (size_t j = 0; j < count; ++j)
+            if (items[j] == weapon->item) { next = weapon; break; }
     }
-    return next == QA_Q3_W_NONE || (selection != QA_PICKUP_SWITCH_ALWAYS && next <= player.weapon) ||
-        (qa_q3_player_request_weapon(pair->arsenal->state.q3, actor, next, error) &&
-            supply_current(pair, actor, error));
+    return !next || (selection != QA_PICKUP_SWITCH_ALWAYS && next->weapon <= active) ||
+        q3_request_weapon(pair, actor, next, error);
 }
 static bool q1_source_preference(supply_pair *pair, qa_actor_id actor,
     qa_q1_auto_switch *value, const qa_q1_auto_switch **out, qa_error *error) {
@@ -2007,22 +2093,22 @@ static bool ammo_apply(supply_pair *pair, qa_actor_id actor,
                 return q2_weapon_receipts(pair, actor, &grenades, 1, QA_PICKUP_SWITCH_IF_BETTER, error);
         return true;
     }
-    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3) {
+    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3 || original_q3_arsenal(pair->arsenal)) {
         qa_q1_auto_switch value;
         const qa_q1_auto_switch *preference;
         if (!q1_source_preference(pair, actor, &value, &preference, error)) return false;
         if (preference && *preference == QA_Q1_SWITCH_NEVER) auto_switch = false;
         if (!auto_switch) return true;
-        qa_q3_weapon before, after;
-        qa_q3_player_state player;
+        int32_t before, after, active;
         if (!q3_best_weapon(pair, actor, receipts, count, &before, error)) return false;
-        if (!qa_q3_player_read(pair->arsenal->state.q3, actor, &player))
-            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 ammunition receipt lost its actual arsenal player");
-        if (before == QA_Q3_W_NONE || player.weapon != before) return true;
+        if (!q3_active_weapon(pair, actor, &active, error)) return false;
+        if (before == QA_Q3_W_NONE || active != before) return true;
         if (!q3_best_weapon(pair, actor, NULL, 0, &after, error)) return false;
-        return after == QA_Q3_W_NONE ||
-            (qa_q3_player_request_weapon(pair->arsenal->state.q3, actor, after, error) &&
-             supply_current(pair, actor, error));
+        if (after == QA_Q3_W_NONE) return true;
+        q3_supply_arsenal arsenal;
+        if (!q3_arsenal_read(pair, &arsenal, error)) return false;
+        const application_q3_catalog_weapon *weapon = q3_arsenal_weapon(&arsenal, after);
+        return weapon && q3_request_weapon(pair, actor, weapon, error);
     }
     return application_fail(error, QA_ERROR_ARGUMENT, "Pickup receipt has no native selected arsenal");
 }
@@ -2073,7 +2159,7 @@ static bool weapon_granted(void *context, qa_actor_id actor,
     }
     if (pair->arsenal->kind == APPLICATION_PROVIDER_Q2)
         return q2_weapon_receipts(pair, actor, items, count, selection, error);
-    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3)
+    if (pair->arsenal->kind == APPLICATION_PROVIDER_Q3 || original_q3_arsenal(pair->arsenal))
         return q3_weapon_receipts(pair, actor, items, count, selection, error);
     return application_fail(error, QA_ERROR_ARGUMENT, "Pickup receipt has no native selected arsenal");
 }

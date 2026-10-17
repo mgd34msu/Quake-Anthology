@@ -167,13 +167,16 @@ bool application_q3_guest_client_sources_retire(application_provider *provider,
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine) return true;
     qa_application *application = provider->application;
-    if (!provider->constructed || engine->calls || engine->restore_pending || engine->draining_clients ||
+    if (!provider->constructed || engine->calls || engine->draining_clients ||
+        (engine->restore_pending && application->operation != APPLICATION_DESTROYING) ||
         (application->operation != APPLICATION_CONFIGURING && application->operation != APPLICATION_DESTROYING) ||
         !qa_session_safe(application->session) || !qa_world_idle(engine->world) ||
         !application_q3_guest_idle(provider) ||
         (old_game && old_game->application != application) ||
         (next_game && (next_game->application != application || !choices)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client source retirement requires its actual world cut");
+    /* Unfinished restored roles retire through checked provider deconstruction. */
+    if (engine->restore_pending) return true;
     if (!application_guest_q3_client_consoles_retarget(engine, old_game, next_game, choices, error)) return false;
     for (q3g_role *role = engine->roles; role; role = role->next) {
         if (role->kind != QA_QVM_UI || !role->local_client || role->retired) continue;
@@ -464,7 +467,7 @@ bool application_q3_guest_round_reset(application_provider *provider, qa_error *
                 return q3g_round_fail(engine, error, error);
             game->projection->actors = context->next;
             qa_actor_index_forget_retained(&game->projection->actor_contexts, context->actor);
-            free(context);
+        qa_pool_release(&game->projection->actor_pool, context->storage_slot);
         }
     }
     if (!qa_q3_host_round_reset(game->host,

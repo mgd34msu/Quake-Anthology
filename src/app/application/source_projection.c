@@ -90,32 +90,41 @@ bool application_source_projection_publish(const application_source_projection *
     uint32_t slot, const qa_body_state *body, const int32_t *health,
     uint64_t time_ns, qa_error *error)
 {
-    projection_record record; qa_q3_entity entity; qa_qvm_entity_shared shared;
-    if (!record_open(source, slot, &record, error) ||
-        !qa_q3_abi_read_entity(&record.abi, 0, true, &entity, error) ||
-        !qa_q3_abi_read_shared_entity(&record.abi, 0, &shared, error)) return false;
-    shared.origin = body->origin; shared.angles = body->angles;
-    shared.local_bounds = body->bounds;
-    shared.absolute_bounds = (qa_bounds){qa_vec_add(body->origin, body->bounds.mins),
-        qa_vec_add(body->origin, body->bounds.maxs)};
-    entity.pos.time = (int32_t)(time_ns / UINT64_C(1000000));
-    entity.pos.base[0] = entity.origin[0] = body->origin.x;
-    entity.pos.base[1] = entity.origin[1] = body->origin.y;
-    entity.pos.base[2] = entity.origin[2] = body->origin.z;
-    entity.pos.delta[0] = body->velocity.x; entity.pos.delta[1] = body->velocity.y;
-    entity.pos.delta[2] = body->velocity.z;
-    entity.angles[0] = body->angles.x; entity.angles[1] = body->angles.y;
-    entity.angles[2] = body->angles.z;
-    return qa_q3_abi_write_entity(&record.abi, 0, true, &entity, error) &&
-        qa_q3_abi_write_shared_entity(&record.abi, 0, &shared, error) &&
-        (!health || record_word(&record, source->health, *health, error));
+    projection_record record;
+    if (!record_open(source, slot, &record, error)) return false;
+    if (body) {
+        qa_q3_entity entity; qa_qvm_entity_shared shared;
+        if (!qa_q3_abi_read_entity(&record.abi, 0, true, &entity, error) ||
+            !qa_q3_abi_read_shared_entity(&record.abi, 0, &shared, error)) return false;
+        shared.origin = body->origin; shared.angles = body->angles;
+        shared.local_bounds = body->bounds;
+        shared.absolute_bounds = (qa_bounds){qa_vec_add(body->origin, body->bounds.mins),
+            qa_vec_add(body->origin, body->bounds.maxs)};
+        entity.number = (int32_t)slot;
+        entity.pos.time = (int32_t)(time_ns / UINT64_C(1000000));
+        entity.pos.base[0] = entity.origin[0] = body->origin.x;
+        entity.pos.base[1] = entity.origin[1] = body->origin.y;
+        entity.pos.base[2] = entity.origin[2] = body->origin.z;
+        entity.pos.delta[0] = body->velocity.x; entity.pos.delta[1] = body->velocity.y;
+        entity.pos.delta[2] = body->velocity.z;
+        entity.angles[0] = body->angles.x; entity.angles[1] = body->angles.y;
+        entity.angles[2] = body->angles.z;
+        if (!qa_q3_abi_write_entity(&record.abi, 0, true, &entity, error) ||
+            !qa_q3_abi_write_shared_entity(&record.abi, 0, &shared, error)) return false;
+    }
+    return (!health || record_word(&record, source->health, *health, error)) &&
+        (!source->takedamage || record_word(&record, source->takedamage, source->can_take_damage, error));
 }
 
 bool application_source_projection_keep(const application_source_projection *source,
     uint32_t slot, qa_error *error)
 {
-    projection_record record;
-    return record_open(source, slot, &record, error) && record_word(&record, source->inuse, 1, error);
+    projection_record record; qa_q3_entity entity;
+    if (!record_open(source, slot, &record, error) ||
+        !qa_q3_abi_read_entity(&record.abi, 0, true, &entity, error)) return false;
+    entity.number = (int32_t)slot;
+    return qa_q3_abi_write_entity(&record.abi, 0, true, &entity, error) &&
+        record_word(&record, source->inuse, 1, error);
 }
 
 bool application_source_projection_release(const application_source_projection *source,
