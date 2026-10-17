@@ -1591,7 +1591,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         qa_entity_record record = entities->records[i]; int32_t reference;
         if (record.property_count == 0 && i != 0) continue;
         if (!qa_qc_game_spawn_entity(provider->state.qc.game, i == 0,
-            entities->properties + record.first_property, record.property_count, &reference, error)) return false;
+            entities->properties + record.first_property, record.property_count, &reference, error) ||
+            !application_qc_flush_signon(engine, error)) return false;
     }
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
     if (!application_qc_precache_bind(engine, error)) return false;

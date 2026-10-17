@@ -554,12 +554,13 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         message->destination = qa_net_read_u32(&reader);
         ok = message->destination <= 4 && (candidate.profile == QA_QC_QUAKEWORLD || message->destination != 4) &&
              read_actor(&reader, actors, false, &message->recipient);
-        message->capacity = qa_net_read_u32(&reader); message->size = qa_net_read_u32(&reader);
+        uint32_t saved_capacity = qa_net_read_u32(&reader); message->size = qa_net_read_u32(&reader);
         uint8_t overflowed = qa_net_read_u8(&reader); message->overflowed = overflowed != 0;
-        size_t maximum = candidate.profile == QA_QC_QUAKEWORLD ?
-            message->destination == 1 ? 1450u * 5u : message->destination == 0 || message->destination == 3 ? 1024u : 1450u :
-            message->destination == 0 || message->destination == 2 ? 1024u : 8000u;
-        ok = ok && message->capacity == maximum && message->size <= maximum && overflowed <= 1 &&
+        message->capacity = application_qc_message_capacity(candidate.profile, message->destination);
+        bool legacy_capacity = candidate.profile == QA_QC_QUAKEWORLD &&
+            (message->destination == 0 || message->destination == 3) && saved_capacity == 1024;
+        ok = ok && (saved_capacity == message->capacity || legacy_capacity) &&
+             message->size <= saved_capacity && overflowed <= 1 &&
              (message->destination == 1 ? message->recipient.registry != 0 : message->recipient.registry == 0);
         if (ok) ok = qa_net_read_data(&reader, message->data, message->size);
         uint32_t references = ok ? qa_net_read_u32(&reader) : 0;

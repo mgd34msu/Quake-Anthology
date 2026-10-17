@@ -49,6 +49,7 @@ typedef struct application_qc_message {
     qa_application_protocol_reference *references;
     size_t reference_count, reference_capacity;
 } application_qc_message;
+enum { QC_QW_MESSAGE_BYTES = 1450, QC_QW_SIGNON_RESERVE = 512 };
 typedef struct application_qc_actor {
     struct application_qc_state *engine;
     qa_actor_id actor;
@@ -145,6 +146,8 @@ bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
 bool application_qc_source_globals(application_provider *, qa_error *);
 bool application_qc_npc_restore_finish(application_provider *, qa_error *);
 bool application_qc_flush(struct application_qc_state *, qa_error *);
+bool application_qc_flush_signon(struct application_qc_state *, qa_error *);
+size_t application_qc_message_capacity(qa_qc_profile, uint32_t destination);
 bool application_qc_messages_create(struct application_qc_state *, qa_error *);
 void application_qc_messages_reset(struct application_qc_state *);
 void application_qc_messages_destroy(struct application_qc_state *);

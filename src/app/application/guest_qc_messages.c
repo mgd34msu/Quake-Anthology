@@ -1,9 +1,15 @@
 #include "guest_qc_internal.h"
 
+size_t application_qc_message_capacity(qa_qc_profile profile, uint32_t destination)
+{
+    if (profile == QA_QC_QUAKEWORLD) return QC_QW_MESSAGE_BYTES * (destination == 1 ? 5u : 1u);
+    return destination == 0 || destination == 2 ? 1024u : 8000u;
+}
+
 bool application_qc_messages_create(struct application_qc_state *engine, qa_error *error)
 {
     size_t count = (size_t)engine->max_clients + 4;
-    size_t bytes = engine->profile == QA_QC_QUAKEWORLD ? 1450u * 5u : 8000u;
+    size_t bytes = application_qc_message_capacity(engine->profile, 1);
     size_t references = bytes * (engine->profile == QA_QC_QUAKEWORLD ? 2u : 1u);
     engine->messages = calloc(count, sizeof(*engine->messages));
     if (!engine->messages)
@@ -77,9 +83,7 @@ static bool message_target(struct application_qc_state *engine, qa_qc_instance *
     for (size_t i = 0; i < engine->message_count; ++i)
         if (engine->messages[i].destination == destination &&
             qa_actor_id_equal(engine->messages[i].recipient, recipient)) { *out = &engine->messages[i]; return true; }
-    size_t maximum = engine->profile == QA_QC_QUAKEWORLD ?
-        destination == 1 ? 1450u * 5u : destination == 0 || destination == 3 ? 1024u : 1450u :
-        destination == 0 || destination == 2 ? 1024u : 8000u;
+    size_t maximum = application_qc_message_capacity(engine->profile, destination);
     application_qc_message *message = &engine->messages[engine->message_count++];
     uint8_t *data = message->data;
     qa_application_protocol_reference *references = message->references;
@@ -174,6 +178,10 @@ bool application_qc_write_message(struct application_qc_state *engine, qa_qc_ins
 static bool publish(struct application_qc_state *engine, application_qc_message *message,
                      bool multicast, qa_vec3 origin, int32_t mode, qa_error *error)
 {
+    if (engine->profile == QA_QC_QUAKEWORLD && message->destination == 0 && message->overflowed) {
+        message->size = 0; message->reference_count = 0; message->overflowed = false;
+        return true;
+    }
     if (message->size == 0) return true;
     qa_application_protocol_event event = {.recipient = message->recipient, .origin = origin,
         .payload = {message->data, message->size}, .destination = multicast ? mode : (int32_t)message->destination,
@@ -182,6 +190,16 @@ static bool publish(struct application_qc_state *engine, application_qc_message 
         .multicast = multicast, .signon = message->destination == 3};
     if (!application_emit_protocol(engine->provider, &event, error)) return false;
     message->size = 0; message->reference_count = 0; message->overflowed = false; return true;
+}
+bool application_qc_flush_signon(struct application_qc_state *engine, qa_error *error)
+{
+    if (engine->profile != QA_QC_QUAKEWORLD) return true;
+    for (size_t i = 0; i < engine->message_count; ++i) {
+        application_qc_message *message = &engine->messages[i];
+        if (message->destination != 3 || message->size < message->capacity - QC_QW_SIGNON_RESERVE) continue;
+        if (!publish(engine, message, false, qa_v3(0, 0, 0), 0, error)) return false;
+    }
+    return true;
 }
 bool application_qc_flush(struct application_qc_state *engine, qa_error *error)
 {

@@ -589,7 +589,8 @@ bool application_qc_initialize_declared(struct application_qc_state *engine, qa_
     if (!application_qc_prepare_markers(engine, error)) return false;
     if (!engine->initialized) {
         application_qc_inputs inputs = {.time_ns = engine->source_time_ns};
-        if (!application_qc_run_calls(engine, &profile->initialize, &inputs, error)) return false;
+        if (!application_qc_run_calls(engine, &profile->initialize, &inputs, error) ||
+            !application_qc_flush_signon(engine, error)) return false;
         engine->initialized = true;
     }
     return true;
@@ -602,6 +603,7 @@ static bool initialize_declared_map_context(struct application_qc_state *engine,
     const char *path = qa_strings_cstr(qa_session_strings(engine->services.session), map);
     if (!profile || !path || !qa_qc_game_loading(engine->provider->state.qc.game, true, error)) return false;
     engine->loading = true; qa_cvars_set_server_active(engine->cvars, false);
+    application_qc_messages_reset(engine);
     engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
     if (!engine->source_time_ns) engine->source_time_ns = UINT64_C(1000000000);
     qa_qc_instance *vm = engine->provider->state.qc.instance;

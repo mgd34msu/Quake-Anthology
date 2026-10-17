@@ -410,21 +410,31 @@ qa_network_qw_server_hooks frontend_qw_peer_hooks(qw_frontend_peer *peer)
             .disconnect = signon_disconnect, .open_download = open_download}};
 }
 
-static bool add_signon(frontend_qw_host *host, qa_bytes bytes, qa_error *error)
+static bool add_signon(frontend_qw_host *host, qa_qw_decoder *decoder, qa_bytes bytes, qa_error *error)
 {
     if (!bytes.size) return true;
-    if (!bytes.data || bytes.size > QW_SIGNON)
-        return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source signon record exceeds its factory block");
-    if (!host->signon_count || host->signon[host->signon_count - 1].size + bytes.size > QW_SIGNON) {
-        size_t count = host->signon_count + 1;
-        qa_buffer *next = realloc(host->signon, count * sizeof(*next));
-        if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable signon blocks");
-        host->signon = next; host->signon[host->signon_count] = (qa_buffer){0}; host->signon_count = count;
+    if (!bytes.data) return frontend_fail(error, QA_ERROR_FORMAT, "QuakeWorld source signon bytes are absent");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    while (qa_net_reader_remaining(&reader)) {
+        size_t start = reader.bit / 8;
+        qa_qw_service service;
+        if (!qa_qw_service_read(&reader, decoder, 0, &service)) return false;
+        size_t size = reader.bit / 8 - start;
+        if (size > QW_MESSAGE)
+            return frontend_fail(error, QA_ERROR_UNSUPPORTED,
+                "QuakeWorld signon service exceeds the legacy reliable message capacity");
+        if (!host->signon_count || host->signon[host->signon_count - 1].size + size > QW_SIGNON) {
+            size_t count = host->signon_count + 1;
+            qa_buffer *next = realloc(host->signon, count * sizeof(*next));
+            if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable signon blocks");
+            host->signon = next; host->signon[host->signon_count] = (qa_buffer){0}; host->signon_count = count;
+        }
+        qa_buffer *last = host->signon + host->signon_count - 1;
+        void *next = realloc(last->data, last->size + size);
+        if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable source signon bytes");
+        last->data = next; memcpy(last->data + last->size, bytes.data + start, size); last->size += size;
     }
-    qa_buffer *last = host->signon + host->signon_count - 1;
-    void *next = realloc(last->data, last->size + bytes.size);
-    if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable source signon bytes");
-    last->data = next; memcpy(last->data + last->size, bytes.data, bytes.size); last->size += bytes.size; return true;
+    return qa_net_reader_finish(&reader);
 }
 static bool capture_factory(frontend_qw_host *host, qa_error *error)
 {
@@ -454,20 +464,25 @@ static bool capture_factory(frontend_qw_host *host, qa_error *error)
             .colormap = entity.colormap, .skin = entity.skin};
         memcpy(baseline->origin, entity.origin, sizeof(baseline->origin)); memcpy(baseline->angles, entity.angles, sizeof(baseline->angles));
     }
-    for (size_t i = 0; i < host->baseline_count; ++i) {
+    qa_qw_decoder *decoder = qa_qw_decoder_create(world.protocol, error);
+    if (!decoder) return false;
+    bool ok = qa_qw_decoder_set_player_model(decoder, host->player_model, error);
+    for (size_t i = 0; ok && i < host->baseline_count; ++i) {
         uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-        if (!qa_qw_source_write_baseline(&writer, host->baselines + i) ||
-            !add_signon(host, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error)) return false;
+        ok = qa_qw_source_write_baseline(&writer, host->baselines + i) &&
+            add_signon(host, decoder, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
     }
-    size_t count;
-    if (!qa_application_network_qw_signon_count(host->frontend->application, &count, error)) return false;
-    for (size_t i = 0; i < count; ++i) {
+    size_t count = 0;
+    if (ok) ok = qa_application_network_qw_signon_count(host->frontend->application, &count, error);
+    for (size_t i = 0; ok && i < count; ++i) {
         qa_application_protocol_event event;
         uint8_t bytes[QA_APPLICATION_PROTOCOL_SCRATCH_BYTES]; qa_net_writer writer;
         qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
-        if (!qa_application_network_qw_signon_at(host->frontend->application, i, &event, error) ||
-            !qa_application_protocol_event_encode(&event, &writer) || !add_signon(host, event.payload, error)) return false;
+        ok = qa_application_network_qw_signon_at(host->frontend->application, i, &event, error) &&
+            qa_application_protocol_event_encode(&event, &writer) && add_signon(host, decoder, event.payload, error);
     }
+    qa_qw_decoder_destroy(decoder);
+    if (!ok) return false;
     host->signon_views = calloc(host->signon_count, sizeof(*host->signon_views));
     if (host->signon_count && !host->signon_views) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining QuakeWorld immutable signon views");
     for (size_t i = 0; i < host->signon_count; ++i) host->signon_views[i] = (qa_bytes){host->signon[i].data, host->signon[i].size};

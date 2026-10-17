@@ -89,6 +89,7 @@
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
 #include "qa/network_qw_source.h"
+#include "qa/network_q1_session.h"
 #include "../src/world/collision/internal.h"
 #include "qa/network_q2_kex.h"
 #include "qa/network_q2_messages.h"
@@ -9990,6 +9991,63 @@ static void test_browser_lan_overlap(void)
     qa_server_browser_destroy(browser); CHECK(qa_http_destroy(http, &error));
 }
 
+typedef struct qw_signon_capture {
+    qa_bytes block;
+    uint8_t messages[2][1450];
+    size_t sizes[2], count;
+} qw_signon_capture;
+static bool qw_signon_data(void *context, qa_qw_serverdata *out, qa_error *error) {
+    (void)context; (void)error;
+    *out=(qa_qw_serverdata){.protocol={.kind=QA_NET_QW28},.server_count=7};return true;
+}
+static bool qw_signon_names(void *context, bool models, const char *const **out,
+    size_t *count, qa_error *error) {
+    (void)context;(void)models;(void)error;*out=NULL;*count=0;return true;
+}
+static bool qw_signon_buffers(void *context, const qa_bytes **out, size_t *count, qa_error *error) {
+    (void)error;*out=&((qw_signon_capture *)context)->block;*count=1;return true;
+}
+static bool qw_signon_checksum(void *context, uint32_t checksum) {
+    (void)context;return checksum==0;
+}
+static bool qw_signon_spawn(void *context, uint8_t start, qa_q1_emit_fn emit, void *user, qa_error *error) {
+    (void)context;(void)start;(void)emit;(void)user;(void)error;return true;
+}
+static bool qw_signon_begin(void *context, qa_error *error) {(void)context;(void)error;return true;}
+static void qw_signon_disconnect(void *context, const char *reason) {(void)context;(void)reason;}
+static bool qw_signon_download(void *context, const char *name, bool *found,
+    qa_qw_download *out, qa_error *error) {
+    (void)context;(void)name;(void)out;(void)error;*found=false;return true;
+}
+static bool qw_signon_emit(void *context, qa_bytes bytes, qa_error *error) {
+    (void)error;qw_signon_capture *capture=context;
+    if(capture->count>=2 || bytes.size>sizeof(capture->messages[0]))return false;
+    memcpy(capture->messages[capture->count],bytes.data,bytes.size);
+    capture->sizes[capture->count++]=bytes.size;return true;
+}
+static void test_qw_full_signon_block(void) {
+    qa_error error={0};qa_qw_signon *signon=NULL;bool handled=false;
+    uint8_t bytes[1450];memset(bytes,1,sizeof(bytes));
+    qw_signon_capture capture={.block={bytes,sizeof(bytes)}};
+    qa_qw_signon_host host={.user=&capture,.server_data=qw_signon_data,.names=qw_signon_names,
+        .buffers=qw_signon_buffers,.accepts_checksum=qw_signon_checksum,.spawn=qw_signon_spawn,
+        .begin=qw_signon_begin,.disconnect=qw_signon_disconnect,.open_download=qw_signon_download};
+    CHECK(qa_qw_signon_create(&host,false,&signon,&error));
+    CHECK(qa_qw_signon_command(signon,"prespawn 7 0 0",qw_signon_emit,&capture,&handled,&error));
+    CHECK(handled && capture.count==2 && capture.sizes[0]==sizeof(bytes));
+    CHECK(memcmp(capture.messages[0],bytes,sizeof(bytes))==0 && !qa_qw_signon_spawned(signon));
+    qa_qw_decoder *decoder=qa_qw_decoder_create((qa_net_protocol_id){.kind=QA_NET_QW28},&error);
+    CHECK(decoder!=NULL);
+    qa_net_reader reader;qa_net_reader_init(&reader,(qa_bytes){capture.messages[1],capture.sizes[1]},&error);
+    qa_qw_service service;
+    CHECK(qa_qw_service_read(&reader,decoder,0,&service) && service.kind==QA_QW_STUFFTEXT);
+    CHECK(qa_net_reader_finish(&reader));
+    capture.count=0;capture.block.size=1400;
+    CHECK(qa_qw_signon_command(signon,"prespawn 7 0 0",qw_signon_emit,&capture,&handled,&error));
+    CHECK(handled && capture.count==1 && capture.sizes[0]>1400 && capture.sizes[0]<=1450);
+    CHECK(memcmp(capture.messages[0],bytes,1400)==0);
+    qa_qw_decoder_destroy(decoder);qa_qw_signon_destroy(signon);
+}
 static void test_q3_demo_clock_freeze(void) {
     qa_error error = {0};
     qa_q3_client_clock clock = {0};
@@ -10105,6 +10163,7 @@ int main(int argc, char **argv)
     test_shared_cvar_archive();
     test_cvar_restart_removal();
     test_socks_transport_pending();
+    test_qw_full_signon_block();
     test_q3_demo_clock_freeze();
     test_runtime_server_settings();
     test_shared_cvar_save();

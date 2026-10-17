@@ -211,9 +211,16 @@ bool qa_qw_signon_command(qa_qw_signon *s, const char *text, qa_q1_emit_fn emit,
             !s->host.accepts_checksum(s->host.user,(uint32_t)checksum))) {
             s->host.disconnect(s->host.user,"Map model file does not match"); return true;
         }
-        if (count) qa_net_write_data(&w,buffers[index].data,buffers[index].size);
         if (index+1>=count) snprintf(command_line,sizeof(command_line),"cmd spawn %" PRId32 " 0\n",data.server_count);
         else snprintf(command_line,sizeof(command_line),"cmd prespawn %" PRId32 " %zu\n",data.server_count,index+1);
+        if (count) {
+            if (buffers[index].size>sizeof(bytes)) {
+                qa_error_set(e,QA_ERROR_CAPACITY,0,"QuakeWorld signon block exceeds reliable message capacity"); return false;
+            }
+            if (buffers[index].size>sizeof(bytes)-strlen(command_line)-2) {
+                if (!emit(user,buffers[index],e)) return false;
+            } else qa_net_write_data(&w,buffers[index].data,buffers[index].size);
+        }
         qa_net_write_u8(&w,9); qa_net_write_string(&w,command_line);
         return emit_writer(&w,emit,user,e);
     }
