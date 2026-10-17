@@ -205,6 +205,7 @@ static unsigned qa_unicorn_arithmetic_exceptions(float_status *status)
 {
     int flags = get_float_exception_flags(status);
     return ((flags & float_flag_invalid) ? FPUS_IE : 0) |
+        ((flags & float_flag_divbyzero) ? FPUS_ZE : 0) |
         ((flags & float_flag_overflow) ? FPUS_OE : 0) |
         ((flags & float_flag_underflow) ? FPUS_UE : 0) |
         ((flags & float_flag_inexact) ? FPUS_PE : 0);
@@ -217,7 +218,9 @@ static floatx80 qa_unicorn_arithmetic_value(int operation, floatx80 left,
     case 0: return floatx80_add(left, right, status);
     case 1: return floatx80_mul(left, right, status);
     case 4: return floatx80_sub(left, right, status);
-    default: return floatx80_sub(right, left, status);
+    case 5: return floatx80_sub(right, left, status);
+    case 6: return floatx80_div(left, right, status);
+    default: return floatx80_div(right, left, status);
     }
 }
 
@@ -229,27 +232,25 @@ static int qa_unicorn_arithmetic_normalize(floatx80 *source)
     return exponent;
 }
 
-/* Change the product exponent without rounding either operand. Normalize
- * subnormal inputs, then distribute the requested shift so both operands
- * remain normal binary80 values for the existing SoftFloat multiplication.
- * For a wrapped product the adjusted exponent sum is within [-8314,8194],
- * so a distribution inside the two normal operand ranges always exists. */
-static void qa_unicorn_fmul_rescale(floatx80 *left, floatx80 *right, int adjustment)
+/* Change a product or quotient exponent without rounding either operand.
+ * Normalize subnormal inputs, then distribute the requested shift so both
+ * factors remain normal binary80 inputs to the existing SoftFloat kernel.
+ * Wrapped exponent sums/differences lie within [-8314,8252], so they always
+ * fit inside the two normal operand ranges. */
+static void qa_unicorn_product_rescale(floatx80 *left, floatx80 *right,
+    int adjustment, bool quotient)
 {
     int left_exponent = qa_unicorn_arithmetic_normalize(left);
     int right_exponent = qa_unicorn_arithmetic_normalize(right);
-    int sum = left_exponent + right_exponent + adjustment;
+    int right_sign = quotient ? -1 : 1;
+    int combined = left_exponent + right_sign * right_exponent + adjustment;
     left_exponent += adjustment;
     if (left_exponent < -16382) left_exponent = -16382;
     if (left_exponent > 16383) left_exponent = 16383;
-    right_exponent = sum - left_exponent;
-    if (right_exponent < -16382) {
-        left_exponent -= -16382 - right_exponent;
-        right_exponent = -16382;
-    } else if (right_exponent > 16383) {
-        left_exponent += right_exponent - 16383;
-        right_exponent = 16383;
-    }
+    right_exponent = right_sign * (combined - left_exponent);
+    if (right_exponent < -16382) right_exponent = -16382;
+    if (right_exponent > 16383) right_exponent = 16383;
+    left_exponent = combined - right_sign * right_exponent;
     left->high = (left->high & 0x8000) | (left_exponent + 16383);
     right->high = (right->high & 0x8000) | (right_exponent + 16383);
 }
@@ -274,8 +275,8 @@ static void qa_unicorn_sum_rescale(floatx80 *source, int adjustment)
  * bits and the translator's op>>4 format: f32, i32, f64, i16. Converting it
  * here preserves SNaN and denormal admission before the destination changes.
  * Operations use the translator's selectors: 0 add, 1 multiply, 4 subtract,
- * 5 reverse subtract. Register, memory, integer and popping forms share
- * operand admission, SoftFloat computation and architectural publication. */
+ * 5 reverse subtract, 6 divide, 7 reverse divide. Register, memory, integer
+ * and popping forms share admission, computation and publication. */
 static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
     int destination, int source, bool pop, int format, uint64_t bits,
     uintptr_t retaddr)
@@ -322,6 +323,15 @@ static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
         exceptions = qa_unicorn_arithmetic_exceptions(&status);
         goto finish;
     }
+    /* Real ZE takes precedence over DE, even for a denormal numerator.
+     * SoftFloat distinguishes finite/zero from invalid 0/0 and infinity/0;
+     * unlike the old helper, merely having a zero divisor does not set ZE. */
+    if ((operation == 6 && floatx80_is_zero(right)) ||
+        (operation == 7 && floatx80_is_zero(left))) {
+        value = qa_unicorn_arithmetic_value(operation, left, right, &status);
+        exceptions = qa_unicorn_arithmetic_exceptions(&status);
+        goto finish;
+    }
     bool denormal_left = qa_unicorn_x87_denormal(&left);
     bool denormal_right = qa_unicorn_x87_denormal(&right);
     if (memory_denormal || denormal_left || denormal_right) {
@@ -331,7 +341,7 @@ static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
     set_float_exception_flags(0, &status);
     value = qa_unicorn_arithmetic_value(operation, left, right, &status);
     exceptions = qa_unicorn_arithmetic_exceptions(&status);
-    if (!(exceptions & FPUS_IE)) {
+    if (!(exceptions & (FPUS_IE | FPUS_ZE))) {
         /* IEEE SoftFloat raises UE for tiny AND inexact results. Unmasked
          * x87 UE also reports an exact nonzero tiny register result. */
         bool tiny = (exceptions & FPUS_UE) ||
@@ -346,8 +356,10 @@ static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
         if (wrapped || check_underflow) {
             floatx80 scaled_left = left, scaled_right = right;
             int adjustment = wrapped ? -24576 : 24576;
-            if (operation == 1) qa_unicorn_fmul_rescale(&scaled_left, &scaled_right, adjustment);
-            else {
+            if (operation == 1 || operation == 6 || operation == 7) {
+                qa_unicorn_product_rescale(operation == 7 ? &scaled_right : &scaled_left,
+                    operation == 7 ? &scaled_left : &scaled_right, adjustment, operation != 1);
+            } else {
                 qa_unicorn_sum_rescale(&scaled_left, adjustment);
                 qa_unicorn_sum_rescale(&scaled_right, adjustment);
             }
@@ -377,17 +389,19 @@ static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
         }
     }
 finish:
-    /* IE and DE are pre-computation exceptions. OE/UE/PE register results
+    /* IE, ZE and DE are pre-computation exceptions. OE/UE/PE register results
      * are stored, including the pop, before their deferred handler runs. */
-    if (exceptions & FPUS_IE) {
-        fpu_set_exception(env, FPUS_IE);
-        if (!(env->fpuc & FPUS_IE)) return;
+    if (exceptions & (FPUS_IE | FPUS_ZE)) {
+        unsigned pre_computation = exceptions & (FPUS_IE | FPUS_ZE);
+        fpu_set_exception(env, pre_computation);
+        if (pre_computation & ~env->fpuc) return;
     }
     ST(destination) = value;
     env->fptags[destination_slot] = 0;
     if (pop) fpop(env);
     if (rounded_up) env->fpus |= 0x200;
-    if (exceptions & ~FPUS_IE) fpu_set_exception(env, exceptions & ~FPUS_IE);
+    if (exceptions & ~(FPUS_IE | FPUS_ZE))
+        fpu_set_exception(env, exceptions & ~(FPUS_IE | FPUS_ZE));
 }
 
 void helper_farithmetic_memory(CPUX86State *env, uint64_t bits, int format,

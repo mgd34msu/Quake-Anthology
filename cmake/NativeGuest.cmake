@@ -180,7 +180,14 @@ void helper_fptan(CPUX86State *env)
 {
     qa_unicorn_trig_push(env, false, GETPC());
 }]=] 1)
-    foreach(operation IN ITEMS 0 1 4 5)
+    qa_native_guest_replace_text(fpu [=[static inline floatx80 helper_fdiv(CPUX86State *env, floatx80 a, floatx80 b)
+{
+    if (floatx80_is_zero(b)) {
+        fpu_set_exception(env, FPUS_ZE);
+    }
+    return floatx80_div(a, b, &env->fp_status);
+}]=] "" 1)
+    foreach(operation IN ITEMS 0 1 4 5 6 7)
         if(operation EQUAL 0)
             set(name fadd)
             set(kernel add)
@@ -190,29 +197,44 @@ void helper_fptan(CPUX86State *env)
         elseif(operation EQUAL 4)
             set(name fsub)
             set(kernel sub)
-        else()
+        elseif(operation EQUAL 5)
             set(name fsubr)
             set(kernel sub)
+        elseif(operation EQUAL 6)
+            set(name fdiv)
+        else()
+            set(name fdivr)
         endif()
         set(left ST0)
         set(right FT0)
         set(destination "ST(st_index)")
         set(source ST0)
-        if(operation EQUAL 5)
+        if(operation EQUAL 5 OR operation EQUAL 7)
             set(left FT0)
             set(right ST0)
             set(destination ST0)
             set(source "ST(st_index)")
+        endif()
+        set(st0_body "    ST0 = floatx80_${kernel}(${left}, ${right}, &env->fp_status);")
+        set(stn_body "    ST(st_index) = floatx80_${kernel}(${destination}, ${source}, &env->fp_status);")
+        if(operation GREATER_EQUAL 6)
+            set(st0_body "    ST0 = helper_fdiv(env, ${left}, ${right});")
+            if(operation EQUAL 6)
+                set(stn_arguments "*p, ST0")
+            else()
+                set(stn_arguments "ST0, *p")
+            endif()
+            set(stn_body "    floatx80 *p;\n\n    p = &ST(st_index);\n    *p = helper_fdiv(env, ${stn_arguments});")
         endif()
         set(declaration "")
         if(operation EQUAL 0)
             set(declaration "static void qa_unicorn_arithmetic(CPUX86State *env, int operation, int destination, int source, bool pop,\n    int format, uint64_t bits, uintptr_t retaddr);\n\n")
         endif()
         qa_native_guest_replace_text(fpu
-            "void helper_${name}_ST0_FT0(CPUX86State *env)\n{\n    ST0 = floatx80_${kernel}(${left}, ${right}, &env->fp_status);\n}"
+            "void helper_${name}_ST0_FT0(CPUX86State *env)\n{\n${st0_body}\n}"
             "${declaration}void helper_${name}_ST0_FT0(CPUX86State *env, int source)\n{\n    qa_unicorn_arithmetic(env, ${operation}, 0, source, false, 0, 0, GETPC());\n}" 1)
         qa_native_guest_replace_text(fpu
-            "void helper_${name}_STN_ST0(CPUX86State *env, int st_index)\n{\n    ST(st_index) = floatx80_${kernel}(${destination}, ${source}, &env->fp_status);\n}"
+            "void helper_${name}_STN_ST0(CPUX86State *env, int st_index)\n{\n${stn_body}\n}"
             "void helper_${name}_STN_ST0(CPUX86State *env, int st_index, int pop)\n{\n    qa_unicorn_arithmetic(env, ${operation}, st_index, 0, pop != 0, 0, 0, GETPC());\n}" 1)
     endforeach()
     qa_native_guest_write_source("${fpu_extension}"
@@ -220,7 +242,7 @@ void helper_fptan(CPUX86State *env)
     qa_native_guest_replace_source(x86_64-softmmu "${fpu_original}" "${fpu_extension}")
 
     file(READ "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/helper.h" helpers)
-    foreach(name IN ITEMS fadd fmul fsub fsubr)
+    foreach(name IN ITEMS fadd fmul fsub fsubr fdiv fdivr)
         qa_native_guest_replace_text(helpers
             "DEF_HELPER_1(${name}_ST0_FT0, void, env)"
             "DEF_HELPER_2(${name}_ST0_FT0, void, env, int)" 1)
@@ -263,7 +285,7 @@ void helper_fptan(CPUX86State *env)
     }
 }]=] [=[static bool gen_fp_arith_owned(int op)
 {
-    return op == 0 || op == 1 || op == 4 || op == 5;
+    return op == 0 || op == 1 || op == 4 || op == 5 || op == 6 || op == 7;
 }
 
 static void gen_helper_fp_arith_ST0_FT0(TCGContext *tcg_ctx, int op, int source)
@@ -288,10 +310,10 @@ static void gen_helper_fp_arith_ST0_FT0(TCGContext *tcg_ctx, int op, int source)
         gen_helper_fsubr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, source));
         break;
     case 6:
-        gen_helper_fdiv_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        gen_helper_fdiv_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, source));
         break;
     case 7:
-        gen_helper_fdivr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        gen_helper_fdivr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, source));
         break;
     }
 }]=] 1)
@@ -335,10 +357,10 @@ static void gen_helper_fp_arith_ST0_FT0(TCGContext *tcg_ctx, int op, int source)
         gen_helper_fsub_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp, tcg_const_i32(tcg_ctx, pop));
         break;
     case 6:
-        gen_helper_fdivr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        gen_helper_fdivr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp, tcg_const_i32(tcg_ctx, pop));
         break;
     case 7:
-        gen_helper_fdiv_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        gen_helper_fdiv_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp, tcg_const_i32(tcg_ctx, pop));
         break;
     }
 }]=] 1)
