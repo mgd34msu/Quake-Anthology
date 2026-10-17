@@ -152,7 +152,7 @@ bool frontend_remote_q1_media_read(const frontend_remote_q1 *row, frontend_remot
 {
     if (!row || !out || row->busy) return remote_q1_fail(error, QA_ERROR_ARGUMENT, "Q1 media observation overlaps its producer");
     *out = (frontend_remote_q1_media){row->content.mounts, row->map, &row->map_opening,
-        row->images, row->materials, row->sound_bank, row->world}; return true;
+        row->images, row->materials, row->sound_bank, row->world, row->collision}; return true;
 }
 size_t frontend_remote_q1_model_count(const frontend_remote_q1 *row)
 { size_t count = 0; if (row) for (remote_q1_model *m = row->model_cache; m; m = m->next) ++count; return count; }

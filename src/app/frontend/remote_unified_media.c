@@ -458,6 +458,8 @@ bool frontend_unified_media_importing(const frontend_unified_media *owner)
 { return owner && owner->importing; }
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *owner)
 { return owner ? owner->world : NULL; }
+qa_audio_bank *frontend_unified_media_world_sounds(const frontend_unified_media *owner)
+{ return owner && owner->world_bank ? owner->world_bank->sounds : NULL; }
 qa_ruleset_id frontend_unified_media_world_rules(const frontend_unified_media *owner)
 { return owner->world_rules; }
 void frontend_unified_media_world_scratch(const frontend_unified_media *owner, qa_scene_world_input *input)

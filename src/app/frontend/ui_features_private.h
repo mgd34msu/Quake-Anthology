@@ -28,6 +28,9 @@ typedef struct frontend_ui_seat_features {
     frontend_inventory_menu *inventory;
     qa_sound_captions *captions;
     qa_localization *localization;
+    qa_vfs *ambient_files;
+    uint64_t ambient_generation;
+    qa_audio_asset *ambient_sounds[2];
     qa_cvar_handle language_handle;
     uint64_t language_identity, language_revision;
     char localized[1024]; /* Immediate draw result, never a retained label. */

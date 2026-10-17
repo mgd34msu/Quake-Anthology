@@ -6181,6 +6181,34 @@ static void test_shared_audio_preparation(void)
         CHECK(qa_audio_asset_resample(asset, 32000, families[i], &changed, &error));
         CHECK(changed != first && changed->sample_rate == 32000 && first->sample_rate == 44100);
         CHECK(!memcmp(first->samples, expected->samples, (size_t)first->frame_count * sizeof(int16_t)));
+        if(families[i]==QA_GAME_Q1) {
+            qa_audio_mixer *ambient[2]={0};
+            qa_audio_mixer_options options={.sample_rate=44100,.output_channels=2,
+                .initial_voices=2,.prepared_capacity=1,.workspace_capacity=8};
+            qa_audio_sample *samples[2]={qa_audio_asset_sample(asset),NULL};
+            uint8_t levels[2]={100,0},quiet[2]={0,0};
+            qa_audio_channel_volume volumes[2];
+            for(unsigned seat=0;seat<2;++seat) {
+                CHECK(qa_audio_mixer_create(&options,&ambient[seat],&error));
+                qa_audio_listener listener={.seat=seat,.gain=1,.axis={{1,0,0},{0,1,0},{0,0,1}}};
+                CHECK(qa_audio_mixer_listener(ambient[seat],&listener,&error));
+                CHECK(qa_audio_mixer_ambient(ambient[seat],samples,levels,.1f*(float)(seat+1),.3f,100,&error));
+                CHECK(qa_audio_mixer_channel_volumes(ambient[seat],volumes,2)==1);
+                CHECK(fabs(volumes[0].left-10*(seat+1))<.001 && volumes[0].left==volumes[0].right);
+            }
+            int16_t output[32];CHECK(qa_audio_mixer_mix(ambient[0],output,16,&error));
+            bool nonzero=false;for(unsigned sample=0;sample<32;++sample) nonzero|=output[sample]!=0;
+            CHECK(nonzero);
+            CHECK(qa_audio_mixer_ambient(ambient[0],samples,quiet,.05f,.3f,100,&error));
+            CHECK(qa_audio_mixer_channel_volumes(ambient[0],volumes,2)==1 && fabs(volumes[0].left-5)<.001);
+            CHECK(qa_audio_mixer_channel_volumes(ambient[1],volumes,2)==1 && fabs(volumes[0].left-20)<.001);
+            CHECK(qa_audio_mixer_ambient(ambient[0],samples,levels,.1f,0,100,&error));
+            CHECK(qa_audio_mixer_channel_volumes(ambient[0],volumes,2)==0);
+            samples[0]=NULL;
+            CHECK(qa_audio_mixer_ambient(ambient[1],samples,levels,.1f,.3f,100,&error));
+            CHECK(qa_audio_mixer_channel_volumes(ambient[1],volumes,2)==0);
+            for(unsigned seat=0;seat<2;++seat) qa_audio_mixer_destroy(ambient[seat]);
+        }
         qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
             .family = families[i], .actor = QA_AUDIO_NO_ACTOR, .owner = QA_AUDIO_NO_OWNER,
             .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_LOCAL, .volume = 1};

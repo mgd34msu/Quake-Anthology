@@ -11,6 +11,7 @@ bool frontend_ui_features_idle(const qa_frontend *);
 bool frontend_ui_features_sync(qa_frontend *, qa_error *);
 bool frontend_ui_audio_prepare_sound(qa_frontend *, qa_audio_bank *, const char *, qa_game_family, qa_error *);
 bool frontend_ui_audio_prepare_q2_source(qa_frontend *, qa_audio_bank *, qa_actor_owner, qa_error *);
+bool frontend_ui_audio_ambient(qa_frontend *, uint64_t elapsed_ns, qa_error *);
 bool frontend_ui_audio_prepare_asset(qa_frontend *, qa_audio_asset *, qa_error *);
 void frontend_ui_audio_event(void *, const qa_audio_voice_event *);
 bool frontend_ui_local_sound(frontend_seat *, qa_audio_bank *, qa_game_family,

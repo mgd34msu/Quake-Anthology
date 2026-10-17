@@ -106,6 +106,7 @@ typedef struct frontend_remote_q1_media {
     qa_material_library *materials;
     qa_audio_bank *sounds;
     const qa_scene_world *world;
+    const qa_collision_geometry *geometry;
 } frontend_remote_q1_media;
 typedef struct frontend_remote_q1_model_view {
     const char *path;

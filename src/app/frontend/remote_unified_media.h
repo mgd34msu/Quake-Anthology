@@ -73,6 +73,7 @@ bool frontend_unified_media_skin(frontend_unified_media *, const frontend_unifie
     qa_string_id content, qa_string_id path, const qa_scene_image_options *, const qa_material **, qa_error *);
 qa_material_library *frontend_unified_model_materials(const qa_scene_model *);
 qa_scene_world *frontend_unified_media_world(const frontend_unified_media *);
+qa_audio_bank *frontend_unified_media_world_sounds(const frontend_unified_media *);
 qa_ruleset_id frontend_unified_media_world_rules(const frontend_unified_media *);
 void frontend_unified_media_world_scratch(const frontend_unified_media *, qa_scene_world_input *);
 bool frontend_unified_media_current(const frontend_unified_media *);

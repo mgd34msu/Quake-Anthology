@@ -12,6 +12,8 @@
 #include "qa/game_q1_source_obituary.h"
 #include "music_sources.h"
 #include "inventory_menu.h"
+#include "remote_q1_client.h"
+#include "remote_unified_presentation.h"
 #include <limits.h>
 #include <math.h>
 
@@ -29,6 +31,15 @@ static bool sound_view(void *context, qa_audio_asset *asset, qa_vfs **out, qa_er
         return frontend_fail(error, QA_ERROR_NOT_FOUND, "Caption voice lost its actual source bank view");
     *out = (qa_vfs *)files;
     return true;
+}
+static void ambient_sounds_clear(frontend_ui_seat_features *seat)
+{
+    for (unsigned i = 0; i < 2; ++i) {
+        qa_audio_asset_release(seat->ambient_sounds[i]);
+        seat->ambient_sounds[i] = NULL;
+    }
+    qa_vfs_destroy(seat->ambient_files); seat->ambient_files = NULL;
+    seat->ambient_generation = 0;
 }
 bool frontend_ui_features_prepare(qa_frontend *f, qa_error *error)
 {
@@ -76,6 +87,7 @@ bool frontend_ui_features_destroy(qa_frontend *f, qa_error *error)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"UI features retain an active presentation or caption child");
     frontend_ui_cinematic_destroy(f);
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
+        ambient_sounds_clear(owner->seats + i);
         frontend_inventory_menu_destroy(&owner->seats[i].inventory);
         qa_sound_captions_destroy(owner->seats[i].captions);
         qa_localization_release(owner->seats[i].localization);
@@ -371,6 +383,87 @@ bool frontend_ui_audio_prepare_q2_source(qa_frontend *f, qa_audio_bank *bank, qa
         if (!frontend_ui_audio_prepare_sound(f, bank, qa_q2_sound_path(i), QA_GAME_Q2, error)) return false;
     source_audio_preparation preparation = {f, bank, sexed_count};
     return !owner || qa_application_native_q2_sound_resources(f->application, owner, prepare_source_sound, &preparation, error);
+}
+static bool ambient_source(qa_frontend *f, uint32_t seat,
+    const qa_collision_geometry **geometry, qa_audio_bank **sounds, qa_error *error)
+{
+    *geometry = NULL; *sounds = NULL;
+    for (size_t i = 0; i < frontend_remote_unified_count(f); ++i) {
+        frontend_remote_unified *replica = frontend_remote_unified_at(f, i);
+        const frontend_remote_unified_domain *domain = frontend_remote_unified_domain_read(replica);
+        if (frontend_remote_unified_retired(replica) || domain->physical_seat != seat) continue;
+        frontend_unified_media *installed, *pending;
+        if (!frontend_remote_unified_presentation_media(replica, &installed, &pending, error)) return false;
+        *geometry = frontend_remote_unified_geometry(replica);
+        *sounds = frontend_unified_media_world_sounds(installed);
+        return true;
+    }
+    for (size_t i = 0; i < frontend_remote_q1_count(f); ++i) {
+        frontend_remote_q1 *receiver = frontend_remote_q1_at(f, i);
+        frontend_remote_q1_view source;
+        if (!frontend_remote_q1_metadata_read(receiver, &source, error)) return false;
+        if (source.retired || source.domain.physical_seat != seat) continue;
+        if (source.bound && source.loaded) {
+            frontend_remote_q1_media media;
+            if (!frontend_remote_q1_media_read(receiver, &media, error)) return false;
+            *geometry = media.geometry; *sounds = media.sounds;
+        }
+        return true;
+    }
+    if (!frontend_network_local_input_owned(f, seat)) {
+        *geometry = qa_world_geometry(qa_application_world(f->application));
+        *sounds = f->sounds;
+    }
+    return true;
+}
+static bool ambient_sounds_prepare(frontend_ui_seat_features *seat, qa_audio_bank *bank, qa_error *error)
+{
+    qa_vfs *files = (qa_vfs *)qa_audio_bank_files(bank);
+    uint64_t generation = files ? qa_vfs_lookup_generation(files) : 0;
+    if (seat->ambient_files == files && seat->ambient_generation == generation) return true;
+    qa_audio_asset *sounds[2] = {NULL, NULL};
+    if (files) {
+        if (!qa_vfs_retain(files, error)) return false;
+        if (!qa_audio_bank_register(bank, "ambience/water1.wav", QA_GAME_Q1, sounds, error) ||
+            !qa_audio_bank_register(bank, "ambience/wind2.wav", QA_GAME_Q1, sounds + 1, error)) {
+            qa_audio_asset_release(sounds[0]); qa_audio_asset_release(sounds[1]);
+            qa_vfs_destroy(files); return false;
+        }
+    }
+    ambient_sounds_clear(seat);
+    seat->ambient_files = files;
+    seat->ambient_generation = generation;
+    memcpy(seat->ambient_sounds, sounds, sizeof(sounds));
+    return true;
+}
+bool frontend_ui_audio_ambient(qa_frontend *f, uint64_t elapsed_ns, qa_error *error)
+{
+    if (!f->audio || !f->ui_features) return true;
+    const qa_cvars *registry = qa_application_cvars(f->application);
+    const qa_cvar_view *level = qa_cvars_read(registry, f->engine_cvars.ambient_level);
+    const qa_cvar_view *fade = qa_cvars_read(registry, f->engine_cvars.ambient_fade);
+    for (uint32_t i = 0; i < f->options.seats; ++i) {
+        frontend_ui_seat_features *seat = f->ui_features->seats + i;
+        qa_audio_mixer *mixer = qa_audio_engine_seat_mixer(f->audio, i);
+        if (!mixer) { ambient_sounds_clear(seat); continue; }
+        const qa_collision_geometry *geometry;
+        qa_audio_bank *bank;
+        if (!ambient_source(f, i, &geometry, &bank, error)) return false;
+        const qa_bsp_view *bsp = qa_collision_bsp(geometry);
+        uint8_t levels[2] = {0, 0};
+        if (bsp && bsp->family == QA_BSP_Q1 && bank) {
+            qa_collision_leaf where; qa_bsp_leaf leaf;
+            if (!qa_collision_point_leaf(geometry, qa_audio_mixer_listener_origin(mixer), QA_LEAF_Q1, &where, error) ||
+                !qa_bsp_read_leaf(bsp, where.leaf, &leaf, error)) return false;
+            memcpy(levels, leaf.ambient, sizeof(levels));
+        } else bank = NULL;
+        if (!ambient_sounds_prepare(seat, bank, error)) return false;
+        qa_audio_sample *sounds[2] = {qa_audio_asset_sample(seat->ambient_sounds[0]),
+            qa_audio_asset_sample(seat->ambient_sounds[1])};
+        if (!qa_audio_mixer_ambient(mixer, sounds, levels, (float)((double)elapsed_ns / 1e9),
+            level ? fmaxf(0, level->number) : .3f, fade ? fmaxf(0, fade->number) : 100, error)) return false;
+    }
+    return true;
 }
 void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
 {

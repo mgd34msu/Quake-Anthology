@@ -282,6 +282,7 @@ typedef struct frontend_engine_cvar_handles {
     qa_cvar_handle timedemo, com_maxfps, r_maxfps, cl_shownet;
     qa_cvar_handle cl_avidemo, cl_forceavidemo, timescale;
     qa_cvar_handle s_volume, scr_centertime, s_geometry_acoustics;
+    qa_cvar_handle ambient_level, ambient_fade;
     qa_cvar_handle cl_rerelease_effects;
     qa_cvar_handle gl_farclip, r_gamma, con_notifytime, r_drawentities;
     qa_cvar_handle filterban, public_server, dedicated;
