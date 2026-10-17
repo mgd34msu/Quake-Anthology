@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/filesystem.h"
+#include "qa/qc.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -396,6 +397,50 @@ static bool finalize_product(qa_catalog *c, catalog_product *p, unsigned depth, 
     return true;
 }
 
+static bool quakeworld_program(qa_catalog *c, const catalog_product *p,
+    const qa_mount_id *mounts, size_t mount_count, const char **out,
+    qa_product_id *owner, bool *compatible, qa_error *error)
+{
+    *out = NULL;
+    if (owner) *owner = 0;
+    if (compatible) *compatible = false;
+    qa_vfs *view = NULL;
+    if (!catalog_view(c, mounts, mount_count, &view, error)) return false;
+    static const char *const paths[] = {"qwprogs.dat", "progs.dat"};
+    bool ok = true;
+    for (size_t i = 0; ok && i < sizeof(paths) / sizeof(*paths); ++i) {
+        qa_resource *resource = NULL; qa_mount_id acquired = 0; qa_error issue = {0};
+        if (!qa_vfs_acquire(view, paths[i], &resource, &acquired, &issue)) {
+            if (issue.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = issue;
+            ok = false; break;
+        }
+        if (compatible && i == 1) {
+            qa_qc_program *program = NULL; qa_error validation = {0};
+            if (qa_qc_program_load(qa_resource_bytes(resource), paths[i], &program, &validation)) {
+                *compatible = qa_qc_program_describe(program).api == QA_QC_API_QUAKEWORLD;
+            } else if (validation.code == QA_ERROR_MEMORY) {
+                if (error) *error = validation;
+                ok = false;
+            }
+            qa_qc_program_destroy(program);
+        } else if (compatible) *compatible = true;
+        if (ok) {
+            *out = paths[i];
+            qa_mount_id physical;
+            if (owner && !qa_catalog_product_mount_origin(c, p->view.id, view,
+                acquired, owner, &physical)) {
+                qa_error_set(error, QA_ERROR_FORMAT, 0, "QuakeWorld program lost its mounted content owner");
+                ok = false;
+            }
+        }
+        qa_resource_release(resource);
+        break;
+    }
+    qa_vfs_destroy(view);
+    return ok;
+}
+
 static bool quakeworld_variants(qa_catalog *c, qa_error *error)
 {
     size_t initial_count = c->product_count;
@@ -403,20 +448,10 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
     for (size_t i = 0; i < initial_count; ++i) {
         catalog_product *p = &c->products[i];
         if (p->view.family != QA_GAME_Q1 || p->view.edition != QA_EDITION_CLASSIC) continue;
-        bool found = false;
-        for (size_t j = 0; j < p->own_count; ++j) {
-            const catalog_physical *physical = catalog_package(c, p->own_mounts[j]);
-            if (physical->view.format == QA_ARCHIVE_AUTO) {
-                const char *program;
-                if (!catalog_path(c, physical->view.path, "qwprogs.dat", &program, error)) return false;
-                if (program) found = true;
-            } else {
-                for (size_t k = 0; k < physical->member_count; ++k)
-                    if (catalog_ascii_equal(physical->members[k].path, "qwprogs.dat")) { found = true; break; }
-            }
-            if (found) break;
-        }
-        if (!found) continue;
+        const char *program; bool compatible;
+        if (!quakeworld_program(c, p, p->own_mounts, p->own_count, &program,
+            NULL, &compatible, error)) return false;
+        if (!program || !compatible) continue;
         size_t size = strlen(p->view.campaign) + 48;
         char *text = malloc(size);
         if (!text) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate QuakeWorld variant identity"); return false; }
@@ -779,22 +814,30 @@ bool catalog_has_path(qa_catalog *c, const catalog_product *p, const char *path,
 
 static bool program_metadata(qa_catalog *c, catalog_product *p, qa_error *error)
 {
-    const char *paths[10]; size_t count = 0;
-    if (p->view.family == QA_GAME_Q1) paths[count++] = p->view.edition == QA_EDITION_QUAKEWORLD ? "qwprogs.dat" : "progs.dat";
+    const char *paths[10], *program = NULL; size_t count = 0;
+    qa_product_id program_product = p->view.id;
+    if (p->view.family == QA_GAME_Q1) {
+        if (p->view.edition == QA_EDITION_QUAKEWORLD) {
+            if (!quakeworld_program(c, p, p->mounts, p->mount_count, &program,
+                &program_product, NULL, error)) return false;
+        } else paths[count++] = "progs.dat";
+    }
     else if (p->view.family == QA_GAME_Q3) paths[count++] = "vm/qagame.qvm";
     else {
         paths[count++] = p->view.edition == QA_EDITION_RERELEASE ? "game_x64.dll" : "gamex86.dll";
         paths[count++] = "game.so"; paths[count++] = "gamex86_64.so"; paths[count++] = "gamei386.so";
         paths[count++] = "game_aarch64.so"; paths[count++] = "game_x86_64.so";
     }
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = 0; !program && i < count; ++i) {
         bool found;
         if (!catalog_has_path(c, p, paths[i], true, &found, error)) return false;
-        if (!found) continue;
-        p->view.program = catalog_string(c, paths[i], error);
+        if (found) program = paths[i];
+    }
+    if (program) {
+        p->view.program = catalog_string(c, program, error);
         if (!p->view.builtin)
             p->view.program_kind = p->view.family == QA_GAME_Q1 ? QA_PROGRAM_QUAKEC : p->view.family == QA_GAME_Q3 ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE;
-        p->view.program_product = p->view.id;
+        p->view.program_product = program_product;
         return p->view.program != NULL;
     }
     if (p->view.builtin) return true;
