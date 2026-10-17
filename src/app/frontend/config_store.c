@@ -915,9 +915,16 @@ qa_input_seat *frontend_config_source_input(const frontend_config_source *source
     size_t index=seat_index(source,seat); if (index>=source->seat_count) return NULL;
     qa_frontend *f=source->manager->frontend;
     if (source->seats[index].input) return source->seats[index].input;
-    uint32_t physical;
-    return source->published && f->seats && frontend_seat_ordinal_read(f,seat,&physical)?
-        f->seats[physical].input:NULL;
+    if (!source->published || !f->seats) return NULL;
+    /* A remote watch can return a local seat to ENGINE without removing its
+     * authored input profile. Resolve that profile independently of live views. */
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(source->application));
+    for (uint32_t physical=0;physical<f->options.seats;++physical) {
+        uint32_t logical;
+        if (frontend_local_seat_read(choices,physical,&logical) && logical==seat)
+            return f->seats[physical].input;
+    }
+    return NULL;
 }
 qa_cvars *frontend_config_source_seat_cvars(const frontend_config_source *source,uint32_t seat)
 { size_t index=source?seat_index(source,seat):0; return source && index<source->seat_count?source->seats[index].cvars:NULL; }
