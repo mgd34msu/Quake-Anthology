@@ -623,6 +623,7 @@ static bool predict_obstacles(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal
 }
 static bool movement_result(qa_bots *b,bot_ai_state *s,bool activate,
                             qa_bot_move_result *result,qa_error *e) {
+    if(s->source_settings) s->hazard.floor.recovering=false;
     if(result->failure) {
         DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,false,e));
         if(s->view.decision==QA_BOT_ACTIVATING) {
@@ -696,6 +697,14 @@ static bool movement_result(qa_bots *b,bot_ai_state *s,bool activate,
             bot_ai_flag_toggle(s,BOT_AI_AVOID_RIGHT);sideward=qa_vec_sub(sideward,direction);
             DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,sideward,400,
                 QA_BOT_DIRECTION_WALK,&moved,e));
+        }
+        if(s->source_settings && moved) {
+            qa_bot_input recovery={0};
+            DECISION_CALL(bot_ai_source_action_input(b,s,b->time,&recovery,e));
+            s->hazard.floor.recovering=true;s->hazard.floor.side_flipped=false;
+            s->hazard.floor.recovery_direction=recovery.direction;
+            s->hazard.floor.recovery_speed=recovery.speed;
+            s->hazard.floor.recovery_actions=recovery.action_flags&BOT_FLOOR_HORIZONTAL;
         }
         if(bot_ai_not_blocked_time(s)<b->time-.4f) {
             if(s->view.decision==QA_BOT_SEEK_NEARBY) bot_ai_nearby_until_set(s,0);

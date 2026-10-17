@@ -86,19 +86,24 @@ typedef struct bot_cooperative_cooldown {
     uint32_t client;
     float until;
 } bot_cooperative_cooldown;
+typedef enum bot_floor_action {
+    BOT_FLOOR_CLEAR, BOT_FLOOR_STOP, BOT_FLOOR_JUMP, BOT_FLOOR_NO_JUMP
+} bot_floor_action;
+enum { BOT_FLOOR_HORIZONTAL=QA_BOT_MOVE_FORWARD|QA_BOT_MOVE_BACK|QA_BOT_MOVE_LEFT|QA_BOT_MOVE_RIGHT };
 typedef struct bot_hazard_memory {
     qa_vec3 safe_origin;
     bool has_safe_origin, escaping;
     /* Derived floor/prediction results expire at the next AI think. */
     struct {
-        qa_vec3 origin, direction, velocity;
+        qa_vec3 origin, direction, velocity, recovery_direction, replacement_direction;
         qa_bounds bounds;
         qa_movement_ground ground;
         const qa_bot_source_skill *settings;
         qa_bot_navigation *navigation;
-        float speed;
-        enum { BOT_FLOOR_CLEAR, BOT_FLOOR_STOP, BOT_FLOOR_JUMP, BOT_FLOOR_NO_JUMP } action;
-        bool valid, jumping, crouching;
+        float speed, recovery_speed, replacement_speed;
+        uint32_t recovery_actions, replacement_actions;
+        bot_floor_action action;
+        bool valid, jumping, crouching, recovering, checked_recovery, side_flipped, replaced;
     } floor;
 } bot_hazard_memory;
 typedef enum bot_objective_role {
