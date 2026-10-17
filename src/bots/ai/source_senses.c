@@ -209,7 +209,7 @@ bool bot_ai_senses_enemy(qa_bots *b,bot_ai_state *s,qa_actor_id *out,bool *found
     for(size_t i=0;i<b->entities.count;++i) {
         qa_actor_id actor=b->entities.actors[i];
         const qa_bot_awareness *awareness=bot_ai_senses_awareness(b,s,actor);
-        if(!awareness || awareness->sight<1 || !bot_ai_live(b,actor)) continue;
+        if(!bot_ai_senses_aware(awareness) || !bot_ai_live(b,actor)) continue;
         qa_bot_player player;qa_bot_entity entity;bool present,same;
         if(!candidate(b,s,actor,&player,&entity,&present,error)) return false;
         if(s->retired || !bot_ai_live(b,s->view.actor)) return true;

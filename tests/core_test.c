@@ -367,8 +367,17 @@ static void test_bot_awareness_storage(void)
     qa_bot_contact visible={.line_of_sight=true,.in_sight_fov=true,.in_weapon_fov=true,.origin={4,5,6}};
     qa_bot_sense_step(&awareness,&visible,&senses,&weapons,.25f,10.25);
     CHECK(awareness.sight==.5f && awareness.weapon==.25f && awareness.last_seen==10.25);
+    CHECK(!bot_ai_senses_aware(NULL) && !bot_ai_senses_aware(&awareness));
+    qa_bot_awareness heard=awareness;
+    qa_bot_contact sound={.audible=true,.origin={7,8,9}};
+    qa_bot_sense_step(&heard,&sound,&senses,&weapons,.5f,10.75);
+    CHECK(bot_ai_senses_aware(&heard) && heard.last_seen==10.25 && heard.last_heard==10.75 &&
+        qa_vec_equal(heard.last_known_origin,sound.origin));
+    qa_bot_sense_step(&heard,&(qa_bot_contact){0},&senses,&weapons,.25f,11);
+    CHECK(!bot_ai_senses_aware(&heard) && qa_vec_equal(heard.last_known_origin,sound.origin));
     bot_ai_awareness_set(&bots,&(bot_awareness_record){awareness,0});
     awareness.sight=1;
+    CHECK(bot_ai_senses_aware(&awareness));
     bot_ai_awareness_set(&bots,&(bot_awareness_record){awareness,1});
     bot_ai_cooperative_cooldown_set(&bots,&(bot_cooperative_cooldown){target,0,14});
     CHECK(bots.actor_memory_count==1 && bots.actor_memory.active==1 &&

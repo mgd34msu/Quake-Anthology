@@ -199,6 +199,9 @@ void bot_ai_senses_clear_client(qa_bots *,uint32_t client,bool cooldowns);
 bool bot_ai_senses_update(qa_bots *,bot_ai_state *,float,qa_error *);
 bool bot_ai_senses_enemy(qa_bots *,bot_ai_state *,qa_actor_id *,bool *,qa_error *);
 const qa_bot_awareness *bot_ai_senses_awareness(const qa_bots *,const bot_ai_state *,qa_actor_id);
+static inline bool bot_ai_senses_aware(const qa_bot_awareness *awareness) {
+    return awareness && awareness->sight>=1;
+}
 float bot_ai_senses_weapon_cone(qa_bots *,bot_ai_state *,qa_item_id);
 bool bot_ai_awareness_next(const qa_bots *,size_t *,bot_awareness_record *);
 void bot_ai_awareness_set(qa_bots *,const bot_awareness_record *);
