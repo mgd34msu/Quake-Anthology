@@ -9549,7 +9549,7 @@ static void test_native_guest_architectural_stops(void)
     CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION && result.detail.invalid_instruction.byte_count==2);
     CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
 }
-static void test_native_x87_round_status(void)
+static void test_native_x87_unary_status(void)
 {
     qa_error error = {0}; qa_native_guest *guest = NULL;
     qa_native_guest_options options = {
@@ -9561,7 +9561,8 @@ static void test_native_x87_round_status(void)
         .backend = QA_NATIVE_GUEST_EMULATED};
     CHECK(qa_native_guest_create(&options, &guest, &error));
     const uint64_t entry = UINT64_C(0x100000);
-    const uint8_t code[] = {0xd9,0xfc, 0xdf,0xe0, 0x9b, 0xdb,0xe2, 0x9b, 0x90};
+    const uint8_t code[] = {0xd9,0xfc, 0xdf,0xe0, 0x9b, 0xdb,0xe2, 0x9b, 0x90,
+        [16]=0xd9,0xfe, 0xdf,0xe0, 0x9b, [32]=0xd9,0xff, 0xdf,0xe0, 0x9b};
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
@@ -9614,6 +9615,67 @@ static void test_native_x87_round_status(void)
     CHECK(qa_native_guest_run(guest, entry + 5, entry + 8, 32, 32, &result, &error));
     CHECK(result.kind == QA_NATIVE_GUEST_RETURN);
     CHECK(qa_native_guest_cpu_read(guest, &cpu, &error) && !(cpu.fp_status & 0x80ff));
+    struct trig_case {
+        uint64_t input, sine, cosine;
+        uint16_t exponent, sine_exponent, cosine_exponent, control, status;
+    } trig[] = {
+        {0,0,UINT64_C(0x8000000000000000),0,0,0x3fff,0x037f,0},
+        {0,0,UINT64_C(0x8000000000000000),0x8000,0x8000,0x3fff,0x037f,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x403e,0x403e,0x403e,0x037f,0x0400},
+        {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),
+            0x403e,0x403e,0x403e,0x037f,0x0400},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0xc03e,0xc03e,0xc03e,0x037f,0x0400},
+        {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),
+            0xc03e,0xc03e,0xc03e,0x037f,0x0400},
+        {UINT64_C(0x8000000000000000),UINT64_C(0xc000000000000000),UINT64_C(0xc000000000000000),
+            0x7fff,0xffff,0xffff,0x037f,0x0001},
+        {UINT64_C(0x8000000000000000),UINT64_C(0xc000000000000000),UINT64_C(0xc000000000000000),
+            0xffff,0xffff,0xffff,0x037f,0x0001},
+        {UINT64_C(0xc000000000000001),UINT64_C(0xc000000000000001),UINT64_C(0xc000000000000001),
+            0x7fff,0x7fff,0x7fff,0x037f,0},
+        {UINT64_C(0x8000000000000001),UINT64_C(0xc000000000000001),UINT64_C(0xc000000000000001),
+            0x7fff,0x7fff,0x7fff,0x037f,0x0001},
+    };
+    for (size_t op=0; op<2; ++op) {
+        uint64_t instruction=entry+16+op*16;
+        for (size_t i=0; i<sizeof(trig)/sizeof(*trig); ++i) {
+            cpu=initial; cpu.control[0]|=UINT64_C(0x20);
+            cpu.fp_control=trig[i].control; cpu.fp_status=0x0600; cpu.fp_tags=0xfffc;
+            cpu.fp_mantissa[0]=trig[i].input; cpu.fp_exponent[0]=trig[i].exponent;
+            CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+            CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+            CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+            CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+            CHECK(cpu.fp_mantissa[0]==(op ? trig[i].cosine : trig[i].sine));
+            CHECK(cpu.fp_exponent[0]==(op ? trig[i].cosine_exponent : trig[i].sine_exponent));
+            CHECK((cpu.fp_status&0x86ff)==trig[i].status);
+            CHECK((cpu.registers[QA_NATIVE_RAX]&0xffff)==cpu.fp_status);
+        }
+        /* This binary80 input rounds up to 2^63 in binary64, but is in range. */
+        cpu=initial; cpu.fp_control=0x037f; cpu.fp_status=0x0600; cpu.fp_tags=0xfffc;
+        cpu.fp_mantissa[0]=UINT64_MAX; cpu.fp_exponent[0]=0x403d;
+        CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+        CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+        CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+        CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+        CHECK(!(cpu.fp_status&0x0401));
+        CHECK((cpu.fp_exponent[0]&0x7fff)<0x3fff ||
+            ((cpu.fp_exponent[0]&0x7fff)==0x3fff && cpu.fp_mantissa[0]<=UINT64_C(0x8000000000000000)));
+        /* Unmasked invalid preserves ST0 and reports #MF at the next wait. */
+        cpu=initial; cpu.control[0]|=UINT64_C(0x20);
+        cpu.fp_control=0x037e; cpu.fp_tags=0xfffc;
+        cpu.fp_mantissa[0]=UINT64_C(0x8000000000000000); cpu.fp_exponent[0]=0x7fff;
+        CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+        CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+        CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+        CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+        CHECK(cpu.fp_mantissa[0]==UINT64_C(0x8000000000000000) && cpu.fp_exponent[0]==0x7fff);
+        CHECK((cpu.fp_status&0x80ff)==0x8081);
+        CHECK(qa_native_guest_run(guest,instruction+4,instruction+5,32,32,&result,&error));
+        CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+    }
     CHECK(qa_native_guest_destroy(&guest, &error));
 }
 
@@ -10619,7 +10681,7 @@ int main(int argc, char **argv)
     test_native_executable_alias_writes();
     test_native_guest_halt();
     test_native_guest_architectural_stops();
-    test_native_x87_round_status();
+    test_native_x87_unary_status();
     test_native_i386_call_conventions();
     test_q2_linked_models();
     test_q2_weapon_names();

@@ -96,6 +96,38 @@ function(qa_native_guest_dependency)
     qa_native_guest_replace_text(fpu
         "void helper_frndint(CPUX86State *env)\n{\n    ST0 = floatx80_round_to_int(ST0, &env->fp_status);\n}"
         "static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr);\n\nvoid helper_frndint(CPUX86State *env)\n{\n    qa_unicorn_frndint(env, GETPC());\n}" 1)
+    qa_native_guest_replace_text(fpu [=[void helper_fsin(CPUX86State *env)
+{
+    double fptemp = floatx80_to_double(env, ST0);
+
+    if ((fptemp > MAXTAN) || (fptemp < -MAXTAN)) {
+        env->fpus |= 0x400;
+    } else {
+        ST0 = double_to_floatx80(env, sin(fptemp));
+        env->fpus &= ~0x400;  /* C2 <-- 0 */
+        /* the above code is for |arg| < 2**53 only */
+    }
+}]=] [=[static void qa_unicorn_trig(CPUX86State *env, bool cosine, uintptr_t retaddr);
+
+void helper_fsin(CPUX86State *env)
+{
+    qa_unicorn_trig(env, false, GETPC());
+}]=] 1)
+    qa_native_guest_replace_text(fpu [=[void helper_fcos(CPUX86State *env)
+{
+    double fptemp = floatx80_to_double(env, ST0);
+
+    if ((fptemp > MAXTAN) || (fptemp < -MAXTAN)) {
+        env->fpus |= 0x400;
+    } else {
+        ST0 = double_to_floatx80(env, cos(fptemp));
+        env->fpus &= ~0x400;  /* C2 <-- 0 */
+        /* the above code is for |arg| < 2**63 only */
+    }
+}]=] [=[void helper_fcos(CPUX86State *env)
+{
+    qa_unicorn_trig(env, true, GETPC());
+}]=] 1)
     qa_native_guest_write_source("${fpu_extension}"
         "${fpu}\n#include \"${guest_root}/unicorn_abi_fp.inc.c\"\n")
     qa_native_guest_replace_source(x86_64-softmmu "${fpu_original}" "${fpu_extension}")

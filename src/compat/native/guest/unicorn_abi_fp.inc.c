@@ -3,37 +3,52 @@
 #include "unicorn_abi_fp.h"
 #include "uc_priv.h"
 
-static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr)
+typedef enum qa_unicorn_unary_state {
+    QA_UNICORN_UNARY_READY, QA_UNICORN_UNARY_HANDLED, QA_UNICORN_UNARY_SUPPRESSED
+} qa_unicorn_unary_state;
+
+static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
+    uintptr_t retaddr, bool infinity_invalid, floatx80 *source, float_status *status)
 {
     if (env->fpus & FPUS_SE) fpu_raise_exception(env, retaddr);
     env->fpus &= ~0x200;
-    if (env->fptags[env->fpstt]) {
-        env->fpus |= FPUS_SF;
-        fpu_set_exception(env, FPUS_IE);
-        if (env->fpuc & FPUS_IE) {
-            ST0 = floatx80_default_nan(&env->fp_status);
-            env->fptags[env->fpstt] = 0;
-        }
-        return;
+    *status = env->fp_status;
+    set_flush_to_zero(false, status);
+    set_flush_inputs_to_zero(false, status);
+    set_float_exception_flags(0, status);
+    bool empty = env->fptags[env->fpstt] != 0;
+    *source = ST0;
+    bool special = !empty && (floatx80_invalid_encoding(*source) || floatx80_is_any_nan(*source));
+    bool invalid_infinity = !empty && !special && infinity_invalid && floatx80_is_infinity(*source);
+    if (empty || special || invalid_infinity) {
+        floatx80 result = empty || invalid_infinity ? floatx80_default_nan(status) :
+            floatx80_round_to_int(*source, status);
+        int exception = empty || invalid_infinity ||
+            (get_float_exception_flags(status) & float_flag_invalid) ? FPUS_IE : 0;
+        if (empty) env->fpus |= FPUS_SF;
+        if (exception) fpu_set_exception(env, exception);
+        if (exception & ~env->fpuc) return QA_UNICORN_UNARY_SUPPRESSED;
+        ST0 = result;
+        env->fptags[env->fpstt] = 0;
+        return QA_UNICORN_UNARY_HANDLED;
     }
+    if (floatx80_is_zero_or_denormal(*source) && !floatx80_is_zero(*source)) {
+        fpu_set_exception(env, FPUS_DE);
+        if (!(env->fpuc & FPUS_DE)) return QA_UNICORN_UNARY_SUPPRESSED;
+        /* Intel SDM 1, 8.2.2: pseudo-denormals raise DE and use exponent 1. */
+        if (source->low & UINT64_C(0x8000000000000000)) source->high |= 1;
+    }
+    return QA_UNICORN_UNARY_READY;
+}
 
-    floatx80 source = ST0;
-    bool denormal = floatx80_is_zero_or_denormal(source) && !floatx80_is_zero(source);
-    /* Intel SDM 1, 8.2.2: pseudo-denormals raise DE and use exponent 1. */
-    if (denormal && (source.low & UINT64_C(0x8000000000000000))) source.high |= 1;
-    float_status status = env->fp_status;
-    set_flush_to_zero(false, &status);
-    set_flush_inputs_to_zero(false, &status);
-    set_float_exception_flags(0, &status);
+static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr)
+{
+    floatx80 source;
+    float_status status;
+    if (qa_unicorn_unary_begin(env, retaddr, false, &source, &status) != QA_UNICORN_UNARY_READY)
+        return;
     floatx80 rounded = floatx80_round_to_int(source, &status);
     int flags = get_float_exception_flags(&status);
-    if (flags & float_flag_invalid) {
-        fpu_set_exception(env, FPUS_IE);
-        if (!(env->fpuc & FPUS_IE)) return;
-    } else if (denormal) {
-        fpu_set_exception(env, FPUS_DE);
-        if (!(env->fpuc & FPUS_DE)) return;
-    }
 
     /* Unlike IE/DE, unmasked PE commits the rounded result (SDM 1, 8.5.6). */
     ST0 = rounded;
@@ -42,6 +57,31 @@ static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr)
             env->fpus |= 0x200;
         fpu_set_exception(env, FPUS_PE);
     }
+}
+
+static void qa_unicorn_trig(CPUX86State *env, bool cosine, uintptr_t retaddr)
+{
+    floatx80 source;
+    float_status status;
+    qa_unicorn_unary_state input = qa_unicorn_unary_begin(env, retaddr, true, &source, &status);
+    if (input == QA_UNICORN_UNARY_SUPPRESSED) return;
+    if (input == QA_UNICORN_UNARY_HANDLED) {
+        env->fpus &= ~0x400;
+        return;
+    }
+    const floatx80 limit = make_floatx80(0x403e, UINT64_C(0x8000000000000000));
+    if (floatx80_le_quiet(limit, floatx80_abs(source), &status)) {
+        env->fpus |= 0x400;
+        return;
+    }
+    env->fpus &= ~0x400;
+    if (floatx80_is_zero(source)) {
+        ST0 = cosine ? int32_to_floatx80(1, &status) : source;
+        return;
+    }
+    /* The existing finite approximation still narrows through binary64. */
+    double operand = floatx80_to_double(env, source);
+    ST0 = double_to_floatx80(env, cosine ? cos(operand) : sin(operand));
 }
 
 UNICORN_EXPORT unsigned qa_unicorn_abi_fp_revision(void)
