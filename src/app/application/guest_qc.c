@@ -527,7 +527,8 @@ static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame
         }
         return true;
     }
-    return application_qc_named(engine, "StartFrame", (qa_actor_id){0}, error);
+    return application_qc_named(engine, "StartFrame", (qa_actor_id){0}, error) &&
+        application_qc_run_newmis(engine->provider, frame, error);
 }
 static bool control_current(struct application_qc_state *engine, int32_t reference,
                               qa_actor_id actor, qa_error *error)
