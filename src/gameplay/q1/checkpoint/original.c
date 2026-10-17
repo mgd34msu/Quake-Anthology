@@ -214,6 +214,12 @@ static const original_field rotation_fields[] = {
 static const original_field hurt_fields[] = {
     FIELD(q1_map_state, pending.brush.phase, "state", U8)
 };
+static const original_field sigil_fixer_fields[] = {
+    FIELD(q1_map_state, effect_active, "state", BOOL)
+};
+static const original_field electrode_fields[] = {
+    FIELD(q1_map_state, counter_value, "cnt", FLOAT)
+};
 static const original_field frame_tick_head = {"frametick_head", ORIGINAL_REF, 0};
 static const original_field frame_tick_next = {"frametick_next", ORIGINAL_REF, 0};
 static const original_field shooter_fields[] = {
@@ -380,7 +386,8 @@ static const original_map_callback map_callbacks[] = {
     {Q1_MAP_SHOOTER_FIRE, "shooter_think"}, {Q1_MAP_FIREBALL_FLY, "fire_fly"},
     {Q1_MAP_BUBBLES_MAKE, "make_bubbles"}, {Q1_MAP_NOISE_REPEAT, "noise_think"},
     {Q1_MAP_LIGHTNING_FIRE, "lightning_fire"},
-    {Q1_MAP_ADDON_PARTICLE_TICK, "particle_tele_think"}
+    {Q1_MAP_ADDON_PARTICLE_TICK, "particle_tele_think"},
+    {Q1_MAP_SIGIL_FIX, "mge2m2_rune_pickup_fixer_use"}
 };
 static const char *map_think(q1_map_action action) {
     if (action == Q1_MAP_IDLE) return NULL;
@@ -509,7 +516,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
         if (entity->max_health > 0) die = "door_killed";
         break;
     case Q1_MAP_BUTTON:
-        touch = "button_touch"; use = "button_use"; blocked = "button_blocked";
+        touch = map->electrode_button ? "mge2m2_electrode_button_touch" : "button_touch";
+        use = "button_use"; blocked = "button_blocked";
         if (entity->max_health > 0) die = "button_killed";
         break;
     case Q1_MAP_SECRET_DOOR:
@@ -527,6 +535,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_PLAT_TRIGGER: touch = "plat_center_touch"; break;
     case Q1_MAP_SIGIL:
         return callback(record, "touch", map->touch_enabled ? "sigil_touch" : "SUB_Null", error);
+    case Q1_MAP_SIGIL_FIXER: use = "mge2m2_rune_pickup_fixer_use"; break;
+    case Q1_MAP_EGG_OPENER: use = "mge2m2_rune_egg_opener_use"; break;
     case Q1_MAP_SHOOTER: {
         const char *name = qa_strings_cstr(strings, entity->classname);
         use = name && !strcmp(name, "trap_switched_shooter") ? "trap_shooter_use" : "spikeshooter_use";
@@ -548,7 +558,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
             return fail(error, "Original native map callback has no Source field projection");
         break;
     }
-    return callback(record, "touch", map->touch_enabled ? touch : NULL, error) &&
+    return callback(record, "touch", map->touch_enabled ? touch :
+            map->electrode_button ? "SUB_Null" : NULL, error) &&
         callback(record, "use", map->use_enabled ? use : NULL, error) && callback(record, "blocked", blocked, error) &&
         callback(record, "th_pain", pain, error) && callback(record, "th_die", die, error) &&
         callback(record, "tick", tick, error);
@@ -968,7 +979,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         source_entity = *entity;
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
-            if (kind == Q1_MAP_ADDON_COUNTER) physics.enemy = entity->activator;
+            if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON) physics.enemy = entity->activator;
             if (kind == Q1_MAP_SIGIL) source_entity.source_netname = entity->map->netname;
             if (game->options.edition == QA_Q1_CLASSIC) {
                 if (kind == Q1_MAP_DOOR || kind == Q1_MAP_SECRET_DOOR) source_class = "door";
@@ -1117,6 +1128,10 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !FIELDS(receipt, record, entity->map, rotation_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_HURT &&
             !FIELDS(receipt, record, entity->map, hurt_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_SIGIL_FIXER &&
+            !FIELDS(receipt, record, entity->map, sigil_fixer_fields, error)) return false;
+        if ((entity->map->kind == Q1_MAP_ELECTRODE_TARGET || entity->map->electrode_button) &&
+            !FIELDS(receipt, record, entity->map, electrode_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_SIGIL &&
             !text(record, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV),
                 QA_Q1_SAVE_STRING, error)) return false;
@@ -1137,6 +1152,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
                 }
             }
             q1_map_movement source_move = *move;
+            if (entity->map->kind == Q1_MAP_DOOR && entity->map->has_dest2)
+                source_move.dest2 = entity->map->dest2;
             if (entity->map->kind == Q1_MAP_SECRET_DOOR) source_move.pos1 = qa_v3(0,0,0);
             if (!FIELDS(receipt, record, &source_move, mover_fields, error) ||
                 (entity->map->kind == Q1_MAP_SECRET_DOOR &&
@@ -1666,12 +1683,26 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     map->touch_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"touch") != NULL;
     map->use_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"use") != NULL;
     map->original_model = entity->model;
-    if (map->kind == Q1_MAP_ADDON_COUNTER) entity->activator = entity->physics.enemy;
+    const char *classname = qa_strings_cstr(strings, entity->classname);
+    map->electrode_button = map->kind == Q1_MAP_BUTTON && classname &&
+        !strcmp(classname, "mge2m2_electrode_button");
+    if (map->electrode_button) {
+        const char *touch = saved(record, "touch");
+        map->touch_enabled = touch && strcmp(touch, "SUB_Null");
+    }
+    if (map->kind == Q1_MAP_ADDON_COUNTER || map->kind == Q1_MAP_BUTTON)
+        entity->activator = entity->physics.enemy;
     if (map->kind == Q1_MAP_SIGIL) {
         const char *touch = saved(record, "touch");
         map->touch_enabled = touch && strcmp(touch, "SUB_Null");
         map->netname = entity->source_netname;
         entity->source_netname = QA_STRING_NONE;
+    }
+    if (map->kind == Q1_MAP_DOOR) {
+        const char *closed = qa_strings_cstr(strings, map->noise[1]);
+        const char *moving = qa_strings_cstr(strings, map->noise[2]);
+        if (closed && moving && !strcmp(closed, "doors/drclos4.wav") &&
+            !strcmp(moving, "doors/doormv1.wav")) map->sounds = 1;
     }
     if (map->kind == Q1_MAP_PLAT_TRIGGER && saved(record,"enemy")) entity->owner = entity->physics.enemy;
     const char *use = saved(record,"use");
@@ -1693,10 +1724,20 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     if (map->kind == Q1_MAP_ADDON_HURT &&
         !restore_fields(strings, source, record, map, hurt_fields,
             sizeof(hurt_fields) / sizeof(*hurt_fields), slots, count, error)) return false;
+    if (map->kind == Q1_MAP_SIGIL_FIXER &&
+        !restore_fields(strings, source, record, map, sigil_fixer_fields,
+            sizeof(sigil_fixer_fields) / sizeof(*sigil_fixer_fields), slots, count, error)) return false;
+    if ((map->kind == Q1_MAP_ELECTRODE_TARGET || map->electrode_button) &&
+        !restore_fields(strings, source, record, map, electrode_fields,
+            sizeof(electrode_fields) / sizeof(*electrode_fields), slots, count, error)) return false;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
             sizeof(mover_fields) / sizeof(*mover_fields), slots, count, error)) return false;
+        if (map->kind == Q1_MAP_DOOR) {
+            map->dest2 = move->dest2;
+            map->has_dest2 = saved(record, "dest2") != NULL;
+        }
         if (map->kind == Q1_MAP_SECRET_DOOR && saved(record,"oldorigin") &&
             !restore_fields(strings,source,record,move,&secret_origin,1,slots,count,error)) return false;
         float position = saved_number(record,"state");
@@ -2013,7 +2054,8 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
     case Q1_MAP_ADDON_PARTICLE_TELE: case Q1_MAP_FOG_INFO:
     case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE:
-    case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT:
+    case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT: case Q1_MAP_SIGIL_FIXER:
+    case Q1_MAP_EGG_OPENER: case Q1_MAP_ELECTRODE_TARGET:
         return true;
     default:
         return false;
@@ -2037,6 +2079,8 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
     case Q1_MAP_ADDON_PARTICLE_TELE: return action==Q1_MAP_ADDON_PARTICLE_TICK;
     case Q1_MAP_SIGIL: return action==Q1_MAP_SIGIL_PLACE;
+    case Q1_MAP_SIGIL_FIXER: return action==Q1_MAP_SIGIL_FIX;
+    case Q1_MAP_ELECTRODE_TARGET: return action==Q1_MAP_REMOVE;
     default: return false;
     }
 }
@@ -2194,6 +2238,10 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                     unsupported(error, "Original hurt activation has no native boolean state"); goto done;
                 }
             }
+            if (source.map == Q1_MAP_SIGIL_FIXER &&
+                !ADMIT_FIELDS(admission, &map, sigil_fixer_fields, error)) goto done;
+            if ((source.map == Q1_MAP_ELECTRODE_TARGET || map.electrode_button) &&
+                !ADMIT_FIELDS(admission, &map, electrode_fields, error)) goto done;
             if (source.map == Q1_MAP_SIGIL &&
                 !admit_text(admission, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV), error))
                 goto done;
