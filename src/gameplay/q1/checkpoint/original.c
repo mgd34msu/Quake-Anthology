@@ -7,6 +7,7 @@
 #include "qa/game_q1_travel.h"
 #include "qa/game_q1_bots.h"
 #include "qa/qc_text_save.h"
+#include "qa/stamp.h"
 #include <stdio.h>
 #include <stddef.h>
 #include <float.h>
@@ -205,6 +206,13 @@ static const original_field particle_tele_fields[] = {
     FIELD(q1_map_state, particle_size, "size", VECTOR),
     FIELD(q1_map_state, distance, "distance", FLOAT)
 };
+static const original_field rotation_fields[] = {
+    FIELD(q1_map_state, pos2, "pos2", VECTOR),
+    FIELD(q1_map_state, distance, "distance", FLOAT),
+    FIELD(q1_map_state, pending.brush.phase, "state", U8)
+};
+static const original_field frame_tick_head = {"frametick_head", ORIGINAL_REF, 0};
+static const original_field frame_tick_next = {"frametick_next", ORIGINAL_REF, 0};
 static const original_field shooter_fields[] = {
     FIELD(q1_map_state, field_state, "state", FLOAT),
     FIELD(q1_map_state, current_ammo, "currentammo", FLOAT),
@@ -473,7 +481,7 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
 static bool map_functions(const qa_strings *strings, const q1_actor *entity, bool damageable,
     qa_q1_save_record *record, qa_error *error) {
     bool targeted = qa_strings_text(strings, entity->targetname).size != 0;
-    const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL;
+    const q1_map_state *map = entity->map; const char *touch = NULL, *use = NULL, *blocked = NULL, *pain = NULL, *die = NULL, *tick = NULL;
     switch (map->kind) {
     case Q1_MAP_MULTI:
         touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use";
@@ -524,6 +532,12 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_FOG_INFO: break;
     case Q1_MAP_FOG_TRIGGER: touch = use = "trigger_fog_activate"; break;
     case Q1_MAP_FOG_TRANSITION: touch = "trigger_fog_transition_touch"; break;
+    case Q1_MAP_ADDON_ROTATE:
+        use = "rotate_object_continuously_use";
+        tick = map->pending.brush.phase == 1 || map->pending.brush.phase == 3 ||
+            (map->pending.brush.phase == 0 && entity->delay > 0 && map->distance < 0) ?
+            "rotate_object_tween_tick" : "rotate_object_continuously_tick";
+        break;
     default:
         if (map->touch_enabled || map->use_enabled)
             return fail(error, "Original native map callback has no Source field projection");
@@ -531,7 +545,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     }
     return callback(record, "touch", map->touch_enabled ? touch : NULL, error) &&
         callback(record, "use", map->use_enabled ? use : NULL, error) && callback(record, "blocked", blocked, error) &&
-        callback(record, "th_pain", pain, error) && callback(record, "th_die", die, error);
+        callback(record, "th_pain", pain, error) && callback(record, "th_die", die, error) &&
+        callback(record, "tick", tick, error);
 }
 static bool monster_functions(const q1_monster *monster, qa_q1_save_record *record, qa_error *error) {
     const q1_species *species = monster->species;
@@ -1092,6 +1107,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !mover_sounds(entity,game->options.world_type,record,error) || !map_functions(qa_session_strings(game->services.session), entity, combat.can_take_damage, record, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE &&
             !FIELDS(receipt, record, entity->map, particle_tele_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_ROTATE &&
+            !FIELDS(receipt, record, entity->map, rotation_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_SHOOTER &&
             !FIELDS(receipt, record, entity->map, shooter_fields, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
@@ -1181,6 +1198,10 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         }
         if (okay) okay = number(globals,"NumProximityGrenades",mines,true,error);
     }
+    const qa_qc_definition *frame_head = qa_qc_program_find_global(program, "frametick_head");
+    if (okay && frame_head && frame_head->save)
+        okay = actor_id(&receipt, globals, "frametick_head", game->maps->frame_tick_count ?
+            game->maps->frame_ticks[0] : (qa_actor_id){0}, true, error);
     if (okay) okay = source_order(program, globals, true, error);
     for (uint32_t slot = 0; okay && slot < save->entity_count; ++slot) {
         qa_actor_id id;
@@ -1190,6 +1211,13 @@ bool qa_q1_game_original_capture(qa_q1_game *game, const qa_qc_program *program,
         if (entity && (entity->think == Q1_THINK_AXE || entity->think == Q1_THINK_HAMMER_STRIKE)) continue;
         okay = entity_capture(&receipt, entity, player, movement, save->entities + slot, error) &&
             source_order(program, save->entities + slot, false, error);
+    }
+    for (uint32_t i=0;okay && frame_head && frame_head->save && i<game->maps->frame_tick_count;++i) {
+        uint32_t slot;
+        if (!qa_q1_wire_actor_slot(&receipt,game->maps->frame_ticks[i],&slot))
+            okay=fail(error,"Original frame tick has no physical Source edict");
+        else okay=actor_id(&receipt,save->entities+slot,"frametick_next",
+            i+1<game->maps->frame_tick_count?game->maps->frame_ticks[i+1]:(qa_actor_id){0},false,error);
     }
     qa_q1_wire_read_end(&receipt);
     return okay;
@@ -1641,6 +1669,9 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     if (map->kind == Q1_MAP_SHOOTER &&
         !restore_fields(strings, source, record, map, shooter_fields,
             sizeof(shooter_fields) / sizeof(*shooter_fields), slots, count, error)) return false;
+    if (map->kind == Q1_MAP_ADDON_ROTATE &&
+        !restore_fields(strings, source, record, map, rotation_fields,
+            sizeof(rotation_fields) / sizeof(*rotation_fields), slots, count, error)) return false;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
@@ -1745,7 +1776,7 @@ static bool admit_vector(original_admission *admission,const char *name,
 static bool admit_callbacks(original_admission *admission,
     const qa_q1_save_record *expected,q1_map_kind defaults,qa_error *error) {
     static const char *const callbacks[]={"touch","use","blocked","th_stand","th_walk",
-        "th_run","th_missile","th_melee","th_pain","th_die"};
+        "th_run","th_missile","th_melee","th_pain","th_die","tick"};
     for (size_t i=0;i<sizeof(callbacks)/sizeof(*callbacks);++i) {
         const char *name=callbacks[i],*actual=saved(admission->record,name),*wanted=saved(expected,name);
         bool derived=!actual &&
@@ -1767,12 +1798,64 @@ static bool admit_complete(const original_admission *admission,qa_error *error) 
 static bool original_callback_globals(qa_q1_program program) {
     return program==QA_Q1_ID1 || program==QA_Q1_HIPNOTIC || program==QA_Q1_ROGUE;
 }
+static bool original_frame_ticks(qa_q1_program native_program, const qa_qc_program *program,
+    const qa_q1_save_data *save, const qa_actor_id *slots, q1_map_runtime *maps,
+    size_t capacity, qa_error *error) {
+    const qa_qc_definition *head = qa_qc_program_find_global(program, "frametick_head");
+    if (!head || !head->save) return true;
+    uint32_t *marks = calloc(save->entity_count, sizeof(*marks));
+    uint32_t *order = calloc(save->entity_count, sizeof(*order));
+    if (!marks || !order) {
+        free(marks); free(order);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Reading original frame tick order"); return false;
+    }
+    qa_stamp_set seen;
+    qa_stamp_set_init(&seen,marks,save->entity_count);
+    uint32_t slot = 0; size_t count = 0;
+    const char *value = saved(&save->globals, "frametick_head");
+    bool okay = qa_q1_save_entity_decode(value ? value : "0", &slot, error);
+    while (okay && slot) {
+        if (slot >= save->entity_count || qa_stamp_set_test(&seen,slot) || !save->entities[slot].count) {
+            okay = unsupported(error, "Original frame tick list leaves its live physical edicts"); break;
+        }
+        const qa_q1_save_record *record = save->entities + slot;
+        if (original_map_kind(native_program, saved(record, "classname")) != Q1_MAP_ADDON_ROTATE ||
+            saved_number(record, "state") == 0) {
+            okay = unsupported(error, "Original frame tick member lacks its paired active native continuation"); break;
+        }
+        (void)qa_stamp_set_mark(&seen,slot); order[count++] = slot;
+        value = saved(record, "frametick_next");
+        okay = qa_q1_save_entity_decode(value ? value : "0", &slot, error);
+    }
+    for (size_t i = 0; okay && i < save->entity_count; ++i) {
+        const qa_q1_save_record *record = save->entities + i;
+        if (!record->count || original_map_kind(native_program, saved(record, "classname")) != Q1_MAP_ADDON_ROTATE)
+            continue;
+        value = saved(record, "frametick_next"); uint32_t next = 0;
+        okay = qa_q1_save_entity_decode(value ? value : "0", &next, error);
+        if (okay && ((saved_number(record, "state") != 0) != qa_stamp_set_test(&seen,i) ||
+            (!qa_stamp_set_test(&seen,i) && next)))
+            okay = unsupported(error, "Original rotation state differs from its frame tick membership");
+    }
+    if (okay && maps) {
+        if (count > capacity) okay = unsupported(error, "Original frame tick order exceeds its native roster");
+        else {
+            for (size_t i = 0; i < count; ++i) maps->frame_ticks[i] = slots[order[i]];
+            maps->frame_tick_count = (uint32_t)count;
+        }
+    }
+    free(marks); free(order); return okay;
+}
 static bool admit_globals(original_admission *admission,const qa_qc_program *program,
     qa_q1_program native_program,qa_q1_edition edition,const qa_q1_save_data *save,qa_error *error) {
     qa_q1_game game={.options={.program=native_program,.edition=edition}};
     q1_map_runtime maps={0};uint32_t flags=0;
     char queue_name[32];original_field queue_global=body_queue_global(&game,queue_name);
     if (!admit_fields(admission,&game,&queue_global,1,error)) return false;
+    const qa_qc_definition *frame_head = qa_qc_program_find_global(program, "frametick_head");
+    q1_ref frame_head_reference = {0};
+    if (frame_head && frame_head->save &&
+        !admit_fields(admission, &frame_head_reference, &frame_tick_head, 1, error)) return false;
     if (!ADMIT_FIELDS(admission,&game,game_globals,error) ||
         !ADMIT_FIELDS(admission,&maps,map_globals,error) ||
         !ADMIT_FIELDS(admission,&flags,server_globals,error) ||
@@ -1908,7 +1991,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
     case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
     case Q1_MAP_ADDON_PARTICLE_TELE: case Q1_MAP_FOG_INFO:
-    case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION:
+    case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE:
         return true;
     default:
         return false;
@@ -2074,6 +2157,14 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 !restore_map(admission->strings,admission->source,record,&entity,NULL,admission->slots,error)) goto done;
             if (source.map == Q1_MAP_ADDON_PARTICLE_TELE &&
                 !ADMIT_FIELDS(admission, &map, particle_tele_fields, error)) goto done;
+            if (source.map == Q1_MAP_ADDON_ROTATE) {
+                q1_ref next = {0};
+                if (!ADMIT_FIELDS(admission, &map, rotation_fields, error) ||
+                    !admit_fields(admission, &next, &frame_tick_next, 1, error)) goto done;
+                if (map.pending.brush.phase > 3) {
+                    unsupported(error, "Original rotation phase has no native continuation"); goto done;
+                }
+            }
             if (source.map == Q1_MAP_SHOOTER &&
                 !ADMIT_FIELDS(admission, &map, shooter_fields, error)) goto done;
             if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
@@ -2205,6 +2296,7 @@ bool qa_q1_game_original_admit(qa_q1_program native_program,qa_q1_edition editio
         memset(consumed,0,count);admission.record=save->entities+slot;
         okay=admit_entity(&admission,native_program,slot,&local);
     }
+    if (okay) okay = original_frame_ticks(native_program, program, save, NULL, NULL, 0, &local);
     qa_strings_destroy(strings);free(consumed);
     if (!okay && local.code==QA_ERROR_MEMORY) {if(error)*error=local;return false;}
     *supported=okay;return true;
@@ -2729,6 +2821,8 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
     }
     if (okay) okay=q1_body_queue_validate(game,error);
     if (okay) okay=restore_groups(game,save,slots,error);
+    if (okay) okay = original_frame_ticks(game->options.program, program, save, slots,
+        game->maps, game->capacity, error);
     for (size_t slot=2;okay && slot<save->entity_count;++slot) {
         q1_actor *bolt=q1_entity(game,slots[slot]);
         if (!bolt || bolt->think!=Q1_THINK_HAMMER_BOLT) continue;
