@@ -205,6 +205,8 @@ static bool toggle_inner(qa_seat_console *seat, bool from_key, bool repeat, qa_e
 }
 static bool message_inner(qa_seat_console *seat, bool team, bool targeted, int32_t target,
                              qa_error *error) {
+    if (!seat->options.connected(seat->options.context))
+        return print_inner(seat, "Chat requires an active connection.\n", error);
     qa_text_field_clear(seat->chat);
     seat->targeted = targeted;
     seat->chat_target = target;
