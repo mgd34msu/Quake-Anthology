@@ -161,13 +161,16 @@ bool qa_native_guest_bind(qa_native_guest *, const qa_native_guest_callback *, q
 bool qa_native_guest_unbind(qa_native_guest *, uint64_t, qa_error *);
 bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void *, qa_error *);
 typedef enum qa_native_guest_stop_kind {
-    QA_NATIVE_GUEST_RETURN, QA_NATIVE_GUEST_BUDGET, QA_NATIVE_GUEST_PROGRAM_STOP
+    QA_NATIVE_GUEST_RETURN, QA_NATIVE_GUEST_BUDGET, QA_NATIVE_GUEST_PROGRAM_STOP,
+    QA_NATIVE_GUEST_HALT
 } qa_native_guest_stop_kind;
 typedef struct qa_native_guest_run_result {
     qa_native_guest_stop_kind kind;
     size_t instructions, remaining;
     /* Hardware execution has no instruction counter; its fields are unused. */
     bool counted;
+    /* Actual halted instruction, valid for HALT. The CPU retains its continuation. */
+    uint64_t instruction;
 } qa_native_guest_run_result;
 
 /* Exact stop address, shared nested total instruction budget, no host clock.
@@ -177,6 +180,7 @@ typedef struct qa_native_guest_run_result {
  * successful resumable stop, including budget zero. Emulated counts include
  * stopped callback/observer dispatch and nested execution. remaining is bounded
  * by every enclosing run; the caller chooses the next operation's budget.
+ * Emulated HALT retains the instruction continuation for an explicit next run.
  * CPU/callback faults remain terminal. The caller prepares the actual ABI
  * stack/registers before this raw operation and retains them until RETURN. */
 bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, size_t,

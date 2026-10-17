@@ -173,7 +173,7 @@ bool qa_native_sysv_program_run(qa_native_sysv_program *owner, size_t quantum,
         qa_native_guest_run_program(owner->guest, cpu.instruction, owner->returned,
             owner->options.instruction_budget, quantum, program_syscall, owner, &completed, error);
     if (okay) okay = guest_cpu_clock_leave(&owner->clock, owner->guest, error);
-    if (okay && completed.kind != QA_NATIVE_GUEST_BUDGET &&
+    if (okay && completed.kind != QA_NATIVE_GUEST_BUDGET && completed.kind != QA_NATIVE_GUEST_HALT &&
         (completed.kind != QA_NATIVE_GUEST_PROGRAM_STOP || !owner->status.exited))
         okay = guest_fail(error, QA_ERROR_FORMAT, cpu.instruction, "Linux program reached a controller return without a kernel exit");
     if (!okay) { owner->failed = true; owner->guest->failed = true; }

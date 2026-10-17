@@ -856,6 +856,9 @@ bool guest_abi_call_step(guest_abi_call *call, size_t quantum, bool *returned, q
     if (okay && execution.kind == QA_NATIVE_GUEST_RETURN) call->returned = true;
     else if (okay && execution.kind == QA_NATIVE_GUEST_BUDGET && execution.remaining) {
         *returned = false; return true;
+    } else if (okay && execution.kind == QA_NATIVE_GUEST_HALT) {
+        okay = guest_fail(error, QA_ERROR_ARGUMENT, execution.instruction,
+            "native guest halted before ABI return");
     } else if (okay) {
         okay = qa_native_guest_cpu_read(guest, &cpu, error);
         if (okay) okay = guest_fail(error, QA_ERROR_ARGUMENT, cpu.instruction,

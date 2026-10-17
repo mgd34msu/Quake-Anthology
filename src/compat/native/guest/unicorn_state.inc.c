@@ -11,6 +11,13 @@ UNICORN_EXPORT unsigned qa_unicorn_state_revision(void)
     return QA_UNICORN_STATE_REVISION;
 }
 
+UNICORN_EXPORT uc_err qa_unicorn_x86_halted(uc_engine *engine, bool *out)
+{
+    if (!engine || !out || engine->arch != UC_ARCH_X86 || !engine->cpu) return UC_ERR_ARG;
+    *out = engine->cpu->halted != 0;
+    return UC_ERR_OK;
+}
+
 UNICORN_EXPORT uc_err qa_unicorn_x86_state(uc_engine *engine,
     qa_native_guest_cpu *state, bool writing)
 {
