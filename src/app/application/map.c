@@ -42,7 +42,7 @@ static qa_ruleset_id map_authored_rules(const application_provider *provider)
 {
     const qa_product *geometry = qa_catalog_product(provider->application->catalog,
         provider->application->map_geometry);
-    return qa_product_ruleset(geometry, provider->product->family);
+    return qa_product_ruleset(geometry, qa_ruleset_read(provider->component.clock.kind)->family);
 }
 
 static uint32_t map_inhibition_flags(qa_ruleset_id rules)
@@ -275,7 +275,8 @@ bool application_map_prepare_content(qa_application *application,
         return application_fail(error, QA_ERROR_NOT_FOUND,
                                 "selected entity provider is absent");
     const qa_product *geometry = qa_catalog_product(application->catalog, choices->world.geometry);
-    qa_ruleset_id entities = qa_product_ruleset(geometry, publication->map_provider->product->family);
+    qa_ruleset_id entities = qa_product_ruleset(geometry,
+        qa_ruleset_read(publication->map_provider->component.clock.kind)->family);
     qa_entity_syntax syntax = entities == QA_RULESET_Q2_CLASSIC ? QA_ENTITY_Q2_CLASSIC :
         entities == QA_RULESET_Q2_RERELEASE ? QA_ENTITY_Q2_RERELEASE :
         entities == QA_RULESET_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1;
