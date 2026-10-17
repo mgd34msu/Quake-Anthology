@@ -39,7 +39,7 @@ static bool scalar_read(const qa_json_document *doc, qa_json_id value,
         if (qa_json_string_equal(doc, value, names[i])) { *out = scalar(kinds[i]); *bytes = sizes[i]; return true; }
     return fail(error, QA_ERROR_FORMAT, "Native combat defaults require a declared nonpointer scalar");
 }
-static uint32_t required(application_q2_call_operation operation, uint8_t pointers)
+static uint32_t required(application_q2_call_operation operation, bool rerelease)
 {
     switch (operation) {
     case APPLICATION_Q2_DAMAGE: return (1u << (APPLICATION_Q2_CAUSE + 1)) - 1u;
@@ -48,20 +48,24 @@ static uint32_t required(application_q2_call_operation operation, uint8_t pointe
     case APPLICATION_Q2_POWER_ARMOR: return (1u << APPLICATION_Q2_TARGET) | (1u << APPLICATION_Q2_POINT) |
         (1u << APPLICATION_Q2_NORMAL) | (1u << APPLICATION_Q2_AMOUNT) | (1u << APPLICATION_Q2_FLAGS);
     case APPLICATION_Q2_PAIN: return (1u << APPLICATION_Q2_TARGET) | (1u << APPLICATION_Q2_ATTACKER) |
-        (1u << APPLICATION_Q2_KICK) | (1u << APPLICATION_Q2_AMOUNT) | (pointers == 8 ? 1u << APPLICATION_Q2_CAUSE : 0);
+        (1u << APPLICATION_Q2_KICK) | (1u << APPLICATION_Q2_AMOUNT) | (rerelease ? 1u << APPLICATION_Q2_CAUSE : 0);
     case APPLICATION_Q2_DEATH: return (1u << APPLICATION_Q2_TARGET) | (1u << APPLICATION_Q2_INFLICTOR) |
         (1u << APPLICATION_Q2_ATTACKER) | (1u << APPLICATION_Q2_AMOUNT) | (1u << APPLICATION_Q2_POINT) |
-        (pointers == 8 ? 1u << APPLICATION_Q2_CAUSE : 0);
+        (rerelease ? 1u << APPLICATION_Q2_CAUSE : 0);
     case APPLICATION_Q2_PROCESS_PAIN: return 1u << APPLICATION_Q2_TARGET;
     }
     return 0;
 }
-static bool field_type(application_q2_call_field field, uint8_t pointers,
-    qa_native_type *out, qa_error *error)
+static bool field_type(application_q2_call_field field, application_q2_call_operation operation,
+    bool rerelease, qa_native_type *out, qa_error *error)
 {
     if (field <= APPLICATION_Q2_NORMAL) *out = scalar(QA_NATIVE_ADDRESS);
     else if (field == APPLICATION_Q2_KICK) *out = scalar(QA_NATIVE_F32);
-    else if (field == APPLICATION_Q2_CAUSE && pointers == 8) {
+    /* API2023 reactions take const mod_t&, while T_Damage takes mod_t. */
+    else if (field == APPLICATION_Q2_CAUSE && rerelease &&
+        (operation == APPLICATION_Q2_PAIN || operation == APPLICATION_Q2_DEATH))
+        *out = scalar(QA_NATIVE_ADDRESS);
+    else if (field == APPLICATION_Q2_CAUSE && rerelease) {
         qa_native_type *members = calloc(3, sizeof(*members));
         if (!members) return fail(error, QA_ERROR_MEMORY, "Retaining original Q2 mod_t ABI");
         for (size_t i = 0; i < 3; ++i) members[i] = scalar(QA_NATIVE_U8);
@@ -69,7 +73,7 @@ static bool field_type(application_q2_call_field field, uint8_t pointers,
     } else *out = scalar(QA_NATIVE_I32);
     return true;
 }
-static bool layout_read(const qa_json_document *doc, qa_json_id value, uint8_t pointers,
+static bool layout_read(const qa_json_document *doc, qa_json_id value, qa_native_target target,
     qa_native_type *out, uint32_t *bytes, qa_error *error)
 {
     if (qa_json_string_equal(doc, qa_json_get(doc, value, "kind"), "scalar"))
@@ -81,7 +85,7 @@ static bool layout_read(const qa_json_document *doc, qa_json_id value, uint8_t p
     if (!word(doc, qa_json_get(doc, layout, "pointerBytes"), &declared_pointers, error) ||
         !word(doc, qa_json_get(doc, layout, "byteLength"), bytes, error) ||
         !word(doc, qa_json_get(doc, layout, "alignment"), &alignment, error)) return false;
-    if (declared_pointers != pointers || !*bytes || *bytes > 65536 ||
+    if (declared_pointers != target.pointer_bytes || !*bytes || *bytes > 65536 ||
         !qa_json_string_equal(doc, qa_json_get(doc, layout, "byteOrder"), "little-endian") ||
         qa_json_type(doc, rows) != QA_JSON_ARRAY || !qa_json_size(doc, rows) || qa_json_size(doc, rows) > 256)
         return fail(error, QA_ERROR_FORMAT, "Native combat aggregate differs from its source ABI");
@@ -96,8 +100,6 @@ static bool layout_read(const qa_json_document *doc, qa_json_id value, uint8_t p
         ok = scalar_read(doc, qa_json_get(doc, row, "storage"), &members[i], &sizes[i], error) &&
             word(doc, qa_json_get(doc, row, "byteOffset"), &offsets[i], error) &&
             word(doc, qa_json_get(doc, row, "count"), &repeats, error);
-        if (ok && pointers == 4 && sizes[i] == 8)
-            ok = fail(error, QA_ERROR_UNSUPPORTED, "Native i386 aggregate eight-byte member alignment requires explicit ABI qualification");
         if (ok && (!repeats || repeats > *bytes / sizes[i])) ok = fail(error, QA_ERROR_FORMAT, "Native combat aggregate field extent is invalid");
         if (ok) members[i].count = repeats;
     }
@@ -110,7 +112,7 @@ static bool layout_read(const qa_json_document *doc, qa_json_id value, uint8_t p
     }
     uint64_t next = 0; uint32_t natural_alignment = 1;
     for (size_t i = 0; ok && i < count; ++i) {
-        uint32_t align = sizes[i] < pointers ? sizes[i] : pointers;
+        uint32_t align = target.abi == QA_NATIVE_ABI_SYSTEM_V_I386 && sizes[i] > 4 ? 4 : sizes[i];
         if (align > natural_alignment) natural_alignment = align;
         next = (next + align - 1) & ~(uint64_t)(align - 1);
         if (next != offsets[i]) ok = fail(error, QA_ERROR_UNSUPPORTED, "Native combat aggregate requires an explicit packed or sparse ABI producer");
@@ -133,9 +135,12 @@ void application_q2_call_free(application_q2_call *call)
     free((void *)call->signature.parameters); free(call->arguments); memset(call, 0, sizeof(*call));
 }
 bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
-    application_q2_call_operation operation, qa_native_target target, application_q2_call *out, qa_error *error)
+    application_q2_call_operation operation, qa_native_profile profile, qa_native_target target,
+    application_q2_call *out, qa_error *error)
 {
-    if (!doc || !out || !required(operation, target.pointer_bytes))
+    bool rerelease = profile == QA_NATIVE_Q2_GAME_API2023;
+    if (!doc || !out || (profile != QA_NATIVE_Q2_GAME_API3 && !rerelease) ||
+        !required(operation, rerelease))
         return fail(error, QA_ERROR_ARGUMENT, "Native combat call requires its original source operation");
     qa_json_id convention = qa_json_get(doc, value, "convention"), rows = qa_json_get(doc, value, "arguments");
     qa_native_call_convention call_convention = QA_NATIVE_CALL_DEFAULT;
@@ -147,12 +152,12 @@ bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
     else if (qa_json_string_equal(doc, convention, "thiscall"))
         call_convention = QA_NATIVE_CALL_THISCALL;
     known_convention = known_convention || call_convention != QA_NATIVE_CALL_DEFAULT;
-    if (target.os != QA_NATIVE_OS_WINDOWS ||
-        !((target.arch == QA_NATIVE_ARCH_I386 && target.pointer_bytes == 4 && target.abi == QA_NATIVE_ABI_CDECL_I386 &&
-            known_convention) ||
-          (target.arch == QA_NATIVE_ARCH_X86_64 && target.pointer_bytes == 8 && target.abi == QA_NATIVE_ABI_MICROSOFT_X64 &&
-            qa_json_string_equal(doc, convention, "microsoft-x64"))))
-        return fail(error, QA_ERROR_UNSUPPORTED, "Native combat convention requires its declared Windows ABI backend");
+    bool declared = target.abi == QA_NATIVE_ABI_CDECL_I386 ? known_convention :
+        target.abi == QA_NATIVE_ABI_MICROSOFT_X64 ? qa_json_string_equal(doc, convention, "microsoft-x64") :
+        target.abi == QA_NATIVE_ABI_SYSTEM_V_I386 ? qa_json_string_equal(doc, convention, "system-v-i386") :
+        target.abi == QA_NATIVE_ABI_SYSTEM_V_X64 && qa_json_string_equal(doc, convention, "system-v-x86-64");
+    if (!declared)
+        return fail(error, QA_ERROR_UNSUPPORTED, "Native combat convention differs from its admitted source ABI");
     if (qa_json_type(doc, rows) != QA_JSON_ARRAY || !qa_json_size(doc, rows) || qa_json_size(doc, rows) > 64)
         return fail(error, QA_ERROR_FORMAT, "Native combat argument roster is invalid");
     application_q2_call call = {.pointer_bytes = target.pointer_bytes};
@@ -165,7 +170,7 @@ bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
     call.signature = (qa_native_signature){.abi = target.abi, .parameters = parameters, .parameter_count = count,
         .result = scalar(operation == APPLICATION_Q2_REGULAR_ARMOR || operation == APPLICATION_Q2_POWER_ARMOR ? QA_NATIVE_I32 : QA_NATIVE_VOID),
         .convention = call_convention};
-    uint32_t seen = 0, needed = required(operation, target.pointer_bytes); bool ok = true;
+    uint32_t seen = 0, needed = required(operation, rerelease); bool ok = true;
     for (size_t i = 0; ok && i < count; ++i) {
         qa_json_id row = qa_json_at(doc, rows, i), kind = qa_json_get(doc, row, "kind");
         application_q2_call_argument *argument = &call.arguments[i];
@@ -177,11 +182,11 @@ bool application_q2_call_read(const qa_json_document *doc, qa_json_id value,
             }
             argument->kind = ARGUMENT_FIELD; argument->field = (application_q2_call_field)field;
             call.field_index[field] = i; seen |= 1u << field;
-            ok = field_type(argument->field, target.pointer_bytes, &parameters[i], error);
+            ok = field_type(argument->field, operation, rerelease, &parameters[i], error);
             if (ok && parameters[i].kind == QA_NATIVE_BYTES) argument->value_bytes = 3;
         } else if (qa_json_string_equal(doc, kind, "value")) {
             argument->kind = ARGUMENT_VALUE; uint32_t bytes;
-            ok = layout_read(doc, qa_json_get(doc, row, "layout"), target.pointer_bytes, &parameters[i], &bytes, error);
+            ok = layout_read(doc, qa_json_get(doc, row, "layout"), target, &parameters[i], &bytes, error);
             qa_json_id source = qa_json_get(doc, row, "bytes");
             if (ok && (qa_json_type(doc, source) != QA_JSON_ARRAY || qa_json_size(doc, source) != bytes))
                 ok = fail(error, QA_ERROR_FORMAT, "Native combat default bytes differ from their layout");

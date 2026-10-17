@@ -25,7 +25,7 @@ typedef struct application_q2_call {
  * Lowered aggregate defaults borrow call storage. Captured extras borrow the
  * original invocation and must remain alive until synchronous continuation. */
 bool application_q2_call_read(const qa_json_document *, qa_json_id,
-    application_q2_call_operation, qa_native_target, application_q2_call *, qa_error *);
+    application_q2_call_operation, qa_native_profile, qa_native_target, application_q2_call *, qa_error *);
 void application_q2_call_free(application_q2_call *);
 bool application_q2_call_project(const application_q2_call *, const qa_native_value *, size_t,
     qa_native_value fields[APPLICATION_Q2_FIELD_COUNT], qa_error *);

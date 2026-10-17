@@ -7,6 +7,7 @@
 #include "qa/application_startup_prepare.h"
 #include "qa/qc.h"
 #include "../src/app/frontend/internal.h"
+#include "../src/app/application/guest_native_q2_calls.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -734,10 +735,104 @@ static void tree_traversal(const qa_collision_geometry *geometry)
     GAME_CHECK(stopped.count == 2 && stopped.children[1] == -2);
 }
 
+static void native_combat_calls(void)
+{
+    static const char damage[] =
+        "[{\"kind\":\"field\",\"field\":\"target\"},{\"kind\":\"field\",\"field\":\"inflictor\"},"
+        "{\"kind\":\"field\",\"field\":\"attacker\"},{\"kind\":\"field\",\"field\":\"direction\"},"
+        "{\"kind\":\"field\",\"field\":\"point\"},{\"kind\":\"field\",\"field\":\"normal\"},"
+        "{\"kind\":\"field\",\"field\":\"amount\"},{\"kind\":\"field\",\"field\":\"knockback\"},"
+        "{\"kind\":\"field\",\"field\":\"flags\"},{\"kind\":\"field\",\"field\":\"cause\"}]";
+    static const char pain[] =
+        "{\"kind\":\"field\",\"field\":\"target\"},{\"kind\":\"field\",\"field\":\"attacker\"},"
+        "{\"kind\":\"field\",\"field\":\"kick\"},{\"kind\":\"field\",\"field\":\"amount\"}";
+    static const char death[] =
+        "{\"kind\":\"field\",\"field\":\"target\"},{\"kind\":\"field\",\"field\":\"inflictor\"},"
+        "{\"kind\":\"field\",\"field\":\"attacker\"},{\"kind\":\"field\",\"field\":\"amount\"},"
+        "{\"kind\":\"field\",\"field\":\"point\"}";
+    static const struct {
+        qa_native_target target;
+        const char *convention;
+        qa_native_profile profile;
+    } sources[] = {
+        {{QA_NATIVE_OS_WINDOWS, QA_NATIVE_ARCH_I386, QA_NATIVE_ABI_CDECL_I386, 4}, "cdecl", QA_NATIVE_Q2_GAME_API3},
+        {{QA_NATIVE_OS_WINDOWS, QA_NATIVE_ARCH_X86_64, QA_NATIVE_ABI_MICROSOFT_X64, 8}, "microsoft-x64", QA_NATIVE_Q2_GAME_API3},
+        {{QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_I386, QA_NATIVE_ABI_SYSTEM_V_I386, 4}, "system-v-i386", QA_NATIVE_Q2_GAME_API3},
+        {{QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, QA_NATIVE_ABI_SYSTEM_V_X64, 8}, "system-v-x86-64", QA_NATIVE_Q2_GAME_API3},
+        {{QA_NATIVE_OS_WINDOWS, QA_NATIVE_ARCH_X86_64, QA_NATIVE_ABI_MICROSOFT_X64, 8}, "microsoft-x64", QA_NATIVE_Q2_GAME_API2023},
+        {{QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, QA_NATIVE_ABI_SYSTEM_V_X64, 8}, "system-v-x86-64", QA_NATIVE_Q2_GAME_API2023}
+    };
+    static const application_q2_call_operation operations[] = {
+        APPLICATION_Q2_DAMAGE, APPLICATION_Q2_PAIN, APPLICATION_Q2_DEATH
+    };
+    for (size_t source = 0; source < sizeof(sources) / sizeof(*sources); ++source) {
+        bool rerelease = sources[source].profile == QA_NATIVE_Q2_GAME_API2023;
+        for (size_t operation = 0; operation < sizeof(operations) / sizeof(*operations); ++operation) {
+            qa_error error = {0};
+            char arguments[1024], text[1200];
+            int length = operation == 0 ? snprintf(arguments, sizeof(arguments), "%s", damage) :
+                snprintf(arguments, sizeof(arguments), "[%s%s]", operation == 1 ? pain : death,
+                    rerelease ? ",{\"kind\":\"field\",\"field\":\"cause\"}" : "");
+            GAME_CHECK(length > 0 && (size_t)length < sizeof(arguments));
+            length = snprintf(text, sizeof(text), "{\"convention\":\"%s\",\"arguments\":%s}",
+                sources[source].convention, arguments);
+            GAME_CHECK(length > 0 && (size_t)length < sizeof(text));
+            qa_json_document *document = NULL;
+            GAME_CHECK(qa_json_parse(QA_JSON_STRICT, (qa_bytes){(const uint8_t *)text, (size_t)length}, &document, &error));
+            application_q2_call call = {0};
+            GAME_CHECK(application_q2_call_read(document, qa_json_root(document), operations[operation],
+                sources[source].profile, sources[source].target, &call, &error));
+            GAME_CHECK(call.signature.abi == sources[source].target.abi &&
+                call.signature.convention == QA_NATIVE_CALL_DEFAULT &&
+                call.pointer_bytes == sources[source].target.pointer_bytes);
+            GAME_CHECK(call.signature.parameter_count == (operation == 0 ? 10u :
+                (operation == 1 ? 4u : 5u) + (rerelease ? 1u : 0u)));
+            size_t cause = call.field_index[APPLICATION_Q2_CAUSE];
+            if (operation && !rerelease) GAME_CHECK(cause == SIZE_MAX);
+            else {
+                GAME_CHECK(cause < call.signature.parameter_count);
+                const qa_native_type *type = call.signature.parameters + cause;
+                GAME_CHECK(type->kind == (!rerelease ? QA_NATIVE_I32 :
+                    operation ? QA_NATIVE_ADDRESS : QA_NATIVE_BYTES));
+                if (rerelease && !operation) {
+                    GAME_CHECK(type->field_count == 3 && type->count == 1);
+                    for (size_t i = 0; i < 3; ++i)
+                        GAME_CHECK(type->fields[i].kind == QA_NATIVE_U8 && type->fields[i].count == 1);
+                }
+            }
+            qa_native_value values[10] = {0}, fields[APPLICATION_Q2_FIELD_COUNT];
+            uint8_t mod[] = {1, 0, 0};
+            qa_native_address address = call.pointer_bytes == 8 ? UINT64_C(0x100000020) : 32;
+            for (size_t i = 0; i < call.signature.parameter_count; ++i) {
+                values[i].type = call.signature.parameters[i].kind;
+                if (values[i].type == QA_NATIVE_ADDRESS) values[i].as.address = address;
+                else if (values[i].type == QA_NATIVE_BYTES) values[i].as.bytes = (qa_native_memory){mod, sizeof(mod)};
+            }
+            GAME_CHECK(application_q2_call_project(&call, values, call.signature.parameter_count, fields, &error));
+            GAME_CHECK(fields[APPLICATION_Q2_TARGET].as.address == address);
+            if (rerelease && operation) GAME_CHECK(fields[APPLICATION_Q2_CAUSE].as.address == address);
+            application_q2_call_free(&call);
+            qa_json_destroy(document);
+        }
+    }
+    qa_error error = {0};
+    char text[1200];
+    int length = snprintf(text, sizeof(text), "{\"convention\":\"microsoft-x64\",\"arguments\":%s}", damage);
+    GAME_CHECK(length > 0 && (size_t)length < sizeof(text));
+    qa_json_document *document = NULL;
+    GAME_CHECK(qa_json_parse(QA_JSON_STRICT, (qa_bytes){(const uint8_t *)text, (size_t)length}, &document, &error));
+    application_q2_call call = {0};
+    GAME_CHECK(!application_q2_call_read(document, qa_json_root(document), APPLICATION_Q2_DAMAGE,
+        QA_NATIVE_Q2_GAME_API3, sources[3].target, &call, &error));
+    application_q2_call_free(&call);
+    qa_json_destroy(document);
+}
+
 void test_guest(void);
 void test_guest(void)
 {
     qa_error error = {0};
+    native_combat_calls();
     guest_fixture fixture = {0};
     gameplay_map_create(&fixture.map);
     tree_traversal(fixture.map.geometry);

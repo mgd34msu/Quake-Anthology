@@ -51,6 +51,7 @@ bool application_native_q2_inventory_item(struct application_native_q2 *, uint32
     qa_item_id *, qa_error *);
 bool application_q2_combat_profile_read(struct application_native_q2 *,
     application_q2_combat_profile *, qa_error *);
+bool application_q2_combat_profile_load(application_q2_combat_profile *, qa_error *);
 const application_q2_combat_profile *application_native_q2_combat_profile(
     const struct application_native_q2 *);
 bool application_q2_combat_classname(const application_q2_combat_profile *, qa_actor_id,

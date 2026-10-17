@@ -107,8 +107,9 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
     memset(p, 0, sizeof(*p)); p->engine = engine; p->classname = UINT32_MAX;
     p->kex = engine->profile == QA_NATIVE_Q2_GAME_API2023;
     p->target = qa_native_module_describe(engine->provider->state.native.module).image.target;
-    if ((p->kex && p->target.pointer_bytes != 8) || (!p->kex && p->target.pointer_bytes != 4))
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native primary combat requires its qualified classic32 or KEX64 artifact");
+    if ((p->target.pointer_bytes != 4 && p->target.pointer_bytes != 8) ||
+        (p->kex && p->target.pointer_bytes != 8))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native primary combat requires its actual Q2 source pointer width");
     if (!qa_json_parse(QA_JSON_STRICT, qa_native_declaration_primary(engine->declaration), &p->document, error)) return false;
     const qa_json_document *doc = p->document;
     qa_json_id root = qa_json_root(doc); p->world = qa_json_get(doc, root, "world");
@@ -128,7 +129,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
     for (size_t i = 0; i < 6; ++i) {
         if ((p->kex && i == APPLICATION_Q2_REGULAR_ARMOR) || (!p->kex && i == APPLICATION_Q2_PROCESS_PAIN)) continue;
         if (!application_q2_call_read(doc, qa_json_get(doc, calls, call_names[i]),
-            (application_q2_call_operation)i, p->target, &p->calls[i], error)) return false;
+            (application_q2_call_operation)i, engine->profile, p->target, &p->calls[i], error)) return false;
     }
     qa_json_id regular = qa_json_get(doc, armor, "regular");
     p->regular_count = qa_json_size(doc, regular);
@@ -140,7 +141,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         qa_json_id fields = qa_json_get(doc, p->world, "fields"), globals = qa_json_get(doc, p->world, "globals"),
             items = qa_json_get(doc, p->world, "items"), item_fields = qa_json_get(doc, p->world, "itemFields"),
             info = qa_json_get(doc, p->world, "armorInfo"), teams = qa_json_get(doc, p->world, "teams");
-        p->client_pointer = 84; p->inuse = 88; p->svflags = 184; p->team = UINT32_MAX;
+        p->team = UINT32_MAX;
 #define READ(object, name, member) if (!word(doc, object, name, &p->member, error)) return false
         READ(p->world, "entityBytes", entity_bytes);
         READ(qa_json_get(doc, qa_json_get(doc, root, "weapons"), "client"), "byteLength", client_bytes);
@@ -163,25 +164,28 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
             p->regular[i].index = (uint32_t)index;
         }
         uint32_t offsets[] = {p->health, p->damageable, p->flags, p->mass, p->pain, p->die};
+        uint32_t sizes[] = {4, 4, 4, 4, p->target.pointer_bytes, p->target.pointer_bytes};
         for (size_t i = 0; i < sizeof(offsets) / sizeof(*offsets); ++i) {
-            if (offsets[i] % 4 || !range(offsets[i], 4, p->entity_bytes, error)) return false;
-            if (offsets[i] < 260 || ((uint64_t)offsets[i] < (uint64_t)p->velocity + 12 &&
-                (uint64_t)p->velocity < (uint64_t)offsets[i] + 4))
-                return application_fail(error, QA_ERROR_FORMAT, "Native classic combat aliases its public prefix or source velocity");
+            if (!range(offsets[i], sizes[i], p->entity_bytes, error)) return false;
+            if ((uint64_t)offsets[i] < (uint64_t)p->velocity + 12 &&
+                (uint64_t)p->velocity < (uint64_t)offsets[i] + sizes[i])
+                return application_fail(error, QA_ERROR_FORMAT, "Native classic combat aliases its source velocity");
             for (size_t j = 0; j < i; ++j)
-                if (offsets[i] == offsets[j]) return application_fail(error, QA_ERROR_FORMAT, "Native classic combat fields overlap");
+                if ((uint64_t)offsets[i] < (uint64_t)offsets[j] + sizes[j] &&
+                    (uint64_t)offsets[j] < (uint64_t)offsets[i] + sizes[i])
+                    return application_fail(error, QA_ERROR_FORMAT, "Native classic combat fields overlap");
         }
         qa_json_id game = qa_json_get(doc, p->world, "game");
         if (!qa_json_string_equal(doc, game, "base") && !qa_json_string_equal(doc, game, "xatrix") &&
             !qa_json_string_equal(doc, game, "rogue") && !qa_json_string_equal(doc, game, "ctf"))
             return application_fail(error, QA_ERROR_FORMAT, "Native classic combat requires its exact original product cause roster");
         if ((p->classname != UINT32_MAX && !range(p->classname, p->target.pointer_bytes, p->entity_bytes, error)) ||
-            p->entity_bytes < 260 || !range(p->velocity, 12, p->entity_bytes, error) ||
+            !range(p->velocity, 12, p->entity_bytes, error) ||
             !range(p->invincible, 4, p->client_bytes, error) || !p->userinfo_bytes ||
             !range(p->userinfo, p->userinfo_bytes, p->client_bytes, error) ||
             !range(p->view_angles, 12, p->client_bytes, error) ||
-            !range(p->item_classname, 4, p->item_stride, error) ||
-            !range(p->item_info, 4, p->item_stride, error) ||
+            !range(p->item_classname, p->target.pointer_bytes, p->item_stride, error) ||
+            !range(p->item_info, p->target.pointer_bytes, p->item_stride, error) ||
             p->screen >= p->inventory_count || p->shield >= p->inventory_count || p->cells >= p->inventory_count)
             return application_fail(error, QA_ERROR_FORMAT, "Native classic combat metadata exceeds its records");
     } else {
@@ -201,8 +205,6 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         FIELD(layout, "invincible_time", "int64", 1, invincible); FIELD(layout, "v_angle", "float32", 3, view_angles);
 #undef FIELD
         if (!field(doc, layout, "resp.ctf_team", "int32", 1, &p->team, true, error)) return false;
-        if (p->client_pointer != 120 || p->inuse != 1376 || p->svflags != 1392 || p->entity_bytes < 1472)
-            return application_fail(error, QA_ERROR_FORMAT, "Native combat changes its API2023 public entity prefix");
         READ(entries, "time", time); READ(entries, "processPain", process_entry);
         READ(armor, "table", item_table); READ(armor, "stride", item_stride);
         READ(armor, "normal", normal); READ(armor, "energy", energy); READ(armor, "cellsIndex", cells);
@@ -232,8 +234,10 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
     if (!word(doc, inventory, "client", &actual_pointer, error) ||
         !word(doc, inventory, "inventory", &actual_offset, error) ||
         !word(doc, inventory, "count", &actual_count, error) ||
-        actual_pointer != p->client_pointer || actual_offset != p->inventory || actual_count != p->inventory_count)
+        (p->kex && actual_pointer != p->client_pointer) ||
+        actual_offset != p->inventory || actual_count != p->inventory_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native combat and inventory disagree about their original shared counters");
+    p->client_pointer = actual_pointer;
     if (!range(p->inventory, (uint64_t)p->inventory_count * 4, p->client_bytes, error) ||
         p->item_stride < p->target.pointer_bytes || p->item_stride > 65536 ||
         p->normal > 65532 || p->energy > 65532 || p->normal == p->energy ||
@@ -251,9 +255,27 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
     }
     return true;
 }
+bool application_q2_combat_profile_load(application_q2_combat_profile *p, qa_error *error)
+{
+    const qa_native_host_entity_layout *layout =
+        qa_native_host_source_layout(p->engine->provider->state.native.host);
+    if (!layout || layout->bytes > p->entity_bytes || layout->client != p->client_pointer ||
+        (p->kex && (layout->inuse != p->inuse || layout->flags != p->svflags)))
+        return application_fail(error, QA_ERROR_FORMAT, "Native combat differs from its actual GAME public entity layout");
+    if (!p->kex) {
+        uint32_t offsets[] = {p->health, p->damageable, p->flags, p->mass, p->pain, p->die};
+        for (size_t i = 0; i < sizeof(offsets) / sizeof(*offsets); ++i)
+            if (offsets[i] < layout->bytes)
+                return application_fail(error, QA_ERROR_FORMAT, "Native classic combat aliases its public entity prefix");
+        p->inuse = (uint32_t)layout->inuse;
+        p->svflags = (uint32_t)layout->flags;
+    }
+    return true;
+}
 bool application_q2_combat_profile_resolve(application_q2_combat_profile *p, qa_error *error)
 {
     if (p->resolved) return true;
+    if (!application_q2_combat_profile_load(p, error)) return false;
     qa_json_id armor = qa_json_get(p->document, p->world, "armor");
     if (p->kex) {
         qa_item_id identity;
@@ -331,6 +353,7 @@ bool application_q2_combat_actor_init(application_q2_combat_profile *p, uint32_t
 {
     if (!p || !out || !qa_actors_get(qa_session_actors(p->engine->provider->application->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Native combat actor has no live full canonical generation");
+    if (!application_q2_combat_profile_load(p, error)) return false;
     qa_native_entity_table table; qa_native_address address; int64_t generation = 0;
     if (!qa_native_entity_table_get(native(p), &table, error) ||
         (p->kex ? table.stride < p->entity_bytes : table.stride != p->entity_bytes) ||

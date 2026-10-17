@@ -930,7 +930,8 @@ bool application_native_q2_combat_team_refresh(struct application_native_q2 *eng
 bool application_native_q2_combat_load(struct application_native_q2 *engine, qa_error *error)
 {
     struct application_native_q2_combat *p = engine->source_combat;
-    return !p || application_q2_kex_damage_bind(p->kex, error);
+    return !p || (application_q2_combat_profile_load(&p->profile, error) &&
+        application_q2_kex_damage_bind(p->kex, error));
 }
 bool application_native_q2_combat_activate(struct application_native_q2 *engine, qa_error *error)
 {
