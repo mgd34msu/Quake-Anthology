@@ -2,13 +2,14 @@
  * use its genuine SoftFloat types/rounding, including on ARM64 hosts. */
 #include "unicorn_abi_fp.h"
 #include "uc_priv.h"
+#include "unicorn_abi_fp_math.inc.c"
 
 typedef enum qa_unicorn_unary_state {
     QA_UNICORN_UNARY_READY, QA_UNICORN_UNARY_HANDLED, QA_UNICORN_UNARY_SUPPRESSED
 } qa_unicorn_unary_state;
 
-static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
-    uintptr_t retaddr, bool infinity_invalid, floatx80 *source, float_status *status)
+static void qa_unicorn_x87_begin(CPUX86State *env, uintptr_t retaddr,
+    float_status *status)
 {
     if (env->fpus & FPUS_SE) fpu_raise_exception(env, retaddr);
     env->fpus &= ~0x200;
@@ -16,6 +17,20 @@ static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
     set_flush_to_zero(false, status);
     set_flush_inputs_to_zero(false, status);
     set_float_exception_flags(0, status);
+}
+
+static bool qa_unicorn_x87_denormal(floatx80 *source)
+{
+    if (!floatx80_is_zero_or_denormal(*source) || floatx80_is_zero(*source)) return false;
+    /* Intel SDM 1, 8.2.2: pseudo-denormals raise DE and use exponent 1. */
+    if (source->low & UINT64_C(0x8000000000000000)) source->high |= 1;
+    return true;
+}
+
+static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
+    uintptr_t retaddr, bool infinity_invalid, floatx80 *source, float_status *status)
+{
+    qa_unicorn_x87_begin(env, retaddr, status);
     bool empty = env->fptags[env->fpstt] != 0;
     *source = ST0;
     bool special = !empty && (floatx80_invalid_encoding(*source) || floatx80_is_any_nan(*source));
@@ -32,11 +47,9 @@ static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
         env->fptags[env->fpstt] = 0;
         return QA_UNICORN_UNARY_HANDLED;
     }
-    if (floatx80_is_zero_or_denormal(*source) && !floatx80_is_zero(*source)) {
+    if (qa_unicorn_x87_denormal(source)) {
         fpu_set_exception(env, FPUS_DE);
         if (!(env->fpuc & FPUS_DE)) return QA_UNICORN_UNARY_SUPPRESSED;
-        /* Intel SDM 1, 8.2.2: pseudo-denormals raise DE and use exponent 1. */
-        if (source->low & UINT64_C(0x8000000000000000)) source->high |= 1;
     }
     return QA_UNICORN_UNARY_READY;
 }
@@ -79,9 +92,46 @@ static void qa_unicorn_trig(CPUX86State *env, bool cosine, uintptr_t retaddr)
         ST0 = cosine ? int32_to_floatx80(1, &status) : source;
         return;
     }
-    /* The existing finite approximation still narrows through binary64. */
-    double operand = floatx80_to_double(env, source);
-    ST0 = double_to_floatx80(env, cosine ? cos(operand) : sin(operand));
+    qa_unicorn_x87_math_result result = qa_unicorn_x87_sincos(source,
+        cosine, env->fpuc, &status);
+    ST0 = result.value;
+    if (result.rounded_up) env->fpus |= 0x200;
+    fpu_set_exception(env, result.exceptions);
+}
+
+static void qa_unicorn_fpatan(CPUX86State *env, uintptr_t retaddr)
+{
+    float_status status;
+    qa_unicorn_x87_begin(env, retaddr, &status);
+    unsigned destination = (env->fpstt + 1) & 7;
+    floatx80 x = ST0, y = ST1;
+    bool empty = env->fptags[env->fpstt] || env->fptags[destination];
+    bool unsupported = floatx80_invalid_encoding(x) || floatx80_invalid_encoding(y);
+    if (empty || unsupported || floatx80_is_any_nan(x) || floatx80_is_any_nan(y)) {
+        floatx80 value = empty || unsupported ? floatx80_default_nan(&status) :
+            propagateFloatx80NaN(y, x, &status);
+        unsigned exception = empty || unsupported ||
+            (get_float_exception_flags(&status) & float_flag_invalid) ? FPUS_IE : 0;
+        if (empty) env->fpus |= FPUS_SF;
+        if (exception) fpu_set_exception(env, exception);
+        if (exception & ~env->fpuc) return;
+        ST1 = value;
+        env->fptags[destination] = 0;
+        fpop(env);
+        return;
+    }
+    bool denormal_x = qa_unicorn_x87_denormal(&x);
+    bool denormal_y = qa_unicorn_x87_denormal(&y);
+    if (denormal_x || denormal_y) {
+        fpu_set_exception(env, FPUS_DE);
+        if (!(env->fpuc & FPUS_DE)) return;
+    }
+    qa_unicorn_x87_math_result result = qa_unicorn_x87_atan2(y, x, env->fpuc, &status);
+    ST1 = result.value;
+    env->fptags[destination] = 0;
+    fpop(env);
+    if (result.rounded_up) env->fpus |= 0x200;
+    if (result.exceptions) fpu_set_exception(env, result.exceptions);
 }
 
 UNICORN_EXPORT unsigned qa_unicorn_abi_fp_revision(void)

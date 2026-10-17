@@ -96,6 +96,20 @@ function(qa_native_guest_dependency)
     qa_native_guest_replace_text(fpu
         "void helper_frndint(CPUX86State *env)\n{\n    ST0 = floatx80_round_to_int(ST0, &env->fp_status);\n}"
         "static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr);\n\nvoid helper_frndint(CPUX86State *env)\n{\n    qa_unicorn_frndint(env, GETPC());\n}" 1)
+    qa_native_guest_replace_text(fpu [=[void helper_fpatan(CPUX86State *env)
+{
+    double fptemp, fpsrcop;
+
+    fpsrcop = floatx80_to_double(env, ST1);
+    fptemp = floatx80_to_double(env, ST0);
+    ST1 = double_to_floatx80(env, atan2(fpsrcop, fptemp));
+    fpop(env);
+}]=] [=[static void qa_unicorn_fpatan(CPUX86State *env, uintptr_t retaddr);
+
+void helper_fpatan(CPUX86State *env)
+{
+    qa_unicorn_fpatan(env, GETPC());
+}]=] 1)
     qa_native_guest_replace_text(fpu [=[void helper_fsin(CPUX86State *env)
 {
     double fptemp = floatx80_to_double(env, ST0);
