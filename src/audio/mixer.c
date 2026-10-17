@@ -380,6 +380,8 @@ static void notify_voice(qa_audio_mixer *mixer, qa_mixer_voice *voice, bool star
         mixer->events[index].event = (qa_audio_voice_event){
             .started = started,
             .seat = mixer->listener.seat,
+            .actor = voice->event_actor,
+            .listener_actor = mixer->listener.actor,
             .voice_id = voice->id,
             .resource_id = voice->prepared->asset
                                ? qa_resource_id(qa_audio_asset_resource(voice->prepared->asset))
@@ -760,6 +762,7 @@ bool qa_audio_mixer_play(qa_audio_mixer *mixer, const qa_audio_play *sound, int3
         .role = QA_MIXER_EFFECT,
         .prepared = prepared,
         .sound = *sound,
+        .event_actor = sound->actor,
         .channel = channel_name(sound->family, sound->channel),
         .loop_start = prepared->pcm->loop_start,
         .allocated_at = allocated_at,
@@ -1014,9 +1017,14 @@ void qa_audio_mixer_actors_visit(const qa_audio_mixer *mixer, qa_audio_actor_vis
     void *context)
 {
     if (mixer->listener.actor != QA_AUDIO_NO_ACTOR) visit(context, mixer->listener.actor);
-    for (size_t i = 0; i < mixer->voice_count; ++i)
-        if (mixer->voices[i].state != QA_MIXER_FREE)
-            sound_actors_visit(&mixer->voices[i].sound, visit, context);
+    for (size_t i = 0; i < mixer->voice_count; ++i) {
+        const qa_mixer_voice *voice = &mixer->voices[i];
+        if (voice->state == QA_MIXER_FREE) continue;
+        sound_actors_visit(&voice->sound, visit, context);
+        if (voice->role == QA_MIXER_EFFECT && voice->event_actor != QA_AUDIO_NO_ACTOR &&
+            voice->event_actor != voice->sound.actor)
+            visit(context, voice->event_actor);
+    }
     for (size_t i = 0; i < mixer->loop_count; ++i)
         if (mixer->loops[i].active)
             sound_actors_visit(&mixer->loops[i].request.sound, visit, context);

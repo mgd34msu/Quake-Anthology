@@ -40,7 +40,7 @@ typedef struct qa_mixer_voice {
     qa_mixer_notification notification;
     qa_mixer_prepared *prepared;
     qa_audio_play sound;
-    uint64_t id, channel, key, order, loop_start;
+    uint64_t id, channel, key, order, loop_start, event_actor;
     int64_t start;
     int32_t allocated_at;
     double volume, attenuation, distance_offset, stereo_scale;

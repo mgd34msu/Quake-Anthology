@@ -378,7 +378,8 @@ void frontend_ui_audio_event(void *context, const qa_audio_voice_event *event)
     if (!owner || !event || event->seat >= f->options.seats || f->options.dedicated || owner->audio_error.code != QA_OK) return;
     owner->handling = true;
     (void)qa_sound_captions_event(owner->seats[event->seat].captions, event, &owner->audio_error);
-    if (event->started && event->asset && f->input) {
+    if (event->started && event->asset && f->input &&
+        event->actor != QA_AUDIO_NO_ACTOR && event->actor == event->listener_actor) {
         const qa_vfs *files = qa_audio_asset_files(event->asset);
         const char *name = qa_audio_asset_name(event->asset);
         qa_error tactile_error = {0};

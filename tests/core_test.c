@@ -5151,11 +5151,16 @@ static void test_q2_requested_body(void)
     }
 }
 
-typedef struct audio_notification_counts { size_t starts, stops; } audio_notification_counts;
+typedef struct audio_notification_counts {
+    size_t starts, stops;
+    uint64_t actor, listener_actor;
+} audio_notification_counts;
 static void count_audio_notification(void *context, const qa_audio_voice_event *event)
 {
     audio_notification_counts *counts = context;
     CHECK(event->sample && event->voice_id);
+    counts->actor = event->actor;
+    counts->listener_actor = event->listener_actor;
     if (event->started) ++counts->starts; else ++counts->stops;
 }
 static qa_audio_trace_hit audio_material_trace(void *context, qa_vec3 start, qa_vec3 end,
@@ -5953,11 +5958,17 @@ static void test_shared_audio_preparation(void)
                 .initial_voices = initial_voices[initial], .prepared_capacity = 1, .workspace_capacity = 8,
                 .observer = count_audio_notification, .observer_user = &counts};
             CHECK(qa_audio_mixer_create(&options, &mixer, &error));
+            qa_audio_listener listener = {.seat = 3, .actor = 91, .gain = 1,
+                .axis = {{1,0,0},{0,1,0},{0,0,1}}};
+            CHECK(qa_audio_mixer_listener(mixer, &listener, &error));
             for (size_t turn = 0; turn < 16; ++turn) {
                 bool accepted = false;
-                CHECK(qa_audio_mixer_play(mixer, &sound, 0, &accepted, &error) && accepted);
-                CHECK(qa_audio_mixer_play(mixer, &sound, 100, &accepted, &error) && accepted);
+                qa_audio_play attributed = sound;
+                attributed.actor = turn % 3 == 0 ? QA_AUDIO_NO_ACTOR : turn % 3 == 1 ? 91 : 93;
+                CHECK(qa_audio_mixer_play(mixer, &attributed, 0, &accepted, &error) && accepted);
+                CHECK(qa_audio_mixer_play(mixer, &attributed, 100, &accepted, &error) && accepted);
                 int16_t output[32]; CHECK(qa_audio_mixer_mix(mixer, output, 16, &error));
+                CHECK(counts.actor == attributed.actor && counts.listener_actor == 91);
                 qa_audio_mixer_stop_all(mixer);
             }
             CHECK(counts.starts && counts.starts == counts.stops);

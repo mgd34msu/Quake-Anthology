@@ -239,6 +239,7 @@ typedef enum qa_audio_stop_reason {
 typedef struct qa_audio_voice_event {
     bool started;
     uint32_t seat;
+    uint64_t actor, listener_actor; /* Original emitter and actual listener identities. */
     uint64_t voice_id;
     uint64_t resource_id;
     int64_t output_frame;
