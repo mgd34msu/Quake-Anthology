@@ -667,10 +667,13 @@ typedef struct application_persistence {
     qa_buffer progression;
     qa_application_content_graph *content_graph;
     application_startup_program_roster *programs;
+    qa_configuration_transaction *restore_configuration;
+    application_publication *restore_content;
     qa_error cleanup_error;
     uint64_t configuration_generation, publication_generation, actor_revision;
     qa_save_purpose purpose;
     bool leased;
+    bool content_prepared;
     bool finish_prepared;
 } application_persistence;
 
@@ -1777,9 +1780,9 @@ static qa_bytes persistence_progression(application_persistence *operation,
     return record?record->payload:(qa_bytes){0};
 }
 
-static bool persistence_create(void *opaque, const qa_save_image *image, void **out, qa_error *error)
+static bool persistence_create_begin(application_persistence *operation,
+    const qa_save_image *image, void **out, qa_error *error)
 {
-    application_persistence *operation = opaque;
     bool transition=operation->purpose==QA_SAVE_TRANSITION;
     qa_configuration_checkpoint checkpoint; qa_bytes identity;
     if (!configuration_fields(persistence_configuration(operation,image,error),
@@ -1817,14 +1820,9 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     candidate->native_restore_current = transition ? operation->active : NULL;
     candidate->native_restore_resources = operation->ops->native_resources;
     if (operation->ops->prepare_services &&
-        !operation->ops->prepare_services(operation->ops->context, candidate, image, error)) {
-        candidate->native_restore_image = NULL;
-        candidate->native_restore_current = NULL;
-        candidate->native_restore_resources = NULL;
+        !operation->ops->prepare_services(operation->ops->context, candidate, image, error))
         return false;
-    }
     qa_launch_draft *draft = NULL;
-    qa_configuration_transaction *transaction = NULL;
     const qa_launch_restore_content content = {.context = candidate->content_graph,
         .mounts = content_mounts, .instance = content_instance,
         .resource = transition ? NULL : content_resource,
@@ -1833,44 +1831,64 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&
         (!transition || application_campaign_restore_draft(operation->active,draft,error)) &&
         application_q3_product_validate_draft(&candidate->q3_product, draft, error) &&
-        qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &content, &transaction, error);
+        qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &content,
+            &operation->restore_configuration, error);
     qa_launch_draft_destroy(draft);
     if (ok) {
-        const qa_launch_snapshot *snapshot = qa_configuration_candidate(transaction);
+        const qa_launch_snapshot *snapshot = qa_configuration_candidate(operation->restore_configuration);
         ok = (transition || qa_launch_identity_match(snapshot, qa_session_actors(candidate->session), identity, error)) &&
-            application_q3_product_validate_snapshot(&candidate->q3_product, snapshot, error) &&
-            application_save_prepare_content(candidate, snapshot, image, error) &&
-            application_metadata_prepare(candidate, image, error);
-        for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
-            application_provider *provider = candidate->providers[i];
-            if (provider && provider->constructed && provider->attached &&
-                provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
-                provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
-                ok = application_native_q2_prepare_restore(provider, error);
-        }
-        if (ok && operation->ops->prepare_content) {
-            const qa_launch_snapshot *routing_snapshot = candidate->routing_snapshot;
-            application_provider **routing_providers = candidate->routing_providers;
-            size_t routing_count = candidate->routing_provider_count;
-            candidate->routing_snapshot = snapshot;
-            candidate->routing_providers = candidate->providers;
-            candidate->routing_provider_count = candidate->provider_count;
-            ok = operation->ops->prepare_content(operation->ops->context, candidate, snapshot, image, error);
-            candidate->routing_snapshot = routing_snapshot;
-            candidate->routing_providers = routing_providers;
-            candidate->routing_provider_count = routing_count;
-        }
+            application_q3_product_validate_snapshot(&candidate->q3_product, snapshot, error);
     }
-    if (ok) ok = qa_configuration_commit_restored(transaction, error);
-    if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);
+    return ok;
+}
+
+static bool persistence_create(void *opaque, const qa_save_image *image, void **out,
+    uint64_t quantum, bool *complete, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    *complete = false;
+    if (!*out) {
+        if (!persistence_create_begin(operation, image, out, error)) return false;
+        if (quantum) return true;
+    }
+    qa_application *candidate = *out;
+    const qa_launch_snapshot *snapshot = qa_configuration_candidate(operation->restore_configuration);
+    if (!operation->content_prepared) {
+        bool prepared = false;
+        if (!application_save_prepare_content_advance(candidate, snapshot, image,
+                &operation->restore_content, quantum, &prepared, error)) return false;
+        if (!prepared) return true;
+        operation->content_prepared = true;
+        if (quantum) return true;
+    }
+    bool ok = application_metadata_prepare(candidate, image, error);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider && provider->constructed && provider->attached &&
+            provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+            provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
+            ok = application_native_q2_prepare_restore(provider, error);
+    }
+    if (ok && operation->ops->prepare_content) {
+        const qa_launch_snapshot *routing_snapshot = candidate->routing_snapshot;
+        application_provider **routing_providers = candidate->routing_providers;
+        size_t routing_count = candidate->routing_provider_count;
+        candidate->routing_snapshot = snapshot;
+        candidate->routing_providers = candidate->providers;
+        candidate->routing_provider_count = candidate->provider_count;
+        ok = operation->ops->prepare_content(operation->ops->context, candidate, snapshot, image, error);
+        candidate->routing_snapshot = routing_snapshot;
+        candidate->routing_providers = routing_providers;
+        candidate->routing_provider_count = routing_count;
+    }
+    if (ok) {
+        ok = qa_configuration_commit_restored(operation->restore_configuration, error);
+        if (ok) operation->restore_configuration = NULL;
+    }
     if (ok) ok = persistence_restore_provider_clocks(operation, candidate, error);
     if (ok) ok = persistence_inventory(operation, candidate, image, error);
     if (ok) ok = application_save_resolvers(candidate, &operation->resolvers, error);
-    if (!ok) {
-        candidate->native_restore_image = NULL;
-        candidate->native_restore_current = NULL;
-        candidate->native_restore_resources = NULL;
-    }
+    *complete = ok;
     return ok;
 }
 
@@ -2176,6 +2194,15 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
 static bool persistence_discard_candidate(application_persistence *operation,
     qa_application *candidate, qa_error *error)
 {
+    if (operation->restore_content) {
+        application_publication_dispose(candidate, operation->restore_content);
+        operation->restore_content = NULL;
+    }
+    if (!application_publication_retry_cleanup(candidate, error)) return false;
+    if (operation->restore_configuration) {
+        if (!qa_configuration_abort(operation->restore_configuration, error)) return false;
+        operation->restore_configuration = NULL;
+    }
     for (size_t i = 0; i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
         if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&

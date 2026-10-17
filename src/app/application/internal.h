@@ -230,6 +230,10 @@ typedef struct application_publication {
     size_t removed_count;
     application_provider_admission *admissions;
     size_t admission_count;
+    bool *admission_used;
+    size_t construction_next;
+    unsigned restore_phase;
+    qa_bytes restored_components;
     qa_resource *map_resource;
     struct qa_map_sidecars *map_sidecars;
     qa_bsp_view map;

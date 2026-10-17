@@ -85,11 +85,13 @@ bool qa_save_restore_advance(qa_save_restore_operation *operation, uint64_t quan
     if (*complete) return true;
     bool okay = true;
     if (!operation->created) {
+        bool created = false;
         okay = operation->ops.create(operation->context, operation->image,
-            &operation->candidate, error);
-        if (okay && !operation->candidate)
+            &operation->candidate, quantum, &created, error);
+        if (okay && created && !operation->candidate)
             okay = persistence_fail(error, QA_ERROR_FORMAT, "Restore producer returned no candidate");
         if (!okay) goto failed;
+        if (!created) return true;
         operation->created = true;
         if (quantum) return true;
     }

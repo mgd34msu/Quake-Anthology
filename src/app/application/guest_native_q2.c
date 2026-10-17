@@ -292,6 +292,14 @@ static qa_command_result console_command(void *opaque, const qa_command_invocati
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
 
+bool application_native_q2_is_cgame(const application_provider *provider)
+{
+    uint64_t roles = provider->launch->roles;
+    return (roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
+        !(roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
+          QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
+}
+
 static bool prepare_owner(qa_application *app, application_provider *provider,
     qa_world *world, const qa_product *product, const qa_launch_choices *choices, qa_error *error)
 {
@@ -304,9 +312,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
     provider->state.native.q2_engine = engine;
     engine->provider = provider; engine->world = world;
     if (!qa_actor_index_create(&engine->client_index, qa_session_actors(app->session), NULL, error)) return false;
-    bool cgame = (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_HUD)) &&
-        !(provider->launch->roles & (QA_ROLE_BIT(QA_ROLE_ENTITIES) |
-          QA_ROLE_BIT(QA_ROLE_CHARACTER) | QA_ROLE_BIT(QA_ROLE_ARSENAL)));
+    bool cgame = application_native_q2_is_cgame(provider);
     engine->profile = cgame ? QA_NATIVE_Q2_CGAME_API2023 :
         provider->launch->selection.clock.kind == QA_RULESET_Q2_RERELEASE ?
             QA_NATIVE_Q2_GAME_API2023 : QA_NATIVE_Q2_GAME_API3;

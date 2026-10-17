@@ -6679,14 +6679,17 @@ typedef struct restore_probe {
     const qa_save_record *pending;
     size_t applied, expected;
     unsigned creates, finishes, publishes, discards;
-    bool reject, finish_pending;
+    bool reject, finish_pending, yield_create;
 } restore_probe;
 static bool restore_probe_create(void *context, const qa_save_image *image,
-    void **candidate, qa_error *error)
+    void **candidate, uint64_t quantum, bool *complete, qa_error *error)
 {
-    (void)image; (void)error;
+    (void)image; (void)quantum; (void)error;
     restore_probe *probe = context;
-    ++probe->creates; *candidate = probe;
+    if (!probe->creates) { CHECK(!*candidate); *candidate = probe; }
+    else CHECK(*candidate == probe);
+    ++probe->creates;
+    *complete = !probe->yield_create || probe->creates == 3;
     return true;
 }
 static bool restore_probe_record(void *context, void *candidate, const qa_save_record *record,
@@ -6758,6 +6761,30 @@ static void recovery_restore_yields(const qa_save_image *image)
     probe = (restore_probe){.reject = true};
     CHECK(!qa_save_restore(&probe, &ops, image, &error));
     CHECK(probe.discards == 1 && !probe.finishes && !probe.publishes);
+    probe = (restore_probe){.expected = qa_save_image_record_count(image), .yield_create = true};
+    CHECK(qa_save_restore_begin(&probe, &ops, image, &operation, &error));
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(probe.creates == 1 && !probe.pending && !probe.applied && !probe.finishes);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(probe.creates == 2 && !probe.pending && !probe.applied && !probe.finishes);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(probe.creates == 3 && !probe.pending && !probe.applied);
+    remaining = 2 * probe.expected + 5;
+    while (!complete && remaining--) CHECK(qa_save_restore_advance(operation, 64, &complete, &error));
+    CHECK(complete && probe.creates == 3 && probe.finishes == 1 && probe.publishes == 1);
+    qa_save_restore_destroy(&operation);
+    CHECK(!operation && !probe.discards);
+    probe = (restore_probe){.yield_create = true};
+    CHECK(qa_save_restore_begin(&probe, &ops, image, &operation, &error));
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    qa_save_restore_destroy(&operation);
+    qa_save_restore_destroy(&operation);
+    CHECK(!operation && probe.creates == 2 && probe.discards == 1 && !probe.finishes && !probe.publishes);
+    probe = (restore_probe){.expected = qa_save_image_record_count(image), .yield_create = true};
+    CHECK(qa_save_restore(&probe, &ops, image, &error));
+    CHECK(probe.creates == 3 && probe.applied == probe.expected && probe.finishes == 1 &&
+        probe.publishes == 1 && !probe.discards);
 }
 
 typedef struct demo_seek_probe {

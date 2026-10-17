@@ -153,6 +153,7 @@ bool application_native_q2_config_update(struct application_native_q2 *, uint32_
 bool application_native_q2_config_clear(struct application_native_q2 *, qa_error *);
 bool application_native_q2_config_prepare(struct application_native_q2 *, qa_error *);
 
+bool application_native_q2_is_cgame(const application_provider *);
 bool application_construct_native_q2(qa_application *, application_provider *, qa_world *,
                                        const qa_product *, const qa_launch_choices *, qa_error *);
 bool application_native_q2_initialize_supplemental(application_provider *,qa_string_id,qa_string_id,qa_error *);

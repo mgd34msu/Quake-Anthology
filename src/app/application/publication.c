@@ -338,9 +338,10 @@ static qa_actor_owner retiring_component(qa_application *application,
 
 static bool construct_and_reserve(qa_application *application,
                                   application_publication *publication,
-                                  const qa_save_image *image,
-                                  qa_error *error)
+                                  const qa_save_image *image, uint64_t quantum,
+                                  bool *complete, qa_error *error)
 {
+    *complete = false;
     if (publication->next_count > SIZE_MAX / sizeof(*publication->admissions))
         return application_fail(error, QA_ERROR_MEMORY,
                                 "provider admission roster is too large");
@@ -349,12 +350,11 @@ static bool construct_and_reserve(qa_application *application,
             sizeof(*publication->admissions));
         publication->admission_count = publication->next_count;
     }
-    bool *used = calloc(publication->removed_count == 0
-                            ? 1
-                            : publication->removed_count,
-                        sizeof(*used));
+    if (!publication->admission_used)
+        publication->admission_used = calloc(publication->removed_count == 0
+            ? 1 : publication->removed_count, sizeof(*publication->admission_used));
+    bool *used = publication->admission_used;
     if (publication->admissions == NULL || used == NULL) {
-        free(used);
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot retain provider admissions");
     }
@@ -369,10 +369,9 @@ static bool construct_and_reserve(qa_application *application,
     size_t primary = 0;
     while (primary < publication->next_count && publication->next[primary] != publication->map_provider)
         ++primary;
-    if (primary == publication->next_count) {
-        free(used);
+    if (primary == publication->next_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "provider construction has no actual primary map source");
-    }
+    if (!image) memset(used, 0, publication->removed_count * sizeof(*used));
     const qa_launch_snapshot *routing_snapshot = application->routing_snapshot;
     application_provider **routing_providers = application->routing_providers;
     size_t routing_count = application->routing_provider_count;
@@ -381,7 +380,8 @@ static bool construct_and_reserve(qa_application *application,
     application->routing_provider_count = publication->next_count;
     bool okay = true;
     bool cold = !image && !publication->sources_retired;
-    for (size_t ordinal = 0; ordinal < publication->next_count; ++ordinal) {
+    for (size_t ordinal = image ? publication->construction_next : 0;
+         ordinal < publication->next_count; ++ordinal) {
         size_t index = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
         application_provider *provider = publication->next[index];
         application_provider_admission *admission =
@@ -416,15 +416,21 @@ static bool construct_and_reserve(qa_application *application,
                 okay = false;
                 break;
             }
-            if (product && !image && !provider->trajectory_only) {
+            if (product && !provider->trajectory_only && (!image ||
+                (provider->kind == APPLICATION_PROVIDER_NATIVE && product->family == QA_GAME_Q2 &&
+                 !application_native_q2_is_cgame(provider)))) {
                 qa_console *console;
                 qa_cvars *cvars;
                 qa_command_context command;
-                if (!application_provider_console_prepare(application, provider, world,
-                        provider_catalog, product, choices, &console, &cvars, &command, error)) {
+                bool prepared = false;
+                size_t budget = image ? (quantum > SIZE_MAX ? SIZE_MAX : (size_t)quantum) : 0;
+                if (!application_provider_console_advance(application, provider, world,
+                        provider_catalog, product, choices, budget, &prepared,
+                        &console, &cvars, &command, error)) {
                     okay = false;
                     break;
                 }
+                if (!prepared) break;
             }
             bool original_q3 = product && product->family == QA_GAME_Q3 &&
                 (provider->kind == APPLICATION_PROVIDER_QVM || provider->kind == APPLICATION_PROVIDER_NATIVE);
@@ -447,7 +453,7 @@ static bool construct_and_reserve(qa_application *application,
             }
             admission->constructed = true;
         }
-        if (provider->trajectory_only) continue;
+        if (provider->trajectory_only) goto next_provider;
         if (image != NULL && provider->kind == APPLICATION_PROVIDER_Q2) {
             const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                 provider->launch->selection.instance);
@@ -493,11 +499,14 @@ static bool construct_and_reserve(qa_application *application,
                 break;
             }
         }
+next_provider:
+        if (image) publication->construction_next = ordinal + 1;
+        if (quantum) break;
     }
     application->routing_snapshot = routing_snapshot;
     application->routing_providers = routing_providers;
     application->routing_provider_count = routing_count;
-    free(used);
+    *complete = okay && (!image || publication->construction_next == publication->next_count);
     return okay;
 }
 
@@ -845,7 +854,9 @@ static bool finish_publication(qa_application *application,
         return application_q3_components_create(&options,&publication->components,error)&&
             application_q3_components_prepare(publication->components,error);
     }
-    if (!construct_and_reserve(application, publication, NULL, error)) return false;
+    bool constructed = false;
+    if (!construct_and_reserve(application, publication, NULL, 0, &constructed, error) ||
+        !constructed) return false;
     if (!publication->sources_retired) return true;
     if (!application_map_prepare_points(application, publication, error) ||
         !prepare_supplies(application, publication, error) ||
@@ -1007,6 +1018,7 @@ static bool publication_dispose_checked(qa_application *application,
         application->physics_ready = false;
     }
     free(publication->admissions);
+    free(publication->admission_used);
     application_provider_view_unindex(application, publication->removed);
     free(publication->removed);
     application_provider_roster_unindex(application, publication->next);
@@ -1250,108 +1262,132 @@ static bool qc_objectives(qa_application *application, bool activate, qa_error *
     return true;
 }
 
-bool application_save_prepare_content(qa_application *candidate,
-                                        const qa_launch_snapshot *snapshot,
-                                        const qa_save_image *image,
-                                        qa_error *error)
+bool application_save_prepare_content_advance(qa_application *candidate,
+    const qa_launch_snapshot *snapshot, const qa_save_image *image,
+    application_publication **slot, uint64_t quantum, bool *complete, qa_error *error)
 {
-    if (candidate == NULL || snapshot == NULL || image == NULL ||
-        candidate->operation != APPLICATION_PERSISTING ||
-        candidate->world != NULL || candidate->provider_count != 0 ||
-        candidate->providers != NULL || candidate->modes != NULL ||
-        candidate->equipment != NULL || candidate->equipment_runtime != NULL || candidate->components != NULL ||
-        !qa_session_safe(candidate->session))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "save content requires an isolated restored application");
-    application_publication *publication = calloc(1, sizeof(*publication));
-    if (publication == NULL)
-        return application_fail(error, QA_ERROR_MEMORY,
-                                "cannot allocate restored content preparation");
-    publication->candidate = snapshot;
-    publication->restoring = true;
-    qa_bytes components_saved = {0};
-    bool ok = application_save_components_decode(image, &components_saved, error) &&
-              application_equipment_runtime_saved(candidate->session, image,
-                  &publication->equipment_runtime_saved, error) &&
-              provider_roster(candidate, publication, error) &&
-              application_save_sidecars_decode(image, candidate, error) &&
-              prepare_world(candidate, publication, error);
-    if (ok)
-        ok = qa_session_adopt_restored_world(candidate->session,
-                                             publication->initial_world,
-                                             close_world, error);
-    if (ok) {
-        candidate->world = publication->initial_world;
-        publication->initial_world = NULL;
-        candidate->physics_ready = true;
-        publication->physics_initialized = false;
-        candidate->geometry = publication->geometry;
-        publication->geometry = NULL;
-        candidate->map_resource = publication->map_resource;
-        publication->map_resource = NULL;
-        qa_map_sidecars_release(candidate->map_sidecars);
-        candidate->map_sidecars = publication->map_sidecars;
-        publication->map_sidecars = NULL;
+    *complete = false;
+    if (!*slot) {
+        if (candidate == NULL || snapshot == NULL || image == NULL ||
+            candidate->operation != APPLICATION_PERSISTING ||
+            candidate->world != NULL || candidate->provider_count != 0 ||
+            candidate->providers != NULL || candidate->modes != NULL ||
+            candidate->equipment != NULL || candidate->equipment_runtime != NULL || candidate->components != NULL ||
+            !qa_session_safe(candidate->session))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "save content requires an isolated restored application");
+        *slot = calloc(1, sizeof(**slot));
+        if (!*slot)
+            return application_fail(error, QA_ERROR_MEMORY,
+                                    "cannot allocate restored content preparation");
+        (*slot)->candidate = snapshot;
+        (*slot)->restoring = true;
+    }
+    application_publication *publication = *slot;
+    const qa_launch_snapshot *routing_snapshot = candidate->routing_snapshot;
+    application_provider **routing_providers = candidate->routing_providers;
+    size_t routing_count = candidate->routing_provider_count;
+    if (publication->restore_phase) {
         candidate->routing_snapshot = snapshot;
         candidate->routing_providers = publication->next;
         candidate->routing_provider_count = publication->next_count;
-        ok = application_map_restore_identity(candidate, snapshot, error) &&
-             application_match_prepare_modes(candidate, publication, error);
-        if (ok) {
-            /* Bot and guest services borrow the actual candidate modes. Install
-             * this owner before creating either runtime; teardown owns it even
-             * if later source construction fails. */
+    }
+    bool ok = true;
+    do {
+        switch (publication->restore_phase) {
+        case 0:
+            ok = application_save_components_decode(image, &publication->restored_components, error) &&
+                application_equipment_runtime_saved(candidate->session, image,
+                    &publication->equipment_runtime_saved, error) &&
+                provider_roster(candidate, publication, error) &&
+                application_save_sidecars_decode(image, candidate, error) &&
+                prepare_world(candidate, publication, error) &&
+                qa_session_adopt_restored_world(candidate->session,
+                    publication->initial_world, close_world, error);
+            if (ok) {
+                candidate->world = publication->initial_world;
+                publication->initial_world = NULL;
+                candidate->physics_ready = true;
+                publication->physics_initialized = false;
+                candidate->geometry = publication->geometry;
+                publication->geometry = NULL;
+                candidate->map_resource = publication->map_resource;
+                publication->map_resource = NULL;
+                qa_map_sidecars_release(candidate->map_sidecars);
+                candidate->map_sidecars = publication->map_sidecars;
+                publication->map_sidecars = NULL;
+            }
+            break;
+        case 1: {
+            ok = application_map_restore_identity(candidate, snapshot, error) &&
+                application_match_prepare_modes(candidate, publication, error);
+            if (!ok) break;
+            /* Both runtimes borrow these modes through the actual candidate. */
             candidate->modes = publication->modes;
             publication->modes = NULL;
             candidate->mode_ids = publication->mode_ids;
             publication->mode_ids = NULL;
-            const qa_save_record *bots =
-                qa_save_image_find(image, QA_SAVE_BOTS, "");
-            const qa_save_record *navigation =
-                qa_save_image_find(image, QA_SAVE_NAVIGATION, "");
+            const qa_save_record *bots = qa_save_image_find(image, QA_SAVE_BOTS, "");
+            const qa_save_record *navigation = qa_save_image_find(image, QA_SAVE_NAVIGATION, "");
             if (bots == NULL || navigation == NULL)
                 ok = application_fail(error, QA_ERROR_FORMAT,
-                                      "saved application has no bot or navigation owner");
+                    "saved application has no bot or navigation owner");
             else
-                ok = application_bots_save_prepare(candidate, bots->payload,
-                                                    navigation->payload, error);
+                ok = application_bots_save_prepare(candidate, bots->payload, navigation->payload, error);
+            break;
         }
-        if (ok)
-            ok = construct_and_reserve(candidate, publication, image, error) &&
-                 prepare_supplies(candidate, publication, error) &&
-                 application_match_prepare_equipment(candidate, publication, error) &&
-                 application_equipment_runtime_prepare_components(publication->equipment_runtime, error);
-        if (ok) {
+        case 2: {
+            bool constructed = false;
+            ok = construct_and_reserve(candidate, publication, image, quantum, &constructed, error);
+            if (ok && !constructed) goto returned;
+            break;
+        }
+        case 3: {
+            ok = prepare_supplies(candidate, publication, error) &&
+                application_match_prepare_equipment(candidate, publication, error) &&
+                application_equipment_runtime_prepare_components(publication->equipment_runtime, error);
+            if (!ok) break;
             application_q3_components_options options = {.application=candidate,.snapshot=snapshot,
                 .providers=publication->next,.provider_count=publication->next_count,
                 .world_source=publication->map_provider,.world=candidate->world,.equipment=publication->equipment,
                 .entity_text=publication->map.lumps[QA_BSP_ENTITIES].bytes,
-                .saved=components_saved,.restoring=true,
+                .saved=publication->restored_components,.restoring=true,
                 .scene_factory={.context=candidate->guest_context,.prepare=candidate->q3_component_scene_prepare}};
             ok = application_q3_components_create(&options, &publication->components, error) &&
                 application_q3_components_prepare(publication->components, error);
+            break;
         }
+        case 4:
+            ok = commit_admissions(publication, error);
+            publish_roster(candidate, publication);
+            if (ok) ok = register_qc_callbacks(candidate, true, error);
+            candidate->supplies = publication->supplies;
+            publication->supplies = NULL;
+            publication->published = true;
+            candidate->equipment = publication->equipment;
+            publication->equipment = NULL;
+            candidate->equipment_runtime = publication->equipment_runtime;
+            publication->equipment_runtime = NULL;
+            candidate->components = publication->components;
+            publication->components = NULL;
+            if (ok) ok = application_map_restore_bind(candidate, snapshot, error);
+            if (ok) *complete = true;
+            break;
+        }
+        if (!ok) break;
+        ++publication->restore_phase;
+        candidate->routing_snapshot = snapshot;
+        candidate->routing_providers = publication->next;
+        candidate->routing_provider_count = publication->next_count;
+    } while (!quantum && !*complete);
+returned:
+    candidate->routing_snapshot = routing_snapshot;
+    candidate->routing_providers = routing_providers;
+    candidate->routing_provider_count = routing_count;
+    if (*complete) {
+        application_publication_dispose(candidate, publication);
+        *slot = NULL;
     }
-    if (ok) {
-        ok = commit_admissions(publication, error);
-        publish_roster(candidate, publication);
-        if (ok) ok = register_qc_callbacks(candidate, true, error);
-        candidate->supplies = publication->supplies;
-        publication->supplies = NULL;
-        publication->published = true;
-        candidate->equipment = publication->equipment;
-        publication->equipment = NULL;
-        candidate->equipment_runtime = publication->equipment_runtime;
-        publication->equipment_runtime = NULL;
-        candidate->components = publication->components;
-        publication->components = NULL;
-        if (ok)
-            ok = application_map_restore_bind(candidate, snapshot, error);
-    }
-    candidate->routing_snapshot = NULL;
-    candidate->routing_providers = NULL;
-    candidate->routing_provider_count = 0;
-    application_publication_dispose(candidate, publication);
     return ok;
 }
 

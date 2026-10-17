@@ -113,7 +113,8 @@ bool qa_save_capture(void *, const qa_save_capture_ops *, qa_save_purpose,
  * candidate ownership. discard closes a candidate on every prior failure.
  * Closing the displaced session is the application's separate responsibility. */
 typedef struct qa_save_restore_ops {
-    bool (*create)(void *, const qa_save_image *, void **candidate, qa_error *);
+    bool (*create)(void *, const qa_save_image *, void **candidate, uint64_t quantum,
+                    bool *complete, qa_error *);
     bool (*restore)(void *, void *candidate, const qa_save_record *, uint64_t quantum,
                     bool *complete, qa_error *);
     bool (*finish)(void *, void *candidate, const qa_save_image *, uint64_t quantum,
@@ -123,8 +124,8 @@ typedef struct qa_save_restore_ops {
 } qa_save_restore_ops;
 typedef struct qa_save_restore_operation qa_save_restore_operation;
 /* The image and callback contexts remain borrowed until destroy. An unfinished
- * record retains its cursor and candidate; publish runs only after every record
- * actually completes. Zero quantum drives the same operation synchronously. */
+ * create, record or finish retains its candidate and phase; publish runs only
+ * after each completes. Zero quantum drives the same operation synchronously. */
 bool qa_save_restore_begin(void *, const qa_save_restore_ops *, const qa_save_image *,
                            qa_save_restore_operation **, qa_error *);
 bool qa_save_restore_advance(qa_save_restore_operation *, uint64_t quantum,
