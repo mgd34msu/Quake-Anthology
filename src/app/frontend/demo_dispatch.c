@@ -312,12 +312,42 @@ static bool gtv_command(frontend_demo_dispatch *d,const qa_command_invocation *c
 }
 bool frontend_demo_dispatch_gtv_disconnect(frontend_demo_dispatch *d,const qa_command_invocation *call)
 { return gtv_command(d,call,18); }
+static bool viewpoint_command(frontend_demo_dispatch *d,const qa_command_invocation *call,bool alias)
+{
+    double player=0;qa_error parse_error={0};
+    bool valid=call->argc==2;
+    if(valid&&alias) {
+        const unsigned char *text=(const unsigned char *)call->argv[1];
+        valid=*text!=0;
+        for(;valid&&*text;++text)valid=*text>='0'&&*text<='9';
+    }
+    valid=valid && qa_parse_number((qa_bytes){(const uint8_t *)call->argv[1],strlen(call->argv[1])},
+        &player,&parse_error) && isfinite(player) && player>=0 && player<=254 && floor(player)==player;
+    if(!valid) {
+        if(alias) {
+            char usage[128];
+            snprintf(usage,sizeof(usage),"Usage: %s <source player ID>; Recorded free camera is not available\n",call->argv[0]);
+            frontend_console_print(d->frontend,&call->context,usage);
+        } else frontend_console_print(d->frontend,&call->context,"Usage: mvdplayer <0..254>\n");
+        return true;
+    }
+    if(!frontend_network_demo_viewpoint(d->frontend,(uint8_t)player))
+        frontend_console_print(d->frontend,&call->context,"Viewpoint selection requires MVD playback.\n");
+    return true;
+}
 bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_invocation *call,
     bool *handled,qa_error *error) {
     if(!d||!call||!handled||!call->argc||!call->argv||!call->console||
         !qa_console_invocation_current(call->console,call))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Demo command requires its entered actual console invocation");
-    *handled=false;size_t kind=0;
+    *handled=false;
+    if(named(call->argv[0],"follow")||named(call->argv[0],"chase")) {
+        frontend_demo_format format=frontend_network_demo_format(d->frontend,&call->context);
+        if(call->context.origin==QA_COMMAND_REMOTE ||
+            (!frontend_demo_playback_path(d->service)&&format!=FRONTEND_DEMO_MVD&&format!=FRONTEND_DEMO_Q2_SERVER))return true;
+        *handled=true;return viewpoint_command(d,call,true);
+    }
+    size_t kind=0;
     while(kind<sizeof(demo_commands)/sizeof(*demo_commands)&&!named(call->argv[0],demo_commands[kind]))++kind;
     if(kind==sizeof(demo_commands)/sizeof(*demo_commands))return true;
     const qa_console_entry *entry=qa_console_find(call->console,&call->context,call->argv[0]);
@@ -338,17 +368,7 @@ bool frontend_demo_dispatch_command(frontend_demo_dispatch *d,const qa_command_i
     if(call->context.origin==QA_COMMAND_REMOTE) {
         frontend_console_print(d->frontend,&call->context,"Demo recording and playback are local client commands.\n");return true;
     }
-    if(kind==16) {
-        double player;
-        qa_error parse_error={0};
-        if(call->argc!=2 || !qa_parse_number((qa_bytes){(const uint8_t *)call->argv[1],strlen(call->argv[1])},
-            &player,&parse_error) || !isfinite(player) || player<0 || player>254 || floor(player)!=player) {
-            frontend_console_print(d->frontend,&call->context,"Usage: mvdplayer <0..254>\n");return true;
-        }
-        if(!frontend_network_demo_viewpoint(d->frontend,(uint8_t)player))
-            frontend_console_print(d->frontend,&call->context,"Viewpoint selection requires MVD playback.\n");
-        return true;
-    }
+    if(kind==16)return viewpoint_command(d,call,false);
     if(kind==15) {
         if(call->argc!=1) {
             frontend_console_print(d->frontend,&call->context,"Usage: demopause\n");return true;

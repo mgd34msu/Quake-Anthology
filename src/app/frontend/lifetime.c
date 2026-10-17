@@ -339,6 +339,10 @@ qa_command_result frontend_console_forward(void *context,const qa_command_invoca
     if (!command->context.owner &&
         command->context.cvar_view!=qa_cvars_view_identity(qa_application_cvars(frontend->application)))
         return QA_COMMAND_UNHANDLED;
+    bool handled=false;
+    if (frontend->demos && !frontend_demo_dispatch_command(frontend->demos,command,&handled,error))
+        return QA_COMMAND_FAILED;
+    if (handled) return QA_COMMAND_HANDLED;
     uint32_t physical,seat;
     if (!frontend_command_seat_read(frontend,&command->context,&physical) ||
         !frontend_seat_launch_id_read(frontend,physical,&seat) || seat!=command->context.seat ||
