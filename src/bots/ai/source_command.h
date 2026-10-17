@@ -9,5 +9,6 @@ bool bot_ai_source_action_text(qa_bots *,bot_ai_state *,qa_bot_text_action,int32
 bool bot_ai_source_action_view(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_action_weapon(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_action_input(qa_bots *,bot_ai_state *,float,qa_bot_input *,qa_error *);
+bool bot_ai_source_action_drift(qa_bots *,bot_ai_state *,qa_vec3,qa_error *);
 bool bot_ai_source_action_trigger(qa_bots *,bot_ai_state *,const qa_bot_source_weapon *,qa_error *);
 #endif

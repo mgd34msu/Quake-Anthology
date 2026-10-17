@@ -775,7 +775,17 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool 
     }
     DECISION_CALL(qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e));
     if(result->failure) bot_ai_cooperative_failed(b,s,goal);
-    return movement_result(b,s,activate,result,e);
+    DECISION_CALL(movement_result(b,s,activate,result,e));
+    if(s->source_settings && s->player.grounded && !s->player.water_jump &&
+       !s->player.grapple_pull && !result->failure && !result->blocked &&
+       qa_nav_aas_travel((uint32_t)result->travel_type)==QA_NAV_WALK &&
+       !(result->flags&(QA_BOT_MOVE_WAITING|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_ON_ELEVATOR|
+           QA_BOT_MOVE_ON_BOBBING|QA_BOT_MOVE_ON_OBSTACLE)) &&
+       !qa_nav_asset_aas(qa_navigation_graph(qa_bot_navigation_runtime(navigation(b,s)))->asset)) {
+        qa_bot_player player=bot_ai_player_sample(s);
+        DECISION_CALL(bot_ai_source_action_drift(b,s,player.velocity,e));
+    }
+    return true;
 }
 static bool movement_view(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
                             const qa_bot_move_result *result,qa_bot_decision node,qa_error *e) {
