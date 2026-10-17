@@ -202,9 +202,9 @@ void remote_q2_cvars_bind(frontend_remote_q2 *row)
         .cl_noskins=qa_cvars_resolve(registry,"cl_noskins"),
         .gl_damageblend_frac=qa_cvars_resolve(registry,"gl_damageblend_frac"),
         .paused=qa_cvars_resolve(registry,"paused"),
-        .scr_centertime=qa_cvars_resolve(registry,"scr_centertime"),
     };
     row->cvar_handles.marker=qa_hud_q2_marker_bind(registry);
+    qa_hud_cvars_bind(registry,QA_HUD_CVAR_CENTER_TIME | QA_HUD_CVAR_PRINT_SPEED,&row->cvar_handles.print);
     frontend_legacy_cvars_bind(registry,&row->cvar_handles.legacy);
     frontend_remote_q2_effects_cvars_bind(registry,&row->cvar_handles.effects);
 }

@@ -1092,37 +1092,12 @@ static bool temporary_receive(frontend_unified_q2 *o,const qa_unified_presentati
     ++o->busy;bool okay=frontend_remote_q2_effects_temporary(b->effects,&t,actors,row->seconds*1000,row->seconds*1000,e);--o->busy;
     return okay;
 }
-static bool player_names_expand(frontend_unified_q2 *o,qa_arena *storage,qa_buffer *text,qa_error *e)
+static qa_bytes player_name(void *context,uint32_t slot)
 {
-    const char *input=(const char *)text->data; size_t extent=0; char *output=NULL;
-    for (unsigned pass=0;pass<2;++pass) {
-        size_t used=0;
-        for (size_t i=0;i<text->size;) {
-            const char *part=input+i; size_t length=1;
-            if (text->size-i>=4 && input[i]=='#' && input[i+1]=='#' && input[i+2]=='P' &&
-                input[i+3]>='0' && input[i+3]<='9') {
-                size_t next=i+3; uint32_t slot=0; bool overflow=false;
-                while (next<text->size && input[next]>='0' && input[next]<='9') {
-                    unsigned digit=(unsigned)(input[next]-'0');
-                    if (slot>(UINT32_MAX-digit)/10) overflow=true;
-                    if (!overflow) slot=slot*10+digit;
-                    ++next;
-                }
-                q2_player_name *name=overflow?NULL:o->names;
-                while (name && name->slot!=slot) name=name->next;
-                part=name?name->name:""; length=strlen(part); i=next;
-            } else ++i;
-            if (length>SIZE_MAX-1-used) {
-                return frontend_unified_fail(e,QA_ERROR_MEMORY,"Q2 player name expansion exceeds text storage"); }
-            if (pass) memcpy(output+used,part,length);
-            used+=length;
-        }
-        if (!pass) {
-            extent=used; output=qa_arena_alloc(storage,extent+1,1,e);
-            if (!output) return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining Q2 localized player names");
-        }
-    }
-    output[extent]=0; *text=(qa_buffer){(uint8_t *)output,extent}; return true;
+    frontend_unified_q2 *o=context;
+    q2_player_name *name=o->names;
+    while (name && name->slot!=slot) name=name->next;
+    return name?(qa_bytes){(const uint8_t *)name->name,strlen(name->name)}:(qa_bytes){0};
 }
 static bool userinfo(frontend_unified_q2 *o,const qa_q2_player_event *event,bool publish,qa_error *e)
 {
@@ -1149,7 +1124,8 @@ static bool localized(frontend_unified_q2 *o,const qa_unified_presentation_event
     const frontend_remote_unified_domain *domain=frontend_remote_unified_domain_read(o->replica);
     return frontend_ui_source_text(o->frontend,domain->physical_seat,QA_GAME_Q2,
         bank?bank->files:NULL,row->q2_profile==2?QA_EDITION_RERELEASE:QA_EDITION_CLASSIC,
-        o->replica->strings,text,args,count,storage,out,e) && player_names_expand(o,storage,out,e);
+        o->replica->strings,text,args,count,storage,out,e) &&
+        frontend_ui_q2_player_names(storage,out,o,player_name,e);
 }
 static frontend_q2_print_policy print_policy(frontend_unified_q2 *o,
     const qa_unified_presentation_event *row,bool center,uint32_t flags)

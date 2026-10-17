@@ -479,6 +479,40 @@ bool frontend_ui_source_text(qa_frontend *f,uint32_t seat,qa_game_family family,
     qa_localization_release(catalog);
     return ok;
 }
+bool frontend_ui_q2_player_names(qa_arena *storage,qa_buffer *text,void *context,
+    qa_bytes (*name)(void *,uint32_t),qa_error *error)
+{
+    const char *input=(const char *)text->data; size_t extent=0; char *output=NULL;
+    bool expanded=false;
+    for (unsigned pass=0;pass<2;++pass) {
+        size_t used=0;
+        for (size_t i=0;i<text->size;) {
+            qa_bytes part={(const uint8_t *)input+i,1};
+            if (text->size-i>=4 && input[i]=='#' && input[i+1]=='#' && input[i+2]=='P' &&
+                input[i+3]>='0' && input[i+3]<='9') {
+                size_t next=i+3; uint32_t slot=0; bool overflow=false;
+                while (next<text->size && input[next]>='0' && input[next]<='9') {
+                    unsigned digit=(unsigned)(input[next]-'0');
+                    if (slot>(UINT32_MAX-digit)/10) overflow=true;
+                    if (!overflow) slot=slot*10+digit;
+                    ++next;
+                }
+                part=overflow?(qa_bytes){0}:name(context,slot); i=next;
+                expanded=true;
+            } else ++i;
+            if (part.size>SIZE_MAX-1-used)
+                return frontend_fail(error,QA_ERROR_MEMORY,"Q2 player name expansion exceeds text storage");
+            if (pass && part.size) memcpy(output+used,part.data,part.size);
+            used+=part.size;
+        }
+        if (!pass) {
+            if (!expanded) return true;
+            extent=used; output=qa_arena_alloc(storage,extent+1,1,error);
+            if (!output) return false;
+        }
+    }
+    output[extent]=0; *text=(qa_buffer){(uint8_t *)output,extent}; return true;
+}
 frontend_q2_print_policy frontend_ui_q2_print_policy(bool legacy_center,uint32_t flags,
     bool rerelease,const qa_cvars *cvars,const qa_hud_cvar_handles *handles)
 {

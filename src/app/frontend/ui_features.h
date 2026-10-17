@@ -33,6 +33,8 @@ bool frontend_ui_source_message(qa_frontend *, uint32_t, const qa_builtin_event 
 bool frontend_ui_source_text(qa_frontend *, uint32_t, qa_game_family, qa_vfs *, qa_product_edition,
     qa_strings *, const char *, const qa_builtin_message_arg *, size_t,
     qa_arena *, qa_buffer *, qa_error *);
+bool frontend_ui_q2_player_names(qa_arena *, qa_buffer *, void *,
+    qa_bytes (*)(void *, uint32_t), qa_error *);
 typedef struct frontend_q2_print_policy {
     bool center, chat, notify;
     uint64_t duration_ns;

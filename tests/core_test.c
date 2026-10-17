@@ -99,6 +99,7 @@
 #include "../src/app/frontend/selected_effects_q1_temporary.h"
 #include "../src/app/frontend/shared_video.h"
 #include "../src/app/frontend/shared_register.h"
+#include "../src/app/frontend/ui_features.h"
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
 #include "../src/app/application/control_frame.h"
@@ -429,6 +430,43 @@ static bool bot_source_fixture_weapon(void *context,qa_string_id name,uint32_t n
     (void)name;*out=0;
     return !qa_q1_weapon_source(QA_Q1_ROGUE,number,&weapon) ||
         qa_strings_intern_cstr(strings,qa_q1_weapon_identity(weapon),out,error);
+}
+static qa_bytes q2_print_name(void *context,uint32_t slot)
+{
+    const qa_bytes *names=context;
+    return slot<2?names[slot]:(qa_bytes){0};
+}
+static void test_q2_print_names_and_policy(void)
+{
+    qa_arena storage={0};qa_error error={0};
+    const uint8_t bob[]={'B','o','b'};
+    qa_bytes names[]={{(const uint8_t *)"Alice",5},{bob,sizeof(bob)}};
+    const char input[]="##P0 hit ##P1 / ##P001 / ##P4294967296 / ##P9 / ##P";
+    qa_buffer text={(uint8_t *)input,sizeof(input)-1};
+    CHECK(frontend_ui_q2_player_names(&storage,&text,names,q2_print_name,&error));
+    CHECK(!strcmp((const char *)text.data,"Alice hit Bob / Bob /  /  / ##P"));
+    const char literal[]="unexpanded #P0 ##P?";
+    text=(qa_buffer){(uint8_t *)literal,sizeof(literal)-1};
+    CHECK(frontend_ui_q2_player_names(&storage,&text,names,q2_print_name,&error));
+    CHECK(text.size==sizeof(literal)-1 && !memcmp(text.data,literal,text.size));
+    qa_cvars *cvars=qa_cvars_create(&(qa_cvar_options){.dialect=QA_RULESET_Q2_RERELEASE},&error);
+    CHECK(cvars);
+    CHECK(qa_cvars_register(cvars,"scr_centertime","3",0,0,"",&error));
+    CHECK(qa_cvars_register(cvars,"scr_printspeed","20",0,0,"",&error));
+    CHECK(qa_cvars_set(cvars,"scr_centertime","3",true,&error));
+    CHECK(qa_cvars_set(cvars,"scr_printspeed","20",true,&error));
+    qa_hud_cvar_handles handles;
+    qa_hud_cvars_bind(cvars,QA_HUD_CVAR_CENTER_TIME|QA_HUD_CVAR_PRINT_SPEED,&handles);
+    frontend_q2_print_policy policy=frontend_ui_q2_print_policy(false,4,true,cvars,&handles);
+    CHECK(policy.center && !policy.center_policy.instant && policy.duration_ns==UINT64_C(3000000000));
+    CHECK(policy.center_policy.character_ns==UINT64_C(50000000));
+    policy=frontend_ui_q2_print_policy(false,5,true,cvars,&handles);
+    CHECK(policy.center && policy.center_policy.instant);
+    policy=frontend_ui_q2_print_policy(false,3|16,true,cvars,&handles);
+    CHECK(!policy.center && policy.chat && !policy.notify);
+    policy=frontend_ui_q2_print_policy(true,0,false,cvars,&handles);
+    CHECK(policy.center && policy.center_policy.instant);
+    qa_cvars_destroy(cvars);qa_arena_destroy(&storage);
 }
 static void test_bot_authored_progress(void)
 {
@@ -10715,6 +10753,7 @@ int main(int argc, char **argv)
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();
+    test_q2_print_names_and_policy();
     test_bot_authored_progress();
     test_bot_authored_aim();
     test_bot_source_knowledge();

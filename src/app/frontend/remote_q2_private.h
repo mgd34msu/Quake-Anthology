@@ -4,6 +4,7 @@
 #include "remote_q2_client.h"
 #include "remote_q2_effects.h"
 #include "qa/hud_q2.h"
+#include "qa/hud_controls.h"
 #include "qa/font.h"
 #include "model_inventory.h"
 #include "q2_animation.h"
@@ -54,6 +55,7 @@ typedef struct remote_q2_cvar_handles {
     frontend_legacy_cvar_handles legacy;
     frontend_remote_q2_effects_cvars effects;
     qa_hud_q2_marker_cvars marker;
+    qa_hud_cvar_handles print;
     qa_cvar_handle cl_blend;
     qa_cvar_handle cl_entities;
     qa_cvar_handle cl_lights;
@@ -61,7 +63,6 @@ typedef struct remote_q2_cvar_handles {
     qa_cvar_handle cl_vwep, cl_noskins;
     qa_cvar_handle gl_damageblend_frac;
     qa_cvar_handle paused;
-    qa_cvar_handle scr_centertime;
 } remote_q2_cvar_handles;
 typedef struct remote_q2_model_slot {
     remote_q2_model *model;

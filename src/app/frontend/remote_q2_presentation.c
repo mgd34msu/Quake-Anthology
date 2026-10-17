@@ -10,6 +10,7 @@
 #include "qa/game_q2.h"
 #include "inventory_menu.h"
 #include "menu_fonts.h"
+#include "ui_features.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -263,6 +264,37 @@ static bool inventory_items(void *context,qa_hud_data *out,qa_strings **strings,
     return frontend_inventory_menu_wire_rows(row->frontend->seats+row->options.domain.physical_seat,
         &row->hud_names,row->inventory,256,selected,out,error);
 }
+static qa_bytes player_name(void *context,uint32_t slot)
+{
+    frontend_remote_q2 *row=context;
+    return slot<256?qa_strings_text(row->hud_names.strings,row->hud_names.players[slot].name):(qa_bytes){0};
+}
+static bool received_text(frontend_remote_q2 *row,const char *input,
+    const qa_builtin_message_arg *args,size_t count,uint32_t flags,bool center,bool localized,
+    qa_error *error)
+{
+    qa_frontend *f=row->frontend;
+    uint32_t seat=row->options.domain.physical_seat;
+    qa_arena *storage=&f->frame.storage;
+    qa_buffer text={(uint8_t *)input,strlen(input)};
+    bool rerelease=remote_q2_rerelease_presentation(row);
+    if (localized && !frontend_ui_source_text(f,seat,QA_GAME_Q2,row->content.mounts,QA_EDITION_RERELEASE,
+        row->hud_names.strings,input,args,count,storage,&text,error)) return false;
+    if (rerelease && !frontend_ui_q2_player_names(storage,&text,row,player_name,error)) return false;
+    frontend_q2_print_policy policy=frontend_ui_q2_print_policy(center,flags,rerelease,
+        row->options.domain.cvars,&row->cvar_handles.print);
+    if (center) policy.center_policy.columns=40;
+    qa_hud *hud=f->seats[seat].hud;
+    if (policy.center)
+        return !hud || qa_hud_center_print(hud,(const char *)text.data,f->time_ns,
+            policy.duration_ns,policy.center_policy,error);
+    if (hud && policy.notify && !qa_hud_notify(hud,(const char *)text.data,policy.chat,
+        f->time_ns,UINT64_C(3000000000),error)) return false;
+    const char *message;
+    if (!frontend_ui_console_text(storage,(const char *)text.data,policy.notify,&message,error)) return false;
+    qa_console_emit(row->options.domain.console,&row->options.domain.command_context,message);
+    return true;
+}
 bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *records, size_t count,
     bool *waiting, qa_error *error)
 {
@@ -304,15 +336,16 @@ bool remote_q2_records(frontend_remote_q2 *row, const qa_q2_server_record *recor
             if (!qa_hud_q2_program_update(row->hud_overlay, text, remote_q2_rerelease_presentation(row), error)) return false;
             break;
         }
-        case QA_Q2_SVC_PRINT:
-            qa_console_emit(row->options.domain.console, &row->options.domain.command_context,
-                event->data.print.text); break;
-        case QA_Q2_SVC_CENTERPRINT: {
-            qa_hud *hud=row->frontend->seats[row->options.domain.physical_seat].hud;
-            const qa_cvar_view *duration=qa_cvars_read(row->options.domain.cvars,row->cvar_handles.scr_centertime);
-            double seconds=duration && isfinite(duration->number)?fmax(0,fmin(86400,duration->number)):2.5;
-            if (hud && !qa_hud_center_print(hud,event->data.print.text,row->frontend->time_ns,
-                    (uint64_t)(seconds*1e9),(qa_hud_center_policy){.instant=true,.columns=40},error)) return false;
+        case QA_Q2_SVC_PRINT:case QA_Q2_SVC_CENTERPRINT:
+            if (!received_text(row,event->data.print.text,NULL,0,event->data.print.level,
+                event->kind==QA_Q2_SVC_CENTERPRINT,false,error)) return false;
+            break;
+        case QA_Q2_SVC_LOCALIZED_PRINT: {
+            const qa_q2_kex_locprint *print=&event->data.localized;
+            qa_builtin_message_arg args[8];
+            for (size_t j=0;j<print->arg_count;++j)
+                args[j]=(qa_builtin_message_arg){.kind=QA_BUILTIN_MESSAGE_TEXT,.value.literal=print->args[j]};
+            if (!received_text(row,print->base,args,print->arg_count,print->flags,false,true,error)) return false;
             break;
         }
         case QA_Q2_SVC_SOUND: if (!sound(row, &event->data.sound, error)) return false; break;
