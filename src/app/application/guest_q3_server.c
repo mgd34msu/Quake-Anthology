@@ -159,7 +159,7 @@ bool q3g_publish_information(q3g_role *role, bool force, qa_error *error)
     for (uint32_t index = 0; index < 2; ++index) {
         if (!force && !(modified & masks[index])) continue;
         char text[8192];
-        bool ok = qa_cvars_info_write(cvars, masks[index], index ? sizeof(text) : 1024, text, error) &&
+        bool ok = qa_q3_host_info_write(role->host, masks[index], index ? sizeof(text) : 1024, text, error) &&
             q3g_set_configstring(role, index, text, error);
         if (!ok) {
             qa_cvars_mark_modified_flags(cvars, modified & information);

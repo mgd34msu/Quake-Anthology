@@ -3341,6 +3341,11 @@ static void test_shared_campaign_modes(void)
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_COOPERATIVE) == QA_MODE_COOPERATIVE);
     CHECK(qa_mode_from_game_type(QA_GAME_TYPE_HARVESTER) == QA_MODE_HARVESTER);
     CHECK(qa_mode_from_game_type(-1) == QA_MODE_FFA);
+    for (int32_t type = QA_GAME_TYPE_FFA; type <= QA_GAME_TYPE_HARVESTER; ++type)
+        CHECK(qa_game_type_q3(type) == type);
+    CHECK(qa_game_type_q3(QA_GAME_TYPE_CAMPAIGN) == QA_GAME_TYPE_ARENA_SINGLE_PLAYER);
+    CHECK(qa_game_type_q3(QA_GAME_TYPE_COOPERATIVE) == QA_GAME_TYPE_ARENA_SINGLE_PLAYER);
+    CHECK(qa_game_type_q3(10) == 10);
 }
 
 typedef struct source_objective_fixture {

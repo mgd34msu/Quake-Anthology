@@ -1056,12 +1056,19 @@ qa_bot_services application_bots_services(application_bots *bots) {
             application_bot_source_model_bounds:NULL,
         .predict_motion=application_bot_predict_motion};
 }
+static const qa_product *bot_source_product(const application_provider *source)
+{
+    if(!source) return NULL;
+    if(source->product) return source->product;
+    return source->launch?qa_catalog_product(qa_launch_instance_catalog(source->launch),
+        source->launch->selection.product):NULL;
+}
 static bool bot_weapon_resolve(void *context,qa_string_id name,uint32_t number,
     qa_item_id *out,qa_error *error)
 {
     application_provider *source=context;qa_q1_weapon weapon;
     (void)name;*out=0;
-    if(!qa_q1_weapon_source(application_q1_program(source->product->campaign),number,&weapon)) return true;
+    if(!qa_q1_weapon_source(application_q1_program(bot_source_product(source)->campaign),number,&weapon)) return true;
     return qa_strings_intern_cstr(qa_session_strings(source->application->session),
         qa_q1_weapon_identity(weapon),out,error);
 }
@@ -1069,8 +1076,9 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     bots->behavior=QA_RULESET_Q3;
     bots->walk_speed=160;
     application_provider *source=application_bot_source(bots);
-    if(!source || !source->product) return true;
-    qa_game_family family=source->product->family;
+    const qa_product *product=bot_source_product(source);
+    if(!product) return true;
+    qa_game_family family=product->family;
     qa_ruleset_id behavior=family==QA_GAME_Q1?QA_RULESET_NETQUAKE:QA_RULESET_Q2_RERELEASE;
     qa_bot_source_knowledge *knowledge=NULL;bool found=false;
     qa_strings *strings=qa_session_strings(bots->application->session);

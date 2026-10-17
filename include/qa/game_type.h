@@ -17,6 +17,12 @@ typedef enum qa_game_type {
     QA_GAME_TYPE_COOPERATIVE
 } qa_game_type;
 
+static inline int32_t qa_game_type_q3(int32_t type)
+{
+    return type == QA_GAME_TYPE_CAMPAIGN || type == QA_GAME_TYPE_COOPERATIVE ?
+        QA_GAME_TYPE_ARENA_SINGLE_PLAYER : type;
+}
+
 static inline bool qa_game_type_is_team(int32_t type)
 {
     return type >= QA_GAME_TYPE_TEAM_DEATHMATCH && type <= QA_GAME_TYPE_HARVESTER;

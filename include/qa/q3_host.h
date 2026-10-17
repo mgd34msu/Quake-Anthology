@@ -373,6 +373,7 @@ bool qa_q3_host_cvar_cache_read(const qa_q3_host *,size_t,qa_q3_host_cvar_cache 
  * original records through the same cvar Update path. Changed guest handles
  * remove their records. A failure preserves the remaining inventory. */
 bool qa_q3_host_cvar_cache_refresh(qa_q3_host *,qa_error *);
+bool qa_q3_host_info_write(const qa_q3_host *,uint32_t flags,size_t capacity,char *,qa_error *);
 typedef struct qa_q3_host_client_context {
     qa_session *session;
     qa_qvm_role role;

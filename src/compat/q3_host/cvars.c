@@ -3,6 +3,8 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/cvars_alias.h"
 #include "qa/source_save.h"
+#include "qa/game_type.h"
+#include "qa/text.h"
 
 /* Registry handles are nonnegative size_t values admitted through INT32_MAX.
  * This opaque signed source token cannot alias any real private handle. */
@@ -320,6 +322,7 @@ bool q3_cvars_bindings_restore_ready(qa_q3_host *host,qa_error *error)
         binding->previous_modification=binding->previous_current?modification:0;
     }
     host->draw_status=qa_cvars_resolve(host->options.cvars,"cg_drawStatus");
+    host->game_type=qa_cvars_resolve(host->options.cvars,"g_gametype");
     if (host->cvar_cache_count && ((!host->vm && !host->native) || host->options.role!=QA_QVM_CGAME))
         return q3_fail(error,QA_ERROR_FORMAT,0,"Restored cvar cache lacks its original CGAME executor");
     for (size_t i=0;i<host->cvar_cache_count;++i) {
@@ -477,6 +480,8 @@ static bool bind_routed(q3_call *call,q3_cvar_access access,size_t handle,
     qa_cvar_handle value_handle=qa_cvars_resolve(access.registry,view->name);
     bool status=status_name(view->name);
     if (status && access.registry==host->options.cvars) host->draw_status=value_handle;
+    if (access.registry==host->options.cvars && qa_text_ascii_equal(view->name,"g_gametype"))
+        host->game_type=value_handle;
     for (size_t i=0;i<host->cvar_binding_count;++i) {
         const q3_cvar_binding *binding=host->cvar_bindings+i;
         if (binding->reference==reference && binding->handle==handle && !strcmp(binding->name,view->name)) {
@@ -511,11 +516,31 @@ static bool routed_view(q3_cvar_binding *binding,const qa_cvar_view **out,
     *modification=binding->revision; return true;
 }
 
-static bool effective_status(q3_call *call,const qa_cvar_view *source,bool is_status,
-    qa_cvar_view *out,qa_error *error)
+static bool source_game_type(const qa_q3_host *host,const qa_cvar_view *source,qa_cvar_view *out)
 {
     *out=*source;
+    if (source!=qa_cvars_read(host->options.cvars,host->game_type) ||
+        qa_game_type_q3(source->integer)==source->integer) return false;
+    out->value="2"; out->number=QA_GAME_TYPE_ARENA_SINGLE_PLAYER;
+    out->integer=QA_GAME_TYPE_ARENA_SINGLE_PLAYER;
+    return true;
+}
+
+bool qa_q3_host_info_write(const qa_q3_host *host,uint32_t flags,size_t capacity,
+    char *out,qa_error *error)
+{
+    if (!qa_cvars_info_write(host->options.cvars,flags,capacity,out,error)) return false;
+    const qa_cvar_view *type=qa_cvars_read(host->options.cvars,host->game_type);
+    qa_cvar_view effective;
+    return !type || !(type->flags&flags) || !source_game_type(host,type,&effective) ||
+        qa_q3_info_set(out,capacity,type->name,effective.value,QA_Q3_INFO_STRICT,NULL,error);
+}
+
+static bool effective_view(q3_call *call,const qa_cvar_view *source,bool is_status,
+    qa_cvar_view *out,qa_error *error)
+{
     qa_q3_host *host=call->host;
+    source_game_type(host,source,out);
     if (host->options.role!=QA_QVM_CGAME || !is_status) return true;
     bool visible=true;
     const qa_q3_host_cvar_status_services *services=&host->options.cvar_status;
@@ -565,13 +590,17 @@ static bool update_fields(q3_call *call,uint64_t pointer,bool *resolved_status,q
     status=view && call->host->options.role==QA_QVM_CGAME && status;
     *resolved_status=status;
     qa_cvar_view effective;
-    if (status) {
-        if (!effective_status(call,view,status,&effective,error)) return false;
-        view=&effective; modification=view->modification_count;
+    bool projected_refresh=false;
+    if (view) {
+        if (!effective_view(call,view,status,&effective,error)) return false;
+        projected_refresh=view->integer!=effective.integer &&
+            qa_load_i32le(input+12)!=effective.integer;
+        view=&effective;
+        if (status) modification=view->modification_count;
     }
-    if (!view || (handle<=-3?
+    if (!view || (!projected_refresh && (handle<=-3?
         qa_load_i32le(input+4)>=0 && modification==(uint64_t)qa_load_i32le(input+4):
-        modification==qa_load_u32le(input+4))) return true;
+        modification==qa_load_u32le(input+4)))) return true;
     size_t length = strlen(view->value);
     int32_t integer = view->integer;
     uint32_t bits; memcpy(&bits, &view->number, sizeof(bits));
@@ -708,7 +737,13 @@ static void info_print(q3_call *call,const qa_command_context *command,const cha
 static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *error)
 {
     qa_q3_host_options *options=&call->host->options;
-    if (!options->cvar_entry.entered) return qa_cvars_info(options->cvars,flags,1024,out,error);
+    if (!options->cvar_entry.entered) {
+        char text[1024];
+        if (!qa_q3_host_info_write(call->host,flags,sizeof(text),text,error)) return false;
+        char *copy=copy_text(text,error);
+        if (!copy) return false;
+        *out=(qa_buffer){(uint8_t *)copy,strlen(copy)+1}; return true;
+    }
     qa_command_context command;
     if (!qa_console_cvar_context(options->console,&options->command_context,&command,error)) return false;
     char output[1024]={0};
@@ -728,8 +763,10 @@ static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *er
             q3_cvar_access access;
             if (!access_name(call,view->name,&access,error)) return false;
             if (access.registry!=registry) continue;
+            qa_cvar_view effective;
+            source_game_type(call->host,view,&effective);
             const char *warning=NULL;
-            bool ok=qa_cvars_info_pair(options->cvars,flags,sizeof(output),output,view->name,view->value,&warning,error);
+            bool ok=qa_cvars_info_pair(options->cvars,flags,sizeof(output),output,view->name,effective.value,&warning,error);
             if (warning) info_print(call,&command,warning);
             if (!ok) return false;
         }
@@ -768,6 +805,10 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
     const qa_cvar_view *view=NULL;
     bool ok = find(access,key,&view,error) && classify(call,access,key,&view,error);
     if (!ok) { return Q3_FAILED; }
+    qa_cvar_view effective;
+    bool status=view && call->host->options.role==QA_QVM_CGAME && status_name(view->name);
+    if (view && !effective_view(call,view,status,&effective,error)) return Q3_FAILED;
+    if (view) view=&effective;
     if (trap == (ui ? 3 : 5)) {
         ok = call->arguments[1] ?
                  q3_string(call, call->arguments[1], &value, error) &&
@@ -776,10 +817,6 @@ static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error
                  apply(call,access,&(qa_cvars_edit_command){.kind=QA_CVARS_EDIT_RESET,.name=key,.force=true},error);
         if (ok) ok=find(access,key,&view,error) && classify(call,access,key,&view,error);
     } else if (trap == (ui ? 5 : game ? 7 : 6)) {
-        qa_cvar_view effective;
-        bool status=view && call->host->options.role==QA_QVM_CGAME && status_name(view->name);
-        if (view && !effective_status(call,view,status,&effective,error)) ok=false;
-        else if (view) view=&effective;
         if (ok && view) ok = q3_write_string(call, call->arguments[1], view->value, q3_integer(call, 2), error);
         else if (ok) {
             const uint8_t zero = 0;

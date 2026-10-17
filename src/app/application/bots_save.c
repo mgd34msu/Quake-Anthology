@@ -77,7 +77,7 @@ static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
         if(!qa_source_save_u32(io,&entry->handle) || entry->handle>INT32_MAX ||
            !qa_source_save_actor(io,&entry->actor) || !entry->actor.registry ||
            !provider_field(io,bots->application,&entry->provider,true) ||
-           !application_bot_arsenal_supported(entry->provider))
+           (!reading && !application_bot_arsenal_supported(entry->provider)))
             goto invalid;
     }
     if(reading && count) {
@@ -554,6 +554,10 @@ static bool agreement(application_bots *bots,qa_error *error) {
         bool found=false;for(application_bot_guest *g=bots->guests;g;g=g->next) found=found || g->provider==table[i];
         if(!found) return application_fail(error,QA_ERROR_FORMAT,"Selected guest bot provider has no saved namespace");
     }
+    const application_bot_knowledge_owner *knowledge=bots->knowledge_owner;
+    for(size_t i=0;knowledge && i<knowledge->count;++i)
+        if(!application_bot_arsenal_supported(knowledge->actors[i].provider))
+            return application_fail(error,QA_ERROR_FORMAT,"Invalid actual selected-arsenal knowledge identity");
     application_bot_graph *map=binding_graph(bots,bots->map_navigation);
     if(!map || map->movement || qa_bot_navigation_actor(bots->map_navigation).registry)
         return application_fail(error,QA_ERROR_FORMAT,"Application map navigation binding differs");

@@ -562,16 +562,6 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     int64_t elapsed = (int64_t)command.serverTime - (int64_t)state.commandTime;
     scope->milliseconds = slice ? elapsed > 200 ? 200 : elapsed < 1 ? 1 : (uint32_t)elapsed
                                 : elapsed > 1000 ? 1000 : elapsed < 0 ? 0 : (uint32_t)elapsed;
-    if (slice) {
-        qa_application *app = input->role->engine->provider->application;
-        if (application_provider_for(app, scope->actor, QA_ROLE_MOVEMENT, "") !=
-            input->role->engine->provider &&
-            (!input->profile.has_modes || state.pmType != input->profile.normal_mode)) {
-            scope->movement = previous;
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Mixed guest movement mode requires its own qualified source region");
-        }
-    }
     application_source_input_scope input_scope = {0};
     application_guest_q3_control_scope body_scope = {0};
     uint32_t before_type = 0, projected_type = 0;

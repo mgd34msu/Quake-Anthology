@@ -74,6 +74,13 @@ struct application_control_turn {
 static bool guest_complete(qa_application *, qa_actor_id, const qa_usercmd *,
     const qa_q3_player *, const application_control_external_stage *, qa_error *);
 
+static bool retained_nq_turn(const application_control_context *context)
+{
+    return context && context->retained && !context->command_only &&
+        context->path == APPLICATION_CONTROL_NQ_TURN && context->frame.kind == QA_RULESET_NETQUAKE &&
+        (context->stage == APPLICATION_CONTROL_PREPARE || context->stage == APPLICATION_CONTROL_PHYSICS);
+}
+
 static application_provider *control_execution(qa_application *app, qa_actor_id actor)
 {
     qa_actor_owner owner;
@@ -2401,9 +2408,9 @@ static bool external_stage_current(const application_control_external_stage *sta
         return false;
     const application_control_context *actual = application_control_frame_current(move->application, stage->actor);
     qa_source_frame active;
-    return actual && actual->source_nqcmd && !actual->command_only && actual->retained &&
-        actual->stage == APPLICATION_CONTROL_PHYSICS && actual->path == APPLICATION_CONTROL_NQ_TURN &&
-        stage->source.source_nqcmd && stage->source.stage == actual->stage &&
+    return retained_nq_turn(actual) && actual->stage == APPLICATION_CONTROL_PHYSICS &&
+        retained_nq_turn(&stage->source) && stage->source.stage == actual->stage &&
+        actual->source_nqcmd == stage->source.source_nqcmd &&
         qa_actor_id_equal(actual->actor, stage->actor) &&
         actual->frame.provider == stage->source.frame.provider && actual->frame.kind == QA_RULESET_NETQUAKE &&
         actual->frame.number == stage->source.frame.number && actual->frame.time_ns == stage->source.frame.time_ns &&
@@ -2715,12 +2722,13 @@ static bool control_move(qa_application *application,
     bool preparing = context->stage == APPLICATION_CONTROL_PREPARE;
     bool physics = context->stage == APPLICATION_CONTROL_PHYSICS;
     application_provider *selected_arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
-    bool original_stage = context->source_nqcmd &&
+    bool source_turn = retained_nq_turn(context);
+    bool original_stage = source_turn &&
         ((movement->kind == APPLICATION_PROVIDER_QVM ||
           (movement->kind == APPLICATION_PROVIDER_NATIVE && movement->component.clock.kind == QA_RULESET_Q3)) ||
          (selected_arsenal && (selected_arsenal->kind == APPLICATION_PROVIDER_QVM ||
           (selected_arsenal->kind == APPLICATION_PROVIDER_NATIVE && selected_arsenal->component.clock.kind == QA_RULESET_Q3))));
-    bool native_q2_stage = context->source_nqcmd && movement->kind == APPLICATION_PROVIDER_NATIVE &&
+    bool native_q2_stage = source_turn && movement->kind == APPLICATION_PROVIDER_NATIVE &&
         movement->state.native.q2_engine;
     if ((preparing || physics) && !turn)
         return application_fail(error, QA_ERROR_ARGUMENT, "Split source movement needs its retained turn");
@@ -2831,7 +2839,7 @@ static bool control_move(qa_application *application,
     if (ok && preparing && live(application, actor)) ok = record_nq_equipment(&move, error);
     bool foreign_nq = context->source_nqcmd && record->player.state.kind != QA_RULESET_NETQUAKE;
     bool mixed_outer = context->path == APPLICATION_CONTROL_MIXED ||
-        (context->source_nqcmd && physics && (foreign_nq || original_stage));
+        (physics && (foreign_nq || original_stage));
     move.mixed_source_outer = mixed_outer && !(original_stage && !foreign_nq) &&
         execution && execution->kind == APPLICATION_PROVIDER_QC &&
         !execution->state.qc.qualified;
@@ -2847,7 +2855,7 @@ static bool control_move(qa_application *application,
     if (ok && live(application, actor)) effective_command = input.command;
     qa_movement_services services = movement_services(&move);
     bool external_handled = false;
-    if (ok && context->source_nqcmd && physics && original_stage && !foreign_nq && live(application, actor)) {
+    if (ok && physics && original_stage && !foreign_nq && live(application, actor)) {
         move.external_nq_physics = true;
         ok = qa_movement_physics_netquake(&input, &services, &record->result, error);
         if (ok && live(application, actor)) {
@@ -2861,7 +2869,7 @@ static bool control_move(qa_application *application,
             }
         }
     }
-    if (ok && context->source_nqcmd && physics && (original_stage || native_q2_stage) && live(application, actor)) {
+    if (ok && physics && (original_stage || native_q2_stage) && live(application, actor)) {
         application_control_external_stage stage = {.application = application, .actor = actor,
             .source = *context, .state = &move, .current = external_stage_current,
             .input = external_stage_input, .locomotion = external_stage_locomotion,
