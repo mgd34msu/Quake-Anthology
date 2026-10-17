@@ -797,7 +797,8 @@ typedef struct cvar_scope_row {
     bool active;
 } cvar_scope_row;
 typedef struct cvar_scope_metadata {
-    union { cvar *row; cvar_alias *alias; } entry;
+    cvar_values *values;
+    size_t ordinal;
     bool alias, modified;
     uint64_t modification_count;
 } cvar_scope_metadata;
@@ -839,11 +840,13 @@ static void scalar_swap(cvar *first,cvar *second)
     SCALAR_SWAP(cvar_detail *,details);
 #undef SCALAR_SWAP
 }
-static bool scope_metadata_add(qa_cvars_value_scope *scope,cvar *row,cvar_alias *alias,qa_error *error)
+static bool scope_metadata_add(qa_cvars_value_scope *scope,cvar_values *values,
+    cvar *row,cvar_alias *alias,qa_error *error)
 {
+    size_t ordinal=alias?alias->ordinal:row->ordinal;
     for (size_t i=0;i<scope->metadata_count;++i) {
         const cvar_scope_metadata *item=scope->metadata+i;
-        if (alias ? item->alias && item->entry.alias==alias : !item->alias && item->entry.row==row) return true;
+        if (item->values==values && item->ordinal==ordinal && item->alias==(alias!=NULL)) return true;
     }
     if (scope->metadata_count==scope->metadata_capacity) {
         size_t capacity=scope->metadata_capacity?scope->metadata_capacity*2:16;
@@ -854,21 +857,22 @@ static bool scope_metadata_add(qa_cvars_value_scope *scope,cvar *row,cvar_alias 
         scope->metadata=storage; scope->metadata_capacity=capacity;
     }
     cvar_scope_metadata *item=scope->metadata+scope->metadata_count++;
-    item->alias=alias!=NULL;
-    if (alias) { item->entry.alias=alias; item->modified=alias->modified; item->modification_count=alias->modification_count; }
-    else { item->entry.row=row; item->modified=row->view.modified; item->modification_count=row->view.modification_count; }
+    *item=(cvar_scope_metadata){.values=values,.ordinal=ordinal,.alias=alias!=NULL};
+    if (alias) { item->modified=alias->modified; item->modification_count=alias->modification_count; }
+    else { item->modified=row->view.modified; item->modification_count=row->view.modification_count; }
     return true;
 }
 static bool scope_metadata_collect(qa_cvars_value_scope *scope,const cvar *canonical,qa_error *error)
 {
+    if (!canonical) return true;
     for (size_t i=0;i<scope->view_count;++i) {
         cvar_scope_view *view=scope->views+i;
         for (cvar *row=view->values->first;row;row=row->next)
             if ((row->ordinal==canonical->ordinal || record_affected(view->registry,view->values,row,canonical)) &&
-                !scope_metadata_add(scope,row,NULL,error)) return false;
+                !scope_metadata_add(scope,view->values,row,NULL,error)) return false;
         for (cvar_alias *alias=view->values->aliases;alias;alias=alias->next)
             if (alias_affected(view->registry,view->values,alias,canonical) &&
-                !scope_metadata_add(scope,NULL,alias,error)) return false;
+                !scope_metadata_add(scope,view->values,NULL,alias,error)) return false;
     }
     return true;
 }
@@ -1550,6 +1554,18 @@ static bool source_handle(cvar_target target,cvar *entry,cvar_alias *alias,qa_er
     if (alias) alias->vm_bound=true;
     return true;
 }
+static void promote_user_variable(cvar_target target,cvar *canonical)
+{
+    canonical->view.console_created=false;
+    for (qa_cvars *view=target.registry->store->views;view;view=view->next_view) {
+        cvar_values *values=qac_cvars_current_values(view);
+        cvar *entry=values->rows[canonical->ordinal];
+        if (!entry) continue;
+        uint32_t user=qac_q2(entry->flags_dialect)?(uint32_t)QA_Q2_CVAR_CUSTOM:(uint32_t)QA_CVAR_USER_CREATED;
+        entry->view.flags&=~user;
+        entry->view.console_created=false;
+    }
+}
 static bool register_variable(cvar_target target,const char *name,const char *default_value,
     uint32_t flags,uint64_t owner,const char *description,qa_error *error)
 {
@@ -1575,9 +1591,19 @@ static bool register_variable(cvar_target target,const char *name,const char *de
     if (qac_q2(qa_cvars_dialect(registry)) && (native_flags&6u) && (!valid_info(name) || !valid_info(default_value)))
         { free(converted.allocated_value); return qac_fail(error,QA_ERROR_FORMAT,"invalid Source info declaration"); }
     if (!source_handle(target,entry,alias,error)) { free(converted.allocated_value); return false; }
+    cvar *canonical=qac_cvars_canonical(entry);
+    bool user_created=(qac_cvars_flags(native_flags,dialect,QA_RULESET_Q3)&QA_CVAR_USER_CREATED)!=0;
+    bool promote=canonical->view.console_created && !user_created && default_value[0];
     bool declared=alias?alias->declared:entry->view.declared;
+    if ((!declared || promote) && !qac_cvars_default_declare(target,entry,converted.value,promote,error)) {
+        free(converted.allocated_value); return false;
+    }
+    if (promote) {
+        promote_user_variable(target,canonical);
+        target.values->changed_flags|=native_flags;
+        if (native_flags&QA_CVAR_USERINFO) target.values->userinfo_modified=true;
+    }
     if (!declared) {
-        if (!qac_cvars_default_declare(target,entry,converted.value,error)) { free(converted.allocated_value); return false; }
         if (alias) { alias->declared=true; alias->owner=owner; }
         else { entry->view.declared=true; entry->view.owner=owner; ++target.values->declared_count; }
         ++canonical_values(target)->declaration_revision;
@@ -1597,7 +1623,7 @@ static bool register_variable(cvar_target target,const char *name,const char *de
             description?description:"",entry->view.documentation,error)) { free(converted.allocated_value); return false; }
         qac_cvars_metadata_view(entry->metadata,&entry->view);
     }
-    cvar *canonical=qac_cvars_canonical(entry);
+    if (user_created && canonical->catalog_row==QA_CVAR_CATALOG_NO_ROW) canonical->view.console_created=true;
     canonical->view.flags|=native_flags&QA_CVAR_ARCHIVE;
     qa_cvar_save_policy policy=registry->options.declaration_save_policy?registry->options.declaration_save_policy(name):QA_CVAR_SAVE_UNCLASSIFIED;
     if (policy==QA_CVAR_SAVE_UNCLASSIFIED) policy=registry->options.default_save_policy;
@@ -1741,7 +1767,8 @@ failed:
     for (size_t i=0;i<prepared;++i) write_dispose(&writes[i]);
     return false;
 }
-bool qac_cvars_change_defaults(cvar_target target,const char *const *defaults,qa_error *error)
+bool qac_cvars_change_defaults(cvar_target target,const char *const *defaults,
+    bool preserve_values,qa_error *error)
 {
     cvar_values *canonical=canonical_values(target);
     cvar_write *writes=canonical->count?calloc(canonical->count,sizeof(*writes)):NULL;
@@ -1750,10 +1777,10 @@ bool qac_cvars_change_defaults(cvar_target target,const char *const *defaults,qa
     for (cvar *entry=canonical->first;entry;entry=entry->next) {
         const char *reset=defaults[entry->ordinal];
         if (!reset || (entry->catalog_row!=QA_CVAR_CATALOG_NO_ROW && qa_cvar_catalog_rows[entry->catalog_row].not_stored)) continue;
-        const char *value=entry->view.explicit_value?entry->view.value:reset;
+        const char *value=preserve_values || entry->view.explicit_value?entry->view.value:reset;
         if (!strcmp(reset,entry->view.reset_value) && !strcmp(value,entry->view.value)) continue;
         writes[count++]=(cvar_write){.entry=entry,.value=value,.reset_value=reset,
-            .latch_reset=entry->view.latched_value && !entry->pending_explicit?reset:NULL,
+            .latch_reset=!preserve_values && entry->view.latched_value && !entry->pending_explicit?reset:NULL,
             .explicit_value=entry->view.explicit_value,.mark=strcmp(value,entry->view.value)!=0};
     }
     if (target.registry->mutation_depth==SIZE_MAX) { free(writes); return qac_fail(error,QA_ERROR_MEMORY,"cvar default mutation depth exhausted"); }
@@ -1828,6 +1855,7 @@ static bool apply_converted_as(cvar_target target,const char *name,const char *v
         entry=create_variable(target,name,"",error);
         if (!entry) return false;
         entry->view.console_created=true;
+        qac_cvars_canonical(entry)->view.console_created=true;
         entry->view.flags=qa_cvars_dialect(registry)==QA_RULESET_Q3?QA_CVAR_USER_CREATED:qac_q2(qa_cvars_dialect(registry))?QA_Q2_CVAR_CUSTOM:0;
         entry->flags_dialect=qac_cvars_view_options(registry,target.values).dialect;
     }
@@ -1867,8 +1895,10 @@ static bool scope_metadata_prepare(qa_cvars_value_scope *scope,cvar_target targe
     }
     for (size_t i=0;i<scope->metadata_count;++i) {
         cvar_scope_metadata *item=scope->metadata+i;
-        item->modified=item->alias?item->entry.alias->modified:item->entry.row->view.modified;
-        item->modification_count=item->alias?item->entry.alias->modification_count:item->entry.row->view.modification_count;
+        cvar_alias *alias=item->alias?item->values->alias_rows[item->ordinal]:NULL;
+        cvar *row=item->alias?NULL:item->values->rows[item->ordinal];
+        if (alias) { item->modified=alias->modified; item->modification_count=alias->modification_count; }
+        else if (row) { item->modified=row->view.modified; item->modification_count=row->view.modification_count; }
     }
     return true;
 }
@@ -1897,12 +1927,16 @@ bool qa_cvars_value_scope_run(qa_cvars_value_scope *scope,bool (*run)(void *,qa_
     for (size_t i=scope->row_count;i>0;--i) {
         cvar_scope_row *row=scope->rows+i-1;
         if (!row->active) continue;
-        scalar_swap(values->rows[row->ordinal],&row->working); row->active=false;
+        cvar *canonical=values->rows[row->ordinal];
+        if (canonical) scalar_swap(canonical,&row->working);
+        row->active=false;
     }
     for (size_t i=0;i<scope->metadata_count;++i) {
         cvar_scope_metadata *item=scope->metadata+i;
-        if (item->alias) { item->entry.alias->modified=item->modified; item->entry.alias->modification_count=item->modification_count; }
-        else { item->entry.row->view.modified=item->modified; item->entry.row->view.modification_count=item->modification_count; }
+        cvar_alias *alias=item->alias?item->values->alias_rows[item->ordinal]:NULL;
+        cvar *row=item->alias?NULL:item->values->rows[item->ordinal];
+        if (alias) { alias->modified=item->modified; alias->modification_count=item->modification_count; }
+        else if (row) { row->view.modified=item->modified; row->view.modification_count=item->modification_count; }
     }
     for (size_t i=0;i<scope->view_count;++i) {
         cvar_scope_view *view=scope->views+i;
@@ -2079,15 +2113,67 @@ static bool reset_variable(cvar_target target,const char *name,bool force,qa_err
     }
     return set_canonical(target,entry,name,canonical->view.reset_value,alias?alias->flags:entry->view.flags,force,false,error);
 }
+static uint32_t restart_flags(cvar_target target,const cvar *canonical,uint32_t flags)
+{
+    for (qa_cvars *view=target.registry->store->views;view;view=view->next_view) {
+        cvar_values *values=qac_cvars_current_values(view);
+        const cvar *entry=values->rows[canonical->ordinal];
+        if (entry) flags|=qac_cvars_flags(entry->view.flags,entry->flags_dialect,QA_RULESET_Q3);
+    }
+    return flags;
+}
+static void remove_user_variable(cvar_target target,cvar *canonical)
+{
+    cvar_values *common=canonical_values(target);
+    for (qa_cvars *view=target.registry->store->views;view;view=view->next_view) {
+        cvar_values *values=qac_cvars_current_values(view);
+        cvar *entry=values->rows[canonical->ordinal];
+        if (!entry) continue;
+        cvar **link=&values->first;
+        while (*link!=entry) link=&(*link)->next;
+        *link=entry->next;
+        if (entry->view.handle!=SIZE_MAX) values->handles[entry->view.handle]=NULL;
+        values->rows[entry->ordinal]=NULL;
+        --values->count;
+        if (entry->view.declared) --values->declared_count;
+        values->changed_flags|=entry->view.flags;
+        if (entry->view.flags&QA_CVAR_USERINFO) values->userinfo_modified=true;
+        ++values->declaration_revision;
+        qac_cvars_entry_free(entry);
+    }
+    cvar **link=&common->first;
+    while (*link!=canonical) link=&(*link)->next;
+    *link=canonical->next;
+    size_t bucket=name_hash(target.registry,canonical->view.name)&(common->name_bucket_count-1);
+    cvar_name_node **node=&common->name_buckets[bucket];
+    while (*node!=&canonical->indexed_name) node=&(*node)->next;
+    *node=canonical->indexed_name.next;
+    common->rows[canonical->ordinal]=NULL;
+    ++common->declaration_revision;
+    qac_cvars_entry_free(canonical);
+}
 static bool restart_variables(cvar_target target,qa_error *error)
 {
     if (!target_touch(target,error)) return false;
-    for (cvar *entry=target.values->first;entry;entry=entry->next) {
-        const qa_cvar_view *projection=qac_cvars_project(target.registry,target.values,entry);
-        if (!source_visible(target.registry,entry,false) || !projection ||
-            (qac_cvars_flags(projection->flags,qac_cvars_view_options(target.registry,target.values).dialect,QA_RULESET_Q3)&
-             (QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART))) continue;
-        if (!reset_variable(target,entry->view.name,true,error)) return false;
+    bool engine=target.registry->options.role==QA_CVAR_ROLE_ENGINE;
+    cvar *entry=engine?canonical_values(target)->first:target.values->first;
+    while (entry) {
+        cvar *next=entry->next;
+        cvar *canonical=qac_cvars_canonical(entry);
+        cvar *source=engine?qac_cvars_source_row(target.registry,target.values,canonical,error):entry;
+        if (!source) return false;
+        const qa_cvar_view *projection=qac_cvars_project(target.registry,target.values,source);
+        if (source_visible(target.registry,source,false) && projection) {
+            uint32_t flags=qac_cvars_flags(projection->flags,
+                qac_cvars_view_options(target.registry,target.values).dialect,QA_RULESET_Q3);
+            flags=restart_flags(target,canonical,flags);
+            if (!(flags&(QA_CVAR_READONLY|QA_CVAR_INIT|QA_CVAR_NO_RESTART))) {
+                if (canonical->catalog_row==QA_CVAR_CATALOG_NO_ROW && canonical->view.console_created)
+                    remove_user_variable(target,canonical);
+                else if (!reset_variable(target,source->view.name,true,error)) return false;
+            }
+        }
+        entry=next;
     }
     return true;
 }
@@ -2124,7 +2210,10 @@ static bool add_flags_variable(cvar_target target,const char *name,uint32_t flag
         entry->view.flags=qac_cvars_flags(entry->view.flags,entry->flags_dialect,dialect)|flags;
         entry->flags_dialect=dialect;
     }
-    qac_cvars_canonical(entry)->view.flags|=flags&QA_CVAR_ARCHIVE;
+    cvar *canonical=qac_cvars_canonical(entry);
+    canonical->view.flags|=flags&QA_CVAR_ARCHIVE;
+    if (canonical->catalog_row==QA_CVAR_CATALOG_NO_ROW &&
+        (qac_cvars_flags(flags,dialect,QA_RULESET_Q3)&QA_CVAR_USER_CREATED)) canonical->view.console_created=true;
     return true;
 }
 

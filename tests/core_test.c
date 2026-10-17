@@ -6670,6 +6670,55 @@ static void test_retained_patch_levels(void)
     qa_scene_geometry_release(geometry);
 }
 
+static bool restart_cvars_in_scope(void *context,qa_error *error)
+{ return qa_cvars_restart(context,error); }
+static void test_cvar_restart_removal(void)
+{
+    qa_error error={0};
+    qa_cvar_options options={.dialect=QA_RULESET_Q3,.side=QA_CVAR_SIDE_CLIENT,.role=QA_CVAR_ROLE_ENGINE};
+    qa_cvars *engine=qa_cvars_create(&options,&error);CHECK(engine);
+    CHECK(qa_cvars_register(engine,"restart_declared","1",0,0,"",&error));
+    CHECK(qa_cvars_set(engine,"restart_declared","2",true,&error));
+    CHECK(qa_cvars_set(engine,"restart_temporary","7",true,&error));
+    qa_cvar_handle old=qa_cvars_resolve(engine,"restart_temporary");
+    CHECK(qa_cvars_read(engine,old));
+    options.role=QA_CVAR_ROLE_CGAME;
+    qa_cvars *client=qa_cvars_create_view(engine,&options,&error);CHECK(client);
+    CHECK(qa_cvars_register(client,"restart_temporary","",0,42,"",&error));
+    qa_cvar_handle guest=qa_cvars_resolve(client,"restart_temporary");
+    CHECK(qa_cvars_read(client,guest));
+    qa_cvars_edit *edit=NULL;
+    CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    CHECK(qa_cvars_restart(engine,&error));
+    CHECK(!qa_cvars_find(engine,"restart_temporary") && !qa_cvars_read(client,guest));
+    qa_cvars_edit_abort(edit);edit=NULL;
+    CHECK(qa_cvars_read(engine,old) && qa_cvars_read(client,guest));
+    CHECK(qa_cvars_find(engine,"restart_declared")->integer==2);
+    CHECK(qa_cvars_edit_prepare(engine,&edit,&error));
+    CHECK(qa_cvars_restart(engine,&error) && qa_cvars_edit_ready(edit,&error));
+    qa_cvars_edit_publish(edit);CHECK(qa_cvars_edit_finish(engine,&error));
+    CHECK(!qa_cvars_find(engine,"restart_temporary") && !qa_cvars_find(client,"restart_temporary"));
+    CHECK(!qa_cvars_read(engine,old) && !qa_cvars_read(client,guest));
+    CHECK(qa_cvars_find(engine,"restart_declared")->integer==1);
+    CHECK(qa_cvars_set(engine,"restart_temporary","9",true,&error));
+    qa_cvar_handle replacement=qa_cvars_resolve(engine,"restart_temporary");
+    CHECK(replacement.slot!=old.slot && !qa_cvars_read(engine,old));
+    CHECK(qa_cvars_read(engine,replacement)->integer==9);
+    CHECK(qa_cvars_set(engine,"restart_promoted","8",true,&error));
+    CHECK(qa_cvars_register(client,"restart_promoted","3",0,42,"",&error));
+    CHECK(qa_cvars_restart(engine,&error));
+    CHECK(qa_cvars_find(engine,"restart_promoted") && qa_cvars_find(engine,"restart_promoted")->integer==3);
+    CHECK(qa_cvars_find(client,"restart_promoted") && qa_cvars_find(client,"restart_promoted")->integer==3);
+    CHECK(qa_cvars_set(engine,"restart_scoped","5",true,&error));
+    qa_cvars_value_scope *scope=NULL;
+    qa_cvar_assignment assignment={.name="restart_scoped",.value="6"};
+    CHECK(qa_cvars_value_scope_create(engine,&assignment,1,&scope,&error));
+    CHECK(qa_cvars_value_scope_run(scope,restart_cvars_in_scope,engine,&error));
+    CHECK(!qa_cvars_find(engine,"restart_scoped"));
+    qa_cvars_value_scope_destroy(scope);
+    qa_cvars_destroy(client);qa_cvars_destroy(engine);
+}
+
 static void test_shared_cvar_archive(void)
 {
     qa_error error={0};
@@ -9855,6 +9904,7 @@ int main(int argc, char **argv)
     test_q3_received_commands();
     test_q3_command_cursors();
     test_shared_cvar_archive();
+    test_cvar_restart_removal();
     test_runtime_server_settings();
     test_shared_cvar_save();
     test_cvar_value_scope();

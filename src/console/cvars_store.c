@@ -551,12 +551,14 @@ bool qac_cvars_values_clone(qa_cvars *registry, const cvar_values *source,
             if (!okay) { qac_cvars_entry_free(copy); goto failed; }
         }
         if (!copy) goto failed;
-        *tail = copy; tail = &copy->next; ++out->count;
+        *tail = copy; tail = &copy->next;
+        if (canonical_values) ++out->count;
         qac_cvars_index_entry(registry, out, copy);
         out->rows[copy->ordinal] = copy;
         if (canonical_values && copy->view.handle!=SIZE_MAX) out->handles[copy->view.handle]=&copy->indexed_name;
     }
     if (!canonical_values) {
+        out->count=source->count;
         for (cvar *entry=out->first;entry;entry=entry->next) if (entry->definition) {
             entry->definition=out->rows[entry->definition->ordinal];
             memcpy(entry->defaults,entry->definition->defaults,sizeof(entry->defaults));
@@ -605,7 +607,7 @@ bool qac_cvars_edit_add_view(qa_cvars_edit *edit, qa_cvars *registry, qa_error *
 }
 
 bool qac_cvars_default_declare(cvar_target target, cvar *entry,
-    const char *canonical_default, qa_error *error)
+    const char *canonical_default, bool promote, qa_error *error)
 {
     char *definition=qac_copy(canonical_default,error);
     if (!definition) return false;
@@ -616,7 +618,7 @@ bool qac_cvars_default_declare(cvar_target target, cvar *entry,
         (!canonical->player_default_source || canonical->player_default_source==target.registry ||
          target.registry->options.role==QA_CVAR_ROLE_ENGINE);
     bool engine_default=target.registry->options.role==QA_CVAR_ROLE_ENGINE && !canonical->defaults[active];
-    bool apply=engine_default || (player_authority && (target.registry->options.dialect==active ||
+    bool apply=promote || engine_default || (player_authority && (target.registry->options.dialect==active ||
         (target.registry->options.role==QA_CVAR_ROLE_ENGINE && qa_text_ascii_equal(canonical->view.name,"name")))) ||
         (authority==target.registry &&
         (stock_default_role(canonical,target.registry->options.dialect)==QA_CVAR_ROLE_GAME ||
@@ -626,7 +628,7 @@ bool qac_cvars_default_declare(cvar_target target, cvar *entry,
         const char **defaults=calloc(values->row_capacity,sizeof(*defaults));
         if (!defaults) { free(definition); return qac_fail(error,QA_ERROR_MEMORY,"admitting Source cvar default"); }
         defaults[canonical->ordinal]=definition;
-        bool okay=qac_cvars_change_defaults(target,defaults,error);
+        bool okay=qac_cvars_change_defaults(target,defaults,promote,error);
         free(defaults);
         if (!okay) { free(definition); return false; }
     }
@@ -662,7 +664,7 @@ bool qa_cvars_select_dialect(qa_cvars *registry, qa_ruleset_id dialect,
     qa_cvars *authority=edit?edit->active_default_source:registry->store->active_default_source;
     if (edit) { edit->active_dialect=dialect; edit->active_default_source=source; }
     else { registry->store->active_dialect=dialect; registry->store->active_default_source=source; }
-    bool okay=qac_cvars_change_defaults((cvar_target){registry,values,edit},defaults,error);
+    bool okay=qac_cvars_change_defaults((cvar_target){registry,values,edit},defaults,false,error);
     free(defaults);
     if (!okay) {
         if (edit) { edit->active_dialect=previous; edit->active_default_source=authority; }

@@ -115,6 +115,7 @@ typedef struct cvar_values {
     cvar *first;
     cvar_alias *aliases, *last_alias;
     size_t alias_count;
+    /* Canonical count is the next stable row slot; restart leaves holes. */
     size_t count, declared_count, next_handle;
     uint64_t declaration_revision;
     /* The canonical owner alone owns name_buckets. Views address their
@@ -248,8 +249,8 @@ bool qac_cvars_values_clone(qa_cvars *, const cvar_values *, cvar_values *,
 cvar_edit_view *qac_cvars_edit_view(qa_cvars_edit *, const qa_cvars *);
 bool qac_cvars_edit_add_view(qa_cvars_edit *, qa_cvars *, qa_error *);
 bool qac_cvars_restore_row(qa_cvars_edit *, const char *, const char *, const char *, qa_ruleset_id, bool, qa_error *);
-bool qac_cvars_change_defaults(cvar_target, const char *const *, qa_error *);
-bool qac_cvars_default_declare(cvar_target, cvar *, const char *, qa_error *);
+bool qac_cvars_change_defaults(cvar_target, const char *const *, bool preserve_values, qa_error *);
+bool qac_cvars_default_declare(cvar_target, cvar *, const char *, bool promote, qa_error *);
 bool qac_cvars_handles_reserve(cvar_values *, size_t, qa_error *);
 bool qac_cvars_rows_reserve(cvar_values *, size_t, size_t, qa_error *);
 uint32_t qac_cvars_flags(uint32_t, qa_ruleset_id, qa_ruleset_id);
