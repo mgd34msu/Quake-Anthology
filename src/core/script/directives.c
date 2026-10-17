@@ -1,13 +1,13 @@
 #include "internal.h"
 #include <stdio.h>
 
-static bool current_condition(qa_script *s, qa_script_location location, script_condition *out,
+static bool current_condition(qa_script *s, const qa_script_token *directive, script_condition *out,
                               qa_error *e) {
     if (s->condition_count == 0 || script_source_pointer(s) == 0)
-        return script_fail(s, location, "Misplaced script conditional", e);
+        return script_failf(s,directive->location,e,"misplaced #%.*s",(int)directive->text.size,directive->text.data);
     if (!script_condition_top(s,out,e)) return false;
     if (out->frame != script_current_frame(s))
-        return script_fail(s, location, "Misplaced script conditional", e);
+        return script_failf(s,directive->location,e,"misplaced #%.*s",(int)directive->text.size,directive->text.data);
     return true;
 }
 static bool push_condition(qa_script *s, uint32_t type, bool skip, qa_error *e) {
@@ -23,16 +23,19 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
     script_queued_token item=script_local_token();
     bool found;
     if (dollar) {
+        /* PC_DollarEvaluate consumes this token without checking its text. */
         if (!script_raw(s, &item, &found, e))
             return false;
-        if (!found || !qa_script_token_is(&item.token, "("))
-            return script_fail(s, location, "Dollar evaluation requires (", e);
+        if (!found)
+            return script_fail(s, location, "no leading ( after $evalint/$evalfloat", e);
     }
     for (;;) {
         if (!(dollar ? script_raw(s, &item, &found, e) : script_line_token(s, &item, &found, e)))
             return false;
-        if (!found)
+        if (!found) {
+            if(!count) return script_fail(s,location,dollar?"nothing to evaluate":"no value after #if/#elif",e);
             break;
+        }
         qa_script_token *t = &item.token;
         if (t->kind == QA_SCRIPT_NAME) {
             if (defined)
@@ -43,13 +46,13 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
                 script_macro *m=NULL;
                 if(!script_macro_lookup(&s->macros,t->text,&m,e)) return false;
                 if (m == NULL) {
-                    script_fail(s, t->location, "Undefined name in expression", e);
+                    script_failf(s,t->location,e,"can't evaluate %.*s, not defined",(int)t->text.size,t->text.data);
                     return false;
                 }
                 if (!script_expand(s, item, m, e))
                     return false;
                 if (s->empty_expansion) {
-                    script_fail(s, t->location, "Empty macro in expression", e);
+                    script_failf(s,t->location,e,"Empty macro %.*s in expression",(int)t->text.size,t->text.data);
                     return false;
                 }
                 continue;
@@ -66,7 +69,7 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
                     break;
             }
         } else {
-            script_fail(s, t->location, "Invalid token in expression", e);
+            script_failf(s,t->location,e,"can't evaluate %.*s",(int)t->text.size,t->text.data);
             return false;
         }
         script_token_record *copied;
@@ -84,10 +87,6 @@ bool script_evaluate_stream(qa_script *s, qa_script_location location, bool inte
         last=pointer;
         if(++count>s->options.maximum_expression_tokens)
             return script_fail(s,t->location,"Expression token limit exceeded",e);
-    }
-    if (dollar && depth != 0) {
-        script_fail(s, location, "Unterminated dollar expression", e);
-        return false;
     }
     if(!script_expression(s,first,integer_mode,out,e)) return false;
     if(!s->services.debug_eval) return script_heap_free_chain(&s->macros,first,e);
@@ -213,13 +212,16 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
     bool found;
     if (!script_line_token(s, &item, &found, e))
         return false;
-    if (!found || item.token.kind != QA_SCRIPT_NAME)
+    if (!found)
         return script_fail(s, hash.token.location, "Preprocessor directive requires a name", e);
+    if(item.token.kind!=QA_SCRIPT_NAME)
+        return script_failf(s,item.token.location,e,"unknown precompiler directive %.*s",
+            (int)item.token.text.size,item.token.text.data);
     qa_script_token *name = &item.token;
     qa_script_location location = name->location;
     if (qa_script_token_is(&hash.token, "$")) {
         if (!qa_script_token_is(name, "evalint") && !qa_script_token_is(name, "evalfloat"))
-            return script_fail(s, location, "Unknown dollar directive", e);
+            return script_failf(s,location,e,"unknown precompiler directive %.*s",(int)name->text.size,name->text.data);
         return script_eval_directive(s, location, qa_script_token_is(name, "evalint"), true, e);
     }
     if (qa_script_token_is(name, "if")) {
@@ -231,8 +233,11 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         bool invert = qa_script_token_is(name, "ifndef");
         if (!script_line_token(s, &item, &found, e))
             return false;
-        if (!found || item.token.kind != QA_SCRIPT_NAME)
+        if (!found)
             return script_fail(s, location, "Conditional requires a macro name", e);
+        if(item.token.kind!=QA_SCRIPT_NAME)
+            return script_failf(s,location,e,"expected name after #%s, found %.*s",invert?"ifndef":"ifdef",
+                (int)item.token.text.size,item.token.text.data);
         script_macro *defined_macro=NULL;
         if(!script_macro_lookup(&s->macros,item.token.text,&defined_macro,e)) return false;
         bool exists=defined_macro!=NULL;
@@ -242,10 +247,10 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         qa_script_token_is(name, "endif")) {
         bool end = qa_script_token_is(name, "endif"), otherwise = qa_script_token_is(name, "else");
         script_condition condition;
-        if (!current_condition(s, location, &condition, e))
+        if (!current_condition(s, name, &condition, e))
             return false;
         if (!end && condition.was_else)
-            return script_fail(s, location, "Conditional branch after #else", e);
+            return script_failf(s,location,e,"#%.*s after #else",(int)name->text.size,name->text.data);
         bool previous_skip = condition.skip;
         if (!script_condition_pop(s,e)) return false;
         if (end)
@@ -273,14 +278,16 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
             return true;
         if (!script_line_token(s, &item, &found, e))
             return false;
-        if (!found || item.token.kind != QA_SCRIPT_NAME)
+        if (!found)
             return script_fail(s, location, "Undef requires a macro name", e);
+        if(item.token.kind!=QA_SCRIPT_NAME)
+            return script_failf(s,location,e,"expected name, found %.*s",(int)item.token.text.size,item.token.text.data);
         bool fixed;
         qa_error failure={0};
         (void)script_macro_remove(&s->macros,item.token.text,&fixed,&failure);
         if(failure.code!=QA_OK) {if(e) *e=failure;return false;}
         if (fixed)
-            script_warn(s, location, "Cannot undefine fixed macro");
+            script_warnf(s,location,"can't undef %.*s",(int)item.token.text.size,item.token.text.data);
         return true;
     }
     if (qa_script_token_is(name, "eval") || qa_script_token_is(name, "evalfloat"))
@@ -296,7 +303,10 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
     }
     if (qa_script_token_is(name, "line"))
         return script_fail(s, location, "Line directive is unsupported", e);
-    if (qa_script_token_is(name, "error"))
-        return script_fail(s, location, "Script #error directive", e);
-    return script_fail(s, location, "Unknown preprocessor directive", e);
+    if (qa_script_token_is(name, "error")) {
+        if(!script_raw(s,&item,&found,e)) return false;
+        return script_failf(s,location,e,"#error directive: %.*s",found?(int)item.token.text.size:0,
+            found?item.token.text.data:(const uint8_t *)"");
+    }
+    return script_failf(s,location,e,"unknown precompiler directive %.*s",(int)name->text.size,name->text.data);
 }

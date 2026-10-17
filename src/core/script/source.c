@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdarg.h>
 #include <stdio.h>
 
 static qa_script_location report_location(const qa_script *s,qa_script_location fallback) {
@@ -25,8 +26,30 @@ bool script_fail(qa_script *s, qa_script_location location, const char *message,
     source_report(s,QA_SCRIPT_ERROR,location,message);
     return false;
 }
+void script_source_error(qa_script *s, qa_script_location location, const char *message) {
+    source_report(s,QA_SCRIPT_ERROR,location,message);
+}
 void script_warn(qa_script *s, qa_script_location location, const char *message) {
     source_report(s,QA_SCRIPT_WARNING,location,message);
+}
+static bool source_reportv(qa_script *s, qa_script_location location,
+    qa_script_severity severity, qa_error *error, const char *format, va_list arguments) {
+    char message[2 * SCRIPT_TOKEN_BYTES + 128];
+    (void)vsnprintf(message,sizeof(message),format,arguments);
+    if(severity==QA_SCRIPT_ERROR) return script_fail(s,location,message,error);
+    script_warn(s,location,message);
+    return true;
+}
+bool script_failf(qa_script *s, qa_script_location location, qa_error *error,
+    const char *format, ...) {
+    va_list arguments;va_start(arguments,format);
+    bool result=source_reportv(s,location,QA_SCRIPT_ERROR,error,format,arguments);
+    va_end(arguments);return result;
+}
+void script_warnf(qa_script *s, qa_script_location location, const char *format, ...) {
+    va_list arguments;va_start(arguments,format);
+    (void)source_reportv(s,location,QA_SCRIPT_WARNING,NULL,format,arguments);
+    va_end(arguments);
 }
 static bool same_path(const char *a, const char *b) {
     for (;;) {
@@ -61,8 +84,7 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
     if(!found) {
         qa_buffer_free(&file.path);
         if(request->kind!=QA_SCRIPT_ROOT) {
-            char message[256];snprintf(message,sizeof(message),"file %s not found",request->requested_path);
-            return script_fail(s,qa_script_position(s),message,e);
+            return script_failf(s,qa_script_position(s),e,"file %s not found",request->requested_path);
         }
         qa_error_set(e,QA_ERROR_NOT_FOUND,0,"Script resource not found: %s",request->requested_path);return false;
     }
@@ -372,7 +394,7 @@ bool qa_script_undefine(qa_script *s, const char *name, qa_error *e) {
     (void)script_macro_remove(&s->macros,script_bytes(name),&fixed,&failure);
     if(failure.code!=QA_OK) {if(e) *e=failure;return false;}
     if (fixed)
-        script_warn(s, qa_script_position(s), "Cannot undefine a fixed script macro");
+        script_warnf(s,qa_script_position(s),"can't undef %s",name);
     return true;
 }
 bool qa_script_is_defined(const qa_script *s, const char *name) {

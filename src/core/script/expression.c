@@ -186,7 +186,7 @@ static bool binary(qa_script *s, const qa_script_token *op, script_eval_value a,
         v.integer = a.integer ^ b.integer;
         break;
     default:
-        return script_fail(s, op->location, "Unsupported expression operator", e);
+        return script_failf(s,op->location,e,"Unsupported expression operator %.*s",(int)op->text.size,op->text.data);
     }
     *out = v;
     return true;
@@ -204,14 +204,15 @@ static bool evaluate(qa_script *s, const qa_script_token *tokens, size_t count, 
         bool add = false;
         if (t->kind == QA_SCRIPT_NAME) {
             if (last_value || negative || !qa_script_token_is(t, "defined"))
-                return script_fail(s, t->location, "Unexpected name in expression", e);
+                return script_failf(s,t->location,e,"undefined name %.*s in #if/#elif",(int)t->text.size,t->text.data);
             if (++i == count)
                 return script_fail(s, t->location, "defined requires a macro name", e);
             bool brace = qa_script_token_is(tokens + i, "(");
             if (brace && ++i == count)
                 return script_fail(s, t->location, "defined requires a macro name", e);
             if (tokens[i].kind != QA_SCRIPT_NAME)
-                return script_fail(s, t->location, "defined requires a macro name", e);
+                return script_failf(s,t->location,e,"defined requires a macro name, found %.*s",
+                    (int)tokens[i].text.size,tokens[i].text.data);
             script_macro *defined_macro=NULL;
             if(!script_macro_lookup(&s->macros,tokens[i].text,&defined_macro,e)) return false;
             value.integer=defined_macro!=NULL;
@@ -246,17 +247,20 @@ static bool evaluate(qa_script *s, const qa_script_token *tokens, size_t count, 
                 continue;
             }
             if (!integer_mode && integer_only(op))
-                return script_fail(s, t->location, "Integer operator in floating expression", e);
+                return script_failf(s,t->location,e,"illegal operator %.*s on floating point operands",
+                    (int)t->text.size,t->text.data);
             if (op == QA_SCRIPT_NOT || op == QA_SCRIPT_LOGICAL_NOT) {
                 if (last_value)
-                    return script_fail(s, t->location, "Unary operator after expression value", e);
+                    return script_failf(s,t->location,e,"operator %.*s after value in #if/#elif",
+                        (int)t->text.size,t->text.data);
             } else if (op == QA_SCRIPT_SUB && !last_value) {
                 negative = true;
                 continue;
             } else if (op == QA_SCRIPT_INCREMENT || op == QA_SCRIPT_DECREMENT)
-                script_warn(s, t->location, "Increment/decrement in expression");
+                script_warnf(s,t->location,"operator %.*s used in #if/#elif",(int)t->text.size,t->text.data);
             else if (!last_value || precedence(op) < 0)
-                return script_fail(s, t->location, "Invalid expression operator", e);
+                return script_failf(s,t->location,e,!last_value?"operator %.*s after operator in #if/#elif":
+                    "invalid operator %.*s in #if/#elif",(int)t->text.size,t->text.data);
             if (operator_count == 64)
                 return script_fail(s, t->location, "Expression exceeds 64 source operators", e);
             expression_operator *entry=&operators[operator_count++];
@@ -265,7 +269,7 @@ static bool evaluate(qa_script *s, const qa_script_token *tokens, size_t count, 
             last_operator=entry;
             last_value = false;
         } else
-            return script_fail(s, t->location, "Invalid expression token", e);
+            return script_failf(s,t->location,e,"unknown %.*s in #if/#elif",(int)t->text.size,t->text.data);
         if (add) {
             if (value_count == 64)
                 return script_fail(s, t->location, "Expression exceeds 64 source values", e);

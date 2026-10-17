@@ -35,6 +35,7 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
+#include "qa/script.h"
 #include "qa/campaign.h"
 #include "../src/app/application/source_objectives.h"
 #include "../src/gameplay/modes/internal.h"
@@ -129,6 +130,54 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+
+typedef struct script_input {
+    const char *text;
+    unsigned errors;
+} script_input;
+static bool script_input_read(void *context, const qa_script_include *request,
+    qa_script_resource *resource, bool *found, qa_error *error)
+{
+    (void)error;
+    script_input *input=context;
+    *resource=(qa_script_resource){.path=request->requested_path,
+        .bytes={(const uint8_t *)input->text,strlen(input->text)}};
+    *found=true;
+    return true;
+}
+static void script_input_release(void *context, qa_script_resource *resource)
+{
+    (void)context;(void)resource;
+}
+static void script_input_diagnostic(void *context, const qa_script_diagnostic *diagnostic)
+{
+    script_input *input=context;
+    if(diagnostic->severity==QA_SCRIPT_ERROR) ++input->errors;
+}
+static void test_source_dollar_evaluation(void)
+{
+    const char *inputs[]={"$evalint ignored 1+2)","$evalfloat [ 1.5+2.25)",
+        "$evalint ( 2*3", "#define SELF SELF 7\nSELF", "#error rejected"};
+    const double expected[]={3,3.75,6,7};
+    for(size_t i=0;i<sizeof(inputs)/sizeof(*inputs);++i) {
+        script_input input={.text=inputs[i]};
+        qa_script_services services={.context=&input,.read=script_input_read,
+            .release=script_input_release,.diagnostic=script_input_diagnostic};
+        qa_script *source=NULL;qa_script_token token;qa_error error={0};bool found=false;
+        CHECK(qa_script_open("evaluation.script",&services,NULL,&source,&error));
+        bool okay=qa_script_next(source,&token,&found,&error);
+        if(i<sizeof(expected)/sizeof(*expected)) {
+            CHECK(okay && found && token.kind==QA_SCRIPT_NUMBER && token.number==expected[i]);
+            CHECK(!qa_script_source_failure(source));
+            CHECK(qa_script_next(source,&token,&found,&error) && !found);
+            CHECK(input.errors==(i==3?1u:0u));
+        } else {
+            CHECK(!okay && qa_script_source_failure(source) && error.code==QA_ERROR_FORMAT);
+            CHECK(input.errors==1);
+        }
+        qa_script_close(source);
+    }
+}
 
 static void test_bot_log_resume(void)
 {
@@ -9724,6 +9773,7 @@ int main(int argc, char **argv)
     int recovery_status;
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
+    test_source_dollar_evaluation();
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();

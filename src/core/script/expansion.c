@@ -48,23 +48,25 @@ static int parameter(qa_script *source,script_macro *macro,const qa_script_token
 static bool arguments(qa_script *source,script_macro *macro,qa_script_location location,uint32_t heads[128],qa_error *error) {
     script_queued_token token=script_local_token();bool found;
     if(!script_raw(source,&token,&found,error)) return false;
+    qa_bytes name=script_macro_name(macro);
     uint32_t count=script_macro_word(macro,12);
     if(count>128) return script_fail(source,location,"Macro has more than 128 parameters",error);
     if(!found || !qa_script_token_is(&token.token,"(")) {
         if(found && !script_push(source,token,error)) return false;
-        return script_fail(source,location,"Function macro requires arguments",error);
+        return script_failf(source,location,error,"define %.*s missing parms",(int)name.size,name.data);
     }
     memset(heads,0,128*sizeof(*heads));size_t total=0;int depth=0;bool done=false;
     for(size_t argument=0;!done;++argument) {
-        if(argument>=128) return script_fail(source,location,"Too many macro parameters",error);
+        if(argument>=128) return script_failf(source,location,error,"define %.*s with too many parms",(int)name.size,name.data);
         if(argument>=script_macro_word(macro,12)) {
-            script_warn(source,location,"Too many macro arguments");
-            source->source_failure=true;qa_error_set(error,QA_ERROR_FORMAT,location.offset,"Too many macro arguments");return false;
+            script_warnf(source,location,"define %.*s has too many parms",(int)name.size,name.data);
+            source->source_failure=true;
+            qa_error_set(error,QA_ERROR_FORMAT,location.offset,"define %.*s has too many parms",(int)name.size,name.data);return false;
         }
         uint32_t last=0;bool last_comma=true;
         while(!done) {
             if(!script_raw(source,&token,&found,error)) return false;
-            if(!found) return script_fail(source,location,"Unterminated macro arguments",error);
+            if(!found) return script_failf(source,location,error,"define %.*s incomplete",(int)name.size,name.data);
             if(qa_script_token_is(&token.token,",") && depth<=0) {
                 if(last_comma) script_warn(source,token.token.location,"Too many commas in macro arguments");
                 break;
@@ -77,7 +79,7 @@ static bool arguments(qa_script *source,script_macro *macro,qa_script_location l
             if(qa_script_token_is(&token.token,")") && --depth<=0) {
                 count=script_macro_word(macro,12);
                 if(!count || count>128) return script_fail(source,location,"Macro parameter count exceeds its argument table",error);
-                if(!heads[count-1]) script_warn(source,token.token.location,"Too few macro arguments");
+                if(!heads[count-1]) script_warnf(source,token.token.location,"define %.*s has too few parms",(int)name.size,name.data);
                 done=true;break;
             }
             if(total++>=source->options.maximum_queued_tokens)
@@ -209,7 +211,8 @@ bool script_expand(qa_script *source,script_queued_token invocation,script_macro
         return script_fail(source,invocation.token.location,"Macro expansion count exceeds configured limit",error);
     ++source->expansions;
     for(const script_expansion *parent=invocation.expansion;parent;parent=parent->parent)
-        if(parent->macro==macro->pointer) return script_fail(source,invocation.token.location,"Recursive macro expansion",error);
+        if(parent->macro==macro->pointer) return script_failf(source,invocation.token.location,error,
+            "Recursive expansion of %.*s",(int)invocation.token.text.size,invocation.token.text.data);
     script_expansion *expansion=qa_arena_alloc(&source->arena,sizeof(*expansion),_Alignof(script_expansion),error);
     if(!expansion) return false;
     *expansion=(script_expansion){macro->pointer,invocation.expansion};invocation.expansion=expansion;
@@ -274,7 +277,9 @@ bool script_expand(qa_script *source,script_queued_token invocation,script_macro
                     if(!value(source,second_pointer,&second,error)) return false;
                     bool names=first.token.kind==QA_SCRIPT_NAME && (second.token.kind==QA_SCRIPT_NAME || second.token.kind==QA_SCRIPT_NUMBER);
                     bool strings=first.token.kind==QA_SCRIPT_STRING && second.token.kind==QA_SCRIPT_STRING;
-                    if(!names && !strings) return script_fail(source,invocation.token.location,"Invalid macro token merge",error);
+                    if(!names && !strings) return script_failf(source,invocation.token.location,error,
+                        "can't merge %.*s with %.*s",(int)first.token.text.size,first.token.text.data,
+                        (int)second.token.text.size,second.token.text.data);
                     qa_bytes text=joined(source,first.token.text,second.token.text,strings?1:0,strings?1:0,error);
                     if(!text.data) return false;
                     script_token_record *left=script_heap_token(&source->macros,pointer);

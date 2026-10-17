@@ -57,10 +57,15 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
     if(!script_line_token(source,&token,&found,error)) return false;
     if(!found || token.token.kind!=QA_SCRIPT_NAME) {
         if(found && !script_push(source,token,error)) return false;
-        qa_error_set(error,QA_ERROR_FORMAT,0,"Script define requires a name");return false;
+        if(found) qa_error_set(error,QA_ERROR_FORMAT,0,"expected name after #define, found %.*s",
+            (int)token.token.text.size,token.token.text.data);
+        else qa_error_set(error,QA_ERROR_FORMAT,0,"#define without name");
+        return false;
     }
     script_macro *existing=NULL;if(!script_macro_lookup(table,token.token.text,&existing,error)) return false;
-    if(existing && (script_macro_word(existing,4)&1)) {qa_error_set(error,QA_ERROR_FORMAT,0,"Cannot redefine a fixed script macro");return false;}
+    if(existing && (script_macro_word(existing,4)&1)) {
+        qa_error_set(error,QA_ERROR_FORMAT,0,"can't redefine %.*s",(int)token.token.text.size,token.token.text.data);return false;
+    }
     if(!existing && table->count>=limit) {qa_error_set(error,QA_ERROR_FORMAT,0,"Script define count exceeds configured limit");return false;}
     if(existing) {
         if(!source_redefine(source,&token,error)) return false;
@@ -79,7 +84,9 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
         if(!empty) for(;;) {
             if(!script_line_token(source,&token,&found,error)) return false;
             if(!found || token.token.kind!=QA_SCRIPT_NAME || script_macro_word(macro,12)>=128) {
-                qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid script macro parameter");return false;
+                qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid parameter %.*s in define %.*s",
+                    found?(int)token.token.text.size:0,found?token.token.text.data:(const uint8_t *)"",
+                    (int)script_macro_name(macro).size,script_macro_name(macro).data);return false;
             }
             size_t remaining=table->queue_count;
             for(uint32_t pointer=script_macro_word(macro,16);pointer;) {
@@ -88,7 +95,9 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
                 if(!script_heap_token_bytes(table,node,error)) return false;
                 const uint8_t *zero=memchr(node->record.bytes,0,1024);
                 if(zero && script_bytes_equal((qa_bytes){node->record.bytes,(size_t)(zero-node->record.bytes)},token.token.text)) {
-                    qa_error_set(error,QA_ERROR_FORMAT,0,"Duplicate script macro parameter");return false;
+                    qa_error_set(error,QA_ERROR_FORMAT,0,"Duplicate parameter %.*s in define %.*s",
+                        (int)token.token.text.size,token.token.text.data,
+                        (int)script_macro_name(macro).size,script_macro_name(macro).data);return false;
                 }
                 pointer=qa_load_u32le(node->record.bytes+1064);
             }
@@ -96,7 +105,10 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
             script_macro_word_set(macro,12,script_macro_word(macro,12)+1);
             if(!script_line_token(source,&token,&found,error)) return false;
             if(found && qa_script_token_is(&token.token,")")) break;
-            if(!found || !qa_script_token_is(&token.token,",")) {qa_error_set(error,QA_ERROR_FORMAT,0,"Unterminated script macro parameters");return false;}
+            if(!found || !qa_script_token_is(&token.token,",")) {
+                qa_error_set(error,QA_ERROR_FORMAT,0,"Unterminated parameters in define %.*s",
+                    (int)script_macro_name(macro).size,script_macro_name(macro).data);return false;
+            }
         }
         if(!script_line_token(source,&token,&found,error)) return false;
     }
@@ -106,6 +118,7 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
             /* The original copy occurs before the recursive token is discarded. */
             script_token_record *discarded;token.expansion=NULL;
             if(!script_heap_copy_token(table,token,&discarded,error)) return false;
+            script_source_error(source,token.token.location,"recursive define (removed recursion)");
         } else if(!script_macro_add_token(macro,20,token,&last,error)) return false;
         if(!script_line_token(source,&token,&found,error)) return false;
     }
@@ -114,7 +127,8 @@ static bool parse_define(qa_script *source,size_t limit,script_macro **result,qa
         script_token_record *tail=script_heap_token(table,last);
         if(!script_heap_token_bytes(table,first,error) || !script_heap_token_bytes(table,tail,error)) return false;
         if(!strcmp((char *)first->record.bytes,"##") || !strcmp((char *)tail->record.bytes,"##")) {
-            qa_error_set(error,QA_ERROR_FORMAT,0,"Misplaced script macro merge operator");return false;
+            qa_error_set(error,QA_ERROR_FORMAT,0,"Misplaced ## in define %.*s",
+                (int)script_macro_name(macro).size,script_macro_name(macro).data);return false;
         }
     }
     return true;
@@ -129,10 +143,7 @@ static bool source_empty(void *context,bool *empty,qa_error *error)
 static bool source_redefine(void *context,const script_queued_token *token,qa_error *error)
 {
     qa_script *source=context;
-    static const char prefix[]="redefinition of ";size_t length=sizeof(prefix)-1;
-    char *message=qa_arena_alloc(&source->arena,length+token->token.text.size+1,1,error);if(!message) return false;
-    memcpy(message,prefix,length);memcpy(message+length,token->token.text.data,token->token.text.size);message[length+token->token.text.size]=0;
-    script_warn(source,token->token.location,message);
+    script_warnf(source,token->token.location,"redefinition of %.*s",(int)token->token.text.size,token->token.text.data);
     if(!script_push(source,*token,error)) return false;
     script_queued_token copied=script_local_token();bool found;
     return script_line_token(source,&copied,&found,error) && found;
