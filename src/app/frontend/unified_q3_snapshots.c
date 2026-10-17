@@ -31,11 +31,10 @@ struct frontend_unified_q3_snapshots {
     qa_q3_player previous_player, previous_prediction;
     qa_vec3 correction;
     int32_t correction_time;
-    uint64_t revision, scope, baseline_revision;
-    int64_t command_receipt;
+    uint64_t revision, scope;
     int32_t time, processed, commands, constructor_message, constructor_command;
     q3n_compiled_stage stage;
-    bool has_snap, has_next, has_prediction, has_prediction_receipt, hyperspace, this_teleport, next_teleport;
+    bool has_snap, has_next, has_prediction, hyperspace, this_teleport, next_teleport;
     bool busy, callback, faulted, transition_alias, predicted_transition;
 };
 static bool fail(qa_error *e, qa_status code, const char *message)
@@ -428,22 +427,17 @@ bool frontend_unified_q3_snapshots_prediction(frontend_unified_q3_snapshots *s,c
     const frontend_unified_q3_prediction_receipt *receipt,qa_vec3 correction,int32_t correction_time,bool hyperspace,qa_error *e)
 {
     q3n_compiled_source_view source;
-    if (!s || !player || !receipt || receipt->command_receipt < -1 || receipt->outcome < FRONTEND_UNIFIED_Q3_INTERPOLATED ||
+    if (!s || !player || !receipt || receipt->outcome < FRONTEND_UNIFIED_Q3_INTERPOLATED ||
         (receipt->teleport_consumed && receipt->outcome != FRONTEND_UNIFIED_Q3_MOVED) ||
         receipt->outcome > FRONTEND_UNIFIED_Q3_MOVED || s->busy || s->faulted || !s->has_snap ||
         s->revision == UINT64_MAX || !qa_vec_finite(correction) ||
         !q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
         player->product != source.basis.product || player->clientNum != s->snap.value.player.clientNum)
         return fail(e,QA_ERROR_ARGUMENT,"Compiled predicted PS requires its actual merged predictor receipt");
-    if (s->has_prediction_receipt && (receipt->baseline_revision < s->baseline_revision ||
-        (receipt->baseline_revision == s->baseline_revision && receipt->command_receipt < s->command_receipt)))
-        return fail(e,QA_ERROR_ARGUMENT,"Compiled paired prediction receipt rewound");
     if (!s->has_prediction) s->predicted_player = s->snap.value.player;
     s->previous_prediction = s->predicted_player;
     if (receipt->teleport_consumed) s->this_teleport = false;
     if (receipt->outcome != FRONTEND_UNIFIED_Q3_EXHAUSTED) s->predicted_player = *player;
-    s->command_receipt = receipt->command_receipt; s->baseline_revision = receipt->baseline_revision;
-    s->has_prediction_receipt = true;
     s->has_prediction = true; s->predicted_entity.actor = source.basis.viewer;
     s->predicted_entity.physical = (uint32_t)s->predicted_player.clientNum;
     s->correction = correction; s->correction_time = correction_time; s->hyperspace = hyperspace; ++s->revision;

@@ -11,8 +11,6 @@ typedef enum frontend_unified_q3_prediction_outcome {
     FRONTEND_UNIFIED_Q3_UNMOVED, FRONTEND_UNIFIED_Q3_MOVED
 } frontend_unified_q3_prediction_outcome;
 typedef struct frontend_unified_q3_prediction_receipt {
-    uint64_t baseline_revision;
-    int64_t command_receipt; /* -1 is the real unacknowledged constructor baseline. */
     frontend_unified_q3_prediction_outcome outcome;
     bool teleport_consumed;
 } frontend_unified_q3_prediction_receipt;
