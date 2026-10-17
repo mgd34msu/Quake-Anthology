@@ -53,12 +53,7 @@ static bool use_actor(qa_q2_game *g, qa_actor_id target, qa_actor_id source, qa_
         return true;
     if (q2_ent(g, target))
         return qa_q2_entity_use(g, target, source, source, e);
-    qa_q2_entity_services *services = &g->entity_runtime->services;
-    if (!services->invoke_use) {
-        qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 map requires shared direct use service");
-        return false;
-    }
-    return services->invoke_use(services->context, target, source, source, e);
+    return qa_targets_invoke(g->entity_runtime->services.targets, target, source, source, e);
 }
 static bool flashlight(qa_q2_game *g, qa_actor_id id, bool enabled, qa_error *e) {
     q2_actor *a = q2_actor_get(g, id, false, NULL);

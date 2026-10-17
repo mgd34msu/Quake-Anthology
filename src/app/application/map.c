@@ -2361,20 +2361,6 @@ static bool q2_target_anger(void *opaque, qa_actor_id actor,
                             "selected monster has no Q2 anger adapter");
 }
 
-static bool q2_invoke_use(void *opaque, qa_actor_id actor,
-                          qa_actor_id other, qa_actor_id activator,
-                          qa_error *error)
-{
-    application_provider *origin = opaque;
-    application_provider *provider = application_provider_for(
-        origin->application, actor, QA_ROLE_ENTITIES, "");
-    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_entity_use(provider->state.q2, actor, other, activator,
-                                error);
-    return application_fail(error, QA_ERROR_UNSUPPORTED,
-                            "selected entity has no Q2 use adapter");
-}
-
 static bool q2_holds_healthbar(void *opaque, qa_actor_id actor)
 {
     application_provider *origin = opaque;
@@ -2418,7 +2404,6 @@ static qa_q2_entity_services q2_entity_services(application_provider *provider,
         .path_follower = q2_monster_path_follower,
         .path_advance = q2_monster_path_advance,
         .target_anger = q2_target_anger,
-        .invoke_use = q2_invoke_use,
         .holds_healthbar = q2_holds_healthbar,
         .camera_player = q2_camera_player,
     };

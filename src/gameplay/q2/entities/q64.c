@@ -128,13 +128,8 @@ static bool event(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool use_target(qa_q2_game *g, q2_actor *source, qa_actor_id target, qa_error *e) {
     if (q2_ent(g, target))
         return qa_q2_entity_use(g, target, source->id, source->entity->activator, e);
-    qa_q2_entity_services *services = &g->entity_runtime->services;
-    if (!services->invoke_use) {
-        qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q64 camera requires selected target use");
-        return false;
-    }
-    return services->invoke_use(services->context, target, source->id, source->entity->activator,
-                                e);
+    return qa_targets_invoke(g->entity_runtime->services.targets, target, source->id,
+                             source->entity->activator, e);
 }
 static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
