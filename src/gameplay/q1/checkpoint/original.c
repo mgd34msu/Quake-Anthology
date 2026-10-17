@@ -2126,7 +2126,7 @@ static bool admit_pickup(original_admission *admission,qa_q1_program program,
 }
 static bool original_map_supported(q1_map_kind kind) {
     switch (kind) {
-    case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION:
+    case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION: case Q1_MAP_STATIC:
     case Q1_MAP_WALL: case Q1_MAP_GATE: case Q1_MAP_AMBIENT: case Q1_MAP_COOP_POINT:
     case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_ADDON_COUNTER:
     case Q1_MAP_RELAY: case Q1_MAP_TELEPORT: case Q1_MAP_DELAY:
@@ -2136,7 +2136,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
     case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
     case Q1_MAP_ADDON_PARTICLE_TELE: case Q1_MAP_FOG_INFO:
-    case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE:
+    case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE: case Q1_MAP_DYNAMIC_LIGHT:
     case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT: case Q1_MAP_SIGIL_FIXER:
     case Q1_MAP_EGG_OPENER: case Q1_MAP_ELECTRODE_TARGET:
     case Q1_MAP_ADDON_LIGHTNING: case Q1_MAP_ADDON_SHAKE: case Q1_MAP_ADDON_TOSS:
