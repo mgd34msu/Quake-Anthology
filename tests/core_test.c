@@ -9465,6 +9465,8 @@ static void test_actor_index_lifetimes(void)
     size_t value; qa_actor_id actor;
     CHECK(!qa_actor_index_find(&index,first,&value));
     CHECK(qa_actor_index_find(&index,reused,&value) && value==30);
+    qa_actor_index_remove(&index,first);
+    CHECK(qa_actor_index_find(&index,reused,&value) && value==30);
     CHECK(qa_actor_index_find_retained(&index,first,&value) && value==10);
     qa_actor_index_forget_retained(&index,first);
     CHECK(!qa_actor_index_find_retained(&index,first,&value));
