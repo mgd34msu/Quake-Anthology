@@ -100,8 +100,10 @@ static bool explicit_launch(const frontend_demo_dispatch *d) {
     return f->startup_launch||f->options.game||f->options.map||f->options.network_connect;
 }
 static bool idle_world(const frontend_demo_dispatch *d) {
-    return !qa_application_launch(d->frontend->application)&&
-        !frontend_demo_playback_path(d->service)&&!frontend_network_client_only(d->frontend);
+    const qa_frontend *f=d->frontend;
+    return !f->source_restoring&&!qa_application_startup_candidate(f->application)&&
+        !qa_application_launch(f->application)&&!qa_application_world(f->application)&&
+        !frontend_demo_playback_path(d->service)&&!frontend_network_client_only(f);
 }
 static bool attract_command(frontend_demo_dispatch *d,const qa_command_invocation *call,bool start,qa_error *error) {
     if(start) {
