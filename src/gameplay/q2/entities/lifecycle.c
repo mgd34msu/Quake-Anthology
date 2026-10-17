@@ -11,6 +11,30 @@ static uint32_t flags(qa_q2_game *g, q2_entity_state *s) {
     const char *text = q2_field_text(g, s, g->field_keys[QA_TARGET_KEY_SPAWNFLAGS]);
     return (uint32_t)qa_parse_decimal_i32(text, QA_DECIMAL_ASCII_WRAP);
 }
+static void brush_animation_spawn(qa_q2_game *g, q2_entity_state *s) {
+    if (g->options.rules != QA_RULESET_Q2_RERELEASE) return;
+    static const struct { qa_target_key key; size_t offset; bool boolean; } fields[] = {
+#define ANIMATION(member, key, boolean) \
+        {QA_TARGET_KEY_BMODEL_ANIM_##key, offsetof(qa_q2_brush_animation, member), boolean}
+        ANIMATION(start, START, false), ANIMATION(end, END, false),
+        ANIMATION(style, STYLE, false), ANIMATION(speed, SPEED, false),
+        ANIMATION(nowrap, NOWRAP, true), ANIMATION(alt_start, ALT_START, false),
+        ANIMATION(alt_end, ALT_END, false), ANIMATION(alt_style, ALT_STYLE, false),
+        ANIMATION(alt_speed, ALT_SPEED, false), ANIMATION(alt_nowrap, ALT_NOWRAP, true)
+#undef ANIMATION
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i) {
+        int32_t value = qa_parse_decimal_i32(q2_field_text(g, s, g->field_keys[fields[i].key]),
+            QA_DECIMAL_ASCII_WRAP);
+        void *target = (uint8_t *)&s->brush_animation + fields[i].offset;
+        if (fields[i].boolean) *(bool *)target = value != 0;
+        else *(int32_t *)target = value;
+    }
+    for (size_t i = 0; i < s->field_count; ++i)
+        if (s->fields[i].key == g->field_keys[QA_TARGET_KEY_BMODEL_ANIM_START] ||
+            s->fields[i].key == g->field_keys[QA_TARGET_KEY_BMODEL_ANIM_END])
+            s->brush_animation.enabled = true;
+}
 static bool string_field(const qa_q2_game *g, qa_string_id key) {
     static const qa_target_key common[] = {
         QA_TARGET_KEY_CLASSNAME, QA_TARGET_KEY_MODEL, QA_TARGET_KEY_TARGET,
@@ -125,6 +149,7 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     s->style = integer(q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_STYLE], 0));
     s->volume = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_VOLUME], 0);
     s->attenuation = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ATTENUATION], 0);
+    brush_animation_spawn(g, s);
     s->visual = (qa_entity_visual){.scale = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_SCALE],
             g->options.rules == QA_RULESET_Q2_RERELEASE ? 0 : 1),
                                .alpha = q2_field_float(g, s, g->field_keys[QA_TARGET_KEY_ALPHA], 1),
@@ -253,9 +278,51 @@ bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor
     entity_use_call call = {.game = g, .other = other, .activator = activator};
     return qa_q2_run_actor(g, id, run_entity_use, &call, e);
 }
+static bool brush_animation_step(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    q2_entity_state *s = a->entity;
+    qa_q2_brush_animation *animation = &s->brush_animation;
+    if (!animation->enabled) return true;
+    if (animation->currently_alternate != animation->alternate) {
+        animation->currently_alternate = animation->alternate;
+        animation->next_tick_ns = 0;
+    }
+    if (g->now_ns < animation->next_tick_ns) return true;
+    int32_t speed = animation->alternate ? animation->alt_speed : animation->speed;
+    if (speed >= 0) animation->next_tick_ns = q2_deadline(g->now_ns, (uint64_t)speed * Q2_MS);
+    else {
+        uint64_t duration = (uint64_t)(-(int64_t)speed) * Q2_MS;
+        animation->next_tick_ns = g->now_ns >= duration ? g->now_ns - duration : 0;
+    }
+    int32_t style = animation->alternate ? animation->alt_style : animation->style;
+    int32_t start = animation->alternate ? animation->alt_start : animation->start;
+    int32_t end = animation->alternate ? animation->alt_end : animation->end;
+    int64_t frame = s->visual.frame;
+    if (style == 0) frame += end >= start ? 1 : -1;
+    else if (style == 1) frame += end >= start ? -1 : 1;
+    else if (style == 2 && start <= end) {
+        uint64_t count = (uint64_t)((int64_t)end - start) + 1;
+        uint32_t offset = count == UINT64_C(0x100000000) ? q2_rerelease_word(g) :
+            q2_random_bounded(g, (uint32_t)count);
+        frame = (int64_t)start + offset;
+    }
+    bool nowrap = animation->alternate ? animation->alt_nowrap : animation->nowrap;
+    if (nowrap) {
+        int32_t minimum = start < end ? start : end, maximum = start > end ? start : end;
+        if (frame < minimum) frame = minimum;
+        else if (frame > maximum) frame = maximum;
+    } else {
+        if (frame < start) frame = end;
+        else if (frame > end) frame = start;
+    }
+    s->visual.frame = (int32_t)frame;
+    return q2_entity_show(g, a, e);
+}
 bool q2_entity_prethink(qa_q2_game *g, q2_actor *a, qa_error *e) {
-    return a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity ||
-           q2_scenery_prethink(g, a, e);
+    if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity) return true;
+    qa_actor_id id = a->id;
+    if (!q2_scenery_prethink(g, a, e)) return false;
+    a = q2_actor_get(g, id, false, NULL);
+    return !a || !a->entity || brush_animation_step(g, a, e);
 }
 bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity)

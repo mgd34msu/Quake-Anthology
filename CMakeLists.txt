@@ -1964,7 +1964,7 @@ if(BUILD_TESTING)
     add_test(NAME platform_services COMMAND platform_services_test)
 
     if(UNIX)
-        add_executable(core_test tests/core_test.c tests/q1_gameplay_test.c tests/guest_test.c tests/recovery_test.c)
+        add_executable(core_test tests/core_test.c tests/q1_gameplay_test.c tests/q2_gameplay_test.c tests/guest_test.c tests/recovery_test.c)
         target_link_libraries(core_test PRIVATE qa_core qa_game_q1 qa_qc qa_frontend)
         add_test(NAME core COMMAND core_test)
 

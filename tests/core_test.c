@@ -179,6 +179,8 @@ static void test_source_dollar_evaluation(void)
     }
 }
 
+void test_q2_brush_animation(void);
+
 static void test_bot_log_resume(void)
 {
     char directory[]="/tmp/qa-bot-log-XXXXXX",path[160];
@@ -9774,6 +9776,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_source_dollar_evaluation();
+    test_q2_brush_animation();
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();

@@ -17,6 +17,16 @@
     X(ANGLES, "angles") \
     X(ATTACK_FINISHED, "attack_finished") \
     X(ATTENUATION, "attenuation") \
+    X(BMODEL_ANIM_ALT_END, "bmodel_anim_alt_end") \
+    X(BMODEL_ANIM_ALT_NOWRAP, "bmodel_anim_alt_nowrap") \
+    X(BMODEL_ANIM_ALT_SPEED, "bmodel_anim_alt_speed") \
+    X(BMODEL_ANIM_ALT_START, "bmodel_anim_alt_start") \
+    X(BMODEL_ANIM_ALT_STYLE, "bmodel_anim_alt_style") \
+    X(BMODEL_ANIM_END, "bmodel_anim_end") \
+    X(BMODEL_ANIM_NOWRAP, "bmodel_anim_nowrap") \
+    X(BMODEL_ANIM_SPEED, "bmodel_anim_speed") \
+    X(BMODEL_ANIM_START, "bmodel_anim_start") \
+    X(BMODEL_ANIM_STYLE, "bmodel_anim_style") \
     X(CATEGORY, "category") \
     X(CLASSNAME, "classname") \
     X(CNT, "cnt") \

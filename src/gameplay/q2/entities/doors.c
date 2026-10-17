@@ -102,9 +102,10 @@ bool q2_door_down(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (s->kind == Q2E_BUTTON) {
-        s->visual.frame = 0;
-        if (!q2_entity_show(g, a, e))
-            return false;
+        if (!s->brush_animation.enabled) {
+            s->visual.frame = 0;
+            if (!q2_entity_show(g, a, e)) return false;
+        }
     } else if (!sound(g, a, true, e))
         return false;
     if (!q2_actor_live(g, a->id))
@@ -206,9 +207,11 @@ bool q2_door_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e) {
     q2_entity_state *s = a->entity;
     s->mover->phase = top ? 2 : 0;
     if (s->kind == Q2E_BUTTON) {
-        s->visual.effects = (s->visual.effects & ~UINT64_C(0xc00)) | (top ? 0x800u : 0x400u);
-        if (top)
-            s->visual.frame = 1;
+        if (s->brush_animation.enabled) s->brush_animation.alternate = top;
+        else {
+            s->visual.effects = (s->visual.effects & ~UINT64_C(0xc00)) | (top ? 0x800u : 0x400u);
+            if (top) s->visual.frame = 1;
+        }
         if (!q2_entity_show(g, a, e))
             return false;
         if (top && q2_actor_live(g, a->id) && !q2_entity_targets(g, a, s->activator, false, e))
@@ -401,9 +404,9 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (s->wait == -1)
             s->spawnflags |= 32;
     }
-    if (button)
-        s->visual.effects |= 0x400;
-    else if (!water) {
+    if (button) {
+        if (!s->brush_animation.enabled) s->visual.effects |= 0x400;
+    } else if (!water) {
         if (s->spawnflags & 16)
             s->visual.effects |= 0x1000;
         if (!m->angular && (s->spawnflags & 64))

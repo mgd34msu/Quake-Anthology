@@ -80,15 +80,15 @@ static uint32_t hint_fields(qa_q2_game *g, const q2_actor *actor) {
     return fields;
 }
 
-static bool hint_reference(q2_save_io *io, qa_actor_id *actor) {
+static bool continuation_reference(q2_save_io *io, qa_actor_id *actor) {
     qa_q2_saved_reference saved = {0};
     if ((!io->reading && !q2_save_reference(io->game, *actor, &saved, io->error)) ||
         !q2_save_ref(io, &saved)) return false;
     return !io->reading || q2_resolve_reference(io->game, saved, actor, io->error);
 }
 
-/* The pre-existing continuation ends at the wire section. Only maps with
- * hint state append these sparse rows; a former end-of-file stays valid. */
+/* The pre-existing continuation ends at the wire section. Later sparse state
+ * requires this section even without hints; a former end-of-file stays valid. */
 static bool save_hints(q2_save_io *io, bool has_tail) {
     qa_q2_game *g = io->game;
     q2_entities *runtime = g->entity_runtime;
@@ -108,7 +108,7 @@ static bool save_hints(q2_save_io *io, bool has_tail) {
         memset(runtime->hint_starts, 0, sizeof(runtime->hint_starts));
     }
     for (uint32_t i = 0; i < roots; ++i)
-        if (!hint_reference(io, runtime->hint_starts + i)) return false;
+        if (!continuation_reference(io, runtime->hint_starts + i)) return false;
     if (!q2_save_u32(io, &rows)) return false;
     if (io->reading && (rows > g->capacity || rows > (io->input.size - io->offset) / 6))
         return q2_save_fail(io, "Invalid Q2 saved hint actor count");
@@ -125,7 +125,7 @@ static bool save_hints(q2_save_io *io, bool has_tail) {
             id = actor->id;
             fields = hint_fields(g, actor);
         }
-        if (!hint_reference(io, &id) || !q2_save_u32(io, &fields)) return false;
+        if (!continuation_reference(io, &id) || !q2_save_u32(io, &fields)) return false;
         if (io->reading) actor = q2_actor_get(g, id, false, NULL);
         if (!actor || !fields || (fields & ~3u))
             return q2_save_fail(io, "Q2 saved hint state has no restored actor");
@@ -134,15 +134,54 @@ static bool save_hints(q2_save_io *io, bool has_tail) {
                 return q2_save_fail(io, "Q2 saved hint link has no hint node");
             qa_actor_id hint = io->reading ? (qa_actor_id){0} : qa_actor_reference_resolve(
                 qa_session_actors(g->services.session), actor->entity->hint_next);
-            if (!hint_reference(io, &hint) ||
+            if (!continuation_reference(io, &hint) ||
                 !q2_save_i32(io, &actor->entity->hint_chain_id)) return false;
             if (io->reading) actor->entity->hint_next = qa_actor_reference_lifetime(hint);
         }
         if (fields & 2u) {
             if (!actor->monster) return q2_save_fail(io, "Q2 saved hint pursuit has no monster");
-            if (!hint_reference(io, &actor->monster->goal_hint) ||
+            if (!continuation_reference(io, &actor->monster->goal_hint) ||
                 !q2_save_u64(io, &actor->monster->last_hint_ns)) return false;
         }
+    }
+    return true;
+}
+static bool brush_animation_present(const q2_actor *actor) {
+    if (!actor->entity) return false;
+    const qa_q2_brush_animation *s = &actor->entity->brush_animation;
+    return s->start || s->end || s->style || s->speed || s->nowrap ||
+        s->alt_start || s->alt_end || s->alt_style || s->alt_speed || s->alt_nowrap ||
+        s->enabled || s->alternate || s->currently_alternate || s->next_tick_ns;
+}
+static bool brush_animation_fields(q2_save_io *io, qa_q2_brush_animation *s) {
+    Q2I(start); Q2I(end); Q2I(style); Q2I(speed); Q2B(nowrap);
+    Q2I(alt_start); Q2I(alt_end); Q2I(alt_style); Q2I(alt_speed); Q2B(alt_nowrap);
+    Q2B(enabled); Q2B(alternate); Q2B(currently_alternate); Q2T(next_tick_ns);
+    return true;
+}
+static bool save_brush_animations(q2_save_io *io, uint32_t rows) {
+    if (io->reading ? io->offset == io->input.size : rows == 0) return true;
+    if (!q2_save_u32(io, &rows)) return false;
+    qa_q2_game *g = io->game;
+    if (rows > g->capacity) return q2_save_fail(io, "Too many Q2 brush animation rows");
+    q2_actor *next = g->first_actor;
+    uint64_t previous_order = 0;
+    for (uint32_t i = 0; i < rows; ++i) {
+        qa_actor_id id = {0};
+        q2_actor *actor = NULL;
+        if (!io->reading) {
+            while (next && (!q2_actor_live(g, next->id) || !brush_animation_present(next)))
+                next = next->live_next;
+            actor = next;
+            next = next->live_next;
+            id = actor->id;
+        }
+        if (!continuation_reference(io, &id)) return false;
+        if (io->reading) actor = q2_actor_get(g, id, false, NULL);
+        if (!actor || !actor->entity || actor->source_order <= previous_order)
+            return q2_save_fail(io, "Q2 brush animation has no ordered Source entity");
+        if (!brush_animation_fields(io, &actor->entity->brush_animation)) return false;
+        previous_order = actor->source_order;
     }
     return true;
 }
@@ -166,8 +205,12 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, 
     bool ok = header(&io) && (io.level_only || qa_q2_runtime_capture(g, &runtime, e)) &&
         q2_save_runtime(&io, &runtime);
     uint32_t count = 0;
+    uint32_t brush_rows = 0;
     for (q2_actor *a = g->first_actor; a; a = a->live_next)
-        if (q2_actor_live(g, a->id)) ++count;
+        if (q2_actor_live(g, a->id)) {
+            ++count;
+            brush_rows += brush_animation_present(a);
+        }
     ok = ok && q2_save_u32(&io, &count);
     for (q2_actor *a = g->first_actor; ok && a; a = a->live_next) {
         if (!q2_actor_live(g, a->id)) continue;
@@ -181,8 +224,9 @@ bool qa_q2_game_capture(qa_q2_game *g, qa_save_purpose purpose, qa_buffer *out, 
          qa_q2_entities_capture(g, io.level_only, &entities, e) && q2_save_entities(&io, &entities) &&
          qa_q2_monsters_capture(g, &monsters, e) && q2_save_monsters(&io, &monsters) &&
          q2_save_wire(&io) && save_hints(&io,
-             monsters.disguise_violator.present || monsters.disguise_until_ns != 0) &&
-         q2_save_monsters_tail(&io, &monsters);
+             monsters.disguise_violator.present || monsters.disguise_until_ns != 0 || brush_rows != 0) &&
+         q2_save_monsters_tail(&io, &monsters, brush_rows != 0) &&
+         save_brush_animations(&io, brush_rows);
     qa_q2_players_checkpoint_free(&players);
     qa_q2_entities_checkpoint_free(&entities);
     qa_q2_monsters_checkpoint_free(&monsters);
@@ -336,7 +380,8 @@ bool qa_q2_game_restore(qa_q2_game *g, qa_save_purpose purpose, const qa_q2_game
          q2_save_entities(&io, &entities) && (!transition || unit_entities(g, current, &entities, e)) &&
          qa_q2_entities_restore(g, &entities, e) &&
          q2_save_monsters(&io, &monsters) && q2_save_wire(&io) && save_hints(&io, false) &&
-         q2_save_monsters_tail(&io, &monsters) && qa_q2_monsters_restore(g, &monsters, e);
+         q2_save_monsters_tail(&io, &monsters, false) && qa_q2_monsters_restore(g, &monsters, e) &&
+         save_brush_animations(&io, 0);
     if (ok && io.offset != data.size) ok = q2_save_fail(&io, "Trailing Q2 continuation data");
     if (ok) ok = qa_q2_entities_validate_links(g, e);
     if (ok) g->actor_sequence = runtime.actor_sequence;

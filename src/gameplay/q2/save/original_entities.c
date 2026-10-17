@@ -387,6 +387,32 @@ static bool entity_fog(qa_q2_game *g, q2_original_record_io *io, q2_entity_state
     if (io->reading && s->kind == Q2E_WORLD) g->entity_runtime->world_fog = fog[0];
     return true;
 }
+static bool entity_brush_animation(q2_original_record_io *io, q2_entity_state *s)
+{
+    if (io->edition != QA_RULESET_Q2_RERELEASE) return true;
+    static const struct {
+        const char *name;
+        size_t offset;
+        q2_original_field_kind kind;
+    } fields[] = {
+#define ANIMATION(member, name, kind) \
+        {"bmodel_anim." name, offsetof(qa_q2_brush_animation, member), Q2_ORIGINAL_##kind}
+        ANIMATION(start, "start", I32), ANIMATION(end, "end", I32),
+        ANIMATION(style, "style", I32), ANIMATION(speed, "speed", I32),
+        ANIMATION(nowrap, "nowrap", BOOL), ANIMATION(alt_start, "alt_start", I32),
+        ANIMATION(alt_end, "alt_end", I32), ANIMATION(alt_style, "alt_style", I32),
+        ANIMATION(alt_speed, "alt_speed", I32), ANIMATION(alt_nowrap, "alt_nowrap", BOOL),
+        ANIMATION(enabled, "enabled", BOOL), ANIMATION(alternate, "alternate", BOOL),
+        ANIMATION(currently_alternate, "currently_alternate", BOOL),
+        ANIMATION(next_tick_ns, "next_tick", TIME)
+#undef ANIMATION
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
+        if (!q2_original_scalar(io, fields[i].name, fields[i].kind,
+            UINT16_MAX, UINT16_MAX, UINT16_MAX,
+            (uint8_t *)&s->brush_animation + fields[i].offset)) return false;
+    return true;
+}
 
 static bool entity_team_references(qa_q2_game *g, q2_original_record_io *io, q2_entity_state *s)
 {
@@ -1139,7 +1165,8 @@ bool q2_original_entity_record(qa_q2_game *g, q2_original_record_io *io, q2_acto
         !scalar(io, "last_move_time", Q2_ORIGINAL_TIME, 476, &s->sound_ns) ||
         (!driver && !entity_think(g, io, s)) || !entity_motion(g, io, a) || !entity_curve(g, io, s) ||
         !entity_turret(g, io, s) ||
-        !entity_effects(g, io, s, engine) || !entity_fog(g, io, s) || !entity_q64(io, a) ||
+        !entity_effects(g, io, s, engine) || !entity_fog(g, io, s) ||
+        !entity_brush_animation(io, s) || !entity_q64(io, a) ||
         (!driver && !entity_callbacks(g, io, a)) || !entity_references(g, io, s)) return false;
     if (io->reading) {
         s->damage = (float)damage;
