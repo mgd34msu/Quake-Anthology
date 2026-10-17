@@ -100,7 +100,7 @@ bool qa_q2_save_select_product(const qa_catalog *catalog,const qa_q2_save_data *
     const qa_product *preferred,const qa_product **out,qa_error *error)
 {
     if (!catalog || !save || !out) return failure(error,"Original Quake II save requires its actual catalog and state");
-    const char *game="baseq2";
+    const char *game=NULL;
     for (size_t i=0;i<save->server.cvar_count;++i)
         if (!strcmp(save->server.cvars[i].name,"game"))
             game=*save->server.cvars[i].value?basename(save->server.cvars[i].value):"baseq2";
@@ -114,8 +114,13 @@ bool qa_q2_save_select_product(const qa_catalog *catalog,const qa_q2_save_data *
         const qa_product *product=qa_catalog_at(catalog,i);
         if (!product || product->family!=QA_GAME_Q2 || (!unresolved && product->edition!=edition) ||
             product->availability!=QA_CONTENT_INSTALLED || !product->directory) continue;
+        /* Older captures omitted the ENGINE-owned game row. Only the actual
+         * compatible session supplies that missing identity; an explicit empty
+         * row still selects BaseQ2. */
+        if (!game && product==preferred) { preferred_match=product;continue; }
         const char *directory=basename(product->directory);
-        if (!equal(game,strlen(game),directory,strlen(directory))) continue;
+        const char *saved_game=game?game:"baseq2";
+        if (!equal(saved_game,strlen(saved_game),directory,strlen(directory))) continue;
         ++count;selected=product;
         if (product==preferred) preferred_match=product;
     }

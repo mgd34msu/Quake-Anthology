@@ -155,6 +155,9 @@ static bool capture_server(qa_application *app,application_provider *source,
 {
     qa_cvars *cvars=source->kind==APPLICATION_PROVIDER_Q2?
         application_native_q2_console_registry(source):source->state.native.q2_engine->cvars;
+    const char *game=source->product->directory;
+    for (const char *p=game;*p;++p) if (*p=='/' || *p=='\\') game=p+1;
+    if (!strcmp(game,"baseq2")) game="";
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(app));
     const char *map=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
     const char *spawn=choices->world.spawn_point?choices->world.spawn_point:"";
@@ -183,9 +186,17 @@ static bool capture_server(qa_application *app,application_provider *source,
         if (ok) (void)snprintf(out->comment,comment_capacity,"%2i:%02i %2i/%2i  %s",
             local.hour,local.minute,local.month,local.day,name?name:"");
     }
-    size_t text_size=0;
+    /* The original ENGINE always saves its selected game directory, even when
+     * the GAME DLL never registered the filesystem-owned cvar itself. */
+    size_t game_size=strlen(game)+1;
+    if (!out->rerelease && game_size>QA_Q2_SAVE_CVAR_BYTES) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Game directory does not fit the original Q2 save cvar field");
+        return false;
+    }
+    size_t text_size=out->rerelease?sizeof("game")+game_size:QA_Q2_SAVE_CVAR_BYTES*2;
+    out->cvar_count=1;
     for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row)) {
-        if (!(row->flags&QA_Q2_CVAR_LATCH)) continue;
+        if (!(row->flags&QA_Q2_CVAR_LATCH) || !strcmp(row->name,"game")) continue;
         size_t name_size=strlen(row->name)+1, value_size=strlen(row->value)+1;
         /* Original 3.20 skips cvars which do not fit its fixed rows. */
         if (!out->rerelease && (name_size>=QA_Q2_SAVE_CVAR_BYTES || value_size>=QA_Q2_SAVE_CVAR_BYTES)) continue;
@@ -202,8 +213,16 @@ static bool capture_server(qa_application *app,application_provider *source,
             ok=application_fail(error,QA_ERROR_MEMORY,"Retaining original Q2 latched cvars");
     }
     size_t at=0, offset=0;
+    if (ok) {
+        out->cvars[at].name=(char *)out->cvar_text.data;
+        memcpy(out->cvars[at].name,"game",sizeof("game"));
+        offset=out->rerelease?sizeof("game"):QA_Q2_SAVE_CVAR_BYTES;
+        out->cvars[at].value=(char *)out->cvar_text.data+offset;
+        memcpy(out->cvars[at++].value,game,game_size);
+        offset+=out->rerelease?game_size:QA_Q2_SAVE_CVAR_BYTES;
+    }
     for (const qa_cvar_view *row=ok?qa_cvars_next(cvars,NULL):NULL;row;row=qa_cvars_next(cvars,row)) {
-        if (!(row->flags&QA_Q2_CVAR_LATCH)) continue;
+        if (!(row->flags&QA_Q2_CVAR_LATCH) || !strcmp(row->name,"game")) continue;
         size_t name_size=strlen(row->name)+1, value_size=strlen(row->value)+1;
         if (!out->rerelease && (name_size>=QA_Q2_SAVE_CVAR_BYTES || value_size>=QA_Q2_SAVE_CVAR_BYTES)) continue;
         out->cvars[at].name=(char *)out->cvar_text.data+offset;
