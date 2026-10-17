@@ -1009,12 +1009,12 @@ static bool combat_inflictor_center(void *opaque, const qa_damage_request *reque
     return application_native_q1_wire_inflictor_center(opaque, request, center, found, error);
 }
 
-static bool combat_source_amount(void *opaque, qa_actor_id actor, double amount,
+static bool combat_source_amount(void *opaque, const qa_damage_request *request,
                                   double *out, qa_error *error)
 {
     bool available = false;
-    return application_qc_combat_damage_amount(opaque,actor,amount,out,&available,error) &&
-        (available || application_fail(error,QA_ERROR_ARGUMENT,"Physical QC Source lost its declared damage scale"));
+    return application_qc_combat_damage_amount(opaque,request,out,&available,error) &&
+        (available || application_fail(error,QA_ERROR_ARGUMENT,"Physical QC Source lost its damage scale"));
 }
 
 static bool combat_prepare_request(void *opaque, qa_damage_request *request, qa_error *error)
@@ -1023,14 +1023,14 @@ static bool combat_prepare_request(void *opaque, qa_damage_request *request, qa_
     application_provider *physical = application_world_provider(application,QA_ROLE_ENTITIES,"");
     if (!physical || physical->kind != APPLICATION_PROVIDER_QC || !request->attack.weapon ||
         !request->attack.weapon_provider || request->attack.weapon_provider == physical->owner ||
-        !application_qc_combat_damage_scale_declared(physical->state.qc.engine)) return true;
+        !application_qc_combat_damage_scale_available(physical->state.qc.engine)) return true;
     qa_damage_modifier modifier = {.owner=physical->owner,.context=physical->state.qc.engine,
         .transform=combat_source_amount};
     if (!qa_damage_apply_modifier(qa_session_actors(application->session),request,&modifier,request,error))
         return false;
     return (application_world_provider(application,QA_ROLE_ENTITIES,"")==physical &&
         physical->constructed && physical->attached && !physical->close_pending &&
-        application_qc_combat_damage_scale_declared(physical->state.qc.engine)) ||
+        application_qc_combat_damage_scale_available(physical->state.qc.engine)) ||
         application_fail(error,QA_ERROR_ARGUMENT,"Damage preparation replaced its actual physical QC Source");
 }
 

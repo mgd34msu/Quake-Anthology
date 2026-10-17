@@ -76,7 +76,7 @@ bool qa_attack_next(uint64_t *sequence, qa_attack *, qa_error *);
 typedef struct qa_damage_modifier {
     qa_actor_owner owner;
     void *context;
-    bool (*transform)(void *, qa_actor_id attacker, double amount, double *, qa_error *);
+    bool (*transform)(void *, const qa_damage_request *, double *, qa_error *);
 } qa_damage_modifier;
 bool qa_damage_apply_modifier(const qa_actor_registry *, const qa_damage_request *, const qa_damage_modifier *, qa_damage_request *, qa_error *);
 

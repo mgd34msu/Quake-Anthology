@@ -44,7 +44,7 @@ bool qa_damage_apply_modifier(const qa_actor_registry *actors, const qa_damage_r
         if (!qa_actors_get(actors, next.attack.attacker)) next.attack.attacker = (qa_actor_id){0};
         if (!qa_actors_get(actors, next.attack.inflictor)) next.attack.inflictor = (qa_actor_id){0};
         if ((!next.attack.powerup_applied || next.attack.powerup_owner != modifier->owner) &&
-            !modifier->transform(modifier->context, next.attack.attacker, request->amount, &next.amount, error)) return false;
+            !modifier->transform(modifier->context, &next, &next.amount, error)) return false;
         if (!isfinite(next.amount)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "damage modifier returned nonfinite damage"); return false; }
         next.attack.powerup_applied = true;
         next.attack.powerup_owner = modifier->owner;

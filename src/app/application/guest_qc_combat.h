@@ -29,8 +29,8 @@ bool application_qc_combat_ready(const struct application_qc_state *, qa_error *
 bool application_qc_combat_saved_binding(struct application_qc_state *, qa_actor_id,
     uint64_t serial, qa_combat_binding *, qa_error *);
 bool application_qc_combat_restore_attach(struct application_qc_state *, qa_error *);
-bool application_qc_combat_damage_amount(struct application_qc_state *, qa_actor_id,
-    double amount, double *out, bool *available, qa_error *);
-bool application_qc_combat_damage_scale_declared(const struct application_qc_state *);
+bool application_qc_combat_damage_amount(struct application_qc_state *, const qa_damage_request *,
+    double *out, bool *available, qa_error *);
+bool application_qc_combat_damage_scale_available(const struct application_qc_state *);
 
 #endif

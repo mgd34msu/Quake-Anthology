@@ -18,7 +18,7 @@ typedef struct damage_scale {
     qa_qc_inline_region region;
     uint32_t *scratch, *constants, *initial;
     size_t scratch_count, constant_count;
-    bool declared, transform;
+    bool qualified, transform, implicit, inflictor;
 } damage_scale;
 typedef struct synchronous_layout {
     uint32_t axe, shotgun, super_shotgun, trace_attack, add_multi, apply_multi;
@@ -360,8 +360,114 @@ static bool environment_prepare(application_qc_combat_profile *profile, const ui
     }
     return true;
 }
+static bool quad_field(const qa_qc_program *program, const uint8_t *written,
+    uint32_t word, const char *name, qa_qc_value_type type)
+{
+    const qa_qc_definition *field = qa_qc_program_find_field(program, name);
+    int32_t initial; qa_error ignored = {0};
+    return field && field->type == type && definition_at(program, word, QA_QC_FIELD) &&
+        !written[word] && qa_qc_program_initial_int(program, word, &initial, &ignored) &&
+        initial == field->offset;
+}
+static bool quad_constant(const qa_qc_program *program, const uint8_t *written,
+    uint32_t word, float expected)
+{
+    int32_t initial; float value; qa_error ignored = {0};
+    if (!definition_at(program, word, QA_QC_FLOAT) || written[word] ||
+        !qa_qc_program_initial_int(program, word, &initial, &ignored)) return false;
+    memcpy(&value, &initial, sizeof(value)); return value == expected;
+}
+static bool quad_door(const qa_qc_program *program, const uint8_t *written, uint32_t word)
+{
+    int32_t initial; qa_error ignored = {0};
+    if (!definition_at(program, word, QA_QC_STRING) || written[word] ||
+        !qa_qc_program_initial_int(program, word, &initial, &ignored) || initial < 0) return false;
+    qa_bytes strings = qa_qc_program_strings(program);
+    return (uint32_t)initial < strings.size && strings.size - (uint32_t)initial >= sizeof("door") &&
+        !memcmp(strings.data + initial, "door", sizeof("door"));
+}
+static bool quad_product(const qa_qc_program *program, const uint8_t *written,
+    uint32_t pc, uint32_t amount, float factor)
+{
+    const qa_qc_statement *multiply = qa_qc_program_statement(program, pc);
+    const qa_qc_statement *store = qa_qc_program_statement(program, pc + 1);
+    return multiply->opcode == QA_QC_MUL_F && store->opcode == QA_QC_STORE_F &&
+        store->a == multiply->c && store->b == amount &&
+        ((multiply->a == amount && quad_constant(program, written, multiply->b, factor)) ||
+         (multiply->b == amount && quad_constant(program, written, multiply->a, factor)));
+}
+static void scale_discover(application_qc_combat_profile *profile, const uint8_t *written)
+{
+    const qa_qc_program *program = profile->program;
+    const qa_qc_function *function = qa_qc_program_function(program, profile->damage.function);
+    const qa_qc_definition *time = qa_qc_program_find_global(program, "time");
+    const qa_qc_definition *deathmatch = qa_qc_program_find_global(program, "deathmatch");
+    const damage_location *attacker = NULL, *inflictor = NULL, *amount = NULL;
+    for (size_t i = 0; i < profile->location_count; ++i) {
+        const damage_location *location = profile->locations + i;
+        const damage_location **selected = location->role == QC_INPUT_ATTACKER ? &attacker :
+            location->role == QC_INPUT_INFLICTOR ? &inflictor : location->role == QC_INPUT_AMOUNT ? &amount : NULL;
+        if (!selected) continue;
+        if (*selected || !location->parameter) return;
+        *selected = location;
+    }
+    if (!attacker || !inflictor || !amount || !time || time->type != QA_QC_FLOAT) return;
+    uint32_t end = qa_qc_program_function_end(program, function);
+    qa_qc_inline_region found = {0}; bool needs_inflictor = false;
+    for (uint32_t pc = (uint32_t)function->first_statement; end - pc > 4; ++pc) {
+        const qa_qc_statement *load = qa_qc_program_statement(program, pc);
+        const qa_qc_statement *compare = qa_qc_program_statement(program, pc + 1);
+        if (load->opcode != QA_QC_LOAD_F || load->a != attacker->frame_word ||
+            !quad_field(program, written, load->b, "super_damage_finished", QA_QC_FLOAT) ||
+            compare->opcode != QA_QC_GT || compare->a != load->c || compare->b != time->offset) continue;
+        uint32_t branch_pc = pc + 2, predicate = compare->c;
+        const qa_qc_statement *door = qa_qc_program_statement(program, branch_pc);
+        bool qw = door->opcode == QA_QC_LOAD_S;
+        if (qw) {
+            if (end - branch_pc <= 3 || door->a != inflictor->frame_word ||
+                !quad_field(program, written, door->b, "classname", QA_QC_STRING)) continue;
+            const qa_qc_statement *different = qa_qc_program_statement(program, branch_pc + 1);
+            const qa_qc_statement *both = qa_qc_program_statement(program, branch_pc + 2);
+            if (different->opcode != QA_QC_NE_S ||
+                !((different->a == door->c && quad_door(program, written, different->b)) ||
+                  (different->b == door->c && quad_door(program, written, different->a))) ||
+                both->opcode != QA_QC_AND ||
+                !((both->a == predicate && both->b == different->c) ||
+                  (both->b == predicate && both->a == different->c))) continue;
+            predicate = both->c; branch_pc += 3;
+        }
+        const qa_qc_statement *branch = qa_qc_program_statement(program, branch_pc);
+        int64_t join = (int64_t)branch_pc + (int16_t)branch->b;
+        uint32_t body = branch_pc + 1;
+        if (branch->opcode != QA_QC_IFNOT || branch->a != predicate || join >= end) continue;
+        if (!qw) {
+            if (join != (int64_t)body + 2 || !quad_product(program, written, body, amount->frame_word, 4)) continue;
+        } else {
+            if (join != (int64_t)body + 7 || !deathmatch || deathmatch->type != QA_QC_FLOAT) continue;
+            const qa_qc_statement *mode = qa_qc_program_statement(program, body);
+            const qa_qc_statement *choose = qa_qc_program_statement(program, body + 1);
+            const qa_qc_statement *skip = qa_qc_program_statement(program, body + 4);
+            if (mode->opcode != QA_QC_EQ_F ||
+                !((mode->a == deathmatch->offset && quad_constant(program, written, mode->b, 4)) ||
+                  (mode->b == deathmatch->offset && quad_constant(program, written, mode->a, 4))) ||
+                choose->opcode != QA_QC_IFNOT || choose->a != mode->c ||
+                (int64_t)body + 1 + (int16_t)choose->b != (int64_t)body + 5 ||
+                skip->opcode != QA_QC_GOTO || (int64_t)body + 4 + (int16_t)skip->a != join ||
+                !quad_product(program, written, body + 2, amount->frame_word, 8) ||
+                !quad_product(program, written, body + 5, amount->frame_word, 4)) continue;
+        }
+        if (found.exit) return;
+        found = (qa_qc_inline_region){.function = profile->damage.function,
+            .entry = pc, .exit = (uint32_t)join, .saved_word = amount->frame_word};
+        needs_inflictor = qw;
+    }
+    if (found.exit) {
+        profile->scale.region = found;
+        profile->scale.implicit = true; profile->scale.inflictor = needs_inflictor;
+    }
+}
 static bool immutable_layout(application_provider *provider, application_qc_combat_profile *profile,
-    qa_error *error)
+    bool discover_scale, qa_error *error)
 {
     const qa_qc_program *program = profile->program;
     qa_qc_program_info info = qa_qc_program_describe(program);
@@ -446,11 +552,16 @@ static bool immutable_layout(application_provider *provider, application_qc_comb
     if (ok) {
         synchronous_prepare(profile, written);
         ok = environment_prepare(profile, written, error);
+        if (ok && discover_scale) scale_discover(profile, written);
     }
     free(written);
     return ok && (reactions || reject(error, "QC combat has no typed original pain or death call sites"));
 }
 static bool scale_parse(application_qc_combat_profile *, const qa_json_document *, qa_json_id, qa_error *);
+static void scale_free(damage_scale *scale)
+{
+    free(scale->scratch); free(scale->constants); free(scale->initial); *scale = (damage_scale){0};
+}
 static bool combat_profile_prepare(application_provider *provider, const qa_json_document *doc,
     qa_json_id root, application_qc_combat_profile *profile, qa_error *error)
 {
@@ -489,9 +600,11 @@ static bool combat_profile_prepare(application_provider *provider, const qa_json
         profile->invincible, profile->armorvalue, profile->armortype};
     for (size_t i = 0; i < sizeof(floats) / sizeof(*floats); ++i)
         if (!floats[i] || floats[i]->type != QA_QC_FLOAT) return reject(error, "QC combat lacks an actual required Source float field");
+    qa_json_id scale_node = declared ? qa_json_get(doc, root, "damageScale") : QA_JSON_NONE;
     if (!profile->velocity || profile->velocity->type != QA_QC_VECTOR || !profile->pain ||
         profile->pain->type != QA_QC_FUNCTION || !profile->die || profile->die->type != QA_QC_FUNCTION ||
-        !profile->self || profile->self->type != QA_QC_ENTITY || !immutable_layout(provider, profile, error))
+        !profile->self || profile->self->type != QA_QC_ENTITY ||
+        !immutable_layout(provider, profile, scale_node == QA_JSON_NONE, error))
         return reject(error, "QC combat lacks its actual typed Source reaction and armor layout");
     qa_json_id armor = declared ? qa_json_get(doc, root, "armorStage") : QA_JSON_NONE;
     if (armor != QA_JSON_NONE) {
@@ -502,8 +615,15 @@ static bool combat_profile_prepare(application_provider *provider, const qa_json
     } else if (!application_qc_armor_compile(profile->program, &profile->damage,
         &profile->armor, &profile->armor_declared, error)) return false;
     if (!declared && !profile->armor_declared) return false;
-    if (!scale_parse(profile, doc, declared ? qa_json_get(doc, root, "damageScale") : QA_JSON_NONE, error)) return false;
-    if (profile->scale.declared) profile->regions[profile->region_count++] = profile->scale.region;
+    qa_error scale_error = {0};
+    if (!scale_parse(profile, doc, scale_node, &scale_error)) {
+        if (scale_node != QA_JSON_NONE || scale_error.code == QA_ERROR_MEMORY) {
+            if (error) *error = scale_error;
+            return false;
+        }
+        scale_free(&profile->scale);
+    }
+    if (profile->scale.qualified) profile->regions[profile->region_count++] = profile->scale.region;
     if (profile->armor_declared) profile->regions[profile->region_count++] = profile->armor.region;
     qa_json_id empty = declared ? qa_json_get(doc, root, "emptyArmor") : QA_JSON_NONE;
     if (empty != QA_JSON_NONE) {
@@ -538,8 +658,8 @@ void application_qc_combat_profile_free(application_qc_combat_profile *profile)
 {
     if (!profile) return;
     application_qc_call_free(&profile->damage); application_qc_armor_free(&profile->armor);
-    free(profile->locations); free(profile->reactions); free(profile->scale.scratch);
-    free(profile->scale.constants); free(profile->scale.initial); free(profile->environment.hazards); free(profile);
+    free(profile->locations); free(profile->reactions); scale_free(&profile->scale);
+    free(profile->environment.hazards); free(profile);
 }
 const qa_qc_inline_region *application_qc_combat_regions(const application_qc_combat_profile *profile, size_t *count)
 { *count = profile ? profile->region_count : 0; return profile ? profile->regions : NULL; }
@@ -1335,7 +1455,7 @@ bool application_qc_combat_inline(struct application_qc_state *engine, qa_qc_ins
     const application_qc_combat_profile *profile = owner->profile;
     damage_frame *frame = owner->frame;
     if (!frame || frame->reaction_depth) return true;
-    if (profile->scale.declared && event->region.function == profile->scale.region.function &&
+    if (profile->scale.qualified && event->region.function == profile->scale.region.function &&
         event->region.entry == profile->scale.region.entry) {
         *handled = true;
         return frame->request->attack.powerup_applied && frame->request->attack.powerup_owner == engine->provider->owner ?
@@ -1494,7 +1614,7 @@ typedef struct scale_analysis {
     uint8_t *written, *named, *prefix, *scratch, *constants;
     scale_value *context;
     uint32_t parameter_end, damage;
-    bool transform, identity, multiplied;
+    bool transform, identity, multiplied, inflictor;
 } scale_analysis;
 static bool scale_number(const qa_json_document *doc, qa_json_id node, uint32_t *out, qa_error *error)
 {
@@ -1515,7 +1635,7 @@ static bool scale_read(scale_analysis *analysis, scale_value *values, uint32_t w
         return reject(error, "QC damage scale reads an unstaged private Source word");
     if (analysis->context[word].kind != SCALE_UNSET) {
         *out = analysis->context[word];
-        return out->kind != SCALE_ACTOR || out->identity ||
+        return out->kind != SCALE_ACTOR || out->identity || analysis->inflictor ||
             reject(error, "QC damage scale depends on a target or inflictor entity");
     }
     const qa_qc_definition *time = qa_qc_program_find_global(analysis->profile->program, "time");
@@ -1589,9 +1709,10 @@ static bool scale_operations(scale_analysis *analysis, scale_value **pending, ui
     } else if (opcode == QA_QC_GOTO)
         return scale_edge(analysis, pending, pc, (int64_t)pc + (int16_t)statement->a, values, error);
     else if (opcode == QA_QC_LOAD_F || opcode == QA_QC_LOAD_S) {
-        if (!scale_read(analysis, values, statement->a, &left, error) || left.kind != SCALE_ACTOR || !left.identity ||
+        if (!scale_read(analysis, values, statement->a, &left, error) || left.kind != SCALE_ACTOR ||
+            (!left.identity && !analysis->inflictor) ||
             !scale_read(analysis, values, statement->b, &right, error) || right.kind == SCALE_AMOUNT)
-            return reject(error, "QC damage scale entity read does not belong to its actual attacker");
+            return reject(error, "QC damage scale reads an undeclared Source entity");
         if (!scale_write(analysis, values, statement->c, (scale_value){.kind = SCALE_SCALAR}, error)) return false;
     } else if (opcode == QA_QC_STORE_F || opcode == QA_QC_STORE_ENT || opcode == QA_QC_STORE_S) {
         if (!scale_read(analysis, values, statement->a, &left, error) ||
@@ -1636,21 +1757,25 @@ static bool scale_operations(scale_analysis *analysis, scale_value **pending, ui
 static bool scale_parse(application_qc_combat_profile *profile, const qa_json_document *doc,
     qa_json_id node, qa_error *error)
 {
-    if (node == QA_JSON_NONE) return true;
     damage_scale *scale = &profile->scale;
+    if (node == QA_JSON_NONE && !scale->implicit) return true;
     scale_analysis analysis = {.profile = profile, .function = qa_qc_program_function(profile->program, profile->damage.function),
-        .info = qa_qc_program_describe(profile->program)};
-    qa_json_id kind = qa_json_get(doc, node, "kind");
-    analysis.transform = qa_json_string_equal(doc, kind, "transform");
-    analysis.identity = qa_json_string_equal(doc, kind, "identity");
-    if (kind != QA_JSON_NONE && !analysis.transform && !analysis.identity && !qa_json_string_equal(doc, kind, "multiplier"))
-        return reject(error, "QC damage scale declaration kind is invalid");
-    char *name = application_qc_declaration_string(doc, qa_json_get(doc, node, "function"), error);
-    bool same = name && !strcmp(name, analysis.function->name); free(name);
-    if (!same || !scale_number(doc, qa_json_get(doc, node, "entry"), &scale->region.entry, error) ||
-        !scale_number(doc, qa_json_get(doc, node, "exit"), &scale->region.exit, error) ||
-        !scale_number(doc, qa_json_get(doc, node, "damage"), &analysis.damage, error) ||
-        scale->region.entry < (uint32_t)analysis.function->first_statement || scale->region.exit <= scale->region.entry ||
+        .info = qa_qc_program_describe(profile->program), .inflictor = scale->inflictor,
+        .damage = scale->region.saved_word};
+    if (node != QA_JSON_NONE) {
+        qa_json_id kind = qa_json_get(doc, node, "kind");
+        analysis.transform = qa_json_string_equal(doc, kind, "transform");
+        analysis.identity = qa_json_string_equal(doc, kind, "identity");
+        if (kind != QA_JSON_NONE && !analysis.transform && !analysis.identity && !qa_json_string_equal(doc, kind, "multiplier"))
+            return reject(error, "QC damage scale declaration kind is invalid");
+        char *name = application_qc_declaration_string(doc, qa_json_get(doc, node, "function"), error);
+        bool same = name && !strcmp(name, analysis.function->name); free(name);
+        if (!same || !scale_number(doc, qa_json_get(doc, node, "entry"), &scale->region.entry, error) ||
+            !scale_number(doc, qa_json_get(doc, node, "exit"), &scale->region.exit, error) ||
+            !scale_number(doc, qa_json_get(doc, node, "damage"), &analysis.damage, error))
+            return reject(error, "QC damage scale differs from its actual compiled damage function");
+    }
+    if (scale->region.entry < (uint32_t)analysis.function->first_statement || scale->region.exit <= scale->region.entry ||
         scale->region.exit >= qa_qc_program_function_end(profile->program, analysis.function))
         return reject(error, "QC damage scale differs from its actual compiled damage function");
     const damage_location *amount = NULL;
@@ -1658,8 +1783,8 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
         if (amount) return reject(error, "QC damage scale requires one actual incoming amount word");
         amount = profile->locations + i;
     }
-    if (!amount || amount->frame_word != analysis.damage || !application_qc_statements_validate(doc,
-        qa_json_get(doc, node, "statements"), profile->program, scale->region.entry, scale->region.exit, error))
+    if (!amount || amount->frame_word != analysis.damage || (node != QA_JSON_NONE && !application_qc_statements_validate(doc,
+        qa_json_get(doc, node, "statements"), profile->program, scale->region.entry, scale->region.exit, error)))
         return reject(error, "QC damage scale result differs from its original typed amount");
     analysis.parameter_end = analysis.function->parameter_start;
     for (uint32_t i = 0; i < analysis.function->parameter_count; ++i) analysis.parameter_end += analysis.function->parameter_sizes[i];
@@ -1696,6 +1821,14 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
             value = (scale_value){.kind = SCALE_SCALAR, .known = true, .constant = global->value.constant.value.number};
         analysis.context[global->definition->offset] = value;
     }
+    if (ok && scale->implicit) {
+        const qa_qc_definition *time = qa_qc_program_find_global(profile->program, "time");
+        analysis.context[time->offset] = (scale_value){.kind = SCALE_SCALAR};
+        if (scale->inflictor) {
+            const qa_qc_definition *deathmatch = qa_qc_program_find_global(profile->program, "deathmatch");
+            analysis.context[deathmatch->offset] = (scale_value){.kind = SCALE_SCALAR};
+        }
+    }
     for (uint32_t pc = (uint32_t)analysis.function->first_statement; ok && pc < scale->region.entry; ++pc) {
         const qa_qc_statement *statement = qa_qc_program_statement(profile->program, pc);
         qa_qc_statement_access access;
@@ -1711,6 +1844,12 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
             for (uint32_t i = 0; ok && i < access.write_count; ++i) analysis.prefix[access.write[i]] = 1;
     }
     if (ok && analysis.prefix[analysis.damage]) ok = reject(error, "QC Source changes amount before its declared scale region");
+    if (ok && scale->implicit) {
+        const qa_qc_definition *time = qa_qc_program_find_global(profile->program, "time");
+        const qa_qc_definition *deathmatch = scale->inflictor ? qa_qc_program_find_global(profile->program, "deathmatch") : NULL;
+        if (analysis.prefix[time->offset] || (deathmatch && analysis.prefix[deathmatch->offset]))
+            ok = reject(error, "QC Source changes live Quad context before its scale region");
+    }
     if (ok) {
         pending[0] = calloc(words, sizeof(**pending));
         if (!pending[0]) ok = application_fail(error, QA_ERROR_MEMORY, "Owning QC scale entry state");
@@ -1718,9 +1857,11 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
             pending[0][analysis.damage] = (scale_value){.kind = SCALE_AMOUNT, .identity = true, .powers = true};
             for (size_t i = 0; i < profile->location_count; ++i) {
                 const damage_location *location = profile->locations + i;
-                if (location->role == QC_INPUT_ATTACKER && location->parameter) {
-                    if (analysis.prefix[location->frame_word]) { ok = reject(error, "QC Source changes attacker before its scale region"); break; }
-                    pending[0][location->frame_word] = (scale_value){.kind = SCALE_ACTOR, .identity = true};
+                if ((location->role == QC_INPUT_ATTACKER ||
+                    (analysis.inflictor && location->role == QC_INPUT_INFLICTOR)) && location->parameter) {
+                    if (analysis.prefix[location->frame_word]) { ok = reject(error, "QC Source changes scale entity before its region"); break; }
+                    pending[0][location->frame_word] = (scale_value){.kind = SCALE_ACTOR,
+                        .identity = location->role == QC_INPUT_ATTACKER};
                 }
             }
         }
@@ -1785,19 +1926,19 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
     if (pending) for (size_t i = 0; i < paths; ++i) free(pending[i]);
     free(pending); free(analysis.written); free(analysis.named); free(analysis.prefix);
     free(analysis.scratch); free(analysis.constants); free(analysis.context);
-    if (ok) { scale->declared = true; scale->transform = analysis.transform; scale->region.replaceable = true; }
+    if (ok) { scale->qualified = true; scale->transform = analysis.transform; scale->region.replaceable = true; }
     return ok;
 }
-bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa_actor_id actor,
-    double amount, double *out, bool *available, qa_error *error)
+bool application_qc_combat_damage_amount(struct application_qc_state *engine, const qa_damage_request *request,
+    double *out, bool *available, qa_error *error)
 {
-    if (!out || !available || !isfinite(amount) || amount < 0)
+    if (!request || !out || !available || !isfinite(request->amount) || request->amount < 0)
         return reject(error, "QC Source amount query requires finite original damage");
-    application_qc_combat *owner = engine->combat; *available = owner && owner->profile->scale.declared;
-    if (!*available) { *out = amount; return true; }
+    application_qc_combat *owner = engine->combat; *available = owner && owner->profile->scale.qualified;
+    if (!*available) { *out = request->amount; return true; }
     if (!held(owner, error)) return false;
     const damage_scale *scale = &owner->profile->scale; qa_qc_instance *vm = engine->provider->state.qc.instance;
-    uint32_t slot = 0; qa_actor_id source_actor = actor;
+    uint32_t slot = 0; qa_actor_id actor = request->attack.attacker, source_actor = actor;
     if (actor.registry) {
         if (!qa_qc_actor_observation_slot(vm, actor, &slot, error)) return false;
         if (!slot) source_actor = (qa_actor_id){0};
@@ -1830,8 +1971,9 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
         ok = qa_qc_global_int(vm, scale->scratch[i], &actual, error);
         if (ok) { saved[i] = (uint32_t)actual; ++staged; }
     }
-    application_qc_inputs inputs = {.self = source_actor, .attacker = source_actor, .inflictor = source_actor,
-        .amount = (float)amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
+    application_qc_inputs inputs = {.self = source_actor, .attacker = source_actor,
+        .inflictor = scale->inflictor ? request->attack.inflictor : source_actor,
+        .amount = (float)request->amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
     if (ok) {
         ++owner->calls;
         ok = application_qc_run_call_region(engine, &owner->profile->damage, &scale->region, &inputs, result, error);
@@ -1853,10 +1995,10 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, qa
     if (!ok && error) *error = first;
     return ok;
 }
-bool application_qc_combat_damage_scale_declared(const struct application_qc_state *engine)
+bool application_qc_combat_damage_scale_available(const struct application_qc_state *engine)
 {
     const application_qc_combat *owner = engine ? engine->combat : NULL;
-    return owner && owner->engine == engine && owner->profile->scale.declared &&
+    return owner && owner->engine == engine && owner->profile->scale.qualified &&
         engine->provider->state.qc.engine == engine && engine->provider->state.qc.instance &&
         engine->provider->state.qc.program == owner->profile->program &&
         engine->provider->state.qc.combat_profile == owner->profile;
