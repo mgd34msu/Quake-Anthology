@@ -328,6 +328,8 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
         (options->translation.size && !options->translation.data) ||
         (options->palette_rgb.size && !options->palette_rgb.data) || options->source_q3)
         return frontend_unified_fail(error, QA_ERROR_ARGUMENT, "Unified model needs its genuine content and retained image request");
+    unified_media_bank *files;
+    if (!bank(owner, content_name, &files, error)) return false;
     if (path[0] == '*') {
         qa_id_index_entry *binding = qa_id_index_find(&owner->inline_index, path_name, 0);
         uint32_t index = binding ? (uint32_t)binding->value : 0;
@@ -339,8 +341,8 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
                 index = index * 10 + (uint32_t)(*p - '0');
             }
         }
-        if (content_name != owner->world_bank->content_name)
-            return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model differs from the offered world content");
+        if (index >= qa_scene_world_model_count(owner->world))
+            return frontend_unified_fail(error, QA_ERROR_FORMAT, "Unified inline model exceeds the offered world model count");
         if (!binding) {
             if (!qa_id_index_reserve(&owner->inline_index, 1, error)) return false;
             qa_id_index_insert(&owner->inline_index, path_name, 0, index);
@@ -348,8 +350,6 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
         *out = (frontend_unified_model){.brush_world = owner->world, .inline_model = index, .is_inline = true};
         return true;
     }
-    unified_media_bank *files;
-    if (!bank(owner, content_name, &files, error)) return false;
     qa_id_index_cursor cursor = qa_id_index_begin(&files->model_index, path_name, family);
     size_t value;
     while (qa_id_index_next(&files->model_index, &cursor, &value)) {
