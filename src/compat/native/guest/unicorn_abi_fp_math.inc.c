@@ -11,6 +11,18 @@ typedef struct qa_unicorn_x87_math_result {
     unsigned exceptions;
     bool rounded_up;
 } qa_unicorn_x87_math_result;
+typedef struct qa_x87_scaled {
+    qa_x87_uint magnitude;
+    int exponent;
+    bool negative, remainder;
+} qa_x87_scaled;
+typedef struct qa_x87_trig_argument {
+    floatx80 source;
+    qa_x87_uint angle;
+    int exponent;
+    unsigned quadrant;
+    bool tiny, reflected;
+} qa_x87_trig_argument;
 
 static const qa_x87_uint qa_x87_scale = {{ 0, 0, 0, 0, 1 }};
 /* floor(pi * 2^256). Intel SDM 1, 8.3.8 defines the internal Pi from its
@@ -218,43 +230,82 @@ static qa_x87_uint qa_x87_series(qa_x87_uint angle, bool cosine)
     return sum;
 }
 
+static qa_x87_trig_argument qa_x87_reduce_trig(floatx80 source)
+{
+    qa_x87_uint coefficient = {{ source.low, 0, 0, 0, 0 }};
+    qa_x87_trig_argument argument = {
+        .source = source, .exponent = qa_x87_operand_exponent(source)
+    };
+    argument.tiny = argument.exponent + 63 - clz64(source.low) <= -128;
+    if (argument.tiny) return argument;
+    qa_x87_uint period = qa_x87_shift(qa_x87_source_pi, 1);
+    qa_x87_divide(qa_x87_widen(qa_x87_shift(coefficient, argument.exponent + 256)),
+        period, &argument.angle);
+    qa_x87_uint half_pi = qa_x87_shift(qa_x87_source_pi, -1);
+    while (qa_x87_compare(argument.angle, half_pi) >= 0) {
+        argument.angle = qa_x87_subtract(argument.angle, half_pi);
+        ++argument.quadrant;
+    }
+    argument.reflected = qa_x87_compare(argument.angle, qa_x87_shift(half_pi, -1)) > 0;
+    if (argument.reflected) argument.angle = qa_x87_subtract(half_pi, argument.angle);
+    argument.angle = qa_x87_divide(qa_x87_multiply(argument.angle, qa_x87_pi),
+        qa_x87_source_pi, NULL);
+    return argument;
+}
+
+static qa_x87_scaled qa_x87_sincos_coefficient(const qa_x87_trig_argument *argument,
+    bool cosine)
+{
+    qa_x87_scaled result = {
+        .exponent = -256, .negative = (argument->source.high & 0x8000) && !cosine
+    };
+    if (argument->tiny) {
+        if (cosine) {
+            const qa_x87_uint one = {{ 1, 0, 0, 0, 0 }};
+            result.magnitude = qa_x87_subtract(qa_x87_scale, one);
+        } else {
+            /* sin(x*pi/Pi) has the sign and scale of x even below Q256. The
+             * cubic term here is below the retained guard precision. */
+            qa_x87_uint coefficient = {{ argument->source.low, 0, 0, 0, 0 }};
+            qa_x87_uint divisor = qa_x87_shift(qa_x87_source_pi, -190), rest;
+            result.magnitude = qa_x87_divide(qa_x87_multiply(coefficient, qa_x87_pi),
+                divisor, &rest);
+            result.exponent = argument->exponent - 190;
+            result.remainder = qa_x87_nonzero(rest);
+        }
+        return result;
+    }
+    result.negative ^= ((argument->quadrant + (cosine ? 1 : 0)) & 2) != 0;
+    bool evaluate_cosine = cosine ^ (argument->quadrant & 1) ^ argument->reflected;
+    result.magnitude = qa_x87_series(argument->angle, evaluate_cosine);
+    return result;
+}
+
 static qa_unicorn_x87_math_result qa_unicorn_x87_sincos(floatx80 source,
     bool cosine, uint16_t control, const float_status *status)
 {
-    qa_x87_uint coefficient = {{ source.low, 0, 0, 0, 0 }};
-    int exponent = qa_x87_operand_exponent(source);
-    bool negative = (source.high & 0x8000) && !cosine;
-    if (exponent + 63 - clz64(source.low) <= -128) {
-        if (cosine) {
-            const qa_x87_uint one = {{ 1, 0, 0, 0, 0 }};
-            return qa_x87_pack(qa_x87_subtract(qa_x87_scale, one), -256,
-                false, false, control, status);
-        }
-        /* sin(x*pi/Pi) has the sign and scale of x even below Q256. The
-         * cubic term here is below the retained guard precision. */
-        qa_x87_uint divisor = qa_x87_shift(qa_x87_source_pi, -190), rest;
-        coefficient = qa_x87_divide(qa_x87_multiply(coefficient, qa_x87_pi), divisor, &rest);
-        return qa_x87_pack(coefficient, exponent - 190, negative,
-            qa_x87_nonzero(rest), control, status);
-    }
+    qa_x87_trig_argument argument = qa_x87_reduce_trig(source);
+    qa_x87_scaled value = qa_x87_sincos_coefficient(&argument, cosine);
+    return qa_x87_pack(value.magnitude, value.exponent, value.negative,
+        value.remainder, control, status);
+}
 
-    qa_x87_uint period = qa_x87_shift(qa_x87_source_pi, 1), angle;
-    qa_x87_divide(qa_x87_widen(qa_x87_shift(coefficient, exponent + 256)), period, &angle);
-    qa_x87_uint half_pi = qa_x87_shift(qa_x87_source_pi, -1);
-    unsigned quadrant = 0;
-    while (qa_x87_compare(angle, half_pi) >= 0) {
-        angle = qa_x87_subtract(angle, half_pi);
-        ++quadrant;
-    }
-    negative ^= ((quadrant + (cosine ? 1 : 0)) & 2) != 0;
-    bool evaluate_cosine = cosine ^ (quadrant & 1);
-    if (qa_x87_compare(angle, qa_x87_shift(half_pi, -1)) > 0) {
-        angle = qa_x87_subtract(half_pi, angle);
-        evaluate_cosine = !evaluate_cosine;
-    }
-    angle = qa_x87_divide(qa_x87_multiply(angle, qa_x87_pi), qa_x87_source_pi, NULL);
-    return qa_x87_pack(qa_x87_series(angle, evaluate_cosine), -256,
-        negative, false, control, status);
+static qa_unicorn_x87_math_result qa_unicorn_x87_tangent(qa_x87_scaled sine,
+    qa_x87_scaled cosine, uint16_t control, const float_status *status)
+{
+    int sine_top = qa_x87_top_bit(sine.magnitude);
+    int cosine_top = qa_x87_top_bit(cosine.magnitude);
+    qa_x87_uint numerator = qa_x87_shift(sine.magnitude, 255 - sine_top);
+    qa_x87_uint denominator = qa_x87_shift(cosine.magnitude, 255 - cosine_top), rest;
+    /* Divide before binary80 rounding, retaining the quotient's exponent.
+     * Near a pole its Q256 representation can exceed the five-limb range.
+     * An admitted nonzero binary80 input cannot equal an odd multiple of
+     * internal Pi/2: that dyadic constant requires 66 significant bits. */
+    qa_x87_uint quotient = qa_x87_divide(qa_x87_multiply(numerator, qa_x87_scale),
+        denominator, &rest);
+    int exponent = sine.exponent - cosine.exponent + sine_top - cosine_top - 256;
+    return qa_x87_pack(quotient, exponent, sine.negative ^ cosine.negative,
+        qa_x87_nonzero(rest) || sine.remainder || cosine.remainder, control, status);
 }
 
 static qa_x87_uint qa_x87_atan_series(qa_x87_uint argument)

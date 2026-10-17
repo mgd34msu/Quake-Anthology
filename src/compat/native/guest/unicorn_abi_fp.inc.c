@@ -27,10 +27,9 @@ static bool qa_unicorn_x87_denormal(floatx80 *source)
     return true;
 }
 
-static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
-    uintptr_t retaddr, bool infinity_invalid, floatx80 *source, float_status *status)
+static qa_unicorn_unary_state qa_unicorn_unary_operand(CPUX86State *env,
+    bool infinity_invalid, floatx80 *source, float_status *status)
 {
-    qa_unicorn_x87_begin(env, retaddr, status);
     bool empty = env->fptags[env->fpstt] != 0;
     *source = ST0;
     bool special = !empty && (floatx80_invalid_encoding(*source) || floatx80_is_any_nan(*source));
@@ -52,6 +51,19 @@ static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
         if (!(env->fpuc & FPUS_DE)) return QA_UNICORN_UNARY_SUPPRESSED;
     }
     return QA_UNICORN_UNARY_READY;
+}
+
+static qa_unicorn_unary_state qa_unicorn_unary_begin(CPUX86State *env,
+    uintptr_t retaddr, bool infinity_invalid, floatx80 *source, float_status *status)
+{
+    qa_unicorn_x87_begin(env, retaddr, status);
+    return qa_unicorn_unary_operand(env, infinity_invalid, source, status);
+}
+
+static bool qa_unicorn_trig_outside(floatx80 source)
+{
+    unsigned exponent = source.high & 0x7fff;
+    return exponent >= 0x403e && exponent < 0x7fff && !floatx80_invalid_encoding(source);
 }
 
 static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr)
@@ -82,8 +94,7 @@ static void qa_unicorn_trig(CPUX86State *env, bool cosine, uintptr_t retaddr)
         env->fpus &= ~0x400;
         return;
     }
-    const floatx80 limit = make_floatx80(0x403e, UINT64_C(0x8000000000000000));
-    if (floatx80_le_quiet(limit, floatx80_abs(source), &status)) {
+    if (qa_unicorn_trig_outside(source)) {
         env->fpus |= 0x400;
         return;
     }
@@ -97,6 +108,62 @@ static void qa_unicorn_trig(CPUX86State *env, bool cosine, uintptr_t retaddr)
     ST0 = result.value;
     if (result.rounded_up) env->fpus |= 0x200;
     fpu_set_exception(env, result.exceptions);
+}
+
+static void qa_unicorn_trig_push(CPUX86State *env, bool tangent, uintptr_t retaddr)
+{
+    float_status status;
+    qa_unicorn_x87_begin(env, retaddr, &status);
+    floatx80 source = ST0;
+    bool empty = env->fptags[env->fpstt] != 0;
+    if (!empty && qa_unicorn_trig_outside(source)) {
+        env->fpus |= 0x400;
+        return;
+    }
+    unsigned pushed = (env->fpstt - 1) & 7;
+    bool overflow = env->fptags[pushed] == 0;
+    if (empty || overflow) {
+        env->fpus |= FPUS_SF;
+        if (!empty) env->fpus |= 0x200;
+        fpu_set_exception(env, FPUS_IE);
+        if (!(env->fpuc & FPUS_IE)) return;
+        ST0 = floatx80_default_nan(&status);
+        env->fptags[env->fpstt] = 0;
+        fpush(env);
+        ST0 = floatx80_default_nan(&status);
+        env->fpus &= ~0x400;
+        return;
+    }
+    qa_unicorn_unary_state input = qa_unicorn_unary_operand(env, true, &source, &status);
+    if (input == QA_UNICORN_UNARY_SUPPRESSED) return;
+    env->fpus &= ~0x400;
+    qa_unicorn_x87_math_result first_result = { 0 }, pushed_result = { 0 };
+    if (input == QA_UNICORN_UNARY_HANDLED) {
+        first_result.value = ST0;
+        pushed_result.value = tangent ? int32_to_floatx80(1, &status) : ST0;
+    } else if (floatx80_is_zero(source)) {
+        first_result.value = source;
+        pushed_result.value = int32_to_floatx80(1, &status);
+    } else {
+        qa_x87_trig_argument argument = qa_x87_reduce_trig(source);
+        qa_x87_scaled first = qa_x87_sincos_coefficient(&argument, false);
+        qa_x87_scaled second = qa_x87_sincos_coefficient(&argument, true);
+        if (tangent) {
+            first_result = qa_unicorn_x87_tangent(first, second, env->fpuc, &status);
+            pushed_result.value = int32_to_floatx80(1, &status);
+        } else {
+            first_result = qa_x87_pack(first.magnitude, first.exponent, first.negative,
+                first.remainder, env->fpuc, &status);
+            pushed_result = qa_x87_pack(second.magnitude, second.exponent, second.negative,
+                second.remainder, env->fpuc, &status);
+        }
+    }
+    ST0 = first_result.value;
+    fpush(env);
+    ST0 = pushed_result.value;
+    if (tangent ? first_result.rounded_up : pushed_result.rounded_up) env->fpus |= 0x200;
+    unsigned exceptions = first_result.exceptions | pushed_result.exceptions;
+    if (exceptions) fpu_set_exception(env, exceptions);
 }
 
 static void qa_unicorn_fpatan(CPUX86State *env, uintptr_t retaddr)

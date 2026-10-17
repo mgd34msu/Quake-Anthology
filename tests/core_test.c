@@ -9632,7 +9632,8 @@ static void test_native_x87_unary_status(void)
     const uint64_t entry = UINT64_C(0x100000);
     const uint8_t code[] = {0xd9,0xfc, 0xdf,0xe0, 0x9b, 0xdb,0xe2, 0x9b, 0x90,
         [16]=0xd9,0xfe, 0xdf,0xe0, 0x9b, [32]=0xd9,0xff, 0xdf,0xe0, 0x9b,
-        [48]=0xd9,0xf3, 0xdf,0xe0, 0x9b};
+        [48]=0xd9,0xf3, 0xdf,0xe0, 0x9b, [64]=0xd9,0xfb, 0xdf,0xe0, 0x9b,
+        [80]=0xd9,0xf2, 0xdf,0xe0, 0x9b};
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
@@ -9843,6 +9844,105 @@ static void test_native_x87_unary_status(void)
         CHECK((cpu.fp_status&0x80ff)==(denormal?0x8082:0x8081));
         CHECK(qa_native_guest_run(guest,entry+52,entry+53,32,32,&result,&error));
         CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+    }
+    /* Paired trig instructions use the same binary80 coefficients and push once. */
+    const struct {
+        uint64_t input, first[4], pushed[4];
+        uint16_t exponent, first_exponent[4], pushed_exponent[4];
+        unsigned offset;
+    } paired[] = {
+        {UINT64_C(0x8000000000000000),
+            {UINT64_C(0xd76aa47848677021),UINT64_C(0xd76aa47848677020),UINT64_C(0xd76aa47848677021),UINT64_C(0xd76aa47848677020)},
+            {UINT64_C(0x8a51407da8345c92),UINT64_C(0x8a51407da8345c91),UINT64_C(0x8a51407da8345c92),UINT64_C(0x8a51407da8345c91)},
+            0x3fff,{0x3ffe,0x3ffe,0x3ffe,0x3ffe},{0x3ffe,0x3ffe,0x3ffe,0x3ffe},64},
+        {UINT64_C(0x8000000000000000),
+            {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000)},
+            {UINT64_C(0x8000000000000000),UINT64_MAX,UINT64_C(0x8000000000000000),UINT64_MAX},
+            0x3b4f,{0x3b4f,0x3b4f,0x3b4f,0x3b4f},{0x3fff,0x3ffe,0x3fff,0x3ffe},64},
+        {UINT64_C(0xc90fdaa22168c235),
+            {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_MAX,UINT64_MAX},
+            {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000)},
+            0x3fff,{0xc040,0xc040,0xc03f,0xc03f},{0x3fff,0x3fff,0x3fff,0x3fff},80},
+    };
+    for (size_t p=0;p<sizeof(precision_control)/sizeof(*precision_control);++p)
+        for (unsigned rounding=0;rounding<4;++rounding)
+            for (size_t i=0;i<sizeof(paired)/sizeof(*paired);++i) {
+                cpu=initial;cpu.fp_control=(uint16_t)(0x007f|precision_control[p]|(rounding<<10));
+                cpu.fp_tags=0xfffc;cpu.fp_status=0x0600;
+                cpu.fp_mantissa[0]=paired[i].input;cpu.fp_exponent[0]=paired[i].exponent;
+                uint64_t instruction=entry+paired[i].offset;
+                CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+                CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+                CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+                CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+                CHECK(((cpu.fp_status>>11)&7u)==7 && !(cpu.fp_status&0x0401));
+                CHECK(cpu.fp_mantissa[0]==paired[i].first[rounding] &&
+                    cpu.fp_exponent[0]==paired[i].first_exponent[rounding]);
+                CHECK(cpu.fp_mantissa[7]==paired[i].pushed[rounding] &&
+                    cpu.fp_exponent[7]==paired[i].pushed_exponent[rounding]);
+                CHECK((cpu.fp_status&0x20) && (cpu.registers[QA_NATIVE_RAX]&0xffff)==cpu.fp_status);
+            }
+    for (unsigned op=0;op<2;++op) {
+        uint64_t instruction=entry+64+op*16;
+        for (unsigned negative=0;negative<2;++negative) {
+            cpu=initial;cpu.fp_control=0x037f;cpu.fp_tags=0xfffd;
+            cpu.fp_mantissa[0]=0;cpu.fp_exponent[0]=(uint16_t)(negative<<15);
+            CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+            CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+            CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+            CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+            CHECK(((cpu.fp_status>>11)&7u)==7 && !(cpu.fp_status&0x86ff));
+            CHECK(cpu.fp_mantissa[0]==0 && cpu.fp_exponent[0]==(negative<<15));
+            CHECK(cpu.fp_mantissa[7]==UINT64_C(0x8000000000000000) && cpu.fp_exponent[7]==0x3fff);
+        }
+        /* The range test leaves a full stack untouched, without a stack fault. */
+        cpu=initial;cpu.fp_control=0x037f;cpu.fp_tags=0;cpu.fp_status=0x0200;
+        for(unsigned slot=0;slot<8;++slot) {cpu.fp_mantissa[slot]=UINT64_C(0x8000000000000000);cpu.fp_exponent[slot]=0x3fff;}
+        cpu.fp_mantissa[0]=UINT64_C(0x8000000000000000);cpu.fp_exponent[0]=0x403e;
+        CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+        CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+        CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+        CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+        CHECK(cpu.fp_tags==0 && cpu.fp_status==0x0400 &&
+            cpu.fp_mantissa[0]==UINT64_C(0x8000000000000000) && cpu.fp_exponent[0]==0x403e);
+        for (unsigned masked=0;masked<2;++masked) {
+            cpu=initial;cpu.control[0]|=UINT64_C(0x20);
+            cpu.fp_control=(uint16_t)(masked?0x037f:0x037e);cpu.fp_tags=0;
+            for(unsigned slot=0;slot<8;++slot) {cpu.fp_mantissa[slot]=UINT64_C(0x8000000000000000);cpu.fp_exponent[slot]=0x3fff;}
+            cpu.fp_mantissa[0]=UINT64_C(0x8000000000000000);cpu.fp_exponent[0]=0x3fff;
+            cpu.fp_mantissa[7]=UINT64_C(0xc000000000000000);cpu.fp_exponent[7]=0x4000;
+            CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+            CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+            CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+            CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+            CHECK((cpu.fp_status&0x86ff)==(masked?0x0241:0x82c1));
+            CHECK(((cpu.fp_status>>11)&7u)==(masked?7u:0u));
+            CHECK(cpu.fp_mantissa[0]==(masked?UINT64_C(0xc000000000000000):UINT64_C(0x8000000000000000)));
+            CHECK(cpu.fp_exponent[0]==(masked?0xffff:0x3fff));
+            if(masked) CHECK(cpu.fp_mantissa[7]==UINT64_C(0xc000000000000000) && cpu.fp_exponent[7]==0xffff);
+            else {
+                CHECK(cpu.fp_mantissa[7]==UINT64_C(0xc000000000000000) && cpu.fp_exponent[7]==0x4000);
+                CHECK(qa_native_guest_run(guest,instruction+4,instruction+5,32,32,&result,&error));
+                CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+            }
+        }
+        /* An unmasked operand exception must not publish or push either result. */
+        for(unsigned denormal=0;denormal<2;++denormal) {
+            cpu=initial;cpu.control[0]|=UINT64_C(0x20);cpu.fp_tags=0xfffe;
+            cpu.fp_control=(uint16_t)(denormal?0x037d:0x037e);
+            cpu.fp_mantissa[0]=denormal?1:UINT64_C(0x8000000000000001);
+            cpu.fp_exponent[0]=denormal?0:0x7fff;
+            CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+            CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+            CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
+            CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+            CHECK(!(cpu.fp_status&0x3800) && cpu.fp_tags==0xfffe);
+            CHECK(cpu.fp_mantissa[0]==(denormal?1:UINT64_C(0x8000000000000001)) &&
+                cpu.fp_exponent[0]==(denormal?0:0x7fff));
+            CHECK((cpu.fp_status&0x80ff)==(denormal?0x8082:0x8081));
+            CHECK(qa_native_guest_run(guest,instruction+4,instruction+5,32,32,&result,&error));
+            CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+        }
     }
     CHECK(qa_native_guest_destroy(&guest, &error));
 }
