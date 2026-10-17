@@ -2016,7 +2016,15 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
         ok = qa_application_network_local_bind(n->frontend->application, connection, peer->seat, application_seat, error) &&
             qa_application_player_actor(n->frontend->application, application_seat, &actor);
         if (ok) ok = qa_application_network_q3_userinfo(n->frontend->application, actor, request->userinfo, error);
-    } else if (ok) ok = qa_application_remote_player_attach(n->frontend->application, &player, &actor, error);
+    } else if (ok) {
+        qa_application_player_admission admission;
+        ok = qa_application_remote_player_attach(n->frontend->application, &player, &admission, error);
+        if (ok && !admission.accepted) {
+            snprintf(rejection, 1024, "%.1023s", admission.reason);
+            return qa_network_detach(n->runtime, peer->client, admission.reason, error);
+        }
+        if (ok) actor = admission.actor;
+    }
     if (ok) ok = qa_application_network_q3_world(n->frontend->application, actor, n->q3_server_id,
         n->q3_restarted_server_id, n->q3_checksum_feed, &peer->world, error);
     if (ok) ok = frontend_q3_packages_prepare(n->q3_packages, false, error);
@@ -5111,8 +5119,8 @@ bool frontend_network_rebuild_ready(const qa_frontend *candidate,const qa_fronte
 
 static qa_net_send_result detached_send(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
 {
-    (void)context; (void)to; (void)bytes;
-    return frontend_fail(error, QA_ERROR_ARGUMENT, "detached network candidate has no published transport");
+    (void)context; (void)to; (void)bytes; (void)error;
+    return QA_NET_SEND_FULL;
 }
 static bool detached_collect(void *context, uint64_t now, qa_net_transport_event *event, qa_error *error)
 { (void)context; (void)now; (void)error; *event = (qa_net_transport_event){0}; return true; }
@@ -5559,7 +5567,7 @@ bool frontend_network_component_drop(void *context,qa_actor_owner component,
 {
     qa_frontend *f=context; qa_frontend_network *n=f?f->network:NULL;
     if(!f || !component || !actor.registry || !reason ||
-        (n && (n->busy || n->detached_transport || !qa_network_callbacks_idle(n->runtime))))
+        (n && (n->busy || !qa_network_callbacks_idle(n->runtime))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Component drop requires its returned real transport owner");
     const qa_net_client *destination=NULL;
     uint32_t cursor=0; const qa_net_client *client;
@@ -5573,14 +5581,7 @@ bool frontend_network_component_drop(void *context,qa_actor_owner component,
             destination=client;
         }
     }
-    if(!destination) {
-        for(uint32_t i=0;i<f->options.seats;++i) {
-            uint32_t authored; qa_actor_id actual;
-            if(frontend_seat_launch_id_read(f,i,&authored) && qa_application_player_actor(f->application,authored,&actual) &&
-                qa_actor_id_equal(actual,actor)) return true;
-        }
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Component player has no retained local or remote transport binding");
-    }
+    if(!destination) return true;
     switch(destination->protocol.kind) {
     case QA_NET_UNIFIED_1:
         return n->unified && frontend_network_unified_close(n->unified,destination->id,reason,error);
@@ -5590,7 +5591,7 @@ bool frontend_network_component_drop(void *context,qa_actor_owner component,
         return qa_network_qw_server_drop(n->runtime,destination->id,reason,error);
     case QA_NET_Q2_34: case QA_NET_R1Q2_35: case QA_NET_Q2PRO_36: case QA_NET_Q2REPRO_1038:
     case QA_NET_Q2PRIVATE_4038: case QA_NET_Q2KEX_2023: case QA_NET_Q2KEX_DEMO_2022:
-        return qa_network_q2_server_drop(n->runtime,destination->id,reason,f->wall_time_ns,error);
+        return qa_network_q2_server_request_drop(n->runtime,destination->id,reason,error);
     case QA_NET_Q3_68:
         for(size_t i=0;i<64;++i) {
             frontend_q3_peer *peer=n->q3_peers+i;

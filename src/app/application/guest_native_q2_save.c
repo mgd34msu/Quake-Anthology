@@ -123,13 +123,11 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
          !application_native_q2_inventory_scanner_finish_restore(engine->inventory_scanner,error)||
          !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error))) return false;
     bool ok=application_native_q2_inventory_finish(provider, error) &&
-        (!engine->restore_record.data || application_native_q2_clients_reconnect(provider, error)) &&
         (!engine->map_ready || (application_native_q2_callbacks_validate(engine,error) &&
         application_native_q2_stages_prepare(engine,error) &&
         application_native_q2_client_outputs_finish_restore(engine,error) &&
         application_native_q2_callbacks_register(engine,error)));
     if(ok)ok=qa_native_observers_restore_ready(qa_native_host_instance(provider->state.native.host),error);
-    if(ok)engine->restore_record=(qa_bytes){0};
     return ok;
 }
 

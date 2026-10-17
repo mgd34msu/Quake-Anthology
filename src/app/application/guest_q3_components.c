@@ -223,9 +223,14 @@ bool application_q3_components_initialize(application_q3_components *owner,qa_er
 }
 bool application_q3_components_idle(const application_q3_components *owner)
 {
+    return application_q3_components_returned(owner)&&
+        (!owner||application_q3_component_client_adapter_idle(owner->clients_adapter));
+}
+bool application_q3_components_returned(const application_q3_components *owner)
+{
     if(!owner) return true;
     if(owner->video&&!owner->video_entering) return false;
-    if(!application_q3_component_client_adapter_idle(owner->clients_adapter)) return false;
+    if(!application_q3_component_client_adapter_returned(owner->clients_adapter)) return false;
     for(size_t i=0;i<owner->count;++i) if(owner->rows[i]&&(!q3components_scenes_idle(owner->rows[i])||(owner->rows[i]->publication.game&&!application_q3_component_idle(owner->rows[i]->publication.game)))) return false;
     return true;
 }

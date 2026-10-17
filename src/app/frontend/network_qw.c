@@ -615,10 +615,18 @@ static bool connect_source(void *context, const qa_qw_connect_request *request,
             .application_seat = peer->seat.index, .source_slot = (uint32_t)index + 1,
             .name = name ? name : "unnamed", .team = team ? team : "", .skin = skin ? skin : "",
             .userinfo = info, .spectator = request->spectator, .defer_source_begin = true};
+        qa_application_player_admission admission = {.accepted = true};
         ok = local_player ? qa_application_network_local_bind(host->frontend->application,
             qa_net_connections_get(qa_network_connections(host->runtime), peer->client), peer->seat, application_seat, error) &&
             qa_application_network_qw_userinfo(host->frontend->application, actor, info, error) :
-            qa_application_remote_player_attach(host->frontend->application, &player, &actor, error);
+            qa_application_remote_player_attach(host->frontend->application, &player, &admission, error);
+        if (ok && !admission.accepted) {
+            snprintf(host->admission_reason,sizeof(host->admission_reason),"%s",admission.reason);
+            bool detached = qa_network_detach(host->runtime,peer->client,host->admission_reason,error);
+            qa_qw_info_free(&parsed);
+            *out = (qa_q1_connect_result){.decision = QA_Q1_CONNECT_REJECT,.reason = host->admission_reason};
+            return detached;
+        }
         ok = ok && peer_actor(peer, &actor, error) &&
             qa_network_qw_server_baselines(host->runtime, peer->client, host->baselines, host->baseline_count, error);
         if (!ok) {

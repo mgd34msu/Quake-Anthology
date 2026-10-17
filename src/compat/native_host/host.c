@@ -873,7 +873,7 @@ bool qa_native_host_client_connect_userinfo(qa_native_host *host,
                                                             : result.as.u8 != 0;
     if (ok) ok = qa_native_read_string(host->instance, userinfo,
         host->profile == QA_NATIVE_Q2_GAME_API2023 ? 2048u : 512u, returned, error);
-    if (!ok || !*accepted)
+    if (!ok)
         retain_client(host, request->slot, false, NULL);
     native_host_temporary_free(host, social);
     native_host_temporary_free(host, userinfo);

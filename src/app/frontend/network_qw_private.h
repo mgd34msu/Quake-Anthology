@@ -49,6 +49,7 @@ struct frontend_qw_host {
     qa_application_event_subscription commands;
     bool previous_pause, action_active;
     unsigned busy;
+    char admission_reason[2048];
 };
 qa_network_qw_server_hooks frontend_qw_peer_hooks(qw_frontend_peer *);
 #endif

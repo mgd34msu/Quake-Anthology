@@ -341,9 +341,10 @@ static bool server_continue(qa_network_q2_bootstrap *owner, uint64_t now, qa_err
             ok = same_connection(&claim.connection, &pending.from, &pending.request) && same_channel(&claim.policy.channel, &pending.request, true);
             if (!ok) q2_fail(error, QA_ERROR_ARGUMENT, "Q2 Source host claim differs from authenticated wire admission");
             if (ok) ok = qa_network_attach_q2_server(owner->runtime, &claim.connection, &claim.policy, &claim.hooks, now, &id, error);
-            if (ok) ok = hooks->committed(hooks->context, &claim, id, error);
-            if (ok) ok = qa_network_q2_server_userinfo(owner->runtime, id, pending.request.userinfo, error);
-            if (ok) ok = acceptance(owner, &pending.from, pending.request.protocol, error);
+            if (ok) ok = hooks->committed(hooks->context, &claim, id, &allowed, reason, error);
+            if (ok && !allowed) ok = refusal(owner, &pending.from, *reason ? reason : "Connection refused.", error);
+            if (ok && allowed) ok = qa_network_q2_server_userinfo(owner->runtime, id, pending.request.userinfo, error);
+            if (ok && allowed) ok = acceptance(owner, &pending.from, pending.request.protocol, error);
         }
         if (!ok || !allowed) {
             qa_error cleanup = {0};

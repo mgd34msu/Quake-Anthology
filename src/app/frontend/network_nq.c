@@ -546,9 +546,16 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
         .application_seat = peer->seat.index, .source_slot = slot, .name = "unconnected",
         .team = "", .skin = "", .userinfo = source.source_board_events ? "\\language\\english" : "",
         .defer_source_begin = true};
+    qa_application_player_admission admission = {.accepted = true};
     bool attached = local_player ? qa_application_network_local_bind(host->frontend->application,
         qa_net_connections_get(qa_network_connections(host->runtime), peer->client), peer->seat, application_seat, error) :
-        qa_application_remote_player_attach(host->frontend->application, &player, &actor, error);
+        qa_application_remote_player_attach(host->frontend->application, &player, &admission, error);
+    if (attached && !admission.accepted) {
+        snprintf(host->admission_reason,sizeof(host->admission_reason),"%s",admission.reason);
+        if (!qa_network_detach(host->runtime,peer->client,host->admission_reason,error)) return false;
+        *out = (qa_q1_connect_result){.decision = QA_Q1_CONNECT_REJECT,.reason = host->admission_reason};
+        return true;
+    }
     if (!attached ||
         !peer_actor(peer, &actor, error) || !qa_network_nq_server_start(host->runtime, peer->client, error)) {
         qa_error first = error ? *error : (qa_error){0};

@@ -13,6 +13,7 @@
 #include "guest_qc_item_weapons.h"
 #include "guest_q3_restart.h"
 #include "guest_q3_components.h"
+#include "guest_q3_component_clients.h"
 #include "q3_round.h"
 #include "q3_world_restart.h"
 #include "control_frame.h"
@@ -131,7 +132,6 @@ static application_player_record *physical_player(qa_application *app,
         return NULL;
     }
     application_player_record *actual=application_player_record_find(roster,actor);
-    if(actual && actual->retiring) actual=NULL;
     if (!actual)
         application_fail(error, QA_ERROR_ARGUMENT, "Component lost its physical player roster row");
     return actual;
@@ -141,7 +141,7 @@ static const application_player_record *component_player(qa_application *app,
     struct application_player_roster *roster, qa_actor_id actor, qa_error *error)
 {
     const application_player_record *actual = physical_player(app, roster, actor, error);
-    if (actual && (actual->deferred || actual->source_begin_pending)) {
+    if (actual && (actual->retiring || actual->deferred || actual->source_begin_pending)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Component admission precedes actual player Begin");
         return NULL;
     }
@@ -2789,6 +2789,15 @@ static bool q2_admission_userinfo(qa_application *app, application_provider *sou
     return okay;
 }
 
+static bool reject_player(qa_application *app,application_provider *provider,
+    application_player_record *record,const char *reason,bool *accepted,const char **denial,qa_error *error)
+{
+    const char *retained;
+    if(!application_clients_reject(app,provider->owner,record->actor,reason,&retained,error))return false;
+    if(accepted)*accepted=false;
+    if(denial)*denial=retained;
+    return true;
+}
 static bool publish_player(qa_application *application, const qa_launch_choices *choices,
                            const qa_launch_seat *seat, application_player_record *record,
                            const application_player_carry *carry, size_t ordinal,
@@ -3074,31 +3083,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     !round && !carry->q3_client, application_player_identity(record)->bot, &accepted, &reason, error))
                 return false;
             if (!reserved_player && !accepted) {
-                qa_actor_id dropped;
-                const char *drop_reason;
-                bool pending;
-                if (!application_native_q3_wire_drop_client_read(map_source, record->client_slot,
-                        &dropped, &drop_reason, &pending, error)) return false;
-                if (pending) {
-                    if (!qa_actor_id_equal(dropped, actor) ||
-                        !application_native_q3_clients_drain(application, error)) return false;
-                } else {
-                    application_native_q3_wire_client_view client;
-                    bool present;
-                    if (!application_native_q3_wire_client_admission_read(map_source,
-                            record->client_slot, &client, &present, error)) return false;
-                    if (present && (!qa_actor_id_equal(client.actor, actor) ||
-                        !application_native_q3_wire_disconnect(map_source, record->client_slot, error)))
-                        return false;
-                    if (!qa_session_release(application->session, actor, error)) return false;
-                }
-                qa_actor_index_remove(&application->players->actors, record->actor);
-                record->actor = (qa_actor_id){0};
-                record->player = NULL;
-                record->retiring = true;
-                if (round_accepted) *round_accepted = false;
-                if (denial) *denial = reason;
-                return round_accepted != NULL || application_fail(error, QA_ERROR_ARGUMENT, reason);
+                return reject_player(application,map_source,record,reason,round_accepted,denial,error);
             }
             if (defer_source_begin)
                 record->source_begin_pending = true;
@@ -3122,7 +3107,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!reserved_player && !qa_q2_player_connect(character->state.q2, source_info, seat->bot, &connection, error))
                 return false;
             if (!reserved_player && !connection.allowed)
-                return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
+                return reject_player(application,character,record,connection.reason,round_accepted,denial,error);
             qa_q2_player_carry q2 = carry->q2;
             q2.inventory = carry->inventory;
             q2.count = carry->count;
@@ -3183,8 +3168,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                         return false;
                     if (round_accepted) *round_accepted = accepted;
                     if (!accepted) {
-                        record->retiring = true;
-                        return true;
+                        const char *reason;
+                        if(!application_q3_guest_round_denial_read(provider,record->source_slot,&reason,error))return false;
+                        return reject_player(application,provider,record,reason,round_accepted,denial,error);
                     }
                     continue;
                 }
@@ -3202,7 +3188,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                                                           !continued && !replaced, seat->bot, &accepted, error))
                     return false;
                 if (!accepted)
-                    return application_fail(error, QA_ERROR_ARGUMENT, "selected Q3 guest rejected a client");
+                    return reject_player(application,provider,record,NULL,round_accepted,denial,error);
                 if (replaced &&
                     !application_q3_guest_client_carry(provider, record->client_slot,
                         actor, &carry->q3_command, error)) return false;
@@ -3227,8 +3213,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     "", seat->bot, &accepted, error))
                     return false;
                 if (!accepted)
-                    return application_fail(error, QA_ERROR_ARGUMENT,
-                                            "selected native Q2 guest rejected a client");
+                    return reject_player(application,provider,record,NULL,round_accepted,denial,error);
                 if (defer_source_begin) record->source_begin_pending = true;
                 else if (!application_native_q2_client_begin(provider,
                                                              record->client_slot + 1, error))
@@ -3455,13 +3440,14 @@ bool application_players_publish(qa_application *application,
             continue;
         if (application_player_identity(record)->bot && travel->carry[i].q3_client)
             record->source_begin_pending = false;
+        bool accepted;const char *denial;
         if (!publish_player(application, choices, &travel->seats[i],
                             &application->players->records[i], &travel->carry[i], i,
                             travel->carry_players, travel->new_unit,
                             travel->has_landmark ? &travel->landmark : NULL,
                             application->players->records[i].source_begin_pending,
                             PLAYER_ADMISSION_COMPLETE,
-                            NULL, NULL, NULL, error))
+                            NULL, &accepted, &denial, error))
             return false;
     }
     for (size_t i = 0; i < application->mode_count; ++i) {
@@ -3472,7 +3458,7 @@ bool application_players_publish(qa_application *application,
             return false;
     }
     ++application->players->revision;
-    return true;
+    return application_q3_components_drain(application->components,error);
 }
 
 struct application_q3_round_players {
@@ -3728,7 +3714,7 @@ bool application_q3_round_players_finish(qa_application *app,
     if (!cut || cut->admitted != cut->travel->count || app->players != cut->installed ||
         cut->installed->map_provider != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round has unfinished client admission");
-    return true;
+    return application_q3_components_drain(app->components,error);
 }
 
 bool application_players_advance(qa_application *application, qa_error *error)
@@ -3868,11 +3854,19 @@ static bool disconnect_provider(qa_application *app,application_provider *source
     }
     else if(provider==source&&provider->kind==APPLICATION_PROVIDER_Q3)
         okay=application_native_q3_client_disconnect(provider,actor,error);
-    else if(provider->kind==APPLICATION_PROVIDER_Q2)
-        okay=qa_q2_player_disconnect(provider->state.q2,actor,error);
+    else if(provider->kind==APPLICATION_PROVIDER_Q2) {
+        qa_builtin_player_info info;
+        if(qa_q2_player_projection(provider->state.q2,actor,NULL,&info)&&info.connected)
+            okay=qa_q2_player_disconnect(provider->state.q2,actor,error);
+    }
     else if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
         okay=application_native_q2_actor_disconnect(provider,actor,error);
+    else if(provider->kind==APPLICATION_PROVIDER_QC)
+        okay=application_qc_disconnect_player(provider,actor,error);
+    else if(q3g_engine(provider))
+        okay=application_q3_guest_client_disconnect(provider,client_slot,error);
     if(!okay) return false;
+    if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     record=physical_player(app,roster,actor,error);
     return record&&roster->map_provider==source&&app->publication_generation==generation&&
         record->character==character&&record->client_slot==client_slot&&record->source_slot==source_slot ? true:
@@ -3908,6 +3902,10 @@ static bool retire_player(qa_application *app,application_provider *source,
     uint32_t client_slot=found->client_slot,source_slot=found->source_slot;
     application_provider *character=found->character;
     uint64_t generation=app->publication_generation;
+    if(!qa_actors_get(qa_session_actors(app->session),actor)) {
+        qa_actor_index_remove(&roster->actors,actor);record_free(roster,found);found->dynamic=true;
+        ++roster->revision;return true;
+    }
     if(!application_client_declared_disconnect(app,actor,error)) return false;
     found=physical_player(app,roster,actor,error);
     if(!found||roster->map_provider!=source||app->publication_generation!=generation||
@@ -3949,7 +3947,7 @@ bool application_players_native_q3_retire(qa_application *app,
         application_world_provider(app, QA_ROLE_ENTITIES, "") != provider ||
         !qa_session_safe(app->session) ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
-         app->operation != APPLICATION_CONFIGURING))
+         app->operation != APPLICATION_CONFIGURING && app->operation != APPLICATION_PERSISTING))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 client retirement has no completed private source cut");
     uint32_t source_slot;
     qa_q3_native_client client;
@@ -4052,7 +4050,8 @@ bool qa_application_remote_player_actor(const qa_application *application,
                                          qa_net_client_id client, qa_net_seat_id seat,
                                          qa_actor_id *out)
 {
-    const application_player_record *record = application_players_connection_read(application, client, seat);
+    const application_player_record *record = application_player_record_remote(
+        application?application->players:NULL,client,seat,true);
     if (!record || !out || !application->session ||
         !qa_actors_get(qa_session_actors(application->session), record->actor)) return false;
     *out = record->actor;
@@ -4387,7 +4386,7 @@ static bool player_source_slot(qa_application *application, application_provider
 }
 
 static bool player_attach(qa_application *application,
-    const player_admission_request *request, qa_actor_id *out, qa_error *error)
+    const player_admission_request *request, qa_application_player_admission *out, qa_error *error)
 {
     if (application == NULL || request == NULL || out == NULL || request->seat == NULL || request->seat->name == NULL ||
         application->players == NULL || application->operation != APPLICATION_IDLE ||
@@ -4396,7 +4395,7 @@ static bool player_attach(qa_application *application,
         application->session == NULL || !qa_session_safe(application->session) ||
         application->state == QA_APPLICATION_FAULTED || application->state == QA_APPLICATION_STOPPING)
         return application_fail(error, QA_ERROR_ARGUMENT, "player admission requires an idle active player roster");
-    *out = (qa_actor_id){0};
+    *out = (qa_application_player_admission){0};
     for (size_t i = 0; i < application->players->count; ++i) {
         const application_player_record *record = &application->players->records[i];
         if (record->retiring) continue;
@@ -4419,15 +4418,13 @@ static bool player_attach(qa_application *application,
         bool allowed;
         if (!application_native_q1_qw_admission(application, seat->spectator, &allowed, error))
             return false;
-        if (!allowed)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+        if (!allowed){snprintf(out->reason,sizeof(out->reason),"Server is full");return true;}
     }
     uint32_t client_slot;
     bool available;
     if (!player_source_slot(application,source,character,request->source_slot,&client_slot,&available,error))
         return false;
-    if (!available)
-        return application_fail(error,QA_ERROR_MEMORY,"player source client capacity is exhausted");
+    if (!available){snprintf(out->reason,sizeof(out->reason),"Server is full");return true;}
     uint32_t source_slot=client_slot+(character->component.clock.kind==QA_RULESET_Q3?0u:1u);
     application_player_record record = {.pending_identity = {.spectator = seat->spectator, .bot = seat->bot}, .seat = seat->id, .configured_actor = seat->actor, .client_slot = client_slot,
         .source_slot = source_slot, .character = character, .remote_client = request->client,
@@ -4455,14 +4452,13 @@ static bool player_attach(qa_application *application,
         application_fault(application, error);
         return false;
     }
-    if (!accepted)
-        return application_fail(error, QA_ERROR_ARGUMENT, denial);
-    *out = application->players->records[index].actor;
+    if (!accepted){snprintf(out->reason,sizeof(out->reason),"%s",denial?denial:"Connection refused");return true;}
+    out->accepted=true;out->actor=application->players->records[index].actor;
     return true;
 }
 
 bool qa_application_remote_player_attach(qa_application *application,
-    const qa_application_remote_player_request *request, qa_actor_id *out, qa_error *error)
+    const qa_application_remote_player_request *request, qa_application_player_admission *out, qa_error *error)
 {
     if (!request)
         return application_fail(error, QA_ERROR_ARGUMENT, "remote admission needs its actual request");
@@ -4509,7 +4505,7 @@ bool qa_application_local_player_available(qa_application *application, uint32_t
 }
 
 bool qa_application_local_player_attach(qa_application *application, uint32_t logical_seat,
-    const char *userinfo, const char *skin, qa_actor_id *out, qa_error *error)
+    const char *userinfo, const char *skin, qa_application_player_admission *out, qa_error *error)
 {
     const qa_launch_choices *choices = application
         ? qa_launch_snapshot_choices(qa_application_launch(application)) : NULL;
@@ -4558,9 +4554,10 @@ static bool player_detach(qa_application *application, size_t index, qa_error *e
 bool qa_application_remote_player_detach(qa_application *application,
     qa_net_client_id client, qa_net_seat_id seat, qa_error *error)
 {
-    if (!player_detach_ready(application, error)) return false;
+    if(!application)return player_detach_ready(application,error);
     application_player_record *record=application_player_record_remote(application->players,client,seat,true);
-    return !record || !record->remote || player_detach(application,
+    if(!record||!record->remote||(record->retiring&&application->state!=QA_APPLICATION_FAULTED))return true;
+    return player_detach_ready(application,error)&&player_detach(application,
         (size_t)(record-application->players->records),error);
 }
 

@@ -41,7 +41,6 @@ static bool guests_idle(const qa_application *application,
     if (!application_control_frames_idle(application) || !application_rankings_idle(application) ||
         !application_supplies_idle(application->supplies) ||
         !application_q3_mod_operations_idle(application->mod_operations) ||
-        !application_q3_components_idle(application->components) ||
         !application_equipment_runtime_idle(application->equipment_runtime) ||
         (application->equipment && !qa_equipment_idle(application->equipment))) return false;
     for (const application_provider *provider = application->live_providers;
@@ -87,16 +86,20 @@ static bool guests_idle(const qa_application *application,
 }
 
 bool application_guests_idle(const qa_application *application)
-{ return guests_idle(application, NULL, 0, NULL); }
+{ return application_q3_components_idle(application?application->components:NULL)&&guests_idle(application, NULL, 0, NULL); }
+bool application_guests_execution_idle(const qa_application *application)
+{ return application_q3_components_returned(application?application->components:NULL)&&guests_idle(application, NULL, 0, NULL); }
 
 bool application_guests_languages_idle(const qa_application *application,
     const qa_application_language_ticket *const *languages, size_t count)
-{ return (!count || languages) && guests_idle(application, languages, count, NULL); }
+{ return (!count || languages) && application_q3_components_idle(application?application->components:NULL)&&
+    guests_idle(application, languages, count, NULL); }
 
 bool application_guests_languages_loading_idle(const qa_application *application,
     const qa_application_language_ticket *const *languages, size_t count,
     const application_provider *loading_owner)
-{ return (!count || languages) && guests_idle(application, languages, count, loading_owner); }
+{ return (!count || languages) && application_q3_components_idle(application?application->components:NULL)&&
+    guests_idle(application, languages, count, loading_owner); }
 
 static void remember(bool result, const qa_error *current, const char *fallback,
                      bool *ok, qa_error *first)

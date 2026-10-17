@@ -962,7 +962,7 @@ bool qa_application_clients_drain(qa_application *application, qa_error *error)
         (application->state != QA_APPLICATION_READY &&
          application->state != QA_APPLICATION_RUNNING) ||
         !qa_console_idle(application->console) ||
-        !application_guests_idle(application) ||
+        !application_guests_execution_idle(application) ||
         !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         !qa_session_safe(application->session) ||
@@ -971,7 +971,8 @@ bool qa_application_clients_drain(qa_application *application, qa_error *error)
         (application->modes && !qa_modes_idle(application->modes)) ||
         (application->equipment && !qa_equipment_idle(application->equipment)))
         return true;
-    return application_native_q3_clients_drain(application, error) &&
+    return application_q3_components_drain(application->components,error) &&
+        application_native_q3_clients_drain(application, error) &&
         (application->state != QA_APPLICATION_RUNNING ||
          application_q3_publish_local_snapshots(application, error));
 }

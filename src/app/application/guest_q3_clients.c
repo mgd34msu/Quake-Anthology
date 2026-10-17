@@ -8,6 +8,8 @@
 #include "native_q3_console.h"
 #include "guest_q3_combat.h"
 #include "guest_q3_weapons_services.h"
+#include "guest_q3_component_clients.h"
+#include "map_players_private.h"
 #include "qa/json.h"
 
 bool application_q3_guest_actor_bound(application_provider *provider, qa_actor_id actor,
@@ -128,22 +130,30 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
     client->carry_pending = !first_time &&
         application_q3_world_restart_source(provider->application, provider, &startup);
     int32_t arguments[] = {(int32_t)slot, first_time ? 1 : 0, bot ? 1 : 0}, result;
+    char reason[2048]="Connection refused";
     if (engine->game->native) {
         qa_buffer denial = {0};
         ++engine->calls;
         bool ok = qa_native_host_q3_client_connect(engine->game->native, slot, first_time, bot, &denial, error);
         --engine->calls;
-        if (ok) *accepted = !denial.data;
+        if (ok) {
+            *accepted = !denial.data;
+            if(denial.data)snprintf(reason,sizeof(reason),"%s",(const char *)denial.data);
+        }
         qa_buffer_free(&denial);
         if (!ok) return false;
     } else {
         if (!q3g_call(engine->game, 2, arguments, 3, &result, error)) return false;
-        if (result) { qa_bytes denial; if (!qa_qvm_read_string(engine->game->vm, result, &denial, error)) return false; }
+        if (result) { qa_bytes denial; if (!qa_qvm_read_string(engine->game->vm, result, &denial, error)) return false;
+            snprintf(reason,sizeof(reason),"%s",(const char *)denial.data); }
         else *accepted = true;
     }
     if (client->pending_retirement) *accepted = false;
     client->connected = *accepted;
     client->reserved = false;
+    if(!*accepted&&application_player_record_find(provider->application->players,actor))
+        return application_clients_reject(provider->application,provider->owner,actor,
+            client->retirement_reason?client->retirement_reason:reason,NULL,error);
     if (!*accepted && !client->pending_retirement &&
         !application_guest_client_drop(provider, slot, "", error)) return false;
     return application_guest_bots_admit(provider, error) && application_guest_clients_drain(provider, error);

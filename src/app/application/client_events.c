@@ -358,7 +358,7 @@ bool application_client_declared_disconnect(qa_application *app, qa_actor_id act
     qa_launch_snapshot_retain(launch);
     for (size_t i = 0; ok && i < count; ++i) {
         const client_listener *row = rows + i;
-        if (!player(app, actor) || !source || qa_application_launch(app) != launch ||
+        if (!application_player_record_find(app->players, actor) || !source || qa_application_launch(app) != launch ||
             app->publication_generation != generation || app->players->map_provider != source ||
             !provider_current(app, row) || !binding_current(row, actor)) {
             ok = application_fail(error, QA_ERROR_ARGUMENT,
@@ -366,7 +366,7 @@ bool application_client_declared_disconnect(qa_application *app, qa_actor_id act
             break;
         }
         ok = application_qc_disconnect_player(row->provider, actor, error);
-        if (ok && (!player(app, actor) || qa_application_launch(app) != launch ||
+        if (ok && (!application_player_record_find(app->players, actor) || qa_application_launch(app) != launch ||
             app->publication_generation != generation || app->players->map_provider != source ||
             !provider_current(app, row) || !qc_binding_current(row, actor, false)))
             ok = application_fail(error, QA_ERROR_ARGUMENT,

@@ -2040,6 +2040,17 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
                  (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine))
             ok = application_guest_q3_save_finish(provider, error);
     }
+    for(size_t i=0;ok&&i<candidate->provider_count;++i) {
+        application_provider *provider=candidate->providers[i];
+        if(provider->trajectory_only)continue;
+        struct application_native_q2 *engine=provider->kind==APPLICATION_PROVIDER_NATIVE?
+            provider->state.native.q2_engine:NULL;
+        if(engine&&engine->profile!=QA_NATIVE_Q2_CGAME_API2023&&engine->restore_record.data) {
+            ok=application_native_q2_clients_reconnect(provider,error);
+            if(ok)engine->restore_record=(qa_bytes){0};
+        }
+    }
+    if(ok)ok=application_q3_components_drain(candidate->components,error);
     if (ok) ok = application_q3_components_finish_restore(candidate->components, error);
     if (ok) ok = qa_equipment_weapons_reconnect(candidate->equipment, error);
     if (ok && candidate->q1_paused) {

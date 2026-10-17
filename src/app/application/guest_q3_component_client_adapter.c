@@ -1,4 +1,5 @@
 #include "guest_q3_component_clients.h"
+#include "guest_q3_components_private.h"
 #include "map_players_private.h"
 #include "guest_q3_private.h"
 #include "guest_projection_private.h"
@@ -309,20 +310,42 @@ static bool active_command(void *context,qa_actor_id actor,const application_q3_
     --a->calls;
     return ok&&(current(a,actor)||application_fail(e,QA_ERROR_ARGUMENT,"Component active command changed its client"));
 }
-static bool drop(void *context,qa_actor_owner component,qa_actor_id actor,const char *reason,qa_error *e)
+static bool drop_request(application_q3_component_client_adapter *a,application_player_record *p,
+    qa_actor_owner component,qa_actor_id actor,const char *reason,const char **retained,qa_error *e)
 {
-    application_q3_component_client_adapter *a=context;
-    application_player_record *p=entered(a,actor,e);
-    if(!p) return false;
     if(!reason||!component||!qa_strings_cstr(qa_session_strings(a->application->session),component))
         return application_fail(e,QA_ERROR_ARGUMENT,"Component drop lost its actual namespace or reason");
+    for(component_drop *request=a->drops;request;request=request->next)
+        if(qa_actor_id_equal(request->actor,actor)) {if(retained)*retained=request->reason;return true;}
     component_drop *request=calloc(1,sizeof(*request));
     if(!request) return application_fail(e,QA_ERROR_MEMORY,"Retaining actual component client drop");
     request->reason=q3g_copy_text(reason,e);
     if(!request->reason) {free(request);return false;}
     request->actor=actor;request->slot=p->client_slot;request->component=component;
     if(a->tail) a->tail->next=request;else a->drops=request;
-    a->tail=request;return true;
+    a->tail=request;if(retained)*retained=request->reason;return true;
+}
+static bool drop(void *context,qa_actor_owner component,qa_actor_id actor,const char *reason,qa_error *e)
+{
+    application_q3_component_client_adapter *a=context;
+    application_player_record *p=entered(a,actor,e);
+    return p&&drop_request(a,p,component,actor,reason,NULL,e);
+}
+bool application_clients_reject(qa_application *app,qa_actor_owner owner,qa_actor_id actor,
+    const char *reason,const char **retained,qa_error *e)
+{
+    application_q3_component_client_adapter *a=app&&app->components?app->components->clients_adapter:NULL;
+    application_player_record *p=storage(a)?application_player_record_find(app->players,actor):NULL;
+    if(!p)return application_fail(e,QA_ERROR_ARGUMENT,"Client refusal lost its reserved player roster row");
+    char bounded[2048];snprintf(bounded,sizeof(bounded),"%s",reason&&*reason?reason:"Connection refused");
+    if(!drop_request(a,p,owner,actor,bounded,retained,e))return false;
+    bool first=!p->retiring;
+    if(first){p->retiring=true;++app->players->revision;}
+    if(first&&!p->remote&&!application_player_identity(p)->bot) {
+        qa_command_context command={.origin=QA_COMMAND_SEAT,.owner=owner,.seat=p->seat,.actor=actor};
+        return qa_application_log_emit(app,&command,bounded,QA_APPLICATION_LOG_CONSOLE,e);
+    }
+    return true;
 }
 static bool source_score(application_q3_component_client_adapter *a,qa_actor_id actor,double *out,qa_error *e)
 {
@@ -500,7 +523,9 @@ bool application_q3_component_client_adapter_transport_bind(application_q3_compo
     a->transport_context=context;a->transport_drop=callback;return true;
 }
 bool application_q3_component_client_adapter_idle(const application_q3_component_client_adapter *a)
-{ return !a||(!a->calls&&!a->draining&&!a->drops); }
+{ return application_q3_component_client_adapter_returned(a)&&(!a||!a->drops); }
+bool application_q3_component_client_adapter_returned(const application_q3_component_client_adapter *a)
+{ return !a||(!a->calls&&!a->draining); }
 bool application_q3_component_client_drop_read(const application_q3_component_client_adapter *a,
     application_q3_component_client_drop *out,bool *present,qa_error *e)
 {
@@ -623,7 +648,8 @@ bool application_q3_component_client_adapter_drain(application_q3_component_clie
             if(!ok) break;
             request->character=true;
         }
-        ok=source->kind==APPLICATION_PROVIDER_Q3?
+        ok=source->kind==APPLICATION_PROVIDER_Q3&&
+            qa_actors_get(qa_session_actors(app->session),request->actor)?
             application_players_native_q3_retire(app,source,request->actor,e):
             application_players_component_retire(app,source,request->actor,e);
         if(!ok) break;

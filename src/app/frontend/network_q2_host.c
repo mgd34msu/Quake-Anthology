@@ -328,8 +328,10 @@ static bool prepare(void *context,const qa_net_address *address,const qa_q2_conn
     memcpy(peer->userinfo,request->userinfo,sizeof(peer->userinfo));
     *out=peer->admission; *allowed=true; return true;
 }
-static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_client_id id,qa_error *error)
+static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_client_id id,
+    bool *accepted,char reason[1024],qa_error *error)
 {
+    *accepted=true; reason[0]=0;
     frontend_network_q2_host *host=context; q2_host_peer *peer=claim?claim->source_claim:NULL;
     if(!peer || peer->host!=host || !peer->reserved || peer->committed || !current(host,error)) return false;
     peer->client=id; peer->committed=true;
@@ -356,7 +358,14 @@ static bool committed(void *context,const qa_q2_server_admission *claim,qa_net_c
             qa_application_remote_player_request player={.client=id,.seat=peer->bindings[i].seat,
                 .application_seat=peer->bindings[i].seat.index,.source_slot=peer->slots[i],
                 .name=name,.team="",.skin="",.userinfo=peer->userinfo,.defer_source_begin=true};
-            if(!qa_application_remote_player_attach(host->options.frontend->application,&player,&actor,error)) return false;
+            qa_application_player_admission admission;
+            if(!qa_application_remote_player_attach(host->options.frontend->application,&player,&admission,error)) return false;
+            if(!admission.accepted) {
+                *accepted=false;
+                snprintf(reason,1024,"%.1023s",admission.reason);
+                return true;
+            }
+            actor=admission.actor;
         }
         qa_network_q2_player actual;
         if(!qa_application_network_q2_player(peer->source,actor,&actual,error) || actual.source_slot!=peer->slots[i]) return false;

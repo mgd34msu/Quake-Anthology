@@ -492,12 +492,17 @@ bool frontend_startup_launch_complete(qa_frontend *f,qa_error *error)
                 frontend_config_store_named_source(f->config_store,source.descriptor->selection.instance):NULL;
             qa_cvars *cvars=frontend_config_source_seat_cvars(profile,request->logical);
             if (!cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Joining local player lost its actual published profile");
-            qa_buffer info={0}; qa_actor_id actor;
+            qa_buffer info={0}; qa_application_player_admission admission;
             bool ok=qa_cvars_info(cvars,QA_CVAR_USERINFO,0,&info,error) &&
                 qa_application_local_player_attach(f->application,request->logical,(const char *)info.data,
-                    NULL,&actor,error);
+                    NULL,&admission,error);
             qa_buffer_free(&info);
             if (!ok) return false;
+            if (!admission.accepted) {
+                frontend_print(f,admission.reason);
+                frontend_startup_launch_discard(f);
+                return frontend_startup_menus_bind(f,error);
+            }
             request->admitted=true;
         }
         if (!frontend_startup_menus_bind(f,error)) return false;

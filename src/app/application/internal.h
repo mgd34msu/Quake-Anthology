@@ -653,6 +653,7 @@ bool application_q3_guest_console_command(application_provider *, const char *,
 bool application_q3_guest_role_command(application_provider *, qa_qvm_role,
                                        uint32_t, int32_t, const char *, bool *, qa_error *);
 bool application_guests_idle(const qa_application *);
+bool application_guests_execution_idle(const qa_application *);
 struct qa_application_language_ticket;
 bool application_guests_languages_idle(const qa_application *,
     const struct qa_application_language_ticket *const *, size_t);

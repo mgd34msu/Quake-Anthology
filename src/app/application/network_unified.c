@@ -851,12 +851,13 @@ bool application_unified_source_command(qa_application *app,qa_net_client_id cli
 
 bool application_unified_player_admit(qa_application *app,
     qa_network_runtime *runtime, const qa_application_remote_player_request *request,
-    qa_unified_session_player *out, qa_error *error)
+    qa_unified_session_player *out,qa_application_player_admission *admission,qa_error *error)
 {
     application_unified_source source;
-    if (!request || !out || !runtime || request->bot || request->defer_source_begin ||
+    if (!request || !out || !admission || !runtime || request->bot || request->defer_source_begin ||
         !application_unified_source_read(app, &source, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified admission requires its immediate remote human Source request");
+    *out=(qa_unified_session_player){0};*admission=(qa_application_player_admission){0};
     const qa_net_client *peer = qa_net_connections_get(qa_network_connections(runtime), request->client);
     bool bound = false;
     for (size_t i = 0; peer && i < peer->seat_count; ++i)
@@ -904,14 +905,14 @@ bool application_unified_player_admit(qa_application *app,
             if (!occupied) { canonical.source_slot = slot; break; }
         }
         if (canonical.source_slot == UINT32_MAX) {
-            application_fail(error, QA_ERROR_ARGUMENT, "Server is full");
+            snprintf(admission->reason,sizeof(admission->reason),"Server is full");okay=true;
             goto done;
         }
     }
-    qa_actor_id actor;
-    if (!qa_application_remote_player_attach(app, &canonical, &actor, error)) goto done;
+    if (!qa_application_remote_player_attach(app, &canonical, admission, error)) goto done;
+    if(!admission->accepted){okay=true;goto done;}
     if (!application_unified_player_read(app, request->client, request->seat, out, error) ||
-        !qa_actor_id_equal(actor, out->actor)) {
+        !qa_actor_id_equal(admission->actor, out->actor)) {
         application_fault(app, error);
         goto done;
     }

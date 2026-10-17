@@ -68,6 +68,7 @@ bool application_q3_components_checkpoint(qa_application *,qa_buffer *,qa_error 
 bool application_q3_components_finish_restore(application_q3_components *,qa_error *);
 bool application_q3_components_adopt(qa_application *,application_q3_components **,qa_error *);
 bool application_q3_components_idle(const application_q3_components *);
+bool application_q3_components_returned(const application_q3_components *);
 bool application_q3_components_destroy(application_q3_components **,qa_error *);
 size_t application_q3_components_count(const qa_application *);
 bool application_q3_components_at(qa_application *,size_t,application_q3_component **,qa_error *);

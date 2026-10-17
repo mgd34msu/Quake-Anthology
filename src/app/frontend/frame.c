@@ -701,9 +701,18 @@ bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *err
          !frontend_source_publish_music(frontend,error) ||
          !frontend_music_sources_output(frontend->music_sources,FRONTEND_MUSIC_WORLD,error))) return false;
     uint64_t travel_revision;
-    return (qa_application_travel_publication_read(frontend->application,&travel_revision) ||
-        qa_application_rankings_start(frontend->application,error)) &&
-        frontend_network_create(frontend,error) && control_bindings(frontend,error);
+    if (!(qa_application_travel_publication_read(frontend->application,&travel_revision) ||
+          qa_application_rankings_start(frontend->application,error)) ||
+        !frontend_network_create(frontend,error) || !control_bindings(frontend,error)) return false;
+    if (!frontend->options.dedicated && !frontend_network_remote(frontend)) {
+        for (uint32_t physical=0;physical<frontend->options.seats;++physical) {
+            uint32_t logical; qa_actor_id actor;
+            if (frontend_seat_launch_id_read(frontend,physical,&logical) &&
+                !qa_application_player_actor(frontend->application,logical,&actor) &&
+                !frontend_game_menu(frontend->seats+physical,error)) return false;
+        }
+    }
+    return true;
 }
 static bool stop_server(qa_frontend *f, bool *complete, qa_error *error)
 {

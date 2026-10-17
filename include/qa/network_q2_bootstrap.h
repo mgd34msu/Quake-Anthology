@@ -35,7 +35,8 @@ typedef struct qa_q2_server_bootstrap_hooks {
     bool (*transport_admitted)(void *, const qa_net_address *, bool *, qa_error *);
     bool (*prepare)(void *, const qa_net_address *, const qa_q2_connect_request *,
         qa_q2_server_admission *, bool *allowed, char reason[1024], qa_error *);
-    bool (*committed)(void *, const qa_q2_server_admission *, qa_net_client_id, qa_error *);
+    bool (*committed)(void *, const qa_q2_server_admission *, qa_net_client_id,
+        bool *accepted, char reason[1024], qa_error *);
     bool (*abort)(void *, const qa_q2_server_admission *, qa_error *);
     bool (*discovery)(void *, qa_q2_discovery *, qa_error *);
     /* Validated URL from the actual Source sv_downloadserver policy. */

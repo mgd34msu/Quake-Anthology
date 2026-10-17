@@ -36,7 +36,7 @@ bool application_unified_player_checkpoint_read(qa_application *, qa_net_client_
 bool application_unified_player_checkpoint_current(qa_application *, qa_net_client_id,
     const qa_unified_session_player *);
 bool application_unified_player_admit(qa_application *, qa_network_runtime *, const qa_application_remote_player_request *,
-    qa_unified_session_player *, qa_error *);
+    qa_unified_session_player *, qa_application_player_admission *,qa_error *);
 bool application_unified_player_userinfo(qa_application *, qa_net_client_id, qa_net_seat_id,
     const char *, qa_error *);
 bool application_unified_player_command(qa_application *, qa_net_client_id, qa_net_seat_id,

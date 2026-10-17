@@ -858,7 +858,7 @@ bool application_native_q3_clients_drain_provider(application_provider *provider
         if (!ok || !pending) continue;
         if (!application_rankings_idle(app) ||
             (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
-             app->operation != APPLICATION_CONFIGURING) || !qa_session_safe(app->session) ||
+             app->operation != APPLICATION_CONFIGURING && app->operation != APPLICATION_PERSISTING) || !qa_session_safe(app->session) ||
             !qa_modes_idle(app->modes) || !qa_world_idle(app->world) || !qa_combat_idle(app->combat) ||
             !application_native_q3_console_idle(provider) || !application_native_q3_wire_idle(provider))
             return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 DROP drain requires released source callbacks");

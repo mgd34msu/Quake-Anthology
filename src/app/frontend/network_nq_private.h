@@ -40,6 +40,7 @@ struct frontend_nq_host {
     unsigned busy;
     bool previous_pause;
     char reply_address[128];
+    char admission_reason[2048];
     nq_status_cache board[256];
     qa_string_id published_names[256];
     qa_string_id styles[64];

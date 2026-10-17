@@ -277,11 +277,13 @@ static bool control_entered(void *context, qa_network_runtime *runtime, qa_net_c
         const qa_net_client *peer = qa_net_connections_get(qa_network_connections(runtime), client);
         bool local = peer && peer->attachment == QA_NET_LOCAL_SEAT;
         bool exists = application_players_connection_read(owner->application, client, owner->seat) != NULL;
+        qa_application_player_admission admission={.accepted=true};
         bool okay = local ?
             application_unified_player_bind_local(owner->application, peer, owner->seat,
                 owner->application_seat, &actual, error) :
             exists ? application_unified_player_read(owner->application, client, owner->seat, &actual, error) :
-                application_unified_player_admit(owner->application, runtime, &request, &actual, error);
+                application_unified_player_admit(owner->application, runtime, &request, &actual, &admission,error);
+        if(okay&&!admission.accepted)return qa_unified_session_close(owner->session,admission.reason,error);
         if (okay) owner->player_attached = true;
         if (okay && local && request.userinfo)
             okay = application_unified_player_userinfo(owner->application, client, owner->seat, request.userinfo, error);

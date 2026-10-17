@@ -7,6 +7,7 @@
 #include "control_frame.h"
 #include "guest_native_q2_input.h"
 #include "guest_native_q2_attack.h"
+#include "guest_q3_component_clients.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/arena.h"
 #include "qa/text.h"
@@ -495,6 +496,18 @@ static bool declared_client(struct application_native_q2 *engine,uint32_t slot,
     application_native_callback_inputs inputs={values,command};
     return application_native_q2_callbacks_run(engine,stage,&inputs,accepted,error);
 }
+static bool client_rejected(struct application_native_q2 *engine,application_native_q2_client *client,qa_error *error)
+{
+    qa_bytes reason={0};
+    qa_info_find(client->userinfo,(qa_bytes){(const uint8_t *)"rejmsg",6},0,&reason);
+    char text[sizeof(client->userinfo)];
+    size_t size=reason.size<sizeof(text)-1?reason.size:sizeof(text)-1;
+    if(size)memcpy(text,reason.data,size);
+    text[size]=0;
+    client->denied=true;client->connected=client->begun=false;
+    return application_clients_reject(engine->provider->application,engine->provider->owner,
+        client->actor,text,NULL,error);
+}
 
 bool application_native_q2_client_admit(application_provider *provider, uint32_t slot,
     qa_actor_id actor, const char *userinfo, const char *social_id, bool bot,
@@ -537,13 +550,12 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
             client->connected=true;
             return application_native_q2_callbacks_components_admit(engine,actor,error);
         }
-        if (ok) { client->denied = true; return true; }
+        if (ok) return client_rejected(engine,client,error);
         qa_error cleanup={0};
         bool detached=qa_native_host_client_retained_set(provider->state.native.host,slot,false,&cleanup)&&
             qa_native_host_detach_actor(provider->state.native.host,slot,actor,&cleanup);
         if(detached) { application_native_q2_client_unbind(engine, actor); client->actor=(qa_actor_id){0}; client->userinfo_present=false; client->userinfo[0]=0;
             client->protocol_fog=(qa_q2_wire_fog){0}; client->protocol_fog_actor=(qa_actor_id){0}; }
-        if(ok&&!detached&&error) *error=cleanup;
         return ok&&detached;
     }
     qa_native_host_client_request request = {.slot = slot, .userinfo = userinfo,
@@ -565,10 +577,10 @@ bool application_native_q2_client_admit(application_provider *provider, uint32_t
     if (ok && *accepted) {
         client->connected = true;
         ok = application_native_q2_combat_team_refresh(engine, slot, error);
-    } else {
+    } else if(ok) return client_rejected(engine,client,error);
+    else {
         qa_error cleanup = {0};
         bool detached = qa_native_host_detach_actor(provider->state.native.host, slot, actor, &cleanup);
-        if (!detached && ok) { ok = false; if (error) *error = cleanup; }
         if (detached) {
             application_native_q2_client_unbind(engine, actor);
             client->actor = (qa_actor_id){0};
@@ -624,8 +636,7 @@ bool application_native_q2_clients_reconnect(application_provider *provider, qa_
         client->connected = client->begun = false;
         bool accepted = false;
         if (!application_native_q2_client_admit(provider, slot, actor, userinfo, "", bot, &accepted, error)) return false;
-        if (!accepted)
-            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 GAME rejected its saved client during reconnect");
+        if (!accepted) continue;
         if (begun && !application_native_q2_client_begin(provider, slot, error)) return false;
     }
     return true;
@@ -635,6 +646,7 @@ bool application_native_q2_client_userinfo(application_provider *provider, uint3
     const char *userinfo, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if(engine&&slot&&slot<257&&engine->clients[slot].denied)return true;
     if (!engine || !engine->initialized || engine->profile == QA_NATIVE_Q2_CGAME_API2023 ||
         !slot || slot >= 257 || engine->calls || !engine->clients[slot].connected ||
         !userinfo || !qa_world_idle(engine->world) ||
@@ -738,6 +750,7 @@ bool application_native_q2_client_think(application_provider *provider, uint32_t
     qa_bytes command, qa_error *error)
 {
     struct application_native_q2 *declared = provider ? provider->state.native.q2_engine : NULL;
+    if(declared&&slot&&slot<257&&declared->clients[slot].denied)return true;
     if (declared && declared->callbacks) {
         if (!slot || slot >= 257 || !declared->clients[slot].connected || !declared->clients[slot].begun ||
             !qa_actors_get(qa_session_actors(provider->application->session), declared->clients[slot].actor))
@@ -773,6 +786,8 @@ bool application_native_q2_client_command(application_provider *provider, qa_act
         !qa_actors_get(qa_session_actors(provider->application->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 ClientCommand requires its actual invocation and live client");
     *handled = false;
+    uint32_t reserved=application_native_q2_client_slot(engine,actor);
+    if(reserved&&engine->clients[reserved].denied){*handled=true;return true;}
     uint32_t slot = application_native_q2_client_begun(engine, actor) ?
         application_native_q2_client_slot(engine, actor) : 0;
     if (!slot) return true;

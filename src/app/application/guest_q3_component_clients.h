@@ -14,6 +14,7 @@ bool application_q3_component_client_adapter_create(qa_application *,application
     application_q3_component_client_adapter **,qa_error *);
 bool application_q3_component_client_adapter_destroy(application_q3_component_client_adapter **,qa_error *);
 bool application_q3_component_client_adapter_idle(const application_q3_component_client_adapter *);
+bool application_q3_component_client_adapter_returned(const application_q3_component_client_adapter *);
 bool application_q3_component_client_adapter_transport_bind(application_q3_component_client_adapter *,
     void *,bool (*)(void *,qa_actor_owner,qa_actor_id,const char *,qa_error *),qa_error *);
 application_q3_component_clients application_q3_component_client_adapter_services(application_q3_component_client_adapter *);
@@ -30,4 +31,6 @@ bool application_client_userinfo_key_write(qa_application *,qa_world *,qa_actor_
 bool application_q3_component_client_adapter_drain(application_q3_component_client_adapter *,qa_error *);
 bool application_q3_component_client_drop_read(const application_q3_component_client_adapter *,
     application_q3_component_client_drop *,bool *present,qa_error *);
+bool application_clients_reject(qa_application *,qa_actor_owner,qa_actor_id,const char *,
+    const char **retained_reason,qa_error *);
 #endif
