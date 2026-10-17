@@ -184,6 +184,7 @@ bool application_qc_reserve_player(application_provider *, uint32_t slot, uint32
     qa_actor_id, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *);
 bool application_qc_begin_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_prepare_player(application_provider *, qa_actor_id, qa_error *);
+bool application_qc_classic_qw(const struct application_qc_state *);
 bool application_qc_source_clients_initialize(struct application_qc_state *, qa_error *);
 application_qc_client *application_qc_client_for_actor(const struct application_qc_state *, qa_actor_id);
 bool application_qc_source_client_released(struct application_qc_state *, qa_actor_record, qa_error *);

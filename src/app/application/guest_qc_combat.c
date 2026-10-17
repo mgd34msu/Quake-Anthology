@@ -909,7 +909,16 @@ bool application_qc_combat_create(struct application_qc_state *engine, qa_error 
 static bool eligible(application_qc_combat *owner, qa_qc_slot_binding slot)
 {
     if (!slot.slot || !slot.actor.registry || (slot.kind != QA_QC_SLOT_OWNED && slot.kind != QA_QC_SLOT_BORROWED)) return false;
-    if (slot.kind == QA_QC_SLOT_OWNED) return slot.owner == owner->engine->provider->owner;
+    if (slot.kind == QA_QC_SLOT_OWNED) {
+        struct application_qc_state *engine = owner->engine;
+        if (slot.owner != engine->provider->owner) return false;
+        if (application_qc_classic_qw(engine) && slot.slot <= engine->max_clients) {
+            const application_qc_client *client = &engine->clients[slot.slot];
+            return client->connected && qa_actor_id_equal(client->actor, slot.actor) &&
+                application_provider_for(engine->provider->application, slot.actor, QA_ROLE_COMBAT, "") == engine->provider;
+        }
+        return true;
+    }
     return application_provider_for(owner->engine->provider->application, slot.actor, QA_ROLE_COMBAT, "") == owner->engine->provider;
 }
 static bool admit(application_qc_combat *owner, qa_qc_slot_binding slot, int32_t reference, qa_error *error)

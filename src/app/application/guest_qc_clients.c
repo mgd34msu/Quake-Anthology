@@ -20,7 +20,7 @@ application_qc_client *application_qc_client_for_actor(const struct application_
         &engine->clients[slot] : NULL;
 }
 
-static bool classic_qw(const struct application_qc_state *engine)
+bool application_qc_classic_qw(const struct application_qc_state *engine)
 {
     return engine && !engine->provider->state.qc.qualified && engine->profile == QA_QC_QUAKEWORLD &&
         engine->max_clients == 32 && engine->provider->state.qc.instance;
@@ -34,7 +34,7 @@ static bool source_binding(struct application_qc_state *engine, uint32_t slot,
         !qa_actor_id_equal(binding.actor, actor) || binding.owner != record->owner ||
         binding.source_slot != (record->has_source ? record->source_slot : 0) ||
         (binding.kind != QA_QC_SLOT_BORROWED && (binding.kind != QA_QC_SLOT_OWNED ||
-         !classic_qw(engine) || record->owner != engine->provider->owner ||
+         !application_qc_classic_qw(engine) || record->owner != engine->provider->owner ||
          !record->has_source || record->source_slot != slot)))
         return application_fail(error, QA_ERROR_FORMAT, "QC client differs from its actual physical source binding");
     return true;
@@ -64,7 +64,7 @@ bool application_qc_player_source_actor(application_provider *provider, uint32_t
     if (!engine || !out || !slot)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC player source actor requires its actual source owner");
     *out = (qa_actor_id){0};
-    if (!classic_qw(engine)) return true;
+    if (!application_qc_classic_qw(engine)) return true;
     qa_qc_slot_binding binding;
     if (slot > engine->max_clients || !qa_qc_slot(provider->state.qc.instance, slot, &binding) ||
         binding.kind != QA_QC_SLOT_OWNED || !source_binding(engine, slot, binding.actor, error))
@@ -73,7 +73,7 @@ bool application_qc_player_source_actor(application_provider *provider, uint32_t
 }
 bool application_qc_source_clients_initialize(struct application_qc_state *engine, qa_error *error)
 {
-    if (!classic_qw(engine)) return true;
+    if (!application_qc_classic_qw(engine)) return true;
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     qa_actor_definition definition;
     if (!qa_strings_intern_cstr(qa_session_strings(engine->services.session),
@@ -104,7 +104,7 @@ bool application_qc_source_clients_initialize(struct application_qc_state *engin
 bool application_qc_source_client_released(struct application_qc_state *engine,
     qa_actor_record released, qa_error *error)
 {
-    if (!classic_qw(engine) || engine->loading || !engine->initialized ||
+    if (!application_qc_classic_qw(engine) || engine->loading || !engine->initialized ||
         !qa_qc_reserved_actor_rebind_ready(engine->provider->state.qc.instance) ||
         engine->provider->application->operation == APPLICATION_PERSISTING ||
         !qa_session_actor_allocation_ready(engine->services.session, engine->provider->owner)) return true;
@@ -622,7 +622,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         return application_fail(error, QA_ERROR_UNSUPPORTED, "QuakeC spectators require QuakeWorld");
     if (!qualified && !spectator && !qa_qc_program_find_function(provider->state.qc.program, connect, &index))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "QuakeC selected client callback is absent");
-    if (classic_qw(engine)) {
+    if (application_qc_classic_qw(engine)) {
         qa_qc_slot_binding binding;
         if (!qa_qc_slot(provider->state.qc.instance, slot, &binding))
             return application_fail(error, QA_ERROR_FORMAT, "QW client physical source row is absent");
@@ -663,6 +663,13 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     const qa_qc_definition *netname = application_qc_field(engine->field_bindings->netname, QA_QC_STRING, error);
     int32_t string;
     if (netname == NULL || !application_qc_reference(engine, actor, &reference, error)) return false;
+    if (application_qc_classic_qw(engine)) {
+        qa_qc_entity_access access = {.kind = QA_QC_ENTITY_BIND, .reference = reference};
+        if (!qa_qc_slot(vm, slot, &access.binding))
+            return application_fail(error, QA_ERROR_FORMAT, "QW client physical source row is absent");
+        if (access.binding.kind == QA_QC_SLOT_OWNED &&
+            !application_qc_combat_bind(engine, vm, &access, error)) return false;
+    }
     if (engine->profile == QA_QC_QUAKEWORLD) {
         if (!qw_name(engine, slot, reference,
             (qa_bytes){(const uint8_t *)name, strlen(name)}, error)) return false;
@@ -672,7 +679,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         (!application_qc_named(engine, "SetNewParms", (qa_actor_id){0}, error) || !parms(engine, client, true, error))) return false;
     client->has_parms = true;
     if (reserve) return true;
-    if (classic_qw(engine))
+    if (application_qc_classic_qw(engine))
         return application_qc_prepare_player(provider, actor, error) &&
             application_qc_begin_player(provider, actor, error);
     if (!source_spawn_colors(engine, reference, slot, client->colors, error)) return false;
@@ -700,7 +707,7 @@ bool application_qc_prepare_player(application_provider *provider, qa_actor_id a
 {
     struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ?
         provider->state.qc.engine : NULL;
-    if (!classic_qw(engine) || !qa_qc_idle(provider->state.qc.instance) || !application_qc_input_idle(provider))
+    if (!application_qc_classic_qw(engine) || !qa_qc_idle(provider->state.qc.instance) || !application_qc_input_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "QW source Prepare requires its idle actual client owner");
     application_qc_client *client = application_qc_client_for_actor(engine, actor);
     if (client && client->connected) {
@@ -761,11 +768,11 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
         uint32_t slot = (uint32_t)(client - engine->clients);
         if (client->spawned) return true;
         if (!client->has_parms || !source_binding(engine, slot, actor, error) ||
-            (classic_qw(engine) && !client->prepared))
+            (application_qc_classic_qw(engine) && !client->prepared))
             return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin lacks its retained actor or spawn parameters");
         int32_t reference;
         if (!application_qc_reference(engine, actor, &reference, error)) return false;
-        if (!classic_qw(engine) && !source_spawn_colors(engine, reference, slot, client->colors, error)) return false;
+        if (!application_qc_classic_qw(engine) && !source_spawn_colors(engine, reference, slot, client->colors, error)) return false;
         if (!parms(engine, client, false, error) || !(client->spectator ?
             application_qc_spectator_callback(engine, "SpectatorConnect", actor, error) :
             application_qc_named(engine, "ClientConnect", actor, error))) return false;
