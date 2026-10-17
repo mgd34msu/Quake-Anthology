@@ -211,6 +211,9 @@ static const original_field rotation_fields[] = {
     FIELD(q1_map_state, distance, "distance", FLOAT),
     FIELD(q1_map_state, pending.brush.phase, "state", U8)
 };
+static const original_field hurt_fields[] = {
+    FIELD(q1_map_state, pending.brush.phase, "state", U8)
+};
 static const original_field frame_tick_head = {"frametick_head", ORIGINAL_REF, 0};
 static const original_field frame_tick_next = {"frametick_next", ORIGINAL_REF, 0};
 static const original_field shooter_fields[] = {
@@ -373,7 +376,7 @@ static const original_map_callback map_callbacks[] = {
     {Q1_MAP_SECRET_BOTTOM, "fd_secret_done"}, {Q1_MAP_PLAT_TOP, "plat_hit_top"},
     {Q1_MAP_PLAT_BOTTOM, "plat_hit_bottom"}, {Q1_MAP_PLAT_DOWN, "plat_go_down"},
     {Q1_MAP_TRAIN_FIND, "func_train_find"}, {Q1_MAP_TRAIN_NEXT, "train_next"},
-    {Q1_MAP_TRAIN_WAIT, "train_wait"}, {Q1_MAP_SIGIL_PLACE, "StartItem"},
+    {Q1_MAP_TRAIN_WAIT, "train_wait"}, {Q1_MAP_SIGIL_PLACE, "PlaceItem"},
     {Q1_MAP_SHOOTER_FIRE, "shooter_think"}, {Q1_MAP_FIREBALL_FLY, "fire_fly"},
     {Q1_MAP_BUBBLES_MAKE, "make_bubbles"}, {Q1_MAP_NOISE_REPEAT, "noise_think"},
     {Q1_MAP_LIGHTNING_FIRE, "lightning_fire"},
@@ -522,7 +525,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_TRAIN: case Q1_MAP_TRAIN2: use = "train_use"; blocked = "train_blocked"; break;
     case Q1_MAP_DOOR_TRIGGER: touch = "door_trigger_touch"; break;
     case Q1_MAP_PLAT_TRIGGER: touch = "plat_center_touch"; break;
-    case Q1_MAP_SIGIL: touch = "sigil_touch"; break;
+    case Q1_MAP_SIGIL:
+        return callback(record, "touch", map->touch_enabled ? "sigil_touch" : "SUB_Null", error);
     case Q1_MAP_SHOOTER: {
         const char *name = qa_strings_cstr(strings, entity->classname);
         use = name && !strcmp(name, "trap_switched_shooter") ? "trap_shooter_use" : "spikeshooter_use";
@@ -532,6 +536,7 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_FOG_INFO: break;
     case Q1_MAP_FOG_TRIGGER: touch = use = "trigger_fog_activate"; break;
     case Q1_MAP_FOG_TRANSITION: touch = "trigger_fog_transition_touch"; break;
+    case Q1_MAP_ADDON_HURT: touch = "func_hurt_touch"; use = "func_hurt_use"; break;
     case Q1_MAP_ADDON_ROTATE:
         use = "rotate_object_continuously_use";
         tick = map->pending.brush.phase == 1 || map->pending.brush.phase == 3 ||
@@ -964,6 +969,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
             if (kind == Q1_MAP_ADDON_COUNTER) physics.enemy = entity->activator;
+            if (kind == Q1_MAP_SIGIL) source_entity.source_netname = entity->map->netname;
             if (game->options.edition == QA_Q1_CLASSIC) {
                 if (kind == Q1_MAP_DOOR || kind == Q1_MAP_SECRET_DOOR) source_class = "door";
                 else if (kind == Q1_MAP_PLAT) source_class = "plat";
@@ -1109,6 +1115,11 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !FIELDS(receipt, record, entity->map, particle_tele_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_ADDON_ROTATE &&
             !FIELDS(receipt, record, entity->map, rotation_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_HURT &&
+            !FIELDS(receipt, record, entity->map, hurt_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_SIGIL &&
+            !text(record, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV),
+                QA_Q1_SAVE_STRING, error)) return false;
         if (entity->map->kind == Q1_MAP_SHOOTER &&
             !FIELDS(receipt, record, entity->map, shooter_fields, error)) return false;
         if (q1_map_is_mover(entity->map->kind)) {
@@ -1382,7 +1393,8 @@ static bool restore_think(qa_q1_game *game, q1_actor *entity,
             return true;
         }
         for (size_t i = 0; i < sizeof(map_callbacks) / sizeof(*map_callbacks); ++i)
-            if (!strcmp(name, map_callbacks[i].name)) {
+            if (!strcmp(name, map_callbacks[i].name) &&
+                (map_callbacks[i].action != Q1_MAP_SIGIL_PLACE || entity->map->kind == Q1_MAP_SIGIL)) {
                 entity->think = Q1_THINK_MAP; entity->map->action = map_callbacks[i].action; return true;
             }
     }
@@ -1655,6 +1667,12 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     map->use_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"use") != NULL;
     map->original_model = entity->model;
     if (map->kind == Q1_MAP_ADDON_COUNTER) entity->activator = entity->physics.enemy;
+    if (map->kind == Q1_MAP_SIGIL) {
+        const char *touch = saved(record, "touch");
+        map->touch_enabled = touch && strcmp(touch, "SUB_Null");
+        map->netname = entity->source_netname;
+        entity->source_netname = QA_STRING_NONE;
+    }
     if (map->kind == Q1_MAP_PLAT_TRIGGER && saved(record,"enemy")) entity->owner = entity->physics.enemy;
     const char *use = saved(record,"use");
     map->dormant = map->kind == Q1_MAP_MULTI && use && !strcmp(use,"trigger_multiple");
@@ -1672,6 +1690,9 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     if (map->kind == Q1_MAP_ADDON_ROTATE &&
         !restore_fields(strings, source, record, map, rotation_fields,
             sizeof(rotation_fields) / sizeof(*rotation_fields), slots, count, error)) return false;
+    if (map->kind == Q1_MAP_ADDON_HURT &&
+        !restore_fields(strings, source, record, map, hurt_fields,
+            sizeof(hurt_fields) / sizeof(*hurt_fields), slots, count, error)) return false;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
@@ -1992,6 +2013,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
     case Q1_MAP_ADDON_PARTICLE_TELE: case Q1_MAP_FOG_INFO:
     case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE:
+    case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT:
         return true;
     default:
         return false;
@@ -2014,6 +2036,7 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_SHOOTER: return action==Q1_MAP_SHOOTER_FIRE;
     case Q1_MAP_FIREBALL: return action==Q1_MAP_REMOVE;
     case Q1_MAP_ADDON_PARTICLE_TELE: return action==Q1_MAP_ADDON_PARTICLE_TICK;
+    case Q1_MAP_SIGIL: return action==Q1_MAP_SIGIL_PLACE;
     default: return false;
     }
 }
@@ -2165,6 +2188,15 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                     unsupported(error, "Original rotation phase has no native continuation"); goto done;
                 }
             }
+            if (source.map == Q1_MAP_ADDON_HURT) {
+                if (!ADMIT_FIELDS(admission, &map, hurt_fields, error)) goto done;
+                if (map.pending.brush.phase > 1) {
+                    unsupported(error, "Original hurt activation has no native boolean state"); goto done;
+                }
+            }
+            if (source.map == Q1_MAP_SIGIL &&
+                !admit_text(admission, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV), error))
+                goto done;
             if (source.map == Q1_MAP_SHOOTER &&
                 !ADMIT_FIELDS(admission, &map, shooter_fields, error)) goto done;
             if (source.map==Q1_MAP_PLAT_TRIGGER && saved(record,"enemy") && saved_number(record,"owner")!=0) {
