@@ -479,7 +479,7 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
         touch = "multi_touch"; use = map->dormant ? "trigger_multiple" : "multi_use";
         if (!map->dormant && entity->max_health > 0) die = "multi_killed";
         break;
-    case Q1_MAP_COUNTER: use = "counter_use"; break;
+    case Q1_MAP_COUNTER: case Q1_MAP_ADDON_COUNTER: use = "counter_use"; break;
     case Q1_MAP_RELAY: use = "SUB_UseTargets"; break;
     case Q1_MAP_TELEPORT: touch = "teleport_touch"; use = "teleport_use"; break;
     case Q1_MAP_HURT: touch = "hurt_touch"; break;
@@ -901,8 +901,15 @@ static const char *sprite_classname(const qa_q1_game *game, const q1_actor *enti
         if (!strcmp(name,projectiles[i].native_classname)) return projectiles[i].classname;
     return name;
 }
+static q1_map_kind original_map_kind(qa_q1_program program, const char *classname) {
+    q1_map_kind kind = classname ? q1_map_classify(classname) : Q1_MAP_FIELDS;
+    if (kind == Q1_MAP_COUNTER &&
+        (program == QA_Q1_DOPA || program == QA_Q1_MG1 || program == QA_Q1_MG3))
+        return Q1_MAP_ADDON_COUNTER;
+    return kind;
+}
 static bool original_hidden_map_model(q1_map_kind kind, bool dormant) {
-    return kind == Q1_MAP_COUNTER || kind == Q1_MAP_RELAY ||
+    return kind == Q1_MAP_COUNTER || kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_RELAY ||
         (kind == Q1_MAP_MULTI && dormant);
 }
 static bool original_door_trigger(const qa_q1_wire_receipt *receipt,
@@ -941,6 +948,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         source_entity = *entity;
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
+            if (kind == Q1_MAP_ADDON_COUNTER) physics.enemy = entity->activator;
             if (game->options.edition == QA_Q1_CLASSIC) {
                 if (kind == Q1_MAP_DOOR || kind == Q1_MAP_SECRET_DOOR) source_class = "door";
                 else if (kind == Q1_MAP_PLAT) source_class = "plat";
@@ -1504,7 +1512,8 @@ typedef struct original_class {
     q1_entity_kind kind;
     bool hammer_base;
 } original_class;
-static bool original_classify(const qa_q1_save_record *record, original_class *out, qa_error *error) {
+static bool original_classify(qa_q1_program program, const qa_q1_save_record *record,
+    original_class *out, qa_error *error) {
     const char *name = saved(record, "classname");
     const char *think = saved(record, "think");
     const char *touch = saved(record, "touch"), *use = saved(record,"use");
@@ -1515,7 +1524,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
         saved_number(record,"struck_by_mjolnir") == 1 && (!model || !*model);
     const q1_species *species = name ? q1_species_find(name) : NULL;
     const original_projectile *projectile = saved_projectile(record);
-    q1_map_kind map = name ? q1_map_classify(name) : Q1_MAP_FIELDS;
+    q1_map_kind map = original_map_kind(program, name);
     if (think && !strcmp(think, "particle_tele_think")) map = Q1_MAP_ADDON_PARTICLE_TELE;
     if (name && !strcmp(name,"door")) {
         if (use && !strcmp(use,"door_use")) { map = Q1_MAP_DOOR; name = "func_door"; }
@@ -1559,7 +1568,7 @@ static bool original_classify(const qa_q1_save_record *record, original_class *o
 static bool create_original(qa_q1_game *game, const qa_q1_save_record *record,
     uint32_t slot, q1_actor **out, qa_error *error) {
     original_class source;
-    if (!original_classify(record, &source, error)) return false;
+    if (!original_classify(game->options.program, record, &source, error)) return false;
     const char *name = source.name;
     const q1_species *species = source.species;
     const original_projectile *projectile = source.projectile;
@@ -1617,6 +1626,7 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     map->touch_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"touch") != NULL;
     map->use_enabled = map->kind != Q1_MAP_FIELDS && saved(record,"use") != NULL;
     map->original_model = entity->model;
+    if (map->kind == Q1_MAP_ADDON_COUNTER) entity->activator = entity->physics.enemy;
     if (map->kind == Q1_MAP_PLAT_TRIGGER && saved(record,"enemy")) entity->owner = entity->physics.enemy;
     const char *use = saved(record,"use");
     map->dormant = map->kind == Q1_MAP_MULTI && use && !strcmp(use,"trigger_multiple");
@@ -1890,7 +1900,8 @@ static bool original_map_supported(q1_map_kind kind) {
     switch (kind) {
     case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION:
     case Q1_MAP_WALL: case Q1_MAP_GATE: case Q1_MAP_AMBIENT: case Q1_MAP_COOP_POINT:
-    case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_RELAY: case Q1_MAP_TELEPORT:
+    case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_ADDON_COUNTER:
+    case Q1_MAP_RELAY: case Q1_MAP_TELEPORT:
     case Q1_MAP_HURT: case Q1_MAP_PUSH: case Q1_MAP_CHANGELEVEL: case Q1_MAP_SETSKILL:
     case Q1_MAP_REGISTERED: case Q1_MAP_MONSTERJUMP: case Q1_MAP_LIGHT:
     case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
@@ -1906,7 +1917,8 @@ static bool original_map_supported(q1_map_kind kind) {
 static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     if (action==Q1_MAP_IDLE) return true;
     switch (kind) {
-    case Q1_MAP_MULTI: return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
+    case Q1_MAP_MULTI: case Q1_MAP_ADDON_COUNTER:
+        return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
     case Q1_MAP_HURT: return action==Q1_MAP_REARM;
     case Q1_MAP_CHANGELEVEL: return action==Q1_MAP_BEGIN_LEVEL;
     case Q1_MAP_DOOR: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_DOWN;
@@ -2030,7 +2042,7 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
         admitted_key(admission,"think");admitted_key(admission,"nextthink");
     } else {
         original_class source;
-        if (!original_classify(record,&source,error)) goto done;
+        if (!original_classify(program,record,&source,error)) goto done;
         if ((source.map!=Q1_MAP_FIELDS && !original_map_supported(source.map)) ||
             source.kind==Q1_ENTITY) {
             unsupported(error,"Source map/item state still lacks its complete paired native inverse");goto done;
@@ -2442,7 +2454,8 @@ static bool original_model_fits(const qa_q1_wire_receipt *receipt,
          (receipt->operation.game->options.program==QA_Q1_HIPNOTIC && !strcmp(expected,"progs/playham.mdl"))))
         equal=true;
     if (!equal && index==0 && model[0]=='*' && classname &&
-        original_hidden_map_model(q1_map_classify(classname), use && !strcmp(use,"trigger_multiple")) &&
+        original_hidden_map_model(original_map_kind(receipt->operation.game->options.program,classname),
+            use && !strcmp(use,"trigger_multiple")) &&
         saved_number(record,"solid")==0 && saved_number(record,"movetype")==0) {
         for (size_t i=1;i<receipt->model_count;++i) {
             expected=qa_strings_cstr(strings,receipt->models[i]);
@@ -2472,7 +2485,7 @@ static bool original_pickup_fits(qa_q1_game *game,const qa_q1_save_data *save,
         if (!record->count || pickup_record_kind(record)==UINT32_MAX) continue;
         original_class source;qa_actor_id id;
         if (slot>UINT32_MAX) return unsupported(error,"Original pickup leaves its physical Source ordinals");
-        if (!original_classify(record,&source,error)) return false;
+        if (!original_classify(game->options.program,record,&source,error)) return false;
         const q1_actor *entity=qa_q1_wire_actor_at(receipt,(uint32_t)slot,&id)?q1_entity(game,id):NULL;
         q1_pickup head;
         const q1_pickup *item;
@@ -2555,7 +2568,7 @@ static bool original_door_fits(qa_q1_game *game,const qa_q1_save_data *save,
         const qa_q1_save_record *record=save->entities+slot;
         if (!record->count) continue;
         original_class source;qa_actor_id id;
-        if (!original_classify(record,&source,error)) return false;
+        if (!original_classify(game->options.program,record,&source,error)) return false;
         if (source.map!=Q1_MAP_DOOR) continue;
         const q1_actor *entity=qa_q1_wire_actor_at(receipt,(uint32_t)slot,&id)?q1_entity(game,id):NULL;
         if (!entity || !entity->map || entity->map->kind!=Q1_MAP_DOOR)
@@ -2594,7 +2607,7 @@ static bool original_door_fits(qa_q1_game *game,const qa_q1_save_data *save,
             if (!trigger || trigger>=save->entity_count || !save->entities[trigger].count)
                 return unsupported(error,"Original door lost its actual native helper relationship");
             const qa_q1_save_record *row=save->entities+trigger;original_class trigger_source;uint32_t helper_owner;
-            if (!original_classify(row,&trigger_source,error) ||
+            if (!original_classify(game->options.program,row,&trigger_source,error) ||
                 !qa_q1_save_entity_decode(saved(row,"owner")?saved(row,"owner"):"0",&helper_owner,error)) return false;
             if (trigger_source.map!=Q1_MAP_DOOR_TRIGGER || helper_owner!=master)
                 return unsupported(error,"Original door helper differs from its actual native owner");
@@ -2670,7 +2683,7 @@ bool qa_q1_game_original_restore(qa_q1_game *game, const qa_qc_program *program,
         const char *name = NULL;
         if (slot<save->entity_count && save->entities[slot].count && slot>=2) {
             original_class source;
-            if (!original_classify(save->entities+slot,&source,error)) {okay=false;break;}
+            if (!original_classify(game->options.program,save->entities+slot,&source,error)) {okay=false;break;}
             name=source.name;
         }
         q1_actor *entity = q1_entity(game,id);
