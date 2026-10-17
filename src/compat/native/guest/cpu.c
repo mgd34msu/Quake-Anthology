@@ -151,14 +151,20 @@ static void record_store(uc_engine *cpu, uc_mem_type type, uint64_t address, int
 static bool record_fault(uc_engine *cpu, uc_mem_type type, uint64_t address,
     int size, int64_t value, void *context)
 {
-    (void)cpu; (void)size; (void)value;
+    (void)cpu; (void)value;
     qa_native_guest *guest = context;
+    guest_run *run = guest->run;
+    if (run && !run->recorded_fault) {
+        run->previous_fault = guest->memory_fault;
+        run->previous_has_fault = guest->has_memory_fault;
+        run->recorded_fault = true;
+    }
     uint32_t access = type == UC_MEM_READ_PROT || type == UC_MEM_READ_UNMAPPED ?
         QA_NATIVE_GUEST_READ : type == UC_MEM_WRITE_PROT || type == UC_MEM_WRITE_UNMAPPED ?
         QA_NATIVE_GUEST_WRITE : QA_NATIVE_GUEST_EXECUTE;
     qa_native_guest_mapping *mapping = guest_mapping(guest, address);
     qa_native_guest_fault fault = {.kind = QA_NATIVE_GUEST_FAULT_UNMAPPED,
-        .access = access, .address = address};
+        .access = access, .address = address, .bytes = size > 0 ? (size_t)size : 0};
     if (mapping) {
         guest_backing *backing = guest_backing_at(guest, mapping->backing);
         fault.backing = mapping->backing;
@@ -398,8 +404,6 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
     }
     guest_run frame = {.parent = guest->run, .remaining = budget, .bypass = bypass};
     qa_native_guest_run_result completed = {.kind = QA_NATIVE_GUEST_RETURN, .counted = true};
-    qa_native_guest_fault previous_fault = guest->memory_fault;
-    bool previous_has_fault = guest->has_memory_fault;
     guest->run = &frame;
     bool okay = instruction_pointer(guest, &start, true, error);
     uint64_t instruction = start;
@@ -484,6 +488,7 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         }
         frame.count = 0;
         frame.prepared = 0;
+        frame.recorded_fault = false;
         frame.instruction = instruction;
         guest_dispatch_started(guest);
         guest->stepping = true;
@@ -492,21 +497,21 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         bool boundary_fetch = false;
         /* The count hook precedes execution but follows instruction fetch.
          * A completed branch may reach an unmapped controller boundary. */
-        if (!frame.recording_failed && stop && guest->has_memory_fault &&
+        if (!frame.recording_failed && stop && frame.recorded_fault &&
             guest->memory_fault.access == QA_NATIVE_GUEST_EXECUTE &&
             (code == UC_ERR_FETCH_UNMAPPED || code == UC_ERR_FETCH_PROT)) {
             uint64_t stopped = 0;
             okay = instruction_pointer(guest, &stopped, false, error);
             if (okay && stopped == stop) {
-                guest->memory_fault = previous_fault;
-                guest->has_memory_fault = previous_has_fault;
+                guest->memory_fault = frame.previous_fault;
+                guest->has_memory_fault = frame.previous_has_fault;
                 boundary_fetch = true;
                 code = UC_ERR_OK;
             }
         }
         guest->faulting = code != UC_ERR_OK || frame.recording_failed;
         /* Actual RAM completions survive a later instruction fault. Publish
-         * while the owner is still readable, then make any engine fault terminal. */
+         * while the faulting owner is readable and cannot mutate or resume. */
         for (size_t i = 0; okay && i < frame.count; ++i) {
             qa_native_guest_commit commit = frame.writes[i];
             commit.instruction_last = i + 1 == frame.count;
@@ -515,16 +520,28 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         if (okay && frame.recording_failed) {
             if (error) *error = frame.failure;
             okay = false;
-        } else if (okay && code != UC_ERR_OK && guest->has_memory_fault &&
-            guest->memory_fault.kind == QA_NATIVE_GUEST_FAULT_FILE_EOF) {
-            okay = guest_fail(error, QA_ERROR_FORMAT, guest->memory_fault.address,
-                "native guest CPU file mapping access faults beyond EOF");
+        } else if (okay && frame.recorded_fault &&
+            (code == UC_ERR_READ_UNMAPPED || code == UC_ERR_WRITE_UNMAPPED ||
+             code == UC_ERR_FETCH_UNMAPPED || code == UC_ERR_READ_PROT ||
+             code == UC_ERR_WRITE_PROT || code == UC_ERR_FETCH_PROT)) {
+            completed.kind = QA_NATIVE_GUEST_MEMORY_FAULT;
+            completed.detail.memory = guest->memory_fault;
+        } else if (okay && code == UC_ERR_EXCEPTION) {
+            completed.kind = QA_NATIVE_GUEST_PROCESSOR_EXCEPTION;
+            okay = guest_uc(guest, qa_unicorn_x86_exception_take(guest->cpu,
+                &completed.detail.processor), error);
         } else if (okay) okay = guest_uc(guest, code, error);
         bool halted = false;
-        if (okay && !boundary_fetch)
+        if (okay && code == UC_ERR_OK && !boundary_fetch)
             okay = guest_uc(guest, qa_unicorn_x86_halted(guest->cpu, &halted), error);
         guest->faulting = false;
         if (okay) okay = instruction_pointer(guest, &instruction, false, error);
+        if (okay && (completed.kind == QA_NATIVE_GUEST_MEMORY_FAULT ||
+                     completed.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION)) {
+            completed.instruction = completed.kind == QA_NATIVE_GUEST_MEMORY_FAULT ?
+                instruction : frame.instruction;
+            break;
+        }
         if (okay && halted) {
             completed.kind = QA_NATIVE_GUEST_HALT;
             completed.instruction = frame.instruction;

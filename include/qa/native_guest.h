@@ -69,7 +69,12 @@ typedef struct qa_native_guest_fault {
     qa_native_guest_fault_kind kind;
     uint32_t access;
     uint64_t address, backing, backing_offset;
+    size_t bytes; /* Actual access extent, or zero when the backend supplies none. */
 } qa_native_guest_fault;
+typedef struct qa_native_guest_processor_exception {
+    uint32_t vector, error_code;
+    bool has_error_code, software_interrupt;
+} qa_native_guest_processor_exception;
 
 /* Callback addresses identify caller-owned executable entries. A
  * callback decodes its genuine ABI and updates the real CPU continuation.
@@ -162,15 +167,20 @@ bool qa_native_guest_unbind(qa_native_guest *, uint64_t, qa_error *);
 bool qa_native_guest_observe(qa_native_guest *, qa_native_guest_commit_fn, void *, qa_error *);
 typedef enum qa_native_guest_stop_kind {
     QA_NATIVE_GUEST_RETURN, QA_NATIVE_GUEST_BUDGET, QA_NATIVE_GUEST_PROGRAM_STOP,
-    QA_NATIVE_GUEST_HALT
+    QA_NATIVE_GUEST_HALT, QA_NATIVE_GUEST_MEMORY_FAULT,
+    QA_NATIVE_GUEST_PROCESSOR_EXCEPTION
 } qa_native_guest_stop_kind;
 typedef struct qa_native_guest_run_result {
     qa_native_guest_stop_kind kind;
     size_t instructions, remaining;
     /* Hardware execution has no instruction counter; its fields are unused. */
     bool counted;
-    /* Actual halted instruction, valid for HALT. The CPU retains its continuation. */
+    /* Actual source instruction for HALT or architectural faults/traps. */
     uint64_t instruction;
+    union {
+        qa_native_guest_fault memory;
+        qa_native_guest_processor_exception processor;
+    } detail;
 } qa_native_guest_run_result;
 
 /* Exact stop address, shared nested total instruction budget, no host clock.
@@ -180,8 +190,11 @@ typedef struct qa_native_guest_run_result {
  * successful resumable stop, including budget zero. Emulated counts include
  * stopped callback/observer dispatch and nested execution. remaining is bounded
  * by every enclosing run; the caller chooses the next operation's budget.
- * Emulated HALT retains the instruction continuation for an explicit next run.
- * CPU/callback faults remain terminal. The caller prepares the actual ABI
+ * Emulated HALT, MEMORY_FAULT and PROCESSOR_EXCEPTION retain readable CPU state
+ * for an explicit next run. The backend supplies the real continuation and
+ * committed instruction prefixes; whole-register or RAM rollback is not implied.
+ * Callback, unsupported-instruction and dependency failures remain terminal.
+ * The caller prepares the actual ABI
  * stack/registers before this raw operation and retains them until RETURN. */
 bool qa_native_guest_run(qa_native_guest *, uint64_t, uint64_t, size_t, size_t,
     qa_native_guest_run_result *, qa_error *);

@@ -21,6 +21,7 @@ uc_err qa_unicorn_memory_release(uc_engine *);
 unsigned qa_unicorn_state_revision(void);
 uc_err qa_unicorn_x86_state(uc_engine *, qa_native_guest_cpu *, bool);
 uc_err qa_unicorn_x86_halted(uc_engine *, bool *);
+uc_err qa_unicorn_x86_exception_take(uc_engine *, qa_native_guest_processor_exception *);
 unsigned qa_unicorn_store_revision(void);
 uc_err qa_unicorn_store_bind(uc_engine *, uc_hook);
 

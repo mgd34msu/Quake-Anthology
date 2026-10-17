@@ -35,6 +35,8 @@ typedef struct guest_run {
     uint64_t prepared_address;
     int prepared_size;
     bool recording_failed;
+    bool recorded_fault, previous_has_fault;
+    qa_native_guest_fault previous_fault;
     qa_error failure;
 } guest_run;
 typedef struct guest_callback_recovery {

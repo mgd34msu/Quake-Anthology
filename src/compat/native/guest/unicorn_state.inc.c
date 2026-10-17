@@ -18,6 +18,27 @@ UNICORN_EXPORT uc_err qa_unicorn_x86_halted(uc_engine *engine, bool *out)
     return UC_ERR_OK;
 }
 
+UNICORN_EXPORT uc_err qa_unicorn_x86_exception_take(uc_engine *engine,
+    qa_native_guest_processor_exception *out)
+{
+    if (!engine || !out || engine->arch != UC_ARCH_X86 || !engine->cpu) return UC_ERR_ARG;
+    CPUX86State *env = engine->cpu->env_ptr;
+    *out = (qa_native_guest_processor_exception){
+        .vector = (uint32_t)engine->cpu->exception_index,
+        .error_code = (uint32_t)env->error_code,
+        .software_interrupt = env->exception_is_int != 0};
+    if (!out->software_interrupt)
+        switch (out->vector) {
+        case 8: case 10: case 11: case 12: case 13: case 14: case 17:
+        case 21: case 29: case 30: out->has_error_code = true; break;
+        default: break;
+        }
+    /* The controller received this exception; the next explicit run is not
+     * an exception nested inside an unfinished architectural delivery. */
+    env->old_exception = -1;
+    return UC_ERR_OK;
+}
+
 UNICORN_EXPORT uc_err qa_unicorn_x86_state(uc_engine *engine,
     qa_native_guest_cpu *state, bool writing)
 {

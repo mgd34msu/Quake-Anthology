@@ -859,6 +859,19 @@ bool guest_abi_call_step(guest_abi_call *call, size_t quantum, bool *returned, q
     } else if (okay && execution.kind == QA_NATIVE_GUEST_HALT) {
         okay = guest_fail(error, QA_ERROR_ARGUMENT, execution.instruction,
             "native guest halted before ABI return");
+    } else if (okay && execution.kind == QA_NATIVE_GUEST_MEMORY_FAULT) {
+        const qa_native_guest_fault *fault = &execution.detail.memory;
+        qa_error_set(error, QA_ERROR_FORMAT, (size_t)execution.instruction,
+            "native guest memory fault kind %u access %u at 0x%llx (%zu bytes) before ABI return",
+            (unsigned)fault->kind, fault->access, (unsigned long long)fault->address, fault->bytes);
+        okay = false;
+    } else if (okay && execution.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION) {
+        const qa_native_guest_processor_exception *fault = &execution.detail.processor;
+        qa_error_set(error, QA_ERROR_FORMAT, (size_t)execution.instruction,
+            "native guest %s vector %u, error 0x%x (%s), before ABI return",
+            fault->software_interrupt ? "software interrupt" : "processor exception",
+            fault->vector, fault->error_code, fault->has_error_code ? "present" : "absent");
+        okay = false;
     } else if (okay) {
         okay = qa_native_guest_cpu_read(guest, &cpu, error);
         if (okay) okay = guest_fail(error, QA_ERROR_ARGUMENT, cpu.instruction,
