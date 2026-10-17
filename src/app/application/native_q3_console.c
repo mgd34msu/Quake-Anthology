@@ -4,6 +4,7 @@
 #include "startup_flow.h"
 #include "engine_shutdown.h"
 #include "native_q3_wire_state.h"
+#include "native_q3_clients.h"
 #include "native_q3_votes.h"
 #include "bots_catalog.h"
 #include "qa/game_q3_clients.h"
@@ -474,6 +475,47 @@ static bool operator_kick(void *context,const qa_command_invocation *call,qa_err
     }
     application_native_q3_console_release(provider);
     return ok;
+}
+
+bool application_native_q3_console_force_team(application_provider *provider,
+    const qa_command_invocation *command, qa_error *error)
+{
+    qa_q3_game *game=provider->state.q3;
+    uint32_t maximum,slot=UINT32_MAX;
+    if (!qa_q3_source_max_clients(game,&maximum,error)) return false;
+    const char *target=command->argv[1];
+    qa_q3_native_client client;
+    char message[1152];
+    if (target[0]>='0' && target[0]<='9') {
+        int32_t number=qa_parse_decimal_i32(target,QA_DECIMAL_SIGNED_WRAP);
+        if (number<0 || (uint32_t)number>=maximum) {
+            snprintf(message,sizeof(message),"Bad client slot: %d\n",number);
+            return qa_application_log_emit(provider->application,&command->context,message,
+                QA_APPLICATION_LOG_CONSOLE,error);
+        }
+        slot=(uint32_t)number;
+        if (!qa_q3_client_slot_read(game,slot,&client,error)) return false;
+        if (client.rule.connected==QA_Q3_CLIENT_DISCONNECTED) {
+            snprintf(message,sizeof(message),"Client %u is not connected\n",slot);
+            return qa_application_log_emit(provider->application,&command->context,message,
+                QA_APPLICATION_LOG_CONSOLE,error);
+        }
+    } else {
+        qa_string_id key=qa_q3_client_name_key(game,target,1024);
+        uint32_t candidate;
+        for (uint32_t first=0;qa_q3_client_name_slot(game,key,first,&candidate);first=candidate+1) {
+            if (!qa_q3_client_slot_read(game,candidate,&client,error)) return false;
+            if (client.rule.connected!=QA_Q3_CLIENT_DISCONNECTED) { slot=candidate; break; }
+        }
+        if (slot==UINT32_MAX) {
+            snprintf(message,sizeof(message),"User %s is not on the server\n",target);
+            return qa_application_log_emit(provider->application,&command->context,message,
+                QA_APPLICATION_LOG_CONSOLE,error);
+        }
+    }
+    qa_q3_source_binding binding;
+    return qa_q3_source_binding_read(game,slot,&binding,error) &&
+        application_native_q3_client_set_team(provider,binding.actor,command->argv[2],error);
 }
 
 bool application_native_q3_console_at(application_provider *provider, qa_console **console,

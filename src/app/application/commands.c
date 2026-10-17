@@ -5,6 +5,7 @@
 #include "map_players_private.h"
 #include "match_intents.h"
 #include "native_q3_clients.h"
+#include "native_q3_console.h"
 #include "native_client_roles.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_postgame.h"
@@ -403,6 +404,29 @@ static qa_command_result q1_host_command(qa_application *application,
 qa_command_result qa_application_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
+    if (q3_command_named(command->argv[0],"forceteam")) {
+        if (command->context.origin==QA_COMMAND_REMOTE) return QA_COMMAND_HANDLED;
+        if (command->argc!=3)
+            return qa_application_log_emit(application,&command->context,
+                "Usage: forceteam <player name|slot> <team>\n",QA_APPLICATION_LOG_CONSOLE,error)
+                ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        application_provider *source=application->primary_mode_ready?
+            application_native_q3_mode_source_provider(application,application->primary_mode):NULL;
+        if (!source || (source->kind!=APPLICATION_PROVIDER_Q3 &&
+            !application_q3_guest_server_gamestate(source)))
+            source=application_world_provider(application,QA_ROLE_ENTITIES,"");
+        if (!source || !source->constructed) return QA_COMMAND_UNHANDLED;
+        if (source->kind==APPLICATION_PROVIDER_Q3)
+            return application_native_q3_console_force_team(source,command,error)
+                ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        if (application_q3_guest_server_gamestate(source)) {
+            bool handled=false;
+            if (!application_q3_guest_console_command(source,command->raw,&handled,error))
+                return QA_COMMAND_FAILED;
+            return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
+        }
+        return QA_COMMAND_UNHANDLED;
+    }
     qa_command_result status = host_status(application, command, error);
     if (status != QA_COMMAND_UNHANDLED) return status;
     qa_command_result q1 = q1_host_command(application, command, error);

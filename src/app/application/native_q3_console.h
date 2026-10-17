@@ -16,6 +16,8 @@ bool application_native_q3_console_borrow(application_provider *, qa_error *);
 void application_native_q3_console_release(application_provider *);
 bool application_native_q3_console_at(application_provider *, qa_console **,
                                        qa_cvars **, qa_command_context *);
+bool application_native_q3_console_force_team(application_provider *,
+    const qa_command_invocation *, qa_error *);
 qa_cvars *application_native_q3_console_registry(const application_provider *);
 qa_cvar_handle application_native_q3_console_no_areas_handle(const application_provider *);
 typedef enum application_native_q3_rankings_control {
