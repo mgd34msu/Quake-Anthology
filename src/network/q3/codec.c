@@ -99,10 +99,12 @@ uint32_t qa_q3_read_bits(qa_q3_reader *reader, int bits)
 bool qa_q3_write_bits(qa_q3_writer *writer, uint32_t value, int bits)
 {
     if (writer == NULL || writer->raw.failed) return false;
-    if (writer->size > writer->raw.capacity || writer->raw.capacity - writer->size < 4)
-        return qa_net_writer_fail(&writer->raw, "Q3 message exceeds output capacity");
     if (!valid_width(bits, writer->oob, false))
         return qa_net_writer_fail(&writer->raw, "Invalid Q3 message bit width");
+    if (writer->size > writer->raw.capacity || writer->raw.capacity - writer->size < 4) {
+        writer->overflowed = true;
+        return qa_net_writer_fail(&writer->raw, "Q3 message exceeds output capacity");
+    }
     unsigned width = (unsigned)(bits < 0 ? -bits : bits);
     if (writer->oob) {
         for (unsigned shift = 0; shift < width; shift += 8)
@@ -120,8 +122,10 @@ bool qa_q3_write_bits(qa_q3_writer *writer, uint32_t value, int bits)
         remaining >>= 8;
     }
     size_t size = (writer->raw.bit + total) / 8 + 1;
-    if (size > writer->raw.capacity)
+    if (size > writer->raw.capacity) {
+        writer->overflowed = true;
         return qa_net_writer_fail(&writer->raw, "Q3 Huffman message exceeds output capacity");
+    }
     if (!qa_net_write_bits(&writer->raw, value, width & 7u)) return false;
     for (unsigned index = 0; index < count; ++index)
         if (!qa_net_write_bits(&writer->raw, codes[index], lengths[index])) return false;

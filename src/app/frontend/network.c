@@ -1851,9 +1851,12 @@ static bool q3_snapshot(frontend_q3_peer *peer, qa_error *error)
         actor, 0, 0, n->q3_server_bit, &frame, error)) return false;
     q3_download_packet packet = {.peer = peer, .enabled = enabled};
     peer->world.downloading = qa_q3_download_window_active(peer->download);
+    bool body_written = false;
     bool ok = qa_network_q3_snapshot_write(n->runtime, peer->client, &frame.snapshot, &peer->rate,
-        q3_write_downloads, &packet, error);
-    if (ok && packet.offer.owner) ok = qa_q3_download_window_commit(peer->download, &packet.offer, error);
+        q3_write_downloads, &packet, &body_written, error);
+    if (ok && !body_written) admin_print(n, "WARNING: msg overflowed\n");
+    if (ok && body_written && packet.offer.owner)
+        ok = qa_q3_download_window_commit(peer->download, &packet.offer, error);
     peer->world.downloading = qa_q3_download_window_active(peer->download);
     return ok;
 }

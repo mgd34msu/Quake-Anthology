@@ -390,10 +390,12 @@ bool qa_network_q3_snapshot(qa_network_runtime *runtime, qa_net_client_id id,
 }
 bool qa_network_q3_snapshot_write(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q3_snapshot *snapshot, const qa_q3_server_rate *rate,
-    qa_q3_server_download_write_fn write_downloads, void *context, qa_error *error)
+    qa_q3_server_download_write_fn write_downloads, void *context, bool *body_written, qa_error *error)
 {
+    if (body_written) *body_written = false;
     q3_runtime_peer *p = get(runtime, id, error);
-    return p && qa_q3_server_peer_snapshot_write(p->source, snapshot, rate, write_downloads, context, error);
+    return p && qa_q3_server_peer_snapshot_write(p->source, snapshot, rate, write_downloads, context,
+        body_written, error);
 }
 bool qa_network_q3_command(qa_network_runtime *runtime,qa_net_client_id id,const qa_unified_q3_event *event,
     qa_event_lease *lease,uint32_t config_index,uint32_t fragment,qa_error *error)

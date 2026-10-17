@@ -173,8 +173,7 @@ static bool rate_interval(size_t size, const qa_q3_server_rate *rate, int64_t *i
     if (size > 1500) size = 1500;
     *interval = (int64_t)((double)(size + 48) * 1000 / speed); return true;
 }
-static bool transmit(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, const qa_q3_server_rate *rate, qa_error *e) {
-    if (!qa_q3_server_end(writer)) return false;
+static bool transmit_finished(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, const qa_q3_server_rate *rate, qa_error *e) {
     size_t size = qa_q3_writer_size(writer);
     qa_q3_server_world world = p->hooks.world(p->hooks.context);
     bool sent;
@@ -199,6 +198,9 @@ static bool transmit(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, 
     if (interval < rate->snapshot_ms) interval = rate->snapshot_ms;
     if (p->state.phase != QA_Q3_ACTIVE && !world.downloading && interval < 1000) interval = 1000;
     p->state.next_snapshot_time = world.time + interval; return true;
+}
+static bool transmit(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, const qa_q3_server_rate *rate, qa_error *e) {
+    return qa_q3_server_end(writer) && transmit_finished(p, writer, data, rate, e);
 }
 static bool message_begin(qa_q3_server_peer *p, qa_q3_writer *w) {
     if (!qa_q3_server_begin(w, p->state.last_client_command)) return false;
@@ -293,7 +295,9 @@ bool qa_q3_server_peer_gamestate(qa_q3_server_peer *p, const qa_q3_gamestate *st
 bool qa_q3_server_peer_snapshot_ready(const qa_q3_server_peer *p)
 { return p && !qa_q3_channel_pending(p->channel) && !p->queue_first; }
 bool qa_q3_server_peer_snapshot_write(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
-    const qa_q3_server_rate *rate, qa_q3_server_download_write_fn write_downloads, void *context, qa_error *e) {
+    const qa_q3_server_rate *rate, qa_q3_server_download_write_fn write_downloads, void *context,
+    bool *body_written, qa_error *e) {
+    if (body_written) *body_written = false;
     if (!p || !snapshot || !rate || snapshot->player.product != p->product)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 snapshot send");
     if (qa_q3_channel_pending(p->channel) || p->queue_first) {
@@ -313,17 +317,38 @@ bool qa_q3_server_peer_snapshot_write(qa_q3_server_peer *p, const qa_q3_snapshot
     const qa_q3_snapshot *old = delta_snapshot(p, sequence);
     int32_t requested = p->state.delta_message;
     current_snapshot.delta_number = old ? requested : -1;
-    uint8_t data[QA_Q3_MESSAGE_BYTES]; qa_q3_writer writer;
-    qa_q3_writer_init(&writer, data, sizeof(data), false, e);
-    if (!message_begin(p, &writer) || !qa_q3_server_snapshot(&writer, old, &current_snapshot, &p->gamestate)) return false;
-    if (write_downloads && !write_downloads(context, &writer, e)) return false;
+    uint8_t data[QA_Q3_MESSAGE_BYTES]; qa_q3_writer writer; qa_error writing = {0};
+    qa_q3_writer_init(&writer, data, sizeof(data), false, &writing);
+    int32_t previous_reliable_sent = p->state.reliable_sent;
+    bool complete = message_begin(p, &writer) &&
+        qa_q3_server_snapshot(&writer, old, &current_snapshot, &p->gamestate) &&
+        (!write_downloads || write_downloads(context, &writer, &writing));
+    int32_t encoded_reliable_sent = p->state.reliable_sent;
+    p->state.reliable_sent = previous_reliable_sent;
+    size_t message_size = qa_q3_writer_size(&writer);
+    if (complete) complete = qa_q3_server_end(&writer);
     qa_q3_snapshot_slot *slot = &p->history[sequence & 31];
+    if (!complete) {
+        if (!writer.overflowed) { if (e) *e = writing; return false; }
+        qa_q3_writer_init(&writer, data, sizeof(data), false, e);
+        if (!qa_q3_server_begin(&writer, p->state.last_client_command)) return false;
+        message_size = qa_q3_writer_size(&writer);
+        if (!qa_q3_server_end(&writer)) return false;
+        slot->value.valid = false;
+        slot->sent_time = world.time; slot->ack_time = -1; slot->message_size = message_size;
+        return transmit_finished(p, &writer, data, rate, e);
+    }
     if (current_snapshot.entity_count > UINT64_MAX - p->entity_number)
         return fail(e, QA_ERROR_FORMAT, "Q3 snapshot entity sequence exhausted");
     if (!qa_q3_slot_store(slot, &current_snapshot, e)) return false;
     p->entity_number += current_snapshot.entity_count;
-    slot->sent_time = world.time; slot->ack_time = -1; slot->message_size = qa_q3_writer_size(&writer);
-    return transmit(p, &writer, data, rate, e);
+    slot->sent_time = world.time; slot->ack_time = -1; slot->message_size = message_size;
+    bool okay = transmit_finished(p, &writer, data, rate, e);
+    if (okay) {
+        p->state.reliable_sent = encoded_reliable_sent;
+        if (body_written) *body_written = true;
+    }
+    return okay;
 }
 typedef struct snapshot_downloads { const qa_q3_download *messages; size_t count; } snapshot_downloads;
 static bool write_download_array(void *context, qa_q3_writer *writer, qa_error *error)
@@ -338,7 +363,7 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snap
 {
     if (count && !downloads) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 snapshot download records");
     snapshot_downloads source = {downloads, count};
-    return qa_q3_server_peer_snapshot_write(p, snapshot, rate, write_download_array, &source, error);
+    return qa_q3_server_peer_snapshot_write(p, snapshot, rate, write_download_array, &source, NULL, error);
 }
 bool qa_q3_server_peer_snapshot(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
                                 const qa_q3_server_rate *rate, const qa_q3_download *download, qa_error *e) {

@@ -95,7 +95,7 @@ typedef struct qa_q3_reader {
     bool oob;
     qa_q3_diagnostics diagnostics;
 } qa_q3_reader;
-typedef struct qa_q3_writer { qa_net_writer raw; bool oob; size_t size; } qa_q3_writer;
+typedef struct qa_q3_writer { qa_net_writer raw; bool oob, overflowed; size_t size; } qa_q3_writer;
 void qa_q3_reader_init(qa_q3_reader *, qa_bytes, bool oob, qa_error *);
 void qa_q3_writer_init(qa_q3_writer *, void *, size_t, bool oob, qa_error *);
 uint32_t qa_q3_read_bits(qa_q3_reader *, int bits);
@@ -516,10 +516,12 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *, const qa_q3_snaps
                                           const qa_q3_server_rate *, const qa_q3_download *,
                                           size_t download_count, qa_error *);
 /* Runs only after the new physical snapshot is encoded, with its actual
- * bounded message writer. Existing FIFO/fragments bypass this producer. */
+ * bounded message writer. Existing FIFO/fragments bypass this producer.
+ * body_written is true only when the complete snapshot/download payload is
+ * retained for transport; a capacity-overflow recovery carries only its ACK. */
 typedef bool (*qa_q3_server_download_write_fn)(void *, qa_q3_writer *, qa_error *);
 bool qa_q3_server_peer_snapshot_write(qa_q3_server_peer *, const qa_q3_snapshot *,
-    const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, qa_error *);
+    const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, bool *body_written, qa_error *);
 /* True only when the next snapshot call will encode a new physical message,
  * rather than drain the existing native FIFO or fragment continuation. */
 bool qa_q3_server_peer_snapshot_ready(const qa_q3_server_peer *);

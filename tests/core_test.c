@@ -10378,6 +10378,86 @@ static void q3_ack_packet(qa_q3_server_peer *peer,qa_q3_channel *client,
     CHECK(kind==QA_Q3_PACKET_MESSAGE && error.code==QA_OK);
     qa_q3_channel_sent(client,packet);
 }
+typedef struct q3_capacity_test {
+    q3_ack_test input;
+    uint8_t packet[1500];
+    size_t size, sent;
+    unsigned acknowledgements, commands, snapshots;
+} q3_capacity_test;
+static qa_net_send_result q3_capacity_send(void *context,const qa_net_address *to,qa_bytes bytes,qa_error *error)
+{
+    (void)to;(void)error;q3_capacity_test *test=context;
+    CHECK(bytes.size<=sizeof(test->packet));
+    memcpy(test->packet,bytes.data,bytes.size);test->size=bytes.size;++test->sent;
+    return QA_NET_SEND_ACCEPTED;
+}
+static bool q3_capacity_download(void *context,qa_q3_writer *writer,qa_error *error)
+{
+    (void)context;(void)error;
+    for(size_t i=0;i<QA_Q3_MESSAGE_BYTES*8u;++i)
+        if(!qa_q3_write_bits(writer,(uint32_t)(i&255u),8)) return false;
+    CHECK(false);return false;
+}
+static bool q3_capacity_malformed(void *context,qa_q3_writer *writer,qa_error *error)
+{ (void)context;(void)error;return qa_q3_write_bits(writer,0,33); }
+static bool q3_capacity_event(void *context,const qa_q3_server_event *event,qa_error *error)
+{
+    (void)error;q3_capacity_test *test=context;
+    if(event->kind==QA_Q3_EVENT_ACK) ++test->acknowledgements;
+    else if(event->kind==QA_Q3_EVENT_COMMAND) ++test->commands;
+    else if(event->kind==QA_Q3_EVENT_SNAPSHOT) {
+        CHECK(event->value.snapshot.validity==QA_Q3_SNAPSHOT_VALID);
+        ++test->snapshots;
+    } else CHECK(false);
+    return true;
+}
+static void q3_capacity_receive(q3_capacity_test *test,qa_q3_channel *client)
+{
+    qa_error error={0};qa_q3_packet packet;uint8_t decoded[QA_Q3_MESSAGE_BYTES];
+    CHECK(qa_q3_channel_receive(client,(qa_bytes){test->packet,test->size},&packet,&error));
+    CHECK(packet.kind==QA_Q3_PACKET_MESSAGE);
+    memcpy(decoded,packet.payload.data,packet.payload.size);
+    qa_q3_xor_server(decoded,packet.payload.size,0,packet.sequence,"");
+    qa_q3_gamestate gamestate;qa_q3_gamestate_init(&gamestate);
+    qa_q3_entity entity;
+    qa_q3_server_decode decode={.product=QA_Q3_ARENA,.message_number=(int32_t)packet.sequence,
+        .gamestate=&gamestate,.entity_scratch=&entity,.entity_scratch_capacity=1};
+    CHECK(qa_q3_decode_server((qa_bytes){decoded,packet.payload.size},&decode,q3_capacity_event,test,&error));
+    CHECK(error.code==QA_OK);
+}
+static void test_q3_snapshot_capacity_recovery(void)
+{
+    qa_error error={0};q3_capacity_test test={0};qa_q3_server_peer *peer=NULL;qa_q3_channel *client=NULL;
+    qa_net_address remote={.kind=QA_NET_IPV4,.port=27960,.host.ipv4={127,0,0,1}};
+    qa_q3_server_hooks hooks={.context=&test,.world=q3_ack_world,.command=q3_ack_command,
+        .enter_world=q3_ack_move,.think=q3_ack_move,.resend_gamestate=q3_test_ok,
+        .pure_rejected_snapshot=q3_test_ok,.drop=q3_ack_drop,.send=q3_capacity_send};
+    CHECK(qa_q3_server_peer_create((qa_q3_identity){0},QA_Q3_ARENA,&remote,0,1234,&hooks,&peer,&error));
+    CHECK(qa_q3_channel_create(QA_Q3_CLIENT,1234,&client,&error));
+    CHECK(qa_q3_server_peer_command(peer,"print pending",NULL,UINT32_MAX,0,&error));
+    qa_q3_snapshot snapshot={.player={.product=QA_Q3_ARENA}};
+    qa_q3_server_rate rate={.bytes_per_second=3000,.snapshot_ms=50};bool body=true;
+    CHECK(qa_q3_server_peer_snapshot_write(peer,&snapshot,&rate,q3_capacity_download,NULL,&body,&error));
+    CHECK(!body && error.code==QA_OK && test.sent==1);
+    CHECK(qa_q3_server_peer_state(peer)->next_snapshot_time>0);
+    CHECK(qa_q3_server_peer_state(peer)->reliable_sent==0 && qa_q3_server_peer_reliable_acknowledged(peer)==0);
+    q3_capacity_receive(&test,client);
+    CHECK(test.acknowledgements==1 && !test.commands && !test.snapshots);
+    CHECK(qa_q3_server_peer_snapshot_write(peer,&snapshot,&rate,NULL,NULL,&body,&error));
+    CHECK(body && error.code==QA_OK && test.sent==2);
+    q3_capacity_receive(&test,client);
+    CHECK(test.acknowledgements==2 && test.commands==1 && test.snapshots==1);
+    CHECK(qa_q3_server_peer_state(peer)->reliable_sent==1);
+    CHECK(!qa_q3_server_peer_snapshot_write(peer,&snapshot,&rate,q3_capacity_malformed,NULL,&body,&error));
+    CHECK(!body && error.code!=QA_OK && test.sent==2);
+    error=(qa_error){0};
+    CHECK(qa_q3_server_peer_snapshot_write(peer,&snapshot,&rate,NULL,NULL,&body,&error));
+    CHECK(body && error.code==QA_OK && test.sent==3);
+    q3_capacity_receive(&test,client);
+    CHECK(test.acknowledgements==3 && test.commands==2 && test.snapshots==2);
+    qa_q3_channel_destroy(client);qa_q3_server_peer_destroy(peer);
+}
+
 static void test_q3_stale_ack_keeps_peer(void)
 {
     qa_error error={0};q3_ack_test test={0};qa_q3_server_peer *peer=NULL;qa_q3_channel *client=NULL;
@@ -11331,6 +11411,7 @@ int main(int argc, char **argv)
     test_q3_pure_metadata();
     test_q3_send_admission();
     test_q3_stale_ack_keeps_peer();
+    test_q3_snapshot_capacity_recovery();
     test_arena_progress_bound_store();
     test_event_ring_cold_growth();
     test_q3_reliable_event_references();
