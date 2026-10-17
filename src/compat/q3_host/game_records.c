@@ -561,12 +561,15 @@ bool qa_q3_host_actor_slot(const qa_q3_host *host, qa_actor_id actor, uint32_t *
 
 bool q3_game_project_actor(q3_call *call, qa_actor_id actor, uint32_t *out, qa_error *error)
 {
+    const qa_q3_host_server_services *services = &call->host->options.server;
     size_t number;
     if (qa_actor_index_find(&call->host->game->actor_slots, actor, &number)) {
+        if (services->project_actor && number >= services->maximum_clients &&
+            number < QA_Q3_ENTITY_WORLD && call->host->game->slots[number].borrowed)
+            return services->project_actor(services->context, call->source_call, actor, out, error);
         *out = (uint32_t)number;
         return true;
     }
-    const qa_q3_host_server_services *services = &call->host->options.server;
     return services->project_actor
         ? services->project_actor(services->context, call->source_call, actor, out, error)
         : qa_q3_host_actor_slot(call->host, actor, out, error);

@@ -1232,6 +1232,7 @@ add_library(qa_application STATIC
     src/app/application/weapon_availability.c
     src/app/application/weapon_trajectories.c
     src/app/application/source_trajectory_qc.c
+    src/app/application/source_projection.c
     src/app/application/source_trajectory_qvm.c
     src/app/application/source_trajectory_native.c
     src/app/application/q3_asset_selection.c

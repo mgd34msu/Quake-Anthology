@@ -1,4 +1,5 @@
 #include "source_trajectory.h"
+#include "source_projection.h"
 #include "internal.h"
 #include "native_q3_settings.h"
 #include "qa/binary.h"
@@ -50,6 +51,8 @@ typedef struct trajectory_qvm {
     bool initialized, releasing, refreshed_once, cvars_active;
 } trajectory_qvm;
 
+static application_source_projection qvm_projection(trajectory_qvm *);
+
 static bool qvm_word_read(trajectory_qvm *source, uint32_t address, int32_t *value, qa_error *error)
 {
     uint8_t bytes[4];
@@ -75,27 +78,19 @@ static bool qvm_data(trajectory_qvm *source, qa_q3_host_game_data *data, qa_erro
 
 static bool qvm_pointer(trajectory_qvm *source, uint32_t slot, int32_t *pointer, qa_error *error)
 {
-    qa_q3_host_game_data data;
-    if (!qvm_data(source, &data, error)) return false;
-    uint64_t address = data.entities_address + (uint64_t)slot * data.entity_stride;
-    if (slot >= data.entity_count || address > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM entity leaves its located table");
+    application_source_projection projection = qvm_projection(source);
+    uint64_t address;
+    if (!application_source_projection_pointer(&projection, slot, &address, error)) return false;
+    if (address > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM entity exceeds its pointer word");
     *pointer = (int32_t)address;
     return true;
 }
 
 static bool qvm_slot(trajectory_qvm *source, int32_t pointer, uint32_t *slot, qa_error *error)
 {
-    qa_q3_host_game_data data;
-    if (!qvm_data(source, &data, error)) return false;
-    if (pointer <= 0 || (uint32_t)pointer < data.entities_address ||
-        ((uint64_t)(uint32_t)pointer - data.entities_address) % data.entity_stride)
-        return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM returned a noncanonical entity pointer");
-    uint64_t number = ((uint64_t)(uint32_t)pointer - data.entities_address) / data.entity_stride;
-    if (number >= data.entity_count || number >= 1022)
-        return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM entity pointer leaves its located table");
-    *slot = (uint32_t)number;
-    return true;
+    application_source_projection projection = qvm_projection(source);
+    return application_source_projection_slot(&projection, (uint32_t)pointer, slot, error);
 }
 
 typedef struct trajectory_qvm_call {
@@ -135,6 +130,37 @@ static bool qvm_function(trajectory_qvm *source, const qa_qvm_call *call, uint32
     return qa_cvars_value_scope_run(source->cvar_scopes[teams], qvm_execute, &invocation, error);
 }
 
+static bool projection_span(void *context, uint64_t address, size_t size,
+    qa_bytes *out, qa_error *error)
+{
+    trajectory_qvm *source = context;
+    if (address > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Trajectory projection exceeds its QVM pointer word");
+    return qa_qvm_span(source->vm, (int32_t)address, 0, size, out, error);
+}
+
+static bool projection_write(void *context, uint64_t address, qa_bytes bytes,
+    bool private_fields, qa_error *error)
+{
+    trajectory_qvm *source = context;
+    if (address > UINT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Trajectory projection exceeds its QVM address word");
+    return private_fields ? qa_qvm_source_bytes_write(source->vm, source->image,
+        (uint32_t)address, bytes, error) : qa_qvm_write(source->vm, (uint32_t)address, bytes, error);
+}
+
+static bool projection_invoke(void *context, const qa_qvm_call *call, uint32_t entry,
+    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+{ return qvm_function(context, call, entry, arguments, count, result, error); }
+
+static application_source_projection qvm_projection(trajectory_qvm *source)
+{
+    return (application_source_projection){.host = source->host, .abi = source->abi,
+        .entity_stride = source->stride, .inuse = source->inuse, .health = source->health,
+        .allocate = source->allocate, .free = source->free_entity, .context = source,
+        .span = projection_span, .write = projection_write, .invoke = projection_invoke};
+}
+
 static bool qvm_call(trajectory_qvm *source, const qa_qvm_call *call, int32_t command,
     const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
 {
@@ -148,30 +174,6 @@ static bool qvm_time(trajectory_qvm *source, uint64_t time_ns, qa_error *error)
     source->time_ns = time_ns;
     return qvm_word_write(source, source->level_time,
         (int32_t)(uint32_t)(time_ns / UINT64_C(1000000)), error);
-}
-
-static bool qvm_body(trajectory_qvm *source, uint32_t slot, const qa_body_state *body,
-    qa_error *error)
-{
-    int32_t pointer;
-    qa_q3_entity entity; qa_qvm_entity_shared shared;
-    if (!qvm_pointer(source, slot, &pointer, error) ||
-        !qa_qvm_read_entity(source->vm, pointer, true, &entity, error) ||
-        !qa_qvm_read_shared_entity(source->vm, pointer, &shared, error)) return false;
-    shared.origin = body->origin; shared.angles = body->angles;
-    shared.local_bounds = body->bounds;
-    shared.absolute_bounds = (qa_bounds){qa_vec_add(body->origin, body->bounds.mins),
-        qa_vec_add(body->origin, body->bounds.maxs)};
-    entity.pos.time = (int32_t)(source->time_ns / UINT64_C(1000000));
-    entity.pos.base[0] = entity.origin[0] = body->origin.x;
-    entity.pos.base[1] = entity.origin[1] = body->origin.y;
-    entity.pos.base[2] = entity.origin[2] = body->origin.z;
-    entity.pos.delta[0] = body->velocity.x; entity.pos.delta[1] = body->velocity.y;
-    entity.pos.delta[2] = body->velocity.z;
-    entity.angles[0] = body->angles.x; entity.angles[1] = body->angles.y;
-    entity.angles[2] = body->angles.z;
-    return qa_qvm_write_entity(source->vm, pointer, true, &entity, error) &&
-        qa_qvm_write_shared_entity(source->vm, pointer, &shared, error);
 }
 
 static bool qvm_trajectory(trajectory_qvm *source, uint32_t slot,
@@ -379,20 +381,16 @@ static bool qvm_project(trajectory_qvm *source, const qa_qvm_call *call, qa_acto
     else if (!qa_world_body_read(source->application->world, actor, &body, error)) return false;
     qa_actor_player *player = qa_actors_player(qa_session_actors(source->application->session), actor);
     bool client = player && player->present;
+    application_source_projection projection = qvm_projection(source);
     if (created) {
         if (client) {
             for (slot = 0; slot < source->maximum_clients && source->flags[slot]; ++slot) {}
             if (slot == source->maximum_clients)
                 return application_fail(error, QA_ERROR_CAPACITY, "Trajectory QVM has no free source client");
+            if (!qa_q3_host_bind_actor(source->host, slot, actor, true, error)) return false;
         } else {
-            int32_t pointer, active;
-            if (!qvm_function(source, call, source->allocate, NULL, 0, &pointer, error) ||
-                !qvm_slot(source, pointer, &slot, error) ||
-                !qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error)) return false;
-            if (!active || source->flags[slot])
-                return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM allocated an occupied or inactive row");
+            if (!application_source_projection_borrow(&projection, call, actor, &slot, &created, error)) return false;
         }
-        if (!qa_q3_host_bind_actor(source->host, slot, actor, true, error)) return false;
         source->flags[slot] = client ? QVM_TRAJECTORY_CLIENT : QVM_TRAJECTORY_TARGET;
     }
     qa_stamp_set_mark(&source->refreshed, actor.slot);
@@ -401,9 +399,8 @@ static bool qvm_project(trajectory_qvm *source, const qa_qvm_call *call, qa_acto
         !qa_combat_read_traits(source->application->combat, actor, &combat, error)) return false;
     int32_t health = qa_source_to_i32(combat.health);
     if (client && !qvm_player(source, call, actor, player, &body, health, slot, created, error)) return false;
-    int32_t pointer;
-    if (!qvm_pointer(source, slot, &pointer, error) || !qvm_body(source, slot, &body, error) ||
-        !qvm_word_write(source, (uint32_t)pointer + source->health, health, error)) return false;
+    if (!application_source_projection_publish(&projection, slot, &body, &health,
+        source->time_ns, error)) return false;
     *out = slot; return true;
 }
 
@@ -447,8 +444,9 @@ static bool qvm_free_hook(void *context, const qa_qvm_call *call, int32_t *resul
     if (!source->flags[slot]) return qa_qvm_proceed(call, result, error);
     /* A donor can retire its private target state, but its allocator cannot
      * reuse a row still borrowed by a live canonical actor. */
+    application_source_projection projection = qvm_projection(source);
     return qa_qvm_proceed(call, result, error) &&
-        qvm_word_write(source, (uint32_t)pointer + source->inuse, 1, error);
+        application_source_projection_keep(&projection, slot, error);
 }
 
 static bool qvm_initialize(trajectory_qvm *source, qa_error *error)
@@ -529,7 +527,8 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
     if (!qvm_pointer(source, slot, &pointer, error) ||
         !qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error)) return false;
     if (!active) { source->flags[slot] |= QVM_TRAJECTORY_RETIRED; attachment->retired = true; return true; }
-    if (!qvm_body(source, slot, body, error) ||
+    application_source_projection projection = qvm_projection(source);
+    if (!application_source_projection_publish(&projection, slot, body, NULL, source->time_ns, error) ||
         !qvm_word_read(source, (uint32_t)pointer + source->nextthink, &next, error)) return false;
     if (next <= 0 || next > (int32_t)(time_ns / UINT64_C(1000000))) return true;
     if (!qvm_word_read(source, (uint32_t)pointer + source->think, &entry, error)) return false;
@@ -560,9 +559,8 @@ static bool qvm_private_release(trajectory_qvm *source, uint32_t slot, qa_error 
         source->userinfo[slot][0] = 0;
         source->userinfo_ready[slot] = false;
     } else {
-        int32_t active;
-        okay = qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error);
-        if (okay && active) okay = qvm_function(source, NULL, source->free_entity, &pointer, 1, &result, error);
+        application_source_projection projection = qvm_projection(source);
+        okay = application_source_projection_release(&projection, NULL, slot, error);
     }
     source->releasing = prior;
     if (okay) source->flags[slot] = 0;
