@@ -777,6 +777,7 @@ static bool authored_progress(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal
     if(!bot_ai_wedged(&s->progress,bot_ai_origin(s),b->time,pursuing)) return true;
     if(s->progress.recover_until<=b->time) s->progress.recover_until=b->time+.5f;
     if(b->time-s->progress.since<2.5f) return true;
+    bot_ai_unblock_failed(b,s,goal);
     bot_ai_cooperative_failed(b,s,goal);
     if(goal->flags&QA_BOT_GOAL_ITEM)
         DECISION_CALL(qa_bot_goals_avoid_set(goals(b),s->goals,goal->number,20,e));
@@ -801,10 +802,14 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool 
         DECISION_CALL(qa_bot_moves_direction(moves(b),s->movement,result->direction,400,
             QA_BOT_DIRECTION_WALK,&moved,e));
         result->failure=!moved;
+        if(result->failure) bot_ai_unblock_failed(b,s,goal);
         return movement_result(b,s,activate,result,e);
     }
     DECISION_CALL(qa_bot_moves_goal(moves(b),s->movement,goal,bot_ai_travel_flags(s),result,e));
-    if(result->failure) bot_ai_cooperative_failed(b,s,goal);
+    if(result->failure) {
+        bot_ai_unblock_failed(b,s,goal);
+        bot_ai_cooperative_failed(b,s,goal);
+    }
     DECISION_CALL(movement_result(b,s,activate,result,e));
     if(s->source_settings && s->player.grounded && !s->player.water_jump &&
        !s->player.grapple_pull && !result->failure && !result->blocked &&
@@ -1182,7 +1187,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 }
                 if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
                 if(!found) return !ordered || scripted_combat(b,s,false,e);
-                if(!ordered && s->cooperative.goal==BOT_COOP_NONE && bot_ai_check_time(s)<b->time) {
+                if(!ordered && !s->interaction.target.registry &&
+                   s->cooperative.goal==BOT_COOP_NONE && bot_ai_check_time(s)<b->time) {
                     bot_ai_check_time_set(s,b->time+.5f);
                     bool accepted,nearby_found;
                     if(!bot_ai_source_wants_camp(b,s,&accepted,e)) return false;
@@ -1200,6 +1206,11 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(objective.found) {
                     DECISION_CALL(qa_bot_goals_pop(goals(b),s->goals,e));
                     ENTER(QA_BOT_SEEK_LONG_TERM,"authored objective superseded nearby goal");continue;
+                }
+                DECISION_CALL(bot_ai_interactable_goal(b,s,&goal,&found,e));
+                if(found) {
+                    DECISION_CALL(qa_bot_goals_pop(goals(b),s->goals,e));
+                    ENTER(QA_BOT_SEEK_LONG_TERM,"authored unblock goal selected");continue;
                 }
                 DECISION_CALL(bot_ai_cooperative_goal(b,s,&goal,&found,e));
                 if(found) {

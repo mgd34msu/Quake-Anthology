@@ -9,6 +9,10 @@
 #include "qa/vfs.h"
 
 typedef struct qa_bot_source_knowledge qa_bot_source_knowledge;
+typedef enum qa_bot_source_interaction {
+    QA_BOT_SOURCE_INTERACTION_NONE, QA_BOT_SOURCE_INTERACTION_PUSH,
+    QA_BOT_SOURCE_INTERACTION_USE, QA_BOT_SOURCE_INTERACTION_SHOOT
+} qa_bot_source_interaction;
 typedef struct qa_bot_source_movement {
     bool allow_combat_jumping, walk_only, allow_rocket_jumping;
     float jump_chance, jump_cooldown;
@@ -127,6 +131,8 @@ size_t qa_bot_source_character_count(const qa_bot_source_knowledge *);
 const qa_bot_source_character *qa_bot_source_character_at(const qa_bot_source_knowledge *, size_t);
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *, qa_item_id);
 const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge *, qa_string_id classname);
+qa_bot_source_interaction qa_bot_source_interaction_read(const qa_bot_source_knowledge *,
+    qa_string_id classname, uint32_t spawnflags, bool has_health, bool has_targetname);
 size_t qa_bot_source_document_count(const qa_bot_source_knowledge *);
 const qa_bot_source_document *qa_bot_source_document_at(const qa_bot_source_knowledge *, size_t);
 size_t qa_bot_source_chat_count(const qa_bot_source_knowledge *, qa_string_id type);

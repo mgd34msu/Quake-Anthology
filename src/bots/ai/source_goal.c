@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "qa/binary.h"
+#include "qa/text.h"
 #include "source_goal_record.h"
 #include "source_event_state.h"
 #include "source_team_state.h"
@@ -235,6 +236,77 @@ void bot_ai_cooperative_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goa
     bot_cooperative_cooldown row={.actor=actor,.client=s->acquired_source_client,.until=b->time+4};
     bot_ai_cooperative_cooldown_set(b,&row);
     s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
+}
+void bot_ai_unblock_failed(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal) {
+    if(!s->source_settings) return;
+    qa_actor_id actor=s->interaction.target;
+    if(bot_ai_live(b,actor) && b->services.entity_number(b->services.context,actor)==goal->entity) {
+        bot_cooperative_cooldown row={.actor=actor,.client=s->acquired_source_client,.until=b->time+20};
+        bot_ai_cooperative_cooldown_set(b,&row);
+    }
+    s->interaction=(bot_interaction_state){.until=b->time+8};
+}
+bool bot_ai_interactable_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
+    *found=false;s->interaction.target=(qa_actor_id){0};
+    if(!s->source_settings || b->time>=s->interaction.until ||
+       !b->services.shared.targets || bot_ai_order_active(s) || bot_ai_ordered(s)) return true;
+    if(b->services.modes && s->view.mode.generation) {
+        qa_mode_view mode;
+        SOURCE_CALL(qa_modes_read(b->services.modes,s->view.mode,&mode,e));
+        if(mode.rules.kind==QA_MODE_CTF || mode.rules.kind==QA_MODE_ONE_FLAG) {
+            for(size_t i=0;i<3;++i) {
+                qa_mode_flag_view flag;
+                SOURCE_CALL(qa_modes_flag_read(b->services.modes,s->view.mode,mode.rules.teams[i],&flag,e));
+                if(flag.actor.registry) return true;
+            }
+        }
+    }
+    qa_targets *targets=b->services.shared.targets;
+    qa_strings *strings=qa_session_strings(b->services.shared.session);
+    const qa_string_id *keys=qa_targets_field_keys(targets);
+    qa_target_cursor cursor={0};qa_actor_id actor,best={0};qa_linked_body best_body={0};
+    qa_vec3 center={0};float best_distance=1024*1024+1;
+    while(qa_targets_next_authored(targets,0,&cursor,&actor)) {
+        qa_authored_target fields;qa_linked_body body;
+        if(!qa_targets_read(targets,actor,&fields) || qa_strings_text(strings,fields.targetname).size ||
+           qa_bot_source_item_read(b->services.source_knowledge,fields.classname) ||
+           !qa_world_linked(b->services.shared.world,actor,&body)) continue;
+        qa_builtin_actor_traits traits;
+        if(b->services.shared.actor_traits &&
+           b->services.shared.actor_traits(b->services.shared.context,actor,&traits) &&
+           (traits.player || traits.monster)) continue;
+        const bot_actor_memory *memory=bot_ai_memory_read(b,actor);
+        if(memory && memory->unreachable_until[s->acquired_source_client]>b->time) continue;
+        double flags=0,health=0;
+        qa_targets_number(targets,actor,keys[QA_TARGET_KEY_SPAWNFLAGS],&flags);
+        if(qa_combat_has(b->services.shared.combat,actor)) {
+            qa_combat_state combat;
+            SOURCE_CALL(qa_combat_read_traits(b->services.shared.combat,actor,&combat,e));
+            health=combat.health;
+        } else qa_targets_number(targets,actor,keys[QA_TARGET_KEY_HEALTH],&health);
+        if(!bot_ai_live(b,actor) || qa_bot_source_interaction_read(b->services.source_knowledge,
+           fields.classname,(uint32_t)qa_source_to_i32(flags),health>0,false)!=QA_BOT_SOURCE_INTERACTION_PUSH)
+            continue;
+        qa_vec3 point=qa_vec_add(body.state.origin,
+            qa_vec_scale(qa_vec_add(body.state.bounds.mins,body.state.bounds.maxs),.5f));
+        qa_vec3 delta=qa_vec_sub(point,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
+        if(distance<=1024*1024 && distance<best_distance) {
+            best=actor;best_body=body;center=point;best_distance=distance;
+        }
+    }
+    if(!best.registry) return true;
+    if(best_distance<=40*40) {s->interaction.until=0;return true;}
+    qa_bounds bounds={qa_vec_sub(best_body.absolute_bounds.mins,center),
+        qa_vec_sub(best_body.absolute_bounds.maxs,center)};
+    qa_vec3 origin;uint32_t area;
+    SOURCE_CALL(qa_bot_navigation_best(navigation(b,s),center,bounds,&origin,&area,e));
+    if(!bot_ai_live(b,best)) return true;
+    int32_t entity=b->services.entity_number(b->services.context,best);
+    if(entity<0) return true;
+    /* Snap only the route area; walking into the actual brush center pushes it. */
+    *out=(qa_bot_goal){.origin=center,.area=(int32_t)area,
+        .mins=bounds.mins,.maxs=bounds.maxs,.entity=entity};
+    s->interaction.target=best;*found=true;return true;
 }
 bool bot_ai_human_nearest(qa_bots *b,bot_ai_state *s,bool teammates_only,
     qa_vec3 *human,float *human_distance,bool *has_human,qa_error *e)
@@ -924,6 +996,10 @@ static bool long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
 bool bot_ai_source_long_term_goal(qa_bots *b,bot_ai_state *s,bool retreat,
                                    qa_bot_goal *out,bool *found,qa_error *e) {
     s->cooperative.goal=BOT_COOP_NONE;s->cooperative.hunt=(qa_actor_id){0};
+    if(!retreat) {
+        SOURCE_CALL(bot_ai_interactable_goal(b,s,out,found,e));
+        if(*found) return true;
+    }
     bool result=long_term_goal(b,s,retreat,out,found,e);
     if(!alive(b,s)) *found=false;
     return result;

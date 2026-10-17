@@ -52,7 +52,10 @@ static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     bool ok=b->services.player(b->services.context,s->view.actor,&observed,&source,e);
     bot_ai_player_observe(s,&observed);
     if(!ok) return false;
-    if(observed.dead || observed.spawn_sequence!=spawn) s->hazard=(bot_hazard_memory){0};
+    if(observed.dead || observed.spawn_sequence!=spawn) {
+        s->hazard=(bot_hazard_memory){0};
+        s->interaction=(bot_interaction_state){0};
+    }
     if(observed.dead || observed.spawn_sequence!=spawn || observed.teleport_sequence!=teleport)
         s->progress=(bot_progress_memory){0};
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}

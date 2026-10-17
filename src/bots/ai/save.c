@@ -607,6 +607,31 @@ static bool progress_fields(qa_source_save_io *io,qa_bots *bots)
     }
     return true;
 }
+static bool interaction_fields(qa_source_save_io *io,qa_bots *bots)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    if(reading && io->offset==io->input.size) return true;
+    uint32_t count=0,next=0;uint64_t seen=0;
+    if(!reading) for(size_t i=0;i<64;++i)
+        if(bots->source_cells[i] && bots->source_cells[i]->interaction.until>bots->time) ++count;
+    U(count);if(count>64) return false;
+    for(uint32_t i=0;i<count;++i) {
+        uint32_t client=0;bot_interaction_state value={0};
+        if(!reading) {
+            while(next<64 && (!bots->source_cells[next] ||
+                bots->source_cells[next]->interaction.until<=bots->time)) ++next;
+            client=next++;value=bots->source_cells[client]->interaction;
+            if(!bot_ai_live(bots,value.target)) value.target=(qa_actor_id){0};
+        }
+        U(client);
+        if(client>=64 || !bots->source_cells[client] || (seen&(UINT64_C(1)<<client))) return false;
+        seen|=UINT64_C(1)<<client;
+        F(value.until);A(value.target);
+        if(!isfinite(value.until)) return false;
+        if(reading) bots->source_cells[client]->interaction=value;
+    }
+    return true;
+}
 bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *error)
 {
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
@@ -616,7 +641,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
         fields(&io,&view,&bots->source_orders) && order_tolerance_fields(&io,&view) &&
         cooperative_fields(&io,&view) && awareness_fields(&io,&view) && aim_fields(&io,&view) &&
         authored_chat_fields(&io,&view) && objective_role_fields(&io,&view) && hazard_fields(&io,&view) &&
-        progress_fields(&io,&view) &&
+        progress_fields(&io,&view) && interaction_fields(&io,&view) &&
         qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -636,7 +661,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         fields(&io,&scratch,&scratch.source_orders) && order_tolerance_fields(&io,&scratch) &&
         cooperative_fields(&io,&scratch) && awareness_fields(&io,&scratch) && aim_fields(&io,&scratch) &&
         authored_chat_fields(&io,&scratch) && objective_role_fields(&io,&scratch) && hazard_fields(&io,&scratch) &&
-        progress_fields(&io,&scratch) &&
+        progress_fields(&io,&scratch) && interaction_fields(&io,&scratch) &&
         scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     for(uint32_t i=0;ok && i<64;++i) if(scratch.source_cells[i])

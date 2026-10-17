@@ -780,7 +780,7 @@ static void test_bot_source_knowledge(void)
     test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
     test_bot_authored_respawn_deadline();
     qa_error error={0};
-    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[5][160];
+    char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[6][160];
     CHECK(mkdtemp(directory));
     CHECK(snprintf(folder,sizeof(folder),"%s/bots",directory)>0 && mkdir(folder,0700)==0);
     qa_resource_pool *pool=qa_resource_pool_create(&error);CHECK(pool);
@@ -847,14 +847,20 @@ static void test_bot_source_knowledge(void)
         (qa_bytes){(const uint8_t *)english,sizeof(english)-1},&error));
     CHECK(qa_vfs_write(files,mount,"localization/loc_french.txt",
         (qa_bytes){(const uint8_t *)french,sizeof(french)-1},&error));
-    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt","items.txt","chats.txt"};
+    const char interactions_text[]="{\n name func_button\n interaction push\n spawnflags 4\n health false\n targetname false\n}\n"
+        "{\n name func_button\n interaction shoot\n health true\n}\n"
+        "{\n name func_button\n interaction use\n}\n"
+        "{\n name func_switch\n interaction push\n spawnflags 8\n targetname false\n logic_op or\n}\n"
+        "{\n name reserved\n interaction unknown\n}\n{\n name reserved\n interaction push\n}\n";
+    const char *names[]={"weapons.txt","settings_Consoles.txt","characters.txt","items.txt","chats.txt","interactables.txt"};
     const qa_bytes contents[]={
         {(const uint8_t *)weapons,sizeof(weapons)-1},
         {(const uint8_t *)settings,sizeof(settings)-1},
         {(const uint8_t *)optional,sizeof(optional)-1},
         {(const uint8_t *)items_text,sizeof(items_text)-1},
-        {(const uint8_t *)chats_text,sizeof(chats_text)-1}};
-    for(size_t i=0;i<5;++i) {
+        {(const uint8_t *)chats_text,sizeof(chats_text)-1},
+        {(const uint8_t *)interactions_text,sizeof(interactions_text)-1}};
+    for(size_t i=0;i<sizeof(names)/sizeof(*names);++i) {
         CHECK(snprintf(paths[i],sizeof(paths[i]),"bots/%s",names[i])>0);
         CHECK(qa_vfs_write(files,mount,paths[i],contents[i],&error));
     }
@@ -864,7 +870,20 @@ static void test_bot_source_knowledge(void)
     CHECK(qa_bot_source_knowledge_load(files,strings,QA_RULESET_NETQUAKE,"english",bot_source_fixture_weapon,strings,
         &knowledge,&found,&error));
     CHECK(found && knowledge && qa_bot_source_skill_count(knowledge)==3 &&
-        qa_bot_source_document_count(knowledge)==5);
+        qa_bot_source_document_count(knowledge)==6);
+    qa_string_id button=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"func_button",11});
+    qa_string_id lever=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"func_switch",11});
+    qa_string_id reserved=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"reserved",8});
+    CHECK(button && lever && reserved);
+    CHECK(qa_bot_source_interaction_read(knowledge,button,12,false,false)==QA_BOT_SOURCE_INTERACTION_PUSH);
+    CHECK(qa_bot_source_interaction_read(knowledge,button,12,true,false)==QA_BOT_SOURCE_INTERACTION_SHOOT);
+    CHECK(qa_bot_source_interaction_read(knowledge,button,12,false,true)==QA_BOT_SOURCE_INTERACTION_USE);
+    CHECK(qa_bot_source_interaction_read(knowledge,button,0,false,false)==QA_BOT_SOURCE_INTERACTION_USE);
+    CHECK(qa_bot_source_interaction_read(knowledge,lever,0,false,false)==QA_BOT_SOURCE_INTERACTION_PUSH);
+    CHECK(qa_bot_source_interaction_read(knowledge,lever,8,false,true)==QA_BOT_SOURCE_INTERACTION_PUSH);
+    CHECK(qa_bot_source_interaction_read(knowledge,lever,0,false,true)==QA_BOT_SOURCE_INTERACTION_NONE);
+    CHECK(qa_bot_source_interaction_read(knowledge,reserved,0,false,false)==QA_BOT_SOURCE_INTERACTION_NONE);
+    CHECK(qa_bot_source_interaction_read(knowledge,0,0,false,false)==QA_BOT_SOURCE_INTERACTION_NONE);
     test_bot_authored_runtime(knowledge,strings);
     qa_string_id connected=qa_strings_find(strings,(qa_bytes){(const uint8_t *)"connected",9});
     CHECK(qa_bot_source_chat_count(knowledge,connected)==2);
@@ -1013,7 +1032,7 @@ static void test_bot_source_knowledge(void)
     qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
     CHECK(practice->movement.jump_chance==37.5f && !memcmp(byte_name.data,"\377\200",2));
     qa_bot_source_knowledge_destroy(knowledge);qa_strings_destroy(strings);
-    for(size_t i=0;i<5;++i) {
+    for(size_t i=0;i<sizeof(names)/sizeof(*names);++i) {
         char path[256];CHECK(snprintf(path,sizeof(path),"%s/%s",directory,paths[i])>0);
         CHECK(unlink(path)==0);
     }

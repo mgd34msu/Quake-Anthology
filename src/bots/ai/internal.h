@@ -111,6 +111,10 @@ typedef struct bot_progress_memory {
     float since, recover_until;
     bool active, pressing, pursuing;
 } bot_progress_memory;
+typedef struct bot_interaction_state {
+    qa_actor_id target;
+    float until;
+} bot_interaction_state;
 typedef enum bot_objective_role {
     BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND
 } bot_objective_role;
@@ -139,6 +143,7 @@ typedef struct bot_ai_state {
     bot_cooperative_state cooperative;
     bot_hazard_memory hazard;
     bot_progress_memory progress;
+    bot_interaction_state interaction;
     bot_objective_role objective_role;
     bot_authored_chat_state authored_chat;
     uint32_t character, goals, weapons, chat, movement;
@@ -219,6 +224,8 @@ bool bot_ai_cooperative(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_human_nearest(qa_bots *,bot_ai_state *,bool teammates_only,
     qa_vec3 *,float *distance_squared,bool *found,qa_error *);
 bool bot_ai_cooperative_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
+bool bot_ai_interactable_goal(qa_bots *,bot_ai_state *,qa_bot_goal *,bool *,qa_error *);
+void bot_ai_unblock_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
 bool bot_ai_authored_objective_goal(qa_bots *,bot_ai_state *,bot_objective_goal *,qa_error *);
 void bot_ai_cooperative_failed(qa_bots *,bot_ai_state *,const qa_bot_goal *);
 bool bot_ai_cooperative_cooldown_next(const qa_bots *,size_t *,bot_cooperative_cooldown *);

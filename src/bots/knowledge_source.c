@@ -9,6 +9,13 @@
 #include <string.h>
 #include <stdio.h>
 
+enum { SOURCE_INTERACTION_FLAGS=1, SOURCE_INTERACTION_HEALTH=2, SOURCE_INTERACTION_TARGET=4 };
+typedef struct source_interaction {
+    qa_bot_source_interaction kind;
+    uint32_t spawnflags;
+    uint8_t conditions, expected;
+    bool any, exact_flags;
+} source_interaction;
 struct qa_bot_source_knowledge {
     qa_arena storage;
     qa_strings *strings;
@@ -24,6 +31,8 @@ struct qa_bot_source_knowledge {
     qa_bot_source_item *items;
     qa_id_index chat_types;
     qa_bot_source_chat *chats;
+    qa_id_index interaction_names;
+    source_interaction *interactions;
 };
 static void *reserve(qa_bot_source_knowledge *knowledge,void *old,size_t *capacity,
     size_t needed,size_t stride,size_t alignment,qa_error *error) {
@@ -547,6 +556,55 @@ static bool chats_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_d
     }
     qa_localization_release(catalog);qa_localization_pool_destroy(pool);return okay;
 }
+static bool interactions_parse(qa_bot_source_knowledge *knowledge,const qa_bot_source_document *document,
+    qa_error *error)
+{
+    static const char *const fields[]={"name","interaction","spawnflags","health","targetname","logic_op"};
+    static const char *const kinds[]={"push","use","shoot"};
+    qa_string_id keys[6],values[3],yes,no,any;
+    for(size_t i=0;i<6;++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,fields[i],keys+i,error)) return false;
+    for(size_t i=0;i<3;++i)
+        if(!qa_strings_intern_cstr(knowledge->strings,kinds[i],values+i,error)) return false;
+    if(!qa_strings_intern_cstr(knowledge->strings,"true",&yes,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"false",&no,error) ||
+       !qa_strings_intern_cstr(knowledge->strings,"or",&any,error)) return false;
+    knowledge->interaction_names.storage=&knowledge->storage;
+    if(!qa_id_index_reserve(&knowledge->interaction_names,document->block_count,error)) return false;
+    knowledge->interactions=document->block_count?qa_arena_alloc(&knowledge->storage,
+        document->block_count*sizeof(*knowledge->interactions),_Alignof(source_interaction),error):NULL;
+    if(document->block_count && !knowledge->interactions) return false;
+    for(size_t i=0;i<document->block_count;++i) {
+        source_interaction *row=knowledge->interactions+i;*row=(source_interaction){0};
+        qa_string_id name=0;const qa_bot_source_block *block=document->blocks+i;
+        for(size_t j=0;j<block->field_count;++j) {
+            const qa_bot_source_field *field=block->fields+j;
+            if(field->count!=1) continue;
+            qa_string_id value=field->values[0];
+            if(field->key==keys[0]) name=value;
+            else if(field->key==keys[1]) {
+                row->kind=QA_BOT_SOURCE_INTERACTION_NONE;
+                for(size_t k=0;k<3;++k) if(value==values[k])
+                    row->kind=(qa_bot_source_interaction)(QA_BOT_SOURCE_INTERACTION_PUSH+k);
+            } else if(field->key==keys[2]) {
+                double flags;
+                if(qa_parse_number(qa_strings_text(knowledge->strings,value),&flags,NULL) && isfinite(flags)) {
+                    int32_t mask=qa_source_to_i32(flags);
+                    row->spawnflags=(uint32_t)mask;row->exact_flags=(double)mask==flags;
+                    row->conditions|=SOURCE_INTERACTION_FLAGS;
+                }
+            } else if(field->key==keys[3] || field->key==keys[4]) {
+                if(value==yes || value==no) {
+                    uint8_t bit=field->key==keys[3]?SOURCE_INTERACTION_HEALTH:SOURCE_INTERACTION_TARGET;
+                    row->conditions|=bit;
+                    if(value==yes) row->expected|=bit;else row->expected&=(uint8_t)~bit;
+                }
+            } else if(field->key==keys[5]) row->any=value==any;
+        }
+        if(name) qa_id_index_insert(&knowledge->interaction_names,name,0,i);
+    }
+    return true;
+}
 static bool document_load(qa_bot_source_knowledge *knowledge,qa_vfs *files,const char *path,
     bool *found,qa_error *error) {
     *found=false;qa_resource *resource=NULL;qa_error local={0};
@@ -598,6 +656,8 @@ bool qa_bot_source_knowledge_load(qa_vfs *files,qa_strings *strings,qa_ruleset_i
             error)) goto failed;
         if(present && i==1 && !items_parse(knowledge,knowledge->documents+knowledge->document_count-1,
             rules,bindings,knowledge->documents[0].block_count,error)) goto failed;
+        if(present && i==3 && !interactions_parse(knowledge,knowledge->documents+knowledge->document_count-1,
+            error)) goto failed;
         if(present && i==6 && !chats_parse(knowledge,knowledge->documents+knowledge->document_count-1,
             files,rules,language,error)) goto failed;
     }
@@ -611,6 +671,7 @@ failed:
 void qa_bot_source_knowledge_destroy(qa_bot_source_knowledge *knowledge) {
     if(knowledge) {qa_id_index_destroy(&knowledge->weapon_items);qa_id_index_destroy(&knowledge->item_names);
         qa_id_index_destroy(&knowledge->chat_types);
+        qa_id_index_destroy(&knowledge->interaction_names);
         qa_arena_destroy(&knowledge->storage);free(knowledge);}
 }
 const qa_bot_source_weapon *qa_bot_source_weapon_read(const qa_bot_source_knowledge *knowledge,qa_item_id item)
@@ -624,6 +685,25 @@ const qa_bot_source_item *qa_bot_source_item_read(const qa_bot_source_knowledge 
     if(!knowledge) return NULL;
     qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->item_names,classname,0);size_t at;
     return qa_id_index_next(&knowledge->item_names,&cursor,&at)?knowledge->items+at:NULL;
+}
+qa_bot_source_interaction qa_bot_source_interaction_read(const qa_bot_source_knowledge *knowledge,
+    qa_string_id classname,uint32_t spawnflags,bool has_health,bool has_targetname)
+{
+    if(!knowledge) return QA_BOT_SOURCE_INTERACTION_NONE;
+    qa_id_index_cursor cursor=qa_id_index_begin(&knowledge->interaction_names,classname,0);
+    size_t at,first=SIZE_MAX;qa_bot_source_interaction kind=QA_BOT_SOURCE_INTERACTION_NONE;
+    while(qa_id_index_next(&knowledge->interaction_names,&cursor,&at)) {
+        const source_interaction *row=knowledge->interactions+at;
+        uint8_t matched=0;
+        if(row->exact_flags && (spawnflags&row->spawnflags)==row->spawnflags) matched|=SOURCE_INTERACTION_FLAGS;
+        if(has_health==((row->expected&SOURCE_INTERACTION_HEALTH)!=0)) matched|=SOURCE_INTERACTION_HEALTH;
+        if(has_targetname==((row->expected&SOURCE_INTERACTION_TARGET)!=0)) matched|=SOURCE_INTERACTION_TARGET;
+        bool matches=!row->conditions || (row->any?(matched&row->conditions)!=0:
+            (matched&row->conditions)==row->conditions);
+        /* The shared index visits newest first; authored rules match first. */
+        if(matches && at<first) {first=at;kind=row->kind;}
+    }
+    return kind;
 }
 size_t qa_bot_source_chat_count(const qa_bot_source_knowledge *knowledge,qa_string_id type)
 {
