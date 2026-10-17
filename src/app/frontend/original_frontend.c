@@ -153,6 +153,7 @@ static void publish(qa_frontend_original_restore *operation,qa_frontend **slot,q
     active->archive_enabled=false;
     source->archive_enabled=true; source->archive_saved=false;
     source->options.display.hidden=!operation->visible;
+    if (active->input && source->input) qa_input_platform_replace(active->input,source->input);
     if (source->display) (void)qa_display_set_visible(source->display,operation->visible,NULL);
     if (source->device) qa_audio_device_pause(source->device,false);
     frontend_platform_handoff_publish(source,&operation->events);

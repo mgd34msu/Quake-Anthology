@@ -53,6 +53,10 @@ qa_input_platform *qa_input_platform_create(const qa_input_platform_options *, q
 /* Complete checked settings abort/publication or entered retirement before destruction. A retained
  * nonterminal settings ticket keeps its native owner alive. */
 void qa_input_platform_destroy(qa_input_platform *);
+/* Publish an independently opened replacement. It inherits the original SDL
+ * restore modes; destroying the displaced owner still closes its own handles
+ * without changing the replacement's global modes or shared device output. */
+void qa_input_platform_replace(qa_input_platform *previous, qa_input_platform *replacement);
 /* Atomic validation/copy of selections precedes release. Slots remain stable
  * when a seat is removed; a NULL seat makes that slot unavailable. */
 bool qa_input_platform_routes(qa_input_platform *, qa_input_seat *const seats[4],

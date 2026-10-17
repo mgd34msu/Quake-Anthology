@@ -404,6 +404,7 @@ static bool resolve(qa_input_platform *p, double time, const int32_t retained[4]
 }
 static bool haptic_sink(void *user, float low, float high, uint32_t duration, qa_error *error) {
     struct seat_route *r = user;
+    if (r->platform->native_replaced) return true;
     int32_t instance = r->haptic_instance;
     struct device *d = device(r->platform, instance);
     bool connected = d ? SDL_GameControllerGetAttached(d->handle) == SDL_TRUE
@@ -449,7 +450,7 @@ static input_pointer_modes pointer_modes(Uint32 flags, qa_input_focus focus,
         .text = focused && (focus == QA_INPUT_CONSOLE || focus == QA_INPUT_CHAT || focus == QA_INPUT_UI)};
 }
 bool qa_input_platform_sync_focus(qa_input_platform *p, qa_error *error) {
-    if (!p->window)
+    if (!p->window || p->native_replaced)
         return true;
     SDL_Window *window = SDL_GetWindowFromID(p->window);
     if (!window)
@@ -580,6 +581,27 @@ static bool release_all(qa_input_platform *p, double time, qa_error *error) {
     memset(p->keys, 0, sizeof(p->keys));
     return ok;
 }
+void input_platform_restore_modes_inherit(qa_input_platform *p, const qa_input_platform *active,
+    bool same_window) {
+    p->old_relative = active->old_relative;
+    p->old_text = active->old_text;
+    p->old_cursor = active->old_cursor;
+    p->old_controller_events = active->old_controller_events;
+    p->old_joystick_events = active->old_joystick_events;
+    if (same_window) p->old_grab = active->old_grab;
+}
+void qa_input_platform_replace(qa_input_platform *previous, qa_input_platform *replacement) {
+    input_platform_restore_modes_inherit(replacement, previous, false);
+    for (size_t i = 0; i < previous->device_count; ++i) {
+        int32_t instance = previous->devices[i].info.instance;
+        if (!device(replacement, instance) && replacement->joystick_instance != instance)
+            (void)stop_device(previous, instance, NULL);
+    }
+    if (previous->joystick && previous->joystick_instance != replacement->joystick_instance &&
+        !device(replacement, previous->joystick_instance) && SDL_JoystickHasRumble(previous->joystick))
+        (void)source_motor(previous, 0, 0, 0, NULL);
+    previous->native_replaced = true;
+}
 void qa_input_platform_destroy(qa_input_platform *p) {
     /* A failed checked abort retains its real endpoints and their owner. */
     if (!p || p->settings_ticket)
@@ -587,18 +609,22 @@ void qa_input_platform_destroy(qa_input_platform *p) {
     qa_error ignored = {0};
     if (!input_platform_restore_abort_pending(p, &ignored)) return;
     if (p->native_owned) {
-        (void)qa_input_platform_window(p, NULL, p->now, &ignored);
+        if (!p->native_replaced)
+            (void)qa_input_platform_window(p, NULL, p->now, &ignored);
         (void)release_all(p, p->now, &ignored);
         if (p->midi_fd >= 0)
             close(p->midi_fd);
         if (p->joystick)
             SDL_JoystickClose(p->joystick);
         for (size_t i = 0; i < p->device_count; ++i) {
-            (void)stop_device(p, p->devices[i].info.instance, &ignored);
+            if (!p->native_replaced)
+                (void)stop_device(p, p->devices[i].info.instance, &ignored);
             SDL_GameControllerClose(p->devices[i].handle);
         }
-        SDL_GameControllerEventState(p->old_controller_events);
-        SDL_JoystickEventState(p->old_joystick_events);
+        if (!p->native_replaced) {
+            SDL_GameControllerEventState(p->old_controller_events);
+            SDL_JoystickEventState(p->old_joystick_events);
+        }
     } else {
         for (unsigned i = 0; i < 4; ++i)
             qa_haptic_pattern_release(p->seats[i].haptic.pattern);

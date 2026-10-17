@@ -447,12 +447,7 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
         candidate->midi_generation = active->midi_generation;
         candidate->retry_at = active->retry_at;
         candidate->window = info.window_id;
-        candidate->old_relative = active->old_relative;
-        candidate->old_text = active->old_text;
-        candidate->old_grab = active->old_grab;
-        candidate->old_cursor = active->old_cursor;
-        candidate->old_controller_events = active->old_controller_events;
-        candidate->old_joystick_events = active->old_joystick_events;
+        input_platform_restore_modes_inherit(candidate, active, true);
         candidate->capture = SDL_GetRelativeMouseMode() == SDL_TRUE;
         success = native_matches(active, (qa_bytes){guard->native_cut.data, guard->native_cut.size}, error);
     }
