@@ -18,6 +18,7 @@
 #include "qa/network_q2_messages.h"
 #include "qa/native_host_q2_wire.h"
 #include "qa/application_network_q2.h"
+#include "qa/localization.h"
 #include <math.h>
 
 static bool protocol(struct application_native_q2 *engine, const qa_q2_server_event *source,
@@ -43,11 +44,13 @@ static void print(void *opaque, const qa_native_host_print *source)
 {
     struct application_native_q2 *engine = opaque;
     qa_application *app = engine->provider->application;
-    if (source->kind == QA_NATIVE_HOST_PRINT_DEBUG || qa_console_output_redirected(app->console)) {
+    bool console_only = source->kind == QA_NATIVE_HOST_PRINT_DEBUG ||
+        (source->kind == QA_NATIVE_HOST_PRINT_CLIENT && !source->client.registry);
+    if (console_only || qa_console_output_redirected(app->console)) {
         qa_command_context context=engine->command_context;context.actor=source->client;
         (void)qa_application_log_emit(app,&context,source->text,true,NULL);
     }
-    if (source->kind != QA_NATIVE_HOST_PRINT_DEBUG) {
+    if (!console_only) {
         qa_q2_server_event event = {.kind = source->kind == QA_NATIVE_HOST_PRINT_CENTER ?
             QA_Q2_SVC_CENTERPRINT : QA_Q2_SVC_PRINT,
             .data.print = {.level = (uint8_t)source->level, .text = source->text}};
@@ -72,6 +75,25 @@ static bool localized_print(void *opaque, qa_actor_id client,
     const qa_native_host_localized_print *source, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
+    if (!client.registry && !(source->level & 8)) {
+        qa_application *app = engine->provider->application;
+        qa_unified_frame_lease *storage = application_control_storage_acquire(app, error);
+        if (!storage) return false;
+        qa_arena *arena = qa_unified_frame_lease_arena(storage);
+        qa_buffer formatted = {0};
+        bool ok = engine->platform.localize
+            ? engine->platform.localize(engine->platform.context, source, arena, &formatted, error)
+            : qa_localize_presentation_arena(NULL, source->base, source->arguments,
+                source->argument_count, true, arena, &formatted, error);
+        if (ok) {
+            qa_command_context context = engine->command_context;
+            context.actor = client;
+            ok = qa_application_log_emit(app, &context, (const char *)formatted.data,
+                QA_APPLICATION_LOG_CONSOLE, error);
+        }
+        qa_unified_frame_lease_release(storage);
+        return ok;
+    }
     qa_q2_server_event event = {.kind = QA_Q2_SVC_LOCALIZED_PRINT,
         .data.localized = {.flags = (uint8_t)source->level,
             .arg_count = source->argument_count}};

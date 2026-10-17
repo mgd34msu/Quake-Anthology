@@ -124,6 +124,17 @@ static bool catalog_for(frontend_native_q2 *source, qa_localization **out, qa_er
     return qa_localization_acquire(source->catalogs, source->mounts,
         language ? language->value : "english", &options, out, error);
 }
+static bool localize_message(void *opaque, const qa_native_host_localized_print *message,
+    qa_arena *storage, qa_buffer *out, qa_error *error)
+{
+    frontend_native_q2 *source = opaque;
+    qa_localization *catalog = NULL;
+    if (!catalog_for(source, &catalog, error)) return false;
+    bool ok = qa_localize_presentation_arena(catalog, message->base, message->arguments,
+        message->argument_count, true, storage, out, error);
+    qa_localization_release(catalog);
+    return ok;
+}
 static bool localize(frontend_native_q2 *source, const qa_native_host_q2_application_call *call,
     qa_native_value *result, qa_error *error)
 {
@@ -638,6 +649,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         QA_HUD_CVAR_LANGUAGE | QA_HUD_CVAR_USE_FONT | QA_HUD_CVAR_CENTER_TIME | QA_HUD_CVAR_PRINT_SPEED,
         &source->hud_cvars);
     engine->context = source;
+    engine->localize = localize_message;
     engine->hud_view = platform_hud_view;
     engine->resource_precache = platform_resource_precache;
     engine->frontend_lifetime = source; engine->release_frontend = release_source;

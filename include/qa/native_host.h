@@ -1,6 +1,7 @@
 #ifndef QA_NATIVE_HOST_H
 #define QA_NATIVE_HOST_H
 
+#include "qa/arena.h"
 #include "qa/console.h"
 #include "qa/gameplay.h"
 #include "qa/inventory.h"
@@ -169,6 +170,8 @@ typedef struct qa_native_host_engine_services {
         const qa_vfs **actual_view, qa_resource **retained, qa_vfs_acquisition *owned_opening,
         bool *found, qa_error *);
     bool (*source_import)(void *,const qa_native_import_call *,qa_native_value *,bool *handled,qa_error *);
+    /* Source catalog formatting; the returned text borrows caller storage. */
+    bool (*localize)(void *,const qa_native_host_localized_print *,qa_arena *,qa_buffer *,qa_error *);
 } qa_native_host_engine_services;
 
 typedef struct qa_native_host_instance_options {
