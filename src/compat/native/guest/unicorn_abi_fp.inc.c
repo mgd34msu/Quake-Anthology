@@ -201,6 +201,142 @@ static void qa_unicorn_fpatan(CPUX86State *env, uintptr_t retaddr)
     if (result.exceptions) fpu_set_exception(env, result.exceptions);
 }
 
+static unsigned qa_unicorn_arithmetic_exceptions(float_status *status)
+{
+    int flags = get_float_exception_flags(status);
+    return ((flags & float_flag_invalid) ? FPUS_IE : 0) |
+        ((flags & float_flag_overflow) ? FPUS_OE : 0) |
+        ((flags & float_flag_underflow) ? FPUS_UE : 0) |
+        ((flags & float_flag_inexact) ? FPUS_PE : 0);
+}
+
+/* Change the product exponent without rounding either operand. Normalize
+ * subnormal inputs, then distribute the requested shift so both operands
+ * remain normal binary80 values for the existing SoftFloat multiplication.
+ * For a wrapped product the adjusted exponent sum is within [-8314,8194],
+ * so a distribution inside the two normal operand ranges always exists. */
+static void qa_unicorn_fmul_rescale(floatx80 *left, floatx80 *right, int adjustment)
+{
+    int left_shift = clz64(left->low), right_shift = clz64(right->low);
+    int left_exponent = qa_x87_operand_exponent(*left) + 63 - left_shift;
+    int right_exponent = qa_x87_operand_exponent(*right) + 63 - right_shift;
+    int sum = left_exponent + right_exponent + adjustment;
+    left_exponent += adjustment;
+    if (left_exponent < -16382) left_exponent = -16382;
+    if (left_exponent > 16383) left_exponent = 16383;
+    right_exponent = sum - left_exponent;
+    if (right_exponent < -16382) {
+        left_exponent -= -16382 - right_exponent;
+        right_exponent = -16382;
+    } else if (right_exponent > 16383) {
+        left_exponent += right_exponent - 16383;
+        right_exponent = 16383;
+    }
+    left->low <<= left_shift;
+    right->low <<= right_shift;
+    left->high = (left->high & 0x8000) | (left_exponent + 16383);
+    right->high = (right->high & 0x8000) | (right_exponent + 16383);
+}
+
+/* source >= 0 names ST(source). A memory source carries its original raw
+ * bits and the translator's op>>4 format: f32, i32, f64, i16. Converting it
+ * here preserves SNaN and denormal admission before the destination changes.
+ * All FMUL/FIMUL destination forms, including FMULP, commit and pop here. */
+static void qa_unicorn_fmul(CPUX86State *env, int destination, int source,
+    bool pop, int format, uint64_t bits, uintptr_t retaddr)
+{
+    float_status status;
+    qa_unicorn_x87_begin(env, retaddr, &status);
+    set_float_detect_tininess(float_tininess_after_rounding, &status);
+    unsigned destination_slot = (env->fpstt + destination) & 7;
+    bool empty = env->fptags[destination_slot] ||
+        (source >= 0 && env->fptags[(env->fpstt + source) & 7]);
+    floatx80 left = ST(destination), right, value;
+    unsigned exceptions = 0;
+    bool rounded_up = false, memory_denormal = false;
+    if (empty) {
+        env->fpus |= FPUS_SF;
+        exceptions = FPUS_IE;
+        value = floatx80_default_nan(&status);
+        goto finish;
+    }
+    if (source >= 0) right = ST(source);
+    else {
+        switch (format) {
+        case 0:
+            memory_denormal = !(bits & UINT64_C(0x7f800000)) &&
+                (bits & UINT64_C(0x007fffff));
+            right = float32_to_floatx80((uint32_t)bits, &status);
+            break;
+        case 1:
+            right = int32_to_floatx80((int32_t)(uint32_t)bits, &status);
+            break;
+        case 2:
+            memory_denormal = !(bits & UINT64_C(0x7ff0000000000000)) &&
+                (bits & UINT64_C(0x000fffffffffffff));
+            right = float64_to_floatx80(bits, &status);
+            break;
+        default:
+            right = int32_to_floatx80((int16_t)(uint16_t)bits, &status);
+            break;
+        }
+    }
+    if (floatx80_invalid_encoding(left) || floatx80_invalid_encoding(right) ||
+        floatx80_is_any_nan(left) || floatx80_is_any_nan(right)) {
+        value = floatx80_mul(left, right, &status);
+        exceptions = qa_unicorn_arithmetic_exceptions(&status);
+        goto finish;
+    }
+    bool denormal_left = qa_unicorn_x87_denormal(&left);
+    bool denormal_right = qa_unicorn_x87_denormal(&right);
+    if (memory_denormal || denormal_left || denormal_right) {
+        fpu_set_exception(env, FPUS_DE);
+        if (!(env->fpuc & FPUS_DE)) return;
+    }
+    set_float_exception_flags(0, &status);
+    value = floatx80_mul(left, right, &status);
+    exceptions = qa_unicorn_arithmetic_exceptions(&status);
+    if (!(exceptions & FPUS_IE)) {
+        /* IEEE SoftFloat raises UE for tiny AND inexact results. Unmasked
+         * x87 UE also reports an exact nonzero tiny register result. */
+        bool tiny = (exceptions & FPUS_UE) ||
+            (floatx80_is_zero_or_denormal(value) && !floatx80_is_zero(value));
+        unsigned wrapped = (exceptions & FPUS_OE) && !(env->fpuc & FPUS_OE) ? FPUS_OE :
+            tiny && !(env->fpuc & FPUS_UE) ? FPUS_UE : 0;
+        if (wrapped) {
+            qa_unicorn_fmul_rescale(&left, &right, wrapped == FPUS_OE ? -24576 : 24576);
+            set_float_exception_flags(0, &status);
+            value = floatx80_mul(left, right, &status);
+            exceptions = wrapped | qa_unicorn_arithmetic_exceptions(&status);
+        }
+        if (exceptions & FPUS_PE) {
+            float_status truncated = status;
+            set_float_exception_flags(0, &truncated);
+            set_float_rounding_mode(float_round_to_zero, &truncated);
+            floatx80 toward_zero = floatx80_mul(left, right, &truncated);
+            rounded_up = floatx80_lt_quiet(floatx80_abs(toward_zero),
+                floatx80_abs(value), &truncated);
+        }
+    }
+finish:
+    /* IE and DE are pre-computation exceptions. OE/UE/PE register results
+     * are stored, including the pop, before their deferred handler runs. */
+    if (exceptions & FPUS_IE) {
+        fpu_set_exception(env, FPUS_IE);
+        if (!(env->fpuc & FPUS_IE)) return;
+    }
+    ST(destination) = value;
+    env->fptags[destination_slot] = 0;
+    if (pop) fpop(env);
+    if (rounded_up) env->fpus |= 0x200;
+    if (exceptions & ~FPUS_IE) fpu_set_exception(env, exceptions & ~FPUS_IE);
+}
+
+void helper_fmul_memory(CPUX86State *env, uint64_t bits, int format)
+{
+    qa_unicorn_fmul(env, 0, -1, false, format, bits, GETPC());
+}
+
 UNICORN_EXPORT unsigned qa_unicorn_abi_fp_revision(void)
 { return QA_UNICORN_ABI_FP_REVISION; }
 

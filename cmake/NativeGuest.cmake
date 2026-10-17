@@ -180,9 +180,206 @@ void helper_fptan(CPUX86State *env)
 {
     qa_unicorn_trig_push(env, false, GETPC());
 }]=] 1)
+    qa_native_guest_replace_text(fpu [=[void helper_fmul_ST0_FT0(CPUX86State *env)
+{
+    ST0 = floatx80_mul(ST0, FT0, &env->fp_status);
+}]=] [=[static void qa_unicorn_fmul(CPUX86State *env, int destination, int source, bool pop,
+    int format, uint64_t bits, uintptr_t retaddr);
+
+void helper_fmul_ST0_FT0(CPUX86State *env, int source)
+{
+    qa_unicorn_fmul(env, 0, source, false, 0, 0, GETPC());
+}]=] 1)
+    qa_native_guest_replace_text(fpu [=[void helper_fmul_STN_ST0(CPUX86State *env, int st_index)
+{
+    ST(st_index) = floatx80_mul(ST(st_index), ST0, &env->fp_status);
+}]=] [=[void helper_fmul_STN_ST0(CPUX86State *env, int st_index, int pop)
+{
+    qa_unicorn_fmul(env, st_index, 0, pop != 0, 0, 0, GETPC());
+}]=] 1)
     qa_native_guest_write_source("${fpu_extension}"
         "${fpu}\n#include \"${guest_root}/unicorn_abi_fp.inc.c\"\n")
     qa_native_guest_replace_source(x86_64-softmmu "${fpu_original}" "${fpu_extension}")
+
+    file(READ "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/helper.h" helpers)
+    qa_native_guest_replace_text(helpers [=[DEF_HELPER_1(fmul_ST0_FT0, void, env)]=] [=[DEF_HELPER_2(fmul_ST0_FT0, void, env, int)]=] 1)
+    qa_native_guest_replace_text(helpers [=[DEF_HELPER_2(fmul_STN_ST0, void, env, int)]=] [=[DEF_HELPER_3(fmul_STN_ST0, void, env, int, int)
+DEF_HELPER_3(fmul_memory, void, env, i64, int)]=] 1)
+    qa_native_guest_write_source("${extension_root}/helper.h" "${helpers}")
+    set(translate_original "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/translate.c")
+    set(translate_extension "${extension_root}/unicorn-translate.c")
+    file(READ "${translate_original}" translate)
+    qa_native_guest_replace_text(translate [=[static void gen_helper_fp_arith_ST0_FT0(TCGContext *tcg_ctx, int op)
+{
+    switch (op) {
+    case 0:
+        gen_helper_fadd_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 1:
+        gen_helper_fmul_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 2:
+        gen_helper_fcom_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 3:
+        gen_helper_fcom_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 4:
+        gen_helper_fsub_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 5:
+        gen_helper_fsubr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 6:
+        gen_helper_fdiv_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 7:
+        gen_helper_fdivr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    }
+}]=] [=[static void gen_helper_fp_arith_ST0_FT0(TCGContext *tcg_ctx, int op, int source)
+{
+    switch (op) {
+    case 0:
+        gen_helper_fadd_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 1:
+        gen_helper_fmul_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, source));
+        break;
+    case 2:
+        gen_helper_fcom_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 3:
+        gen_helper_fcom_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 4:
+        gen_helper_fsub_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 5:
+        gen_helper_fsubr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 6:
+        gen_helper_fdiv_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    case 7:
+        gen_helper_fdivr_ST0_FT0(tcg_ctx, tcg_ctx->cpu_env);
+        break;
+    }
+}]=] 1)
+    qa_native_guest_replace_text(translate [=[static void gen_helper_fp_arith_STN_ST0(TCGContext *tcg_ctx, int op, int opreg)
+{
+    TCGv_i32 tmp = tcg_const_i32(tcg_ctx, opreg);
+    switch (op) {
+    case 0:
+        gen_helper_fadd_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 1:
+        gen_helper_fmul_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 4:
+        gen_helper_fsubr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 5:
+        gen_helper_fsub_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 6:
+        gen_helper_fdivr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 7:
+        gen_helper_fdiv_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    }
+}]=] [=[static void gen_helper_fp_arith_STN_ST0(TCGContext *tcg_ctx, int op, int opreg, bool pop)
+{
+    TCGv_i32 tmp = tcg_const_i32(tcg_ctx, opreg);
+    switch (op) {
+    case 0:
+        gen_helper_fadd_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 1:
+        gen_helper_fmul_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp, tcg_const_i32(tcg_ctx, pop));
+        break;
+    case 4:
+        gen_helper_fsubr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 5:
+        gen_helper_fsub_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 6:
+        gen_helper_fdivr_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    case 7:
+        gen_helper_fdiv_STN_ST0(tcg_ctx, tcg_ctx->cpu_env, tmp);
+        break;
+    }
+}]=] 1)
+    qa_native_guest_replace_text(translate [=[                        switch(op >> 4) {
+                        case 0:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LEUL);
+                            gen_helper_flds_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        case 1:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LEUL);
+                            gen_helper_fildl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        case 2:
+                            tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0,
+                                                s->mem_index, MO_LEQ);
+                            gen_helper_fldl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp1_i64);
+                            break;
+                        case 3:
+                        default:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LESW);
+                            gen_helper_fildl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        }
+
+                        gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1);
+]=] [=[                        if (op1 == 1) gen_helper_fwait(tcg_ctx, tcg_ctx->cpu_env);
+                        switch(op >> 4) {
+                        case 0:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LEUL);
+                            if (op1 != 1) gen_helper_flds_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        case 1:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LEUL);
+                            if (op1 != 1) gen_helper_fildl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        case 2:
+                            tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0,
+                                                s->mem_index, MO_LEQ);
+                            if (op1 != 1) gen_helper_fldl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp1_i64);
+                            break;
+                        case 3:
+                        default:
+                            tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0,
+                                                s->mem_index, MO_LESW);
+                            if (op1 != 1) gen_helper_fildl_FT0(tcg_ctx, tcg_ctx->cpu_env, s->tmp2_i32);
+                            break;
+                        }
+
+                        if (op1 == 1) {
+                            if ((op >> 4) != 2) tcg_gen_extu_i32_i64(tcg_ctx, s->tmp1_i64, s->tmp2_i32);
+                            gen_helper_fmul_memory(tcg_ctx, tcg_ctx->cpu_env, s->tmp1_i64,
+                                tcg_const_i32(tcg_ctx, op >> 4));
+                        } else gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1, -1);
+]=] 1)
+    qa_native_guest_replace_text(translate [=[                            gen_helper_fp_arith_STN_ST0(tcg_ctx, op1, opreg);
+                            if (op >= 0x30)
+                                gen_helper_fpop(tcg_ctx, tcg_ctx->cpu_env);]=] [=[                            gen_helper_fp_arith_STN_ST0(tcg_ctx, op1, opreg, op >= 0x30);
+                            if (op >= 0x30 && op1 != 1)
+                                gen_helper_fpop(tcg_ctx, tcg_ctx->cpu_env);]=] 1)
+    qa_native_guest_replace_text(translate [=[                            gen_helper_fmov_FT0_STN(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, opreg));
+                            gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1);]=] [=[                            if (op1 != 1) gen_helper_fmov_FT0_STN(tcg_ctx, tcg_ctx->cpu_env, tcg_const_i32(tcg_ctx, opreg));
+                            gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1, opreg);]=] 1)
+    qa_native_guest_write_source("${translate_extension}" "${translate}")
+    qa_native_guest_replace_source(x86_64-softmmu "${translate_original}" "${translate_extension}")
+    target_include_directories(x86_64-softmmu BEFORE PRIVATE "${extension_root}")
 
     set(store_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/cputlb.c")
     set(store_extension "${extension_root}/unicorn-cputlb.c")
