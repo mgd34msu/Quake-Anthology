@@ -233,9 +233,7 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
     uint32_t start;
     if (!qc_entity_slot(instance, reference, &start, error)) return false;
     int32_t field = 0;
-    const char *match_text = NULL;
-    if (!next_only && (!qa_qc_arg_int(instance, 1, &field, error)
-        || !qa_qc_arg_string(instance, 2, &match_text, error))) return false;
+    if (!next_only && !qa_qc_arg_int(instance, 1, &field, error)) return false;
     if (!next_only && (field < 0 || (uint32_t)field >= instance->layout.field_words))
         return qc_fail(error, QA_ERROR_FORMAT, 0, "find field is outside entity memory");
     qa_string_id match = QA_STRING_NONE;
@@ -244,7 +242,7 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
             return qc_fail(error, QA_ERROR_FORMAT, 0, "find requires a string field");
         int32_t id;
         if (!qa_qc_arg_int(instance, 2, &id, error)
-            || !qc_strings_identity(&instance->strings, id, &match, error)) return false;
+            || !qa_qc_string_identity(instance, id, &match, error)) return false;
     }
     for (uint32_t slot = start + 1u; slot < instance->entity_count; ++slot) {
         if (instance->slots[slot].kind == QA_QC_SLOT_FREE) continue;
@@ -253,10 +251,8 @@ static bool find_entity(qa_qc_instance *instance, bool next_only, qa_error *erro
                                           QA_QC_ENTITY_READ, false, error)) return false;
             int32_t id = qc_load_int(qc_entity_words(instance, slot), (uint32_t)field);
             if (id == 0) continue;
-            const char *text;
             qa_string_id identity;
-            if (!qc_strings_get(&instance->strings, id, &text, error)
-                || !qc_strings_identity(&instance->strings, id, &identity, error)) return false;
+            if (!qa_qc_string_identity(instance, id, &identity, error)) return false;
             if (identity != match) continue;
         }
         return qa_qc_return_int(instance, (int32_t)((uint64_t)slot * instance->layout.stride_bytes), error);

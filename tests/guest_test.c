@@ -40,7 +40,7 @@ static qa_qc_program *guest_program(qa_qc_api api)
 {
     qa_error error = {0};
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
-        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0";
+        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0tag\0find\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
@@ -58,27 +58,27 @@ static qa_qc_program *guest_program(qa_qc_api api)
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
         {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
-        {"projected", 10, 0, 0}, {"random", -7, 0, 0}
+        {"projected", 10, 0, 0}, {"random", -7, 0, 0}, {"find", -18, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
     const uint32_t statements_at = 60, fields_at = statements_at + statement_count * 8;
-    const uint32_t functions_at = fields_at + 4 * 8;
+    const uint32_t functions_at = fields_at + 5 * 8;
     const uint32_t strings_at = functions_at + function_count * 36;
     const uint32_t globals_at = strings_at + (uint32_t)sizeof(strings);
-    uint8_t bytes[1024] = {0};
+    uint8_t bytes[2048] = {0};
     qa_store_u32le(bytes, 6);
     qa_store_u32le(bytes + 4, api == QA_QC_API_QUAKEWORLD ? 54730u : 5927u);
     const uint32_t sections[][3] = {
         {8, statements_at, statement_count}, {16, fields_at, 0},
-        {24, fields_at, 4}, {32, functions_at, function_count},
+        {24, fields_at, 5}, {32, functions_at, function_count},
         {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 50}
     };
     for (size_t i = 0; i < sizeof(sections) / sizeof(*sections); ++i) {
         qa_store_u32le(bytes + sections[i][0], sections[i][1]);
         qa_store_u32le(bytes + sections[i][0] + 4, sections[i][2]);
     }
-    qa_store_u32le(bytes + 56, 12);
+    qa_store_u32le(bytes + 56, 13);
     memcpy(bytes + strings_at, strings, sizeof(strings));
     for (uint32_t i = 0; i < statement_count; ++i) {
         uint8_t *record = bytes + statements_at + i * 8;
@@ -87,10 +87,10 @@ static qa_qc_program *guest_program(qa_qc_api api)
         qa_store_u16le(record + 4, statements[i].b);
         qa_store_u16le(record + 6, statements[i].c);
     }
-    const char *fields[] = {"origin", "mins", "maxs", "size"};
-    for (uint32_t i = 0; i < 4; ++i) {
+    const char *fields[] = {"origin", "mins", "maxs", "size", "tag"};
+    for (uint32_t i = 0; i < 5; ++i) {
         uint8_t *record = bytes + fields_at + i * 8;
-        qa_store_u16le(record, 3);
+        qa_store_u16le(record, i == 4 ? QA_QC_STRING : QA_QC_VECTOR);
         qa_store_u16le(record + 2, (uint16_t)(i * 3));
         for (size_t offset = 0; offset < sizeof(strings); offset += strlen(strings + offset) + 1)
             if (!strcmp(strings + offset, fields[i]))
@@ -282,6 +282,58 @@ static void shared_entities(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_actors_count(qa_session_actors(fixture->session)) == 0);
     GAME_CHECK(!qa_world_body_read(fixture->world, actor, &body, &error));
     GAME_CHECK(error.code == QA_ERROR_NOT_FOUND);
+}
+
+static int32_t find_tag(qa_qc_instance *instance, int32_t start, int32_t text)
+{
+    qa_error error = {0};
+    int32_t result;
+    GAME_CHECK(qa_qc_set_global_int(instance, 4, start, &error));
+    GAME_CHECK(qa_qc_set_global_int(instance, 7, 12, &error));
+    GAME_CHECK(qa_qc_set_global_int(instance, 10, text, &error));
+    GAME_CHECK(qa_qc_execute_named(instance, "find", 3, &error));
+    GAME_CHECK(qa_qc_global_int(instance, 1, &result, &error));
+    return result;
+}
+
+static void find_strings(guest_fixture *fixture)
+{
+    qa_error error = {0};
+    qa_qc_instance *standalone = NULL;
+    GAME_CHECK(qa_qc_instance_create(fixture->program,
+        &(qa_qc_options){.profile = QA_QC_NETQUAKE, .entity_capacity = 4},
+        &standalone, &error));
+    int32_t needle;
+    GAME_CHECK(qa_qc_string_allocate(standalone, "needle", &needle, &error));
+    GAME_CHECK(find_tag(standalone, 0, needle) == 0);
+    GAME_CHECK(find_tag(standalone, 0, 0) == 0);
+    GAME_CHECK(qa_qc_set_global_int(standalone, 7, 0, &error));
+    GAME_CHECK(!qa_qc_execute_named(standalone, "find", 3, &error));
+    GAME_CHECK(error.code == QA_ERROR_FORMAT);
+    GAME_CHECK(qa_qc_set_global_int(standalone, 7, 12, &error));
+    GAME_CHECK(qa_qc_set_global_int(standalone, 10, INT32_MAX, &error));
+    GAME_CHECK(!qa_qc_execute_named(standalone, "find", 3, &error));
+    GAME_CHECK(qa_qc_instance_destroy(standalone, &error));
+
+    qa_qc_instance *instance = fixture->instance;
+    int32_t rows[4], same, empty;
+    GAME_CHECK(qa_qc_string_allocate(instance, "needle", &needle, &error));
+    GAME_CHECK(qa_qc_string_allocate(instance, "needle", &same, &error));
+    GAME_CHECK(needle != same);
+    GAME_CHECK(qa_qc_string_allocate(instance, "", &empty, &error) && empty != 0);
+    for (size_t i = 0; i < 4; ++i)
+        GAME_CHECK(qa_qc_spawn_entity(instance, rows + i, &error));
+    GAME_CHECK(qa_qc_set_entity_int(instance, rows[1], 12, needle, &error));
+    GAME_CHECK(qa_qc_set_entity_int(instance, rows[2], 12, same, &error));
+    GAME_CHECK(qa_qc_set_entity_int(instance, rows[3], 12, empty, &error));
+    GAME_CHECK(find_tag(instance, 0, needle) == rows[1]);
+    GAME_CHECK(find_tag(instance, rows[1], needle) == rows[2]);
+    GAME_CHECK(find_tag(instance, rows[2], needle) == 0);
+    GAME_CHECK(find_tag(instance, 0, 0) == rows[3]);
+    GAME_CHECK(qa_qc_remove_entity(instance, rows[1], &error));
+    GAME_CHECK(find_tag(instance, 0, needle) == rows[2]);
+    for (size_t i = 0; i < 4; ++i)
+        if (i != 1) GAME_CHECK(qa_qc_remove_entity(instance, rows[i], &error));
 }
 
 static double guest_source_time(void *opaque)
@@ -854,6 +906,7 @@ void test_guest(void)
     GAME_CHECK(qa_session_add(fixture.session, &component, &error));
     execution(fixture.instance, fixture.program);
     shared_entities(&fixture, owner);
+    find_strings(&fixture);
     string_buffer_growth(&fixture, owner, fixture.program, QA_QC_NETQUAKE);
     checkpoint_strings(fixture.program, QA_QC_NETQUAKE);
     qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD);

@@ -332,7 +332,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     size_t global_bytes = (size_t)program->info.global_words * 4u;
     instance->globals = malloc(global_bytes);
     instance->entities = calloc(1, (size_t)entity_bytes);
-    if (options->host.session != NULL && instance->layout.field_words != 0)
+    if (instance->layout.field_words != 0)
         instance->string_fields = calloc(instance->layout.field_words, 1u);
     instance->slots = calloc(instance->options.entity_capacity, sizeof(*instance->slots));
     instance->bodies = calloc(instance->options.entity_capacity, sizeof(*instance->bodies));
@@ -346,8 +346,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
     if (instance->globals == NULL || instance->entities == NULL || instance->slots == NULL
         || instance->bodies == NULL || instance->profiles == NULL || instance->frames == NULL
         || instance->locals == NULL
-        || (options->host.session != NULL && instance->layout.field_words != 0
-            && instance->string_fields == NULL)
+        || (instance->layout.field_words != 0 && instance->string_fields == NULL)
         || (instance->projection_stride && !instance->projected_words)) {
         free_instance(instance);
         return qc_fail(error, QA_ERROR_MEMORY, 0, "Cannot allocate QuakeC private state");
