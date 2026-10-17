@@ -1346,7 +1346,6 @@ static bool map_receive(frontend_unified_q2 *o,const qa_unified_presentation_eve
 static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation_event *row,bool *mirrored,qa_error *e)
 {
     const qa_builtin_event *v=&row->payload.value.builtin;q2_bank *b=NULL;qa_actor_id a;
-    const char *resource=qa_strings_cstr(o->replica->strings,v->resource);
     const char *text=v->message_format?v->message_format:qa_strings_cstr(o->replica->strings,v->text);
     const qa_application_ui_names *names=qa_application_ui_names_read(o->frontend->application);
     switch (v->kind){
@@ -1367,14 +1366,21 @@ static bool builtin_receive(frontend_unified_q2 *o,const qa_unified_presentation
     case QA_BUILTIN_ITEM:{if (v->code==1)return visual_apply(o,row,e);bool matches;
         if (!viewer_matches(o,v->actor,&matches,e))return false;
         if (!matches)return true;
-        qa_scene_image *image=NULL;qa_scene_image_options opts={.family=QA_GAME_Q2,.usage=QA_IMAGE_USAGE_PICTURE,.wrap=QA_SCENE_CLAMP,
-            .filter=QA_SCENE_LINEAR,.transparent=true,.transparent_index=255};
+        const qa_scene_image *image=NULL;
         bool okay=bank_name(o,row->content_id,NULL,QA_STRING_NONE,0,false,&b,e);
-        if (okay && resource && *resource)okay=qa_scene_image_load_exact(b->images,resource,&opts,&image,e);
+        if (okay && v->resource) {
+            qa_error issue={0};
+            image=qa_scene_q2_picture(b->images,o->replica->strings,v->resource,QA_IMAGE_USAGE_PICTURE,
+                b->rules==QA_RULESET_Q2_RERELEASE,QA_SCENE_LINEAR,&issue);
+            if (!image && issue.code!=QA_OK && issue.code!=QA_ERROR_NOT_FOUND) {
+                if (e)*e=issue;
+                okay=false;
+            }
+        }
         if (okay)okay=qa_hud_pickup(o->hud,&(qa_hud_pickup_state){.text=text?text:"",.icon=image,
             .starts_ns=nanoseconds(row->seconds),.until_ns=nanoseconds(row->seconds+3),
             .blend_ns=nanoseconds(row->seconds),.family=QA_GAME_Q2},e);
-        qa_scene_image_release(image);return okay;}
+        return okay;}
     case QA_BUILTIN_BEAM:{if (!source_actor(o,v->actor,&a,e) || !source_bank(o,row,true,&b,e))return false;
         double ms=row->seconds*1000;
         if (!v->resource)return frontend_unified_fail(e,QA_ERROR_FORMAT,"Q2 entity beam requires its received entity state");

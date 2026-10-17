@@ -85,21 +85,7 @@ static bool initialize(void *context,const qa_launch_instance *descriptor,qa_cva
             if (!qa_native_q3_character_default_declaration(QA_GAME_Q2,&defaults,e)) return false;
             model=defaults.model;
         }
-        size_t length=strlen(model);
-        if (!length || length>SIZE_MAX-9)
-            return frontend_fail(e,QA_ERROR_ARGUMENT,"Unified Q2 CLIENT model declaration is invalid");
-        const char *skin=!strcmp(model,"female")?"athena":!strcmp(model,"cyborg")?"oni911":"grunt";
-        char *appearance=malloc(length+strlen(skin)+2);
-        if (!appearance) return frontend_fail(e,QA_ERROR_MEMORY,"Retaining Unified Q2 CLIENT appearance");
-        memcpy(appearance,model,length);appearance[length]='/';strcpy(appearance+length+1,skin);
-        const struct { const char *name,*value; } values[]={
-            {"name",name},{"skin",appearance},{"rate","15000"},{"msg","1"},{"hand","0"},
-            {"fov","90"},{"gender",!strcmp(model,"female")?"female":"male"}};
-        for (size_t i=0;ok && i<sizeof(values)/sizeof(*values);++i)
-            ok=qa_cvars_register(variables,values[i].name,values[i].value,identity,command->owner,description,e);
-        free(appearance);
-        if (ok) ok=qa_cvars_register(variables,"password","",QA_CVAR_USERINFO,command->owner,description,e) &&
-            qa_cvars_register(variables,"spectator","0",QA_CVAR_USERINFO,command->owner,description,e);
+        ok=qa_application_player_userinfo_register(variables,command->seat,model,e);
         break;
     }
     case QA_RULESET_Q3:
