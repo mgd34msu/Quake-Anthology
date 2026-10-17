@@ -432,14 +432,20 @@ bool qa_q3_client_cursor_next(qa_q3_client_cursor *c, qa_q3_client_part *part, q
     case 2: *part = QA_Q3_CLIENT_MOVE; c->phase = 1; return true;
     case 3: *part = QA_Q3_CLIENT_MOVE_NO_DELTA; c->phase = 1; return true;
     case 5: *part = QA_Q3_CLIENT_END; c->phase = 3; return true;
-    default: return read_fail(&c->reader, "Invalid Q3 client opcode");
+    default:
+        c->rejection = QA_Q3_CLIENT_REJECTION_OPCODE;
+        return read_fail(&c->reader, "Invalid Q3 client opcode");
     }
 }
 bool qa_q3_client_cursor_movement(qa_q3_client_cursor *c, int32_t feed, const char *command,
                                   qa_q3_usercmd commands[QA_Q3_USERCMDS], size_t *count) {
     if (c->phase != 1 || !commands || !count || !command) return read_fail(&c->reader, "Invalid Q3 movement cursor state");
     unsigned n = qa_q3_read_bits(&c->reader, 8);
-    if (!n || n > QA_Q3_USERCMDS) return read_fail(&c->reader, "Invalid Q3 backup usercmd count");
+    if (c->reader.raw.failed) return false;
+    if (!n || n > QA_Q3_USERCMDS) {
+        c->rejection = QA_Q3_CLIENT_REJECTION_USERCMDS;
+        return read_fail(&c->reader, "Invalid Q3 backup usercmd count");
+    }
     uint32_t key = (uint32_t)feed ^ (uint32_t)c->header.message_acknowledge ^ qa_q3_command_hash(command, 32);
     qa_q3_usercmd previous = {0};
     for (unsigned i = 0; i < n; ++i) {

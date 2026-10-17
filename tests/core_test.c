@@ -10636,6 +10636,95 @@ static void test_q3_snapshot_capacity_recovery(void)
     qa_q3_channel_destroy(client);qa_q3_server_peer_destroy(peer);
 }
 
+typedef struct q3_rejection_test {
+    q3_ack_test input;
+    unsigned enters, thinks;
+    bool reject_think;
+} q3_rejection_test;
+static bool q3_rejection_enter(void *context,const qa_q3_usercmd *command,qa_error *error)
+{ (void)command;(void)error;++((q3_rejection_test *)context)->enters;return true; }
+static bool q3_rejection_think(void *context,const qa_q3_usercmd *command,qa_error *error)
+{
+    (void)command;q3_rejection_test *test=context;++test->thinks;
+    if(test->reject_think) { qa_error_set(error,QA_ERROR_IO,0,"fixture callback failure");return false; }
+    return true;
+}
+static void q3_rejection_packet(qa_q3_server_peer *peer,qa_q3_channel *client,
+    unsigned opcode,unsigned count,int32_t time,bool accepted)
+{
+    qa_error error={0};uint8_t bytes[256];qa_q3_writer writer;
+    qa_q3_writer_init(&writer,bytes,sizeof(bytes),false,&error);
+    CHECK(qa_q3_write_bits(&writer,1,32));
+    CHECK(qa_q3_write_bits(&writer,0,32));
+    CHECK(qa_q3_write_bits(&writer,0,32));
+    CHECK(qa_q3_write_bits(&writer,opcode,8));
+    if(opcode==2 || opcode==3) {
+        CHECK(qa_q3_write_bits(&writer,count,8));
+        if(time) {
+            qa_q3_usercmd previous={0},command={.serverTime=time,.forwardmove=50};
+            uint32_t key=0;
+            CHECK(qa_q3_write_usercmd(&writer,&previous,&command,&key));
+        }
+    }
+    CHECK(qa_q3_write_bits(&writer,5,8));
+    size_t size=qa_q3_writer_size(&writer);
+    qa_q3_client_cursor cursor;qa_q3_client_part part;qa_q3_command command;
+    CHECK(qa_q3_client_cursor_init(&cursor,(qa_bytes){bytes,size},&error));
+    CHECK(cursor.rejection==QA_Q3_CLIENT_REJECTION_NONE);
+    bool decoded=qa_q3_client_cursor_next(&cursor,&part,&command);
+    if(opcode==99) {
+        CHECK(!decoded && cursor.rejection==QA_Q3_CLIENT_REJECTION_OPCODE && error.code==QA_ERROR_FORMAT);
+    } else {
+        CHECK(decoded);
+        qa_q3_usercmd commands[QA_Q3_USERCMDS];size_t actual=0;
+        decoded=qa_q3_client_cursor_movement(&cursor,0,"",commands,&actual);
+        if(!count || count>QA_Q3_USERCMDS)
+            CHECK(!decoded && cursor.rejection==QA_Q3_CLIENT_REJECTION_USERCMDS && error.code==QA_ERROR_FORMAT);
+        else if(!time)
+            CHECK(!decoded && cursor.rejection==QA_Q3_CLIENT_REJECTION_NONE && error.code!=QA_OK);
+        else CHECK(decoded && actual==1 && commands[0].serverTime==time);
+    }
+    error=(qa_error){0};
+    CHECK(qa_q3_xor_client(bytes,size,0,q3_ack_lookup,"",&error));
+    CHECK(qa_q3_channel_begin(client,(qa_bytes){bytes,size},&error));
+    bool present;qa_bytes packet;qa_q3_receive_kind kind;
+    CHECK(qa_q3_channel_prepare(client,&present,&packet,&error) && present);
+    CHECK(qa_q3_server_peer_receive(peer,packet,&kind,&error)==accepted);
+    CHECK(kind==QA_Q3_PACKET_MESSAGE && (accepted ? error.code==QA_OK : error.code!=QA_OK));
+    qa_q3_channel_sent(client,packet);
+}
+static void test_q3_packet_rejection_keeps_peer(void)
+{
+    qa_error error={0};q3_rejection_test test={0};qa_q3_server_peer *peer=NULL;qa_q3_channel *client=NULL;
+    qa_net_address remote={.kind=QA_NET_IPV4,.port=27960,.host.ipv4={127,0,0,1}};
+    qa_q3_server_hooks hooks={.context=&test,.world=q3_ack_world,.command=q3_ack_command,
+        .enter_world=q3_rejection_enter,.think=q3_rejection_think,.resend_gamestate=q3_test_ok,
+        .pure_rejected_snapshot=q3_test_ok,.drop=q3_ack_drop,.send=q3_ack_send};
+    CHECK(qa_q3_server_peer_create((qa_q3_identity){0},QA_Q3_ARENA,&remote,0,1234,&hooks,&peer,&error));
+    CHECK(qa_q3_channel_create(QA_Q3_CLIENT,1234,&client,&error));
+    qa_q3_server_peer_state(peer)->phase=QA_Q3_PRIMED;
+    q3_rejection_packet(peer,client,99,0,0,true);
+    q3_rejection_packet(peer,client,2,0,0,true);
+    q3_rejection_packet(peer,client,3,QA_Q3_USERCMDS+1,0,true);
+    CHECK(!test.input.drops && !test.enters && !test.thinks);
+    CHECK(qa_q3_server_peer_state(peer)->phase==QA_Q3_PRIMED);
+    q3_rejection_packet(peer,client,2,QA_Q3_USERCMDS,0,false);
+    CHECK(!test.enters && !test.thinks && !test.input.drops);
+    q3_rejection_packet(peer,client,2,1,100,true);
+    CHECK(test.enters==1 && !test.thinks && qa_q3_server_peer_state(peer)->phase==QA_Q3_ACTIVE);
+    q3_rejection_packet(peer,client,2,1,200,true);
+    CHECK(test.enters==1 && test.thinks==1 && !test.input.drops);
+    test.reject_think=true;
+    q3_rejection_packet(peer,client,2,1,300,false);
+    CHECK(test.thinks==2 && !test.input.drops);
+    test.reject_think=false;
+    q3_rejection_packet(peer,client,2,1,400,true);
+    q3_ack_packet(peer,client,0,0,1,"");
+    CHECK(test.thinks==3 && test.input.commands==1 && !test.input.drops);
+    CHECK(qa_q3_server_peer_state(peer)->last_usercmd.serverTime==400);
+    qa_q3_channel_destroy(client);qa_q3_server_peer_destroy(peer);
+}
+
 static void test_q3_stale_ack_keeps_peer(void)
 {
     qa_error error={0};q3_ack_test test={0};qa_q3_server_peer *peer=NULL;qa_q3_channel *client=NULL;
@@ -11590,6 +11679,7 @@ int main(int argc, char **argv)
     test_q3_pure_metadata();
     test_q3_send_admission();
     test_q3_stale_ack_keeps_peer();
+    test_q3_packet_rejection_keeps_peer();
     test_q3_snapshot_capacity_recovery();
     test_arena_progress_bound_store();
     test_event_ring_cold_growth();

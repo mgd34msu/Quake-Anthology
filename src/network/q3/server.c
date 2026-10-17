@@ -73,8 +73,11 @@ bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_re
     if (packet.kind != QA_Q3_PACKET_MESSAGE || p->state.phase == QA_Q3_ZOMBIE) return true;
     uint8_t data[QA_Q3_MESSAGE_BYTES]; memcpy(data, packet.payload.data, packet.payload.size);
     if (!qa_q3_xor_client(data, packet.payload.size, p->challenge, lookup, p, e)) return false;
-    qa_q3_client_cursor cursor;
-    if (!qa_q3_client_cursor_init(&cursor, (qa_bytes){data, packet.payload.size}, e)) return false;
+    qa_q3_client_cursor cursor; qa_error decoding = {0};
+    if (!qa_q3_client_cursor_init(&cursor, (qa_bytes){data, packet.payload.size}, &decoding)) {
+        if (e) *e = decoding;
+        return false;
+    }
     qa_q3_server_world world = p->hooks.world(p->hooks.context);
     qa_q3_server_state *state = &p->state;
     state->message_acknowledge = cursor.header.message_acknowledge;
@@ -93,7 +96,11 @@ bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_re
     }
     for (;;) {
         qa_q3_client_part part; qa_q3_command command;
-        if (!qa_q3_client_cursor_next(&cursor, &part, &command)) return false;
+        if (!qa_q3_client_cursor_next(&cursor, &part, &command)) {
+            if (cursor.rejection == QA_Q3_CLIENT_REJECTION_OPCODE) return true;
+            if (e) *e = decoding;
+            return false;
+        }
         if (part == QA_Q3_CLIENT_END) return true;
         if (part == QA_Q3_CLIENT_COMMAND) {
             if (command.sequence <= state->last_client_command) continue;
@@ -111,7 +118,11 @@ bool qa_q3_server_peer_receive(qa_q3_server_peer *p, qa_bytes datagram, qa_q3_re
         state->delta_message = part == QA_Q3_CLIENT_MOVE ? state->message_acknowledge : -1;
         qa_q3_usercmd commands[QA_Q3_USERCMDS]; size_t count = 0;
         if (!qa_q3_client_cursor_movement(&cursor, world.checksum_feed,
-            qa_q3_reliable_lookup(&p->reliable, ack), commands, &count)) return false;
+            qa_q3_reliable_lookup(&p->reliable, ack), commands, &count)) {
+            if (cursor.rejection == QA_Q3_CLIENT_REJECTION_USERCMDS) return true;
+            if (e) *e = decoding;
+            return false;
+        }
         qa_q3_snapshot_slot *slot = &p->history[(uint32_t)state->message_acknowledge & 31];
         slot->ack_time = world.time;
         if (world.pure && !state->pure_authentic && !state->got_pure_command) {

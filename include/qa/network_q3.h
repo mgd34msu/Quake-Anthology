@@ -289,10 +289,16 @@ typedef struct qa_q3_client_message {
     size_t usercmd_count;
     qa_q3_usercmd usercmds[QA_Q3_USERCMDS];
 } qa_q3_client_message;
+typedef enum qa_q3_client_rejection {
+    QA_Q3_CLIENT_REJECTION_NONE,
+    QA_Q3_CLIENT_REJECTION_OPCODE,
+    QA_Q3_CLIENT_REJECTION_USERCMDS
+} qa_q3_client_rejection;
 typedef struct qa_q3_client_cursor {
     qa_q3_reader reader;
     qa_q3_client_header header;
     unsigned phase;
+    qa_q3_client_rejection rejection;
 } qa_q3_client_cursor;
 typedef enum qa_q3_client_part { QA_Q3_CLIENT_END, QA_Q3_CLIENT_COMMAND, QA_Q3_CLIENT_MOVE, QA_Q3_CLIENT_MOVE_NO_DELTA } qa_q3_client_part;
 bool qa_q3_client_cursor_init(qa_q3_client_cursor *, qa_bytes, qa_error *);
