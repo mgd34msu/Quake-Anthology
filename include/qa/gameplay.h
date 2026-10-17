@@ -78,7 +78,7 @@ typedef struct qa_damage_modifier {
     void *context;
     bool (*transform)(void *, const qa_damage_request *, double *, qa_error *);
 } qa_damage_modifier;
-bool qa_damage_apply_modifier(const qa_actor_registry *, const qa_damage_request *, const qa_damage_modifier *, qa_damage_request *, qa_error *);
+bool qa_damage_apply_modifier(const qa_damage_request *, const qa_damage_modifier *, qa_damage_request *, qa_error *);
 
 typedef enum qa_regular_armor_kind { QA_ARMOR_NONE, QA_ARMOR_Q1, QA_ARMOR_Q2, QA_ARMOR_Q3, QA_ARMOR_SOURCE } qa_regular_armor_kind;
 /* Canonical source storage retains binary64 counts and authored Q2 rates.

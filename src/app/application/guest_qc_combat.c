@@ -61,6 +61,11 @@ typedef struct combat_actor {
     unsigned calls;
     bool bound, restoring, retired;
 } combat_actor;
+typedef struct borrowed_damage {
+    struct borrowed_damage *previous;
+    qa_damage_request request;
+    int32_t target, attacker, inflictor;
+} borrowed_damage;
 typedef struct damage_frame {
     struct damage_frame *previous;
     combat_actor *actor;
@@ -68,6 +73,7 @@ typedef struct damage_frame {
     qa_damage_observer *observer;
     qa_damage_result *result;
     qa_qc_call_next next;
+    const borrowed_damage *borrowed;
     float regular_scale;
     unsigned reaction_depth;
     bool health_written;
@@ -110,6 +116,7 @@ struct application_qc_combat {
     incoming_damage *incoming;
     synchronous_attack *synchronous;
     radius_attack *radius;
+    borrowed_damage *borrowed;
     uint64_t sequence;
     unsigned calls;
 };
@@ -998,6 +1005,7 @@ typedef struct entered_damage {
     combat_actor *actor;
     qa_qc_call_next next;
     qa_damage_request original;
+    const borrowed_damage *borrowed;
     float regular_scale;
 } entered_damage;
 static bool continued_damage(void *context, qa_combat *combat, const qa_damage_request *request,
@@ -1032,7 +1040,10 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
         if (location->role != QC_INPUT_AMOUNT) {
             qa_actor_id id = location->role == QC_INPUT_SELF ? request->target :
                 location->role == QC_INPUT_ATTACKER ? request->attack.attacker : request->attack.inflictor;
-            ok = reference(entered->actor, id, &value, error);
+            if (entered->borrowed && location->role == QC_INPUT_ATTACKER &&
+                qa_actor_id_equal(id, entered->borrowed->request.attack.attacker))
+                value = entered->borrowed->attacker;
+            else ok = reference(entered->actor, id, &value, error);
         }
         if (!ok) break;
         if (location->parameter) ok = location->role == QC_INPUT_AMOUNT ?
@@ -1045,7 +1056,7 @@ static bool continued_damage(void *context, qa_combat *combat, const qa_damage_r
     }
     damage_frame frame = {.previous = owner->frame, .actor = entered->actor,
         .request = request, .observer = observer, .result = result, .next = entered->next,
-        .regular_scale = entered->regular_scale};
+        .borrowed = entered->borrowed, .regular_scale = entered->regular_scale};
     *result = (qa_damage_result){0};
     if (ok) {
         owner->frame = &frame; ++entered->actor->calls;
@@ -1104,6 +1115,45 @@ static bool actual_actor(application_qc_combat *owner, int32_t reference, qa_act
     if (!qa_qc_reference_actor(vm, reference, out, error) ||
         !qa_qc_actor_observation_slot(vm, *out, &physical, error) || !qa_qc_slot(vm, physical, slot))
         return reject(error, "QC damage reference lost its actual full Source actor");
+    return true;
+}
+typedef struct source_attack {
+    qa_attack origin;
+    qa_actor_id attacker;
+    bool emitted, borrowed, resolved;
+} source_attack;
+static bool source_attack_read(application_qc_combat *owner, qa_actor_id inflictor,
+    int32_t reference, source_attack *out, qa_error *error)
+{
+    *out = (source_attack){0};
+    struct application_qc_state *engine = owner->engine;
+    if (!qa_combat_attack_origin_read(engine->services.combat, inflictor,
+        &out->origin, &out->emitted, error)) return false;
+    out->emitted = out->emitted && out->origin.weapon &&
+        out->origin.weapon_provider == engine->provider->owner;
+    qa_qc_slot_binding binding; qa_error unavailable = {0};
+    if (actual_actor(owner, reference, &out->attacker, &binding, &unavailable)) {
+        out->resolved = !out->emitted || qa_actor_id_equal(out->attacker, out->origin.attacker);
+        return true;
+    }
+    if (!out->emitted || !out->origin.attacker.registry ||
+        qa_actors_get(qa_session_actors(engine->services.session), out->origin.attacker)) return true;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    /* Match the captured ABI reference against actual rows, never actor slots. */
+    uint32_t low = 0, high = qa_qc_entity_count(vm);
+    while (low < high) {
+        uint32_t slot = low + (high - low) / 2; int32_t actual;
+        if (!qa_qc_slot_reference(vm, slot, &actual, error)) return false;
+        if (actual < reference) low = slot + 1;
+        else if (actual > reference) high = slot;
+        else {
+            if (qa_qc_slot(vm, slot, &binding) && binding.kind == QA_QC_SLOT_FREE) {
+                out->attacker = out->origin.attacker;
+                out->borrowed = out->resolved = true;
+            }
+            break;
+        }
+    }
     return true;
 }
 static bool projectile_stored(application_qc_combat *owner, qa_qc_instance *vm,
@@ -1196,9 +1246,12 @@ static bool synchronous_call(application_qc_combat *owner, qa_qc_instance *vm,
     if (event->function && event->function == layout->radius) {
         int32_t inflictor, attacker;
         radius_attack radius = {.previous = owner->radius}; qa_qc_slot_binding slot;
+        source_attack source;
         if (!qa_qc_arg_int(vm, 0, &inflictor, error) || !qa_qc_arg_int(vm, 1, &attacker, error) ||
             !actual_actor(owner, inflictor, &radius.inflictor, &slot, error) ||
-            !actual_actor(owner, attacker, &radius.attacker, &slot, error)) return false;
+            !source_attack_read(owner, radius.inflictor, attacker, &source, error)) return false;
+        if (!source.resolved) return true;
+        radius.attacker = source.attacker;
         *handled = true; owner->radius = &radius; ++owner->calls;
         bool ok = qa_qc_call_continue(next, error);
         --owner->calls; owner->radius = radius.previous; return ok;
@@ -1299,15 +1352,12 @@ static bool synchronous_request(application_qc_combat *owner, const qa_qc_call_e
     return true;
 }
 static bool projectile_request(application_qc_combat *owner, const qa_qc_call_event *event,
-    int32_t target, qa_damage_request *request, qa_error *error)
+    int32_t target, const source_attack *source, qa_damage_request *request, qa_error *error)
 {
     if (request->attack.weapon) return true;
     struct application_qc_state *engine = owner->engine;
     const synchronous_layout *layout = &owner->profile->synchronous;
-    qa_attack origin; bool emitted = false;
-    if (!qa_combat_attack_origin_read(engine->services.combat, request->attack.inflictor,
-        &origin, &emitted, error)) return false;
-    emitted = emitted && origin.weapon && origin.weapon_provider == engine->provider->owner;
+    const qa_attack *origin = &source->origin; bool emitted = source->emitted;
     const synchronous_attack *active = owner->synchronous;
     bool firing = active && active->weapon &&
         qa_actor_id_equal(request->attack.attacker, active->actor) &&
@@ -1316,10 +1366,10 @@ static bool projectile_request(application_qc_combat *owner, const qa_qc_call_ev
          (active->function == layout->weapons[QA_Q1_LIGHTNING] && layout->lightning_damage &&
           event->caller == layout->lightning_damage));
     if (!emitted && !firing) return true;
-    request->attack.weapon = emitted ? origin.weapon : active->weapon;
+    request->attack.weapon = emitted ? origin->weapon : active->weapon;
     if (emitted) {
-        request->attack.weapon_provider = origin.weapon_provider;
-        request->attack.inventory_provider = origin.inventory_provider;
+        request->attack.weapon_provider = origin->weapon_provider;
+        request->attack.inventory_provider = origin->inventory_provider;
         request->attack.projectile = request->attack.inflictor;
     }
     const radius_attack *radius = owner->radius;
@@ -1444,10 +1494,13 @@ static bool reaction_body(void *context, const application_q3_mod_actor_request 
     if (!qa_actor_id_equal(effective->self, frame->actor->actor))
         return reject(error, "QC Source reaction target changes require a callback replacement");
     if (frame->result->reaction == QA_REACTION_PAIN) {
-        int32_t attacker;
-        if (!reference(frame->actor, effective->source.pain.attacker, &attacker, error) ||
-            !qa_qc_call_set_arg_int(call->next, 0, attacker, error) ||
-            !qa_qc_call_set_arg_float(call->next, 1, (float)effective->source.pain.damage, error)) return false;
+        if (!frame->borrowed ||
+            !qa_actor_id_equal(effective->source.pain.attacker, frame->borrowed->request.attack.attacker)) {
+            int32_t attacker;
+            if (!reference(frame->actor, effective->source.pain.attacker, &attacker, error) ||
+                !qa_qc_call_set_arg_int(call->next, 0, attacker, error)) return false;
+        }
+        if (!qa_qc_call_set_arg_float(call->next, 1, (float)effective->source.pain.damage, error)) return false;
     } else if (!qa_actor_id_equal(effective->source.die.attacker, frame->request->attack.attacker) ||
         !qa_actor_id_equal(effective->source.die.inflictor, frame->request->attack.inflictor) ||
         effective->source.die.damage != frame->result->applied_damage ||
@@ -1534,34 +1587,39 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
     }
     int32_t target_reference, attacker_reference, inflictor_reference; float amount;
     if (!read_call(owner, vm, &target_reference, &attacker_reference, &inflictor_reference, &amount, error)) return false;
-    qa_actor_id target, attacker, inflictor; qa_qc_slot_binding target_slot, attacker_slot, inflictor_slot;
+    qa_actor_id target, inflictor; qa_qc_slot_binding target_slot, inflictor_slot;
     if (!actual_actor(owner, target_reference, &target, &target_slot, error) ||
-        !actual_actor(owner, attacker_reference, &attacker, &attacker_slot, error) ||
         !actual_actor(owner, inflictor_reference, &inflictor, &inflictor_slot, error)) return false;
     if (!target.registry) return qa_qc_call_continue(next, error);
+    source_attack source;
+    if (!source_attack_read(owner, inflictor, attacker_reference, &source, error)) return false;
+    if (!source.resolved) return qa_qc_call_continue(next, error);
     qa_damage_request request;
-    if (!authored_request(owner, target, attacker, inflictor, amount, &request, error) ||
+    if (!authored_request(owner, target, source.attacker, inflictor, amount, &request, error) ||
         !synchronous_request(owner, event, target_reference, &request, error) ||
-        !projectile_request(owner, event, target_reference, &request, error) ||
+        !projectile_request(owner, event, target_reference, &source, &request, error) ||
         !environment_request(owner, event, target_reference, inflictor_reference, attacker_reference, &request, error)) return false;
+    borrowed_damage borrowed = {.previous = owner->borrowed, .request = request,
+        .target = target_reference, .attacker = attacker_reference, .inflictor = inflictor_reference};
+    if (source.borrowed) owner->borrowed = &borrowed;
+    bool ok = true;
     bool primary = eligible(owner, target_slot);
     if (!primary || request.attack.weapon) {
         qa_damage_request prepared = request;
-        if (!application_qc_combat_prepare_damage(engine, &prepared, error)) return false;
-        if (request.attack.weapon) request.knockback = prepared.amount;
-        if (!primary) { prepared.knockback = request.knockback; request = prepared; }
+        ok = application_qc_combat_prepare_damage(engine, &prepared, error);
+        if (ok && request.attack.weapon) request.knockback = prepared.amount;
+        if (ok && !primary) { prepared.knockback = request.knockback; request = prepared; }
     }
     qa_damage_outcome outcome = {0}; ++owner->calls;
-    bool ok;
-    if (!primary) {
+    if (ok && !primary) {
         ok = qa_combat_apply(engine->services.combat, &request, &outcome, error);
         if (ok) ok = qa_qc_call_skip(next, (uint32_t[3]){0}, error);
-    } else {
+    } else if (ok) {
         ok = admit(owner, target_slot, target_reference, error);
         combat_actor *actor = find(owner, target);
         if (ok && (!actor || !actor->bound)) ok = reject(error, "QC physical damage target has no actual canonical primary");
         entered_damage entered = {.owner = owner, .actor = actor, .next = next,
-            .original = request, .regular_scale = 1};
+            .original = request, .borrowed = source.borrowed ? &borrowed : NULL, .regular_scale = 1};
         for (size_t i = 0; i < owner->profile->armor.scale_count; ++i) {
             const application_qc_armor_scale *scale = owner->profile->armor.scales + i;
             if (scale->caller == event->caller && scale->statement == event->statement) entered.regular_scale = scale->scale;
@@ -1573,7 +1631,8 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
         }
         if (ok && !qa_qc_call_completed(next)) ok = qa_qc_call_skip(next, (uint32_t[3]){0}, error);
     }
-    --owner->calls; qa_damage_outcome_release(&outcome); return ok;
+    --owner->calls; owner->borrowed = borrowed.previous;
+    qa_damage_outcome_release(&outcome); return ok;
 }
 bool application_qc_combat_inline(struct application_qc_state *engine, qa_qc_instance *vm,
     const qa_qc_inline_event *event, qa_qc_inline_next next, bool *handled, qa_error *error)
@@ -1658,7 +1717,7 @@ bool application_qc_combat_release(struct application_qc_state *engine, qa_actor
     return true;
 }
 bool application_qc_combat_idle(const struct application_qc_state *engine)
-{ return !engine || !engine->combat || (!engine->combat->calls && !engine->combat->frame && !engine->combat->incoming && !engine->combat->synchronous && !engine->combat->radius); }
+{ return !engine || !engine->combat || (!engine->combat->calls && !engine->combat->frame && !engine->combat->incoming && !engine->combat->synchronous && !engine->combat->radius && !engine->combat->borrowed); }
 bool application_qc_combat_suspend(struct application_qc_state *engine, qa_error *error)
 {
     application_qc_combat *owner = engine->combat;
@@ -2074,11 +2133,16 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, co
     if (!*available) { *out = request->amount; return true; }
     if (!held(owner, error)) return false;
     const damage_scale *scale = &owner->profile->scale; qa_qc_instance *vm = engine->provider->state.qc.instance;
+    const borrowed_damage *borrowed = owner->borrowed;
+    if (borrowed && (request->attack.sequence != borrowed->request.attack.sequence ||
+        !qa_actor_id_equal(request->target, borrowed->request.target) ||
+        !qa_actor_id_equal(request->attack.attacker, borrowed->request.attack.attacker) ||
+        !qa_actor_id_equal(request->attack.inflictor, borrowed->request.attack.inflictor))) borrowed = NULL;
     uint32_t slot = 0; qa_actor_id actor = request->attack.attacker, source_actor = actor;
-    if (actor.registry) {
+    if (!borrowed && actor.registry) {
         if (!qa_qc_actor_observation_slot(vm, actor, &slot, error)) return false;
         if (!slot) source_actor = (qa_actor_id){0};
-    } else {
+    } else if (!borrowed) {
         qa_qc_slot_binding world; int32_t reference;
         if (!qa_qc_slot(vm, 0, &world) ||
             (world.kind != QA_QC_SLOT_WORLD && world.kind != QA_QC_SLOT_OWNED) ||
@@ -2093,36 +2157,56 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, co
         if (!qa_qc_global_int(vm, scale->constants[i], &actual, error) || (uint32_t)actual != scale->initial[i])
             return reject(error, "QC scaling constant changed from its actual qualified artifact");
     }
-    qa_unified_frame_lease *storage = scale->scratch_count ?
+    size_t location_count = borrowed ? owner->profile->location_count : 0;
+    size_t saved_count = scale->scratch_count + location_count + (borrowed ? 3 : 0);
+    qa_unified_frame_lease *storage = saved_count ?
         application_control_storage_acquire(engine->provider->application, error) : NULL;
-    uint32_t *saved = storage ? qa_unified_frame_lease_alloc(storage, scale->scratch_count,
-        sizeof(*saved), _Alignof(uint32_t), error) : NULL;
-    if (scale->scratch_count && !saved) {
+    typedef struct scale_word { uint32_t word, value; } scale_word;
+    scale_word *saved = storage ? qa_unified_frame_lease_alloc(storage, saved_count,
+        sizeof(*saved), _Alignof(scale_word), error) : NULL;
+    if (saved_count && !saved) {
         qa_unified_frame_lease_release(storage);
         return application_fail(error, QA_ERROR_MEMORY, "Borrowing QC scale scratch words");
     }
     bool ok = true; size_t staged = 0;
-    for (size_t i = 0; ok && i < scale->scratch_count; ++i) {
+    for (size_t i = 0; ok && i < saved_count; ++i) {
+        uint32_t word = i < scale->scratch_count ? scale->scratch[i] :
+            i - scale->scratch_count < location_count ?
+            owner->profile->locations[i - scale->scratch_count].word :
+            (uint32_t)(i - scale->scratch_count - location_count) + 1;
         int32_t actual;
-        ok = qa_qc_global_int(vm, scale->scratch[i], &actual, error);
-        if (ok) { saved[i] = (uint32_t)actual; ++staged; }
+        ok = qa_qc_global_int(vm, word, &actual, error);
+        if (ok) { saved[i] = (scale_word){word, (uint32_t)actual}; ++staged; }
+    }
+    for (size_t i = 0; ok && borrowed && i < owner->profile->location_count; ++i) {
+        const damage_location *location = owner->profile->locations + i;
+        uint32_t word = location->role == QC_INPUT_AMOUNT ? float_bits((float)request->amount) :
+            (uint32_t)(location->role == QC_INPUT_SELF ? borrowed->target :
+            location->role == QC_INPUT_ATTACKER ? borrowed->attacker : borrowed->inflictor);
+        ok = qa_qc_stage_globals(vm, location->word, &word, 1, error);
     }
     application_qc_inputs inputs = {.self = source_actor, .attacker = source_actor,
         .inflictor = scale->inflictor ? request->attack.inflictor : source_actor,
         .amount = (float)request->amount, .time_ns = engine->source_time_ns}; uint32_t result[3];
     if (ok) {
         ++owner->calls;
-        ok = application_qc_run_call_region(engine, &owner->profile->damage, &scale->region, &inputs, result, error);
+        float amount = 0;
+        if (borrowed) ok = qa_qc_execute_region(vm, &scale->region,
+            (uint32_t)owner->profile->damage.argument_count, &amount, error);
+        else {
+            ok = application_qc_run_call_region(engine, &owner->profile->damage, &scale->region, &inputs, result, error);
+            if (ok) amount = bits_float(result[0]);
+        }
         --owner->calls;
         if (ok) {
-            *out = bits_float(result[0]);
+            *out = amount;
             if (!isfinite(*out)) ok = reject(error, "QC original amount query returned invalid Source damage");
         }
     }
     qa_error first = error ? *error : (qa_error){0};
     for (size_t i = 0; i < staged; ++i) {
         qa_error unwind = {0};
-        if (!qa_qc_stage_globals(vm, scale->scratch[i], saved + i, 1, &unwind)) {
+        if (!qa_qc_stage_globals(vm, saved[i].word, &saved[i].value, 1, &unwind)) {
             if (ok) first = unwind;
             ok = false;
         }
@@ -2152,5 +2236,5 @@ bool application_qc_combat_prepare_damage(struct application_qc_state *engine,
     if (!application_qc_combat_damage_scale_available(engine)) return true;
     qa_damage_modifier modifier = {.owner = engine->provider->owner,
         .context = engine, .transform = combat_source_amount};
-    return qa_damage_apply_modifier(qa_session_actors(engine->services.session), request, &modifier, request, error);
+    return qa_damage_apply_modifier(request, &modifier, request, error);
 }

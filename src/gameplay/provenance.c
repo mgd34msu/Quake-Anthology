@@ -35,14 +35,12 @@ bool qa_attack_next(uint64_t *sequence, qa_attack *attack, qa_error *error) {
     return true;
 }
 
-bool qa_damage_apply_modifier(const qa_actor_registry *actors, const qa_damage_request *request,
+bool qa_damage_apply_modifier(const qa_damage_request *request,
                               const qa_damage_modifier *modifier, qa_damage_request *out, qa_error *error) {
-    if (!actors || !out || !qa_damage_request_validate(request, error)) return false;
+    if (!out || !qa_damage_request_validate(request, error)) return false;
     qa_damage_request next = *request;
     if (modifier) {
         if (!modifier->transform) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "damage modifier has no callback"); return false; }
-        if (!qa_actors_get(actors, next.attack.attacker)) next.attack.attacker = (qa_actor_id){0};
-        if (!qa_actors_get(actors, next.attack.inflictor)) next.attack.inflictor = (qa_actor_id){0};
         if ((!next.attack.powerup_applied || next.attack.powerup_owner != modifier->owner) &&
             !modifier->transform(modifier->context, &next, &next.amount, error)) return false;
         if (!isfinite(next.amount)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "damage modifier returned nonfinite damage"); return false; }

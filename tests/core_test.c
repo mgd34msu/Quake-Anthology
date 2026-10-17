@@ -200,6 +200,41 @@ static bool origin_health_write(void *context, double health, qa_error *error)
 static bool origin_armor_write(void *context, const qa_armor *armor, qa_error *error)
 { (void)error; ((qa_combat_state *)context)->armor = *armor; return true; }
 
+typedef struct modifier_identity {
+    qa_actor_id origin;
+    unsigned calls;
+} modifier_identity;
+static bool identity_damage_scale(void *context, const qa_damage_request *request,
+    double *amount, qa_error *error)
+{
+    (void)error;
+    modifier_identity *identity = context;
+    CHECK(qa_actor_id_equal(request->attack.attacker, identity->origin));
+    CHECK(qa_actor_id_equal(request->attack.inflictor, identity->origin));
+    ++identity->calls; *amount *= 4;
+    return true;
+}
+static void test_retired_damage_modifier(void)
+{
+    qa_error error = {0}; qa_actor_registry *actors = NULL;
+    CHECK(qa_actors_create(1, NULL, NULL, &actors, &error));
+    qa_actor_id origin, replacement;
+    CHECK(qa_actors_allocate(actors, 1, 1, &origin, &error));
+    CHECK(qa_actors_release(actors, origin, &error));
+    CHECK(qa_actors_allocate(actors, 1, 1, &replacement, &error));
+    CHECK(origin.slot == replacement.slot && origin.generation != replacement.generation);
+    modifier_identity identity = {.origin = origin};
+    qa_damage_modifier modifier = {.owner = 1, .context = &identity, .transform = identity_damage_scale};
+    qa_damage_request request = {.target = replacement, .amount = 20,
+        .attack = {.attacker = origin, .inflictor = origin, .cause.kind = QA_CAUSE_Q1}};
+    CHECK(qa_damage_apply_modifier(&request, &modifier, &request, &error));
+    CHECK(request.amount == 80 && identity.calls == 1);
+    CHECK(qa_actor_id_equal(request.attack.attacker, origin) &&
+        qa_actor_id_equal(request.attack.inflictor, origin));
+    CHECK(qa_damage_apply_modifier(&request, &modifier, &request, &error));
+    CHECK(request.amount == 80 && identity.calls == 1);
+    CHECK(qa_actors_destroy(actors, &error));
+}
 static void test_shared_attack_origins(void)
 {
     qa_error error = {0}; qa_session *session = NULL; qa_combat *combat = NULL;
@@ -9791,6 +9826,7 @@ int main(int argc, char **argv)
     test_reserved_scene_frame();
     test_bounded_handshake();
     test_shared_trajectory();
+    test_retired_damage_modifier();
     test_shared_attack_origins();
     test_lightstyle_snapshot();
     test_metadata_retention();
