@@ -286,7 +286,7 @@ static bool visibility(qa_native_host *host, const qa_native_import_call *call,
         return false;
     qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
     bool ignore_portals = host->profile == QA_NATIVE_Q2_GAME_API2023 &&
-                          call->argument_count > 2 && call->arguments[2].as.u8 != 0;
+                          call->argument_count > 2 && call->arguments[2].as.u8 == 0;
     qa_collision_point_visibility_scratch scratch = {0};
     const qa_collision_point_visibility_rules rules = {.leaf_rule = QA_LEAF_COLLISION,
         .phs = phs, .ignore_areas = ignore_portals, .minimum_cluster = INT32_MIN,
