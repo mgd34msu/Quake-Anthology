@@ -116,6 +116,7 @@ struct application_qc_state {
     struct application_qc_input_scope *input_scope;
     struct application_qc_parked_input *parked_inputs;
     const float *client_think_time;
+    const qa_touch_contact *touch_contact;
     float serverflags;
     qa_buffer original_extension;
     qa_buffer npc_restore;

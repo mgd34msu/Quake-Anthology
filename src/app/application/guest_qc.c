@@ -1720,7 +1720,11 @@ bool application_qc_touch(application_provider *provider, const qa_touch_contact
     struct application_qc_state *engine = provider->state.qc.engine;
     double time = provider->state.qc.qualified && engine->client_think_time ?
         *engine->client_think_time : (double)engine->source_time_ns / 1e9;
-    return source_callback(engine, contact->self, contact->other, engine->field_bindings->touch, time, error);
+    const qa_touch_contact *previous = engine->touch_contact;
+    engine->touch_contact = contact;
+    bool ok = source_callback(engine, contact->self, contact->other, engine->field_bindings->touch, time, error);
+    engine->touch_contact = previous;
+    return ok;
 }
 bool application_qc_blocked(application_provider *provider, qa_actor_id self, qa_actor_id other, qa_error *error)
 {

@@ -21,8 +21,9 @@ typedef struct damage_scale {
     bool qualified, transform, implicit, inflictor;
 } damage_scale;
 typedef struct synchronous_layout {
-    uint32_t axe, shotgun, super_shotgun, trace_attack, add_multi, apply_multi;
-    const qa_qc_definition *point, *normal, *trace_target;
+    uint32_t weapons[QA_Q1_WEAPON_COUNT], trace_attack, add_multi, apply_multi;
+    uint32_t launch_spike, radius, lightning_damage;
+    const qa_qc_definition *point, *normal, *trace_target, *owner;
 } synchronous_layout;
 typedef struct environment_layout {
     uint32_t water, postthink, hurt, door, secret, plat, train;
@@ -90,9 +91,14 @@ typedef struct synchronous_attack {
     qa_item_id weapon;
     int32_t reference;
     uint32_t function;
+    uint64_t time_ns;
     synchronous_trace *traces;
     qa_unified_frame_lease *storage;
 } synchronous_attack;
+typedef struct radius_attack {
+    struct radius_attack *previous;
+    qa_actor_id inflictor, attacker;
+} radius_attack;
 struct application_qc_combat {
     struct application_qc_state *engine;
     const application_qc_combat_profile *profile;
@@ -103,6 +109,7 @@ struct application_qc_combat {
     damage_frame *frame;
     incoming_damage *incoming;
     synchronous_attack *synchronous;
+    radius_attack *radius;
     uint64_t sequence;
     unsigned calls;
 };
@@ -121,6 +128,7 @@ static const qa_qc_definition *definition_at(const qa_qc_program *program, uint3
     }
     return NULL;
 }
+static bool source_field(const qa_qc_program *, const uint8_t *, uint32_t, const char *, qa_qc_value_type);
 static bool call_layout(application_qc_combat_profile *profile, qa_error *error)
 {
     const qa_qc_function *function = qa_qc_program_function(profile->program, profile->damage.function);
@@ -195,18 +203,33 @@ static void synchronous_prepare(application_qc_combat_profile *profile, const ui
     if (!layout->point || layout->point->type != QA_QC_VECTOR ||
         !layout->normal || layout->normal->type != QA_QC_VECTOR ||
         !layout->trace_target || layout->trace_target->type != QA_QC_ENTITY) {
-        *layout = (synchronous_layout){0}; return;
+        layout->point = layout->normal = layout->trace_target = NULL;
     }
-    layout->axe = source_void_function(program, "W_FireAxe", NULL, 0, written);
+    static const char *const weapons[QA_Q1_WEAPON_COUNT] = {
+        [QA_Q1_AXE] = "W_FireAxe", [QA_Q1_SHOTGUN] = "W_FireShotgun",
+        [QA_Q1_SUPER_SHOTGUN] = "W_FireSuperShotgun", [QA_Q1_NAILGUN] = "W_FireSpikes",
+        [QA_Q1_SUPER_NAILGUN] = "W_FireSuperSpikes", [QA_Q1_GRENADE] = "W_FireGrenade",
+        [QA_Q1_ROCKET] = "W_FireRocket", [QA_Q1_LIGHTNING] = "W_FireLightning"};
+    static const qa_qc_value_type scalar[] = {QA_QC_FLOAT};
+    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i) if (weapons[i])
+        layout->weapons[i] = source_void_function(program, weapons[i],
+            i == QA_Q1_NAILGUN ? scalar : NULL, i == QA_Q1_NAILGUN ? 1 : 0, written);
     static const qa_qc_value_type trace_parameters[] = {QA_QC_FLOAT, QA_QC_VECTOR};
     static const qa_qc_value_type multi_parameters[] = {QA_QC_ENTITY, QA_QC_FLOAT};
     layout->trace_attack = source_void_function(program, "TraceAttack", trace_parameters, 2, written);
     layout->add_multi = source_void_function(program, "AddMultiDamage", multi_parameters, 2, written);
     layout->apply_multi = source_void_function(program, "ApplyMultiDamage", NULL, 0, written);
-    if (layout->trace_attack && layout->add_multi && layout->apply_multi) {
-        layout->shotgun = source_void_function(program, "W_FireShotgun", NULL, 0, written);
-        layout->super_shotgun = source_void_function(program, "W_FireSuperShotgun", NULL, 0, written);
-    }
+    static const qa_qc_value_type spike_parameters[] = {QA_QC_VECTOR, QA_QC_VECTOR};
+    static const qa_qc_value_type lightning_parameters[] = {QA_QC_VECTOR, QA_QC_VECTOR, QA_QC_ENTITY, QA_QC_FLOAT};
+    static const qa_qc_value_type radius_parameters[] = {QA_QC_ENTITY, QA_QC_ENTITY, QA_QC_FLOAT, QA_QC_ENTITY, QA_QC_STRING};
+    layout->launch_spike = source_void_function(program, "launch_spike", spike_parameters, 2, written);
+    layout->lightning_damage = source_void_function(program, "LightningDamage", lightning_parameters, 4, written);
+    const qa_qc_function *radius = qa_qc_program_find_function(program, "T_RadiusDamage", NULL);
+    if (radius && (radius->parameter_count == 4 || radius->parameter_count == 5))
+        layout->radius = source_void_function(program, "T_RadiusDamage", radius_parameters, radius->parameter_count, written);
+    const qa_qc_definition *owner = qa_qc_program_find_global(program, "owner");
+    if (owner && source_field(program, written, owner->offset, "owner", QA_QC_ENTITY))
+        layout->owner = qa_qc_program_find_field(program, "owner");
 }
 typedef enum environment_value_kind {
     ENVIRONMENT_UNKNOWN, ENVIRONMENT_CONSTANT, ENVIRONMENT_DAMAGE, ENVIRONMENT_WATERLEVEL
@@ -360,7 +383,7 @@ static bool environment_prepare(application_qc_combat_profile *profile, const ui
     }
     return true;
 }
-static bool quad_field(const qa_qc_program *program, const uint8_t *written,
+static bool source_field(const qa_qc_program *program, const uint8_t *written,
     uint32_t word, const char *name, qa_qc_value_type type)
 {
     const qa_qc_definition *field = qa_qc_program_find_field(program, name);
@@ -418,14 +441,14 @@ static void scale_discover(application_qc_combat_profile *profile, const uint8_t
         const qa_qc_statement *load = qa_qc_program_statement(program, pc);
         const qa_qc_statement *compare = qa_qc_program_statement(program, pc + 1);
         if (load->opcode != QA_QC_LOAD_F || load->a != attacker->frame_word ||
-            !quad_field(program, written, load->b, "super_damage_finished", QA_QC_FLOAT) ||
+            !source_field(program, written, load->b, "super_damage_finished", QA_QC_FLOAT) ||
             compare->opcode != QA_QC_GT || compare->a != load->c || compare->b != time->offset) continue;
         uint32_t branch_pc = pc + 2, predicate = compare->c;
         const qa_qc_statement *door = qa_qc_program_statement(program, branch_pc);
         bool qw = door->opcode == QA_QC_LOAD_S;
         if (qw) {
             if (end - branch_pc <= 3 || door->a != inflictor->frame_word ||
-                !quad_field(program, written, door->b, "classname", QA_QC_STRING)) continue;
+                !source_field(program, written, door->b, "classname", QA_QC_STRING)) continue;
             const qa_qc_statement *different = qa_qc_program_statement(program, branch_pc + 1);
             const qa_qc_statement *both = qa_qc_program_statement(program, branch_pc + 2);
             if (different->opcode != QA_QC_NE_S ||
@@ -914,10 +937,12 @@ bool application_qc_combat_health_owned(const struct application_qc_state *engin
 }
 static bool touches(const qa_qc_store_event *event, const qa_qc_definition *field, uint32_t width)
 { return event->word < field->offset + width && event->word + event->count > field->offset; }
+static bool projectile_stored(application_qc_combat *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 bool application_qc_combat_source_stored(struct application_qc_state *engine, qa_qc_instance *vm,
     const qa_qc_store_event *event, qa_error *error)
 {
     application_qc_combat *owner = engine->combat;
+    if (owner && !projectile_stored(owner, vm, event, error)) return false;
     damage_frame *frame = owner ? owner->frame : NULL;
     if (!frame || frame->reaction_depth || event->kind != QA_QC_STORE_ENTITY) return true;
     const application_qc_combat_profile *profile = owner->profile;
@@ -1081,6 +1106,35 @@ static bool actual_actor(application_qc_combat *owner, int32_t reference, qa_act
         return reject(error, "QC damage reference lost its actual full Source actor");
     return true;
 }
+static bool projectile_stored(application_qc_combat *owner, qa_qc_instance *vm,
+    const qa_qc_store_event *event, qa_error *error)
+{
+    const synchronous_layout *layout = &owner->profile->synchronous;
+    const synchronous_attack *active = owner->synchronous;
+    if (!active || !active->weapon || !layout->owner || event->kind != QA_QC_STORE_ENTITY ||
+        !event->entity_reference || !touches(event, layout->owner, 1)) return true;
+    bool direct = active->function == layout->weapons[QA_Q1_ROCKET] ||
+        active->function == layout->weapons[QA_Q1_GRENADE];
+    bool spike = active->function == layout->weapons[QA_Q1_NAILGUN] ||
+        active->function == layout->weapons[QA_Q1_SUPER_NAILGUN];
+    if (!((direct && event->function == active->function) ||
+        (spike && event->function == layout->launch_spike))) return true;
+    const qa_qc_statement *statement = qa_qc_program_statement(owner->profile->program, event->statement);
+    if (!statement || statement->opcode != QA_QC_STOREP_ENT ||
+        event->after[layout->owner->offset - event->word] != (uint32_t)active->reference) return true;
+    qa_actor_id projectile; qa_error ignored = {0};
+    if (!qa_qc_reference_actor(vm, event->entity_reference, &projectile, &ignored) ||
+        qa_actor_id_equal(projectile, active->actor)) return true;
+    struct application_qc_state *engine = owner->engine;
+    application_provider *inventory = application_provider_for(engine->provider->application,
+        active->actor, QA_ROLE_INVENTORY, "");
+    qa_attack origin = {.attacker = active->actor, .inflictor = projectile, .projectile = projectile,
+        .weapon = active->weapon, .weapon_provider = engine->provider->owner,
+        .inventory_provider = inventory ? inventory->owner : 0, .time_ns = active->time_ns,
+        .cause = {.kind = QA_CAUSE_Q1, .source.q1.armor = QA_Q1_ARMOR_NORMAL}};
+    if (!qa_attack_next(&owner->sequence, &origin, error)) return false;
+    return qa_combat_attack_origin_store(engine->services.combat, projectile, &origin, error);
+}
 static bool synchronous_weapon(application_qc_combat *owner, synchronous_attack *attack,
     qa_error *error)
 {
@@ -1100,8 +1154,10 @@ static bool synchronous_weapon(application_qc_combat *owner, synchronous_attack 
         return true;
     }
     const synchronous_layout *layout = &owner->profile->synchronous;
-    qa_q1_weapon weapon = attack->function == layout->axe ? QA_Q1_AXE :
-        attack->function == layout->shotgun ? QA_Q1_SHOTGUN : QA_Q1_SUPER_SHOTGUN;
+    qa_q1_weapon weapon = QA_Q1_WEAPON_COUNT;
+    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+        if (layout->weapons[i] && layout->weapons[i] == attack->function) { weapon = (qa_q1_weapon)i; break; }
+    if (weapon == QA_Q1_WEAPON_COUNT) return true;
     qa_item_id item = engine->provider->application->ui_names.q1_weapons[weapon];
     if (!item) return true;
     for (size_t i = 0; i < 8; ++i) {
@@ -1109,8 +1165,8 @@ static bool synchronous_weapon(application_qc_combat *owner, synchronous_attack 
         if (!application_qc_weapon_binding_at(engine, i, &binding, &via, error)) return false;
         if (binding.item == item) {
             /* The original super shotgun calls W_FireShotgun with one shell. */
-            if (value == (float)binding.bit || (attack->function == layout->shotgun &&
-                attack->previous && attack->previous->function == layout->super_shotgun &&
+            if (value == (float)binding.bit || (attack->function == layout->weapons[QA_Q1_SHOTGUN] &&
+                attack->previous && attack->previous->function == layout->weapons[QA_Q1_SUPER_SHOTGUN] &&
                 qa_actor_id_equal(attack->previous->actor, attack->actor))) attack->weapon = item;
             break;
         }
@@ -1124,6 +1180,7 @@ static bool synchronous_trace_read(application_qc_combat *owner, int32_t target,
     qa_qc_instance *vm = owner->engine->provider->state.qc.instance;
     int32_t traced;
     *present = false;
+    if (!layout->trace_target || !layout->point || !layout->normal) return true;
     if (!qa_qc_global_int(vm, layout->trace_target->offset, &traced, error)) return false;
     if (traced != target) return true;
     if (!qa_qc_global_vector(vm, layout->point->offset, point, error) ||
@@ -1136,6 +1193,16 @@ static bool synchronous_call(application_qc_combat *owner, qa_qc_instance *vm,
 {
     const synchronous_layout *layout = &owner->profile->synchronous;
     synchronous_attack *active = owner->synchronous;
+    if (event->function && event->function == layout->radius) {
+        int32_t inflictor, attacker;
+        radius_attack radius = {.previous = owner->radius}; qa_qc_slot_binding slot;
+        if (!qa_qc_arg_int(vm, 0, &inflictor, error) || !qa_qc_arg_int(vm, 1, &attacker, error) ||
+            !actual_actor(owner, inflictor, &radius.inflictor, &slot, error) ||
+            !actual_actor(owner, attacker, &radius.attacker, &slot, error)) return false;
+        *handled = true; owner->radius = &radius; ++owner->calls;
+        bool ok = qa_qc_call_continue(next, error);
+        --owner->calls; owner->radius = radius.previous; return ok;
+    }
     if (active && active->weapon && event->function == layout->add_multi &&
         event->caller == layout->trace_attack) {
         int32_t reference;
@@ -1160,9 +1227,12 @@ static bool synchronous_call(application_qc_combat *owner, qa_qc_instance *vm,
         trace->point = point; trace->normal = normal;
         return true;
     }
-    if (!event->function || (event->function != layout->axe && event->function != layout->shotgun &&
-        event->function != layout->super_shotgun)) return true;
-    synchronous_attack attack = {.previous = active, .function = event->function};
+    bool firing = false;
+    for (size_t i = 0; event->function && i < QA_Q1_WEAPON_COUNT; ++i)
+        firing = firing || layout->weapons[i] == event->function;
+    if (!firing) return true;
+    synchronous_attack attack = {.previous = active, .function = event->function,
+        .time_ns = owner->engine->source_time_ns};
     qa_qc_slot_binding slot;
     if (!qa_qc_global_int(vm, owner->profile->self->offset, &attack.reference, error) ||
         !actual_actor(owner, attack.reference, &attack.actor, &slot, error)) return false;
@@ -1209,10 +1279,10 @@ static bool synchronous_request(application_qc_combat *owner, const qa_qc_call_e
     if (!attack || !attack->weapon || !qa_actor_id_equal(request->attack.attacker, attack->actor) ||
         !qa_actor_id_equal(request->attack.inflictor, attack->actor)) return true;
     qa_vec3 point, normal; bool present = false;
-    if (event->caller == layout->axe && attack->function == layout->axe) {
+    if (event->caller == layout->weapons[QA_Q1_AXE] && attack->function == layout->weapons[QA_Q1_AXE]) {
         if (!synchronous_trace_read(owner, target, &point, &normal, &present, error)) return false;
     } else if (event->caller == layout->apply_multi &&
-        (attack->function == layout->shotgun || attack->function == layout->super_shotgun)) {
+        (attack->function == layout->weapons[QA_Q1_SHOTGUN] || attack->function == layout->weapons[QA_Q1_SUPER_SHOTGUN])) {
         for (const synchronous_trace *trace = attack->traces; trace; trace = trace->next)
             if (qa_actor_id_equal(trace->target, request->target)) {
                 point = trace->point; normal = trace->normal; present = true; break;
@@ -1225,6 +1295,57 @@ static bool synchronous_request(application_qc_combat *owner, const qa_qc_call_e
     request->attack.weapon = attack->weapon;
     request->point = point; request->normal = normal;
     request->direction = direction;
+    request->knockback = request->amount;
+    return true;
+}
+static bool projectile_request(application_qc_combat *owner, const qa_qc_call_event *event,
+    int32_t target, qa_damage_request *request, qa_error *error)
+{
+    if (request->attack.weapon) return true;
+    struct application_qc_state *engine = owner->engine;
+    const synchronous_layout *layout = &owner->profile->synchronous;
+    qa_attack origin; bool emitted = false;
+    if (!qa_combat_attack_origin_read(engine->services.combat, request->attack.inflictor,
+        &origin, &emitted, error)) return false;
+    emitted = emitted && origin.weapon && origin.weapon_provider == engine->provider->owner;
+    const synchronous_attack *active = owner->synchronous;
+    bool firing = active && active->weapon &&
+        qa_actor_id_equal(request->attack.attacker, active->actor) &&
+        qa_actor_id_equal(request->attack.inflictor, active->actor) &&
+        (event->caller == active->function || (layout->radius && event->caller == layout->radius) ||
+         (active->function == layout->weapons[QA_Q1_LIGHTNING] && layout->lightning_damage &&
+          event->caller == layout->lightning_damage));
+    if (!emitted && !firing) return true;
+    request->attack.weapon = emitted ? origin.weapon : active->weapon;
+    if (emitted) {
+        request->attack.weapon_provider = origin.weapon_provider;
+        request->attack.inventory_provider = origin.inventory_provider;
+        request->attack.projectile = request->attack.inflictor;
+    }
+    const radius_attack *radius = owner->radius;
+    request->radius = radius && qa_actor_id_equal(radius->inflictor, request->attack.inflictor) &&
+        qa_actor_id_equal(radius->attacker, request->attack.attacker);
+    qa_vec3 point, direction; bool present;
+    if (!source_geometry(owner, request->target, request->attack.inflictor, &point, &direction, &present, error)) return false;
+    if (present) request->direction = direction;
+    const qa_qc_definition *source_origin = engine->field_bindings->origin;
+    if ((emitted || request->radius) && source_origin && source_origin->type == QA_QC_VECTOR) {
+        uint32_t slot;
+        if (!qa_qc_actor_observation_slot(engine->provider->state.qc.instance, request->attack.inflictor, &slot, error) ||
+            !qa_qc_actor_observation_vector(engine->provider->state.qc.instance, slot, request->attack.inflictor,
+                source_origin->offset, &request->point, error)) return false;
+    }
+    const qa_touch_contact *contact = engine->touch_contact;
+    if (!request->radius && contact && qa_actor_id_equal(contact->self, request->attack.inflictor) &&
+        qa_actor_id_equal(contact->other, request->target)) {
+        if (contact->has_plane) request->normal = contact->plane.normal;
+        if (contact->has_source_trace) request->point = contact->source_trace.end;
+    } else if (!request->radius && firing && active->function == layout->weapons[QA_Q1_LIGHTNING] &&
+        event->caller == layout->lightning_damage) {
+        qa_vec3 normal;
+        if (!synchronous_trace_read(owner, target, &point, &normal, &present, error)) return false;
+        if (present) { request->point = point; request->normal = normal; }
+    }
     request->knockback = request->amount;
     return true;
 }
@@ -1421,10 +1542,18 @@ bool application_qc_combat_replace(struct application_qc_state *engine, qa_qc_in
     qa_damage_request request;
     if (!authored_request(owner, target, attacker, inflictor, amount, &request, error) ||
         !synchronous_request(owner, event, target_reference, &request, error) ||
+        !projectile_request(owner, event, target_reference, &request, error) ||
         !environment_request(owner, event, target_reference, inflictor_reference, attacker_reference, &request, error)) return false;
+    bool primary = eligible(owner, target_slot);
+    if (!primary || request.attack.weapon) {
+        qa_damage_request prepared = request;
+        if (!application_qc_combat_prepare_damage(engine, &prepared, error)) return false;
+        if (request.attack.weapon) request.knockback = prepared.amount;
+        if (!primary) { prepared.knockback = request.knockback; request = prepared; }
+    }
     qa_damage_outcome outcome = {0}; ++owner->calls;
     bool ok;
-    if (!eligible(owner, target_slot)) {
+    if (!primary) {
         ok = qa_combat_apply(engine->services.combat, &request, &outcome, error);
         if (ok) ok = qa_qc_call_skip(next, (uint32_t[3]){0}, error);
     } else {
@@ -1529,7 +1658,7 @@ bool application_qc_combat_release(struct application_qc_state *engine, qa_actor
     return true;
 }
 bool application_qc_combat_idle(const struct application_qc_state *engine)
-{ return !engine || !engine->combat || (!engine->combat->calls && !engine->combat->frame && !engine->combat->incoming && !engine->combat->synchronous); }
+{ return !engine || !engine->combat || (!engine->combat->calls && !engine->combat->frame && !engine->combat->incoming && !engine->combat->synchronous && !engine->combat->radius); }
 bool application_qc_combat_suspend(struct application_qc_state *engine, qa_error *error)
 {
     application_qc_combat *owner = engine->combat;
@@ -1597,6 +1726,13 @@ bool application_qc_combat_restore_attach(struct application_qc_state *engine, q
         qa_attack attack; bool present;
         if (!qa_combat_last_attack_read(engine->services.combat, actor->actor, &attack, &present, error)) return false;
         if (present && attack.sequence > owner->sequence) owner->sequence = attack.sequence;
+    }
+    uint32_t cursor = 0; const qa_actor_record *record;
+    while (qa_actors_next(qa_session_actors(engine->services.session), &cursor, &record)) {
+        qa_attack attack; bool present;
+        if (!qa_combat_attack_origin_read(engine->services.combat, record->id, &attack, &present, error)) return false;
+        if (present && attack.weapon_provider == engine->provider->owner && attack.sequence > owner->sequence)
+            owner->sequence = attack.sequence;
     }
     return application_qc_combat_ready(engine, error);
 }
@@ -1932,7 +2068,7 @@ static bool scale_parse(application_qc_combat_profile *profile, const qa_json_do
 bool application_qc_combat_damage_amount(struct application_qc_state *engine, const qa_damage_request *request,
     double *out, bool *available, qa_error *error)
 {
-    if (!request || !out || !available || !isfinite(request->amount) || request->amount < 0)
+    if (!request || !out || !available || !isfinite(request->amount))
         return reject(error, "QC Source amount query requires finite original damage");
     application_qc_combat *owner = engine->combat; *available = owner && owner->profile->scale.qualified;
     if (!*available) { *out = request->amount; return true; }
@@ -1980,7 +2116,7 @@ bool application_qc_combat_damage_amount(struct application_qc_state *engine, co
         --owner->calls;
         if (ok) {
             *out = bits_float(result[0]);
-            if (!isfinite(*out) || *out < 0) ok = reject(error, "QC original amount query returned invalid Source damage");
+            if (!isfinite(*out)) ok = reject(error, "QC original amount query returned invalid Source damage");
         }
     }
     qa_error first = error ? *error : (qa_error){0};
@@ -2002,4 +2138,19 @@ bool application_qc_combat_damage_scale_available(const struct application_qc_st
         engine->provider->state.qc.engine == engine && engine->provider->state.qc.instance &&
         engine->provider->state.qc.program == owner->profile->program &&
         engine->provider->state.qc.combat_profile == owner->profile;
+}
+static bool combat_source_amount(void *opaque, const qa_damage_request *request,
+    double *out, qa_error *error)
+{
+    bool available = false;
+    return application_qc_combat_damage_amount(opaque, request, out, &available, error) &&
+        (available || application_fail(error, QA_ERROR_ARGUMENT, "QC Source lost its damage scale"));
+}
+bool application_qc_combat_prepare_damage(struct application_qc_state *engine,
+    qa_damage_request *request, qa_error *error)
+{
+    if (!application_qc_combat_damage_scale_available(engine)) return true;
+    qa_damage_modifier modifier = {.owner = engine->provider->owner,
+        .context = engine, .transform = combat_source_amount};
+    return qa_damage_apply_modifier(qa_session_actors(engine->services.session), request, &modifier, request, error);
 }

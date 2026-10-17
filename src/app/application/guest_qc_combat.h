@@ -32,5 +32,6 @@ bool application_qc_combat_restore_attach(struct application_qc_state *, qa_erro
 bool application_qc_combat_damage_amount(struct application_qc_state *, const qa_damage_request *,
     double *out, bool *available, qa_error *);
 bool application_qc_combat_damage_scale_available(const struct application_qc_state *);
+bool application_qc_combat_prepare_damage(struct application_qc_state *, qa_damage_request *, qa_error *);
 
 #endif
