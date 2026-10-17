@@ -126,13 +126,20 @@ static bool next_upgrade(qa_q1_game *g, q1_player *player, unsigned type, qa_err
     }
     return true;
 }
+bool q1_mg3_weapon_impulse_read(qa_q1_game *g, q1_player *player, uint8_t impulse,
+    qa_q1_weapon *weapon, bool *found, qa_error *error) {
+    *found = impulse == 1 || impulse == 225;
+    *weapon = QA_Q1_MG3_LASER;
+    return !*found || impulse != 1 || melee(g, player, weapon, error);
+}
 bool q1_mg3_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, bool *handled,
                     qa_error *error) {
     if (!player || !current(g, player->id, player, error)) return false;
     *handled = true;
-    if (impulse == 1 || impulse == 225) {
-        qa_q1_weapon weapon = QA_Q1_MG3_LASER;
-        if (impulse == 1 && !melee(g, player, &weapon, error)) return false;
+    qa_q1_weapon weapon;
+    bool selecting;
+    if (!q1_mg3_weapon_impulse_read(g, player, impulse, &weapon, &selecting, error)) return false;
+    if (selecting) {
         double count;
         if (!item_count(g, player, g->weapons[weapon], &count, error)) return false;
         if (count == 0) return weapon_message(g, player, g->runtime_names[Q1_NAME_QC_NO_WEAPON], error);

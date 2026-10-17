@@ -1,10 +1,123 @@
 #include "internal.h"
+#include "equipment_media.h"
 #include "qa/application_weapon_availability.h"
 #include "qa/application_equipment.h"
 #include "qa/application_native_q2_presentation.h"
 #include <inttypes.h>
 #include <stdio.h>
 
+static bool definition_row(frontend_seat *seat, qa_actor_id actor,
+    const qa_item_definition *definition, bool availability, int32_t ordinal,
+    qa_hud_wheel_item *out, qa_error *error)
+{
+    qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
+    double owned;
+    if (!qa_inventory_count_read(inventory, actor, definition->item, &owned, error)) return false;
+    bool ammunition = owned > 0;
+    double amount = owned;
+    if (definition->ammo) {
+        double ammo;
+        if (!qa_inventory_count_read(inventory, actor, definition->ammo, &ammo, error)) return false;
+        ammunition = ammo > 0; amount = ammo;
+    }
+    if (definition->weapon && availability) {
+        bool available, found;
+        if (!qa_application_weapon_availability_read(seat->frontend->application, actor,
+            definition, &available, &found, error)) return false;
+        if (found) ammunition = available;
+    }
+    *out = (qa_hud_wheel_item){
+        .identity = {.key = definition->item, .item = definition->item, .source_ordinal = ordinal},
+        .sort_order = ordinal, .label = definition->label ? definition->label : "Item",
+        .owned = owned > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
+    return true;
+}
+typedef struct q1_wheel_rows {
+    qa_actor_owner owner;
+    const frontend_q1_wheel_slot *slots;
+    size_t count;
+} q1_wheel_rows;
+static uint64_t q1_wheel_key(qa_actor_owner owner, size_t ordinal)
+{ return (uint64_t)owner << 32 | (uint32_t)ordinal; }
+static bool authored_rows(frontend_seat *seat, qa_actor_id actor,
+    const qa_item_definition *definitions, size_t definition_count,
+    const qa_hud_wheel_item *original, size_t original_count,
+    const qa_hud_wheel_item **out, size_t *count, qa_error *error)
+{
+    qa_frontend *f = seat->frontend;
+    qa_application_equipment_view selected;
+    if (!qa_application_equipment_read(f->application, actor, &selected, error)) return false;
+    if (definition_count == SIZE_MAX || definition_count + 1 > SIZE_MAX / sizeof(q1_wheel_rows))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Authored wheel sources exceed address space");
+    qa_arena *storage = &f->frame.storage;
+    q1_wheel_rows *sources = qa_arena_alloc(storage, (definition_count + 1) * sizeof(*sources),
+        _Alignof(q1_wheel_rows), error);
+    if (!sources) return false;
+    size_t source_count = 0, capacity = original_count;
+    for (size_t i = 0; i <= definition_count; ++i) {
+        qa_actor_owner owner = i < definition_count ? definitions[i].owner :
+            selected.family == QA_GAME_Q1 ? selected.provider : 0;
+        if (!owner) continue;
+        bool retained = false;
+        for (size_t j = 0; j < source_count; ++j) if (sources[j].owner == owner) retained = true;
+        if (retained) continue;
+        q1_wheel_rows *source = sources + source_count++;
+        *source = (q1_wheel_rows){.owner = owner};
+        if (!frontend_equipment_media_q1_wheel_read(f, owner, &source->slots, &source->count, error)) return false;
+        if (source->count > SIZE_MAX - capacity)
+            return frontend_fail(error, QA_ERROR_MEMORY, "Authored wheel slots exceed address space");
+        capacity += source->count;
+    }
+    if (capacity == original_count) { *out = original; *count = original_count; return true; }
+    if (capacity > SIZE_MAX / sizeof(qa_hud_wheel_item))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Authored wheel rows exceed address space");
+    qa_hud_wheel_item *rows = qa_arena_alloc(storage, capacity * sizeof(*rows), _Alignof(qa_hud_wheel_item), error);
+    bool *replaced = original_count ? qa_arena_alloc(storage, original_count, 1, error) : NULL;
+    if (!rows || (original_count && !replaced)) return false;
+    if (original_count) { memcpy(rows, original, original_count * sizeof(*rows)); memset(replaced, 0, original_count); }
+    size_t written = original_count;
+    for (size_t i = 0; i < source_count; ++i) {
+        const q1_wheel_rows *source = sources + i;
+        if (!source->count) continue;
+        for (size_t j = 0; j < source->count; ++j) {
+            const frontend_q1_wheel_slot *slot = source->slots + j;
+            qa_item_definition definition;
+            bool found;
+            if (!qa_application_q1_wheel_item_read(f->application, actor, source->owner,
+                slot->has_impulse ? slot->impulse : 0, slot->has_weapon_bits ? &slot->weapon_bits : NULL,
+                &definition, &found, error)) return false;
+            if (!found) {
+                char label[48];
+                int length = snprintf(label, sizeof(label), "Slot %" PRId64, (int64_t)slot->slot + 1);
+                char *retained = qa_arena_alloc(storage, (size_t)length + 1, 1, error);
+                if (!retained) return false;
+                memcpy(retained, label, (size_t)length + 1);
+                rows[written++] = (qa_hud_wheel_item){
+                    .identity = {.key = q1_wheel_key(source->owner, j), .source_ordinal = slot->slot},
+                    .sort_order = slot->slot, .label = retained, .has_count = slot->has_count,
+                    .icon = slot->icon, .selected_icon = slot->selected_icon};
+                continue;
+            }
+            size_t target = SIZE_MAX;
+            for (size_t k = 0; k < original_count; ++k) {
+                int32_t ordinal = rows[k].identity.source_ordinal;
+                if (!replaced[k] && rows[k].identity.item == definition.item && ordinal >= 0 &&
+                    (size_t)ordinal < definition_count && definitions[ordinal].owner == source->owner) {
+                    target = k; break;
+                }
+            }
+            if (target == SIZE_MAX) target = written++;
+            else replaced[target] = true;
+            if (!definition_row(seat, actor, &definition, true, slot->slot, rows + target, error)) return false;
+            rows[target].identity.key = q1_wheel_key(source->owner, j);
+            rows[target].has_count = slot->has_count;
+            rows[target].icon = slot->icon;
+            rows[target].selected_icon = slot->selected_icon;
+        }
+    }
+    *out = rows; *count = written;
+    return true;
+}
 static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
                   const qa_hud_wheel_item **out, size_t *count, qa_error *error)
 {
@@ -19,15 +132,15 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
         mode==QA_HUD_WHEEL_POWERUPS,&native,&native_found,error)) return false;
     size_t total;
     if (!qa_inventory_item_definitions(inventory, actor, NULL, 0, &total, error)) return false;
-    if (!total) return true;
     if (total > SIZE_MAX / sizeof(qa_item_definition) || total > SIZE_MAX / sizeof(qa_hud_wheel_item))
         return frontend_fail(error, QA_ERROR_MEMORY, "wheel definition storage overflow");
     qa_arena *storage = &seat->frontend->frame.storage;
-    qa_item_definition *definitions = qa_arena_alloc(storage, total * sizeof(*definitions),
-        _Alignof(qa_item_definition), error);
-    qa_hud_wheel_item *rows = definitions ? qa_arena_alloc(storage, total * sizeof(*rows),
+    qa_item_definition *definitions = total ? qa_arena_alloc(storage, total * sizeof(*definitions),
+        _Alignof(qa_item_definition), error) : NULL;
+    qa_hud_wheel_item *rows = total ? qa_arena_alloc(storage, total * sizeof(*rows),
         _Alignof(qa_hud_wheel_item), error) : NULL;
-    if (!rows || !qa_inventory_item_definitions(inventory, actor, definitions, total, &total, error)) return false;
+    if ((total && (!definitions || !rows)) ||
+        !qa_inventory_item_definitions(inventory, actor, definitions, total, &total, error)) return false;
     uint64_t revision = qa_inventory_definition_revision(inventory, actor);
     size_t written = 0;
     for (size_t i = 0; i < total; ++i) {
@@ -45,25 +158,9 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
         }
         if ((!native_definition && definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS)) ||
             (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
-        double owned;
-        if (!qa_inventory_count_read(inventory, actor, definition.item, &owned, error)) return false;
-        bool ammunition = owned > 0;
-        double amount = owned;
-        if (definition.ammo) {
-            double ammo;
-            if (!qa_inventory_count_read(inventory, actor, definition.ammo, &ammo, error)) return false;
-            ammunition = ammo > 0; amount = ammo;
-        }
-        if (definition.weapon && !native_definition) {
-            bool available, found;
-            if (!qa_application_weapon_availability_read(seat->frontend->application,actor,
-                &definition,&available,&found,error)) return false;
-            if (found) ammunition=available;
-        }
-        rows[written++] = (qa_hud_wheel_item){
-            .identity = {.key = definition.item, .item = definition.item, .source_ordinal = (int32_t)i},
-            .sort_order = (int32_t)i, .label = definition.label ? definition.label : "Item",
-            .owned = owned > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
+        if (!definition_row(seat, actor, &definition, native_definition == NULL,
+            (int32_t)i, rows + written, error)) return false;
+        ++written;
         if (native_definition) {
             qa_hud_wheel_item *row=rows+written-1;
             int32_t native_count=native_powerup?native.state.powerups[native_slot]:
@@ -92,8 +189,9 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
         }
         written = retained;
     }
-    *out = rows; *count = written;
-    return true;
+    if (mode == QA_HUD_WHEEL_WEAPONS)
+        return authored_rows(seat, actor, definitions, total, rows, written, out, count, error);
+    *out = rows; *count = written; return true;
 }
 static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
 {
@@ -111,7 +209,42 @@ static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
     if (native_found && native.active && qa_inventory_item_owner(
         qa_application_inventory(seat->frontend->application),actor,weapon,&owner,NULL) && owner==native.owner)
         weapon=native.active;
-    *out = weapon; return true;
+    *out = weapon;
+    qa_application_equipment_view equipment;
+    if (!qa_application_equipment_read(seat->frontend->application, actor, &equipment, error)) return false;
+    if (weapon && equipment.family == QA_GAME_Q1 && equipment.item == weapon) {
+        owner = equipment.provider;
+        const frontend_q1_wheel_slot *slots; size_t count;
+        if (!frontend_equipment_media_q1_wheel_read(seat->frontend, owner, &slots, &count, error)) return false;
+        for (size_t i = 0; i < count; ++i) {
+            qa_item_definition definition;
+            bool found;
+            if (!qa_application_q1_wheel_item_read(seat->frontend->application, actor, owner,
+                slots[i].has_impulse ? slots[i].impulse : 0,
+                slots[i].has_weapon_bits ? &slots[i].weapon_bits : NULL, &definition, &found, error)) return false;
+            if (found && definition.item == weapon) { *out = q1_wheel_key(owner, i); break; }
+        }
+    }
+    return true;
+}
+static bool request_item(frontend_seat *seat, qa_actor_id actor, uint32_t launch_seat,
+    const qa_item_definition *definition, qa_error *error)
+{
+    (void)error;
+    qa_command_context command=qa_input_seat_context(seat->input);
+    command.actor=actor; command.seat=launch_seat;
+    command.owner=0; command.registry=command.generation=command.cvar_view=0;
+    command.origin=QA_COMMAND_SEAT; command.script=NULL; command.direct=true;
+    char text[64];
+    int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,definition->owner,definition->item);
+    frontend_queued_command queued={.console=qa_application_console(seat->frontend->application),
+        .context=command,.time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
+    qa_platform_event_result result=qa_platform_events_push(seat->frontend->platform_events,
+        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=seat->frontend->wall_time_ns},
+        (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
+        (qa_bytes){(const uint8_t *)text,(size_t)length+1});
+    if(result!=QA_PLATFORM_EVENT_ACCEPTED) frontend_print(seat->frontend,"Input queue is full; item selection was not applied.");
+    return true;
 }
 static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
                         qa_hud_wheel_identity identity, qa_error *error)
@@ -120,29 +253,52 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
     qa_actor_id actor; uint32_t launch_seat;
     if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
         !qa_application_player_actor(seat->frontend->application, launch_seat, &actor) ||
-        identity.key != identity.item || !identity.item)
+        (!(identity.key >> 32) && identity.key != identity.item) || !identity.item)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "wheel selection no longer belongs to a live player");
     qa_item_definition definition; bool found;
+    qa_actor_owner owner = (qa_actor_owner)(identity.key >> 32);
     if (!qa_inventory_item_definition_find(qa_application_inventory(seat->frontend->application),
-        actor, NULL, identity.item, &definition, &found, error)) return false;
+        actor, owner ? &owner : NULL, identity.item, &definition, &found, error)) return false;
     if (found && (mode != QA_HUD_WHEEL_WEAPONS || definition.weapon) &&
         (mode != QA_HUD_WHEEL_POWERUPS || (definition.actions & QA_ITEM_USE))) {
-        qa_command_context command=qa_input_seat_context(seat->input);
-        command.actor=actor; command.seat=launch_seat;
-        command.owner=0; command.registry=command.generation=command.cvar_view=0;
-        command.origin=QA_COMMAND_SEAT; command.script=NULL; command.direct=true;
-        char text[64];
-        int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,definition.owner,identity.item);
-        frontend_queued_command queued={.console=qa_application_console(seat->frontend->application),
-            .context=command,.time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
-        qa_platform_event_result result=qa_platform_events_push(seat->frontend->platform_events,
-            &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=seat->frontend->wall_time_ns},
-            (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
-            (qa_bytes){(const uint8_t *)text,(size_t)length+1});
-        if(result!=QA_PLATFORM_EVENT_ACCEPTED) frontend_print(seat->frontend,"Input queue is full; item selection was not applied.");
-        return true;
+        return request_item(seat, actor, launch_seat, &definition, error);
     }
     return true;
+}
+static bool switch_item(frontend_seat *seat, qa_actor_id actor, qa_actor_owner owner,
+    const frontend_q1_wheel_slot *slots, size_t count, int32_t ordinal,
+    qa_item_definition *out, qa_error *error)
+{
+    *out = (qa_item_definition){0};
+    const frontend_q1_wheel_slot *slot = NULL;
+    for (size_t i = 0; i < count; ++i) if (slots[i].slot == ordinal) { slot = slots + i; break; }
+    if (!slot && (ordinal < 0 || ordinal > 7)) return true;
+    bool found;
+    if (!qa_application_q1_wheel_item_read(seat->frontend->application, actor, owner,
+        slot ? (slot->has_impulse ? slot->impulse : 0) : ordinal == 7 ? 1 : ordinal + 2,
+        slot && slot->has_weapon_bits ? &slot->weapon_bits : NULL, out, &found, error)) return false;
+    if (!found) { *out = (qa_item_definition){0}; return true; }
+    double owned;
+    if (!qa_inventory_count_read(qa_application_inventory(seat->frontend->application), actor, out->item, &owned, error)) return false;
+    if (owned <= 0) *out = (qa_item_definition){0};
+    return true;
+}
+bool frontend_wheel_switch(frontend_seat *seat, int32_t first, int32_t second, qa_error *error)
+{
+    qa_frontend *f = seat->frontend;
+    qa_actor_id actor; uint32_t launch_seat;
+    if (!frontend_seat_launch_id_read(f, seat->id, &launch_seat) ||
+        !qa_application_player_actor(f->application, launch_seat, &actor)) return true;
+    qa_application_equipment_view source;
+    if (!qa_application_equipment_read(f->application, actor, &source, error)) return false;
+    if (source.family != QA_GAME_Q1) return true;
+    const frontend_q1_wheel_slot *slots; size_t count;
+    if (!frontend_equipment_media_q1_wheel_read(f, source.provider, &slots, &count, error)) return false;
+    qa_item_definition a, b;
+    if (!switch_item(seat, actor, source.provider, slots, count, first, &a, error) ||
+        !switch_item(seat, actor, source.provider, slots, count, second, &b, error)) return false;
+    const qa_item_definition *selected = a.item == source.item ? (b.item ? &b : &a) : a.item ? &a : &b;
+    return !selected->item || request_item(seat, actor, launch_seat, selected, error);
 }
 bool frontend_wheel_create(frontend_seat *seat, qa_error *error)
 {

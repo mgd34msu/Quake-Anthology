@@ -14,6 +14,8 @@
 #include "qa/q3_assets_save.h"
 #include "qa/game_q2_items.h"
 #include "qa/unified_frame_player.h"
+#include "qa/script.h"
+#include "qa/text.h"
 #include <stdio.h>
 #include <math.h>
 
@@ -36,6 +38,24 @@ static void native_icons_release(native_hud_icons *icons)
     qa_vfs_destroy(icons->owner.mounts);
     qa_strings_destroy(icons->strings);
     *icons = (native_hud_icons){0};
+}
+static void q1_wheel_data_release(frontend_q1_wheel_source *source)
+{
+    for (size_t i = 0; i < source->count; ++i) {
+        qa_scene_image_release(source->slots[i].icon);
+        qa_scene_image_release(source->slots[i].selected_icon);
+    }
+    qa_resource_release(source->resource);
+    qa_arena_destroy(&source->storage);
+    source->slots = NULL; source->count = 0; source->resource = NULL;
+}
+static void q1_wheel_release(frontend_q1_wheel_source *source)
+{
+    q1_wheel_data_release(source);
+    qa_material_library_destroy(source->owner.materials);
+    qa_scene_resources_destroy(source->owner.images);
+    qa_vfs_destroy(source->owner.mounts);
+    *source = (frontend_q1_wheel_source){0};
 }
 
 typedef struct held_attachment_source {
@@ -305,6 +325,10 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
         native_icons_release((native_hud_icons *)(uintptr_t)
             frontend->equipment->native_hud_icons.entries[i].value);
     qa_id_index_destroy(&frontend->equipment->native_hud_icons);
+    for (size_t i = 0; i < frontend->equipment->q1_wheels.count; ++i)
+        q1_wheel_release((frontend_q1_wheel_source *)(uintptr_t)
+            frontend->equipment->q1_wheels.entries[i].value);
+    qa_id_index_destroy(&frontend->equipment->q1_wheels);
     qa_id_index_destroy(&frontend->equipment->q1_hud_pictures);
     frontend->equipment->q1_hud_strings = NULL;
     qa_arena_destroy(&frontend->equipment->held_storage);
@@ -713,6 +737,186 @@ static bool q1_hud_pictures_bind(qa_frontend *f, qa_error *error)
         qa_id_index_insert(pictures, item, 0, i);
     }
     equipment->q1_hud_strings = strings;
+    return true;
+}
+static bool wheel_token(qa_script_lexer *lexer, qa_script_token *token, qa_error *error)
+{
+    bool present;
+    if (!qa_script_lexer_next(lexer, token, &present, error)) return false;
+    return (present && token->text.size) || frontend_fail(error, QA_ERROR_FORMAT,
+        present ? "Authored weapon wheel contains an unreadable token" : "Authored weapon wheel ended inside a slot");
+}
+static bool wheel_integer(const qa_script_token *token, bool bits, double *out, qa_error *error)
+{
+    if (!qa_parse_number(qa_script_token_value(token), out, error)) return false;
+    return (floor(*out) == *out && *out >= INT32_MIN &&
+        *out <= (bits ? (double)UINT32_MAX : (double)INT32_MAX)) ||
+        frontend_fail(error, QA_ERROR_FORMAT, "Authored weapon wheel requires a source integer");
+}
+static const char *wheel_string(frontend_q1_wheel_source *source, qa_script_lexer *lexer,
+    const qa_script_token *token, qa_error *error)
+{
+    qa_bytes value = qa_script_token_value(token);
+    if (token->kind != QA_SCRIPT_STRING && token->kind != QA_SCRIPT_LITERAL) {
+        qa_bytes bytes = qa_resource_bytes(source->resource);
+        size_t end = qa_script_lexer_position(lexer).offset;
+        for (;;) {
+            qa_script_token next;
+            bool present;
+            if (!qa_script_lexer_next(lexer, &next, &present, error)) return NULL;
+            if (!present) break;
+            if (next.leading_whitespace.size || next.lines_crossed) {
+                if (!qa_script_lexer_unread(lexer, &next, error)) return NULL;
+                break;
+            }
+            if (!next.text.size) {
+                frontend_fail(error, QA_ERROR_FORMAT, "Authored weapon wheel contains an unreadable path");
+                return NULL;
+            }
+            end = qa_script_lexer_position(lexer).offset;
+        }
+        value = (qa_bytes){bytes.data + token->location.offset, end - token->location.offset};
+    }
+    char *text = qa_arena_alloc(&source->storage, value.size + 1, 1, error);
+    if (text) { memcpy(text, value.data, value.size); text[value.size] = 0; }
+    return text;
+}
+static bool wheel_image(frontend_q1_wheel_source *source, const char *path,
+    qa_scene_image **out, qa_error *error)
+{
+    qa_scene_image_options options = {.family = QA_GAME_Q1, .wrap = QA_SCENE_CLAMP,
+        .filter = QA_SCENE_NEAREST, .usage = QA_IMAGE_USAGE_PICTURE,
+        .transparent = true, .transparent_index = 255};
+    qa_error local = {0};
+    if (qa_scene_image_load(source->owner.images, path, &options, out, &local) ||
+        local.code == QA_ERROR_NOT_FOUND) return true;
+    if (error) *error = local;
+    return false;
+}
+static bool q1_wheel_parse(frontend_q1_wheel_source *source, qa_error *error)
+{
+    qa_bytes bytes = qa_resource_bytes(source->resource);
+    size_t capacity = bytes.size / 8 + 1;
+    if (capacity > SIZE_MAX / sizeof(*source->slots) || bytes.size == SIZE_MAX)
+        return frontend_fail(error, QA_ERROR_MEMORY, "Authored weapon wheel exceeds address space");
+    source->slots = qa_arena_alloc(&source->storage, capacity * sizeof(*source->slots),
+        _Alignof(frontend_q1_wheel_slot), error);
+    if (!source->slots) return false;
+    qa_script_lexer *lexer = NULL;
+    qa_script_lexer_options options = {.flags = QA_SCRIPT_PRIMITIVE_TOKENS |
+        QA_SCRIPT_NO_STRING_CONCAT | QA_SCRIPT_NO_STRING_ESCAPES};
+    if (!qa_script_lexer_open("wwheel.txt", bytes, &options, &lexer, error)) return false;
+    bool okay = true, present;
+    qa_script_token token;
+    while (okay) {
+        if (!qa_script_lexer_next(lexer, &token, &present, error)) { okay = false; break; }
+        if (!present) break;
+        double ordinal;
+        if (!qa_script_token_is(&token, "slot") || !wheel_token(lexer, &token, error) ||
+            !wheel_integer(&token, false, &ordinal, error) || !wheel_token(lexer, &token, error) ||
+            !qa_script_token_is(&token, "{")) {
+            if (!error || error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Authored weapon wheel requires slot N {");
+            okay = false; break;
+        }
+        frontend_q1_wheel_slot *slot = source->slots + source->count++;
+        *slot = (frontend_q1_wheel_slot){.slot = (int32_t)ordinal};
+        bool closed = false;
+        while (okay && !closed) {
+            if (!wheel_token(lexer, &token, error)) { okay = false; break; }
+            if (qa_script_token_is(&token, "}")) { closed = true; break; }
+            unsigned field = qa_script_token_is(&token, "impulse") ? 1 :
+                qa_script_token_is(&token, "weaponnum") ? 2 :
+                qa_script_token_is(&token, "entvaroffs") ? 3 :
+                qa_script_token_is(&token, "icon") ? 4 :
+                qa_script_token_is(&token, "icon_sel") ? 5 :
+                qa_script_token_is(&token, "ammoicon") ? 6 : 0;
+            bool value = false;
+            while (okay) {
+                if (!wheel_token(lexer, &token, error)) { okay = false; break; }
+                if (token.lines_crossed) {
+                    okay = qa_script_lexer_unread(lexer, &token, error); break;
+                }
+                if (qa_script_token_is(&token, "}")) { closed = true; break; }
+                if (field && value) {
+                    okay = frontend_fail(error, QA_ERROR_FORMAT, "Authored wheel field requires one value"); break;
+                }
+                value = true;
+                if (field && field <= 3) {
+                    double number;
+                    if (!wheel_integer(&token, field == 2, &number, error)) { okay = false; break; }
+                    if (field == 1) { slot->impulse = (int32_t)number; slot->has_impulse = true; }
+                    else if (field == 2) { slot->weapon_bits = (uint32_t)(int64_t)number; slot->has_weapon_bits = true; }
+                    else { slot->entity_offset = (int32_t)number; slot->has_count = true; }
+                } else if (field >= 4) {
+                    const char *path = wheel_string(source, lexer, &token, error);
+                    if (!path) { okay = false; break; }
+                    if (field == 6) slot->ammo_icon = path;
+                    else {
+                        qa_scene_image **image = field == 4 ? &slot->icon : &slot->selected_icon;
+                        qa_scene_image_release(*image); *image = NULL;
+                        okay = wheel_image(source, path, image, error);
+                    }
+                }
+            }
+            if (okay && field && !value)
+                okay = frontend_fail(error, QA_ERROR_FORMAT, "Authored wheel field has no value");
+        }
+    }
+    qa_script_lexer_close(lexer);
+    return okay;
+}
+bool frontend_equipment_media_q1_wheel_read(qa_frontend *f, qa_actor_owner provider,
+    const frontend_q1_wheel_slot **slots, size_t *count, qa_error *error)
+{
+    *slots = NULL; *count = 0;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(f->application, provider, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *source = application_provider_lookup_next(f->application, &cursor);
+    if (!source || !source->product || source->product->family != QA_GAME_Q1) return true;
+    if (!q1_hud_pictures_bind(f, error)) return false;
+    frontend_visual_owner_view owner;
+    if (!frontend_visual_media_acquire(f, provider, QA_GAME_Q1, &owner, error)) return false;
+    qa_id_index *index = &f->equipment->q1_wheels;
+    index->storage = &f->equipment->held_storage;
+    qa_id_index_entry *entry = qa_id_index_find(index, QA_STRING_NONE, provider);
+    frontend_q1_wheel_source *wheel = entry ? (frontend_q1_wheel_source *)(uintptr_t)entry->value : NULL;
+    uint64_t generation = qa_vfs_lookup_generation(owner.mounts);
+    if (!wheel || wheel->owner.mounts != owner.mounts ||
+        (wheel->count && wheel->owner.images != owner.images) ||
+        wheel->lookup_generation != generation) {
+        if (!wheel) {
+            if (!qa_id_index_reserve(index, 1, error)) return false;
+            wheel = qa_arena_alloc(&f->equipment->held_storage, sizeof(*wheel), _Alignof(frontend_q1_wheel_source), error);
+            if (!wheel) return false;
+            *wheel = (frontend_q1_wheel_source){0};
+        }
+        frontend_q1_wheel_source candidate = {.lookup_generation = generation};
+        if (!qa_vfs_retain(owner.mounts, error)) return false;
+        candidate.owner.mounts = owner.mounts;
+        if (!qa_scene_resources_retain(owner.images, error)) goto failed;
+        candidate.owner.images = owner.images;
+        if (!qa_material_library_retain(owner.materials, error)) goto failed;
+        candidate.owner = owner;
+        qa_error opened = {0};
+        if (!qa_vfs_acquire(owner.mounts, "wwheel.txt", &candidate.resource, NULL, &opened) &&
+            opened.code != QA_ERROR_NOT_FOUND) {
+            if (opened.code == QA_ERROR_MEMORY) { if (error) *error = opened; goto failed; }
+            frontend_print(f, opened.message);
+        }
+        if (candidate.resource && !q1_wheel_parse(&candidate, &opened)) {
+            if (opened.code == QA_ERROR_MEMORY) { if (error) *error = opened; goto failed; }
+            frontend_print(f, opened.message);
+            q1_wheel_data_release(&candidate);
+        }
+        q1_wheel_release(wheel); *wheel = candidate;
+        entry = qa_id_index_find(index, QA_STRING_NONE, provider);
+        if (entry) entry->value = (size_t)(uintptr_t)wheel;
+        else qa_id_index_insert(index, QA_STRING_NONE, provider, (size_t)(uintptr_t)wheel);
+        goto ready;
+failed:
+        q1_wheel_release(&candidate); return false;
+    }
+ready:
+    *slots = wheel->slots; *count = wheel->count;
     return true;
 }
 static native_hud_icons *native_icons_find(const qa_frontend *f, qa_actor_owner provider, qa_item_id item)

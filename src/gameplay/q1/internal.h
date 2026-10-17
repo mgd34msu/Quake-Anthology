@@ -1642,6 +1642,7 @@ bool q1_mg3_weapon_frame(qa_q1_game *, q1_player *, qa_error *);
 bool q1_mg3_capacities(qa_q1_game *, q1_player *, qa_error *);
 bool q1_mg3_upgrade(qa_q1_game *, q1_player *, unsigned type, uint32_t flag, bool *collected,
                     float *maximum, qa_error *);
+bool q1_mg3_weapon_impulse_read(qa_q1_game *, q1_player *, uint8_t, qa_q1_weapon *, bool *, qa_error *);
 bool q1_mg3_impulse(qa_q1_game *, q1_player *, uint8_t, bool *, qa_error *);
 bool q1_mg3_debug_upgrade(qa_q1_game *, qa_actor_id, unsigned, uint32_t, qa_error *);
 bool q1_addon_target(qa_q1_game *, q1_actor *, qa_actor_id *, qa_error *);

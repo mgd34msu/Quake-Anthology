@@ -182,27 +182,13 @@ static const char *switch_message(qa_q1_weapon previous, qa_q1_weapon selected) 
         return "";
     }
 }
-bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_error *error) {
-    if (!q1_enable_combos_read(g, player->id, player, error))
-        return false;
-    if (!q1_alive(g, player->id))
-        return true;
-    if (g->options.program == QA_Q1_ROGUE && (impulse == 20 || impulse == 21))
-        return q1_rogue_toss(g, player, impulse == 21, error);
+static bool impulse_target(qa_q1_game *g, q1_player *player, uint8_t impulse,
+    qa_q1_weapon *out, qa_error *error) {
     if (g->options.program == QA_Q1_MG3) {
-        bool handled;
-        if (!q1_mg3_impulse(g, player, impulse, &handled, error))
-            return false;
-        if (handled || !q1_alive(g, player->id))
-            return true;
+        bool found;
+        if (!q1_mg3_weapon_impulse_read(g, player, impulse, out, &found, error)) return false;
+        if (found) return true;
     }
-    bool source_handled;
-    if (!q1_source_impulse(g, player->id, impulse, &source_handled, error))
-        return false;
-    if (source_handled || !q1_alive(g, player->id))
-        return true;
-    if (impulse == 10 || impulse == 12)
-        return cycle(g, player, impulse == 12, error);
     qa_q1_weapon selected =
         impulse >= 1 && impulse <= 8 ? (qa_q1_weapon)(impulse - 1) : QA_Q1_WEAPON_COUNT;
     bool hip = g->options.program == QA_Q1_HIPNOTIC, rogue = g->options.program == QA_Q1_ROGUE;
@@ -273,6 +259,50 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
             break;
         }
     }
+    *out = selected;
+    return true;
+}
+bool qa_q1_player_weapon_impulse_read(qa_q1_game *g, qa_actor_id actor, uint8_t impulse,
+    const uint32_t *authored_weapon_bits, qa_item_id *item, bool *found, qa_error *error) {
+    *item = 0; *found = false;
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->arsenal) return true;
+    qa_q1_weapon selected = QA_Q1_WEAPON_COUNT;
+    bool mapped = false;
+    if (g->options.program == QA_Q1_MG3 &&
+        !q1_mg3_weapon_impulse_read(g, player, impulse, &selected, &mapped, error)) return false;
+    if (!mapped && authored_weapon_bits)
+        mapped = qa_q1_weapon_source(g->options.program, *authored_weapon_bits, &selected);
+    if (!mapped && !impulse_target(g, player, impulse, &selected, error)) return false;
+    if (selected != QA_Q1_WEAPON_COUNT) {
+        *item = g->weapons[selected]; *found = *item != 0;
+    }
+    return true;
+}
+bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_error *error) {
+    if (!q1_enable_combos_read(g, player->id, player, error))
+        return false;
+    if (!q1_alive(g, player->id))
+        return true;
+    if (g->options.program == QA_Q1_ROGUE && (impulse == 20 || impulse == 21))
+        return q1_rogue_toss(g, player, impulse == 21, error);
+    if (g->options.program == QA_Q1_MG3) {
+        bool handled;
+        if (!q1_mg3_impulse(g, player, impulse, &handled, error))
+            return false;
+        if (handled || !q1_alive(g, player->id))
+            return true;
+    }
+    bool source_handled;
+    if (!q1_source_impulse(g, player->id, impulse, &source_handled, error))
+        return false;
+    if (source_handled || !q1_alive(g, player->id))
+        return true;
+    if (impulse == 10 || impulse == 12)
+        return cycle(g, player, impulse == 12, error);
+    qa_q1_weapon selected;
+    if (!impulse_target(g, player, impulse, &selected, error)) return false;
+    bool rogue = g->options.program == QA_Q1_ROGUE;
     if (selected == QA_Q1_WEAPON_COUNT)
         return true;
     bool owned;

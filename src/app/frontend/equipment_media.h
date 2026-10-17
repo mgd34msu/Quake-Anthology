@@ -60,6 +60,16 @@ bool frontend_equipment_media_prepare_source_icon(qa_frontend *,const qa_applica
 typedef struct frontend_equipment_hud_icons {
     const qa_material *weapon, *selected_weapon, *ammo;
 } frontend_equipment_hud_icons;
+typedef struct frontend_q1_wheel_slot {
+    int32_t slot, impulse, entity_offset;
+    uint32_t weapon_bits;
+    bool has_impulse, has_weapon_bits, has_count;
+    const char *ammo_icon;
+    qa_scene_image *icon, *selected_icon;
+} frontend_q1_wheel_slot;
+bool frontend_equipment_media_q1_wheel_read(qa_frontend *, qa_actor_owner,
+    const frontend_q1_wheel_slot **, size_t *, qa_error *);
+bool frontend_wheel_switch(frontend_seat *, int32_t first, int32_t second, qa_error *);
 bool frontend_equipment_media_native_icons_prepare(qa_frontend *,const qa_application_equipment_view *,
     frontend_equipment_hud_icons *,qa_error *);
 bool frontend_equipment_media_native_icons_read(qa_frontend *,const qa_application_equipment_view *,

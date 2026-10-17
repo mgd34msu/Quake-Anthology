@@ -14,6 +14,7 @@
 #include "ui_features.h"
 #include "startup_server_profile.h"
 #include "startup_menus.h"
+#include "equipment_media.h"
 #include "qa/text.h"
 #include <stdio.h>
 
@@ -370,6 +371,19 @@ setting_failed:
     const char *menus[] = {"menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (unsigned i = 0; i < sizeof(menus) / sizeof(*menus); ++i)
         if (client_name(name, menus[i])) return menu_command(seat,&invocation->context,menu_destinations[i],false,error);
+    if (client_name(name, "switchweapon")) {
+        double first, second;
+        qa_error parsed = {0};
+        if (invocation->argc != 3 ||
+            !qa_parse_number((qa_bytes){(const uint8_t *)invocation->argv[1], strlen(invocation->argv[1])}, &first, &parsed) ||
+            !qa_parse_number((qa_bytes){(const uint8_t *)invocation->argv[2], strlen(invocation->argv[2])}, &second, &parsed) ||
+            first < 0 || first > INT32_MAX || floor(first) != first ||
+            second < 0 || second > INT32_MAX || floor(second) != second) {
+            frontend_console_print(frontend, &invocation->context, "Usage: switchweapon <first slot> <second slot>\n");
+            return true;
+        }
+        return frontend_wheel_switch(seat, (int32_t)first, (int32_t)second, error);
+    }
     if (client_name(name, "weapnext") || client_name(name, "weapprev"))
         return qa_hud_wheel_cycle(seat->wheel, client_name(name, "weapnext") ? 1 : -1, frontend->time_ns, error);
     if (client_name(name, "messagemode") || client_name(name, "messagemode2"))
@@ -379,7 +393,7 @@ setting_failed:
 bool frontend_commands(qa_frontend *frontend, qa_error *error)
 {
     qa_console *console = qa_application_console(frontend->application);
-    const char *names[] = {"quit", "help", "clear", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev",
+    const char *names[] = {"quit", "help", "clear", "toggleconsole", "menu", "togglemenu", "messagemode", "messagemode2", "weapnext", "weapprev", "switchweapon",
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting", "local_join", "local_drop",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",

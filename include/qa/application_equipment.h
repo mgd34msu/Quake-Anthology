@@ -71,6 +71,10 @@ bool qa_application_equipment_current(qa_application *, const qa_application_equ
  * USE/DROP calls are independent and are not invoked here. */
 bool qa_application_equipment_request_weapon(qa_application *, qa_actor_id,
     qa_actor_owner, qa_item_id, bool *accepted, qa_error *);
+/* Resolve an authored Quake wheel slot against its actual admitted arsenal. */
+bool qa_application_q1_wheel_item_read(qa_application *, qa_actor_id,
+    qa_actor_owner source, int32_t impulse, const uint32_t *authored_weapon_bits,
+    qa_item_definition *, bool *found, qa_error *);
 /* Pure product qualification for an actual retained equipment registry during
  * capture/import. Reads its real constructed provider; no source call runs. */
 bool qa_application_equipment_q3_metadata_read(const qa_application *, qa_actor_owner,

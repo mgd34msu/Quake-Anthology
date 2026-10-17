@@ -476,6 +476,8 @@ typedef struct qa_q1_weapon_view {
  * delayed hammer effects and selected projectile replacement remain conditional. */
 bool qa_q1_player_weapon_read(qa_q1_game *, qa_actor_id, qa_q1_weapon,
                               qa_q1_weapon_view *, bool *found, qa_error *);
+bool qa_q1_player_weapon_impulse_read(qa_q1_game *, qa_actor_id, uint8_t impulse,
+    const uint32_t *authored_weapon_bits, qa_item_id *, bool *found, qa_error *);
 /* Nominal moving-stage velocity for these command angles, after launch_delay,
  * using the same Source throw recipe as firing. Autoaim, random variation and
  * delegated trajectory replacement stay in their reached fire stages. */

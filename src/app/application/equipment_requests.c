@@ -205,6 +205,43 @@ uint8_t qa_application_offhand_actions(const qa_application *app,qa_actor_id act
         ? QA_USERCMD_GRAPPLE : 0) | (state.selection.grenades.enabled ? QA_USERCMD_GRENADE : 0);
 }
 
+bool qa_application_q1_wheel_item_read(qa_application *app, qa_actor_id actor,
+    qa_actor_owner source, int32_t impulse, const uint32_t *authored_weapon_bits,
+    qa_item_definition *out, bool *found, qa_error *error)
+{
+    *found = false;
+    qa_id_index_cursor cursor = application_provider_lookup_begin(app, source, APPLICATION_PROVIDER_PUBLISHED);
+    application_provider *provider = application_provider_lookup_next(app, &cursor);
+    if (!provider || !provider->product || provider->product->family != QA_GAME_Q1) return true;
+    if (provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_item_id item;
+        bool mapped;
+        if (!authored_weapon_bits && (impulse < 0 || impulse > UINT8_MAX)) return true;
+        if (!qa_q1_player_weapon_impulse_read(provider->state.q1, actor,
+            impulse >= 0 && impulse <= UINT8_MAX ? (uint8_t)impulse : 0,
+            authored_weapon_bits, &item, &mapped, error)) return false;
+        return !mapped || qa_inventory_item_definition_find(app->inventory, actor, &source, item, out, found, error);
+    }
+    if (provider->kind != APPLICATION_PROVIDER_QC ||
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != provider) return true;
+    qa_application_qc_player_ui view;
+    if (!qa_application_qc_selected_player_ui_read(app, actor, QA_ROLE_ARSENAL, &view, error)) return false;
+    size_t selected = SIZE_MAX;
+    for (size_t i = 0; i < view.binding_count; ++i) {
+        const struct application_qc_profile *profile = provider->state.qc.qualified;
+        if (profile && !profile->weapon_values[i].ui_declared) continue;
+        qa_application_qc_weapon_ui_binding binding;
+        uint32_t via;
+        if (!application_qc_weapon_binding_at(provider->state.qc.engine, i, &binding, &via, error)) return false;
+        if (binding.impulse == impulse) { selected = i; break; }
+        if (selected == SIZE_MAX && authored_weapon_bits && binding.bit == *authored_weapon_bits) selected = i;
+    }
+    if (selected == SIZE_MAX) return true;
+    if (!qa_application_qc_message_player_ui_definition(app, &view, selected, out, error)) return false;
+    *found = true;
+    return true;
+}
+
 static bool current(qa_application *app,application_provider *provider,qa_actor_id actor)
 {
     return app&&provider&&provider->constructed&&provider->attached&&!provider->close_pending&&

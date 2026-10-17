@@ -11,6 +11,14 @@ typedef struct frontend_held_lookup {
     uint64_t lookup_generation;
     bool archive_only, probed, found;
 } frontend_held_lookup;
+typedef struct frontend_q1_wheel_source {
+    frontend_visual_owner_view owner;
+    qa_resource *resource;
+    qa_arena storage;
+    frontend_q1_wheel_slot *slots;
+    size_t count;
+    uint64_t lookup_generation;
+} frontend_q1_wheel_source;
 
 struct frontend_equipment_media {
     struct frontend_equipment_media *next;
@@ -47,6 +55,7 @@ struct frontend_equipment {
     qa_arena held_storage;
     qa_id_index held_lookups;
     qa_id_index q1_hud_pictures;
+    qa_id_index q1_wheels;
     qa_id_index native_hud_icons;
     const qa_strings *q1_hud_strings;
     bool admitting;
