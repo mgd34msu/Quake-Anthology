@@ -363,9 +363,19 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
         }
         return true;
     }
-    if (event->kind == QA_INPUT_EVENT_BUTTON && event->input.kind == QA_PHYSICAL_BUTTON)
-        return event->input.code <= 1 ? key(ui, event->input.code ? QA_KEY_ESCAPE : QA_KEY_ENTER,
-                                             event->down, event->time_ms, error) : true;
+    if (event->kind == QA_INPUT_EVENT_BUTTON && event->input.kind == QA_PHYSICAL_BUTTON) {
+        uint32_t code;
+        switch (event->input.code) {
+        case 0: code = QA_KEY_ENTER; break;
+        case 1: case 6: code = QA_KEY_ESCAPE; break;
+        case 11: code = QA_KEY_UP; break;
+        case 12: code = QA_KEY_DOWN; break;
+        case 13: code = QA_KEY_LEFT; break;
+        case 14: code = QA_KEY_RIGHT; break;
+        default: return true;
+        }
+        return key(ui, code, event->down, event->time_ms, error);
+    }
     if (event->kind == QA_INPUT_EVENT_BUTTON && event->input.kind == QA_PHYSICAL_MOUSE &&
         event->input.code == 3 && event->down)
         return qa_ui_close(ui, ui->time_ms, error);
@@ -396,22 +406,38 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
     }
     qa_ui_id focused = ui->stack[ui->depth - 1].control;
     if (event->kind == QA_INPUT_EVENT_WHEEL) {
-        for (size_t i = 0; i < menu.count; ++i)
-            if (menu.controls[i].id == focused && menu.controls[i].kind == QA_UI_LIST &&
-                menu.controls[i].enabled && menu.controls[i].visible) {
-                const qa_ui_control *control = &menu.controls[i];
-                ui_field *state = ui_list_state(ui, control, error);
-                if (!state) return false;
-                size_t page = ui_list_page(control);
-                size_t maximum = control->value.list.count > page ? control->value.list.count - page : 0;
-                state->top = (size_t)fmax(0, fmin((double)maximum, (double)state->top - event->delta.y * 3));
-                state->scrolled = true;
-                return true;
+        if (event->delta.y == 0) return true;
+        int direction = event->delta.y > 0 ? -1 : 1;
+        if (menu.scrollable && ui_inside(menu.scroll_rect, ui->cursor)) {
+            float maximum = fmaxf(0, menu.content_height - menu.scroll_rect.height);
+            ui_cursor *cursor = &ui->stack[ui->depth - 1];
+            cursor->scroll = fmaxf(0, fminf(cursor->scroll + (float)direction * 84.0f, maximum));
+            return true;
+        }
+        qa_ui_control control = {0};
+        bool list = false;
+        for (size_t i = 0; i < menu.count; ++i) {
+            qa_ui_control candidate = ui_control(ui, &menu, i);
+            if (candidate.kind != QA_UI_LIST || !candidate.enabled || !candidate.visible)
+                continue;
+            bool hovered = ui_inside(candidate.rect, ui->cursor) &&
+                (!candidate.scrolls || !menu.scrollable || ui_inside(menu.scroll_rect, ui->cursor));
+            if (hovered || (!list && candidate.id == focused)) {
+                control = candidate;
+                list = true;
+                if (hovered) break;
             }
-        if (menu.scrollable) ui->stack[ui->depth - 1].scroll = fmaxf(0, fminf(
-            ui->stack[ui->depth - 1].scroll - event->delta.y * 28,
-            menu.content_height - menu.scroll_rect.height));
-        return true;
+        }
+        if (list) {
+            ui_field *state = ui_list_state(ui, &control, error);
+            if (!state) return false;
+            size_t page = ui_list_page(&control);
+            size_t maximum = control.value.list.count > page ? control.value.list.count - page : 0;
+            state->top = (size_t)fmax(0, fmin((double)maximum, (double)state->top + direction * 3));
+            state->scrolled = true;
+            return true;
+        }
+        return key(ui, direction < 0 ? QA_KEY_UP : QA_KEY_DOWN, true, event->time_ms, error);
     }
     for (size_t remaining = menu.count; remaining; --remaining) {
         qa_ui_control control = ui_control(ui, &menu, remaining - 1);
@@ -424,7 +450,11 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
         bool inside = ui_inside(control.rect, ui->cursor) &&
             (!control.scrolls || !menu.scrollable || ui_inside(menu.scroll_rect, ui->cursor));
         if (!inside && ui->dragging != control.id) continue;
-        if (inside) ui->stack[ui->depth - 1].control = control.id;
+        if (inside && ui->stack[ui->depth - 1].control != control.id) {
+            ui->stack[ui->depth - 1].control = control.id;
+            if (event->kind == QA_INPUT_EVENT_MOUSE && ui->options.sound)
+                ui->options.sound(ui->options.context, ui->options.seat, QA_UI_MOVE);
+        }
         bool pressed = primary && event->down;
         if (control.kind == QA_UI_OWNER_DRAW && control.value.owner.input) {
             bool handled = false;
