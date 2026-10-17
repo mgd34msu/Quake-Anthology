@@ -864,7 +864,8 @@ static bool builtin_sound(qa_frontend *frontend, frontend_event_state *state,
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
         .family = family, .actor = actor, .owner = event->provider, .audience = audience,
         .origin_kind = private_sound ? QA_AUDIO_LOCAL : (frame_loop || positioned) ? QA_AUDIO_FIXED : live ? QA_AUDIO_ACTOR : QA_AUDIO_FIXED, .origin_actor = actor,
-        .origin = private_sound ? (qa_vec3){0} : event->origin, .channel = event->channel,
+        .origin = private_sound ? (qa_vec3){0} : event->origin,
+        .channel = family == QA_GAME_Q1 ? event->channel & 7 : event->channel,
         .volume = event->volume, .attenuation = private_sound ? 0 : event->attenuation,
         .delay_seconds = event->value};
     if (live && !private_sound && !frame_loop && !positioned) {

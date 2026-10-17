@@ -738,7 +738,7 @@ bool application_record_level(application_provider *provider,
 static bool transient_event(const qa_builtin_event *event)
 {
     switch (event->kind) {
-    case QA_BUILTIN_SOUND: return (event->flags & 1u) == 0;
+    case QA_BUILTIN_SOUND: return (event->flags & (1u | QA_BUILTIN_SOUND_RELIABLE)) == 0;
     case QA_BUILTIN_PARTICLES: case QA_BUILTIN_IMPACT: case QA_BUILTIN_EXPLOSION:
     case QA_BUILTIN_MUZZLE: case QA_BUILTIN_TRAIL:
         return true;

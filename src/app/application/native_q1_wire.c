@@ -15,6 +15,7 @@
 #include "qa/application_language.h"
 #include "qa/ui_language.h"
 #include "qa/caption_save.h"
+#include "qa/qc_observation.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -985,6 +986,33 @@ static bool emit_light(application_provider *p, const qa_builtin_event *event, q
     bool signon = p->kind == APPLICATION_PROVIDER_QC && p->state.qc.engine->loading;
     return emit_message(p, event, &message, (qa_actor_id){0}, !signon, signon, NULL, error);
 }
+static bool emit_sound(application_provider *p, const qa_builtin_event *event, qa_error *error) {
+    uint32_t index, slot;
+    if (p->kind == APPLICATION_PROVIDER_QC) {
+        qa_qc_game_resource resource;
+        if (!application_qc_resource_lookup(p->state.qc.engine, QA_QC_RESOURCE_SOUND,
+            text(p->application, event->resource), false, &resource, error)) return false;
+        index = resource.index;
+    } else if (!qa_q1_wire_emission_index(p->state.q1, false, event->resource, &index)) return true;
+    bool signon = (event->flags & 1u) != 0;
+    qa_nq_message message = {.op = signon ? QA_NQ_STATICSOUND : QA_NQ_SOUND,
+        .data.sound = {.index = index, .channel = signon ? 0 : (uint32_t)event->channel,
+            .volume = (uint8_t)(counter((double)event->volume * 255) & 255), .attenuation = event->attenuation}};
+    vector(message.data.sound.origin, event->origin);
+    qa_application_protocol_reference reference = {0};
+    if (!signon) {
+        if (p->kind == APPLICATION_PROVIDER_QC) {
+            if (!qa_qc_actor_observation_slot(p->state.qc.instance, event->actor, &slot, error)) return false;
+        } else if (!qa_q1_wire_emission_slot(p->state.q1, event->actor, &slot)) return true;
+        message.data.sound.entity = slot;
+        reference = (qa_application_protocol_reference){.actor = event->actor, .packed_sound = true,
+            .offset = (size_t)2 + (size_t)(message.data.sound.volume != 255) +
+                (size_t)(event->attenuation != 1)};
+    }
+    return emit_message(p, event, &message, (qa_actor_id){0},
+        !signon && (event->flags & QA_BUILTIN_SOUND_RELIABLE) != 0, signon,
+        signon ? NULL : &reference, error);
+}
 bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event *event,
     qa_error *error) {
     if (!event || event->family != QA_GAME_Q1) return true;
@@ -998,6 +1026,9 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
         return true;
     }
     application_provider *p = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
+        p->launch->selection.clock.kind == QA_RULESET_QUAKEWORLD && event->provider == p->owner &&
+        event->kind == QA_BUILTIN_SOUND) return emit_sound(p, event, error);
     if (p && p->kind == APPLICATION_PROVIDER_QC && p->launch &&
         event->provider == p->owner &&
         event->kind == QA_BUILTIN_MESSAGE && (event->flags & QA_Q1_SOURCE_MESSAGE_LITERAL)) {
@@ -1034,23 +1065,7 @@ bool application_native_q1_wire_emit(qa_application *app, const qa_builtin_event
         return emit_text(app, p, event,
             event->kind == QA_BUILTIN_MESSAGE ? QA_NQ_PRINT : QA_NQ_CENTERPRINT, error);
     case QA_BUILTIN_SOUND:
-        if (event->provider != p->owner)
-            return true;
-        if (!qa_q1_wire_emission_index(p->state.q1, false, event->resource, &index)) return true;
-        message.op = event->flags & 1 ? QA_NQ_STATICSOUND : QA_NQ_SOUND;
-        message.data.sound = (qa_q1_sound){.index = index, .channel = (uint32_t)event->channel,
-            .volume = (uint8_t)(counter((double)event->volume * 255) & 255), .attenuation = event->attenuation};
-        vector(message.data.sound.origin, event->origin);
-        if (event->flags & 1) { signon = true; message.data.sound.channel = 0; }
-        else {
-            if (!qa_q1_wire_emission_slot(p->state.q1, event->actor, &slot)) return true;
-            message.data.sound.entity = slot;
-            reference = (qa_application_protocol_reference){.actor = event->actor, .packed_sound = true,
-                .offset = (size_t)2 + (size_t)(message.data.sound.volume != 255) +
-                    (size_t)(event->attenuation != 1)};
-            has_reference = true;
-        }
-        break;
+        return event->provider != p->owner || emit_sound(p, event, error);
     case QA_BUILTIN_STOP_SOUND:
         if (!qa_q1_wire_emission_slot(p->state.q1, event->actor, &slot)) return true;
         message.op = QA_NQ_STOPSOUND; message.data.stop_sound.entity = (uint16_t)slot;

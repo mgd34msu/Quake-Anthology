@@ -119,11 +119,20 @@ static bool emit_sound(qa_qc_game *game, bool ambient, qa_error *error) {
         !qa_qc_arg_float(game->vm, sound_arg + 1, &event.volume, error) ||
         !qa_qc_arg_float(game->vm, sound_arg + 2, &event.attenuation, error) ||
         (!ambient && !sound_origin(game, entity, &event.origin, error))) return false;
-    if (!isfinite(channel) || channel < 0 || channel > 7 || !isfinite(event.volume) ||
+    if (!isfinite(channel) || (double)channel < INT32_MIN || (double)channel > INT32_MAX)
+        return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC sound channel is outside integer range");
+    int32_t source_channel = (int32_t)channel;
+    bool qw = game->options.vm.profile == QA_QC_QUAKEWORLD;
+    if (source_channel < 0 || source_channel > (qw ? 15 : 7) || !isfinite(event.volume) ||
         event.volume < 0 || event.volume > 1 || !isfinite(event.attenuation) ||
         event.attenuation < 0 || event.attenuation > 4 || !qa_vec_finite(event.origin))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC sound parameters outside source bounds");
-    event.channel = (int32_t)channel; event.flags = ambient ? 1u : QA_BUILTIN_SOUND_POSITIONED;
+    event.channel = source_channel & 7; event.flags = ambient ? 1u : QA_BUILTIN_SOUND_POSITIONED;
+    if (qw && !ambient) {
+        if (source_channel & 8) event.flags |= QA_BUILTIN_SOUND_RELIABLE | QA_BUILTIN_SOUND_NO_PHS;
+        const qa_cvar_view *phs = qa_cvars_read(game->options.cvars, game->sv_phs);
+        if (phs && phs->number == 0) event.flags |= QA_BUILTIN_SOUND_NO_PHS;
+    }
     qa_qc_game_resource cached;
     if (!qa_builtin_resource(&game->options.services, name, &event.resource, error) ||
         !game->options.resource(game->options.context, QA_QC_RESOURCE_SOUND, name, false, &cached, error)) return false;

@@ -89,6 +89,7 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     if (!game) return qc_game_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC game host");
     game->options = *options; game->program = program; game->loading = true;
     game->developer = qa_cvars_resolve(options->cvars, "developer");
+    game->sv_phs = qa_cvars_resolve(options->cvars, "sv_phs");
     game->fields = qa_qc_program_resolved_fields(program);
     game->globals = qa_qc_program_resolved_globals(program);
     qa_arena_init(&game->capture_storage, 0);

@@ -1,5 +1,6 @@
 #include "native_q1_wire_qw.h"
 #include "native_q1_console.h"
+#include "guest_qc_internal.h"
 #include "map_players_private.h"
 #include "control_frame.h"
 #include "network_q1_signon.h"
@@ -439,17 +440,20 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
         break;
     case QA_NQ_SOUND: {
         service.kind=QA_QW_SOUND;service.data.sound=message->data.sound;
-        const qa_cvar_view *phs=qa_cvars_read(application_native_q1_console_registry(p),p->sv_phs);
-        if (!phs || !isfinite(phs->number)) return application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld sound has no source PHS policy");
         if (service.data.sound.channel>15) return application_fail(error,QA_ERROR_FORMAT,"Native QuakeWorld sound channel exceeds its source range");
-        bool global=(service.data.sound.channel&8)!=0 || phs->number==0;
-        if (service.data.sound.channel&8) reliable=true;
+        bool global=(service.data.sound.channel&8)!=0 || (event->flags&QA_BUILTIN_SOUND_NO_PHS)!=0;
+        if ((service.data.sound.channel&8) || (event->flags&QA_BUILTIN_SOUND_RELIABLE)) reliable=true;
         service.data.sound.channel&=7;
-        qa_physics_properties physics;
-        if (qa_q1_game_physics_read(p->state.q1,event->actor,&physics) && physics.solid==QA_PHYSICS_BRUSH) {
-            qa_body_state body;
-            if (!qa_world_body_read(p->application->world,event->actor,&body,error)) return false;
-            vector(service.data.sound.origin,qa_vec_add(body.origin,qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),.5f)));
+        if (p->kind==APPLICATION_PROVIDER_Q1) {
+            const qa_cvar_view *phs=qa_cvars_read(application_native_q1_console_registry(p),p->sv_phs);
+            if (!phs || !isfinite(phs->number)) return application_fail(error,QA_ERROR_NOT_FOUND,"Native QuakeWorld sound has no source PHS policy");
+            global|=phs->number==0;
+            qa_physics_properties physics;
+            if (qa_q1_game_physics_read(p->state.q1,event->actor,&physics) && physics.solid==QA_PHYSICS_BRUSH) {
+                qa_body_state body;
+                if (!qa_world_body_read(p->application->world,event->actor,&body,error)) return false;
+                vector(service.data.sound.origin,qa_vec_add(body.origin,qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),.5f)));
+            }
         }
         if (reference) {mapped.offset=1;ref=&mapped;}
         multicast=true;destination=(global?0:1)+(reliable?3:0);break;
@@ -520,7 +524,8 @@ bool application_native_q1_qw_emit(application_provider *p,const qa_builtin_even
     }
     qa_application_protocol_event output={.provider=p->owner,.dialect=QA_RULESET_QUAKEWORLD,.time_ns=event->time_ns,
         .recipient=recipient,.origin=event->kind==QA_BUILTIN_IMPACT && event->flags&QA_Q1_IMPACT_GROUPED?
-            event->end:event->origin,.qw=&service,.encoding_protocol={.kind=QA_NET_QW28},
+            event->end:event->origin,.qw=&service,.encoding_protocol=p->kind==APPLICATION_PROVIDER_QC?
+            p->state.qc.engine->protocol:(qa_net_protocol_id){.kind=QA_NET_QW28},
         .references=ref,.reference_count=ref?1:0,.destination=destination,.reliable=reliable,.signon=signon,.multicast=multicast};
     return application_emit_protocol(p,&output,error);
 }

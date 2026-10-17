@@ -9,7 +9,7 @@
 #include <string.h>
 struct qa_qc_game {
     qa_qc_game_options options;
-    qa_cvar_handle developer;
+    qa_cvar_handle developer, sv_phs;
     const qa_qc_program *program;
     const qa_qc_game_fields *fields;
     const qa_qc_engine_globals *globals;
