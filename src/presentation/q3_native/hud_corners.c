@@ -57,9 +57,14 @@ static bool upper(q3n_hud_draw *d)
     const q3n_command_state *c=q3n_server_commands_state(d->commands); float y=0; char text[128];
     if(qa_game_type_is_team(c->game_type) && d->settings->team_overlay==1 && !team_overlay(d,&y,true,true))return false;
     if(d->settings->draw_snapshot) {
-        if(d->frame->remote)snprintf(text,sizeof(text),"time:%i snap:%i cmd:%i",
-            d->frame->remote->snapshots.snapshot->server_time,
-            d->frame->remote->source.publication.latest_message,d->frame->remote->snapshots.command_sequence);
+        const q3n_compiled_frame *compiled=d->frame->compiled;
+        const q3n_remote_frame *remote=d->frame->remote;
+        if(compiled || remote) {
+            const qa_q3_snapshot *snapshot=compiled?compiled->snapshot:remote->snapshots.snapshot;
+            int32_t latest=compiled?compiled->latest_snapshot:remote->source.publication.latest_message;
+            int32_t command=compiled?c->server_command_sequence:remote->snapshots.command_sequence;
+            snprintf(text,sizeof(text),"time:%i snap:%i cmd:%i",snapshot->server_time,latest,command);
+        }
         else snprintf(text,sizeof(text),"time:%i frame:%llu cmd:%i",d->frame->source.source_time_ms,
             (unsigned long long)d->frame->source.source_frame.number,c->server_command_sequence);
         if(!q3nh_right(d,635,y+2,text,1))return false;

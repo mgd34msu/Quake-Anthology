@@ -54,9 +54,12 @@ static const qa_q3_snapshot *next_view(const frontend_unified_q3_snapshots *s)
 static bool frame(frontend_unified_q3_snapshots *s, q3n_compiled_frame *out, qa_error *e)
 {
     q3n_compiled_source_view source;
-    if (!q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e)) return false;
+    int32_t latest, source_time;
+    if (!q3n_compiled_source_read(frontend_unified_q3_client_source(s->options.client),&source,e) ||
+        !frontend_unified_q3_client_latest(s->options.client,&latest,&source_time,e)) return false;
     *out = (q3n_compiled_frame){.source=source,.owner=s,.revision=s->revision,.scope=s->callback ? s->scope : 0,
         .stage=s->callback ? s->stage : Q3N_COMPILED_COMPLETED_FRAME,.time=s->time,.processed_snapshot=s->processed,
+        .latest_snapshot=latest,
         .reached_command=s->commands,.snapshot=s->has_snap ? &s->snap.value : NULL,.next_snapshot=next_view(s),
         .entities=s->entities,.prediction_error=s->correction,.prediction_error_time=s->correction_time,
         .hyperspace=s->hyperspace,.this_frame_teleport=s->this_teleport,.next_frame_teleport=s->next_teleport,

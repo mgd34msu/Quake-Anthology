@@ -28,7 +28,7 @@ struct q3n_compiled_frame {
     const void *owner;
     uint64_t revision, scope;
     q3n_compiled_stage stage;
-    int32_t time, processed_snapshot, reached_command;
+    int32_t time, processed_snapshot, latest_snapshot, reached_command;
     const qa_q3_snapshot *snapshot, *next_snapshot;
     q3n_entity *entities;
     qa_q3_player *predicted_player;
