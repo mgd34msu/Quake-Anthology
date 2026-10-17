@@ -2,6 +2,16 @@
 #include "source_activation.h"
 #include "source_player.h"
 
+static float radius(qa_bounds bounds) {
+    return fmaxf(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.mins.y)),
+                    fmaxf(bounds.maxs.x, bounds.maxs.y));
+}
+static bool order_reached(const qa_bot_order *order, qa_vec3 from, qa_vec3 goal,
+    float own_radius, float clearance) {
+    float tolerance = order->kind == QA_BOT_ORDER_FOLLOW ? clearance + own_radius :
+        order->has_tolerance ? order->tolerance : own_radius * 2;
+    return qa_vec_length(qa_vec_sub(goal, from)) <= tolerance;
+}
 static bool same_order(const qa_bot_order *a, const qa_bot_order *b) {
     if (a->kind != b->kind) return false;
     return a->kind == QA_BOT_ORDER_POINT ? qa_vec_length(qa_vec_sub(a->point, b->point)) < 8 &&
@@ -28,6 +38,12 @@ bool qa_bots_order(qa_bots *b, qa_actor_id actor, const qa_bot_order *order,
         if (started) *started = true;
         if (!qa_bot_moves_reset_avoid(qa_bot_runtime_moves(b->runtime), s->movement, false, e)) return false;
     }
+    if (s->view.order.kind == QA_BOT_ORDER_POINT && s->view.order.status == QA_BOT_ORDER_ACTIVE) {
+        qa_body_state self;
+        if (!qa_world_body_read(b->services.shared.world, actor, &self, e)) return false;
+        if (bot_ai_live(b, actor) && order_reached(&s->view.order, self.origin, s->view.order.point,
+            radius(self.bounds), 0)) s->view.order.status = QA_BOT_ORDER_SUCCESS;
+    }
     *out = qa_bots_order_status(b, actor);
     return true;
 }
@@ -53,10 +69,6 @@ bool bot_ai_order_active(const bot_ai_state *s) {
     return o->kind != QA_BOT_ORDER_NONE && o->status != QA_BOT_ORDER_ERROR &&
         (o->status == QA_BOT_ORDER_ACTIVE || o->kind == QA_BOT_ORDER_FOLLOW);
 }
-static float radius(qa_bounds bounds) {
-    return fmaxf(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.mins.y)),
-                    fmaxf(bounds.maxs.x, bounds.maxs.y));
-}
 bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *found, qa_error *e) {
     *found = false;
     if (!bot_ai_order_active(s)) return true;
@@ -73,8 +85,7 @@ bool bot_ai_order_goal(qa_bots *b, bot_ai_state *s, qa_bot_goal *goal, bool *fou
     qa_vec3 origin = follow ? target.origin : order->point;
     float own_radius = radius(self.bounds);
     float clearance = follow ? sqrtf(2) * (own_radius + radius(target.bounds)) : 0;
-    if (qa_vec_length(qa_vec_sub(origin, bot_ai_origin(s))) <=
-        (follow ? clearance + own_radius : order->has_tolerance ? order->tolerance : own_radius * 2)) {
+    if (order_reached(order, bot_ai_origin(s), origin, own_radius, clearance)) {
         order->status = QA_BOT_ORDER_SUCCESS;
         return true;
     }
