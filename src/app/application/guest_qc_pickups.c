@@ -19,11 +19,16 @@ typedef struct qc_pickup_definition {
     application_qc_call gate,grant;
     bool gated,always;
 } qc_pickup_definition;
-typedef enum qc_pickup_source_kind { QC_PICKUP_ARMOR, QC_PICKUP_AMMO, QC_PICKUP_WEAPON, QC_PICKUP_BACKPACK } qc_pickup_source_kind;
+typedef enum qc_pickup_source_kind { QC_PICKUP_ARMOR, QC_PICKUP_AMMO, QC_PICKUP_WEAPON, QC_PICKUP_BACKPACK, QC_PICKUP_DECLARED } qc_pickup_source_kind;
 typedef enum qc_pickup_operation {
     QC_PICKUP_DECISION, QC_PICKUP_ADMISSION, QC_PICKUP_GRANT, QC_PICKUP_SELECTION,
-    QC_PICKUP_SET_WEAPON, QC_PICKUP_CARGO_OWNERSHIP, QC_PICKUP_CARGO_CURRENT, QC_PICKUP_COUNTER
+    QC_PICKUP_SET_WEAPON, QC_PICKUP_CARGO_OWNERSHIP, QC_PICKUP_CARGO_CURRENT, QC_PICKUP_COUNTER, QC_PICKUP_CONSUME
 } qc_pickup_operation;
+typedef struct qc_pickup_scalar {
+    const qa_qc_definition *field;
+    uint32_t word;
+    bool present;
+} qc_pickup_scalar;
 typedef struct qc_pickup_descriptor {
     qa_item_id item, ammo;
     qa_string_id name;
@@ -31,6 +36,7 @@ typedef struct qc_pickup_descriptor {
     uint32_t quantity, leave;
     bool quantity_field;
     qa_pickup_resource resource;
+    qc_pickup_scalar override;
 } qc_pickup_descriptor;
 typedef struct qc_pickup_caller {
     uint32_t function;
@@ -40,17 +46,20 @@ typedef struct qc_pickup_caller {
     size_t count;
     uint32_t effect_word;
     float effect_value;
+    qc_pickup_scalar dropped;
 } qc_pickup_caller;
 typedef struct qc_pickup_source_region {
     qc_pickup_operation operation;
     uint32_t word;
+    float accepted;
     const qa_qc_definition *field;
     qa_item_id item;
 } qc_pickup_source_region;
 struct application_qc_pickups {
     qc_pickup_definition *rules;
     size_t count;
-    qc_pickup_caller callers[4];
+    qc_pickup_caller *callers;
+    size_t caller_count;
     qa_qc_inline_region *regions;
     qc_pickup_source_region *operations;
     size_t region_count;
@@ -65,6 +74,8 @@ typedef struct qc_pickup_projection {
     bool stored;
 } qc_pickup_projection;
 static bool source_compile(application_provider *, struct application_qc_pickups *, qa_error *);
+static bool declared_compile(application_provider *,const qa_json_document *,qa_json_id,
+    struct application_qc_pickups *,qa_error *);
 typedef struct qc_pickup_bound { struct application_qc_pickup_actor *actor;const qc_pickup_definition *definition; } qc_pickup_bound;
 struct application_qc_pickup_actor {
     size_t storage_slot;
@@ -132,9 +143,18 @@ bool application_qc_pickups_qualify(application_provider *provider,const qa_json
     struct application_qc_pickups *p=calloc(1,sizeof(*p));
     if(!p)return application_fail(e,QA_ERROR_MEMORY,"Owning QC pickup profile");
     provider->state.qc.pickup_profile=p;
-    if(!source_compile(provider,p,e))return false;
+    qa_json_id callers=d?qa_json_get(d,qa_json_root(d),"pickupCallers"):QA_JSON_NONE;
+    if(callers!=QA_JSON_NONE&&qa_json_type(d,callers)!=QA_JSON_ARRAY)
+        return application_fail(e,QA_ERROR_FORMAT,"QC pickupCallers requires an array");
+    size_t declared_count=callers==QA_JSON_NONE?0:qa_json_size(d,callers);
+    if(declared_count>SIZE_MAX/sizeof(*p->callers)-4)
+        return application_fail(e,QA_ERROR_MEMORY,"QC pickupCallers declaration is too large");
+    p->caller_count=4+declared_count;
+    p->callers=calloc(p->caller_count,sizeof(*p->callers));
+    if(!p->callers)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup callers");
+    if(!source_compile(provider,p,e)||!declared_compile(provider,d,callers,p,e))return false;
     if(node==QA_JSON_NONE){
-        bool found=false;for(size_t i=0;i<4;++i)found|=p->callers[i].function!=0;
+        bool found=false;for(size_t i=0;i<p->caller_count;++i)found|=p->callers[i].function!=0;
         if(!found){application_qc_pickups_profile_free(p);provider->state.qc.pickup_profile=NULL;}
         return true;
     }
@@ -164,8 +184,8 @@ void application_qc_pickups_profile_free(struct application_qc_pickups *p)
 {
     if(!p)return;
     for(size_t i=0;p->rules&&i<p->count;++i){qc_pickup_definition *v=p->rules+i;free(v->offered);free(v->writes);application_qc_call_free(&v->gate);application_qc_call_free(&v->grant);}
-    for(size_t i=0;i<4;++i)free(p->callers[i].descriptors);
-    free(p->regions);free(p->operations);free(p->rules);free(p);
+    for(size_t i=0;p->callers&&i<p->caller_count;++i)free(p->callers[i].descriptors);
+    free(p->callers);free(p->regions);free(p->operations);free(p->rules);free(p);
 }
 static bool physical_current(struct application_qc_pickup_actor *a,qa_error *e)
 {
@@ -416,6 +436,28 @@ static bool source_descriptor(qc_pickup_caller *c,qc_pickup_descriptor value,qa_
     if(!grown)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup descriptors");
     c->descriptors=grown;grown[c->count++]=value;return true;
 }
+static int64_t source_destination(const qa_qc_statement *s,uint32_t pc)
+{
+    return s->opcode==QA_QC_GOTO?(int64_t)pc+(int16_t)s->a:
+        (s->opcode==QA_QC_IF||s->opcode==QA_QC_IFNOT)?(int64_t)pc+(int16_t)s->b:-1;
+}
+static bool source_region_add(qc_pickup_analysis *a,qc_pickup_caller *c,uint32_t entry,uint32_t exit,
+    qc_pickup_source_region operation,bool standalone,qa_error *e)
+{
+    const qa_qc_function *f=qa_qc_program_function(a->program,c->function);
+    struct application_qc_pickups *p=a->profile;size_t n=p->region_count;
+    if(n==SIZE_MAX/sizeof(*p->regions)||n==SIZE_MAX/sizeof(*p->operations))
+        return application_fail(e,QA_ERROR_MEMORY,"Compiled QC pickup regions are too large");
+    qa_qc_inline_region *regions=realloc(p->regions,(n+1)*sizeof(*regions));
+    if(!regions)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup regions");
+    p->regions=regions;
+    qc_pickup_source_region *operations=realloc(p->operations,(n+1)*sizeof(*operations));
+    if(!operations)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup operations");
+    p->operations=operations;
+    p->regions[n]=(qa_qc_inline_region){.function=c->function,.entry=entry,.exit=exit,.replaceable=true,
+        .saved_scope=standalone?QA_QC_INLINE_FRAME:QA_QC_INLINE_NOT_STANDALONE,.saved_word=f->parameter_start};
+    p->operations[n]=operation;++p->region_count;return true;
+}
 static bool source_region(qc_pickup_analysis *a,qc_pickup_caller *c,uint32_t entry,uint32_t exit,
     qc_pickup_source_region operation,bool standalone,qa_error *e)
 {
@@ -427,23 +469,14 @@ static bool source_region(qc_pickup_analysis *a,qc_pickup_caller *c,uint32_t ent
     for(size_t i=0;i<declared_count;++i)if(declared[i].function==c->function&&
         entry<declared[i].exit&&exit>declared[i].entry)return false;
     for(uint32_t pc=first;pc<end;++pc){const qa_qc_statement *s=source_at(a,pc);
-        int64_t destination=s->opcode==QA_QC_GOTO?(int64_t)pc+(int16_t)s->a:
-            (s->opcode==QA_QC_IF||s->opcode==QA_QC_IFNOT)?(int64_t)pc+(int16_t)s->b:-1;
+        int64_t destination=source_destination(s,pc);
         if(pc<entry||pc>=exit){if(destination>(int64_t)entry&&destination<(int64_t)exit)return false;}
         else if(destination>=0&&(destination<(int64_t)entry||destination>(int64_t)exit))return false;
         if(pc>=entry&&pc<exit&&(s->opcode==QA_QC_RETURN||s->opcode==QA_QC_DONE))return false;
     }
     struct application_qc_pickups *p=a->profile;size_t n=p->region_count;
     for(size_t i=0;i<n;++i)if(p->regions[i].function==c->function&&p->regions[i].entry==entry)return false;
-    qa_qc_inline_region *regions=realloc(p->regions,(n+1)*sizeof(*regions));
-    if(!regions)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup regions");
-    p->regions=regions;
-    qc_pickup_source_region *operations=realloc(p->operations,(n+1)*sizeof(*operations));
-    if(!operations)return application_fail(e,QA_ERROR_MEMORY,"Owning compiled QC pickup operations");
-    p->operations=operations;
-    p->regions[n]=(qa_qc_inline_region){.function=c->function,.entry=entry,.exit=exit,.replaceable=true,
-        .saved_scope=standalone?QA_QC_INLINE_FRAME:QA_QC_INLINE_NOT_STANDALONE,.saved_word=f->parameter_start};
-    p->operations[n]=operation;++p->region_count;return true;
+    return source_region_add(a,c,entry,exit,operation,standalone,e);
 }
 static bool source_decision(qc_pickup_analysis *a,qc_pickup_caller *c,uint32_t entry,uint32_t exit,qa_error *e)
 {
@@ -737,12 +770,12 @@ static bool source_current_ammo_regions(qc_pickup_analysis *a,qa_error *e)
 static bool source_compile(application_provider *provider,struct application_qc_pickups *p,qa_error *e)
 {
     const qa_qc_program *program=provider->state.qc.program;qa_qc_program_info info=qa_qc_program_describe(program);
+    p->self=qa_qc_program_find_global(program,"self");p->other=qa_qc_program_find_global(program,"other");
+    p->time=qa_qc_program_find_global(program,"time");p->items=qa_qc_program_find_field(program,"items");
     qa_catalog *catalog=qa_launch_instance_catalog(provider->launch);
     const qa_product *product=qa_catalog_product(catalog?catalog:provider->application->catalog,
         provider->launch->selection.product);
     if(!product)return true;
-    p->self=qa_qc_program_find_global(program,"self");p->other=qa_qc_program_find_global(program,"other");
-    p->time=qa_qc_program_find_global(program,"time");p->items=qa_qc_program_find_field(program,"items");
     if(!p->self||p->self->type!=QA_QC_ENTITY||!p->other||p->other->type!=QA_QC_ENTITY||
         !p->time||p->time->type!=QA_QC_FLOAT||!p->items||p->items->type!=QA_QC_FLOAT)return true;
     qc_pickup_analysis a={.provider=provider,.profile=p,.program=program,
@@ -772,6 +805,181 @@ static bool source_compile(application_provider *provider,struct application_qc_
     free(a.written);return ok;
 }
 
+static bool declared_word(const qa_json_document *d,qa_json_id node,uint32_t *out,qa_error *e)
+{
+    uint64_t value;
+    if(!qa_json_u64(d,node,&value,e))return false;
+    if(value>UINT32_MAX)return application_fail(e,QA_ERROR_FORMAT,"Source word exceeds its compiled address space");
+    *out=(uint32_t)value;return true;
+}
+static bool declared_float(const qa_json_document *d,qa_json_id node,float *out,qa_error *e)
+{
+    double value;
+    if(!qa_json_number(d,node,&value,e))return false;
+    if(!isfinite(value)||fabs(value)>FLT_MAX||(double)(float)value!=value)
+        return application_fail(e,QA_ERROR_FORMAT,"Declared value is not an exact Source float");
+    *out=(float)value;return true;
+}
+static const qa_qc_definition *declared_field(const qa_json_document *d,qa_json_id node,
+    const qa_qc_program *program,qa_qc_value_type type,qa_error *e)
+{
+    char *name=application_qc_declaration_string(d,node,e);
+    if(!name)return NULL;
+    const qa_qc_definition *field=qa_qc_program_find_field(program,name);
+    free(name);
+    if(!field||field->type!=type){application_fail(e,QA_ERROR_FORMAT,"Declared field has no matching Source type");return NULL;}
+    return field;
+}
+static bool declared_scalar(const qa_json_document *d,qa_json_id node,const qa_qc_program *program,
+    qc_pickup_scalar *out,qa_error *e)
+{
+    if(node==QA_JSON_NONE)return true;
+    qa_json_id kind=qa_json_get(d,node,"kind");
+    if(qa_json_string_equal(d,kind,"field")){
+        out->field=declared_field(d,qa_json_get(d,node,"name"),program,QA_QC_FLOAT,e);
+        if(!out->field)return false;
+    }else if(qa_json_string_equal(d,kind,"global")){
+        if(!declared_word(d,qa_json_get(d,node,"word"),&out->word,e))return false;
+        if(out->word>=qa_qc_program_describe(program).global_words)
+            return application_fail(e,QA_ERROR_FORMAT,"Declared scalar word is outside Source memory");
+    }else return application_fail(e,QA_ERROR_FORMAT,"Unknown Source scalar kind");
+    out->present=true;return true;
+}
+static bool declared_descriptor(application_provider *provider,const qa_json_document *d,qa_json_id node,
+    qc_pickup_descriptor *out,qa_error *e)
+{
+    qa_strings *strings=qa_session_strings(provider->application->session);
+    if(!application_mod_item_identity(d,qa_json_get(d,node,"item"),strings,&out->item,e))return false;
+    qa_json_id resource=qa_json_get(d,node,"resource"),kind=qa_json_get(d,resource,"kind");
+    if(qa_json_type(d,resource)==QA_JSON_NULL)out->resource=(qa_pickup_resource){0};
+    else if(qa_json_string_equal(d,kind,"inventory")){
+        out->resource.kind=QA_PICKUP_INVENTORY;
+        if(!application_mod_item_identity(d,qa_json_get(d,resource,"item"),strings,&out->resource.item,e))return false;
+    }else if(qa_json_string_equal(d,kind,"protection")){
+        out->resource.kind=QA_PICKUP_PROTECTION;
+        qa_json_id channel=qa_json_get(d,resource,"channel");
+        if(qa_json_string_equal(d,channel,"regular"))out->resource.channel=QA_PROTECTION_REGULAR;
+        else if(qa_json_string_equal(d,channel,"powered"))out->resource.channel=QA_PROTECTION_POWERED;
+        else return application_fail(e,QA_ERROR_FORMAT,"Unknown pickup protection channel");
+    }else return application_fail(e,QA_ERROR_FORMAT,"Declared pickup resource must be null, inventory or protection");
+    return declared_scalar(d,qa_json_get(d,node,"count"),provider->state.qc.program,&out->override,e);
+}
+typedef struct qc_pickup_declared_region { qa_json_id node;uint32_t entry,exit; } qc_pickup_declared_region;
+static int declared_region_order(const void *left,const void *right)
+{
+    const qc_pickup_declared_region *a=left,*b=right;
+    return (a->entry>b->entry)-(a->entry<b->entry);
+}
+static bool declared_regions(qc_pickup_analysis *a,const qa_json_document *d,qa_json_id node,
+    qc_pickup_caller *c,qa_error *e)
+{
+    if(!application_qc_declaration_array(d,node,false,e))return false;
+    size_t count=qa_json_size(d,node);
+    if(!count)return application_fail(e,QA_ERROR_FORMAT,"Missing recipient admission boundary");
+    if(count>SIZE_MAX/sizeof(qc_pickup_declared_region))
+        return application_fail(e,QA_ERROR_MEMORY,"Declared pickup regions are too large");
+    qc_pickup_declared_region *regions=calloc(count,sizeof(*regions));
+    if(!regions)return application_fail(e,QA_ERROR_MEMORY,"Ordering declared QC pickup regions");
+    bool ok=true,admission=false;
+    for(size_t i=0;ok&&i<count;++i){regions[i].node=qa_json_at(d,node,i);
+        ok=declared_word(d,qa_json_get(d,regions[i].node,"entry"),&regions[i].entry,e)&&
+            declared_word(d,qa_json_get(d,regions[i].node,"exit"),&regions[i].exit,e);}
+    if(ok)qsort(regions,count,sizeof(*regions),declared_region_order);
+    const qa_qc_function *f=qa_qc_program_function(a->program,c->function);
+    uint32_t previous=(uint32_t)f->first_statement,end=qa_qc_program_function_end(a->program,f);
+    for(size_t i=0;ok&&i<count;++i){qc_pickup_declared_region *r=regions+i;
+        if(r->entry<previous||r->exit<=r->entry||r->exit>=end){
+            ok=application_fail(e,QA_ERROR_FORMAT,"Overlapping or out-of-function pickup regions");break;}
+        previous=r->exit;
+        ok=application_qc_statements_validate(d,qa_json_get(d,r->node,"statements"),a->program,r->entry,r->exit,e);
+        for(uint32_t pc=(uint32_t)f->first_statement;ok&&pc<end;++pc){
+            if(pc>=r->entry&&pc<r->exit)continue;
+            int64_t destination=source_destination(source_at(a,pc),pc);
+            if(destination>(int64_t)r->entry&&destination<(int64_t)r->exit)
+                ok=application_fail(e,QA_ERROR_FORMAT,"Source branch enters the middle of a declared pickup region");
+        }
+        if(!ok)break;
+        qa_json_id operation=qa_json_get(d,r->node,"operation"),kind=qa_json_get(d,operation,"kind");
+        qc_pickup_source_region compiled={0};
+        if(qa_json_string_equal(d,kind,"decision")){
+            compiled.operation=QC_PICKUP_DECISION;admission=true;
+            ok=declared_word(d,qa_json_get(d,operation,"word"),&compiled.word,e)&&
+                declared_float(d,qa_json_get(d,operation,"accepted"),&compiled.accepted,e);
+            const qa_qc_statement *join=source_at(a,r->exit);
+            if(ok&&(compiled.word>=qa_qc_program_describe(a->program).global_words||join->a!=compiled.word||
+                (join->opcode!=QA_QC_IF&&join->opcode!=QA_QC_IFNOT)))
+                ok=application_fail(e,QA_ERROR_FORMAT,"Decision join does not consume its declared Source predicate");
+        }else if(qa_json_string_equal(d,kind,"admission")){compiled.operation=QC_PICKUP_ADMISSION;admission=true;}
+        else if(qa_json_string_equal(d,kind,"grant"))compiled.operation=QC_PICKUP_GRANT;
+        else if(qa_json_string_equal(d,kind,"consume"))compiled.operation=QC_PICKUP_CONSUME;
+        else ok=application_fail(e,QA_ERROR_FORMAT,"Unknown declared pickup region operation");
+        if(ok)ok=source_region_add(a,c,r->entry,r->exit,compiled,false,e);
+    }
+    free(regions);
+    return ok&&(admission||application_fail(e,QA_ERROR_FORMAT,"Missing recipient admission boundary"));
+}
+static bool declared_caller(qc_pickup_analysis *a,const qa_json_document *d,qa_json_id row,
+    const char *name,size_t index,qa_error *e)
+{
+    struct application_qc_pickups *p=a->profile;qc_pickup_caller *c=p->callers+index;
+    const qa_qc_function *f=qa_qc_program_find_function(a->program,name,&c->function);
+    if(!f||!c->function||f->first_statement<=0||f->named_builtin||f->parameter_count)
+        return application_fail(e,QA_ERROR_FORMAT,"Declared caller is not an interpreted touch function");
+    for(size_t i=4;i<index;++i)if(p->callers[i].function==c->function)
+        return application_fail(e,QA_ERROR_FORMAT,"Duplicate declared pickup function");
+    if(!p->self||p->self->type!=QA_QC_ENTITY||!p->other||p->other->type!=QA_QC_ENTITY||
+        !p->time||p->time->type!=QA_QC_FLOAT)
+        return application_fail(e,QA_ERROR_FORMAT,"Pickup caller lacks typed self, other or time globals");
+    c->kind=QC_PICKUP_DECLARED;
+    qa_json_id descriptor=qa_json_get(d,row,"descriptor"),kind=qa_json_get(d,descriptor,"kind");
+    bool constant=qa_json_string_equal(d,kind,"constant"),string=qa_json_string_equal(d,kind,"string");
+    if(!constant&&!string&&!qa_json_string_equal(d,kind,"float"))
+        return application_fail(e,QA_ERROR_FORMAT,"Unknown declared pickup descriptor kind");
+    if(!constant){c->discriminator=declared_field(d,qa_json_get(d,descriptor,"field"),a->program,
+        string?QA_QC_STRING:QA_QC_FLOAT,e);if(!c->discriminator)return false;}
+    qa_json_id values=qa_json_get(d,descriptor,"values");
+    if(!constant&&!application_qc_declaration_array(d,values,false,e))return false;
+    c->count=constant?1:qa_json_size(d,values);
+    if(!c->count)return application_fail(e,QA_ERROR_FORMAT,"Empty declared pickup descriptors");
+    if(c->count>SIZE_MAX/sizeof(*c->descriptors))return application_fail(e,QA_ERROR_MEMORY,"Declared pickup descriptors are too large");
+    c->descriptors=calloc(c->count,sizeof(*c->descriptors));
+    if(!c->descriptors)return application_fail(e,QA_ERROR_MEMORY,"Owning declared QC pickup descriptors");
+    for(size_t i=0;i<c->count;++i){qc_pickup_descriptor *v=c->descriptors+i;
+        qa_json_id at=constant?descriptor:qa_json_at(d,values,i);
+        if(!declared_descriptor(a->provider,d,at,v,e))return false;
+        if(constant)continue;
+        if(string){char *value=application_qc_declaration_string(d,qa_json_get(d,at,"value"),e);
+            bool ok=value&&qa_strings_intern_cstr(qa_session_strings(a->provider->application->session),value,&v->name,e);
+            free(value);if(!ok)return false;
+        }else if(!declared_float(d,qa_json_get(d,at,"value"),&v->value,e))return false;
+        for(size_t j=0;j<i;++j)if(string?v->name==c->descriptors[j].name:v->value==c->descriptors[j].value)
+            return application_fail(e,QA_ERROR_FORMAT,"Ambiguous declared pickup discriminator");
+    }
+    if(!declared_scalar(d,qa_json_get(d,row,"dropped"),a->program,&c->dropped,e))return false;
+    for(size_t i=0;i<4;++i)if(p->callers[i].function==c->function){
+        free(p->callers[i].descriptors);p->callers[i]=(qc_pickup_caller){0};}
+    size_t kept=0;
+    for(size_t i=0;i<p->region_count;++i)if(p->regions[i].function!=c->function){
+        p->regions[kept]=p->regions[i];p->operations[kept++]=p->operations[i];}
+    p->region_count=kept;
+    return declared_regions(a,d,qa_json_get(d,row,"regions"),c,e);
+}
+static bool declared_compile(application_provider *provider,const qa_json_document *d,qa_json_id node,
+    struct application_qc_pickups *p,qa_error *e)
+{
+    if(node==QA_JSON_NONE)return true;
+    qc_pickup_analysis a={.provider=provider,.profile=p,.program=provider->state.qc.program};
+    for(size_t i=0;i<qa_json_size(d,node);++i){qa_json_id row=qa_json_at(d,node,i);qa_error failure={0};
+        char *name=application_qc_declaration_string(d,qa_json_get(d,row,"function"),&failure);
+        bool ok=name&&declared_caller(&a,d,row,name,4+i,&failure);
+        if(!ok){char message[256];snprintf(message,sizeof(message),"QC pickupCallers[%zu] (%.64s): %.128s",
+            i,name?name:"function",failure.message);
+            free(name);return application_fail(e,failure.code==QA_OK?QA_ERROR_FORMAT:failure.code,message);}
+        free(name);
+    }
+    return true;
+}
+
 struct qc_pickup_source_frame {
     qc_pickup_source_frame *previous;
     struct application_qc_state *engine;
@@ -787,7 +995,7 @@ struct qc_pickup_source_frame {
     qa_pickup_grant *grants;
     size_t grant_count;
     qa_item_id cargo_weapon;
-    bool accepted,new_weapon,foreign_arsenal;
+    bool accepted,new_weapon,foreign_arsenal,consuming;
 };
 const qa_qc_inline_region *application_qc_pickups_regions(const application_provider *provider,size_t *count)
 {
@@ -805,12 +1013,13 @@ bool application_qc_pickups_idle(const struct application_qc_state *engine)
 qa_item_id application_qc_pickups_cargo_item(const application_provider *provider)
 {
     const struct application_qc_pickups *p=provider->state.qc.pickup_profile;
-    return p&&p->callers[QC_PICKUP_BACKPACK].function?p->callers[QC_PICKUP_BACKPACK].descriptors[0].item:0;
+    return p&&p->callers[QC_PICKUP_BACKPACK].function&&p->callers[QC_PICKUP_BACKPACK].kind==QC_PICKUP_BACKPACK?
+        p->callers[QC_PICKUP_BACKPACK].descriptors[0].item:0;
 }
 bool application_qc_pickups_source_present(const application_provider *provider)
 {
     const struct application_qc_pickups *p=provider->state.qc.pickup_profile;
-    if(p)for(size_t i=0;i<4;++i)if(p->callers[i].function)return true;
+    if(p)for(size_t i=0;i<p->caller_count;++i)if(p->callers[i].function)return true;
     return false;
 }
 static bool source_cancel(qc_pickup_source_frame *frame,qa_error *e)
@@ -871,6 +1080,13 @@ static bool source_run(void *context,const qa_pickup_offer *offer,qa_pickup_sele
 }
 static bool source_remove(void *context,qa_error *e)
 { return qa_qc_call_continue(*(qa_qc_call_next *)context,e); }
+static bool source_consume(void *context,qa_error *e)
+{ return qa_qc_inline_continue(*(qa_qc_inline_next *)context,e); }
+static bool source_scalar(qa_qc_instance *vm,int32_t reference,const qc_pickup_scalar *scalar,float *out,qa_error *e)
+{
+    return scalar->field?qa_qc_entity_float(vm,reference,scalar->field->offset,out,e):
+        qa_qc_global_float(vm,scalar->word,out,e);
+}
 static bool source_cargo(qc_pickup_source_frame *frame,qa_error *e)
 {
     struct application_qc_state *engine=frame->engine;const struct application_qc_items *items=engine->items;
@@ -922,7 +1138,7 @@ bool application_qc_pickups_replace(struct application_qc_state *engine,qa_qc_in
     if(!store||!p)return true;
     qc_pickup_source_frame *active=store->source;
     if(active&&active->caller&&event->caller==active->caller->function){
-        if(event->function==p->remove){int32_t reference;
+        if(event->function==p->remove&&!active->consuming){int32_t reference;
             if(!qa_qc_arg_int(vm,0,&reference,e))return false;
             if(reference==active->pickup_reference){*handled=true;
                 return qa_pickup_consume(active->execution,source_remove,&next,e);}
@@ -933,7 +1149,7 @@ bool application_qc_pickups_replace(struct application_qc_state *engine,qa_qc_in
         }
     }
     const qc_pickup_caller *caller=NULL;
-    for(size_t i=0;i<4;++i)if(p->callers[i].function&&p->callers[i].function==event->function){caller=p->callers+i;break;}
+    for(size_t i=0;i<p->caller_count;++i)if(p->callers[i].function&&p->callers[i].function==event->function){caller=p->callers+i;break;}
     if(!caller)return true;
     *handled=true;
     qc_pickup_source_frame frame={.engine=engine,.vm=vm,.caller=caller,.next=next};
@@ -941,7 +1157,7 @@ bool application_qc_pickups_replace(struct application_qc_state *engine,qa_qc_in
         !qa_qc_global_int(vm,p->other->offset,&frame.recipient_reference,e))return false;
     qa_actor_id pickup={0},recipient={0};
     bool known=source_actor(vm,frame.pickup_reference,&pickup)&&source_actor(vm,frame.recipient_reference,&recipient);
-    if(known&&caller->kind==QC_PICKUP_BACKPACK)frame.descriptor=caller->descriptors;
+    if(known&&!caller->discriminator)frame.descriptor=caller->descriptors;
     else if(known&&caller->discriminator){
         if(caller->discriminator->type==QA_QC_STRING){int32_t name;qa_string_id identity;
             if(!qa_qc_entity_int(vm,frame.pickup_reference,caller->discriminator->offset,&name,e)||!qa_qc_string_identity(vm,name,&identity,e))return false;
@@ -963,6 +1179,14 @@ bool application_qc_pickups_replace(struct application_qc_state *engine,qa_qc_in
     frame.offer=(qa_pickup_offer){.pickup=pickup,.recipient=recipient,.source=engine->provider->owner,
         .item=frame.descriptor->item,.default_resource=frame.descriptor->resource,
         .time_ns=seconds>0?(uint64_t)((double)seconds*1e9):0,.dropped=caller->kind==QC_PICKUP_BACKPACK};
+    if(frame.descriptor->override.present){float count;
+        if(!source_scalar(vm,frame.pickup_reference,&frame.descriptor->override,&count,e))return false;
+        frame.offer.override_count=true;frame.offer.count=count;
+    }
+    if(caller->dropped.present){float dropped;
+        if(!source_scalar(vm,frame.pickup_reference,&caller->dropped,&dropped,e))return false;
+        frame.offer.dropped=dropped!=0;
+    }
     qa_actor_owner owner=0;
     if(frame.offer.default_resource.kind==QA_PICKUP_INVENTORY){
         if(qa_inventory_item_owner(engine->services.inventory,recipient,frame.offer.default_resource.item,&owner,NULL)&&owner==engine->provider->owner)
@@ -1073,7 +1297,12 @@ bool application_qc_pickups_inline(struct application_qc_state *engine,qa_qc_ins
         (store->projection&&store->projection->region->entry==event->region.entry&&
          store->projection->region->function==event->region.function))return qa_qc_inline_continue(next,e);
     const qc_pickup_source_region *operation=p->operations+index;
-    if(!qa_pickup_current(frame->execution))return source_cancel(frame,e);
+    if(!frame->consuming&&!qa_pickup_current(frame->execution))return source_cancel(frame,e);
+    if(operation->operation==QC_PICKUP_CONSUME){
+        frame->consuming=true;
+        bool ok=qa_pickup_consume(frame->execution,source_consume,&next,e);
+        frame->consuming=false;return ok;
+    }
     if(operation->operation==QC_PICKUP_COUNTER&&frame->foreign_arsenal)
         return source_counter(frame,p->regions+index,operation,e)&&qa_qc_inline_skip_to_join(next,e);
     if(operation->operation==QC_PICKUP_SELECTION&&frame->foreign_arsenal)return qa_qc_inline_skip_to_join(next,e);
@@ -1097,7 +1326,7 @@ bool application_qc_pickups_inline(struct application_qc_state *engine,qa_qc_ins
         if(outcome!=QA_PICKUP_ACCEPTED||!qa_pickup_current(frame->execution))return source_cancel(frame,e);
         frame->accepted=true;
         if(operation->operation==QC_PICKUP_ADMISSION)return qa_qc_inline_continue(next,e);
-        return qa_qc_set_global_float(vm,operation->word,0,e)&&qa_qc_inline_skip_to_join(next,e);
+        return qa_qc_set_global_float(vm,operation->word,operation->accepted,e)&&qa_qc_inline_skip_to_join(next,e);
     }
     if(!frame->accepted)return source_cancel(frame,e);
     if(operation->operation==QC_PICKUP_CARGO_OWNERSHIP){
