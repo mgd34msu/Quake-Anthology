@@ -122,6 +122,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <unistd.h>
 
 #define CHECK(expression) do { \
@@ -6670,6 +6672,40 @@ static void test_retained_patch_levels(void)
     qa_scene_geometry_release(geometry);
 }
 
+static void test_socks_transport_pending(void)
+{
+    qa_error error={0};
+    int listener=socket(AF_INET,SOCK_STREAM,0);CHECK(listener>=0);
+    struct sockaddr_in address={.sin_family=AF_INET,.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
+    CHECK(bind(listener,(const struct sockaddr *)&address,sizeof(address))==0);
+    CHECK(listen(listener,1)==0);
+    socklen_t size=sizeof(address);CHECK(getsockname(listener,(struct sockaddr *)&address,&size)==0);
+    qa_net_udp_options udp={.bind={.kind=QA_NET_IPV4,.host.ipv4={127,0,0,1}},
+        .limits={1400,4},.broadcast=true};
+    qa_net_transport *physical=NULL,*proxy=NULL;
+    CHECK(qa_net_udp_open(&udp,&physical,&error));
+    qa_net_udp_policy actual={0},wrapped={0};bool present=false;
+    CHECK(qa_net_udp_policy_read(physical,&actual,&present,&error) && present);
+    qa_net_socks_options options={.server={.kind=QA_NET_IPV4,.host.ipv4={127,0,0,1},
+        .port=ntohs(address.sin_port)}};
+    CHECK(qa_net_socks_wrap(physical,&options,1000,&proxy,&error));
+    CHECK(qa_net_udp_policy_read(proxy,&wrapped,&present,&error) && present);
+    CHECK(qa_net_address_equal(&actual.bound,&wrapped.bound,true) && actual.ipv6_only==wrapped.ipv6_only);
+    qa_net_address remote={.kind=QA_NET_IPV4,.host.ipv4={192,0,2,1},.port=27910};
+    CHECK(!qa_net_transport_send_ready(proxy,&remote));
+    CHECK(qa_net_transport_send(proxy,&remote,(qa_bytes){(const uint8_t *)"ping",4},&error)==QA_NET_SEND_FULL);
+    CHECK(error.code==QA_OK);
+    qa_net_address broadcast={.kind=QA_NET_IPV4,.host.ipv4={255,255,255,255},.port=27910};
+    CHECK(qa_net_transport_send_ready(proxy,&broadcast));
+    qa_net_loopback *loopback=NULL;qa_net_transport *local=NULL,*host=NULL;
+    CHECK(qa_net_loopback_create((qa_net_limits){1400,4},&loopback,&error));
+    CHECK(qa_net_loopback_bind(loopback,"host",&local,&error));
+    CHECK(qa_net_host_transport_create(proxy,local,&host,&error));
+    CHECK(qa_net_udp_policy_read(host,&wrapped,&present,&error) && present);
+    CHECK(qa_net_address_equal(&actual.bound,&wrapped.bound,true));
+    qa_net_transport_close(host);qa_net_loopback_close(loopback);CHECK(close(listener)==0);
+}
+
 static bool restart_cvars_in_scope(void *context,qa_error *error)
 { return qa_cvars_restart(context,error); }
 static void test_cvar_restart_removal(void)
@@ -9905,6 +9941,7 @@ int main(int argc, char **argv)
     test_q3_command_cursors();
     test_shared_cvar_archive();
     test_cvar_restart_removal();
+    test_socks_transport_pending();
     test_runtime_server_settings();
     test_shared_cvar_save();
     test_cvar_value_scope();

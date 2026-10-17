@@ -4832,6 +4832,28 @@ bool frontend_network_declarations(qa_cvars *cvars,qa_error *error)
             "Limited remote administrator password",error);
 }
 static bool detached_transport(const qa_net_address *,qa_net_transport **,qa_error *);
+static bool client_socks_prepare(qa_frontend *f,qa_net_transport **transport,uint64_t now_ns,qa_error *error)
+{
+    static const char *const settings[]={"net_socksEnabled","net_socksServer","net_socksPort",
+        "net_socksUsername","net_socksPassword"};
+    qa_cvars *cvars=qa_application_cvars(f->application);
+    for(size_t i=0;i<sizeof(settings)/sizeof(*settings);++i)
+        if(!qa_cvars_apply_latched(cvars,settings[i],error)) return false;
+    if(!qa_cvars_find(cvars,"net_socksEnabled")->integer) return true;
+    const qa_cvar_view *server=qa_cvars_find(cvars,"net_socksServer");
+    const qa_cvar_view *port=qa_cvars_find(cvars,"net_socksPort");
+    const qa_cvar_view *username=qa_cvars_find(cvars,"net_socksUsername");
+    const qa_cvar_view *password=qa_cvars_find(cvars,"net_socksPassword");
+    qa_net_socks_options options={
+        .username={(const uint8_t *)username->value,strlen(username->value)},
+        .password={(const uint8_t *)password->value,strlen(password->value)},
+        .timeout_ns=UINT64_C(5000000000)};
+    if(!qa_net_address_resolve(server->value,(uint16_t)port->integer,4,&options.server,error)) return false;
+    options.server.port=(uint16_t)port->integer;
+    qa_net_transport *wrapped=NULL;
+    if(!qa_net_socks_wrap(*transport,&options,now_ns,&wrapped,error)) return false;
+    *transport=wrapped; return true;
+}
 static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *error)
 {
     if (!f->options.network_host && !f->options.network_connect && !f->options.dedicated)
@@ -4937,7 +4959,12 @@ static bool network_create(qa_frontend *f,const qa_frontend *active,qa_error *er
     options.hooks.unified_input=unified_source_input;
     if (active && active->network) {
         if (!detached_transport(qa_network_local_address(active->network->runtime),&transport,error)) goto failed;
-    } else if (!qa_net_udp_open(&udp,&transport,error)) goto failed;
+    } else {
+        if (!qa_net_udp_open(&udp,&transport,error)) goto failed;
+        if(f->options.network_connect && !client_socks_prepare(f,&transport,n->nonce,error)) {
+            qa_net_transport_close(transport); goto failed;
+        }
+    }
     if((f->options.network_host || f->options.network_connect) && f->options.network_protocol.kind==QA_NET_Q2KEX_2023) {
         if(f->options.network_host && source_clients>UINT8_MAX) {
             qa_net_transport_close(transport);

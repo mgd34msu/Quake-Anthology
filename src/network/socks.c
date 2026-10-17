@@ -179,21 +179,28 @@ static bool socks_maintenance(void *opaque, uint64_t now_ns, qa_error *error) {
     return qa_net_transport_maintenance(socks->udp, now_ns, error);
 }
 
+static bool socks_broadcast(const qa_net_address *to) {
+    return to && to->kind==QA_NET_IPV4 && to->host.ipv4[0]==255 &&
+        to->host.ipv4[1]==255 && to->host.ipv4[2]==255 && to->host.ipv4[3]==255;
+}
+static bool socks_send_ready(const void *opaque,const qa_net_address *to) {
+    const socks_transport *socks=opaque;
+    return socks_broadcast(to)?qa_net_transport_send_ready(socks->udp,to):
+        socks->phase==SOCKS_READY && qa_net_transport_send_ready(socks->udp,&socks->relay);
+}
+static const qa_net_transport *socks_underlying(const void *opaque) {
+    return ((const socks_transport *)opaque)->udp;
+}
 static qa_net_send_result socks_send(void *opaque, const qa_net_address *to, qa_bytes payload, qa_error *error) {
     socks_transport *socks = opaque;
     if (socks->phase == SOCKS_FAILED) return socks_fail(socks, socks->failure, error);
-    if (socks->phase != SOCKS_READY) {
-        qa_error_set(error, QA_ERROR_IO, 0, "SOCKS negotiation is pending");
-        return false;
-    }
     if (!to || to->kind != QA_NET_IPV4 || !to->port || payload.size > socks->limit ||
         (payload.size && !payload.data)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid SOCKS IPv4 datagram");
         return false;
     }
-    bool broadcast = to->host.ipv4[0] == 255 && to->host.ipv4[1] == 255 &&
-                     to->host.ipv4[2] == 255 && to->host.ipv4[3] == 255;
-    if (broadcast) return qa_net_transport_send(socks->udp, to, payload, error);
+    if (socks_broadcast(to)) return qa_net_transport_send(socks->udp, to, payload, error);
+    if (socks->phase != SOCKS_READY) return QA_NET_SEND_FULL;
     memset(socks->datagram, 0, SOCKS_HEADER_BYTES);
     socks->datagram[3] = 1;
     memcpy(socks->datagram + 4, to->host.ipv4, 4);
@@ -378,7 +385,8 @@ bool qa_net_socks_wrap(qa_net_transport *udp, const qa_net_socks_options *option
     const qa_net_transport_ops ops = {
         .send = socks_send, .collect = socks_collect, .dispatch = socks_dispatch,
         .maintenance = socks_maintenance, .close = socks_close, .ready = socks_ready,
-        .dispatch_ready = socks_dispatch_ready
+        .dispatch_ready = socks_dispatch_ready, .send_ready = socks_send_ready,
+        .underlying = socks_underlying
     };
     if (!qa_net_transport_create(bound, (qa_net_limits){socks->limit, 256}, &ops, socks, out, error)) {
         socks_close(socks);

@@ -404,7 +404,7 @@ static bool client_tick(qa_network_q2_bootstrap *owner, uint64_t now, qa_error *
     if (handshake->phase != QA_Q2_CONNECTED && handshake->phase != QA_Q2_REFUSED) {
         bool ready = true;
         if (kex_offer(owner) && !owner->state.client.hooks.transport_ready(owner->state.client.hooks.context, &ready, error)) return false;
-        if (ready) {
+        if (ready && qa_net_transport_send_ready(qa_network_transport(owner->runtime),&handshake->remote)) {
             qa_q2_client_identity identity = {0};
             if (!owner->state.client.hooks.identity(owner->state.client.hooks.context, &identity, error) ||
                 !identity_valid(&identity, kex_offer(owner), error)) return false;

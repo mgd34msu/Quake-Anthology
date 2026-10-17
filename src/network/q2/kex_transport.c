@@ -10,6 +10,15 @@ static qa_net_send_result raw_send(void *context, const qa_net_address *to, qa_b
     }
     return qa_net_transport_send(o->raw, to, bytes, e);
 }
+static bool transport_send_ready(const void *context,const qa_net_address *to)
+{
+    const qa_kex_transport *o=context;
+    return o->raw && o->raw_owned && qa_net_transport_send_ready(o->raw,to);
+}
+static const qa_net_transport *transport_underlying(const void *context)
+{
+    return ((const qa_kex_transport *)context)->raw;
+}
 
 static bool raw_collect(void *context, uint64_t now, qa_net_transport_event *out, qa_error *e)
 {
@@ -183,12 +192,14 @@ bool qa_kex_transport_finish(qa_kex_transport *o, qa_net_transport **out, qa_err
     const qa_net_transport_ops raw_ops = {
         .send = raw_send, .collect = raw_collect, .dispatch = raw_dispatch,
         .maintenance = raw_maintenance, .ready = raw_ready, .close = raw_close,
-        .dispatch_ready = raw_dispatch_ready
+        .dispatch_ready = raw_dispatch_ready, .send_ready = transport_send_ready,
+        .underlying = transport_underlying
     };
     const qa_net_transport_ops game_ops = {
         .send = game_send, .collect = game_collect, .dispatch = game_dispatch,
         .maintenance = game_maintenance, .ready = game_ready, .close = game_close,
-        .reliable_receipt = game_reliable_receipt, .dispatch_ready = game_dispatch_ready
+        .reliable_receipt = game_reliable_receipt, .dispatch_ready = game_dispatch_ready,
+        .send_ready = transport_send_ready, .underlying = transport_underlying
     };
     qa_net_limits limits = {o->raw_limit, 256};
     if (!qa_net_transport_create(&o->lobby->local_address, limits, &raw_ops, o, &o->dispatch, e)) return false;

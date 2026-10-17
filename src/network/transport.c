@@ -475,6 +475,11 @@ static void host_close(void *context)
     qa_net_transport_close(state->children[1]);
     free(state);
 }
+static const qa_net_transport *host_underlying(const void *context)
+{
+    const host_state *state=context;
+    return state->children[0];
+}
 
 bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *local,
     qa_net_transport **out, qa_error *error)
@@ -495,7 +500,8 @@ bool qa_net_host_transport_create(qa_net_transport *external, qa_net_transport *
     const qa_net_transport_ops ops = {.send = host_send, .collect = host_collect,
         .dispatch = host_dispatch, .maintenance = host_maintenance,
         .ready = host_ready, .close = host_close, .reliable_receipt = host_reliable_receipt,
-        .send_ready = host_send_ready, .dispatch_ready = host_dispatch_ready};
+        .send_ready = host_send_ready, .dispatch_ready = host_dispatch_ready,
+        .underlying = host_underlying};
     if (!qa_net_transport_create(external ? &external->address : &local->address,
         limits, &ops, state, out, error)) {
         free(state);
@@ -561,9 +567,9 @@ bool qa_net_udp_policy_read(const qa_net_transport *transport, qa_net_udp_policy
         return fail(error, QA_ERROR_ARGUMENT, "Missing native UDP policy observation");
     *out = (qa_net_udp_policy){0};
     *present = false;
-    if (transport->ops.close == host_close) {
-        const host_state *state = transport->state;
-        return !state->children[0] || qa_net_udp_policy_read(state->children[0], out, present, error);
+    if (transport->ops.underlying) {
+        const qa_net_transport *physical=transport->ops.underlying(transport->state);
+        return !physical || qa_net_udp_policy_read(physical,out,present,error);
     }
     if (transport->ops.send != udp_send || transport->ops.collect != udp_receive ||
         transport->ops.close != udp_close) return true;

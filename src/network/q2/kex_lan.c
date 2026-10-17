@@ -502,7 +502,8 @@ static bool dispatch_body(qa_kex_lan*l,const qa_net_datagram *event,qa_net_datag
 static bool tick_body(qa_kex_lan*l,uint64_t now,qa_error*e) {
     l->clock=now;
     if(!qa_net_transport_maintenance(l->transport,now,e))return false;
-    if(!l->options.host&&!l->joined&&(!l->retried||now<l->retry_at||now-l->retry_at>=UINT64_C(500000000))) {
+    if(!l->options.host&&!l->joined&&qa_net_transport_send_ready(l->transport,&l->options.server)&&
+       (!l->retried||now<l->retry_at||now-l->retry_at>=UINT64_C(500000000))) {
         struct peer*p=add_peer(l,&l->options.server,e);
         if(!p)return false;
         uint8_t bytes[64];

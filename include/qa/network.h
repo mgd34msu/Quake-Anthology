@@ -141,6 +141,8 @@ typedef struct qa_net_transport_ops {
     bool (*reliable_receipt)(const void *, const qa_net_address *, qa_network_reliable_receipt *);
     bool (*send_ready)(const void *, const qa_net_address *);
     bool (*dispatch_ready)(const void *, const qa_net_transport_event *);
+    /* Borrow the owned physical transport through an adapter. */
+    const qa_net_transport *(*underlying)(const void *);
 } qa_net_transport_ops;
 bool qa_net_transport_create(const qa_net_address *, qa_net_limits,
                               const qa_net_transport_ops *, void *owned_state,
