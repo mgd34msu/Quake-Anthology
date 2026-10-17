@@ -10053,7 +10053,7 @@ static void test_native_x87_unary_status(void)
     CHECK(qa_native_guest_destroy(&guest, &error));
 }
 
-static void test_native_x87_multiply(void)
+static void test_native_x87_arithmetic(void)
 {
     qa_error error={0};qa_native_guest *guest=NULL;
     qa_native_guest_options options={.image={.format=QA_NATIVE_IMAGE_PE32,
@@ -10066,7 +10066,16 @@ static void test_native_x87_multiply(void)
     const uint8_t code[]={0xd8,0xc8,0xdf,0xe0,0x9b,
         [16]=0xdc,0xc9,0xdf,0xe0,0x9b,[32]=0xde,0xc9,0xdf,0xe0,0x9b,
         [48]=0xd8,0x0b,0xdf,0xe0,0x9b,[64]=0xda,0x0b,0xdf,0xe0,0x9b,
-        [80]=0xdc,0x0b,0xdf,0xe0,0x9b,[96]=0xde,0x0b,0xdf,0xe0,0x9b};
+        [80]=0xdc,0x0b,0xdf,0xe0,0x9b,[96]=0xde,0x0b,0xdf,0xe0,0x9b,
+        [112]=0xd8,0xc1,0xdf,0xe0,0x9b,[128]=0xdc,0xc1,0xdf,0xe0,0x9b,
+        [144]=0xde,0xc1,0xdf,0xe0,0x9b,[160]=0xd8,0xe1,0xdf,0xe0,0x9b,
+        [176]=0xd8,0xe9,0xdf,0xe0,0x9b,[192]=0xdc,0xe1,0xdf,0xe0,0x9b,
+        [208]=0xdc,0xe9,0xdf,0xe0,0x9b,[224]=0xde,0xe1,0xdf,0xe0,0x9b,
+        [240]=0xde,0xe9,0xdf,0xe0,0x9b,
+        [256]=0xd8,0x03,0xdf,0xe0,0x9b,[272]=0xdc,0x03,0xdf,0xe0,0x9b,
+        [288]=0xda,0x03,0xdf,0xe0,0x9b,[304]=0xde,0x03,0xdf,0xe0,0x9b,
+        [320]=0xd8,0x23,0xdf,0xe0,0x9b,[336]=0xdc,0x2b,0xdf,0xe0,0x9b,
+        [352]=0xde,0x23,0xdf,0xe0,0x9b,[368]=0xda,0x2b,0xdf,0xe0,0x9b};
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest,entry,QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,(qa_bytes){code,sizeof(code)},&mapping,&error));
@@ -10077,28 +10086,90 @@ static void test_native_x87_multiply(void)
     const struct {
         uint64_t x,y,expected;
         uint16_t xe,ye,expected_exponent,control,status;
-        unsigned offset,top;
+        unsigned offset,top,destination;
     } cases[]={
         {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000002),
-            0x3fff,0x3fff,0x3fff,0x037f,0x0020,0,0},
+            0x3fff,0x3fff,0x3fff,0x037f,0x0020,0,0,0},
         {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000003),
-            0x3fff,0x3fff,0x3fff,0x0b7f,0x0220,0,0},
+            0x3fff,0x3fff,0x3fff,0x0b7f,0x0220,0,0,0},
         {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0xc000000000000000),
-            0x4000,0x4000,0x4001,0x037f,0,16,0},
+            0x4000,0x4000,0x4001,0x037f,0,16,0,1},
         {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0xc000000000000000),
-            0x4000,0x4000,0x4001,0x037f,0,32,1},
+            0x4000,0x4000,0x4001,0x037f,0,32,1,1},
         {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
-            0x670f,0x670f,0x2e1f,0x0377,0x8088,32,1},
+            0x670f,0x670f,0x2e1f,0x0377,0x8088,32,1,1},
         {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
-            0x18ef,0x18ef,0x51df,0x036f,0x8090,32,1},
+            0x18ef,0x18ef,0x51df,0x036f,0x8090,32,1,1},
         {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
-            1,0x3ffe,0x6000,0x036f,0x8090,32,1},
+            1,0x3ffe,0x6000,0x036f,0x8090,32,1,1},
         {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000002),
-            0x3fff,0x3fff,0x3fff,0x035f,0x80a0,32,1},
+            0x3fff,0x3fff,0x3fff,0x035f,0x80a0,32,1,1},
         {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
-            0x7fff,0x3fff,0x3fff,0x037e,0x8081,32,0},
+            0x7fff,0x3fff,0x3fff,0x037e,0x8081,32,0,1},
         {1,UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
-            0,0x3fff,0x3fff,0x037d,0x8082,32,0},
+            0,0x3fff,0x3fff,0x037d,0x8082,32,0,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0xa000000000000000),
+            0x4000,0x4000,0x4001,0x037f,0,112,0,0},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0xa000000000000000),
+            0x4000,0x4000,0x4001,0x037f,0,128,0,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0xa000000000000000),
+            0x4000,0x4000,0x4001,0x037f,0,144,1,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0x3fff,0x037f,0,160,0,0},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0xbfff,0x037f,0,176,0,0},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0x3fff,0x037f,0,192,0,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0xbfff,0x037f,0,208,0,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0x3fff,0x037f,0,224,1,1},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x4000,0x4000,0xbfff,0x037f,0,240,1,1},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x7ffe,0x7ffe,0x1fff,0x0377,0x8088,144,1,1},
+        {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            1,1,0x5fc2,0x036f,0x8090,224,1,1},
+        {UINT64_C(0x8000000001000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            1,1,0x5fda,0x006f,0x80b0,224,1,1},
+        {UINT64_C(0x8000000001000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000010000000000),
+            1,1,0x5fda,0x086f,0x82b0,224,1,1},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x0000006000000000),UINT64_C(0xffffff0000000000),
+            1,0,0x6000,0x006f,0x80b2,224,1,1},
+        {UINT64_C(0xffffffffffffffff),1,UINT64_C(0x8000000000000000),
+            0x7ffe,0,0x1fff,0x0b77,0x82aa,112,0,0},
+        {UINT64_C(0xffffffffffffffff),1,UINT64_C(0xffffffffffffffff),
+            0x7ffe,0,0x7ffe,0x0377,0x0022,112,0,0},
+        {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x7fff,0x3fff,0x3fff,0x037e,0x8081,144,0,1},
+        {1,UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0,0x3fff,0x3fff,0x037d,0x8082,144,0,1},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fe7,0x3fff,0x007f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fe7,0x3fff,0x047f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000010000000000),
+            0x3fff,0x3fe7,0x3fff,0x087f,0x0220,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fe7,0x3fff,0x0c7f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fca,0x3fff,0x027f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fca,0x3fff,0x067f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000800),
+            0x3fff,0x3fca,0x3fff,0x0a7f,0x0220,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fca,0x3fff,0x0e7f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fbf,0x3fff,0x037f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fbf,0x3fff,0x077f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000001),
+            0x3fff,0x3fbf,0x3fff,0x0b7f,0x0220,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fbf,0x3fff,0x0f7f,0x0020,112,0,0},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),
+            0x3fff,0x3fbf,0x3fff,0x035f,0x80a0,144,1,1},
     };
     for(size_t i=0;i<sizeof(cases)/sizeof(*cases);++i) {
         cpu=initial;cpu.control[0]|=UINT64_C(0x20);cpu.fp_control=cases[i].control;cpu.fp_tags=0xfff0;
@@ -10108,7 +10179,7 @@ static void test_native_x87_multiply(void)
         uint64_t instruction=entry+cases[i].offset;
         CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
         CHECK(result.kind==QA_NATIVE_GUEST_RETURN && qa_native_guest_cpu_read(guest,&cpu,&error));
-        unsigned slot=cases[i].offset?1u:0u;
+        unsigned slot=cases[i].destination;
         CHECK(cpu.fp_mantissa[slot]==cases[i].expected && cpu.fp_exponent[slot]==cases[i].expected_exponent);
         CHECK((cpu.fp_status&0x86ff)==cases[i].status && ((cpu.fp_status>>11)&7u)==cases[i].top);
         if(cases[i].status&0x80) {
@@ -10123,6 +10194,18 @@ static void test_native_x87_multiply(void)
         {80,1,0x037f,0x3bcd,0x0002,UINT64_C(0x8000000000000000)},
         {64,UINT32_C(0xfffffffe),0x037f,0xc001,0,UINT64_C(0xc000000000000000)},
         {96,UINT16_C(0xfffe),0x037f,0xc001,0,UINT64_C(0xc000000000000000)},
+        {256,1,0x037d,0x3fff,0x8082,UINT64_C(0x8000000000000000)},
+        {272,1,0x037d,0x3fff,0x8082,UINT64_C(0x8000000000000000)},
+        {256,UINT32_C(0x7f800001),0x037e,0x3fff,0x8081,UINT64_C(0x8000000000000000)},
+        {272,UINT64_C(0x7ff0000000000001),0x037e,0x3fff,0x8081,UINT64_C(0x8000000000000000)},
+        {256,1,0x037f,0x3fff,0x0022,UINT64_C(0x8000000000000000)},
+        {272,1,0x037f,0x3fff,0x0022,UINT64_C(0x8000000000000000)},
+        {288,UINT32_C(0xfffffffe),0x037f,0xbfff,0,UINT64_C(0x8000000000000000)},
+        {304,UINT16_C(0xfffe),0x037f,0xbfff,0,UINT64_C(0x8000000000000000)},
+        {320,UINT32_C(0xc0000000),0x037f,0x4000,0,UINT64_C(0xc000000000000000)},
+        {336,UINT64_C(0xc000000000000000),0x037f,0xc000,0,UINT64_C(0xc000000000000000)},
+        {352,UINT16_C(0xfffe),0x037f,0x4000,0,UINT64_C(0xc000000000000000)},
+        {368,UINT32_C(0xfffffffe),0x037f,0xc000,0,UINT64_C(0xc000000000000000)},
     };
     for(size_t i=0;i<sizeof(memory)/sizeof(*memory);++i) {
         uint8_t bytes[8];qa_store_u64le(bytes,memory[i].bits);
@@ -10141,9 +10224,13 @@ static void test_native_x87_multiply(void)
     /* Pending #MF wins over a faulting memory operand, as on the register forms. */
     cpu=initial;cpu.control[0]|=UINT64_C(0x20);cpu.fp_control=0x037e;cpu.fp_status=0x8081;
     cpu.registers[QA_NATIVE_RBX]=UINT64_C(0x700000);
-    CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
-    CHECK(qa_native_guest_run(guest,entry+48,entry+52,32,32,&result,&error));
-    CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+    const unsigned pending_offsets[]={48,256,320,336};
+    for(size_t i=0;i<sizeof(pending_offsets)/sizeof(*pending_offsets);++i) {
+        CHECK(qa_native_guest_cpu_write(guest,&cpu,&error));
+        uint64_t instruction=entry+pending_offsets[i];
+        CHECK(qa_native_guest_run(guest,instruction,instruction+4,32,32,&result,&error));
+        CHECK(result.kind==QA_NATIVE_GUEST_PROCESSOR_EXCEPTION && result.detail.processor.vector==16);
+    }
     CHECK(qa_native_guest_destroy(&guest,&error));
 }
 
@@ -11219,7 +11306,7 @@ int main(int argc, char **argv)
     test_native_guest_halt();
     test_native_guest_architectural_stops();
     test_native_x87_unary_status();
-    test_native_x87_multiply();
+    test_native_x87_arithmetic();
     test_native_i386_call_conventions();
     test_q2_linked_models();
     test_q2_weapon_names();

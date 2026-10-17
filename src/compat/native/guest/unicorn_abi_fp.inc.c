@@ -210,6 +210,25 @@ static unsigned qa_unicorn_arithmetic_exceptions(float_status *status)
         ((flags & float_flag_inexact) ? FPUS_PE : 0);
 }
 
+static floatx80 qa_unicorn_arithmetic_value(int operation, floatx80 left,
+    floatx80 right, float_status *status)
+{
+    switch (operation) {
+    case 0: return floatx80_add(left, right, status);
+    case 1: return floatx80_mul(left, right, status);
+    case 4: return floatx80_sub(left, right, status);
+    default: return floatx80_sub(right, left, status);
+    }
+}
+
+static int qa_unicorn_arithmetic_normalize(floatx80 *source)
+{
+    int shift = clz64(source->low);
+    int exponent = qa_x87_operand_exponent(*source) + 63 - shift;
+    source->low <<= shift;
+    return exponent;
+}
+
 /* Change the product exponent without rounding either operand. Normalize
  * subnormal inputs, then distribute the requested shift so both operands
  * remain normal binary80 values for the existing SoftFloat multiplication.
@@ -217,9 +236,8 @@ static unsigned qa_unicorn_arithmetic_exceptions(float_status *status)
  * so a distribution inside the two normal operand ranges always exists. */
 static void qa_unicorn_fmul_rescale(floatx80 *left, floatx80 *right, int adjustment)
 {
-    int left_shift = clz64(left->low), right_shift = clz64(right->low);
-    int left_exponent = qa_x87_operand_exponent(*left) + 63 - left_shift;
-    int right_exponent = qa_x87_operand_exponent(*right) + 63 - right_shift;
+    int left_exponent = qa_unicorn_arithmetic_normalize(left);
+    int right_exponent = qa_unicorn_arithmetic_normalize(right);
     int sum = left_exponent + right_exponent + adjustment;
     left_exponent += adjustment;
     if (left_exponent < -16382) left_exponent = -16382;
@@ -232,18 +250,35 @@ static void qa_unicorn_fmul_rescale(floatx80 *left, floatx80 *right, int adjustm
         left_exponent += right_exponent - 16383;
         right_exponent = 16383;
     }
-    left->low <<= left_shift;
-    right->low <<= right_shift;
     left->high = (left->high & 0x8000) | (left_exponent + 16383);
     right->high = (right->high & 0x8000) | (right_exponent + 16383);
+}
+
+/* Unlike a product, a sum requires the same scale on both operands. A tiny
+ * sum can only come from low-exponent inputs, so its upward adjustment is
+ * exact. For an overflowing sum the scaled dominant exponent is at least
+ * -8194. Any addend shifted below the normal range is then over 8100 bits
+ * smaller: its nonzero sign alone supplies SoftFloat's sticky rounding tail. */
+static void qa_unicorn_sum_rescale(floatx80 *source, int adjustment)
+{
+    if (floatx80_is_zero(*source)) return;
+    int exponent = qa_unicorn_arithmetic_normalize(source) + adjustment;
+    if (exponent < -16382) {
+        exponent = -16382;
+        source->low = UINT64_C(0x8000000000000000);
+    }
+    source->high = (source->high & 0x8000) | (exponent + 16383);
 }
 
 /* source >= 0 names ST(source). A memory source carries its original raw
  * bits and the translator's op>>4 format: f32, i32, f64, i16. Converting it
  * here preserves SNaN and denormal admission before the destination changes.
- * All FMUL/FIMUL destination forms, including FMULP, commit and pop here. */
-static void qa_unicorn_fmul(CPUX86State *env, int destination, int source,
-    bool pop, int format, uint64_t bits, uintptr_t retaddr)
+ * Operations use the translator's selectors: 0 add, 1 multiply, 4 subtract,
+ * 5 reverse subtract. Register, memory, integer and popping forms share
+ * operand admission, SoftFloat computation and architectural publication. */
+static void qa_unicorn_arithmetic(CPUX86State *env, int operation,
+    int destination, int source, bool pop, int format, uint64_t bits,
+    uintptr_t retaddr)
 {
     float_status status;
     qa_unicorn_x87_begin(env, retaddr, &status);
@@ -283,7 +318,7 @@ static void qa_unicorn_fmul(CPUX86State *env, int destination, int source,
     }
     if (floatx80_invalid_encoding(left) || floatx80_invalid_encoding(right) ||
         floatx80_is_any_nan(left) || floatx80_is_any_nan(right)) {
-        value = floatx80_mul(left, right, &status);
+        value = qa_unicorn_arithmetic_value(operation, left, right, &status);
         exceptions = qa_unicorn_arithmetic_exceptions(&status);
         goto finish;
     }
@@ -294,26 +329,49 @@ static void qa_unicorn_fmul(CPUX86State *env, int destination, int source,
         if (!(env->fpuc & FPUS_DE)) return;
     }
     set_float_exception_flags(0, &status);
-    value = floatx80_mul(left, right, &status);
+    value = qa_unicorn_arithmetic_value(operation, left, right, &status);
     exceptions = qa_unicorn_arithmetic_exceptions(&status);
     if (!(exceptions & FPUS_IE)) {
         /* IEEE SoftFloat raises UE for tiny AND inexact results. Unmasked
          * x87 UE also reports an exact nonzero tiny register result. */
         bool tiny = (exceptions & FPUS_UE) ||
             (floatx80_is_zero_or_denormal(value) && !floatx80_is_zero(value));
-        unsigned wrapped = (exceptions & FPUS_OE) && !(env->fpuc & FPUS_OE) ? FPUS_OE :
-            tiny && !(env->fpuc & FPUS_UE) ? FPUS_UE : 0;
-        if (wrapped) {
-            qa_unicorn_fmul_rescale(&left, &right, wrapped == FPUS_OE ? -24576 : 24576);
-            set_float_exception_flags(0, &status);
-            value = floatx80_mul(left, right, &status);
-            exceptions = wrapped | qa_unicorn_arithmetic_exceptions(&status);
+        /* At reduced PC, masked denormal rounding can reach minimum-normal
+         * even when unlimited-exponent rounding is still tiny. Decide that
+         * boundary using the scaled computation, not the masked result. */
+        bool minimum_normal = (value.high & 0x7fff) == 1 &&
+            value.low == UINT64_C(0x8000000000000000);
+        bool check_underflow = !(env->fpuc & FPUS_UE) && (tiny || minimum_normal);
+        unsigned wrapped = (exceptions & FPUS_OE) && !(env->fpuc & FPUS_OE) ? FPUS_OE : 0;
+        if (wrapped || check_underflow) {
+            floatx80 scaled_left = left, scaled_right = right;
+            int adjustment = wrapped ? -24576 : 24576;
+            if (operation == 1) qa_unicorn_fmul_rescale(&scaled_left, &scaled_right, adjustment);
+            else {
+                qa_unicorn_sum_rescale(&scaled_left, adjustment);
+                qa_unicorn_sum_rescale(&scaled_right, adjustment);
+            }
+            float_status scaled_status = status;
+            set_float_exception_flags(0, &scaled_status);
+            floatx80 scaled_value = qa_unicorn_arithmetic_value(operation,
+                scaled_left, scaled_right, &scaled_status);
+            if (check_underflow) {
+                exceptions &= ~FPUS_UE;
+                if ((scaled_value.high & 0x7fff) < 0x6001) wrapped = FPUS_UE;
+            }
+            if (wrapped) {
+                left = scaled_left;
+                right = scaled_right;
+                status = scaled_status;
+                value = scaled_value;
+                exceptions = wrapped | qa_unicorn_arithmetic_exceptions(&status);
+            }
         }
         if (exceptions & FPUS_PE) {
             float_status truncated = status;
             set_float_exception_flags(0, &truncated);
             set_float_rounding_mode(float_round_to_zero, &truncated);
-            floatx80 toward_zero = floatx80_mul(left, right, &truncated);
+            floatx80 toward_zero = qa_unicorn_arithmetic_value(operation, left, right, &truncated);
             rounded_up = floatx80_lt_quiet(floatx80_abs(toward_zero),
                 floatx80_abs(value), &truncated);
         }
@@ -332,9 +390,10 @@ finish:
     if (exceptions & ~FPUS_IE) fpu_set_exception(env, exceptions & ~FPUS_IE);
 }
 
-void helper_fmul_memory(CPUX86State *env, uint64_t bits, int format)
+void helper_farithmetic_memory(CPUX86State *env, uint64_t bits, int format,
+    int operation)
 {
-    qa_unicorn_fmul(env, 0, -1, false, format, bits, GETPC());
+    qa_unicorn_arithmetic(env, operation, 0, -1, false, format, bits, GETPC());
 }
 
 UNICORN_EXPORT unsigned qa_unicorn_abi_fp_revision(void)
