@@ -227,22 +227,19 @@ static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
     }
     return true;
 }
-static bool request_item(frontend_seat *seat, qa_actor_id actor, uint32_t launch_seat,
-    const qa_item_definition *definition, qa_error *error)
+static bool request_item(frontend_seat *seat,const qa_item_definition *definition,qa_error *error)
 {
-    (void)error;
-    qa_command_context command=qa_input_seat_context(seat->input);
-    command.actor=actor; command.seat=launch_seat;
-    command.owner=0; command.registry=command.generation=command.cvar_view=0;
-    command.origin=QA_COMMAND_SEAT; command.script=NULL; command.direct=true;
-    char text[64];
-    int length=snprintf(text,sizeof(text),"useitem %" PRIu32 " %" PRIu32,definition->owner,definition->item);
-    frontend_queued_command queued={.console=qa_application_console(seat->frontend->application),
-        .context=command,.time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
-    qa_platform_event_result result=qa_platform_events_push(seat->frontend->platform_events,
-        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=seat->frontend->wall_time_ns},
-        (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
-        (qa_bytes){(const uint8_t *)text,(size_t)length+1});
+    qa_application *app=seat->frontend->application;
+    qa_strings *strings=qa_session_strings(qa_application_session(app));
+    const char *instance=qa_strings_cstr(strings,definition->owner);
+    const char *item=qa_strings_cstr(strings,definition->item);
+    if (!instance || !item)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Wheel selection lost its published provider or item name");
+    frontend_queued_command queued={.target=FRONTEND_COMMAND_ITEM,.physical_seat=seat->id,
+        .time_ns=seat->frontend->time_ns,.frame_number=seat->frontend->frame_number};
+    qa_platform_event_result result=frontend_command_queue(seat->frontend,&queued,instance,item,
+        seat->frontend->wall_time_ns,error);
+    if(result!=QA_PLATFORM_EVENT_ACCEPTED && error && error->code!=QA_OK) return false;
     if(result!=QA_PLATFORM_EVENT_ACCEPTED) frontend_print(seat->frontend,"Input queue is full; item selection was not applied.");
     return true;
 }
@@ -261,7 +258,7 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
         actor, owner ? &owner : NULL, identity.item, &definition, &found, error)) return false;
     if (found && (mode != QA_HUD_WHEEL_WEAPONS || definition.weapon) &&
         (mode != QA_HUD_WHEEL_POWERUPS || (definition.actions & QA_ITEM_USE))) {
-        return request_item(seat, actor, launch_seat, &definition, error);
+        return request_item(seat,&definition,error);
     }
     return true;
 }
@@ -298,7 +295,7 @@ bool frontend_wheel_switch(frontend_seat *seat, int32_t first, int32_t second, q
     if (!switch_item(seat, actor, source.provider, slots, count, first, &a, error) ||
         !switch_item(seat, actor, source.provider, slots, count, second, &b, error)) return false;
     const qa_item_definition *selected = a.item == source.item ? (b.item ? &b : &a) : a.item ? &a : &b;
-    return !selected->item || request_item(seat, actor, launch_seat, selected, error);
+    return !selected->item || request_item(seat, selected, error);
 }
 bool frontend_wheel_create(frontend_seat *seat, qa_error *error)
 {

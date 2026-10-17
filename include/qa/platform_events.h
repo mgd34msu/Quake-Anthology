@@ -90,6 +90,10 @@ typedef struct qa_platform_event_stats {
 /* One caller thread owns the cold-sized FIFO. Admission precedes destructive
  * source reads; a full store retains every accepted event and its bytes. */
 qa_platform_events *qa_platform_events_create(qa_error *);
+/* A load handoff retains both pending FIFOs plus the normal intake headroom.
+ * Record headers, leases and alignment are sized by the queue itself. */
+qa_platform_events *qa_platform_events_create_reserved(uint32_t retained_records,
+    size_t retained_payload_bytes, qa_error *);
 void qa_platform_events_destroy(qa_platform_events *);
 void qa_platform_events_reset(qa_platform_events *);
 qa_platform_event_result qa_platform_events_admit(qa_platform_events *,

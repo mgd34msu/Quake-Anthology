@@ -56,6 +56,7 @@ typedef struct frontend_persistence {
     qa_application_native_resource_refs native_resource_refs;
     frontend_persistence_native native;
     frontend_q3_color_ticket *color_ticket;
+    qa_platform_events *events;
     bool finished;
     void *replay_context;
     frontend_persistence_replay_fn replay;
@@ -266,7 +267,8 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
         (!operation->native.display || qa_display_handoff_ready(operation->native.display,error)) &&
         (!operation->native.gl || qa_gl_handoff_ready(operation->native.gl,error)) &&
         (!operation->native.device || qa_audio_device_handoff_ready(operation->native.device,error)) &&
-        (!operation->color_ticket || frontend_q3_source_color_ready_is(operation->color_ticket));
+        (!operation->color_ticket || frontend_q3_source_color_ready_is(operation->color_ticket)) &&
+        frontend_platform_handoff_prepare(source,f,&operation->events,error);
 }
 static void publish(void *context,qa_application *active,qa_application *candidate)
 {
@@ -276,9 +278,7 @@ static void publish(void *context,qa_application *active,qa_application *candida
         operation->services->publish(operation->services->context,active,candidate);
     frontend_network_transport_exchange(source,f);
     frontend_local_lobby_exchange(source,f);
-    qa_platform_events *events=source->platform_events;
-    source->platform_events=f->platform_events;
-    f->platform_events=events;
+    frontend_platform_handoff_publish(f,&operation->events);
     qa_http_handoff_publish(frontend_tools_http(source),frontend_tools_http(f));
     if (operation->native.input) qa_input_platform_handoff(operation->native.input);
     if (operation->native.display) qa_display_handoff(operation->native.display);
@@ -317,6 +317,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
 }
 static void operation_close(frontend_persistence *operation)
 {
+    qa_platform_events_destroy(operation->events); operation->events=NULL;
     qa_input_platform_restore_guard_destroy(operation->native.input);
     qa_audio_device_restore_guard_destroy(operation->native.device);
     qa_gl_restore_guard_destroy(operation->native.gl);

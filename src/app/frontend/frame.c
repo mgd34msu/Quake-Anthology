@@ -44,6 +44,7 @@
 #include "qa/ruleset.h"
 #include "qa/platform_services.h"
 #include <stdio.h>
+#include <inttypes.h>
 #ifdef QA_ALLOCATION_GATE
 #include "qa/allocation_gate.h"
 #endif
@@ -420,6 +421,128 @@ static bool runtime_console(qa_frontend *frontend, qa_console **console,
     }
     return true;
 }
+qa_platform_event_result frontend_command_queue(qa_frontend *f,const frontend_queued_command *command,
+    const char *instance,const char *text,uint64_t wall_ns,qa_error *error)
+{
+    frontend_queued_command queued=*command;
+    queued.instance_size=instance?strlen(instance)+1:0;
+    size_t text_size=strlen(text)+1;
+    if (queued.instance_size>QA_PLATFORM_EVENT_BYTE_CAPACITY ||
+        text_size>QA_PLATFORM_EVENT_BYTE_CAPACITY-queued.instance_size ||
+        sizeof(queued)>QA_PLATFORM_EVENT_BYTE_CAPACITY-queued.instance_size-text_size)
+        return QA_PLATFORM_EVENT_OVERSIZE;
+    size_t size=queued.instance_size+text_size;
+    qa_platform_event_result admitted=qa_platform_events_admit(f->platform_events,
+        QA_PLATFORM_EVENT_CONSOLE_COMMAND,sizeof(queued)+size);
+    if (admitted!=QA_PLATFORM_EVENT_ACCEPTED) return admitted;
+    char *bytes=qa_arena_alloc(&f->frame.storage,size,1,error);
+    if (!bytes) return QA_PLATFORM_EVENT_FULL;
+    if (queued.instance_size) memcpy(bytes,instance,queued.instance_size);
+    memcpy(bytes+queued.instance_size,text,text_size);
+    return qa_platform_events_push(f->platform_events,
+        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=wall_ns},
+        (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},(qa_bytes){(const uint8_t *)bytes,size});
+}
+static bool queued_command_context(qa_frontend *f,const frontend_queued_command *queued,
+    const char *instance,qa_console **console,qa_command_context *context,qa_error *error)
+{
+    if (queued->target==FRONTEND_COMMAND_SOURCE) {
+        for (size_t i=0;;++i) {
+            qa_application_startup_source source; bool present;
+            if (!qa_application_console_source_at(f->application,i,&source,&present,error)) return false;
+            if (!present) break;
+            const char *name=source.descriptor?source.descriptor->selection.instance:"";
+            if (source.scope.kind!=queued->source_kind || strcmp(name,instance) ||
+                ((source.scope.kind==QA_APPLICATION_CONSOLE_CLIENT ||
+                  source.scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME ||
+                  source.scope.kind==QA_APPLICATION_CONSOLE_Q3_UI) && source.scope.seat!=queued->source_seat)) continue;
+            *console=source.console; *context=source.command;
+            context->seat=queued->source_seat; context->dialect=queued->dialect; context->origin=queued->origin;
+            context->direct=queued->direct; context->console_text=queued->console_text;
+            context->script=NULL;
+            context->actor=(qa_actor_id){0};
+            if (source.scope.kind!=QA_APPLICATION_CONSOLE_CLIENT)
+                (void)qa_application_player_actor(f->application,queued->source_seat,&context->actor);
+            return true;
+        }
+        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Queued command Source is not currently published");
+    }
+    if (queued->target==FRONTEND_COMMAND_INPUT) {
+        qa_cvars *variables;
+        if (queued->physical_seat>=f->options.seats ||
+            !qa_input_seat_recipient_read(f->seats[queued->physical_seat].input,console,&variables,context))
+            return frontend_fail(error,QA_ERROR_NOT_FOUND,"Queued input has no published recipient");
+        return true;
+    }
+    uint32_t seat;
+    if (!frontend_seat_launch_id_read(f,queued->physical_seat,&seat))
+        return frontend_fail(error,QA_ERROR_NOT_FOUND,"Queued input has no current local seat");
+    *console=qa_application_console(f->application);
+    if (!qa_console_context_read(*console,context,error)) return false;
+    context->seat=seat; context->origin=QA_COMMAND_SEAT; context->direct=true;
+    context->actor=(qa_actor_id){0};
+    (void)qa_application_player_actor(f->application,seat,&context->actor);
+    context->script=NULL;
+    return true;
+}
+static bool handoff_event(qa_platform_events *events,qa_sys_event event,qa_bytes bytes,
+    uint32_t previous,uint32_t next,qa_error *error)
+{
+    uint32_t *window=NULL;
+    switch (event.kind) {
+    case QA_PLATFORM_EVENT_KEY: window=&event.data.key.window; break;
+    case QA_PLATFORM_EVENT_CHAR: window=&event.data.character.window; break;
+    case QA_PLATFORM_EVENT_MOUSE: window=&event.data.mouse.window; break;
+    case QA_PLATFORM_EVENT_WINDOW: window=&event.data.window.id; break;
+    default: break;
+    }
+    if (window && previous && *window==previous) *window=next;
+    if (qa_platform_events_push(events,&event,bytes,(qa_bytes){0})!=QA_PLATFORM_EVENT_ACCEPTED)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining pending frontend events at publication");
+    return true;
+}
+bool frontend_platform_handoff_prepare(const qa_frontend *active,const qa_frontend *candidate,
+    qa_platform_events **out,qa_error *error)
+{
+    qa_display_info previous={0},next={0};
+    if ((active->display && !qa_display_info_get(active->display,&previous,error)) ||
+        (candidate->display && !qa_display_info_get(candidate->display,&next,error))) return false;
+    qa_platform_event_stats old=qa_platform_events_statistics(active->platform_events);
+    qa_platform_event_stats fresh=qa_platform_events_statistics(candidate->platform_events);
+    qa_platform_events *events=qa_platform_events_create_reserved(old.records+fresh.records+1,
+        (size_t)old.bytes+fresh.bytes,error);
+    if (!events) return false;
+    bool okay=true;
+    if (next.window_id) {
+        bool focused=false;
+        for (unsigned i=0;i<active->options.seats;++i)
+            focused|=active->seats[i].input && qa_input_seat_focused(active->seats[i].input);
+        qa_sys_event focus={.kind=QA_PLATFORM_EVENT_WINDOW,.time_ns=active->wall_time_ns,
+            .data.window={.id=next.window_id,
+                .action=focused?QA_SYS_WINDOW_FOCUS_GAINED:QA_SYS_WINDOW_FOCUS_LOST}};
+        okay=handoff_event(events,focus,(qa_bytes){0},0,0,error);
+    }
+    qa_platform_event_cursor cursors[2]={{0},{0}};
+    const qa_platform_events *queues[2]={active->platform_events,candidate->platform_events};
+    qa_sys_event pending[2]; qa_bytes payload[2];
+    bool present[2]={qa_platform_events_read(queues[0],&cursors[0],&pending[0],&payload[0]),
+        qa_platform_events_read(queues[1],&cursors[1],&pending[1],&payload[1])};
+    while (okay && (present[0] || present[1])) {
+        unsigned index=!present[0] || (present[1] && pending[1].time_ns<pending[0].time_ns);
+        okay=handoff_event(events,pending[index],payload[index],index?0:previous.window_id,next.window_id,error);
+        present[index]=qa_platform_events_read(queues[index],&cursors[index],&pending[index],&payload[index]);
+    }
+    if (!okay) { qa_platform_events_destroy(events); return false; }
+    if (qa_platform_events_quit_requested(queues[0]) || qa_platform_events_quit_requested(queues[1]))
+        qa_platform_events_latch_quit(events);
+    qa_platform_events_destroy(*out); *out=events;
+    return true;
+}
+void frontend_platform_handoff_publish(qa_frontend *candidate,qa_platform_events **events)
+{
+    qa_platform_events_destroy(candidate->platform_events);
+    candidate->platform_events=*events; *events=NULL;
+}
 bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *error)
 {
     qa_sys_event event; qa_bytes payload;
@@ -493,14 +616,27 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
             if (!input_ready || commands_blocked) continue;
             frontend_queued_command command;
             memcpy(&command,payload.data,sizeof(command));
+            const char *instance=(const char *)payload.data+sizeof(command);
+            const char *text=instance+command.instance_size;
+            qa_console *console; qa_command_context context;
+            ok=queued_command_context(frontend,&command,instance,&console,&context,error);
+            if (!ok) { consumed=false; break; }
+            char item_command[64];
+            if (command.target==FRONTEND_COMMAND_ITEM) {
+                qa_strings *strings=qa_session_strings(qa_application_session(frontend->application));
+                qa_actor_owner owner=qa_strings_find(strings,(qa_bytes){(const uint8_t *)instance,strlen(instance)});
+                qa_item_id item=qa_strings_find(strings,
+                    (qa_bytes){(const uint8_t *)text,strlen(text)});
+                if (!item || !owner) break;
+                snprintf(item_command,sizeof(item_command),"useitem %" PRIu32 " %" PRIu32,owner,item);
+                text=item_command;
+            }
             if (command.replay) {
                 frontend->time_ns=command.time_ns;
                 frontend->frame_number=command.frame_number;
-                ok=qa_console_execute_now(command.console,&command.context,
-                    (const char *)payload.data + sizeof(command),error);
+                ok=qa_console_execute_now(console,&context,text,error);
             } else {
-                ok=qa_console_append(command.console,&command.context,
-                    (const char *)payload.data + sizeof(command),error);
+                ok=qa_console_append(console,&context,text,error);
                 consumed=ok;
             }
             break;

@@ -17,6 +17,7 @@ struct qa_frontend_original_restore {
     const qa_application_persistence_ops *services;
     qa_frontend_original_save save;
     char *product;
+    qa_platform_events *events;
     uint64_t wall_time_ns;
     bool begun,import_begun,imported,finished,visible;
 };
@@ -139,8 +140,9 @@ static bool publish_ready(qa_frontend_original_restore *operation,qa_error *erro
         if (!qa_display_info_get(source->display,&display,error)) return false;
         if (display.visible) return frontend_fail(error,QA_ERROR_ARGUMENT,"Original candidate window became visible before publication");
     }
-    return !operation->services || !operation->services->publish_ready ||
-        operation->services->publish_ready(operation->services->context,active->application,source->application,error);
+    return (!operation->services || !operation->services->publish_ready ||
+        operation->services->publish_ready(operation->services->context,active->application,source->application,error)) &&
+        frontend_platform_handoff_prepare(active,source,&operation->events,error);
 }
 static void publish(qa_frontend_original_restore *operation,qa_frontend **slot,qa_frontend **displaced)
 {
@@ -153,6 +155,7 @@ static void publish(qa_frontend_original_restore *operation,qa_frontend **slot,q
     source->options.display.hidden=!operation->visible;
     if (source->display) (void)qa_display_set_visible(source->display,operation->visible,NULL);
     if (source->device) qa_audio_device_pause(source->device,false);
+    frontend_platform_handoff_publish(source,&operation->events);
     *slot=source; *displaced=active; operation->source=NULL;
 }
 bool qa_frontend_original_restore_advance(qa_frontend_original_restore *operation,qa_frontend **slot,
@@ -218,6 +221,7 @@ bool qa_frontend_original_restore_dispose(qa_frontend_original_restore *operatio
     if (!retained_source || *retained_source)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original preparation disposal needs an empty retained source output");
     if (!operation) return true;
+    qa_platform_events_destroy(operation->events); operation->events=NULL;
     save_destroy(operation);
     qa_frontend *source=operation->source;
     bool ok=!source || qa_frontend_destroy(source,error);

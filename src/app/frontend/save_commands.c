@@ -456,31 +456,6 @@ static bool recovery_finish(void *context,void *value,qa_error *error)
     return !candidate->count || candidate->records[candidate->count-1].kind==QA_DEMO_ADVANCE ||
         frontend_fail(error,QA_ERROR_FORMAT,"Recovery ends inside an unfinished frame");
 }
-static bool recovery_console(qa_frontend *f,const recovery_command *saved,qa_console **out,
-    qa_command_context *command,qa_error *error)
-{
-    size_t count=qa_application_console_count(f->application);
-    for (size_t i=0;i<count;++i) {
-        qa_console *console=qa_application_console_at(f->application,i,NULL);
-        qa_application_console_scope scope;
-        if (!qa_application_console_scope_read(f->application,console,&scope) ||
-            (uint32_t)scope.kind!=saved->kind) continue;
-        const char *instance=scope.provider?qa_application_provider_instance(f->application,scope.provider):"";
-        if (!instance || strcmp(instance,saved->instance) ||
-            ((scope.kind==QA_APPLICATION_CONSOLE_CLIENT || scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME ||
-              scope.kind==QA_APPLICATION_CONSOLE_Q3_UI) && scope.seat!=saved->seat)) continue;
-        qa_command_context actual;
-        if (!qa_console_context_read(console,&actual,error)) return false;
-        actual.seat=saved->seat;actual.dialect=(qa_ruleset_id)saved->dialect;
-        actual.origin=(qa_command_origin)saved->origin;actual.direct=saved->direct;
-        actual.console_text=saved->console_text;actual.script=NULL;
-        if (!qa_application_player_actor(f->application,saved->seat,&actual.actor))
-            return frontend_fail(error,QA_ERROR_FORMAT,"Recovery command lost its actual local actor");
-        if (!qa_application_capture_command_context(f->application,&actual,command,error)) return false;
-        *out=console;return true;
-    }
-    return frontend_fail(error,QA_ERROR_FORMAT,"Recovery command lost its actual Source console");
-}
 static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
 {
     recovery_candidate *candidate=context;frontend_replay_timing frame={0};bool frame_pending=false;
@@ -513,16 +488,15 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
                 frame_pending=ok;
             } else if (ok && kind==RECOVERY_COMMAND) {
                 ok=command_fields(&io,&command) && qa_source_save_finish(&io,NULL);
-                qa_console *console=NULL;qa_command_context actual;
-                if (ok) ok=recovery_console(f,&command,&console,&actual,error);
                 if (ok) {
-                    frontend_queued_command queued={.console=console,.replay=true,
-                        .context=actual,
+                    frontend_queued_command queued={.target=FRONTEND_COMMAND_SOURCE,.replay=true,
+                        .source_seat=command.seat,.source_kind=(qa_application_console_kind)command.kind,
+                        .dialect=(qa_ruleset_id)command.dialect,.origin=(qa_command_origin)command.origin,
+                        .direct=command.direct,.console_text=command.console_text,
                         .time_ns=command.time_ns,.frame_number=command.frame_number};
                     qa_platform_event_result admitted=qa_platform_events_frame(f->platform_events,command.wall_ns);
-                    if(admitted==QA_PLATFORM_EVENT_ACCEPTED) admitted=qa_platform_events_push(f->platform_events,
-                        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=command.wall_ns},(qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
-                        (qa_bytes){(const uint8_t *)command.text,strlen(command.text)+1});
+                    if(admitted==QA_PLATFORM_EVENT_ACCEPTED) admitted=frontend_command_queue(f,&queued,
+                        command.instance,command.text,command.wall_ns,error);
                     queue_pending=admitted!=QA_PLATFORM_EVENT_ACCEPTED;
                     ok=!queue_pending && frontend_platform_drain(f,true,error);
                     if (ok) {

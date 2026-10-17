@@ -8302,6 +8302,41 @@ static void test_platform_event_retirement(void)
     }
     CHECK(clocks == 1);
     qa_platform_events_destroy(events);
+
+    const size_t retained = 24;
+    events = qa_platform_events_create_reserved((uint32_t)retained,
+        retained * sizeof(large), &error);
+    CHECK(events);
+    for (size_t i = 0; i < retained; ++i) {
+        line.time_ns = i;
+        large[0] = (uint8_t)i;
+        CHECK(qa_platform_events_push(events, &line, (qa_bytes){large, sizeof(large)},
+            (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+    }
+    for (size_t i = 0; i < QA_PLATFORM_EVENT_CAPACITY - 1; ++i) {
+        release.time_ns = retained + i;
+        CHECK(qa_platform_events_push(events, &release, (qa_bytes){0},
+            (qa_bytes){0}) == QA_PLATFORM_EVENT_ACCEPTED);
+    }
+    CHECK(qa_platform_events_frame(events, retained + QA_PLATFORM_EVENT_CAPACITY - 1) ==
+        QA_PLATFORM_EVENT_ACCEPTED);
+    cursor = (qa_platform_event_cursor){0};
+    size_t ordinal = 0;
+    while (qa_platform_events_read(events, &cursor, &event, &bytes)) {
+        CHECK(event.time_ns == ordinal);
+        if (ordinal < retained) {
+            CHECK(event.kind == QA_PLATFORM_EVENT_CONSOLE_LINE && bytes.size == sizeof(large));
+            CHECK(bytes.data[0] == (uint8_t)ordinal);
+        } else if (ordinal < retained + QA_PLATFORM_EVENT_CAPACITY - 1)
+            CHECK(event.kind == QA_PLATFORM_EVENT_KEY && !event.data.key.down);
+        else CHECK(event.kind == QA_PLATFORM_EVENT_TIME);
+        ++ordinal;
+        qa_platform_events_consume(events, &cursor);
+    }
+    CHECK(ordinal == retained + QA_PLATFORM_EVENT_CAPACITY);
+    CHECK(qa_platform_events_statistics(events).records == 0);
+    CHECK(qa_platform_events_statistics(events).bytes == 0);
+    qa_platform_events_destroy(events);
 }
 
 static void test_q2_command_angles(void)

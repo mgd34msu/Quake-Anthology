@@ -25,9 +25,6 @@ static bool command(frontend_inventory_menu *owner,const char *argument,qa_error
 {
     frontend_seat *seat=owner->seat;qa_frontend *f=seat->frontend;
     if(f->shutdown || qa_application_should_stop(f->application)) return true;
-    qa_console *console;qa_cvars *cvars;qa_command_context input,captured;
-    if(!qa_input_seat_recipient_read(seat->input,&console,&cvars,&input)) return true;
-    if(!qa_console_cvar_context(console,&input,&captured,error)) return false;
     size_t size=argument?strlen(argument):0;
     if(argument && strpbrk(argument,"\"\r\n")) {
         frontend_print(f,"Inventory item name cannot be represented by the selected console protocol.");
@@ -35,13 +32,12 @@ static bool command(frontend_inventory_menu *owner,const char *argument,qa_error
     }
     char *text=qa_arena_alloc(&f->frame.storage,size+12,1,error);
     if(!text) return false;
-    int written=argument?snprintf(text,size+12,"use \"%s\"\n",argument):snprintf(text,size+12,"putaway\n");
-    frontend_queued_command queued={.console=console,.context=captured,
+    if (argument) snprintf(text,size+12,"use \"%s\"\n",argument);
+    else snprintf(text,size+12,"putaway\n");
+    frontend_queued_command queued={.target=FRONTEND_COMMAND_INPUT,.physical_seat=seat->id,
         .time_ns=f->time_ns,.frame_number=f->frame_number};
-    qa_platform_event_result result=qa_platform_events_push(f->platform_events,
-        &(qa_sys_event){.kind=QA_PLATFORM_EVENT_CONSOLE_COMMAND,.time_ns=f->wall_time_ns},
-        (qa_bytes){(const uint8_t *)&queued,sizeof(queued)},
-        (qa_bytes){(const uint8_t *)text,(size_t)written+1});
+    qa_platform_event_result result=frontend_command_queue(f,&queued,NULL,text,f->wall_time_ns,error);
+    if(result!=QA_PLATFORM_EVENT_ACCEPTED && error && error->code!=QA_OK) return false;
     if(result!=QA_PLATFORM_EVENT_ACCEPTED)
         frontend_print(f,"Input queue is full; inventory command was not applied.");
     return true;

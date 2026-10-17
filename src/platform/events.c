@@ -13,17 +13,33 @@ typedef struct platform_event_record {
 struct qa_platform_events {
     qa_event_ring *pages;
     platform_event_record *first, *last;
-    uint32_t count, byte_count;
+    uint32_t count, byte_count, record_capacity;
     qa_platform_event_stats stats;
     bool quit_requested;
 };
 
 qa_platform_events *qa_platform_events_create(qa_error *error)
 {
+    return qa_platform_events_create_reserved(0, 0, error);
+}
+
+qa_platform_events *qa_platform_events_create_reserved(uint32_t retained_records,
+    size_t retained_payload_bytes, qa_error *error)
+{
+    size_t overhead = qa_event_ring_record_storage_size(sizeof(platform_event_record) +
+        _Alignof(platform_event_record) - 1);
+    if (retained_records > UINT32_MAX - QA_PLATFORM_EVENT_CAPACITY ||
+        retained_payload_bytes > UINT32_MAX - QA_PLATFORM_EVENT_BYTE_CAPACITY ||
+        retained_records > (UINT32_MAX - QA_PLATFORM_EVENT_BYTE_CAPACITY -
+            retained_payload_bytes) / overhead) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retained platform events exceed queue storage");
+        return NULL;
+    }
     qa_platform_events *events = calloc(1, sizeof(*events));
     if (!events) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating platform event queue"); return NULL; }
-    events->pages = qa_event_ring_create(QA_PLATFORM_EVENT_BYTE_CAPACITY, 16384,
-        QA_PLATFORM_EVENT_CAPACITY, error);
+    events->record_capacity = QA_PLATFORM_EVENT_CAPACITY + retained_records;
+    size_t bytes = QA_PLATFORM_EVENT_BYTE_CAPACITY + retained_payload_bytes + retained_records * overhead;
+    events->pages = qa_event_ring_create(bytes, 16384, events->record_capacity, error);
     if (!events->pages) { free(events); return NULL; }
     return events;
 }
@@ -59,7 +75,7 @@ qa_platform_event_result qa_platform_events_admit(qa_platform_events *events,
         increment(&events->stats.oversize[kind]);
         return QA_PLATFORM_EVENT_OVERSIZE;
     }
-    uint32_t limit = QA_PLATFORM_EVENT_CAPACITY - (kind == QA_PLATFORM_EVENT_TIME ? 0u : 1u);
+    uint32_t limit = events->record_capacity - (kind == QA_PLATFORM_EVENT_TIME ? 0u : 1u);
     if (kind == QA_PLATFORM_EVENT_PACKET) limit -= QA_PLATFORM_EVENT_KIND_COUNT;
     bool records = events->count >= limit;
     bool bytes = false;

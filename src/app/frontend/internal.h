@@ -598,12 +598,23 @@ typedef struct frontend_replay_timing {
     uint64_t wall_ns,time_ns,frame_before,frame_after;
     bool advanced,completed;
 } frontend_replay_timing;
+typedef enum frontend_command_target {
+    FRONTEND_COMMAND_INPUT, FRONTEND_COMMAND_SOURCE, FRONTEND_COMMAND_ITEM
+} frontend_command_target;
 typedef struct frontend_queued_command {
-    qa_console *console;
-    qa_command_context context;
+    frontend_command_target target;
+    uint32_t physical_seat,source_seat;
+    qa_application_console_kind source_kind;
+    qa_ruleset_id dialect;
+    qa_command_origin origin;
+    size_t instance_size;
     uint64_t time_ns,frame_number;
-    bool replay;
+    bool replay,direct,console_text;
 } frontend_queued_command;
+qa_platform_event_result frontend_command_queue(qa_frontend *,const frontend_queued_command *,
+    const char *instance,const char *text,uint64_t wall_ns,qa_error *);
+bool frontend_platform_handoff_prepare(const qa_frontend *,const qa_frontend *,qa_platform_events **,qa_error *);
+void frontend_platform_handoff_publish(qa_frontend *,qa_platform_events **);
 bool frontend_replay_frame(qa_frontend *,const frontend_replay_timing *,qa_error *);
 bool frontend_network_prepare(qa_frontend *, qa_error *);
 bool frontend_network_intake(qa_frontend *, qa_platform_events *, uint64_t now_ns, qa_error *);
