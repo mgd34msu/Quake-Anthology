@@ -3209,6 +3209,38 @@ static void test_campaign_travel_continuation(void)
     CHECK(application_map_travel_retained_read(source, &travel) && travel.revision == 7 &&
         source->map_state->gates_blocked && source->map_state->level_recorded);
     qa_buffer_free(&saved);
+    qa_travel_route_free(&state->route);
+    state->cursor = 0;
+    state->transition = APPLICATION_TRANSITION_CAMPAIGN_COMPLETE;
+    qa_travel_route_free(&restored->map_state->route);
+    free(restored->map_state);
+    restored->map_state = NULL;
+    for (unsigned step = 0; step < 3; ++step) {
+        state->pending = step < 2;
+        state->level_recorded = state->completion_emitted = step != 0;
+        CHECK(application_map_checkpoint_capture(source, false, &saved, &error));
+        CHECK(application_map_checkpoint_restore(restored, (qa_bytes){saved.data, saved.size}, &error));
+        const struct application_map_state *completion = restored->map_state;
+        CHECK(completion->transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE &&
+            completion->pending == state->pending && completion->level_recorded == state->level_recorded &&
+            completion->completion_emitted == state->completion_emitted &&
+            completion->origin == APPLICATION_TRAVEL_CAMPAIGN && completion->route.count == 0);
+        CHECK(!qa_application_travel_read(restored, &travel) &&
+            !application_map_travel_retained_read(restored, &travel));
+        qa_buffer_free(&saved);
+        free(restored->map_state);
+        restored->map_state = NULL;
+    }
+    state->pending = true;
+    CHECK(application_map_checkpoint_capture(source, false, &saved, &error));
+    CHECK(application_map_checkpoint_restore(restored, (qa_bytes){saved.data, saved.size}, &error));
+    CHECK(qa_application_queue_map_travel(restored,
+        &(qa_application_travel_request){.expression = "override"}, &error));
+    CHECK(qa_application_travel_read(restored, &travel) && travel.revision == 8 &&
+        !strcmp(travel.target.name, "maps/override.bsp") &&
+        restored->map_state->transition == APPLICATION_TRANSITION_ROUTE &&
+        !restored->map_state->level_recorded && !restored->map_state->completion_emitted);
+    qa_buffer_free(&saved);
     for (size_t i = 0; i < 3; ++i) {
         qa_travel_route_free(&apps[i].map_state->route);
         free(apps[i].map_state);

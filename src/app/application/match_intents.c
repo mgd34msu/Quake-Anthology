@@ -100,9 +100,8 @@ bool application_match_intents_idle(const application_match_intents *state) {
     return !state || (!state->busy && application_q3_restart_idle(state->restart));
 }
 static bool restart_owned_by_travel(application_match_intents *state, qa_application *app) {
-    qa_application_travel_view travel;
     if ((state->stage == MATCH_MAP_WAIT && state->revision) ||
-        (app && application_map_travel_retained_read(app, &travel))) {
+        (app && app->map_state && (app->map_state->pending || app->map_state->publication_complete))) {
         application_q3_restart_cancel(state->restart);
         return true;
     }
@@ -219,9 +218,9 @@ static bool config_intent(qa_match_intent_kind kind) {
     return kind == QA_MATCH_GAME_TYPE || kind == QA_MATCH_WARMUP ||
            kind == QA_MATCH_TIME_LIMIT || kind == QA_MATCH_FRAG_LIMIT;
 }
-static void travel_override(application_match_intents *state, const qa_application *app) {
+void application_match_intents_travel_override(application_match_intents *state, const qa_application *app) {
     const struct application_map_state *travel = app ? app->map_state : NULL;
-    if (state->stage == MATCH_MAP_AFTER || !travel || !travel->pending ||
+    if (!state || state->stage == MATCH_MAP_AFTER || !travel || !travel->pending ||
         travel->origin == APPLICATION_TRAVEL_MATCH) return;
     if (state->stage != MATCH_MAP_EMPTY && !config_intent(state->kind)) clear(state);
     application_q3_restart_cancel(state->restart);
@@ -325,7 +324,7 @@ bool application_match_intents_prepare(application_match_intents *state, qa_appl
     bool *consumed, qa_error *error) {
     if (!state || state->busy || !consumed) return application_fail(error, QA_ERROR_ARGUMENT, "match intent execution cannot reenter");
     *consumed = false;
-    travel_override(state, app);
+    application_match_intents_travel_override(state, app);
     if (state->stage != MATCH_MAP_EMPTY && state->stage != MATCH_MAP_AFTER &&
         !config_intent(state->kind) && application_map_campaign_active(app)) return true;
     state->busy = true;
@@ -492,7 +491,7 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
 }
 bool application_match_intents_reconnect(application_match_intents *state, qa_application *app, qa_error *error) {
     if (!state || state->busy) return application_fail(error, QA_ERROR_ARGUMENT, "match map reconnect cannot reenter");
-    travel_override(state, app);
+    application_match_intents_travel_override(state, app);
     if (!application_q3_restart_reconnect(state->restart, app, error)) return false;
     if (state->stage == MATCH_MAP_EMPTY) return true;
     bool after = state->stage == MATCH_MAP_AFTER;

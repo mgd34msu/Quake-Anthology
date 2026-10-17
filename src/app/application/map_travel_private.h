@@ -8,6 +8,10 @@ typedef enum application_travel_origin {
     APPLICATION_TRAVEL_CAMPAIGN,
     APPLICATION_TRAVEL_MATCH
 } application_travel_origin;
+typedef enum application_transition_kind {
+    APPLICATION_TRANSITION_ROUTE,
+    APPLICATION_TRANSITION_CAMPAIGN_COMPLETE
+} application_transition_kind;
 
 struct application_map_state {
     qa_launch_draft *restart_draft;
@@ -21,8 +25,9 @@ struct application_map_state {
     qa_string_id nextserver;
     qa_map_launch_policy map_launch;
     application_travel_origin origin;
+    application_transition_kind transition;
     bool pending, busy, has_landmark, carry_players, complete_campaign;
-    bool gates_blocked, level_recorded;
+    bool gates_blocked, level_recorded, completion_emitted;
     bool loading, load_carry, load_new_unit;
     bool publication_complete, match_finished;
     bool start_match;
@@ -36,6 +41,9 @@ struct application_map_state {
 bool application_map_campaign_active(const qa_application *);
 bool application_map_travel_prepare(qa_application *, qa_error *);
 bool application_map_travel_retained_read(const qa_application *, qa_application_travel_view *);
+void application_match_intents_travel_override(struct application_match_intents *, const qa_application *);
+bool application_source_complete_campaign(application_provider *, qa_error *);
+bool application_map_campaign_complete_event(application_provider *, qa_error *);
 bool application_map_level_entry(qa_application *, bool fresh, qa_error *);
 bool application_map_autosave_request(qa_application *, qa_error *);
 void application_map_load_finish(qa_application *, bool published);

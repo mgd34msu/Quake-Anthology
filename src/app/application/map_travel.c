@@ -190,6 +190,10 @@ bool application_map_level_entry(qa_application *application, bool fresh, qa_err
     if (!state) return false;
     if (state->entry_generation == application->map_revision) return true;
     if (!campaign_level_entry(application,error)) return false;
+    if (state->transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE && !state->pending) {
+        state->transition = APPLICATION_TRANSITION_ROUTE;
+        state->completion_emitted = false;
+    }
     if (state->save_request_revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY, "level save request identity exhausted");
     if (!application_q1_music_cue(application, fresh, error)) return false;
@@ -449,12 +453,14 @@ bool qa_application_load_map(qa_application *application,
     return ok;
 }
 
-static bool queue_travel(qa_application *application,
+static bool queue_transition(qa_application *application,
                          const qa_application_travel_request *request,
-                         bool literal_map, application_travel_origin origin,
+                         bool literal_map, application_transition_kind transition,
+                         application_travel_origin origin,
                          qa_error *error)
 {
-    if (application == NULL || request == NULL || request->expression == NULL ||
+    if (application == NULL || request == NULL ||
+        (transition == APPLICATION_TRANSITION_ROUTE && request->expression == NULL) ||
         application->state == QA_APPLICATION_FAULTED ||
         application->state == QA_APPLICATION_STOPPING ||
         application->destroy_requested || application->finalizing ||
@@ -467,12 +473,15 @@ static bool queue_travel(qa_application *application,
     if (state->busy || state->loading || state->publication_complete)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "travel cannot reenter its publication");
+    if (transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE &&
+        state->transition == transition && state->provider == request->provider &&
+        state->completion_emitted && !state->pending) return true;
     if (state->revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "travel continuation identity is exhausted");
     literal_map |= request->map_launch != QA_MAP_LAUNCH_DEFAULT;
     qa_travel_route route = {0};
-    if (literal_map) {
+    if (transition == APPLICATION_TRANSITION_ROUTE && literal_map) {
         route.storage = map_path(request->expression, error);
         if (route.storage == NULL)
             return false;
@@ -486,7 +495,8 @@ static bool queue_travel(qa_application *application,
         route.targets[0] = (qa_travel_target){.kind = QA_TRAVEL_MAP,
                                              .name = route.storage,
                                              .spawn_point = ""};
-    } else if (!qa_q2_travel_parse(request->expression, &route, error))
+    } else if (transition == APPLICATION_TRANSITION_ROUTE &&
+        !qa_q2_travel_parse(request->expression, &route, error))
         return false;
     if (request->map_launch != QA_MAP_LAUNCH_DEFAULT) {
         application_provider *source = application_provider_lookup(application,
@@ -518,7 +528,7 @@ static bool queue_travel(qa_application *application,
             return ok;
         }
     }
-    route.targets[0].new_unit |= request->new_unit;
+    if (route.count) route.targets[0].new_unit |= request->new_unit;
     size_t match_index = 0;
     bool start_match = request->start_match_mode.generation != 0;
     if (start_match) {
@@ -529,9 +539,8 @@ static bool queue_travel(qa_application *application,
         start_match = match_index < application->mode_count;
     }
     if (state->pending) {
-        const qa_travel_target *old = &state->route.targets[state->cursor];
-        const qa_travel_target *next = &route.targets[0];
-        bool same = state->origin == origin && state->provider == request->provider &&
+        bool same = state->transition == transition && state->origin == origin &&
+                    state->provider == request->provider &&
                     state->geometry == request->geometry &&
                     state->carry_players == request->carry_players &&
                     state->complete_campaign == request->complete_campaign &&
@@ -547,8 +556,8 @@ static bool queue_travel(qa_application *application,
                    qa_vec_equal(state->landmark.relative_velocity, request->landmark->relative_velocity) &&
                    qa_vec_equal(state->landmark.relative_view_angles, request->landmark->relative_view_angles);
         for (size_t i = 0; same && i < route.count; ++i) {
-            old = &state->route.targets[state->cursor + i];
-            next = &route.targets[i];
+            const qa_travel_target *old = &state->route.targets[state->cursor + i];
+            const qa_travel_target *next = &route.targets[i];
             same = old->kind == next->kind && old->new_unit == next->new_unit &&
                    strcmp(old->name, next->name) == 0 &&
                    strcmp(old->spawn_point, next->spawn_point) == 0;
@@ -578,9 +587,11 @@ static bool queue_travel(qa_application *application,
     state->complete_campaign = request->complete_campaign;
     state->map_launch = request->map_launch;
     state->origin = origin;
+    state->transition = transition;
     state->gates_blocked = origin != APPLICATION_TRAVEL_MANUAL &&
         application_map_campaign_active(application);
     state->level_recorded = false;
+    state->completion_emitted = false;
     state->start_match = start_match;
     state->match_mode_index = match_index;
     state->has_landmark = request->landmark != NULL;
@@ -597,7 +608,8 @@ bool qa_application_queue_travel(qa_application *application,
     if (application && (application->q3_round_active || application->frame_preparing ||
         application->q3_world_restart || !application_rankings_idle(application)))
         return application_fail(error, QA_ERROR_ARGUMENT, "travel request cannot reenter a source replacement");
-    return queue_travel(application, request, false, APPLICATION_TRAVEL_MANUAL, error);
+    return queue_transition(application, request, false, APPLICATION_TRANSITION_ROUTE,
+        APPLICATION_TRAVEL_MANUAL, error);
 }
 
 bool qa_application_queue_map_travel(qa_application *application,
@@ -607,11 +619,13 @@ bool qa_application_queue_map_travel(qa_application *application,
     if (application && (application->q3_round_active || application->frame_preparing ||
         application->q3_world_restart || !application_rankings_idle(application)))
         return application_fail(error, QA_ERROR_ARGUMENT, "travel request cannot reenter a source replacement");
-    return queue_travel(application, request, true, APPLICATION_TRAVEL_MANUAL, error);
+    return queue_transition(application, request, true, APPLICATION_TRANSITION_ROUTE,
+        APPLICATION_TRAVEL_MANUAL, error);
 }
 
-static bool source_queue_travel(qa_application *application,
-    const qa_application_travel_request *request, bool literal, qa_error *error)
+static bool source_queue_transition(qa_application *application,
+    const qa_application_travel_request *request, bool literal,
+    application_transition_kind transition, qa_error *error)
 {
     application_provider *provider = request ? application_provider_lookup(application,
         request->provider, APPLICATION_PROVIDER_PUBLISHED) : NULL;
@@ -619,17 +633,24 @@ static bool source_queue_travel(qa_application *application,
         (application->operation != APPLICATION_IDLE && application->operation != APPLICATION_ADVANCING &&
          application->operation != APPLICATION_CONFIGURING))
         return application_fail(error, QA_ERROR_ARGUMENT, "source travel has no admitted producer");
-    return queue_travel(application, request, literal,
+    return queue_transition(application, request, literal, transition,
         literal ? APPLICATION_TRAVEL_MATCH : APPLICATION_TRAVEL_CAMPAIGN, error);
 }
 
 bool application_source_queue_travel(qa_application *application,
     const qa_application_travel_request *request, qa_error *error)
-{ return source_queue_travel(application, request, false, error); }
+{ return source_queue_transition(application, request, false, APPLICATION_TRANSITION_ROUTE, error); }
 
 bool application_source_queue_map_travel(qa_application *application,
     const qa_application_travel_request *request, qa_error *error)
-{ return source_queue_travel(application, request, true, error); }
+{ return source_queue_transition(application, request, true, APPLICATION_TRANSITION_ROUTE, error); }
+
+bool application_source_complete_campaign(application_provider *provider, qa_error *error)
+{
+    return source_queue_transition(provider->application,
+        &(qa_application_travel_request){.provider = provider->owner, .complete_campaign = true},
+        false, APPLICATION_TRANSITION_CAMPAIGN_COMPLETE, error);
+}
 
 bool application_map_campaign_active(const qa_application *application)
 {
@@ -659,6 +680,22 @@ bool application_map_travel_prepare(qa_application *application, qa_error *error
         }
     }
     state->gates_blocked = blocked;
+    if (!blocked && state->transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE) {
+        application_match_intents_travel_override(application->match_intents, application);
+        application_provider *source = application_provider_lookup(application,
+            state->provider, APPLICATION_PROVIDER_PUBLISHED);
+        if (!source) return false;
+        if (!state->level_recorded) {
+            if (!application_record_level(source, application->current_map, error)) return false;
+            state->level_recorded = true;
+        }
+        if (!state->completion_emitted) {
+            if (!application_map_campaign_complete_event(source, error)) return false;
+            state->completion_emitted = true;
+        }
+        if (!application_source_log(source, "Campaign complete.\n", true, error)) return false;
+        state->pending = false;
+    }
     return true;
 }
 
@@ -666,6 +703,7 @@ bool application_map_travel_retained_read(const qa_application *application,
     qa_application_travel_view *out)
 {
     if (application == NULL || out == NULL || application->map_state == NULL ||
+        application->map_state->transition != APPLICATION_TRANSITION_ROUTE ||
         (!application->map_state->pending && !application->map_state->publication_complete))
         return false;
     const struct application_map_state *state = application->map_state;
@@ -741,6 +779,7 @@ static bool travel_current(qa_application *application, uint64_t revision,
                             struct application_map_state **out, qa_error *error)
 {
     if (!map_safe(application) || application->map_state == NULL ||
+        application->map_state->transition != APPLICATION_TRANSITION_ROUTE ||
         !application->map_state->pending || application->map_state->gates_blocked ||
         application->map_state->busy ||
         application->map_state->revision != revision)
@@ -1087,10 +1126,11 @@ bool application_map_server_command(application_provider *provider,
     memcpy(expression, destination, size);
     expression[size] = '\0';
     if (size > 4 && !strcmp(expression + size - 4, ".bsp")) expression[size - 4] = '\0';
-    bool ok = queue_travel(provider->application,
+    bool ok = queue_transition(provider->application,
         &(qa_application_travel_request){.provider = provider->owner,
             .expression = expression, .new_unit = map, .carry_players = !map,
             .complete_campaign = changelevel, .map_launch = policy}, policy != QA_MAP_LAUNCH_DEFAULT,
+        APPLICATION_TRANSITION_ROUTE,
         map ? APPLICATION_TRAVEL_MATCH : APPLICATION_TRAVEL_CAMPAIGN, error);
     free(expression);
     return ok;
@@ -1250,6 +1290,8 @@ bool application_map_checkpoint_capture(qa_application *application, bool depart
             ok = application_fail(error, QA_ERROR_FORMAT, "map continuation has no retained target storage");
         else {
             struct application_map_state retained = *live;
+            if (retained.transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE)
+                retained.pending = false;
             uint64_t revision = live->revision;
             ok = map_checkpoint_fields(&io, &retained, &retained.geometry, application->catalog);
             if (ok && (live != application->map_state || revision != live->revision || live->busy || live->loading))
@@ -1269,6 +1311,12 @@ bool application_map_checkpoint_capture(qa_application *application, bool depart
     if (ok) ok = qa_source_save_u32(&io, &origin);
     bool level_recorded = present && application->map_state->level_recorded;
     if (ok) ok = qa_source_save_bool(&io, &level_recorded);
+    if (ok && present && application->map_state->transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE) {
+        uint32_t transition = (uint32_t)application->map_state->transition;
+        bool pending = application->map_state->pending, emitted = application->map_state->completion_emitted;
+        ok = qa_source_save_u32(&io, &transition) && qa_source_save_bool(&io, &pending) &&
+            qa_source_save_bool(&io, &emitted);
+    }
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
@@ -1329,7 +1377,9 @@ static bool campaign_route_copy(const struct application_map_state *source,
     destination->complete_campaign=source->complete_campaign;
     destination->map_launch=source->map_launch;
     destination->origin=source->origin;
+    destination->transition=source->transition;
     destination->level_recorded=source->level_recorded;
+    destination->completion_emitted=source->completion_emitted;
     destination->start_match=source->start_match;
     destination->match_mode_index=source->match_mode_index;
     destination->pending=false; destination->has_landmark=false;
@@ -1431,6 +1481,13 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         ok = application_fail(error, QA_ERROR_FORMAT, "Invalid map transition origin");
     bool level_recorded = false;
     if (ok && io.offset < io.input.size) ok = qa_source_save_bool(&io, &level_recorded);
+    uint32_t transition = APPLICATION_TRANSITION_ROUTE;
+    bool completion_pending = false, completion_emitted = false;
+    if (ok && io.offset < io.input.size) ok = qa_source_save_u32(&io, &transition);
+    if (ok && transition > APPLICATION_TRANSITION_CAMPAIGN_COMPLETE)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Invalid map continuation transition");
+    if (ok && transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE)
+        ok = qa_source_save_bool(&io, &completion_pending) && qa_source_save_bool(&io, &completion_emitted);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok && !state && overrides != QA_TEAM_ARENA_OVERRIDES_NONE) {
         state = calloc(1, sizeof(*state));
@@ -1442,7 +1499,10 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
         state->match_mode_index = match_index;
         state->team_overrides = overrides;
         state->origin = (application_travel_origin)origin;
+        state->transition = (application_transition_kind)transition;
         state->level_recorded = level_recorded;
+        state->completion_emitted = completion_emitted;
+        if (transition == APPLICATION_TRANSITION_CAMPAIGN_COMPLETE) state->pending = completion_pending;
         state->gates_blocked = state->pending && origin != APPLICATION_TRAVEL_MANUAL;
     }
     if (ok && state) ok = own_map_route(&state->route, &state->route, error);

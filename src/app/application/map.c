@@ -795,18 +795,17 @@ static bool q1_finale_finished(void *opaque)
     return qa_q1_game_finale_finished(provider->state.q1);
 }
 
-static bool q1_finish_campaign(void *opaque, qa_error *error)
+bool application_map_campaign_complete_event(application_provider *provider, qa_error *error)
 {
-    application_provider *provider = opaque;
     return emit_map_event(provider,
                           (qa_builtin_event){.kind = QA_BUILTIN_TARGET,
                                              .family = QA_GAME_Q1,
                                              .code = INT32_MAX},
-                          error) &&
-           application_record_level(provider,
-                                    provider->application->current_map,
-                                    error);
+                          error);
 }
+
+static bool q1_finish_campaign(void *opaque, qa_error *error)
+{ return application_source_complete_campaign(opaque, error); }
 
 static bool q1_server_command(void *opaque, qa_string_id command,
                               qa_error *error)
