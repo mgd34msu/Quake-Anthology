@@ -2113,6 +2113,13 @@ static bool persistence_finish_prepare(void *opaque, void *value, const qa_save_
     if (ok) ok = application_unified_events_restore_finish(candidate, error);
     if (ok && operation->ops->complete_state)
         ok=operation->ops->complete_state(operation->ops->context,candidate,image,error);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (!engine || !engine->game || provider->trajectory_only) continue;
+        for (uint32_t slot = 0; ok && slot < sizeof(engine->clients) / sizeof(*engine->clients); ++slot)
+            ok = q3g_arsenal_client_admit(provider, slot, error);
+    }
     if (ok)
         ok=application_startup_program_restore_prepare(candidate,operation->active,&operation->programs,error) &&
             application_startup_program_publication_seal(operation->programs,error) &&
