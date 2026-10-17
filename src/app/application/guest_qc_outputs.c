@@ -2,6 +2,7 @@
 #include "map_players_private.h"
 #include "native_q2_client_outputs.h"
 #include "native_q2_client_stages.h"
+#include "qa/qc_observation.h"
 
 static bool client_binding(const struct application_qc_state *engine, uint32_t slot,
     bool canonical, int32_t *reference, qa_error *error)
@@ -178,7 +179,8 @@ bool application_qc_control_outputs(const qa_application *application, qa_actor_
     if (!application || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "QC output read requires its application and destination");
     *out = (application_client_outputs){0};
-    if (!qa_actors_get(qa_session_actors(application->session), actor)) return true;
+    const qa_actor_record *owned = qa_actors_get(qa_session_actors(application->session), actor);
+    if (!owned) return true;
     if (!application_player_record_find(application->players,actor)) return true;
     if(!application_native_q2_control_outputs(application,actor,out,error))return false;
     uint8_t claimed = 0;
@@ -188,8 +190,38 @@ bool application_qc_control_outputs(const qa_application *application, qa_actor_
     for (size_t i = 0; i < application->provider_count; ++i) {
         const application_provider *provider = application->providers[i];
         if (!provider->attached || !provider->constructed || provider->kind != APPLICATION_PROVIDER_QC ||
-            !provider->state.qc.qualified || !provider->state.qc.engine) continue;
+            !provider->state.qc.engine) continue;
         const struct application_qc_state *engine = provider->state.qc.engine;
+        if (!provider->state.qc.qualified) {
+            const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+            if (owned->owner != provider->owner || !client || !client->connected || !client->spawned ||
+                !client->primary_character ||
+                application_provider_for(engine->provider->application, actor, QA_ROLE_CHARACTER, "") != provider ||
+                application_provider_for(engine->provider->application, actor, QA_ROLE_MOVEMENT, "") == provider) continue;
+            uint32_t slot = (uint32_t)(client - engine->clients);
+            qa_qc_slot_binding binding;
+            if (!qa_qc_slot(provider->state.qc.instance, slot, &binding) ||
+                (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
+                !qa_actor_id_equal(binding.actor, actor) || binding.owner != owned->owner ||
+                binding.source_slot != (owned->has_source ? owned->source_slot : 0))
+                return application_fail(error, QA_ERROR_NOT_FOUND, "QC body request lost its actual source client binding");
+            const qa_qc_definition *mins = engine->field_bindings->mins, *maxs = engine->field_bindings->maxs;
+            if (!mins || mins->type != QA_QC_VECTOR || !maxs || maxs->type != QA_QC_VECTOR)
+                return application_fail(error, QA_ERROR_FORMAT, "QC body request has no original source bounds");
+            uint8_t channel = 1u << APPLICATION_CLIENT_BODY_SHAPE;
+            if (claimed & channel)
+                return application_fail(error, QA_ERROR_FORMAT, "QC body request found competing channel owners");
+            if (!application_control_output_admit(application, actor, channel, error) ||
+                !qa_qc_actor_observation_vector(provider->state.qc.instance, slot, actor, mins->offset,
+                    &out->body_bounds.mins, error) ||
+                !qa_qc_actor_observation_vector(provider->state.qc.instance, slot, actor, maxs->offset,
+                    &out->body_bounds.maxs, error)) return false;
+            if (!qa_bounds_valid(out->body_bounds))
+                return application_fail(error, QA_ERROR_FORMAT, "QC body request has invalid original source bounds");
+            out->has_body_bounds = true;
+            claimed |= channel;
+            continue;
+        }
         if (!engine->output_channels) continue;
         if (claimed & engine->output_channels)
             return application_fail(error, QA_ERROR_FORMAT, "QC output read found competing channel owners");

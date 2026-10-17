@@ -16,6 +16,12 @@ static int32_t reference_of(const qa_qc_instance *instance, uint32_t slot)
 {
     return (int32_t)((uint64_t)slot * instance->layout.stride_bytes);
 }
+static bool may_move(qa_qc_instance *, uint32_t);
+static bool source_owned(const qa_qc_instance *instance, qa_actor_id actor)
+{
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(instance->options.host.session), actor);
+    return record && record->owner == instance->options.host.owner;
+}
 static bool canonical_ground_reference(qa_qc_instance *instance,
     qa_actor_reference ground, int32_t *out, qa_error *error)
 {
@@ -689,13 +695,14 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "Borrowed QuakeC actor changed during body refresh");
     }
+    bool private_bounds = source_owned(instance, actor) && !may_move(instance, slot);
     bool ok = raw_body_vector(instance, slot, instance->program->engine_fields.origin, body.origin, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.angles, body.angles, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.velocity, body.velocity, error)
-        && raw_body_vector(instance, slot, instance->program->engine_fields.mins, body.bounds.mins, error)
+        && (private_bounds || (raw_body_vector(instance, slot, instance->program->engine_fields.mins, body.bounds.mins, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.maxs, body.bounds.maxs, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.size,
-                           qa_vec_sub(body.bounds.maxs, body.bounds.mins), error);
+                           qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)));
     qa_linked_body linked;
     qa_bounds absolute = qa_world_linked(instance->options.host.world, actor,
                                          &linked)
@@ -1290,7 +1297,8 @@ static bool setorigin(qa_qc_instance *instance, qa_error *error)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setorigin requires a finite origin");
     uint32_t slot;
     if (!qc_entity_slot(instance, reference, &slot, error) || slot == 0
-        || instance->slots[slot].kind == QA_QC_SLOT_FREE || !may_move(instance, slot))
+        || instance->slots[slot].kind == QA_QC_SLOT_FREE ||
+        (!source_owned(instance, instance->slots[slot].actor) && !may_move(instance, slot)))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setorigin lacks actor movement authority");
     qc_slot binding = instance->slots[slot];
     if (!set_field_vector(instance, slot, instance->program->engine_fields.origin, origin, error)) return false;
@@ -1323,7 +1331,10 @@ static bool setsize(qa_qc_instance *instance, qa_error *error)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize bounds are inverted");
     uint32_t slot;
     if (!qc_entity_slot(instance, reference, &slot, error) || slot == 0
-        || instance->slots[slot].kind == QA_QC_SLOT_FREE || !may_move(instance, slot))
+        || instance->slots[slot].kind == QA_QC_SLOT_FREE)
+        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize lacks actor movement authority");
+    bool movement = may_move(instance, slot);
+    if (!movement && !source_owned(instance, instance->slots[slot].actor))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize lacks actor movement authority");
     qc_slot binding = instance->slots[slot];
     if (!set_field_vector(instance, slot, instance->program->engine_fields.mins, mins, error)) return false;
@@ -1344,7 +1355,7 @@ static bool setsize(qa_qc_instance *instance, qa_error *error)
     if (!slot_matches(instance, slot, binding.kind, binding.actor))
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "setsize actor changed during source store");
-    if (instance->options.host.world == NULL) return true;
+    if (instance->options.host.world == NULL || !movement) return true;
     qa_body_state body;
     if (!qa_world_body_read(instance->options.host.world,
             binding.actor, &body, error)) return false;

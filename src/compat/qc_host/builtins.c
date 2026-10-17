@@ -55,11 +55,12 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
         return qc_game_fail(error, QA_ERROR_NOT_FOUND, "QC model actor changed during resource lookup");
     const qa_actor_record *record = qa_actors_get(qa_session_actors(game->options.services.session), actor);
     qa_actor_owner execution;
-    bool allowed = !entity || (record && (game->options.vm.host.may_move ?
+    bool movement = !entity || (record && (game->options.vm.host.may_move ?
         game->options.vm.host.may_move(game->options.vm.host.context, actor) :
         record->owner == game->options.vm.host.owner ||
             (qa_session_execution(game->options.services.session, actor, &execution) && execution == game->options.vm.host.owner)));
-    if (!allowed || !same_model_actor(game, entity, actor, error))
+    bool source_owned = record && record->owner == game->options.vm.host.owner;
+    if ((!movement && !source_owned) || !same_model_actor(game, entity, actor, error))
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC model cannot alter another movement owner");
     uint32_t words[3] = {(uint32_t)model, 0, 0};
     if (!field(game, entity, game->fields->model, QA_QC_STRING, words, error) ||
@@ -71,7 +72,7 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
         !vector_field(game, entity, game->fields->maxs, cached.bounds.maxs, error) ||
         !same_model_actor(game, entity, actor, error) ||
         !vector_field(game, entity, game->fields->size, qa_vec_sub(cached.bounds.maxs, cached.bounds.mins), error)) return false;
-    if (!entity) return true;
+    if (!entity || !movement) return true;
     if (!qa_qc_reference_actor(game->vm, entity, &current, error) || !qa_actor_id_equal(current, actor))
         return qc_game_fail(error, QA_ERROR_NOT_FOUND, "QC model actor changed during field publication");
     qa_body_state body;
