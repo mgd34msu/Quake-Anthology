@@ -257,6 +257,9 @@ bool qa_scene_model_image_policy_replacement(qa_scene_model_image_policy *,
 bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy *,
     const qa_model_replacement *, struct qa_scene_model_content_lease *mesh,
     struct qa_scene_model_content_lease *animation, qa_error *);
+/* Borrow only the newly prepared child. Existing published models remain owned
+ * by the live tree; abort destroys this private child. */
+qa_scene_model *qa_scene_model_image_policy_replacement_model(const qa_scene_model_image_policy *);
 bool qa_scene_model_replacement_prepare(qa_scene_model *, const qa_model_replacement *,
     struct qa_scene_model_content_lease *mesh, struct qa_scene_model_content_lease *source,
     struct qa_scene_model_content_lease *animation, qa_error *);

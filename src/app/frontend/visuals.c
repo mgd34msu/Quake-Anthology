@@ -717,6 +717,8 @@ bool frontend_visual_policy_prepare(qa_frontend *frontend, const frontend_model_
                     if (mesh.release) mesh.release(mesh.context);
                     if (source.release) source.release(source.context);
                     if (animation.release) animation.release(animation.context);
+                    if (ok) ok = frontend_held_attachment_prepare(owner->mounts, model->path,
+                        qa_scene_model_image_policy_replacement_model(prepared), error);
                     if (!ok) { visual_policy_dispose(ticket); return false; }
                     description = &row->description;
                 }
@@ -854,6 +856,9 @@ static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_
                 qa_scene_model_image_policy_replacement_parent(bindings[index].ticket, &replacement, &mesh, &animation, error);
             if (mesh.release) mesh.release(mesh.context);
             if (animation.release) animation.release(animation.context);
+            if (ok) ok = frontend_held_attachment_prepare(files,
+                opening->lookup_path ? opening->lookup_path : opening->path,
+                qa_scene_model_image_policy_replacement_model(bindings[index].ticket), error);
             if (ok) description = &replacement;
         }
     }
@@ -963,6 +968,9 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
                             qa_scene_model_image_policy_replacement_parent(bindings[index].ticket, &replacement, &mesh, &animation, error);
                         if (mesh.release) mesh.release(mesh.context);
                         if (animation.release) animation.release(animation.context);
+                        if (ok) ok = frontend_held_attachment_prepare(opening.provider.mounts,
+                            opening.first_requested_path ? opening.first_requested_path : opening.receipt->path,
+                            qa_scene_model_image_policy_replacement_model(bindings[index].ticket), error);
                         if (ok) description = &replacement;
                     }
                 }

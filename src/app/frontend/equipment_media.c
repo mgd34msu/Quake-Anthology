@@ -7,6 +7,7 @@
 #include "qa/application_equipment_content.h"
 #include "../application/guest_q3_components.h"
 #include "shared_resource_policy.h"
+#include "scene_refs.h"
 #include "renderer_materials.h"
 #include "qa/media_library_prepare.h"
 #include "qa/q3_assets_custody.h"
@@ -37,14 +38,22 @@ static void native_icons_release(native_hud_icons *icons)
     *icons = (native_hud_icons){0};
 }
 
-static bool stock_grip_admit(void *context,qa_scene_model *scene,qa_error *error)
+typedef struct held_attachment_source {
+    qa_vfs *files;
+    const char *path;
+} held_attachment_source;
+static bool held_attachment_admit(void *context, qa_scene_model *scene, qa_error *error)
 {
-    const char *const *path=context;
-    return frontend_held_stock_q2_attachment(*path,scene,error);
-}
-bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
-    qa_scene_model *scene, qa_error *error)
-{
+    const held_attachment_source *carrier = context;
+    qa_vfs *files = carrier->files;
+    const char *model_path = carrier->path;
+    frontend_model_source source;
+    if (qa_scene_model_replacement_description(scene)) {
+        if (!frontend_scene_model_source_read(scene, QA_SCENE_MODEL_CONTENT_SOURCE, &source))
+            return frontend_held_stock_q2_attachment(carrier->path, scene, error);
+        files = (qa_vfs *)source.files;
+        model_path = qa_resource_path(source.resource);
+    }
     static const char suffix[] = ".attachment.json";
     size_t length = strlen(model_path);
     if (length > SIZE_MAX - sizeof(suffix))
@@ -58,7 +67,7 @@ bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
     bool ok = qa_vfs_acquire(files, path, &resource, NULL, &local);
     free(path);
     if (!ok && local.code == QA_ERROR_NOT_FOUND)
-        return qa_scene_model_visit(scene,stock_grip_admit,&model_path,error);
+        return frontend_held_stock_q2_attachment(carrier->path, scene, error);
     if (!ok) { if (error) *error = local; return false; }
     frontend_held_attachment attachment = {0};
     ok = frontend_held_attachment_read(qa_resource_bytes(resource), &attachment, error);
@@ -67,6 +76,12 @@ bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
     frontend_held_attachment_free(&attachment);
     qa_resource_release(resource);
     return ok;
+}
+bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
+    qa_scene_model *scene, qa_error *error)
+{
+    held_attachment_source source = {files, model_path};
+    return qa_scene_model_visit(scene, held_attachment_admit, &source, error);
 }
 
 static bool carrier_grip_present(void *context, qa_scene_model *model, qa_error *error)

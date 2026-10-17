@@ -802,6 +802,10 @@ bool qa_scene_model_image_policy_replacement_parent(qa_scene_model_image_policy 
     next->animation_lease = *animation; *animation = (qa_scene_model_content_lease){0};
     ticket->replacement = next; return true;
 }
+qa_scene_model *qa_scene_model_image_policy_replacement_model(const qa_scene_model_image_policy *ticket)
+{
+    return ticket && !ticket->published ? ticket->replacement : NULL;
+}
 bool qa_scene_model_image_policy_skin_admit(qa_scene_model_image_policy *ticket,
     const qa_model_skin_map *skin, qa_error *error)
 {
