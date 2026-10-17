@@ -281,13 +281,17 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
 {
     if (services->view_blend && (!scene_current(services,error) ||
         !services->view_blend(services->context,input,blend,error) || !scene_current(services,error))) return false;
+    const qa_scene_fog *previous_fog = frame->fog_scope;
+    qa_scene_fog fog = input->no_world ? (qa_scene_fog){0} : input->fog;
+    frame->fog_scope = &fog;
+    bool ok = false;
     qa_scene_world_input opaque = *input;
     bool q1_world = policy->family == QA_GAME_Q1 && qa_scene_world_format(actual_world) == QA_BSP_Q1;
     if (q1_world) opaque.legacy_phase = QA_LEGACY_WORLD_OPAQUE;
     if (q1_world && input->q1_sky_environment &&
-        !qa_scene_world_q1_sky_begin(actual_world, &opaque, frame, &opaque.q1_sky, error)) return false;
-    if (!qa_scene_world_boxed_sky_begin(actual_world, &opaque, frame, &opaque.boxed_sky, error)) return false;
-    if (!qa_scene_world_q2_alpha_begin(&opaque, frame, &opaque.q2_alpha, error)) return false;
+        !qa_scene_world_q1_sky_begin(actual_world, &opaque, frame, &opaque.q1_sky, error)) goto done;
+    if (!qa_scene_world_boxed_sky_begin(actual_world, &opaque, frame, &opaque.boxed_sky, error)) goto done;
+    if (!qa_scene_world_q2_alpha_begin(&opaque, frame, &opaque.q2_alpha, error)) goto done;
     qa_scene_world_input visuals = *input;
     visuals.q1_sky = opaque.q1_sky;
     visuals.boxed_sky = opaque.boxed_sky;
@@ -296,29 +300,31 @@ static bool scene(qa_scene_world *actual_world, const frontend_legacy_scene_serv
         !scene_current(services, error) || !services->visuals(services->context, &visuals, frame, error) ||
         !scene_current(services, error) ||
         (opaque.q1_sky && !qa_scene_world_q1_sky_finish(opaque.q1_sky, frame, error)) ||
-        (opaque.boxed_sky && !qa_scene_world_boxed_sky_finish(opaque.boxed_sky, frame, error))) return false;
+        (opaque.boxed_sky && !qa_scene_world_boxed_sky_finish(opaque.boxed_sky, frame, error))) goto done;
     if (policy->flashblend && !qa_scene_legacy_dlights(frame, &input->view, policy->family,
-        policy->rules == QA_RULESET_QUAKEWORLD, input->lights, input->light_count, blend, error)) return false;
+        policy->rules == QA_RULESET_QUAKEWORLD, input->lights, input->light_count, blend, error)) goto done;
     if (services->dlights && (!scene_current(services, error) ||
-        !services->dlights(services->context, input, frame, blend, error))) return false;
+        !services->dlights(services->context, input, frame, blend, error))) goto done;
     if (!scene_current(services, error) || !services->particles(services->context, input, frame, error) ||
-        !scene_current(services, error)) return false;
+        !scene_current(services, error)) goto done;
     if (q1_world) {
         qa_scene_world_input water = *input;
         water.legacy_phase = QA_LEGACY_WORLD_WATER;
         if (!qa_scene_world_submit(actual_world, &water, frame, error) ||
-            !scene_current(services, error)) return false;
+            !scene_current(services, error)) goto done;
     }
     if (opaque.q2_alpha) {
         qa_scene_world_input alpha = *input;
         alpha.legacy_phase = QA_LEGACY_WORLD_ALPHA;
         alpha.q2_alpha = opaque.q2_alpha;
         if (!qa_scene_world_submit(actual_world, &alpha, frame, error) ||
-            !scene_current(services, error)) return false;
+            !scene_current(services, error)) goto done;
     }
-    qa_scene_fog fog = input->fog;
     fog.sky_drawn = qa_scene_world_sky_drawn(actual_world);
-    return qa_scene_frame_finish(frame, &input->view, &fog, error);
+    ok = qa_scene_frame_finish(frame, &input->view, &fog, error);
+done:
+    frame->fog_scope = previous_fog;
+    return ok;
 }
 
 typedef struct native_scene_context {

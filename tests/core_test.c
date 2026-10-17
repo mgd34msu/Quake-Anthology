@@ -4237,6 +4237,56 @@ static void test_reserved_scene_frame(void)
     CHECK(frame.storage.pages->overflow==1);
     CHECK(frame.commands[frame.command_count-1].data.view.viewport.x==(int32_t)frame.command_count-1);
     qa_scene_frame_destroy(&frame);
+    CHECK(qa_scene_frame_init(&frame,19,256*1024,&error));
+    qa_scene_fog fog={.kind=QA_FOG_EXP2,.effect=QA_FOG_COLOR,
+        .color={.25f,.5f,.75f},.density=.6f};
+    qa_scene_command draw={.kind=QA_SCENE_COMMAND_DRAW};
+    qa_scene_state_default(&draw.data.draw.state);
+    CHECK(qa_scene_frame_emit(&frame,&draw,&error));
+    qa_scene_command unscoped=frame.commands[0];
+    CHECK(!unscoped.fog_resolved && unscoped.data.draw.fog.kind==QA_FOG_NONE);
+    frame.fog_scope=&fog;
+    CHECK(qa_scene_frame_emit(&frame,&unscoped,&error));
+    CHECK(frame.commands[1].fog_resolved && frame.commands[1].data.draw.fog.kind==QA_FOG_EXP2 &&
+        frame.commands[1].data.draw.fog.density==fog.density &&
+        qa_vec_equal(frame.commands[1].data.draw.fog.color,fog.color));
+    draw.data.draw.state.blend_destination=QA_BLEND_ONE;
+    CHECK(qa_scene_frame_emit(&frame,&draw,&error));
+    CHECK(frame.commands[2].data.draw.fog.kind==QA_FOG_EXP2 &&
+        qa_vec_equal(frame.commands[2].data.draw.fog.color,(qa_vec3){0}));
+    qa_scene_command particles={.kind=QA_SCENE_COMMAND_PARTICLES};
+    CHECK(qa_scene_frame_emit(&frame,&particles,&error));
+    CHECK(frame.commands[3].fog_resolved && frame.commands[3].data.particles.fog.kind==QA_FOG_EXP2 &&
+        frame.commands[3].data.particles.fog.density==fog.density);
+    draw.data.draw.fog=(qa_scene_fog){.kind=QA_FOG_CONSTANT,.amount=.3f,.color={1,0,0}};
+    CHECK(qa_scene_frame_emit(&frame,&draw,&error));
+    CHECK(frame.commands[4].data.draw.fog.kind==QA_FOG_CONSTANT &&
+        frame.commands[4].data.draw.fog.amount==.3f && frame.commands[4].data.draw.fog.color.x==1);
+    for(unsigned effect=QA_FOG_RGB;effect<=QA_FOG_NO_EFFECT;++effect) {
+        draw.data.draw.fog=(qa_scene_fog){.kind=QA_FOG_EXP2,.density=.8f,
+            .effect=(qa_scene_fog_effect)effect,.color={1,0,0}};
+        size_t next=frame.command_count;
+        CHECK(qa_scene_frame_emit(&frame,&draw,&error));
+        qa_scene_command explicit_fog=frame.commands[next];
+        CHECK(explicit_fog.fog_resolved && explicit_fog.data.draw.fog.effect==(qa_scene_fog_effect)effect);
+        if(effect==QA_FOG_NO_EFFECT) CHECK(explicit_fog.data.draw.fog.kind==QA_FOG_NONE);
+        else CHECK(explicit_fog.data.draw.fog.kind==QA_FOG_EXP2 &&
+            explicit_fog.data.draw.fog.density==.8f && explicit_fog.data.draw.fog.color.x==1);
+        CHECK(qa_scene_frame_emit(&frame,&explicit_fog,&error));
+        CHECK(frame.commands[next+1].data.draw.fog.kind==explicit_fog.data.draw.fog.kind &&
+            frame.commands[next+1].data.draw.fog.effect==explicit_fog.data.draw.fog.effect);
+    }
+    qa_scene_fog no_fog={0};frame.fog_scope=&no_fog;
+    draw.data.draw.fog=(qa_scene_fog){0};
+    CHECK(qa_scene_frame_emit(&frame,&draw,&error));
+    qa_scene_command picture=frame.commands[frame.command_count-1];
+    CHECK(picture.fog_resolved && picture.data.draw.fog.kind==QA_FOG_NONE);
+    frame.fog_scope=&fog;
+    CHECK(qa_scene_frame_emit(&frame,&picture,&error));
+    CHECK(frame.commands[frame.command_count-1].data.draw.fog.kind==QA_FOG_NONE);
+    qa_scene_frame_reset(&frame,3);
+    CHECK(!frame.fog_scope);
+    qa_scene_frame_destroy(&frame);
     qa_scene_resources *resources=qa_scene_resources_create(NULL,&error);
     CHECK(resources);
     const uint8_t pixel[]={10,20,30,255};

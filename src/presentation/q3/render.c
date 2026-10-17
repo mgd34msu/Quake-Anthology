@@ -1190,6 +1190,9 @@ bool qa_q3_presentation_supplement_draw(const qa_q3_supplement *r,const qa_q3_sc
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Supplement replay lost its actual admission, view or mirror scope");
     if(!q3p_begin(p,error))return false;
     qa_q3_scene_options admitted_options=*options;admitted_options.first_entity=r->first;
+    const qa_scene_fog *previous_fog=frame->fog_scope;
+    qa_scene_fog no_fog={0};
+    frame->fog_scope=options->world.no_world?&no_fog:&admitted_options.world.fog;
     uint32_t milliseconds=(uint32_t)(uint64_t)options->world.milliseconds;
     memcpy(&p->render_milliseconds,&milliseconds,sizeof(milliseconds));
     p->submission=&admitted_options;bool okay=true;
@@ -1223,7 +1226,7 @@ bool qa_q3_presentation_supplement_draw(const qa_q3_supplement *r,const qa_q3_sc
             okay=submit_effect(p,cell.assets,&admitted_options,&entity,ordinal,NULL,error);
     }
     if(okay && p->options.submit_view)okay=p->options.submit_view(p->options.context,&admitted_options,frame,error);
-    p->submission=NULL;return q3p_end(p,okay);
+    p->submission=NULL;frame->fog_scope=previous_fog;return q3p_end(p,okay);
 }
 bool qa_q3_presentation_lights_read(const qa_q3_presentation *p,const qa_scene_light **out,size_t *count,qa_error *e)
 {
@@ -1237,17 +1240,27 @@ bool qa_q3_presentation_lights_read(const qa_q3_presentation *p,const qa_scene_l
 static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *options, qa_error *error)
 {
     qa_material_source_scratch *source = options->world.source_scratch;
-    if (source && !qa_material_source_scene_begin(source, p->frame, error)) return false;
+    const qa_scene_fog *previous_fog = p->frame->fog_scope;
+    qa_scene_fog no_fog = {0};
+    /* scene_begin may finish pictures retained before this world view. */
+    p->frame->fog_scope = &no_fog;
+    if (source && !qa_material_source_scene_begin(source, p->frame, error)) {
+        p->frame->fog_scope = previous_fog;
+        return false;
+    }
     if (source && !qa_material_source_scene_view(source, &options->world, error)) {
         qa_error cleanup = {0};
         (void)qa_material_source_scene_end(source, p->frame, false, &cleanup);
+        p->frame->fog_scope = previous_fog;
         return false;
     }
+    p->frame->fog_scope = options->world.no_world ? &no_fog : &options->world.fog;
     if (source && options->world.source_hyperspace) {
         qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = options->world.view};
         bool drawn = qa_scene_frame_emit(p->frame, &view, error);
         qa_error cleanup = {0};
         if (!qa_material_source_scene_end(source, p->frame, drawn, drawn ? error : &cleanup)) drawn = false;
+        p->frame->fog_scope = previous_fog;
         return drawn;
     }
     bool ok = true;
@@ -1261,10 +1274,14 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
         qa_error cleanup = {0};
         if (!qa_material_source_scene_end(source, p->frame, ok, ok ? error : &cleanup)) ok = false;
     }
-    if (!ok || !qa_scene_frame_finish(p->frame, &options->world.view, &options->world.fog, error)) return false;
-    return options->shadow_mode != 2 || (source && options->world.source_diagnostics.stencil_bits < 4) ||
-        (source ? qa_scene_source_stencil_finish : qa_scene_stencil_finish)(p->frame, &options->world.view,
-        qa_scene_white(p->options.assets->options.provider.images), error);
+    if (ok) ok = qa_scene_frame_finish(p->frame, &options->world.view, &options->world.fog, error);
+    p->frame->fog_scope = &no_fog;
+    if (ok && options->shadow_mode == 2 &&
+        !(source && options->world.source_diagnostics.stencil_bits < 4))
+        ok = (source ? qa_scene_source_stencil_finish : qa_scene_stencil_finish)(p->frame, &options->world.view,
+            qa_scene_white(p->options.assets->options.provider.images), error);
+    p->frame->fog_scope = previous_fog;
+    return ok;
 }
 
 bool qa_q3_presentation_render(qa_q3_presentation *p, const qa_q3_refdef *refdef, qa_error *error)

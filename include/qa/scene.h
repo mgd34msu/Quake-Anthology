@@ -643,6 +643,7 @@ typedef struct qa_scene_particle_sample {
 } qa_scene_particle_sample;
 typedef struct qa_scene_particle_batch {
     qa_scene_view view;
+    qa_scene_fog fog;
     qa_game_family family;
     const qa_scene_image *image;
     const qa_scene_particle_sample *samples; /* owned by the frame arena */
@@ -672,6 +673,8 @@ typedef struct qa_scene_image_stream {
 } qa_scene_image_stream;
 typedef struct qa_scene_command {
     qa_scene_command_kind kind;
+    /* Preserve scoped fog decisions when captured commands are replayed. */
+    bool fog_resolved;
     union {
         qa_scene_view view;
         qa_scene_draw draw;
@@ -713,6 +716,8 @@ typedef struct qa_scene_model_pin {
 typedef struct qa_scene_frame {
     qa_scene_image_stream *stream_images;
     const qa_scene_weapon_occupation *weapon_occupation;
+    /* Borrowed only during construction of one world view. */
+    const qa_scene_fog *fog_scope;
     qa_material_source_scratch *source_pending;
     uint64_t sequence, owner;
     bool source_backend, source_skip_backend, source_clear_draw_buffer;

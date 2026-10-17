@@ -86,6 +86,7 @@ void qa_scene_frame_weapon_bind(qa_scene_frame *frame,qa_scene_weapon_occupation
 void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
 {
     if (frame == NULL) return;
+    frame->fog_scope = NULL;
     if (frame->source_pending) {
         qa_error ignored = {0};
         (void)qa_material_source_frame_end(frame->source_pending, frame, false, &ignored);
@@ -304,8 +305,14 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     frame->picture_view_end = 0;
     if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
         copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN ||
-        copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA || copied.kind == QA_SCENE_COMMAND_PARTICLES) &&
-        !qa_material_source_picture_end(frame->source_pending, frame, error)) return false;
+        copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA || copied.kind == QA_SCENE_COMMAND_PARTICLES)) {
+        const qa_scene_fog *previous_fog = frame->fog_scope;
+        qa_scene_fog no_fog = {0};
+        frame->fog_scope = &no_fog;
+        bool ok = qa_material_source_picture_end(frame->source_pending, frame, error);
+        frame->fog_scope = previous_fog;
+        if (!ok) return false;
+    }
     if (frame->command_count == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "scene command count overflow");
         return false;
@@ -314,6 +321,18 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     if (!scene_frame_reserve(frame,SCENE_COMMANDS,&data, &frame->command_capacity, frame->command_count + 1,
                  sizeof(*frame->commands), error)) return false;
     frame->commands = data;
+    qa_scene_fog *resolved_fog = copied.kind == QA_SCENE_COMMAND_DRAW ? &copied.data.draw.fog :
+        copied.kind == QA_SCENE_COMMAND_PARTICLES ? &copied.data.particles.fog : NULL;
+    if (resolved_fog && !copied.fog_resolved) {
+        const qa_scene_fog *scope = frame->fog_scope;
+        bool global = scope && scope->kind == QA_FOG_EXP2 && scope->density > 0;
+        if (global && resolved_fog->kind == QA_FOG_NONE) *resolved_fog = *scope;
+        if (global && copied.kind == QA_SCENE_COMMAND_DRAW &&
+            resolved_fog->kind == QA_FOG_EXP2 && resolved_fog->effect == QA_FOG_COLOR &&
+            copied.data.draw.state.blend_destination == QA_BLEND_ONE)
+            resolved_fog->color = (qa_vec3){0};
+        copied.fog_resolved = scope || resolved_fog->kind != QA_FOG_NONE;
+    }
     if (copied.kind == QA_SCENE_COMMAND_DRAW) {
         qa_scene_draw *draw = &copied.data.draw;
         qa_scene_fog *fog = &draw->fog;

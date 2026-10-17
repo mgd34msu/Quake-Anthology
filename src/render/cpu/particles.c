@@ -1,4 +1,5 @@
 #include "particles.h"
+#include "fog_private.h"
 
 /* WinQuake d_part.c / Q2 ref_soft r_part.c: projected squares, inverse-depth
  * size, a one-pixel minimum and a depth test for every covered pixel. */
@@ -51,9 +52,11 @@ bool cpu_particles(qa_cpu_renderer *renderer, const qa_scene_particle_batch *bat
         double sized = inverse_word * size_scale;
         int pixels = sized > maximum ? maximum : sized < minimum ? minimum : (int)sized;
         float depth = cpu_clamp((float)((clip[2] / clip[3] + 1) * .5));
-        unsigned blend = batch->family == QA_GAME_Q1 || sample->color.w > .66f ? 3u :
-            sample->color.w > .33f ? 2u : 1u;
-        uint8_t color[3] = {cpu_byte(sample->color.x), cpu_byte(sample->color.y), cpu_byte(sample->color.z)};
+        float rgba[4] = {sample->color.x, sample->color.y, sample->color.z, sample->color.w};
+        cpu_fog_color(&batch->fog, eye_depth, rgba);
+        unsigned blend = batch->family == QA_GAME_Q1 || rgba[3] > .66f ? 3u :
+            rgba[3] > .33f ? 2u : 1u;
+        uint8_t color[3] = {cpu_byte(rgba[0]), cpu_byte(rgba[1]), cpu_byte(rgba[2])};
         if (renderer->preblend_gamma && renderer->gamma_enabled)
             for (unsigned c = 0; c < 3; ++c) color[c] = renderer->gamma[color[c]];
         for (int py = 0; py < pixels * (int)(1u << y_shift); ++py) for (int px = 0; px < pixels; ++px) {

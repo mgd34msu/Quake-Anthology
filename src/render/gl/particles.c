@@ -37,6 +37,7 @@ bool gl_particles_prepare(qa_gl_renderer *renderer, const qa_scene_particle_batc
     draw->mvp = qa_scene_matrix_multiply(batch->view.projection, qa_scene_view_matrix(&batch->view));
     draw->textures[0] = batch->image;
     draw->texture_count = 1;
+    draw->fog = batch->fog;
     draw->lighting = QA_LIGHT_VERTEX;
     qa_scene_state_default(&draw->state);
     draw->state.blend_source = QA_BLEND_SRC_ALPHA;
