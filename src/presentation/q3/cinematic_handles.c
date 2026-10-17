@@ -903,10 +903,9 @@ const qa_scene_image *qa_q3_cinematic_shader_resolve(qa_q3_cinematic_source *sou
         const q3cin_movie *movie=&owner->movies[i];
         qa_cinematic *decoder=movie->playback?movie->playback:
             movie->system.playback?movie->system.playback(movie->system.context):NULL;
-        if (ok && decoder && qa_cinematic_frame(decoder)) {
+        if (ok && decoder && qa_cinematic_frame(decoder))
             ok=upload(owner,i,true,frame,error);
-            if (ok) image=owner->scratch[i];
-        }
+        if (ok) image=owner->scratch[i];
         break;
     }
     if (!found && ok) ok=q3cin_fail(error,QA_ERROR_ARGUMENT,"Reached video stage is not an actual cinematic scratch slot");

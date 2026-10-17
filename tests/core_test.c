@@ -5735,6 +5735,8 @@ static void test_roq_handle_checkpoints(void)
     double now[]={0,10000};
     qa_q3_cinematic_restore_slot rows[2]={0};
     uint8_t pixels[2][8*8*4];
+    qa_scene_frame shader_frame;
+    CHECK(qa_scene_frame_init(&shader_frame,32,256*1024,&error));
     for (unsigned pass=0;pass<2;++pass) {
         CHECK(qa_q3_cinematic_handles_create(&bank_options,banks+pass,&error));
         if (pass) CHECK(qa_q3_cinematic_handles_restore_reserve(banks[pass],rows,2,&error));
@@ -5758,6 +5760,12 @@ static void test_roq_handle_checkpoints(void)
                     CHECK(qa_q3_cinematic_handles_at(banks[pass],(uint32_t)handles[i],&slot) && slot.playback);
                     const qa_media_frame *picture=qa_cinematic_frame(slot.playback);
                     CHECK(step?picture && picture->index==step-1:!picture);
+                    const qa_scene_image *scratch=qa_scene_source_q3_scratch(images,(size_t)handles[i]);
+                    const qa_scene_image *resolved=qa_q3_cinematic_shader_resolve(sources[pass][i],
+                        scratch->identity,&shader_frame,&error);
+                    CHECK(resolved && qa_q3_cinematic_handles_image_is(banks[pass],resolved));
+                    if(!step) CHECK(resolved==scratch && !qa_cinematic_frame(slot.playback));
+                    else CHECK(resolved->logical_width==256 && resolved->logical_height==256);
                 }
             }
         } else {
@@ -5814,6 +5822,7 @@ static void test_roq_handle_checkpoints(void)
         for (unsigned i=0;i<2;++i) CHECK(qa_q3_cinematic_source_destroy(&sources[pass][i],&error));
         CHECK(qa_q3_cinematic_handles_destroy(banks+pass,&error));
     }
+    qa_scene_frame_destroy(&shader_frame);
     qa_media_library_destroy(media); qa_scene_resources_destroy(images);
     for (unsigned i=0;i<2;++i) CHECK(qa_vfs_remove(files,mount,paths[i],&error));
     qa_vfs_destroy(files); qa_resource_pool_destroy(pool);
