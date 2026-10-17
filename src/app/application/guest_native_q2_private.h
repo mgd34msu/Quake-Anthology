@@ -104,6 +104,7 @@ struct application_native_q2 {
     application_native_q2_loading_phase loading_phase;
     unsigned map_loading_phase;
     qa_native_loading_call *restore_call;
+    struct application_native_q2_record_restore *record_restore;
     bool map_admission_prepared;
     unsigned calls;
     uint32_t current_client, disconnect_client;

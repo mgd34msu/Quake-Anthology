@@ -143,8 +143,19 @@ static qa_save_image *image_allocate(void)
 {
     /* Keep the mutable encoding cache with its immutable owner in one allocation. */
     qa_save_image *image = calloc(1, sizeof(*image) + sizeof(qa_buffer));
-    if (image) image->encoded = (qa_buffer *)(image + 1);
+    if (image) {
+        image->encoded = (qa_buffer *)(image + 1);
+        image->references = 1;
+    }
     return image;
+}
+
+bool qa_save_image_retain(const qa_save_image *image, qa_error *error)
+{
+    if (!image || image->retiring || image->references == SIZE_MAX)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save image cannot be retained");
+    ++((qa_save_image *)image)->references;
+    return true;
 }
 
 bool qa_save_image_destroy_checked(qa_save_image **pointer, qa_error *error)
@@ -152,6 +163,11 @@ bool qa_save_image_destroy_checked(qa_save_image **pointer, qa_error *error)
     if (!pointer) return persistence_fail(error, QA_ERROR_ARGUMENT, "Save image retirement needs its owning pointer");
     qa_save_image *image = *pointer;
     if (!image) return true;
+    if (image->references > 1) {
+        --image->references;
+        *pointer = NULL;
+        return true;
+    }
     image->retiring = true;
     if (image->native_resources &&
         !image->native_release(&image->native_resources, error)) return false;

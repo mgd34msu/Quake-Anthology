@@ -620,7 +620,9 @@ static bool load_host(struct application_native_q2 *engine, qa_error *error)
 bool application_native_q2_loading_cancel(application_provider *provider, qa_error *error)
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    if (!engine || !engine->loading_phase) return true;
+    if (!engine) return true;
+    if (!application_native_q2_record_restore_dispose(&engine->record_restore, error)) return false;
+    if (!engine->loading_phase) return true;
     if (engine->calls) return false;
     bool ok = !engine->restore_call || qa_native_loading_call_abandon(&engine->restore_call, error);
     if (ok) ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
@@ -928,6 +930,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
+    if (!application_native_q2_loading_cancel(provider, error)) return false;
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
@@ -989,6 +992,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
 {
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine) return true;
+    if (!application_native_q2_loading_cancel(provider, error)) return false;
     if (!application_native_q2_callbacks_drain(engine, error)) return false;
     if (!owner_returned(provider, false))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");

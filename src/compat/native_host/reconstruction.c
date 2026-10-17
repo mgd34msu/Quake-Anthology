@@ -112,6 +112,7 @@ bool qa_native_host_reconstruction_destroy(qa_native_host_reconstruction *phase,
     if (!consumed || !phase || phase->target->reconstruction != phase || phase->baseline->reconstruction != phase ||
         !qa_native_host_destroy_ready(phase->target) || !qa_native_host_destroy_ready(phase->baseline))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native reconstruction destruction requires drained source owners");
+    if (!clear_slots(phase->target, error)) return false;
     phase->target->reconstruction = phase->baseline->reconstruction = NULL;
     bool ok = qa_native_host_destroy_owned(&phase->target, error);
     if (phase->target) {

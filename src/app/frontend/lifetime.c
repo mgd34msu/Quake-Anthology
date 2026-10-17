@@ -804,6 +804,16 @@ bool frontend_save_image_release(qa_frontend *frontend,qa_save_image **image,qa_
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
+    if (frontend->restore_retirement) {
+        frontend_persistence_restore_operation *operation=frontend->restore_retirement;
+        frontend->restore_retirement=NULL;
+        qa_frontend *displaced=NULL,*retained=NULL;
+        if (!frontend_persistence_restore_end(&operation,&displaced,&retained,error)) {
+            frontend->restore_retirement=operation;
+            return false;
+        }
+        return !retained || qa_frontend_destroy(retained,error);
+    }
     if (!frontend_save_commands_restore_cancel(frontend,error) ||
         !frontend_shared_resource_policy_live_retire(frontend,error)) return false;
     if (frontend->shutdown) {
@@ -1041,7 +1051,8 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         else if(qa_platform_events_frame(frontend->platform_events,frontend->wall_time_ns+elapsed)!=QA_PLATFORM_EVENT_ACCEPTED)
             ok=frontend_fail(error,QA_ERROR_MEMORY,"Frontend frame time does not fit the platform queue");
         else ok=qa_frontend_step(frontend,error);
-        if (ok) ok=frontend_save_commands_drain(slot,error);
+        if (ok && !interrupted && !qa_application_should_stop(frontend->application))
+            ok=frontend_save_commands_drain(slot,error);
         frontend=*slot;
         if (!frontend_save_commands_restoring(frontend) && frontend->options.frame_limit &&
             frontend->frame_number >= frontend->options.frame_limit) break;

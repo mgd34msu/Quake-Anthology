@@ -28,8 +28,9 @@ bool frontend_persistence_restore_begin(qa_frontend **,
     frontend_persistence_restore_operation **,qa_error *);
 bool frontend_persistence_restore_advance(frontend_persistence_restore_operation *,
     uint64_t quantum,bool *complete,qa_error *);
-void frontend_persistence_restore_end(frontend_persistence_restore_operation **,
-    qa_frontend **displaced,qa_frontend **retained);
+/* A refused inverse keeps the operation and its active lease for retry. */
+bool frontend_persistence_restore_end(frontend_persistence_restore_operation **,
+    qa_frontend **displaced,qa_frontend **retained,qa_error *);
 bool frontend_persistence_restore(qa_frontend **, const qa_application_persistence_ops *,
     const qa_save_image *, qa_frontend **displaced, qa_frontend **retained, qa_error *);
 typedef bool (*frontend_persistence_replay_fn)(void *,qa_frontend *,qa_error *);

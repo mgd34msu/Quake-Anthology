@@ -70,6 +70,8 @@ bool qa_save_image_metadata_read(qa_fs_file *, const qa_fs_identity *,
  * close successfully. A refusal retains *image for retry; that retiring image
  * can no longer be encoded or used as an active capability graph. */
 bool qa_save_image_destroy_checked(qa_save_image **, qa_error *);
+/* Retain the same immutable image without copying records or native holds. */
+bool qa_save_image_retain(const qa_save_image *, qa_error *);
 /* Transfers the actual inventory on success. No pointer enters the encoded
  * image. A decoded image requires its real external graph to be attached by
  * the preparation owner before restoring native capabilities. */

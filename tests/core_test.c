@@ -6757,6 +6757,12 @@ static void test_recovery_checkpoints(void)
     CHECK(qa_fs_root_open(directory, &root, &error));
     qa_save_image *image = recovery_image(0, 73);
     recovery_restore_yields(image);
+    qa_save_image *held = image;
+    CHECK(qa_save_image_retain(held, &error));
+    CHECK(qa_save_image_destroy_checked(&image, &error) && !image);
+    qa_bytes held_bytes;
+    CHECK(qa_save_image_encode(held, &held_bytes, &error) && held_bytes.size);
+    image = held;
     qa_bytes first, again;
     CHECK(qa_save_image_encode(image, &first, &error));
     CHECK(qa_save_image_encode(image, &again, &error));

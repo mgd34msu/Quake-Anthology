@@ -667,6 +667,7 @@ typedef struct application_persistence {
     qa_buffer progression;
     qa_application_content_graph *content_graph;
     application_startup_program_roster *programs;
+    qa_error cleanup_error;
     uint64_t configuration_generation, publication_generation, actor_revision;
     qa_save_purpose purpose;
     bool leased;
@@ -1470,7 +1471,8 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
 }
 
 static bool provider_restore(application_persistence *operation,
-                              application_provider *provider, qa_bytes bytes, qa_error *error)
+    application_provider *provider, qa_bytes bytes, uint64_t quantum,
+    bool *complete, qa_error *error)
 {
     if (!bytes.data || bytes.size < 28 || memcmp(bytes.data, "QAPV", 4) ||
         qa_load_u32le(bytes.data + 4) != (uint32_t)provider->kind ||
@@ -1494,11 +1496,22 @@ static bool provider_restore(application_persistence *operation,
         ok = application_native_q2_checkpoint_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = native_q3_restore(provider, state, error);
-    else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-        ok = client || application_native_q2_save_restore(provider,
-            operation->purpose == QA_SAVE_TRANSITION
-                ? saved_provider(operation->active, provider->launch->selection.instance) : NULL,
-            state, operation->options, operation->ops, error);
+    else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
+        struct application_native_q2 *engine = provider->state.native.q2_engine;
+        ok = true;
+        if (!client) {
+            if (!engine->record_restore)
+                ok = application_native_q2_record_restore_begin(provider,
+                    operation->purpose == QA_SAVE_TRANSITION
+                        ? saved_provider(operation->active, provider->launch->selection.instance) : NULL,
+                    state, operation->options, operation->ops, &engine->record_restore, error);
+            if (ok) ok = application_native_q2_record_restore_advance(engine->record_restore,
+                (size_t)quantum, complete, error);
+            if (ok && *complete)
+                ok = application_native_q2_record_restore_dispose(&engine->record_restore, error);
+            if (!ok || !*complete) return ok;
+        }
+    }
     else ok = application_guest_q3_save_declarations(provider,
         operation->options, operation->ops, error) &&
         application_guest_checkpoint_restore(provider, state, error);
@@ -1896,7 +1909,6 @@ static bool persistence_restore_owner(void *opaque, void *value,
     application_persistence *operation = opaque;
     qa_application *candidate = value;
     *complete = true;
-    (void)quantum;
     switch (record->owner.kind) {
     /* Foundation is decoded during isolated construction and applied after
      * source bindings. Configuration was prepared without ordinary callbacks. */
@@ -1959,7 +1971,7 @@ static bool persistence_restore_owner(void *opaque, void *value,
         application_provider *provider = saved_provider(candidate, record->owner.instance);
         if (!provider) return application_fail(error, QA_ERROR_FORMAT, "restore selected provider is absent");
         if (provider_schema(provider))
-            return provider_restore(operation, provider, record->payload, error);
+            return provider_restore(operation, provider, record->payload, quantum, complete, error);
         const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }
@@ -2142,28 +2154,29 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
     return true;
 }
 
-static void persistence_discard(void *opaque, void *value)
+static bool persistence_discard_candidate(application_persistence *operation,
+    qa_application *candidate, qa_error *error)
 {
-    application_persistence *operation = opaque;
-    qa_application *candidate = value;
-    if (!application_startup_program_publication_abort(&operation->programs,NULL)) {
-        operation->retained = value;
-        return;
+    for (size_t i = 0; i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+            !application_native_q2_loading_cancel(provider, error)) return false;
     }
+    if (!application_startup_program_publication_abort(&operation->programs,error)) return false;
     candidate->native_restore_image = NULL;
     candidate->native_restore_current = NULL;
     candidate->native_restore_resources = NULL;
     candidate->operation = APPLICATION_IDLE;
-    if (!application_native_q2_baselines_destroy(candidate, NULL)) {
-        operation->retained = value;
-        return;
-    }
+    if (!application_native_q2_baselines_destroy(candidate, error)) return false;
     if (operation->ops->discard_services &&
-        !operation->ops->discard_services(operation->ops->context, value, NULL)) {
-        operation->retained = value;
-        return;
-    }
-    if (!qa_application_destroy(value, NULL)) operation->retained = value;
+        !operation->ops->discard_services(operation->ops->context, candidate, error)) return false;
+    return qa_application_destroy(candidate, error);
+}
+
+static void persistence_discard(void *opaque, void *value)
+{
+    application_persistence *operation = opaque;
+    if (!persistence_discard_candidate(operation, value, &operation->cleanup_error)) operation->retained = value;
 }
 
 bool qa_application_persistence_restore_begin(qa_application **active,
@@ -2211,18 +2224,27 @@ bool qa_application_persistence_restore_advance(qa_application_restore *restore,
     return ok;
 }
 
-void qa_application_persistence_restore_end(qa_application_restore **slot,
-    qa_application **displaced, qa_application **retained_on_failure)
+bool qa_application_persistence_restore_end(qa_application_restore **slot,
+    qa_application **displaced, qa_application **retained_on_failure, qa_error *error)
 {
+    (void)retained_on_failure;
     qa_application_restore *restore = slot ? *slot : NULL;
-    if (!restore) return;
-    qa_save_restore_destroy(&restore->records);
+    if (!restore) return true;
+    if (restore->records) qa_save_restore_destroy(&restore->records);
+    else if (restore->state.retained) {
+        qa_application *candidate = restore->state.retained;
+        if (!persistence_discard_candidate(&restore->state, candidate, error)) return false;
+        restore->state.retained = NULL;
+    }
+    if (restore->state.retained) {
+        if (error && restore->state.cleanup_error.code != QA_OK) *error = restore->state.cleanup_error;
+        return false;
+    }
     if (restore->complete && displaced) *displaced = restore->state.displaced;
-    if (retained_on_failure && restore->state.retained)
-        *retained_on_failure = restore->state.retained;
     persistence_end(&restore->state);
     free(restore);
     *slot = NULL;
+    return true;
 }
 
 bool qa_application_persistence_restore(qa_application **active,
@@ -2238,6 +2260,10 @@ bool qa_application_persistence_restore(qa_application **active,
     bool complete = false;
     while (ok && !complete)
         ok = qa_application_persistence_restore_advance(restore, 0, &complete, error);
-    qa_application_persistence_restore_end(&restore, displaced, retained_on_failure);
+    if (!qa_application_persistence_restore_end(&restore, displaced, retained_on_failure, error)) {
+        restore->state.retained->restore_retirement = restore;
+        *retained_on_failure = restore->state.retained;
+        return false;
+    }
     return ok;
 }

@@ -151,9 +151,17 @@ qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 bool frontend_save_commands_pending(const qa_frontend *f)
 { return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_restoring(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN); }
+{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign ||
+    f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN || frontend_save_commands_restore_lease_held(f)); }
 bool frontend_save_commands_restore_lease_held(const qa_frontend *f)
-{ return f && f->save_commands && f->save_commands->shared; }
+{
+    const frontend_save_commands *owner=f?f->save_commands:NULL;
+    if (!owner) return false;
+    if (owner->shared) return true;
+    for (size_t i=0;i<3;++i)
+        if (owner->retained[i] && owner->retained[i]->restore_retirement) return true;
+    return false;
+}
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
@@ -167,8 +175,14 @@ bool frontend_save_commands_restore_cancel(qa_frontend *f,qa_error *error)
     frontend_save_commands *owner=f->save_commands;
     if (owner->shared) {
         qa_frontend *displaced=NULL;
-        frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2]);
+        if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],error)) return false;
         request_free(&owner->request); owner->pending=false;
+    }
+    for (size_t i=0;i<3;++i) {
+        qa_frontend *retained=owner->retained[i];
+        if (!retained || !retained->restore_retirement) continue;
+        if (!qa_frontend_destroy(retained,error)) return false;
+        owner->retained[i]=NULL;
     }
     return frontend_save_image_release(f,&owner->restore_image,error);
 }
@@ -702,6 +716,18 @@ static bool failed_operation_finish(qa_frontend *f, qa_error *error)
     frontend_save_commands *owner=f->save_commands;
     save_failed_operation failed=owner->failed_operation;
     qa_error failure=owner->failure;
+    if (owner->shared) {
+        qa_frontend *displaced=NULL;
+        qa_error cleanup={0};
+        if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],&cleanup))
+            return true;
+        request_free(&owner->request); owner->pending=false;
+        if (!frontend_save_image_release(f,&owner->restore_image,&cleanup)) {
+            if (error) *error=cleanup;
+            return false;
+        }
+        if (!cleanup_retained(owner,&cleanup)) return true;
+    }
     owner->failed_operation=SAVE_FAILURE_NONE; owner->failure=(qa_error){0};
     bool ok=failed==SAVE_FAILURE_CAMPAIGN?campaign_fresh(f,&failure):save_failure_returned(f);
     if (!ok && error) *error=failure;
@@ -760,6 +786,11 @@ static bool campaign_restore(qa_frontend **slot, qa_error *error)
     qa_error cleanup={0};
     (void)cleanup_retained(current,&cleanup);
     if (ok) return true;
+    if (frontend_save_commands_restore_lease_held(active)) {
+        owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
+        owner->failure=error?*error:(qa_error){0};
+        return true;
+    }
     if (*slot!=active || displaced || !save_driver_returned(active) ||
         qa_application_get_state(active->application)!=QA_APPLICATION_RUNNING) return false;
     owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
@@ -779,7 +810,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     qa_error cleanup = {0};
     if (!cleanup_retained(owner, &cleanup)) {
         qa_application_feature_report(f->application,"Save candidate cleanup",&cleanup);
-        if (save_driver_returned(f)) return true;
+        if (save_driver_returned(f) || frontend_save_commands_restore_lease_held(f)) return true;
         if (error) *error=cleanup;
         return false;
     }
@@ -827,7 +858,15 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         }
     }
     if (!ok || complete) {
-        frontend_persistence_restore_end(&owner->shared,&displaced,&retained_candidate);
+        if (!frontend_persistence_restore_end(&owner->shared,&displaced,&retained_candidate,&cleanup)) {
+            if (local.code==QA_OK) local=cleanup;
+            owner->failed_operation=SAVE_FAILURE_MANUAL; owner->failure=local;
+            owner->pending=false; owner->draining=false;
+            qa_q1_save_destroy(source); qa_q2_save_destroy(q2);
+            (void)frontend_save_image_release(f,&image,&cleanup);
+            qa_application_feature_report(f->application,"Manual save/load",&local);
+            return true;
+        }
         if (!frontend_save_image_release(f,&owner->restore_image,ok?&local:&cleanup)) {
             if (local.code==QA_OK) local=cleanup;
             ok=false;

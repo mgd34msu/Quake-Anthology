@@ -12,6 +12,7 @@ struct qa_save_image {
     qa_save_record *records;
     qa_buffer *encoded;
     size_t count;
+    size_t references;
     qa_native_resource_inventory *native_resources;
     qa_save_native_release_fn native_release;
     bool retiring;

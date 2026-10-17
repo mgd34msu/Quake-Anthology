@@ -148,19 +148,21 @@ bool application_native_q2_baseline_abort(struct application_native_q2_baseline 
     if (!drained(phase, error)) return false;
     struct application_native_q2 *source = phase->target->state.native.q2_engine;
     struct application_native_q2 *temporary = phase->baseline->state.native.q2_engine;
-    if (source->initialized) {
+    bool terminal = qa_native_terminal(qa_native_host_instance(phase->target->state.native.host));
+    if (source->initialized && !terminal) {
         ++source->calls; ++temporary->calls;
         bool ok = qa_native_host_shutdown(phase->target->state.native.host, false, error);
         --temporary->calls; --source->calls;
         if (!ok) return false;
         source->initialized = false;
     }
-    /* Both destroy predicates passed without callbacks after Shutdown. Normal
-     * native destruction consumes the target even if unloading reports a fault. */
+    /* Terminal sources retire their scratch bindings without another guest
+     * call. Destruction consumes the target even if unloading reports a fault. */
     if (!drained(phase, error)) return false;
     bool consumed = false;
     bool ok = qa_native_host_reconstruction_destroy(phase->services, &consumed, error);
     if (!consumed) return false;
+    source->initialized = false;
     phase->target->state.native.host = NULL;
     release(phase); return ok;
 }

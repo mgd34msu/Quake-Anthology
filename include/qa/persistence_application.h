@@ -123,8 +123,9 @@ bool qa_application_persistence_restore_begin(qa_application **active,
     const qa_save_image *, qa_application_restore **, qa_error *);
 bool qa_application_persistence_restore_advance(qa_application_restore *, uint64_t quantum,
     bool *complete, qa_error *);
-void qa_application_persistence_restore_end(qa_application_restore **,
-    qa_application **displaced, qa_application **retained_on_failure);
+/* Refused cancellation keeps the operation and its lease for another end call. */
+bool qa_application_persistence_restore_end(qa_application_restore **,
+    qa_application **displaced, qa_application **retained_on_failure, qa_error *);
 /* The active owner and displaced output remain unchanged on failure. The
  * retained_on_failure output must initially be NULL; failed candidate teardown
  * transfers its owner there for the caller to retry qa_application_destroy.

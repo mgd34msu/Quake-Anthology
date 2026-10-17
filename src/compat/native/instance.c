@@ -517,7 +517,11 @@ bool qa_native_loading_invoke_begin(qa_native_instance *instance, qa_native_addr
 
 bool qa_native_loading_call_step(qa_native_loading_call *call, size_t quantum,
     bool *returned, qa_error *error)
-{ return native_process_call_step(call, quantum, returned, error); }
+{
+    if (call && call->instance->guest->options.backend == QA_NATIVE_GUEST_HOST_X86_64)
+        quantum = 0;
+    return native_process_call_step(call, quantum, returned, error);
+}
 
 bool qa_native_loading_call_finish(qa_native_loading_call **owner, qa_error *error)
 {

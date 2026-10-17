@@ -495,7 +495,7 @@ bool qa_native_host_startup_paused(const qa_native_host *host)
 
 bool qa_native_host_startup_cancel(qa_native_host *host, qa_error *error)
 {
-    if (!host || host->destroying || host->reconstruction || host->callback_depth || host->call_scratch.active)
+    if (!host || host->destroying || host->callback_depth || host->call_scratch.active)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native startup cancellation requires returned host callbacks");
     if (!map_cancel(host, error)) return false;
     if (!host->constructing && !host->initializing) return true;

@@ -342,6 +342,7 @@ struct qa_frontend {
     frontend_resource_inventory *resource_inventory;
     struct frontend_live_resource_policy *live_resource_policy;
     frontend_save_commands *save_commands;
+    struct frontend_persistence *restore_retirement;
     frontend_campaign *campaign;
     frontend_music_sources *music_sources;
     frontend_view_settings *view_settings;

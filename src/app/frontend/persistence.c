@@ -55,6 +55,7 @@ typedef struct frontend_persistence {
     qa_application_options options;
     qa_application *application;
     qa_application_restore *restore;
+    qa_save_image *image;
     frontend_native_resource_context native_resources;
     qa_application_native_resource_refs native_resource_refs;
     frontend_persistence_native native;
@@ -375,9 +376,14 @@ static bool restore_begin(qa_frontend **slot,const qa_application_persistence_op
     frontend_persistence *operation=calloc(1,sizeof(*operation));
     if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining frontend restore operation");
     *out=operation;
-    operation->slot=slot; operation->replay_context=replay_context; operation->replay=replay_fn;
-    operation->native_resources.image=image;
-    bool ok=operation_init(operation,*slot,services,error);
+    operation->slot=slot; operation->active=*slot;
+    operation->replay_context=replay_context; operation->replay=replay_fn;
+    bool ok=qa_save_image_retain(image,error);
+    if (ok) {
+        operation->image=(qa_save_image *)image;
+        operation->native_resources.image=image;
+        ok=operation_init(operation,*slot,services,error);
+    }
     const qa_frontend *source=operation->active;
     if (ok) {
         operation->candidate=calloc(1,sizeof(*operation->candidate));
@@ -438,14 +444,19 @@ bool frontend_persistence_restore_advance(frontend_persistence_restore_operation
     if (ok && *complete) operation->restored=true;
     return ok;
 }
-void frontend_persistence_restore_end(frontend_persistence_restore_operation **slot,
-    qa_frontend **displaced,qa_frontend **retained)
+bool frontend_persistence_restore_end(frontend_persistence_restore_operation **slot,
+    qa_frontend **displaced,qa_frontend **retained,qa_error *error)
 {
-    if (!slot || !*slot) return;
+    if (!slot || !*slot) return true;
     frontend_persistence *operation=*slot;
     qa_application *old=NULL,*held=NULL;
-    qa_application_persistence_restore_end(&operation->restore,&old,&held);
+    if (!qa_application_persistence_restore_end(&operation->restore,&old,&held,error)) return false;
     operation_close(operation);
+    if (operation->image) {
+        qa_error cleanup={0};
+        (void)frontend_save_image_release(operation->candidate?operation->candidate:operation->active,
+            &operation->image,&cleanup);
+    }
     if (operation->restored) {
         operation->active->application=old;
         *displaced=operation->active;
@@ -457,6 +468,7 @@ void frontend_persistence_restore_end(frontend_persistence_restore_operation **s
         if (held || !qa_frontend_destroy(operation->candidate,&cleanup)) *retained=operation->candidate;
     }
     free(operation); *slot=NULL;
+    return true;
 }
 static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,void *replay_context,frontend_persistence_replay_fn replay_fn,
@@ -469,7 +481,12 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
     bool complete=false;
     bool ok=restore_begin(slot,services,image,replay_context,replay_fn,&operation,error);
     while (ok && !complete) ok=frontend_persistence_restore_advance(operation,0,&complete,error);
-    frontend_persistence_restore_end(&operation,displaced,retained);
+    qa_error cleanup={0};
+    if (!frontend_persistence_restore_end(&operation,displaced,retained,ok?error:&cleanup)) {
+        operation->candidate->restore_retirement=operation;
+        *retained=operation->candidate;
+        ok=false;
+    }
     return ok;
 }
 bool frontend_persistence_restore(qa_frontend **slot,const qa_application_persistence_ops *services,

@@ -1174,6 +1174,16 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
+    if (application->restore_retirement) {
+        qa_application_restore *restore = application->restore_retirement;
+        application->restore_retirement = NULL;
+        qa_application *displaced = NULL, *retained = NULL;
+        if (!qa_application_persistence_restore_end(&restore, &displaced, &retained, error)) {
+            application->restore_retirement = restore;
+            return false;
+        }
+        return true;
+    }
     if (application->engine_shutdown)
         return application_fail(error, QA_ERROR_ARGUMENT, "ENGINE shutdown still retains its application parents");
     if (application->client_preparation)

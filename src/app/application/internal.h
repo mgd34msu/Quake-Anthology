@@ -356,6 +356,7 @@ struct qa_application {
     qa_save_purpose capture_purpose;
     const struct qa_application_native_resource_refs *native_restore_resources;
     const struct qa_save_image *native_restore_image;
+    struct qa_application_restore *restore_retirement;
     /* Borrowed only while rebuilding a visited level from its current unit. */
     struct qa_application *native_restore_current;
     qa_session *session;
