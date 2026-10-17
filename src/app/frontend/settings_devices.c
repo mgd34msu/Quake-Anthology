@@ -124,7 +124,7 @@ static void gyro_profiles_load(qa_frontend *f)
         qa_gamepad_tuning *pad=qa_input_seat_gamepad_tuning(input);
         pad->gyro_yaw_sensitivity=tuning.yaw_sensitivity; pad->gyro_pitch_sensitivity=tuning.pitch_sensitivity;
         pad->gyro_yaw_axis=tuning.yaw_axis; pad->gyro_enabled=false;
-        if (connected && device.sensors[SDL_SENSOR_GYRO] &&
+        if (connected && device.sensors[SDL_SENSOR_GYRO - 1] &&
             !qa_input_platform_gyro(f->input,slot,tuning.enabled,&error)) ok=false;
         row->saved=ok && found && (!row->identity.device || device_profile);
         qa_gyro_profile_free(&saved);
@@ -138,7 +138,7 @@ static void gyro_profiles_save(qa_frontend *f)
     for (unsigned slot=0;slot<f->options.seats;++slot) {
         frontend_gyro_profile *row=f->gyro_profiles->seats+slot;
         qa_controller_info device={0}; bool capable=frontend_settings_controller_read(f,slot,&device) &&
-            device.instance==row->instance && device.sensors[SDL_SENSOR_GYRO];
+            device.instance==row->instance && device.sensors[SDL_SENSOR_GYRO - 1];
         if (!capable) continue;
         qa_gyro_profile profile=gyro_tuning(qa_input_seat_gamepad_tuning(f->seats[slot].input));
         profile.device=row->identity.device; memcpy(profile.guid,row->identity.guid,sizeof(profile.guid));

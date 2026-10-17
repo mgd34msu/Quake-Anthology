@@ -1265,7 +1265,7 @@ static bool gyro(void *context,uint32_t id,qa_ui_menu *out,qa_error *error)
     frontend_seat *seat=context; (void)id; begin(seat);
     qa_frontend *f=seat->frontend; frontend_settings_menu *owner=seat->settings_menu;
     qa_controller_info device={0}; bool found=frontend_settings_controller_read(f,seat->id,&device);
-    bool capable=found && device.sensors[SDL_SENSOR_GYRO], enabled=capable;
+    bool capable=found && device.sensors[SDL_SENSOR_GYRO - 1], enabled=capable;
     qa_gyro_status status=qa_gamepad_calibration_status(qa_input_seat_gamepad(seat->input));
     qa_gamepad_tuning *pad=qa_input_seat_gamepad_tuning(seat->input);
     qa_ui_control *item=button(seat,found?copy_text(owner,device.name):"Controller",SET_CLOSE); item->enabled=false;
