@@ -9426,6 +9426,74 @@ static void test_native_guest_architectural_stops(void)
     CHECK(result.kind==QA_NATIVE_GUEST_INVALID_INSTRUCTION && result.detail.invalid_instruction.byte_count==2);
     CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
 }
+static void test_native_x87_round_status(void)
+{
+    qa_error error = {0}; qa_native_guest *guest = NULL;
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_PE32,
+            .target = {.os = QA_NATIVE_OS_WINDOWS, .arch = QA_NATIVE_ARCH_I386,
+                .abi = QA_NATIVE_ABI_CDECL_I386, .pointer_bytes = 4}},
+        .allocation_base = UINT64_C(0x200000),
+        .maximum_backing_bytes = 2 * QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    const uint64_t entry = UINT64_C(0x100000);
+    const uint8_t code[] = {0xd9,0xfc, 0xdf,0xe0, 0x9b, 0xdb,0xe2, 0x9b, 0x90};
+    qa_native_guest_mapping mapping;
+    CHECK(qa_native_guest_map(guest, entry, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE,
+        (qa_bytes){code, sizeof(code)}, &mapping, &error));
+    qa_native_guest_cpu initial, cpu;
+    CHECK(qa_native_guest_cpu_read(guest, &initial, &error));
+    struct round_case {
+        uint64_t input, rounded;
+        uint16_t exponent, result_exponent, control, status;
+    } cases[] = {
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0x3fff,0x4000,0x037f,0x0220},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0x3fff,0x3fff,0x077f,0x0020},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0x3fff,0x4000,0x0b7f,0x0220},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0x3fff,0x3fff,0x0f7f,0x0020},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0xbfff,0xc000,0x037f,0x0220},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0xbfff,0xc000,0x077f,0x0220},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0xbfff,0xbfff,0x0b7f,0x0020},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0xbfff,0xbfff,0x0f7f,0x0020},
+        {UINT64_C(0xa000000000000000),UINT64_C(0x8000000000000000),0x4000,0x4000,0x037f,0x0020},
+        {0,0,0,0,0x037f,0}, {0,0,0x8000,0x8000,0x037f,0},
+        {UINT64_C(0x8000000000000000),0,0xbffd,0x8000,0x037f,0x0020},
+        {UINT64_C(0x8000000000000000),UINT64_C(0x8000000000000000),0xbffd,0xbfff,0x077f,0x0220},
+        {1,0,0,0,0x037f,0x0022},
+        {1,UINT64_C(0x8000000000000000),0,0x3fff,0x0b7f,0x0222},
+        {UINT64_C(0x8000000000000000),0,0,0,0x037f,0x0022},
+        {1,1,0,0,0x037d,0x8082},
+        {UINT64_C(0x8000000000000001),UINT64_C(0xc000000000000001),0x7fff,0x7fff,0x037f,0x0001},
+        {UINT64_C(0x8000000000000001),UINT64_C(0x8000000000000001),0x7fff,0x7fff,0x037e,0x8081},
+        {UINT64_C(0xc000000000000000),UINT64_C(0x8000000000000000),0x3fff,0x4000,0x035f,0x82a0},
+    };
+    qa_native_guest_run_result result;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {
+        cpu = initial;
+        cpu.control[0] |= UINT64_C(0x20);
+        cpu.fp_control = cases[i].control; cpu.fp_status = 0x0200; cpu.fp_tags = 0xfffc;
+        cpu.fp_mantissa[0] = cases[i].input; cpu.fp_exponent[0] = cases[i].exponent;
+        CHECK(qa_native_guest_cpu_write(guest, &cpu, &error));
+        CHECK(qa_native_guest_run(guest, entry, entry + 4, 32, 32, &result, &error));
+        CHECK(result.kind == QA_NATIVE_GUEST_RETURN);
+        CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+        CHECK(cpu.fp_mantissa[0] == cases[i].rounded && cpu.fp_exponent[0] == cases[i].result_exponent);
+        CHECK((cpu.fp_status & 0x82ff) == cases[i].status);
+        CHECK((cpu.registers[QA_NATIVE_RAX] & 0xffff) == cpu.fp_status);
+    }
+    CHECK(qa_native_guest_run(guest, entry + 4, entry + 5, 32, 32, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_PROCESSOR_EXCEPTION &&
+        result.detail.processor.vector == 16 && result.instruction == entry + 4);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error));
+    CHECK(cpu.fp_mantissa[0] == UINT64_C(0x8000000000000000) && cpu.fp_exponent[0] == 0x4000);
+    CHECK(qa_native_guest_run(guest, entry + 5, entry + 8, 32, 32, &result, &error));
+    CHECK(result.kind == QA_NATIVE_GUEST_RETURN);
+    CHECK(qa_native_guest_cpu_read(guest, &cpu, &error) && !(cpu.fp_status & 0x80ff));
+    CHECK(qa_native_guest_destroy(&guest, &error));
+}
+
 static void test_native_i386_call_conventions(void)
 {
     qa_error error = {0};
@@ -10367,6 +10435,7 @@ int main(int argc, char **argv)
     test_native_executable_alias_writes();
     test_native_guest_halt();
     test_native_guest_architectural_stops();
+    test_native_x87_round_status();
     test_native_i386_call_conventions();
     test_q2_linked_models();
     test_q2_weapon_names();

@@ -3,6 +3,47 @@
 #include "unicorn_abi_fp.h"
 #include "uc_priv.h"
 
+static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr)
+{
+    if (env->fpus & FPUS_SE) fpu_raise_exception(env, retaddr);
+    env->fpus &= ~0x200;
+    if (env->fptags[env->fpstt]) {
+        env->fpus |= FPUS_SF;
+        fpu_set_exception(env, FPUS_IE);
+        if (env->fpuc & FPUS_IE) {
+            ST0 = floatx80_default_nan(&env->fp_status);
+            env->fptags[env->fpstt] = 0;
+        }
+        return;
+    }
+
+    floatx80 source = ST0;
+    bool denormal = floatx80_is_zero_or_denormal(source) && !floatx80_is_zero(source);
+    /* Intel SDM 1, 8.2.2: pseudo-denormals raise DE and use exponent 1. */
+    if (denormal && (source.low & UINT64_C(0x8000000000000000))) source.high |= 1;
+    float_status status = env->fp_status;
+    set_flush_to_zero(false, &status);
+    set_flush_inputs_to_zero(false, &status);
+    set_float_exception_flags(0, &status);
+    floatx80 rounded = floatx80_round_to_int(source, &status);
+    int flags = get_float_exception_flags(&status);
+    if (flags & float_flag_invalid) {
+        fpu_set_exception(env, FPUS_IE);
+        if (!(env->fpuc & FPUS_IE)) return;
+    } else if (denormal) {
+        fpu_set_exception(env, FPUS_DE);
+        if (!(env->fpuc & FPUS_DE)) return;
+    }
+
+    /* Unlike IE/DE, unmasked PE commits the rounded result (SDM 1, 8.5.6). */
+    ST0 = rounded;
+    if (flags & float_flag_inexact) {
+        if (floatx80_lt_quiet(floatx80_abs(source), floatx80_abs(rounded), &status))
+            env->fpus |= 0x200;
+        fpu_set_exception(env, FPUS_PE);
+    }
+}
+
 UNICORN_EXPORT unsigned qa_unicorn_abi_fp_revision(void)
 { return QA_UNICORN_ABI_FP_REVISION; }
 

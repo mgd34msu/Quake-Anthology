@@ -90,8 +90,15 @@ function(qa_native_guest_dependency)
         "${guest_root}/unicorn_map_exec.inc.c" "${extension_root}/unicorn-exec.c")
     qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/softmmu/memory.c"
         "${guest_root}/unicorn_map_memory.inc.c" "${extension_root}/unicorn-memory.c")
-    qa_native_guest_wrap_source(x86_64-softmmu "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/fpu_helper.c"
-        "${guest_root}/unicorn_abi_fp.inc.c" "${extension_root}/unicorn-fpu.c")
+    set(fpu_original "${qa_unicorn_SOURCE_DIR}/qemu/target/i386/fpu_helper.c")
+    set(fpu_extension "${extension_root}/unicorn-fpu.c")
+    file(READ "${fpu_original}" fpu)
+    qa_native_guest_replace_text(fpu
+        "void helper_frndint(CPUX86State *env)\n{\n    ST0 = floatx80_round_to_int(ST0, &env->fp_status);\n}"
+        "static void qa_unicorn_frndint(CPUX86State *env, uintptr_t retaddr);\n\nvoid helper_frndint(CPUX86State *env)\n{\n    qa_unicorn_frndint(env, GETPC());\n}" 1)
+    qa_native_guest_write_source("${fpu_extension}"
+        "${fpu}\n#include \"${guest_root}/unicorn_abi_fp.inc.c\"\n")
+    qa_native_guest_replace_source(x86_64-softmmu "${fpu_original}" "${fpu_extension}")
 
     set(store_original "${qa_unicorn_SOURCE_DIR}/qemu/accel/tcg/cputlb.c")
     set(store_extension "${extension_root}/unicorn-cputlb.c")
