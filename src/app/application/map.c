@@ -2388,13 +2388,9 @@ static bool q2_camera_player(void *opaque, qa_actor_id actor, qa_vec3 origin,
                              qa_vec3 angles, bool entering, qa_error *error)
 {
     application_provider *source = opaque;
-    application_provider *provider = application_provider_for(
-        source->application, actor, QA_ROLE_CHARACTER, "");
-    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_players_camera(provider->state.q2, origin, angles,
-                                    entering, error);
-    return application_fail(error, QA_ERROR_UNSUPPORTED,
-                            "selected character has no Q2 camera adapter");
+    (void)entering;
+    return application_control_cutscene(source->application, actor, origin,
+                                        angles, qa_v3(0, 0, 0), error);
 }
 
 static qa_q2_entity_services q2_entity_services(application_provider *provider,
