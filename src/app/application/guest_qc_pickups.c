@@ -319,6 +319,7 @@ typedef struct qc_pickup_analysis {
     application_provider *provider;
     struct application_qc_pickups *profile;
     const qa_qc_program *program;
+    qa_q1_program game;
     uint8_t *written;
 } qc_pickup_analysis;
 static bool source_type(const qa_qc_program *program,uint32_t word,qa_qc_value_type type)
@@ -397,8 +398,8 @@ static bool source_weapon(const qc_pickup_analysis *a,uint32_t word,qa_item_id *
 {
     qa_q1_weapon weapon;qa_q1_weapon_profile profile;
     if(!source_float(a,word,value)||*value<1||*value>UINT32_C(0x80000000)||truncf(*value)!=*value||
-        !qa_q1_weapon_source(application_q1_program(a->provider->product->campaign),(uint32_t)*value,&weapon)||
-        !qa_q1_weapon_profile_identity(application_q1_program(a->provider->product->campaign),weapon,&profile))return false;
+        !qa_q1_weapon_source(a->game,(uint32_t)*value,&weapon)||
+        !qa_q1_weapon_profile_identity(a->game,weapon,&profile))return false;
     return qa_strings_intern_cstr(qa_session_strings(a->provider->application->session),profile.item,item,e);
 }
 static bool source_name(const qc_pickup_analysis *a,uint32_t word,qa_string_id *out,qa_error *e)
@@ -736,11 +737,16 @@ static bool source_current_ammo_regions(qc_pickup_analysis *a,qa_error *e)
 static bool source_compile(application_provider *provider,struct application_qc_pickups *p,qa_error *e)
 {
     const qa_qc_program *program=provider->state.qc.program;qa_qc_program_info info=qa_qc_program_describe(program);
+    qa_catalog *catalog=qa_launch_instance_catalog(provider->launch);
+    const qa_product *product=qa_catalog_product(catalog?catalog:provider->application->catalog,
+        provider->launch->selection.product);
+    if(!product)return true;
     p->self=qa_qc_program_find_global(program,"self");p->other=qa_qc_program_find_global(program,"other");
     p->time=qa_qc_program_find_global(program,"time");p->items=qa_qc_program_find_field(program,"items");
     if(!p->self||p->self->type!=QA_QC_ENTITY||!p->other||p->other->type!=QA_QC_ENTITY||
         !p->time||p->time->type!=QA_QC_FLOAT||!p->items||p->items->type!=QA_QC_FLOAT)return true;
-    qc_pickup_analysis a={.provider=provider,.profile=p,.program=program,.written=calloc(info.global_words,1)};
+    qc_pickup_analysis a={.provider=provider,.profile=p,.program=program,
+        .game=application_q1_program(product->campaign),.written=calloc(info.global_words,1)};
     if(!a.written)return application_fail(e,QA_ERROR_MEMORY,"Qualifying immutable QC pickup operands");
     bool ok=true;
     for(uint32_t pc=0;ok&&pc<info.statement_count;++pc){qa_qc_statement_access access;
