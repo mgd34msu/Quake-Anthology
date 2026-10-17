@@ -53,8 +53,8 @@ bool qa_qvm_memory_create(qa_qvm *, qa_error *);
 void qa_qvm_execution_destroy(qa_qvm *);
 void qa_qvm_execution_reset(qa_qvm *);
 void qa_qvm_execution_checkpoint(const qa_qvm *, uint64_t values[3]);
-bool qa_qvm_execution_checkpoint_ready(const qa_qvm *, const uint64_t values[3], bool candidate, qa_error *);
-void qa_qvm_execution_restore(qa_qvm *, const uint64_t values[3], bool candidate);
+bool qa_qvm_execution_checkpoint_ready(const qa_qvm *, bool candidate, qa_error *);
+void qa_qvm_execution_restore(qa_qvm *, const uint64_t values[3]);
 struct qa_qvm_saved_function;
 struct qa_qvm_saved_resolver;
 struct qa_qvm_saved_write_watch;
@@ -68,7 +68,7 @@ bool qa_qvm_execution_restore_inventory(qa_qvm *, uint64_t,
     const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t,
     const struct qa_qvm_saved_resolver *, qa_qvm_binding, qa_error *);
 bool qa_qvm_execution_restore_bindings(qa_qvm *, uint64_t generation,
-    const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t, qa_error *);
+    const struct qa_qvm_saved_function *, qa_qvm_binding *, size_t, qa_error *);
 bool qa_qvm_execution_restore_callbacks(qa_qvm *, uint64_t generation,
     const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t,
     const struct qa_qvm_saved_resolver *, qa_qvm_binding, qa_error *);

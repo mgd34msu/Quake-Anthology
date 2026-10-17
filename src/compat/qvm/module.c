@@ -148,7 +148,7 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound checkpoint services");
     uint64_t execution[3];
     qa_qvm_execution_checkpoint(vm,execution);
-    if (!qa_qvm_execution_checkpoint_ready(vm,execution,false,error)) return false;
+    if (!qa_qvm_execution_checkpoint_ready(vm,false,error)) return false;
     qa_buffer host = {0};
     ++vm->lifecycle_depth;
     bool captured = vm->options.checkpoint(vm->options.context,&host,error);
@@ -224,13 +224,13 @@ static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
     if (!api_matches || !saved_watch ||
         (candidate && (vm->write_sequence || saved_watch < vm->next_watch)))
         return qa_qvm_error(error,QA_ERROR_FORMAT,16,"QVM source API or candidate execution generation differs");
-    if (!qa_qvm_execution_checkpoint_ready(vm,execution,candidate,error)) return false;
+    if (!qa_qvm_execution_checkpoint_ready(vm,candidate,error)) return false;
     *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}, memory, host};
     return true;
 }
 
 bool qa_qvm_restore_candidate_bindings(qa_qvm *vm, qa_bytes state,
-    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    const qa_qvm_saved_function *constructed, qa_qvm_binding *saved,
     size_t count, qa_error *error)
 {
     saved_execution source;
@@ -292,7 +292,7 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     if (candidate || saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
     if (candidate || source.watch > vm->next_watch) vm->next_watch = source.watch;
     vm->api_version = source.api;
-    qa_qvm_execution_restore(vm,source.counters,candidate);
+    qa_qvm_execution_restore(vm,source.counters);
     qa_bytes host = source.host;
     ++vm->lifecycle_depth;
     bool restored = vm->options.restore(vm->options.context,host,error);

@@ -80,7 +80,8 @@ bool application_q3_equipment_functions_restore(qa_session *session, qa_qvm *vm,
         qa_source_save_bool(&io, &present) && qa_source_save_count(&io, &count, constructed_count);
     if (okay && (present != (equipment != NULL) || count != constructed_count))
         okay = application_fail(error, QA_ERROR_FORMAT, "CGAME equipment inventory differs from its admitted artifact");
-    for (size_t i = 0; okay && i < count; ++i) okay = qa_source_save_u64(&io, &bindings[i]);
+    for (size_t i = 0; okay && i < count; ++i)
+        okay = qa_source_save_u64(&io, &bindings[i]) && bindings[i] != 0;
     if (okay) okay = state_fields(&io, &state) && qa_source_save_finish(&io, NULL) &&
         application_q3_equipment_state_qualify(equipment, &state, error) &&
         qa_qvm_restore_candidate_bindings(vm, executor, functions, bindings, constructed_count, error);

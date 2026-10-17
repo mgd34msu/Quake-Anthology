@@ -129,7 +129,8 @@ bool application_q3_gear_restore(application_q3_gear *gear, qa_bytes bytes,
         qa_source_save_i32(&io, &milliseconds) && milliseconds >= 0 &&
         qa_source_save_i32(&io, &frame) && frame >= 0 &&
         qa_source_save_count(&io, &functions, 4) && functions == expected;
-    for (size_t i = 0; i < functions && okay; ++i) okay = qa_source_save_u64(&io, &saved[i]);
+    for (size_t i = 0; i < functions && okay; ++i)
+        okay = qa_source_save_u64(&io, &saved[i]) && saved[i] != 0;
     if (okay) okay = qa_source_save_count(&io, &bindings, bytes.size/30);
     for (size_t i = 0; i < bindings && okay; ++i) {
         q3gear_binding row = {0};

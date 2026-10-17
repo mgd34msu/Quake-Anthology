@@ -119,6 +119,9 @@ bool native_client_module_functions_restore(native_client_module *role, qa_bytes
         okay = application_fail(error, QA_ERROR_FORMAT, "CGAME callbacks differ from their actual artifact constructors");
     for (size_t i = 0; okay && i < count; ++i) okay = qa_source_save_u64(&io, bindings + i);
     if (okay && body.count) memcpy(bindings + functions.equipment, body.bindings, body.count * sizeof(*bindings));
+    for (size_t i = 0; okay && i < functions.count; ++i)
+        if (!bindings[i])
+            okay = application_fail(error, QA_ERROR_FORMAT, "Saved CGAME callback identity is absent");
     if (okay) okay = state_fields(&io, &state) && qa_source_save_finish(&io, NULL) &&
         application_q3_equipment_state_qualify(role->equipment, &state, error) &&
         qa_qvm_restore_candidate_bindings(role->vm, executor, functions.descriptors, bindings, functions.count, error);
