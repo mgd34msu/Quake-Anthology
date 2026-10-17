@@ -389,7 +389,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         return qa_application_network_q1_colors(peer->host->frontend->application, actor, top, bottom, error);
     }
     static const char *const allowed[] = {"god", "notarget", "fly", "noclip",
-        "kick", "give", "ban"};
+        "kick", "give", "ban", "use", "weapnext", "weapprev"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(*allowed); ++i)
         if (!strcmp(command, allowed[i])) return qa_application_actor_command(peer->host->frontend->application, actor, text, error);
     uint8_t bytes[96]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
