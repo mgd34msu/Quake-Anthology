@@ -238,7 +238,7 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->source_captures[0] = g->source_captures[1] = 0;
     g->qw_rj = g->options.rules == QA_RULESET_QUAKEWORLD ? 1 : 0;
-    g->sight_actor = g->horn_charmer = g->newmis = (q1_ref){0};
+    g->sight_actor = g->horn_charmer = g->newmis = g->activator = (q1_ref){0};
     g->rogue_runes_world = g->body_queue_head = (q1_ref){0};
     g->rogue_runes_started = false;
     g->time_ns = Q1_SOURCE_INITIAL_TIME_NS;
@@ -829,7 +829,10 @@ bool q1_map_player(qa_q1_game *g, qa_actor_id actor) {
            g->services.actor_traits(g->services.context, actor, &traits) && traits.player;
 }
 bool q1_map_targets(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
-    return qa_targets_use(g->targets, entity->id, activator, g->time_ns, error);
+    q1_ref incoming = g->activator;
+    bool okay = qa_targets_use(g->targets, entity->id, activator, g->time_ns, error);
+    g->activator = incoming;
+    return okay;
 }
 bool q1_map_ambient(qa_q1_game *g, qa_vec3 origin, qa_string_id sound, float volume,
                     qa_error *error) {
@@ -1767,15 +1770,20 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
         return q1_link(g, entity, error);
     case Q1_MAP_DELAYED_USE: {
+        q1_ref incoming = entity->activator;
+        g->activator = incoming;
         qa_target_use use = {.source = entity->id,
-            .activator = q1_ref_actor(g, entity->activator),
+            .activator = q1_ref_actor(g, incoming),
             .dialect = state->pending.delayed.dialect,
             .fields = {.classname = entity->classname, .target = entity->target,
                 .killtarget = entity->killtarget, .message = entity->message,
                 .shader_old = state->pending.delayed.shader_old,
-                .shader_new = state->pending.delayed.shader_new},
+                .shader_new = state->pending.delayed.shader_new,
+                .broadcast_message = (entity->spawnflags & 2097152u) != 0},
             .time_ns = g->time_ns};
-        if (!qa_targets_use_now(g->maps->options.targets, &use, error))
+        bool okay = qa_targets_use_now(g->maps->options.targets, &use, error);
+        g->activator = incoming;
+        if (!okay)
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
     }
@@ -1809,7 +1817,11 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         if (!q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id,
                        qa_vec_add(body.origin, qa_v3(0, 0, 32)), 0, 0, error))
             return false;
-        return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
+        if (!q1_alive(g, entity->id))
+            return true;
+        g->activator = entity->activator;
+        return q1_map_targets(g, entity, q1_ref_actor(g, g->activator), error) &&
+            (!q1_alive(g, entity->id) || q1_remove(g, entity, error));
     }
     default:
         return q1_map_fail(error, "unknown Q1 map continuation");
@@ -1833,16 +1845,23 @@ bool q1_map_timer(qa_q1_game *g, qa_string_id name, q1_actor **out, qa_error *er
 bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_error *error) {
     if (!use || !isfinite(use->fields.delay_seconds))
         return q1_map_fail(error, "invalid Q1 delayed target use");
+    q1_ref incoming = q1_activator_reference(g, use->activator);
     q1_actor *entity;
     if (!q1_map_timer(g, g->runtime_names[Q1_NAME_CLASS_DELAYEDUSE], &entity, error))
         return false;
     entity->map->pending.delayed.dialect = use->dialect;
     entity->map->pending.delayed.shader_old = use->fields.shader_old;
     entity->map->pending.delayed.shader_new = use->fields.shader_new;
-    entity->activator = q1_ref_from(g, use->activator);
+    entity->activator = incoming;
     entity->target = use->fields.target;
     entity->killtarget = use->fields.killtarget;
     entity->message = use->fields.message;
+    entity->spawnflags = use->fields.broadcast_message ? 2097152u : 0;
+    if (g->options.program == QA_Q1_MG1 || g->options.program == QA_Q1_MG3) {
+        entity->targetname = use->fields.targetname;
+        entity->map->use_enabled = true;
+        qa_targets_changed(g->targets, entity->id);
+    }
     if (q1_map_schedule(g, entity, use->fields.delay_seconds, Q1_MAP_DELAYED_USE, error))
         return true;
     (void)q1_remove(g, entity, NULL);

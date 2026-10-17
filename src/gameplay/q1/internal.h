@@ -1545,7 +1545,7 @@ struct qa_q1_game {
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
-    q1_ref sight_actor, horn_charmer, rogue_runes_world, body_queue_head, newmis;
+    q1_ref sight_actor, horn_charmer, rogue_runes_world, body_queue_head, newmis, activator;
     double time, elapsed, sight_time;
     double finale_last_poll;
     bool finale_polled, finale_acknowledged;
@@ -1576,6 +1576,7 @@ struct qa_q1_game {
     uint8_t rune_knight_melee, enemy_range;
     bool enemy_visible;
 };
+q1_ref q1_activator_reference(const qa_q1_game *, qa_actor_id);
 qa_string_id q1_weapon_pickup_name(const qa_q1_game *, qa_q1_weapon);
 qa_string_id q1_hipnotic_step_sound(qa_q1_game *);
 void q1_source_client_clear(q1_player *);

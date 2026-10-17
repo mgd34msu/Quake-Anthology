@@ -1071,6 +1071,8 @@ static bool dispatch_targets(item_touch *touch, qa_error *error) {
     q1_actor *entity = touch->entity;
     if (!touch_live(touch))
         return true;
+    q1_ref incoming = q1_ref_from(g, touch->recipient);
+    g->activator = incoming;
     if (!qa_strings_text(qa_session_strings(g->services.session), entity->target).size &&
         !qa_strings_text(qa_session_strings(g->services.session), entity->killtarget).size)
         return true;
@@ -1079,8 +1081,10 @@ static bool dispatch_targets(item_touch *touch, qa_error *error) {
                      "Q1 pickup target dispatcher missing");
         return false;
     }
-    return g->services.use_targets(g->services.context, entity->id, touch->recipient,
-                                   entity->target, entity->killtarget, entity->delay, error);
+    bool okay = g->services.use_targets(g->services.context, entity->id, touch->recipient,
+                                      entity->target, entity->killtarget, entity->delay, error);
+    g->activator = incoming;
+    return okay;
 }
 static bool backpack_message(item_touch *touch, qa_error *error) {
     qa_q1_game *g = touch->game;

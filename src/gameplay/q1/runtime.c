@@ -262,6 +262,11 @@ qa_actor_id q1_ref_actor(const qa_q1_game *g, q1_ref reference) {
     }
     return actor;
 }
+q1_ref q1_activator_reference(const qa_q1_game *g, qa_actor_id actor) {
+    /* A removed Source edict still retains its activator slot. */
+    return qa_actor_id_equal(q1_ref_actor(g, g->activator), actor) ?
+        g->activator : q1_ref_from(g, actor);
+}
 bool qa_q1_player_source_present(const qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || g->continuation_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
@@ -1855,7 +1860,7 @@ static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_ac
     if (entity && entity->kind == Q1_MAP)
         return q1_map_use(g, entity, other, activator, error);
     if (entity)
-        entity->activator = q1_ref_from(g, activator);
+        entity->activator = g->activator;
     if (entity && q1_classnamed(g, actor, g->runtime_names[Q1_NAME_TRIGGER_BOSS_TELEPORT]))
         return q1_final_teleport(g, (entity->spawnflags & 1) != 0, error);
     if (entity && entity->kind == Q1_PICKUP)
@@ -1913,6 +1918,8 @@ bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other,
         return false;
     bool ok;
     q1_actor *entity = q1_entity(g, actor);
+    q1_ref incoming = entity ? q1_activator_reference(g, activator) : g->activator;
+    g->activator = incoming;
     if (g->services.actor_callback && entity && q1_alive(g, actor)) {
         qa_builtin_actor_callback_request request = {.family = QA_GAME_Q1,
             .provider = g->options.provider, .self = actor,
@@ -1923,6 +1930,7 @@ bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other,
             &request, use_body, &context, &result, error);
         if (ok && q1_alive(g, actor)) ok = callback_current(&context, actor, error);
     } else ok = use_inner(g, actor, other, activator, error);
+    g->activator = incoming;
     return operation_finish(&operation, ok, error);
 }
 static bool blocked_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id obstacle, qa_error *error) {
@@ -2180,6 +2188,8 @@ bool qa_q1_game_authored_target(const qa_q1_game *g, qa_actor_id actor, qa_autho
                                 .killtarget = entity->killtarget,
                                 .message = entity->message,
                                 .delay_seconds = entity->delay,
-                                .wait_seconds = entity->wait};
+                                .wait_seconds = entity->wait,
+                                .broadcast_message = (g->options.program == QA_Q1_MG1 ||
+                                    g->options.program == QA_Q1_MG3) && (entity->spawnflags & 2097152u) != 0};
     return true;
 }

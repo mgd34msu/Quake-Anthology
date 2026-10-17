@@ -219,7 +219,7 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
                 return true;
         }
     }
-    entity->activator = q1_ref_from(g, activator);
+    entity->activator = q1_activator_reference(g, activator);
     if (!q1_map_damageable(g, entity, false, error))
         return false;
     entity = q1_entity(g, id);
@@ -234,7 +234,8 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    if (!q1_map_targets(g, entity, activator, error))
+    g->activator = entity->activator;
+    if (!q1_map_targets(g, entity, q1_ref_actor(g, g->activator), error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;

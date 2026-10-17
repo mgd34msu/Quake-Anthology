@@ -294,10 +294,11 @@ static bool weapon_tail(q1_save_io *io, qa_q1_game *g) {
         for (uint32_t i = 0; i < g->capacity; ++i)
             if (g->actors[i] && g->actors[i]->map && weapon_tail_needed(g->actors[i]->map))
                 ++count;
-        if (!count && !q1_ref_present(g->newmis))
+        if (!count && !q1_ref_present(g->newmis) && !qa_actor_reference_present(g->activator))
             return true;
     } else {
         g->newmis = (q1_ref){0};
+        g->activator = (q1_ref){0};
         if (io->values.offset == io->values.input.size)
             return true;
     }
@@ -322,6 +323,9 @@ static bool weapon_tail(q1_save_io *io, qa_q1_game *g) {
             Q1_SAVE(io, float, entity->map->ammo_rockets);
         Q1_SAVE(io, vector, entity->map->punch_angle);
     }
+    if (io->values.direction == QA_SOURCE_SAVE_READ && io->values.offset == io->values.input.size)
+        return true;
+    Q1_SAVE(io, ref, g->activator);
     return true;
 }
 static bool payload(q1_save_io *io, qa_q1_game *g) {

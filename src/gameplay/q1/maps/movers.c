@@ -204,7 +204,7 @@ static bool button_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     q1_map_movement *move = &entity->map->pending.mover;
     if (move->position == Q1_MAP_UP || move->position == Q1_MAP_TOP)
         return true;
-    entity->activator = q1_ref_from(g, activator);
+    entity->activator = q1_activator_reference(g, activator);
     move->position = Q1_MAP_UP;
     return q1_sound_resource(g, entity->id, g->runtime_names[q1_map_button_sound(entity)], 2, 1, 1, error) &&
            (!q1_alive(g, entity->id) ||
@@ -645,10 +645,11 @@ bool q1_map_mover_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     case Q1_MAP_DOOR_TRIGGER: {
         if (q1_health(g, other) <= 0 || state->cooldown > g->time)
             return true;
+        state->cooldown = g->time + 1;
+        g->activator = q1_ref_from(g, other);
         q1_actor *master = q1_entity(g, q1_ref_actor(g, entity->owner));
         if (!master || !master->map)
             return true;
-        state->cooldown = g->time + 1;
         return door_use(g, master, other, error);
     }
     case Q1_MAP_PLAT_TRIGGER: {
@@ -764,7 +765,8 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         if (entity->wait >= 0 &&
             !q1_map_schedule(g, entity, entity->wait, Q1_MAP_BUTTON_RETURN, error))
             return false;
-        if (!q1_map_targets(g, entity, q1_ref_actor(g, entity->activator), error))
+        g->activator = entity->activator;
+        if (!q1_map_targets(g, entity, q1_ref_actor(g, g->activator), error))
             return false;
         if (q1_alive(g, entity->id))
             entity->frame = 1;

@@ -233,7 +233,10 @@ bool q1_map_addon_sigil_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
     if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     e = campaign_actor(g, id);
-    return !e || q1_map_targets(g, e, other, error);
+    if (!e)
+        return true;
+    g->activator = q1_ref_from(g, other);
+    return q1_map_targets(g, e, other, error);
 }
 static bool indicator_model(qa_q1_game *g, q1_actor *e, qa_error *error) {
     uint32_t bits = e->spawnflags ? e->spawnflags : 1;

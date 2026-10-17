@@ -281,8 +281,12 @@ bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, 
                      "Q1 monster death requires target dispatch");
         return false;
     }
-    return g->services.use_targets(g->services.context, entity->id, killer, entity->target,
-                                   entity->killtarget, entity->delay, error);
+    q1_ref incoming = entity->target ? q1_activator_reference(g, killer) : g->activator;
+    g->activator = incoming;
+    bool okay = g->services.use_targets(g->services.context, entity->id, killer, entity->target,
+                                      entity->killtarget, entity->delay, error);
+    g->activator = incoming;
+    return okay;
 }
 
 static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {

@@ -174,13 +174,16 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
             !qa_targets_read(g->maps->options.targets, target, &fields) ||
             !q1_map_text(g, fields.target))
             continue;
+        q1_ref incoming = g->activator;
         ok = qa_targets_use(g->maps->options.targets, target, activator, g->time_ns, error);
+        g->activator = incoming;
         if (ok && !(flags & 8) && effect(g, id) && q1_alive(g, target) &&
             qa_targets_read(g->maps->options.targets, target, &fields)) {
             ok = qa_targets_set_delay(g->maps->options.targets, target,
                                         (float)((double)fields.delay_seconds + .2),
                                         error) &&
                  qa_targets_use(g->maps->options.targets, target, activator, g->time_ns, error);
+            g->activator = incoming;
             if (q1_alive(g, target)) {
                 qa_error restore = {0};
                 bool restored = qa_targets_set_delay(g->maps->options.targets, target,

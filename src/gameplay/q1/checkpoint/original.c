@@ -261,6 +261,7 @@ static const original_field game_globals[] = {
     FIELD(qa_q1_game, enemy_range, "enemy_range", U8),
     FIELD(qa_q1_game, sight_actor, "sight_entity", REF),
     FIELD(qa_q1_game, newmis, "newmis", REF),
+    FIELD(qa_q1_game, activator, "activator", REF),
     FIELD(qa_q1_game, sight_time, "sight_entity_time", DOUBLE),
     FIELD(qa_q1_game, hellknight_melee, "hknight_type", U32),
     FIELD(qa_q1_game, forward.x, "v_forward_x", FLOAT),
@@ -402,7 +403,9 @@ static const original_map_callback map_callbacks[] = {
     {Q1_MAP_ADDON_SHAKE_TICK, "T_Shake"},
     {Q1_MAP_ADDON_TOSS_CASCADE, "func_toss_linkcascade"},
     {Q1_MAP_ADDON_TOSS_START, "func_toss_toss"},
-    {Q1_MAP_ADDON_TOSS_STOP, "func_toss_think"}
+    {Q1_MAP_ADDON_TOSS_STOP, "func_toss_think"},
+    {Q1_MAP_ADDON_REPEAT_TICK, "repeater_think"},
+    {Q1_MAP_ADDON_EXPLOSION_FIRE, "trigger_explosion_activate"}
 };
 static const char *map_think(q1_map_action action) {
     if (action == Q1_MAP_IDLE) return NULL;
@@ -428,6 +431,7 @@ static const original_think_callback think_callbacks[] = {
 };
 static const char *entity_think(const q1_actor *entity) {
     if (entity->think == Q1_THINK_NONE) {
+        if (entity->map && entity->map->kind == Q1_MAP_ADDON_REPEATER) return "SUB_Null";
         if (entity->map && q1_map_is_mover(entity->map->kind) &&
             entity->map->pending.mover.done != Q1_MAP_IDLE) return map_think(Q1_MAP_MOVE_DONE);
         if (entity->map && entity->map->kind == Q1_MAP_DOOR &&
@@ -503,6 +507,12 @@ static bool source_order(const qa_qc_program *program, qa_q1_save_record *record
     if (!okay) { qa_q1_save_record_destroy(&ordered); return false; }
     *record = ordered; return true;
 }
+static bool original_explosion_sprite(const qa_strings *strings, const q1_actor *entity) {
+    const char *model = qa_strings_cstr(strings, entity->model);
+    return entity->map && entity->map->kind == Q1_MAP_ADDON_EXPLOSION && model &&
+        !strcmp(model, "progs/s_explod.spr") && (entity->think == Q1_THINK_SPRITE ||
+            (entity->think == Q1_THINK_MAP && entity->map->action == Q1_MAP_REMOVE));
+}
 static bool map_functions(const qa_strings *strings, const q1_actor *entity, bool damageable,
     qa_q1_save_record *record, qa_error *error) {
     bool targeted = qa_strings_text(strings, entity->targetname).size != 0;
@@ -514,6 +524,7 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
         break;
     case Q1_MAP_COUNTER: case Q1_MAP_ADDON_COUNTER: use = "counter_use"; break;
     case Q1_MAP_RELAY: use = "SUB_UseTargets"; break;
+    case Q1_MAP_DELAY: use = "SUB_Null"; break;
     case Q1_MAP_TELEPORT: touch = "teleport_touch"; use = "teleport_use"; break;
     case Q1_MAP_HURT: touch = "hurt_touch"; break;
     case Q1_MAP_PUSH: touch = "trigger_push_touch"; break;
@@ -554,6 +565,10 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_EGG_OPENER: use = "mge2m2_rune_egg_opener_use"; break;
     case Q1_MAP_ADDON_TOSS:
         return callback(record, "use", map->use_enabled ? "func_toss_use" : "SUB_Null", error);
+    case Q1_MAP_ADDON_REPEATER: use = "repeater_use"; break;
+    case Q1_MAP_ADDON_EXPLOSION:
+        return callback(record, "use", map->use_enabled ? "trigger_explosion_use" : NULL, error) &&
+            callback(record, "touch", original_explosion_sprite(strings, entity) ? "SUB_Null" : NULL, error);
     case Q1_MAP_SHOOTER: {
         const char *name = qa_strings_cstr(strings, entity->classname);
         use = name && !strcmp(name, "trap_switched_shooter") ? "trap_shooter_use" : "spikeshooter_use";
@@ -1006,7 +1021,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         source_entity = *entity;
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
-            if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON) physics.enemy = entity->activator;
+            if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON || kind == Q1_MAP_BARREL)
+                physics.enemy = entity->activator;
             if (kind == Q1_MAP_SIGIL || kind == Q1_MAP_ADDON_TOSS)
                 source_entity.source_netname = entity->map->netname;
             if (game->options.edition == QA_Q1_CLASSIC) {
@@ -1112,7 +1128,9 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         "OgreGrenadeExplode" : entity_think(entity);
     if (entity->think != Q1_THINK_NONE && !think)
         return fail(error, "Original native think has no exact Source callback projection");
-    if (!callback(record, "think", think, error) || !number(record, "nextthink", entity->next_think, false, error)) return false;
+    double next_think = entity->think == Q1_THINK_NONE && entity->map &&
+        entity->map->kind == Q1_MAP_ADDON_REPEATER ? 0 : entity->next_think;
+    if (!callback(record, "think", think, error) || !number(record, "nextthink", next_think, false, error)) return false;
     if (hammer_base && !FIELDS(receipt,record,&entity->state.projectile,hammer_base_fields,error)) return false;
     if (hammer_bolt &&
         (!FIELDS(receipt,record,&entity->state.projectile,hammer_bolt_fields,error) ||
@@ -1438,6 +1456,7 @@ static bool restore_think(qa_q1_game *game, q1_actor *entity,
         if (!strcmp(name, "FoundTarget")) { entity->think = Q1_THINK_MONSTER_FOUND; return true; }
     }
     if (entity->map) {
+        if (entity->map->kind == Q1_MAP_ADDON_REPEATER && !strcmp(name, "SUB_Null")) return true;
         if (entity->map->kind == Q1_MAP_DOOR && !strcmp(name, "LinkDoors")) {
             if (entity->next_think != 0 || !q1_ref_present(entity->owner) ||
                 !q1_ref_present(entity->physics.enemy))
@@ -1638,6 +1657,8 @@ static bool original_classify(qa_q1_program program, const qa_q1_save_record *re
     if (think && (!strcmp(think,"Wiz_FastFire") || !strcmp(think,"DeathBubblesSpawn") ||
         !strcmp(think,"bubble_bob") || !strcmp(think,"ScourgeTriggerThink") || !strncmp(think,"s_explode",9))) kind = Q1_TIMER;
     if (explosion || hammer_base || hammer_bolt) kind = Q1_TIMER;
+    if (map == Q1_MAP_ADDON_EXPLOSION && (explosion || (think && !strncmp(think, "s_explode", 9))))
+        kind = Q1_MAP;
     if (pickup_record_kind(record)!=UINT32_MAX) kind=Q1_PICKUP;
     if (projectile) name = projectile->native_classname;
     if (!name || !*name) {
@@ -1730,7 +1751,8 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
         const char *use = saved(record, "use");
         map->use_enabled = use && strcmp(use, "SUB_Null");
     }
-    if (map->kind == Q1_MAP_ADDON_COUNTER || map->kind == Q1_MAP_BUTTON)
+    if (original_explosion_sprite(strings, entity)) map->touch_enabled = false;
+    if (map->kind == Q1_MAP_ADDON_COUNTER || map->kind == Q1_MAP_BUTTON || map->kind == Q1_MAP_BARREL)
         entity->activator = entity->physics.enemy;
     if (map->kind == Q1_MAP_SIGIL) {
         const char *touch = saved(record, "touch");
@@ -2024,9 +2046,8 @@ static bool admit_globals(original_admission *admission,const qa_qc_program *pro
                 return unsupported(error,"Mutable Source global lacks its paired native inverse");
         } else if (definition->type==QA_QC_ENTITY) {
             uint32_t slot;
-            bool callback=original_callback_globals(native_program) && !strcmp(pair->key,"activator");
             if (!qa_q1_save_entity_decode(pair->value,&slot,error) ||
-                (callback ? slot>=admission->slots : initial || slot))
+                initial || slot)
                 return unsupported(error,"Mutable Source reference global lacks its paired native inverse");
         } else if (definition->type==QA_QC_STRING) {
             char *decoded=NULL;
@@ -2101,7 +2122,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_WORLD: case Q1_MAP_POINT: case Q1_MAP_PATH: case Q1_MAP_DESTINATION:
     case Q1_MAP_WALL: case Q1_MAP_GATE: case Q1_MAP_AMBIENT: case Q1_MAP_COOP_POINT:
     case Q1_MAP_MULTI: case Q1_MAP_COUNTER: case Q1_MAP_ADDON_COUNTER:
-    case Q1_MAP_RELAY: case Q1_MAP_TELEPORT:
+    case Q1_MAP_RELAY: case Q1_MAP_TELEPORT: case Q1_MAP_DELAY:
     case Q1_MAP_HURT: case Q1_MAP_PUSH: case Q1_MAP_CHANGELEVEL: case Q1_MAP_SETSKILL:
     case Q1_MAP_REGISTERED: case Q1_MAP_MONSTERJUMP: case Q1_MAP_LIGHT:
     case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
@@ -2112,6 +2133,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT: case Q1_MAP_SIGIL_FIXER:
     case Q1_MAP_EGG_OPENER: case Q1_MAP_ELECTRODE_TARGET:
     case Q1_MAP_ADDON_LIGHTNING: case Q1_MAP_ADDON_SHAKE: case Q1_MAP_ADDON_TOSS:
+    case Q1_MAP_ADDON_REPEATER: case Q1_MAP_ADDON_EXPLOSION:
         return true;
     default:
         return false;
@@ -2123,6 +2145,8 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_MULTI: case Q1_MAP_ADDON_COUNTER:
         return action==Q1_MAP_REARM || action==Q1_MAP_REMOVE;
     case Q1_MAP_HURT: return action==Q1_MAP_REARM;
+    case Q1_MAP_BARREL: return action==Q1_MAP_BARREL_EXPLODE;
+    case Q1_MAP_DELAY: return action==Q1_MAP_DELAYED_USE;
     case Q1_MAP_CHANGELEVEL: return action==Q1_MAP_BEGIN_LEVEL;
     case Q1_MAP_DOOR: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_DOOR_DOWN;
     case Q1_MAP_BUTTON: return action==Q1_MAP_MOVE_DONE || action==Q1_MAP_BUTTON_RETURN;
@@ -2138,6 +2162,9 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_SIGIL_FIXER: return action==Q1_MAP_SIGIL_FIX;
     case Q1_MAP_ELECTRODE_TARGET: return action==Q1_MAP_REMOVE;
     case Q1_MAP_ADDON_SHAKE: return action==Q1_MAP_ADDON_SHAKE_TICK;
+    case Q1_MAP_ADDON_REPEATER: return action==Q1_MAP_ADDON_REPEAT_TICK;
+    case Q1_MAP_ADDON_EXPLOSION:
+        return action==Q1_MAP_ADDON_EXPLOSION_FIRE || action==Q1_MAP_REMOVE;
     case Q1_MAP_ADDON_TOSS:
         return action==Q1_MAP_ADDON_TOSS_CASCADE || action==Q1_MAP_ADDON_TOSS_START ||
             action==Q1_MAP_ADDON_TOSS_STOP;
@@ -2334,10 +2361,16 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 admission->world_type=options.world_type;
             } else if (!slot || !isfinite(entity.next_think) ||
                 (entity.think==Q1_THINK_NONE && entity.next_think!=0) ||
-                (entity.think!=Q1_THINK_NONE && (entity.think!=Q1_THINK_MAP ||
-                    !original_map_continuation(source.map,map.action))) ||
+                (entity.think!=Q1_THINK_NONE && !original_explosion_sprite(admission->strings, &entity) &&
+                    (entity.think!=Q1_THINK_MAP || !original_map_continuation(source.map,map.action))) ||
                 saved_number(record,"movetype")==3 || saved_number(record,"solid")==3) {
                 unsupported(error,"Source map has an unrepresented scheduled continuation");goto done;
+            }
+            if (original_explosion_sprite(admission->strings, &entity) &&
+                (entity.frame < 0 || entity.frame > 5 || physics.motion != QA_PHYSICS_STATIONARY ||
+                 physics.solid != QA_PHYSICS_NOT_SOLID ||
+                 !admit_text(admission, "think", entity_think(&entity), error))) {
+                unsupported(error, "Source explosion sprite differs from its shared frame continuation"); goto done;
             }
             if (q1_map_is_mover(source.map)) {
                 q1_map_movement *move=&map.pending.mover;

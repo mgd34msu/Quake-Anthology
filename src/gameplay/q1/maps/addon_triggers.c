@@ -77,7 +77,7 @@ static bool repeat(qa_q1_game *g, q1_actor *e, qa_error *error) {
 static bool explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     e->delay = 0;
-    if (!targets(g, e, q1_ref_actor(g, e->activator), error))
+    if (!q1_map_targets(g, e, q1_ref_actor(g, g->activator), error))
         return false;
     e = trigger(g, id);
     if (!e)
@@ -109,7 +109,20 @@ static bool explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     } else if (!q1_effect(g, QA_BUILTIN_EXPLOSION, id, body.origin, 0, 0, error))
         return false;
     e = trigger(g, id);
-    return !e || q1_remove(g, e, error);
+    if (!e)
+        return true;
+    if (colored)
+        return q1_remove(g, e, error);
+    e->physics.motion = QA_PHYSICS_STATIONARY;
+    e->map->action = Q1_MAP_IDLE;
+    e->map->touch_enabled = false;
+    if (!q1_sprite_prepare(g, e, error))
+        return false;
+    e = trigger(g, id);
+    if (!e || !q1_link(g, e, error))
+        return e == NULL;
+    e = trigger(g, id);
+    return !e || q1_schedule(g, e, .1, Q1_THINK_SPRITE, error);
 }
 static bool change_targets(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
@@ -223,15 +236,14 @@ bool q1_map_addon_trigger_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator,
     case Q1_MAP_ADDON_SACRIFICE_COUNTER:
         return counter_use(g, e, activator, error);
     case Q1_MAP_ADDON_REPEATER:
-        e->activator = q1_ref_from(g, activator);
         e->spawnflags ^= 1;
         if (!(e->spawnflags & 1)) {
             q1_map_cancel(g, e);
+            e->next_think = 0;
             return true;
         }
         return repeat(g, e, error);
     case Q1_MAP_ADDON_EXPLOSION:
-        e->activator = q1_ref_from(g, activator);
         return e->delay > 0 ? q1_map_schedule(g, e, e->delay, Q1_MAP_ADDON_EXPLOSION_FIRE, error)
                            : explosion(g, e, error);
     case Q1_MAP_ADDON_CHANGE_TARGET:
@@ -321,7 +333,7 @@ bool q1_map_addon_trigger_think(qa_q1_game *g, q1_actor *e, q1_map_action action
         e->count = e->map->counter_value;
         return true;
     case Q1_MAP_ADDON_REPEAT_TICK:
-        if (!targets(g, e, q1_ref_actor(g, e->activator), error))
+        if (!q1_map_targets(g, e, q1_ref_actor(g, g->activator), error))
             return false;
         e = trigger(g, id);
         return !e || repeat(g, e, error);
