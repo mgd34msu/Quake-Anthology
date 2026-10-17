@@ -28,6 +28,9 @@ typedef struct save_command_request {
 typedef enum save_failed_operation {
     SAVE_FAILURE_NONE, SAVE_FAILURE_MANUAL, SAVE_FAILURE_CAMPAIGN
 } save_failed_operation;
+typedef enum shared_restore_kind {
+    SHARED_RESTORE_MANUAL, SHARED_RESTORE_CAMPAIGN
+} shared_restore_kind;
 struct frontend_save_commands {
     qa_fs_root *root;
     qa_fs_root *level_root;
@@ -42,6 +45,7 @@ struct frontend_save_commands {
     qa_frontend *retained[3];
     qa_error failure;
     save_failed_operation failed_operation;
+    shared_restore_kind restore_kind;
     bool pending, draining;
     bool recovery_checked,recovery_available,recovery_pending,recovery_resume;
     bool recovery_abandoned;
@@ -177,6 +181,7 @@ bool frontend_save_commands_restore_cancel(qa_frontend *f,qa_error *error)
         qa_frontend *displaced=NULL;
         if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],error)) return false;
         request_free(&owner->request); owner->pending=false;
+        owner->restore_kind=SHARED_RESTORE_MANUAL;
     }
     for (size_t i=0;i<3;++i) {
         qa_frontend *retained=owner->retained[i];
@@ -637,6 +642,7 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
     if (*image) {
         free(path);
         owner->restore_image=*image; *image=NULL;
+        owner->restore_kind=SHARED_RESTORE_MANUAL;
         return frontend_persistence_restore_begin(slot,f->options.persistence_services,
             owner->restore_image,&owner->shared,error);
     }
@@ -722,6 +728,7 @@ static bool failed_operation_finish(qa_frontend *f, qa_error *error)
         if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],&cleanup))
             return true;
         request_free(&owner->request); owner->pending=false;
+        owner->restore_kind=SHARED_RESTORE_MANUAL;
         if (!frontend_save_image_release(f,&owner->restore_image,&cleanup)) {
             if (error) *error=cleanup;
             return false;
@@ -771,26 +778,43 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     return ok || campaign_fresh(f,error);
 }
 
+static bool shared_restore_advance(qa_frontend *f,bool *complete,qa_error *error)
+{
+    uint64_t quantum=f->options.application.native_process_policy.instruction_budget;
+    if (!quantum || quantum>16384) quantum=16384;
+    return frontend_persistence_restore_advance(f->save_commands->shared,quantum,complete,error);
+}
 static bool campaign_restore(qa_frontend **slot, qa_error *error)
 {
     qa_frontend *active=*slot;
     frontend_save_commands *owner=active->save_commands;
-    qa_save_image *image=owner->campaign;
-    owner->campaign=NULL; owner->draining=true;
+    owner->draining=true;
+    bool ok,complete=false;
+    if (!owner->shared) {
+        owner->restore_image=owner->campaign; owner->campaign=NULL;
+        owner->restore_kind=SHARED_RESTORE_CAMPAIGN;
+        ok=frontend_persistence_restore_begin(slot,active->options.persistence_services,
+            owner->restore_image,&owner->shared,error);
+    } else ok=shared_restore_advance(active,&complete,error);
+    if (ok && !complete) {
+        owner->draining=false;
+        return true;
+    }
     qa_frontend *displaced=NULL,*retained=NULL;
-    bool ok=qa_frontend_persistence_restore(slot,active->options.persistence_services,image,&displaced,&retained,error);
-    if (!frontend_save_image_release(active,&image,error)) ok=false;
+    qa_error cleanup={0};
+    if (!frontend_persistence_restore_end(&owner->shared,&displaced,&retained,&cleanup)) {
+        owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
+        owner->failure=error && error->code!=QA_OK?*error:cleanup;
+        owner->draining=false;
+        return true;
+    }
+    owner->restore_kind=SHARED_RESTORE_MANUAL;
+    if (!frontend_save_image_release(active,&owner->restore_image,error)) ok=false;
     owner->draining=false;
     frontend_save_commands *current=(*slot)->save_commands;
     current->retained[0]=displaced; current->retained[2]=retained;
-    qa_error cleanup={0};
     (void)cleanup_retained(current,&cleanup);
     if (ok) return true;
-    if (frontend_save_commands_restore_lease_held(active)) {
-        owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
-        owner->failure=error?*error:(qa_error){0};
-        return true;
-    }
     if (*slot!=active || displaced || !save_driver_returned(active) ||
         qa_application_get_state(active->application)!=QA_APPLICATION_RUNNING) return false;
     owner->failed_operation=SAVE_FAILURE_CAMPAIGN;
@@ -818,7 +842,8 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     qa_error inspection={0};
     if (!recovery_inspect(f,&inspection)) return true;
     if (owner->recovery_pending) return recovery_drain(slot,error);
-    if (owner->campaign) return campaign_restore(slot,error);
+    if (owner->campaign || (owner->shared && owner->restore_kind==SHARED_RESTORE_CAMPAIGN))
+        return campaign_restore(slot,error);
     if (!owner->pending) return frontend_save_commands_autosave(f,error) && recovery_start(f,error);
     save_command_request request = owner->request;
     owner->pending = false; owner->draining = true;
@@ -833,9 +858,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
         f->options.dedicated,request.load,QA_SAVE_MANUAL,&local);
     bool complete=!continuing;
     if (owner->shared) {
-        uint64_t quantum=f->options.application.native_process_policy.instruction_budget;
-        if (!quantum || quantum>16384) quantum=16384;
-        ok=frontend_persistence_restore_advance(owner->shared,quantum,&complete,&local);
+        ok=shared_restore_advance(f,&complete,&local);
     } else if (owner->original) {
         if (ok) ok = qa_frontend_original_restore_advance(owner->original, slot, &complete,
             &displaced, &retained_candidate, &local);
