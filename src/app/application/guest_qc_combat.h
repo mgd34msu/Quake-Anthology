@@ -17,6 +17,8 @@ bool application_qc_combat_source_stored(struct application_qc_state *, qa_qc_in
     const qa_qc_store_event *, qa_error *);
 bool application_qc_combat_health_owned(const struct application_qc_state *, qa_actor_id,
     const qa_qc_definition *);
+bool application_qc_combat_reaction(struct application_qc_state *, const qa_damage_outcome *,
+    qa_error *);
 bool application_qc_combat_replace(struct application_qc_state *, qa_qc_instance *,
     const qa_qc_call_event *, qa_qc_call_next, bool *handled, qa_error *);
 bool application_qc_combat_inline(struct application_qc_state *, qa_qc_instance *,

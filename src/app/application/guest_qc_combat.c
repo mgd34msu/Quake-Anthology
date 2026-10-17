@@ -8,6 +8,7 @@
 #include "qa/qc_observation.h"
 #include "qa/text.h"
 #include <ctype.h>
+#include <float.h>
 #include <stdio.h>
 
 typedef struct damage_location {
@@ -1532,25 +1533,124 @@ static bool reaction_body(void *context, const application_q3_mod_actor_request 
     if (ok) *result = true;
     return ok;
 }
+static application_q3_mod_actor_request reaction_request(const qa_damage_request *damage,
+    const qa_damage_result *result)
+{
+    application_q3_mod_actor_request request = {.self = damage->target,
+        .has_attack = true, .attack = damage->attack};
+    if (result->reaction == QA_REACTION_DEATH) {
+        request.source.die.attacker = damage->attack.attacker;
+        request.source.die.inflictor = damage->attack.inflictor;
+        request.source.die.damage = result->applied_damage;
+        request.source.die.kick = damage->knockback; request.source.die.point = damage->point;
+    } else {
+        request.source.pain.attacker = damage->attack.attacker;
+        request.source.pain.damage = result->applied_damage;
+        request.source.pain.kick = damage->knockback;
+    }
+    return request;
+}
 static bool reaction_original(void *context, qa_error *error)
 {
     reaction_call *call = context; damage_frame *frame = call->frame;
-    application_q3_mod_actor_request request = {.self = frame->actor->actor,
-        .has_attack = true, .attack = frame->request->attack};
-    bool death = frame->result->reaction == QA_REACTION_DEATH;
-    if (death) {
-        request.source.die.attacker = frame->request->attack.attacker;
-        request.source.die.inflictor = frame->request->attack.inflictor;
-        request.source.die.damage = frame->result->applied_damage;
-        request.source.die.kick = frame->request->knockback; request.source.die.point = frame->request->point;
-    } else {
-        request.source.pain.attacker = frame->request->attack.attacker;
-        request.source.pain.damage = frame->result->applied_damage;
-        request.source.pain.kick = frame->request->knockback;
-    }
+    application_q3_mod_actor_request request = reaction_request(frame->request, frame->result);
     bool result;
     return application_q3_mod_actor_dispatch(frame->actor->owner->engine->provider->application->mod_operations,
-        death ? Q3_MOD_DIE : Q3_MOD_PAIN, &request, reaction_body, call, &result, error);
+        frame->result->reaction == QA_REACTION_DEATH ? Q3_MOD_DIE : Q3_MOD_PAIN,
+        &request, reaction_body, call, &result, error);
+}
+typedef struct actor_reaction_call {
+    application_qc_combat *owner;
+    qa_actor_id actor;
+    int32_t reference;
+    bool death;
+} actor_reaction_call;
+static bool actor_reaction_current(const actor_reaction_call *call, qa_error *error)
+{
+    int32_t reference;
+    return held(call->owner, error) &&
+        qa_qc_actor_reference(call->owner->engine->provider->state.qc.instance,
+            call->actor, false, &reference, error) &&
+        (reference == call->reference || reject(error, "QC reaction changed its actual Source row"));
+}
+static bool actor_reaction_health(const actor_reaction_call *call, qa_error *error)
+{
+    application_qc_combat *owner = call->owner;
+    struct application_qc_state *engine = owner->engine;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    qa_combat_state state;
+    if (!qa_combat_read_traits(engine->services.combat, call->actor, &state, error)) return false;
+    if (fabs(state.health) > FLT_MAX)
+        return reject(error, "QC reaction health exceeds actual Source precision");
+    float health = (float)state.health;
+    uint32_t slot;
+    int32_t previous;
+    if (!qa_qc_actor_observation_slot(vm, call->actor, &slot, error) ||
+        !qa_qc_actor_observation_int(vm, slot, call->actor,
+            owner->profile->health->offset, &previous, error)) return false;
+    return (uint32_t)previous == float_bits(health) ||
+        qa_qc_project_entity_float(vm, call->reference, owner->profile->health->offset, health, error);
+}
+static bool actor_reaction_body(void *opaque, const application_q3_mod_actor_request *request,
+    bool *result, qa_error *error)
+{
+    actor_reaction_call *reaction = opaque;
+    application_qc_combat *owner = reaction->owner;
+    struct application_qc_state *engine = owner->engine;
+    if (!qa_actor_id_equal(request->self, reaction->actor))
+        return reject(error, "QC Source reaction target changes require a callback replacement");
+    if (!qa_actors_get(qa_session_actors(engine->services.session), reaction->actor)) return true;
+    if (!actor_reaction_current(reaction, error) || !actor_reaction_health(reaction, error)) return false;
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    const application_qc_combat_profile *profile = owner->profile;
+    int32_t function;
+    if (!qa_qc_entity_int(vm, reaction->reference,
+            (reaction->death ? profile->die : profile->pain)->offset, &function, error)) return false;
+    if (!function) return true;
+    const qa_qc_function *callee = function > 0 ?
+        qa_qc_program_function(profile->program, (uint32_t)function) : NULL;
+    if (!callee || callee->parameter_count > (reaction->death ? 0u : 2u))
+        return reject(error, "QC Source reaction has an incompatible callback signature");
+    for (uint32_t i = 0; i < callee->parameter_count; ++i)
+        if (callee->parameter_sizes[i] != 1)
+            return reject(error, "QC Source reaction has an incompatible parameter width");
+    const qa_qc_definition *time = application_qc_field(engine->global_bindings->time, QA_QC_FLOAT, error);
+    if (!time) return false;
+    application_qc_global globals[] = {
+        {profile->self, {.kind = QC_VALUE_INPUT, .source = QC_INPUT_SELF}},
+        {time, {.kind = QC_VALUE_INPUT, .source = QC_INPUT_TIME}}
+    };
+    application_qc_call call = {.function = (uint32_t)function,
+        .argument_count = callee->parameter_count, .globals = globals, .global_count = 2};
+    call.arguments[0] = (application_qc_value){.kind = QC_VALUE_INPUT, .source = QC_INPUT_ATTACKER};
+    call.arguments[1] = (application_qc_value){.kind = QC_VALUE_INPUT, .source = QC_INPUT_AMOUNT};
+    application_qc_inputs inputs = {.self = reaction->actor, .time_ns = engine->source_time_ns,
+        .attacker = reaction->death ? request->source.die.attacker : request->source.pain.attacker,
+        .amount = (float)(reaction->death ? request->source.die.damage : request->source.pain.damage)};
+    if (!application_qc_run_call(engine, &call, &inputs, NULL, error)) return false;
+    *result = true;
+    return !qa_actors_get(qa_session_actors(engine->services.session), reaction->actor) ||
+        actor_reaction_current(reaction, error);
+}
+bool application_qc_combat_reaction(struct application_qc_state *engine,
+    const qa_damage_outcome *outcome, qa_error *error)
+{
+    application_qc_combat *owner = engine ? engine->combat : NULL;
+    if (!owner) return reject(error, "QC character reaction requires its retained Source combat profile");
+    if (!held(owner, error)) return false;
+    actor_reaction_call call = {.owner = owner, .actor = outcome->request.target,
+        .death = outcome->result.reaction == QA_REACTION_DEATH};
+    ++owner->calls;
+    bool ok = qa_qc_actor_reference(engine->provider->state.qc.instance, call.actor,
+        false, &call.reference, error) && actor_reaction_health(&call, error);
+    application_q3_mod_actor_request request = reaction_request(&outcome->request, &outcome->result);
+    bool result;
+    if (ok) ok = application_q3_mod_actor_dispatch(engine->provider->application->mod_operations,
+        call.death ? Q3_MOD_DIE : Q3_MOD_PAIN, &request, actor_reaction_body, &call, &result, error);
+    if (ok && qa_actors_get(qa_session_actors(engine->services.session), call.actor))
+        ok = actor_reaction_current(&call, error);
+    --owner->calls;
+    return ok;
 }
 static bool reaction_replace(application_qc_combat *owner, qa_qc_instance *vm,
     const qa_qc_call_event *event, qa_qc_call_next next, bool *handled, qa_error *error)

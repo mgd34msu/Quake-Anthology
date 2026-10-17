@@ -722,6 +722,8 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
         ok = qa_q3_damage_reaction(provider->state.q3, outcome, error);
         break;
     case APPLICATION_PROVIDER_QC:
+        ok = application_qc_combat_reaction(provider->state.qc.engine, outcome, error);
+        break;
     case APPLICATION_PROVIDER_QVM:
         ok = application_fail(error, QA_ERROR_UNSUPPORTED,
                               "selected foreign character has no source reaction adapter");
