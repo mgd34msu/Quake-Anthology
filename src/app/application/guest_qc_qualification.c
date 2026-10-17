@@ -752,6 +752,16 @@ bool application_qc_player_map_ready(application_provider *provider, bool primar
         return application_fail(error, QA_ERROR_ARGUMENT, "QC player provider has unfinished input");
     const struct application_qc_profile *profile = provider->state.qc.qualified;
     if (profile) return profile->clients || application_fail(error, QA_ERROR_UNSUPPORTED, "QC declaration has no client lifecycle");
-    return (primary_character && source_map_owned) ||
-        application_fail(error, QA_ERROR_UNSUPPORTED, "QC players on foreign maps or secondary roles require a qualified client declaration");
+    if (!primary_character)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "QC secondary player roles require a qualified client declaration");
+    if (source_map_owned) return true;
+    static const char *const callbacks[] = {"SetNewParms", "ClientConnect", "PutClientInServer"};
+    for (size_t i = 0; i < sizeof(callbacks) / sizeof(*callbacks); ++i) {
+        uint32_t index;
+        if (!qa_qc_program_find_function(provider->state.qc.program, callbacks[i], &index) || !index) {
+            qa_error_set(error, QA_ERROR_UNSUPPORTED, i, "QC standard client callback %s is absent", callbacks[i]);
+            return false;
+        }
+    }
+    return true;
 }

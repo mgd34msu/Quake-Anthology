@@ -1601,14 +1601,10 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     qa_cvars_set_server_active(engine->cvars, true);
     return application_qc_objectives_activate(engine,error) && application_qc_callbacks_register(provider, error);
 }
-bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view *bsp,
-                               const qa_entities *entities, qa_string_id map,
-                               qa_string_id spawn, qa_error *error)
+static bool prepare_map(application_provider *provider, const qa_bsp_view *bsp,
+                        const qa_entities *entities, qa_string_id map,
+                        qa_string_id spawn, bool clients_only, qa_error *error)
 {
-    if (provider && provider->state.qc.qualified &&
-        !application_qc_authored_map_ready(provider, error)) return false;
-    if (!bsp || bsp->family == QA_BSP_Q1)
-        return load_map(provider, bsp, entities, map, spawn, true, error);
     static const char *const deathmatch_spawns[] = {
         "info_player_start", "info_player_coop", "team_CTF_redplayer", "team_CTF_blueplayer",
         "team_CTF_redspawn", "team_CTF_bluespawn"
@@ -1625,6 +1621,36 @@ bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view 
         .fallback_count = deathmatch ? sizeof(deathmatch_spawns) / sizeof(*deathmatch_spawns) :
             sizeof(ordinary_spawns) / sizeof(*ordinary_spawns)
     };
+    qa_arena storage;
+    qa_arena_init(&storage, 0);
+    if (clients_only) {
+        qa_bytes world_class;
+        if (!qa_entity_value(entities, 0, "classname", &world_class) || !world_class.size)
+            return application_fail(error, QA_ERROR_FORMAT, "QC world has no spawn function");
+        const qa_qc_program *program = provider->state.qc.program;
+        qa_qc_program_info info = qa_qc_program_describe(program);
+        size_t count = 1;
+        for (uint32_t i = 0; i < info.function_count; ++i) {
+            const char *name = qa_qc_program_function(program, i)->name;
+            if (!strncmp(name, "info_player_", 12) || !strcmp(name, "testplayerstart")) ++count;
+        }
+        if (count > SIZE_MAX / sizeof(const char *))
+            return application_fail(error, QA_ERROR_MEMORY, "QC source spawn class table exceeds address space");
+        const char **classes = qa_arena_alloc(&storage, count * sizeof(*classes), _Alignof(const char *), error);
+        if (!classes) { qa_arena_destroy(&storage); return false; }
+        char *world_name = qa_arena_alloc(&storage, world_class.size + 1, 1, error);
+        if (!world_name) { qa_arena_destroy(&storage); return false; }
+        memcpy(world_name, world_class.data, world_class.size);
+        world_name[world_class.size] = 0;
+        count = 0;
+        classes[count++] = world_name;
+        for (uint32_t i = 0; i < info.function_count; ++i) {
+            const char *name = qa_qc_program_function(program, i)->name;
+            if (!strncmp(name, "info_player_", 12) || !strcmp(name, "testplayerstart")) classes[count++] = name;
+        }
+        options.include_classes = classes;
+        options.include_count = count;
+    }
     qa_buffer text = {0};
     qa_entities prepared = {0};
     bool okay = qa_entities_prepare_text(bsp->lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q1,
@@ -1633,12 +1659,26 @@ bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view 
         load_map(provider, bsp, &prepared, map, spawn, true, error);
     qa_entities_free(&prepared);
     qa_buffer_free(&text);
+    qa_arena_destroy(&storage);
     return okay;
+}
+bool application_qc_spawn_map(application_provider *provider, const qa_bsp_view *bsp,
+                               const qa_entities *entities, qa_string_id map,
+                               qa_string_id spawn, qa_error *error)
+{
+    if (provider && provider->state.qc.qualified &&
+        !application_qc_authored_map_ready(provider, error)) return false;
+    if (!bsp || bsp->family == QA_BSP_Q1)
+        return load_map(provider, bsp, entities, map, spawn, true, error);
+    return prepare_map(provider, bsp, entities, map, spawn, false, error);
 }
 bool application_qc_initialize_map(application_provider *provider, const qa_bsp_view *bsp,
                                     const qa_entities *entities, qa_string_id map,
                                     qa_string_id spawn, qa_error *error)
 {
+    if (provider && provider->launch && !provider->state.qc.qualified &&
+        (provider->launch->roles & QA_ROLE_BIT(QA_ROLE_CHARACTER)))
+        return prepare_map(provider, bsp, entities, map, spawn, true, error);
     return load_map(provider, bsp, entities, map, spawn, false, error);
 }
 bool application_qc_deconstruct(application_provider *provider, qa_error *error)
