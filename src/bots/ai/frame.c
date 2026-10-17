@@ -429,6 +429,7 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(!hazard_input(b,s,&input,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    bot_ai_interactables_fire(b,s,&input);
     bool ok=true;
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
@@ -562,6 +563,8 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     }
 finished:
     if(s->source_settings && !s->progress.pursuing) s->progress=(bot_progress_memory){0};
+    if(ok && !s->retired && bot_ai_live(b,s->view.actor))
+        ok=bot_ai_interactables_gate(b,s,e);
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
         ok = bot_ai_source_action_weapon(b,s,e);
     if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)

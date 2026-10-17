@@ -113,6 +113,7 @@
 #include "../src/bots/runtime/internal.h"
 #include "../src/bots/ai/internal.h"
 #include "../src/bots/ai/source_view.h"
+#include "../src/bots/ai/source_selectors.h"
 #include "../src/bots/ai/source_timers.h"
 #include "qa/bot_observations_save.h"
 #include "qa/bot_knowledge.h"
@@ -655,6 +656,46 @@ static void test_bot_authored_respawn_deadline(void)
     CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
     CHECK(qa_session_destroy(session,&error));
 }
+static void test_bot_authored_gate_fire(void)
+{
+    qa_error error={0};qa_session *session=NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity=2,.component_capacity=1},&session,&error));
+    qa_bots bots={.time=10,.services={.shared={.session=session}}};
+    qa_bot_source_skill settings={0};uint8_t source[QA_BOT_STATE_SOURCE_BYTES]={0};
+    bot_ai_state state={.source_settings=&settings,.source_span={source,sizeof(source)}};
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&state.view.actor,&error));
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&state.interaction.gate.actor,&error));
+    state.interaction.gate.point=qa_v3(100,0,0);
+    bot_ai_enemy_number_set(&state,-1);
+    qa_bot_input input={.view_angles={0,6,0},.action_flags=QA_BOT_USE};
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(input.action_flags==QA_BOT_USE && state.interaction.gate_ready_at==0);
+    input=(qa_bot_input){0};
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK((input.action_flags&QA_BOT_ATTACK) && state.interaction.gate_ready_at==10.7f);
+    input=(qa_bot_input){0};bots.time=10.5f;
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(!(input.action_flags&QA_BOT_ATTACK));
+    bots.time=state.interaction.gate_ready_at;
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(input.action_flags&QA_BOT_ATTACK);
+    bots.time+=1;input=(qa_bot_input){0};state.player.dead=true;
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(!(input.action_flags&QA_BOT_ATTACK));
+    state.player.dead=false;state.hazard.escaping=true;
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(!(input.action_flags&QA_BOT_ATTACK));
+    state.hazard.escaping=false;
+    qa_actor_id old=state.interaction.gate.actor,replacement;
+    CHECK(qa_actors_release(qa_session_actor_registry(session),old,&error));
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session),0,0,&replacement,&error));
+    CHECK(old.slot==replacement.slot && !qa_actor_id_equal(old,replacement));
+    bot_ai_interactables_fire(&bots,&state,&input);
+    CHECK(!(input.action_flags&QA_BOT_ATTACK));
+    CHECK(qa_actors_release(qa_session_actor_registry(session),replacement,&error));
+    CHECK(qa_actors_release(qa_session_actor_registry(session),state.view.actor,&error));
+    CHECK(qa_session_destroy(session,&error));
+}
 static void test_bot_authored_chat_delivery(qa_vfs *files)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -779,6 +820,7 @@ static void test_bot_source_knowledge(void)
 {
     test_bot_authored_trigger();test_bot_authored_aim_point();test_bot_authored_item_value();
     test_bot_authored_respawn_deadline();
+    test_bot_authored_gate_fire();
     qa_error error={0};
     char directory[]="/tmp/qa-bot-source-XXXXXX",folder[128],paths[6][160];
     CHECK(mkdtemp(directory));

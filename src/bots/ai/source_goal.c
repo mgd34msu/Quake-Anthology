@@ -256,7 +256,11 @@ typedef struct bot_interactable_query {
     const qa_string_id *keys;
     float best_distance;
     uint32_t best_order;
-    bool unblock;
+    bool unblock, gate;
+    qa_bounds gate_bounds;
+    qa_actor_id gate_actor;
+    qa_vec3 gate_center;
+    qa_bot_source_interaction gate_kind;
 } bot_interactable_query;
 static bool interactable_evaluate(bot_interactable_query *query,qa_actor_id actor,qa_error *e) {
     qa_bots *b=query->bots;bot_ai_state *s=query->state;bot_interaction_state *state=&s->interaction;
@@ -271,7 +275,9 @@ static bool interactable_evaluate(bot_interactable_query *query,qa_actor_id acto
     qa_vec3 delta=qa_vec_sub(center,bot_ai_origin(s));float distance=qa_vec_dot(delta,delta);
     bool targetname=qa_strings_text(query->strings,fields.targetname).size!=0;
     bool button=query->unblock && !targetname && distance<=1024*1024;
-    if(distance>96*96 && !button) return true;
+    if(query->gate) {
+        if(!qa_bounds_contains(query->gate_bounds,center)) return true;
+    } else if(distance>96*96 && !button) return true;
     qa_builtin_actor_traits traits;
     if(b->services.shared.actor_traits &&
        b->services.shared.actor_traits(b->services.shared.context,actor,&traits) &&
@@ -286,6 +292,13 @@ static bool interactable_evaluate(bot_interactable_query *query,qa_actor_id acto
     if(!bot_ai_live(b,actor)) return true;
     qa_bot_source_interaction kind=qa_bot_source_interaction_read(b->services.source_knowledge,
         fields.classname,(uint32_t)qa_source_to_i32(flags),health>0,targetname);
+    if(query->gate) {
+        if(!query->gate_actor.registry || order<query->best_order ||
+           (order==query->best_order && actor.slot<query->gate_actor.slot)) {
+            query->gate_actor=actor;query->gate_center=center;query->gate_kind=kind;query->best_order=order;
+        }
+        return true;
+    }
     if(distance<=96*96 && (kind==QA_BOT_SOURCE_INTERACTION_USE || kind==QA_BOT_SOURCE_INTERACTION_PUSH))
         state->nearby.use=true;
     if(button && kind==QA_BOT_SOURCE_INTERACTION_PUSH && distance<=query->best_distance) {
@@ -340,6 +353,53 @@ bool bot_ai_interactables_use(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!s->source_settings || s->player.dead || s->player.observer || s->player.intermission) return true;
     SOURCE_CALL(interactables_prepare(b,s,e));
     return !s->interaction.nearby.use || action(b,s,QA_BOT_USE,e);
+}
+bool bot_ai_interactables_gate(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    s->interaction.gate.actor=(qa_actor_id){0};
+    if(!s->source_settings || !s->progress.pursuing || s->player.dead || s->player.observer ||
+       s->player.intermission || !b->services.shared.targets ||
+       bot_ai_live(b,bot_ai_enemy_actor(b,s))) return true;
+    const qa_nav_edge *edge;
+    SOURCE_CALL(qa_bot_moves_reachability(qa_bot_runtime_moves(b->runtime),s->movement,&edge,e));
+    if(!edge || !edge->has_entity) return true;
+    qa_vec3 padding=qa_v3(8,8,8);
+    qa_bounds bounds={qa_vec_sub(edge->entity.bounds.mins,padding),qa_vec_add(edge->entity.bounds.maxs,padding)};
+    qa_world_actor_snapshot snapshot={0};
+    if(!qa_world_snapshot_capture(b->services.shared.world,bounds,QA_COLLISION_BOTH,
+        QA_WORLD_ORDER_SPATIAL,&snapshot,e)) return false;
+    bot_interactable_query query={.bots=b,.state=s,.targets=b->services.shared.targets,
+        .strings=qa_session_strings(b->services.shared.session),.best_order=UINT32_MAX,
+        .gate=true,.gate_bounds=bounds};
+    query.keys=qa_targets_field_keys(query.targets);
+    bool okay=true;
+    for(size_t i=0;i<snapshot.count;++i) {
+        if(!interactable_evaluate(&query,snapshot.actors[i],e)) {okay=false;break;}
+        if(!alive(b,s)) break;
+    }
+    qa_world_snapshot_release(&snapshot);
+    if(!okay || !alive(b,s)) return okay;
+    /* The first control inside the route binding decides, even when its
+     * authored interaction is not SHOOT. Do not select a later control. */
+    if(query.gate_kind!=QA_BOT_SOURCE_INTERACTION_SHOOT || !bot_ai_live(b,query.gate_actor)) return true;
+    qa_vec3 direction=qa_vec_sub(query.gate_center,bot_ai_eye(s));
+    if(qa_vec_dot(direction,direction)>768*768) return true;
+    qa_trace_result trace;
+    SOURCE_CALL(qa_bot_navigation_trace(navigation(b,s),bot_ai_eye(s),query.gate_center,NULL,
+        s->view.actor,UINT32_MAX,&trace,e));
+    if(!bot_ai_live(b,query.gate_actor) ||
+       (trace.fraction<1 && !qa_actor_id_equal(trace.actor,query.gate_actor))) return true;
+    s->interaction.gate.actor=query.gate_actor;s->interaction.gate.point=query.gate_center;
+    bot_ai_view_ideal_set(s,qa_vec_angles(direction,QA_DIRECTION_FLOAT,QA_VECTOR_VIEW|QA_VECTOR_VERTICAL_SIGNED));
+    return true;
+}
+void bot_ai_interactables_fire(qa_bots *b,bot_ai_state *s,qa_bot_input *input) {
+    if(!s->source_settings || s->player.dead || s->player.observer || s->player.intermission ||
+       s->hazard.escaping || b->time<s->interaction.gate_ready_at ||
+       !bot_ai_live(b,s->interaction.gate.actor) || bot_ai_live(b,bot_ai_enemy_actor(b,s))) return;
+    qa_vec3 direction=qa_vec_normalize(qa_vec_sub(s->interaction.gate.point,bot_ai_eye(s))),forward;
+    qa_angle_vectors(input->view_angles,&forward,NULL,NULL,QA_ANGLE_FLOAT_MATH);
+    if(qa_vec_dot(forward,direction)<cosf(5*(3.14159265358979323846f/180))) return;
+    input->action_flags|=QA_BOT_ATTACK;s->interaction.gate_ready_at=b->time+.7f;
 }
 bool bot_ai_interactable_goal(qa_bots *b,bot_ai_state *s,qa_bot_goal *out,bool *found,qa_error *e) {
     *found=false;s->interaction.target=(qa_actor_id){0};

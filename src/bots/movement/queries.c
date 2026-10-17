@@ -67,6 +67,23 @@ bool bot_on_mover(bot_travel *t, const bot_reach *r, bool *out, qa_error *e) {
            t->moves->services.entity_model(t->moves->services.context, entity) == (r->face & 65535);
     return true;
 }
+static bool moves_reachability(qa_bot_moves *moves,uint32_t handle,const qa_nav_edge **out,
+    qa_error *e) {
+    if(!out) return bot_move_fail(e,"missing current reachability output");
+    *out=NULL;
+    if(!handle) return true;
+    bot_move_record *state=bot_move_state(moves,handle,e);
+    if(!state) return false;
+    uint32_t reach=bot_move_word(state,BM_LAST_REACHABILITY);
+    if(!reach) return true;
+    bot_travel travel;
+    if(!bot_travel_begin(moves,state,&travel,e)) return false;
+    *out=qa_bot_navigation_reachability(travel.navigation,reach);return true;
+}
+bool qa_bot_moves_reachability(qa_bot_moves *moves,uint32_t handle,const qa_nav_edge **out,
+    qa_error *e) {
+    BOT_MOVE_OPERATION(moves,e,moves_reachability(moves,handle,out,e));
+}
 static bool moves_riding(qa_bot_moves *moves,uint32_t handle,const qa_nav_entity_state *ground,
     bool *out,qa_error *e) {
     *out=false;

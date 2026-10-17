@@ -132,6 +132,8 @@ bool qa_bot_moves_reset(qa_bot_moves *, uint32_t, qa_error *);
 bool qa_bot_moves_reset_avoid(qa_bot_moves *, uint32_t, bool last_only, qa_error *);
 bool qa_bot_moves_avoid_spot(qa_bot_moves *, uint32_t, const qa_bot_avoid_spot *, qa_error *);
 bool qa_bot_moves_capture(const qa_bot_moves *, uint32_t, qa_bot_move_state *, qa_error *);
+bool qa_bot_moves_reachability(qa_bot_moves *, uint32_t handle,
+    const qa_nav_edge **out, qa_error *);
 bool qa_bot_moves_riding(qa_bot_moves *, uint32_t handle, const qa_nav_entity_state *ground,
     bool *, qa_error *);
 bool qa_bot_moves_restore(qa_bot_moves *, uint32_t, const qa_bot_move_state *, qa_error *);
