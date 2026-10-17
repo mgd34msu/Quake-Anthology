@@ -8,9 +8,9 @@
  * indices refer to the same engine table captured beside the module file. */
 bool qa_q2_game_original_capture(qa_q2_game *, bool autosave, bool transition,
     qa_q2_save_level *, qa_buffer *game, qa_buffer *level, qa_error *);
-/* Classic Source GAME headers identify the installed original compiler ABI.
- * Unknown headers must use that installed module rather than the retail bridge. */
-bool qa_q2_game_original_builtin_game(qa_bytes);
+/* Recognize GAME formats handled by the compiled reader. Donor JSON cannot be
+ * passed to an original DLL; the optional output distinguishes that format. */
+bool qa_q2_game_original_builtin_game(qa_bytes, bool *donor_json);
 /* ReadGame precedes authored map spawning. ReadLevel replaces the spawned
  * physical edict state before spawn-point observation and client Begin. */
 bool qa_q2_game_original_read_game(qa_q2_game *, qa_bytes, qa_error *);

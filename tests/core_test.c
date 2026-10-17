@@ -3586,13 +3586,18 @@ static void test_q2_donor_save_metadata(void)
 {
     const char game[]="{\"stamp\":\"quake-2-ts:g_save:v1\",\"maxclients\":1,\"maxentities\":1024,\"clients\":[{}]}";
     const char level_game[]="{\"level\":{\"mapname\":\"base1\"},\"edicts\":[{\"index\":0,\"data\":{\"classname\":\"worldspawn\"}}]}";
-    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)game,sizeof(game)-1}));
+    bool donor_json=false;
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)game,sizeof(game)-1},&donor_json) && donor_json);
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)game,sizeof(game)-1},NULL));
+    const uint8_t classic[16]="Oct 16 1998";
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){classic,sizeof(classic)},&donor_json) && !donor_json);
     const char unknown[]="{\"stamp\":\"unsupported-source\",\"clients\":[]}";
-    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)unknown,sizeof(unknown)-1}));
+    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)unknown,sizeof(unknown)-1},&donor_json) && !donor_json);
     const char rerelease[]=" \n{\"save_version\":1,\"game\":{\"maxclients\":1,\"maxentities\":8192,\"autosaved\":true},\"clients\":[{}]}";
-    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)rerelease,sizeof(rerelease)-1}));
+    donor_json=true;
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)rerelease,sizeof(rerelease)-1},&donor_json) && !donor_json);
     const char future[]="{\"save_version\":2,\"game\":{},\"clients\":[]}";
-    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)future,sizeof(future)-1}));
+    CHECK(!qa_q2_game_original_builtin_game((qa_bytes){(const uint8_t *)future,sizeof(future)-1},&donor_json) && !donor_json);
     qa_error error={0};
     const qa_net_protocol_id protocols[]={{.kind=QA_NET_Q2_34},{.kind=QA_NET_Q2REPRO_1038},
         {.kind=QA_NET_Q2PRO_36,.revision=1024}};
@@ -3700,7 +3705,7 @@ static void test_q2_donor_save_metadata(void)
     qa_q2_save_data *read=NULL;
     CHECK(qa_q2_save_directory_read(root,"slot",&read,&error));
     CHECK(read->game.size==sizeof(game)-1 && !memcmp(read->game.data,game,sizeof(game)-1));
-    CHECK(qa_q2_game_original_builtin_game((qa_bytes){read->game.data,read->game.size}));
+    CHECK(qa_q2_game_original_builtin_game((qa_bytes){read->game.data,read->game.size},&donor_json) && donor_json);
     CHECK(read->level_count==1 && read->levels[0].game.size==sizeof(level_game)-1 &&
         !memcmp(read->levels[0].game.data,level_game,sizeof(level_game)-1));
     for (size_t i=0;i<QA_Q2_SAVE_AREA_PORTALS;++i)

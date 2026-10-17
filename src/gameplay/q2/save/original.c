@@ -1154,8 +1154,9 @@ void q2_original_client_free(q2_original_client_state *state)
     *state = (q2_original_client_state){0};
 }
 
-bool qa_q2_game_original_builtin_game(qa_bytes bytes)
+bool qa_q2_game_original_builtin_game(qa_bytes bytes, bool *donor_json)
 {
+    if (donor_json) *donor_json = false;
     if (!bytes.data || bytes.size<16) return false;
     for (unsigned product=QA_Q2_BASE;product<=QA_Q2_ROGUE;++product) {
         const q2_original_library *library=q2_original_library_for((qa_q2_product)product);
@@ -1167,12 +1168,14 @@ bool qa_q2_game_original_builtin_game(qa_bytes bytes)
         qa_json_id root = qa_json_root(document);
         qa_json_id stamp = qa_json_get(document, root, "stamp");
         uint64_t version = 0;
-        bool supported = stamp != QA_JSON_NONE ?
-            qa_json_string_equal(document, stamp, "quake-2-ts:g_save:v1") :
+        bool donor = stamp != QA_JSON_NONE &&
+            qa_json_string_equal(document, stamp, "quake-2-ts:g_save:v1");
+        bool supported = stamp != QA_JSON_NONE ? donor :
             qa_json_u64(document, qa_json_get(document, root, "save_version"), &version, NULL) &&
             version == 1 &&
             qa_json_type(document, qa_json_get(document, root, "game")) == QA_JSON_OBJECT &&
             qa_json_type(document, qa_json_get(document, root, "clients")) == QA_JSON_ARRAY;
+        if (supported && donor_json) *donor_json = donor;
         qa_json_destroy(document);
         return supported;
     }
