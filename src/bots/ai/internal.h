@@ -89,6 +89,17 @@ typedef struct bot_cooperative_cooldown {
 typedef struct bot_hazard_memory {
     qa_vec3 safe_origin;
     bool has_safe_origin, escaping;
+    /* Derived floor/prediction results expire at the next AI think. */
+    struct {
+        qa_vec3 origin, direction, velocity;
+        qa_bounds bounds;
+        qa_movement_ground ground;
+        const qa_bot_source_skill *settings;
+        qa_bot_navigation *navigation;
+        float speed;
+        enum { BOT_FLOOR_CLEAR, BOT_FLOOR_STOP, BOT_FLOOR_JUMP, BOT_FLOOR_NO_JUMP } action;
+        bool valid, jumping, crouching;
+    } floor;
 } bot_hazard_memory;
 typedef enum bot_objective_role {
     BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND

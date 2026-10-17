@@ -78,6 +78,178 @@ static bool delta_angles(qa_bots *b,bot_ai_state *s,int32_t out[3],qa_error *e) 
         if(!bot_ai_source_player_slot(b,s,BOT_PS_DELTA_ANGLES,i,out+i,e)) return false;
     return true;
 }
+static bool floor_probe(qa_bot_navigation *navigation,qa_actor_id actor,qa_vec3 point,
+    qa_trace_result *trace,bool *hazard,qa_error *e) {
+    qa_vec3 end=point;end.z-=1024;
+    if(!qa_bot_navigation_trace(navigation,point,end,NULL,actor,1,trace,e)) return false;
+    point=trace->end;point.z+=2;
+    int32_t contents;
+    if(!qa_bot_navigation_contents(navigation,point,&contents,e)) return false;
+    *hazard=((uint32_t)contents&((1u<<QA_CONTENT_LAVA)|(1u<<QA_CONTENT_SLIME)))!=0;
+    return true;
+}
+static bool floor_route(qa_bots *b,bot_ai_state *s,qa_bot_navigation *navigation,
+    qa_vec3 origin,qa_vec3 direction,float *hazard_at,bool *planned,qa_error *e) {
+    *planned=false;
+    qa_bot_move_state move;
+    if(!qa_bot_moves_capture(qa_bot_runtime_moves(b->runtime),s->movement,&move,e)) return false;
+    if(move.reachability_time<=b->time || !move.last_reachability) return true;
+    const qa_nav_edge *edge=qa_bot_navigation_reachability(navigation,move.last_reachability);
+    if(!edge) return true;
+    if(edge->mode==QA_NAV_WALK || edge->mode==QA_NAV_CROUCH) {
+        float along=qa_vec_dot(qa_vec_sub(edge->end,origin),direction);
+        if(along>16 && along<*hazard_at) *hazard_at=0;
+    }
+    switch(edge->mode) {
+    case QA_NAV_JUMP: case QA_NAV_WATER_JUMP: case QA_NAV_JUMP_PAD:
+    case QA_NAV_ROCKET_JUMP: case QA_NAV_BFG_JUMP: case QA_NAV_GRAPPLE:
+    case QA_NAV_DOUBLE_JUMP: case QA_NAV_RAMP_JUMP: case QA_NAV_STRAFE_JUMP:
+    case QA_NAV_LADDER: case QA_NAV_TELEPORT: case QA_NAV_MOVER:
+        *planned=true;break;
+    default: break;
+    }
+    return true;
+}
+static bool floor_jump(qa_bot_navigation *navigation,qa_actor_id actor,const qa_body_state *body,
+    qa_vec3 direction,float speed,qa_bot_movement_prediction *out,qa_error *e) {
+    qa_bot_movement_prediction_query query={.pass_actor=actor,.origin=body->origin,
+        .velocity=body->velocity,.command_move=qa_vec_scale(direction,speed),.presence=2,
+        .on_ground=true,.command_frames=30,.maximum_frames=30,.frame_time=.1f,
+        .stop_events=1|4|8|16|32};
+    query.origin.z+=.5f;
+    query.command_move.z=400;
+    return qa_bot_navigation_predict_movement(navigation,&query,out,e);
+}
+static bool floor_landing(qa_bot_navigation *navigation,qa_actor_id actor,qa_vec3 origin,
+    qa_vec3 direction,float minimum,const qa_bot_movement_prediction *prediction,
+    bool *crossable,qa_error *e) {
+    *crossable=false;
+    if(!(prediction->stop_event&1) || (prediction->stop_event&(8|16|32)) ||
+        qa_vec_dot(qa_vec_sub(prediction->end,origin),direction)<minimum) return true;
+    qa_trace_result trace;bool hazard;
+    if(!floor_probe(navigation,actor,prediction->end,&trace,&hazard,e)) return false;
+    *crossable=!trace.start_solid && !trace.all_solid && trace.fraction<1 && !hazard;
+    return true;
+}
+static bool floor_input(qa_bots *b,bot_ai_state *s,qa_bot_navigation *navigation,
+    const qa_body_state *body,const qa_movement_ground *ground,qa_bot_input *input,qa_error *e) {
+    qa_input_command_intent intent;
+    qa_bot_input_intent(input,&intent);
+    qa_input_command_frame frame={.kind=QA_RULESET_Q3,.attack_allowed=true};
+    qa_usercmd command;
+    qa_usercmd_build(&intent,&frame,0,&command);
+    qa_vec3 forward,right;
+    qa_angle_vectors(qa_v3(0,input->view_angles.y,0),&forward,&right,NULL,QA_ANGLE_FLOAT_MATH);
+    qa_vec3 direction=qa_vec_ma(qa_vec_scale(forward,command.forward_move),command.side_move,right);
+    float magnitude=qa_vec_length(direction);
+    float speed=fminf(1,magnitude/qa_input_command_units(QA_RULESET_Q3))*400;
+    direction=qa_vec_normalize(direction);
+    bool jumping=(input->action_flags&(QA_BOT_JUMP|QA_BOT_DELAYED_JUMP))!=0;
+    bool crouching=(input->action_flags&QA_BOT_CROUCH)!=0;
+    if(magnitude<1 && !jumping) {s->hazard.floor.valid=false;return true;}
+    qa_vec3 displacement=qa_vec_sub(body->origin,s->hazard.floor.origin);
+    qa_vec3 velocity=qa_vec_sub(body->velocity,s->hazard.floor.velocity);
+    bool same=s->hazard.floor.valid && s->hazard.floor.navigation==navigation &&
+        s->hazard.floor.settings==s->source_settings && s->hazard.floor.jumping==jumping &&
+        s->hazard.floor.crouching==crouching &&
+        qa_bounds_equal(s->hazard.floor.bounds,body->bounds) &&
+        s->hazard.floor.ground.hit==ground->hit && s->hazard.floor.ground.model==ground->model &&
+        qa_actor_id_equal(s->hazard.floor.ground.actor,ground->actor) &&
+        qa_vec_dot(displacement,displacement)<64 && qa_vec_dot(velocity,velocity)<1024 &&
+        fabsf(speed-s->hazard.floor.speed)<16 &&
+        (magnitude<1 ? qa_vec_length(s->hazard.floor.direction)<1 :
+            qa_vec_dot(direction,s->hazard.floor.direction)>.98f);
+    if(!same) {
+        s->hazard.floor.valid=false;
+        s->hazard.floor.action=BOT_FLOOR_CLEAR;
+        float horizontal_speed=sqrtf(body->velocity.x*body->velocity.x+body->velocity.y*body->velocity.y);
+        float ahead=32+horizontal_speed*.15f,hazard_at=0;
+        qa_trace_result trace;
+        bool hazard;
+        if(magnitude>=1) for(float distance=16;distance<=ahead;distance+=16) {
+            if(!floor_probe(navigation,s->view.actor,qa_vec_ma(body->origin,distance,direction),
+                &trace,&hazard,e)) return false;
+            if(hazard) {hazard_at=distance;break;}
+        }
+        bool planned=false;
+        if((hazard_at>0 || jumping) && !floor_route(b,s,navigation,body->origin,direction,
+            &hazard_at,&planned,e)) return false;
+        qa_bot_movement_prediction prediction;
+        bool predicted=false;
+        if(!planned && hazard_at>0) {
+            /* A landing must support the scaled body, rather than one narrow rail. */
+            float front=fabsf(direction.x)*fmaxf(fabsf(body->bounds.mins.x),fabsf(body->bounds.maxs.x))+
+                fabsf(direction.y)*fmaxf(fabsf(body->bounds.mins.y),fabsf(body->bounds.maxs.y));
+            float landing_start=0,landing_z=0;
+            bool landing=false;
+            for(float distance=hazard_at+16;distance<=hazard_at+320;distance+=16) {
+                if(!floor_probe(navigation,s->view.actor,qa_vec_ma(body->origin,distance,direction),
+                    &trace,&hazard,e)) return false;
+                if(trace.start_solid || trace.all_solid) break;
+                if(trace.fraction>=1 || hazard) {landing_start=0;continue;}
+                if(!landing_start || fabsf(trace.end.z-landing_z)>8) {
+                    landing_start=distance;landing_z=trace.end.z;continue;
+                }
+                if(distance-landing_start>=fmaxf(16,front)) {landing=true;break;}
+            }
+            bool crossable=false,run_up=false;
+            if(landing && !crouching) {
+                if(!floor_jump(navigation,s->view.actor,body,direction,speed,&prediction,e)) return false;
+                predicted=true;
+                if(!floor_landing(navigation,s->view.actor,body->origin,direction,landing_start+front,
+                    &prediction,&crossable,e)) return false;
+                if(!crossable) {
+                    /* Accelerate on actual ground before asking a stationary bot to jump. */
+                    qa_bot_movement_prediction_query approach={.pass_actor=s->view.actor,
+                        .origin=body->origin,.velocity=body->velocity,.presence=2,.on_ground=true,
+                        .command_move=qa_vec_scale(direction,speed),.command_frames=5,
+                        .maximum_frames=5,.frame_time=.016f,.stop_events=2|4|8|16|32};
+                    approach.origin.z+=.5f;
+                    qa_bot_movement_prediction walking;
+                    if(!qa_bot_navigation_predict_movement(navigation,&approach,&walking,e)) return false;
+                    if(!walking.stop_event && walking.frames==5) {
+                        qa_body_state rim=*body;rim.origin=walking.end;rim.velocity=walking.velocity;
+                        if(!floor_jump(navigation,s->view.actor,&rim,direction,speed,&prediction,e) ||
+                            !floor_landing(navigation,s->view.actor,body->origin,direction,
+                                landing_start+front,&prediction,&crossable,e)) return false;
+                        run_up=crossable;
+                    }
+                }
+            }
+            if(!crossable) s->hazard.floor.action=BOT_FLOOR_STOP;
+            else if(run_up) s->hazard.floor.action=BOT_FLOOR_NO_JUMP;
+            else if(hazard_at<=32) s->hazard.floor.action=BOT_FLOOR_JUMP;
+        }
+        if(!planned && jumping && !crouching && s->hazard.floor.action==BOT_FLOOR_CLEAR) {
+            if(!predicted && !floor_jump(navigation,s->view.actor,body,direction,speed,&prediction,e)) return false;
+            qa_vec3 travel=qa_vec_sub(prediction.end,body->origin);travel.z=0;
+            float distance=qa_vec_length(travel);
+            qa_vec3 along=qa_vec_normalize(travel);
+            if(prediction.stop_event&(8|16|32)) s->hazard.floor.action=BOT_FLOOR_NO_JUMP;
+            for(float step=16;s->hazard.floor.action==BOT_FLOOR_CLEAR && step<=distance;step+=16) {
+                if(!floor_probe(navigation,s->view.actor,qa_vec_ma(body->origin,step,along),
+                    &trace,&hazard,e)) return false;
+                if(hazard) s->hazard.floor.action=BOT_FLOOR_NO_JUMP;
+            }
+        }
+        s->hazard.floor.origin=body->origin;s->hazard.floor.direction=direction;
+        s->hazard.floor.velocity=body->velocity;s->hazard.floor.bounds=body->bounds;
+        s->hazard.floor.ground=*ground;s->hazard.floor.settings=s->source_settings;
+        s->hazard.floor.navigation=navigation;s->hazard.floor.speed=speed;
+        s->hazard.floor.jumping=jumping;s->hazard.floor.crouching=crouching;s->hazard.floor.valid=true;
+    }
+    switch(s->hazard.floor.action) {
+    case BOT_FLOOR_STOP:
+        input->direction.x=0;input->direction.y=0;input->speed=0;
+        input->action_flags&=~(uint32_t)(QA_BOT_MOVE_FORWARD|QA_BOT_MOVE_BACK|QA_BOT_MOVE_LEFT|
+            QA_BOT_MOVE_RIGHT|QA_BOT_JUMP|QA_BOT_DELAYED_JUMP);break;
+    case BOT_FLOOR_JUMP: input->action_flags|=QA_BOT_JUMP;break;
+    case BOT_FLOOR_NO_JUMP:
+        input->action_flags&=~(uint32_t)(QA_BOT_JUMP|QA_BOT_DELAYED_JUMP);break;
+    case BOT_FLOOR_CLEAR: break;
+    }
+    return true;
+}
 static bool hazard_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,qa_error *e) {
     if(!s->source_settings || !b->services.shared.player_control) return true;
     if(s->player.dead || s->player.observer || s->player.intermission ||
@@ -88,6 +260,7 @@ static bool hazard_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,qa_error
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
     if(control.player->cutscene) return true;
     bool grounded=control.ground->hit!=QA_TRACE_HIT_NONE;
+    qa_movement_ground ground=*control.ground;
     int32_t water_level=control.player->water_level;
     qa_body_state body;
     if(!qa_world_body_read(b->services.shared.world,s->view.actor,&body,e)) return false;
@@ -101,9 +274,12 @@ static bool hazard_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,qa_error
         s->hazard.escaping=false;
         if(grounded && water_level==0) {
             s->hazard.safe_origin=body.origin;s->hazard.has_safe_origin=true;
+            return floor_input(b,s,navigation,&body,&ground,input,e);
         }
+        s->hazard.floor.valid=false;
         return true;
     }
+    s->hazard.floor.valid=false;
     if(!s->hazard.escaping) {
         if(!qa_bot_moves_reset(qa_bot_runtime_moves(b->runtime),s->movement,e)) return false;
     }
@@ -206,6 +382,7 @@ bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *ar
     return true;
 }
 bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
+    s->hazard.floor.valid=false;
     if(!s->source_span.data && !bot_ai_source_alias_bind(b,s,e)) return false;
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     int32_t old_inventory[QA_BOT_INVENTORY_SIZE];
