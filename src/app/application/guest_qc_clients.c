@@ -6,6 +6,9 @@
 #include "control_frame.h"
 #include "qa/application_network_qw.h"
 #include "guest_qc_rerelease.h"
+#include "supplies.h"
+#include "qa/application_qc_presentation.h"
+#include "qa/qc_observation.h"
 #include "qa/text.h"
 #include <stdio.h>
 
@@ -146,30 +149,73 @@ static bool qw_name(struct application_qc_state *engine, uint32_t slot,
         qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, field->offset, string, error);
 }
 
-static bool host_give(struct application_qc_state *engine, int32_t reference,
-    const qa_command_invocation *command, qa_error *error)
+static bool give_bits(struct application_qc_state *engine, int32_t reference,
+    uint32_t add, uint32_t clear, qa_error *error)
 {
-    const char *item = command->argc > 1 ? command->argv[1] : "";
-    float amount = (float)atoi(command->argc > 2 ? command->argv[2] : "");
-    qa_campaign_id campaign = engine->provider->product->campaign_id;
-    bool hipnotic = engine->profile != QA_QC_QUAKEWORLD && campaign == QA_CAMPAIGN_HIPNOTIC;
-    bool rogue = engine->profile != QA_QC_QUAKEWORLD && campaign == QA_CAMPAIGN_ROGUE;
-    uint32_t weapon = 0;
-    if (*item >= '0' && *item <= '9') {
-        if (hipnotic && *item == '6') weapon = item[1] == 'a' ? UINT32_C(1) << 16 : 16;
-        else if (hipnotic && *item == '9') weapon = UINT32_C(1) << 23;
-        else if (hipnotic && *item == '0') weapon = 128;
-        else if (*item >= '2') weapon = UINT32_C(1) << (*item - '2');
-        if (!weapon) return true;
-        float items;
-        return application_qc_float(engine, reference, engine->field_bindings->items, &items, error) &&
-            application_qc_set_float(engine, reference, engine->field_bindings->items,
-                (float)(qa_source_to_i32(items) | (int32_t)weapon), error);
+    float items;
+    if (!application_qc_float(engine, reference, engine->field_bindings->items, &items, error)) return false;
+    uint32_t bits = ((uint32_t)qa_source_to_i32(items) & ~clear) | add;
+    int32_t value;
+    memcpy(&value, &bits, sizeof(value));
+    return application_qc_set_float(engine, reference, engine->field_bindings->items, (float)value, error);
+}
+
+static bool give_weapons(struct application_qc_state *engine, qa_actor_id actor,
+    int32_t reference, const char *name, bool *handled, qa_error *error)
+{
+    *handled = name == NULL;
+    uint32_t bits = 0;
+    for (size_t i = 0;; ++i) {
+        qa_item_id item;
+        uint32_t bit = 0;
+        const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+        if (engine->items) {
+            if (i >= engine->items->definition_count) break;
+            const qa_item_definition *definition = &engine->items->admissions[i].definition;
+            if (!definition->weapon) continue;
+            item = definition->item;
+        } else if (profile) {
+            if (i >= profile->weapon_count) break;
+            item = profile->weapon_values[i].item;
+            bit = profile->weapon_values[i].bit;
+        } else {
+            qa_application_qc_weapon_ui_binding binding;
+            uint32_t via;
+            qa_error lookup = {0};
+            if (!application_qc_weapon_binding_at(engine, i, &binding, &via, &lookup)) {
+                if (lookup.code != QA_OK) {
+                    if (error) *error = lookup;
+                    return false;
+                }
+                break;
+            }
+            item = binding.item; bit = binding.bit;
+        }
+        const char *identity = qa_strings_cstr(qa_session_strings(engine->services.session), item);
+        const char *base = identity ? strrchr(identity, '/') : NULL;
+        if (!name || (identity && (application_qc_command_name_equal(name, identity) ||
+            application_qc_command_name_equal(name, base ? base + 1 : identity)))) {
+            qa_inventory_entry entry;
+            bool present;
+            if (!qa_inventory_entry_find(engine->services.inventory, actor, item, &entry, &present, error)) return false;
+            if (present) {
+                entry.count = 1; entry.capacity = fmax(entry.capacity, 1);
+                if (!qa_inventory_configure(engine->services.inventory, actor, &entry, NULL, NULL, error)) return false;
+            } else if (bit) bits |= bit;
+            else return application_fail(error, QA_ERROR_UNSUPPORTED, "QC weapon grant has no admitted Source inventory or ownership bit");
+            *handled = true;
+            if (name) break;
+        }
     }
+    return !bits || give_bits(engine, reference, bits, 0, error);
+}
+
+static bool give_ammo(struct application_qc_state *engine, int32_t reference,
+    char item, float amount, qa_error *error)
+{
     const qa_qc_definition *field = NULL, *alternate = NULL;
     bool extra = false;
-    switch (*item) {
-    case 'h': field = engine->field_bindings->health; break;
+    switch (item) {
     case 's': field = engine->field_bindings->ammo_shells; alternate = engine->field_bindings->ammo_shells1; break;
     case 'n': field = engine->field_bindings->ammo_nails; alternate = engine->field_bindings->ammo_nails1; break;
     case 'r': field = engine->field_bindings->ammo_rockets; alternate = engine->field_bindings->ammo_rockets1; break;
@@ -179,25 +225,175 @@ static bool host_give(struct application_qc_state *engine, int32_t reference,
     case 'p': field = engine->field_bindings->ammo_cells; alternate = engine->field_bindings->ammo_plasma; extra = true; break;
     default: return true;
     }
+    bool rogue = engine->profile != QA_QC_QUAKEWORLD &&
+        engine->provider->product->campaign_id == QA_CAMPAIGN_ROGUE;
     if (!rogue) return extra || application_qc_set_float(engine, reference, field, amount, error);
-    if (*item != 'h') {
-        const qa_qc_definition *definition = alternate;
-        if (definition) {
-            if (definition->type != QA_QC_FLOAT)
-                return application_fail(error, QA_ERROR_FORMAT, "QC Host give field differs from its Source float");
-            if (!qa_qc_set_entity_float(engine->provider->state.qc.instance, reference,
-                definition->offset, amount, error)) return false;
-        }
-        /* Host_Give_f always updates shells; the other Rogue ammo counters
-         * update the shared counter only when that actual source field exists. */
-        if (*item != 's') {
-            if (!definition) return true;
-            float selected;
-            if (!application_qc_float(engine, reference, engine->field_bindings->weapon, &selected, error)) return false;
-            if ((selected > 64) != extra) return true;
-        }
+    if (alternate && !application_qc_set_float(engine, reference, alternate, amount, error)) return false;
+    /* Host_Give_f always updates shells; other Rogue counters update the
+     * selected counter only when their actual alternate source field exists. */
+    if (item != 's') {
+        if (!alternate) return true;
+        float selected;
+        if (!application_qc_float(engine, reference, engine->field_bindings->weapon, &selected, error)) return false;
+        if ((selected > 64) != extra) return true;
     }
     return application_qc_set_float(engine, reference, field, amount, error);
+}
+
+static bool give_all_ammo(struct application_qc_state *engine, int32_t reference,
+    qa_error *error)
+{
+    const qa_qc_definition *fields[] = {
+        engine->field_bindings->ammo_shells, engine->field_bindings->ammo_nails,
+        engine->field_bindings->ammo_rockets, engine->field_bindings->ammo_cells,
+        engine->field_bindings->ammo_shells1, engine->field_bindings->ammo_nails1,
+        engine->field_bindings->ammo_rockets1, engine->field_bindings->ammo_cells1,
+        engine->field_bindings->ammo_lava_nails, engine->field_bindings->ammo_multi_rockets,
+        engine->field_bindings->ammo_plasma};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
+        if ((i < 4 || fields[i]) && !application_qc_set_float(engine, reference, fields[i],
+            i == 1 || i == 5 || i == 8 ? 200 : 100, error)) return false;
+    return true;
+}
+
+static bool give_template(struct application_qc_state *engine, qa_actor_id player,
+    int32_t player_reference, const char *name, qa_error *error)
+{
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    const qa_qc_game_fields *fields = engine->field_bindings;
+    const qa_qc_definition *classname = application_qc_field(fields->classname, QA_QC_STRING, error);
+    const qa_qc_definition *touch = application_qc_field(fields->touch, QA_QC_FUNCTION, error);
+    if (!classname || !touch) return false;
+    qa_qc_slot_binding source = {0};
+    uint32_t source_slot = 0;
+    for (uint32_t slot = engine->max_clients + 1; slot < qa_qc_entity_count(vm); ++slot) {
+        qa_qc_slot_binding binding;
+        if (!qa_qc_slot(vm, slot, &binding) || !binding.actor.registry ||
+            !qa_actors_get(qa_session_actors(engine->services.session), binding.actor)) continue;
+        int32_t text, callback;
+        const char *candidate;
+        if (!qa_qc_actor_observation_int(vm, slot, binding.actor, classname->offset, &text, error) ||
+            !qa_qc_actor_observation_int(vm, slot, binding.actor, touch->offset, &callback, error) ||
+            !qa_qc_string(vm, text, &candidate, error)) return false;
+        if (!callback || (strncmp(candidate, "item_", 5) && strncmp(candidate, "weapon_", 7)) ||
+            !application_qc_command_name_equal(name, candidate)) continue;
+        source = binding; source_slot = slot; break;
+    }
+    if (!source.actor.registry) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Cannot give %s: this map has no live Source item template", name);
+        return false;
+    }
+    qa_unified_frame_lease *storage = application_control_storage_acquire(engine->provider->application, error);
+    if (!storage) return false;
+    uint32_t count = qa_qc_program_describe(engine->provider->state.qc.program).entity_field_words;
+    int32_t *words = qa_unified_frame_lease_alloc(storage, count, sizeof(*words), _Alignof(int32_t), error);
+    bool okay = words != NULL;
+    for (uint32_t i = 0; okay && i < count; ++i)
+        okay = qa_qc_actor_observation_int(vm, source_slot, source.actor, i, words + i, error);
+    qa_vec3 origin;
+    if (okay) okay = qa_qc_entity_vector(vm, player_reference, fields->origin->offset, &origin, error);
+    int32_t reference = 0;
+    qa_actor_id item = {0};
+    if (okay) okay = qa_qc_spawn_entity(vm, &reference, error) &&
+        qa_qc_reference_actor(vm, reference, &item, error);
+    for (uint32_t i = 0; okay && i < count; ++i)
+        okay = qa_qc_set_entity_int(vm, reference, i, words[i], error);
+    if (okay) okay = qa_qc_set_entity_vector(vm, reference, fields->origin->offset, origin, error) &&
+        application_qc_set_float(engine, reference, fields->solid, 1, error) &&
+        application_qc_set_float(engine, reference, fields->nextthink, 0, error);
+    const char *const targets[] = {"target", "targetname", "killtarget"};
+    for (size_t i = 0; okay && i < sizeof(targets) / sizeof(*targets); ++i) {
+        const qa_qc_definition *field = qa_qc_program_find_field(engine->provider->state.qc.program, targets[i]);
+        if (field) okay = qa_qc_set_entity_int(vm, reference, field->offset, 0, error);
+    }
+    if (okay) {
+        qa_qc_game_global globals[] = {
+            {"self", {QA_QC_GAME_ACTOR, {.actor = item}}},
+            {"other", {QA_QC_GAME_ACTOR, {.actor = player}}},
+            {"time", {QA_QC_GAME_FLOAT, {.number = (float)((double)engine->source_time_ns / 1e9)}}}};
+        okay = qa_qc_game_call_index(engine->provider->state.qc.game,
+            (uint32_t)words[touch->offset], NULL, 0, globals, 3, NULL, error);
+    }
+    if (item.registry && qa_actors_get(qa_session_actors(engine->services.session), item)) {
+        qa_error cleanup = {0};
+        bool released = qa_session_release(engine->services.session, item, okay ? error : &cleanup);
+        okay = okay && released;
+    }
+    qa_unified_frame_lease_release(storage);
+    return okay;
+}
+
+static bool host_give(struct application_qc_state *engine, qa_actor_id actor,
+    int32_t reference, size_t count, const char *const *arguments, qa_error *error)
+{
+    if (!count) return application_source_message(engine->provider, actor,
+        "Usage: give <all|weapons|ammo|health|armor|keys|item> [amount]\n", error);
+    const char *name = arguments[0];
+    bool all = application_qc_command_name_equal(name, "all");
+    bool weapons = application_qc_command_name_equal(name, "weapons");
+    bool ammunition = application_qc_command_name_equal(name, "ammo");
+    bool handled = false;
+    if (!all && !weapons && !ammunition) {
+        if (!application_supplies_cheat_item(engine->provider, actor, count, arguments, &handled, error)) return false;
+        if (handled) return true;
+    }
+    float amount = count > 1 ? (float)atoi(arguments[1]) : 0;
+    if (all || application_qc_command_name_equal(name, "health") || application_qc_command_name_equal(name, "h")) {
+        float value = count > 1 ? amount : application_qc_command_name_equal(name, "h") ? 0 : 100;
+        if (!application_qc_set_float(engine, reference, engine->field_bindings->health, value, error)) return false;
+        if (!all) return true;
+    }
+    if (all || application_qc_command_name_equal(name, "armor") || application_qc_command_name_equal(name, "a")) {
+        float points = count > 1 ? amount : application_qc_command_name_equal(name, "a") ? 0 : 200;
+        const qa_qc_definition *type = qa_qc_program_find_field(engine->provider->state.qc.program, "armortype");
+        uint32_t bit = points > 150 ? 32768u : points > 100 ? 16384u : points > 0 ? 8192u : 0;
+        if (!give_bits(engine, reference, bit, 8192u | 16384u | 32768u, error) ||
+            !application_qc_set_float(engine, reference, engine->field_bindings->armorvalue, points, error) ||
+            !application_qc_set_float(engine, reference, type, points > 150 ? .8f : points > 100 ? .6f : points > 0 ? .3f : 0, error)) return false;
+        if (!all) return true;
+    }
+    if (all || weapons) {
+        if (!application_supplies_cheat_arsenal(engine->provider, actor, QA_Q1_CHEAT_WEAPONS, &handled, error) ||
+            (!handled && !give_weapons(engine, actor, reference, NULL, &handled, error))) return false;
+        if (!all) return true;
+    }
+    if (all || ammunition) {
+        if (!application_supplies_cheat_arsenal(engine->provider, actor, QA_Q1_CHEAT_AMMO, &handled, error) ||
+            (!handled && !give_all_ammo(engine, reference, error))) return false;
+        if (!all) return true;
+    }
+    if (all || application_qc_command_name_equal(name, "keys"))
+        return give_bits(engine, reference, 131072u | 262144u, 0, error);
+    if (application_qc_command_name_equal(name, "items")) {
+        const char *const items[] = {"quad", "pent", "ring", "suit"};
+        for (size_t i = 0; i < sizeof(items) / sizeof(*items); ++i)
+            if (!host_give(engine, actor, reference, 1, items + i, error)) return false;
+        return true;
+    }
+    if (*name >= '0' && *name <= '9') {
+        bool hipnotic = engine->profile != QA_QC_QUAKEWORLD &&
+            engine->provider->product->campaign_id == QA_CAMPAIGN_HIPNOTIC;
+        uint32_t weapon = 0;
+        if (hipnotic && *name == '6') weapon = name[1] == 'a' ? UINT32_C(1) << 16 : 16;
+        else if (hipnotic && *name == '9') weapon = UINT32_C(1) << 23;
+        else if (hipnotic && *name == '0') weapon = 128;
+        else if (*name >= '2') weapon = UINT32_C(1) << (*name - '2');
+        return !weapon || give_bits(engine, reference, weapon, 0, error);
+    }
+    if (!give_weapons(engine, actor, reference, name, &handled, error)) return false;
+    if (handled) return true;
+    char ammo = application_qc_command_name_equal(name, "s") || application_qc_command_name_equal(name, "shells") ? 's' :
+        application_qc_command_name_equal(name, "n") || application_qc_command_name_equal(name, "nails") ? 'n' :
+        application_qc_command_name_equal(name, "r") || application_qc_command_name_equal(name, "rockets") ? 'r' :
+        application_qc_command_name_equal(name, "c") || application_qc_command_name_equal(name, "cells") ? 'c' :
+        application_qc_command_name_equal(name, "l") ? 'l' : application_qc_command_name_equal(name, "m") ? 'm' :
+        application_qc_command_name_equal(name, "p") ? 'p' : 0;
+    if (ammo) return give_ammo(engine, reference, ammo, amount, error);
+    const char *classname = application_qc_command_name_equal(name, "quad") ? "item_artifact_super_damage" :
+        application_qc_command_name_equal(name, "pent") ? "item_artifact_invulnerability" :
+        application_qc_command_name_equal(name, "ring") ? "item_artifact_invisibility" :
+        application_qc_command_name_equal(name, "suit") ? "item_artifact_envirosuit" : name;
+    return give_template(engine, actor, reference, classname, error);
 }
 
 bool application_qc_game_command(application_provider *provider,
@@ -255,7 +451,15 @@ bool application_qc_host_command(application_provider *provider,
     }
     int32_t reference;
     if (!qa_qc_actor_reference(provider->state.qc.instance, context.actor, false, &reference, error)) return false;
-    if (give) return host_give(engine, reference, command, error);
+    if (give) {
+        if (!host_give(engine, context.actor, reference, command->argc - 1, command->argv + 1, error)) return false;
+        qa_application *app = provider->application;
+        if (application_provider_for(app, context.actor, QA_ROLE_ARSENAL, "") == provider &&
+            (!app->equipment || qa_equipment_primary_selected(app->equipment, context.actor)) &&
+            qa_qc_program_find_function(provider->state.qc.program, "W_SetCurrentAmmo", NULL))
+            return application_qc_named(engine, "W_SetCurrentAmmo", context.actor, error);
+        return application_qc_publish_client_outputs(engine, error);
+    }
     bool enabled;
     if (god || notarget) {
         float flags;
