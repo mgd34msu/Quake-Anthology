@@ -842,6 +842,12 @@ bool application_native_q2_spawn_map_advance(application_provider *provider, con
     *complete = false;
     if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires its game owner");
+    if (!engine->initialized) {
+        bool initialized = false;
+        if (!application_native_q2_initialize_primary_advance(provider, map, name, spawn,
+                NULL, quantum, &initialized, error)) return false;
+        if (!initialized) return true;
+    }
     if (!engine->map_loading_phase) {
         if (!application_native_q2_idle(provider))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires returned source callbacks");
@@ -856,11 +862,7 @@ bool application_native_q2_spawn_map_advance(application_provider *provider, con
         ++engine->calls;
         switch (engine->map_loading_phase) {
         case 1:
-            if (!engine->initialized) {
-                ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
-                if (ok) engine->initialized = true;
-            }
-            if (ok && original)
+            if (original)
                 ok = application_q2_original_game_advance(provider, quantum, &returned, error);
             break;
         case 2: {
