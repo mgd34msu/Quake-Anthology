@@ -132,9 +132,8 @@ bool qa_armor_absorb(const qa_armor *armor, double damage, qa_damage_flags flags
             regular_saved = fmin((float)item->points, ceilf((float)(fraction * remaining)));
             item->points = (float)((float)item->points - (float)regular_saved);
         } else {
-            double protected_damage = item->kind == QA_ARMOR_Q2 ?
-                (float)((float)((float)protection * flags.regular_scale) * (float)(damage - power_saved)) :
-                protection * flags.regular_scale * (damage - power_saved);
+            double protected_damage = (float)((float)((float)protection * flags.regular_scale) *
+                (float)(damage - power_saved));
             regular_saved = fmin(item->points, ceil(protected_damage));
             item->points -= regular_saved;
         }

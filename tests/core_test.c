@@ -184,6 +184,24 @@ static void test_source_dollar_evaluation(void)
 
 void test_q2_brush_animation(void);
 
+static void test_q3_armor_rounding(void)
+{
+    qa_error error = {0};
+    qa_armor armor = {.regular = {.kind = QA_ARMOR_Q3, .points = 100,
+        .protection.q3_protection = 0.66f}};
+    qa_armor_context context = {0};
+    qa_armor_result result;
+    CHECK(qa_armor_absorb(&armor, 50, (qa_damage_flags){.regular_scale = 1},
+        &context, NULL, &result, &error));
+    CHECK(result.regular_saved == 33 && result.armor.regular.points == 67);
+    CHECK(qa_armor_absorb(&armor, 100, (qa_damage_flags){.regular_scale = 0.5f},
+        &context, NULL, &result, &error));
+    CHECK(result.regular_saved == 33 && result.armor.regular.points == 67);
+    CHECK(qa_armor_absorb(&armor, 150, (qa_damage_flags){.regular_scale = 1},
+        &context, NULL, &result, &error));
+    CHECK(result.regular_saved == 100 && result.armor.regular.points == 0);
+}
+
 static void test_bot_log_resume(void)
 {
     char directory[]="/tmp/qa-bot-log-XXXXXX",path[160];
@@ -10283,6 +10301,7 @@ int main(int argc, char **argv)
     if (test_recovery_child(argc, argv, &recovery_status)) return recovery_status;
     test_errors_and_buffers();
     test_source_dollar_evaluation();
+    test_q3_armor_rounding();
     test_q2_brush_animation();
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
