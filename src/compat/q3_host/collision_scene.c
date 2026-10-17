@@ -85,8 +85,7 @@ typedef struct collision_row {
 typedef struct collision_capture {
     const qa_q3_host_collision_scene *scene;
     qa_q3_host_collision_view view;
-    collision_row *rows;
-    uint8_t *record;
+    collision_row row;
     qa_trace_scratch *scratch;
     size_t slot;
 } collision_capture;
@@ -223,15 +222,7 @@ static collision_capture *capture_take(qa_q3_host_collision_scene *scene, qa_err
     capture->scene = scene;
     capture->slot = slot;
     capture->view = (qa_q3_host_collision_view){0};
-    if (!capture->rows)
-        capture->rows = qa_arena_alloc(&scene->capture_storage,
-            (size_t)scene->binding->profile.solid_capacity * sizeof(*capture->rows),
-            _Alignof(collision_row), error);
-    if (!capture->record)
-        capture->record = qa_arena_alloc(&scene->capture_storage,
-            qa_qvm_entity_bytes(scene->host->options.abi) + 24, 1, error);
-    if (!capture->rows || !capture->record || (!capture->scratch &&
-        !qa_trace_scratch_create(scene->geometry, &capture->scratch, error))) {
+    if (!capture->scratch && !qa_trace_scratch_create(scene->geometry, &capture->scratch, error)) {
         qa_pool_release(&scene->captures, slot); return NULL;
     }
     return capture;
@@ -340,33 +331,33 @@ static bool capture_view(const qa_q3_host_collision_scene *scene,
     return true;
 }
 
-static bool capture(const qa_q3_host_collision_scene *scene, collision_capture *out,
-    qa_error *error)
+static bool read_row(collision_capture *capture, size_t index, qa_error *error)
 {
-    if (!capture_view(scene, &out->view, error)) return false;
+    const qa_q3_host_collision_scene *scene = capture->scene;
     qa_q3_host *host = scene->host;
     const q3_collision_binding *binding = scene->binding;
     const qa_q3_host_collision_profile *profile = &binding->profile;
     size_t entity_bytes = qa_qvm_entity_bytes(host->options.abi);
-    for (size_t i = 0; i < out->view.solid_count; ++i) {
-        collision_row *row = out->rows + i;
-        uint32_t address;
-        if (!word(binding, profile->solids + (uint32_t)i * 4, &address, error)) return false;
-        if (address < profile->entities ||
-            (address - profile->entities) % profile->entity_stride ||
-            (address - profile->entities) / profile->entity_stride >= profile->entity_count)
-            return q3_fail(error, QA_ERROR_FORMAT, i, "CG solid pointer is outside its declared centity array");
-        uint8_t *bytes = out->record;
-        if (!qa_qvm_read(binding->vm, address + profile->current_state, bytes, entity_bytes, error) ||
-            !qa_qvm_read(binding->vm, address + profile->lerp_origin, bytes + entity_bytes, 12, error) ||
-            !qa_qvm_read(binding->vm, address + profile->lerp_angles, bytes + entity_bytes + 12, 12, error)) return false;
-        qa_q3_abi_record record = {.abi = host->options.abi, .bytes = {bytes, entity_bytes}};
-        if (!qa_q3_abi_read_entity(&record, 0, true, &row->state, error) ||
-            row->state.number < 0 || row->state.number >= QA_Q3_ENTITIES)
-            return q3_fail(error, QA_ERROR_FORMAT, i, "CG solid has an invalid actual Source entity number");
-        row->origin = vector(bytes + entity_bytes);
-        row->angles = vector(bytes + entity_bytes + 12);
-    }
+    uint32_t address;
+    if (!word(binding, profile->solids + (uint32_t)index * 4, &address, error)) return false;
+    if (address < profile->entities ||
+        (address - profile->entities) % profile->entity_stride ||
+        (address - profile->entities) / profile->entity_stride >= profile->entity_count)
+        return q3_fail(error, QA_ERROR_FORMAT, index, "CG solid pointer is outside its declared centity array");
+    qa_bytes state, origin, angles;
+    if (!qa_qvm_span(binding->vm, 1, (int64_t)address + profile->current_state - 1,
+            entity_bytes, &state, error) ||
+        !qa_qvm_span(binding->vm, 1, (int64_t)address + profile->lerp_origin - 1,
+            12, &origin, error) ||
+        !qa_qvm_span(binding->vm, 1, (int64_t)address + profile->lerp_angles - 1,
+            12, &angles, error)) return false;
+    collision_row *row = &capture->row;
+    qa_q3_abi_record record = {.abi = host->options.abi, .bytes = state};
+    if (!qa_q3_abi_read_entity(&record, 0, true, &row->state, error) ||
+        row->state.number < 0 || row->state.number >= QA_Q3_ENTITIES)
+        return q3_fail(error, QA_ERROR_FORMAT, index, "CG solid has an invalid actual Source entity number");
+    row->origin = vector(origin.data);
+    row->angles = vector(angles.data);
     return true;
 }
 
@@ -405,7 +396,8 @@ static bool query_row(void *context, size_t index, qa_entity_pose pose,
 {
     collision_capture *capture = context;
     const qa_q3_host_collision_scene *scene = capture->scene;
-    collision_row *row = capture->rows + index;
+    if (!read_row(capture, index, error)) return false;
+    collision_row *row = &capture->row;
     bool ignored;
     *present = false;
     if (!skip(scene, row, pass, &ignored, error)) return false;
@@ -455,7 +447,8 @@ static bool query_row(void *context, size_t index, qa_entity_pose pose,
 static bool query_hit(void *context, size_t index, qa_trace_result *hit, qa_error *error)
 {
     const collision_capture *capture = context;
-    const collision_row *row = capture->rows + index;
+    /* The shared query resolves a replacing hit before reading its next row. */
+    const collision_row *row = &capture->row;
     qa_actor_id mapped = {0}; bool present = false;
     if (row->state.number != QA_Q3_ENTITY_WORLD) {
         if (!actor(capture->scene, (uint32_t)row->state.number, &mapped, &present, error)) return false;
@@ -485,7 +478,7 @@ bool qa_q3_host_collision_trace(qa_q3_host_collision_scene *scene, const qa_trac
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "CG acoustic trace requires its actual listener and finite query");
     ++scene->readers;
     collision_capture *cached = capture_take(scene, error);
-    bool ok = cached && capture(scene, cached, error);
+    bool ok = cached && capture_view(scene, &cached->view, error);
     qa_trace_result result = {0};
     if (ok && !cached->view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_trace_query q = *query;
@@ -510,7 +503,7 @@ bool qa_q3_host_collision_point_contents(qa_q3_host_collision_scene *scene, cons
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "CG contents query needs its actual held scene");
     ++scene->readers;
     collision_capture *cached = capture_take(scene, error);
-    bool ok = cached && capture(scene, cached, error);
+    bool ok = cached && capture_view(scene, &cached->view, error);
     qa_point_contents result = {0};
     if (ok && !cached->view.snapshot_address) ok = q3_fail(error, QA_ERROR_NOT_FOUND, 0, "CG has no selected collision snapshot yet");
     qa_point_query q = *query;
