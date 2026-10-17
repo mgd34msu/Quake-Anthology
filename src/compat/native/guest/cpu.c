@@ -424,9 +424,9 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         return guest_fail(error, QA_ERROR_UNSUPPORTED, start,
             "exact instruction budgets require the qualified emulated execution backend");
     if (!out || (!stop && !syscall) || (guest->run && !guest->callback_depth && !guest->publication_depth) ||
-        (guest->options.image.target.pointer_bytes == 4 && stop > UINT32_MAX) ||
-        !guest_range(guest, start, 1, QA_NATIVE_GUEST_EXECUTE, error))
-        return guest_fail(error, QA_ERROR_ARGUMENT, start, "native guest execution requires a genuine executable entry and bounded continuation");
+        (guest->options.image.target.pointer_bytes == 4 &&
+            (start > UINT32_MAX || stop > UINT32_MAX)))
+        return guest_fail(error, QA_ERROR_ARGUMENT, start, "native guest execution requires a bounded continuation within its address width");
     if (bypass) {
         qa_native_guest_callback *bound = guest_callback_id(guest, bypass);
         if (!bound || bound->address != start) return guest_fail(error, QA_ERROR_ARGUMENT, bypass,
@@ -443,7 +443,6 @@ static bool run(qa_native_guest *guest, uint64_t start, uint64_t stop,
         for (guest_run *owner = &frame; owner && !exhausted; owner = owner->parent)
             exhausted = !owner->remaining;
         if (exhausted) { completed.kind = QA_NATIVE_GUEST_BUDGET; break; }
-        if (!guest_range(guest, instruction, 1, QA_NATIVE_GUEST_EXECUTE, error)) { okay = false; break; }
         for (guest_run *owner = &frame; owner; owner = owner->parent) --owner->remaining;
         qa_native_guest_callback *bound = guest_callback_address(guest, instruction);
         qa_native_guest_callback callback = bound ? *bound : (qa_native_guest_callback){0};

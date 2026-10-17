@@ -9390,7 +9390,13 @@ static void test_native_guest_halt(void)
     qa_native_guest_mapping mapping;
     CHECK(qa_native_guest_map(guest,entry,QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,(qa_bytes){code,sizeof(code)},&mapping,&error));
-    qa_native_guest_run_result result;qa_native_guest_cpu cpu;
+    qa_native_guest_run_result result;qa_native_guest_cpu cpu;qa_native_guest_fault fault;
+    CHECK(qa_native_guest_run(guest,UINT64_C(0x500000),UINT64_C(0x600000),0,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_BUDGET && result.instructions==0 &&
+        !qa_native_guest_last_fault(guest,&fault) && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_run(guest,UINT64_C(0x500000),UINT64_C(0x500000),16,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_RETURN && result.instructions==0 &&
+        !qa_native_guest_last_fault(guest,&fault) && !qa_native_guest_terminal(guest));
     CHECK(qa_native_guest_run(guest,entry,entry+11,16,16,&result,&error));
     CHECK(result.kind==QA_NATIVE_GUEST_HALT && result.instruction==entry+5);
     CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
@@ -9405,13 +9411,24 @@ static void test_native_guest_halt(void)
     CHECK(qa_native_guest_run(guest,entry+16,UINT64_C(0x500000),16,16,&result,&error));
     CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
     CHECK(qa_native_guest_cpu_read(guest,&cpu,&error) && cpu.instruction==UINT64_C(0x500000));
-    qa_native_guest_fault fault;
     CHECK(!qa_native_guest_last_fault(guest,&fault));
     CHECK(qa_native_guest_run(guest,entry+16,UINT64_C(0x600000),16,16,&result,&error));
     CHECK(result.kind==QA_NATIVE_GUEST_MEMORY_FAULT && !qa_native_guest_terminal(guest));
     CHECK(qa_native_guest_last_fault(guest,&fault));
     CHECK(fault.address==UINT64_C(0x500000) && fault.access==QA_NATIVE_GUEST_EXECUTE);
     CHECK(result.detail.memory.address==fault.address && result.detail.memory.access==fault.access);
+    CHECK(qa_native_guest_cpu_read(guest,&cpu,&error));
+    CHECK(qa_native_guest_run(guest,cpu.instruction,UINT64_C(0x600000),16,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_MEMORY_FAULT &&
+        result.detail.memory.address==UINT64_C(0x500000) && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_protect(guest,mapping.id,QA_NATIVE_GUEST_READ,&error));
+    CHECK(qa_native_guest_run(guest,entry,entry+5,16,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_MEMORY_FAULT &&
+        result.detail.memory.kind==QA_NATIVE_GUEST_FAULT_PROTECTION &&
+        result.detail.memory.access==QA_NATIVE_GUEST_EXECUTE && !qa_native_guest_terminal(guest));
+    CHECK(qa_native_guest_protect(guest,mapping.id,QA_NATIVE_GUEST_READ|QA_NATIVE_GUEST_EXECUTE,&error));
+    CHECK(qa_native_guest_run(guest,entry,entry+5,16,16,&result,&error));
+    CHECK(result.kind==QA_NATIVE_GUEST_RETURN);
     CHECK(qa_native_guest_destroy(&guest,&error) && !guest);
 }
 static bool native_test_stop_syscall(void *context,qa_native_guest *guest,
