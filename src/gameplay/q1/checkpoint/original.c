@@ -220,6 +220,17 @@ static const original_field sigil_fixer_fields[] = {
 static const original_field electrode_fields[] = {
     FIELD(q1_map_state, counter_value, "cnt", FLOAT)
 };
+static const original_field lightning_fields[] = {
+    FIELD(q1_map_state, volume, "volume", FLOAT)
+};
+static const original_field shake_fields[] = {
+    FIELD(q1_map_state, active_until, "storednextthink", DOUBLE)
+};
+static const original_field toss_fields[] = {
+    FIELD(q1_map_state, pending.brush.origin, "oldorigin", VECTOR),
+    FIELD(q1_map_state, dest, "dest", VECTOR),
+    FIELD(q1_map_state, dest2, "dest2", VECTOR)
+};
 static const original_field frame_tick_head = {"frametick_head", ORIGINAL_REF, 0};
 static const original_field frame_tick_next = {"frametick_next", ORIGINAL_REF, 0};
 static const original_field shooter_fields[] = {
@@ -387,7 +398,11 @@ static const original_map_callback map_callbacks[] = {
     {Q1_MAP_BUBBLES_MAKE, "make_bubbles"}, {Q1_MAP_NOISE_REPEAT, "noise_think"},
     {Q1_MAP_LIGHTNING_FIRE, "lightning_fire"},
     {Q1_MAP_ADDON_PARTICLE_TICK, "particle_tele_think"},
-    {Q1_MAP_SIGIL_FIX, "mge2m2_rune_pickup_fixer_use"}
+    {Q1_MAP_SIGIL_FIX, "mge2m2_rune_pickup_fixer_use"},
+    {Q1_MAP_ADDON_SHAKE_TICK, "T_Shake"},
+    {Q1_MAP_ADDON_TOSS_CASCADE, "func_toss_linkcascade"},
+    {Q1_MAP_ADDON_TOSS_START, "func_toss_toss"},
+    {Q1_MAP_ADDON_TOSS_STOP, "func_toss_think"}
 };
 static const char *map_think(q1_map_action action) {
     if (action == Q1_MAP_IDLE) return NULL;
@@ -537,6 +552,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
         return callback(record, "touch", map->touch_enabled ? "sigil_touch" : "SUB_Null", error);
     case Q1_MAP_SIGIL_FIXER: use = "mge2m2_rune_pickup_fixer_use"; break;
     case Q1_MAP_EGG_OPENER: use = "mge2m2_rune_egg_opener_use"; break;
+    case Q1_MAP_ADDON_TOSS:
+        return callback(record, "use", map->use_enabled ? "func_toss_use" : "SUB_Null", error);
     case Q1_MAP_SHOOTER: {
         const char *name = qa_strings_cstr(strings, entity->classname);
         use = name && !strcmp(name, "trap_switched_shooter") ? "trap_shooter_use" : "spikeshooter_use";
@@ -547,6 +564,8 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
     case Q1_MAP_FOG_TRIGGER: touch = use = "trigger_fog_activate"; break;
     case Q1_MAP_FOG_TRANSITION: touch = "trigger_fog_transition_touch"; break;
     case Q1_MAP_ADDON_HURT: touch = "func_hurt_touch"; use = "func_hurt_use"; break;
+    case Q1_MAP_ADDON_LIGHTNING: use = "play_lightning"; break;
+    case Q1_MAP_ADDON_SHAKE: use = "screenshake_use"; break;
     case Q1_MAP_ADDON_ROTATE:
         use = "rotate_object_continuously_use";
         tick = map->pending.brush.phase == 1 || map->pending.brush.phase == 3 ||
@@ -958,6 +977,14 @@ static bool original_door_trigger(const qa_q1_wire_receipt *receipt,
     }
     return true;
 }
+static qa_vec3 original_size(const q1_actor *entity, const qa_body_state *body) {
+    qa_vec3 size = qa_vec_sub(body->bounds.maxs, body->bounds.mins);
+    if (entity && entity->map && entity->map->kind == Q1_MAP_ADDON_TOSS &&
+        !entity->map->use_enabled && !(entity->think == Q1_THINK_MAP &&
+            entity->map->action == Q1_MAP_ADDON_TOSS_START))
+        size = qa_vec_sub(size, qa_v3(4,4,0));
+    return size;
+}
 static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
     q1_player *player, const qa_movement_state *movement, qa_q1_save_record *record, qa_error *error) {
     qa_q1_game *game = receipt->operation.game; qa_body_state body; qa_combat_state combat;
@@ -980,7 +1007,8 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         if (entity->map) {
             q1_map_kind kind = entity->map->kind;
             if (kind == Q1_MAP_ADDON_COUNTER || kind == Q1_MAP_BUTTON) physics.enemy = entity->activator;
-            if (kind == Q1_MAP_SIGIL) source_entity.source_netname = entity->map->netname;
+            if (kind == Q1_MAP_SIGIL || kind == Q1_MAP_ADDON_TOSS)
+                source_entity.source_netname = entity->map->netname;
             if (game->options.edition == QA_Q1_CLASSIC) {
                 if (kind == Q1_MAP_DOOR || kind == Q1_MAP_SECRET_DOOR) source_class = "door";
                 else if (kind == Q1_MAP_PLAT) source_class = "plat";
@@ -1034,7 +1062,7 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         !FIELDS(receipt, record, &combat, combat_fields, error) ||
         !number(record, "takedamage", combat.can_take_damage ? player || entity->aimed_damage ? 2 : 1 : 0, false, error) ||
         !vector(record, "size", entity && entity->map && entity->map->kind == Q1_MAP_ADDON_PARTICLE_TELE
-            ? entity->map->particle_size : qa_vec_sub(body.bounds.maxs, body.bounds.mins), error)) return false;
+            ? entity->map->particle_size : original_size(entity, &body), error)) return false;
     if (game->options.program == QA_Q1_HIPNOTIC &&
         !number(record, "struck_by_mjolnir", hammer_base || q1_hipnotic_lightning_claimed(game,id), false,error)) return false;
     if (player) {
@@ -1132,6 +1160,14 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
             !FIELDS(receipt, record, entity->map, sigil_fixer_fields, error)) return false;
         if ((entity->map->kind == Q1_MAP_ELECTRODE_TARGET || entity->map->electrode_button) &&
             !FIELDS(receipt, record, entity->map, electrode_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_LIGHTNING &&
+            (!FIELDS(receipt, record, entity->map, lightning_fields, error) ||
+             !number(record, "style", entity->map->style == 1 ? 5 : entity->map->style == 2 ? 6 : 9,
+                 false, error))) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_SHAKE &&
+            !FIELDS(receipt, record, entity->map, shake_fields, error)) return false;
+        if (entity->map->kind == Q1_MAP_ADDON_TOSS &&
+            !FIELDS(receipt, record, entity->map, toss_fields, error)) return false;
         if (entity->map->kind == Q1_MAP_SIGIL &&
             !text(record, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV),
                 QA_Q1_SAVE_STRING, error)) return false;
@@ -1690,11 +1726,17 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
         const char *touch = saved(record, "touch");
         map->touch_enabled = touch && strcmp(touch, "SUB_Null");
     }
+    if (map->kind == Q1_MAP_ADDON_TOSS) {
+        const char *use = saved(record, "use");
+        map->use_enabled = use && strcmp(use, "SUB_Null");
+    }
     if (map->kind == Q1_MAP_ADDON_COUNTER || map->kind == Q1_MAP_BUTTON)
         entity->activator = entity->physics.enemy;
     if (map->kind == Q1_MAP_SIGIL) {
         const char *touch = saved(record, "touch");
         map->touch_enabled = touch && strcmp(touch, "SUB_Null");
+    }
+    if (map->kind == Q1_MAP_SIGIL || map->kind == Q1_MAP_ADDON_TOSS) {
         map->netname = entity->source_netname;
         entity->source_netname = QA_STRING_NONE;
     }
@@ -1730,6 +1772,19 @@ static bool restore_map(qa_strings *strings,qa_actor_owner source,
     if ((map->kind == Q1_MAP_ELECTRODE_TARGET || map->electrode_button) &&
         !restore_fields(strings, source, record, map, electrode_fields,
             sizeof(electrode_fields) / sizeof(*electrode_fields), slots, count, error)) return false;
+    if (map->kind == Q1_MAP_ADDON_LIGHTNING) {
+        if (map->style != 5 && map->style != 6 && map->style != 9)
+            return fail(error, "Original lightning style has no native beam projection");
+        map->style = map->style == 5 ? 1 : map->style == 6 ? 2 : 0;
+        if (!restore_fields(strings, source, record, map, lightning_fields,
+            sizeof(lightning_fields) / sizeof(*lightning_fields), slots, count, error)) return false;
+    }
+    if (map->kind == Q1_MAP_ADDON_SHAKE &&
+        !restore_fields(strings, source, record, map, shake_fields,
+            sizeof(shake_fields) / sizeof(*shake_fields), slots, count, error)) return false;
+    if (map->kind == Q1_MAP_ADDON_TOSS &&
+        !restore_fields(strings, source, record, map, toss_fields,
+            sizeof(toss_fields) / sizeof(*toss_fields), slots, count, error)) return false;
     if (q1_map_is_mover(map->kind)) {
         q1_map_movement *move = &map->pending.mover;
         if (!restore_fields(strings, source, record, move, mover_fields,
@@ -2056,6 +2111,7 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION: case Q1_MAP_ADDON_ROTATE:
     case Q1_MAP_SIGIL: case Q1_MAP_ADDON_HURT: case Q1_MAP_SIGIL_FIXER:
     case Q1_MAP_EGG_OPENER: case Q1_MAP_ELECTRODE_TARGET:
+    case Q1_MAP_ADDON_LIGHTNING: case Q1_MAP_ADDON_SHAKE: case Q1_MAP_ADDON_TOSS:
         return true;
     default:
         return false;
@@ -2081,6 +2137,10 @@ static bool original_map_continuation(q1_map_kind kind,q1_map_action action) {
     case Q1_MAP_SIGIL: return action==Q1_MAP_SIGIL_PLACE;
     case Q1_MAP_SIGIL_FIXER: return action==Q1_MAP_SIGIL_FIX;
     case Q1_MAP_ELECTRODE_TARGET: return action==Q1_MAP_REMOVE;
+    case Q1_MAP_ADDON_SHAKE: return action==Q1_MAP_ADDON_SHAKE_TICK;
+    case Q1_MAP_ADDON_TOSS:
+        return action==Q1_MAP_ADDON_TOSS_CASCADE || action==Q1_MAP_ADDON_TOSS_START ||
+            action==Q1_MAP_ADDON_TOSS_STOP;
     default: return false;
     }
 }
@@ -2109,7 +2169,8 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     if (!admit_word(admission,"modelindex",error)) return false;
     const char *source_think = saved(record, "think");
     bool particle_tele = source_think && !strcmp(source_think, "particle_tele_think");
-    if (saved(record,"size") && !particle_tele &&
+    bool toss = original_map_kind(program, saved(record, "classname")) == Q1_MAP_ADDON_TOSS;
+    if (saved(record,"size") && !particle_tele && !toss &&
         !admit_vector(admission,"size",qa_vec_sub(body.bounds.maxs,body.bounds.mins),error)) return false;
     admitted_key(admission,"size");
     static const char *const link_bounds[] = {"absmin", "absmax"};
@@ -2242,6 +2303,13 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
                 !ADMIT_FIELDS(admission, &map, sigil_fixer_fields, error)) goto done;
             if ((source.map == Q1_MAP_ELECTRODE_TARGET || map.electrode_button) &&
                 !ADMIT_FIELDS(admission, &map, electrode_fields, error)) goto done;
+            if (source.map == Q1_MAP_ADDON_LIGHTNING &&
+                !ADMIT_FIELDS(admission, &map, lightning_fields, error)) goto done;
+            if (source.map == Q1_MAP_ADDON_SHAKE &&
+                !ADMIT_FIELDS(admission, &map, shake_fields, error)) goto done;
+            if (source.map == Q1_MAP_ADDON_TOSS &&
+                (!ADMIT_FIELDS(admission, &map, toss_fields, error) ||
+                 !admit_vector(admission, "size", original_size(&entity, &body), error))) goto done;
             if (source.map == Q1_MAP_SIGIL &&
                 !admit_text(admission, "noise", q1_runtime_name_text(Q1_NAME_RESOURCE_MISC_RUNEKEY_WAV), error))
                 goto done;
