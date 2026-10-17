@@ -24,6 +24,10 @@ bool qa_arena_init_buffer(qa_arena *, void *, size_t, qa_error *);
 /* A load-sized common pool supplies pages; no heap fallback. Pool ownership
  * outlives the arena. Reset returns its pages for other live arenas to reuse. */
 void qa_arena_init_pool(qa_arena *arena, struct qa_pool *pages);
+/* Needed pages for the next allocation, or zero when retained storage fits.
+ * Does not acquire pages or change allocation/overflow counters. */
+bool qa_arena_pool_allocation_pages(const qa_arena *, size_t bytes,
+    size_t alignment, size_t *pages, qa_error *);
 /* Reserve a reusable block during load, then forbid later heap growth. Reset
  * preserves the reservation, seal and overflow count. */
 bool qa_arena_reserve(qa_arena *arena, size_t capacity, qa_error *error);

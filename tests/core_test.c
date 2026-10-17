@@ -4614,10 +4614,18 @@ static void test_arena(void)
     CHECK(qa_pool_reserve_pages(&pages,&backing,8,4096,64,&error));
     CHECK(backing.sealed);
     qa_arena_init_pool(&left,&pages);qa_arena_init_pool(&right,&pages);
+    size_t needed_pages = SIZE_MAX;
+    CHECK(qa_arena_pool_allocation_pages(&left,7000,64,&needed_pages,&error) && needed_pages==2);
+    CHECK(!pages.active && !pages.overflow && !left.first);
     uint8_t *held=qa_arena_alloc(&left,7000,64,&error);
     CHECK(held && (uintptr_t)held%64==0);
     memset(held,0x37,7000);
+    CHECK(qa_arena_pool_allocation_pages(&left,64,64,&needed_pages,&error) && !needed_pages);
+    CHECK(qa_arena_pool_allocation_pages(&right,17000,64,&needed_pages,&error) && needed_pages==5);
+    CHECK(pages.active==2 && !pages.overflow && !right.first);
     CHECK(qa_arena_alloc(&right,17000,64,&error));
+    CHECK(qa_arena_pool_allocation_pages(&right,9000,64,&needed_pages,&error) && needed_pages==3);
+    CHECK(pages.active==7 && !pages.overflow && !right.overflow_count);
     CHECK(!qa_arena_alloc(&right,9000,64,&error));
     CHECK(pages.overflow==1 && held[6999]==0x37);
     qa_arena_reset(&right);
@@ -5889,6 +5897,24 @@ static void test_roq_handle_checkpoints(void)
     qa_scene_resources *images=qa_scene_resources_create(files,&error); CHECK(images);
     qa_q3_image_upload_options upload={.color={.device={.color_bits=24},.gamma=1,.intensity=1}};
     CHECK(qa_scene_resources_source_q3_initialize(images,&upload,&error));
+    const qa_scene_image *initial=qa_scene_source_q3_scratch(images,31);
+    uint8_t retained_pixels[4*4*4]; memset(retained_pixels,0x37,sizeof(retained_pixels));
+    qa_image retained_picture={.width=4,.height=4,
+        .rgba={retained_pixels,sizeof(retained_pixels)}};
+    qa_scene_image *first_version=NULL,*next_version=NULL;
+    CHECK(qa_scene_image_source_scratch_prepare(images,31,4,4,&error));
+    CHECK(qa_scene_image_source_scratch_version(images,31,initial,&retained_picture,&first_version,&error));
+    memset(retained_pixels,0x82,sizeof(retained_pixels));
+    CHECK(qa_scene_image_source_scratch_version(images,31,first_version,&retained_picture,&next_version,&error));
+    CHECK(first_version->identity==initial->identity && next_version->identity==initial->identity &&
+        next_version->revision>first_version->revision);
+    CHECK(qa_scene_image_source_scratch_is(images,31,first_version) &&
+        qa_scene_image_source_scratch_is(images,31,next_version));
+    CHECK(((const uint8_t *)first_version->levels[0].pixels)[63]==0x37 &&
+        ((const uint8_t *)next_version->levels[0].pixels)[63]==0x82);
+    qa_scene_image_release(first_version);
+    CHECK(((const uint8_t *)next_version->levels[0].pixels)[63]==0x82);
+    qa_scene_image_release(next_version);
     qa_media_library *media=qa_media_library_create(images,&error); CHECK(media);
     qa_q3_cinematic_handles_options bank_options={.images=images,
         .ui_limits=cinematic_bank_test_limits,.upload=cinematic_bank_test_upload};

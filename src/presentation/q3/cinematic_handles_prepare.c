@@ -67,7 +67,7 @@ bool qa_q3_cinematic_handles_stage_shader(qa_q3_cinematic_handles_stage *stage,
         occupied[i]=stage->movies[i].occupied; reserved[i]=stage->movies[i].restore_pending;
     }
     stage->busy=true;
-    bool ok=q3cin_play_into(source,stage->movies,qa_media_library_stage_destination(media),
+    bool ok=q3cin_play_into(source,stage->movies,qa_media_library_stage_destination(media),stage->destination,
         stage->added,&stage->selected_handle,&stage->decoder_handle,path,
         (qa_scene_rect_f){0,0,256,256},2u|8u|16u,NULL,NULL,handle,error);
     for (size_t i=0;i<16;++i)

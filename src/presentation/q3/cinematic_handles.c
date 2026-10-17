@@ -451,11 +451,13 @@ static char *path_copy(const char *request,qa_error *error)
     memcpy(path+before,request,length);
     path[before+length]=0; return path;
 }
-static bool dimensions(qa_q3_cinematic_handles *owner,q3cin_movie *movie,
+static bool dimensions(qa_q3_cinematic_handles *owner,qa_scene_resources *images,uint32_t index,q3cin_movie *movie,
     const qa_media_frame *picture,bool announce,qa_error *error)
 {
     if (!picture || (movie->width==picture->width && movie->height==picture->height && movie->draw_width))
         return true;
+    if (!qa_scene_image_source_scratch_prepare(images,index,
+            picture->width,picture->height,error)) return false;
     bool limited=false;
     if (!owner->options.ui_limits(owner->options.context,&limited,error)) return false;
     movie->width=picture->width; movie->height=picture->height;
@@ -476,7 +478,7 @@ static bool playback_create(qa_q3_cinematic_source *source,q3cin_movie *movie,
     return checkpoint?qa_cinematic_restore(&asset,&options,checkpoint,&movie->playback,error):
         qa_cinematic_create(&asset,&options,&movie->playback,error);
 }
-bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_media_library *media,
+bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_media_library *media,qa_scene_resources *images,
     const bool owned_slots[16],int32_t *selected,int32_t *decoder,
     const char *request,qa_scene_rect_f rect,uint32_t flags,
     bool (*open)(void *,const qa_q3_movie_request *,qa_q3_system_movie *,qa_error *),void *context,
@@ -564,6 +566,12 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
         if (!ok && error) *error=local;
         if (ok && (!movie->system.status || !movie->system.end || !movie->system.release))
             ok=q3cin_fail(error,QA_ERROR_ARGUMENT,"System cinematic returned incomplete ownership");
+        if (ok && movie->system.playback) {
+            qa_cinematic *playback=movie->system.playback(movie->system.context);
+            const qa_media_frame *picture=playback?qa_cinematic_frame(playback):NULL;
+            if (picture) ok=qa_scene_image_source_scratch_prepare(images,index,
+                picture->width,picture->height,error);
+        }
     } else {
         qa_error local={0};
         ok=qa_media_library_load_source_roq(media,source->options.files,path,&movie->asset,&local);
@@ -584,6 +592,11 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
                 movie->pending=false; movie->status=0; *out=-1; return true;
             }
             if (!ok && error) *error=local;
+            if (ok) {
+                const qa_media_frame *picture=qa_cinematic_frame(movie->playback);
+                if (picture) ok=qa_scene_image_source_scratch_prepare(images,index,
+                    picture->width,picture->height,error);
+            }
         }
     }
     if (!ok) {
@@ -599,7 +612,7 @@ bool q3cin_play_into(qa_q3_cinematic_source *source,q3cin_movie slots[16],qa_med
     if (restore) {
         qa_cinematic *restored_playback=movie->playback?movie->playback:
             movie->system.playback?movie->system.playback(movie->system.context):NULL;
-        if (!dimensions(source->handles,movie,restored_playback?qa_cinematic_frame(restored_playback):NULL,false,error))
+        if (!dimensions(source->handles,images,index,movie,restored_playback?qa_cinematic_frame(restored_playback):NULL,false,error))
             return false;
         movie->status=saved.status; movie->play_on_walls=saved.play_on_walls;
         movie->occupied=saved.occupied;
@@ -631,7 +644,7 @@ bool qa_q3_cinematic_source_restore_finish(qa_q3_cinematic_source *source,
         if (!movie->restore_pending || movie->source!=source || selected_phase!=phase ||
             (system && !open)) continue;
         int32_t handle;
-        ok=q3cin_play_into(source,owner->movies,source->options.media,NULL,
+        ok=q3cin_play_into(source,owner->movies,source->options.media,owner->options.images,NULL,
             &owner->selected_handle,&owner->decoder_handle,movie->path,movie->rect,movie->flags,
             open,context,&handle,error);
         if (ok && system && handle>=0 && movie->system.playback &&
@@ -664,7 +677,7 @@ bool qa_q3_cinematic_play(qa_q3_cinematic_source *source,const char *path,qa_sce
     if (!path || !out || ((flags&1u) && !open) || !isfinite(rect.x) || !isfinite(rect.y) ||
         !isfinite(rect.width) || !isfinite(rect.height) || !q3cin_enter(source,error)) return false;
     qa_q3_cinematic_handles *owner=source->handles;
-    return returned(source,q3cin_play_into(source,owner->movies,source->options.media,NULL,
+    return returned(source,q3cin_play_into(source,owner->movies,source->options.media,owner->options.images,NULL,
         &owner->selected_handle,&owner->decoder_handle,path,rect,flags,open,context,out,error),error);
 }
 static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_error *error)
@@ -695,7 +708,7 @@ static bool run(qa_q3_cinematic_handles *owner,int32_t handle,int32_t *out,qa_er
     if (!ok) return false;
     if (decoder && qa_cinematic_revision(decoder)!=before) movie->dirty=true;
     const qa_media_frame *picture=decoder?qa_cinematic_frame(decoder):NULL;
-    if (!dimensions(owner,movie,picture,true,error)) return false;
+    if (!dimensions(owner,owner->options.images,(uint32_t)handle,movie,picture,true,error)) return false;
     if (!movie->source->options.current(movie->source->options.context,&movie->source->options))
         return q3cin_fail(error,QA_ERROR_ARGUMENT,"Cinematic source changed during reached decoder callbacks");
     if (tick.looped) *out=5;
@@ -833,7 +846,7 @@ bool qa_q3_cinematic_system_fullscreen(qa_q3_cinematic_source *source,int32_t ha
     if (visible) {
         if (qa_cinematic_revision(decoder)!=before) movie->dirty=true;
         const qa_media_frame *picture=qa_cinematic_frame(decoder);
-        ok=dimensions(owner,movie,picture,false,error);
+        ok=dimensions(owner,owner->options.images,(uint32_t)handle,movie,picture,false,error);
         if (ok) ok=upload(owner,(uint32_t)handle,false,frame,error);
     } else if (ok) {
         qa_scene_command clear={.kind=QA_SCENE_COMMAND_VIEW,.data.view={.viewport=viewport,
@@ -884,7 +897,7 @@ bool qa_q3_cinematic_shader_play(qa_q3_cinematic_source *source,const char *path
 {
     if (!out || !handle || !path || !q3cin_enter(source,error)) return false;
     qa_q3_cinematic_handles *owner=source->handles;
-    bool ok=q3cin_play_into(source,owner->movies,source->options.media,NULL,
+    bool ok=q3cin_play_into(source,owner->movies,source->options.media,owner->options.images,NULL,
         &owner->selected_handle,&owner->decoder_handle,path,
         (qa_scene_rect_f){0,0,256,256},2u|8u|16u,NULL,NULL,handle,error);
     if (ok) *out=*handle>=0?source->handles->scratch[*handle]:NULL;

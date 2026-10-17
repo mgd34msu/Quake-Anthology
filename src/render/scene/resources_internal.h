@@ -18,7 +18,8 @@ typedef struct scene_names {
     size_t image_count;
     qa_scene_resources *owner;
     qa_arena storage;
-    qa_pool revisions, lineages;
+    qa_pool revisions, lineages, image_pages;
+    size_t scratch_prepared_pages[32];
     qa_id_index image_relations;
 } scene_names;
 typedef struct image_lineage {
@@ -53,7 +54,7 @@ struct owned_image {
     scene_names *names;
     scene_names *storage_names;
     size_t storage_slot;
-    qa_arena storage;
+    qa_arena storage, recipient_storage;
     qa_scene_image_level *levels;
     image_lineage *lineage;
     uint64_t creation_sequence;

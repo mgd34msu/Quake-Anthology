@@ -373,6 +373,9 @@ const qa_scene_image *qa_scene_source_q3_dlight(const qa_scene_resources *);
 const qa_scene_image *qa_scene_source_q3_fog(const qa_scene_resources *);
 const qa_scene_image *qa_scene_source_q3_scratch(const qa_scene_resources *, size_t);
 bool qa_scene_image_source_scratch_is(const qa_scene_resources *, size_t, const qa_scene_image *);
+/* Admit a scratch slot's decoded dimensions before publishing image versions. */
+bool qa_scene_image_source_scratch_prepare(qa_scene_resources *, size_t slot,
+    uint32_t width, uint32_t height, qa_error *);
 bool qa_scene_image_source_scratch_version(qa_scene_resources *, size_t,
     const qa_scene_image *previous, const qa_image *, qa_scene_image **, qa_error *);
 typedef struct qa_scene_image_request {

@@ -41,17 +41,81 @@ void qa_arena_init_pool(qa_arena *arena, qa_pool *pages)
         .block_size=pages->stride>sizeof(qa_arena_block)?pages->stride-sizeof(qa_arena_block):1};
 }
 
-static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
+static bool block_fits(const qa_arena_block *block, size_t size,
+    size_t alignment, size_t *padding)
 {
     uintptr_t address = (uintptr_t)(block->data + block->used);
-    size_t padding = (size_t)((-(uintptr_t)address) & (alignment - 1));
+    *padding = (size_t)((-(uintptr_t)address) & (alignment - 1));
     size_t available = block->capacity - block->used;
-    if (padding > available || size > available - padding) {
-        return NULL;
-    }
+    return *padding <= available && size <= available - *padding;
+}
+
+static void *block_alloc(qa_arena_block *block, size_t size, size_t alignment)
+{
+    size_t padding;
+    if (!block_fits(block, size, alignment, &padding)) return NULL;
     void *result = block->data + block->used + padding;
     block->used += padding + size;
     return result;
+}
+
+static bool allocation_valid(const qa_arena *arena, size_t size,
+    size_t alignment, qa_error *error)
+{
+    if (arena == NULL || size == 0 || alignment == 0 ||
+        (alignment & (alignment - 1)) != 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                     "arena allocation requires a positive size and power-of-two alignment");
+        return false;
+    }
+    if (size > SIZE_MAX - (alignment - 1)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena allocation size overflow");
+        return false;
+    }
+    return true;
+}
+
+static size_t allocation_capacity(const qa_arena *arena, size_t size, size_t alignment)
+{
+    size_t capacity = arena->block_size == 0 ? QA_ARENA_DEFAULT_BLOCK_SIZE : arena->block_size;
+    size_t required = size + alignment - 1;
+    return capacity < required ? required : capacity;
+}
+
+static bool block_size_valid(size_t capacity, qa_error *error)
+{
+    if (capacity > (size_t)PTRDIFF_MAX - sizeof(qa_arena_block)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena block size overflow");
+        return false;
+    }
+    return true;
+}
+
+static size_t block_pages(const qa_arena *arena, size_t capacity)
+{
+    size_t bytes = sizeof(qa_arena_block) + capacity;
+    return bytes / arena->pages->stride + (bytes % arena->pages->stride != 0);
+}
+
+bool qa_arena_pool_allocation_pages(const qa_arena *arena, size_t size,
+    size_t alignment, size_t *pages, qa_error *error)
+{
+    if (!pages || !arena || !arena->pages || !arena->pages->stride) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "arena page query requires its pool");
+        return false;
+    }
+    if (!allocation_valid(arena, size, alignment, error)) return false;
+    for (const qa_arena_block *block = arena->current; block; block = block->next) {
+        size_t padding;
+        if (block_fits(block, size, alignment, &padding)) {
+            *pages = 0;
+            return true;
+        }
+    }
+    size_t capacity = allocation_capacity(arena, size, alignment);
+    if (!block_size_valid(capacity, error)) return false;
+    *pages = block_pages(arena, capacity);
+    return true;
 }
 
 static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
@@ -63,15 +127,11 @@ static qa_arena_block *block_create(qa_arena *arena, size_t capacity,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "sealed arena capacity exhausted");
         return NULL;
     }
-    if (capacity > (size_t)PTRDIFF_MAX - sizeof(qa_arena_block)) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena block size overflow");
-        return NULL;
-    }
+    if (!block_size_valid(capacity, error)) return NULL;
     qa_arena_block *block;
     size_t slot=0, pages=0;
     if(arena->pages) {
-        size_t bytes=sizeof(*block)+capacity;
-        pages=bytes/arena->pages->stride+(bytes%arena->pages->stride!=0);
+        pages=block_pages(arena,capacity);
         block=qa_pool_take_run(arena->pages,pages,&slot);
         if(block) capacity=pages*arena->pages->stride-sizeof(*block);
         else if(arena->overflow_count!=SIZE_MAX) ++arena->overflow_count;
@@ -111,16 +171,7 @@ void qa_arena_seal(qa_arena *arena)
 
 void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *error)
 {
-    if (arena == NULL || size == 0 || alignment == 0 ||
-        (alignment & (alignment - 1)) != 0) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                     "arena allocation requires a positive size and power-of-two alignment");
-        return NULL;
-    }
-    if (size > SIZE_MAX - (alignment - 1)) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "arena allocation size overflow");
-        return NULL;
-    }
+    if (!allocation_valid(arena, size, alignment, error)) return NULL;
     qa_arena_block *last = NULL;
     for (qa_arena_block *block = arena->current; block != NULL; block = block->next) {
         void *result = block_alloc(block, size, alignment);
@@ -130,11 +181,7 @@ void *qa_arena_alloc(qa_arena *arena, size_t size, size_t alignment, qa_error *e
         }
         last = block;
     }
-    size_t capacity = arena->block_size == 0 ? QA_ARENA_DEFAULT_BLOCK_SIZE : arena->block_size;
-    size_t required = size + alignment - 1;
-    if (capacity < required) {
-        capacity = required;
-    }
+    size_t capacity = allocation_capacity(arena, size, alignment);
     qa_arena_block *block = block_create(arena, capacity, last, error);
     if (block == NULL) return NULL;
     arena->current = block;

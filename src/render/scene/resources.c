@@ -26,6 +26,28 @@ static bool image_from_rgba(qa_scene_resources *, const char *, const qa_image *
                             const qa_scene_image_options *, qa_scene_image **, qa_error *);
 static bool policy_source_image_admitted(qa_scene_resources *, const qa_scene_image *, qa_error *);
 
+static bool image_storage_admit(owned_image *image, qa_arena *storage,
+    size_t bytes, size_t alignment, qa_error *error)
+{
+    size_t pages;
+    if (!qa_arena_pool_allocation_pages(storage, bytes, alignment, &pages, error)) return false;
+    scene_names *names = image->storage_names;
+    return !pages || qa_pool_run_available(&names->image_pages, pages) ||
+        qa_pool_extend(&names->image_pages, &names->storage, pages, error);
+}
+
+static void *image_storage_alloc(owned_image *image, size_t bytes, size_t alignment, qa_error *error)
+{
+    return image_storage_admit(image, &image->storage, bytes, alignment, error) ?
+        qa_arena_alloc(&image->storage, bytes, alignment, error) : NULL;
+}
+
+static void image_recipient_clear(owned_image *image)
+{
+    qa_arena_reset(&image->recipient_storage);
+    image->recipient_source = (qa_image){0};
+}
+
 enum {
     IMAGE_GENERIC = 1,
     IMAGE_GENERIC_MIPMAP,
@@ -69,7 +91,7 @@ static bool image_animation_bind(owned_image *image, qa_error *error)
     --count;
     if (count > SIZE_MAX / sizeof(*image->animation_bindings) ||
         !image_relations_reserve(image->names, count, error)) return false;
-    image_animation_binding *bindings = qa_arena_alloc(&image->storage,
+    image_animation_binding *bindings = image_storage_alloc(image,
         count * sizeof(*bindings), _Alignof(image_animation_binding), error);
     if (!bindings) return false;
     for (size_t i = 0; i < count; ++i)
@@ -553,6 +575,7 @@ static void names_release(scene_names *names)
     for (size_t i = 0; i < names->revisions.capacity; ++i) {
         owned_image *image = qa_pool_at(&names->revisions, i);
         qa_arena_destroy(&image->storage);
+        qa_arena_destroy(&image->recipient_storage);
     }
     qa_id_index_destroy(&names->image_relations);
     qa_arena_destroy(&names->storage);
@@ -560,15 +583,20 @@ static void names_release(scene_names *names)
     free(names);
 }
 
-static bool image_storage_available(scene_names *names, qa_pool *pool, qa_error *error)
+static bool image_storage_extend(scene_names *names, qa_pool *pool, size_t count, qa_error *error)
 {
-    if (pool->head != SIZE_MAX) return true;
     size_t previous = pool->capacity;
-    if (!qa_pool_extend(pool, &names->storage, previous ? previous : 1, error)) return false;
+    if (!qa_pool_extend(pool, &names->storage, count, error)) return false;
     if (pool == &names->revisions)
         for (size_t i = previous; i < pool->capacity; ++i)
             *(owned_image *)qa_pool_at(pool, i) = (owned_image){0};
     return true;
+}
+
+static bool image_storage_available(scene_names *names, qa_pool *pool, qa_error *error)
+{
+    return pool->head != SIZE_MAX ||
+        image_storage_extend(names, pool, pool->capacity ? pool->capacity : 1, error);
 }
 
 static image_lineage *image_lineage_create(scene_names *names, qa_error *error)
@@ -596,7 +624,10 @@ static owned_image *image_revision_take(scene_names *names, qa_error *error)
     size_t slot;
     owned_image *owned = qa_pool_take(&names->revisions, &slot);
     qa_arena storage = owned->storage;
-    *owned = (owned_image){.storage = storage, .names = names,
+    qa_arena recipient_storage = owned->recipient_storage;
+    if (!storage.pages) qa_arena_init_pool(&storage, &names->image_pages);
+    if (!recipient_storage.pages) qa_arena_init_pool(&recipient_storage, &names->image_pages);
+    *owned = (owned_image){.storage = storage, .recipient_storage = recipient_storage, .names = names,
         .storage_names = names, .storage_slot = slot, .image = {.references = 1}};
     /* Name publication may move to another bank; the slot keeps its backing. */
     names->references += 2;
@@ -634,7 +665,7 @@ void qa_scene_image_release(const qa_scene_image *image)
         qa_scene_image_release(binding->source); free(binding);
     }
     qa_scene_resources *parent_owner = owned->source_variant_owner;
-    qa_image_free(&owned->recipient_source);
+    image_recipient_clear(owned);
     if (owned->asset) {
         qa_resource_release(owned->asset->source); qa_resource_release(owned->asset->palette_source);
         free(owned->asset->path); free(owned->asset);
@@ -723,7 +754,8 @@ static bool image_create(qa_scene_resources *resources, const char *name, qa_sce
     if (!qa_strings_intern_cstr(resources->names->strings, name, &id, error)) return false;
     owned_image *owned = image_revision_take(resources->names, error);
     if (owned == NULL) goto allocation_failed;
-    if (!qa_arena_reserve(&owned->storage, bytes, error)) {
+    if (!image_storage_admit(owned, &owned->storage, bytes, 1, error) ||
+        !qa_arena_reserve(&owned->storage, bytes, error)) {
         qa_scene_image_release(&owned->image); goto allocation_failed;
     }
     owned->levels = qa_arena_alloc(&owned->storage, count * sizeof(*owned->levels),
@@ -889,7 +921,7 @@ bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image 
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "image replacement animation overflow"); return false;
         }
-        const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)image)->storage,
+        const qa_scene_image **frames = image_storage_alloc((owned_image *)image,
             source->animation_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
         if (frames == NULL) {
             qa_scene_image_release(image);
@@ -953,7 +985,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
             qa_scene_image_release(image);
             qa_error_set(error, QA_ERROR_MEMORY, 0, "image sampling animation exceeds address space"); return false;
         }
-        const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)image)->storage,
+        const qa_scene_image **frames = image_storage_alloc((owned_image *)image,
             source->animation_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
         if (frames == NULL) {
             qa_scene_image_release(image);
@@ -1005,6 +1037,34 @@ bool qa_scene_image_source_scratch_is(const qa_scene_resources *resources, size_
         image->revision && image->revision <= ((const owned_image *)initial)->lineage->revision;
 }
 
+bool qa_scene_image_source_scratch_prepare(qa_scene_resources *resources, size_t slot,
+    uint32_t width, uint32_t height, qa_error *error)
+{
+    if (!qa_scene_source_q3_scratch(resources, slot) || !width || !height ||
+        (uint64_t)width * height > ((size_t)PTRDIFF_MAX - sizeof(qa_scene_image_level)) / 4) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, slot, "Source cinematic admission requires its scratch slot and dimensions");
+        return false;
+    }
+    if (!admission_ready(resources, error)) return false;
+    scene_names *names = resources->names;
+    qa_arena storage;
+    qa_arena_init_pool(&storage, &names->image_pages);
+    size_t bytes = sizeof(qa_scene_image_level) + (size_t)width * height * 4, pages;
+    if (!qa_arena_pool_allocation_pages(&storage, bytes, 1, &pages, error)) return false;
+    if (pages <= names->scratch_prepared_pages[slot]) return true;
+    if (pages > SIZE_MAX / 2) {
+        qa_error_set(error, QA_ERROR_MEMORY, slot, "Source cinematic image admission exceeds address space");
+        return false;
+    }
+    /* Current and next versions are the decoder's known baseline. External
+     * leases and later shared-pool demand admit additional runs when reached. */
+    if (!qa_pool_extend(&names->image_pages, &names->storage, pages * 2, error) ||
+        (!names->scratch_prepared_pages[slot] &&
+         !image_storage_extend(names, &names->revisions, 2, error))) return false;
+    names->scratch_prepared_pages[slot] = pages;
+    return true;
+}
+
 bool qa_scene_image_source_scratch_version(qa_scene_resources *resources, size_t slot,
     const qa_scene_image *previous, const qa_image *pixels, qa_scene_image **out, qa_error *error)
 {
@@ -1019,11 +1079,10 @@ bool qa_scene_image_source_scratch_version(qa_scene_resources *resources, size_t
     }
     qa_scene_image_level level = {pixels->width, pixels->height, pixels->rgba.data, pixels->rgba.size};
     qa_scene_image *image = NULL;
-    if (!qa_scene_image_create(resources, initial->name, QA_SCENE_RGBA8, &level, 1,
-        initial->wrap, QA_SCENE_LINEAR, initial->border, &image, error)) return false;
+    if (!image_create(resources, initial->name, QA_SCENE_RGBA8, &level, 1,
+        initial->wrap, QA_SCENE_LINEAR, initial->border, 0, NULL,
+        ((const owned_image *)initial)->lineage, &image, error)) return false;
     owned_image *owned = (owned_image *)image;
-    image_lineage_release(owned->lineage); owned->lineage = ((const owned_image *)initial)->lineage;
-    ++owned->lineage->references;
     image->identity = initial->identity; image->revision = ++owned->lineage->revision;
     image->source_q3 = true; image->source_texture_unit = initial->source_texture_unit;
     image->source_format = QA_Q3_TEXTURE_RGB8;
@@ -1045,7 +1104,9 @@ qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *er
     if (!qa_pool_prepare(&resources->names->revisions, &resources->names->storage,
             0, sizeof(owned_image), _Alignof(owned_image), error) ||
         !qa_pool_prepare(&resources->names->lineages, &resources->names->storage,
-            0, sizeof(image_lineage), _Alignof(image_lineage), error)) {
+            0, sizeof(image_lineage), _Alignof(image_lineage), error) ||
+        !qa_pool_prepare(&resources->names->image_pages, &resources->names->storage,
+            0, 4096, _Alignof(max_align_t), error)) {
         names_release(resources->names); free(resources); return NULL;
     }
     resources->vfs = vfs;
@@ -1993,7 +2054,9 @@ static bool image_from_rgba_complete(qa_scene_resources *resources, const char *
             owned_image *owned = (owned_image *)*out;
             owned->recipient_source.width = source->width;
             owned->recipient_source.height = source->height;
-            owned->recipient_source.rgba.data = malloc(source->rgba.size);
+            owned->recipient_source.rgba.data =
+                image_storage_admit(owned, &owned->recipient_storage, source->rgba.size, 1, error) ?
+                qa_arena_alloc(&owned->recipient_storage, source->rgba.size, 1, error) : NULL;
             if (!owned->recipient_source.rgba.data) {
                 qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining original Source upload pixels"); ok = false;
             } else {
@@ -2189,7 +2252,7 @@ static bool image_indexed_bind(qa_scene_image *image, const qa_scene_indexed_ima
     if (source->indices.size > (size_t)PTRDIFF_MAX - 1024) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining indexed skin exceeds address space"); return false;
     }
-    uint8_t *storage = qa_arena_alloc(&((owned_image *)image)->storage, source->indices.size + 1024, 1, error);
+    uint8_t *storage = image_storage_alloc((owned_image *)image, source->indices.size + 1024, 1, error);
     if (!storage) return false;
     memcpy(storage, source->indices.data, source->indices.size);
     memcpy(storage + source->indices.size, source->palette_rgb.data, 768);
@@ -2321,7 +2384,7 @@ static bool decode_asset_pixels(qa_scene_resources *resources, const char *reque
             qa_gif_free(&gif); return false;
         }
         if (gif.frame_count > 1) {
-            const qa_scene_image **frames = qa_arena_alloc(&((owned_image *)first)->storage,
+            const qa_scene_image **frames = image_storage_alloc((owned_image *)first,
                 gif.frame_count * sizeof(*frames), _Alignof(qa_scene_image *), error);
             if (frames == NULL) {
                 qa_scene_image_release(first); qa_gif_free(&gif);
@@ -2900,9 +2963,9 @@ bool qa_scene_image_source_q3_variant(qa_scene_resources *resources, const qa_sc
         source->source_texture_unit, error)) {
         qa_scene_image_release(*out); *out = NULL; return false;
     }
-    qa_image_free(&variant->recipient_source);
+    image_recipient_clear(variant);
     for (size_t i = 1; i < variant->image.animation_count; ++i)
-        qa_image_free(&((owned_image *)variant->image.animation[i])->recipient_source);
+        image_recipient_clear((owned_image *)variant->image.animation[i]);
     variant->variant_next = resources->variants; resources->variants = variant;
     recipient_correspondence_changed(resources);
     qa_scene_image_retain(&variant->image);
@@ -3223,9 +3286,9 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
     ++resources->cache_count;
     /* The completed recipe now owns the immutable decoder inputs. Only
      * uncached Source constructors need a separate pre-upload pixel copy. */
-    qa_image_free(&((owned_image *)image)->recipient_source);
+    image_recipient_clear((owned_image *)image);
     for (size_t i = 1; i < image->animation_count; ++i)
-        qa_image_free(&((owned_image *)image->animation[i])->recipient_source);
+        image_recipient_clear((owned_image *)image->animation[i]);
     return true;
 }
 
