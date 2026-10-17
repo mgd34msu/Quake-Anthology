@@ -29,6 +29,8 @@ static void usage(FILE *stream)
           "       quake-anthology --inspect-nav ARCHIVE MEMBER [BSP_MEMBER]\n"
           "       quake-anthology --optimize-aas FILE OUTPUT\n"
           "       quake-anthology --optimize-aas ARCHIVE MEMBER OUTPUT\n"
+          "       quake-anthology --cluster-aas FILE OUTPUT [--optimize]\n"
+          "       quake-anthology --cluster-aas ARCHIVE MEMBER OUTPUT [--optimize]\n"
           "       quake-anthology weapon-behavior inspect PRODUCT [--artifact PATH] [options]\n"
           "       quake-anthology weapon-behavior declare PRODUCT --id NAMESPACE:ID --role ROLE --fire CALLBACK [options]\n"
           "       quake-anthology weapon-behavior declare-qvm PRODUCT --profile MOUNTED_JSON [options]\n"
@@ -170,20 +172,40 @@ static int inspect_archive(const char *path, const char *member,
     return result;
 }
 
-static int optimize_aas(const inspection_input *input, void *context)
+typedef struct aas_author_request {
+    const char *output;
+    bool cluster, optimize;
+} aas_author_request;
+
+static int author_aas(const inspection_input *input, void *context)
 {
-    const char *output = context;
+    const aas_author_request *request = context;
+    const char *output = request->output;
     const char *name = input->member ? input->member : input->path;
     qa_error error = {0};
-    qa_nav_asset *source = NULL, *optimized = NULL;
+    qa_nav_asset *asset = NULL, *checked = NULL;
     qa_buffer bytes = {0};
-    if (!qa_nav_asset_read(input->bytes, NULL, &source, &error))
+    if (!qa_nav_asset_read(input->bytes, NULL, &asset, &error))
         return report_error(name, &error);
-    const qa_aas_view *aas = qa_nav_asset_aas(source);
+    const qa_aas_view *aas = qa_nav_asset_aas(asset);
     bool okay = aas != NULL;
+    int32_t checksum = aas ? aas->bsp_checksum : 0;
     if (!okay) qa_error_set(&error, QA_ERROR_UNSUPPORTED, 0, "Navigation input is not an AAS file");
-    if (okay) okay = qa_aas_optimize(aas, &optimized, &error) &&
-        qa_aas_write(qa_nav_asset_aas(optimized), &bytes, &error);
+    if (okay && request->cluster) {
+        qa_nav_asset *clustered = NULL;
+        okay = qa_aas_cluster_rebuild(aas, &clustered, &error);
+        if (okay) {
+            qa_nav_asset_release(asset); asset = clustered;
+            aas = qa_nav_asset_aas(asset);
+        }
+    }
+    if (okay && request->optimize) {
+        qa_nav_asset *optimized = NULL;
+        okay = qa_aas_optimize(aas, &optimized, &error);
+        if (okay) {qa_nav_asset_release(asset); asset = optimized;}
+    }
+    if (okay) okay = qa_aas_write(qa_nav_asset_aas(asset), &bytes, &error) &&
+        qa_nav_asset_read((qa_bytes){bytes.data, bytes.size}, &checksum, &checked, &error);
     qa_fs_root *root = NULL;
     char *parent = NULL;
     const char *separator = strrchr(output, '/');
@@ -204,15 +226,21 @@ static int optimize_aas(const inspection_input *input, void *context)
         }
     }
     uint64_t nonce = 0;
+    bool created = false;
     if (okay) okay = qa_fs_root_open(parent ? parent : ".", &root, &error) &&
         qa_platform_entropy_u64(&nonce, &error) &&
-        qa_fs_root_replace(root, leaf, (qa_bytes){bytes.data, bytes.size}, nonce, &error);
+        qa_fs_root_publish(root, leaf, (qa_bytes){bytes.data, bytes.size}, nonce,
+            true, false, &created, &error);
+    if (okay && !created) {
+        qa_error_set(&error, QA_ERROR_IO, 0, "AAS output already exists; choose a distinct new output file");
+        okay = false;
+    }
     if (okay) printf("%s: %zu -> %zu bytes\n", output, input->bytes.size, bytes.size);
     qa_fs_root_close(root);
     free(parent);
     qa_buffer_free(&bytes);
-    qa_nav_asset_release(optimized);
-    qa_nav_asset_release(source);
+    qa_nav_asset_release(checked);
+    qa_nav_asset_release(asset);
     return okay ? 0 : report_error(output, &error);
 }
 
@@ -355,9 +383,21 @@ int main(int argc, char **argv)
             return inspect_archive(argv[2], argv[3], inspect_nav, argc == 5 ? argv[4] : NULL);
         usage(stderr); return 2;
     }
-    if (argc > 1 && strcmp(argv[1], "--optimize-aas") == 0) {
-        if (argc == 4) return inspect_file(argv[2], optimize_aas, argv[3]);
-        if (argc == 5) return inspect_archive(argv[2], argv[3], optimize_aas, argv[4]);
+    if (argc > 1 && (!strcmp(argv[1], "--optimize-aas") || !strcmp(argv[1], "--cluster-aas"))) {
+        aas_author_request request = {.cluster = !strcmp(argv[1], "--cluster-aas")};
+        request.optimize = !request.cluster;
+        int arguments = argc;
+        if (request.cluster && argc > 2 && !strcmp(argv[argc - 1], "--optimize")) {
+            request.optimize = true; --arguments;
+        }
+        if (arguments == 4) {
+            request.output = argv[3];
+            return inspect_file(argv[2], author_aas, &request);
+        }
+        if (arguments == 5) {
+            request.output = argv[4];
+            return inspect_archive(argv[2], argv[3], author_aas, &request);
+        }
         usage(stderr); return 2;
     }
     qa_weapon_behavior_tool_command behavior = {0};
