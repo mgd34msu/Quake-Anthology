@@ -430,6 +430,24 @@ static bool bot_source_fixture_weapon(void *context,qa_string_id name,uint32_t n
     return !qa_q1_weapon_source(QA_Q1_ROGUE,number,&weapon) ||
         qa_strings_intern_cstr(strings,qa_q1_weapon_identity(weapon),out,error);
 }
+static void test_bot_authored_progress(void)
+{
+    bot_progress_memory progress={0};
+    CHECK(!bot_ai_wedged(&progress,qa_v3(0,0,0),10,true));
+    progress.pressing=true;
+    CHECK(!bot_ai_wedged(&progress,qa_v3(8,0,0),10.5f,true));
+    CHECK(!bot_ai_wedged(&progress,qa_v3(-8,0,0),11,true));
+    CHECK(bot_ai_wedged(&progress,qa_v3(8,0,0),11.25f,true));
+    CHECK(!bot_ai_wedged(&progress,qa_v3(120,0,0),11.5f,true));
+    CHECK(progress.since==11.5f);
+    CHECK(!bot_ai_wedged(&progress,qa_v3(120,0,0),12,true));
+    CHECK(bot_ai_wedged(&progress,qa_v3(120,0,0),12.75f,true));
+    progress.pressing=false;
+    CHECK(!bot_ai_wedged(&progress,qa_v3(120,0,0),13,true));
+    progress.pressing=true;progress.recover_until=14;
+    CHECK(!bot_ai_wedged(&progress,qa_v3(120,0,0),13.5f,false));
+    CHECK(!progress.active && !progress.pressing && !progress.pursuing && !progress.recover_until);
+}
 static void test_bot_authored_aim(void)
 {
     qa_bot_aiming settings={.maximum_speed=90,.spring_stiffness=64,.damping=16,.velocity_offset=-.25f};
@@ -10697,6 +10715,7 @@ int main(int argc, char **argv)
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();
+    test_bot_authored_progress();
     test_bot_authored_aim();
     test_bot_source_knowledge();
     test_aas_geometry_compaction();

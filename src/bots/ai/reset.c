@@ -11,6 +11,7 @@ bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t we
        !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e)) return false;
     bot_ai_weapon_number_set(state,weapon);
     state->hazard=(bot_hazard_memory){0};
+    state->progress=(bot_progress_memory){0};
     if(state->source_settings) bot_ai_trigger_clear(state);
     return true;
 }

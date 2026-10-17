@@ -757,6 +757,36 @@ static bool movement_result(qa_bots *b,bot_ai_state *s,bool activate,
     } else bot_ai_not_blocked_time_set(s,b->time);
     return true;
 }
+bool bot_ai_wedged(bot_progress_memory *progress,qa_vec3 origin,float now,bool pursuing) {
+    progress->pursuing=pursuing;
+    qa_vec3 displacement=qa_vec_sub(origin,progress->origin);
+    if(!pursuing || !progress->active || !progress->pressing ||
+       qa_vec_dot(displacement,displacement)>96*96) {
+        progress->origin=origin;progress->since=now;progress->active=pursuing;
+        if(!pursuing) {progress->pressing=false;progress->recover_until=0;}
+        return false;
+    }
+    return now-progress->since>=1.2f;
+}
+static bool authored_progress(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,
+    const qa_bot_move_result *result,bool pursuing,qa_error *e) {
+    if(!s->source_settings) return true;
+    pursuing=pursuing && !(result->flags&(QA_BOT_MOVE_WAITING|QA_BOT_MOVE_ON_ELEVATOR|
+        QA_BOT_MOVE_ON_BOBBING)) && !s->player.dead && !s->player.observer &&
+        !s->player.intermission && !s->player.water_jump && !s->player.grapple_pull;
+    if(!bot_ai_wedged(&s->progress,bot_ai_origin(s),b->time,pursuing)) return true;
+    if(s->progress.recover_until<=b->time) s->progress.recover_until=b->time+.5f;
+    if(b->time-s->progress.since<2.5f) return true;
+    bot_ai_cooperative_failed(b,s,goal);
+    if(goal->flags&QA_BOT_GOAL_ITEM)
+        DECISION_CALL(qa_bot_goals_avoid_set(goals(b),s->goals,goal->number,20,e));
+    if(bot_ai_order_active(s)) s->view.order.status=QA_BOT_ORDER_ERROR;
+    if(s->view.decision==QA_BOT_SEEK_NEARBY) bot_ai_nearby_until_set(s,0);
+    else bot_ai_long_term_until_set(s,0);
+    DECISION_CALL(qa_bot_moves_reset_avoid(moves(b),s->movement,false,e));
+    s->progress.origin=bot_ai_origin(s);s->progress.since=b->time;
+    return true;
+}
 static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,bool activate,
                         qa_bot_move_result *result, qa_error *e) {
     memset(result,0,sizeof(*result));
@@ -1197,6 +1227,8 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                 if(objective.active) enemy_found=objective.enemy;
                 else DECISION_CALL(bot_ai_find_enemy(b,s,-1,&enemy_found,e));
             }
+            DECISION_CALL(authored_progress(b,s,&goal,&result,
+                !holding && !enemy_found && bot_ai_enemy_number(s)<0,e));
             if(ordered) {
                 if(objective_goal && !objective.enemy) return true;
                 if(!(result.flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET|QA_BOT_MOVE_WEAPON)))

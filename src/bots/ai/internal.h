@@ -106,6 +106,11 @@ typedef struct bot_hazard_memory {
         bool valid, jumping, crouching, recovering, checked_recovery, side_flipped, replaced;
     } floor;
 } bot_hazard_memory;
+typedef struct bot_progress_memory {
+    qa_vec3 origin;
+    float since, recover_until;
+    bool active, pressing, pursuing;
+} bot_progress_memory;
 typedef enum bot_objective_role {
     BOT_OBJECTIVE_NONE, BOT_OBJECTIVE_ATTACK, BOT_OBJECTIVE_DEFEND
 } bot_objective_role;
@@ -133,6 +138,7 @@ typedef struct bot_ai_state {
     bot_ai_player player;
     bot_cooperative_state cooperative;
     bot_hazard_memory hazard;
+    bot_progress_memory progress;
     bot_objective_role objective_role;
     bot_authored_chat_state authored_chat;
     uint32_t character, goals, weapons, chat, movement;
@@ -228,6 +234,7 @@ void bot_ai_source_cell_clear(qa_bots *,bot_ai_state *);
 bool bot_ai_schedule(qa_bots *,qa_error *);
 bool bot_ai_reset(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_think(qa_bots *, bot_ai_state *, float, qa_error *);
+bool bot_ai_wedged(bot_progress_memory *, qa_vec3 origin, float now, bool pursuing);
 bool bot_ai_source_intermission(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_source_observer(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_input(qa_bots *, bot_ai_state *, int32_t time, int32_t elapsed, qa_error *);

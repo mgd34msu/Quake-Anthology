@@ -46,13 +46,15 @@ static bool ready(qa_bots *b, bot_ai_state *s) {
 static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_live(b, s->view.actor)) { s->retired = true; return true; }
     int32_t held=bot_ai_firing_weapon_number(s);
-    uint64_t spawn=s->player.spawn_sequence;
+    uint64_t spawn=s->player.spawn_sequence,teleport=s->player.teleport_sequence;
     qa_q3_player source;
     qa_bot_player observed=bot_ai_player_sample(s);
     bool ok=b->services.player(b->services.context,s->view.actor,&observed,&source,e);
     bot_ai_player_observe(s,&observed);
     if(!ok) return false;
     if(observed.dead || observed.spawn_sequence!=spawn) s->hazard=(bot_hazard_memory){0};
+    if(observed.dead || observed.spawn_sequence!=spawn || observed.teleport_sequence!=teleport)
+        s->progress=(bot_progress_memory){0};
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
     if(!bot_ai_source_player_copy(b,s,&source,e)) return false;
     if(s->source_settings && held!=source.weapon) bot_ai_trigger_clear(s);
@@ -144,6 +146,22 @@ static void floor_command(const qa_bot_input *input,qa_usercmd *command,qa_vec3 
     *direction=floor_command_direction(input,command);
     *speed=fminf(1,qa_vec_length(*direction)/qa_input_command_units(QA_RULESET_Q3))*400;
     *direction=qa_vec_normalize(*direction);
+}
+static void progress_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,bool grounded) {
+    if(!s->source_settings || !s->progress.pursuing || s->progress.recover_until<=b->time) return;
+    qa_usercmd command;qa_vec3 direction;float speed;
+    floor_command(input,&command,&direction,&speed);
+    float units=qa_input_command_units(QA_RULESET_Q3);
+    command.forward_move*=.5f;
+    command.side_move=bot_ai_flag(s,BOT_AI_AVOID_RIGHT)?-units:units;
+    input->direction=qa_vec_scale(floor_command_direction(input,&command),1/units);
+    input->speed=400;
+    input->action_flags&=~(uint32_t)BOT_FLOOR_HORIZONTAL;
+    if(grounded) input->action_flags|=QA_BOT_JUMP;
+    s->hazard.floor.recovering=true;
+    s->hazard.floor.recovery_direction=input->direction;
+    s->hazard.floor.recovery_speed=input->speed;
+    s->hazard.floor.recovery_actions=input->action_flags&BOT_FLOOR_HORIZONTAL;
 }
 static bool floor_evaluate(qa_bots *b,bot_ai_state *s,qa_bot_navigation *navigation,
     const qa_body_state *body,qa_vec3 direction,float speed,bool jumping,bool crouching,
@@ -315,10 +333,12 @@ static bool hazard_input(qa_bots *b,bot_ai_state *s,qa_bot_input *input,qa_error
     qa_builtin_player_control control;
     if(!b->services.shared.player_control(b->services.shared.context,0,s->view.actor,&control,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-    if(control.player->cutscene) return true;
+    if(control.player->cutscene) {s->progress=(bot_progress_memory){0};return true;}
     bool grounded=control.ground->hit!=QA_TRACE_HIT_NONE;
     qa_movement_ground ground=*control.ground;
     int32_t water_level=control.player->water_level;
+    if(water_level>=2) s->progress=(bot_progress_memory){0};
+    else progress_input(b,s,input,grounded);
     qa_body_state body;
     if(!qa_world_body_read(b->services.shared.world,s->view.actor,&body,e)) return false;
     qa_bot_navigation *navigation=qa_bot_runtime_navigation(b->runtime,(int32_t)s->view.client);
@@ -419,6 +439,9 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
         memcpy(frame.delta_angle_words, delta, sizeof(delta));
         qa_usercmd built;
         qa_usercmd_build(&intent, &frame, 0, &built);
+        if(s->source_settings && s->progress.pursuing)
+            s->progress.pressing=built.forward_move!=0 || built.side_move!=0 ||
+                (s->hazard.floor.valid && s->hazard.floor.action==BOT_FLOOR_STOP);
         command = built;
         ok = bot_ai_source_command_write(b, s, &command, e);
     }
@@ -439,6 +462,7 @@ bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *ar
     return true;
 }
 bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
+    s->progress.pursuing=false;
     s->hazard.floor.valid=false;s->hazard.floor.recovering=false;s->hazard.floor.side_flipped=false;
     if(!s->source_span.data && !bot_ai_source_alias_bind(b,s,e)) return false;
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
@@ -533,6 +557,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         }
     }
 finished:
+    if(s->source_settings && !s->progress.pursuing) s->progress=(bot_progress_memory){0};
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
         ok = bot_ai_source_action_weapon(b,s,e);
     if(ok && !s->retired && bot_ai_live(b,s->view.actor) && s->source_settings)
