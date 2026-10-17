@@ -322,7 +322,18 @@ bool application_native_q2_stages_advance(struct application_native_q2 *n,const 
 bool application_native_q2_stages_idle(const struct application_native_q2_stages *o)
 { return !o||(!o->advancing&&!o->inputs&&!o->handlers); }
 uint64_t application_native_q2_stages_frame(const struct application_native_q2 *n)
-{ return n&&n->stages&&n->stages->interval_ns?n->stages->frame:n?n->frame.number:0; }
+{
+    if (!n) return 0;
+    if (n->stages && n->stages->interval_ns) return n->stages->frame;
+    if (n->initialization_clock) return n->initialization_clock->frame.number;
+    if (!n->callbacks) {
+        /* World retirement resets the retained clock before the new map's first tick. */
+        qa_clock_state clock;
+        if (qa_session_clock(n->provider->application->session,n->provider->owner,&clock))
+            return clock.frame.number;
+    }
+    return n->frame.number;
+}
 struct application_native_q2_client_outputs *application_native_q2_stages_outputs(const struct application_native_q2 *n)
 {return n&&n->stages?n->stages->client_outputs:NULL;}
 qa_bytes application_native_q2_stages_damage_saved(const struct application_native_q2 *n)

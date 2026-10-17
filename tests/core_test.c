@@ -103,6 +103,8 @@
 #include "../src/network/q2/session_internal.h"
 #include "../src/app/application/internal.h"
 #include "../src/app/application/control_frame.h"
+#include "../src/app/application/guest_native_q2_private.h"
+#include "../src/app/application/native_q2_client_stages.h"
 #include "../src/app/application/bots_log.h"
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
@@ -3493,6 +3495,13 @@ static void test_component_construction_actors(void)
     CHECK(qa_session_prepare_component(session,&source,0,&admission,&error));
     const qa_clock_state *prepared=qa_component_admission_clock(admission);
     CHECK(prepared && prepared->frame.provider==owner && prepared->frame.kind==QA_RULESET_Q2_CLASSIC);
+    qa_application native_app={.session=session};
+    application_provider native_provider={.application=&native_app,.owner=owner};
+    struct application_native_q2 native={.provider=&native_provider,.frame={.number=999}};
+    CHECK(application_native_q2_stages_frame(&native)==999);
+    native.initialization_clock=prepared;
+    CHECK(application_native_q2_stages_frame(&native)==prepared->frame.number);
+    native.initialization_clock=NULL;
     qa_clock_state clock;
     CHECK(!qa_session_clock(session,owner,&clock));
     qa_actor_id actor;
@@ -3525,10 +3534,14 @@ static void test_component_construction_actors(void)
     for(size_t i=0;i<3;++i)
         CHECK(qa_session_clock(session,owners[i],before+i) &&
             before[i].frame.time_ns>UINT64_C(13000000000));
+    native_app.session=session;native_provider.owner=owners[1];
+    native.frame.number=before[1].frame.number+1000;
+    CHECK(application_native_q2_stages_frame(&native)==before[1].frame.number);
     CHECK(qa_session_retire_world(session,&error));
     for(size_t i=0;i<2;++i)
         CHECK(qa_session_clock(session,owners[i],&after) &&
             after.frame.time_ns==UINT64_C(13000000000) && !after.elapsed_ns && !after.frame_number);
+    CHECK(application_native_q2_stages_frame(&native)==0);
     CHECK(qa_session_clock(session,owners[2],&after) &&
         after.frame.time_ns==before[2].frame.time_ns && after.debt_ns==before[2].debt_ns &&
         after.host_origin_ns==before[2].host_origin_ns && after.frame_number==before[2].frame_number);
