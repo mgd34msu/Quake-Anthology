@@ -624,8 +624,7 @@ bool application_native_q2_loading_cancel(application_provider *provider, qa_err
     if (!engine || !engine->loading_phase) return true;
     if (engine->calls) return false;
     bool ok = !engine->restore_call || qa_native_loading_call_abandon(&engine->restore_call, error);
-    if (ok && engine->loading_phase != APPLICATION_NATIVE_Q2_LOADING_MAP)
-        ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
+    if (ok) ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
     if (ok) {
         engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
         engine->map_loading_phase = 0;
@@ -877,16 +876,17 @@ bool application_native_q2_spawn_map_advance(application_provider *provider, con
                     source_entities = (char *)declared_entities.data;
                 }
             }
-            if (ok && spawn_entities) ok = qa_native_host_spawn_entities(provider->state.native.host,
+            if (ok && spawn_entities) ok = qa_native_host_spawn_entities_begin(provider->state.native.host,
                 qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
-                spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
+                spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "",
+                engine->callbacks ? 0 : 2, error);
             qa_buffer_free(&declared_entities);
-            if (ok && spawn_entities && !engine->callbacks)
-                ok = qa_native_host_run_frame(provider->state.native.host, false, error) &&
-                    qa_native_host_run_frame(provider->state.native.host, false, error);
             break;
         }
         case 3:
+            ok = qa_native_host_spawn_entities_advance(provider->state.native.host, quantum, &returned, error);
+            break;
+        case 4:
             if (original) ok = application_q2_original_level_advance(provider, quantum, &returned, error);
             break;
         default:
@@ -896,7 +896,7 @@ bool application_native_q2_spawn_map_advance(application_provider *provider, con
         }
         --engine->calls;
         if (!ok || !returned) return ok;
-        if (engine->map_loading_phase == 4) {
+        if (engine->map_loading_phase == 5) {
             engine->map_loading_phase = 0;
             engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
             engine->map_admission_prepared = false;

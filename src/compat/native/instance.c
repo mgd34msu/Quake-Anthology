@@ -176,9 +176,7 @@ bool qa_native_startup_paused(const qa_native_instance *instance)
     if (instance->checkpointing && (!call || !call->checkpoint_restore)) return false;
     if (instance->creating && instance->process_initializing)
         return native_process_initialization_paused(instance);
-    if (!call || (!call->checkpoint_restore &&
-        (!((instance->creating && instance->profile_loading) || instance->initializing) ||
-         call != instance->startup_call))) return false;
+    if (!call) return false;
     const qa_native_guest *guest = instance->guest;
     return guest && guest->call == call->abi &&
         !guest->run && !guest->callback_depth && !guest->publication_depth &&

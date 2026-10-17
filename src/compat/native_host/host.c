@@ -1,6 +1,7 @@
 #include "internal.h"
 
 static void free_records(qa_native_host *);
+static bool map_cancel(qa_native_host *, qa_error *);
 
 static bool release_process(qa_native_host *host, qa_error *error)
 {
@@ -482,7 +483,7 @@ static void free_records(qa_native_host *host)
 
 bool qa_native_host_destroy_ready(const qa_native_host *host)
 {
-    return host && !host->destroying && !host->callback_depth && !host->call_scratch.active &&
+    return host && !host->destroying && !host->map_loading && !host->callback_depth && !host->call_scratch.active &&
         (!host->instance || qa_native_can_destroy(host->instance));
 }
 
@@ -496,6 +497,7 @@ bool qa_native_host_startup_cancel(qa_native_host *host, qa_error *error)
 {
     if (!host || host->destroying || host->reconstruction || host->callback_depth || host->call_scratch.active)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native startup cancellation requires returned host callbacks");
+    if (!map_cancel(host, error)) return false;
     if (!host->constructing && !host->initializing) return true;
     if (!qa_native_startup_cancel(host->instance, error)) return false;
     host->constructing = false; host->initializing = false;
@@ -512,6 +514,7 @@ bool qa_native_host_destroy_owned(qa_native_host **owner, qa_error *error)
 {
     qa_native_host *host = owner ? *owner : NULL;
     bool construction_ok = true;
+    if (host && host->map_loading && !qa_native_host_startup_cancel(host, error)) return false;
     if (host && (host->constructing || host->initializing) && host->instance) {
         if (!qa_native_host_startup_cancel(host, error)) return false;
         construction_ok = qa_native_destroy_owned(&host->instance, error);
@@ -672,40 +675,71 @@ bool qa_native_host_shutdown(qa_native_host *host, bool restart, qa_error *error
     return qa_native_shutdown(host->instance, error);
 }
 
-static bool call_strings(qa_native_host *host, const char *entry,
-                         const char *const *strings, size_t count, qa_error *error)
+static void map_strings_release(qa_native_host *host)
 {
-    qa_native_address addresses[3] = {0};
-    qa_native_value arguments[3] = {0};
-    if (count > 3)
-        return native_host_fail(error, QA_ERROR_ARGUMENT, count,
-                                "too many native lifecycle strings");
-    bool ok = true;
-    for (size_t index = 0; index < count; ++index) {
-        ok = native_host_temporary_string(host, strings[index] ? strings[index] : "",
-                                          &addresses[index], error);
-        if (!ok)
-            break;
-        arguments[index].type = QA_NATIVE_ADDRESS;
-        arguments[index].as.address = addresses[index];
+    for (size_t i=0;i<3;++i) {
+        native_host_temporary_free(host,host->map_strings[i]);
+        host->map_strings[i]=0;
     }
-    if (ok)
-        ok = qa_native_call(host->instance, entry, arguments, count, NULL, error);
-    for (size_t index = 0; index < count; ++index)
-        native_host_temporary_free(host, addresses[index]);
-    return ok;
+    host->map_loading=false;
+    host->map_settling_frames=0;
 }
-
-bool qa_native_host_spawn_entities(qa_native_host *host, const char *map,
-                                   const char *entities, const char *spawn_point,
-                                   qa_error *error)
+static bool map_cancel(qa_native_host *host, qa_error *error)
 {
-    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !map || !entities || !spawn_point)
+    if (!qa_native_loading_call_abandon(&host->map_call,error)) return false;
+    map_strings_release(host);
+    return true;
+}
+bool qa_native_host_spawn_entities_begin(qa_native_host *host, const char *map,
+    const char *entities, const char *spawn_point, unsigned settling_frames, qa_error *error)
+{
+    if (!host || host->kind!=NATIVE_HOST_Q2_GAME || !map || !entities || !spawn_point || host->map_loading)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "Q2 native spawn strings are required");
-    const char *strings[] = {map, entities, spawn_point};
-    return call_strings(host, "SpawnEntities", strings, 3, error) &&
-           native_host_reconcile(host, error);
+    host->map_loading=true;
+    host->map_settling_frames=settling_frames;
+    const char *strings[]={map,entities,spawn_point};
+    qa_native_value arguments[3]={0};
+    bool ok=true;
+    for (size_t i=0;ok && i<3;++i) {
+        ok=native_host_temporary_string(host,strings[i],host->map_strings+i,error);
+        arguments[i]=(qa_native_value){.type=QA_NATIVE_ADDRESS,.as.address=host->map_strings[i]};
+    }
+    if (ok) ok=qa_native_loading_call_begin(host->instance,"SpawnEntities",arguments,3,NULL,&host->map_call,error);
+    if (!ok) {qa_error cleanup={0};(void)map_cancel(host,&cleanup);}
+    return ok;
+}
+bool qa_native_host_spawn_entities_advance(qa_native_host *host, size_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!host || !complete)
+        return native_host_fail(error,QA_ERROR_ARGUMENT,0,"Q2 map loading requires its host and result");
+    *complete=!host->map_loading;
+    while (!*complete) {
+        bool returned=false;
+        if (!qa_native_loading_call_step(host->map_call,quantum,&returned,error)) return false;
+        if (!returned) return true;
+        if (!qa_native_loading_call_finish(&host->map_call,error) || !native_host_reconcile(host,error)) return false;
+        if (!host->map_settling_frames) {
+            map_strings_release(host);
+            *complete=true;
+            return true;
+        }
+        --host->map_settling_frames;
+        qa_native_value argument={.type=QA_NATIVE_U8,.as.u8=0};
+        bool rerelease=host->profile==QA_NATIVE_Q2_GAME_API2023;
+        if (!qa_native_loading_call_begin(host->instance,"RunFrame",rerelease?&argument:NULL,
+            rerelease?1:0,NULL,&host->map_call,error)) return false;
+        if (quantum) return true;
+    }
+    return true;
+}
+bool qa_native_host_spawn_entities(qa_native_host *host, const char *map,
+    const char *entities, const char *spawn_point, qa_error *error)
+{
+    bool complete=false;
+    return qa_native_host_spawn_entities_begin(host,map,entities,spawn_point,0,error) &&
+        qa_native_host_spawn_entities_advance(host,0,&complete,error) && complete;
 }
 
 bool qa_native_host_run_frame(qa_native_host *host, bool main_loop, qa_error *error)

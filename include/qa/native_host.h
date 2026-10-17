@@ -426,6 +426,10 @@ bool qa_native_host_initialize_advance(qa_native_host *, size_t quantum,
 bool qa_native_host_shutdown(qa_native_host *, bool restart, qa_error *);
 bool qa_native_host_spawn_entities(qa_native_host *, const char *map, const char *entities,
                                    const char *spawn_point, qa_error *);
+bool qa_native_host_spawn_entities_begin(qa_native_host *, const char *map, const char *entities,
+    const char *spawn_point, unsigned settling_frames, qa_error *);
+bool qa_native_host_spawn_entities_advance(qa_native_host *, size_t quantum,
+    bool *complete, qa_error *);
 bool qa_native_host_run_frame(qa_native_host *, bool main_loop, qa_error *);
 bool qa_native_host_prep_frame(qa_native_host *, qa_error *);
 /* Read the original public player prefix into 296 caller-owned writable bytes.
