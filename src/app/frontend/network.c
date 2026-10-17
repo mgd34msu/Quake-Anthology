@@ -137,7 +137,7 @@ typedef struct frontend_q3_client {
     uint32_t q3_client_launch_seat;
     qa_q3_product q3_client_product;
     qa_q3_client_clock q3_client_clock;
-    qa_cvar_handle cl_maxpackets, cl_packetdup, cl_timeNudge, cg_smoothClients, cl_allowDownload;
+    qa_cvar_handle cl_maxpackets, cl_packetdup, cl_timeNudge, cl_freezeDemo, cg_smoothClients, cl_allowDownload;
     frontend_q3_content *q3_client_content;
     qa_q3_client_downloads *q3_client_downloads;
     qa_q3_prediction_scene *q3_prediction_scene;
@@ -183,6 +183,7 @@ static void client_cvars_bind(frontend_q3_client *client, const qa_cvars *cvars)
     client->cl_maxpackets = qa_cvars_resolve(cvars, "cl_maxpackets");
     client->cl_packetdup = qa_cvars_resolve(cvars, "cl_packetdup");
     client->cl_timeNudge = qa_cvars_resolve(cvars, "cl_timeNudge");
+    client->cl_freezeDemo = qa_cvars_resolve(cvars, "cl_freezeDemo");
     client->cg_smoothClients = qa_cvars_resolve(cvars, "cg_smoothClients");
     client->cl_allowDownload = qa_cvars_resolve(cvars, "cl_allowDownload");
 }
@@ -9221,9 +9222,11 @@ static bool demo_playback_advance(void *context,frontend_demo_reader *reader,uin
     if(!qa_application_q3_remote_context_read(n->frontend->application,n->clients[0].q3.q3_cgame_owner,n->clients[0].q3.q3_client_launch_seat,&role,error))return false;
     qa_q3_clock_options options={.demo=true,.timedemo=timedemo,.timescale=1};
     const qa_cvar_view *scale=qa_cvars_read(role.cvars,n->frontend->engine_cvars.timescale),
-        *nudge=qa_cvars_read(role.cvars,n->clients[0].q3.cl_timeNudge);
+        *nudge=qa_cvars_read(role.cvars,n->clients[0].q3.cl_timeNudge),
+        *freeze=qa_cvars_read(role.cvars,n->clients[0].q3.cl_freezeDemo);
     if(scale)options.timescale=scale->number;
     if(nudge)options.time_nudge=nudge->integer;
+    options.freeze_demo=freeze && freeze->integer!=0;
     if(!qa_q3_clock_advance(&n->clients[0].q3.q3_client_clock,(int32_t)((time_ns/UINT64_C(1000000))&INT32_MAX),
         &options,&n->clients[0].q3.q3_client_active,&n->clients[0].q3.q3_client_time,error))return false;
     while(qa_q3_clock_needs_demo_message(&n->clients[0].q3.q3_client_clock)&&*end==FRONTEND_DEMO_RUNNING)

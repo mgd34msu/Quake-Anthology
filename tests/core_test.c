@@ -9854,6 +9854,32 @@ static void test_browser_lan_overlap(void)
     qa_server_browser_destroy(browser); CHECK(qa_http_destroy(http, &error));
 }
 
+static void test_q3_demo_clock_freeze(void) {
+    qa_error error = {0};
+    qa_q3_client_clock clock = {0};
+    qa_q3_clock_options options = {.demo = true, .timescale = 1};
+    qa_q3_snapshot snapshot = {.server_time = 1000};
+    bool active = false; int32_t time = 0;
+    qa_q3_clock_publish(&clock, &snapshot);
+    CHECK(qa_q3_clock_advance(&clock, 100, &options, &active, &time, &error));
+    CHECK(active && time == 1000);
+    snapshot.server_time = 2000;
+    qa_q3_clock_publish(&clock, &snapshot);
+    options.freeze_demo = true;
+    CHECK(qa_q3_clock_advance(&clock, 200, &options, &active, &time, &error));
+    CHECK(time == 1000 && !qa_q3_clock_needs_demo_message(&clock));
+    CHECK(qa_q3_clock_advance(&clock, 250, &options, &active, &time, &error));
+    CHECK(time == 1000);
+    options.freeze_demo = false;
+    CHECK(qa_q3_clock_advance(&clock, 300, &options, &active, &time, &error));
+    CHECK(time == 1200);
+    options.freeze_demo = true; options.timedemo = true;
+    CHECK(qa_q3_clock_advance(&clock, 400, &options, &active, &time, &error));
+    CHECK(time == 1050 && clock.demo_frames == 1);
+    CHECK(qa_q3_clock_advance(&clock, 450, &options, &active, &time, &error));
+    CHECK(time == 1100 && clock.demo_frames == 2);
+}
+
 int main(int argc, char **argv)
 {
     if(!player_feedback_test()) return 1;
@@ -9942,6 +9968,7 @@ int main(int argc, char **argv)
     test_shared_cvar_archive();
     test_cvar_restart_removal();
     test_socks_transport_pending();
+    test_q3_demo_clock_freeze();
     test_runtime_server_settings();
     test_shared_cvar_save();
     test_cvar_value_scope();
