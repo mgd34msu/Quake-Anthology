@@ -138,4 +138,6 @@ bool frontend_remote_q2_rebind_ready(const frontend_remote_q2 *, qa_frontend *,
     const frontend_remote_q2_options *, qa_error *);
 void frontend_remote_q2_rebind(frontend_remote_q2 *, qa_frontend *,
     const frontend_remote_q2_options *);
+bool remote_q2_rerelease_presentation(const frontend_remote_q2 *);
+
 #endif

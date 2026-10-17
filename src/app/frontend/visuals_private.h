@@ -66,6 +66,7 @@ struct frontend_visual_owner {
     qa_id_index model_index, brush_index, flare_index;
     qa_actor_owner owner;
     qa_game_family family;
+    qa_ruleset_id rules;
     qa_vfs *mounts;
     qa_scene_resources *images;
     qa_material_library *materials;

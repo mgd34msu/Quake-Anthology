@@ -123,7 +123,7 @@ bool qa_q3_assets_provider_hold(qa_q3_presentation_assets *assets,
     for (q3p_provider_custody *row = assets->providers; row; row = row->next)
         if (row->value.mounts == provider->mounts && row->value.images == provider->images &&
             row->value.materials == provider->materials && row->value.family == provider->family &&
-            row->value.geometry_owner == provider->geometry_owner) return true;
+            row->value.geometry_owner == provider->geometry_owner && row->value.rules == provider->rules) return true;
     q3p_provider_custody *row = calloc(1, sizeof(*row));
     if (!row) return q3p_fail(error, QA_ERROR_MEMORY, "Retaining Source registry provider custody");
     bool vfs = qa_vfs_retain(provider->mounts, error);
@@ -183,6 +183,11 @@ bool qa_q3_assets_custody_restore(qa_q3_presentation_assets *assets, qa_error *e
         qa_scene_resources *images = qa_material_library_resource_owner(material->library);
         qa_q3_presentation_provider provider = {.mounts = qa_scene_resources_files(images),
             .images = images, .materials = material->library, .family = material->family};
+        for (q3p_provider_custody *row = assets->providers; row; row = row->next)
+            if (row->value.materials == material->library && row->value.images == images) {
+                provider = row->value;
+                break;
+            }
         if (!qa_q3_assets_provider_hold(assets, &provider, error)) return false;
     }
     return q3p_assets_skin_bindings_prepare(assets, error);

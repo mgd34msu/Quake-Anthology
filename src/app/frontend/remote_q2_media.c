@@ -165,7 +165,8 @@ bool remote_q2_model_read_id(frontend_remote_q2 *row, qa_string_id path_id, remo
     if (ok && m->decoded.format == QA_MODEL_MD3) options.family = QA_GAME_Q3;
     if (ok) ok = qa_scene_model_create(&m->decoded, path, row->images, row->materials, &options, qa_session_strings(qa_application_session(row->frontend->application)), &m->scene, error) &&
         qa_scene_model_source_resource_bind(m->scene, m->resource, error) &&
-        frontend_visual_model_opening_initialize(row->frontend, options.family, row->content.mounts,
+        frontend_visual_model_opening_initialize(row->frontend, options.family,
+            qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(row)), row->content.mounts,
             m->resource, &m->opening, &m->decoded, m->scene, error);
     if (ok) ok = remote_q2_model_scope_current(row, m, error);
     if (!ok) {

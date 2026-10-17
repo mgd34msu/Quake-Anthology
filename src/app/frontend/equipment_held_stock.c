@@ -30,7 +30,7 @@ static const qa_model_transform q1_axe = {
     .scale = {1, 1, 1}
 };
 static const qa_model_transform q2_male = {
-    .origin = {-2.5316378672917685f, -9.27009121576945f, 4.795252025127411f},
+    .origin = {-2.5316379070281982f, -9.270092010498047f, 4.795251846313477f},
     .axes = {{.9701912999153137f, -.16778743267059326f, -.17486034333705902f},
         {.16538193821907043f, .9858221411705017f, -.02834496460855007f},
         {.17713716626167297f, -.0014186727348715067f, .9841850996017456f}},
@@ -41,6 +41,20 @@ static const qa_model_transform q2_female = {
     .axes = {{.9919583797454834f, .036155037581920624f, -.12129008769989014f},
         {-.03602835536003113f, .9993454813957214f, .003238283796235919f},
         {.12132780998945236f, .0011576636461541057f, .992611825466156f}},
+    .scale = {1, 1, 1}
+};
+static const qa_model_transform q2_male_classic = {
+    .origin = {-2.198841094970703f, -9.209379196166992f, 5.1354217529296875f},
+    .axes = {{.9739808440208435f, -.16668719053268433f, -.15354691445827484f},
+        {.12157008051872253f, .9560694098472595f, -.26674318313598633f},
+        {.19126416742801666f, .24113602936267853f, .9514575004577637f}},
+    .scale = {1, 1, 1}
+};
+static const qa_model_transform q2_female_classic = {
+    .origin = {1.8566161394119263f, -5.973968029022217f, 2.301879405975342f},
+    .axes = {{.99488365650177f, .030664639547467232f, -.09626106172800064f},
+        {-.013402743265032768f, .9844618439674377f, .17508633434772491f},
+        {.10013430565595627f, -.17290037870407104f, .9798359870910645f}},
     .scale = {1, 1, 1}
 };
 static const char *q2_carrier_name(const char *path, bool *female)
@@ -59,15 +73,14 @@ static const char *q2_carrier_name(const char *path, bool *female)
     return NULL;
 }
 
-static qa_model_transform q2_admitted_grip(bool female)
+static bool q2_admitted_grip(bool female, qa_model_format format, qa_ruleset_id rules,
+    qa_model_transform *out)
 {
-    qa_model_transform grip = female ? q2_female : q2_male;
-    if (!female) {
-        grip.origin[0] = -2.5316379070281982f;
-        grip.origin[1] = -9.270092010498047f;
-        grip.origin[2] = 4.795251846313477f;
-    }
-    return grip;
+    if (rules != QA_RULESET_Q2_CLASSIC && rules != QA_RULESET_Q2_RERELEASE) return false;
+    if (format == QA_MODEL_MD2 && rules == QA_RULESET_Q2_CLASSIC)
+        *out = female ? q2_female_classic : q2_male_classic;
+    else *out = female ? q2_female : q2_male;
+    return true;
 }
 
 static const char *const q2_carriers[] = {
@@ -139,7 +152,7 @@ static bool q2_mesh_attachment(qa_scene_model *scene, const qa_model *model,
     return qa_scene_model_grip_bind(scene, NULL, 0, selected->vertex, grip, error);
 }
 
-bool frontend_held_stock_q2_attachment(const char *path, qa_scene_model *scene, qa_error *error)
+bool frontend_held_stock_q2_attachment(const char *path, qa_ruleset_id rules, qa_scene_model *scene, qa_error *error)
 {
     const qa_model *model = qa_scene_model_source(scene);
     if (!model || qa_scene_model_grip_defined(scene) ||
@@ -147,7 +160,8 @@ bool frontend_held_stock_q2_attachment(const char *path, qa_scene_model *scene, 
     bool female = false;
     const char *name = q2_carrier_name(path, &female);
     if (!name || !q2_stock_carrier(name)) return true;
-    qa_model_transform reference = q2_admitted_grip(female);
+    qa_model_transform reference;
+    if (!q2_admitted_grip(female, model->format, rules, &reference)) return true;
     if (model->format == QA_MODEL_MD2) return q2_mesh_attachment(scene, model, &reference, error);
     for (uint32_t joint = 0; joint < model->bone_count; ++joint) {
         qa_bytes joint_name = qa_model_bone_name(model->bones + joint);
@@ -167,7 +181,7 @@ bool frontend_held_stock_q2_attachment(const char *path, qa_scene_model *scene, 
     return true;
 }
 
-bool frontend_held_stock_q2_grip(const char *path, const qa_resource *source, const qa_model *model,
+bool frontend_held_stock_q2_grip(const char *path, qa_ruleset_id rules, const qa_resource *source, const qa_model *model,
     qa_model_transform *out, bool *found, qa_error *error)
 {
     if (!path || !source || !model || !out || !found) {
@@ -180,7 +194,7 @@ bool frontend_held_stock_q2_grip(const char *path, const qa_resource *source, co
     if (!name || model->format != QA_MODEL_MD2 || model->mesh_count != 1 || model->skin_count != 1)
         return true;
     if (!q2_stock_carrier(name) || !model->frame_count) return true;
-    *out = q2_admitted_grip(female);
+    if (!q2_admitted_grip(female, model->format, rules, out)) return true;
     *found = true;
     return true;
 }
@@ -209,7 +223,7 @@ static bool q1(const char *view, frontend_held_declaration *out, bool *found, qa
     return true;
 }
 
-static bool q2(const char *view, const char *item, frontend_held_declaration *out,
+static bool q2(const char *view, const char *item, qa_ruleset_id rules, frontend_held_declaration *out,
     bool *found, qa_error *error)
 {
     static const struct { const char *item, *model; } models[] = {
@@ -247,7 +261,8 @@ static bool q2(const char *view, const char *item, frontend_held_declaration *ou
     if (!model) return true;
     char path[96];
     snprintf(path, sizeof(path), "players/male/%s.md2", model);
-    frontend_held_declaration result = {.grip = q2_male};
+    frontend_held_declaration result = {0};
+    if (!q2_admitted_grip(false, QA_MODEL_MD2, rules, &result.grip)) return true;
     result.path = copy(path); result.fallback = copy("players/male/weapon.md2");
     if (!result.path || !result.fallback) {
         frontend_held_declaration_free(&result);
@@ -258,7 +273,7 @@ static bool q2(const char *view, const char *item, frontend_held_declaration *ou
     return true;
 }
 
-bool frontend_held_stock(qa_game_family family, const char *view, const char *item,
+bool frontend_held_stock(qa_game_family family, qa_ruleset_id rules, const char *view, const char *item,
     frontend_held_declaration *out, bool *found, qa_error *error)
 {
     if (!view || !out || !found) {
@@ -267,6 +282,6 @@ bool frontend_held_stock(qa_game_family family, const char *view, const char *it
     }
     *found = false;
     if (family == QA_GAME_Q1) return q1(view, out, found, error);
-    if (family == QA_GAME_Q2) return q2(view, item, out, found, error);
+    if (family == QA_GAME_Q2) return q2(view, item, rules, out, found, error);
     return true;
 }

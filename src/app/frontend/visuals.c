@@ -138,7 +138,7 @@ bool frontend_visual_owner_read(const qa_frontend *frontend, size_t index, front
         qa_scene_resources_files(owner->images)!=owner->mounts || qa_material_library_resource_owner(owner->materials)!=owner->images)
         return false;
     *out=(frontend_visual_owner_view){owner->owner,owner->family,owner->mounts,owner->images,owner->materials,
-        owner->media,owner->shader_movies}; return true;
+        owner->media,owner->shader_movies,owner->rules}; return true;
 }
 bool frontend_visual_movie_source_read(qa_frontend *frontend, size_t index,
     frontend_material_movie_source *out, qa_error *error)
@@ -309,6 +309,10 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     owner->strings = qa_session_strings(qa_application_session(frontend->application));
     qa_strings_retain(owner->strings);
     owner->family = family;
+    const char *instance = qa_application_provider_instance(frontend->application, view->provider);
+    const qa_launch_instance *source = instance ? qa_launch_snapshot_find(
+        qa_application_launch(frontend->application), instance) : NULL;
+    owner->rules = source ? source->selection.clock.kind : QA_RULESET_NETQUAKE;
     owner->mounts = qa_vfs_clone(files, error);
     owner->images = owner->mounts ? qa_scene_resources_create(owner->mounts, error) : NULL;
     bool configured = owner->images && frontend_image_policy_initialize(frontend, owner->images, error);
@@ -614,7 +618,7 @@ static bool model_read(qa_frontend *frontend, frontend_visual_owner *owner, qa_s
         frontend_model_policy_select(&policy, owner->family, model->model, 0, true),
         frontend_model_policy_distance(&policy, model->model),
         model->replacement ? &model->replacement_description : NULL, error);
-    if (ok) ok = frontend_held_attachment_prepare(owner->mounts,path,model->scene,error);
+    if (ok) ok = frontend_held_attachment_prepare(owner->mounts,owner->rules,path,model->scene,error);
     uint64_t resource = qa_resource_id(model->resource);
     if (ok) ok = qa_id_index_reserve(&owner->model_index, resource ? 2 : 1, error);
     if (!ok) {
@@ -719,7 +723,7 @@ bool frontend_visual_policy_prepare(qa_frontend *frontend, const frontend_model_
                     if (mesh.release) mesh.release(mesh.context);
                     if (source.release) source.release(source.context);
                     if (animation.release) animation.release(animation.context);
-                    if (ok) ok = frontend_held_attachment_prepare(owner->mounts, model->path,
+                    if (ok) ok = frontend_held_attachment_prepare(owner->mounts, owner->rules, model->path,
                         qa_scene_model_image_policy_replacement_model(prepared), error);
                     if (!ok) { visual_policy_dispose(ticket); return false; }
                     description = &row->description;
@@ -770,7 +774,7 @@ bool frontend_visual_policy_abort(frontend_visual_policy **owner, qa_error *erro
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual cache abort requires its actual unpublished preparation");
     visual_policy_dispose(*owner); *owner = NULL; return true;
 }
-static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
+static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_ruleset_id rules, qa_vfs *files,
     const qa_resource *resource, const char *path, const char *attachment_path, int64_t rank,
     const qa_model *native, qa_scene_model *root, qa_error *error)
 {
@@ -782,7 +786,7 @@ static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_v
         qa_resource_pool_find(qa_vfs_resources(files), qa_resource_id(resource)) != resource)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial model policy requires its genuine decoded parent and first opening");
     if (native->format != QA_MODEL_MDL && native->format != QA_MODEL_MD2)
-        return frontend_held_attachment_prepare(files,attachment_path,root,error);
+        return frontend_held_attachment_prepare(files,rules,attachment_path,root,error);
     frontend_model_policy policy;
     if (!frontend_model_policy_read(f, &policy, error)) return false;
     frontend_visual_content *content = NULL; qa_model_replacement replacement = {0};
@@ -800,7 +804,7 @@ static bool model_opening_initialize(qa_frontend *f, qa_game_family family, qa_v
     if (ok) ok = qa_scene_model_replacement_policy_bind(root,
         frontend_model_policy_select(&policy, family, native, 0, true),
         frontend_model_policy_distance(&policy, native), content ? &replacement : NULL, error);
-    if (ok) ok = frontend_held_attachment_prepare(files,attachment_path,root,error);
+    if (ok) ok = frontend_held_attachment_prepare(files,rules,attachment_path,root,error);
     visual_content_release(content); return ok;
 }
 bool frontend_visual_registered_model_initialize(qa_frontend *f, const qa_q3_model_opening *opening,
@@ -810,12 +814,12 @@ bool frontend_visual_registered_model_initialize(qa_frontend *f, const qa_q3_mod
         qa_scene_model_resource_owner(root) != opening->provider.images ||
         qa_scene_model_material_owner(root) != opening->provider.materials)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial registry model lost its actual provider parent");
-    return model_opening_initialize(f, opening->provider.family, opening->provider.mounts,
+    return model_opening_initialize(f, opening->provider.family, opening->provider.rules, opening->provider.mounts,
         opening->resource, opening->receipt->path,
         opening->first_requested_path ? opening->first_requested_path : opening->receipt->path,
         opening->rank, native, root, error);
 }
-bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family family, qa_vfs *files,
+bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family family, qa_ruleset_id rules, qa_vfs *files,
     const qa_resource *resource, const qa_vfs_acquisition *receipt, const qa_model *native,
     qa_scene_model *root, qa_error *error)
 {
@@ -824,10 +828,10 @@ bool frontend_visual_model_opening_initialize(qa_frontend *f, qa_game_family fam
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Initial native model has no actual retained acquisition");
     int64_t rank;
     if (!opening_rank(files, receipt, &rank, error)) return false;
-    return model_opening_initialize(f, family, files, resource, receipt->path,
+    return model_opening_initialize(f, family, rules, files, resource, receipt->path,
         receipt->lookup_path ? receipt->lookup_path : receipt->path, rank, native, root, error);
 }
-static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_game_family family,
+static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_game_family family, qa_ruleset_id rules,
     qa_vfs *files, const qa_resource *resource, const qa_vfs_acquisition *opening,
     const qa_model *native, const qa_scene_model *root,
     const frontend_visual_policy_binding *bindings, size_t count, bool *covered, qa_error *error)
@@ -858,7 +862,7 @@ static bool native_cache_policy_prepare(const frontend_model_policy *policy, qa_
                 qa_scene_model_image_policy_replacement_parent(bindings[index].ticket, &replacement, &mesh, &animation, error);
             if (mesh.release) mesh.release(mesh.context);
             if (animation.release) animation.release(animation.context);
-            if (ok) ok = frontend_held_attachment_prepare(files,
+            if (ok) ok = frontend_held_attachment_prepare(files, rules,
                 opening->lookup_path ? opening->lookup_path : opening->path,
                 qa_scene_model_image_policy_replacement_model(bindings[index].ticket), error);
             if (ok) description = &replacement;
@@ -970,7 +974,7 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
                             qa_scene_model_image_policy_replacement_parent(bindings[index].ticket, &replacement, &mesh, &animation, error);
                         if (mesh.release) mesh.release(mesh.context);
                         if (animation.release) animation.release(animation.context);
-                        if (ok) ok = frontend_held_attachment_prepare(opening.provider.mounts,
+                        if (ok) ok = frontend_held_attachment_prepare(opening.provider.mounts, opening.provider.rules,
                             opening.first_requested_path ? opening.first_requested_path : opening.receipt->path,
                             qa_scene_model_image_policy_replacement_model(bindings[index].ticket), error);
                         if (ok) description = &replacement;
@@ -991,7 +995,7 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
         for (size_t i = 0; ok && i < frontend_remote_q1_model_count(owner); ++i) {
             frontend_remote_q1_model_view model;
             ok = frontend_remote_q1_model_at(owner, i, &model, error);
-            if (ok && !model.world) ok = native_cache_policy_prepare(policy, QA_GAME_Q1, view.content.mounts, model.resource,
+            if (ok && !model.world) ok = native_cache_policy_prepare(policy, QA_GAME_Q1, QA_RULESET_NETQUAKE, view.content.mounts, model.resource,
                 model.opening, model.model, model.scene, bindings, count, covered, error);
         }
     }
@@ -1002,7 +1006,8 @@ bool frontend_visual_registered_model_policy_prepare(qa_frontend *f, const front
         for (size_t i = 0; ok && i < frontend_remote_q2_model_count(owner); ++i) {
             frontend_remote_q2_model_view model;
             ok = frontend_remote_q2_model_at(owner, i, &model, error) &&
-                native_cache_policy_prepare(policy, QA_GAME_Q2, view.content.mounts, model.resource,
+                native_cache_policy_prepare(policy, QA_GAME_Q2,
+                    qa_ruleset_q2_from_tag(remote_q2_rerelease_presentation(owner)), view.content.mounts, model.resource,
                     model.opening, model.model, model.scene, bindings, count, covered, error);
         }
     }
@@ -1038,7 +1043,7 @@ bool frontend_visual_media_acquire(qa_frontend *frontend, qa_actor_owner provide
     if (!frontend_visuals_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Live media admission requires idle appearance owners");
     *out = (frontend_visual_owner_view){owner->owner, owner->family, owner->mounts, owner->images, owner->materials,
-        owner->media, owner->shader_movies};
+        owner->media, owner->shader_movies, owner->rules};
     return true;
 }
 bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner provider,
@@ -1056,7 +1061,7 @@ bool frontend_visual_media_read(const qa_frontend *frontend, qa_actor_owner prov
             qa_material_library_resource_owner(owner->materials) != owner->images)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read lost its complete physical resource owner");
         *out = (frontend_visual_owner_view){owner->owner, owner->family, owner->mounts,
-            owner->images, owner->materials, owner->media, owner->shader_movies};
+            owner->images, owner->materials, owner->media, owner->shader_movies, owner->rules};
         return true;
     }
     return frontend_fail(error, QA_ERROR_ARGUMENT, "Media read has no previously admitted source owner");

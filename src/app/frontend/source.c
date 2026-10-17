@@ -1191,7 +1191,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
     if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), frontend_music_family(source->music_catalog, source->music_product), true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
-    qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3, qa_application_world(frontend->application)},
+    qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {source->mounts, source->images, source->materials, QA_GAME_Q3, qa_application_world(frontend->application), QA_RULESET_Q3},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source, .model_initialize = model_initialize};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,

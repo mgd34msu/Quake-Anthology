@@ -41,6 +41,7 @@ static void native_icons_release(native_hud_icons *icons)
 typedef struct held_attachment_source {
     qa_vfs *files;
     const char *path;
+    qa_ruleset_id rules;
 } held_attachment_source;
 static bool held_attachment_admit(void *context, qa_scene_model *scene, qa_error *error)
 {
@@ -50,7 +51,7 @@ static bool held_attachment_admit(void *context, qa_scene_model *scene, qa_error
     frontend_model_source source;
     if (qa_scene_model_replacement_description(scene)) {
         if (!frontend_scene_model_source_read(scene, QA_SCENE_MODEL_CONTENT_SOURCE, &source))
-            return frontend_held_stock_q2_attachment(carrier->path, scene, error);
+            return frontend_held_stock_q2_attachment(carrier->path, carrier->rules, scene, error);
         files = (qa_vfs *)source.files;
         model_path = qa_resource_path(source.resource);
     }
@@ -67,7 +68,7 @@ static bool held_attachment_admit(void *context, qa_scene_model *scene, qa_error
     bool ok = qa_vfs_acquire(files, path, &resource, NULL, &local);
     free(path);
     if (!ok && local.code == QA_ERROR_NOT_FOUND)
-        return frontend_held_stock_q2_attachment(carrier->path, scene, error);
+        return frontend_held_stock_q2_attachment(carrier->path, carrier->rules, scene, error);
     if (!ok) { if (error) *error = local; return false; }
     frontend_held_attachment attachment = {0};
     ok = frontend_held_attachment_read(qa_resource_bytes(resource), &attachment, error);
@@ -77,10 +78,10 @@ static bool held_attachment_admit(void *context, qa_scene_model *scene, qa_error
     qa_resource_release(resource);
     return ok;
 }
-bool frontend_held_attachment_prepare(qa_vfs *files, const char *model_path,
+bool frontend_held_attachment_prepare(qa_vfs *files, qa_ruleset_id rules, const char *model_path,
     qa_scene_model *scene, qa_error *error)
 {
-    held_attachment_source source = {files, model_path};
+    held_attachment_source source = {files, model_path, rules};
     return qa_scene_model_visit(scene, held_attachment_admit, &source, error);
 }
 
@@ -433,7 +434,7 @@ static bool held_declaration(qa_frontend *frontend, const qa_application_equipme
     } else if (ok) {
         const char *item = view->item ?
             qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->item) : NULL;
-        ok = frontend_held_stock(view->family, model_path, item, &row->declaration, &found, error);
+        ok = frontend_held_stock(view->family, row->owner.rules, model_path, item, &row->declaration, &found, error);
         if (ok && !found)
             ok = frontend_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment has no authored held declaration");
     }
@@ -465,7 +466,7 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
     }
     if (row->family == QA_GAME_Q2 && !row->declaration.source) {
         bool known;
-        if (!frontend_held_stock_q2_grip(row->held_parent.path, row->held_parent.resource,
+        if (!frontend_held_stock_q2_grip(row->held_parent.path, row->owner.rules, row->held_parent.resource,
                 row->held_parent.model,
                 &row->declaration.grip, &known, error)) return false;
     }
@@ -599,7 +600,18 @@ static bool source_media_prepare(qa_frontend *f,const qa_application_equipment_v
         ok=row->source_icon.data!=NULL;
         if(ok){row->source_icon.size=view->source_icon.size;memcpy(row->source_icon.data,view->source_icon.data,view->source_icon.size);}
         else frontend_fail(error,QA_ERROR_MEMORY,"Retaining actual source icon declaration");}
-    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family};
+    const char *instance = qa_application_provider_instance(f->application, view->provider);
+    const qa_launch_instance *source_launch = instance ? qa_launch_snapshot_find(
+        qa_application_launch(f->application), instance) : NULL;
+    qa_ruleset_id rules = source_launch ? source_launch->selection.clock.kind : QA_RULESET_NETQUAKE;
+    if (ok && !source_launch) {
+        application_q3_component_publication component = {0};
+        bool present = false;
+        ok = application_q3_components_checkpoint_publication_read(f->application,
+            view->provider, &component, &present, error);
+        if (ok && present) rules = qa_product_ruleset(component.product, view->family);
+    }
+    row->owner=(frontend_visual_owner_view){.owner=view->provider,.family=view->family,.rules=rules};
     if(ok)row->owner.mounts=qa_vfs_clone(view->view_content,error);
     if(ok)row->owner.images=row->owner.mounts?qa_scene_resources_create(row->owner.mounts,error):NULL;
     if(ok)ok=row->owner.images&&frontend_image_policy_initialize(f,row->owner.images,error);

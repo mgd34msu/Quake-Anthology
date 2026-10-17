@@ -216,5 +216,4 @@ bool remote_q2_player_fog_receive(frontend_remote_q2 *, qa_error *);
 bool remote_q2_layout_adopt(frontend_remote_q2 *, const qa_q2_serverdata *, qa_error *);
 const qa_q2_entity *remote_q2_frame_entity(const qa_q2_wire_frame *, uint32_t);
 bool remote_q2_float_movement(const frontend_remote_q2 *);
-bool remote_q2_rerelease_presentation(const frontend_remote_q2 *);
 #endif

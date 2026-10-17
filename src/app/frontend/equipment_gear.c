@@ -113,7 +113,7 @@ bool frontend_equipment_gear_content_create(qa_frontend *frontend,
         .definition = definition, .product = product, .content = *content};
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     qa_q3_presentation_asset_options assets = {.strings=strings,.provider = {.mounts = content->mounts,
-        .images = content->images, .materials = content->materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
+        .images = content->images, .materials = content->materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application), .rules = content->rules}};
     bool okay = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     size_t count = definition->presentation.attachment_count;
     q3n_selected_authored_attachment *attachments = count ? calloc(count, sizeof(*attachments)) : NULL;

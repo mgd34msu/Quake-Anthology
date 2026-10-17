@@ -11,6 +11,7 @@ typedef struct frontend_visual_owner_view {
     qa_material_library *materials;
     qa_media_library *media;
     struct frontend_material_movies *shader_movies;
+    qa_ruleset_id rules;
 } frontend_visual_owner_view;
 typedef struct frontend_visual_model_view {
     const char *path;

@@ -183,7 +183,7 @@ static bool content_create(qa_frontend *frontend, const qa_application_equipment
         frontend_visual_media_acquire(frontend, source->provider, QA_GAME_Q3, &owner->view.content, error);
     qa_q3_presentation_asset_options assets = {.strings=qa_session_strings(qa_application_session(frontend->application)),.provider = {
         .mounts = owner->view.content.mounts, .images = owner->view.content.images,
-        .materials = owner->view.content.materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application)}};
+        .materials = owner->view.content.materials, .family = QA_GAME_Q3, .geometry_owner = qa_application_world(frontend->application), .rules = owner->view.content.rules}};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &owner->view.assets, error);
     q3n_selected_media_options media = {.content = owner->view.content.mounts,
         .assets = owner->view.assets, .product = owner->view.product};

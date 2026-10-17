@@ -28,7 +28,7 @@ typedef struct frontend_held_attachment {
 
 bool frontend_held_attachment_read(qa_bytes, frontend_held_attachment *, qa_error *);
 void frontend_held_attachment_free(frontend_held_attachment *);
-bool frontend_held_attachment_prepare(qa_vfs *, const char *model_path, qa_scene_model *, qa_error *);
+bool frontend_held_attachment_prepare(qa_vfs *, qa_ruleset_id, const char *model_path, qa_scene_model *, qa_error *);
 
 typedef struct frontend_held_model {
     const qa_model *model;

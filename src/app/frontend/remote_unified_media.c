@@ -195,7 +195,7 @@ bool frontend_unified_media_q3_assets(frontend_unified_media *owner, qa_string_i
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified Q3 registry creation overlaps resource inventory");
         qa_q3_presentation_asset_options options = {.strings=qa_session_strings(qa_application_session(owner->frontend->application)),.provider = {
             .mounts = row->files, .images = row->images, .materials = row->materials,
-            .family = QA_GAME_Q3, .geometry_owner = qa_application_world(owner->frontend->application)}, .sounds = row->sounds, .movies = row->media};
+            .family = QA_GAME_Q3, .geometry_owner = qa_application_world(owner->frontend->application), .rules = qa_product_ruleset(row->product, QA_GAME_Q3)}, .sounds = row->sounds, .movies = row->media};
         if (!qa_q3_presentation_assets_create(&options, &row->q3_assets, error)) return false;
     }
     *out = row->q3_assets; return true;
@@ -390,7 +390,7 @@ bool frontend_unified_media_model(frontend_unified_media *owner, qa_string_id co
     } else if (okay) okay = qa_model_load(qa_resource_bytes(row->resource), &row->decoded, error) &&
         qa_scene_model_create(&row->decoded, path, files->images, files->materials, &row->options, qa_session_strings(qa_application_session(owner->frontend->application)), &row->scene, error) &&
         qa_scene_model_source_resource_bind(row->scene, row->resource, error) &&
-        frontend_visual_model_opening_initialize(owner->frontend, family, files->files, row->resource,
+        frontend_visual_model_opening_initialize(owner->frontend, family, qa_product_ruleset(files->product, family), files->files, row->resource,
             &row->opening, &row->decoded, row->scene, error);
     owner->busy = false;
     if (!okay) {
