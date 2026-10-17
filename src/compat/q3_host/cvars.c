@@ -705,32 +705,6 @@ static bool register_vm(q3_call *call, qa_error *error)
 }
 static void info_print(q3_call *call,const qa_command_context *command,const char *text)
 { qa_console_emit(call->host->options.console,command,text); }
-static bool info_pair(q3_call *call,const qa_command_context *command,char output[1024],
-    const char *name,const char *value,qa_error *error)
-{
-    const char *message=strchr(name,'\\') || strchr(value,'\\')?"Can't use keys or values with a \\\n":
-        strchr(name,';') || strchr(value,';')?"Can't use keys or values with a semicolon\n":
-        strchr(name,'"') || strchr(value,'"')?"Can't use keys or values with a \"\n":NULL;
-    if (message) { info_print(call,command,message); return true; }
-    char removed[1024]; memcpy(removed,output,strlen(output)+1);
-    if (!qa_q3_info_set(removed,sizeof(removed),name,"", QA_Q3_INFO_STRICT, NULL,error)) return false;
-    if (!*value) { memcpy(output,removed,strlen(removed)+1); return true; }
-    char pair[1024]; size_t pair_size=0;
-    const char *parts[]={"\\",name,"\\",value};
-    for (unsigned i=0;i<4;++i) {
-        size_t remaining=sizeof(pair)-1-pair_size,length=strlen(parts[i]);
-        size_t amount=length<remaining?length:remaining;
-        memcpy(pair+pair_size,parts[i],amount); pair_size+=amount;
-    }
-    size_t removed_size=strlen(removed),total=removed_size+pair_size;
-    if (total>1024) {
-        memcpy(output,removed,strlen(removed)+1);
-        info_print(call,command,"Info string length exceeded\n"); return true;
-    }
-    if (total==1024) return q3_fail(error,QA_ERROR_FORMAT,0,"Q3 info assignment overflows its source terminator");
-    memcpy(output,pair,pair_size);
-    memcpy(output+pair_size,removed,removed_size+1); return true;
-}
 static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *error)
 {
     qa_q3_host_options *options=&call->host->options;
@@ -754,7 +728,10 @@ static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *er
             q3_cvar_access access;
             if (!access_name(call,view->name,&access,error)) return false;
             if (access.registry!=registry) continue;
-            if (!info_pair(call,&command,output,view->name,view->value,error)) return false;
+            const char *warning=NULL;
+            bool ok=qa_cvars_info_pair(options->cvars,flags,sizeof(output),output,view->name,view->value,&warning,error);
+            if (warning) info_print(call,&command,warning);
+            if (!ok) return false;
         }
     }
     char *copy=copy_text(output,error);

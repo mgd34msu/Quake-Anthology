@@ -2721,6 +2721,89 @@ bool qa_cvars_take_userinfo_modified(qa_cvars *registry)
     cvar_values *values=qac_cvars_current_values(registry); bool modified=values->userinfo_modified; values->userinfo_modified=false; return modified;
 }
 
+bool qa_cvars_info_pair(const qa_cvars *registry, uint32_t flags, size_t capacity,
+    char *out, const char *key, const char *value, const char **warning, qa_error *error)
+{
+    if (warning) *warning = NULL;
+    if (!registry || !out || !key || !value)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar info arguments");
+    qa_ruleset_id dialect = qa_cvars_dialect(registry);
+    if (!capacity) capacity = dialect == QA_RULESET_Q3 ? 1024 : 512;
+    size_t used = strlen(out), key_length = strlen(key), value_length = strlen(value);
+    if (used >= capacity)
+        return qac_fail(error, QA_ERROR_FORMAT, "oversize cvar info string");
+    const char *message = strchr(key, '\\') || strchr(value, '\\') ? "Can't use keys or values with a \\\n" :
+        (dialect != QA_RULESET_QUAKEWORLD && strchr(key, ';')) ||
+        (dialect == QA_RULESET_Q3 && strchr(value, ';')) ? "Can't use keys or values with a semicolon\n" :
+        strchr(key, '"') || strchr(value, '"') ? "Can't use keys or values with a \"\n" :
+        dialect == QA_RULESET_QUAKEWORLD && *key == '*' ? "Can't set * keys\n" :
+        dialect != QA_RULESET_Q3 && (key_length >= 64 || value_length >= 64) ?
+            "Keys and values must be < 64 characters.\n" : NULL;
+    if (message) { if (warning) *warning = message; return true; }
+    qa_bytes key_bytes = {(const uint8_t *)key, key_length};
+    const char *cursor = out;
+    while (*cursor) {
+        const char *begin = cursor;
+        qa_bytes current_key, current_value;
+        if (!qa_info_next(&cursor, &current_key, &current_value)) break;
+        if (!qa_info_key_equal(current_key, key_bytes, 0)) continue;
+        if (dialect == QA_RULESET_QUAKEWORLD && current_value.size &&
+            value_length > capacity - (used - current_value.size)) {
+            if (warning) *warning = "Info string length exceeded\n";
+            return true;
+        }
+        size_t end = (size_t)(cursor - out);
+        memmove((char *)begin, cursor, used - end + 1);
+        used -= (size_t)(cursor - begin);
+        break;
+    }
+    if (!value_length) return true;
+    if (key_length > SIZE_MAX - 2 || value_length > SIZE_MAX - 2 - key_length)
+        return qac_fail(error, QA_ERROR_MEMORY, "console text exceeds address space");
+    size_t pair_size = key_length + value_length + 2;
+    if (dialect == QA_RULESET_Q3 && pair_size >= capacity) pair_size = capacity - 1;
+    if (pair_size > capacity - used) {
+        if (warning) *warning = "Info string length exceeded\n";
+        return true;
+    }
+    qa_bytes value_bytes = {(const uint8_t *)value, value_length};
+    if (dialect != QA_RULESET_Q3) {
+        char pair[130];
+        size_t encoded = 0;
+        if (!qa_info_append(pair, sizeof(pair), &encoded, key_bytes, value_bytes, 0, error)) return false;
+        size_t count = 0;
+        bool userinfo = (flags & QA_CVAR_USERINFO) != 0;
+        bool strip = dialect != QA_RULESET_QUAKEWORLD ||
+            (userinfo ? !qa_text_ascii_equal(key, "name") : !qac_cvars_current_values(registry)->high_characters);
+        bool lowercase_team = dialect == QA_RULESET_QUAKEWORLD && userinfo && qa_text_ascii_equal(key, "team");
+        for (size_t i = 0; i < encoded; ++i) {
+            unsigned char c = (unsigned char)pair[i];
+            if (strip) {
+                c &= 127;
+                if (c < 32 || (dialect != QA_RULESET_QUAKEWORLD && c == 127)) continue;
+                if (lowercase_team && c >= 'A' && c <= 'Z') c += 32;
+            }
+            if (dialect == QA_RULESET_QUAKEWORLD && c <= 13) continue;
+            pair[count++] = (char)c;
+        }
+        if (count == capacity - used)
+            return qac_fail(error, QA_ERROR_FORMAT, "cvar info assignment overflows its source terminator");
+        memcpy(out + used, pair, count); out[used + count] = 0;
+        return true;
+    }
+    if (pair_size == capacity - used)
+        return qac_fail(error, QA_ERROR_FORMAT, "cvar info assignment overflows its source terminator");
+    if (capacity == 8192)
+        return qa_info_append(out, capacity, &used, key_bytes, value_bytes, QA_INFO_TRUNCATE, error);
+    memmove(out + pair_size, out, used + 1);
+    char first = out[pair_size];
+    size_t prefix = 0;
+    if (!qa_info_append(out, pair_size + 1, &prefix, key_bytes, value_bytes, QA_INFO_TRUNCATE, error)) return false;
+    /* The prefix's terminator occupies the first byte of the retained tail. */
+    out[pair_size] = first;
+    return true;
+}
+
 bool qa_cvars_info_write(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
     char *out, qa_error *error)
 {
@@ -2728,54 +2811,13 @@ bool qa_cvars_info_write(const qa_cvars *registry, uint32_t flags, size_t maximu
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar info arguments");
     qa_ruleset_id dialect = qa_cvars_dialect(registry);
     if (!maximum_length) maximum_length = dialect == QA_RULESET_Q3 ? 1024 : 512;
-    size_t used = 0;
     out[0] = 0;
-    cvar_values *values = qac_cvars_current_values(registry);
     for (const qa_cvar_view *value = qa_cvars_next(registry, NULL); value; value = qa_cvars_next(registry, value)) {
         if (!(value->flags & flags) || (qac_q2(dialect) && (value->flags & QA_Q2_CVAR_PRIVATE))) continue;
-        size_t key_length = strlen(value->name), value_length = strlen(value->value);
-        if (!*value->value || strchr(value->name, '\\') || strchr(value->value, '\\') ||
-            strchr(value->name, '"') || strchr(value->value, '"') ||
-            (dialect != QA_RULESET_QUAKEWORLD && strchr(value->name, ';')) ||
-            (dialect == QA_RULESET_Q3 && strchr(value->value, ';')) ||
-            (dialect == QA_RULESET_QUAKEWORLD && *value->name == '*') ||
-            (dialect != QA_RULESET_Q3 && (key_length >= 64 || value_length >= 64))) continue;
-        if (key_length > SIZE_MAX - 2 - value_length)
-            return qac_fail(error, QA_ERROR_MEMORY, "console text exceeds address space");
-        size_t pair_size = key_length + value_length + 2;
-        char pair[130];
-        if (dialect != QA_RULESET_Q3) {
-            pair[0] = '\\'; memcpy(pair + 1, value->name, key_length);
-            pair[key_length + 1] = '\\'; memcpy(pair + key_length + 2, value->value, value_length);
-            size_t count = 0;
-            bool userinfo = (flags & QA_CVAR_USERINFO) != 0;
-            bool strip = dialect != QA_RULESET_QUAKEWORLD ||
-                (userinfo ? !qa_text_ascii_equal(value->name, "name") : !values->high_characters);
-            for (size_t i = 0; i < pair_size; ++i) {
-                unsigned char c = (unsigned char)pair[i];
-                if (strip) {
-                    c &= 127;
-                    if (c < 32 || (dialect != QA_RULESET_QUAKEWORLD && c == 127)) continue;
-                    if (dialect == QA_RULESET_QUAKEWORLD && userinfo && qa_text_ascii_equal(value->name, "team") &&
-                        c >= 'A' && c <= 'Z') c += 32;
-                }
-                if (dialect == QA_RULESET_QUAKEWORLD && c <= 13) continue;
-                pair[count++] = (char)c;
-            }
-            pair_size = count;
-        }
-        if (pair_size >= maximum_length || used >= maximum_length - pair_size) {
-            print_message(live_target((qa_cvars *)registry), NULL, "Info string length exceeded\n");
-            continue;
-        }
-        bool prepend = dialect == QA_RULESET_Q3 && maximum_length != 8192;
-        if (prepend) memmove(out + pair_size, out, used + 1);
-        char *target = out + (prepend ? 0 : used);
-        if (dialect == QA_RULESET_Q3) {
-            target[0] = '\\'; memcpy(target + 1, value->name, key_length);
-            target[key_length + 1] = '\\'; memcpy(target + key_length + 2, value->value, value_length);
-        } else memcpy(target, pair, pair_size);
-        used += pair_size; out[used] = 0;
+        const char *warning = NULL;
+        bool ok = qa_cvars_info_pair(registry, flags, maximum_length, out, value->name, value->value, &warning, error);
+        if (warning) print_message(live_target((qa_cvars *)registry), NULL, warning);
+        if (!ok) return false;
     }
     return true;
 }

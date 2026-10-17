@@ -7259,8 +7259,10 @@ static void test_cvar_info_storage(void)
     CHECK(!strcmp(big_info,"\\keep\\1\\k\\last"));
     for (qa_ruleset_id dialect = QA_RULESET_NETQUAKE; dialect <= QA_RULESET_Q3; ++dialect) {
         qa_error error = {0};
+        size_t diagnostics = 0;
         qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = dialect,
-            .side = QA_CVAR_SIDE_SERVER}, &error);
+            .side = QA_CVAR_SIDE_SERVER, .user = &diagnostics,
+            .print = q3_trace_test_print}, &error);
         CHECK(cvars && qa_cvars_register(cvars, "qa_info_first", "first", QA_CVAR_SERVERINFO, 0, "", &error));
         CHECK(qa_cvars_register(cvars, "qa_info_second", "second", QA_CVAR_SERVERINFO, 0, "", &error));
         CHECK(qa_cvars_register(cvars, "qa_info_bytes", "\301text", QA_CVAR_SERVERINFO, 0, "", &error));
@@ -7279,7 +7281,55 @@ static void test_cvar_info_storage(void)
         qa_buffer owned = {0};
         CHECK(qa_cvars_info(cvars, QA_CVAR_SERVERINFO, sizeof(small), &owned, &error));
         CHECK(owned.size == strlen(small) && !memcmp(owned.data, small, owned.size + 1));
-        qa_buffer_free(&owned); qa_cvars_destroy(cvars);
+        qa_buffer_free(&owned);
+        char assignment[1024] = "\\keep\\1";
+        const char *diagnostic = NULL;
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+            "bad\\key", "", &diagnostic, &error));
+        CHECK(diagnostic && !strcmp(assignment, "\\keep\\1"));
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+            "bad\"key", "value", &diagnostic, &error));
+        CHECK(diagnostic && !strcmp(assignment, "\\keep\\1"));
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+            "*star", "value", &diagnostic, &error));
+        CHECK((diagnostic != NULL) == (dialect == QA_RULESET_QUAKEWORLD));
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_USERINFO, sizeof(assignment), assignment,
+            "name", "\301Player", &diagnostic, &error) && !diagnostic);
+        CHECK(qa_q3_info_value(assignment, "name", value, sizeof(value), &error));
+        CHECK(!strcmp(value, dialect == QA_RULESET_Q3 || dialect == QA_RULESET_QUAKEWORLD ?
+            "\301Player" : "APlayer"));
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_USERINFO, sizeof(assignment), assignment,
+            "team", "RED", &diagnostic, &error) && !diagnostic);
+        CHECK(qa_q3_info_value(assignment, "team", value, sizeof(value), &error));
+        CHECK(!strcmp(value, dialect == QA_RULESET_QUAKEWORLD ? "red" : "RED"));
+        strcpy(assignment, "\\k\\first\\k\\second");
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+            "k", "", &diagnostic, &error) && !diagnostic);
+        CHECK(!strcmp(assignment, "\\k\\second"));
+        char long_value[1024]; memset(long_value, 'x', sizeof(long_value) - 1);
+        long_value[sizeof(long_value) - 1] = 0;
+        assignment[0] = 0;
+        CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+            "k", long_value, &diagnostic, &error));
+        if (dialect == QA_RULESET_Q3) {
+            CHECK(!diagnostic && strlen(assignment) == sizeof(assignment) - 1);
+            CHECK(!memcmp(assignment, "\\k\\", 3));
+            strcpy(assignment, "\\k\\old\\keep\\1");
+            CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(assignment), assignment,
+                "k", long_value, &diagnostic, &error));
+            CHECK(diagnostic && !strcmp(assignment, "\\keep\\1"));
+            strcpy(large, "\\keep\\1");
+            CHECK(qa_cvars_info_pair(cvars, QA_CVAR_SERVERINFO, sizeof(large), large,
+                "k", "last", &diagnostic, &error));
+            CHECK(!diagnostic && !strcmp(large, "\\keep\\1\\k\\last"));
+        } else CHECK(diagnostic && !*assignment);
+        CHECK(qa_cvars_register(cvars, "qa_info_invalid", "bad\\value", 0, 0, "", &error));
+        CHECK(qa_cvars_add_flags(cvars, "qa_info_invalid", QA_CVAR_SERVERINFO, &error));
+        size_t before_diagnostics = diagnostics;
+        CHECK(qa_cvars_info_write(cvars, QA_CVAR_SERVERINFO, sizeof(small), small, &error));
+        CHECK(diagnostics > before_diagnostics);
+        CHECK(!qa_info_find(small, (qa_bytes){(const uint8_t *)"qa_info_invalid", 15}, 0, &info_span));
+        qa_cvars_destroy(cvars);
     }
 }
 
