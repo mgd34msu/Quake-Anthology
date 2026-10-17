@@ -7,14 +7,32 @@ static bool give(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d, 
 }
 static bool select_picked(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d, bool first,
                           qa_error *e) {
-    if (!first || d->weapon == QA_Q2_WEAPON_NONE || !q2_actor_live(g, id))
+    bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+    if ((!rerelease && !first) || d->weapon == QA_Q2_WEAPON_NONE || !q2_actor_live(g, id))
         return true;
     q2_actor *a = q2_actor_get(g, id, false, e);
     if (!a)
         return false;
     if (!a->weapon_bound)
         return true;
-    if (g->options.deathmatch && a->weapon.weapon != QA_Q2_BLASTER)
+    if (rerelease) {
+        const qa_q2_weapon_definition *weapon = qa_q2_weapon_definition_at(g, d->weapon);
+        if (!weapon || a->weapon.weapon == d->weapon || a->weapon.pending == d->weapon)
+            return true;
+        bool ammo_weapon = d->kind == QA_Q2_ITEM_AMMO;
+        if (g->ammo[d->weapon]) {
+            int count;
+            if (!q2_count(g, id, g->ammo[d->weapon], &count, e))
+                return false;
+            if (count < (ammo_weapon ? 1 : weapon->quantity))
+                return true;
+        }
+        int mode = a->client ? a->client->rule.auto_switch : 0;
+        if (mode == 3 || (mode == 2 && ammo_weapon) ||
+            (mode == 0 && a->weapon.weapon != QA_Q2_BLASTER &&
+             (g->options.deathmatch || !first)))
+            return true;
+    } else if (g->options.deathmatch && a->weapon.weapon != QA_Q2_BLASTER)
         return true;
     qa_q2_selection result;
     return qa_q2_weapon_select(g, id, d->weapon, false, &result, e);
