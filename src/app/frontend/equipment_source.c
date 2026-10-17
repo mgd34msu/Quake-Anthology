@@ -10,8 +10,7 @@
 typedef struct equipment_packet {
     struct equipment_packet *next;
     frontend_equipment_held_output *output;
-    frontend_equipment_q3_output *q3_output;
-    frontend_equipment_gear_output *gear_output;
+    frontend_equipment_output *selected_output;
     bool committed, companion;
 } equipment_packet;
 
@@ -47,9 +46,8 @@ struct frontend_equipment_source {
     qa_application_q3_equipment_draw draw;
     frontend_equipment_media *view_media;
     frontend_equipment_q3_presenter *q3_presenter;
-    frontend_equipment_q3_output *q3_view;
     frontend_equipment_gear_presenter *gear_presenter;
-    frontend_equipment_gear_output *gear_view;
+    frontend_equipment_output *selected_view;
     equipment_packet *active, *packets, *tail;
     equipment_world_packet *world_packets;
     equipment_source_actor *source_actors;
@@ -157,14 +155,12 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
     while (row) {
         equipment_packet *next = row->next;
         frontend_equipment_held_output_destroy(row->output);
-        frontend_equipment_q3_output_destroy(row->q3_output);
-        frontend_equipment_gear_output_destroy(row->gear_output);
+        frontend_equipment_output_destroy(row->selected_output);
         row = next;
     }
     owner->packets = owner->tail = NULL;
     clear_world(owner);
-    frontend_equipment_q3_output_destroy(owner->q3_view); owner->q3_view = NULL;
-    frontend_equipment_gear_output_destroy(owner->gear_view); owner->gear_view = NULL;
+    frontend_equipment_output_destroy(owner->selected_view); owner->selected_view = NULL;
     owner->reserved = 0; owner->view_ready = false;
     owner->source_actors = NULL; owner->source_actor_count = 0;
     owner->source_polygons = NULL; owner->source_polygon_count = 0;
@@ -547,7 +543,7 @@ static equipment_packet **token_slot(frontend_equipment_source *owner, const voi
 
 static bool q3_held_output(frontend_equipment_source *owner, const qa_application_equipment_view *source,
     const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent, int32_t powerups, bool personal_model,
-    frontend_equipment_q3_output **out, bool *submitted, qa_error *error)
+    frontend_equipment_output **out, bool *submitted, qa_error *error)
 {
     *submitted = false;
     frontend_equipment_q3_presenter *presenter =
@@ -564,7 +560,7 @@ static bool q3_held_output(frontend_equipment_source *owner, const qa_applicatio
 
 static bool gear_held_output(frontend_equipment_source *owner, const qa_application_equipment_view *source,
     const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent, int32_t powerups,
-    bool personal_model, frontend_equipment_gear_output **out, bool *submitted, qa_error *error)
+    bool personal_model, frontend_equipment_output **out, bool *submitted, qa_error *error)
 {
     application_equipment_gear_presentation gear; bool selected;
     if (!application_equipment_gear_presentation_read(owner->options.frontend->application,
@@ -653,16 +649,14 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
         else {
             bool submitted = false;
             okay = source.equipment_slot ? gear_held_output(owner, &source, parent_assets, parent,
-                0, false, &packet->gear_output, &submitted, error) :
-                q3_held_output(owner, &source, parent_assets, parent, 0, false, &packet->q3_output, &submitted, error);
+                0, false, &packet->selected_output, &submitted, error) :
+                q3_held_output(owner, &source, parent_assets, parent, 0, false, &packet->selected_output, &submitted, error);
             if (okay && !submitted) {
-                frontend_equipment_q3_output_destroy(packet->q3_output);
-                frontend_equipment_gear_output_destroy(packet->gear_output);
+                frontend_equipment_output_destroy(packet->selected_output);
                 return true;
             }
-            if (okay) okay = packet->gear_output ? frontend_equipment_gear_output_source_style(packet->gear_output,
-                owner->options.assets, parent, error) : frontend_equipment_q3_output_source_style(packet->q3_output,
-                    owner->options.assets, parent, error);
+            if (okay) okay=frontend_equipment_output_source_style(packet->selected_output,
+                owner->options.assets,parent,error);
         }
     } else {
         frontend_equipment_media *media = frontend_equipment_media_held_read(owner->options.frontend, &source,
@@ -673,8 +667,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
     }
     if (!okay) {
         frontend_equipment_held_output_destroy(packet->output);
-        frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output); return false;
+        frontend_equipment_output_destroy(packet->selected_output); return false;
     }
     packet->next = owner->active; owner->active = packet;
     *token = packet; *selected = true;
@@ -703,8 +696,7 @@ static bool held_pass(void *context, void *token, const qa_q3_ref_entity *pass, 
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Captured Source held replacement lost its actual completed refs");
         return true;
     }
-    return packet->gear_output ? frontend_equipment_gear_output_source_pass(packet->gear_output, pass, error) :
-        packet->q3_output ? frontend_equipment_q3_output_source_pass(packet->q3_output, pass, error) :
+    return packet->selected_output ? frontend_equipment_output_source_pass(packet->selected_output, pass, error) :
         frontend_equipment_held_output_pass(packet->output, pass, error);
 }
 
@@ -733,8 +725,7 @@ static void held_release(void *context, void *token)
         owner->tail = packet;
     } else {
         frontend_equipment_held_output_destroy(packet->output);
-        frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output);
+        frontend_equipment_output_destroy(packet->selected_output);
     }
 }
 
@@ -778,12 +769,11 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining native selected held output");
     *packet=(equipment_packet){0};
     bool okay = source.equipment_slot ? gear_held_output(owner, &source, parent_assets, parent,
-        powerups, personal_model, &packet->gear_output, submitted, error) :
+        powerups, personal_model, &packet->selected_output, submitted, error) :
         q3_held_output(owner, &source, parent_assets, parent, powerups, personal_model,
-            &packet->q3_output, submitted, error);
+            &packet->selected_output, submitted, error);
     if (!okay || !*submitted) {
-        frontend_equipment_q3_output_destroy(packet->q3_output);
-        frontend_equipment_gear_output_destroy(packet->gear_output); return okay;
+        frontend_equipment_output_destroy(packet->selected_output); return okay;
     }
     packet->committed = true;
     if (owner->tail) owner->tail->next = packet; else owner->packets = packet;
@@ -823,7 +813,7 @@ bool frontend_equipment_source_idle(const frontend_equipment_source *owner)
 {
     return !owner || (!owner->borrowed && !owner->drawing && !owner->active &&
         !owner->packets && !owner->world_packets && !owner->submitting && !owner->view_media &&
-        !owner->q3_presenter && !owner->q3_view && !owner->gear_presenter && !owner->gear_view &&
+        !owner->q3_presenter && !owner->gear_presenter && !owner->selected_view &&
         !owner->companion_selected && !owner->companion_selection && !owner->source_actors &&
         !owner->source_polygons && !owner->source_lights &&
         !owner->view_lights && !owner->view_projected_lights &&
@@ -871,7 +861,7 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
         return frontend_fail(error, QA_ERROR_NOT_FOUND, "Equipment view has no actual full-actor camera producer");
     qa_vec3 origin = camera.origin; origin.z += camera.view_height;
     if (owner->gear_presenter) {
-        if (!owner->gear_view) {
+        if (!owner->selected_view) {
             application_equipment_gear_presentation gear; bool selected;
             if (!application_equipment_gear_presentation_read(owner->options.frontend->application,
                     owner->selection.actor, &gear, &selected, error)) return false;
@@ -884,12 +874,12 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
                 .bob_cycle = source->bobCycle, .draw_gun = true};
             bool submitted = false;
             if (!frontend_equipment_gear_view(owner->gear_presenter, &gear, &view, fov,
-                    owner, current_preparation, &owner->gear_view, &submitted, error)) return false;
+                    owner, current_preparation, &owner->selected_view, &submitted, error)) return false;
         }
-        owner->view_offset = offset; owner->view_ready = owner->gear_view != NULL; return true;
+        owner->view_offset = offset; owner->view_ready = owner->selected_view != NULL; return true;
     }
     if (owner->q3_presenter) {
-        if (!owner->q3_view) {
+        if (!owner->selected_view) {
             const qa_q3_player *source = &owner->selection.q3_source;
             q3n_selected_weapon_view view = {.origin = origin, .angles = camera.angles,
                 .horizontal_speed = hypot((double)source->velocity[0], (double)source->velocity[1]),
@@ -898,9 +888,9 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
             if (!qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),qa_application_ui_preference_handles(owner->options.frontend->application),
                     owner->options.physical_seat, &preferences, error) ||
                 !frontend_equipment_q3_view(owner->q3_presenter, &owner->selection, &view, preferences.reduced_flashes,
-                    owner, current_preparation, &owner->q3_view, &submitted, error)) return false;
+                    owner, current_preparation, &owner->selected_view, &submitted, error)) return false;
         }
-        owner->view_offset = offset; owner->view_ready = owner->q3_view != NULL;
+        owner->view_offset = offset; owner->view_ready = owner->selected_view != NULL;
         return true;
     }
     origin = qa_vec_add(origin, owner->selection.has_source_gun_pose ?
@@ -1009,17 +999,16 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
         if (!options->world.view.clip_enabled &&
             !build_view(owner, qa_vec_sub(options->world.view.origin, definition->origin), definition->fov_x, error)) return false;
     }
-    size_t count = owner->view_ready ? owner->gear_view ? frontend_equipment_gear_output_count(owner->gear_view) :
-        owner->q3_view ? frontend_equipment_q3_output_count(owner->q3_view) : 1 : 0;
+    size_t count=owner->view_ready?(owner->selected_view?
+        frontend_equipment_output_count(owner->selected_view):1):0;
     owner->companion_view_requested = owner->companion_selected && requested && !options->world.view.clip_enabled;
     if (!companion_lights_prepare(owner, options, error)) return false;
     if (owner->companion_selected && !options->world.no_world)
         for (size_t i = 0; i < owner->companion_selection->ref_count; ++i)
             if (!owner->companion_selection->refs[i].view || owner->companion_view_requested) ++count;
     for (equipment_packet *row = owner->packets; row; row = row->next) {
-        size_t extent = row->companion ? 0 : row->gear_output ? frontend_equipment_gear_output_count(row->gear_output) :
-            row->q3_output ? frontend_equipment_q3_output_count(row->q3_output) :
-            frontend_equipment_held_output_count(row->output);
+        size_t extent=row->companion?0:row->selected_output?
+            frontend_equipment_output_count(row->selected_output):frontend_equipment_held_output_count(row->output);
         if (extent > 1021 - count)
             return frontend_fail(error, QA_ERROR_FORMAT, "Equipment scene exceeds its actual source ordering extent");
         count += extent;
@@ -1073,10 +1062,8 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
     bool ok = companion_submit(owner, options, &order, frame, error);
     if (ok && owner->view_ready) {
         if (!options->world.view.clip_enabled) {
-            if (owner->gear_view) ok = frontend_equipment_gear_output_submit(owner->gear_view,
-                owner->options.presentation, owner->view_offset, options, order, frame, error);
-            else if (owner->q3_view) ok = frontend_equipment_q3_output_submit_offset(owner->q3_view,
-                owner->options.presentation, owner->view_offset, options, order, frame, error);
+            if (owner->selected_view) ok=frontend_equipment_output_submit(owner->selected_view,
+                owner->options.presentation,owner->view_offset,options,order,frame,error);
             else {
                 frontend_equipment_media_view media;
                 qa_q3_foreign_view_lighting lighting={
@@ -1088,20 +1075,16 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
                         options, &lighting, order, frame, error);
             }
         }
-        order += owner->gear_view ? (uint32_t)frontend_equipment_gear_output_count(owner->gear_view) :
-            owner->q3_view ? (uint32_t)frontend_equipment_q3_output_count(owner->q3_view) : 1;
+        order+=owner->selected_view?(uint32_t)frontend_equipment_output_count(owner->selected_view):1;
     }
     if (!options->world.no_world) {
         for (equipment_packet *row = owner->packets; ok && row; row = row->next) {
             if (row->companion) continue;
-            ok = row->gear_output ? frontend_equipment_gear_output_submit(row->gear_output,
-                owner->options.presentation, qa_v3(0, 0, 0), options, order, frame, error) :
-                row->q3_output ? frontend_equipment_q3_output_submit(row->q3_output,
-                owner->options.presentation, options, order, frame, error) :
+            ok=row->selected_output?frontend_equipment_output_submit(row->selected_output,
+                owner->options.presentation,qa_v3(0,0,0),options,order,frame,error):
                 frontend_equipment_held_output_submit(row->output, owner->options.presentation,
                     options, order, frame, error);
-            order += (uint32_t)(row->gear_output ? frontend_equipment_gear_output_count(row->gear_output) :
-                row->q3_output ? frontend_equipment_q3_output_count(row->q3_output) :
+            order+=(uint32_t)(row->selected_output?frontend_equipment_output_count(row->selected_output):
                 frontend_equipment_held_output_count(row->output));
         }
         for (equipment_world_packet *row = owner->world_packets; ok && row; row = row->next)

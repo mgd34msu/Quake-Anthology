@@ -2,25 +2,21 @@
 #include "equipment_gear_private.h"
 #include "equipment_gear_output.h"
 #include "equipment_media.h"
-#include "qa/q3_asset_shader.h"
+#include "equipment_output.h"
 #include <math.h>
 
-struct frontend_equipment_gear_output {
+typedef struct equipment_gear_output {
     frontend_equipment_gear_presenter *presenter;
     application_equipment_gear_presentation source;
-    qa_q3_ref_entity *refs, *passes;
-    qa_q3_presentation_assets *primary_assets;
-    size_t count, capacity, base_count, pass_count, pass_capacity;
-    frontend_held_carrier carrier;
-    bool view, source_style;
-};
+    frontend_equipment_output draw;
+} equipment_gear_output;
 typedef struct gear_draw_call {
-    frontend_equipment_gear_output *output;
+    equipment_gear_output *output;
     void *context;
     bool (*current)(void *);
 } gear_draw_call;
 
-static bool source_current(const frontend_equipment_gear_output *output)
+static bool source_current(const equipment_gear_output *output)
 {
     const equipment_gear_content *owner = output ? output->presenter->owner : NULL;
     return owner && qa_actor_id_equal(output->source.actor, output->presenter->actor) &&
@@ -35,25 +31,24 @@ static bool call_current(void *context)
     gear_draw_call *call = context;
     return call->current(call->context) && source_current(call->output);
 }
-static bool collect(void *context, qa_q3_presentation_assets *assets,
-    const qa_q3_ref_entity *ref, qa_error *error)
+static bool collect(void *context,qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *ref,qa_error *error)
 {
-    gear_draw_call *call = context; frontend_equipment_gear_output *output = call->output;
-    if (!call_current(call) || !ref || assets != output->presenter->owner->view.assets ||
-        output->count == output->capacity)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear draw exceeds its actual registry or output lifetime");
-    output->refs[output->count++] = *ref; return true;
+    gear_draw_call *call=context;
+    if (!call_current(call))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Gear draw lost its actual output lifetime");
+    return frontend_equipment_output_collect(&call->output->draw,assets,ref,error);
 }
-void frontend_equipment_gear_output_destroy(frontend_equipment_gear_output *output)
-{
-    if (!output) return;
-    frontend_equipment_gear_release(output->presenter);
-}
+static bool output_current(void *context)
+{ return source_current(context); }
+static void output_release(void *context)
+{ frontend_equipment_gear_release(((equipment_gear_output *)context)->presenter); }
+static bool base_group(void *,size_t *,qa_error *);
 
 static bool draw(frontend_equipment_gear_presenter *presenter,
     const application_equipment_gear_presentation *source, const q3n_selected_weapon_view *view,
     float fov, const q3n_selected_weapon_held *held, bool reduced_flashes,
-    void *context, bool (*current)(void *), frontend_equipment_gear_output **out,
+    void *context, bool (*current)(void *), frontend_equipment_output **out,
     bool *submitted, qa_error *error)
 {
     if (submitted) *submitted = false;
@@ -69,17 +64,18 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
         attachments > SIZE_MAX / sizeof(q3n_selected_weapon_attachment))
         return frontend_fail(error, QA_ERROR_MEMORY, "Gear authored output exceeds address space");
     qa_arena *storage=&presenter->owner->frontend->frame.storage;
-    frontend_equipment_gear_output *output=qa_arena_alloc(storage,sizeof(*output),_Alignof(frontend_equipment_gear_output),error);
+    equipment_gear_output *output=qa_arena_alloc(storage,sizeof(*output),_Alignof(equipment_gear_output),error);
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear output");
-    *output=(frontend_equipment_gear_output){0};
-    output->refs=qa_arena_alloc(storage,capacity*sizeof(*output->refs),_Alignof(qa_q3_ref_entity),error);
-    if (!output->refs) {
+    *output=(equipment_gear_output){.draw={.assets=presenter->owner->view.assets,.storage=storage,
+        .context=output,.current=output_current,.release=output_release,.base_group=base_group}};
+    output->draw.refs=qa_arena_alloc(storage,capacity*sizeof(*output->draw.refs),_Alignof(qa_q3_ref_entity),error);
+    if (!output->draw.refs) {
         return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear draw references");
     }
     if (!frontend_equipment_gear_retain(presenter, error)) {
         return false;
     }
-    output->presenter = presenter; output->source = *source; output->capacity = capacity; output->view = view != NULL;
+    output->presenter = presenter; output->source = *source; output->draw.capacity = capacity; output->draw.view = view != NULL;
     gear_draw_call call = {output, context, current}; q3n_selected_weapon_media media;
     bool okay = source_current(output);
     if (!okay) frontend_fail(error, QA_ERROR_ARGUMENT, "Gear draw changed its actual private source tuple");
@@ -111,126 +107,38 @@ static bool draw(frontend_equipment_gear_presenter *presenter,
         actual.attachment_count = attachments;
         if (media.gun) okay = frontend_held_carrier_prepare(held->parent_assets, held->torso,
             (double)presenter->owner->frontend->time_ns * 1e-9,
-            &output->carrier, &actual.carrier_grip, error);
+            &output->draw.carrier, &actual.carrier_grip, error);
         if (okay) okay = q3n_weapons_selected_held(presenter->owner->weapons, &media, &presenter->state,
             &request, &actual, submitted, error);
-        if (okay && actual.carrier_grip) for (size_t i = 0; i < output->count; ++i) {
-            output->refs[i].flags = held->torso->flags;
-            output->refs[i].color[3] = held->torso->color[3];
-            output->refs[i].lighting_origin = held->torso->lighting_origin;
-            output->refs[i].shadow_plane = held->torso->shadow_plane;
-        }
+        if (okay && actual.carrier_grip)
+            frontend_equipment_output_parent(&output->draw,held->torso,true);
     }
-    if (!okay || !*submitted) { frontend_equipment_gear_output_destroy(output); return okay; }
-    *out = output; return true;
+    if (!okay || !*submitted) { frontend_equipment_output_destroy(&output->draw); return okay; }
+    *out=&output->draw; return true;
 }
 bool frontend_equipment_gear_view(frontend_equipment_gear_presenter *presenter,
     const application_equipment_gear_presentation *source, const q3n_selected_weapon_view *view, float fov,
-    void *context, bool (*current)(void *), frontend_equipment_gear_output **out, bool *submitted, qa_error *error)
+    void *context, bool (*current)(void *), frontend_equipment_output **out, bool *submitted, qa_error *error)
 {
     if (!view) return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear view has no actual camera");
     return draw(presenter, source, view, fov, NULL, false, context, current, out, submitted, error);
 }
 bool frontend_equipment_gear_held(frontend_equipment_gear_presenter *presenter,
     const application_equipment_gear_presentation *source, const q3n_selected_weapon_held *held, bool reduced_flashes,
-    void *context, bool (*current)(void *), frontend_equipment_gear_output **out, bool *submitted, qa_error *error)
+    void *context, bool (*current)(void *), frontend_equipment_output **out, bool *submitted, qa_error *error)
 {
     if (!held) return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear held has no actual torso");
     return draw(presenter, source, NULL, 0, held, reduced_flashes, context, current, out, submitted, error);
 }
-size_t frontend_equipment_gear_output_count(const frontend_equipment_gear_output *output)
+static bool base_group(void *context,size_t *count,qa_error *error)
 {
-    return !output ? 0 : !output->source_style ? output->count :
-        output->base_count * output->pass_count + output->count - output->base_count;
-}
-bool frontend_equipment_gear_output_source_style(frontend_equipment_gear_output *output,
-    qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent, qa_error *error)
-{
+    equipment_gear_output *output=context;
     q3n_selected_weapon_media media;
-    if (!output || output->view || output->source_style || !assets || !parent || !source_current(output) ||
-        !qa_q3_assets_idle(assets) || parent->kind != QA_Q3_REF_MODEL ||
-        !qa_vec_finite(parent->lighting_origin) || !isfinite(parent->shadow_plane))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear source style requires its actual primary torso");
-    if (!q3n_selected_authored_read(output->presenter->owner->view.media, false, &media, error)) return false;
-    if (!output->count || output->refs[0].model != media.gun || output->refs[0].custom_shader)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Gear source style has no genuine base gun");
-    size_t base = output->count;
-    if (base > 1 && media.flash && output->refs[base - 1].model == media.flash &&
-        !output->refs[base - 1].custom_shader) --base;
-    for (size_t i = 0; i < output->count; ++i) {
-        output->refs[i].flags = parent->flags; output->refs[i].lighting_origin = parent->lighting_origin;
-        output->refs[i].shadow_plane = parent->shadow_plane;
-    }
-    output->primary_assets = assets; output->base_count = base; output->source_style = true; return true;
-}
-bool frontend_equipment_gear_output_source_pass(frontend_equipment_gear_output *output,
-    const qa_q3_ref_entity *pass, qa_error *error)
-{
-    const qa_material *material;
-    if (!output || !output->source_style || !pass || !isfinite(pass->shader_time) || !source_current(output))
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear source pass has no actual captured primary style");
-    if (!qa_q3_assets_shader_read(output->primary_assets, pass->custom_shader, &material, error)) return false;
-    size_t remaining = output->count - output->base_count;
-    if (output->pass_count >= (1022 - remaining) / output->base_count)
-        return frontend_fail(error, QA_ERROR_FORMAT, "Gear held output exceeds its actual source orders");
-    if (output->pass_count == output->pass_capacity) {
-        size_t capacity = output->pass_capacity ? output->pass_capacity * 2 : 4;
-        if (capacity > 1022) capacity = 1022;
-        qa_q3_ref_entity *passes=qa_arena_grow(&output->presenter->owner->frontend->frame.storage,output->passes,
-            output->pass_count*sizeof(*passes),capacity*sizeof(*passes),_Alignof(qa_q3_ref_entity),error);
-        if (!passes) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual gear source passes");
-        output->passes = passes; output->pass_capacity = capacity;
-    }
-    output->passes[output->pass_count++] = *pass; return true;
-}
-static qa_q3_ref_entity shifted(const qa_q3_ref_entity *source, qa_vec3 offset)
-{
-    qa_q3_ref_entity ref = *source;
-    ref.origin = qa_vec_add(ref.origin, offset); ref.old_origin = qa_vec_add(ref.old_origin, offset);
-    ref.lighting_origin = qa_vec_add(ref.lighting_origin, offset); ref.shadow_plane += offset.z;
-    return ref;
-}
-bool frontend_equipment_gear_output_submit(frontend_equipment_gear_output *output,
-    qa_q3_presentation *presentation, qa_vec3 offset, const qa_q3_scene_options *options,
-    uint32_t order, qa_scene_frame *frame, qa_error *error)
-{
-    if (!output || !source_current(output) || !presentation || !options || !frame || !qa_vec_finite(offset) ||
-        order > 1022 || frontend_equipment_gear_output_count(output) > 1022 - order)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "Gear submission lost its actual registry, lease or orders");
-    const qa_q3_ref_entity *refs = output->refs;
-    if (output->carrier.model) {
-        qa_q3_ref_entity *posed = qa_arena_alloc(&frame->storage,
-            output->count * sizeof(*posed), _Alignof(qa_q3_ref_entity), error);
-        if (!posed) return false;
-        qa_model_transform transform;
-        bool visible;
-        if (!frontend_held_carrier_sample(&output->carrier, &options->world.view,
-            frame, &transform, &visible, error)) return false;
-        if (!visible) return true;
-        for (size_t i = 0; i < output->count; ++i)
-            frontend_held_carrier_ref(&transform, output->refs + i, posed + i);
-        refs = posed;
-    }
-    for (size_t i = 0; i < output->count; ++i) {
-        qa_q3_ref_entity ref = shifted(refs + i, offset);
-        if (!qa_vec_finite(ref.origin) || !qa_vec_finite(ref.old_origin) ||
-            !qa_vec_finite(ref.lighting_origin) || !isfinite(ref.shadow_plane))
-            return frontend_fail(error, QA_ERROR_FORMAT, "Gear offset exceeds finite scene coordinates");
-    }
-    size_t first = 0;
-    if (output->source_style) {
-        for (size_t pass = 0; pass < output->pass_count; ++pass)
-            for (size_t part = 0; part < output->base_count; ++part) {
-                qa_q3_ref_entity ref = shifted(refs + part, offset);
-                if (!qa_q3_presentation_selected_registered_pass(presentation, output->presenter->owner->view.assets,
-                    &ref, output->primary_assets, output->passes + pass, options, order++, frame, error)) return false;
-            }
-        first = output->base_count;
-    }
-    for (size_t i = first; i < output->count; ++i) {
-        qa_q3_ref_entity ref = shifted(refs + i, offset);
-        if (!qa_q3_presentation_selected_registered(presentation, output->presenter->owner->view.assets,
-            &ref, options, order++, frame, error)) return false;
-    }
+    if (!q3n_selected_authored_read(output->presenter->owner->view.media,false,&media,error)) return false;
+    if (!output->draw.count || output->draw.refs[0].model!=media.gun || output->draw.refs[0].custom_shader)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Gear source style has no genuine base gun");
+    *count=output->draw.count;
+    if (*count>1 && media.flash && output->draw.refs[*count-1].model==media.flash &&
+        !output->draw.refs[*count-1].custom_shader) --*count;
     return true;
 }

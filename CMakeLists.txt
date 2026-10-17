@@ -1746,6 +1746,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_events.c
     src/app/frontend/equipment_gear.c
     src/app/frontend/equipment_gear_output.c
+    src/app/frontend/equipment_output.c
     src/app/frontend/equipment_gear_world_output.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c

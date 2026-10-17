@@ -2,12 +2,12 @@
 #define QA_FRONTEND_EQUIPMENT_Q3_H
 
 #include "visual_access.h"
+#include "equipment_output.h"
 #include "qa/application_equipment.h"
 #include "qa/persistence_content.h"
 #include "../../presentation/q3_native/selected_media.h"
 
 typedef struct frontend_equipment_q3_presenter frontend_equipment_q3_presenter;
-typedef struct frontend_equipment_q3_output frontend_equipment_q3_output;
 typedef struct frontend_equipment_q3_owner_view {
     qa_actor_owner provider;
     qa_q3_product product;
@@ -32,26 +32,12 @@ bool frontend_equipment_q3_retain(frontend_equipment_q3_presenter *, qa_error *)
 void frontend_equipment_q3_release(frontend_equipment_q3_presenter *);
 bool frontend_equipment_q3_view(frontend_equipment_q3_presenter *,
     const qa_application_equipment_view *, const q3n_selected_weapon_view *, bool reduced_flashes,
-    void *context, bool (*current)(void *), frontend_equipment_q3_output **,
+    void *context, bool (*current)(void *), frontend_equipment_output **,
     bool *submitted, qa_error *);
 bool frontend_equipment_q3_held(frontend_equipment_q3_presenter *,
     const qa_application_equipment_view *, const q3n_selected_weapon_held *, bool reduced_flashes,
-    void *context, bool (*current)(void *), frontend_equipment_q3_output **,
+    void *context, bool (*current)(void *), frontend_equipment_output **,
     bool *submitted, qa_error *);
-size_t frontend_equipment_q3_output_count(const frontend_equipment_q3_output *);
-/* Original source captures only its base gun group's shader passes. Gun and
- * barrel repeat together; later flash output stays in the selected registry. */
-bool frontend_equipment_q3_output_source_style(frontend_equipment_q3_output *,
-    qa_q3_presentation_assets *primary_assets, const qa_q3_ref_entity *authored_parent, qa_error *);
-bool frontend_equipment_q3_output_source_pass(frontend_equipment_q3_output *,
-    const qa_q3_ref_entity *captured_pass, qa_error *);
-bool frontend_equipment_q3_output_submit(frontend_equipment_q3_output *, qa_q3_presentation *,
-    const qa_q3_scene_options *, uint32_t first_order, qa_scene_frame *, qa_error *);
-/* A real RenderScene tools-camera delta translates queued view refs without
- * replaying their retained torso, barrel or RNG producers. */
-bool frontend_equipment_q3_output_submit_offset(frontend_equipment_q3_output *, qa_q3_presentation *,
-    qa_vec3 offset, const qa_q3_scene_options *, uint32_t first_order, qa_scene_frame *, qa_error *);
-void frontend_equipment_q3_output_destroy(frontend_equipment_q3_output *);
 bool frontend_equipment_q3_idle(const qa_frontend *);
 bool frontend_equipment_q3_retire(qa_frontend *, qa_error *);
 void frontend_equipment_q3_destroy(qa_frontend *);
