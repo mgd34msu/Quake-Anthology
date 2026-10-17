@@ -1137,10 +1137,10 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
     struct application_control_frames *frames = app->control_frames;
     application_control_record *record = &app->controls[actor.slot];
     application_provider *source = source_provider(app, actor);
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     control_unified receipt = {.movement = *raw, .sequence = raw->sequence,
         .has_arsenal = raw->has_arsenal};
     if (raw->has_arsenal) {
-        application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
         receipt.arsenal = qa_strings_find(qa_session_strings(app->session), raw->arsenal.provider);
         receipt.weapon = raw->arsenal.weapon.size
             ? qa_strings_find(qa_session_strings(app->session), raw->arsenal.weapon) : 0;
@@ -1169,6 +1169,16 @@ bool qa_application_control_unified_command(qa_application *app, qa_actor_id act
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified command has no registered Source clock");
     bool retained = source_client(source) && source->component.clock.kind == QA_RULESET_NETQUAKE &&
         receipt.movement.kind == QA_RULESET_NETQUAKE;
+    if (retained && input->retained && input->domain == CONTROL_COMMAND_UNIFIED &&
+        qa_actor_id_equal(input->actor, actor) && input->provider == source->owner) {
+        const control_unified *pending = &input->unified;
+        if (!receipt.movement.impulse) receipt.movement.impulse = pending->movement.impulse;
+        if (!receipt.impulse && pending->impulse && arsenal && arsenal->owner == pending->arsenal &&
+            (!receipt.has_arsenal || receipt.arsenal == pending->arsenal)) {
+            receipt.has_arsenal = true; receipt.arsenal = pending->arsenal;
+            receipt.has_impulse = true; receipt.impulse = pending->impulse;
+        }
+    }
     bool paused = frames->paused || app->q1_paused;
     control_group *group = retained || paused ? NULL : group_take(frames,1,error);
     if (!retained && !paused && !group) return application_fail(error, QA_ERROR_MEMORY, "Allocating unified command receipt");
