@@ -1,6 +1,7 @@
 #include "qa/platform_services.h"
 #include "guest_native_q2_original_save.h"
 #include "guest_native_q2_private.h"
+#include "save_native_q2_record.h"
 #include "native_q2_console.h"
 #include "map_travel_private.h"
 #include "portals.h"
@@ -138,7 +139,7 @@ static bool capture_files(application_provider *source,qa_save_purpose purpose,
     if (source->kind==APPLICATION_PROVIDER_Q2)
         return qa_q2_game_original_capture(source->state.q2,autosave,transition,engine_level,game,level,error);
     qa_native_checkpoint snapshot={0};
-    bool ok=qa_native_checkpoint_capture(qa_native_host_instance(source->state.native.host),
+    bool ok=application_native_q2_capture_checkpoint(source->state.native.q2_engine,
         (qa_native_checkpoint_request){.game=!transition,.level=!autosave,
             .autosave=autosave,.transition=transition},&snapshot,error);
     if (ok) {

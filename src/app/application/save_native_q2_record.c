@@ -61,31 +61,17 @@ bool application_native_q2_save_resource_recipe(const qa_save_record *record,
     return true;
 }
 
-bool application_native_q2_save_capture(application_provider *provider, qa_save_purpose purpose,
-    const qa_application_native_resource_refs *resources, qa_buffer *out, qa_error *error)
+bool application_native_q2_capture_checkpoint(struct application_native_q2 *engine,
+    qa_native_checkpoint_request request, qa_native_checkpoint *out, qa_error *error)
 {
-    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
-        ? provider->state.native.q2_engine : NULL;
-    if (!engine || !out || !engine->initialized || !engine->map_ready || !provider->map_bound ||
-        !provider->state.native.host || !provider->application->map_resource ||
-        !application_native_q2_idle(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q2 capture requires its complete initialized map owner");
-    const char *texts[] = {source_text(provider, engine->map_name),
-                          source_text(provider, engine->spawn_point)};
-    for (size_t i = 0; i < 2; ++i)
-        if (!texts[i]) return application_fail(error, QA_ERROR_FORMAT, "native Q2 source map text has no actual owner");
-    qa_native_checkpoint snapshot = {0};
-    qa_buffer parts[NATIVE_RECORD_PARTS] = {0};
-    bool transition = purpose == QA_SAVE_TRANSITION;
-    qa_native_checkpoint_request request = {.game = !transition, .level = true, .host = true,
-        .autosave = purpose == QA_SAVE_LEVEL_ENTRY, .transition = transition};
+    application_provider *provider = engine->provider;
     qa_native_host *host = provider->state.native.host;
     qa_native_instance *instance = qa_native_host_instance(host);
     const qa_native_host_entity_layout *layout = qa_native_host_source_layout(host);
     uint8_t client_inuse[256][4];
     uint32_t cleared = 0;
     bool ok = true;
-    if (transition && engine->profile == QA_NATIVE_Q2_GAME_API3) {
+    if (request.transition && request.level && engine->profile == QA_NATIVE_Q2_GAME_API3) {
         const qa_cvar_view *maximum = qa_cvars_read(engine->cvars, provider->q2_maxclients);
         if (!maximum || maximum->integer < 1 || maximum->integer > 256)
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 travel lost its source maximum clients");
@@ -101,7 +87,8 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
             }
         }
     }
-    if (ok) ok = qa_native_checkpoint_capture(instance, request, &snapshot, error);
+    bool captured = ok && qa_native_checkpoint_capture(instance, request, out, error);
+    ok = ok && captured;
     if (cleared) {
         qa_error returned = {0};
         qa_native_entity_table table;
@@ -121,6 +108,29 @@ bool application_native_q2_save_capture(application_provider *provider, qa_save_
         if (ok && !restored && error) *error = returned;
         ok = ok && restored;
     }
+    if (captured && !ok) qa_native_checkpoint_free(out);
+    return ok;
+}
+
+bool application_native_q2_save_capture(application_provider *provider, qa_save_purpose purpose,
+    const qa_application_native_resource_refs *resources, qa_buffer *out, qa_error *error)
+{
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.q2_engine : NULL;
+    if (!engine || !out || !engine->initialized || !engine->map_ready || !provider->map_bound ||
+        !provider->state.native.host || !provider->application->map_resource ||
+        !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q2 capture requires its complete initialized map owner");
+    const char *texts[] = {source_text(provider, engine->map_name),
+                          source_text(provider, engine->spawn_point)};
+    for (size_t i = 0; i < 2; ++i)
+        if (!texts[i]) return application_fail(error, QA_ERROR_FORMAT, "native Q2 source map text has no actual owner");
+    qa_native_checkpoint snapshot = {0};
+    qa_buffer parts[NATIVE_RECORD_PARTS] = {0};
+    bool transition = purpose == QA_SAVE_TRANSITION;
+    qa_native_checkpoint_request request = {.game = !transition, .level = true, .host = true,
+        .autosave = purpose == QA_SAVE_LEVEL_ENTRY, .transition = transition};
+    bool ok = application_native_q2_capture_checkpoint(engine, request, &snapshot, error);
     if (ok) ok = complete(&snapshot, error) && qa_native_checkpoint_encode(&snapshot, parts, error);
     if (ok && engine->process.resources) {
         if (!resources || !resources->capture || !resources->resolve || !resources->attach)
@@ -207,7 +217,7 @@ bool application_native_q2_save_restore(application_provider *provider, applicat
             application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 revisit requires its current matching GAME owner");
         if (ok) {
             qa_native_checkpoint_request request = {.game = true, .host = true, .autosave = true, .transition = true};
-            ok = qa_native_checkpoint_capture(qa_native_host_instance(current->state.native.host),
+            ok = application_native_q2_capture_checkpoint(current->state.native.q2_engine,
                 request, &game, error);
         }
         if (ok && (!game.has_game || !game.game.size || !game.has_host || !game.host.size || game.has_level || game.has_process))
