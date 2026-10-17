@@ -11,6 +11,8 @@ bool application_qc_pickups_close(struct application_qc_state *,qa_error *);
 bool application_qc_pickups_ready(struct application_qc_state *,qa_error *);
 bool application_qc_pickups_saved_rule(application_provider *,qa_actor_id,qa_actor_owner,uint64_t,uint32_t,qa_pickup_rule *,qa_error *);
 const qa_qc_inline_region *application_qc_pickups_regions(const application_provider *,size_t *);
+bool application_qc_pickups_empty_armor(const application_provider *,const qa_qc_definition *,
+    uint32_t red_mask,uint32_t armor_mask,qa_regular_armor *);
 bool application_qc_pickups_replace(struct application_qc_state *,qa_qc_instance *,
     const qa_qc_call_event *,qa_qc_call_next,bool *handled,qa_error *);
 bool application_qc_pickups_inline(struct application_qc_state *,qa_qc_instance *,

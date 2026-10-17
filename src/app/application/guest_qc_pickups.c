@@ -37,6 +37,8 @@ typedef struct qc_pickup_descriptor {
     bool quantity_field;
     qa_pickup_resource resource;
     qc_pickup_scalar override;
+    float armor_absorption;
+    uint32_t armor_bit, armor_clear;
 } qc_pickup_descriptor;
 typedef struct qc_pickup_caller {
     uint32_t function;
@@ -484,6 +486,134 @@ static bool source_decision(qc_pickup_analysis *a,qc_pickup_caller *c,uint32_t e
     return branch&&source_branch_return(a,exit,branch->a)&&source_region(a,c,entry,exit,
         (qc_pickup_source_region){.operation=QC_PICKUP_DECISION,.word=branch->a},false,e);
 }
+static const qa_qc_statement *source_writer(const qc_pickup_analysis *a,uint32_t first,
+    uint32_t limit,uint32_t word,uint32_t *at)
+{
+    for(uint32_t pc=limit;pc>first;){
+        qa_qc_statement_access access;
+        if(!qa_qc_program_statement_access(a->program,--pc,&access,NULL))return NULL;
+        for(uint32_t i=0;i<access.write_count;++i)if(access.write[i]==word){
+            *at=pc;return source_at(a,pc);}
+    }
+    return NULL;
+}
+static bool source_unchanged(const qc_pickup_analysis *a,uint32_t first,uint32_t end,uint32_t word)
+{
+    for(uint32_t pc=first;pc<end;++pc){
+        const qa_qc_statement *s=source_at(a,pc);
+        if((s->opcode>=QA_QC_CALL0&&s->opcode<=QA_QC_CALL8)||s->opcode==QA_QC_STATE)return false;
+        qa_qc_statement_access access;
+        if(!qa_qc_program_statement_access(a->program,pc,&access,NULL))return false;
+        for(uint32_t i=0;i<access.write_count;++i)if(access.write[i]==word)return false;
+    }
+    return true;
+}
+static bool source_armor_mask(const qc_pickup_analysis *a,uint32_t first,uint32_t limit,
+    uint32_t word,uint32_t *out)
+{
+    /* The original mask combines the three admitted armor tiers. */
+    struct {uint32_t word,limit;} pending[3]={{word,limit}};
+    size_t count=1;uint32_t mask=0;
+    while(count){
+        --count;word=pending[count].word;limit=pending[count].limit;
+        float value;
+        if(source_float(a,word,&value)){
+            if(value<0||value>UINT32_C(0x80000000)||truncf(value)!=value)return false;
+            mask|=(uint32_t)value;continue;
+        }
+        uint32_t pc;
+        const qa_qc_statement *s=source_writer(a,first,limit,word,&pc);
+        if(!s||s->opcode!=QA_QC_BITOR||count+2>sizeof(pending)/sizeof(*pending))return false;
+        pending[count].word=s->a;pending[count++].limit=pc;
+        pending[count].word=s->b;pending[count++].limit=pc;
+    }
+    *out=mask;return true;
+}
+static bool source_armor_items(const qc_pickup_analysis *a,uint32_t first,uint32_t limit,
+    uint32_t word,uint32_t *selected,uint32_t *clear)
+{
+    const qa_qc_game_fields *fields=qa_qc_program_resolved_fields(a->program);
+    uint32_t sum_pc;
+    const qa_qc_statement *sum=source_writer(a,first,limit,word,&sum_pc);
+    if(!sum||sum->opcode!=QA_QC_ADD_F)return false;
+    for(unsigned order=0;order<2;++order){
+        uint32_t sub_pc,and_pc,load_pc;
+        const qa_qc_statement *sub=source_writer(a,first,sum_pc,order?sum->b:sum->a,&sub_pc);
+        if(!sub||sub->opcode!=QA_QC_SUB_F)continue;
+        const qa_qc_statement *load=source_writer(a,first,sub_pc,sub->a,&load_pc);
+        const qa_qc_statement *masked=source_writer(a,first,sub_pc,sub->b,&and_pc);
+        if(!source_load(a,load,QA_QC_LOAD_F,a->profile->other->offset,fields->items)||
+            !masked||masked->opcode!=QA_QC_BITAND)continue;
+        for(unsigned side=0;side<2;++side){
+            load=source_writer(a,first,and_pc,side?masked->b:masked->a,&load_pc);
+            if(!source_load(a,load,QA_QC_LOAD_F,a->profile->other->offset,fields->items)||
+                !source_armor_mask(a,first,and_pc,side?masked->a:masked->b,clear))continue;
+            *selected=order?sum->a:sum->b;return true;
+        }
+    }
+    return false;
+}
+static void source_armor_default(const qc_pickup_analysis *a,qc_pickup_caller *c,
+    size_t red,uint32_t comparison,uint32_t decision,uint32_t grant,uint32_t join,
+    const qa_qc_definition *type)
+{
+    if(red==SIZE_MAX)return;
+    for(size_t i=0;i<c->count;++i)for(size_t j=0;j<i;++j)
+        if(c->descriptors[i].name==c->descriptors[j].name)return;
+    const qa_qc_game_fields *fields=qa_qc_program_resolved_fields(a->program);
+    const qa_qc_definition *outputs[]={type,fields->armorvalue,fields->items};
+    uint32_t words[3]={0},stores[3]={0};bool found[3]={0};
+    for(uint32_t pc=grant;pc<join;++pc){
+        const qa_qc_statement *s=source_at(a,pc);
+        switch(s->opcode){
+        case QA_QC_ADDRESS:case QA_QC_LOAD_F:case QA_QC_STORE_F:case QA_QC_ADD_F:
+        case QA_QC_SUB_F:case QA_QC_BITAND:case QA_QC_BITOR:break;
+        case QA_QC_STOREP_F:{
+            uint32_t address_pc;
+            const qa_qc_statement *address=source_writer(a,grant,pc,s->b,&address_pc);
+            size_t i=0;
+            while(i<3&&!source_load(a,address,QA_QC_ADDRESS,a->profile->other->offset,outputs[i]))++i;
+            if(i==3||found[i])return;
+            found[i]=true;words[i]=s->a;stores[i]=pc;break;
+        }
+        default:return;
+        }
+    }
+    if(!found[0]||!found[1]||!found[2])return;
+    uint32_t selected,clear;
+    if(!source_armor_items(a,grant,stores[2],words[2],&selected,&clear))return;
+    const qa_qc_function *function=qa_qc_program_function(a->program,c->function);
+    uint32_t first=(uint32_t)function->first_statement,end_function=qa_qc_program_function_end(a->program,function);
+    if(!source_unchanged(a,first,join,a->profile->self->offset)||
+        !source_unchanged(a,first,join,a->profile->other->offset))return;
+    for(uint32_t pc=first;pc<end_function;++pc){
+        int64_t target=source_destination(source_at(a,pc),pc);
+        if((pc<comparison||pc>=join)&&target>(int64_t)comparison&&target<(int64_t)join)return;
+    }
+    uint32_t locals[]={words[0],words[1],selected};
+    for(size_t i=0;i<3;++i)if(locals[i]<function->parameter_start||
+        locals[i]-function->parameter_start>=function->local_words||
+        !source_type(a->program,locals[i],QA_QC_FLOAT)||
+        !source_unchanged(a,grant,join,locals[i]))return;
+    const qa_qc_statement *test=source_at(a,comparison+1),*branch=source_at(a,comparison+2);
+    if(branch->opcode!=QA_QC_IFNOT||branch->a!=test->c)return;
+    int64_t end=source_destination(branch,comparison+2);
+    if(end<=(int64_t)comparison+3||end!=decision)return;
+    float values[3]={0};bool assigned[3]={0};
+    for(uint32_t pc=comparison+3;pc<(uint32_t)end;++pc){
+        const qa_qc_statement *s=source_at(a,pc);
+        if(s->opcode!=QA_QC_STORE_F)return;
+        size_t i=0;while(i<3&&s->b!=locals[i])++i;
+        if(i==3||assigned[i]||!source_float(a,s->a,values+i))return;
+        assigned[i]=true;
+    }
+    if(!assigned[0]||!assigned[1]||!assigned[2]||values[0]<0||values[0]>1||values[1]<=0||
+        values[2]<1||values[2]>UINT32_C(0x80000000)||truncf(values[2])!=values[2])return;
+    for(size_t i=0;i<3;++i)if(!source_unchanged(a,(uint32_t)end,grant,locals[i]))return;
+    uint32_t bit=(uint32_t)values[2];if(bit&(bit-1))return;
+    c->descriptors[red].armor_absorption=values[0];
+    c->descriptors[red].armor_bit=bit;c->descriptors[red].armor_clear=clear;
+}
 static bool source_armor(qc_pickup_analysis *a,qc_pickup_caller *c,qa_error *e)
 {
     const qa_qc_game_fields *fields=qa_qc_program_resolved_fields(a->program);
@@ -491,7 +621,7 @@ static bool source_armor(qc_pickup_analysis *a,qc_pickup_caller *c,qa_error *e)
     const qa_qc_function *f=qa_qc_program_function(a->program,c->function);
     uint32_t first=(uint32_t)f->first_statement,end=qa_qc_program_function_end(a->program,f),other=a->profile->other->offset;
     c->discriminator=fields->classname;
-    uint32_t decision=0,grant=0,join=0;
+    uint32_t decision=0,grant=0,join=0,red_pc=0;size_t red=SIZE_MAX;
     for(uint32_t pc=first;pc+6<end;++pc){const qa_qc_statement *s=source_at(a,pc),*next=source_at(a,pc+1);
         if(source_load(a,s,QA_QC_LOAD_S,a->profile->self->offset,fields->classname)&&next->opcode==QA_QC_EQ_S&&next->a==s->c){
             qc_pickup_descriptor d={.resource={.kind=QA_PICKUP_PROTECTION,.channel=QA_PROTECTION_REGULAR}};
@@ -501,6 +631,7 @@ static bool source_armor(qc_pickup_analysis *a,qc_pickup_caller *c,qa_error *e)
             char identity[64];int length=snprintf(identity,sizeof(identity),"q1:%s",name);
             if(length<=0||(size_t)length>=sizeof(identity)||!qa_strings_intern_cstr(
                 qa_session_strings(a->provider->application->session),identity,&d.item,e)||!source_descriptor(c,d,e))return false;
+            if(!strcmp(name,"item_armorInv")){red=c->count-1;red_pc=pc;}
         }
         if(source_load(a,s,QA_QC_LOAD_F,other,type)&&source_load(a,next,QA_QC_LOAD_F,other,fields->armorvalue)){
             const qa_qc_statement *left=source_at(a,pc+2),*right=source_at(a,pc+3),*compare=source_at(a,pc+4);
@@ -521,8 +652,10 @@ static bool source_armor(qc_pickup_analysis *a,qc_pickup_caller *c,qa_error *e)
         if((s->opcode>=QA_QC_CALL0&&s->opcode<=QA_QC_CALL8)||s->opcode==QA_QC_STATE||s->opcode==QA_QC_STOREP_V||s->opcode==QA_QC_STOREP_S||
             s->opcode==QA_QC_STOREP_ENT||s->opcode==QA_QC_STOREP_FLD||s->opcode==QA_QC_STOREP_FN)return false;
     }
-    return source_decision(a,c,decision,grant-2,e)&&source_region(a,c,grant,join,
+    bool found=source_decision(a,c,decision,grant-2,e)&&source_region(a,c,grant,join,
         (qc_pickup_source_region){.operation=QC_PICKUP_GRANT},false,e);
+    if(found)source_armor_default(a,c,red,red_pc,decision,grant,join,type);
+    return found;
 }
 /* Both compilers follow the original lvalue/load/add/store data flow. Numeric
  * amounts, limits and leave rules stay in the admitted program. */
@@ -1001,6 +1134,20 @@ const qa_qc_inline_region *application_qc_pickups_regions(const application_prov
 {
     const struct application_qc_pickups *p=provider->state.qc.pickup_profile;
     *count=p?p->region_count:0;return p?p->regions:NULL;
+}
+bool application_qc_pickups_empty_armor(const application_provider *provider,
+    const qa_qc_definition *items,uint32_t red_mask,uint32_t armor_mask,qa_regular_armor *out)
+{
+    const struct application_qc_pickups *p=provider->state.qc.pickup_profile;
+    if(!p||p->items!=items||!p->callers[QC_PICKUP_ARMOR].function)return false;
+    const qc_pickup_caller *caller=p->callers+QC_PICKUP_ARMOR;
+    for(size_t i=0;i<caller->count;++i){const qc_pickup_descriptor *d=caller->descriptors+i;
+        if(d->armor_bit&&d->armor_bit==red_mask&&d->armor_clear==armor_mask){
+            *out=(qa_regular_armor){.kind=QA_ARMOR_Q1,.item=d->item,
+                .protection.q1_absorption=d->armor_absorption};return true;
+        }
+    }
+    return false;
 }
 bool application_qc_pickups_idle(const struct application_qc_state *engine)
 {

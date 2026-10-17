@@ -1,5 +1,6 @@
 #include "guest_qc_combat.h"
 #include "guest_qc_armor.h"
+#include "guest_qc_pickups.h"
 #include "guest_mod_item_definition.h"
 #include "control_frame.h"
 #include "qa/application_qc_presentation.h"
@@ -48,7 +49,7 @@ struct application_qc_combat_profile {
     environment_layout environment;
     qa_qc_inline_region regions[2];
     size_t region_count;
-    bool armor_declared, empty_declared;
+    bool armor_declared, empty_present;
 };
 typedef struct combat_actor {
     struct combat_actor *next,*previous;
@@ -664,7 +665,7 @@ static bool combat_profile_prepare(application_provider *provider, const qa_json
         bool known = false;
         for (size_t i = 0; i < 3; ++i) known |= profile->empty_item == profile->armor_items[i];
         if (!known) return reject(error, "QC empty armor is not a Source Q1 armor identity");
-        profile->empty_declared = true;
+        profile->empty_present = true;
     }
     return true;
 }
@@ -829,7 +830,7 @@ static bool empty_armor(void *context, double points, qa_regular_armor *out, boo
     combat_actor *actor = context;
     const application_qc_combat_profile *profile = actor->owner->profile;
     if (!current(actor, error)) return false;
-    *present = profile->empty_declared;
+    *present = profile->empty_present;
     if (*present) {
         if (!isfinite(points) || points < 0)
             return reject(error, "QC empty armor points must be finite and nonnegative");
@@ -876,9 +877,19 @@ static qa_combat_binding binding(combat_actor *actor)
 }
 bool application_qc_combat_create(struct application_qc_state *engine, qa_error *error)
 {
-    const application_qc_combat_profile *profile = engine->provider->state.qc.combat_profile;
+    application_qc_combat_profile *profile = engine->provider->state.qc.combat_profile;
     if (!profile) return true;
     if (engine->combat) return held(engine->combat, error);
+    if (!profile->empty_present) {
+        qa_regular_armor armor;
+        if (application_qc_pickups_empty_armor(engine->provider, profile->items, profile->masks[2],
+            profile->masks[0] | profile->masks[1] | profile->masks[2], &armor) &&
+            armor.item == profile->armor_items[2]) {
+            profile->empty_item = armor.item;
+            profile->empty_absorption = armor.protection.q1_absorption;
+            profile->empty_present = true;
+        }
+    }
     engine->combat = calloc(1, sizeof(*engine->combat));
     if (!engine->combat) return application_fail(error, QA_ERROR_MEMORY, "Owning QC combat callback contexts");
     const qa_actor_registry *registry=qa_session_actors(engine->services.session);
