@@ -191,7 +191,15 @@ static const original_field map_fields[] = {
     FIELD(q1_map_state, cooldown, "attack_finished", DOUBLE),
     FIELD(q1_map_state, sounds, "sounds", I32),
     FIELD(q1_map_state, style, "style", I32),
-    FIELD(q1_map_state, color_map, "colormap", I32)
+    FIELD(q1_map_state, color_map, "colormap", I32),
+    FIELD(q1_map_state, fog_density, "fog_density", FLOAT),
+    FIELD(q1_map_state, fog_color, "fog_color", VECTOR),
+    FIELD(q1_map_state, fog_info_entity, "fog_info_entity", STRING)
+};
+static const original_field player_fog_fields[] = {
+    FIELD(q1_addon_contact, fog_active, "fog_active_fog_trigger", REF),
+    FIELD(q1_addon_contact, fog.density, "fog_density", FLOAT),
+    FIELD(q1_addon_contact, fog.color, "fog_color", VECTOR)
 };
 static const original_field particle_tele_fields[] = {
     FIELD(q1_map_state, particle_size, "size", VECTOR),
@@ -513,6 +521,9 @@ static bool map_functions(const qa_strings *strings, const q1_actor *entity, boo
         break;
     }
     case Q1_MAP_FIREBALL: touch = "fire_touch"; break;
+    case Q1_MAP_FOG_INFO: break;
+    case Q1_MAP_FOG_TRIGGER: touch = use = "trigger_fog_activate"; break;
+    case Q1_MAP_FOG_TRANSITION: touch = "trigger_fog_transition_touch"; break;
     default:
         if (map->touch_enabled || map->use_enabled)
             return fail(error, "Original native map callback has no Source field projection");
@@ -1023,6 +1034,9 @@ static bool entity_capture(qa_q1_wire_receipt *receipt, q1_actor *entity,
         const char *name=NULL;
         if (!qa_q1_source_client_info(game,player->id,"name",&name) ||
             !text(record,"netname",name?name:"",QA_Q1_SAVE_STRING,error)) return false;
+        const q1_addon_contact *contact=q1_map_addon_contact(game,player->id,false,error);
+        if (contact && !fields(receipt,record,contact,player_fog_fields,
+            sizeof(player_fog_fields)/sizeof(*player_fog_fields),contact->fog.initialized,error)) return false;
         return player_functions(game->options.program, qa_session_strings(game->services.session), player, record, error);
     }
     const char *think = entity->think == Q1_THINK_EXPLODE &&
@@ -1882,7 +1896,8 @@ static bool original_map_supported(q1_map_kind kind) {
     case Q1_MAP_DOOR: case Q1_MAP_DOOR_TRIGGER: case Q1_MAP_BUTTON:
     case Q1_MAP_SECRET_DOOR: case Q1_MAP_PLAT: case Q1_MAP_PLAT_TRIGGER: case Q1_MAP_BARREL:
     case Q1_MAP_SHOOTER: case Q1_MAP_FIREBALL_SOURCE: case Q1_MAP_FIREBALL:
-    case Q1_MAP_ADDON_PARTICLE_TELE:
+    case Q1_MAP_ADDON_PARTICLE_TELE: case Q1_MAP_FOG_INFO:
+    case Q1_MAP_FOG_TRIGGER: case Q1_MAP_FOG_TRANSITION:
         return true;
     default:
         return false;
@@ -1954,10 +1969,12 @@ static bool admit_entity(original_admission *admission,qa_q1_program program,
     qa_q1_save_record callbacks={0};q1_map_kind defaults=Q1_MAP_FIELDS;bool okay=false;
     if (slot==1) {
         q1_player player={0};qa_nq_movement_state movement={0};
+        q1_addon_contact contact={0};
         if (!admit_text(admission,"classname","player",error) ||
             !ADMIT_FIELDS(admission,&movement,movement_fields,error) ||
             !ADMIT_FIELDS(admission,&player,player_fields,error) ||
             !ADMIT_FIELDS(admission,&player.character_state,character_fields,error) ||
+            !ADMIT_FIELDS(admission,&contact,player_fog_fields,error) ||
             !admit_word(admission,"items",error) || !admit_word(admission,"items2",error) ||
             !admit_word(admission,"weapon",error)) goto done;
         float selected=saved_number(record,"weapon");
@@ -2260,6 +2277,16 @@ static bool restore_entity(qa_q1_game *game, q1_actor *entity, q1_player *player
             .hit = flags & 512 ? world_ground ? QA_TRACE_HIT_WORLD : QA_TRACE_HIT_ACTOR : QA_TRACE_HIT_NONE};
         if (!RESTORE_FIELDS(game,record,&movement->data.nq,movement_fields,slots,count,error) ||
             !saved_vector(saved(record,"movedir"),&movement->data.nq.water_jump_direction,error)) return false;
+        bool has_fog=saved(record,"fog_density") || saved(record,"fog_color");
+        bool has_contact=has_fog || saved(record,"fog_active_fog_trigger");
+        q1_addon_contact *contact=q1_map_addon_contact(game,id,has_contact,error);
+        if (has_contact && !contact) return false;
+        if (contact) {
+            if (!RESTORE_FIELDS(game,record,contact,player_fog_fields,slots,count,error)) return false;
+            contact->fog=(qa_q1_fog_state){.density=contact->fog.density,.color=contact->fog.color,
+                .previous_density=contact->fog.density,.previous_color=contact->fog.color,
+                .start_ns=game->time_ns,.initialized=has_fog};
+        }
         return game->services.physics && game->services.physics->services.write &&
             game->services.physics->services.write(game->services.physics->services.context, id, &physics, error) &&
             restore_player_name(game,player,record,error);
