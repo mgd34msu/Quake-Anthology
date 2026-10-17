@@ -6287,6 +6287,17 @@ static void test_q3_font_export(const char *executable)
     qa_font_library *fonts=qa_font_library_create(files,images,&error); CHECK(fonts);
     qa_font_q3_options options={.point_size=16,.truetype_path="DejaVuSans.ttf",.generate_if_missing=true};
     const qa_font *font=NULL,*cached=NULL;
+    const char *override=getenv("QUAKE_FREETYPE_LIBRARY");
+    char *saved_override=override?strdup(override):NULL;
+    CHECK(!override || saved_override);
+    qa_font_truetype_options direct={.path="DejaVuSans.ttf",.pixel_size=16};
+    CHECK(setenv("QUAKE_FREETYPE_LIBRARY","",1)==0);
+    CHECK(!qa_font_truetype_load(fonts,&direct,&font,&error) && error.code==QA_ERROR_ARGUMENT && !font);
+    CHECK(setenv("QUAKE_FREETYPE_LIBRARY","/qa-missing-freetype-library",1)==0);
+    CHECK(!qa_font_truetype_load(fonts,&direct,&font,&error) && error.code==QA_ERROR_NOT_FOUND && !font);
+    CHECK(saved_override?setenv("QUAKE_FREETYPE_LIBRARY",saved_override,1)==0:
+        unsetenv("QUAKE_FREETYPE_LIBRARY")==0);
+    free(saved_override);
     CHECK(qa_font_q3_register(fonts,&options,&font,&error));
     qa_fs_root *root=NULL; CHECK(qa_fs_root_temporary_create(&root,&error));
     unsigned warnings=0;

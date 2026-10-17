@@ -1,5 +1,6 @@
 #include "codec_internal.h"
 #include "qa/arena.h"
+#include "../platform/native_libraries.h"
 #include <stdio.h>
 
 #define OV_EXCLUDE_STATIC_CALLBACKS
@@ -231,9 +232,34 @@ bool qa_audio_decode_wav(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sa
 }
 
 typedef enum stream_kind { STREAM_SAMPLE, STREAM_WAV, STREAM_VORBIS } stream_kind;
+typedef struct vorbis_api {
+    int (*ov_open_callbacks)(void *, OggVorbis_File *, const char *, long, ov_callbacks);
+    long (*ov_streams)(OggVorbis_File *);
+    vorbis_info *(*ov_info)(OggVorbis_File *, int);
+    ogg_int64_t (*ov_pcm_total)(OggVorbis_File *, int);
+    int (*ov_pcm_seek)(OggVorbis_File *, ogg_int64_t);
+    int (*ov_clear)(OggVorbis_File *);
+    long (*ov_read)(OggVorbis_File *, char *, int, int, int, int, int *);
+} vorbis_api;
+
+static bool vorbis_bind(qa_platform_library *library, void *out, qa_error *error)
+{
+    vorbis_api *api = out;
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_open_callbacks, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_streams, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_info, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_pcm_total, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_pcm_seek, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_clear, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, ov_read, error);
+    return true;
+}
+
 typedef struct vorbis_source {
     qa_bytes bytes;
     size_t offset;
+    qa_platform_library *library;
+    vorbis_api api;
     OggVorbis_File file;
     long links;
     qa_arena scratch_storage;
@@ -309,20 +335,24 @@ static bool vorbis_open(qa_audio_stream *stream, qa_bytes bytes, qa_error *error
         return qa_audio_codec_fail(error, QA_ERROR_UNSUPPORTED, 0,
                                    "Ogg input exceeds the native Vorbis callback seek range");
     vorbis_source *source = &stream->source.vorbis;
+    if (!qa_platform_library_open(QA_PLATFORM_LIBRARY_VORBISFILE, vorbis_bind,
+                                   &source->api, &source->library, error))
+        return false;
     source->bytes = bytes;
     const ov_callbacks callbacks = {vorbis_read, vorbis_seek, NULL, vorbis_tell};
-    int result = ov_open_callbacks(source, &source->file, NULL, 0, callbacks);
+    int result = source->api.ov_open_callbacks(source, &source->file, NULL, 0, callbacks);
     if (result) {
+        qa_platform_library_close(source->library);
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Cannot open Ogg Vorbis stream: %d", result);
         return false;
     }
-    source->links = ov_streams(&source->file);
+    source->links = source->api.ov_streams(&source->file);
     if (source->links < 1 || source->links > 65536) {
         qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid Ogg logical stream count");
         goto fail;
     }
     for (long i = 0; i < source->links; ++i) {
-        vorbis_info *info = ov_info(&source->file, (int)i);
+        vorbis_info *info = source->api.ov_info(&source->file, (int)i);
         if (!info || (info->channels != 1 && info->channels != 2) || info->rate < 8000 ||
             info->rate > 192000) {
             qa_audio_codec_fail(error, QA_ERROR_UNSUPPORTED, 0, "Unsupported Ogg PCM format");
@@ -338,19 +368,20 @@ static bool vorbis_open(qa_audio_stream *stream, qa_bytes bytes, qa_error *error
             goto fail;
         }
     }
-    ogg_int64_t frames = ov_pcm_total(&source->file, -1);
+    ogg_int64_t frames = source->api.ov_pcm_total(&source->file, -1);
     if (frames < 0) {
         qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Invalid Ogg PCM frame count");
         goto fail;
     }
     stream->frames = (uint64_t)frames;
-    if (ov_pcm_seek(&source->file, 0) != 0 && frames != 0) {
+    if (source->api.ov_pcm_seek(&source->file, 0) != 0 && frames != 0) {
         qa_audio_codec_fail(error, QA_ERROR_FORMAT, 0, "Cannot seek to Ogg stream start");
         goto fail;
     }
     return true;
 fail:
-    ov_clear(&source->file);
+    source->api.ov_clear(&source->file);
+    qa_platform_library_close(source->library);
     return false;
 }
 
@@ -489,7 +520,7 @@ static bool vorbis_read_pcm(qa_audio_stream *stream, int16_t *out, size_t count,
         if (request > maximum)
             request = maximum;
         int link = -1;
-        long read = ov_read(&source->file, (char *)source->scratch + received, (int)request,
+        long read = source->api.ov_read(&source->file, (char *)source->scratch + received, (int)request,
                             big_endian, 2, 1, &link);
         if (read < 0 || (read > 0 && ((size_t)read > request || (size_t)read % alignment ||
                                       link < 0 || link >= source->links))) {
@@ -509,7 +540,7 @@ static bool vorbis_read_pcm(qa_audio_stream *stream, int16_t *out, size_t count,
     stream->position += *frames;
     return true;
 rollback:
-    if (ov_pcm_seek(&source->file, (ogg_int64_t)stream->position))
+    if (source->api.ov_pcm_seek(&source->file, (ogg_int64_t)stream->position))
         source->failed = true;
     return false;
 }
@@ -550,9 +581,9 @@ bool qa_audio_stream_seek(qa_audio_stream *stream, uint64_t frame, qa_error *err
         return qa_audio_codec_fail(error, QA_ERROR_ARGUMENT, 0, "PCM seek is outside stream");
     if (stream->kind == STREAM_VORBIS) {
         vorbis_source *source = &stream->source.vorbis;
-        int result = ov_pcm_seek(&source->file, (ogg_int64_t)frame);
+        int result = source->api.ov_pcm_seek(&source->file, (ogg_int64_t)frame);
         if (result) {
-            if (ov_pcm_seek(&source->file, (ogg_int64_t)stream->position))
+            if (source->api.ov_pcm_seek(&source->file, (ogg_int64_t)stream->position))
                 source->failed = true;
             qa_error_set(error, QA_ERROR_FORMAT, source->offset, "Ogg PCM seek failed: %d", result);
             return false;
@@ -569,7 +600,8 @@ void qa_audio_stream_close(qa_audio_stream *stream) {
     if (stream->kind == STREAM_SAMPLE)
         qa_audio_sample_release(stream->source.sample);
     else if (stream->kind == STREAM_VORBIS) {
-        ov_clear(&stream->source.vorbis.file);
+        stream->source.vorbis.api.ov_clear(&stream->source.vorbis.file);
+        qa_platform_library_close(stream->source.vorbis.library);
         qa_arena_destroy(&stream->source.vorbis.scratch_storage);
     }
     if (stream->release_resource)

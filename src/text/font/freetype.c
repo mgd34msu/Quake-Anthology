@@ -42,7 +42,8 @@ static bool append_codepoint(uint32_t **values, size_t *count, size_t *capacity,
     return true;
 }
 
-static bool collect_codepoints(FT_Face face, const qa_font_truetype_options *options,
+static bool collect_codepoints(const qa_freetype_api *api, FT_Face face,
+                               const qa_font_truetype_options *options,
                                uint32_t **out, size_t *out_count, qa_error *error) {
     uint32_t *values = NULL;
     size_t count = 0, capacity = 0;
@@ -57,11 +58,11 @@ static bool collect_codepoints(FT_Face face, const qa_font_truetype_options *opt
                       append_codepoint(&values, &count, &capacity, '?', error);
     } else {
         FT_UInt glyph_index = 0;
-        FT_ULong character = FT_Get_First_Char(face, &glyph_index);
+        FT_ULong character = api->FT_Get_First_Char(face, &glyph_index);
         while (success && glyph_index) {
             if (character <= UINT32_MAX && qa_font_valid_scalar((uint32_t)character))
                 success = append_codepoint(&values, &count, &capacity, (uint32_t)character, error);
-            character = FT_Get_Next_Char(face, character, &glyph_index);
+            character = api->FT_Get_Next_Char(face, character, &glyph_index);
         }
     }
     if (!success) {
@@ -249,19 +250,19 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
     qa_bytes bytes = qa_resource_bytes(source);
     bool success = qa_font_internal_freetype(library, &freetype, error);
     if (success && (bytes.size > LONG_MAX ||
-                    FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
+                    library->freetype_api.FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
         success = qa_font_fail(error, QA_ERROR_FORMAT, 0, "FreeType cannot open font face");
-    if (success && FT_Select_Charmap(face, FT_ENCODING_UNICODE))
+    if (success && library->freetype_api.FT_Select_Charmap(face, FT_ENCODING_UNICODE))
         success =
             qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "TrueType face has no Unicode charmap");
-    if (success && FT_Set_Pixel_Sizes(face, 0, options->pixel_size))
+    if (success && library->freetype_api.FT_Set_Pixel_Sizes(face, 0, options->pixel_size))
         success = qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0,
                                "FreeType cannot select the requested pixel size");
 
     uint32_t *codepoints = NULL;
     size_t codepoint_count = 0;
     if (success)
-        success = collect_codepoints(face, options, &codepoints, &codepoint_count, error);
+        success = collect_codepoints(&library->freetype_api, face, options, &codepoints, &codepoint_count, error);
     if (success) {
         const char *name = options->name ? options->name : options->path;
         uint64_t source_id = qa_resource_id(source);
@@ -276,7 +277,7 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
                                            codepoint_count * sizeof(*codepoints))))
                 continue;
             free(codepoints);
-            FT_Done_Face(face);
+            library->freetype_api.FT_Done_Face(face);
             qa_font_internal_destroy(font);
             *out = cached;
             return true;
@@ -309,10 +310,10 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
     }
     for (size_t i = 0; success && i < codepoint_count; ++i) {
         uint32_t codepoint = font->truetype_coverage[i];
-        FT_UInt glyph_index = FT_Get_Char_Index(face, codepoint);
+        FT_UInt glyph_index = library->freetype_api.FT_Get_Char_Index(face, codepoint);
         if (!glyph_index)
             continue;
-        if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_HINTING | FT_LOAD_COLOR)) {
+        if (library->freetype_api.FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_HINTING | FT_LOAD_COLOR)) {
             success = qa_font_fail(error, QA_ERROR_FORMAT, codepoint, "FreeType cannot load glyph");
             break;
         }
@@ -321,7 +322,7 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
         if (descent > font->descent)
             font->descent = descent;
         if (face->glyph->format != FT_GLYPH_FORMAT_BITMAP &&
-            FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL)) {
+            library->freetype_api.FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL)) {
             success =
                 qa_font_fail(error, QA_ERROR_FORMAT, codepoint, "FreeType cannot rasterize glyph");
             break;
@@ -357,7 +358,7 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
     free(page.pixels);
     free(codepoints);
     if (face)
-        FT_Done_Face(face);
+        library->freetype_api.FT_Done_Face(face);
     if (success)
         qa_font_internal_measure_cap_ink(font);
     if (!success || !font->glyph_count || !qa_font_internal_publish(font, out, error)) {

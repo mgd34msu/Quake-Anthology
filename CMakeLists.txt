@@ -206,7 +206,8 @@ add_library(qa_text STATIC
     src/text/font/console.c)
 target_link_libraries(qa_text PUBLIC qa_content qa_audio qa_scene qa_console
     qa_campaign
-    PRIVATE Freetype::Freetype)
+    PRIVATE qa_display)
+target_include_directories(qa_text SYSTEM PRIVATE ${FREETYPE_INCLUDE_DIRS})
 
 add_library(qa_qc STATIC
     src/compat/qc/program.c
@@ -819,7 +820,9 @@ add_library(qa_audio STATIC
     src/audio/reverb.c
     src/audio/streams.c
     src/audio/wavelet.c)
-target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 PkgConfig::VORBISFILE)
+target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 qa_display)
+target_include_directories(qa_audio SYSTEM PRIVATE ${VORBISFILE_INCLUDE_DIRS})
+target_compile_options(qa_audio PRIVATE ${VORBISFILE_CFLAGS_OTHER})
 
 add_library(qa_media STATIC
     src/media/source.c
@@ -840,7 +843,9 @@ add_library(qa_media STATIC
     src/media/material_movies_prepare.c
     )
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
-    PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
+    PRIVATE PkgConfig::OGG qa_display)
+target_include_directories(qa_media SYSTEM PRIVATE ${THEORADEC_INCLUDE_DIRS})
+target_compile_options(qa_media PRIVATE ${THEORADEC_CFLAGS_OTHER})
 
 add_library(qa_scene STATIC
     src/render/scene/world/q1_sky.c
@@ -894,7 +899,8 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/fog.c)
 target_link_libraries(qa_render_cpu PUBLIC qa_scene PRIVATE SDL2::SDL2 qa_jobs)
 
-add_library(qa_display STATIC src/platform/display.c src/platform/directories.c)
+add_library(qa_display STATIC src/platform/display.c src/platform/directories.c
+    src/platform/native_libraries.c)
 target_link_libraries(qa_display PUBLIC qa_core PRIVATE SDL2::SDL2)
 
 add_library(qa_render_gl STATIC

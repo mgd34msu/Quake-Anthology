@@ -5,6 +5,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool freetype_bind(qa_platform_library *library, void *out, qa_error *error)
+{
+    qa_freetype_api *api = out;
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Init_FreeType, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Done_FreeType, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_New_Memory_Face, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Done_Face, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Select_Charmap, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Set_Char_Size, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Set_Pixel_Sizes, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Get_Char_Index, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Get_First_Char, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Get_Next_Char, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Load_Glyph, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Render_Glyph, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Outline_Translate, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, FT_Outline_Get_Bitmap, error);
+    return true;
+}
+
 struct qa_font_library_capture { qa_font_library *library; };
 bool qa_font_library_idle(const qa_font_library *library)
 { return library && !library->capture && !library->policy && !library->codec_active && !library->callbacks; }
@@ -116,7 +136,8 @@ void qa_font_library_destroy(qa_font_library *library) {
     for (size_t i = 0; i < library->font_count; ++i)
         qa_font_internal_destroy(library->fonts[i]);
     if (library->freetype)
-        FT_Done_FreeType(library->freetype);
+        library->freetype_api.FT_Done_FreeType(library->freetype);
+    qa_platform_library_close(library->freetype_module);
     free(library->fonts);
     free(library);
 }
@@ -275,8 +296,21 @@ bool qa_font_internal_freetype(qa_font_library *library, FT_Library *out, qa_err
     if (!library || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid FreeType request");
     if (!qa_font_internal_admission_ready(library,error)) return false;
-    if (!library->freetype && FT_Init_FreeType(&library->freetype))
-        return qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "FreeType initialization failed");
+    if (!library->freetype) {
+        qa_freetype_api api;
+        qa_platform_library *module = NULL;
+        if (!qa_platform_library_open(QA_PLATFORM_LIBRARY_FREETYPE, freetype_bind,
+                                       &api, &module, error))
+            return false;
+        FT_Library freetype;
+        if (api.FT_Init_FreeType(&freetype)) {
+            qa_platform_library_close(module);
+            return qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "FreeType initialization failed");
+        }
+        library->freetype_api = api;
+        library->freetype_module = module;
+        library->freetype = freetype;
+    }
     *out = library->freetype;
     return true;
 }

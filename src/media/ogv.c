@@ -6,6 +6,22 @@
 #include <string.h>
 #include <threads.h>
 
+static bool theora_bind(qa_platform_library *library, void *out, qa_error *error)
+{
+    qa_theora_api *api = out;
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_info_init, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_info_clear, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_comment_init, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_comment_clear, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_decode_headerin, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_decode_alloc, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_setup_free, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_decode_free, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_decode_packetin, error);
+    QA_PLATFORM_LIBRARY_BIND(library, api, th_decode_ycbcr_out, error);
+    return true;
+}
+
 static once_flag color_once = ONCE_FLAG_INIT;
 static struct color_table {
     double y[256], red[256], green_u[256], green_v[256], blue[256];
@@ -30,7 +46,7 @@ static uint8_t color_byte(double value) {
 
 static bool picture(qa_ogv_playback *playback, qa_error *error) {
     th_ycbcr_buffer planes;
-    if (th_decode_ycbcr_out(playback->decoder, planes) != 0) {
+    if (playback->asset->api.th_decode_ycbcr_out(playback->decoder, planes) != 0) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Theora output planes are unavailable");
         return false;
     }
@@ -79,11 +95,11 @@ static bool picture(qa_ogv_playback *playback, qa_error *error) {
 
 static bool header_info(qa_ogv_asset *asset, qa_error *error) {
     th_comment comments;
-    th_comment_init(&comments);
+    asset->api.th_comment_init(&comments);
     bool success = false;
     for (size_t i = 0; i < 3; ++i) {
         ogg_packet packet = qa_ogv_native_packet(&asset->movie, i);
-        int result = th_decode_headerin(&asset->video_info, &comments, &asset->setup, &packet);
+        int result = asset->api.th_decode_headerin(&asset->video_info, &comments, &asset->setup, &packet);
         if (result <= 0) {
             qa_error_set(error, QA_ERROR_FORMAT, i, "Invalid Theora header: %d", result);
             goto done;
@@ -114,7 +130,7 @@ static bool header_info(qa_ogv_asset *asset, qa_error *error) {
     asset->rgba_bytes = (size_t)info->pic_width * info->pic_height * 4;
     success = true;
 done:
-    th_comment_clear(&comments);
+    asset->api.th_comment_clear(&comments);
     return success;
 }
 
@@ -129,7 +145,12 @@ bool qa_ogv_asset_load(qa_media_input *input, qa_ogv_asset **out, qa_error *erro
         return false;
     }
     asset->references = 1;
-    th_info_init(&asset->video_info);
+    if (!qa_platform_library_open(QA_PLATFORM_LIBRARY_THEORADEC, theora_bind,
+                                   &asset->api, &asset->library, error)) {
+        free(asset);
+        return false;
+    }
+    asset->api.th_info_init(&asset->video_info);
     if (!qa_ogv_demux(input, &asset->movie, error) || !header_info(asset, error)) {
         qa_ogv_asset_release(asset);
         return false;
@@ -144,8 +165,9 @@ void qa_ogv_asset_retain(qa_ogv_asset *asset) {
 void qa_ogv_asset_release(qa_ogv_asset *asset) {
     if (!asset || --asset->references)
         return;
-    th_setup_free(asset->setup);
-    th_info_clear(&asset->video_info);
+    asset->api.th_setup_free(asset->setup);
+    asset->api.th_info_clear(&asset->video_info);
+    qa_platform_library_close(asset->library);
     qa_ogv_movie_free(&asset->movie);
     free(asset);
 }
@@ -178,7 +200,7 @@ static qa_ogv_playback *prepare(qa_ogv_asset *asset, const qa_ogv_options *optio
     playback->epoch_ms = epoch;
     playback->reset_audio = true;
     playback->status = QA_MEDIA_PLAYING;
-    playback->decoder = th_decode_alloc(&asset->video_info, asset->setup);
+    playback->decoder = asset->api.th_decode_alloc(&asset->video_info, asset->setup);
     playback->pixels = malloc(asset->rgba_bytes);
     if (!playback->decoder || !playback->pixels) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Theora decoder or RGBA output");
@@ -219,7 +241,7 @@ static bool decode_frame(qa_ogv_playback *playback, qa_error *error) {
     }
     ogg_packet packet =
         qa_ogv_native_packet(&playback->asset->movie, (size_t)playback->next_index + 3);
-    int result = th_decode_packetin(playback->decoder, &packet, NULL);
+    int result = playback->asset->api.th_decode_packetin(playback->decoder, &packet, NULL);
     if (result < 0) {
         qa_error_set(error, QA_ERROR_FORMAT, (size_t)playback->next_index,
                      "Invalid Theora frame: %d", result);
@@ -314,7 +336,7 @@ void qa_ogv_playback_destroy(qa_ogv_playback *playback) {
     if (!playback || playback->dispatching)
         return;
     if (playback->decoder)
-        th_decode_free(playback->decoder);
+        playback->asset->api.th_decode_free(playback->decoder);
     qa_audio_stream_close(playback->audio);
     qa_ogv_asset_release(playback->asset);
     free(playback->pixels);
@@ -322,16 +344,16 @@ void qa_ogv_playback_destroy(qa_ogv_playback *playback) {
     free(playback);
 }
 static bool rewind_decoder(qa_ogv_playback *playback, qa_error *error) {
-    th_dec_ctx *next = th_decode_alloc(&playback->asset->video_info, playback->asset->setup);
+    th_dec_ctx *next = playback->asset->api.th_decode_alloc(&playback->asset->video_info, playback->asset->setup);
     if (!next) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Restarting Theora decoder");
         return false;
     }
     if (playback->audio && !qa_audio_stream_seek(playback->audio, 0, error)) {
-        th_decode_free(next);
+        playback->asset->api.th_decode_free(next);
         return false;
     }
-    th_decode_free(playback->decoder);
+    playback->asset->api.th_decode_free(playback->decoder);
     playback->decoder = next;
     playback->next_index = 0;
     playback->has_frame = false;

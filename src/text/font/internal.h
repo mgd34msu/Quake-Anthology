@@ -3,10 +3,28 @@
 
 #include "qa/font.h"
 #include "qa/binary.h"
+#include "../../platform/native_libraries.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_OUTLINE_H
+
+typedef struct qa_freetype_api {
+    FT_Error (*FT_Init_FreeType)(FT_Library *);
+    FT_Error (*FT_Done_FreeType)(FT_Library);
+    FT_Error (*FT_New_Memory_Face)(FT_Library, const FT_Byte *, FT_Long, FT_Long, FT_Face *);
+    FT_Error (*FT_Done_Face)(FT_Face);
+    FT_Error (*FT_Select_Charmap)(FT_Face, FT_Encoding);
+    FT_Error (*FT_Set_Char_Size)(FT_Face, FT_F26Dot6, FT_F26Dot6, FT_UInt, FT_UInt);
+    FT_Error (*FT_Set_Pixel_Sizes)(FT_Face, FT_UInt, FT_UInt);
+    FT_UInt (*FT_Get_Char_Index)(FT_Face, FT_ULong);
+    FT_ULong (*FT_Get_First_Char)(FT_Face, FT_UInt *);
+    FT_ULong (*FT_Get_Next_Char)(FT_Face, FT_ULong, FT_UInt *);
+    FT_Error (*FT_Load_Glyph)(FT_Face, FT_UInt, FT_Int32);
+    FT_Error (*FT_Render_Glyph)(FT_GlyphSlot, FT_Render_Mode);
+    void (*FT_Outline_Translate)(const FT_Outline *, FT_Pos, FT_Pos);
+    FT_Error (*FT_Outline_Get_Bitmap)(FT_Library, FT_Outline *, const FT_Bitmap *);
+} qa_freetype_api;
 
 struct qa_font {
     qa_font_library *library;
@@ -35,6 +53,8 @@ struct qa_font_library {
     qa_font **fonts;
     size_t font_count, font_capacity;
     uint64_t q3_save_nonce;
+    qa_platform_library *freetype_module;
+    qa_freetype_api freetype_api;
     FT_Library freetype;
     struct qa_font_library_capture *capture;
     qa_font_resource_policy *policy;

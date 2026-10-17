@@ -199,10 +199,10 @@ static void q3_bitmap_free(q3_bitmap *bitmap) {
     *bitmap = (q3_bitmap){0};
 }
 
-static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_bitmap *out,
+static bool render_q3_glyph(qa_font_library *library, FT_Face face, uint32_t code, q3_bitmap *out,
                             qa_error *error) {
-    FT_UInt index = FT_Get_Char_Index(face, code);
-    FT_Error status = FT_Load_Glyph(face, index, FT_LOAD_DEFAULT);
+    FT_UInt index = library->freetype_api.FT_Get_Char_Index(face, code);
+    FT_Error status = library->freetype_api.FT_Load_Glyph(face, index, FT_LOAD_DEFAULT);
     if (status)
         return qa_font_fail(error, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
                             code, "FreeType cannot load Q3 glyph");
@@ -257,8 +257,8 @@ static bool render_q3_glyph(FT_Library library, FT_Face face, uint32_t code, q3_
         target.buffer = pixels;
         target.num_grays = 256;
         target.pixel_mode = FT_PIXEL_MODE_GRAY;
-        FT_Outline_Translate(&slot->outline, (FT_Pos)-left, (FT_Pos)-bottom);
-        status = FT_Outline_Get_Bitmap(library, &slot->outline, &target);
+        library->freetype_api.FT_Outline_Translate(&slot->outline, (FT_Pos)-left, (FT_Pos)-bottom);
+        status = library->freetype_api.FT_Outline_Get_Bitmap(library->freetype, &slot->outline, &target);
         if (status) {
             free(pixels);
             return qa_font_fail(error, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT, code,
@@ -362,19 +362,19 @@ static bool generate_q3(qa_font_library *library, const char *cache_name,
     bool success = qa_font_internal_freetype(library, &freetype, &unavailable);
     if (success && bytes.size > LONG_MAX)
         success = qa_font_fail(&unavailable, QA_ERROR_FORMAT, 0, "FreeType cannot open Q3 font face");
-    if (success && (status = FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
+    if (success && (status = library->freetype_api.FT_New_Memory_Face(freetype, bytes.data, (FT_Long)bytes.size, 0, &face)))
         success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_FORMAT,
                                0, "FreeType cannot open Q3 font face");
-    if (success && (status = FT_Select_Charmap(face, FT_ENCODING_UNICODE)))
+    if (success && (status = library->freetype_api.FT_Select_Charmap(face, FT_ENCODING_UNICODE)))
         success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_UNSUPPORTED,
                                0, "Q3 TrueType face has no Unicode charmap");
-    if (success && (status = FT_Set_Char_Size(face, (FT_F26Dot6)point_size * 64,
+    if (success && (status = library->freetype_api.FT_Set_Char_Size(face, (FT_F26Dot6)point_size * 64,
                                            (FT_F26Dot6)point_size * 64, 72, 72)))
         success = qa_font_fail(&unavailable, status == FT_Err_Out_Of_Memory ? QA_ERROR_MEMORY : QA_ERROR_UNSUPPORTED,
                                0, "FreeType cannot select Q3 point size");
     if (!success) {
         if (face)
-            FT_Done_Face(face);
+            library->freetype_api.FT_Done_Face(face);
         qa_font_internal_destroy(font);
         if (unavailable.code == QA_ERROR_MEMORY || unavailable.code == QA_ERROR_CAPACITY ||
             unavailable.code == QA_ERROR_ARGUMENT) {
@@ -390,7 +390,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name,
     for (uint32_t code = 0; success && code < 255u; ++code) {
         q3_bitmap bitmap = {0};
         qa_error glyph_error = {0};
-        bool available = render_q3_glyph(freetype, face, code, &bitmap, &glyph_error);
+        bool available = render_q3_glyph(library, face, code, &bitmap, &glyph_error);
         if (!available && glyph_error.code == QA_ERROR_MEMORY) {
             if (error) *error = glyph_error;
             success = false;
@@ -409,7 +409,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name,
     for (uint32_t code = 0; success && code < 255u; ++code) {
         q3_bitmap bitmap = {0};
         qa_error glyph_error = {0};
-        if (!render_q3_glyph(freetype, face, code, &bitmap, &glyph_error)) {
+        if (!render_q3_glyph(library, face, code, &bitmap, &glyph_error)) {
             q3_bitmap_free(&bitmap);
             if (glyph_error.code == QA_ERROR_MEMORY) {
                 if (error) *error = glyph_error;
@@ -457,7 +457,7 @@ static bool generate_q3(qa_font_library *library, const char *cache_name,
         success = q3_page(font, point_size, page, page_start, 255u, gray, available, glyph_images, error);
     free(gray);
     if (face)
-        FT_Done_Face(face);
+        library->freetype_api.FT_Done_Face(face);
     if (success)
         success = publish_record(font, cache_name, false, out, error);
     if (success) {
