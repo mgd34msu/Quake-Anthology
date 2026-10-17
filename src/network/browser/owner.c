@@ -122,7 +122,13 @@ bool qa_server_browser_create(qa_http *http, uint32_t capacity, const qa_browser
     if (!browser->decoders) { qa_server_browser_destroy(browser); return false; }
     *browser->decoders = (browser_decode_storage){0};
     if (!qa_pool_prepare(&browser->decoders->arenas, &browser->decoders->backing,
-        0, sizeof(qa_arena), _Alignof(qa_arena), error)) {
+        1, sizeof(qa_arena), _Alignof(qa_arena), error)) {
+        qa_server_browser_destroy(browser); return false;
+    }
+    qa_arena *decode = qa_pool_at(&browser->decoders->arenas, 0);
+    *decode = (qa_arena){0};
+    if (!qa_arena_reserve(decode, (QA_BROWSER_DATAGRAM_BYTES / 6) * sizeof(qa_net_address) +
+        _Alignof(qa_net_address) - 1, error)) {
         qa_server_browser_destroy(browser); return false;
     }
     browser->responses = qa_arena_alloc(&browser->response_storage, sizeof(*browser->responses),
@@ -264,11 +270,21 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
     if (!browser || browser->callback || !packet || !recognized) return qa_browser_fail(error, "Invalid discovery delivery");
     *recognized = false; if (packet->kind != QA_NET_POLL_PACKET) return true;
     if (browser->master_pending && qa_net_address_equal(&browser->master, &packet->from, true)) {
-        qa_net_address addresses[256]; size_t count; bool complete; qa_error ignored = {0};
-        if (qa_browser_master_decode(packet->payload, browser->master_protocol, addresses, 256, &count, &complete, &ignored)) {
+        /* Q2 packs each endpoint into six bytes; Q3 needs another delimiter. */
+        size_t capacity = packet->payload.size / 6, slot, count;
+        if (capacity > SIZE_MAX / sizeof(qa_net_address)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Master reply address extent exceeds memory"); return false;
+        }
+        qa_arena *scratch = qa_browser_decode_acquire(browser, &slot, error);
+        if (!scratch) return false;
+        qa_net_address *addresses = capacity ? qa_arena_alloc(scratch,
+            capacity * sizeof(*addresses), _Alignof(qa_net_address), error) : NULL;
+        if (capacity && !addresses) { qa_browser_decode_release(browser, slot); return false; }
+        bool complete; qa_error ignored = {0};
+        if (qa_browser_master_decode(packet->payload, browser->master_protocol, addresses, capacity, &count, &complete, &ignored)) {
             uint32_t source = browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0 ?
                 qa_browser_q3_source_bit(browser->q3->master_source) : QA_SERVER_MASTER;
-            bool malformed = false; size_t found = 0;
+            bool malformed = false, ok = true; size_t found = 0;
             for (size_t i = 0; i < count; ++i) {
                 if (!addresses[i].port) {
                     if (browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0) { malformed = true; break; }
@@ -277,10 +293,12 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
                 if (browser->master_protocol.kind == QA_NET_Q3_68 && browser->q3->master_source >= 0 &&
                     browser->q3->sources[browser->q3->master_source].count >=
                     (browser->q3->master_source == 2 ? 8192u : 128u)) break;
-                if (!qa_server_browser_add(browser, &addresses[i], browser->master_protocol, source, error)) return false;
-                if (!qa_browser_status_enqueue(browser, &addresses[i], browser->master_protocol, error)) return false;
+                if (!qa_server_browser_add(browser, &addresses[i], browser->master_protocol, source, error) ||
+                    !qa_browser_status_enqueue(browser, &addresses[i], browser->master_protocol, error)) { ok = false; break; }
                 ++found;
             }
+            qa_browser_decode_release(browser, slot);
+            if (!ok) return false;
             if (!malformed) {
                 browser->q3->master_received = true;
                 if (complete) browser->master_pending = false;
@@ -296,6 +314,7 @@ bool qa_server_browser_receive(qa_server_browser *browser, const qa_net_datagram
             }
             *recognized = true; return true;
         }
+        qa_browser_decode_release(browser, slot);
     }
     if (!qa_browser_q3_receive(browser, packet, recognized, error)) return false;
     if (*recognized) return true;

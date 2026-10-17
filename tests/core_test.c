@@ -10253,6 +10253,8 @@ static void test_gtv_output_reuse(void)
 typedef struct browser_probe_capture {
     size_t sends;
     size_t nq_queries, qw_queries, q2_queries;
+    size_t master_calls, master_found;
+    bool master_complete, master_error;
     char challenge[32];
 } browser_probe_capture;
 static bool browser_probe_send(void *context, const qa_net_address *address, qa_bytes bytes, qa_error *error)
@@ -10272,6 +10274,64 @@ static bool browser_probe_send(void *context, const qa_net_address *address, qa_
         !strcmp(qa_q3_token(&command.tokens, 0), "getstatus"))
         snprintf(capture->challenge, sizeof(capture->challenge), "%s", qa_q3_token(&command.tokens, 1));
     return true;
+}
+static void browser_master_capture(void *context, const qa_error *error,
+    const qa_browser_master_result *result)
+{
+    browser_probe_capture *capture = context;
+    ++capture->master_calls;
+    capture->master_found = result->found;
+    capture->master_complete = result->complete;
+    capture->master_error = error != NULL;
+}
+static void test_browser_large_master_reply(void)
+{
+    qa_error error = {0}; qa_http *http = NULL;
+    CHECK(qa_http_create(NULL, &http, &error));
+    const qa_net_protocol protocols[] = {QA_NET_Q2_34, QA_NET_Q3_68};
+    qa_net_address master = {.kind = QA_NET_IPV4, .port = 27900, .host.ipv4 = {127,0,0,1}};
+    for (size_t dialect = 0; dialect < sizeof(protocols)/sizeof(*protocols); ++dialect) {
+        bool q3 = protocols[dialect] == QA_NET_Q3_68;
+        qa_server_browser *browser = NULL; browser_probe_capture capture = {0};
+        qa_browser_hooks hooks = {.context = &capture, .send = browser_probe_send,
+            .master_complete = browser_master_capture};
+        qa_net_protocol_id protocol = {.kind = protocols[dialect]};
+        CHECK(qa_server_browser_create(http, 512, &hooks, &browser, &error));
+        CHECK(qa_server_browser_master_udp(browser, &master, protocol, 10, 1000, &error));
+        uint8_t bytes[2048]; qa_net_writer writer;
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        CHECK(qa_q2_oob_write(&writer, q3 ? "getserversResponse" : "servers\n"));
+        for (unsigned i = 1; i <= 257; ++i) {
+            uint8_t endpoint[] = {10,3,(uint8_t)(i >> 8),(uint8_t)i,0x6d,0x06};
+            if (q3) CHECK(qa_net_write_data(&writer, "\\", 1));
+            CHECK(qa_net_write_data(&writer, endpoint, sizeof(endpoint)));
+        }
+        if (q3) CHECK(qa_net_write_data(&writer, "\\EOT", 4));
+        qa_net_datagram packet = {.kind = QA_NET_POLL_PACKET, .from = master,
+            .payload = {bytes, qa_net_writer_size(&writer)}, .received_ns = 20};
+        bool recognized = false;
+        CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized);
+        CHECK(qa_server_browser_count(browser) == 257 && capture.master_calls == 1 &&
+            capture.master_found == 257 && capture.master_complete && !capture.master_error);
+        qa_server_entry last;
+        CHECK(qa_server_browser_at(browser, 256, &last) && last.address.port == 27910 &&
+            last.address.host.ipv4[2] == 1 && last.address.host.ipv4[3] == 1);
+        CHECK(qa_server_browser_query(browser, &last.address, protocol, false, 100, 1000, &error));
+        qa_net_writer_init(&writer, bytes, sizeof(bytes), &error);
+        if (q3) {
+            char response[256];
+            snprintf(response, sizeof(response), "statusResponse\n\\challenge\\%s\\sv_hostname\\last"
+                "\\mapname\\q3dm1\\sv_maxclients\\8\n", capture.challenge);
+            CHECK(qa_q2_oob_write(&writer, response));
+        } else CHECK(qa_q2_status_write(&writer, &(qa_q2_status){
+            .server_info = "\\hostname\\last\\mapname\\base1\\maxclients\\8"}, "print\n", sizeof(bytes)-4));
+        packet.from = last.address; packet.payload = (qa_bytes){bytes, qa_net_writer_size(&writer)};
+        packet.received_ns = 300;
+        CHECK(qa_server_browser_receive(browser, &packet, &recognized, &error) && recognized);
+        CHECK(qa_server_browser_at(browser, 256, &last) && last.available && last.has_ping && last.ping_ns == 200);
+        qa_server_browser_destroy(browser);
+    }
+    CHECK(qa_http_destroy(http, &error));
 }
 static void test_browser_endpoint_probe(void)
 {
@@ -10572,6 +10632,7 @@ int main(int argc, char **argv)
     test_connection_expiry();
     test_loopback_admission();
     test_browser_endpoint_probe();
+    test_browser_large_master_reply();
     test_browser_lan_overlap();
     test_dosbox_loopback();
     test_nq_extended_appearance();
