@@ -352,36 +352,55 @@ bool application_q2_original_prepare(application_provider *provider, qa_error *e
     return true;
 }
 
-static bool native_file(application_provider *provider, qa_bytes bytes,
-    qa_native_restore_part part, qa_error *error)
+static bool native_file_advance(application_provider *provider, qa_bytes bytes,
+    qa_native_restore_part part, size_t quantum, bool *complete, qa_error *error)
 {
     struct application_native_q2 *engine=provider->state.native.q2_engine;
-    qa_native_module_info module=qa_native_module_describe(provider->state.native.module);
-    qa_native_checkpoint value={.kind=engine->profile==QA_NATIVE_Q2_GAME_API2023?
-            QA_NATIVE_CHECKPOINT_Q2_RERELEASE:QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
-        .profile=module.profile,.q3_role=QA_QVM_GAME,.image=module.image,
-        .source={(uint8_t *)module.source,strlen(module.source)},
-        .has_declaration=engine->declaration!=NULL};
-    qa_buffer file={(uint8_t *)bytes.data,bytes.size};
-    if (part==QA_NATIVE_RESTORE_GAME) { value.game=file; value.has_game=true; }
-    else { value.level=file; value.has_level=true; }
+    *complete=false;
     qa_native_host *host=provider->state.native.host;
-    return qa_native_checkpoint_restore(qa_native_host_instance(host),&value,part,error) &&
-        (part!=QA_NATIVE_RESTORE_LEVEL || qa_native_host_source_reconcile(host,error));
+    if (!engine->restore_call) {
+        qa_native_module_info module=qa_native_module_describe(provider->state.native.module);
+        qa_native_checkpoint value={.kind=engine->profile==QA_NATIVE_Q2_GAME_API2023?
+                QA_NATIVE_CHECKPOINT_Q2_RERELEASE:QA_NATIVE_CHECKPOINT_Q2_CLASSIC,
+            .profile=module.profile,.q3_role=QA_QVM_GAME,.image=module.image,
+            .source={(uint8_t *)module.source,strlen(module.source)},
+            .has_declaration=engine->declaration!=NULL};
+        qa_buffer file={(uint8_t *)bytes.data,bytes.size};
+        if (part==QA_NATIVE_RESTORE_GAME) { value.game=file; value.has_game=true; }
+        else { value.level=file; value.has_level=true; }
+        if (!qa_native_checkpoint_restore_begin(qa_native_host_instance(host),&value,part,
+            &engine->restore_call,error)) return false;
+    }
+    bool returned=false;
+    if (!qa_native_loading_call_step(engine->restore_call,quantum,&returned,error)) return false;
+    if (!returned) return true;
+    if (!qa_native_loading_call_finish(&engine->restore_call,error) ||
+        (part==QA_NATIVE_RESTORE_LEVEL && !qa_native_host_source_reconcile(host,error))) return false;
+    *complete=true; return true;
 }
 
-bool application_q2_original_game(application_provider *provider, qa_error *error)
+bool application_q2_original_game_advance(application_provider *provider, size_t quantum,
+    bool *complete, qa_error *error)
 {
+    *complete=true;
     if (!application_q2_original_source(provider)) return true;
     struct application_q2_original_save *stage=provider->application->q2_original_save;
     if (!stage) return true;
     if (!stage->prepared || stage->game_read || stage->failed)
         return application_fail(error,QA_ERROR_ARGUMENT,"Original Q2 ReadGame lost its constructor boundary");
     qa_bytes bytes={stage->save->game.data,stage->save->game.size};
-    bool ok=provider->kind==APPLICATION_PROVIDER_Q2?
-        qa_q2_game_original_read_game(provider->state.q2,bytes,error):native_file(provider,bytes,QA_NATIVE_RESTORE_GAME,error);
-    stage->game_read=ok; stage->failed=!ok;
+    bool ok;
+    if (provider->kind==APPLICATION_PROVIDER_Q2)
+        ok=qa_q2_game_original_read_game(provider->state.q2,bytes,error);
+    else ok=native_file_advance(provider,bytes,QA_NATIVE_RESTORE_GAME,quantum,complete,error);
+    stage->game_read=ok && *complete; stage->failed=!ok;
     return ok;
+}
+
+bool application_q2_original_game(application_provider *provider, qa_error *error)
+{
+    bool complete=false;
+    return application_q2_original_game_advance(provider,0,&complete,error) && complete;
 }
 
 static bool restore_engine_level(application_provider *provider,const qa_q2_save_level *level,qa_error *error)
@@ -420,8 +439,10 @@ static bool restore_engine_level(application_provider *provider,const qa_q2_save
     return ok;
 }
 
-bool application_q2_original_level(application_provider *provider, qa_error *error)
+bool application_q2_original_level_advance(application_provider *provider, size_t quantum,
+    bool *complete, qa_error *error)
 {
+    *complete=true;
     if (!application_q2_original_source(provider)) return true;
     struct application_q2_original_save *stage=provider->application->q2_original_save;
     if (stage && (!stage->game_read || stage->level_read || stage->failed))
@@ -429,12 +450,21 @@ bool application_q2_original_level(application_provider *provider, qa_error *err
     const qa_q2_save_level *level=stage?current_level(stage):application_campaign_q2_level(provider->application);
     bool ok=true;
     if (level) {
+        struct application_native_q2 *engine=provider->kind==APPLICATION_PROVIDER_NATIVE?
+            provider->state.native.q2_engine:NULL;
         qa_bytes bytes={level->game.data,level->game.size};
-        ok=restore_engine_level(provider,level,error) && (provider->kind==APPLICATION_PROVIDER_Q2?
-            qa_q2_game_original_read_level(provider->state.q2,bytes,level,error):native_file(provider,bytes,QA_NATIVE_RESTORE_LEVEL,error));
+        if (!engine || !engine->restore_call) ok=restore_engine_level(provider,level,error);
+        if (ok) ok=engine?native_file_advance(provider,bytes,QA_NATIVE_RESTORE_LEVEL,quantum,complete,error):
+            qa_q2_game_original_read_level(provider->state.q2,bytes,level,error);
     }
-    if (stage) { stage->level_read=ok; stage->failed=!ok; }
+    if (stage) { stage->level_read=ok && *complete; stage->failed=!ok; }
     return ok;
+}
+
+bool application_q2_original_level(application_provider *provider, qa_error *error)
+{
+    bool complete=false;
+    return application_q2_original_level_advance(provider,0,&complete,error) && complete;
 }
 
 bool application_q2_original_player(application_provider *provider,uint32_t slot,

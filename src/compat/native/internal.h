@@ -151,6 +151,7 @@ struct qa_native_instance {
 struct qa_native_loading_call {
     qa_native_instance *instance;
     qa_native_loading_call *previous;
+    struct native_checkpoint_restore *checkpoint_restore;
     qa_unified_frame_lease *storage;
     qa_arena scratch;
     guest_abi_call *abi;
@@ -161,6 +162,9 @@ struct qa_native_loading_call {
     bool pending_shutdown, pending_restart, pending_initialize;
     bool restart_requested, shutdown_entry, started, returned, failed, named;
 };
+
+bool native_checkpoint_restore_release(qa_native_instance *,
+    struct native_checkpoint_restore *, bool completed, bool okay, qa_error *);
 
 static inline void native_entity_notify(qa_native_instance *instance,
     qa_native_entity_change change, uint32_t slot, qa_native_address address, size_t bytes,

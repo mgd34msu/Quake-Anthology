@@ -252,6 +252,7 @@ typedef struct application_publication {
     bool physics_initialized;
     bool entities_parsed;
     bool published;
+    unsigned travel_phase, map_phase;
     struct application_supplies *supplies;
     struct application_startup_program_roster *programs;
 } application_publication;
@@ -788,7 +789,13 @@ uint64_t application_frame_revision(const qa_application *);
 bool application_monster_admit(void *, qa_actor_id, const qa_authored_monster *, qa_error *);
 bool application_monster_mission(void *, qa_actor_owner, qa_monster_mission *, qa_error *);
 bool application_map_prepare(qa_application *, application_publication *, qa_error *);
-bool application_map_publish(qa_application *, application_publication *, qa_error *);
+bool application_map_publish_advance(qa_application *, application_publication *, size_t,
+    bool *, qa_error *);
+bool application_native_q2_spawn_map_advance(application_provider *, const qa_bsp_view *,
+    qa_string_id, qa_string_id, size_t, bool *, qa_error *);
+bool application_publication_advance(qa_application *, application_publication *, size_t,
+    bool *, qa_error *);
+void application_startup_flow_yield_publication(qa_application *, application_publication *);
 bool application_match_prepare(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare_modes(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare_equipment(qa_application *, application_publication *, qa_error *);

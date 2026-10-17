@@ -488,7 +488,7 @@ bool qa_native_host_destroy_ready(const qa_native_host *host)
 
 bool qa_native_host_startup_paused(const qa_native_host *host)
 {
-    return host && (host->constructing || host->initializing) && !host->destroying && !host->reconstruction &&
+    return host && !host->destroying && !host->reconstruction &&
         !host->callback_depth && !host->call_scratch.active && qa_native_startup_paused(host->instance);
 }
 

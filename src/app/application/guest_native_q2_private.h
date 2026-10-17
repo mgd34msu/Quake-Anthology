@@ -38,7 +38,8 @@ typedef struct application_native_q2_client {
 typedef enum application_native_q2_loading_phase {
     APPLICATION_NATIVE_Q2_LOADING_NONE,
     APPLICATION_NATIVE_Q2_LOADING_HOST,
-    APPLICATION_NATIVE_Q2_LOADING_INITIALIZE
+    APPLICATION_NATIVE_Q2_LOADING_INITIALIZE,
+    APPLICATION_NATIVE_Q2_LOADING_MAP
 } application_native_q2_loading_phase;
 
 struct application_native_q2 {
@@ -101,6 +102,8 @@ struct application_native_q2 {
     qa_string_id map_name, spawn_point;
     char *entity_text;
     application_native_q2_loading_phase loading_phase;
+    unsigned map_loading_phase;
+    qa_native_loading_call *restore_call;
     bool map_admission_prepared;
     unsigned calls;
     uint32_t current_client, disconnect_client;

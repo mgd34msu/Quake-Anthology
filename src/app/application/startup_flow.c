@@ -41,6 +41,7 @@ struct application_startup_flow {
     size_t count, index, capacity, provider_ordinal;
     uint64_t generation;
     bool advancing, configured, validated, candidate_finished, cancelling, committed;
+    bool publication_pending;
     bool resources_ready, resources_consumed, resources_finished;
     bool resources_consuming, resources_finishing;
     bool resource_advancing, resource_waiting;
@@ -381,6 +382,14 @@ application_publication *application_startup_flow_take_publication(qa_applicatio
     flow->publication = NULL;
     flow->validated_publication = publication;
     return publication;
+}
+
+void application_startup_flow_yield_publication(qa_application *app, application_publication *publication)
+{
+    struct application_startup_flow *flow = app->startup_flow;
+    flow->validated_publication = publication;
+    flow->publication_pending = true;
+    flow->loading_provider = publication->map_provider;
 }
 
 static bool release_phases(struct application_startup_flow *flow, qa_error *error)
@@ -736,6 +745,13 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     flow->images_waiting = false;
     flow->advancing = true;
     flow->cancelling = true;
+    if (flow->publication_pending) {
+        if (!application_native_q2_loading_cancel(flow->loading_provider, error)) goto fail;
+        flow->loading_provider = NULL;
+        application_publication_dispose(app, flow->validated_publication);
+        flow->validated_publication = NULL;
+        flow->publication_pending = false;
+    }
     if (!flow->committed && !flow->engine_only) {
         for (size_t i = 0; i < qa_launch_snapshot_instance_count(flow->candidate); ++i) {
             application_provider *provider = qa_launch_snapshot_instance(flow->candidate, i)->state;
@@ -777,7 +793,12 @@ bool qa_application_startup_abort(qa_application *app, qa_error *error)
     if (!application_startup_program_abort(&flow->program, error)) goto fail;
     if (flow->committed) {
         if (flow->engine_only) finish_candidate(app, flow, NULL, true);
-        else if (!application_q3_campaign_launch_finish(app, true, error)) goto fail;
+        else {
+            finish_candidate(app, flow, qa_configuration_current(app->configuration), false);
+            application_q3_product_finish(app, &flow->product, false);
+            application_map_load_finish(app, false);
+            if (!application_q3_campaign_launch_finish(app, false, error)) goto fail;
+        }
         app->startup_flow = NULL;
         free(flow->sources); free(flow);
         return true;
@@ -1296,6 +1317,35 @@ static bool advance_primary_initialization(qa_application *app, struct applicati
     return ok && left;
 }
 
+static bool finish_committed_startup(qa_application *app, struct application_startup_flow *flow,
+    bool *complete, qa_error *error)
+{
+    bool ok = true;
+    bool published = app->state != QA_APPLICATION_FAULTED;
+    finish_candidate(app, flow, qa_configuration_current(app->configuration), published);
+    application_q3_product_finish(app, &flow->product, published);
+    application_map_load_finish(app, published);
+    if (published) ok = application_map_level_entry(app, true, error);
+    if (ok) ok = published ? application_startup_program_adopt(&flow->program, error)
+        : application_startup_program_abort(&flow->program, error);
+    if (ok && (flow->resources || (flow->resources_consumed && !flow->resources_finished))) {
+        if (app->state == QA_APPLICATION_FAULTED) {
+            if (error) *error = app->publication_error;
+            ok = false;
+        } else ok = application_fail(error, QA_ERROR_ARGUMENT,
+            "Committed publication retains entered resource cleanup");
+    }
+    if (!ok) application_fault(app, error);
+    if (ok) ok = application_q3_campaign_launch_finish(app, published, error);
+    if (ok) {
+        app->startup_flow = NULL;
+        free(flow->sources); free(flow);
+        if (app->state == QA_APPLICATION_READY) app->state = QA_APPLICATION_RUNNING;
+        *complete = true;
+    }
+    return ok;
+}
+
 bool qa_application_startup_advance(qa_application *app, bool *complete, qa_error *error)
 {
     if (!app || !complete || app->operation != APPLICATION_IDLE || app->frame_preparing ||
@@ -1304,7 +1354,7 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
     *complete = false;
     struct application_startup_flow *flow = app->startup_flow;
     if (!flow) { *complete = true; return true; }
-    if (flow->advancing || flow->cancelling || flow->generation != app->command_generation ||
+    if (flow->advancing || flow->cancelling || (!flow->committed && flow->generation != app->command_generation) ||
         !source_consoles_idle(flow))
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup frame lost its retained candidate lifetime");
     if (!candidate_callbacks_idle(app, flow, error)) return false;
@@ -1313,6 +1363,20 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
     flow->resource_waiting = false;
     flow->images_waiting = false;
     bool ok = true;
+    if (flow->committed && !flow->engine_only) {
+        if (flow->publication_pending) {
+            bool published = false;
+            ok = application_publication_advance(app, flow->validated_publication, 16384, &published, error);
+            if (!ok || published) {
+                flow->publication_pending = false;
+                flow->validated_publication = NULL;
+                flow->loading_provider = NULL;
+            }
+            if (!ok || !published) goto returned;
+        }
+        ok = finish_committed_startup(app, flow, complete, error);
+        goto returned;
+    }
     if (!flow->engine_only && !flow->providers_prepared) {
         bool prepared = false;
         ok = advance_providers(app, flow, &prepared, error);
@@ -1441,28 +1505,9 @@ bool qa_application_startup_advance(qa_application *app, bool *complete, qa_erro
             flow->transaction = NULL;
             flow->candidate = NULL;
             flow->committed = true;
-            bool published = app->state != QA_APPLICATION_FAULTED;
-            finish_candidate(app, flow, qa_configuration_current(app->configuration), published);
-            application_q3_product_finish(app, &flow->product, published);
-            application_map_load_finish(app, published);
-            if (published) ok = application_map_level_entry(app, true, error);
-            if (ok) ok = published ? application_startup_program_adopt(&flow->program, error)
-                : application_startup_program_abort(&flow->program, error);
-            if (ok && (flow->resources || (flow->resources_consumed && !flow->resources_finished))) {
-                if (app->state == QA_APPLICATION_FAULTED) {
-                    if (error) *error = app->publication_error;
-                    ok = false;
-                } else ok = application_fail(error, QA_ERROR_ARGUMENT,
-                    "Committed publication retains entered resource cleanup");
-            }
-            if (!ok) application_fault(app, error);
-            if (ok) ok = application_q3_campaign_launch_finish(app, published, error);
-            if (ok) {
-                app->startup_flow = NULL;
-                free(flow->sources); free(flow);
-                if (app->state == QA_APPLICATION_READY) app->state = QA_APPLICATION_RUNNING;
-                *complete = true;
-            }
+            if (flow->publication_pending) goto returned;
+            flow->validated_publication = NULL;
+            ok = finish_committed_startup(app, flow, complete, error);
         }
     }
 returned:

@@ -3173,10 +3173,10 @@ static bool configure_horde(qa_application *application,
     return true;
 }
 
-bool application_map_publish(qa_application *application,
-                             application_publication *publication,
-                             qa_error *error)
+bool application_map_publish_advance(qa_application *application,
+    application_publication *publication, size_t quantum, bool *complete, qa_error *error)
 {
+    *complete = false;
     if (application == NULL || publication == NULL ||
         publication->candidate == NULL || publication->map_provider == NULL ||
         !publication->entities_parsed || application->world == NULL ||
@@ -3191,106 +3191,117 @@ bool application_map_publish(qa_application *application,
         !application_map_spawn_point(application, choices, &spawn_point, error))
         return false;
 
-    application->current_map = current_map;
-    application->map_geometry = choices->world.geometry;
-    application->map_presentation = choices->world.presentation;
-    if (publication->map_provider->kind != APPLICATION_PROVIDER_Q1 &&
-        publication->map_provider->kind != APPLICATION_PROVIDER_QC)
-        application->q1_paused = false;
-    ++application->map_revision;
-    application->map_view_ready = true;
-    for (size_t index = 0; index < application->provider_count; ++index) {
-        application_provider *provider = application->providers[index];
-        if (provider != NULL && !provider->trajectory_only && provider->attached && provider->constructed &&
-            provider->kind == APPLICATION_PROVIDER_Q3 &&
-            (!application_native_q3_settings_register(provider, error) ||
-             (provider->map_bound &&
-              !application_native_q3_settings_reset_cache(provider, __DATE__, error))))
-            return false;
-    }
-    if (!application_bots_prepare(application, choices, &publication->map,
-                                   &publication->entities, error))
-        return false;
-    application->physics->world_actor = (qa_actor_id){0};
-    application->physics->gravity = 800.0f;
-    bool carry, unit;
-    const qa_q2_landmark *landmark;
-    application_map_travel_options(application, &carry, &unit, &landmark);
-    (void)carry; (void)landmark;
-    /* Reset retired source state before Q3 allocates its level actors. */
-    for (unsigned phase = 0; phase < 2; ++phase) {
+    if (!publication->map_phase) {
+        application->current_map = current_map;
+        application->map_geometry = choices->world.geometry;
+        application->map_presentation = choices->world.presentation;
+        if (publication->map_provider->kind != APPLICATION_PROVIDER_Q1 &&
+            publication->map_provider->kind != APPLICATION_PROVIDER_QC)
+            application->q1_paused = false;
+        ++application->map_revision;
+        application->map_view_ready = true;
         for (size_t index = 0; index < application->provider_count; ++index) {
             application_provider *provider = application->providers[index];
-            if (provider == NULL || provider->trajectory_only || !provider->attached || !provider->constructed ||
-                ((provider->kind == APPLICATION_PROVIDER_Q3) != (phase == 1)))
-                continue;
-            if (unit) {
-                provider->q1_server_flags = 0;
-                provider->q2_server_flags = 0;
-            }
-            const qa_product *product = qa_catalog_product(
-                catalog, provider->launch->selection.product);
-            if (product == NULL)
-                return application_fail(error, QA_ERROR_NOT_FOUND,
-                                        "provider product disappeared during map publication");
-            if (provider->kind == APPLICATION_PROVIDER_Q1) {
-                if (!q1_begin_map(provider, product, current_map, false, error))
-                    return false;
-            } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
-                if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
-                    return false;
-                if (!qa_q2_begin_map(provider->state.q2, current_map, spawn_point,
-                                     error))
-                    return false;
-                qa_q2_entity_services services =
-                    q2_entity_services(provider, choices);
-                services.spawn = q2_spawn;
-                if (!qa_q2_entities_configure(provider->state.q2, &services,
-                                              error))
-                    return false;
-                provider->map_bound = true;
-            } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
-                if (!q3_begin_map(provider, choices, error) ||
-                    !application_native_q3_settings_source_init(provider, error) ||
-                    !application_native_q3_ipfilters_init(provider, error) ||
-                    !application_native_q3_settings_install(provider, error))
-                    return false;
+            if (provider != NULL && !provider->trajectory_only && provider->attached && provider->constructed &&
+                provider->kind == APPLICATION_PROVIDER_Q3 &&
+                (!application_native_q3_settings_register(provider, error) ||
+                 (provider->map_bound &&
+                  !application_native_q3_settings_reset_cache(provider, __DATE__, error))))
+                return false;
+        }
+        if (!application_bots_prepare(application, choices, &publication->map,
+                                       &publication->entities, error))
+            return false;
+        application->physics->world_actor = (qa_actor_id){0};
+        application->physics->gravity = 800.0f;
+        bool carry, unit;
+        const qa_q2_landmark *landmark;
+        application_map_travel_options(application, &carry, &unit, &landmark);
+        (void)carry; (void)landmark;
+        /* Reset retired source state before Q3 allocates its level actors. */
+        for (unsigned phase = 0; phase < 2; ++phase) {
+            for (size_t index = 0; index < application->provider_count; ++index) {
+                application_provider *provider = application->providers[index];
+                if (provider == NULL || provider->trajectory_only || !provider->attached || !provider->constructed ||
+                    ((provider->kind == APPLICATION_PROVIDER_Q3) != (phase == 1)))
+                    continue;
+                if (unit) {
+                    provider->q1_server_flags = 0;
+                    provider->q2_server_flags = 0;
+                }
+                const qa_product *product = qa_catalog_product(
+                    catalog, provider->launch->selection.product);
+                if (product == NULL)
+                    return application_fail(error, QA_ERROR_NOT_FOUND,
+                                            "provider product disappeared during map publication");
+                if (provider->kind == APPLICATION_PROVIDER_Q1) {
+                    if (!q1_begin_map(provider, product, current_map, false, error))
+                        return false;
+                } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
+                    if (unit && !qa_q2_campaign_leave_unit(provider->state.q2, error))
+                        return false;
+                    if (!qa_q2_begin_map(provider->state.q2, current_map, spawn_point,
+                                         error))
+                        return false;
+                    qa_q2_entity_services services =
+                        q2_entity_services(provider, choices);
+                    services.spawn = q2_spawn;
+                    if (!qa_q2_entities_configure(provider->state.q2, &services,
+                                                  error))
+                        return false;
+                    provider->map_bound = true;
+                } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
+                    if (!q3_begin_map(provider, choices, error) ||
+                        !application_native_q3_settings_source_init(provider, error) ||
+                        !application_native_q3_ipfilters_init(provider, error) ||
+                        !application_native_q3_settings_install(provider, error))
+                        return false;
+                }
             }
         }
+
+        publication->map_phase = 1;
     }
 
-    bool spawned = false;
-    switch (publication->map_provider->kind) {
-    case APPLICATION_PROVIDER_Q1: {
-        size_t models = qa_bsp_record_count(&publication->map, QA_BSP_MODELS);
-        if (!models || models - 1 > UINT32_MAX || publication->entities.count > UINT32_MAX)
-            return application_fail(error, QA_ERROR_FORMAT,
-                                    "Q1 source map exceeds its native physical extent");
-        if (!qa_q1_wire_begin_world(publication->map_provider->state.q1,
-                choices->world.map, (uint32_t)(models - 1),
-                (uint32_t)publication->entities.count, error))
-            return false;
-        spawned = q1_spawn_map(publication->map_provider, choices,
-                            &publication->entities, publication->players, error);
-        break;
+    if (publication->map_phase == 1) {
+        bool spawned = false, source_complete = true;
+        if (publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            application_q2_original_source(publication->map_provider)) {
+            spawned = application_native_q2_spawn_map_advance(publication->map_provider,
+                &publication->map, current_map, spawn_point, quantum, &source_complete, error);
+        } else switch (publication->map_provider->kind) {
+        case APPLICATION_PROVIDER_Q1: {
+            size_t models = qa_bsp_record_count(&publication->map, QA_BSP_MODELS);
+            if (!models || models - 1 > UINT32_MAX || publication->entities.count > UINT32_MAX)
+                return application_fail(error, QA_ERROR_FORMAT,
+                                        "Q1 source map exceeds its native physical extent");
+            if (!qa_q1_wire_begin_world(publication->map_provider->state.q1,
+                    choices->world.map, (uint32_t)(models - 1),
+                    (uint32_t)publication->entities.count, error))
+                return false;
+            spawned = q1_spawn_map(publication->map_provider, choices,
+                                &publication->entities, publication->players, error);
+            break;
+        }
+        case APPLICATION_PROVIDER_Q2:
+            spawned = q2_spawn_map(publication->map_provider, choices,
+                                &publication->entities, publication->players, error);
+            break;
+        case APPLICATION_PROVIDER_Q3:
+            spawned = q3_spawn_map(publication->map_provider,
+                                &publication->entities, error);
+            break;
+        case APPLICATION_PROVIDER_QC:
+        case APPLICATION_PROVIDER_QVM:
+        case APPLICATION_PROVIDER_NATIVE:
+            spawned = application_guest_spawn_map(publication->map_provider,
+                &publication->map, &publication->entities, current_map, spawn_point, error);
+            break;
+        }
+        if (!spawned || !source_complete) return spawned;
+        publication->map_phase = 2;
     }
-    case APPLICATION_PROVIDER_Q2:
-        spawned = q2_spawn_map(publication->map_provider, choices,
-                            &publication->entities, publication->players, error);
-        break;
-    case APPLICATION_PROVIDER_Q3:
-        spawned = q3_spawn_map(publication->map_provider,
-                            &publication->entities, error);
-        break;
-    case APPLICATION_PROVIDER_QC:
-    case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
-        spawned = application_guest_spawn_map(publication->map_provider,
-            &publication->map, &publication->entities, current_map, spawn_point, error);
-        break;
-    }
-    if (!spawned)
-        return false;
+    if (publication->map_phase == 3) { *complete = true; return true; }
     if (!configure_horde(application, choices, publication->map_provider, error))
         return false;
     for (size_t i = 0; i < application->provider_count; ++i) {
@@ -3337,5 +3348,7 @@ bool application_map_publish(qa_application *application,
             !application_guest_clients_drain(provider, error))
             return false;
     }
+    publication->map_phase = 3;
+    *complete = true;
     return true;
 }

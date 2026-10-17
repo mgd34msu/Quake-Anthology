@@ -631,6 +631,11 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
 bool qa_native_checkpoint_restore(qa_native_instance *instance,
                                   const qa_native_checkpoint *checkpoint,
                                   qa_native_restore_part part, qa_error *error);
+/* GAME/LEVEL restore keeps its source file or JSON storage until the loading
+ * call finishes or is abandoned. Checkpoint bytes may be released after begin. */
+bool qa_native_checkpoint_restore_begin(qa_native_instance *instance,
+    const qa_native_checkpoint *checkpoint, qa_native_restore_part part,
+    qa_native_loading_call **out, qa_error *error);
 void qa_native_checkpoint_free(qa_native_checkpoint *checkpoint);
 bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buffer *out,
                                  qa_error *error);

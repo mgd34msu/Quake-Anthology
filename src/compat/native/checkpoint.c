@@ -370,56 +370,45 @@ static bool same_identity(const qa_native_instance *instance,
     return true;
 }
 
-static bool restore_classic(qa_native_instance *instance, qa_bytes bytes, const char *file_name,
-                            const char *entry_name, qa_error *error) {
-    native_process_temporary *temporary = NULL;
-    char *path = NULL;
-    if (!temporary_create(instance, &temporary, error))
-        return false;
-    bool ok = temporary_file(temporary, file_name, bytes, &path, error);
-    if (ok) {
-        source_file file = {0};
-        qa_native_address source = 0;
-        ok = source_file_admit(instance, temporary, path, false, &file, error) &&
-            source_string(instance, path, &source, error);
-        qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
-                                    .as.address = source};
-        ok = ok && call_entry(instance, entry_name, &argument, 1, NULL, error);
-        ok = release_source_string(instance, source, ok, error);
-        ok = source_file_release(instance, &file, ok, error);
+struct native_checkpoint_restore {
+    native_process_temporary *temporary;
+    source_file file;
+    char *path;
+    qa_native_address source;
+};
+
+static bool restore_completed(qa_native_instance *instance, bool completed, bool okay)
+{
+    instance->checkpointing = false;
+    if (completed && okay && instance->entity_views_retired) {
+        qa_native_entity_table table;
+        qa_error admission = {0};
+        if (qa_native_entity_table_refresh(instance, &table, &admission) && instance->entity_views_retired)
+            native_entity_changed(instance, QA_NATIVE_ENTITIES_TABLE, UINT32_MAX);
     }
-    free(path);
-    return temporary_release(instance, temporary, ok, error);
+    return okay;
 }
 
-static bool restore_json(qa_native_instance *instance, qa_bytes bytes, const char *entry_name,
-                         qa_error *error) {
-    if (bytes.size == SIZE_MAX)
-        return native_fail(error, QA_ERROR_MEMORY, 0, "native JSON checkpoint length overflow");
-    qa_native_address address;
-    if (!qa_native_allocate(instance, bytes.size + 1u, INT32_MIN, &address, error))
-        return false;
-    bool ok = qa_native_write(instance, address, bytes, error);
-    uint8_t terminator = 0;
-    if (ok)
-        ok = qa_native_write(instance, address + bytes.size, (qa_bytes){&terminator, 1}, error);
-    if (ok) {
-        qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = address};
-        ok = call_entry(instance, entry_name, &argument, 1, NULL, error);
+bool native_checkpoint_restore_release(qa_native_instance *instance,
+    struct native_checkpoint_restore *restore, bool completed, bool okay, qa_error *error)
+{
+    /* An abandoned entered ABI call is terminal. Its tagged allocations, file
+     * capabilities and temporary roots remain owned by the process teardown. */
+    if (!qa_native_terminal(instance)) {
+        okay = release_source_string(instance, restore->source, okay, error);
+        okay = source_file_release(instance, &restore->file, okay, error);
+        if (restore->temporary)
+            okay = temporary_release(instance, restore->temporary, okay, error);
     }
-    qa_error free_error = {0};
-    if (!qa_native_free(instance, address, &free_error) && ok) {
-        if (error)
-            *error = free_error;
-        ok = false;
-    }
-    return ok;
+    free(restore->path);
+    free(restore);
+    return restore_completed(instance, completed, okay);
 }
 
-bool qa_native_checkpoint_restore(qa_native_instance *instance,
-                                  const qa_native_checkpoint *checkpoint,
-                                  qa_native_restore_part part, qa_error *error) {
-    if (!checkpoint || part > QA_NATIVE_RESTORE_HOST)
+static bool restore_ready(qa_native_instance *instance, const qa_native_checkpoint *checkpoint,
+    qa_native_restore_part part, qa_error *error)
+{
+    if (!checkpoint || (unsigned)part > QA_NATIVE_RESTORE_HOST)
         return native_fail(error, QA_ERROR_ARGUMENT, part,
                            "native checkpoint and restore part are required");
     if (!checkpoint_ready(instance, error) || !same_identity(instance, checkpoint, error))
@@ -431,46 +420,87 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
         if (instance->regions[i].first)
             return native_fail(error, QA_ERROR_ARGUMENT, i,
                                "native restore requires detached source region observers");
-    bool present = part == QA_NATIVE_RESTORE_GAME    ? checkpoint->has_game
-                   : part == QA_NATIVE_RESTORE_LEVEL ? checkpoint->has_level
-                                                     : checkpoint->has_host;
-    if (!present)
-        return native_fail(error, QA_ERROR_NOT_FOUND, part,
-                           "native checkpoint does not contain the requested part");
+    bool present = part == QA_NATIVE_RESTORE_GAME ? checkpoint->has_game :
+        part == QA_NATIVE_RESTORE_LEVEL ? checkpoint->has_level : checkpoint->has_host;
+    return present || native_fail(error, QA_ERROR_NOT_FOUND, part,
+                                  "native checkpoint does not contain the requested part");
+}
+
+bool qa_native_checkpoint_restore_begin(qa_native_instance *instance,
+    const qa_native_checkpoint *checkpoint, qa_native_restore_part part,
+    qa_native_loading_call **out, qa_error *error)
+{
+    if (!out || *out || (unsigned)part > QA_NATIVE_RESTORE_LEVEL)
+        return native_fail(error, QA_ERROR_ARGUMENT, part,
+                           "native source restore needs its GAME or LEVEL and empty call owner");
+    if (!restore_ready(instance, checkpoint, part, error)) return false;
+    bool classic = checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC;
+    if (!classic && checkpoint->kind != QA_NATIVE_CHECKPOINT_Q2_RERELEASE)
+        return native_fail(error, QA_ERROR_UNSUPPORTED, part,
+                           "host-only native checkpoint has no guest save part");
+    const char *name = classic ? (part == QA_NATIVE_RESTORE_GAME ? "ReadGame" : "ReadLevel") :
+        (part == QA_NATIVE_RESTORE_GAME ? "ReadGameJson" : "ReadLevelJson");
+    const native_entry_binding *entry = native_entry(instance, name);
+    if (!entry) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "native checkpoint entry %s is unavailable", name);
+        return false;
+    }
+    const qa_buffer *file = part == QA_NATIVE_RESTORE_GAME ? &checkpoint->game : &checkpoint->level;
+    qa_bytes bytes = {file->data, file->size};
+    struct native_checkpoint_restore *restore = calloc(1, sizeof(*restore));
+    if (!restore) return native_fail(error, QA_ERROR_MEMORY, 0, "retaining native restore resources");
     native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
     instance->checkpointing = true;
-    bool ok = false;
-    if (part == QA_NATIVE_RESTORE_HOST) {
-        if (!instance->options.restore)
-            ok = native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                             "native host checkpoint restore is unbound");
-        else
-            ok = instance->options.restore(instance->options.context,
-                                           (qa_bytes){checkpoint->host.data, checkpoint->host.size},
-                                           error);
-    } else if (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC) {
-        const qa_buffer *buffer =
-            part == QA_NATIVE_RESTORE_GAME ? &checkpoint->game : &checkpoint->level;
-        ok = restore_classic(instance, (qa_bytes){buffer->data, buffer->size},
-                             part == QA_NATIVE_RESTORE_GAME ? "game.ssv" : "level.sav",
-                             part == QA_NATIVE_RESTORE_GAME ? "ReadGame" : "ReadLevel", error);
-    } else if (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_RERELEASE) {
-        const qa_buffer *buffer =
-            part == QA_NATIVE_RESTORE_GAME ? &checkpoint->game : &checkpoint->level;
-        ok = restore_json(instance, (qa_bytes){buffer->data, buffer->size},
-                          part == QA_NATIVE_RESTORE_GAME ? "ReadGameJson" : "ReadLevelJson", error);
+    bool okay;
+    if (classic) {
+        okay = temporary_create(instance, &restore->temporary, error) &&
+            temporary_file(restore->temporary, part == QA_NATIVE_RESTORE_GAME ? "game.ssv" : "level.sav",
+                bytes, &restore->path, error) &&
+            source_file_admit(instance, restore->temporary, restore->path, false, &restore->file, error) &&
+            source_string(instance, restore->path, &restore->source, error);
     } else {
-        ok = native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                         "host-only native checkpoint has no guest save part");
+        okay = bytes.size != SIZE_MAX ||
+            native_fail(error, QA_ERROR_MEMORY, 0, "native JSON checkpoint length overflow");
+        if (okay) okay = qa_native_allocate(instance, bytes.size + 1u, INT32_MIN, &restore->source, error) &&
+            qa_native_write(instance, restore->source, bytes, error);
+        const uint8_t terminator = 0;
+        if (okay) okay = qa_native_write(instance, restore->source + bytes.size,
+            (qa_bytes){&terminator, 1}, error);
     }
-    instance->checkpointing = false;
-    if (ok && instance->entity_views_retired) {
-        qa_native_entity_table table;
-        qa_error admission = {0};
-        if (qa_native_entity_table_refresh(instance, &table, &admission) && instance->entity_views_retired)
-            native_entity_changed(instance, QA_NATIVE_ENTITIES_TABLE, UINT32_MAX);
+    qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = restore->source};
+    if (okay) okay = native_process_call_begin(instance, entry->address, &entry->spec.signature,
+        &argument, 1, NULL, out, error);
+    if (*out) (*out)->checkpoint_restore = restore;
+    else okay = native_checkpoint_restore_release(instance, restore, false, false, error);
+    return okay;
+}
+
+bool qa_native_checkpoint_restore(qa_native_instance *instance,
+    const qa_native_checkpoint *checkpoint, qa_native_restore_part part, qa_error *error)
+{
+    if (part == QA_NATIVE_RESTORE_HOST) {
+        if (!restore_ready(instance, checkpoint, part, error)) return false;
+        native_entity_changed(instance, QA_NATIVE_ENTITIES_INVALIDATE, UINT32_MAX);
+        instance->checkpointing = true;
+        bool okay = instance->options.restore ? instance->options.restore(instance->options.context,
+            (qa_bytes){checkpoint->host.data, checkpoint->host.size}, error) :
+            native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native host checkpoint restore is unbound");
+        return restore_completed(instance, true, okay);
     }
-    return ok;
+    qa_native_loading_call *call = NULL;
+    bool returned = false;
+    bool okay = qa_native_checkpoint_restore_begin(instance, checkpoint, part, &call, error) &&
+        qa_native_loading_call_step(call, 0, &returned, error);
+    if (okay && !returned) okay = native_fail(error, QA_ERROR_CAPACITY, 0,
+        "native checkpoint exhausted its source call budget");
+    if (okay) okay = qa_native_loading_call_finish(&call, error);
+    if (call) {
+        qa_error cleanup = {0};
+        bool abandoned = qa_native_loading_call_abandon(&call, &cleanup);
+        if (okay && !abandoned && error) *error = cleanup;
+        okay = okay && abandoned;
+    }
+    return okay;
 }
 
 void qa_native_checkpoint_free(qa_native_checkpoint *checkpoint) {

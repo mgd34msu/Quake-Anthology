@@ -154,11 +154,15 @@ static void free_allocations(qa_native_instance *instance) {
     instance->allocations = NULL;
 }
 
-static bool instance_returned(const qa_native_instance *instance) {
+static bool instance_callbacks_returned(const qa_native_instance *instance) {
     return instance && !instance->active_depth && !instance->callback_depth &&
         !instance->region_depth && !instance->write_depth &&
-        !instance->checkpointing && !instance->destroying && !instance->unloading && !instance->region_scopes &&
+        !instance->destroying && !instance->unloading && !instance->region_scopes &&
         !instance->write_scope && !instance->call_scope;
+}
+
+static bool instance_returned(const qa_native_instance *instance) {
+    return instance_callbacks_returned(instance) && !instance->checkpointing;
 }
 
 bool qa_native_can_destroy(const qa_native_instance *instance) {
@@ -167,13 +171,16 @@ bool qa_native_can_destroy(const qa_native_instance *instance) {
 
 bool qa_native_startup_paused(const qa_native_instance *instance)
 {
-    if (!instance_returned(instance)) return false;
+    if (!instance_callbacks_returned(instance)) return false;
+    qa_native_loading_call *call = instance->loading_call;
+    if (instance->checkpointing && (!call || !call->checkpoint_restore)) return false;
     if (instance->creating && instance->process_initializing)
         return native_process_initialization_paused(instance);
-    if (!((instance->creating && instance->profile_loading) || instance->initializing) ||
-        !instance->startup_call || instance->loading_call != instance->startup_call) return false;
+    if (!call || (!call->checkpoint_restore &&
+        (!((instance->creating && instance->profile_loading) || instance->initializing) ||
+         call != instance->startup_call))) return false;
     const qa_native_guest *guest = instance->guest;
-    return guest && guest->call == instance->startup_call->abi &&
+    return guest && guest->call == call->abi &&
         !guest->run && !guest->callback_depth && !guest->publication_depth &&
         !guest->stopped_write_calls && !guest->stopped_write_bindings && !guest->recovery &&
         !guest->stepping && !guest->restoring && !guest->faulting;
@@ -522,8 +529,11 @@ bool qa_native_loading_call_finish(qa_native_loading_call **owner, qa_error *err
     const char *entry = call->entry;
     int32_t command = call->command;
     bool named = call->named, restart = call->restart_requested;
+    struct native_checkpoint_restore *restore = call->checkpoint_restore;
     bool okay = native_process_call_finish(owner, error);
+    if (*owner) return false;
     if (okay) okay = call_completed(instance, true, error);
+    if (restore) okay = native_checkpoint_restore_release(instance, restore, true, okay, error);
     if (okay && named) call_lifecycle_finish(instance, entry, command, restart);
     return okay;
 }
@@ -536,8 +546,10 @@ bool qa_native_loading_call_abandon(qa_native_loading_call **owner, qa_error *er
     if (call->instance->active_depth || call->instance->guest->run ||
         call->instance->guest->callback_depth || call->instance->guest->publication_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loading retirement requires returned callbacks");
+    qa_native_instance *instance = call->instance;
+    struct native_checkpoint_restore *restore = call->checkpoint_restore;
     native_process_call_abandon(owner);
-    return true;
+    return !restore || native_checkpoint_restore_release(instance, restore, false, true, error);
 }
 
 bool qa_native_initialize_begin(qa_native_instance *instance, qa_error *error)

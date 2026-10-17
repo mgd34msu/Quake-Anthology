@@ -1,3 +1,4 @@
+#include "guest_native_q2_original_save.h"
 #include "internal.h"
 #include "save_content.h"
 #include "guest_native_q2_private.h"
@@ -1542,7 +1543,7 @@ static bool prepare_direct_publication(qa_application *application,
         application_startup_program_publication_seal(publication->programs, error);
 }
 
-static bool publish_travel(qa_application *application,
+static bool publish_travel_prepare(qa_application *application,
                            application_publication *publication,
                            qa_error *error)
 {
@@ -1679,42 +1680,44 @@ static bool publish_travel(qa_application *application,
     }
 
     if (ok && geometry_published) {
-        current = (qa_error){0};
         bool mapped = true;
         for (size_t i = 0; mapped && i < application->provider_count; ++i)
             mapped = application_q3_guest_client_sources_rebuild(application->providers[i],
                 publication->map_provider, choices, &current);
         if (mapped) mapped = application_q3_world_restart_admitted(application, publication, &current) &&
-            application_q3_campaign_launch_admitted(application, publication, &current) &&
-            application_map_publish(application, publication, &current);
-        remember_failure(mapped, &current, "map publication failed", &ok,
-                         &first);
-        if (mapped) {
-            current = (qa_error){0};
-            remember_failure(application_bots_publish(application,
-                qa_launch_snapshot_choices(publication->candidate),
-                &publication->map, &publication->entities, &current),
-                &current, "bot population publication failed", &ok, &first);
-        }
-        if (ok) {
-            current = (qa_error){0};
-            remember_failure(application_q3_world_restart_published(application, publication, &current),
-                &current, "Q3 replacement final publication failed", &ok, &first);
-            if (ok)
-                remember_failure(application_q3_map_published(application, publication,
-                    publication->native_map_cut, &current), &current,
-                    "Q3 map wire publication failed", &ok, &first);
-        }
+            application_q3_campaign_launch_admitted(application, publication, &current);
+        remember_failure(mapped, &current, "map source admission failed", &ok, &first);
     }
-    if (ok) {
-        current = (qa_error){0};
-        remember_failure(qc_objectives(application, true, &current), &current,
-            "QC objective publication failed", &ok, &first);
+    if (ok) publication->travel_phase = geometry_published ? 1u : 2u;
+    else {
+        ++application->publication_generation;
+        if (error) *error = first;
     }
-    ++application->publication_generation;
-    if (!ok && error != NULL)
-        *error = first;
     return ok;
+}
+
+static bool publish_travel_advance(qa_application *application,
+    application_publication *publication, size_t quantum, bool *complete, qa_error *error)
+{
+    *complete = false;
+    if (!publication->travel_phase && !publish_travel_prepare(application, publication, error)) return false;
+    if (publication->travel_phase == 1) {
+        bool mapped = false;
+        if (!application_map_publish_advance(application, publication, quantum, &mapped, error)) return false;
+        if (!mapped) return true;
+        if (!application_bots_publish(application, qa_launch_snapshot_choices(publication->candidate),
+                &publication->map, &publication->entities, error) ||
+            !application_q3_world_restart_published(application, publication, error) ||
+            !application_q3_map_published(application, publication, publication->native_map_cut, error)) return false;
+        publication->travel_phase = 2;
+    }
+    if (publication->travel_phase == 2) {
+        if (!qc_objectives(application, true, error)) return false;
+        ++application->publication_generation;
+        publication->travel_phase = 3;
+    }
+    *complete = true;
+    return true;
 }
 
 bool application_publication_retire(qa_application *application,
@@ -1800,56 +1803,94 @@ static bool finish_publication_values(qa_application *application,
             &publication->resources, &complete, error) && complete && !publication->resources;
 }
 
+static bool publication_finish(qa_application *application, application_publication *publication,
+    bool okay, qa_error *error)
+{
+    if (okay) okay = application_trajectories_configure(application, publication->candidate, error);
+    publication->published = publication->published || okay;
+    if (okay) okay = application_startup_program_publication_adopt(&publication->programs, error);
+    if (okay) okay = finish_publication_values(application, publication, error);
+    application_publication_dispose(application, publication);
+    return okay;
+}
+
+bool application_publication_advance(qa_application *application,
+    application_publication *publication, size_t quantum, bool *complete, qa_error *error)
+{
+    const qa_launch_snapshot *routing = application->routing_snapshot;
+    application_provider **providers = application->routing_providers;
+    size_t count = application->routing_provider_count;
+    application_publication *previous = application->startup_publication;
+    bool started = application->publication_started;
+    application->publication_started = true;
+    application->startup_publication = publication;
+    application->routing_snapshot = publication->candidate;
+    application->routing_providers = application->providers;
+    application->routing_provider_count = application->provider_count;
+    bool okay = publish_travel_advance(application, publication, quantum, complete, error);
+    if (!okay) {
+        qa_error cleanup = {0};
+        if (publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE)
+            (void)application_native_q2_loading_cancel(publication->map_provider, &cleanup);
+    }
+    if (!okay || *complete) okay = publication_finish(application, publication, okay, error);
+    application->publication_started = started;
+    application->startup_publication = previous;
+    application->routing_snapshot = routing;
+    application->routing_providers = providers;
+    application->routing_provider_count = count;
+    if (!okay) application_fault(application, error);
+    return okay;
+}
+
 void application_publication_publish(qa_application *application,
-                                     const qa_launch_snapshot *previous,
-                                     const qa_launch_snapshot *candidate,
-                                     void *ticket)
+    const qa_launch_snapshot *previous, const qa_launch_snapshot *candidate, void *ticket)
 {
     (void)previous;
     application_actor_routes_clear(application);
     application->publication_started = true;
     if (candidate == NULL) {
-        if (application->command_generation != UINT64_MAX)
-            ++application->command_generation;
+        if (application->command_generation != UINT64_MAX) ++application->command_generation;
         application->publication_started = false;
         return;
     }
-
     application_publication *publication = ticket;
     qa_error error = {0};
-    bool ok = publication != NULL && publication->candidate == candidate;
-    if (!ok)
-        qa_error_set(&error, QA_ERROR_ARGUMENT, 0,
-                     "configuration committed without its publication ticket");
-    else
-        ok = consume_publication_values(application, publication, candidate, &error);
-    if (ok && application->command_generation != UINT64_MAX)
-        ++application->command_generation;
-    if (ok && !publication->travel) {
-        ok=application_q3_components_commit(publication->components,&error)&&
-            application_q3_components_adopt(application,&publication->components,&error);
-        if(ok) {
-            publish_roster(application, publication);
-            ok=application_q3_components_initialize(application->components,&error) &&
-                register_qc_callbacks(application,false,&error) &&
-                application_players_declared_clients_admit(application,&error);
-            if (ok) ok = qc_objectives(application, true, &error);
-            if(ok) ++application->publication_generation;
+    bool okay = publication && publication->candidate == candidate;
+    if (!okay) qa_error_set(&error, QA_ERROR_ARGUMENT, 0,
+        "configuration committed without its publication ticket");
+    else okay = consume_publication_values(application, publication, candidate, &error);
+    if (okay && application->command_generation != UINT64_MAX) ++application->command_generation;
+    if (okay && publication->travel) {
+        bool complete = false;
+        bool sliced = application->startup_flow && publication->map_provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            application_q2_original_source(publication->map_provider);
+        okay = application_publication_advance(application, publication, sliced ? 16384 : 0, &complete, &error);
+        if (okay && !complete) {
+            if (publication->owns_values) {
+                okay = qa_cvars_edit_finish(application->cvars, &error);
+                if (okay) publication->owns_values = false;
+            }
+            application_startup_flow_yield_publication(application, publication);
         }
-    } else if (ok) {
-        ok = publish_travel(application, publication, &error);
-    }
-    if (ok) ok = application_trajectories_configure(application, candidate, &error);
-    if (publication != NULL) {
-        publication->published = publication->published || ok;
-        if (ok) ok = application_startup_program_publication_adopt(&publication->programs, &error);
-        if (ok) ok = finish_publication_values(application, publication, &error);
-        application_publication_dispose(application, publication);
+    } else {
+        if (okay) {
+            okay = application_q3_components_commit(publication->components, &error) &&
+                application_q3_components_adopt(application, &publication->components, &error);
+            if (okay) {
+                publish_roster(application, publication);
+                okay = application_q3_components_initialize(application->components, &error) &&
+                    register_qc_callbacks(application, false, &error) &&
+                    application_players_declared_clients_admit(application, &error) &&
+                    qc_objectives(application, true, &error);
+                if (okay) ++application->publication_generation;
+            }
+        }
+        if (publication) okay = publication_finish(application, publication, okay, &error);
     }
     application->publication_started = false;
     application->routing_snapshot = NULL;
     application->routing_providers = NULL;
     application->routing_provider_count = 0;
-    if (!ok)
-        application_fault(application, &error);
+    if (!okay) application_fault(application, &error);
 }

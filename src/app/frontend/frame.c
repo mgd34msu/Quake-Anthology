@@ -679,6 +679,7 @@ static bool resource_returned(qa_frontend *frontend,qa_error *error)
 bool frontend_startup_advance(qa_frontend *frontend,bool *complete,qa_error *error)
 {
     if (qa_application_launch(frontend->application) &&
+        qa_application_startup_candidate(frontend->application) &&
         qa_application_events_local_first(frontend->application) != qa_application_events_next(frontend->application) &&
         ((!frontend->options.dedicated && !frontend_scene_sync(frontend,error)) ||
          !frontend_events_flush(frontend,error))) return false;

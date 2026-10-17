@@ -9,6 +9,8 @@ bool application_q2_original_source(const application_provider *);
 bool application_q2_original_prepare(application_provider *, qa_error *);
 bool application_q2_original_game(application_provider *, qa_error *);
 bool application_q2_original_level(application_provider *, qa_error *);
+bool application_q2_original_game_advance(application_provider *, size_t, bool *, qa_error *);
+bool application_q2_original_level_advance(application_provider *, size_t, bool *, qa_error *);
 bool application_q2_original_player(application_provider *, uint32_t, qa_actor_id,
     bool *restored, qa_error *);
 bool application_q2_original_configure(qa_application_network_q2 *, qa_error *);

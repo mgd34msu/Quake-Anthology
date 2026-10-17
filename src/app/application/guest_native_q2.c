@@ -120,7 +120,8 @@ bool application_native_q2_idle(const application_provider *provider)
 bool application_native_q2_loading_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    return engine && !provider->attached && engine->loading_phase && owner_returned(provider, true) &&
+    return engine && (!provider->attached || engine->loading_phase == APPLICATION_NATIVE_Q2_LOADING_MAP) &&
+        engine->loading_phase && owner_returned(provider, true) &&
         application_native_q2_inventory_scanner_idle(engine->inventory_scanner) &&
         application_native_q2_primary_pickups_idle(engine->primary_pickups) &&
         application_native_q2_source_actors_idle(engine->source_actors);
@@ -129,7 +130,10 @@ bool application_native_q2_loading_idle(const application_provider *provider)
 static bool frontend_owner_idle(void *context)
 {
     struct application_native_q2 *engine = context;
-    return engine && application_native_q2_idle(engine->provider);
+    return engine && (application_native_q2_idle(engine->provider) ||
+        (qa_application_startup_pending(engine->provider->application) &&
+         engine->loading_phase == APPLICATION_NATIVE_Q2_LOADING_MAP &&
+         application_native_q2_loading_idle(engine->provider)));
 }
 
 static bool begin_frame(void *state, qa_session *session, const qa_source_frame *frame, qa_error *error)
@@ -619,9 +623,12 @@ bool application_native_q2_loading_cancel(application_provider *provider, qa_err
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !engine->loading_phase) return true;
     if (engine->calls) return false;
-    bool ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
+    bool ok = !engine->restore_call || qa_native_loading_call_abandon(&engine->restore_call, error);
+    if (ok && engine->loading_phase != APPLICATION_NATIVE_Q2_LOADING_MAP)
+        ok = !provider->state.native.host || qa_native_host_startup_cancel(provider->state.native.host, error);
     if (ok) {
         engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
+        engine->map_loading_phase = 0;
         engine->initialization_clock = NULL;
     }
     return ok;
@@ -822,66 +829,100 @@ bool application_native_q2_initialize_primary_advance(application_provider *prov
     return ok;
 }
 
+bool application_native_q2_spawn_map_advance(application_provider *provider, const qa_bsp_view *map,
+    qa_string_id name, qa_string_id spawn, size_t quantum, bool *complete, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    *complete = false;
+    if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires its game owner");
+    if (!engine->map_loading_phase) {
+        if (!application_native_q2_idle(provider))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires returned source callbacks");
+        if (!prepare_map_admission(provider, map, name, spawn, error)) return false;
+        provider->application->physics->world_actor = engine->world_actor;
+        engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_MAP;
+        engine->map_loading_phase = 1;
+    }
+    bool original = application_q2_original_source(provider);
+    for (;;) {
+        bool ok = true, returned = true;
+        ++engine->calls;
+        switch (engine->map_loading_phase) {
+        case 1:
+            if (!engine->initialized) {
+                ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
+                if (ok) engine->initialized = true;
+            }
+            if (ok && original)
+                ok = application_q2_original_game_advance(provider, quantum, &returned, error);
+            break;
+        case 2: {
+            if (!engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
+            if (ok && !original) ok = application_native_q2_attack_activate(engine, error);
+            if (ok && !original) ok = application_native_q2_combat_activate(engine, error);
+            if (ok && !original) ok = application_native_q2_primary_pickups_activate(engine, error);
+            if (ok && !original) ok = application_q2_control_activate(engine, error);
+            if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
+            const char *source_entities = engine->entity_text;
+            qa_buffer declared_entities = {0};
+            bool spawn_entities = true;
+            if (ok && engine->callbacks) {
+                const qa_json_document *d = application_native_q2_callbacks_document(engine->callbacks);
+                qa_json_id id = qa_json_get(d, qa_json_root(d), "spawnEntities");
+                spawn_entities = qa_json_type(d, id) != QA_JSON_NULL;
+                if (spawn_entities) {
+                    ok = qa_json_string(d, id, &declared_entities, error) &&
+                        !memchr(declared_entities.data, 0, declared_entities.size);
+                    source_entities = (char *)declared_entities.data;
+                }
+            }
+            if (ok && spawn_entities) ok = qa_native_host_spawn_entities(provider->state.native.host,
+                qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
+                spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
+            qa_buffer_free(&declared_entities);
+            if (ok && spawn_entities && !engine->callbacks)
+                ok = qa_native_host_run_frame(provider->state.native.host, false, error) &&
+                    qa_native_host_run_frame(provider->state.native.host, false, error);
+            break;
+        }
+        case 3:
+            if (original) ok = application_q2_original_level_advance(provider, quantum, &returned, error);
+            break;
+        default:
+            ok = application_native_q2_callbacks_arrays_validate(engine, error) &&
+                declared_initialize(engine, error) && application_native_q2_visibility_prepare(engine, error);
+            break;
+        }
+        --engine->calls;
+        if (!ok || !returned) return ok;
+        if (engine->map_loading_phase == 4) {
+            engine->map_loading_phase = 0;
+            engine->loading_phase = APPLICATION_NATIVE_Q2_LOADING_NONE;
+            engine->map_admission_prepared = false;
+            engine->map_ready = provider->map_bound = true;
+            qa_cvars_set_server_active(engine->cvars, true);
+            if (original) ok = application_native_q2_restore_finish(provider, error);
+            else {
+                if (engine->inventory_rows) ok = application_native_q2_inventory_rows_prepare(engine->inventory_rows, error) &&
+                    application_native_q2_inventory_scanner_activate(engine->inventory_scanner, error);
+                if (ok) ok = application_native_q2_callbacks_register(engine, error);
+            }
+            if (ok) ok = application_native_q2_publication_activate(engine->publication, error);
+            *complete = ok;
+            return ok;
+        }
+        ++engine->map_loading_phase;
+        if (quantum) return true;
+    }
+}
+
 bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
     const qa_entities *entities, qa_string_id name, qa_string_id spawn, qa_error *error)
 {
     (void)entities;
-    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    if (!engine || !map || engine->profile == QA_NATIVE_Q2_CGAME_API2023 || !application_native_q2_idle(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map publication requires an idle game owner");
-    if (!prepare_map_admission(provider, map, name, spawn, error)) return false;
-    provider->application->physics->world_actor = engine->world_actor;
-    bool original = application_q2_original_source(provider);
-    ++engine->calls;
-    bool ok = true;
-    if (ok && !engine->initialized) {
-        ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
-        if (ok) engine->initialized = true;
-    }
-    if (ok && original) ok = application_q2_original_game(provider,error);
-    if (ok && !engine->wire_engine) ok = application_native_q2_wire_begin(engine, error);
-    if (ok && !original) ok = application_native_q2_attack_activate(engine, error);
-    if (ok && !original) ok = application_native_q2_combat_activate(engine, error);
-    if (ok && !original) ok = application_native_q2_primary_pickups_activate(engine, error);
-    if (ok && !original) ok = application_q2_control_activate(engine, error);
-    if (ok) ok = qa_native_host_source_reconcile(provider->state.native.host, error);
-    const char *source_entities = engine->entity_text;
-    qa_buffer declared_entities = {0};
-    bool spawn_entities = true;
-    if (ok && engine->callbacks) {
-        const qa_json_document *d = application_native_q2_callbacks_document(engine->callbacks);
-        qa_json_id spawn_entities_id = qa_json_get(d, qa_json_root(d), "spawnEntities");
-        spawn_entities = qa_json_type(d, spawn_entities_id) != QA_JSON_NULL;
-        if (spawn_entities) {
-            ok = qa_json_string(d, spawn_entities_id, &declared_entities, error) &&
-                !memchr(declared_entities.data, 0, declared_entities.size);
-            source_entities = (char *)declared_entities.data;
-        }
-    }
-    if (ok && spawn_entities) ok = qa_native_host_spawn_entities(provider->state.native.host,
-        qa_strings_cstr(qa_session_strings(provider->application->session), name), source_entities,
-        spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
-    qa_buffer_free(&declared_entities);
-    if (ok && spawn_entities && !engine->callbacks)
-        ok = qa_native_host_run_frame(provider->state.native.host, false, error) &&
-            qa_native_host_run_frame(provider->state.native.host, false, error);
-    if (ok && original) ok = application_q2_original_level(provider,error);
-    if(ok) ok=application_native_q2_callbacks_arrays_validate(engine,error);
-    if(ok)ok=declared_initialize(engine,error);
-    if(ok)ok=application_native_q2_visibility_prepare(engine,error);
-    --engine->calls;
-    if (ok) {
-        engine->map_admission_prepared = false;
-        engine->map_ready = provider->map_bound = true;
-        qa_cvars_set_server_active(engine->cvars, true);
-        if (original) return application_native_q2_restore_finish(provider,error) &&
-            application_native_q2_publication_activate(engine->publication,error);
-        if(engine->inventory_rows) ok=application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)&&
-            application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error);
-        if(ok) ok = application_native_q2_callbacks_register(engine,error) &&
-            application_native_q2_publication_activate(engine->publication, error);
-    }
-    return ok;
+    bool complete = false;
+    return application_native_q2_spawn_map_advance(provider, map, name, spawn, 0, &complete, error) && complete;
 }
 
 bool application_native_q2_retire_map(application_provider *provider, qa_error *error)
