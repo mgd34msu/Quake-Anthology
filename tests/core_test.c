@@ -373,6 +373,98 @@ static void test_shared_attack_origins(void)
     CHECK(qa_session_destroy(session, &error));
 }
 
+typedef struct external_weapon_inventory {
+    qa_actor_id actor;
+    qa_inventory_entry entry;
+    qa_inventory_items source;
+    unsigned uses;
+} external_weapon_inventory;
+static size_t external_weapon_count(void *context)
+{ (void)context; return 1; }
+static bool external_weapon_read(void *context, size_t index, qa_inventory_entry *out, qa_error *error)
+{
+    (void)error; CHECK(index == 0);
+    *out = ((external_weapon_inventory *)context)->entry; return true;
+}
+static bool external_weapon_write(void *context, const qa_inventory_entry *entry, qa_error *error)
+{
+    (void)error; external_weapon_inventory *source = context;
+    CHECK(entry->item == source->entry.item);
+    source->entry = *entry; return true;
+}
+static bool external_weapon_use(void *context, qa_item_id item, qa_item_action action, qa_error *error)
+{
+    (void)error; external_weapon_inventory *source = context;
+    CHECK(item == source->entry.item && action == QA_ITEM_USE);
+    ++source->uses; return true;
+}
+static bool external_weapon_restore(void *context, qa_actor_id actor, uint64_t serial,
+    const qa_inventory_source_group *saved, qa_inventory_items *out, qa_error *error)
+{
+    (void)error; external_weapon_inventory *source = context;
+    CHECK(qa_actor_id_equal(actor, source->actor) && serial);
+    CHECK(!saved->definitions_only && saved->count == 1);
+    CHECK(saved->items[0].definition.item == source->entry.item);
+    *out = source->source; return true;
+}
+static void test_external_weapon_inventory(void)
+{
+    qa_error error = {0}; qa_session *session = NULL; qa_inventory *inventory = NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 1, .component_capacity = 1}, &session, &error));
+    qa_strings *names = qa_session_strings(session);
+    qa_string_id owner, native_item, guest_weapon;
+    CHECK(qa_strings_intern_cstr(names, "test:external-owner", &owner, &error));
+    CHECK(qa_strings_intern_cstr(names, "native:ammo", &native_item, &error));
+    CHECK(qa_strings_intern_cstr(names, "guest:weapon", &guest_weapon, &error));
+    external_weapon_inventory source = {.entry = {guest_weapon, 1, 1, QA_COUNT_SOURCE_INT32}};
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session), owner, owner, &source.actor, &error));
+    qa_actor_checkpoint actors = {0};
+    CHECK(qa_actors_checkpoint(qa_session_actor_registry(session), &actors, &error));
+    qa_strings *restored_names = NULL;
+    CHECK(qa_strings_create(&restored_names, &error));
+    CHECK(qa_strings_intern_cstr(restored_names, "test:external-owner", &owner, &error));
+    CHECK(qa_strings_intern_cstr(restored_names, "native:ammo", &native_item, &error));
+    CHECK(qa_strings_intern_cstr(restored_names, "guest:weapon", &guest_weapon, &error));
+    CHECK(qa_session_destroy(session, &error)); session = NULL;
+    CHECK(qa_session_create_restored(&(qa_session_options){.actor_capacity = 1, .component_capacity = 1},
+        &actors, restored_names, &session, &error));
+    source.actor = qa_actors_resolve_saved(qa_session_actor_registry(session),
+        (qa_saved_actor_id){.generation = source.actor.generation, .slot = source.actor.slot})->id;
+    qa_actor_checkpoint_free(&actors);
+    CHECK(qa_inventory_create(qa_session_actor_registry(session), &inventory, &error));
+    qa_inventory_entry native = {native_item, 17, 100, QA_COUNT_STACK};
+    CHECK(qa_inventory_create_actor(inventory, source.actor, &native, 1, &error));
+    qa_item_admission weapon = {.definition = {.item = guest_weapon, .owner = owner,
+        .label = "Guest weapon", .weapon = true, .actions = QA_ITEM_USE}};
+    source.source = (qa_inventory_items){.owner = owner, .items = &weapon, .count = 1,
+        .state = {.context = &source, .count = external_weapon_count,
+            .at = external_weapon_read, .write = external_weapon_write},
+        .action_context = &source};
+    qa_inventory_lease lease;
+    CHECK(!qa_inventory_bind_items(inventory, source.actor, &source.source, &lease, &error));
+    error = (qa_error){0}; source.source.invoke = external_weapon_use;
+    CHECK(qa_inventory_bind_items(inventory, source.actor, &source.source, &lease, &error));
+    CHECK(qa_inventory_item_action(inventory, source.actor, guest_weapon, QA_ITEM_USE, &error));
+    CHECK(source.uses == 1);
+    qa_buffer saved = {0};
+    CHECK(qa_persistence_inventory_capture(session, inventory, &saved, &error));
+    source.entry.count = 0;
+    qa_persistence_gameplay_resolvers resolve = {.context = &source, .inventory_group = external_weapon_restore};
+    bool restored = qa_persistence_inventory_restore(session, inventory, &resolve, (qa_bytes){saved.data, saved.size}, &error);
+    if (!restored) fprintf(stderr, "Restoring external weapon inventory: %s\n", error.message);
+    CHECK(restored);
+    CHECK(source.entry.count == 1);
+    CHECK(qa_inventory_item_action(inventory, source.actor, guest_weapon, QA_ITEM_USE, &error));
+    CHECK(source.uses == 2);
+    qa_inventory_entry read; bool found;
+    CHECK(qa_inventory_entry_read(inventory, source.actor, native_item, &read, &error) && read.count == 17);
+    CHECK(qa_inventory_close_items(inventory, lease, &error));
+    CHECK(qa_inventory_entry_find(inventory, source.actor, guest_weapon, &read, &found, &error) && !found);
+    CHECK(qa_inventory_entry_read(inventory, source.actor, native_item, &read, &error) && read.count == 17);
+    qa_buffer_free(&saved); CHECK(qa_inventory_destroy(inventory, &error));
+    CHECK(qa_session_destroy(session, &error));
+}
+
 static void test_bot_awareness_storage(void)
 {
     qa_error error={0};qa_session *session=NULL;
@@ -12068,6 +12160,7 @@ int main(int argc, char **argv)
     test_shared_trajectory();
     test_retired_damage_modifier();
     test_shared_attack_origins();
+    test_external_weapon_inventory();
     test_lightstyle_snapshot();
     test_metadata_retention();
     test_metadata_names();

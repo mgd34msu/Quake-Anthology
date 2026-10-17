@@ -1208,7 +1208,7 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
         qa_inventory_entry entry; bool found;
         if (!definition.item || definition.owner != requested->owner || !definition.label || !*definition.label ||
             (definition.actions & ~(uint32_t)(QA_ITEM_USE | QA_ITEM_DROP)) ||
-            (definition.actions && !requested->invoke) || (definition.weapon && (definition.actions & QA_ITEM_USE)) ||
+            (definition.actions && !requested->invoke) ||
             group_for(store, definition.item)) { fail(e, QA_ERROR_ARGUMENT, "Source item conflicts with owner or actions"); goto failed; }
         for (size_t j = 0; j < i; ++j) if (group->items[j].definition.item == definition.item) {
             fail(e, QA_ERROR_ARGUMENT, "Duplicate source item definition"); goto failed;

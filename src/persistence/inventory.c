@@ -86,7 +86,6 @@ static bool definition_fields(qa_source_save_io *io, qa_item_admission *item,
     return
         qa_source_save_bool(io, &item->definition.weapon) && qa_source_save_u32(io, &item->definition.actions) &&
         !(item->definition.actions & ~(uint32_t)(QA_ITEM_USE | QA_ITEM_DROP)) &&
-        !(item->definition.weapon && !definitions_only && (item->definition.actions & QA_ITEM_USE)) &&
         qa_source_save_bool(io, &item->replace_primary) && !(definitions_only && item->replace_primary);
 }
 
