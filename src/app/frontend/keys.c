@@ -76,7 +76,7 @@ static bool load(frontend_key_profile *profile,bool base,qa_error *error)
 static bool stored(void *context,qa_q3_key_product product,qa_error *error)
 {
     frontend_key_profile *profile=context;
-    if (!profile || profile->busy || !profile->state || !profile->cvars || profile->nonce==UINT64_MAX)
+    if (!profile || profile->busy || !profile->state || profile->nonce==UINT64_MAX)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 key storage lost its actual idle profile registry");
     qa_fs_root *root=frontend_config_files_root(profile->files,product==QA_Q3_KEY_BASE);
     if (product==QA_Q3_KEY_EXPANSION && !*frontend_config_files_game_directory(profile->files))
@@ -269,7 +269,7 @@ bool frontend_keys_save(frontend_keys *owner,qa_error *error)
 bool frontend_key_profile_save(frontend_key_profile *profile,qa_error *error)
 {
     if (!profile || !profile->owner || profile->owner->restoring || profile->imported_state ||
-        profile->detached || !profile->cvars || !profile->state)
+        !profile->state)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 key save requires its bound completed source profile");
     return stored(profile,QA_Q3_KEY_BASE,error) &&
         (!*frontend_config_files_game_directory(profile->files) || stored(profile,QA_Q3_KEY_EXPANSION,error));
