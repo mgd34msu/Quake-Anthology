@@ -672,6 +672,14 @@ typedef struct application_persistence {
     bool leased;
 } application_persistence;
 
+struct qa_application_restore {
+    application_persistence state;
+    qa_application_options options;
+    qa_application_persistence_ops ops;
+    qa_save_restore_operation *records;
+    bool complete;
+};
+
 static bool persistence_restore_provider_clocks(application_persistence *,
     qa_application *, qa_error *);
 
@@ -1883,10 +1891,12 @@ static bool persistence_restore_provider_clocks(application_persistence *operati
 }
 
 static bool persistence_restore_owner(void *opaque, void *value,
-    const qa_save_record *record, qa_error *error)
+    const qa_save_record *record, uint64_t quantum, bool *complete, qa_error *error)
 {
     application_persistence *operation = opaque;
     qa_application *candidate = value;
+    *complete = true;
+    (void)quantum;
     switch (record->owner.kind) {
     /* Foundation is decoded during isolated construction and applied after
      * source bindings. Configuration was prepared without ordinary callbacks. */
@@ -2156,35 +2166,78 @@ static void persistence_discard(void *opaque, void *value)
     if (!qa_application_destroy(value, NULL)) operation->retained = value;
 }
 
+bool qa_application_persistence_restore_begin(qa_application **active,
+    const qa_application_options *options, const qa_application_persistence_ops *ops,
+    const qa_save_image *image, qa_application_restore **out, qa_error *error)
+{
+    if (!active || !options || !ops || !ops->validate ||
+        (ops->owner_count && !ops->owners) || ops->owner_count > QA_SAVE_OWNER_LIMIT ||
+        ((ops->publish_ready != NULL) != (ops->publish != NULL)) ||
+        !image || !out || *out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "application restore requires isolated content and owner producers");
+    qa_application_restore *restore = calloc(1, sizeof(*restore));
+    if (!restore)
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining application restore operation");
+    *out = restore;
+    restore->options = *options;
+    restore->ops = *ops;
+    application_persistence *operation = &restore->state;
+    *operation = (application_persistence){.active = *active, .slot = active,
+        .options = &restore->options, .ops = &restore->ops, .image = image,
+        .purpose = qa_save_image_metadata(image)->purpose};
+    if (!persistence_lease(operation, error)) return false;
+    const qa_save_restore_ops callbacks = {.create = persistence_create, .restore = persistence_restore_owner,
+        .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};
+    bool ok=operation->purpose!=QA_SAVE_TRANSITION ||
+        (application_save_progression_capture(operation->active,ops,&operation->progression,error) &&
+            configuration_capture(operation->active,&operation->configuration,error));
+    if (ok) ok = !qa_application_launch(operation->active) ||
+        application_save_content_retain_current(operation->active, ops->visit_content,
+            ops->context, &operation->content_graph, error);
+    if (ok) {
+        operation->active->capture_content_graph = operation->content_graph;
+        ok = qa_save_restore_begin(operation, &callbacks, image, &restore->records, error);
+    }
+    return ok;
+}
+
+bool qa_application_persistence_restore_advance(qa_application_restore *restore,
+    uint64_t quantum, bool *complete, qa_error *error)
+{
+    if (!restore || !complete)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Application restore operation is absent");
+    bool ok = qa_save_restore_advance(restore->records, quantum, complete, error);
+    if (ok) restore->complete = *complete;
+    return ok;
+}
+
+void qa_application_persistence_restore_end(qa_application_restore **slot,
+    qa_application **displaced, qa_application **retained_on_failure)
+{
+    qa_application_restore *restore = slot ? *slot : NULL;
+    if (!restore) return;
+    qa_save_restore_destroy(&restore->records);
+    if (restore->complete && displaced) *displaced = restore->state.displaced;
+    if (retained_on_failure && restore->state.retained)
+        *retained_on_failure = restore->state.retained;
+    persistence_end(&restore->state);
+    free(restore);
+    *slot = NULL;
+}
+
 bool qa_application_persistence_restore(qa_application **active,
     const qa_application_options *options, const qa_application_persistence_ops *ops,
     const qa_save_image *image, qa_application **displaced,
     qa_application **retained_on_failure, qa_error *error)
 {
-    if (!active || !options || !ops || !ops->validate ||
-        (ops->owner_count && !ops->owners) || ops->owner_count > QA_SAVE_OWNER_LIMIT ||
-        ((ops->publish_ready != NULL) != (ops->publish != NULL)) ||
-        !image || !displaced || !retained_on_failure || *retained_on_failure ||
+    if (!active || !displaced || !retained_on_failure || *retained_on_failure ||
         active == displaced || active == retained_on_failure || displaced == retained_on_failure)
-        return application_fail(error, QA_ERROR_ARGUMENT, "application restore requires isolated content and owner producers");
-    application_persistence operation = {.active = *active, .slot = active,
-        .options = options, .ops = ops, .image = image,
-        .purpose = qa_save_image_metadata(image)->purpose};
-    if (!persistence_lease(&operation, error)) return false;
-    const qa_save_restore_ops restore = {.create = persistence_create, .restore = persistence_restore_owner,
-        .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};
-    bool ok=operation.purpose!=QA_SAVE_TRANSITION ||
-        (application_save_progression_capture(operation.active,ops,&operation.progression,error) &&
-            configuration_capture(operation.active,&operation.configuration,error));
-    if (ok) ok = !qa_application_launch(operation.active) ||
-        application_save_content_retain_current(operation.active, ops->visit_content,
-            ops->context, &operation.content_graph, error);
-    if (ok) {
-        operation.active->capture_content_graph = operation.content_graph;
-        ok = qa_save_restore(&operation, &restore, image, error);
-    }
-    persistence_end(&operation);
-    if (ok) *displaced = operation.displaced;
-    else if (operation.retained) *retained_on_failure = operation.retained;
+        return application_fail(error, QA_ERROR_ARGUMENT, "Application restore needs distinct owner outputs");
+    qa_application_restore *restore = NULL;
+    bool ok = qa_application_persistence_restore_begin(active, options, ops, image, &restore, error);
+    bool complete = false;
+    while (ok && !complete)
+        ok = qa_application_persistence_restore_advance(restore, 0, &complete, error);
+    qa_application_persistence_restore_end(&restore, displaced, retained_on_failure);
     return ok;
 }

@@ -44,38 +44,110 @@ bool qa_save_capture(void *context, const qa_save_capture_ops *ops, qa_save_purp
     return true;
 }
 
-bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
-                      const qa_save_image *image, qa_error *error)
+struct qa_save_restore_operation {
+    void *context, *candidate;
+    qa_save_restore_ops ops;
+    const qa_save_image *image;
+    size_t stage, record;
+    bool created, finished, published, failed;
+};
+
+static const qa_save_owner_kind restore_order[] = {
+    QA_SAVE_STRINGS, QA_SAVE_RESOURCES, QA_SAVE_CONFIGURATION, QA_SAVE_SESSION,
+    QA_SAVE_ACTORS, QA_SAVE_PROVIDER, QA_SAVE_ROSTER, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
+    QA_SAVE_WORLD, QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS, QA_SAVE_TARGETS,
+    QA_SAVE_PROGRESSION, QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_EVENTS,
+    QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION
+};
+
+bool qa_save_restore_begin(void *context, const qa_save_restore_ops *ops,
+    const qa_save_image *image, qa_save_restore_operation **out, qa_error *error)
 {
     if (!ops || !ops->create || !ops->restore || !ops->finish || !ops->publish ||
-        !ops->discard || !image)
+        !ops->discard || !image || !out || *out)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid save restore producer");
-    void *candidate = NULL;
-    if (!ops->create(context, image, &candidate, error)) {
-        if (candidate) ops->discard(context, candidate);
-        return false;
+    qa_save_restore_operation *operation = calloc(1, sizeof(*operation));
+    if (!operation)
+        return persistence_fail(error, QA_ERROR_MEMORY, "Retaining save restore operation");
+    operation->context = context;
+    operation->ops = *ops;
+    operation->image = image;
+    *out = operation;
+    return true;
+}
+
+bool qa_save_restore_advance(qa_save_restore_operation *operation, uint64_t quantum,
+    bool *complete, qa_error *error)
+{
+    if (!operation || !complete || operation->failed)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Save restore operation is unavailable");
+    *complete = operation->published;
+    if (*complete) return true;
+    bool okay = true;
+    if (!operation->created) {
+        okay = operation->ops.create(operation->context, operation->image,
+            &operation->candidate, error);
+        if (okay && !operation->candidate)
+            okay = persistence_fail(error, QA_ERROR_FORMAT, "Restore producer returned no candidate");
+        if (!okay) goto failed;
+        operation->created = true;
+        if (quantum) return true;
     }
-    if (!candidate) return persistence_fail(error, QA_ERROR_FORMAT, "Restore producer returned no candidate");
-    static const qa_save_owner_kind order[] = {
-        QA_SAVE_STRINGS, QA_SAVE_RESOURCES, QA_SAVE_CONFIGURATION, QA_SAVE_SESSION,
-        QA_SAVE_ACTORS, QA_SAVE_PROVIDER, QA_SAVE_ROSTER, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
-        QA_SAVE_WORLD, QA_SAVE_COMBAT, QA_SAVE_INVENTORY,
-        QA_SAVE_PICKUPS, QA_SAVE_TARGETS,
-        QA_SAVE_PROGRESSION,
-        QA_SAVE_CONTROLS, QA_SAVE_CVARS, QA_SAVE_EVENTS,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION
-    };
-    bool ok = true;
-    for (size_t stage = 0; ok && stage < sizeof(order) / sizeof(*order); ++stage)
-        for (size_t i = 0; ok && i < image->count; ++i)
-            if (image->records[i].owner.kind == order[stage] &&
-                (order[stage] == QA_SAVE_PROVIDER ||
-                    qa_save_shared_state_kind(order[stage], image->metadata.purpose)))
-                ok = ops->restore(context, candidate, image->records + i, error);
-    if (ok) ok = ops->finish(context, candidate, image, error);
-    if (ok) ok = ops->publish(context, candidate, error);
-    if (!ok) ops->discard(context, candidate);
-    return ok;
+    while (operation->stage < sizeof(restore_order) / sizeof(*restore_order)) {
+        qa_save_owner_kind kind = restore_order[operation->stage];
+        while (operation->record < operation->image->count) {
+            const qa_save_record *record = operation->image->records + operation->record;
+            if (record->owner.kind != kind || (kind != QA_SAVE_PROVIDER &&
+                !qa_save_shared_state_kind(kind, operation->image->metadata.purpose))) {
+                ++operation->record;
+                continue;
+            }
+            bool restored = false;
+            okay = operation->ops.restore(operation->context, operation->candidate,
+                record, quantum, &restored, error);
+            if (!okay) goto failed;
+            if (restored) ++operation->record;
+            if (quantum || !restored) return true;
+        }
+        ++operation->stage;
+        operation->record = 0;
+    }
+    if (!operation->finished) {
+        okay = operation->ops.finish(operation->context, operation->candidate,
+            operation->image, error);
+        if (!okay) goto failed;
+        operation->finished = true;
+        if (quantum) return true;
+    }
+    okay = operation->ops.publish(operation->context, operation->candidate, error);
+    if (!okay) goto failed;
+    operation->published = true;
+    *complete = true;
+    return true;
+failed:
+    operation->failed = true;
+    return false;
+}
+
+void qa_save_restore_destroy(qa_save_restore_operation **slot)
+{
+    qa_save_restore_operation *operation = slot ? *slot : NULL;
+    if (!operation) return;
+    if (operation->candidate && !operation->published)
+        operation->ops.discard(operation->context, operation->candidate);
+    free(operation);
+    *slot = NULL;
+}
+
+bool qa_save_restore(void *context, const qa_save_restore_ops *ops,
+    const qa_save_image *image, qa_error *error)
+{
+    qa_save_restore_operation *operation = NULL;
+    bool okay = qa_save_restore_begin(context, ops, image, &operation, error), complete = false;
+    while (okay && !complete)
+        okay = qa_save_restore_advance(operation, 0, &complete, error);
+    qa_save_restore_destroy(&operation);
+    return okay;
 }
 
 bool qa_save_slot_name(const char *name, qa_error *error)

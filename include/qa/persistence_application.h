@@ -113,6 +113,18 @@ typedef struct qa_application_persistence_ops {
 
 bool qa_application_persistence_capture(qa_application *,
     const qa_application_persistence_ops *, qa_save_purpose, qa_save_image **, qa_error *);
+typedef struct qa_application_restore qa_application_restore;
+/* The retained operation keeps the active persistence lease until end. The
+ * image, active slot and external callback contexts must outlive it. Begin may
+ * return an owned partial operation on failure; end releases it and transfers
+ * any candidate whose ordinary cleanup remains pending. */
+bool qa_application_persistence_restore_begin(qa_application **active,
+    const qa_application_options *, const qa_application_persistence_ops *,
+    const qa_save_image *, qa_application_restore **, qa_error *);
+bool qa_application_persistence_restore_advance(qa_application_restore *, uint64_t quantum,
+    bool *complete, qa_error *);
+void qa_application_persistence_restore_end(qa_application_restore **,
+    qa_application **displaced, qa_application **retained_on_failure);
 /* The active owner and displaced output remain unchanged on failure. The
  * retained_on_failure output must initially be NULL; failed candidate teardown
  * transfers its owner there for the caller to retry qa_application_destroy.

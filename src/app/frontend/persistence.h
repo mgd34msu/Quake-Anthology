@@ -20,6 +20,16 @@ typedef struct frontend_persistence_native {
  * its frontend context must remain alive until ordinary destroy succeeds. */
 bool frontend_persistence_capture(qa_frontend *, const qa_application_persistence_ops *,
     qa_save_purpose, qa_save_image **, qa_error *);
+typedef struct frontend_persistence frontend_persistence_restore_operation;
+/* The image and external owner contexts stay borrowed until end. The operation
+ * owns all frontend/application slots and callback tables across advances. */
+bool frontend_persistence_restore_begin(qa_frontend **,
+    const qa_application_persistence_ops *,const qa_save_image *,
+    frontend_persistence_restore_operation **,qa_error *);
+bool frontend_persistence_restore_advance(frontend_persistence_restore_operation *,
+    uint64_t quantum,bool *complete,qa_error *);
+void frontend_persistence_restore_end(frontend_persistence_restore_operation **,
+    qa_frontend **displaced,qa_frontend **retained);
 bool frontend_persistence_restore(qa_frontend **, const qa_application_persistence_ops *,
     const qa_save_image *, qa_frontend **displaced, qa_frontend **retained, qa_error *);
 typedef bool (*frontend_persistence_replay_fn)(void *,qa_frontend *,qa_error *);

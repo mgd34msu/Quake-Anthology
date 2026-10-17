@@ -549,6 +549,8 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
     qa_platform_event_cursor cursor = {0};
     bool packets_blocked[QA_INPUT_LOCAL_SEATS + 2] = {0};
     bool commands_blocked=false;
+    bool restoring=frontend_save_commands_restore_lease_held(frontend);
+    if (restoring) input_ready=false;
     while (qa_platform_events_read(frontend->platform_events,&cursor,&event,&payload)) {
         bool ok=true,consumed=true;
         switch (event.kind) {
@@ -563,15 +565,18 @@ bool frontend_platform_drain(qa_frontend *frontend, bool input_ready, qa_error *
             qa_application_request_stop(frontend->application);
             break;
         case QA_PLATFORM_EVENT_STREAM: {
+            if (restoring) continue;
             bool recognized=false;
             ok=frontend_network_stream_receive(frontend,&event,payload,&recognized,error);
             if(ok && !recognized) ok=frontend_tools_stream_receive(frontend,&event,payload,error);
             break;
         }
         case QA_PLATFORM_EVENT_HTTP:
+            if (restoring) continue;
             ok=frontend_tools_http_receive(frontend,&event,payload,error);
             break;
         case QA_PLATFORM_EVENT_PACKET: {
+            if (restoring) continue;
             int32_t destination = event.data.packet.destination;
             bool tracked = destination >= 0 && (size_t)destination < sizeof(packets_blocked) / sizeof(*packets_blocked);
             if(tracked && packets_blocked[destination]) continue;
@@ -1007,13 +1012,14 @@ static bool frontend_step(qa_frontend *frontend,
         frontend->frame_number == UINT64_MAX)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     if (!frontend->capture && !frontend->resource_inventory && !frontend->source_restoring &&
-        !frontend->frame.source_pending)
+        !frontend->frame.source_pending && !frontend_save_commands_restore_lease_held(frontend))
         qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if(replay) {
         frontend->time_ns=replay->time_ns;
         frontend->frame_number=replay->frame_before;
     }
-    qa_application_world_text_frame(frontend->application, frontend->frame_number, !frontend->options.dedicated);
+    if (!frontend_save_commands_restore_lease_held(frontend))
+        qa_application_world_text_frame(frontend->application,frontend->frame_number,!frontend->options.dedicated);
     bool ok=frontend_platform_drain(frontend,replay!=NULL,error),ready=false;
     if(!replay && ok) {
         ok=platform_collect(frontend,frontend->wall_time_ns,error);
@@ -1102,7 +1108,8 @@ static bool frontend_step(qa_frontend *frontend,
             !qa_application_startup_pending(frontend->application))
             ok=qa_application_clients_drain(frontend->application,error);
         bool cinematic=!replay && frontend_cinematic_running(frontend);
-        if (ok && !replay && (!ready || cinematic || client_only || !*playing))
+        if (ok && !replay && !frontend_save_commands_restore_lease_held(frontend) &&
+            (!ready || cinematic || client_only || !*playing))
             ok=qa_application_control_pause(frontend->application,false,error);
         uint64_t adjusted=raw_elapsed;
         if (ok && ready && !replay && !qa_application_should_stop(frontend->application)) {
@@ -1296,7 +1303,7 @@ bool qa_frontend_step(qa_frontend *frontend,qa_error *error)
     *fault = (qa_error){0};
     ok = complete_travel(frontend,fault);
 completed:
-    frontend_audio_collect(frontend);
+    if (!frontend_save_commands_restore_lease_held(frontend)) frontend_audio_collect(frontend);
 #ifdef QA_ALLOCATION_GATE
     (void)qa_allocation_gate_end(playing, ok);
 #endif

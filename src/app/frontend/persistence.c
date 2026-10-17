@@ -51,13 +51,16 @@ typedef struct frontend_persistence {
     qa_frontend *active,*candidate;
     qa_frontend **slot;
     const qa_application_persistence_ops *services;
-    qa_application_persistence_ops ops;
+    qa_application_persistence_ops services_copy,ops;
+    qa_application_options options;
+    qa_application *application;
+    qa_application_restore *restore;
     frontend_native_resource_context native_resources;
     qa_application_native_resource_refs native_resource_refs;
     frontend_persistence_native native;
     frontend_q3_color_ticket *color_ticket;
     qa_platform_events *events;
-    bool finished;
+    bool finished,restored;
     void *replay_context;
     frontend_persistence_replay_fn replay;
 } frontend_persistence;
@@ -300,7 +303,11 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         (services && ((services->owner_count && !services->owners) ||
         ((services->publish_ready!=NULL)!=(services->publish!=NULL)))))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Persistence requires an idle application and paired publication callbacks");
-    operation->active=active; operation->services=services;
+    operation->active=active;
+    if (services) {
+        operation->services_copy=*services;
+        operation->services=&operation->services_copy;
+    }
     operation->native_resource_refs=frontend_native_resource_refs(&operation->native_resources);
     operation->ops=(qa_application_persistence_ops){.context=operation,
         .owners=services?services->owners:NULL,.owner_count=services?services->owner_count:0,
@@ -359,23 +366,25 @@ bool frontend_persistence_capture(qa_frontend *f,const qa_application_persistenc
     }
     native_capture_close(&operation); operation_close(&operation); return ok;
 }
-static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,
+static bool restore_begin(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,void *replay_context,frontend_persistence_replay_fn replay_fn,
-    qa_frontend **displaced,qa_frontend **retained,qa_error *error)
+    frontend_persistence_restore_operation **out,qa_error *error)
 {
-    if (!slot || !*slot || !image || !displaced || !retained || *retained ||
-        slot==displaced || slot==retained || displaced==retained)
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend restore needs distinct active, displaced and empty retained owner slots");
-    frontend_persistence operation={.slot=slot,.replay_context=replay_context,.replay=replay_fn,
-        .native_resources={.image=image}};
-    bool ok=operation_init(&operation,*slot,services,error);
-    const qa_frontend *source=operation.active;
+    if (!slot || !*slot || !image || !out || *out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend restore needs its driver, image and empty operation output");
+    frontend_persistence *operation=calloc(1,sizeof(*operation));
+    if (!operation) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining frontend restore operation");
+    *out=operation;
+    operation->slot=slot; operation->replay_context=replay_context; operation->replay=replay_fn;
+    operation->native_resources.image=image;
+    bool ok=operation_init(operation,*slot,services,error);
+    const qa_frontend *source=operation->active;
     if (ok) {
-        operation.candidate=calloc(1,sizeof(*operation.candidate));
-        if (!operation.candidate) ok=frontend_fail(error,QA_ERROR_MEMORY,"Allocating stable detached frontend owner");
+        operation->candidate=calloc(1,sizeof(*operation->candidate));
+        if (!operation->candidate) ok=frontend_fail(error,QA_ERROR_MEMORY,"Allocating stable detached frontend owner");
     }
     if (ok) {
-        qa_frontend *f=operation.candidate; f->options=source->options;
+        qa_frontend *f=operation->candidate; f->options=source->options;
         f->seats=calloc(QA_INPUT_LOCAL_SEATS,sizeof(*f->seats));
         if (!f->seats) ok=frontend_fail(error,QA_ERROR_MEMORY,"Allocating stable detached frontend seats");
         else {
@@ -396,38 +405,71 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
         }
     }
     if (ok) {
-        operation.candidate->platform_events=qa_platform_events_create(error);
-        ok=operation.candidate->platform_events!=NULL;
+        operation->candidate->platform_events=qa_platform_events_create(error);
+        ok=operation->candidate->platform_events!=NULL;
     }
     if (ok) {
-        ok=frontend_global_settings_storage_create(operation.candidate->options.application.user_root,
-            &operation.candidate->global_settings_storage,error);
-        if (ok) operation.candidate->keys=frontend_keys_create(error);
-        ok=ok && operation.candidate->keys!=NULL;
+        ok=frontend_global_settings_storage_create(operation->candidate->options.application.user_root,
+            &operation->candidate->global_settings_storage,error);
+        if (ok) operation->candidate->keys=frontend_keys_create(error);
+        ok=ok && operation->candidate->keys!=NULL;
         if (ok) {
-            operation.candidate->config_store=frontend_config_store_create(operation.candidate,error);
-            ok=operation.candidate->config_store!=NULL;
+            operation->candidate->config_store=frontend_config_store_create(operation->candidate,error);
+            ok=operation->candidate->config_store!=NULL;
         }
     }
-    qa_application *next=operation.active?operation.active->application:NULL,*old=NULL,*held=NULL;
     if (ok) {
-        qa_application_options options=operation.candidate->options.application;
-        frontend_application_options(operation.candidate,&options);
-        ok=qa_application_persistence_restore(&next,&options,&operation.ops,image,&old,&held,error);
-        if (!ok) operation.candidate->application=held;
+        operation->application=operation->active->application;
+        operation->options=operation->candidate->options.application;
+        frontend_application_options(operation->candidate,&operation->options);
+        ok=qa_application_persistence_restore_begin(&operation->application,&operation->options,
+            &operation->ops,image,&operation->restore,error);
     }
-    operation_close(&operation);
-    if (ok) {
-        /* The concrete frontend heap was published at the same nofail boundary
-         * as its application. Both displaced owners still have their original
-         * stable callback contexts for separate ordinary retirement. */
-        operation.active->application=old; *displaced=operation.active;
-    } else if (operation.candidate && !operation.candidate->seats) {
-        free(operation.candidate);
-    } else if (operation.candidate) {
+    return ok;
+}
+bool frontend_persistence_restore_begin(qa_frontend **slot,
+    const qa_application_persistence_ops *services,const qa_save_image *image,
+    frontend_persistence_restore_operation **out,qa_error *error)
+{ return restore_begin(slot,services,image,NULL,NULL,out,error); }
+bool frontend_persistence_restore_advance(frontend_persistence_restore_operation *operation,
+    uint64_t quantum,bool *complete,qa_error *error)
+{
+    bool ok=qa_application_persistence_restore_advance(operation->restore,quantum,complete,error);
+    if (ok && *complete) operation->restored=true;
+    return ok;
+}
+void frontend_persistence_restore_end(frontend_persistence_restore_operation **slot,
+    qa_frontend **displaced,qa_frontend **retained)
+{
+    if (!slot || !*slot) return;
+    frontend_persistence *operation=*slot;
+    qa_application *old=NULL,*held=NULL;
+    qa_application_persistence_restore_end(&operation->restore,&old,&held);
+    operation_close(operation);
+    if (operation->restored) {
+        operation->active->application=old;
+        *displaced=operation->active;
+    } else if (operation->candidate && !operation->candidate->seats) {
+        free(operation->candidate);
+    } else if (operation->candidate) {
         qa_error cleanup={0};
-        if (held || !qa_frontend_destroy(operation.candidate,&cleanup)) *retained=operation.candidate;
+        operation->candidate->application=held;
+        if (held || !qa_frontend_destroy(operation->candidate,&cleanup)) *retained=operation->candidate;
     }
+    free(operation); *slot=NULL;
+}
+static bool restore_frontend(qa_frontend **slot,const qa_application_persistence_ops *services,
+    const qa_save_image *image,void *replay_context,frontend_persistence_replay_fn replay_fn,
+    qa_frontend **displaced,qa_frontend **retained,qa_error *error)
+{
+    if (!slot || !displaced || !retained || *retained ||
+        slot==displaced || slot==retained || displaced==retained)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend restore needs distinct active, displaced and empty retained owner slots");
+    frontend_persistence_restore_operation *operation=NULL;
+    bool complete=false;
+    bool ok=restore_begin(slot,services,image,replay_context,replay_fn,&operation,error);
+    while (ok && !complete) ok=frontend_persistence_restore_advance(operation,0,&complete,error);
+    frontend_persistence_restore_end(&operation,displaced,retained);
     return ok;
 }
 bool frontend_persistence_restore(qa_frontend **slot,const qa_application_persistence_ops *services,

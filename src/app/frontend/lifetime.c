@@ -804,7 +804,8 @@ bool frontend_save_image_release(qa_frontend *frontend,qa_save_image **image,qa_
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
-    if (!frontend_shared_resource_policy_live_retire(frontend,error)) return false;
+    if (!frontend_save_commands_restore_cancel(frontend,error) ||
+        !frontend_shared_resource_policy_live_retire(frontend,error)) return false;
     if (frontend->shutdown) {
         frontend->shutdown->waiting=false;
         frontend->shutdown->retry_cleanup=false;

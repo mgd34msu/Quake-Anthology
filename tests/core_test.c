@@ -6666,6 +6666,88 @@ static qa_save_image *recovery_image(uint64_t elapsed, uint8_t value)
     return image;
 }
 
+typedef struct restore_probe {
+    const qa_save_record *pending;
+    size_t applied, expected;
+    unsigned creates, finishes, publishes, discards;
+    bool reject;
+} restore_probe;
+static bool restore_probe_create(void *context, const qa_save_image *image,
+    void **candidate, qa_error *error)
+{
+    (void)image; (void)error;
+    restore_probe *probe = context;
+    ++probe->creates; *candidate = probe;
+    return true;
+}
+static bool restore_probe_record(void *context, void *candidate, const qa_save_record *record,
+    uint64_t quantum, bool *complete, qa_error *error)
+{
+    (void)quantum; (void)error;
+    restore_probe *probe = context;
+    CHECK(candidate == probe && !probe->finishes && !probe->publishes);
+    if (probe->reject) return false;
+    *complete = probe->pending != NULL;
+    if (*complete) {
+        CHECK(probe->pending == record);
+        probe->pending = NULL; ++probe->applied;
+    } else probe->pending = record;
+    return true;
+}
+static bool restore_probe_finish(void *context, void *candidate,
+    const qa_save_image *image, qa_error *error)
+{
+    (void)image; (void)error;
+    restore_probe *probe = context;
+    CHECK(candidate == probe && !probe->pending && probe->applied == probe->expected);
+    ++probe->finishes; return true;
+}
+static bool restore_probe_publish(void *context, void *candidate, qa_error *error)
+{
+    (void)error;
+    restore_probe *probe = context;
+    CHECK(candidate == probe && probe->finishes == 1);
+    ++probe->publishes; return true;
+}
+static void restore_probe_discard(void *context, void *candidate)
+{
+    restore_probe *probe = context;
+    CHECK(candidate == probe && !probe->publishes);
+    ++probe->discards;
+}
+static void recovery_restore_yields(const qa_save_image *image)
+{
+    qa_error error = {0};
+    qa_save_restore_ops ops = {.create = restore_probe_create, .restore = restore_probe_record,
+        .finish = restore_probe_finish, .publish = restore_probe_publish, .discard = restore_probe_discard};
+    restore_probe probe = {.expected = qa_save_image_record_count(image)};
+    qa_save_restore_operation *operation = NULL;
+    CHECK(qa_save_restore_begin(&probe, &ops, image, &operation, &error));
+    bool complete = false;
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(probe.creates == 1 && !probe.applied && !probe.publishes);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete && probe.pending);
+    CHECK(!probe.applied && !probe.publishes);
+    size_t remaining = 2 * probe.expected + 2;
+    while (!complete && remaining--) CHECK(qa_save_restore_advance(operation, 64, &complete, &error));
+    CHECK(complete && probe.publishes == 1 && probe.applied == probe.expected);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && complete && probe.publishes == 1);
+    qa_save_restore_destroy(&operation);
+    CHECK(!operation && !probe.discards);
+    probe = (restore_probe){.expected = probe.expected};
+    CHECK(qa_save_restore(&probe, &ops, image, &error));
+    CHECK(probe.creates == 1 && probe.finishes == 1 && probe.publishes == 1 && !probe.discards);
+    probe = (restore_probe){0};
+    CHECK(qa_save_restore_begin(&probe, &ops, image, &operation, &error));
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete);
+    CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && probe.pending);
+    qa_save_restore_destroy(&operation);
+    CHECK(!operation && probe.discards == 1 && !probe.publishes);
+    probe = (restore_probe){.reject = true};
+    CHECK(!qa_save_restore(&probe, &ops, image, &error));
+    CHECK(probe.discards == 1 && !probe.finishes && !probe.publishes);
+}
+
 static void test_recovery_checkpoints(void)
 {
     qa_error error = {0};
@@ -6674,6 +6756,7 @@ static void test_recovery_checkpoints(void)
     qa_fs_root *root = NULL;
     CHECK(qa_fs_root_open(directory, &root, &error));
     qa_save_image *image = recovery_image(0, 73);
+    recovery_restore_yields(image);
     qa_bytes first, again;
     CHECK(qa_save_image_encode(image, &first, &error));
     CHECK(qa_save_image_encode(image, &again, &error));

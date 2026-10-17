@@ -112,11 +112,21 @@ bool qa_save_capture(void *, const qa_save_capture_ops *, qa_save_purpose,
  * Closing the displaced session is the application's separate responsibility. */
 typedef struct qa_save_restore_ops {
     bool (*create)(void *, const qa_save_image *, void **candidate, qa_error *);
-    bool (*restore)(void *, void *candidate, const qa_save_record *, qa_error *);
+    bool (*restore)(void *, void *candidate, const qa_save_record *, uint64_t quantum,
+                    bool *complete, qa_error *);
     bool (*finish)(void *, void *candidate, const qa_save_image *, qa_error *);
     bool (*publish)(void *, void *candidate, qa_error *);
     void (*discard)(void *, void *candidate);
 } qa_save_restore_ops;
+typedef struct qa_save_restore_operation qa_save_restore_operation;
+/* The image and callback contexts remain borrowed until destroy. An unfinished
+ * record retains its cursor and candidate; publish runs only after every record
+ * actually completes. Zero quantum drives the same operation synchronously. */
+bool qa_save_restore_begin(void *, const qa_save_restore_ops *, const qa_save_image *,
+                           qa_save_restore_operation **, qa_error *);
+bool qa_save_restore_advance(qa_save_restore_operation *, uint64_t quantum,
+                             bool *complete, qa_error *);
+void qa_save_restore_destroy(qa_save_restore_operation **);
 bool qa_save_restore(void *, const qa_save_restore_ops *, const qa_save_image *, qa_error *);
 
 /* A contained save file or directory. Every path component named current is

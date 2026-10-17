@@ -11,8 +11,12 @@ uint64_t frontend_save_commands_registry(const qa_frontend *);
 /* Borrowed actual queue directory authority; no path is reopened. */
 qa_fs_root *frontend_save_commands_root(const qa_frontend *);
 bool frontend_save_commands_pending(const qa_frontend *);
-/* A genuine original-source startup operation holds the active native cut. */
+/* A genuine original-source or shared restore suspends ordinary gameplay. */
 bool frontend_save_commands_restoring(const qa_frontend *);
+/* While the shared application lease is held, intake queues events without
+ * dispatching callbacks into the frozen active application. */
+bool frontend_save_commands_restore_lease_held(const qa_frontend *);
+bool frontend_save_commands_restore_cancel(qa_frontend *,qa_error *);
 /* Owned contained path using the exact command queue admission rules. */
 char *frontend_save_commands_slot_path(const qa_frontend *, const char *, qa_error *);
 bool frontend_save_commands_queue(qa_frontend *, const qa_command_invocation *, qa_error *);

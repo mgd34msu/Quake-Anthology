@@ -36,6 +36,8 @@ struct frontend_save_commands {
     uint64_t next_nonce, command_registry;
     save_command_request request;
     qa_frontend_original_restore *original;
+    frontend_persistence_restore_operation *shared;
+    qa_save_image *restore_image;
     qa_save_image *campaign;
     qa_frontend *retained[3];
     qa_error failure;
@@ -147,15 +149,28 @@ uint64_t frontend_save_commands_registry(const qa_frontend *f)
 qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 { return f && f->save_commands ? f->save_commands->root : NULL; }
 bool frontend_save_commands_pending(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
+{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_restoring(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign || f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN); }
+{ return f && f->save_commands && (f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN); }
+bool frontend_save_commands_restore_lease_held(const qa_frontend *f)
+{ return f && f->save_commands && f->save_commands->shared; }
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
         && f->save_commands->failed_operation==SAVE_FAILURE_NONE
-        && !f->save_commands->original
+        && !f->save_commands->original && !f->save_commands->shared
         && (!f->save_commands->draining || !f->save_commands->pending);
+}
+bool frontend_save_commands_restore_cancel(qa_frontend *f,qa_error *error)
+{
+    if (!f || !f->save_commands) return true;
+    frontend_save_commands *owner=f->save_commands;
+    if (owner->shared) {
+        qa_frontend *displaced=NULL;
+        frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2]);
+        request_free(&owner->request); owner->pending=false;
+    }
+    return frontend_save_image_release(f,&owner->restore_image,error);
 }
 bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
 {
@@ -163,7 +178,7 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
     frontend_save_commands *owner = f->save_commands;
     if (owner->draining)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Save command is using its frontend owner");
-    if (!cleanup_retained(owner, error)) return false;
+    if (!frontend_save_commands_restore_cancel(f,error) || !cleanup_retained(owner,error)) return false;
     if (!qa_save_image_destroy_checked(&owner->campaign,error)) return false;
     if (owner->original) {
         qa_frontend_original_restore *original = owner->original;
@@ -279,7 +294,7 @@ bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *c
         !command->argv[0] || !command->argv[1] || !*command->argv[1])
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Usage: save <name or path>, load <name or path>");
     frontend_save_commands *owner = f->save_commands;
-    if (owner->pending || owner->original || owner->draining || cleanup_pending(owner))
+    if (owner->pending || owner->original || owner->shared || owner->draining || cleanup_pending(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Another save operation is in progress");
     save_command_request request = {0};
     request.load = qa_text_ascii_equal(command->argv[0], "load");
@@ -600,7 +615,6 @@ static bool read_saved(frontend_save_commands *owner,const char *name,qa_save_im
 }
 static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
     const save_command_request *request, qa_save_image **image, qa_q1_save_data **source,qa_q2_save_data **q2,
-    qa_frontend **displaced, qa_frontend **retained_candidate,
     qa_error *error)
 {
     char *path=NULL;
@@ -608,8 +622,9 @@ static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
     qa_frontend *f = *slot;
     if (*image) {
         free(path);
-        return qa_frontend_persistence_restore(slot,f->options.persistence_services,
-            *image,displaced,retained_candidate,error);
+        owner->restore_image=*image; *image=NULL;
+        return frontend_persistence_restore_begin(slot,f->options.persistence_services,
+            owner->restore_image,&owner->shared,error);
     }
     const qa_product *product=NULL,*preferred=qa_application_save_original_product(f->application);
     qa_frontend_original_save original={0};
@@ -698,7 +713,7 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     if (!f || !f->save_commands || !handled)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Campaign travel needs its actual save command owner");
     frontend_save_commands *owner=f->save_commands;
-    *handled=owner->pending || owner->campaign || owner->original ||
+    *handled=owner->pending || owner->campaign || owner->original || owner->shared ||
         owner->failed_operation!=SAVE_FAILURE_NONE || cleanup_pending(owner);
     if (*handled) return true;
     bool needed=false;
@@ -780,18 +795,22 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     qa_q1_save_data *source = NULL;qa_q2_save_data *q2=NULL;
     qa_frontend *displaced = NULL, *retained_source = NULL, *retained_candidate = NULL;
     qa_error local = {0};
-    bool ok = qa_application_command_context_active(f->application, &request.context);
-    if (!ok) frontend_fail(&local, QA_ERROR_ARGUMENT, "Save command belongs to a retired world");
-    if (ok) ok = qa_application_save_policy(f->application, frontend_network_save_authority(f),
-        f->options.dedicated, request.load, QA_SAVE_MANUAL, &local);
-    bool complete = !owner->original;
-    if (owner->original) {
+    bool continuing=owner->original || owner->shared;
+    bool ok=continuing || qa_application_command_context_active(f->application,&request.context);
+    if (!ok) frontend_fail(&local,QA_ERROR_ARGUMENT,"Save command belongs to a retired world");
+    if (ok && !continuing) ok=qa_application_save_policy(f->application,frontend_network_save_authority(f),
+        f->options.dedicated,request.load,QA_SAVE_MANUAL,&local);
+    bool complete=!continuing;
+    if (owner->shared) {
+        uint64_t quantum=f->options.application.native_process_policy.instruction_budget;
+        if (!quantum || quantum>16384) quantum=16384;
+        ok=frontend_persistence_restore_advance(owner->shared,quantum,&complete,&local);
+    } else if (owner->original) {
         if (ok) ok = qa_frontend_original_restore_advance(owner->original, slot, &complete,
             &displaced, &retained_candidate, &local);
     } else if (ok && request.load) {
-        ok = restore_saved(slot, owner, &request, &image, &source,&q2, &displaced,
-            &retained_candidate, &local);
-        if (ok && owner->original) complete = false;
+        ok=restore_saved(slot,owner,&request,&image,&source,&q2,&local);
+        if (ok && (owner->original || owner->shared)) complete=false;
     } else if (ok) {
         if (owner->next_nonce == UINT64_MAX) ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Save write sequence exhausted");
         else {
@@ -805,6 +824,13 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
                         QA_SAVE_MANUAL,&image,&recovery_error)) && recovery_checkpoint(f,image,&recovery_error);
                 if (!recorded) recovery_fault(f,&recovery_error);
             }
+        }
+    }
+    if (!ok || complete) {
+        frontend_persistence_restore_end(&owner->shared,&displaced,&retained_candidate);
+        if (!frontend_save_image_release(f,&owner->restore_image,ok?&local:&cleanup)) {
+            if (local.code==QA_OK) local=cleanup;
+            ok=false;
         }
     }
     if (!frontend_save_image_release(f,&image,ok?&local:&cleanup)) {
