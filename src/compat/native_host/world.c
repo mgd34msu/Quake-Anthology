@@ -340,6 +340,14 @@ bool qa_native_host_detach_actor(qa_native_host *host, uint32_t slot,
     return true;
 }
 
+void native_host_models_rebind(qa_native_host *host)
+{
+    qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
+    for (uint32_t index = 0; index < host->models.count; ++index)
+        if (host->model_entries[index].present)
+            host->model_entries[index].geometry = geometry;
+}
+
 bool qa_native_host_world_actor_bind(qa_native_host *host, qa_actor_id actor, qa_error *error)
 {
     if (!host || host->kind != NATIVE_HOST_Q2_GAME || !qa_native_host_destroy_ready(host) ||
@@ -349,6 +357,7 @@ bool qa_native_host_world_actor_bind(qa_native_host *host, qa_actor_id actor, qa
     if (record->owner != host->world.owner || !record->has_source || record->source_slot)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native world actor differs from its owner/source world slot");
     host->world.world_actor = actor;
+    native_host_models_rebind(host);
     if (qa_native_get_lifecycle(host->instance) == QA_NATIVE_LOADED) return true;
     return bind_world(host, 0, error);
 }
