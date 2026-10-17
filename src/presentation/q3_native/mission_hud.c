@@ -102,6 +102,8 @@ bool q3nm_begin(q3n_mission_hud *o, const q3n_frame *f, qa_error *e, q3menu_cont
     if (!o || o->busy || !o->hud || !q3nm_current(o, f, e)) return false;
     o->busy = true; o->frame = f; o->commands = f->server_commands ? q3n_server_commands_state(f->server_commands) : NULL;
     o->display.realTime = f->time;
+    o->display.frameTime = f->frame_milliseconds;
+    o->display.FPS = (float)q3nh_frame_rate(o->hud);
     o->menus->error = e; o->menus->failed = false; *previous = q3menu_enter(o->menus);
     o->settings.draw_status = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawStatus) != 0;
     o->settings.draw_icons = q3nm_integer(o,QA_NATIVE_Q3_CVAR_cg_drawIcons) != 0;

@@ -66,12 +66,9 @@ static bool upper(q3n_hud_draw *d)
         y+=20*d->frame->preferences.text_scale;
     }
     if(d->settings->draw_fps) {
-        q3n_hud *o=d->owner; int32_t time=o->options.milliseconds(o->options.context);
-        o->previous_times[(uint32_t)o->fps_index&3u]=qa_i32_sub(time,o->previous_milliseconds);
-        o->previous_milliseconds=time; o->fps_index=qa_i32_add(o->fps_index,1);
+        q3n_hud *o=d->owner;
         if(o->fps_index>4) {
-            int32_t total=0; for(unsigned i=0;i<4;++i)total=qa_i32_add(total,o->previous_times[i]); if(!total)total=1;
-            snprintf(text,sizeof(text),"%ifps",4000/total);
+            snprintf(text,sizeof(text),"%ifps",q3nh_frame_rate(o));
             if(!q3nh_right(d,635,y+2,text,1))return false;
         }
         y+=20*d->frame->preferences.text_scale;

@@ -43,6 +43,7 @@ bool q3nh_font_text(q3n_hud_draw *,float x,float y,const char *,float height,con
     bool force,bool shadow,int32_t limit,qa_font_alignment,bool baseline,const q3n_hud_text_cursor *,bool *handled);
 bool q3nh_width(q3n_hud_draw *,const char *,float width,float height,int32_t limit,float *);
 bool q3nh_current(q3n_hud *,const q3n_frame *,qa_error *);
+int32_t q3nh_frame_rate(const q3n_hud *);
 size_t q3nh_strlen(const char *);
 bool q3nh_fade(int32_t time,int32_t start,int32_t duration,float color[4]);
 void q3nh_health(int32_t health,int32_t armor,float color[4]);

@@ -85,7 +85,22 @@ bool q3n_hud_scores_request(q3n_hud *o,const q3n_frame *f,bool *due,qa_error *e)
     return true;
 }
 void q3n_hud_frame_sample(q3n_hud *o,int32_t offset)
-{ if(o && !o->busy) { o->frame_samples[(uint32_t)o->frame_count&127u]=offset; o->frame_count=qa_i32_add(o->frame_count,1); } }
+{
+    if(!o || o->busy)return;
+    o->frame_samples[(uint32_t)o->frame_count&127u]=offset;
+    o->frame_count=qa_i32_add(o->frame_count,1);
+    int32_t time=o->options.milliseconds(o->options.context);
+    o->previous_times[(uint32_t)o->fps_index&3u]=qa_i32_sub(time,o->previous_milliseconds);
+    o->previous_milliseconds=time;
+    o->fps_index=qa_i32_add(o->fps_index,1);
+}
+int32_t q3nh_frame_rate(const q3n_hud *o)
+{
+    if(o->fps_index<=4)return 0;
+    int32_t total=0;
+    for(unsigned i=0;i<4;++i)total=qa_i32_add(total,o->previous_times[i]);
+    return 4000/(total?total:1);
+}
 void q3n_hud_snapshot_sample(q3n_hud *o,bool dropped,int32_t ping,int32_t flags)
 { if(o && !o->busy) { unsigned i=(uint32_t)o->snapshot_count&127u; o->snapshot_samples[i]=dropped?-1:ping;
     if(!dropped)o->snapshot_flags[i]=flags;
