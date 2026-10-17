@@ -2,6 +2,7 @@
 #include "qa/binary.h"
 #include "qa/vfs.h"
 #include "qa/hash.h"
+#include "qa/jobs.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -716,6 +717,71 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_trace_scr
     return true;
 }
 
+typedef struct visibility_expansion {
+    qa_collision_geometry *geometry;
+    const uint8_t *pvs, *upper;
+    size_t stride, neighbors, first_neighbor, partitions, lanes;
+    size_t *pending;
+} visibility_expansion;
+
+static uint64_t visibility_lane(const uint8_t *row, size_t offset, size_t width)
+{
+    if (width - offset >= sizeof(uint64_t)) return qa_load_u64le(row + offset);
+    uint64_t value = 0;
+    for (size_t byte = 0; byte < width - offset; ++byte)
+        value |= (uint64_t)row[offset + byte] << (byte * 8);
+    return value;
+}
+
+static void visibility_lane_store(uint8_t *row, size_t offset, size_t width, uint64_t value)
+{
+    if (width - offset >= sizeof(uint64_t)) qa_store_u64le(row + offset, value);
+    else for (size_t byte = 0; byte < width - offset; ++byte)
+        row[offset + byte] = (uint8_t)(value >> (byte * 8));
+}
+
+static void expand_visibility_partition(void *context, size_t partition)
+{
+    const visibility_expansion *work = context;
+    size_t width = work->geometry->visibility_bytes;
+    size_t *pending = work->pending + partition * work->lanes;
+    size_t neighbor_bytes = work->neighbors / 8 + (work->neighbors % 8 != 0);
+    for (size_t i = partition; i < work->geometry->visibility_slots; i += work->partitions) {
+        const uint8_t *pvs = work->pvs + i * work->stride;
+        uint8_t *row = work->geometry->phs[i];
+        memcpy(row, pvs, width);
+        size_t count = 0;
+        for (size_t lane = 0; lane < work->lanes; ++lane) {
+            size_t offset = lane * sizeof(uint64_t);
+            uint64_t original = visibility_lane(pvs, offset, width);
+            if (original != (original | visibility_lane(work->upper, offset, width)))
+                pending[count++] = lane;
+        }
+        /* Only ORIGINAL PVS bits choose neighbors, never the growing PHS. */
+        for (size_t byte = 0; byte < neighbor_bytes && count; ++byte) {
+            unsigned bits = pvs[byte];
+            for (unsigned bit = 0; bits && count; ++bit, bits >>= 1) {
+                if (!(bits & 1u)) continue;
+                size_t neighbor = byte * 8 + bit;
+                if (neighbor >= work->neighbors) break;
+                size_t index = work->first_neighbor + neighbor;
+                if (index == i) continue;
+                const uint8_t *adjacent = work->pvs + index * work->stride;
+                for (size_t at = 0; at < count;) {
+                    size_t offset = pending[at] * sizeof(uint64_t);
+                    uint64_t value = visibility_lane(row, offset, width) |
+                        visibility_lane(adjacent, offset, width);
+                    visibility_lane_store(row, offset, width, value);
+                    uint64_t upper = visibility_lane(work->upper, offset, width) |
+                        visibility_lane(pvs, offset, width);
+                    if (value == upper) pending[at] = pending[--count];
+                    else ++at;
+                }
+            }
+        }
+    }
+}
+
 static bool load_visibility_rows(qa_collision_geometry *geometry, qa_error *error)
 {
     size_t slots = geometry->visibility_slots, width = geometry->visibility_bytes;
@@ -734,29 +800,50 @@ static bool load_visibility_rows(qa_collision_geometry *geometry, qa_error *erro
                 geometry->cluster_count, geometry->pvs[i], width, &written, error)) return false;
         }
     }
-    for (size_t i = 0; i < slots; ++i) {
-        uint8_t *row = geometry->phs[i] = geometry->phs_rows + i * width;
-        if (geometry->family == QA_GAME_Q2) {
+    for (size_t i = 0; i < slots; ++i)
+        geometry->phs[i] = geometry->phs_rows + i * width;
+    if (geometry->family == QA_GAME_Q2) {
+        for (size_t i = 0; i < slots; ++i) {
             size_t written;
             if (!qa_bsp_visibility(&geometry->bsp, (int32_t)i, true,
-                geometry->cluster_count, row, width, &written, error)) return false;
-        } else {
-            qa_bytes vis = geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes;
-            size_t stride = geometry->family == QA_GAME_Q3 ? qa_load_u32le(vis.data + 4) : width;
-            const uint8_t *pvs = geometry->family == QA_GAME_Q3 ?
-                vis.data + 8 + i * stride : geometry->pvs[i];
-            memcpy(row, pvs, width);
-            size_t neighbors = geometry->family == QA_GAME_Q1 ?
-                geometry->leaf_count - 1 : geometry->cluster_count;
-            for (size_t neighbor = 0; neighbor < neighbors; ++neighbor) {
-                if (!bit_test((qa_bytes){pvs, width}, neighbor)) continue;
-                size_t index = geometry->family == QA_GAME_Q1 ? neighbor + 1 : neighbor;
-                const uint8_t *adjacent = geometry->family == QA_GAME_Q3 ?
-                    vis.data + 8 + index * stride : geometry->pvs[index];
-                for (size_t byte = 0; byte < width; ++byte) row[byte] |= adjacent[byte];
-            }
+                geometry->cluster_count, geometry->phs[i], width, &written, error)) return false;
         }
+        return true;
     }
+    visibility_expansion work = {.geometry = geometry,
+        .pvs = geometry->family == QA_GAME_Q3 ? geometry->bsp.lumps[QA_BSP_VISIBILITY].bytes.data + 8 :
+            geometry->pvs_rows,
+        .stride = geometry->visibility_stride,
+        .neighbors = geometry->family == QA_GAME_Q1 ? geometry->leaf_count - 1 : geometry->cluster_count,
+        .first_neighbor = geometry->family == QA_GAME_Q1 ? 1u : 0u,
+        .lanes = width / sizeof(uint64_t) + (width % sizeof(uint64_t) != 0)};
+    if (work.neighbors / 8 >= width) work.neighbors = width * 8;
+    uint8_t *upper = geometry_array(1, width, error);
+    if (!upper) return false;
+    /* Q1 leaf0 is not a neighbor. Its all-visible fallback must not force
+     * every other row's saturation bound to include unused/padding bits. */
+    for (size_t i = 0; i < work.neighbors; ++i) {
+        const uint8_t *row = work.pvs + (work.first_neighbor + i) * work.stride;
+        for (size_t offset = 0; offset < width; offset += sizeof(uint64_t))
+            visibility_lane_store(upper, offset, width,
+                visibility_lane(upper, offset, width) | visibility_lane(row, offset, width));
+    }
+    work.upper = upper;
+    qa_error jobs_error = {0};
+    qa_jobs *jobs = slots > 1 && work.lanes > 1 ? qa_jobs_create(0, &jobs_error) : NULL;
+    work.partitions = qa_jobs_count(jobs);
+    if (work.partitions > slots) work.partitions = slots;
+    qa_error scratch_error = {0};
+    work.pending = geometry_array(work.partitions, work.lanes * sizeof(*work.pending), &scratch_error);
+    if (!work.pending && work.partitions > 1) {
+        qa_jobs_destroy(jobs); jobs = NULL; work.partitions = 1;
+        work.pending = geometry_array(1, work.lanes * sizeof(*work.pending), &scratch_error);
+    }
+    if (!work.pending && error) *error = scratch_error;
+    if (!work.pending) { qa_jobs_destroy(jobs); free(upper); return false; }
+    qa_jobs_dispatch(jobs, 0, work.partitions, expand_visibility_partition, &work);
+    qa_jobs_destroy(jobs);
+    free(work.pending); free(upper);
     return true;
 }
 

@@ -1215,6 +1215,101 @@ static void test_aas_clustering(void)
     qa_nav_asset_release(asset);
 }
 
+static void test_visibility_phs_union(void)
+{
+    enum { clusters=73, width=(clusters+7)/8 };
+    uint8_t rows[clusters][width];
+    memset(rows,0,sizeof(rows));
+    for(unsigned i=2;i<clusters;++i) {
+        const unsigned visible[]={i,(i+1)%clusters,(i*11+17)%clusters};
+        for(size_t j=0;j<sizeof(visible)/sizeof(*visible);++j)
+            rows[i][visible[j]/8]|=(uint8_t)(1u<<(visible[j]%8));
+        rows[i][width-1]|=(uint8_t)((i*2u)&254u);
+    }
+    memset(rows[1],255,width);
+    memset(rows[2],0,width);rows[2][0]=8;
+    memset(rows[3],0,width);rows[3][0]=16;
+    memset(rows[4],0,width);rows[4][0]=32;
+    for(unsigned family=0;family<2;++family) {
+        qa_error error={0};uint8_t bytes[8192]={0};size_t size;
+        if(!family) {
+            gameplay_map floor;gameplay_map_create(&floor);
+            memcpy(bytes,floor.bytes,sizeof(floor.bytes));qa_collision_destroy(floor.geometry);
+            const uint32_t leaves=320,visibility=leaves+(clusters+1)*28;
+            qa_store_u32le(bytes+4+10*8,leaves);qa_store_u32le(bytes+8+10*8,(clusters+1)*28);
+            qa_store_u32le(bytes+4+4*8,visibility);
+            uint32_t model=qa_load_u32le(bytes+4+14*8);qa_store_u32le(bytes+model+52,clusters);
+            size=visibility;
+            for(unsigned i=0;i<=clusters;++i) {
+                uint8_t *leaf=bytes+leaves+i*28;
+                qa_store_u32le(leaf,i?UINT32_MAX:UINT32_MAX-1);
+                qa_store_u32le(leaf+4,i?(uint32_t)(size-visibility):UINT32_MAX);
+                for(unsigned axis=0;axis<3;++axis) {
+                    qa_store_u16le(leaf+8+axis*2,(uint16_t)-1024);
+                    qa_store_u16le(leaf+14+axis*2,1024);
+                }
+                if(i) for(unsigned byte=0;byte<width;++byte) {
+                    bytes[size++]=rows[i-1][byte];
+                    if(!rows[i-1][byte]) bytes[size++]=1;
+                }
+            }
+            qa_store_u32le(bytes+8+4*8,(uint32_t)(size-visibility));
+        } else {
+            const uint32_t planes=144,nodes=planes+16,leaves=nodes+36;
+            const uint32_t models=leaves+clusters*48,visibility=models+40,stride=width+2;
+            memcpy(bytes,"IBSP",4);qa_store_u32le(bytes+4,46);
+            const uint32_t lumps[][3]={{2,planes,16},{3,nodes,36},{4,leaves,clusters*48},
+                {7,models,40},{16,visibility,8+clusters*stride}};
+            for(size_t i=0;i<sizeof(lumps)/sizeof(*lumps);++i) {
+                qa_store_u32le(bytes+8+lumps[i][0]*8,lumps[i][1]);
+                qa_store_u32le(bytes+12+lumps[i][0]*8,lumps[i][2]);
+            }
+            gameplay_float(bytes+planes+8,1);
+            qa_store_u32le(bytes+nodes+4,UINT32_MAX);qa_store_u32le(bytes+nodes+8,UINT32_MAX);
+            for(unsigned i=0;i<clusters;++i) {
+                uint8_t *leaf=bytes+leaves+i*48;qa_store_u32le(leaf,i);
+                for(unsigned axis=0;axis<3;++axis) {
+                    qa_store_u32le(leaf+8+axis*4,(uint32_t)-1024);
+                    qa_store_u32le(leaf+20+axis*4,1024);
+                }
+                memcpy(bytes+visibility+8+i*stride,rows[i],width);
+                bytes[visibility+8+i*stride+width]=231;
+                bytes[visibility+9+i*stride+width]=165;
+            }
+            for(unsigned axis=0;axis<3;++axis) {
+                gameplay_float(bytes+models+axis*4,-1024);
+                gameplay_float(bytes+models+12+axis*4,1024);
+                qa_store_u32le(bytes+nodes+12+axis*4,(uint32_t)-1024);
+                qa_store_u32le(bytes+nodes+24+axis*4,1024);
+            }
+            qa_store_u32le(bytes+visibility,clusters);qa_store_u32le(bytes+visibility+4,stride);
+            size=visibility+8+clusters*stride;
+        }
+        CHECK(size<=sizeof(bytes));qa_bsp_view bsp;qa_collision_geometry *geometry=NULL;
+        CHECK(qa_bsp_open((qa_bytes){bytes,size},&bsp,&error));
+        CHECK(qa_collision_create(&bsp,&geometry,&error));
+        const unsigned count=clusters+(family?0u:1u);
+        for(unsigned i=0;i<count;++i) {
+            uint8_t expected[width];
+            if(!family && !i) memset(expected,255,width);
+            else {
+                const uint8_t *original=rows[i-(family?0u:1u)];memcpy(expected,original,width);
+                for(unsigned neighbor=0;neighbor<clusters;++neighbor)
+                    if(original[neighbor/8]&(1u<<(neighbor%8)))
+                        for(unsigned byte=0;byte<width;++byte) expected[byte]|=rows[neighbor][byte];
+            }
+            qa_bytes phs;CHECK(qa_collision_visibility_row(geometry,(int32_t)i,true,&phs,&error));
+            CHECK(phs.size==width && !memcmp(phs.data,expected,width));
+            if(family) {
+                qa_bytes pvs;CHECK(qa_collision_visibility_row(geometry,(int32_t)i,false,&pvs,&error));
+                CHECK(pvs.size==width+2 && !memcmp(pvs.data,rows[i],width) &&
+                    pvs.data[width]==231 && pvs.data[width+1]==165);
+            }
+        }
+        qa_collision_destroy(geometry);
+    }
+}
+
 static void aas_reachability_generate(const qa_aas_view *source, bool water,
     const qa_bsp_view *geometry, qa_collision_geometry *collision,
     qa_nav_variable_read variable,void *context,qa_nav_asset **out)
@@ -11422,6 +11517,7 @@ int main(int argc, char **argv)
     test_aas_geometry_compaction();
     test_aas_clustering();
     test_aas_reachability();
+    test_visibility_phs_union();
     test_aas_jump_ladder();
     test_aas_teleport_jump_pad();
     test_aas_elevator_bobbing();

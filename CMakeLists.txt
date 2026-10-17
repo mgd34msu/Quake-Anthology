@@ -177,7 +177,7 @@ add_library(qa_world STATIC
     src/world/collision/q3/patch.c
     src/world/collision/world.c
     src/world/spatial.c)
-target_link_libraries(qa_world PUBLIC qa_content)
+target_link_libraries(qa_world PUBLIC qa_content PRIVATE qa_jobs)
 
 add_library(qa_session STATIC src/session/session.c
     src/session/scheduler.c)
