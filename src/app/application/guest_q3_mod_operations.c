@@ -1,5 +1,4 @@
 #include "guest_q3_mod_operations.h"
-#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,9 +68,7 @@ static bool transform(void *context,void *request,bool knockback,double value,qa
     operation_service *s=context;
     if(!s||!request||!isfinite(value)) return fail(e,"Mod transform returned a nonfinite native value");
     if(s->kind==Q3_MOD_DAMAGE) {
-        float narrowed=(float)value;
-        if(!isfinite(narrowed)) return fail(e,"Mod damage transform exceeds canonical binary32");
-        qa_damage_request *r=request; if(knockback) r->knockback=narrowed; else r->amount=narrowed;
+        qa_damage_request *r=request; if(knockback) r->knockback=value; else r->amount=value;
         return qa_damage_request_validate(r,e);
     }
     if((s->kind==Q3_MOD_GIVE||s->kind==Q3_MOD_CONSUME)&&!knockback) {
