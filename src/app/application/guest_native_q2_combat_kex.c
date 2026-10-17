@@ -234,8 +234,7 @@ static bool process_entry(void *opaque, qa_native_instance *instance, qa_native_
             "Original KEX ProcessPain lacks the captured accumulator request for its live target");
     if (!application_q2_combat_actor_valid(&record->source, error)) return false;
     qa_damage_request request = record->request; qa_combat_state state;
-    if (amount < 0 ||
-        !qa_native_read(native(p), record->source.address + p->profile->monster_knockback, knockback, 4, error) ||
+    if (!qa_native_read(native(p), record->source.address + p->profile->monster_knockback, knockback, 4, error) ||
         !vector_read(p, record->source.address + p->profile->monster_point, &request.point, error) ||
         !application_q2_combat_state_read(&record->source, &state, error))
         return application_fail(error, QA_ERROR_FORMAT, "Original KEX reaction accumulation exceeds its exact shared representation");
@@ -436,8 +435,7 @@ bool application_q2_kex_damage_capture(struct application_q2_kex_damage *p, qa_b
             qa_native_read(native(p), record->source.address + p->profile->monster_mod, saved.mod, 3, error) &&
             pointer_slot(p, record->source.address + p->profile->monster_attacker, &saved.attacker_slot, error) &&
             pointer_slot(p, record->source.address + p->profile->monster_inflictor, &saved.inflictor_slot, error);
-        if (ok && (saved.blood < 0 ||
-            !qa_damage_request_validate(&saved.record.request, error)))
+        if (ok && !qa_damage_request_validate(&saved.record.request, error))
             ok = application_fail(error, QA_ERROR_FORMAT, "Original KEX pending damage exceeds its exact saved representation");
         qa_damage_cause cause;
         qa_native_value mod = {.type = QA_NATIVE_BYTES, .as.bytes = {saved.mod, 3}};
@@ -495,7 +493,7 @@ bool application_q2_kex_damage_restore_prepare(struct application_q2_kex_damage 
         if (ok) ok = qa_native_read(native(p), saved->record.source.address + p->profile->svflags, flags, 4, error);
         if (ok && (saved->record.source.generation != generation || !(qa_load_u32le(flags) & 4) ||
             saved->attacker_slot >= table.capacity || saved->inflictor_slot >= table.capacity ||
-            saved->blood < 0 || !qa_vec_finite(saved->point) ||
+            !qa_vec_finite(saved->point) ||
             !qa_damage_request_validate(&saved->record.request, error)))
             ok = application_fail(error, QA_ERROR_FORMAT, "KEX deferred continuation differs from its original source authority");
         qa_damage_cause cause;
