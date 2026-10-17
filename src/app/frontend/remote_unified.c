@@ -439,13 +439,53 @@ static bool prepare(void *context, qa_net_client_id client, const qa_unified_doc
     owner->busy = false; return okay;
 }
 
+static void userinfo_observed(frontend_remote_unified *owner)
+{
+    const qa_cvars *variables=owner->options.domain.cvars;
+    owner->userinfo_view=qa_cvars_view_identity(variables);
+    owner->userinfo_revision=qa_cvars_revision(variables);
+    owner->userinfo_dialect=qa_cvars_dialect(variables);
+}
 static bool ready_document(frontend_remote_unified *owner, qa_unified_document **out, qa_error *error)
 {
     const char *userinfo=NULL;
     if (!owner->options.userinfo(owner->options.context,&owner->options.domain,&userinfo,error) || !userinfo) return false;
     qa_unified_control value={.kind=QA_UNIFIED_CONTROL_READY,.epoch=owner->epoch,
         .value.ready={.composition=*qa_executable_recipe_generation(owner->recipe),.userinfo=(char *)userinfo}};
-    return qa_unified_document_create_control(&value,NULL,out,error);
+    if (!qa_unified_document_create_control(&value,NULL,out,error)) return false;
+    qa_unified_document *receipt=NULL;
+    if (!qa_unified_document_retain(*out,&receipt,error)) {
+        qa_unified_document_destroy(*out); *out=NULL; return false;
+    }
+    qa_unified_document_destroy(owner->sent_userinfo); owner->sent_userinfo=receipt;
+    userinfo_observed(owner); return true;
+}
+static bool userinfo_sync(frontend_remote_unified *owner, qa_error *error)
+{
+    if (!owner->admitted || !owner->frame || !qa_unified_session_active(owner->session)) return true;
+    const qa_cvars *variables=owner->options.domain.cvars;
+    uint64_t revision=qa_cvars_revision(variables);
+    if (revision && revision==owner->userinfo_revision &&
+        qa_cvars_view_identity(variables)==owner->userinfo_view &&
+        qa_cvars_dialect(variables)==owner->userinfo_dialect) return true;
+    const char *userinfo=NULL;
+    if (!owner->options.userinfo(owner->options.context,&owner->options.domain,&userinfo,error) || !userinfo) return false;
+    const qa_unified_control *previous=qa_unified_document_control(owner->sent_userinfo);
+    const char *sent=previous && previous->epoch==owner->epoch ?
+        previous->kind==QA_UNIFIED_CONTROL_READY ? previous->value.ready.userinfo : previous->value.userinfo : NULL;
+    if (sent && !strcmp(sent,userinfo)) { userinfo_observed(owner); return true; }
+    qa_unified_control value={.kind=QA_UNIFIED_CONTROL_USERINFO,.epoch=owner->epoch,.value.userinfo=(char *)userinfo};
+    qa_unified_document *document=NULL; bool ready=false;
+    bool okay=qa_unified_document_create_control(&value,NULL,&document,error) &&
+        qa_unified_session_control_ready(owner->session,document,&ready,error);
+    if (okay && ready) {
+        okay=qa_unified_session_control(owner->session,document,error);
+        if (okay) {
+            qa_unified_document_destroy(owner->sent_userinfo); owner->sent_userinfo=document; document=NULL;
+            userinfo_observed(owner);
+        }
+    }
+    qa_unified_document_destroy(document); return okay;
 }
 
 static bool resources(frontend_remote_unified *owner, const qa_unified_document *document, qa_error *error)
@@ -681,7 +721,8 @@ bool frontend_remote_unified_begin_frame(qa_frontend *frontend,uint64_t now,uint
         if (owner->busy || !frontend_remote_unified_current(owner,error) ||
             !owner->options.consumers.begin_frame)
             return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified recipient clock lacks its actual frame owner");
-        if (!owner->options.consumers.begin_frame(owner->options.consumers.context,owner,now,elapsed,error)) return false;
+        if (!owner->options.consumers.begin_frame(owner->options.consumers.context,owner,now,elapsed,error) ||
+            !userinfo_sync(owner,error)) return false;
     }
     return true;
 }
@@ -778,6 +819,7 @@ bool frontend_remote_unified_destroy(frontend_remote_unified **slot, qa_error *e
     qa_arena_destroy(&owner->identity_storage);
     qa_unified_document_destroy(owner->offer); qa_unified_document_destroy(owner->frame);
     qa_unified_document_destroy(owner->prepared_frame);
+    qa_unified_document_destroy(owner->sent_userinfo);
     frontend_remote_unified_metadata_clear(owner);
     qa_arena_destroy(&owner->metadata_storage);
     qa_catalog_release(owner->options.domain.catalog);

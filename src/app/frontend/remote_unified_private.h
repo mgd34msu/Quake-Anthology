@@ -31,6 +31,9 @@ struct frontend_remote_unified {
     qa_unified_session *session;
     qa_executable_recipe *recipe, *preparing_recipe, *retiring_recipe;
     qa_unified_document *offer, *frame, *prepared_frame;
+    qa_unified_document *sent_userinfo;
+    uint64_t userinfo_view, userinfo_revision;
+    qa_ruleset_id userinfo_dialect;
     qa_unified_document *source_metadata;
     qa_unified_document *prepared_source_metadata;
     frontend_unified_metadata_cut *metadata_head, *metadata_tail;
