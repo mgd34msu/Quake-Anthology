@@ -193,6 +193,7 @@ bool application_qc_weapon_binding_at(struct application_qc_state *,size_t,
     struct qa_application_qc_weapon_ui_binding *,uint32_t *,qa_error *);
 bool application_qc_pending_weapon_ready(struct application_qc_state *,const application_qc_client *,qa_error *);
 bool application_qc_client_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
+bool application_qc_run_newmis(application_provider *, const qa_source_frame *, qa_error *);
 bool application_qc_weapon_before_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
 bool application_qc_weapon_after_postthink(struct application_qc_state *,qa_actor_id,qa_error *);
 void application_qc_weapon_command(struct application_qc_state *,qa_actor_id);

@@ -1118,7 +1118,7 @@ refreshed:
     qa_vec3 view;
     return application_qc_control_state(provider, actor, call->state, call->bounds, call->environment, &view, error);
 }
-static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
+static bool actor_frame_inner(void *opaque, qa_session *session, qa_actor_id actor,
                         const qa_source_frame *frame, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
@@ -1197,6 +1197,56 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
     if (player && !profile && !spectator && qa_actors_get(qa_session_actors(session), actor) != NULL)
         return application_qc_client_postthink(engine, actor, error);
     return true;
+}
+typedef struct qc_newmis_step {
+    struct application_qc_state *engine;
+    qa_actor_id actor;
+    qa_source_frame frame;
+} qc_newmis_step;
+static bool newmis_step(void *opaque, qa_session *session, qa_error *error)
+{
+    qc_newmis_step *step = opaque;
+    return actor_frame_inner(step->engine, session, step->actor, &step->frame, error);
+}
+bool application_qc_run_newmis(application_provider *provider,
+    const qa_source_frame *frame, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ?
+        provider->state.qc.engine : NULL;
+    if (!engine || engine->profile != QA_QC_QUAKEWORLD) return true;
+    const qa_qc_definition *definition = engine->global_bindings->newmis;
+    if (!definition) return true;
+    const qa_qc_definition *field = application_qc_field(definition, QA_QC_ENTITY, error);
+    qa_qc_instance *vm = provider->state.qc.instance;
+    int32_t reference;
+    if (!field || !qa_qc_global_int(vm, field->offset, &reference, error)) return false;
+    if (!reference) return true;
+    if (!qa_qc_set_global_int(vm, field->offset, 0, error)) return false;
+    qa_actor_id actor;
+    qa_error ignored = {0};
+    if (!qa_qc_reference_actor(vm, reference, &actor, &ignored)) return true;
+    qa_source_frame immediate;
+    if (frame) immediate = *frame;
+    else {
+        qa_clock_state clock = {0};
+        (void)qa_session_clock(engine->services.session, provider->owner, &clock);
+        immediate = clock.frame;
+    }
+    immediate.provider = provider->owner;
+    immediate.kind = provider->component.clock.kind;
+    immediate.phase = QA_ENTITY_PHYSICS;
+    immediate.start_ns = immediate.time_ns = engine->source_time_ns;
+    immediate.elapsed_ns = UINT64_C(50000000);
+    qc_newmis_step step = {engine, actor, immediate};
+    return qa_session_invoke(engine->services.session, actor, QA_INVOKE_PHYSICS,
+        newmis_step, &step, error);
+}
+static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
+    const qa_source_frame *frame, qa_error *error)
+{
+    struct application_qc_state *engine = opaque;
+    return actor_frame_inner(engine, session, actor, frame, error) &&
+        application_qc_run_newmis(engine->provider, frame, error);
 }
 static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
 {

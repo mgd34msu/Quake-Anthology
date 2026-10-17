@@ -157,7 +157,7 @@ typedef struct qa_qc_game_fields {
     X(self) X(time) X(frametime) X(v_forward) X(v_right) X(v_up) \
     X(trace_allsolid) X(trace_startsolid) X(trace_fraction) X(trace_endpos) \
     X(trace_plane_normal) X(trace_plane_dist) X(trace_ent) X(trace_inopen) X(trace_inwater) \
-    X(msg_entity) X(force_retouch) X(serverflags) X(mapname) \
+    X(msg_entity) X(force_retouch) X(newmis) X(serverflags) X(mapname) \
     X(total_secrets) X(total_monsters) X(found_secrets) X(killed_monsters) \
     X(skill) X(deathmatch) X(coop) X(teamplay) X(armortype) X(intermission_running)
 typedef struct qa_qc_engine_globals {

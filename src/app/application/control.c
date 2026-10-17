@@ -3305,12 +3305,13 @@ finished:
             control_execution(app, actor)};
         for (size_t i = 0; ok && i < sizeof(sources) / sizeof(*sources); ++i) {
             application_provider *source = sources[i];
-            if (!source || source->kind != APPLICATION_PROVIDER_Q1 ||
+            if (!source || (source->kind != APPLICATION_PROVIDER_Q1 && source->kind != APPLICATION_PROVIDER_QC) ||
                 source->component.clock.kind != QA_RULESET_QUAKEWORLD)
                 continue;
             bool previous = false;
             for (size_t j = 0; j < i; ++j) previous |= sources[j] == source;
-            if (!previous) ok = qa_q1_game_run_newmis(source->state.q1, error);
+            if (!previous) ok = source->kind == APPLICATION_PROVIDER_Q1 ?
+                qa_q1_game_run_newmis(source->state.q1, error) : application_qc_run_newmis(source, NULL, error);
         }
     }
     application_control_frames_state(app, actor, NULL);
