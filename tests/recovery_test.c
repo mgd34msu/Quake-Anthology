@@ -9,6 +9,8 @@
 #include "../src/app/frontend/save_commands.h"
 #include "../src/app/frontend/constructor.h"
 #include "../src/app/frontend/remote_q1_client.h"
+#include "../src/app/frontend/campaign_cinematic.h"
+#include "qa/source_save.h"
 #include "qa/bsp.h"
 #include <SDL2/SDL.h>
 #include <errno.h>
@@ -24,6 +26,57 @@
 
 static bool fail(qa_error *error,const char *text)
 { qa_error_set(error,QA_ERROR_FORMAT,0,"%s",text);return false; }
+bool test_material_movie_checkpoint(qa_error *error);
+bool test_material_movie_checkpoint(qa_error *error)
+{
+    qa_frontend *first=calloc(1,sizeof(*first)),*second=calloc(1,sizeof(*second));
+    qa_buffer input={0},saved={0},empty={0};qa_source_save_io io={0};
+    bool ok=first && second;
+    bool no=false,paused=true;size_t zero=0,one=1;
+    int32_t role=FRONTEND_MOVIE_ROOT,family=QA_GAME_Q2;
+    uint32_t seat=UINT32_MAX;double position=450.5;uint64_t loop=2;
+    const char *names[]={"test:world","q2-classic-baseq2",NULL,"maps/base1.bsp","video/intro.cin"};
+    if(ok)ok=qa_source_save_writer(&io,NULL,error) && qa_source_save_bool(&io,&no);
+    /* A command-free record followed by empty numeric/system/progress/audio tables. */
+    for(unsigned i=0;ok && i<4;++i)ok=qa_source_save_count(&io,&zero,16);
+    if(ok)ok=qa_source_save_count(&io,&one,1) && qa_source_save_i32(&io,&role) &&
+        qa_source_save_i32(&io,&family) && qa_source_save_u32(&io,&seat);
+    for(unsigned i=0;ok && i<5;++i) {
+        char *name=(char *)names[i];ok=qa_source_save_owned_text(&io,&name);
+    }
+    if(ok)ok=qa_source_save_f64(&io,&position) && qa_source_save_u64(&io,&loop) &&
+        qa_source_save_bool(&io,&paused) && qa_source_save_bool(&io,&no) &&
+        qa_source_save_bool(&io,&no) && qa_source_save_finish(&io,&input);
+    qa_source_save_dispose(&io);
+    frontend_material_movie_identity identity={.role=FRONTEND_MOVIE_ROOT,.instance=names[0],
+        .content=names[1],.model=names[3],.seat=seat,.family=QA_GAME_Q2};
+    uint64_t receipt=0;
+    if(ok)ok=frontend_cinematic_save_prepare(first,(qa_bytes){input.data,input.size},error);
+    free(input.data);input=(qa_buffer){0};
+    const qa_cinematic_checkpoint *checkpoint=ok?
+        frontend_cinematic_material_checkpoint(first,&identity,names[4],&receipt):NULL;
+    if(ok)ok=checkpoint && receipt && checkpoint->source_ms==position &&
+        checkpoint->loop==loop && checkpoint->paused &&
+        checkpoint->progress_kind==QA_CINEMATIC_PROGRESS_TIME && frontend_cinematic_saved_state(first);
+    if(ok)ok=frontend_cinematic_save_capture(first,&saved,error) &&
+        frontend_cinematic_save_prepare(second,(qa_bytes){saved.data,saved.size},error);
+    uint64_t repeated=0;
+    checkpoint=ok?frontend_cinematic_material_checkpoint(second,&identity,names[4],&repeated):NULL;
+    if(ok)ok=checkpoint && repeated && checkpoint->source_ms==position && checkpoint->paused &&
+        checkpoint->loop==loop;
+    if(ok) {
+        frontend_material_movie_identity other=identity;other.seat=0;uint64_t absent=99;
+        ok=!frontend_cinematic_material_checkpoint(second,&other,names[4],&absent) && !absent;
+    }
+    if(ok) {
+        frontend_cinematic_material_restored(first,receipt);
+        ok=!frontend_cinematic_saved_state(first) && frontend_cinematic_save_capture(first,&empty,error) &&
+            empty.size==1 && empty.data[0]==0;
+    }
+    frontend_cinematic_save_discard(first);frontend_cinematic_save_discard(second);
+    free(first);free(second);free(input.data);free(saved.data);free(empty.data);
+    return ok || fail(error,"Material movie pending playback did not survive save/load");
+}
 static bool frames(qa_frontend **slot,unsigned count,qa_error *error)
 {
     for (unsigned i=0;i<count;++i)

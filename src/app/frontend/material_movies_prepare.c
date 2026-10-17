@@ -2,6 +2,7 @@
 #include "material_movies_prepare.h"
 #include "qa/media_library_prepare.h"
 #include "qa/material_movies_prepare.h"
+#include "campaign_cinematic.h"
 
 struct frontend_material_movies_policy {
     frontend_material_movies *owner;
@@ -222,6 +223,10 @@ void frontend_material_movies_policy_publish(frontend_material_movies_policy *po
     policy->owner->cinematic_count=policy->cinematic_count;
     policy->owner->cinematic_capacity=policy->cinematic_capacity;
     frontend_material_movie_images_publish(policy->owner,&policy->images);
+    for (size_t i=0;i<policy->added;++i) {
+        frontend_cinematic_material_restored(policy->owner->source.frontend,policy->rows[i]->restore_receipt);
+        policy->rows[i]->restore_receipt=0;
+    }
     policy->published = true;
 }
 static bool dispose(frontend_material_movies_policy **out, bool published, qa_error *error)

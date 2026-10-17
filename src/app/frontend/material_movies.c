@@ -6,6 +6,47 @@
 
 enum { MOVIE_IMAGE = 0, MOVIE_OWNER = 1 };
 
+frontend_material_movie_identity frontend_material_movies_identity(const frontend_material_movies *owner)
+{ return owner?owner->source.identity:(frontend_material_movie_identity){0}; }
+bool frontend_material_movies_saveable(const frontend_material_movies *owner)
+{ return owner && !owner->retired_for_save && owner->source.identity.role!=FRONTEND_MOVIE_UNSCOPED; }
+
+frontend_material_movie_identity frontend_material_movie_provider_identity(qa_frontend *f,
+    frontend_material_movie_role role,qa_actor_owner provider,qa_game_family family)
+{
+    const char *instance=qa_application_provider_instance(f->application,provider);
+    const qa_launch_snapshot *launch=qa_application_launch(f->application);
+    const qa_launch_instance *source=launch && instance?qa_launch_snapshot_find(launch,instance):NULL;
+    const qa_product *product=source?qa_catalog_product(qa_launch_snapshot_catalog(launch),source->selection.product):NULL;
+    return (frontend_material_movie_identity){.role=role,.instance=instance,
+        .content=product?product->key:NULL,.family=family,.seat=UINT32_MAX};
+}
+
+static bool identity_copy(frontend_material_movies *owner,
+    const frontend_material_movie_identity *identity, qa_error *error)
+{
+    const char *texts[]={identity->instance,identity->content,identity->item,identity->model};
+    const char **destinations[]={&owner->source.identity.instance,&owner->source.identity.content,
+        &owner->source.identity.item,&owner->source.identity.model};
+    size_t extent=0;
+    for (size_t i=0;i<4;++i) if (texts[i]) {
+        size_t size=strlen(texts[i])+1;
+        if (size>SIZE_MAX-extent)
+            return frontend_fail(error,QA_ERROR_MEMORY,"Material movie identity exceeds memory");
+        extent+=size;
+    }
+    owner->identity_text=extent?malloc(extent):NULL;
+    if (extent && !owner->identity_text)
+        return frontend_fail(error,QA_ERROR_MEMORY,"Retaining material movie identity");
+    size_t offset=0;
+    for (size_t i=0;i<4;++i) if (texts[i]) {
+        size_t size=strlen(texts[i])+1;
+        memcpy(owner->identity_text+offset,texts[i],size);
+        *destinations[i]=owner->identity_text+offset;offset+=size;
+    }
+    return true;
+}
+
 static void roster_ordinals(qa_frontend *frontend)
 {
     size_t ordinal = 0;
@@ -340,7 +381,10 @@ bool frontend_material_movies_transfer(frontend_material_movies **source_slot,
         qa_material_movies_count(owner->registry) != frontend_material_movie_live_count(owner) ||
         !qa_material_library_video_start_is(old->materials, frontend_material_movies_start, owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Shader movie transfer changed its retained provider resources");
+    frontend_material_movie_identity identity=owner->source.identity;
     owner->source = *destination;
+    owner->source.identity=identity;
+    owner->retired_for_save=true;
     frontend_cinematic_roles_parent_rebind(owner->source.frontend, owner);
     *source_slot = NULL;
     return true;
@@ -444,7 +488,11 @@ bool frontend_material_movie_row_create(frontend_material_movies *owner, qa_medi
     if (ok) {
         qa_cinematic_source source = qa_cinematic_asset_source(row->asset); source.name = row->path;
         qa_cinematic_options options = frontend_material_movie_options(owner, target);
-        ok = qa_cinematic_create(&source, &options, &row->playback, &failure);
+        const qa_cinematic_checkpoint *checkpoint=frontend_material_movies_saveable(owner)?
+            frontend_cinematic_material_checkpoint(owner->source.frontend,&owner->source.identity,
+                row->path,&row->restore_receipt):NULL;
+        ok = checkpoint?qa_cinematic_restore(&source,&options,checkpoint,&row->playback,&failure):
+            qa_cinematic_create(&source, &options, &row->playback, &failure);
     }
     if (ok) ok = qa_material_movies_add(registry, row->playback, &row->publication, &row->initial, &failure);
     if (ok) qa_scene_image_retain(row->initial);
@@ -480,20 +528,21 @@ bool frontend_material_movies_create(const frontend_material_movie_source *sourc
     frontend_material_movies *owner = calloc(1, sizeof(*owner));
     if (!owner) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining provider shader movie cache");
     owner->source = *source; owner->next_target = 1;
+    if (!identity_copy(owner,&source->identity,error)) { free(owner); return false; }
     qa_cvars *registry=qa_application_cvars(source->frontend->application);
     owner->timescale=qa_cvars_resolve(registry,"timescale");
     owner->in_game_video=qa_cvars_resolve(registry,"r_inGameVideo");
     owner->registry = qa_material_movies_create(source->images, error);
-    if (!owner->registry) { free(owner); return false; }
+    if (!owner->registry) { free(owner->identity_text); free(owner); return false; }
     if (!qa_material_movies_prepare(owner->registry, &source->frontend->frame, error)) {
-        qa_material_movies_destroy(owner->registry); free(owner); return false;
+        qa_material_movies_destroy(owner->registry); free(owner->identity_text); free(owner); return false;
     }
     qa_material_library_set_video_start(source->materials, frontend_material_movies_start, owner);
     if (!frontend_material_movie_link(owner, error) || !frontend_material_movies_current(owner)) {
         if (qa_material_library_video_start_is(source->materials, frontend_material_movies_start, owner))
             qa_material_library_set_video_start(source->materials, NULL, NULL);
         if (owner->linked) frontend_material_movie_unlink(owner, NULL);
-        qa_material_movies_destroy(owner->registry); free(owner);
+        qa_material_movies_destroy(owner->registry); free(owner->identity_text); free(owner);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Provider did not retain its genuine shader movie producer");
     }
     *out = owner; return true;
@@ -551,7 +600,11 @@ const qa_scene_image *frontend_material_movies_start(void *context, const char *
             image_remember(owner,row->initial->identity);
         }
     }
-    if (ok) ++owner->next_target;
+    if (ok) {
+        ++owner->next_target;
+        frontend_cinematic_material_restored(owner->source.frontend,row->restore_receipt);
+        row->restore_receipt=0;
+    }
     owner->busy = false;
     return ok ? row->initial : NULL;
 }
@@ -575,7 +628,7 @@ bool frontend_material_movies_destroy(frontend_material_movies **out, qa_error *
     for (size_t i = 0; i < owner->count; ++i) frontend_material_movie_row_free(owner->rows[i]);
     for (size_t i=0;i<owner->cinematic_count;++i) frontend_material_movie_cinematic_receipt_free(owner->cinematic_receipts+i);
     free(owner->cinematic_receipts);
-    free(owner->rows); free(owner); *out = NULL; return true;
+    free(owner->rows); free(owner->identity_text); free(owner); *out = NULL; return true;
 }
 size_t frontend_material_movies_count(const frontend_material_movies *owner)
 { return owner ? owner->count : 0; }

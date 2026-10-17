@@ -3,6 +3,7 @@
 #include "qa/frontend.h"
 #include "qa/cinematic.h"
 #include "qa/input.h"
+#include "material_movies.h"
 
 typedef struct frontend_cinematic_view {
     qa_vfs *files;
@@ -30,6 +31,10 @@ bool frontend_cinematic_idle(const qa_frontend *);
 /* Playback is captured only after command and decoder callbacks return. */
 bool frontend_cinematic_capture_ready(const qa_frontend *);
 bool frontend_cinematic_save_capture(qa_frontend *,qa_buffer *,qa_error *);
+/* Metadata remains pending until the actual lazy row or policy publishes. */
+const qa_cinematic_checkpoint *frontend_cinematic_material_checkpoint(qa_frontend *,
+    const frontend_material_movie_identity *,const char *,uint64_t *receipt);
+void frontend_cinematic_material_restored(qa_frontend *,uint64_t receipt);
 /* Decode once before Source/shader construction; reserve numeric slots when
  * the actual first image owner constructs its shared cinematic bank. */
 bool frontend_cinematic_save_prepare(qa_frontend *,qa_bytes,qa_error *);

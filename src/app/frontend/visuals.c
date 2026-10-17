@@ -149,6 +149,7 @@ bool frontend_visual_movie_source_read(qa_frontend *frontend, size_t index,
     frontend_material_movie_source source = {.frontend = frontend, .files = owner->mounts,
         .images = owner->images, .materials = owner->materials, .media = owner->media,
         .context = owner, .current = visual_movie_current};
+    source.identity=frontend_material_movies_identity(owner->shader_movies);
     if (!visual_movie_current(owner, &source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Visual shader movies lost their genuine provider namespace");
     *out = source; return true;
@@ -318,6 +319,7 @@ static bool visual_owner(qa_frontend *frontend, const qa_application_visual_view
     frontend_material_movie_source movies = {.frontend = frontend, .files = owner->mounts,
         .images = owner->images, .materials = owner->materials, .media = owner->media,
         .context = owner, .current = visual_movie_current};
+    movies.identity=frontend_material_movie_provider_identity(frontend,FRONTEND_MOVIE_VISUAL,owner->owner,family);
     bool ok = owner->mounts && owner->images && owner->materials && owner->media &&
         frontend_material_movies_create(&movies, &owner->shader_movies, error) &&
         qa_material_library_load_scripts(owner->materials, owner->mounts, &images, error) &&

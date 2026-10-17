@@ -229,9 +229,18 @@ static bool movie_current(void *context,const frontend_material_movie_source *so
 
 frontend_material_movie_source frontend_equipment_media_movie_source(frontend_equipment_media *row)
 {
-    return (frontend_material_movie_source){.frontend=row->frontend,.files=row->owner.mounts,
+    frontend_material_movie_source source={.frontend=row->frontend,.files=row->owner.mounts,
         .images=row->owner.images,.materials=row->owner.materials,.media=row->media,
         .context=row,.current=movie_current};
+    if (row->movies) source.identity=frontend_material_movies_identity(row->movies);
+    else {
+        source.identity=frontend_material_movie_provider_identity(row->frontend,
+            FRONTEND_MOVIE_EQUIPMENT,row->provider,row->family);
+        source.identity.item=row->item?qa_strings_cstr(row->strings,row->item):NULL;
+        source.identity.model=row->source_slot?row->declaration.path:
+            row->view_path?qa_strings_cstr(row->strings,row->view_path):NULL;
+    }
+    return source;
 }
 
 bool frontend_equipment_media_dispose(frontend_equipment_media *media,qa_error *error)

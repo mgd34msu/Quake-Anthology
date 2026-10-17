@@ -6,12 +6,23 @@
 #include "qa/q3_cinematic_handles.h"
 
 typedef struct frontend_material_movies frontend_material_movies;
+typedef enum frontend_material_movie_role {
+    FRONTEND_MOVIE_UNSCOPED, FRONTEND_MOVIE_ROOT, FRONTEND_MOVIE_VISUAL,
+    FRONTEND_MOVIE_EQUIPMENT, FRONTEND_MOVIE_Q2_CLIENT, FRONTEND_MOVIE_UNIFIED_CONTENT
+} frontend_material_movie_role;
+typedef struct frontend_material_movie_identity {
+    frontend_material_movie_role role;
+    const char *instance, *content, *item, *model;
+    uint32_t seat;
+    qa_game_family family;
+} frontend_material_movie_identity;
 typedef struct frontend_material_movie_source {
     qa_frontend *frontend;
     qa_vfs *files;
     qa_scene_resources *images;
     qa_material_library *materials;
     qa_media_library *media;
+    frontend_material_movie_identity identity;
     void *context;
     /* Reads the genuine provider's retained constructor/live/candidate tuple.
      * It neither dispatches a source callback nor grants teardown authority. */
@@ -27,6 +38,11 @@ typedef struct frontend_material_movie_view {
     bool failed;
     const qa_error *failure;
 } frontend_material_movie_view;
+
+frontend_material_movie_identity frontend_material_movies_identity(const frontend_material_movies *);
+bool frontend_material_movies_saveable(const frontend_material_movies *);
+frontend_material_movie_identity frontend_material_movie_provider_identity(qa_frontend *,
+    frontend_material_movie_role,qa_actor_owner,qa_game_family);
 
 /* Install before material registration. The parent keeps the exact provider,
  * shared media cache and frontend wall-clock owner alive until destruction. */

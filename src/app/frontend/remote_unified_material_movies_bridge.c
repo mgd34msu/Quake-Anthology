@@ -40,7 +40,11 @@ static frontend_material_movie_source source_view(frontend_unified_media *owner,
     return (frontend_material_movie_source){.frontend = owner ? owner->frontend : NULL,
         .files = row ? row->files : NULL, .images = row ? row->images : NULL,
         .materials = row ? row->materials : NULL, .media = row ? row->media : NULL,
-        .context = owner, .current = shader_movies_current};
+        .context = owner, .current = shader_movies_current,
+        .identity=row && row->shader_movies?frontend_material_movies_identity(row->shader_movies):
+            (frontend_material_movie_identity){.role=FRONTEND_MOVIE_UNIFIED_CONTENT,
+                .content=row?row->content:NULL,.seat=owner?owner->physical_seat:UINT32_MAX,
+                .family=row && row->product?row->product->family:QA_GAME_Q1}};
 }
 bool frontend_unified_material_movie_source_read(frontend_unified_media *owner, size_t ordinal,
     frontend_material_movie_source *out, qa_error *error)

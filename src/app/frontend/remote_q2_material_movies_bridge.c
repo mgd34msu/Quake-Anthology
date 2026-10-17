@@ -54,10 +54,19 @@ static bool shader_movies_current(void *context, const frontend_material_movie_s
 }
 static frontend_material_movie_source source_view(frontend_remote_q2 *row)
 {
-    return (frontend_material_movie_source){.frontend = row ? row->frontend : NULL,
+    frontend_material_movie_source source={.frontend = row ? row->frontend : NULL,
         .files = row ? row->content.mounts : NULL, .images = row ? row->images : NULL,
         .materials = row ? row->materials : NULL, .media = row ? row->media : NULL,
         .context = row, .current = shader_movies_current};
+    if (row) {
+        const qa_product *product=qa_catalog_product(row->content.catalog,row->content.selected);
+        source.identity=row->shader_movies?frontend_material_movies_identity(row->shader_movies):
+            (frontend_material_movie_identity){.role=FRONTEND_MOVIE_Q2_CLIENT,
+                .instance=qa_application_provider_instance(row->frontend->application,
+                    (qa_actor_owner)row->options.domain.command_context.owner),
+                .content=product?product->key:NULL,.seat=row->options.domain.physical_seat,.family=QA_GAME_Q2};
+    }
+    return source;
 }
 bool frontend_remote_q2_movie_source_read(frontend_remote_q2 *row,
     frontend_material_movie_source *out, qa_error *error)

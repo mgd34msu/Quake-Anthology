@@ -65,9 +65,24 @@ static bool current(void *context,const frontend_material_movie_source *source)
 }
 static frontend_material_movie_source source_view(frontend_root_resources *owner)
 {
-    return (frontend_material_movie_source){.frontend=owner->frontend,.files=owner->mounts,
+    frontend_material_movie_source source={.frontend=owner->frontend,.files=owner->mounts,
         .images=owner->images,.materials=owner->materials,.media=owner->media,
         .context=owner,.current=current};
+    source.identity=frontend_material_movies_identity(owner->movies);
+    if (!owner->movies) {
+        const qa_launch_snapshot *launch=qa_application_launch(owner->application);
+        const qa_launch_choices *choices=launch?qa_launch_snapshot_choices(launch):NULL;
+        const qa_launch_binding *binding=choices?qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,""):NULL;
+        qa_application_map_view map;
+        const qa_product *product=qa_application_map_read(owner->application,&map)?
+            qa_catalog_product(qa_application_catalog(owner->application),map.presentation):NULL;
+        source.identity=(frontend_material_movie_identity){.role=FRONTEND_MOVIE_ROOT,
+            .instance=binding?binding->instance:NULL,.content=product?product->key:NULL,
+            .model=owner->map?qa_resource_path(owner->map):NULL,
+            .family=product?product->family:QA_GAME_Q1,.seat=UINT32_MAX};
+    }
+    return source;
 }
 static bool dispose(frontend_root_resources **slot,qa_error *error)
 {

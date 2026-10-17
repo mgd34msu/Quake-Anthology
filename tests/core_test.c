@@ -6375,6 +6375,7 @@ void test_q1_gameplay(void);
 void test_guest(void);
 bool test_recovery_child(int, char **, int *);
 void test_recovery(const char *);
+bool test_material_movie_checkpoint(qa_error *);
 
 typedef struct profiler_clock { double now; unsigned calls; } profiler_clock;
 static double test_profiler_clock(void *context)
@@ -10309,6 +10310,7 @@ int main(int argc, char **argv)
     test_q2_requested_body();
     test_campaign_unit();
     test_recovery_checkpoints();
+    { qa_error error={0};CHECK(test_material_movie_checkpoint(&error)); }
     test_q1_original_codec();
     test_q3_font_export(argv[0]);
     test_q1_effect_state();

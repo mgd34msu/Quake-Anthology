@@ -12,7 +12,7 @@
 #include "qa/q3_cinematic_handles.h"
 #include "qa/text.h"
 #include "cinematic_roles.h"
-#include "material_movies.h"
+#include "material_movies_private.h"
 #include <ctype.h>
 
 typedef struct cinematic_request {
@@ -34,12 +34,52 @@ struct frontend_cinematic {
     double clock_ms;
     bool pending, stopping, busy, focus_paused, complete;
 };
+typedef struct cinematic_material_state {
+    frontend_material_movie_identity identity;
+    const char *path;
+    qa_cinematic_checkpoint playback;
+    bool restored;
+} cinematic_material_state;
 struct frontend_cinematic_restore {
     cinematic_request command;
     qa_q3_cinematic_restore_slot slots[16];
     size_t count;
-    bool present,travel,reserved,command_restored,published;
+    cinematic_material_state *materials;
+    size_t material_count;
+    bool present,travel,reserved,command_restored,published,slots_complete;
 };
+static bool saved_name_equal(const char *a,const char *b)
+{ return a==b || (a && b && !strcmp(a,b)); }
+static bool material_identity_equal(const frontend_material_movie_identity *a,
+    const frontend_material_movie_identity *b)
+{
+    return a->role==b->role && a->family==b->family && a->seat==b->seat &&
+        saved_name_equal(a->instance,b->instance) && saved_name_equal(a->content,b->content) &&
+        saved_name_equal(a->item,b->item) && saved_name_equal(a->model,b->model);
+}
+const qa_cinematic_checkpoint *frontend_cinematic_material_checkpoint(qa_frontend *f,
+    const frontend_material_movie_identity *identity,const char *path,uint64_t *receipt)
+{
+    *receipt=0;
+    struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
+    for (size_t i=0;saved && i<saved->material_count;++i) {
+        const cinematic_material_state *row=saved->materials+i;
+        if (!row->restored && material_identity_equal(&row->identity,identity) &&
+            saved_name_equal(row->path,path)) { *receipt=i+1; return &row->playback; }
+    }
+    return NULL;
+}
+void frontend_cinematic_material_restored(qa_frontend *f,uint64_t receipt)
+{
+    struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
+    if (saved && receipt && receipt<=saved->material_count) saved->materials[receipt-1].restored=true;
+}
+static bool materials_pending(const struct frontend_cinematic_restore *saved)
+{
+    for (size_t i=0;saved && i<saved->material_count;++i)
+        if (!saved->materials[i].restored) return true;
+    return false;
+}
 static char *copy_text(const char *text,qa_error *error)
 {
     size_t length=strlen(text); char *copy=length<SIZE_MAX?malloc(length+1):NULL;
@@ -97,6 +137,13 @@ void frontend_cinematic_save_discard(qa_frontend *f)
         free((char *)saved->slots[i].parent_instance); free((char *)saved->slots[i].parent_content);
         free((char *)saved->slots[i].path); free((char *)saved->slots[i].system_state.nextmap);
     }
+    for (size_t i=0;i<saved->material_count;++i) {
+        frontend_material_movie_identity *identity=&saved->materials[i].identity;
+        free((char *)identity->instance); free((char *)identity->content);
+        free((char *)identity->item); free((char *)identity->model);
+        free((char *)saved->materials[i].path);
+    }
+    free(saved->materials);
     free(saved); f->cinematic_restore=NULL;
 }
 static bool current(const frontend_cinematic *owner)
@@ -152,9 +199,16 @@ bool frontend_cinematic_capture_ready(const qa_frontend *f)
 bool frontend_cinematic_saved_state(const qa_frontend *f)
 {
     if (frontend_cinematic_running(f)) return true;
-    if (f && f->cinematic_restore && f->cinematic_restore->count) return true;
-    if (!f || !f->source_cinematics) return false;
-    for (uint32_t i=0;i<16;++i) {
+    if (f && f->cinematic_restore && ((!f->cinematic_restore->slots_complete &&
+        f->cinematic_restore->count) || materials_pending(f->cinematic_restore))) return true;
+    for (const frontend_material_movies *movies=f?f->material_movie_owners:NULL;movies;movies=movies->next) {
+        if (!frontend_material_movies_saveable(movies)) continue;
+        for (size_t j=0;j<frontend_material_movies_count(movies);++j) {
+            frontend_material_movie_view row;
+            if (frontend_material_movies_read(movies,j,&row) && row.playback && !row.failed) return true;
+        }
+    }
+    for (uint32_t i=0;f && f->source_cinematics && i<16;++i) {
         qa_q3_cinematic_slot slot;
         if (qa_q3_cinematic_handles_at(f->source_cinematics,i,&slot) && slot.source && slot.path &&
             !(slot.flags&1u)) return true;
@@ -439,6 +493,77 @@ static bool saved_audio(qa_source_save_io *io,qa_cinematic_checkpoint *playback)
     if (ok) cursor->channels=channels;
     return ok;
 }
+static bool saved_material(qa_source_save_io *io,cinematic_material_state *row)
+{
+    frontend_material_movie_identity *identity=&row->identity;
+    int32_t role=(int32_t)identity->role,family=(int32_t)identity->family;
+    bool progress=row->playback.progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
+    if (!qa_source_save_i32(io,&role) || role<=FRONTEND_MOVIE_UNSCOPED ||
+        role>FRONTEND_MOVIE_UNIFIED_CONTENT || !qa_source_save_i32(io,&family) ||
+        family<QA_GAME_Q1 || family>QA_GAME_Q3)
+        return frontend_fail(io->error,QA_ERROR_FORMAT,"Invalid saved material movie owner");
+    identity->role=(frontend_material_movie_role)role; identity->family=(qa_game_family)family;
+    if (!qa_source_save_u32(io,&identity->seat) || !saved_text(io,&identity->instance) ||
+        !saved_text(io,&identity->content) || !saved_text(io,&identity->item) ||
+        !saved_text(io,&identity->model) || !saved_text(io,&row->path) ||
+        !saved_position(io,&row->playback) || !qa_source_save_bool(io,&progress) ||
+        (progress && !saved_progress(io,&row->playback)) ||
+        !saved_audio(io,&row->playback)) return false;
+    if (!row->path || !isfinite(row->playback.source_ms) || row->playback.source_ms<0)
+        return frontend_fail(io->error,QA_ERROR_FORMAT,"Invalid saved material movie path or clock");
+    row->playback.resource=row->path; return true;
+}
+static bool saved_materials(qa_source_save_io *io,cinematic_material_state **rows,size_t *count)
+{
+    bool writing=io->direction==QA_SOURCE_SAVE_WRITE;
+    if ((!writing && io->offset==io->input.size) || (writing && !*count)) return true;
+    size_t maximum=SIZE_MAX/sizeof(**rows);
+    if (!writing) {
+        size_t remaining=io->input.size-io->offset;
+        /* Even an empty owner/path needs scalar, text-presence and checkpoint
+         * fields. Bound cold allocation by bytes actually supplied. */
+        size_t supplied=remaining/(3*sizeof(uint32_t)+5+sizeof(double)+sizeof(uint64_t)+3);
+        if (maximum>supplied) maximum=supplied;
+    }
+    if (!qa_source_save_count(io,count,maximum)) return false;
+    if (!writing && *count) {
+        *rows=calloc(*count,sizeof(**rows));
+        if (!*rows) { *count=0; return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining material movie checkpoints"); }
+    }
+    for (size_t i=0;i<*count;++i) if (!saved_material(io,*rows+i)) return false;
+    return true;
+}
+static bool material_capture(qa_frontend *f,cinematic_material_state **rows,size_t *count,qa_error *error)
+{
+    size_t capacity=0;
+    const struct frontend_cinematic_restore *pending=f->cinematic_restore;
+    for (size_t i=0;pending && i<pending->material_count;++i)
+        if (!pending->materials[i].restored) ++capacity;
+    for (const frontend_material_movies *movies=f->material_movie_owners;movies;movies=movies->next) {
+        if (!frontend_material_movies_saveable(movies)) continue;
+        size_t size=frontend_material_movies_count(movies);
+        if (size>SIZE_MAX/sizeof(**rows)-capacity)
+            return frontend_fail(error,QA_ERROR_MEMORY,"Material movie checkpoints exceed memory");
+        capacity+=size;
+    }
+    *rows=capacity?calloc(capacity,sizeof(**rows)):NULL; *count=0;
+    if (capacity && !*rows) return frontend_fail(error,QA_ERROR_MEMORY,"Capturing material movie checkpoints");
+    for (size_t i=0;pending && i<pending->material_count;++i)
+        if (!pending->materials[i].restored) (*rows)[(*count)++]=pending->materials[i];
+    for (const frontend_material_movies *movies=f->material_movie_owners;movies;movies=movies->next) {
+        if (!frontend_material_movies_saveable(movies)) continue;
+        frontend_material_movie_identity identity=frontend_material_movies_identity(movies);
+        for (size_t j=0;j<frontend_material_movies_count(movies);++j) {
+            frontend_material_movie_view view;
+            if (!frontend_material_movies_read(movies,j,&view) || view.failed || !view.playback) continue;
+            cinematic_material_state *row=*rows+*count;
+            *row=(cinematic_material_state){.identity=identity,.path=view.path};
+            if (!qa_cinematic_checkpoint_read((qa_cinematic *)view.playback,&row->playback,error)) return false;
+            ++*count;
+        }
+    }
+    return true;
+}
 static bool checkpoint_tail_present(const qa_cinematic_checkpoint *playback,bool audio)
 {
     return audio?playback->audio.captured:playback->progress_kind!=QA_CINEMATIC_PROGRESS_TIME;
@@ -487,8 +612,10 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
     cinematic_request request=owner?owner->request:(cinematic_request){0};
     if (present && !qa_cinematic_checkpoint_read(owner->movie,&request.playback,error)) return false;
     request.focus_paused=owner && owner->focus_paused;
+    cinematic_material_state *materials=NULL; size_t material_count=0;
+    if (!material_capture(f,&materials,&material_count,error)) { free(materials); return false; }
     qa_source_save_io io;
-    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    if (!qa_source_save_writer(&io,NULL,error)) { free(materials); return false; }
     bool ok=saved_command(&io,&request,&present,&travel);
     qa_q3_cinematic_restore_slot slots[16]; size_t count=0;
     const qa_q3_cinematic_source *sources[16]={0};
@@ -500,7 +627,7 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         if (!slot.source || !slot.path || slot.restore_pending) {
             const struct frontend_cinematic_restore *pending=f->cinematic_restore;
             if (f->source_cinematics && pending && pending->reserved && !slot.restore_pending) continue;
-            for (size_t j=0;pending && j<pending->count;++j) if (pending->slots[j].handle==(int32_t)i) {
+            for (size_t j=0;pending && !pending->slots_complete && j<pending->count;++j) if (pending->slots[j].handle==(int32_t)i) {
                 slots[count]=pending->slots[j]; groups[count]=slots[count].source_group;
                 sources[count]=slot.source;
                 if (f->source_cinematics) {
@@ -528,7 +655,7 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         if (checkpoint_tail_present(&slots[i].playback,false)) progress=true;
         if (checkpoint_tail_present(&slots[i].playback,true)) audio=true;
     }
-    if (ok && (count || progress || audio)) {
+    if (ok && (count || progress || audio || material_count)) {
         /* One per-save association also covers owners not yet lazily created.
          * Runtime pointers qualify groups here but are never written. */
         for (size_t i=0;i<count;++i) {
@@ -540,12 +667,13 @@ bool frontend_cinematic_save_capture(qa_frontend *f,qa_buffer *out,qa_error *err
         }
         ok=qa_source_save_count(&io,&count,16);
         for (size_t i=0;ok && i<count;++i) ok=saved_slot(&io,slots+i);
-        if (ok) ok=saved_system_slots(&io,slots,count,progress || audio);
-        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,false,audio);
-        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,true,false);
+        if (ok) ok=saved_system_slots(&io,slots,count,progress || audio || material_count);
+        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,false,audio || material_count);
+        if (ok) ok=saved_checkpoint_tail(&io,&request,present,slots,count,true,material_count!=0);
+        if (ok) ok=saved_materials(&io,&materials,&material_count);
     }
     ok=ok && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); free(materials); return ok;
 }
 bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *error)
 {
@@ -563,6 +691,7 @@ bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *err
         if (ok) ok=saved_system_slots(&io,saved->slots,saved->count,false);
         if (ok) ok=saved_checkpoint_tail(&io,&saved->command,saved->present,saved->slots,saved->count,false,false);
         if (ok) ok=saved_checkpoint_tail(&io,&saved->command,saved->present,saved->slots,saved->count,true,false);
+        if (ok) ok=saved_materials(&io,&saved->materials,&saved->material_count);
     }
     ok=ok && qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
@@ -579,7 +708,7 @@ bool frontend_cinematic_save_prepare(qa_frontend *f,qa_bytes bytes,qa_error *err
 bool frontend_cinematic_save_reserve(qa_frontend *f,qa_error *error)
 {
     struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
-    if (!saved || saved->reserved || !saved->count || !f->source_cinematics) return true;
+    if (!saved || saved->reserved || saved->slots_complete || !saved->count || !f->source_cinematics) return true;
     if (!qa_q3_cinematic_handles_restore_reserve(f->source_cinematics,saved->slots,saved->count,error)) return false;
     saved->reserved=true;
     if (saved->published) qa_q3_cinematic_handles_restore_published(f->source_cinematics);
@@ -591,13 +720,11 @@ void frontend_cinematic_save_published(qa_frontend *f)
     f->cinematic_restore->published=true;
     if (f->cinematic_restore->reserved) qa_q3_cinematic_handles_restore_published(f->source_cinematics);
 }
-static bool saved_name_equal(const char *a,const char *b)
-{ return a==b || (a && b && !strcmp(a,b)); }
 bool frontend_cinematic_save_parent_bind(qa_frontend *f,frontend_material_movies *parent,
     const char *instance,const char *content,uint32_t seat,qa_error *error)
 {
     struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
-    if (!saved || !saved->reserved) return true;
+    if (!saved || !saved->reserved || saved->slots_complete) return true;
     for (size_t i=0;i<saved->count;++i) {
         const qa_q3_cinematic_restore_slot *row=saved->slots+i;
         if (!row->detached || row->parent_seat!=seat ||
@@ -653,7 +780,10 @@ static bool restore_drain(qa_frontend *f,qa_error *error)
 {
     struct frontend_cinematic_restore *saved=f?f->cinematic_restore:NULL;
     if (!saved || !saved->command_restored) return true;
-    if (!saved->count) { frontend_cinematic_save_discard(f); return true; }
+    if (saved->slots_complete || !saved->count) {
+        if (!materials_pending(saved)) frontend_cinematic_save_discard(f);
+        return true;
+    }
     if (!f->source_cinematics || !qa_q3_cinematic_handles_idle(f->source_cinematics)) return true;
     if (!frontend_cinematic_save_reserve(f,error)) return false;
     for (size_t i=0;i<saved->count;++i) {
@@ -663,7 +793,10 @@ static bool restore_drain(qa_frontend *f,qa_error *error)
     }
     bool complete=false;
     if (!qa_q3_cinematic_handles_restore_finish(f->source_cinematics,&complete,error)) return false;
-    if (complete) frontend_cinematic_save_discard(f);
+    if (complete) {
+        saved->slots_complete=true;
+        if (!materials_pending(saved)) frontend_cinematic_save_discard(f);
+    }
     return true;
 }
 bool frontend_cinematic_save_restore(qa_frontend *f,qa_bytes bytes,qa_error *error)

@@ -16,6 +16,7 @@ typedef struct frontend_material_movie_row {
     const qa_scene_image *initial;
     qa_scene_frame publication;
     uint64_t target;
+    uint64_t restore_receipt;
     bool failed;
     qa_error failure;
 } frontend_material_movie_row;
@@ -26,6 +27,7 @@ typedef struct frontend_material_movie_cinematic_receipt {
 } frontend_material_movie_cinematic_receipt;
 struct frontend_material_movies {
     frontend_material_movie_source source;
+    char *identity_text;
     qa_cvar_handle timescale, in_game_video;
     struct frontend_material_movies *next;
     frontend_material_movie_row **rows;
@@ -40,7 +42,7 @@ struct frontend_material_movies {
     frontend_material_movie_cinematic_receipt *cinematic_receipts;
     size_t cinematic_count, cinematic_capacity;
     struct frontend_material_movies_policy *pending;
-    bool busy, linked, cinematic_mode;
+    bool busy, linked, cinematic_mode, retired_for_save;
 };
 bool frontend_material_movie_source_valid(const frontend_material_movie_source *);
 bool frontend_material_movie_link(frontend_material_movies *, qa_error *);
