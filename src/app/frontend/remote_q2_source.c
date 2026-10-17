@@ -1,6 +1,7 @@
 #include "remote_q2_source.h"
 #include "remote_q2_private.h"
 #include "client_registry.h"
+#include "demo_dispatch.h"
 #include "legacy_render_policy.h"
 #include "qa/cvars_save.h"
 #include "qa/console_cvar_observer.h"
@@ -238,6 +239,10 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
 {
     frontend_remote_q2_source *source = context;
     if (!active(source, &invocation->context)) return QA_COMMAND_UNHANDLED;
+    bool handled=false;
+    if (source->frontend->demos && !frontend_demo_dispatch_command(source->frontend->demos,
+        invocation,&handled,error)) return QA_COMMAND_FAILED;
+    if (handled) return QA_COMMAND_HANDLED;
     if (source->options.template_forward) {
         ++source->calls; qa_command_result result = source->options.template_forward(source->options.client.context, invocation, error); --source->calls;
         if (result != QA_COMMAND_UNHANDLED) return result;
