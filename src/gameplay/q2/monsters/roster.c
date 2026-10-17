@@ -529,6 +529,8 @@ bool q2m_definitions_bind(qa_q2_game *game, qa_error *error) {
           }
       } else if (row->species == Q2M_BRAIN) {
         row->flags |= Q2M_HAS_RANGED;
+      } else if (row->species == Q2M_BERSERK) {
+        row->flags |= Q2M_DUCKS;
       } else if (row->species == Q2M_GLADIATOR) {
         row->bounds.maxs.z = 42;
       }

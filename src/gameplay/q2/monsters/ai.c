@@ -4476,6 +4476,12 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind,
     bool extended = rerelease || rogue;
     if (monster->combat_point)
       return q2m_move_to_goal(context, distance, error);
+    if (rerelease && monster->ducked && (monster->definition->flags & Q2M_DUCKS)) {
+      if (!q2m_callback_run(context, Q2M_CALLBACK_monster_duck_up, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+    }
     if (rogue) {
       monster->ducked = false;
       if (context->body.bounds.maxs.z != monster->normal_height &&
