@@ -1,5 +1,6 @@
 #include "bots_private.h"
 #include "control_frame.h"
+#include "qa/application_equipment.h"
 #include <math.h>
 
 bool application_bot_weapon_apply(qa_application *application,qa_actor_id actor,
@@ -11,25 +12,16 @@ bool application_bot_weapon_apply(qa_application *application,qa_actor_id actor,
     if(!arsenal || arsenal->owner!=owner)
         return application_fail(error,QA_ERROR_NOT_FOUND,"queued bot weapon no longer belongs to the selected arsenal");
     if(!qa_actors_get(qa_session_actors(application->session),actor)) return true;
-    if(arsenal->kind==APPLICATION_PROVIDER_Q1) {
-        qa_q1_player_view current;
-        if(!qa_q1_player_read(arsenal->state.q1,actor,&current))
-            return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q1 weapon state is absent");
-        for(int i=0;i<QA_Q1_WEAPON_COUNT;++i) if(qa_q1_weapon_item(arsenal->state.q1,(qa_q1_weapon)i)==item)
-            return current.weapon==(qa_q1_weapon)i ||
-                qa_q1_player_select(arsenal->state.q1,actor,(qa_q1_weapon)i,error);
-    } else if(arsenal->kind==APPLICATION_PROVIDER_Q2) {
-        qa_q2_weapon_state current;qa_q2_selection result;
-        if(!qa_q2_weapon_read(arsenal->state.q2,actor,&current,error)) return false;
-        for(int i=1;i<QA_Q2_WEAPON_COUNT;++i) {
-            const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(arsenal->state.q2,(qa_q2_weapon)i);
-            const qa_q2_item_definition *candidate=definition?qa_q2_item_lookup(arsenal->state.q2,definition->item):NULL;
-            if(candidate && candidate->item==item)
-                return current.weapon==(qa_q2_weapon)i || current.pending==(qa_q2_weapon)i ||
-                    qa_q2_weapon_select(arsenal->state.q2,actor,(qa_q2_weapon)i,false,&result,error);
-        }
+    qa_item_id current;
+    if(!qa_application_weapon_read(application,actor,&current,error)) return false;
+    if(current==item) return true;
+    if(arsenal->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_weapon_state state;
+        if(!qa_q2_weapon_read(arsenal->state.q2,actor,&state,error)) return false;
+        if(qa_q2_weapon_item(arsenal->state.q2,state.pending,false)==item) return true;
     }
-    return application_fail(error,QA_ERROR_NOT_FOUND,"queued bot weapon item is absent from its actual selected arsenal");
+    bool accepted;
+    return qa_application_equipment_request_weapon(application,actor,owner,item,&accepted,error);
 }
 
 static void source_walk_input(const qa_bot_source_skill *settings,qa_usercmd *command) {
