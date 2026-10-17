@@ -40,6 +40,14 @@ typedef enum bot_shutdown_phase {
 typedef enum bot_map_script {
     BOT_MAP_SCRIPT_NONE, BOT_MAP_SCRIPT_Q3TOURNEY6, BOT_MAP_SCRIPT_MPQ3TOURNEY6
 } bot_map_script;
+enum { BOT_AI_MAX_NODE_SWITCHES=50, BOT_AI_NODE_SWITCH_RECORDS=BOT_AI_MAX_NODE_SWITCHES+4 };
+typedef struct bot_node_switch {
+    qa_bot_decision from, to;
+    const char *reason;
+    float time;
+    int32_t goal_number, goal_entity, goal_area;
+    bool has_goal;
+} bot_node_switch;
 typedef struct bot_source_goals {
     qa_bot_goal red_flag, blue_flag, neutral_flag, red_obelisk, blue_obelisk, neutral_obelisk;
     int32_t game_type, max_clients, max_bsp_model_index;
@@ -147,6 +155,8 @@ struct qa_bots {
     bool not_leader[64];
     bot_source_goals source_goals;
     bot_map_script map_script;
+    bot_node_switch node_switches[BOT_AI_NODE_SWITCH_RECORDS];
+    size_t node_switch_count;
     bot_source_orders_state source_orders;
     bot_source_team_policy_globals source_team_policy;
     bot_source_events_globals source_event_globals;
