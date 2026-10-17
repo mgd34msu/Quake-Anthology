@@ -426,10 +426,38 @@ bool frontend_unified_q3_owner_retire(frontend_unified_q3 *o,const qa_unified_pr
         }
     return okay;
 }
+static const q3p_name *selected_model_registration(const unified_q3_bank *b,qa_string_id path)
+{
+    const qa_id_index_entry *entry=qa_id_index_find(&b->assets->name_index,path,Q3P_MODEL);
+    return entry?qa_pool_at(&b->assets->names,entry->value):NULL;
+}
+static bool selected_model_prepare(frontend_unified_q3 *o,unified_q3_bank *b,
+    qa_string_id path,qa_error *e)
+{
+    if (!path || selected_model_registration(b,path)) return true;
+    int32_t handle;
+    return qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,path),&handle,e);
+}
+static bool selected_models_prepare(frontend_unified_q3 *o,const qa_unified_document *d,qa_error *e)
+{
+    const qa_unified_frame_visuals *visuals=qa_unified_document_frame(d)->visuals;
+    for (size_t i=0;visuals && i<visuals->model_count;++i) {
+        const qa_unified_model_state *model=visuals->models+i;
+        if (!model->q3_weapon || (!model->anchor && !model->attachment_count)) continue;
+        unified_q3_bank *b;
+        if (!bank_name(o,model->content,model->render_equipment->instance,0,&b,e) ||
+            !selected_model_prepare(o,b,model->path,e)) return false;
+        if (model->view_weapon && model->anchor && !selected_model_prepare(o,b,model->anchor->path,e)) return false;
+        for (size_t k=0;k<model->attachment_count;++k)
+            if (!selected_model_prepare(o,b,model->attachments[k].path,e)) return false;
+    }
+    return true;
+}
 bool frontend_unified_q3_frame_prepare(frontend_unified_q3 *o, const qa_unified_document *d, qa_error *e)
 {
     if (!o || o->busy || o->prepared || !current(o,e)) return false;
-    if (!frame_read(o,d,&o->candidate_time,e) || !qa_unified_document_retain(d,&o->candidate,e)) return false;
+    if (!frame_read(o,d,&o->candidate_time,e) || !selected_models_prepare(o,d,e) ||
+        !qa_unified_document_retain(d,&o->candidate,e)) return false;
     o->candidate_input=d; o->prepared=true; return true;
 }
 bool frontend_unified_q3_frame_ready(frontend_unified_q3 *o, const qa_unified_document *d, qa_error *e)
@@ -538,25 +566,27 @@ static bool selected_weapon_collect(void *context,qa_q3_presentation_assets *ass
         return frontend_unified_fail(e,QA_ERROR_MEMORY,"Retaining selected held Q3 model parts");
     call->held->held_refs[call->held->held_count++]=*ref;return true;
 }
-static bool selected_authored_media(frontend_unified_q3 *o,unified_q3_bank *b,
+static int32_t selected_model_read(const unified_q3_bank *b,qa_string_id path)
+{
+    const q3p_name *registration=selected_model_registration(b,path);
+    return registration?registration->handle:0;
+}
+static bool selected_authored_media(unified_q3_bank *b,
     const qa_unified_model_state *model,bool view,qa_scene_frame *scene,
     q3n_selected_weapon_media *media,q3n_selected_weapon_attachment **attachments,qa_error *e)
 {
-    *media=(q3n_selected_weapon_media){.assets=b->assets};*attachments=NULL;
-    bool okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->path),&media->gun,e);
-    if (okay && view) okay=qa_q3_register_model(b->assets,
-        qa_strings_cstr(o->replica->strings,model->anchor->path),&media->hands,e);
-    if (okay && model->attachment_count) {
+    *media=(q3n_selected_weapon_media){.assets=b->assets,.gun=selected_model_read(b,model->path),
+        .hands=view?selected_model_read(b,model->anchor->path):0};
+    *attachments=NULL;
+    if (model->attachment_count) {
         *attachments=qa_arena_alloc(&scene->storage,model->attachment_count*sizeof(**attachments),
             _Alignof(q3n_selected_weapon_attachment),e);
-        okay=*attachments!=NULL;
+        if (!*attachments) return false;
     }
-    for (size_t i=0;okay && i<model->attachment_count;++i) {
-        (*attachments)[i].tag=model->attachments[i].tag;
-        okay=qa_q3_register_model(b->assets,qa_strings_cstr(o->replica->strings,model->attachments[i].path),
-            &(*attachments)[i].model,e);
-    }
-    return okay;
+    for (size_t i=0;i<model->attachment_count;++i)
+        (*attachments)[i]=(q3n_selected_weapon_attachment){
+            .tag=model->attachments[i].tag,.model=selected_model_read(b,model->attachments[i].path)};
+    return true;
 }
 static bool selected_weapon_held(frontend_unified_q3 *o,unified_q3_bank *b,
     const qa_unified_model_state *model,unified_q3_ballistic *state,
@@ -578,7 +608,7 @@ static bool selected_weapon_held(frontend_unified_q3 *o,unified_q3_bank *b,
         q3n_selected_weapon_attachment *attachments=NULL;
         bool authored=model->anchor || model->attachment_count;
         bool okay;
-        if (authored) okay=selected_authored_media(o,b,model,false,scene,&media,&attachments,e);
+        if (authored) okay=selected_authored_media(b,model,false,scene,&media,&attachments,e);
         else {
             q3n_selected_media_request load={.weapon=wire->weapon,.context=call,.current=selected_weapon_current};
             okay=q3n_selected_media_prepare(b->selected_media,&load,&media,e);
@@ -660,7 +690,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
                 okay=q3n_weapons_selected_view(b->weapons,&media,&state->view_state,&request,&camera,submitted,e);}
         } else {
             q3n_selected_weapon_attachment *attachments;
-            okay=selected_authored_media(o,b,model,true,scene,&media,&attachments,e);
+            okay=selected_authored_media(b,model,true,scene,&media,&attachments,e);
             q3n_selected_weapon_authored_view authored={.camera=camera,
                 .anchor_tag=model->anchor->tag,
                 .anchor_offset=model->anchor->offset,
