@@ -42,6 +42,7 @@
 #include "qa/arena_progress.h"
 #include "qa/recovery.h"
 #include "qa/persistence_fields.h"
+#include "qa/persistence_gameplay.h"
 #include "qa/localization.h"
 #include "qa/lightstyles.h"
 #include "qa/text.h"
@@ -190,6 +191,74 @@ static void test_q3_trace_preserves_delta(void)
         CHECK(printed>0 || levels[i]==0 || levels[i]==1);
         CHECK(levels[i]!=0 || printed==0);
     }
+}
+
+static bool origin_primary_read(void *context, qa_combat_state *out, qa_error *error)
+{ (void)error; *out = *(qa_combat_state *)context; return true; }
+static bool origin_health_write(void *context, double health, qa_error *error)
+{ (void)error; ((qa_combat_state *)context)->health = health; return true; }
+static bool origin_armor_write(void *context, const qa_armor *armor, qa_error *error)
+{ (void)error; ((qa_combat_state *)context)->armor = *armor; return true; }
+
+static void test_shared_attack_origins(void)
+{
+    qa_error error = {0}; qa_session *session = NULL; qa_combat *combat = NULL;
+    qa_inventory *inventory = NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 2, .component_capacity = 1}, &session, &error));
+    qa_string_id owner;
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session), "test:origin", &owner, &error));
+    qa_actor_registry *actors = qa_session_actor_registry(session);
+    qa_actor_id actor; CHECK(qa_actors_allocate(actors, owner, owner, &actor, &error));
+    qa_actor_checkpoint checkpoint = {0}; CHECK(qa_actors_checkpoint(actors, &checkpoint, &error));
+    qa_strings *restored_names = NULL; CHECK(qa_strings_create(&restored_names, &error));
+    CHECK(qa_strings_intern_cstr(restored_names, "test:origin", &owner, &error));
+    CHECK(qa_session_destroy(session, &error)); session = NULL;
+    CHECK(qa_session_create_restored(&(qa_session_options){.actor_capacity = 2, .component_capacity = 1},
+        &checkpoint, restored_names, &session, &error));
+    actors = qa_session_actor_registry(session);
+    const qa_actor_record *restored_actor = qa_actors_resolve_saved(actors,
+        (qa_saved_actor_id){.generation = actor.generation, .slot = actor.slot});
+    CHECK(restored_actor); actor = restored_actor->id; qa_actor_checkpoint_free(&checkpoint);
+    CHECK(qa_combat_create(actors, qa_session_strings(session), NULL, &combat, &error));
+    CHECK(qa_inventory_create(actors, &inventory, &error));
+    qa_buffer empty = {0}, saved = {0};
+    CHECK(qa_persistence_combat_capture(session, combat, inventory, &empty, &error));
+    qa_attack origin = {.sequence = 17, .attacker = actor, .inflictor = actor, .projectile = actor};
+    qa_attack found; bool present;
+    CHECK(qa_combat_attack_origin_store(combat, actor, &origin, &error));
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && present && found.sequence == 17);
+    CHECK(!qa_combat_has(combat, actor));
+    /* Legacy combat records have no origin tail. The native source importer
+     * has already installed launch history on this isolated candidate. */
+    CHECK(empty.size >= sizeof(uint64_t));
+    CHECK(qa_persistence_combat_restore(session, combat, inventory, NULL,
+        (qa_bytes){empty.data, empty.size - sizeof(uint64_t)}, &error));
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && present && found.sequence == 17);
+    qa_combat_state primary = {.health = 5, .mass = 1};
+    CHECK(qa_combat_create_actor(combat, actor, &primary, &error));
+    CHECK(qa_combat_bind(combat, actor, &(qa_combat_binding){.context = &primary,
+        .read = origin_primary_read, .write_health = origin_health_write, .write_armor = origin_armor_write}, true, &error));
+    CHECK(qa_combat_detach_primary(combat, actor, qa_combat_storage_serial(combat, actor), &primary, &error));
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && present && found.sequence == 17);
+    CHECK(qa_persistence_combat_capture(session, combat, inventory, &saved, &error));
+    origin.sequence = 18; CHECK(qa_combat_attack_origin_store(combat, actor, &origin, &error));
+    bool restored = qa_persistence_combat_restore(session, combat, inventory, NULL,
+        (qa_bytes){saved.data, saved.size}, &error);
+    if (!restored) fprintf(stderr, "Restoring projectile origin: %s\n", error.message);
+    CHECK(restored);
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && present && found.sequence == 17);
+    CHECK(qa_persistence_combat_restore(session, combat, inventory, NULL, (qa_bytes){empty.data, empty.size}, &error));
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && !present);
+    CHECK(qa_combat_attack_origin_store(combat, actor, &origin, &error));
+    qa_actor_record released = *qa_actors_get(actors, actor);
+    CHECK(qa_actors_release(actors, actor, &error)); qa_combat_actor_released(combat, released);
+    qa_actor_id replacement; CHECK(qa_actors_allocate(actors, 1, 1, &replacement, &error));
+    CHECK(replacement.slot == actor.slot && replacement.generation != actor.generation);
+    CHECK(qa_combat_attack_origin_read(combat, actor, &found, &present, &error) && !present);
+    CHECK(qa_combat_attack_origin_read(combat, replacement, &found, &present, &error) && !present);
+    qa_buffer_free(&empty); qa_buffer_free(&saved);
+    CHECK(qa_inventory_destroy(inventory, &error)); CHECK(qa_combat_destroy(combat, &error));
+    CHECK(qa_session_destroy(session, &error));
 }
 
 static void test_bot_awareness_storage(void)
@@ -9670,6 +9739,7 @@ int main(int argc, char **argv)
     test_reserved_scene_frame();
     test_bounded_handshake();
     test_shared_trajectory();
+    test_shared_attack_origins();
     test_lightstyle_snapshot();
     test_metadata_retention();
     test_metadata_names();

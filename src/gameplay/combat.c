@@ -227,6 +227,30 @@ bool qa_combat_last_attack_read(const qa_combat *combat, qa_actor_id actor,
     *present = entry->has_last_attack;
     return true;
 }
+bool qa_combat_attack_origin_store(qa_combat *combat, qa_actor_id actor,
+    const qa_attack *attack, qa_error *error)
+{
+    if (!combat || !attack || !qa_actors_get(combat->actors, actor))
+        return qa_combat_argument(error, "attack origin requires a current projectile actor");
+    qa_combat_record *entry = combat->records + actor.slot;
+    if (!qa_actor_id_equal(entry->actor, actor)) *entry = (qa_combat_record){.actor = actor};
+    entry->origin_attack = *attack;
+    entry->has_origin_attack = true;
+    return true;
+}
+bool qa_combat_attack_origin_read(const qa_combat *combat, qa_actor_id actor,
+    qa_attack *out, bool *present, qa_error *error)
+{
+    if (!combat || !out || !present)
+        return qa_combat_argument(error, "attack origin requires combat and outputs");
+    *out = (qa_attack){0}; *present = false;
+    if (!qa_actors_get(combat->actors, actor)) return true;
+    const qa_combat_record *entry = combat->records + actor.slot;
+    if (qa_actor_id_equal(entry->actor, actor) && entry->has_origin_attack) {
+        *out = entry->origin_attack; *present = true;
+    }
+    return true;
+}
 bool qa_combat_primary_read(qa_combat *combat, qa_actor_id actor, qa_combat_state *out, bool *local, qa_error *error) {
     qa_combat_record *entry; qa_combat_state state;
     if (!out || !local || !qa_combat_idle(combat)) return qa_combat_argument(error, "checkpoint requires idle combat");
@@ -278,7 +302,7 @@ bool qa_combat_destroy(qa_combat *combat, qa_error *error) {
 void qa_combat_actor_released(qa_combat *combat, qa_actor_record released) {
     if (!combat || released.id.slot >= qa_actors_capacity(combat->actors)) return;
     qa_combat_record *entry = &combat->records[released.id.slot];
-    if (entry->active && qa_actor_id_equal(entry->actor, released.id)) memset(entry, 0, sizeof(*entry));
+    if (qa_actor_id_equal(entry->actor, released.id)) memset(entry, 0, sizeof(*entry));
 }
 static bool next_serial(qa_combat *combat, uint64_t *out, qa_error *error) {
     if (combat->next_serial == UINT64_MAX) return qa_combat_argument(error, "combat ownership identity exhausted");
@@ -377,7 +401,10 @@ bool qa_combat_create_actor(qa_combat *combat, qa_actor_id actor, const qa_comba
         return qa_combat_argument(error, "local combat requires native armor storage");
     uint64_t serial; if (!next_serial(combat, &serial, error)) return false;
     qa_combat_record *entry = &combat->records[actor.slot];
-    *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .state = *state};
+    bool has_origin = qa_actor_id_equal(entry->actor, actor) && entry->has_origin_attack;
+    qa_attack origin = has_origin ? entry->origin_attack : (qa_attack){0};
+    *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .state = *state,
+        .has_origin_attack = has_origin, .origin_attack = origin};
     return true;
 }
 uint64_t qa_combat_storage_serial(const qa_combat *combat, qa_actor_id actor) {
@@ -422,9 +449,12 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
     qa_item_id power_item = previous_active ? entry->power_item : 0;
     bool has_last_attack = previous_active && qa_actor_id_equal(entry->actor, actor) && entry->has_last_attack;
     qa_attack last_attack = has_last_attack ? entry->last_attack : (qa_attack){0};
+    bool has_origin = qa_actor_id_equal(entry->actor, actor) && entry->has_origin_attack;
+    qa_attack origin = has_origin ? entry->origin_attack : (qa_attack){0};
     *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .external = true,
         .binding = *binding, .power_inventory = power_inventory, .power_item = power_item,
-        .last_attack = last_attack, .has_last_attack = has_last_attack};
+        .last_attack = last_attack, .has_last_attack = has_last_attack,
+        .origin_attack = origin, .has_origin_attack = has_origin};
     return true;
 }
 bool qa_combat_primary_current(const qa_combat *combat, qa_actor_id actor,

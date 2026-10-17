@@ -279,6 +279,46 @@ static bool safe(qa_session *session, qa_combat *combat, qa_inventory *inventory
         !combat->current && !combat->pickups) || fail(error, "Combat persistence requires idle candidate-owned stores");
 }
 
+static bool origins(qa_source_save_io *io, qa_combat *combat, qa_combat_record *records)
+{
+    uint32_t capacity = qa_actors_capacity(combat->actors);
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    /* Older source checkpoints import their launch provenance before the
+     * shared combat record. Retain it when this older record has no tail. */
+    if (reading && io->offset == io->input.size) {
+        for (uint32_t slot = 0; slot < capacity; ++slot) {
+            const qa_combat_record *source = combat->records + slot;
+            if (!source->has_origin_attack || !qa_actors_get(combat->actors, source->actor)) continue;
+            qa_combat_record *entry = records + slot;
+            entry->actor = source->actor; entry->origin_attack = source->origin_attack;
+            entry->has_origin_attack = true;
+        }
+        return true;
+    }
+    size_t count = 0;
+    if (!reading) for (uint32_t slot = 0; slot < capacity; ++slot)
+        count += records[slot].has_origin_attack;
+    if (!qa_source_save_count(io, &count, capacity)) return false;
+    uint32_t previous = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_combat_record *entry;
+        qa_actor_id actor = {0}; qa_attack value = {0};
+        if (!reading) {
+            while (!records[previous].has_origin_attack) ++previous;
+            actor = records[previous].actor; value = records[previous].origin_attack;
+        }
+        if (!qa_source_save_actor(io, &actor) || !attack(io, &value) ||
+            !qa_actors_get(combat->actors, actor)) return false;
+        if (reading) {
+            if (i && actor.slot <= previous) return fail(io->error, "Saved launch origins repeat a projectile slot");
+            entry = records + actor.slot;
+            entry->actor = actor; entry->origin_attack = value; entry->has_origin_attack = true;
+            previous = actor.slot;
+        } else ++previous;
+    }
+    return true;
+}
+
 bool qa_persistence_combat_capture(qa_session *session, qa_combat *combat, qa_inventory *inventory,
                                    qa_buffer *out, qa_error *error)
 {
@@ -309,7 +349,8 @@ bool qa_persistence_combat_capture(qa_session *session, qa_combat *combat, qa_in
                 copy.protection[channel].bound != current->protection[channel].bound)
                 ok = fail(error, "Protection ownership changed during capture");
     }
-    if (ok) ok = safe(session, combat, inventory, error) && next == combat->next_serial && qa_source_save_finish(&io, out);
+    if (ok) ok = origins(&io, combat, combat->records) && safe(session, combat, inventory, error) &&
+        next == combat->next_serial && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     return ok;
 }
@@ -341,7 +382,7 @@ bool qa_persistence_combat_restore(qa_session *session, qa_combat *combat, qa_in
                     entry.protection[channel].serial, next - 1, error);
         if (ok) { previous = entry.actor.slot; records[entry.actor.slot] = entry; }
     }
-    if (ok) ok = persistence_serial_unique(serials, serial_count, error) &&
+    if (ok) ok = origins(&io, combat, records) && persistence_serial_unique(serials, serial_count, error) &&
         qa_source_save_finish(&io, NULL) && safe(session, combat, inventory, error);
     if (ok) { free(combat->records); combat->records = records; combat->next_serial = next; records = NULL; }
     else if (!error || error->code == QA_OK) fail(error, "Invalid saved combat continuation");
@@ -354,6 +395,8 @@ bool qa_persistence_combat_validate(qa_combat *combat, qa_inventory *inventory, 
     if (!combat || !inventory || !qa_combat_idle(combat)) return fail(error, "Combat validation requires idle stores");
     for (uint32_t i = 0; i < qa_actors_capacity(combat->actors); ++i) {
         qa_combat_record *entry = combat->records + i;
+        if (entry->has_origin_attack && !qa_actors_get(combat->actors, entry->actor))
+            return fail(error, "Saved launch origin has no current projectile");
         if (!entry->active) continue;
         if (!qa_actors_get(combat->actors, entry->actor)) return fail(error, "Saved combat actor is not live");
         if (entry->power_inventory) {

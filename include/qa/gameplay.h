@@ -364,6 +364,10 @@ bool qa_combat_has(qa_combat *, qa_actor_id);
  * Actor references keep their original generations even after retirement.
  * This query calls no source callbacks and does not require an attacker body. */
 bool qa_combat_last_attack_read(const qa_combat *, qa_actor_id, qa_attack *, bool *present, qa_error *);
+/* Launch provenance belongs to the full projectile actor, independently of
+ * whether that actor has a damageable combat primary. */
+bool qa_combat_attack_origin_store(qa_combat *, qa_actor_id, const qa_attack *, qa_error *);
+bool qa_combat_attack_origin_read(const qa_combat *, qa_actor_id, qa_attack *, bool *present, qa_error *);
 /* Uncomposed primary state for editing traits. Unlike effective read, this
  * cannot copy another provider's temporary protection into primary godmode. */
 bool qa_combat_read_traits(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
