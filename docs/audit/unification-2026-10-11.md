@@ -27,9 +27,9 @@ binary assets. This is an audit of this repository, not a claim that every line
 of sibling reference repositories was reviewed. Findings include actual caller
 checks; source references remain at the snapshot's line numbers.
 
-There are **374 overlapping source-review observations**: 245 have source fixes
+There are **374 overlapping source-review observations**: 254 have source fixes
 with matching normal builds and core checks; three claims were refuted by caller
-review. The remaining 126 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
+review. The remaining 117 records are overlapping observations: producer/consumer observations overlap, and some concern cold cleanup or
 missing capabilities. Their reported severities describe source-review priority,
 not measured frame cost or demonstrated owner-visible impact. Independent
 refutation covered selected high-risk findings, not every observation twice.
@@ -444,3 +444,12 @@ All 13 actor resolver sites named by `01-identity-remaining-actors` now use the 
 - `de44b0f4` / J20-07: Q1 lookup, admission, clone, release and restore use one common target router; host lookup callbacks and the private actor-capacity fallback are deleted. Normal build and seven core suites passed. Records: `/tmp/qa-ta3196-one-q1-target-router-20261012-v1`.
 
 - `7b50187e` / 22-04: Q2 monster definition admission resolves the unchanged move-set table once using the common ID index; spawn and checkpoint consumers read retained bindings. Normal build and seven core suites passed. Records: `/tmp/qa-ta3196-bound-q2-monster-moves-20261012-v1`.
+
+## 2026-10-17 source recheck
+
+The current source resolves the named paths in `J25-01`, `J25-04`, `26-20`,
+`J24-09`, `J24-11`, `26-13`, `26-10`, `J00-14` and `J32-07`. The JSON entries
+name their implementation commits and retain the limits: dynamic QVM proof,
+new pool/image demand and cold allocation remain possible. Normal builds and
+the seven core suites pass; this recheck does not establish live module, audio,
+performance or whole-frame allocation behavior.

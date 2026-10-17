@@ -13,8 +13,8 @@
     "extra_files": 0
   },
   "finding_counts": {
-    "fixed_source_build_core": 245,
-    "open_source_observation": 126,
+    "fixed_source_build_core": 254,
+    "open_source_observation": 117,
     "refuted_as_stated": 3
   },
   "count_warning": "Observations overlap across producer/consumer areas and include design gaps, cold-path cleanup and source-domain bugs. Counts are not counts of unique remaining defects or measured frame costs. Reported severities are source-review priorities, not demonstrated live impact.",
@@ -23463,8 +23463,8 @@
       "severity": "high",
       "job": "00",
       "area": "application",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof",
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Declared combat accepts admitted classic32/classic64/API2023 native ABIs including SysV; public edict layout and target widths come from the host. API2023 damage cause by value and pain/death by reference remain distinct. Existing six-target parser fixture passes; no live cross-OS combat claim.",
       "original_summary": "Declared native Q2 primary-combat composition is restricted to Windows classic32/KEX64 rather than the common native ABI boundary",
       "independent_review": {
         "id": "J00-14",
@@ -23508,7 +23508,8 @@
             "observation": "Actual guest planner accepts System V i386 and x64; assignment at line 205 handles System V register classes."
           }
         ]
-      }
+      },
+      "fixed_commit": "52a4b07544ffe3a4f9b2a4a3045635b55452dd39"
     },
     {
       "id": "01-identity-q2-control",
@@ -33946,8 +33947,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Gameplay and presentation use qa_q3_player_entity_state; collision uses its const shared kinematics helper without consuming predictable events. Existing projection behavior fixture passes.",
+      "fixed_commit": "6ffe0f7bb6ab39f04e59cb4683f86b88c3a7f614"
     },
     {
       "id": "J24-10",
@@ -34023,8 +34025,9 @@
       "severity": "medium",
       "job": "24",
       "area": "gameplay_q3",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Location and team-combat callers use qa_collision_point_visible with explicit caller leaf/cluster/area policies and caller-owned scratch.",
+      "fixed_commit": "689dc7175a58c1547497753418731bc985fd5783"
     },
     {
       "id": "J25-01",
@@ -34081,8 +34084,9 @@
       "severity": "high",
       "job": "25",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Hardware packets use retained sealed arenas; CPU transfers and nested XSAVE/signal workspaces use common leases. Cold constructors and fault capture may allocate; no whole-module zero-allocation or live/performance claim.",
+      "fixed_commit": "5d58aae60b7e4ec411ad52358550f2e1bc2097d9"
     },
     {
       "id": "J25-02",
@@ -34224,8 +34228,9 @@
       "severity": "medium",
       "job": "25",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Windows UCRT and SysV formatting share the parser and exact decimal converter, with UCRT va_list/options/rounding policies. Remaining Windows va_next serves scanf, not a duplicate printf implementation.",
+      "fixed_commit": "af97209c0ed9459f6414b2381e48923fd9eb49a2"
     },
     {
       "id": "J25-05",
@@ -34585,8 +34590,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Acoustic trace/contents use the common borrowed world query and read each visited CG solid row from guest spans; full-list copies are deleted. Query leases retain independent nested scratch. New nesting demand can extend the common pool; no live acoustic-output or speed claim.",
+      "fixed_commit": "027ed7e3dc42793e90bc44930cc1746646bb223d"
     },
     {
       "id": "26-11",
@@ -34677,8 +34683,9 @@
       "severity": "medium",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Builtin targets already bind at instance admission; find now directly uses cached identities and standalone instances admit the string-field bitmap. Existing guest fixture covers standalone find, equal text at different offsets, ordering, free/id0 skip, nonzero empty strings and invalid arguments.",
+      "fixed_commit": "57e38ca1f83788989d1f089e54f7378c0a30c256"
     },
     {
       "id": "26-14",
@@ -34902,8 +34909,9 @@
       "severity": "high",
       "job": "26",
       "area": "module_hosts",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Named immutable gameplay profiles qualify regions at admission; runtime reads image-owned ID records. Dynamic descriptors and an interpreted admission that exhausted memory can use the single proof routine with VM-owned common scratch. No claim that all dynamic proof is eliminated.",
+      "fixed_commit": "eee3f8bfc7881a94c6e50809c80e599bcfc58cdf"
     },
     {
       "id": "27-01",
@@ -36306,8 +36314,9 @@
       "severity": "high",
       "job": "32",
       "area": "render_presentation",
-      "status": "open_source_observation",
-      "verification": "source review; no runtime or performance proof"
+      "status": "fixed_source_build_core",
+      "verification": "Current source rechecked 2026-10-17; normal production build and seven core suites pass at 57e38ca1. Scene image versions use common leased page storage retained through final release; source pixel copies remain necessary. Staged cinematic preparation uses its actual destination bank. First decoded RoQ dimensions, changed dimensions and new lease peaks can extend storage; no all-frame zero-allocation or speed claim.",
+      "fixed_commit": "153bd3687c207a7f929d350da0be9e8e650a5444"
     },
     {
       "id": "J32-08",

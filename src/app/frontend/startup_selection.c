@@ -190,6 +190,13 @@ static bool maps_bind(frontend_startup_selection *s, qa_ui_library *library, boo
     maps->catalog_generation = generation; maps->lookup_generation = lookup;
     return true;
 }
+static qa_entity_syntax map_entity_syntax(qa_bsp_family family, const qa_product *geometry)
+{
+    return family == QA_BSP_Q3 ? QA_ENTITY_Q3 :
+        family == QA_BSP_Q2 ? geometry && geometry->edition == QA_EDITION_RERELEASE ?
+            QA_ENTITY_Q2_RERELEASE : QA_ENTITY_Q2_CLASSIC : QA_ENTITY_Q1;
+}
+
 static bool map_prepare(frontend_startup_selection *s, startup_map *row, bool *changed, qa_error *error)
 {
     if (row->prepared) return true;
@@ -199,10 +206,8 @@ static bool map_prepare(frontend_startup_selection *s, startup_map *row, bool *c
     if (okay) {
         row->family = bsp.family;
         const qa_product *geometry = qa_catalog_product(s->maps.catalog, s->maps.geometry);
-        qa_entity_syntax syntax = bsp.family == QA_BSP_Q3 ? QA_ENTITY_Q3 :
-            bsp.family == QA_BSP_Q2 ? geometry && geometry->edition == QA_EDITION_RERELEASE ?
-                QA_ENTITY_Q2_RERELEASE : QA_ENTITY_Q2_CLASSIC : QA_ENTITY_Q1;
-        okay = qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes, syntax, &entities, &failure);
+        okay = qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes,
+            map_entity_syntax(bsp.family, geometry), &entities, &failure);
     }
     for (size_t i = 0; okay && i < entities.count; ++i) {
         qa_bytes name, flags; qa_string_id id; int32_t spawnflags = 0;
@@ -544,7 +549,9 @@ static const char *rule_selected(qa_ui_library *library)
 static const char *rule_unavailable_for(qa_ui_library *library, const char *rule, qa_mode_kind base_mode)
 {
     const qa_catalog *catalog = qa_ui_library_catalog(library);
-    const qa_product *p = qa_catalog_product(catalog, qa_ui_library_choices(library)->world.preset);
+    const qa_launch_mode *selected = mode(library);
+    const qa_launch_provider *owner = selected ? provider(qa_ui_library_choices(library), selected->instance) : NULL;
+    const qa_product *p = owner ? qa_catalog_product(catalog, owner->product) : NULL;
     bool deathmatch = base_mode == QA_MODE_FFA;
     if (!strcmp(rule, "standard")) return NULL;
     if (!strcmp(rule, "horde")) return !p || p->family != QA_GAME_Q1 || p->edition != QA_EDITION_RERELEASE ||
@@ -676,12 +683,6 @@ static qa_game_family map_family(qa_ui_library *library)
     return p ? p->family : QA_GAME_Q3;
 }
 
-static const char *monster_adapter_unavailable(qa_ui_library *library)
-{
-    return map_family(library) == QA_GAME_Q3 ?
-        "This map has no supported authored monster roster" : NULL;
-}
-
 static bool monster_choices(frontend_startup_selection *s, qa_ui_library *library,
     bool sources_only, const char *classname, qa_error *e)
 {
@@ -702,8 +703,7 @@ static bool monster_choices(frontend_startup_selection *s, qa_ui_library *librar
     for (size_t i = 0; i < count; ++i) {
         const qa_monster_catalog_source *source = sources + i;
         const qa_product *p = monster_product(qa_ui_library_catalog(library), source);
-        const char *reason = unavailable(p), *adapter = monster_adapter_unavailable(library);
-        if (!reason) reason = adapter;
+        const char *reason = unavailable(p);
         const char *edition = source->edition == QA_EDITION_CLASSIC ? "classic" : "rerelease";
         const char *family = source->family == QA_GAME_Q1 ? "Q1" : "Q2";
         char label[512];
@@ -828,7 +828,7 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
             for (size_t i = 0; i < c->monster_count; ++i)
                 custom |= !c->monsters[i].map_defined && strcmp(c->monsters[i].instance, "startup:monster-source");
             if (custom) *selected = "custom";
-            ok = s->choices[0].label && append(s, "custom", "Custom roster", map_family(library) == QA_GAME_Q3 ? "This map has no supported authored monster roster" : NULL, e);
+            ok = s->choices[0].label && append(s, "custom", "Custom roster", NULL, e);
             if (ok) {
                 qa_ui_library_choice custom_choice = s->choices[s->count - 1];
                 memmove(s->choices + 2, s->choices + 1, (s->count - 2) * sizeof(*s->choices));
@@ -972,14 +972,17 @@ static bool select_rule(qa_ui_library *library, const char *id, qa_mode_kind bas
     const qa_launch_mode *current = mode(library);
     if (!current) return fail(e, "Match rule selection requires its canonical mode");
     qa_launch_mode selected = *current;
-    const qa_product *p = qa_catalog_product(qa_ui_library_catalog(library), qa_ui_library_choices(library)->world.preset);
     qa_mode_kind kind = !strcmp(id, "tag") ? QA_MODE_TAG : !strcmp(id, "deathball") ? QA_MODE_DEATHBALL :
         !strcmp(id, "horde") ? QA_MODE_HORDE : (!strcmp(id, "ctf") || !strcmp(id, "lmctf")) ? QA_MODE_CTF : base_mode;
+    const char *owner_instance = kind != QA_MODE_CTF && !strcmp(current->instance, "startup:rules") ?
+        "native:primary" : current->instance;
+    const qa_launch_provider *owner = provider(qa_ui_library_choices(library), owner_instance);
+    const qa_product *p = qa_catalog_product(qa_ui_library_catalog(library), owner->product);
     qa_mode_source source = !strcmp(id, "tag") ? QA_MODE_Q2_TAG : !strcmp(id, "deathball") ? QA_MODE_Q2_DEATHBALL :
         !strcmp(id, "horde") ? QA_MODE_Q1_HORDE : !strcmp(id, "ctf") ? QA_MODE_Q2_CTF : !strcmp(id, "lmctf") ? QA_MODE_LMCTF :
         p->family == QA_GAME_Q3 ? (!strcmp(p->campaign, "missionpack") ? QA_MODE_TEAM_ARENA : QA_MODE_Q3) :
         p->family == QA_GAME_Q2 ? QA_MODE_Q2 : !strcmp(p->campaign, "rogue") ? QA_MODE_ROGUE : QA_MODE_Q1;
-    char *instance = copy_text(kind == QA_MODE_CTF ? selected.instance : "native:primary", e);
+    char *instance = copy_text(owner_instance, e);
     const char *teams[3] = {NULL, NULL, NULL}; bool ok = instance != NULL;
     for (size_t i = 0; ok && i < 3; ++i) { teams[i] = copy_text(selected.teams[i] ? selected.teams[i] : "", e); ok = teams[i] != NULL; }
     char *forced = ok ? copy_text(selected.forced_team ? selected.forced_team : "", e) : NULL;
@@ -987,7 +990,7 @@ static bool select_rule(qa_ui_library *library, const char *id, qa_mode_kind bas
     if (ok && kind == QA_MODE_CTF) {
         const qa_product *rules = qa_catalog_find(qa_ui_library_catalog(library), !strcmp(id, "lmctf") ? "q2-classic-lmctf" : "q2-classic-ctf");
         ok = install_source(library, rules, "startup:rules", e);
-        if (ok) { free(instance); instance = copy_text("startup:rules", e); ok = instance != NULL; }
+        if (ok) { p = rules; free(instance); instance = copy_text("startup:rules", e); ok = instance != NULL; }
     }
     if (ok) {
         selected.instance = instance; selected.rules = qa_mode_defaults(source, kind);
@@ -1053,6 +1056,13 @@ bool frontend_startup_monsters_select(qa_launch_draft *draft, const char *id, qa
         "startup:monster-source", (qa_launch_scope){.kind = QA_SCOPE_WORLD}, e)) return false;
     const qa_product *geometry = qa_catalog_product(catalog, qa_launch_draft_choices(draft)->world.geometry);
     if (!geometry) return fail(e, "Monster selection needs its map geometry");
+    size_t inherited = qa_launch_draft_choices(draft)->monster_count;
+    for (size_t i = 0; i < inherited; ++i) {
+        qa_launch_monster current = qa_launch_draft_choices(draft)->monsters[i];
+        if (strcmp(current.instance, "startup:monster-source")) continue;
+        current.classname = ""; current.map_defined = true;
+        if (!qa_launch_set_monster(draft, &current, e)) return false;
+    }
     size_t count;
     const qa_monster_catalog_slot *slots = qa_monster_catalog_slots(geometry->family, &count);
     for (size_t i = 0; i < count; ++i) {
@@ -1121,14 +1131,6 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
         const char *rule = rule_selected(library);
         if (rule_unavailable(library, rule)) rule = "standard";
         ok = select_rule(library, rule, qa_ui_library_mode_preference(library), e) && refresh_native_equipment(library, e);
-        if (ok && map_family(library) == QA_GAME_Q3) {
-            size_t count = qa_ui_library_choices(library)->monster_count;
-            for (size_t i = 0; ok && i < count; ++i) {
-                char *name = copy_text(qa_ui_library_choices(library)->monsters[i].authored_classname, e);
-                ok = name && native_monster(library, name, e); free(name);
-            }
-            if (ok) ok = qa_launch_remove_provider(qa_ui_library_draft(library), "startup:monster-source", e);
-        }
         free(id); free(class_copy); return ok;
     }
     const qa_ui_library_choice *choices; size_t count; const char *selected;
@@ -1221,7 +1223,6 @@ bool frontend_startup_selection_roster(void *context, qa_ui_library *library,
     frontend_startup_selection *s = context;
     if (!s || !library || !out || !count || !source_label) return fail(e, "Monster roster needs its draft");
     *out = NULL; *count = 0;
-    if (map_family(library) == QA_GAME_Q3) return fail(e, "This map has no supported authored monster roster");
     const qa_launch_draft *draft=qa_ui_library_draft(library);
     qa_catalog *catalog=qa_launch_draft_catalog(draft);
     const qa_launch_choices *c=qa_ui_library_choices(library);
@@ -1247,7 +1248,8 @@ bool frontend_startup_selection_roster(void *context, qa_ui_library *library,
     qa_vfs *vfs=NULL; qa_resource *resource=NULL; qa_entities entities={0}; qa_bsp_view bsp;
     bool ok=rows->source_label && rows->map && qa_catalog_open(catalog,c->world.geometry,&vfs,e) &&
         qa_vfs_acquire(vfs,c->world.map,&resource,NULL,e) && qa_bsp_open(qa_resource_bytes(resource),&bsp,e);
-    if (ok) ok=qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes,QA_ENTITY_Q1,&entities,e);
+    if (ok) ok=qa_entities_parse(bsp.lumps[QA_BSP_ENTITIES].bytes,
+        map_entity_syntax(bsp.family,qa_catalog_product(catalog,c->world.geometry)),&entities,e);
     size_t slot_count; const qa_monster_catalog_slot *slots=qa_monster_catalog_slots(map_family(library),&slot_count);
     size_t maximum=1;
     if (ok) {
