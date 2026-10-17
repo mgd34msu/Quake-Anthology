@@ -171,6 +171,11 @@ static combat_record *record_for(struct application_native_q2_combat *p, qa_acto
     size_t value;
     return qa_actor_index_find(&p->record_index, actor, &value) ? (combat_record *)(uintptr_t)value : NULL;
 }
+const application_q2_combat_profile *application_native_q2_combat_profile(
+    const struct application_native_q2 *engine)
+{
+    return engine && engine->source_combat ? &engine->source_combat->profile : NULL;
+}
 bool application_native_q2_actor_traits(application_provider *provider, qa_actor_id actor,
     qa_builtin_actor_traits *out)
 {
@@ -189,7 +194,8 @@ bool application_native_q2_actor_traits(application_provider *provider, qa_actor
         !source.in_use || !qa_actor_id_equal(source.binding.actor, actor)) return false;
     const qa_actor_player *identity = qa_actors_player(actors, actor);
     bool player = source.bot.player || application_native_q2_client_slot(engine, actor) != 0;
-    qa_builtin_actor_traits traits = {.classname = record->definition, .player = player,
+    qa_string_id classname = qa_native_host_source_classname(host, actor);
+    qa_builtin_actor_traits traits = {.classname = classname ? classname : record->definition, .player = player,
         .monster = (source.server_flags & 4u) != 0,
         .spectator = identity && identity->spectator,
         .disguised = identity && identity->disguised};

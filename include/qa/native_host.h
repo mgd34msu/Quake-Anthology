@@ -86,6 +86,8 @@ typedef struct qa_native_host_link_metadata {
     int32_t clusters[16];
     int32_t cluster_count; /* -1 means the source cluster list overflowed. */
     uint32_t network_solid;
+    qa_native_address classname;
+    bool has_classname;
 } qa_native_host_link_metadata;
 
 typedef struct qa_native_host_command_view {
@@ -371,6 +373,7 @@ bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,
  * matching owned/borrowed bindings; repeated notifications are harmless. */
 bool qa_native_host_actor_released(qa_native_host *, qa_actor_record, qa_error *);
 bool qa_native_host_slot_for_actor(const qa_native_host *, qa_actor_id, uint32_t *);
+qa_string_id qa_native_host_source_classname(const qa_native_host *, qa_actor_id);
 bool qa_native_host_detach_actor(qa_native_host *, uint32_t source_slot,
                                   qa_actor_id, qa_error *);
 bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);

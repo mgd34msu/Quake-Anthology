@@ -104,7 +104,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
 {
     if (!engine || !p || !engine->declaration || engine->profile == QA_NATIVE_Q2_CGAME_API2023)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native primary combat requires its original game declaration");
-    memset(p, 0, sizeof(*p)); p->engine = engine;
+    memset(p, 0, sizeof(*p)); p->engine = engine; p->classname = UINT32_MAX;
     p->kex = engine->profile == QA_NATIVE_Q2_GAME_API2023;
     p->target = qa_native_module_describe(engine->provider->state.native.module).image.target;
     if ((p->kex && p->target.pointer_bytes != 8) || (!p->kex && p->target.pointer_bytes != 4))
@@ -146,6 +146,8 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         READ(qa_json_get(doc, qa_json_get(doc, root, "weapons"), "client"), "byteLength", client_bytes);
         READ(fields, "health", health); READ(fields, "damageable", damageable); READ(fields, "flags", flags);
         READ(fields, "mass", mass); READ(fields, "velocity", velocity); READ(fields, "pain", pain); READ(fields, "die", die);
+        if (qa_json_get(doc, fields, "classname") != QA_JSON_NONE &&
+            !word(doc, fields, "classname", &p->classname, error)) return false;
         READ(client, "inventory", inventory); READ(client, "invincibleFrame", invincible);
         READ(client, "userinfo", userinfo); READ(client, "userinfoBytes", userinfo_bytes); READ(client, "viewAngles", view_angles);
         READ(entries, "regularArmor", regular_entry); READ(globals, "levelFrame", time);
@@ -173,7 +175,8 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         if (!qa_json_string_equal(doc, game, "base") && !qa_json_string_equal(doc, game, "xatrix") &&
             !qa_json_string_equal(doc, game, "rogue") && !qa_json_string_equal(doc, game, "ctf"))
             return application_fail(error, QA_ERROR_FORMAT, "Native classic combat requires its exact original product cause roster");
-        if (p->entity_bytes < 260 || !range(p->velocity, 12, p->entity_bytes, error) ||
+        if ((p->classname != UINT32_MAX && !range(p->classname, p->target.pointer_bytes, p->entity_bytes, error)) ||
+            p->entity_bytes < 260 || !range(p->velocity, 12, p->entity_bytes, error) ||
             !range(p->invincible, 4, p->client_bytes, error) || !p->userinfo_bytes ||
             !range(p->userinfo, p->userinfo_bytes, p->client_bytes, error) ||
             !range(p->view_angles, 12, p->client_bytes, error) ||
@@ -193,6 +196,7 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
         FIELD(edict, "flags", "uint64", 1, flags); FIELD(edict, "mass", "int32", 1, mass);
         FIELD(edict, "velocity", "float32", 3, velocity); FIELD(edict, "pain.value", "pointer", 1, pain);
         FIELD(edict, "die.value", "pointer", 1, die); FIELD(edict, "spawn_count", "int32", 1, generation);
+        if (!field(doc, edict, "classname", "pointer", 1, &p->classname, true, error)) return false;
         FIELD(layout, "pers.inventory", "int32", p->inventory_count, inventory);
         FIELD(layout, "invincible_time", "int64", 1, invincible); FIELD(layout, "v_angle", "float32", 3, view_angles);
 #undef FIELD
@@ -301,6 +305,18 @@ static bool pointer_read(const application_q2_combat_profile *p, qa_native_addre
     uint8_t bytes[8];
     if (!qa_native_read(native(p), at, bytes, p->target.pointer_bytes, error)) return false;
     *out = p->target.pointer_bytes == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes); return true;
+}
+bool application_q2_combat_classname(const application_q2_combat_profile *p,
+    qa_actor_id actor, qa_native_address *out, bool *present, qa_error *error)
+{
+    *out = 0; *present = p && p->classname != UINT32_MAX;
+    if (!*present) return true;
+    qa_native_host *host = p->engine->provider->state.native.host;
+    uint32_t slot; qa_native_address address;
+    if (!qa_native_host_slot_for_actor(host, actor, &slot))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native classname lost its source slot binding");
+    return qa_native_entity_address(native(p), slot, &address, error) &&
+        pointer_read(p, address + p->classname, out, error);
 }
 static bool integer_write(const application_q2_combat_profile *p, qa_native_address at,
     double value, qa_error *error)

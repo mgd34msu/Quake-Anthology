@@ -1,7 +1,10 @@
 #include "internal.h"
 
 #include <math.h>
+#include "qa/text.h"
 #include "../../world/collision/internal.h"
+
+static bool source_classname_reconcile(qa_native_host *, uint32_t, qa_actor_id, qa_error *);
 
 static void store_f32(uint8_t *out, float value)
 {
@@ -458,6 +461,14 @@ bool qa_native_host_slot_for_actor(const qa_native_host *host, qa_actor_id actor
     *out = (uint32_t)slot;
     return true;
 }
+qa_string_id qa_native_host_source_classname(const qa_native_host *host, qa_actor_id actor)
+{
+    uint32_t slot;
+    if (!qa_native_host_slot_for_actor(host, actor, &slot) || slot >= host->q2_lifetime_capacity)
+        return QA_STRING_NONE;
+    const native_host_q2_lifetime *lifetime = &host->q2_lifetimes[slot];
+    return qa_actor_id_equal(lifetime->actor, actor) ? lifetime->classname : QA_STRING_NONE;
+}
 
 bool qa_native_host_source_address(qa_native_host *host, qa_actor_id actor,
                                    qa_native_address *out, qa_error *error)
@@ -522,7 +533,8 @@ bool native_host_reconcile(qa_native_host *host, qa_error *error)
             continue;
         }
         qa_actor_id actor;
-        if (!native_host_actor_for_address(host, address, true, &actor, NULL, error))
+        if (!native_host_actor_for_address(host, address, true, &actor, NULL, error) ||
+            (actor.registry && !source_classname_reconcile(host, slot, actor, error)))
             return false;
     }
     return true;
@@ -713,6 +725,38 @@ static bool lifetime_capacity(qa_native_host *host, uint32_t slot, qa_error *err
     return true;
 }
 
+static bool source_classname_bind(qa_native_host *host, uint32_t slot, qa_actor_id actor,
+    const qa_native_host_link_metadata *metadata, qa_error *error)
+{
+    if (!lifetime_capacity(host, slot, error)) return false;
+    native_host_q2_lifetime *row = &host->q2_lifetimes[slot];
+    if (!qa_actor_id_equal(row->actor, actor)) *row = (native_host_q2_lifetime){.actor = actor};
+    if (!metadata->has_classname) return true;
+    qa_string_id name = QA_STRING_NONE;
+    if (metadata->classname) {
+        qa_bytes text;
+        if (!native_host_text_read(host, metadata->classname, false, &text, error)) return false;
+        if (row->classname_bound && qa_text_bytes_equal(text,
+            qa_strings_text(host->engine.strings, row->classname), false)) return true;
+        if (!qa_strings_intern(host->engine.strings, text, &name, error)) return false;
+    }
+    row->classname = name; row->classname_bound = true;
+    return true;
+}
+
+static bool source_classname_reconcile(qa_native_host *host, uint32_t slot,
+    qa_actor_id actor, qa_error *error)
+{
+    if (host->world.projected_entities) return true;
+    if (slot < host->q2_lifetime_capacity &&
+        qa_actor_id_equal(host->q2_lifetimes[slot].actor, actor) &&
+        host->q2_lifetimes[slot].classname_bound) return true;
+    qa_native_host_link_metadata metadata = {0};
+    return (!host->engine.link_metadata ||
+        host->engine.link_metadata(host->engine.context, actor, &metadata, error)) &&
+        source_classname_bind(host, slot, actor, &metadata, error);
+}
+
 bool native_host_q2_bot_register(qa_native_host *host, qa_native_address address,
     bool registered, qa_error *error)
 {
@@ -845,8 +889,11 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     if (link_count == 0 || !same_actor ||
         (host->engine.source_frame && (!lifetime->present || frame < lifetime->creation_frame))) {
         bool bot_registered = lifetime->bot_registered && same_actor;
+        qa_string_id classname = same_actor ? lifetime->classname : QA_STRING_NONE;
+        bool classname_bound = same_actor && lifetime->classname_bound;
         *lifetime = (native_host_q2_lifetime){.actor = actor, .bot_registered = bot_registered,
-            .creation_origin = origin, .creation_frame = frame, .present = host->engine.source_frame != NULL};
+            .creation_origin = origin, .creation_frame = frame, .present = host->engine.source_frame != NULL,
+            .classname = classname, .classname_bound = classname_bound};
     }
     if (link_count == 0) {
         bool copy_origin = host->profile == QA_NATIVE_Q2_GAME_API3;
@@ -865,7 +912,7 @@ bool native_host_link(qa_native_host *host, qa_native_address address, qa_error 
     }
     host->q2_lifetimes[slot].actor = actor;
     host->q2_lifetimes[slot].linked = true;
-    return true;
+    return host->world.projected_entities || source_classname_bind(host, slot, actor, &metadata, error);
 }
 
 bool native_host_unlink(qa_native_host *host, qa_native_address address, qa_error *error)

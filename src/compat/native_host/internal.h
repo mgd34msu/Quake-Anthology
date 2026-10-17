@@ -71,7 +71,8 @@ typedef struct native_host_q2_lifetime {
     qa_vec3 creation_origin;
     uint64_t creation_frame;
     qa_native_host_q2_origin origins[8];
-    bool present, linked, bot_registered;
+    qa_string_id classname;
+    bool present, linked, bot_registered, classname_bound;
 } native_host_q2_lifetime;
 
 typedef struct native_host_q2_fields {

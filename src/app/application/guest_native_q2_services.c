@@ -2,6 +2,7 @@
 #include "native_q2_client_stages.h"
 #include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_combat_state.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_original_save.h"
 #include "control_frame.h"
@@ -398,6 +399,14 @@ static bool hud_view(void *opaque, uint32_t seat, qa_native_host_q2_hud_view *ou
         : application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 HUD viewport owner is absent");
 }
 
+static bool link_metadata(void *opaque, qa_actor_id actor,
+    qa_native_host_link_metadata *metadata, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    return application_q2_combat_classname(application_native_q2_combat_profile(engine),
+        actor, &metadata->classname, &metadata->has_classname, error);
+}
+
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *engine)
 {
     return (qa_native_host_engine_services){.context = engine,
@@ -407,7 +416,7 @@ qa_native_host_engine_services application_native_q2_services(struct application
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .source_frame = source_frame,
-        .entity_number = entity_number,
+        .entity_number = entity_number, .link_metadata = link_metadata,
         .checkpoint = application_native_q2_capture_engine, .restore = application_native_q2_restore_engine,
         .content_files = engine->provider->launch->content, .cvars = engine->cvars,
         .hud_view = hud_view,
