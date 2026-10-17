@@ -640,11 +640,18 @@ bool application_native_q2_loading_cancel(application_provider *provider, qa_err
     return ok;
 }
 
-bool application_native_q2_activate(struct application_native_q2 *engine, qa_error *error)
+bool application_native_q2_activate_advance(struct application_native_q2 *engine,
+    size_t quantum, bool *complete, qa_error *error)
 {
     if (!engine || !engine->provider->constructed || !engine->provider->attached || engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its committed owner");
-    return load_host(engine, error);
+    return load_host_advance(engine, quantum, complete, error);
+}
+
+bool application_native_q2_activate(struct application_native_q2 *engine, qa_error *error)
+{
+    bool complete = false;
+    return application_native_q2_activate_advance(engine, 0, &complete, error) && complete;
 }
 
 static bool declared_initialize(struct application_native_q2 *engine,qa_error *error)

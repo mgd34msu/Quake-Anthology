@@ -332,11 +332,13 @@ bool application_native_q2_record_restore_advance(struct application_native_q2_r
             break;
         case RECORD_SCRATCH: {
             qa_application_native_baseline_services *services = NULL;
-            ok = application_native_q2_baseline_services_prepare(app, &operation->options, &services, error);
-            if (ok && operation->ops->prepare_native_baseline)
-                ok = operation->ops->prepare_native_baseline(operation->ops->context, app, provider->owner, services, error);
-            if (ok) ok = application_native_q2_scratch_prepare(provider, qa_application_launch(app), services,
-                record_game_host(operation), &operation->scratch, error);
+            if (!operation->scratch) {
+                ok = application_native_q2_baseline_services_prepare(app, &operation->options, &services, error);
+                if (ok && operation->ops->prepare_native_baseline)
+                    ok = operation->ops->prepare_native_baseline(operation->ops->context, app, provider->owner, services, error);
+            }
+            if (ok) ok = application_native_q2_scratch_prepare_advance(provider, qa_application_launch(app), services,
+                record_game_host(operation), &operation->scratch, quantum, &returned, error);
             break;
         }
         case RECORD_GAME:

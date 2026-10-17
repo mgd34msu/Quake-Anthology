@@ -179,6 +179,8 @@ bool application_native_q2_idle(const application_provider *);
  * gameplay role remains with this same original Source. */
 bool application_native_q2_whole_source(const struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_activate(struct application_native_q2 *, qa_error *);
+bool application_native_q2_activate_advance(struct application_native_q2 *, size_t,
+    bool *, qa_error *);
 bool application_native_q2_client_admit(application_provider *, uint32_t, qa_actor_id,
     const char *, const char *, bool, bool *, qa_error *);
 bool application_native_q2_client_begin(application_provider *, uint32_t, qa_error *);

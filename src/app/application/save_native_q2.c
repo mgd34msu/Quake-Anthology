@@ -153,23 +153,33 @@ bool application_source_baseline_ready(struct application_native_q2_scratch *scr
     return !scratch->services.ready || scratch->services.ready(scratch->services.context, error);
 }
 
-bool application_native_q2_scratch_prepare(application_provider *target,
+bool application_native_q2_scratch_prepare_advance(application_provider *target,
     const qa_launch_snapshot *snapshot, qa_application_native_baseline_services *services,
-    qa_bytes cvars, struct application_native_q2_scratch **out, qa_error *error)
+    qa_bytes cvars, struct application_native_q2_scratch **out, size_t quantum,
+    bool *complete, qa_error *error)
 {
+    *complete = false;
     if (!target || target->kind != APPLICATION_PROVIDER_NATIVE || !target->state.native.q2_engine)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 baseline requires its actual GAME owner");
-    if (!application_source_baseline_prepare(target, snapshot, services, out, error)) return false;
+    if (!*out) {
+        if (!application_source_baseline_prepare(target, snapshot, services, out, error)) return false;
+        struct application_native_q2_scratch *scratch = *out;
+        qa_application *app = scratch->application;
+        struct application_native_q2 *engine = scratch->source->state.native.q2_engine;
+        if (!qa_session_allocate(app->session, scratch->source->owner, engine->definition, true, 0,
+                &engine->world_actor, error)) return false;
+        app->physics->world_actor = engine->world_actor;
+        if (quantum) return true;
+    }
     struct application_native_q2_scratch *scratch = *out;
-    qa_application *app = scratch->application;
     struct application_native_q2 *engine = scratch->source->state.native.q2_engine;
-    if (!qa_session_allocate(app->session, scratch->source->owner, engine->definition, true, 0,
-        &engine->world_actor, error)) return false;
-    app->physics->world_actor = engine->world_actor;
-    if (!application_native_q2_activate(engine, error) ||
-        !application_native_q2_prepare_restore(scratch->source, error) ||
+    bool activated = false;
+    if (!application_native_q2_activate_advance(engine, quantum, &activated, error)) return false;
+    if (!activated) return true;
+    if (!application_native_q2_prepare_restore(scratch->source, error) ||
         !qa_native_host_restore(scratch->source->state.native.host, cvars,
             QA_NATIVE_HOST_RESTORE_CVARS, true, error)) return false;
+    *complete = true;
     return true;
 }
 
@@ -208,6 +218,9 @@ bool application_native_q2_baselines_destroy(qa_application *candidate, qa_error
             if (!ended) return false;
         }
         if (scratch->application) {
+            if (scratch->source && scratch->source->kind == APPLICATION_PROVIDER_NATIVE &&
+                scratch->source->state.native.q2_engine &&
+                !application_native_q2_loading_cancel(scratch->source, error)) return false;
             if (!application_composition_destroy(scratch->application, error)) return false;
             if (scratch->source) {
                 if (!application_provider_close(scratch->application, scratch->source, error)) return false;
