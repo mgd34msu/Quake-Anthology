@@ -31,6 +31,7 @@ bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t
             *out=source.context.seat; return true;
         }
     }
+    if (frontend_network_client_only(f)) return false;
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
     return frontend_local_seat_read(choices,ordinal,out);
 }
