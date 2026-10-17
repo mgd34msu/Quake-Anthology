@@ -113,9 +113,11 @@ bool qa_save_restore_advance(qa_save_restore_operation *operation, uint64_t quan
         operation->record = 0;
     }
     if (!operation->finished) {
+        bool finished = false;
         okay = operation->ops.finish(operation->context, operation->candidate,
-            operation->image, error);
+            operation->image, quantum, &finished, error);
         if (!okay) goto failed;
+        if (!finished) return true;
         operation->finished = true;
         if (quantum) return true;
     }

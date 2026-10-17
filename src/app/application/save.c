@@ -671,6 +671,7 @@ typedef struct application_persistence {
     uint64_t configuration_generation, publication_generation, actor_revision;
     qa_save_purpose purpose;
     bool leased;
+    bool finish_prepared;
 } application_persistence;
 
 struct qa_application_restore {
@@ -1982,7 +1983,7 @@ static bool persistence_restore_owner(void *opaque, void *value,
     }
 }
 
-static bool persistence_finish(void *opaque, void *value, const qa_save_image *image, qa_error *error)
+static bool persistence_finish_prepare(void *opaque, void *value, const qa_save_image *image, qa_error *error)
 {
     application_persistence *operation = opaque;
     qa_application *candidate = value;
@@ -2099,8 +2100,25 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             application_startup_program_publication_seal(operation->programs,error) &&
             application_startup_program_publication_adopt(&operation->programs,error);
     if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
-    if (ok && operation->ops->replay) {
-        ok = operation->ops->replay(operation->ops->context, candidate, image, error);
+    return ok;
+}
+
+static bool persistence_finish(void *opaque, void *value, const qa_save_image *image,
+    uint64_t quantum, bool *complete, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    qa_application *candidate = value;
+    *complete = false;
+    if (!operation->finish_prepared) {
+        if (!persistence_finish_prepare(opaque, value, image, error)) return false;
+        operation->finish_prepared = true;
+        if (quantum && operation->ops->replay) return true;
+    }
+    bool ok = true;
+    if (operation->ops->replay) {
+        bool replayed = false;
+        ok = operation->ops->replay(operation->ops->context, candidate, image, quantum, &replayed, error);
+        if (!ok || !replayed) return ok;
         if (ok && !persistence_safe(candidate))
             ok = application_fail(error, QA_ERROR_FORMAT, "Recovery replay did not return an idle world");
         qa_buffer progression = {0};
@@ -2121,6 +2139,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         candidate->native_restore_current = NULL;
         candidate->native_restore_resources = NULL;
     }
+    *complete = ok;
     return ok;
 }
 

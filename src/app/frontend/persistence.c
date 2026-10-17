@@ -61,7 +61,7 @@ typedef struct frontend_persistence {
     frontend_persistence_native native;
     frontend_q3_color_ticket *color_ticket;
     qa_platform_events *events;
-    bool finished,restored;
+    bool finished,restored,replay_services_complete;
     void *replay_context;
     frontend_persistence_replay_fn replay;
 } frontend_persistence;
@@ -159,17 +159,30 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
     if (ok && operation->candidate) operation->finished=true;
     return ok;
 }
-static bool replay(void *context,qa_application *candidate,const qa_save_image *image,qa_error *error)
+static bool replay(void *context,qa_application *candidate,const qa_save_image *image,
+    uint64_t quantum,bool *complete,qa_error *error)
 {
     frontend_persistence *operation=context;
     qa_frontend *f=operation->candidate;
+    *complete=false;
     if (!f || f->application!=candidate)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Recovery replay lost its isolated frontend");
-    if (operation->services && operation->services->replay &&
-        !operation->services->replay(operation->services->context,candidate,image,error)) return false;
-    return (!operation->replay || operation->replay(operation->replay_context,f,error)) &&
+    if (!operation->replay_services_complete) {
+        bool returned=true;
+        if (operation->services && operation->services->replay &&
+            !operation->services->replay(operation->services->context,candidate,image,quantum,&returned,error))
+            return false;
+        if (!returned) return true;
+        operation->replay_services_complete=true;
+    }
+    bool returned=true;
+    if (operation->replay && !operation->replay(operation->replay_context,f,quantum,&returned,error)) return false;
+    if (!returned) return true;
+    bool ok=
         frontend_scene_sync(f,error) &&
         frontend_input_profile_bind(f,error);
+    *complete=ok;
+    return ok;
 }
 static bool ranking_handoff(void *context,qa_rankings *active,qa_rankings *candidate,
     bool *relinquish,qa_error *error)
@@ -492,12 +505,12 @@ static bool restore_frontend(qa_frontend **slot,const qa_application_persistence
 bool frontend_persistence_restore(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,qa_frontend **displaced,qa_frontend **retained,qa_error *error)
 { return restore_frontend(slot,services,image,NULL,NULL,displaced,retained,error); }
-bool frontend_persistence_restore_replay(qa_frontend **slot,const qa_application_persistence_ops *services,
+bool frontend_persistence_restore_replay_begin(qa_frontend **slot,const qa_application_persistence_ops *services,
     const qa_save_image *image,void *context,frontend_persistence_replay_fn replay_fn,
-    qa_frontend **displaced,qa_frontend **retained,qa_error *error)
+    frontend_persistence_restore_operation **out,qa_error *error)
 {
     if (!replay_fn) return frontend_fail(error,QA_ERROR_ARGUMENT,"Recovery restore requires its actual replay producer");
-    return restore_frontend(slot,services,image,context,replay_fn,displaced,retained,error);
+    return restore_begin(slot,services,image,context,replay_fn,out,error);
 }
 bool qa_frontend_persistence_capture(qa_frontend *f,const qa_application_persistence_ops *services,
     qa_save_purpose purpose,qa_save_image **out,qa_error *error)

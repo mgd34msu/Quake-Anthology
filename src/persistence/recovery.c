@@ -160,55 +160,84 @@ void qa_recovery_destroy(qa_recovery *recovery)
     }
 }
 
-typedef struct recovery_seek {
-    const qa_demo_seek_ops *ops;
+struct qa_recovery_restore_operation {
+    qa_demo_seek_ops ops;
+    qa_demo *demo;
+    qa_demo_seek_operation *seek;
     void *context;
     uint64_t committed_sequence;
-} recovery_seek;
+};
 static bool recovery_create(void *context, const qa_save_image *image, void **candidate, qa_error *error)
 {
-    recovery_seek *seek = context;
-    return seek->ops->create(seek->context, image, candidate, error);
+    qa_recovery_restore_operation *seek = context;
+    return seek->ops.create(seek->context, image, candidate, error);
 }
 static bool recovery_apply(void *context, void *candidate, const qa_demo_record *record, qa_error *error)
 {
-    recovery_seek *seek = context;
+    qa_recovery_restore_operation *seek = context;
     return record->sequence > seek->committed_sequence ||
-        seek->ops->apply(seek->context, candidate, record, error);
+        seek->ops.apply(seek->context, candidate, record, error);
 }
 static bool recovery_finish(void *context, void *candidate, qa_error *error)
 {
-    recovery_seek *seek = context;
-    return seek->ops->finish(seek->context, candidate, error);
+    qa_recovery_restore_operation *seek = context;
+    return seek->ops.finish(seek->context, candidate, error);
 }
-static bool recovery_publish(void *context, void *candidate, qa_error *error)
+static bool recovery_publish(void *context, void *candidate, uint64_t quantum, bool *complete, qa_error *error)
 {
-    recovery_seek *seek = context;
-    return seek->ops->publish(seek->context, candidate, error);
+    qa_recovery_restore_operation *seek = context;
+    return seek->ops.publish(seek->context, candidate, quantum, complete, error);
 }
 static void recovery_discard(void *context, void *candidate)
 {
-    recovery_seek *seek = context;
-    seek->ops->discard(seek->context, candidate);
+    qa_recovery_restore_operation *seek = context;
+    seek->ops.discard(seek->context, candidate);
 }
-bool qa_recovery_restore(qa_fs_root *root, const char *name, void *context,
-                          const qa_demo_seek_ops *ops, uint64_t *reached_ns, qa_error *error)
+bool qa_recovery_restore_begin(qa_fs_root *root, const char *name, void *context,
+    const qa_demo_seek_ops *ops, qa_recovery_restore_operation **out, qa_error *error)
 {
-    if (!ops || !ops->create || !ops->apply || !ops->finish || !ops->publish || !ops->discard)
+    if (!ops || !ops->create || !ops->apply || !ops->finish || !ops->publish || !ops->discard ||
+        !out || *out)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery requires actual isolated replay operations");
-    qa_demo *demo = NULL;
-    if (!recovery_read(root, name, &demo, error)) return false;
-    bool ok = !qa_demo_complete(demo) ||
-        persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery journal was closed cleanly");
-    recovery_seek seek = {.ops = ops, .context = context};
-    for (size_t i = 0; i < qa_demo_record_count(demo); ++i) {
-        const qa_demo_record *record = qa_demo_record_at(demo, i);
+    qa_recovery_restore_operation *operation = calloc(1, sizeof(*operation));
+    if (!operation) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining recovery journal owner");
+    operation->ops = *ops; operation->context = context; *out = operation;
+    if (!recovery_read(root, name, &operation->demo, error)) return false;
+    if (qa_demo_complete(operation->demo))
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery journal was closed cleanly");
+    for (size_t i = 0; i < qa_demo_record_count(operation->demo); ++i) {
+        const qa_demo_record *record = qa_demo_record_at(operation->demo, i);
         if (record->kind == QA_DEMO_KEYFRAME || record->kind == QA_DEMO_ADVANCE)
-            seek.committed_sequence = record->sequence;
+            operation->committed_sequence = record->sequence;
     }
     const qa_demo_seek_ops committed = {.create = recovery_create, .apply = recovery_apply,
         .finish = recovery_finish, .publish = recovery_publish, .discard = recovery_discard};
-    if (ok) ok = qa_demo_seek(demo, qa_demo_end_time(demo), &seek, &committed, reached_ns, error);
-    qa_demo_destroy(demo);
+    return qa_demo_seek_begin(operation->demo, qa_demo_end_time(operation->demo), operation,
+        &committed, &operation->seek, error);
+}
+
+bool qa_recovery_restore_advance(qa_recovery_restore_operation *operation, uint64_t quantum,
+    bool *complete, uint64_t *reached_ns, qa_error *error)
+{
+    return operation && qa_demo_seek_advance(operation->seek, quantum, complete, reached_ns, error);
+}
+
+void qa_recovery_restore_destroy(qa_recovery_restore_operation **slot)
+{
+    qa_recovery_restore_operation *operation = slot ? *slot : NULL;
+    if (!operation) return;
+    qa_demo_seek_destroy(&operation->seek);
+    qa_demo_destroy(operation->demo);
+    free(operation); *slot = NULL;
+}
+
+bool qa_recovery_restore(qa_fs_root *root, const char *name, void *context,
+    const qa_demo_seek_ops *ops, uint64_t *reached_ns, qa_error *error)
+{
+    if (!reached_ns) return persistence_fail(error, QA_ERROR_ARGUMENT, "Recovery requires its reached time");
+    qa_recovery_restore_operation *operation = NULL;
+    bool ok = qa_recovery_restore_begin(root, name, context, ops, &operation, error), complete = false;
+    while (ok && !complete) ok = qa_recovery_restore_advance(operation, 0, &complete, reached_ns, error);
+    qa_recovery_restore_destroy(&operation);
     return ok;
 }

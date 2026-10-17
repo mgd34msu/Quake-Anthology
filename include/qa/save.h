@@ -116,7 +116,8 @@ typedef struct qa_save_restore_ops {
     bool (*create)(void *, const qa_save_image *, void **candidate, qa_error *);
     bool (*restore)(void *, void *candidate, const qa_save_record *, uint64_t quantum,
                     bool *complete, qa_error *);
-    bool (*finish)(void *, void *candidate, const qa_save_image *, qa_error *);
+    bool (*finish)(void *, void *candidate, const qa_save_image *, uint64_t quantum,
+                    bool *complete, qa_error *);
     bool (*publish)(void *, void *candidate, qa_error *);
     void (*discard)(void *, void *candidate);
 } qa_save_restore_ops;

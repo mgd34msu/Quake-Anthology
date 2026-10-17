@@ -6670,7 +6670,7 @@ typedef struct restore_probe {
     const qa_save_record *pending;
     size_t applied, expected;
     unsigned creates, finishes, publishes, discards;
-    bool reject;
+    bool reject, finish_pending;
 } restore_probe;
 static bool restore_probe_create(void *context, const qa_save_image *image,
     void **candidate, qa_error *error)
@@ -6695,12 +6695,15 @@ static bool restore_probe_record(void *context, void *candidate, const qa_save_r
     return true;
 }
 static bool restore_probe_finish(void *context, void *candidate,
-    const qa_save_image *image, qa_error *error)
+    const qa_save_image *image, uint64_t quantum, bool *complete, qa_error *error)
 {
     (void)image; (void)error;
     restore_probe *probe = context;
     CHECK(candidate == probe && !probe->pending && probe->applied == probe->expected);
-    ++probe->finishes; return true;
+    *complete = !quantum || probe->finish_pending;
+    probe->finish_pending = !*complete;
+    if (*complete) ++probe->finishes;
+    return true;
 }
 static bool restore_probe_publish(void *context, void *candidate, qa_error *error)
 {
@@ -6728,7 +6731,7 @@ static void recovery_restore_yields(const qa_save_image *image)
     CHECK(probe.creates == 1 && !probe.applied && !probe.publishes);
     CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && !complete && probe.pending);
     CHECK(!probe.applied && !probe.publishes);
-    size_t remaining = 2 * probe.expected + 2;
+    size_t remaining = 2 * probe.expected + 3;
     while (!complete && remaining--) CHECK(qa_save_restore_advance(operation, 64, &complete, &error));
     CHECK(complete && probe.publishes == 1 && probe.applied == probe.expected);
     CHECK(qa_save_restore_advance(operation, 64, &complete, &error) && complete && probe.publishes == 1);
@@ -6748,6 +6751,78 @@ static void recovery_restore_yields(const qa_save_image *image)
     CHECK(probe.discards == 1 && !probe.finishes && !probe.publishes);
 }
 
+typedef struct demo_seek_probe {
+    unsigned creates, applies, finishes, publishes, discards;
+    uint64_t elapsed_ns;
+    bool publishing;
+} demo_seek_probe;
+static bool seek_probe_create(void *context,const qa_save_image *image,void **candidate,qa_error *error)
+{
+    (void)error;
+    demo_seek_probe *probe=context;
+    CHECK(qa_save_image_metadata(image)->elapsed_ns==0);
+    ++probe->creates;*candidate=probe;return true;
+}
+static bool seek_probe_apply(void *context,void *candidate,const qa_demo_record *record,qa_error *error)
+{
+    (void)error;
+    demo_seek_probe *probe=context;CHECK(candidate==probe && !probe->finishes);
+    if (record->kind==QA_DEMO_JOURNAL) CHECK(record->payload.size==1 && record->payload.data[0]==17);
+    else { CHECK(record->kind==QA_DEMO_ADVANCE);probe->elapsed_ns+=record->elapsed_ns; }
+    ++probe->applies;return true;
+}
+static bool seek_probe_finish(void *context,void *candidate,qa_error *error)
+{
+    (void)error;
+    demo_seek_probe *probe=context;CHECK(candidate==probe && probe->applies==2 && probe->elapsed_ns==5);
+    ++probe->finishes;return true;
+}
+static bool seek_probe_publish(void *context,void *candidate,uint64_t quantum,bool *complete,qa_error *error)
+{
+    (void)error;
+    demo_seek_probe *probe=context;CHECK(candidate==probe && probe->finishes==1);
+    *complete=!quantum || probe->publishing;probe->publishing=true;
+    if (*complete) ++probe->publishes;
+    return true;
+}
+static void seek_probe_discard(void *context,void *candidate)
+{
+    demo_seek_probe *probe=context;CHECK(candidate==probe && !probe->publishes);
+    ++probe->discards;
+}
+static void recovery_seek_yields(qa_fs_root *root,const qa_save_image *image)
+{
+    qa_error error={0};qa_demo_recorder *recorder=NULL;
+    CHECK(qa_demo_record_begin(root,"seek.qdemo",image,&recorder,&error));
+    uint8_t value=17;
+    qa_net_protocol_id protocol={QA_NET_UNIFIED_1,0,0};
+    CHECK(qa_demo_record_append(recorder,QA_DEMO_JOURNAL,0,protocol,(qa_bytes){&value,1},&error));
+    CHECK(qa_demo_record_append(recorder,QA_DEMO_ADVANCE,5,protocol,(qa_bytes){0},&error));
+    value=99; /* An uncommitted command tail must never be applied. */
+    CHECK(qa_demo_record_append(recorder,QA_DEMO_JOURNAL,0,protocol,(qa_bytes){&value,1},&error));
+    qa_demo_recorder_destroy(recorder);
+    const qa_demo_seek_ops ops={.create=seek_probe_create,.apply=seek_probe_apply,.finish=seek_probe_finish,
+        .publish=seek_probe_publish,.discard=seek_probe_discard};
+    demo_seek_probe probe={0};qa_recovery_restore_operation *operation=NULL;
+    CHECK(qa_recovery_restore_begin(root,"seek.qdemo",&probe,&ops,&operation,&error));
+    bool complete=false;uint64_t reached=UINT64_MAX;
+    CHECK(qa_recovery_restore_advance(operation,64,&complete,&reached,&error) && !complete);
+    CHECK(probe.creates==1 && !probe.applies && !probe.publishes && reached==UINT64_MAX);
+    unsigned remaining=8;
+    while (!complete && remaining--) CHECK(qa_recovery_restore_advance(operation,64,&complete,&reached,&error));
+    CHECK(complete && reached==5 && probe.applies==2 && probe.publishes==1);
+    CHECK(qa_recovery_restore_advance(operation,64,&complete,&reached,&error) && complete && probe.publishes==1);
+    qa_recovery_restore_destroy(&operation);CHECK(!operation && !probe.discards);
+    probe=(demo_seek_probe){0};
+    CHECK(qa_recovery_restore_begin(root,"seek.qdemo",&probe,&ops,&operation,&error));
+    CHECK(qa_recovery_restore_advance(operation,64,&complete,&reached,&error));
+    qa_recovery_restore_destroy(&operation);CHECK(!operation && probe.discards==1 && !probe.publishes);
+    probe=(demo_seek_probe){0};
+    CHECK(qa_recovery_restore(root,"seek.qdemo",&probe,&ops,&reached,&error));
+    CHECK(reached==5 && probe.applies==2 && probe.publishes==1 && !probe.discards);
+    CHECK(qa_fs_root_remove(root,"seek.qdemo",&error));
+}
+
 static void test_recovery_checkpoints(void)
 {
     qa_error error = {0};
@@ -6757,6 +6832,7 @@ static void test_recovery_checkpoints(void)
     CHECK(qa_fs_root_open(directory, &root, &error));
     qa_save_image *image = recovery_image(0, 73);
     recovery_restore_yields(image);
+    recovery_seek_yields(root,image);
     qa_save_image *held = image;
     CHECK(qa_save_image_retain(held, &error));
     CHECK(qa_save_image_destroy_checked(&image, &error) && !image);

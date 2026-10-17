@@ -20,6 +20,8 @@
 #include "qa/text.h"
 #include <stdio.h>
 
+typedef struct recovery_restore recovery_restore;
+
 typedef struct save_command_request {
     bool load;
     char *name, *script;
@@ -35,6 +37,7 @@ struct frontend_save_commands {
     qa_fs_root *root;
     qa_fs_root *level_root;
     qa_recovery *recovery;
+    recovery_restore *recovering;
     qa_autosave_state autosave;
     uint64_t next_nonce, command_registry;
     save_command_request request;
@@ -61,6 +64,8 @@ typedef struct recovery_command {
 static bool recovery_inspect(qa_frontend *,qa_error *);
 static bool recovery_start(qa_frontend *,qa_error *);
 static bool recovery_drain(qa_frontend **,qa_error *);
+static bool recovery_restore_cancel(qa_frontend *,qa_error *);
+static uint64_t restore_quantum(const qa_frontend *);
 static bool recovery_checkpoint(qa_frontend *f,const qa_save_image *image,qa_error *error)
 {
     frontend_save_commands *owner=f->save_commands;
@@ -153,7 +158,7 @@ uint64_t frontend_save_commands_registry(const qa_frontend *f)
 qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
 { return f && f->save_commands ? f->save_commands->root : NULL; }
 bool frontend_save_commands_pending(const qa_frontend *f)
-{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
+{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->original || f->save_commands->shared || f->save_commands->campaign || f->save_commands->recovering || f->save_commands->failed_operation!=SAVE_FAILURE_NONE || f->save_commands->recovery_pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_restoring(const qa_frontend *f)
 { return f && f->save_commands && (f->save_commands->original || f->save_commands->campaign ||
     f->save_commands->failed_operation==SAVE_FAILURE_CAMPAIGN || frontend_save_commands_restore_lease_held(f)); }
@@ -161,7 +166,7 @@ bool frontend_save_commands_restore_lease_held(const qa_frontend *f)
 {
     const frontend_save_commands *owner=f?f->save_commands:NULL;
     if (!owner) return false;
-    if (owner->shared) return true;
+    if (owner->shared || owner->recovering) return true;
     for (size_t i=0;i<3;++i)
         if (owner->retained[i] && owner->retained[i]->restore_retirement) return true;
     return false;
@@ -170,13 +175,14 @@ bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
     return f && f->save_commands && !cleanup_pending(f->save_commands)
         && f->save_commands->failed_operation==SAVE_FAILURE_NONE
-        && !f->save_commands->original && !f->save_commands->shared
+        && !f->save_commands->original && !f->save_commands->shared && !f->save_commands->recovering
         && (!f->save_commands->draining || !f->save_commands->pending);
 }
 bool frontend_save_commands_restore_cancel(qa_frontend *f,qa_error *error)
 {
     if (!f || !f->save_commands) return true;
     frontend_save_commands *owner=f->save_commands;
+    if (!recovery_restore_cancel(f,error)) return false;
     if (owner->shared) {
         qa_frontend *displaced=NULL;
         if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],error)) return false;
@@ -446,12 +452,19 @@ static bool recovery_start(qa_frontend *f,qa_error *error)
 typedef struct recovery_candidate {
     qa_save_image *image;
     qa_demo_record *records;
-    size_t count,capacity;
+    size_t count,capacity,next;
+    frontend_replay_timing frame;
+    bool frame_pending;
 } recovery_candidate;
-typedef struct recovery_restore {
+struct recovery_restore {
     qa_frontend **slot;
     qa_frontend *displaced,*retained;
-} recovery_restore;
+    qa_recovery_restore_operation *journal;
+    recovery_candidate *candidate;
+    qa_error failure;
+    uint64_t reached_ns;
+    bool failed;
+};
 static void recovery_candidate_free(recovery_candidate *candidate)
 {
     if (!candidate) return;
@@ -460,12 +473,12 @@ static void recovery_candidate_free(recovery_candidate *candidate)
 }
 static bool recovery_create(void *context,const qa_save_image *image,void **out,qa_error *error)
 {
-    (void)context;
-    recovery_candidate *candidate=calloc(1,sizeof(*candidate));qa_bytes bytes={0};
+    recovery_restore *restore=context;
+    recovery_candidate *candidate=calloc(1,sizeof(*candidate));
     if (!candidate) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining recovery checkpoint");
-    bool ok=qa_save_image_encode(image,&bytes,error) &&
-        qa_save_image_decode(bytes,&candidate->image,error);
-    if (!ok) { recovery_candidate_free(candidate);return false; }
+    if (!qa_save_image_retain(image,error)) { free(candidate);return false; }
+    candidate->image=(qa_save_image *)image;
+    restore->candidate=candidate;
     *out=candidate;return true;
 }
 static bool recovery_collect(void *context,void *value,const qa_demo_record *record,qa_error *error)
@@ -490,13 +503,14 @@ static bool recovery_finish(void *context,void *value,qa_error *error)
     return !candidate->count || candidate->records[candidate->count-1].kind==QA_DEMO_ADVANCE ||
         frontend_fail(error,QA_ERROR_FORMAT,"Recovery ends inside an unfinished frame");
 }
-static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
+static bool recovery_replay(void *context,qa_frontend *f,uint64_t quantum,bool *complete,qa_error *error)
 {
-    recovery_candidate *candidate=context;frontend_replay_timing frame={0};bool frame_pending=false;
+    recovery_candidate *candidate=context;
+    *complete=false;
     bool ok=true,queue_pending=false;
-    for (size_t i=0;ok && i<candidate->count;++i) {
-        const qa_demo_record *record=candidate->records+i;
-        if (frame_pending && record->kind!=QA_DEMO_ADVANCE) {
+    while (ok && candidate->next<candidate->count) {
+        const qa_demo_record *record=candidate->records+candidate->next;
+        if (candidate->frame_pending && record->kind!=QA_DEMO_ADVANCE) {
             ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery frame lacks its completion record");
             break;
         }
@@ -518,8 +532,8 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
             qa_source_save_io io={0};uint32_t kind=UINT32_MAX;recovery_command command={0};
             ok=qa_source_save_reader(&io,NULL,record->payload,error) && qa_source_save_u32(&io,&kind);
             if (ok && kind==RECOVERY_FRAME) {
-                ok=frame_fields(&io,&frame) && qa_source_save_finish(&io,NULL);
-                frame_pending=ok;
+                ok=frame_fields(&io,&candidate->frame) && qa_source_save_finish(&io,NULL);
+                candidate->frame_pending=ok;
             } else if (ok && kind==RECOVERY_COMMAND) {
                 ok=command_fields(&io,&command) && qa_source_save_finish(&io,NULL);
                 if (ok) {
@@ -543,53 +557,107 @@ static bool recovery_replay(void *context,qa_frontend *f,qa_error *error)
             if (!ok && !queue_pending && error && error->code==QA_OK)
                 frontend_fail(error,QA_ERROR_FORMAT,"Invalid recovery journal fields");
         } else if (record->kind==QA_DEMO_ADVANCE) {
-            if (!frame_pending) {
+            if (!candidate->frame_pending) {
                 ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery advance lacks its actual frame clocks");
                 break;
             }
-            ok=frontend_replay_frame(f,&frame,error);
+            ok=frontend_replay_frame(f,&candidate->frame,error);
             if (ok && qa_session_elapsed(qa_application_session(f->application))!=record->time_ns)
                 ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay reached another simulation time");
-            frame_pending=false;
+            candidate->frame_pending=false;
         }
+        if (ok) ++candidate->next;
+        if (ok && quantum && candidate->next<candidate->count) return true;
     }
     qa_application_travel_view travel;
     if (ok && (qa_application_should_stop(f->application) || qa_application_startup_pending(f->application) ||
         qa_application_travel_read(f->application,&travel)))
         ok=frontend_fail(error,QA_ERROR_FORMAT,"Recovery replay did not return its completed offline world");
+    *complete=ok;
     return ok;
 }
-static bool recovery_publish(void *context,void *value,qa_error *error)
+static bool recovery_publish(void *context,void *value,uint64_t quantum,bool *complete,qa_error *error)
 {
     recovery_restore *restore=context;recovery_candidate *candidate=value;
     qa_frontend *active=*restore->slot;
-    bool ok=frontend_persistence_restore_replay(restore->slot,active->options.persistence_services,
-        candidate->image,candidate,recovery_replay,&restore->displaced,&restore->retained,error);
-    if (ok) recovery_candidate_free(candidate);
-    return ok;
+    frontend_save_commands *owner=active->save_commands;
+    *complete=false;
+    if (!owner->shared)
+        return frontend_persistence_restore_replay_begin(restore->slot,active->options.persistence_services,
+            candidate->image,candidate,recovery_replay,&owner->shared,error);
+    return frontend_persistence_restore_advance(owner->shared,quantum,complete,error);
 }
 static void recovery_discard(void *context,void *value)
-{ (void)context;recovery_candidate_free(value); }
+{
+    recovery_restore *restore=context;
+    recovery_candidate_free(value);restore->candidate=NULL;
+}
+static void recovery_restore_free(recovery_restore **slot)
+{
+    recovery_restore *restore=*slot;
+    if (!restore) return;
+    qa_recovery_restore_destroy(&restore->journal);
+    recovery_candidate_free(restore->candidate);
+    free(restore);*slot=NULL;
+}
+static bool recovery_restore_cancel(qa_frontend *f,qa_error *error)
+{
+    frontend_save_commands *owner=f->save_commands;
+    if (!owner->recovering) return true;
+    qa_frontend *displaced=NULL;
+    if (!frontend_persistence_restore_end(&owner->shared,&displaced,&owner->retained[2],error)) return false;
+    recovery_restore_free(&owner->recovering);
+    return true;
+}
 static bool recovery_drain(qa_frontend **slot,qa_error *error)
 {
     qa_frontend *active=*slot;frontend_save_commands *owner=active->save_commands;
-    bool resume=owner->recovery_resume;owner->recovery_pending=false;owner->draining=true;
-    qa_error local={0};uint64_t reached=0;recovery_restore restore={.slot=slot};
-    qa_demo_seek_ops ops={.create=recovery_create,.apply=recovery_collect,.finish=recovery_finish,
-        .publish=recovery_publish,.discard=recovery_discard};
-    bool ok=resume?qa_recovery_restore(owner->level_root,"recovery.qdemo",&restore,&ops,&reached,&local):
-        qa_fs_root_remove(owner->level_root,"recovery.qdemo",&local);
+    owner->draining=true;
+    bool ok=true,complete=false;
+    qa_error local={0};
+    recovery_restore *restore=owner->recovering;
+    if (!restore) {
+        bool resume=owner->recovery_resume;
+        owner->recovery_pending=false;
+        if (!resume) {
+            ok=qa_fs_root_remove(owner->level_root,"recovery.qdemo",&local);
+            complete=true;
+        } else {
+            restore=calloc(1,sizeof(*restore));
+            if (!restore) ok=frontend_fail(&local,QA_ERROR_MEMORY,"Retaining recovery restore driver");
+            else {
+                restore->slot=slot;owner->recovering=restore;
+                const qa_demo_seek_ops ops={.create=recovery_create,.apply=recovery_collect,.finish=recovery_finish,
+                    .publish=recovery_publish,.discard=recovery_discard};
+                ok=qa_recovery_restore_begin(owner->level_root,"recovery.qdemo",restore,&ops,&restore->journal,&local);
+            }
+        }
+    } else if (restore->failed) { ok=false;local=restore->failure; }
+    else ok=qa_recovery_restore_advance(restore->journal,restore_quantum(active),&complete,&restore->reached_ns,&local);
+    if (ok && !complete) { owner->draining=false;return true; }
+    qa_error cleanup={0};
+    if (restore) {
+        if (!ok) { restore->failed=true;restore->failure=local; }
+        if (!frontend_persistence_restore_end(&owner->shared,&restore->displaced,&restore->retained,&cleanup)) {
+            restore->failed=true;
+            if (ok) restore->failure=cleanup;
+            owner->draining=false;
+            return true;
+        }
+    }
     owner->draining=false;
     frontend_save_commands *current=(*slot)->save_commands;
-    current->retained[0]=restore.displaced;current->retained[2]=restore.retained;
+    if (restore) {
+        current->retained[0]=restore->displaced;current->retained[2]=restore->retained;
+        recovery_restore_free(&owner->recovering);
+    }
     if (ok) {
         current->recovery_checked=true;current->recovery_available=false;
-        frontend_console_print(*slot,NULL,resume?"Interrupted session recovered.\n":"Interrupted session discarded.\n");
+        frontend_console_print(*slot,NULL,owner->recovery_resume?"Interrupted session recovered.\n":"Interrupted session discarded.\n");
     } else {
         frontend_console_print(*slot,NULL,"Recovery failed: ");
         frontend_console_print(*slot,NULL,local.message);frontend_console_print(*slot,NULL,"\n");
     }
-    qa_error cleanup={0};
     if (cleanup_retained(current,&cleanup) && ok) return recovery_start(*slot,error);
     return true;
 }
@@ -778,12 +846,13 @@ bool frontend_save_commands_campaign(qa_frontend *f, uint64_t revision, bool *ha
     return ok || campaign_fresh(f,error);
 }
 
-static bool shared_restore_advance(qa_frontend *f,bool *complete,qa_error *error)
+static uint64_t restore_quantum(const qa_frontend *f)
 {
     uint64_t quantum=f->options.application.native_process_policy.instruction_budget;
-    if (!quantum || quantum>16384) quantum=16384;
-    return frontend_persistence_restore_advance(f->save_commands->shared,quantum,complete,error);
+    return !quantum || quantum>16384?16384:quantum;
 }
+static bool shared_restore_advance(qa_frontend *f,bool *complete,qa_error *error)
+{ return frontend_persistence_restore_advance(f->save_commands->shared,restore_quantum(f),complete,error); }
 static bool campaign_restore(qa_frontend **slot, qa_error *error)
 {
     qa_frontend *active=*slot;
@@ -841,7 +910,7 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (owner->failed_operation!=SAVE_FAILURE_NONE) return failed_operation_finish(f,error);
     qa_error inspection={0};
     if (!recovery_inspect(f,&inspection)) return true;
-    if (owner->recovery_pending) return recovery_drain(slot,error);
+    if (owner->recovery_pending || owner->recovering) return recovery_drain(slot,error);
     if (owner->campaign || (owner->shared && owner->restore_kind==SHARED_RESTORE_CAMPAIGN))
         return campaign_restore(slot,error);
     if (!owner->pending) return frontend_save_commands_autosave(f,error) && recovery_start(f,error);

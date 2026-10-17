@@ -280,36 +280,95 @@ bool qa_demo_read(qa_fs_root *root, const char *name, bool recover_tail, qa_demo
     return ok;
 }
 
-bool qa_demo_seek(const qa_demo *demo, uint64_t target_ns, void *context, const qa_demo_seek_ops *ops,
-                   uint64_t *reached_ns, qa_error *error)
+struct qa_demo_seek_operation {
+    const qa_demo *demo;
+    qa_demo_seek_ops ops;
+    qa_save_image *image;
+    void *context, *candidate;
+    size_t record;
+    uint64_t target_ns, reached_ns;
+    bool created, finished, published, failed;
+};
+
+bool qa_demo_seek_begin(const qa_demo *demo, uint64_t target_ns, void *context,
+    const qa_demo_seek_ops *ops, qa_demo_seek_operation **out, qa_error *error)
 {
     if (!demo || !ops || !ops->create || !ops->apply || !ops->finish || !ops->publish || !ops->discard ||
-        !reached_ns || target_ns < demo->start_ns || target_ns > demo->end_ns)
+        !out || *out || target_ns < demo->start_ns || target_ns > demo->end_ns)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Invalid shared demo seek target/producer");
     size_t keyframe = 0;
     for (size_t i = 0; i < demo->count; ++i)
         if (demo->records[i].kind == QA_DEMO_KEYFRAME && demo->records[i].time_ns <= target_ns) keyframe = i;
-    qa_save_image *image = NULL;
-    if (!qa_save_image_decode(demo->records[keyframe].payload, &image, error)) return false;
-    void *candidate = NULL;
-    bool ok = ops->create(context, image, &candidate, error);
-    if (!qa_save_image_destroy_checked(&image, error)) ok = false;
-    if (!ok || !candidate) {
-        if (candidate) ops->discard(context, candidate);
-        if (ok) persistence_fail(error, QA_ERROR_FORMAT, "Demo restore returned no candidate");
-        return false;
+    qa_demo_seek_operation *operation = calloc(1, sizeof(*operation));
+    if (!operation) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining demo seek operation");
+    *operation = (qa_demo_seek_operation){.demo = demo, .ops = *ops, .context = context,
+        .record = keyframe + 1, .target_ns = target_ns, .reached_ns = demo->records[keyframe].time_ns};
+    *out = operation;
+    return qa_save_image_decode(demo->records[keyframe].payload, &operation->image, error);
+}
+
+bool qa_demo_seek_advance(qa_demo_seek_operation *operation, uint64_t quantum, bool *complete,
+    uint64_t *reached_ns, qa_error *error)
+{
+    if (!operation || !complete || !reached_ns || operation->failed)
+        return persistence_fail(error, QA_ERROR_ARGUMENT, "Demo seek operation is unavailable");
+    *complete = operation->published;
+    if (*complete) { *reached_ns = operation->reached_ns; return true; }
+    bool ok = true;
+    if (!operation->created) {
+        ok = operation->ops.create(operation->context, operation->image, &operation->candidate, error);
+        if (!qa_save_image_destroy_checked(&operation->image, error)) ok = false;
+        if (ok && !operation->candidate)
+            ok = persistence_fail(error, QA_ERROR_FORMAT, "Demo restore returned no candidate");
+        if (!ok) goto failed;
+        operation->created = true;
+        if (quantum) return true;
     }
-    uint64_t reached = demo->records[keyframe].time_ns;
-    for (size_t i = keyframe + 1; ok && i < demo->count; ++i) {
-        const qa_demo_record *record = demo->records + i;
-        if (record->time_ns > target_ns) break;
-        if (record->kind == QA_DEMO_KEYFRAME || record->kind == QA_DEMO_END) continue;
-        ok = ops->apply(context, candidate, record, error);
-        if (ok && record->kind == QA_DEMO_ADVANCE) reached = record->time_ns;
+    while (operation->record < operation->demo->count) {
+        const qa_demo_record *record = operation->demo->records + operation->record;
+        if (record->time_ns > operation->target_ns) break;
+        if (record->kind == QA_DEMO_KEYFRAME || record->kind == QA_DEMO_END) {
+            ++operation->record;
+            continue;
+        }
+        if (!operation->ops.apply(operation->context, operation->candidate, record, error)) goto failed;
+        if (record->kind == QA_DEMO_ADVANCE) operation->reached_ns = record->time_ns;
+        ++operation->record;
+        if (quantum) return true;
     }
-    if (ok) ok = ops->finish(context, candidate, error);
-    if (ok) ok = ops->publish(context, candidate, error);
-    if (!ok) { ops->discard(context, candidate); return false; }
-    *reached_ns = reached;
+    if (!operation->finished) {
+        if (!operation->ops.finish(operation->context, operation->candidate, error)) goto failed;
+        operation->finished = true;
+        if (quantum) return true;
+    }
+    bool published = false;
+    if (!operation->ops.publish(operation->context, operation->candidate, quantum, &published, error)) goto failed;
+    operation->published = published;
+    *complete = published;
+    if (published) *reached_ns = operation->reached_ns;
     return true;
+failed:
+    operation->failed = true;
+    return false;
+}
+
+void qa_demo_seek_destroy(qa_demo_seek_operation **slot)
+{
+    qa_demo_seek_operation *operation = slot ? *slot : NULL;
+    if (!operation) return;
+    if (operation->candidate && !operation->published)
+        operation->ops.discard(operation->context, operation->candidate);
+    (void)qa_save_image_destroy_checked(&operation->image, NULL);
+    free(operation); *slot = NULL;
+}
+
+bool qa_demo_seek(const qa_demo *demo, uint64_t target_ns, void *context, const qa_demo_seek_ops *ops,
+    uint64_t *reached_ns, qa_error *error)
+{
+    if (!reached_ns) return persistence_fail(error, QA_ERROR_ARGUMENT, "Demo seek requires its reached time");
+    qa_demo_seek_operation *operation = NULL;
+    bool ok = qa_demo_seek_begin(demo, target_ns, context, ops, &operation, error), complete = false;
+    while (ok && !complete) ok = qa_demo_seek_advance(operation, 0, &complete, reached_ns, error);
+    qa_demo_seek_destroy(&operation);
+    return ok;
 }

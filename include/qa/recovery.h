@@ -50,6 +50,13 @@ bool qa_recovery_begin(qa_fs_root *, const char *relative_name, const qa_save_im
 bool qa_recovery_checkpoint(qa_recovery *, const qa_save_image *, qa_error *);
 bool qa_recovery_close_clean(qa_recovery *, qa_error *);
 void qa_recovery_destroy(qa_recovery *);
+typedef struct qa_recovery_restore_operation qa_recovery_restore_operation;
+/* Owns the journal backing throughout collection, restore and replay. */
+bool qa_recovery_restore_begin(qa_fs_root *, const char *, void *, const qa_demo_seek_ops *,
+                                qa_recovery_restore_operation **, qa_error *);
+bool qa_recovery_restore_advance(qa_recovery_restore_operation *, uint64_t quantum,
+                                  bool *complete, uint64_t *reached_ns, qa_error *);
+void qa_recovery_restore_destroy(qa_recovery_restore_operation **);
 bool qa_recovery_restore(qa_fs_root *, const char *, void *, const qa_demo_seek_ops *,
                           uint64_t *reached_ns, qa_error *);
 

@@ -54,9 +54,18 @@ typedef struct qa_demo_seek_ops {
     bool (*create)(void *, const qa_save_image *, void **candidate, qa_error *);
     bool (*apply)(void *, void *candidate, const qa_demo_record *, qa_error *);
     bool (*finish)(void *, void *candidate, qa_error *);
-    bool (*publish)(void *, void *candidate, qa_error *);
+    bool (*publish)(void *, void *candidate, uint64_t quantum, bool *complete, qa_error *);
     void (*discard)(void *, void *candidate);
 } qa_demo_seek_ops;
+typedef struct qa_demo_seek_operation qa_demo_seek_operation;
+/* The immutable demo and callback contexts remain borrowed until destroy.
+ * Each nonzero-quantum advance applies at most one record or producer phase.
+ * An unfinished publish retains the candidate; zero drives the same operation. */
+bool qa_demo_seek_begin(const qa_demo *, uint64_t target_ns, void *, const qa_demo_seek_ops *,
+                         qa_demo_seek_operation **, qa_error *);
+bool qa_demo_seek_advance(qa_demo_seek_operation *, uint64_t quantum, bool *complete,
+                           uint64_t *reached_ns, qa_error *);
+void qa_demo_seek_destroy(qa_demo_seek_operation **);
 bool qa_demo_seek(const qa_demo *, uint64_t target_ns, void *, const qa_demo_seek_ops *,
                    uint64_t *reached_ns, qa_error *);
 
