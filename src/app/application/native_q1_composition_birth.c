@@ -503,7 +503,7 @@ static bool observer_frame(source_birth *call, const qa_q1_input *input, qa_erro
     if (input->jump && held == 0) {
         qa_body_state spot, actual;
         bool found;
-        if (!application_players_native_q1_spawn_pose(call->app, call->source, call->actor,
+        if (!application_players_map_spawn_pose(call->app, call->source, call->actor,
             &spot, &found, NULL, error) || !current(call, error)) return false;
         if (found) {
             if (!qa_world_body_read(call->app->world, call->actor, &actual, error)) return false;

@@ -145,7 +145,7 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     bool found;
     if (!q2_player_spawn_select(g, a, &movement,
                                 s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, &body,
-                                &command_view, &found, e))
+                                &command_view, NULL, &found, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
@@ -369,7 +369,7 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     return player_spawn(g, id, restore, landmark, true, e);
 }
 bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds *bounds,
-    const qa_q2_landmark *landmark, qa_body_state *out, bool *found, qa_error *e) {
+    const qa_q2_landmark *landmark, qa_body_state *out, qa_actor_id *point, bool *found, qa_error *e) {
     if (!bounds || !out || !found) {
         qa_error_set(e, QA_ERROR_ARGUMENT, id.slot, "Q2 map spawn requires selected standing bounds");
         return false;
@@ -383,7 +383,7 @@ bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds 
     }
     qa_q2_player_movement movement = {.standing_bounds = *bounds};
     if (!q2_player_spawn_select(g, a, &movement,
-            s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, out, NULL, found, e)) return false;
+            s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, out, NULL, point, found, e)) return false;
     if (!q2_actor_live(g, id)) return true;
     if (!*found) {
         if (!s->rule.awaiting_respawn) s->rule.respawn_timeout_ns = q2_deadline(g->now_ns, 3 * Q2_NS);

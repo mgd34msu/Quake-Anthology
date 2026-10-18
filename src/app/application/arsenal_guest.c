@@ -277,7 +277,7 @@ static bool select_spawn_enter(application_guest_input *input,
     qa_body_state body;
     qa_actor_id point;
     bool found;
-    if (!application_players_native_q1_spawn_pose(app, world, scope->actor,
+    if (!application_players_map_spawn_pose(app, world, scope->actor,
             &body, &found, &point, error)) return false;
     if (!current(input, scope, call) || !found)
         return cancel_client(call, scope->call, error);

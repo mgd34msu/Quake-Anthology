@@ -460,12 +460,14 @@ done:
     return okay;
 }
 bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
-                            const qa_q2_landmark *landmark, qa_body_state *out, qa_vec3 *command_view, bool *found,
+                            const qa_q2_landmark *landmark, qa_body_state *out, qa_vec3 *command_view,
+                            qa_actor_id *point, bool *found,
                             qa_error *e) {
     q2_players *p = g->player_runtime;
     q2_client_state *s = a->client;
     bool rr = g->options.rules == QA_RULESET_Q2_RERELEASE;
     *found = false;
+    if (point) *point = (qa_actor_id){0};
     if (s->rule.squad_spawn) {
         s->rule.squad_spawn = false;
         *out = (qa_body_state){
@@ -553,6 +555,7 @@ bool q2_player_spawn_select(qa_q2_game *g, q2_actor *a, const qa_q2_player_movem
                                       : qa_v3(0, body.angles.y, 0);
     s->rule.landmark_free_fall = from_landmark;
     *out = body;
+    if (point) *point = spot;
     *found = true;
     return true;
 }

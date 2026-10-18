@@ -1413,7 +1413,7 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
         character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2) {
         qa_body_state selected;
         if (!qa_q2_player_map_spawn_pose(roster->map_provider->state.q2,
-                roster->records[ordinal].actor, &body->bounds, NULL, &selected, found, error)) return false;
+                roster->records[ordinal].actor, &body->bounds, NULL, &selected, source_point, found, error)) return false;
         if (*found) *body = selected;
         return true;
     }
@@ -2671,13 +2671,13 @@ static bool bind_q3_player_roles(qa_application *application,
     return true;
 }
 
-bool application_players_native_q1_spawn_pose(qa_application *app, application_provider *source,
+bool application_players_map_spawn_pose(qa_application *app, application_provider *source,
     qa_actor_id actor, qa_body_state *body, bool *found, qa_actor_id *point, qa_error *error)
 {
     if (!app || !source || !body || !found || !app->players ||
-        app->players->map_provider != source || source->kind != APPLICATION_PROVIDER_Q1 ||
+        app->players->map_provider != source ||
         source != application_world_provider(app, QA_ROLE_ENTITIES, ""))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector lost its actual map roster");
+        return application_fail(error, QA_ERROR_ARGUMENT, "Map spawn selector lost its actual roster");
     for (const application_player_spawn_scope *scope=app->players->spawning;scope;scope=scope->previous)
         if (qa_actor_id_equal(scope->actor,actor)) {
             *body=scope->body; *found=true;
@@ -2687,17 +2687,15 @@ bool application_players_native_q1_spawn_pose(qa_application *app, application_p
     const application_player_record *record=application_player_record_find(app->players,actor);
     size_t ordinal=record && !record->retiring && !record->source_begin_pending && !record->deferred ?
         (size_t)(record-app->players->records) : app->players->count;
-    uint32_t slot;
-    if (ordinal == app->players->count || !qa_q1_native_client_slot(source->state.q1, actor, &slot, error) ||
-        slot != app->players->records[ordinal].client_slot ||
+    if (ordinal == app->players->count ||
         !qa_world_body_read(app->world, actor, body, error))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector lost its physical client");
+        return application_fail(error, QA_ERROR_ARGUMENT, "Map spawn selector lost its actual player");
     if (!spawn_pose(app, ordinal, false, body, found, point, error)) return false;
     return (app->players && ordinal < app->players->count &&
         app->players->map_provider == source &&
         qa_actor_id_equal(app->players->records[ordinal].actor, actor) &&
         !app->players->records[ordinal].retiring) ||
-        application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector changed its actual roster");
+        application_fail(error, QA_ERROR_ARGUMENT, "Map spawn selector changed its actual roster");
 }
 
 static bool spawn_q3_player_roles(qa_application *application, qa_actor_id actor,
@@ -3674,7 +3672,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (q2_map_spawn) {
             qa_body_state selected;
             if (!qa_q2_player_map_spawn_pose(map_source->state.q2, actor, &body.bounds,
-                    landmark, &selected, &found, error)) return false;
+                    landmark, &selected, &source_point, &found, error)) return false;
             if (found) body = selected;
         } else if (!source_completed && !original_world_character && ((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
             (character->kind <= APPLICATION_PROVIDER_Q3 &&

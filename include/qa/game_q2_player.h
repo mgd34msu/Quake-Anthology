@@ -328,9 +328,10 @@ bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, const qa_actor_player *,
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,
                         qa_error *);
 /* The Q2 map places an admitted player with its source slot/start-point rules,
- * even when CHARACTER and MOVEMENT belong to another provider. */
+ * even when CHARACTER and MOVEMENT belong to another provider. Optional point
+ * receives the selected authored actor; squad/service poses have no actor. */
 bool qa_q2_player_map_spawn_pose(qa_q2_game *, qa_actor_id, const qa_bounds *,
-    const qa_q2_landmark *, qa_body_state *, bool *found, qa_error *);
+    const qa_q2_landmark *, qa_body_state *, qa_actor_id *point, bool *found, qa_error *);
 bool qa_q2_player_map_spawn_complete(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_respawn(qa_q2_game *, qa_actor_id, qa_error *);
