@@ -294,13 +294,14 @@ bool application_native_q3_restart_configstring(application_provider *provider,
 static bool q3_settings_ready(application_provider *p, bool admitted, qa_error *e) {
     qa_application *app = p ? p->application : NULL;
     if (!app || p->kind != APPLICATION_PROVIDER_Q3 || !p->state.q3 || !p->constructed ||
-        !p->attached || p->close_pending || app->destroy_requested || !app->modes ||
+        !p->attached || p->close_pending || app->destroy_requested ||
+        (app->mode_count && !app->modes) ||
         !application_native_q3_console_registry(p))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings source is not admitted");
     /* Candidate cvar restore validates source text before private owners finish;
      * it sends no changed notifications. Late reconnect checks the values. */
     if (app->operation == APPLICATION_PERSISTING) return true;
-    if (!qa_modes_idle(app->modes))
+    if (app->modes && !qa_modes_idle(app->modes))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings source is busy");
     if (!qa_q3_destroy_ready(p->state.q3))
         return application_fail(e, QA_ERROR_ARGUMENT, "Q3 settings source is busy");
