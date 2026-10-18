@@ -695,7 +695,7 @@ static bool refresh_borrowed_impl(qa_qc_instance *instance, uint32_t slot,
         return qc_fail(error, QA_ERROR_NOT_FOUND, slot,
                        "Borrowed QuakeC actor changed during body refresh");
     }
-    bool private_bounds = source_owned(instance, actor) && !may_move(instance, slot);
+    bool private_bounds = !may_move(instance, slot);
     bool ok = raw_body_vector(instance, slot, instance->program->engine_fields.origin, body.origin, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.angles, body.angles, error)
         && raw_body_vector(instance, slot, instance->program->engine_fields.velocity, body.velocity, error)
@@ -1334,8 +1334,6 @@ static bool setsize(qa_qc_instance *instance, qa_error *error)
         || instance->slots[slot].kind == QA_QC_SLOT_FREE)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize lacks actor movement authority");
     bool movement = may_move(instance, slot);
-    if (!movement && !source_owned(instance, instance->slots[slot].actor))
-        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "setsize lacks actor movement authority");
     qc_slot binding = instance->slots[slot];
     if (!set_field_vector(instance, slot, instance->program->engine_fields.mins, mins, error)) return false;
     if (!slot_matches(instance, slot, binding.kind, binding.actor))

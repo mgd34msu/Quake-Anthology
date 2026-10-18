@@ -59,9 +59,7 @@ static bool setmodel(qa_qc_game *game, qa_error *error) {
         game->options.vm.host.may_move(game->options.vm.host.context, actor) :
         record->owner == game->options.vm.host.owner ||
             (qa_session_execution(game->options.services.session, actor, &execution) && execution == game->options.vm.host.owner)));
-    bool source_owned = record && record->owner == game->options.vm.host.owner;
-    if ((!movement && !source_owned) || !same_model_actor(game, entity, actor, error))
-        return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC model cannot alter another movement owner");
+    if (!same_model_actor(game, entity, actor, error)) return false;
     uint32_t words[3] = {(uint32_t)model, 0, 0};
     if (!field(game, entity, game->fields->model, QA_QC_STRING, words, error) ||
         !same_model_actor(game, entity, actor, error) ||
