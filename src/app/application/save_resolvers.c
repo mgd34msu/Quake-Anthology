@@ -1,5 +1,6 @@
 #include "save_private.h"
 #include "guest_qc_items.h"
+#include "guest_qc_targets.h"
 #include "guest_qc_pickups.h"
 #include "guest_qc_combat.h"
 #include "guest_qc_protection.h"
@@ -201,6 +202,8 @@ static bool target(void *opaque, qa_actor_id actor, qa_ruleset_id clock,
             ok = qa_q2_game_target_binding(provider->state.q2, actor, out, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q3)
             ok = qa_q3_game_target_binding(provider->state.q3, actor, out, error);
+        else if (provider->kind == APPLICATION_PROVIDER_QC)
+            ok = application_qc_target_binding(provider, actor, out, error);
     }
     if (ok && out->source == clock)
         return true;

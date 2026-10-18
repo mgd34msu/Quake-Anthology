@@ -1,5 +1,6 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_combat.h"
+#include "guest_qc_targets.h"
 
 static bool controls_body(struct application_qc_state *engine, qa_actor_id actor)
 {
@@ -33,7 +34,8 @@ static bool bind_entity(struct application_qc_state *engine, qa_qc_instance *vm,
             row->collision_bound = true;
         }
     }
-    return application_qc_combat_bind(engine, vm, access, error);
+    return application_qc_combat_bind(engine, vm, access, error) &&
+        application_qc_targets_bind(engine, vm, access, error);
 }
 bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
                                      const qa_qc_entity_access *access, qa_error *error)

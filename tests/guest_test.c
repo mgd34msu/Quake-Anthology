@@ -8,6 +8,7 @@
 #include "qa/qc.h"
 #include "../src/app/frontend/internal.h"
 #include "../src/app/application/guest_native_q2_calls.h"
+#include "../src/app/application/guest_qc_targets.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -40,7 +41,9 @@ static qa_qc_program *guest_program(qa_qc_api api)
 {
     qa_error error = {0};
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
-        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0tag\0find\0";
+        "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0tag\0find\0"
+        "use\0targetname\0target\0killtarget\0classname\0message\0delay\0wait\0"
+        "self\0other\0activator\0time\0target_use\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
@@ -50,7 +53,10 @@ static qa_qc_program *guest_program(qa_qc_api api)
         {QA_QC_LOAD_F, 40, 41, 43}, {QA_QC_LOAD_F, 40, 41, 44},
         {QA_QC_CALL0, 42, 0, 0}, {QA_QC_LOAD_F, 40, 41, 45},
         {QA_QC_ADDRESS, 40, 41, 46}, {QA_QC_STOREP_F, 28, 46, 0},
-        {QA_QC_LOAD_F, 40, 41, 47}, {QA_QC_RETURN, 47, 0, 0}
+        {QA_QC_LOAD_F, 40, 41, 47}, {QA_QC_RETURN, 47, 0, 0},
+        {QA_QC_STORE_ENT, 50, 54, 0}, {QA_QC_STORE_ENT, 51, 55, 0},
+        {QA_QC_STORE_ENT, 52, 56, 0}, {QA_QC_STORE_F, 53, 57, 0},
+        {QA_QC_ADD_F, 58, 28, 58}, {QA_QC_DONE, 0, 0, 0}
     };
     static const struct { const char *name; int32_t first; uint32_t locals;
         uint8_t parameters; } functions[] = {
@@ -58,27 +64,28 @@ static qa_qc_program *guest_program(qa_qc_api api)
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
         {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
-        {"projected", 10, 0, 0}, {"random", -7, 0, 0}, {"find", -18, 0, 0}
+        {"projected", 10, 0, 0}, {"random", -7, 0, 0}, {"find", -18, 0, 0}, {"target_use", 18, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
-    const uint32_t statements_at = 60, fields_at = statements_at + statement_count * 8;
-    const uint32_t functions_at = fields_at + 5 * 8;
+    const uint32_t statements_at = 60, definitions_at = statements_at + statement_count * 8;
+    const uint32_t fields_at = definitions_at + 4 * 8;
+    const uint32_t functions_at = fields_at + 13 * 8;
     const uint32_t strings_at = functions_at + function_count * 36;
     const uint32_t globals_at = strings_at + (uint32_t)sizeof(strings);
     uint8_t bytes[2048] = {0};
     qa_store_u32le(bytes, 6);
     qa_store_u32le(bytes + 4, api == QA_QC_API_QUAKEWORLD ? 54730u : 5927u);
     const uint32_t sections[][3] = {
-        {8, statements_at, statement_count}, {16, fields_at, 0},
-        {24, fields_at, 5}, {32, functions_at, function_count},
-        {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 50}
+        {8, statements_at, statement_count}, {16, definitions_at, 4},
+        {24, fields_at, 13}, {32, functions_at, function_count},
+        {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 64}
     };
     for (size_t i = 0; i < sizeof(sections) / sizeof(*sections); ++i) {
         qa_store_u32le(bytes + sections[i][0], sections[i][1]);
         qa_store_u32le(bytes + sections[i][0] + 4, sections[i][2]);
     }
-    qa_store_u32le(bytes + 56, 13);
+    qa_store_u32le(bytes + 56, 21);
     memcpy(bytes + strings_at, strings, sizeof(strings));
     for (uint32_t i = 0; i < statement_count; ++i) {
         uint8_t *record = bytes + statements_at + i * 8;
@@ -87,13 +94,24 @@ static qa_qc_program *guest_program(qa_qc_api api)
         qa_store_u16le(record + 4, statements[i].b);
         qa_store_u16le(record + 6, statements[i].c);
     }
-    const char *fields[] = {"origin", "mins", "maxs", "size", "tag"};
-    for (uint32_t i = 0; i < 5; ++i) {
+    const char *fields[] = {"origin", "mins", "maxs", "size", "tag",
+        "targetname", "target", "killtarget", "classname", "message", "delay", "wait", "use"};
+    for (uint32_t i = 0; i < 13; ++i) {
         uint8_t *record = bytes + fields_at + i * 8;
-        qa_store_u16le(record, i == 4 ? QA_QC_STRING : QA_QC_VECTOR);
-        qa_store_u16le(record + 2, (uint16_t)(i * 3));
+        qa_store_u16le(record, i < 4 ? QA_QC_VECTOR : i < 10 ? QA_QC_STRING :
+            i < 12 ? QA_QC_FLOAT : QA_QC_FUNCTION);
+        qa_store_u16le(record + 2, (uint16_t)(i < 5 ? i * 3 : i + 8));
         for (size_t offset = 0; offset < sizeof(strings); offset += strlen(strings + offset) + 1)
             if (!strcmp(strings + offset, fields[i]))
+                qa_store_u32le(record + 4, (uint32_t)offset);
+    }
+    const char *globals[] = {"self", "other", "activator", "time"};
+    for (uint32_t i = 0; i < 4; ++i) {
+        uint8_t *record = bytes + definitions_at + i * 8;
+        qa_store_u16le(record, i == 3 ? QA_QC_FLOAT : QA_QC_ENTITY);
+        qa_store_u16le(record + 2, (uint16_t)(50 + i));
+        for (size_t offset = 0; offset < sizeof(strings); offset += strlen(strings + offset) + 1)
+            if (!strcmp(strings + offset, globals[i]))
                 qa_store_u32le(record + 4, (uint32_t)offset);
     }
     for (uint32_t i = 0; i < function_count; ++i) {
@@ -116,9 +134,183 @@ static qa_qc_program *guest_program(qa_qc_api api)
     gameplay_float(bytes + globals_at + 32 * 4, 7);
     gameplay_float(bytes + globals_at + 35 * 4, -1);
     qa_qc_program *program = NULL;
-    GAME_CHECK(qa_qc_program_load((qa_bytes){bytes, globals_at + 50 * 4},
+    GAME_CHECK(qa_qc_program_load((qa_bytes){bytes, globals_at + 64 * 4},
         "fixture.qc", &program, &error));
     return program;
+}
+
+static bool target_resource(void *context, qa_qc_resource_kind kind, const char *name,
+    bool precache, qa_qc_game_resource *out, qa_error *error)
+{
+    (void)context; (void)kind; (void)name; (void)precache; (void)out;
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Target fixture has no media");
+    return false;
+}
+static bool target_emit(void *context, const qa_builtin_event *event, qa_error *error)
+{
+    (void)context; (void)event;
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Target fixture has no effects");
+    return false;
+}
+static bool target_builtin(void *context, qa_qc_instance *vm,
+    qa_qc_builtin builtin, const char *name, qa_error *error)
+{
+    (void)context; (void)vm; (void)builtin; (void)name;
+    qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Target fixture does not call imports");
+    return false;
+}
+static bool target_checkpoint(void *context, qa_buffer *out, qa_error *error)
+{ (void)context; (void)error; *out = (qa_buffer){0}; return true; }
+static bool target_restore(void *context, qa_bytes state, qa_error *error)
+{ (void)context; (void)error; return state.size == 0; }
+static bool target_stored(void *context, qa_qc_instance *vm,
+    const qa_qc_store_event *event, qa_error *error)
+{ return application_qc_targets_stored(context, vm, event, error); }
+static bool target_native_read(void *context, qa_actor_id actor, qa_authored_target *out)
+{ (void)actor; *out = (qa_authored_target){.targetname = *(qa_string_id *)context}; return true; }
+static void target_released(void *context, qa_session *session, qa_actor_record record)
+{
+    (void)session;
+    struct application_qc_state *engine = context;
+    qa_targets_unbind(engine->provider->application->targets, record.id);
+    qa_qc_game_actor_released(engine->provider->state.qc.game, record);
+}
+static void shared_targets(guest_fixture *fixture, qa_actor_owner owner)
+{
+    qa_error error = {0};
+    qa_application app = {.session = fixture->session};
+    app.targets = qa_targets_create(&(qa_target_options){.session = fixture->session}, &error);
+    GAME_CHECK(app.targets);
+    application_provider provider = {.kind = APPLICATION_PROVIDER_QC, .application = &app,
+        .owner = owner, .component.clock.kind = QA_RULESET_NETQUAKE};
+    application_qc_actor actors[8] = {0};
+    struct application_qc_state engine = {.provider = &provider, .actors = actors,
+        .actor_capacity = 8, .world = fixture->world, .profile = QA_QC_NETQUAKE,
+        .field_bindings = qa_qc_program_resolved_fields(fixture->program),
+        .global_bindings = qa_qc_program_resolved_globals(fixture->program),
+        .services = {.session = fixture->session, .world = fixture->world, .emit = target_emit}};
+    provider.state.qc.engine = &engine; provider.state.qc.program = fixture->program;
+    qa_cvars *cvars = qa_cvars_create(&(qa_cvar_options){.dialect = QA_RULESET_NETQUAKE}, &error);
+    GAME_CHECK(cvars);
+    qa_console *console = qa_console_create(&(qa_console_options){.cvars = cvars,
+        .context = {.dialect = QA_RULESET_NETQUAKE, .owner = owner}, .disable_builtins = true}, &error);
+    GAME_CHECK(console);
+    qa_qc_game_options options = {.vm = {.profile = QA_QC_NETQUAKE, .entity_capacity = 8,
+            .host = {.owner = owner, .default_definition = owner},
+            .observers = {.context = &engine, .stored = target_stored, .entity_stores_only = true}},
+        .services = engine.services, .cvars = cvars, .console = console,
+        .resource = target_resource, .checkpoint = target_checkpoint, .restore = target_restore};
+    size_t requirement_count;
+    const qa_qc_builtin_requirement *requirements =
+        qa_qc_builtin_requirements(QA_QC_NETQUAKE, &requirement_count);
+    qa_qc_builtin_binding *bindings = calloc(requirement_count, sizeof(*bindings));
+    GAME_CHECK(bindings);
+    size_t binding_count = 0;
+    for (size_t i = 0; i < requirement_count; ++i) {
+        bool found = false;
+        for (size_t j = 0; j < binding_count; ++j)
+            if (bindings[j].builtin == requirements[i].builtin) found = true;
+        if (!found) bindings[binding_count++] = (qa_qc_builtin_binding){
+            .builtin = requirements[i].builtin, .name = requirements[i].name,
+            .call = target_builtin};
+    }
+    options.vm.host.builtins = bindings;
+    options.vm.host.builtin_count = binding_count;
+    GAME_CHECK(qa_qc_game_create(fixture->program, &options, &provider.state.qc.game, &error));
+    free(bindings);
+    qa_qc_instance *vm = qa_qc_game_instance(provider.state.qc.game);
+    provider.state.qc.instance = vm;
+    qa_component component = {.owner = owner, .clock = qa_clock_defaults(QA_RULESET_NETQUAKE),
+        .state = &engine, .actor_released = target_released};
+    GAME_CHECK(qa_session_add(fixture->session, &component, &error));
+    qa_actor_owner foreign_owner;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session), "test:native-target", &foreign_owner, &error));
+    qa_component foreign_component = {.owner = foreign_owner, .clock = qa_clock_defaults(QA_RULESET_Q3)};
+    GAME_CHECK(qa_session_add(fixture->session, &foreign_component, &error));
+    qa_actor_id self, activator, foreign;
+    GAME_CHECK(qa_session_allocate(fixture->session, owner, owner, true, 1, &self, &error));
+    GAME_CHECK(qa_session_allocate(fixture->session, owner, owner, true, 2, &activator, &error));
+    GAME_CHECK(qa_session_allocate(fixture->session, foreign_owner, foreign_owner, false, 0, &foreign, &error));
+    GAME_CHECK(qa_qc_bind_actor(vm, 1, self, QA_QC_SLOT_OWNED, &error));
+    GAME_CHECK(qa_qc_bind_actor(vm, 2, activator, QA_QC_SLOT_OWNED, &error));
+    qa_string_id native_name;
+    GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session), "native-target", &native_name, &error));
+    qa_target_binding native = {.actor = foreign, .source = QA_RULESET_Q3,
+        .context = &native_name, .read = target_native_read};
+    GAME_CHECK(qa_targets_bind(app.targets, &native, &error));
+    qa_body_state body = {0};
+    GAME_CHECK(qa_world_body_create(fixture->world, foreign, &body, &error));
+    GAME_CHECK(qa_qc_bind_actor(vm, 3, foreign, QA_QC_SLOT_BORROWED, &error));
+    int32_t references[4];
+    for (uint32_t i = 1; i < 4; ++i)
+        GAME_CHECK(qa_qc_slot_reference(vm, i, references + i, &error));
+    actors[self.slot] = (application_qc_actor){.engine = &engine, .actor = self, .reference = references[1]};
+    qa_qc_entity_access access = {.kind = QA_QC_ENTITY_BIND,
+        .binding = {.kind = QA_QC_SLOT_OWNED, .slot = 1, .actor = self, .owner = owner, .source_slot = 1},
+        .reference = references[1]};
+    GAME_CHECK(application_qc_targets_bind(&engine, vm, &access, &error));
+    access.binding = (qa_qc_slot_binding){.kind = QA_QC_SLOT_BORROWED, .slot = 3,
+        .actor = foreign, .owner = owner}; access.reference = references[3];
+    GAME_CHECK(application_qc_targets_bind(&engine, vm, &access, &error));
+    qa_authored_target fields;
+    GAME_CHECK(qa_targets_read(app.targets, foreign, &fields) && fields.targetname == native_name);
+    int32_t first, second;
+    GAME_CHECK(qa_qc_string_allocate(vm, "first-target", &first, &error));
+    GAME_CHECK(qa_qc_string_allocate(vm, "second-target", &second, &error));
+    GAME_CHECK(qa_qc_set_entity_int(vm, references[1], engine.field_bindings->targetname->offset, first, &error));
+    qa_string_id first_id, second_id;
+    GAME_CHECK(qa_qc_string_identity(vm, first, &first_id, &error));
+    GAME_CHECK(qa_qc_string_identity(vm, second, &second_id, &error));
+    qa_target_cursor cursor = {0}; qa_actor_id selected;
+    GAME_CHECK(qa_targets_next(app.targets, first_id, &cursor, &selected) && qa_actor_id_equal(selected, self));
+    GAME_CHECK(qa_qc_set_entity_int(vm, references[1], engine.field_bindings->targetname->offset, second, &error));
+    cursor = (qa_target_cursor){0}; GAME_CHECK(!qa_targets_next(app.targets, first_id, &cursor, &selected));
+    cursor = (qa_target_cursor){0};
+    GAME_CHECK(qa_targets_next(app.targets, second_id, &cursor, &selected) && qa_actor_id_equal(selected, self));
+    GAME_CHECK(qa_targets_set_targetname(app.targets, self, first_id, &error));
+    cursor = (qa_target_cursor){0};
+    GAME_CHECK(qa_targets_next(app.targets, first_id, &cursor, &selected) && qa_actor_id_equal(selected, self));
+    cursor = (qa_target_cursor){0}; GAME_CHECK(!qa_targets_next(app.targets, second_id, &cursor, &selected));
+    GAME_CHECK(qa_targets_set_target(app.targets, self, second_id, &error));
+    GAME_CHECK(qa_targets_set_delay(app.targets, self, .2f, &error));
+    GAME_CHECK(qa_targets_read(app.targets, self, &fields) &&
+        fields.target == second_id && fields.delay_seconds == .2f);
+    GAME_CHECK(qa_targets_set_targetname(app.targets, self, QA_STRING_NONE, &error));
+    cursor = (qa_target_cursor){0}; GAME_CHECK(!qa_targets_next(app.targets, first_id, &cursor, &selected));
+    uint32_t function_index;
+    GAME_CHECK(qa_qc_program_find_function(fixture->program, "target_use", &function_index));
+    GAME_CHECK(qa_qc_set_entity_int(vm, references[1], engine.field_bindings->use->offset, (int32_t)function_index, &error));
+    const int32_t saved[] = {12345, 23456, 34567};
+    for (uint32_t i = 0; i < 3; ++i) GAME_CHECK(qa_qc_set_global_int(vm, 50 + i, saved[i], &error));
+    GAME_CHECK(qa_qc_set_global_float(vm, 53, 3.25f, &error));
+    GAME_CHECK(qa_targets_invoke(app.targets, self, foreign, activator, &error));
+    int32_t observed;
+    GAME_CHECK(qa_qc_global_int(vm, 54, &observed, &error) && observed == references[1]);
+    GAME_CHECK(qa_qc_global_int(vm, 55, &observed, &error) && observed == references[3]);
+    GAME_CHECK(qa_qc_global_int(vm, 56, &observed, &error) && observed == references[2]);
+    float number;
+    GAME_CHECK(qa_qc_global_float(vm, 57, &number, &error) && number == 3.25f);
+    GAME_CHECK(qa_qc_global_float(vm, 58, &number, &error) && number == 1);
+    for (uint32_t i = 0; i < 3; ++i)
+        GAME_CHECK(qa_qc_global_int(vm, 50 + i, &observed, &error) && observed == saved[i]);
+    GAME_CHECK(qa_qc_global_float(vm, 53, &number, &error) && number == 3.25f);
+    qa_targets_unbind(app.targets, self);
+    qa_target_binding restored;
+    GAME_CHECK(application_qc_target_binding(&provider, self, &restored, &error));
+    GAME_CHECK(qa_targets_bind(app.targets, &restored, &error));
+    GAME_CHECK(qa_qc_set_entity_int(vm, references[1], engine.field_bindings->targetname->offset, second, &error));
+    cursor = (qa_target_cursor){0};
+    GAME_CHECK(qa_targets_next(app.targets, second_id, &cursor, &selected) && qa_actor_id_equal(selected, self));
+    application_qc_targets_close(&engine);
+    GAME_CHECK(!qa_targets_read(app.targets, self, &fields));
+    GAME_CHECK(qa_targets_read(app.targets, foreign, &fields) && fields.targetname == native_name);
+    GAME_CHECK(qa_targets_invoke(app.targets, self, foreign, activator, &error));
+    GAME_CHECK(qa_qc_global_float(vm, 58, &number, &error) && number == 1);
+    GAME_CHECK(qa_session_remove(fixture->session, owner, &error));
+    GAME_CHECK(qa_qc_game_destroy(provider.state.qc.game, &error));
+    GAME_CHECK(qa_session_remove(fixture->session, foreign_owner, &error));
+    qa_console_destroy(console); qa_cvars_destroy(cvars);
+    qa_targets_destroy(app.targets);
 }
 
 typedef struct projection_fixture {
@@ -889,7 +1081,7 @@ void test_guest(void)
     gameplay_map_create(&fixture.map);
     tree_traversal(fixture.map.geometry);
     GAME_CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 8,
-        .component_capacity = 1},
+        .component_capacity = 2},
         &fixture.session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture.session),
         fixture.map.geometry, NULL, 0, &fixture.world, &error));
@@ -917,6 +1109,7 @@ void test_guest(void)
     projection_loads(&fixture, owner);
     GAME_CHECK(qa_session_remove(fixture.session, owner, &error));
     GAME_CHECK(qa_qc_instance_destroy(fixture.instance, &error));
+    shared_targets(&fixture, owner);
     qa_qc_program_destroy(fixture.program);
     GAME_CHECK(qa_world_destroy(fixture.world, &error));
     GAME_CHECK(qa_session_destroy(fixture.session, &error));

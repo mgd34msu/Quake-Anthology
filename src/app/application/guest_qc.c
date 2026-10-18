@@ -9,6 +9,7 @@
 #include "guest_qc_rerelease.h"
 #include "guest_qc_factory.h"
 #include "guest_qc_spawn.h"
+#include "guest_qc_targets.h"
 #include "bots_npc.h"
 #include "startup_flow.h"
 #include "control_frame.h"
@@ -477,6 +478,7 @@ static bool schedule_think(struct application_qc_state *engine, qa_actor_id acto
 static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *event, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
+    if (!application_qc_targets_stored(engine, vm, event, error)) return false;
     if (!application_qc_pickups_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_combat_source_stored(engine, vm, event, error)) return false;
     if (!application_qc_items_source_stored(engine, vm, event, error)) return false;
@@ -1709,6 +1711,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     }
     engine->initialized = false;
     application_bots_npc_destroy(provider);
+    application_qc_targets_close(engine);
     if (!qa_qc_game_destroy(provider->state.qc.game, error)) return false;
     provider->state.qc.game = NULL; provider->state.qc.instance = NULL;
     engine->output_channels = 0;

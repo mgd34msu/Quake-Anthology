@@ -1348,6 +1348,7 @@ add_library(qa_application STATIC
     src/app/application/guest_qc_bot_orders.c
     src/app/application/guest_qc_original_save.c
     src/app/application/guest_qc_visual.c
+    src/app/application/guest_qc_targets.c
     src/app/application/guest_qc_checkpoint.c
     src/app/application/guest_qc_clients.c
     src/app/application/guest_qc_declared.c
