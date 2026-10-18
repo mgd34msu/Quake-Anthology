@@ -62,7 +62,7 @@ static bool frame_settings(void *context,const q3n_compiled_frame *frame,bool lo
     bool replacement=false;
     if(o->options.primary_view && o->options.status_replacement &&
         !o->options.status_replacement(o->options.context,frame,&replacement,e))return false;
-    if(replacement)out->hud.draw_status=false;
+    out->hud.status_replaced=replacement;
     return q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o);
 }
 static bool weapon_warning(void *context,const q3n_frame *frame,q3n_weapon_hud *out,qa_error *error)

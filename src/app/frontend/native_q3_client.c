@@ -386,7 +386,7 @@ static bool frame_settings(void *context,const q3n_native *core,
     if(row->frontend->qc_messages) {
         qa_application_qc_client_presentation qc; bool found=false;
         if(!frontend_qc_messages_client_vitals(row->frontend->qc_messages,frontend_native_q3_actor(row),&qc,&found,e))return false;
-        if(found)out->hud.draw_status=false;
+        out->hud.status_replaced=found;
     }
     return frontend_native_q3_current(row);
 }

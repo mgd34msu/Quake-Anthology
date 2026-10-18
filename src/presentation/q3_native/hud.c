@@ -180,7 +180,7 @@ static bool status_head(q3n_hud_draw *d,float x)
 static bool status_bar(q3n_hud_draw *d)
 {
     q3nh_anchor(d,320,480);
-    if(!d->settings->draw_status)return true;
+    if(!d->settings->draw_status || d->settings->status_replaced)return true;
     const qa_q3_player *p=q3n_frame_snapshot_player(d->frame),*predicted=q3n_frame_predicted_player(d->frame);
     const q3n_media_view *m=q3n_media_read(d->frame->media);
     qa_q3_entity actual; q3n_entity *cent; bool present;
@@ -419,7 +419,8 @@ static bool active_status(q3n_hud_draw *d)
 {
     d->owner->weapon_requested = d->settings->draw_status;
     if(d->owner->product==QA_Q3_TEAM_ARENA) {
-        if(d->settings->draw_status && (!d->owner->options.mission_paint(d->owner->options.context,d->frame,false,false,d->error) ||
+        if(d->settings->draw_status && !d->settings->status_replaced &&
+           (!d->owner->options.mission_paint(d->owner->options.context,d->frame,false,false,d->error) ||
            !d->owner->options.mission_timed(d->owner->options.context,d->frame,d->error)))return false;
     } else if(!status_bar(d))return false;
     q3nh_anchor(d,320,0);

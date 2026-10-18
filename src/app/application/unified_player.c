@@ -1117,7 +1117,9 @@ static bool ui(qa_unified_player_ui *out, player_observation *o, qa_error *e)
         ammo = o->equipment.ammo;
         out->ammo_count = o->equipment.ammo_count;
     }
-    out->has_ammo = ammo != QA_STRING_NONE; out->selected_arsenal = o->arsenal != o->primary;
+    out->has_ammo = ammo != QA_STRING_NONE;
+    out->selected_arsenal = o->arsenal != o->primary ||
+        (o->has_gear && o->gear.active) || o->equipment.equipment_slot;
     out->active_weapon = active; out->ammo_item = ammo;
     if (o->primary->kind == APPLICATION_PROVIDER_NATIVE && o->primary->state.native.q2_engine) {
         struct application_native_q2 *engine = o->primary->state.native.q2_engine;

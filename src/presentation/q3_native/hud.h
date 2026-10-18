@@ -7,6 +7,7 @@
 typedef struct q3n_hud q3n_hud;
 typedef struct q3n_hud_settings {
     bool draw_2d, draw_status, draw_icons, draw_3d_icons, draw_rewards;
+    bool status_replaced;
     bool crosshair_health, draw_crosshair_names, draw_ammo_warning, paused;
     bool draw_snapshot, draw_fps, draw_timer, draw_attacker, lagometer, no_predict, synchronous_clients;
     int32_t crosshair, crosshair_x, crosshair_y, team_overlay, team_chat_height, team_chat_time;
