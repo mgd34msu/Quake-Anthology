@@ -150,7 +150,7 @@ static bool match_team(void *context, qa_team_id *out, qa_error *error)
     q3_weapon_actor source; qa_combat_state state;
     if (!out || !match_current(match, &source, error)) return false;
     ++s->calls;
-    bool ok = qa_combat_read(application(s)->combat, match->actor, &state, error) &&
+    bool ok = qa_combat_read_traits(application(s)->combat, match->actor, &state, error) &&
         match_current(match, &source, error);
     if (ok) {
         if (state.team.kind == QA_TEAM_NUMBER) {
@@ -172,7 +172,7 @@ static bool match_set_team(void *context, qa_team_id team, qa_error *error)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original match team mutation lost its current owner");
     if (!match_current(match, &source, error)) return false;
     ++s->calls;
-    bool current_ok = qa_combat_read(application(s)->combat, match->actor, &current, error) &&
+    bool current_ok = qa_combat_read_traits(application(s)->combat, match->actor, &current, error) &&
         match_current(match, &source, error);
     --s->calls;
     if (!current_ok) return false;

@@ -3685,7 +3685,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     landmark, &selected, &source_point, &found, error)) return false;
             if (found) body = selected;
         } else if (!source_completed && !original_world_character && ((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
-            ((character->kind <= APPLICATION_PROVIDER_Q3 || q3g_engine(character)) &&
+            ((character->kind <= APPLICATION_PROVIDER_Q3 ||
+              (map_source->kind <= APPLICATION_PROVIDER_Q3 && q3g_engine(character))) &&
              (character->kind != APPLICATION_PROVIDER_Q2 ||
               (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)))) &&
             !spawn_pose(application, ordinal, false, &body, &found, &source_point, error))

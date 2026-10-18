@@ -1681,11 +1681,11 @@ static bool defaults(void *context,qa_error *error)
     return frontend_authored_bindings_ready(seat->authored) ||
         frontend_authored_bindings_defaults(seat->authored,seat->input,seat->movement_dialect,error);
 }
-static bool selected_defaults(frontend_config_source *source,config_seat *seat,bool seed,qa_error *error)
+static bool selected_defaults(frontend_config_source *source,const qa_launch_snapshot *snapshot,
+    config_seat *seat,bool seed,qa_error *error)
 {
     qa_strings *strings=qa_session_strings(qa_application_session(source->application));
     frontend_config_weapon_catalog catalog;
-    const qa_launch_snapshot *snapshot=source->candidate?source->candidate:qa_application_launch(source->application);
     const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
     qa_launch_scope scope={.kind=QA_SCOPE_DEFAULT_PLAYER};
     for (size_t i=0;choices && i<choices->seat_count;++i)
@@ -1944,6 +1944,14 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     }
     free(source); return true;
 }
+static bool install_input_commands(frontend_config_source *source,qa_error *error)
+{
+    if (source->bindings || !source->seat_count) return true;
+    qa_input_console_options input={.console=source->console,.owner=source->command.owner,
+        .user=source,.seat=binding_seat,.print=print,.context=source->command};
+    source->bindings=qa_input_console_create(&input,error);
+    return source->bindings!=NULL;
+}
 static bool install_commands(frontend_config_source *source,qa_error *error)
 {
     if (source->primary && source->command.dialect==QA_RULESET_QUAKEWORLD && !source->frag_registered) {
@@ -1974,10 +1982,7 @@ static bool install_commands(frontend_config_source *source,qa_error *error)
         &source->command,
         source->command.owner,&source->admin_registered,error)) return false;
     if (source->seat_count) {
-        qa_input_console_options input={.console=source->console,.owner=source->command.owner,
-            .user=source,.seat=binding_seat,.print=print,.context=source->command};
-        source->bindings=qa_input_console_create(&input,error);
-        if (!source->bindings) return false;
+        if (!install_input_commands(source,error)) return false;
     } else if (source->primary) {
         if (!source->dedicated_bindings) source->dedicated_bindings=frontend_config_bindings_create(error);
         frontend_config_binding_commands commands={.console=source->console,.owner=source->command.owner,
@@ -2153,6 +2158,46 @@ static bool configuration_store(void *context,qa_application *application,
         return fail(error,QA_ERROR_ARGUMENT,"Campaign ConfigStore has no retained writable directory");
     *out=store; return true;
 }
+static bool carry_seat(frontend_config_source *source,const frontend_config_source *previous,
+    const qa_launch_snapshot *candidate,uint32_t logical,unsigned physical,qa_error *error)
+{
+    size_t index=seat_index(previous,logical);
+    if (index>=previous->seat_count)
+        return fail(error,QA_ERROR_ARGUMENT,"Source carry changed its actual authored seat profile");
+    if (source->seat_count>=QA_INPUT_LOCAL_SEATS)
+        return fail(error,QA_ERROR_MEMORY,"Local profile capacity is exhausted");
+    const config_seat *old=previous->seats+index;
+    config_seat *seat=source->seats+source->seat_count++;
+    seat->logical=logical;
+    bool ok=seat_movement(candidate,logical,&seat->movement_dialect,error);
+    if (ok) {
+        if (qa_cvars_dialect(old->cvars)==source->command.dialect)
+            ok=registry_carry(source,old->cvars,logical,true,&seat->cvars,error);
+        else {
+            seat->cvars=seat_registry(source,source->command.dialect,logical,error);
+            ok=seat->cvars && qa_cvars_same_store(seat->cvars,old->cvars);
+        }
+        ok=ok && registry_carry(source,old->mouse,logical,true,&seat->mouse,error) &&
+            frontend_authored_bindings_clone(old->authored,&seat->authored,error);
+    }
+    qa_input_seat *active=frontend_config_source_input(previous,logical);
+    ok=ok && active && seat_input_create(source,seat,active,physical,error);
+    qa_buffer settings={0};
+    if (ok && old->found) ok=qa_seat_settings_encode(&old->settings,&settings,error) &&
+        qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
+    qa_buffer_free(&settings); seat->found=old->found;
+    if (ok) ok=selected_defaults(source,candidate,seat,false,error);
+    if (ok) {
+        frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
+        frontend_legacy_cvars_bind(seat->cvars,&seat->legacy);
+        return true;
+    }
+    qa_error failure=error?*error:(qa_error){0},cleanup={0};
+    if (!seat_retire(source,seat,&cleanup)) { if (error) *error=cleanup; return false; }
+    --source->seat_count;
+    if (error) *error=failure;
+    return false;
+}
 static bool carry(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_application_startup_source *authority,
     frontend_config_source **out,qa_error *error)
@@ -2186,27 +2231,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
     for (size_t i=0;ok && previous->seat_count && choices && i<choices->seat_count;++i) {
         if (!choices->seats[i].local || choices->seats[i].bot) continue;
-        size_t index=seat_index(previous,choices->seats[i].id);
-        if (index>=previous->seat_count) {
-            ok=fail(error,QA_ERROR_ARGUMENT,"Source carry changed its actual authored seat profile"); break;
-        }
-        const config_seat *old_seat=previous->seats+index;
-        config_seat *seat=source->seats+source->seat_count++; seat->logical=old_seat->logical;
-        if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
-        ok=registry_carry(source,old_seat->cvars,seat->logical,true,&seat->cvars,error) &&
-            registry_carry(source,old_seat->mouse,seat->logical,true,&seat->mouse,error) &&
-            frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
-        qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
-        ok=ok && active && seat_input_create(source,seat,active,(unsigned)(source->seat_count-1),error);
-        qa_buffer settings={0};
-        if (ok && old_seat->found) ok=qa_seat_settings_encode(&old_seat->settings,&settings,error) &&
-            qa_seat_settings_parse((qa_bytes){settings.data,settings.size},&seat->settings,error);
-        qa_buffer_free(&settings); seat->found=old_seat->found;
-        if (ok) ok=selected_defaults(source,seat,false,error);
-        if (ok) {
-            frontend_view_settings_q1_motion_bind(seat->cvars,&seat->q1_motion);
-            frontend_legacy_cvars_bind(seat->cvars,&seat->legacy);
-        }
+        ok=carry_seat(source,previous,candidate,choices->seats[i].id,(unsigned)source->seat_count,error);
     }
     if (ok && previous->dedicated_bindings)
         ok=frontend_config_bindings_clone(previous->dedicated_bindings,&source->dedicated_bindings,error);
@@ -2350,8 +2375,9 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
     qa_frontend *f=manager->frontend;
     const qa_launch_snapshot *previous=qa_application_launch(application);
     const qa_launch_choices *old_choices=qa_launch_snapshot_choices(previous);
+    frontend_config_source *physical_source=published_primary(manager,application);
     unsigned count=frontend_local_seat_count(choices);
-    bool changed=source!=published_primary(manager,application) || !old_choices ||
+    bool changed=source!=physical_source || !old_choices ||
         count!=frontend_local_seat_count(old_choices);
     for (unsigned i=0;i<count;++i) {
         uint32_t logical,old_logical;
@@ -2379,13 +2405,16 @@ static bool prepare_retained_input(frontend_config_store *manager,qa_application
         uint32_t logical;
         (void)frontend_local_seat_read(choices,i,&logical);
         size_t index=seat_index(source,logical);
-        if (index>=source->seat_count)
-            return fail(error,QA_ERROR_ARGUMENT,"Retained input staging lacks its actual authored local profile");
-        const config_seat *old=source->seats+index;
-        config_seat *seat=manager->input_seats+manager->input_count++;
-        qa_input_seat *active=old->input?old->input:frontend_config_source_input(source,old->logical);
+        qa_input_seat *active=physical_source?frontend_config_source_input(physical_source,logical):NULL;
         if (!active || qa_input_seat_has_held(active) || qa_input_seat_release_read(active))
             return fail(error,QA_ERROR_ARGUMENT,"Retained input staging requires its returned actual logical dictionary");
+        if (index>=source->seat_count) {
+            if (!carry_seat(source,physical_source,candidate,logical,i,error) ||
+                !install_input_commands(source,error)) return false;
+            index=seat_index(source,logical);
+        }
+        const config_seat *old=source->seats+index;
+        config_seat *seat=manager->input_seats+manager->input_count++;
         seat->logical=old->logical; seat->mouse=old->mouse;
         if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) return false;
         if (qa_cvars_dialect(old->mouse)!=seat->movement_dialect) {
@@ -2420,7 +2449,7 @@ static bool seat_create(frontend_config_source *source, const qa_launch_snapshot
     seat->authored=frontend_authored_bindings_create(error);
     if (!seat->authored) return false;
     if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) return false;
-    if (!selected_defaults(source,seat,true,error)) return false;
+    if (!selected_defaults(source,candidate,seat,true,error)) return false;
     seat->cvars=seat_registry(source,command->dialect,logical,error);
     seat->mouse=seat_registry(source,seat->movement_dialect,logical,error);
     if (seat->cvars && command->dialect==QA_RULESET_Q3) {
@@ -2686,7 +2715,7 @@ static bool advance(void *context,void *phase,qa_console *console,bool *complete
         config_seat *seat=source->seats+source->seat_index;
         if (!frontend_authored_bindings_secondary(seat->authored,source->seats[0].authored,
             seat->input,seat->movement_dialect,error)) return false;
-        if (published_primary(manager,source->application) && !selected_defaults(source,seat,false,error)) return false;
+        if (published_primary(manager,source->application) && !selected_defaults(source,source->candidate,seat,false,error)) return false;
         if (!phase_create(source,error)) return false;
         return true;
     }
