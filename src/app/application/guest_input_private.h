@@ -31,6 +31,8 @@ bool application_guest_input_weapon_completed(void *role, qa_actor_id,
     const qa_qvm_call *, bool reached, qa_error *);
 bool application_guest_input_weapon_slice(const qa_application *, qa_actor_id);
 bool application_guest_input_source_weapons(qa_application *, qa_actor_id);
+application_provider *application_guest_input_selected(application_provider *movement,
+    application_provider *arsenal, application_provider *character);
 bool application_control_guest_weapon_step(qa_application *, qa_actor_id,
     const qa_usercmd *, const qa_q3_player *, bool reached, qa_error *);
 bool application_control_guest_equipment(qa_application *, application_provider *primary,

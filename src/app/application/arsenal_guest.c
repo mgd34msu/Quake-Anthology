@@ -929,6 +929,13 @@ static bool is_guest(const application_provider *provider)
         (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->component.clock.kind == QA_RULESET_Q3));
 }
 
+application_provider *application_guest_input_selected(application_provider *movement,
+    application_provider *arsenal, application_provider *character)
+{
+    return is_guest(arsenal) ? arsenal : is_guest(movement) ? movement :
+        is_guest(character) ? character : NULL;
+}
+
 static bool weapons_capable(const application_guest_input *input)
 {
     const application_q3_weapon_profile *profile = input && input->weapons &&
@@ -937,10 +944,9 @@ static bool weapons_capable(const application_guest_input *input)
         application_q3_weapons_descriptor_count(input->weapons) == 6;
 }
 
-bool application_arsenal_guest_roles_admit(application_provider *movement,
+static bool guest_roles_admit(application_provider *guest, application_provider *movement,
     application_provider *arsenal, qa_error *error)
 {
-    application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
     if (!guest) return true;
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
@@ -952,6 +958,13 @@ bool application_arsenal_guest_roles_admit(application_provider *movement,
     if (is_guest(movement) && movement != guest)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Two Q3 guest movement owners require an explicit cross-artifact contract");
     return true;
+}
+
+bool application_arsenal_guest_roles_admit(application_provider *movement,
+    application_provider *arsenal, qa_error *error)
+{
+    return guest_roles_admit(application_guest_input_selected(movement, arsenal, NULL),
+        movement, arsenal, error);
 }
 
 bool application_guest_input_source_weapons(qa_application *app, qa_actor_id actor)
@@ -1166,9 +1179,10 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     if (application_guest_input_applying(app, actor)) return true;
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
-    application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    application_provider *guest = application_guest_input_selected(movement, arsenal, character);
     if (!guest) return true;
-    if (!application_arsenal_guest_roles_admit(movement, arsenal, error)) return false;
+    if (!guest_roles_admit(guest, movement, arsenal, error)) return false;
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     uint32_t slot;
@@ -1231,12 +1245,13 @@ bool application_arsenal_guest_stage_ready(qa_application *app, qa_actor_id acto
 {
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
-    application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    application_provider *guest = application_guest_input_selected(movement, arsenal, character);
     if (!guest) return true;
     struct application_q3_guest *engine = q3g_engine(guest);
     uint32_t slot;
     return guest->constructed && guest->attached && !guest->close_pending &&
-        application_arsenal_guest_roles_admit(movement, arsenal, NULL) &&
+        guest_roles_admit(guest, movement, arsenal, NULL) &&
         qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) && slot < 64 &&
         engine->clients[slot].connected && engine->clients[slot].begun &&
         !engine->clients[slot].pending_retirement && qa_actor_id_equal(engine->clients[slot].actor, actor);

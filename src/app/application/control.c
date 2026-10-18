@@ -2723,11 +2723,8 @@ static bool control_move(qa_application *application,
     bool physics = context->stage == APPLICATION_CONTROL_PHYSICS;
     application_provider *selected_arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
     bool source_turn = retained_nq_turn(context);
-    bool original_stage = source_turn &&
-        ((movement->kind == APPLICATION_PROVIDER_QVM ||
-          (movement->kind == APPLICATION_PROVIDER_NATIVE && movement->component.clock.kind == QA_RULESET_Q3)) ||
-         (selected_arsenal && (selected_arsenal->kind == APPLICATION_PROVIDER_QVM ||
-          (selected_arsenal->kind == APPLICATION_PROVIDER_NATIVE && selected_arsenal->component.clock.kind == QA_RULESET_Q3))));
+    bool original_stage = source_turn && application_guest_input_selected(movement, selected_arsenal,
+        application_provider_for(application, actor, QA_ROLE_CHARACTER, "")) != NULL;
     bool native_q2_stage = source_turn && movement->kind == APPLICATION_PROVIDER_NATIVE &&
         movement->state.native.q2_engine;
     if ((preparing || physics) && !turn)
