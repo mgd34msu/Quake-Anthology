@@ -10130,6 +10130,19 @@ static void test_native_q3_declaration(void)
     CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)outside, strlen(outside)},
         "qagamei386.so", module, &declaration, &error));
     CHECK(!declaration && error.code == QA_ERROR_FORMAT);
+    const char *plain = "{\"runtime\":\"native\",\"program\":{\"path\":\"qagamei386.so\"},"
+        "\"version\":1,\"modules\":[{\"artifactPath\":\"qagamei386.so\",\"apiVersion\":8,\"primary\":{}}]}";
+    error = (qa_error){0};
+    CHECK(qa_native_declaration_load((qa_bytes){(const uint8_t *)plain, strlen(plain)},
+        "qagamei386.so", module, &declaration, &error));
+    CHECK(qa_native_declaration_region_count(declaration) == 0);
+    CHECK(qa_native_declaration_primary(declaration).size == 2);
+    qa_native_declaration_destroy(declaration); declaration = NULL;
+    const char *invalid = "{\"version\":1,\"modules\":[{\"artifactPath\":\"qagamei386.so\","
+        "\"apiVersion\":8,\"primary\":[]}]}";
+    CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)invalid, strlen(invalid)},
+        "qagamei386.so", module, &declaration, &error));
+    CHECK(!declaration && error.code == QA_ERROR_FORMAT);
     qa_native_module_release(module);
 }
 

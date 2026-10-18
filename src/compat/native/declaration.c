@@ -62,10 +62,12 @@ static bool required_primary(const qa_json_document *document, qa_json_id primar
                              qa_native_profile profile, qa_error *error) {
     static const char *required[] = {"weapons", "player",  "commands", "inventory",
                                      "drop",    "pickups", "world"};
+    if (profile == QA_NATIVE_Q3_VMMAIN)
+        return qa_json_type(document, primary) == QA_JSON_OBJECT ||
+            native_fail(error, QA_ERROR_FORMAT, 0,
+                        "native Q3 primary must be an object");
     if (!json_object(document, primary, "primary", error))
         return false;
-    if (profile == QA_NATIVE_Q3_VMMAIN)
-        return true;
     for (size_t index = 0; index < sizeof(required) / sizeof(required[0]); ++index) {
         qa_json_id section = qa_json_get(document, primary, required[index]);
         if (!json_object(document, section, required[index], error))
