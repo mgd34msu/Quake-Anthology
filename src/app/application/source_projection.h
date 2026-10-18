@@ -8,12 +8,12 @@ typedef struct application_source_projection {
     qa_q3_host *host;
     qa_qvm_abi abi;
     uint32_t entity_stride, inuse, health, takedamage, allocate, free;
-    bool can_take_damage;
+    bool can_take_damage, has_allocate, has_free;
     void *context;
     bool (*span)(void *, uint64_t address, size_t, qa_bytes *, qa_error *);
     bool (*write)(void *, uint64_t address, qa_bytes, bool private_fields, qa_error *);
     bool (*invoke)(void *, const qa_qvm_call *, uint32_t entry,
-        const int32_t *, size_t, int32_t *, qa_error *);
+        const qa_native_value *, size_t, qa_native_value *, qa_error *);
 } application_source_projection;
 
 bool application_source_projection_pointer(const application_source_projection *,

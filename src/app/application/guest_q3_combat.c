@@ -858,16 +858,14 @@ static bool damage_enter(application_q3_combat *owner,
         (uint32_t)words[Q3_DAMAGE_FLAGS]->as.i32, error)) return false;
     qa_damage_outcome outcome = {0};
     if (combat && combat != owner->role->engine->provider) {
-        if (!call->qvm)
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Native foreign combat requires its actual source actor projection adapter");
+        uint32_t slot;
+        if (!q3g_project_actor(owner->role, call->qvm, target_id, &slot, error)) return false;
         ++owner->calls;
         bool ok = !qa_combat_has(shared(owner), target_id) ||
             qa_combat_apply(shared(owner), &request, &outcome, error);
         --owner->calls;
         qa_damage_outcome_release(&outcome);
         if (ok && qa_actors_get(qa_session_actors(app->session), target_id)) {
-            uint32_t slot;
             ok = q3g_project_actor(owner->role, call->qvm, target_id, &slot, error);
         }
         return ok;
@@ -924,8 +922,9 @@ static bool freed_enter(application_q3_combat *owner,
         if (!live && owned && qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), released) &&
             !qa_session_release(owner->role->engine->provider->application->session, released, error)) return false;
     }
-    return !call->qvm || (q3g_projection_after_free(owner->role, (int32_t)(uint32_t)pointer, error) &&
-        application_q3_pickups_after_free(owner->role->pickups, call->qvm, (int32_t)(uint32_t)pointer, error));
+    return q3g_projection_after_free(owner->role, pointer, error) &&
+        (!call->qvm || application_q3_pickups_after_free(owner->role->pickups,
+            call->qvm, (int32_t)(uint32_t)pointer, error));
 }
 static bool freed(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {

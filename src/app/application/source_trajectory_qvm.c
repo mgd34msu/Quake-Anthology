@@ -87,19 +87,19 @@ static bool qvm_pointer(trajectory_qvm *source, uint32_t slot, int32_t *pointer,
     return true;
 }
 
-static bool qvm_slot(trajectory_qvm *source, int32_t pointer, uint32_t *slot, qa_error *error)
+static bool qvm_slot(trajectory_qvm *source, uint64_t pointer, uint32_t *slot, qa_error *error)
 {
     application_source_projection projection = qvm_projection(source);
-    return application_source_projection_slot(&projection, (uint32_t)pointer, slot, error);
+    return application_source_projection_slot(&projection, pointer, slot, error);
 }
 
 typedef struct trajectory_qvm_call {
     trajectory_qvm *source;
     const qa_qvm_call *call;
     uint32_t entry;
-    const int32_t *arguments;
+    const qa_native_value *arguments;
     size_t count;
-    int32_t *result;
+    qa_native_value *result;
 } trajectory_qvm_call;
 
 static bool qvm_execute(void *context, qa_error *error)
@@ -108,16 +108,14 @@ static bool qvm_execute(void *context, qa_error *error)
     trajectory_qvm *source = invocation->source;
     bool previous = source->cvars_active;
     source->cvars_active = true;
-    bool okay = invocation->call ? qa_qvm_invoke_source_callback(invocation->call, source->image,
-        (int32_t)invocation->entry, invocation->arguments, invocation->count, invocation->result, error) :
-        qa_qvm_invoke(source->vm, invocation->entry, invocation->arguments, invocation->count,
-            invocation->result, error);
+    bool okay = qa_q3_host_source_call(source->host, invocation->call, invocation->entry,
+        invocation->arguments, invocation->count, invocation->result, error);
     source->cvars_active = previous;
     return okay;
 }
 
 static bool qvm_function(trajectory_qvm *source, const qa_qvm_call *call, uint32_t entry,
-    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
     trajectory_qvm_call invocation = {source, call, entry, arguments, count, result};
     if (source->cvars_active) return qvm_execute(&invocation, error);
@@ -150,7 +148,7 @@ static bool projection_write(void *context, uint64_t address, qa_bytes bytes,
 }
 
 static bool projection_invoke(void *context, const qa_qvm_call *call, uint32_t entry,
-    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 { return qvm_function(context, call, entry, arguments, count, result, error); }
 
 static application_source_projection qvm_projection(trajectory_qvm *source)
@@ -158,15 +156,16 @@ static application_source_projection qvm_projection(trajectory_qvm *source)
     return (application_source_projection){.host = source->host, .abi = source->abi,
         .entity_stride = source->stride, .inuse = source->inuse, .health = source->health,
         .allocate = source->allocate, .free = source->free_entity, .context = source,
+        .has_allocate = true, .has_free = true,
         .span = projection_span, .write = projection_write, .invoke = projection_invoke};
 }
 
 static bool qvm_call(trajectory_qvm *source, const qa_qvm_call *call, int32_t command,
-    const int32_t *arguments, size_t count, int32_t *result, qa_error *error)
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
-    int32_t words[10] = {command};
-    if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
-    return qvm_function(source, call, 0, words, count + 1, result, error);
+    qa_native_value values[10] = {{.type = QA_NATIVE_I32, .as.i32 = command}};
+    if (count) memcpy(values + 1, arguments, count * sizeof(*arguments));
+    return qvm_function(source, call, 0, values, count + 1, result, error);
 }
 
 static bool qvm_time(trajectory_qvm *source, uint64_t time_ns, qa_error *error)
@@ -330,11 +329,13 @@ static bool qvm_player(trajectory_qvm *source, const qa_qvm_call *call, qa_actor
         source->userinfo_models[slot] = model;
         source->userinfo_ready[slot] = true;
     }
-    int32_t result, argument = (int32_t)slot;
+    qa_native_value result = {.type = QA_NATIVE_I32};
+    qa_native_value argument = {.type = QA_NATIVE_I32, .as.i32 = (int32_t)slot};
     if (created) {
-        int32_t connect[3] = {(int32_t)slot, 1, 0};
+        qa_native_value connect[3] = {argument,
+            {.type = QA_NATIVE_I32, .as.i32 = 1}, {.type = QA_NATIVE_I32, .as.i32 = 0}};
         if (!qvm_call(source, call, 2, connect, 3, &result, error)) return false;
-        if (result) return application_fail(error, QA_ERROR_UNSUPPORTED, "Trajectory QVM rejected its projected source client");
+        if (result.as.i32) return application_fail(error, QA_ERROR_UNSUPPORTED, "Trajectory QVM rejected its projected source client");
         if (!qvm_call(source, call, 3, &argument, 1, &result, error)) return false;
     } else if (changed && !qvm_call(source, call, 4, &argument, 1, &result, error)) return false;
     qa_q3_host_game_data data; qa_q3_player state; int32_t team;
@@ -436,7 +437,7 @@ static bool qvm_free_hook(void *context, const qa_qvm_call *call, int32_t *resul
     if (!qa_qvm_call_argument(call, 0, &pointer, error)) return false;
     if (!qa_q3_host_game_data_read(source->host, &data) || !data.entities_address)
         return qa_qvm_proceed(call, result, error);
-    if (!qvm_slot(source, pointer, &slot, error)) return false;
+    if (!qvm_slot(source, (uint32_t)pointer, &slot, error)) return false;
     if (source->flags[slot] & QVM_TRAJECTORY_PROJECTILE) {
         source->flags[slot] |= QVM_TRAJECTORY_RETIRED;
         *result = 0; return true;
@@ -452,8 +453,10 @@ static bool qvm_free_hook(void *context, const qa_qvm_call *call, int32_t *resul
 static bool qvm_initialize(trajectory_qvm *source, qa_error *error)
 {
     if (source->initialized) return true;
-    int32_t result, arguments[] = {0, (int32_t)source->owner, 0};
-    if (!qvm_call(source, NULL, 0, arguments, 3, &result, error)) return false;
+    qa_native_value arguments[] = {{.type = QA_NATIVE_I32, .as.i32 = 0},
+        {.type = QA_NATIVE_I32, .as.i32 = (int32_t)source->owner},
+        {.type = QA_NATIVE_I32, .as.i32 = 0}};
+    if (!qvm_call(source, NULL, 0, arguments, 3, NULL, error)) return false;
     qa_q3_host_game_data data;
     if (!qvm_data(source, &data, error)) return false;
     source->initialized = true; return true;
@@ -466,12 +469,13 @@ static bool qvm_launch_inner(void *context, const qa_builtin_weapon_launch *laun
     trajectory_qvm *source = context; *changed = false;
     if (!qvm_initialize(source, error) || !qvm_time(source, launch->time_ns, error) ||
         !qvm_refresh(source, launch->projectile, error)) return false;
-    uint32_t shooter; int32_t pointer, result;
+    uint32_t shooter; int32_t pointer;
     qa_stamp_set_restore_mark(&source->refreshed, launch->shooter.slot, 0);
     if (!qvm_project(source, NULL, launch->shooter, NULL, &shooter, error) ||
         !qvm_pointer(source, shooter, &pointer, error)) return false;
     if (source->activate && !(source->flags[shooter] & QVM_TRAJECTORY_ACTIVATED)) {
-        if (!qvm_function(source, NULL, source->activate, &pointer, 1, &result, error)) return false;
+        qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = (uint32_t)pointer};
+        if (!qvm_function(source, NULL, source->activate, &argument, 1, NULL, error)) return false;
         source->flags[shooter] |= QVM_TRAJECTORY_ACTIVATED;
     }
     qa_q3_entity entity; qa_qvm_entity_shared shared;
@@ -484,12 +488,16 @@ static bool qvm_launch_inner(void *context, const qa_builtin_weapon_launch *laun
     entity.pos.delta[0] = direction.x; entity.pos.delta[1] = direction.y; entity.pos.delta[2] = direction.z;
     if (!qa_qvm_write_entity(source->vm, pointer, true, &entity, error) ||
         !qa_qvm_write_shared_entity(source->vm, pointer, &shared, error)) return false;
-    int32_t arguments[] = {pointer, pointer + (source->abi == QA_QVM_Q3_MODERN ? 488 : 476), pointer + 36};
+    qa_native_value arguments[] = {
+        {.type = QA_NATIVE_ADDRESS, .as.address = (uint32_t)pointer},
+        {.type = QA_NATIVE_ADDRESS, .as.address = (uint32_t)pointer + (source->abi == QA_QVM_Q3_MODERN ? 488u : 476u)},
+        {.type = QA_NATIVE_ADDRESS, .as.address = (uint32_t)pointer + 36u}};
+    qa_native_value result = {.type = QA_NATIVE_ADDRESS};
     if (!qvm_function(source, NULL, source->fire, arguments, 3, &result, error)) return false;
     uint32_t slot; int32_t active;
-    if (!qvm_slot(source, result, &slot, error) ||
-        !qvm_word_read(source, (uint32_t)result + source->inuse, &active, error) ||
-        !qa_qvm_read_entity(source->vm, result, true, &entity, error)) return false;
+    if (!qvm_slot(source, result.as.address, &slot, error) ||
+        !qvm_word_read(source, (uint32_t)result.as.address + source->inuse, &active, error) ||
+        !qa_qvm_read_entity(source->vm, (int32_t)(uint32_t)result.as.address, true, &entity, error)) return false;
     qa_actor_id previous = {0};
     if (!qa_q3_host_actor(source->host, slot, false, &previous, error)) return false;
     bool occupied = previous.registry != 0;
@@ -523,7 +531,7 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
     if (!qa_q3_host_actor_slot(source->host, attachment->projectile, &slot, error)) return false;
     if (source->flags[slot] & QVM_TRAJECTORY_RETIRED) { attachment->retired = true; return true; }
     if (!qvm_time(source, time_ns, error) || !qvm_refresh(source, attachment->projectile, error)) return false;
-    int32_t pointer, active, next, entry, result;
+    int32_t pointer, active, next, entry;
     if (!qvm_pointer(source, slot, &pointer, error) ||
         !qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error)) return false;
     if (!active) { source->flags[slot] |= QVM_TRAJECTORY_RETIRED; attachment->retired = true; return true; }
@@ -535,8 +543,9 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
     size_t count; const qa_qvm_instruction *instructions = qa_qvm_image_instructions(source->image, &count);
     if (entry <= 0 || (uint32_t)entry >= count || instructions[entry].opcode != QA_QVM_ENTER)
         return application_fail(error, QA_ERROR_FORMAT, "Trajectory QVM projectile has an invalid think callback");
+    qa_native_value argument = {.type = QA_NATIVE_ADDRESS, .as.address = (uint32_t)pointer};
     if (!qvm_word_write(source, (uint32_t)pointer + source->nextthink, 0, error) ||
-        !qvm_function(source, NULL, (uint32_t)entry, &pointer, 1, &result, error) ||
+        !qvm_function(source, NULL, (uint32_t)entry, &argument, 1, NULL, error) ||
         !qvm_word_read(source, (uint32_t)pointer + source->inuse, &active, error)) return false;
     qa_q3_entity entity;
     if (!qa_qvm_read_entity(source->vm, pointer, true, &entity, error)) return false;
@@ -549,13 +558,11 @@ static bool qvm_step(void *context, application_trajectory_attachment *attachmen
 
 static bool qvm_private_release(trajectory_qvm *source, uint32_t slot, qa_error *error)
 {
-    int32_t pointer, result;
-    if (!qvm_pointer(source, slot, &pointer, error)) return false;
     bool prior = source->releasing; source->releasing = true;
     bool okay;
     if (source->flags[slot] & QVM_TRAJECTORY_CLIENT) {
-        int32_t argument = (int32_t)slot;
-        okay = qvm_call(source, NULL, 5, &argument, 1, &result, error);
+        qa_native_value argument = {.type = QA_NATIVE_I32, .as.i32 = (int32_t)slot};
+        okay = qvm_call(source, NULL, 5, &argument, 1, NULL, error);
         source->userinfo[slot][0] = 0;
         source->userinfo_ready[slot] = false;
     } else {

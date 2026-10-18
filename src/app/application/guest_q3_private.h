@@ -210,7 +210,7 @@ bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, q
 bool application_q3_guest_respawn(application_provider *, qa_actor_id, qa_error *);
 void application_q3_guest_spawn_point(q3g_role *, qa_actor_id, qa_actor_id,
     const qa_body_state *);
-bool q3g_projection_after_free(q3g_role *, int32_t pointer, qa_error *);
+bool q3g_projection_after_free(q3g_role *, uint64_t pointer, qa_error *);
 bool q3g_projection_actor_released(q3g_role *, qa_actor_record, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                       const char *path, bool primary, q3g_role **, qa_error *);

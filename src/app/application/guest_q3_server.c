@@ -315,6 +315,8 @@ static bool projection_span(void *context, uint64_t address, size_t size,
     qa_bytes *out, qa_error *error)
 {
     q3g_role *role = context;
+    if (role->native)
+        return qa_native_borrow(qa_native_host_instance(role->native), address, size, out, error);
     if (address > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 source projection exceeds its QVM pointer word");
     return qa_qvm_span(role->vm, (int32_t)address, 0, size, out, error);
@@ -324,21 +326,21 @@ static bool projection_write(void *context, uint64_t address, qa_bytes bytes,
     bool private_fields, qa_error *error)
 {
     q3g_role *role = context;
-    if (address > UINT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 source projection exceeds its QVM address word");
-    return private_fields ? qa_qvm_source_bytes_write(role->vm, role->image,
-        (uint32_t)address, bytes, error) : qa_qvm_write(role->vm, (uint32_t)address, bytes, error);
+    return private_fields ? qa_q3_host_source_bytes_project(role->host, address, bytes, error) :
+        qa_q3_host_source_bytes_write(role->host, address, bytes, error);
 }
 
 static bool projection_invoke(void *context, const qa_qvm_call *call, uint32_t entry,
-    const int32_t *arguments, size_t count, int32_t *out, qa_error *error)
+    const qa_native_value *arguments, size_t count, qa_native_value *out, qa_error *error)
 {
     q3g_role *role = context;
     q3g_role *previous = role->engine->entered_role;
     role->engine->entered_role = role;
     ++role->engine->calls;
-    bool okay = call ? qa_qvm_invoke_source_callback(call, role->image, (int32_t)entry,
-        arguments, count, out, error) : qa_qvm_invoke(role->vm, entry, arguments, count, out, error);
+    uint64_t address = entry;
+    bool okay = (!role->native || qa_native_rva(qa_native_host_instance(role->native),
+        entry, 1, &address, error)) &&
+        qa_q3_host_source_call(role->host, call, address, arguments, count, out, error);
     --role->engine->calls;
     role->engine->entered_role = previous;
     return okay;
@@ -346,11 +348,11 @@ static bool projection_invoke(void *context, const qa_qvm_call *call, uint32_t e
 
 static bool projection_read(q3g_role *role, application_source_projection *out)
 {
-    if (!role->vm) return false;
+    if (!role->vm && !role->native) return false;
     const application_q3_combat_definition *combat = role->artifact ?
         application_q3_combat_profile_definition(role->artifact->combat_profile) : NULL;
     const application_q3_pickup_profile *pickup = &role->pickup_profile;
-    if (!combat && (!pickup->present || !pickup->allocate)) return false;
+    if (!combat && !pickup->present) return false;
     *out = (application_source_projection){.host = role->host, .abi = role->abi,
         .entity_stride = combat ? combat->entity_stride : pickup->entity_stride,
         .inuse = combat ? combat->fields.inuse : pickup->fields.inuse,
@@ -358,6 +360,8 @@ static bool projection_read(q3g_role *role, application_source_projection *out)
         .takedamage = combat ? combat->fields.takedamage : 0,
         .allocate = combat ? combat->callbacks.allocate : pickup->allocate,
         .free = combat ? combat->callbacks.free : pickup->free,
+        .has_allocate = combat ? combat->callbacks.has_allocate : pickup->allocate != 0,
+        .has_free = combat ? combat->callbacks.has_free : pickup->free != 0,
         .context = role, .span = projection_span, .write = projection_write,
         .invoke = projection_invoke};
     return true;
@@ -387,12 +391,12 @@ bool q3g_project_actor(void *context, const qa_qvm_call *call, qa_actor_id actor
         (uint64_t)(uint32_t)role->engine->milliseconds * UINT64_C(1000000), error);
 }
 
-bool q3g_projection_after_free(q3g_role *role, int32_t pointer, qa_error *error)
+bool q3g_projection_after_free(q3g_role *role, uint64_t pointer, qa_error *error)
 {
     application_source_projection projection;
     if (!projection_read(role, &projection)) return true;
     qa_q3_host_game_data data; uint32_t slot;
-    if (!application_source_projection_slot(&projection, (uint32_t)pointer, &slot, error) ||
+    if (!application_source_projection_slot(&projection, pointer, &slot, error) ||
         !qa_q3_host_game_data_read(role->host, &data)) return false;
     if (slot < data.client_count) return true;
     qa_actor_id actor;
@@ -408,7 +412,8 @@ bool q3g_projection_actor_released(q3g_role *role, qa_actor_record actor, qa_err
 {
     application_source_projection projection; uint32_t slot = 0; qa_q3_host_game_data data;
     bool borrowed = actor.owner != role->engine->provider->owner &&
-        projection_read(role, &projection) && qa_q3_host_actor_slot(role->host, actor.id, &slot, NULL) &&
+        projection_read(role, &projection) && projection.has_free &&
+        qa_q3_host_actor_slot(role->host, actor.id, &slot, NULL) &&
         qa_q3_host_game_data_read(role->host, &data) && slot >= data.client_count && slot < QA_Q3_ENTITY_WORLD;
     return qa_q3_host_actor_released(role->host, actor, error) &&
         (!borrowed || application_source_projection_release(&projection, NULL, slot, error));

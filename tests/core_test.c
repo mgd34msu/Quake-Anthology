@@ -41,6 +41,7 @@
 #include "qa/script.h"
 #include "qa/campaign.h"
 #include "../src/app/application/source_objectives.h"
+#include "../src/app/application/source_projection.h"
 #include "../src/app/application/map_travel_private.h"
 #include "../src/gameplay/modes/internal.h"
 #include "qa/modes_map.h"
@@ -10404,6 +10405,31 @@ static void q3_source_commands_check(qa_q3_host *host, uint64_t address, const u
     CHECK(!host->calls);
 }
 
+typedef struct source_projection_release_check {
+    qa_q3_host *host;
+    uint64_t address;
+    unsigned calls;
+} source_projection_release_check;
+
+static bool source_projection_test_span(void *context, uint64_t address, size_t bytes,
+    qa_bytes *out, qa_error *error)
+{
+    source_projection_release_check *check = context;
+    return qa_native_borrow(check->host->native, address, bytes, out, error);
+}
+
+static bool source_projection_test_invoke(void *context, const qa_qvm_call *parent,
+    uint32_t entry, const qa_native_value *arguments, size_t count,
+    qa_native_value *out, qa_error *error)
+{
+    (void)error;
+    source_projection_release_check *check = context;
+    CHECK(!parent && entry == 123 && count == 1 && !out);
+    CHECK(arguments[0].type == QA_NATIVE_ADDRESS && arguments[0].as.address == check->address);
+    ++check->calls;
+    return true;
+}
+
 static void q3_source_entity_check(qa_q3_host *host, uint64_t address)
 {
     qa_error error = {0};
@@ -10420,6 +10446,19 @@ static void q3_source_entity_check(qa_q3_host *host, uint64_t address)
         qa_vec_equal(actual_shared.origin, shared.origin) &&
         qa_vec_equal(actual_shared.angles, shared.angles) &&
         qa_bounds_equal(actual_shared.local_bounds, shared.local_bounds) && !host->calls);
+    if (host->native) {
+        source_projection_release_check check = {.host = host, .address = address};
+        application_source_projection projection = {.host = host, .abi = host->options.abi,
+            .entity_stride = game.entity_stride, .inuse = 520, .free = 123,
+            .has_free = true, .context = &check,
+            .span = source_projection_test_span, .invoke = source_projection_test_invoke};
+        uint8_t inuse[4]; qa_store_u32le(inuse, 1);
+        CHECK(qa_q3_host_source_bytes_write(host, address + projection.inuse,
+            (qa_bytes){inuse, sizeof(inuse)}, &error));
+        CHECK(address > UINT32_MAX);
+        CHECK(application_source_projection_release(&projection, NULL, 0, &error));
+        CHECK(check.calls == 1 && !host->calls);
+    }
     host->game = NULL;
 }
 

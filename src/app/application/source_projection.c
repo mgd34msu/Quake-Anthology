@@ -75,9 +75,12 @@ bool application_source_projection_borrow(const application_source_projection *s
 {
     *created = !qa_q3_host_actor_slot(source->host, actor, out, NULL);
     if (!*created) return true;
-    int32_t address;
+    if (!source->has_allocate || !source->has_free)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Source actor projection has no declared allocation and release callbacks");
+    qa_native_value address = {.type = QA_NATIVE_ADDRESS};
     if (!source->invoke(source->context, call, source->allocate, NULL, 0, &address, error) ||
-        !application_source_projection_slot(source, (uint32_t)address, out, error)) return false;
+        !application_source_projection_slot(source, address.as.address, out, error)) return false;
     qa_q3_host_game_data data; projection_record record; qa_actor_id previous;
     if (!table(source, &data, error) || !record_open(source, *out, &record, error) ||
         !qa_q3_host_actor(source->host, *out, false, &previous, error)) return false;
@@ -133,8 +136,9 @@ bool application_source_projection_release(const application_source_projection *
     projection_record record;
     if (!record_open(source, slot, &record, error)) return false;
     if (!qa_load_i32le(record.abi.bytes.data + source->inuse)) return true;
-    if (record.address > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Source release pointer exceeds its callback word");
-    int32_t pointer = (int32_t)record.address, result;
-    return source->invoke(source->context, call, source->free, &pointer, 1, &result, error);
+    if (!source->has_free)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Source actor projection has no declared release callback");
+    qa_native_value pointer = {.type = QA_NATIVE_ADDRESS, .as.address = record.address};
+    return source->invoke(source->context, call, source->free, &pointer, 1, NULL, error);
 }
