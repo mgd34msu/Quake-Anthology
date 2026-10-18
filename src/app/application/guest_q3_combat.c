@@ -7,6 +7,13 @@
 #include "source_projection.h"
 #include "qa/pool.h"
 #include "qa/text.h"
+#include "qa/native_observe.h"
+
+typedef struct native_reaction_binding {
+    struct application_q3_combat *owner;
+    uint64_t address;
+    qa_native_entry_observer *binding;
+} native_reaction_binding;
 
 typedef struct combat_actor {
     struct combat_actor *next,*previous,*retired_next;
@@ -38,9 +45,11 @@ struct application_q3_combat {
     combat_actor *retired;
     incoming_damage *incoming;
     qa_qvm_binding bindings[3];
+    native_reaction_binding *native_bindings;
+    size_t native_count;
     uint64_t sequence;
     size_t count, calls, source_entries;
-    bool direct_bound;
+    bool direct_bound, native_rebound;
 };
 static qa_combat *shared(application_q3_combat *owner)
 { return owner->role->engine->provider->application->combat; }
@@ -450,10 +459,103 @@ static qa_qvm_function_hook direct_resolve(void *context, const qa_qvm_call *cal
     *hook_context = owner;
     return direct_enter;
 }
+typedef struct native_reaction_call {
+    qa_native_entry_observer *binding;
+    const qa_native_value *arguments;
+    size_t count;
+    qa_native_value *result;
+} native_reaction_call;
+static bool native_reaction_pointer(void *context, uint32_t index, uint64_t *out, qa_error *error)
+{
+    (void)error;
+    *out = ((native_reaction_call *)context)->arguments[index].as.address;
+    return true;
+}
+static bool native_reaction_integer(void *context, uint32_t index, int32_t *out, qa_error *error)
+{
+    (void)error;
+    *out = ((native_reaction_call *)context)->arguments[index].as.i32;
+    return true;
+}
+static bool native_reaction_proceed(void *context, qa_error *error)
+{
+    native_reaction_call *call = context;
+    return qa_native_invoke_original(call->binding, call->arguments, call->count, call->result, error);
+}
+static bool native_reaction_enter(void *context, qa_native_instance *instance,
+    qa_native_entry_observer *binding, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_error *error)
+{
+    (void)instance;
+    native_reaction_binding *entry = context;
+    native_reaction_call source = {binding, arguments, count, result};
+    application_q3_reaction_invocation call = {.address = entry->address, .context = &source,
+        .pointer = native_reaction_pointer, .integer = native_reaction_integer,
+        .proceed = native_reaction_proceed};
+    *result = (qa_native_value){.type = QA_NATIVE_VOID};
+    return application_q3_combat_direct_reaction(entry->owner, &call, error);
+}
+static bool native_reactions_leave(application_q3_combat *owner, qa_error *error)
+{
+    while (owner->native_count) {
+        native_reaction_binding *entry = owner->native_bindings + owner->native_count - 1;
+        if (!qa_native_unobserve_entry(entry->binding, error)) return false;
+        *entry = (native_reaction_binding){0};
+        --owner->native_count;
+    }
+    return true;
+}
+static bool native_reactions_enter(application_q3_combat *owner, qa_error *error)
+{
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    const application_q3_reaction_call *calls[] = {&d->reactions.pain_call, &d->reactions.die_call};
+    qa_native_instance *instance = qa_native_host_instance(owner->role->native);
+    for (size_t i = 0; i < owner->reactions.count; ++i) {
+        const qa_id_index_entry *entry = owner->reactions.entries + i;
+        const application_q3_reaction_call *call = calls[(entry->value & 1u) ? 0 : 1];
+        if (entry->value == 3 && (calls[0]->count != calls[1]->count ||
+            calls[0]->target != calls[1]->target || calls[0]->attacker != calls[1]->attacker ||
+            calls[0]->inflictor != calls[1]->inflictor || calls[0]->amount != calls[1]->amount ||
+            calls[0]->method != calls[1]->method))
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native reaction aliases different declared function signatures");
+        qa_native_type parameters[APPLICATION_Q3_COMBAT_ARGUMENTS];
+        for (size_t j = 0; j < call->count; ++j)
+            parameters[j] = (qa_native_type){.kind = QA_NATIVE_I32, .count = 1};
+        parameters[call->target].kind = parameters[call->attacker].kind = QA_NATIVE_ADDRESS;
+        if (call->inflictor != UINT32_MAX) parameters[call->inflictor].kind = QA_NATIVE_ADDRESS;
+        qa_native_signature signature = {.abi = qa_native_module_describe(owner->role->module).image.target.abi,
+            .parameters = parameters, .parameter_count = call->count,
+            .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+        native_reaction_binding *binding = owner->native_bindings + owner->native_count;
+        *binding = (native_reaction_binding){.owner = owner, .address = entry->discriminator};
+        if (!qa_native_observe_entry(instance, binding->address, &signature,
+                native_reaction_enter, binding, &binding->binding, error)) return false;
+        ++owner->native_count;
+    }
+    return true;
+}
+static bool native_reactions_rebind(application_q3_combat *owner, qa_error *error)
+{
+    if (owner->native_rebound) return true;
+    qa_q3_host_game_data table;
+    if (!qa_q3_host_game_data_read(owner->role->host, &table)) return true;
+    qa_application *app = owner->role->engine->provider->application;
+    for (uint32_t slot = 0; slot < table.entity_count; ++slot) {
+        qa_actor_id actor;
+        if (!qa_q3_host_actor(owner->role->host, slot, false, &actor, error)) return false;
+        if (!actor.registry || !qa_actors_get(qa_session_actors(app->session), actor) ||
+            application_provider_for(app, actor, QA_ROLE_CHARACTER, "") == owner->role->engine->provider) continue;
+        if (!application_q3_combat_admit(owner, actor, error)) return false;
+    }
+    owner->native_rebound = true;
+    return true;
+}
 bool application_q3_combat_enter(application_q3_combat *owner, qa_error *error)
 {
     if (!owner) return true;
     if (!owner->source_entries) {
+        if (!owner->role->vm && !native_reactions_rebind(owner, error)) return false;
         qa_id_index_clear(&owner->reactions);
         const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
         const uint32_t offsets[] = {d->reactions.pain, d->reactions.die};
@@ -486,9 +588,13 @@ bool application_q3_combat_enter(application_q3_combat *owner, qa_error *error)
             }
         }
         owner->direct_bound = owner->reactions.count != 0;
-        if (owner->direct_bound &&
-            !application_q3_damage_scopes_enter(owner->scopes, direct_resolve, owner, error)) {
+        bool bound = !owner->direct_bound || (owner->role->vm ?
+            application_q3_damage_scopes_enter(owner->scopes, direct_resolve, owner, error) :
+            native_reactions_enter(owner, error));
+        if (!bound) {
             owner->direct_bound = false;
+            qa_error cleanup = {0};
+            if (!owner->role->vm) (void)native_reactions_leave(owner, &cleanup);
             return false;
         }
     }
@@ -500,7 +606,8 @@ bool application_q3_combat_leave(application_q3_combat *owner, qa_error *error)
     if (!owner) return true;
     if (--owner->source_entries || !owner->direct_bound) return true;
     owner->direct_bound = false;
-    return application_q3_damage_scopes_leave(owner->scopes, error);
+    return owner->role->vm ? application_q3_damage_scopes_leave(owner->scopes, error) :
+        native_reactions_leave(owner, error);
 }
 typedef struct entered_damage {
     application_q3_combat *owner;
@@ -706,14 +813,17 @@ static bool armor_stage(void *context, const qa_qvm_call *call, int32_t *result,
 bool application_q3_combat_create(q3g_role *role, const application_q3_combat_profile *profile,
     application_q3_combat **out, qa_error *error)
 {
-    if (!role || !profile || !out || *out || !role->vm || !role->host || role->kind != QA_QVM_GAME ||
-        role->image != application_q3_combat_profile_image(profile) || role->abi != application_q3_combat_profile_abi(profile))
+    if (!role || !profile || !out || *out || (!role->vm && !role->module) || !role->host || role->kind != QA_QVM_GAME ||
+        role->image != application_q3_combat_profile_image(profile) ||
+        role->module != application_q3_combat_profile_module(profile) || role->abi != application_q3_combat_profile_abi(profile))
         return application_fail(error, QA_ERROR_ARGUMENT, "Combat hooks require their genuine original GAME constructor");
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
+    if (!role->vm && !d->reactions.pain_call.arguments_present && !d->reactions.die_call.arguments_present)
+        return true;
     application_q3_combat *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Retaining original combat callback owner");
     owner->role = role; owner->profile = profile; *out = owner;
     const qa_actor_registry *registry = qa_session_actors(role->engine->provider->application->session);
-    const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
     if (!qa_actor_index_create(&owner->actor_index, registry, NULL, error)) return false;
     owner->actor_chunk=qa_actors_capacity(registry);
     owner->actor_storage=application_control_storage_acquire(role->engine->provider->application,error);
@@ -721,8 +831,14 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
         qa_unified_frame_lease_arena(owner->actor_storage),owner->actor_chunk,
         sizeof(combat_actor),_Alignof(combat_actor),error))return false;
     owner->reactions.storage = qa_unified_frame_lease_arena(owner->actor_storage);
-    if (owner->actor_chunk > SIZE_MAX / 2 ||
+    if (owner->actor_chunk > SIZE_MAX / (2 * sizeof(native_reaction_binding)) ||
         !qa_id_index_reserve(&owner->reactions, owner->actor_chunk * 2, error)) return false;
+    if (!role->vm) {
+        owner->native_bindings = qa_arena_alloc(qa_unified_frame_lease_arena(owner->actor_storage),
+            owner->actor_chunk * 2 * sizeof(*owner->native_bindings), _Alignof(native_reaction_binding), error);
+        owner->native_rebound = !role->engine->restore_pending;
+        return owner->native_bindings != NULL;
+    }
     if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};
@@ -733,7 +849,8 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     return true;
 }
 bool application_q3_combat_idle(const application_q3_combat *owner)
-{ return !owner || (!owner->calls && !owner->source_entries && !owner->incoming && application_q3_damage_scopes_idle(owner->scopes)); }
+{ return !owner || (!owner->calls && !owner->source_entries && !owner->incoming && !owner->native_count &&
+    (!owner->scopes || application_q3_damage_scopes_idle(owner->scopes))); }
 bool application_q3_combat_sequence_read(const application_q3_combat *owner,
     uint64_t *out, qa_error *error)
 {
@@ -746,8 +863,11 @@ void application_q3_combat_sequence_adopt(application_q3_combat *owner, uint64_t
 { if (owner) owner->sequence = sequence; }
 bool application_q3_combat_admit(application_q3_combat *owner, qa_actor_id id, qa_error *error)
 {
-    if (!owner || owner->role->retired || !owner->role->host || !owner->role->vm)
+    if (!owner || owner->role->retired || !owner->role->host || (!owner->role->vm && !owner->role->module))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat admission requires its retained live Source owner");
+    combat_actor *actor = actor_find(owner, id);
+    if (!actor) { actor = actor_create(owner, id, error); if (!actor) return false; }
+    if (!application_q3_combat_actor_read(owner->role, owner->profile, id, &actor->source, error)) return false;
     application_provider *authority = application_provider_for(
         owner->role->engine->provider->application, id, QA_ROLE_COMBAT, "");
     if (authority && authority != owner->role->engine->provider) {
@@ -755,12 +875,10 @@ bool application_q3_combat_admit(application_q3_combat *owner, qa_actor_id id, q
         return application_q3_combat_health_binding(owner, id, &value, error) &&
             (!value.context || qa_combat_bind_health(shared(owner), id, &value, error));
     }
-    combat_actor *actor = actor_find(owner, id);
+    if (!owner->role->vm) return true;
     if (actor && qa_combat_health_current(shared(owner), id, actor) &&
         !qa_combat_detach_health(shared(owner), id, actor, error)) return false;
     if (actor && actor->bound) return application_q3_combat_actor_current(&actor->source, error);
-    if (!actor) { actor = actor_create(owner, id, error); if (!actor) return false; }
-    if (!application_q3_combat_actor_read(owner->role, owner->profile, id, &actor->source, error)) return false;
     qa_combat_binding value = binding(actor);
     if (!qa_combat_bind(shared(owner), id, &value, true, error)) return false;
     actor->serial = qa_combat_storage_serial(shared(owner), id); actor->bound = true; return true;
@@ -780,7 +898,7 @@ bool application_q3_combat_binding(application_q3_combat *owner, qa_actor_id id,
 bool application_q3_combat_health_binding(application_q3_combat *owner, qa_actor_id id,
     qa_combat_health_binding *out, qa_error *error)
 {
-    if (!owner || !out || owner->role->retired || !owner->role->host || !owner->role->vm)
+    if (!owner || !out || owner->role->retired || !owner->role->host || (!owner->role->vm && !owner->role->module))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original health requires its retained live Source owner");
     *out = (qa_combat_health_binding){0};
     application_provider *provider = owner->role->engine->provider;
@@ -809,7 +927,7 @@ bool application_q3_combat_actor_released(application_q3_combat *owner, qa_actor
     return true;
 }
 size_t application_q3_combat_descriptor_count(const application_q3_combat *owner)
-{ return owner ? 3 : 0; }
+{ return owner ? owner->count : 0; }
 bool application_q3_combat_descriptors(const application_q3_combat *owner,
     qa_qvm_saved_function *out, size_t count, qa_error *error)
 {
@@ -825,7 +943,7 @@ bool application_q3_combat_descriptors(const application_q3_combat *owner,
     return true;
 }
 void application_q3_combat_adopt(application_q3_combat *owner, const qa_qvm_binding *bindings)
-{ if (owner) memcpy(owner->bindings, bindings, sizeof(owner->bindings)); }
+{ if (owner && owner->count) memcpy(owner->bindings, bindings, owner->count * sizeof(*bindings)); }
 bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *error)
 {
     if (!pointer || !*pointer) return true;
@@ -833,6 +951,7 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
     if (owner->calls || owner->source_entries || owner->incoming ||
         (owner->scopes && !application_q3_damage_scopes_quiescent(owner->scopes)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat retains a source action or refused observer cleanup");
+    if (!native_reactions_leave(owner, error)) return false;
     for (combat_actor *actor=owner->actors;actor;actor=actor->next) {
         if (qa_combat_health_current(shared(owner), actor->source.actor, actor) &&
             !qa_combat_detach_health(shared(owner), actor->source.actor, actor, error)) return false;

@@ -96,7 +96,9 @@ bool application_guest_q3_functions_checkpoint(q3g_role *role, qa_buffer *out, q
     application_q3_equipment_saved state = {0};
     uint64_t combat_sequence = 0;
     if (!out || !inventory(role, &functions, error)) return false;
-    bool ok = qa_qvm_checkpoint_functions(role->vm, functions.descriptors, functions.count, error) &&
+    bool ok = (role->vm ? qa_qvm_checkpoint_functions(role->vm, functions.descriptors, functions.count, error) :
+        !functions.count || application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native GAME cannot retain QVM callback identities")) &&
         application_guest_input_checkpoint(role, &input, error) &&
         application_q3_weapons_checkpoint(role->weapons, &weapons, error) &&
         (!role->weapon_services || application_q3_weapons_services_checkpoint(role->weapon_services, &requests, error)) &&
@@ -134,6 +136,15 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
     function_inventory functions = {0};
     if (!role || !role->engine->restore_pending || role->initialized) {
         return application_fail(error, QA_ERROR_ARGUMENT, "Composed source import requires its isolated uninitialized executor");
+    }
+    if (!role->vm && !bytes.size) {
+        if (!inventory(role, &functions, error)) return false;
+        bool empty = functions.count == 0;
+        free(functions.descriptors);
+        if (!empty) return application_fail(error, QA_ERROR_FORMAT,
+            "Legacy native continuation cannot retain QVM callback identities");
+        application_q3_combat_sequence_adopt(role->combat, 0);
+        return true;
     }
     qa_source_save_io io = {0};
     qa_bytes input_bytes = {0}, weapons_bytes = {0}, request_bytes = {0}, pickup_bytes = {0}, body_bytes = {0}, model_bytes = {0};
@@ -198,7 +209,7 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
     if (ok && combat_count != functions.combat_count && !added_base_combat)
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved combat hooks differ from their retained source artifact");
-    if (ok && !combat_count && combat_sequence)
+    if (ok && !role->combat && combat_sequence)
         ok = application_fail(error, QA_ERROR_FORMAT, "Absent Source combat cannot own an attack sequence");
     for (size_t i = 0; ok && i < combat_count; ++i)
         ok = qa_source_save_u64(&io, bindings + combat_first + i);
@@ -232,8 +243,9 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
             ok = application_fail(error, QA_ERROR_FORMAT, "Saved source callback identity is absent");
     if (ok) ok = state_fields(&io, &state) && qa_source_save_finish(&io, NULL) &&
         application_q3_equipment_state_qualify(role->equipment, &state, error) &&
-        qa_qvm_restore_candidate_bindings(role->vm, executor, functions.descriptors,
-            bindings, functions.count, error);
+        (role->vm ? qa_qvm_restore_candidate_bindings(role->vm, executor, functions.descriptors,
+            bindings, functions.count, error) : !functions.count ||
+            application_fail(error, QA_ERROR_UNSUPPORTED, "Native GAME cannot import QVM callback identities"));
     if (ok) {
         application_guest_input_adopt_restore(role, &input);
         application_q3_weapons_adopt(role->weapons,

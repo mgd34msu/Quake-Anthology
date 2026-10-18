@@ -191,8 +191,9 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     spawned.previous = role->spawn_scope;
     role->spawn_scope = &spawned;
     ++role->entry_depth;
-    bool ok;
-    if (role->native) {
+    bool ok = !role->combat || application_q3_combat_enter(role->combat, error);
+    bool combat_entry = ok && role->combat;
+    if (ok && role->native) {
         if (source) {
             qa_native_instance *instance = qa_native_host_instance(role->native);
             qa_native_module_info module = qa_native_module_describe(role->module);
@@ -214,18 +215,13 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
                 role->initialized = true;
         }
     }
-    else {
+    else if (ok) {
         int32_t words[10] = {command};
         if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
         qa_qvm_binding bot_setup = 0;
         ok = true;
         if (!source && role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
             ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
-        bool combat_entry = ok && role->combat;
-        if (combat_entry) {
-            ok = application_q3_combat_enter(role->combat, error);
-            combat_entry = ok;
-        }
         if (ok && source) {
             if (source->actor_address > INT32_MAX)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Original respawn entity exceeds its QVM pointer word");
@@ -236,19 +232,19 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
         } else if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
                 qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
                 qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
-        if (combat_entry) {
-            qa_error cleanup = {0};
-            if (!application_q3_combat_leave(role->combat, &cleanup)) {
-                if (ok && error) *error = cleanup;
-                ok = false;
-            }
-        }
         if (bot_setup) {
             qa_error cleanup = {0};
             if (!qa_qvm_unbind(role->vm, bot_setup, &cleanup)) {
                 if (ok && error) *error = cleanup;
                 ok = false;
             }
+        }
+    }
+    if (combat_entry) {
+        qa_error cleanup = {0};
+        if (!application_q3_combat_leave(role->combat, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
         }
     }
     if (drawing) {

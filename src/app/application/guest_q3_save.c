@@ -14,6 +14,7 @@
 #include "guest_q3_client_console.h"
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
+#include "guest_q3_combat.h"
 #include "qa/persistence_content.h"
 #include "qa/native_module_save.h"
 #include "qa/persistence_application.h"
@@ -620,8 +621,6 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
         if (!tokens(io, &role->arguments) || !blob(io, &role->input, artifact->qvm ? 13 : 0) ||
             !blob(io, &role->services, 12) ||
             !qa_source_save_count(io, &role->projection_count, SIZE_MAX / sizeof(*role->projections))) return false;
-        if (!artifact->qvm && role->input.size)
-            return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role contains a QVM callback child");
         if (io->direction == QA_SOURCE_SAVE_READ && role->projection_count) {
             if (role->projection_count > (io->input.size - io->offset) / 26)
                 return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 source projection inventory");
@@ -657,7 +656,8 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
 static bool native_role_plain(const q3g_role *role, qa_error *error)
 {
     return (role && !role->vm && !role->image && role->module && !role->input &&
-        !role->projection && !role->weapons && !role->weapon_services && !role->combat &&
+        !role->projection && !role->weapons && !role->weapon_services &&
+        application_q3_combat_idle(role->combat) && !application_q3_combat_descriptor_count(role->combat) &&
         !role->pickups && !role->equipment && !role->body && !role->weapon_models) ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 role retains an unencoded application callback owner");
 }
@@ -790,19 +790,18 @@ static bool saved_collect(application_provider *provider,
             }
             row->projections[j] = (saved_projection){p->actor, p->slot, p->inventory_lease.serial, p->inventory_bound};
         }
+        if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
+            !application_guest_q3_functions_checkpoint(r, &row->input_storage, error)) { saved_free(saved); return false; }
         if (r->artifact->qvm) {
-            if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
-                !application_guest_q3_functions_checkpoint(r, &row->input_storage, error) ||
-                !qa_qvm_checkpoint(r->vm, &row->executor_storage, error)) { saved_free(saved); return false; }
+            if (!qa_qvm_checkpoint(r->vm, &row->executor_storage, error)) { saved_free(saved); return false; }
         } else {
             if (!r->process.resources || ((r->native != NULL) != r->committed) ||
                 (r->native && qa_native_get_backend(qa_native_host_instance(r->native)) != QA_NATIVE_BACKEND_OWNED_PROCESS)) {
                 saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED,
                     "Native Q3 continuation requires its actual retained owned process and bridge");
             }
-            if (!qa_q3_host_checkpoint_services(r->host, &row->service_storage, error) ||
-                (r->native && (!qa_native_host_checkpoint(r->native, &row->native_host_storage, error) ||
-                    !qa_native_process_checkpoint(qa_native_host_instance(r->native), &row->executor_storage, error)))) {
+            if (r->native && (!qa_native_host_checkpoint(r->native, &row->native_host_storage, error) ||
+                    !qa_native_process_checkpoint(qa_native_host_instance(r->native), &row->executor_storage, error))) {
                 saved_free(saved); return false;
             }
             if (!resources || !resources->capture || !resources->resolve || !resources->attach) {
@@ -1278,6 +1277,8 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
                 !application_q3_catalog_native_restore_validate(role->catalog, role, error)) return false;
         } else if (role->native || row->executor.size || row->native_host.size)
             return application_fail(error, QA_ERROR_FORMAT, "Uncommitted native Q3 role acquired an executor during import");
+        if (!role->vm && (!native_role_plain(role, error) ||
+            !application_guest_q3_functions_restore(role, row->input, row->executor, error))) return false;
         qa_command_tokens_free(&role->arguments);
         role->arguments = row->arguments; row->arguments = (qa_command_tokens){0};
         role->retired = (row->flags & ROLE_RETIRED) != 0;

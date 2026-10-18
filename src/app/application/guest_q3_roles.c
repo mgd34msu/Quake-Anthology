@@ -691,8 +691,10 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         } else application_q3_weapon_profile_free(&weapons);
         if (!application_guest_input_attach(role, error)) goto failed;
         if (role->weapons && !engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
-        if (role->artifact->combat_profile && !application_q3_combat_create(role,
-            role->artifact->combat_profile, &role->combat, error)) goto failed;
+    }
+    if (kind == QA_QVM_GAME && role->artifact->combat_profile && !application_q3_combat_create(role,
+        role->artifact->combat_profile, &role->combat, error)) goto failed;
+    if (kind == QA_QVM_GAME && role->vm) {
         if (!application_q3_pickup_profile_read(role, primary_bytes, &role->pickup_profile, error)) goto failed;
         if (role->pickup_profile.present && !application_q3_pickups_create(role,
             &role->pickup_profile, &role->pickups, error)) goto failed;

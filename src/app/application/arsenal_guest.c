@@ -974,7 +974,8 @@ bool application_guest_input_descriptors(q3g_role *role,
     qa_qvm_saved_function descriptors[6], size_t *out_count, qa_error *error)
 {
     application_guest_input *input = role ? role->input : NULL;
-    bool idle = (role && role->vm && !qa_qvm_active(role->vm) &&
+    bool idle = (role && (role->vm ? !qa_qvm_active(role->vm) :
+        role->module && !input && (!role->native || !qa_native_active(qa_native_host_instance(role->native)))) &&
         (!input || (!input->scope && !input->in_command && !input->command &&
                     !input->applying.registry && !input->command_actor.registry))) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
