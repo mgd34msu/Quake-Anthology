@@ -701,8 +701,10 @@ bool q3g_arsenal_client_admit(application_provider *provider, uint32_t slot, qa_
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     qa_application *app = provider ? provider->application : NULL;
-    if (!engine || !app || slot >= 64 || !engine->game || !engine->game->vm || !app->q3_client_prepare)
-        return true;
+    if (!engine || !app || slot >= 64 || !engine->game || !engine->game->host ||
+        (!engine->game->vm && (!engine->game->module || !engine->game->native)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal CG admission requires its actual GAME executor and host");
+    if (!app->q3_client_prepare) return true;
     q3g_client *client = engine->clients + slot;
     if (!client->connected || !client->begun || client->pending_retirement || client->bot) return true;
     bool hud = application_provider_for(app, client->actor, QA_ROLE_HUD, "") == provider;

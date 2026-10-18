@@ -144,6 +144,9 @@ static bool source_damage(void *context, qa_combat *combat, const qa_damage_requ
     qa_combat_state state;
     if (!read(actor, &state, error)) return false;
     if (!state.can_take_damage) return true;
+    if (!owner->scopes)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native source damage requires its original damage callback scope");
     incoming_damage incoming = {.actor = actor, .request = request, .observer = observer, .result = result};
     q3g_role *previous = owner->role->engine->entered_role;
     owner->role->engine->entered_role = owner->role;
@@ -892,7 +895,6 @@ bool application_q3_combat_admit(application_q3_combat *owner, qa_actor_id id, q
         return application_q3_combat_health_binding(owner, id, &value, error) &&
             (!value.context || qa_combat_bind_health(shared(owner), id, &value, error));
     }
-    if (!owner->role->vm) return true;
     if (actor && qa_combat_health_current(shared(owner), id, actor) &&
         !qa_combat_detach_health(shared(owner), id, actor, error)) return false;
     if (actor && actor->bound) return application_q3_combat_actor_current(&actor->source, error);
