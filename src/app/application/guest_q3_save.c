@@ -1282,8 +1282,6 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
             if ((qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED) !=
                 ((row->flags & ROLE_INITIALIZED) != 0))
                 return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role Init state differs from its actual process lifecycle");
-            if (role->catalog && (row->flags & ROLE_INITIALIZED) &&
-                !application_q3_catalog_native_restore_validate(role->catalog, role, error)) return false;
         } else if (role->native || row->executor.size || row->native_host.size)
             return application_fail(error, QA_ERROR_FORMAT, "Uncommitted native Q3 role acquired an executor during import");
         if (!role->vm && (!native_role_plain(role, error) ||

@@ -148,7 +148,7 @@ bool application_q3_native_catalog_create(q3g_role *role, qa_bytes bytes,
     *out = c; return true;
 }
 
-static bool retained_current(const application_q3_native_catalog *c, const q3g_role *role, bool restoring)
+static bool retained_current(const application_q3_native_catalog *c, const q3g_role *role)
 {
     if (!c || !role || c->role != role || role->kind != QA_QVM_GAME || role->vm ||
         role->retired || !role->ready ||
@@ -159,18 +159,14 @@ static bool retained_current(const application_q3_native_catalog *c, const q3g_r
         role->artifact->items_resource != c->items_resource) return false;
     application_provider *provider = role->engine->provider;
     qa_native_instance *instance = qa_native_host_instance(role->native);
-    if (restoring) {
-        if (!role->engine->restore_pending || !role->engine->restoration || !provider ||
-            provider->application->operation != APPLICATION_PERSISTING ||
-            qa_native_process_restore_pending(instance)) return false;
-    } else if (role->engine->restore_pending || !role->initialized || !role->init_succeeded) return false;
     return provider && provider->constructed && provider->attached && !provider->close_pending &&
         instance && qa_native_get_module(instance) == c->module && !qa_native_terminal(instance) &&
-        !qa_native_active(instance) && qa_native_get_lifecycle(instance) == QA_NATIVE_INITIALIZED;
+        !qa_native_process_restore_pending(instance) && !qa_native_active(instance) &&
+        qa_native_get_lifecycle(instance) == QA_NATIVE_INITIALIZED;
 }
 
 bool application_q3_native_catalog_current(const application_q3_native_catalog *c, const q3g_role *role)
-{ return retained_current(c, role, false); }
+{ return retained_current(c, role); }
 
 static uint64_t little(const uint8_t *p, size_t count)
 {
@@ -241,9 +237,9 @@ static bool identity(application_q3_native_catalog *c, const application_q3_cata
     return qa_strings_intern_cstr(qa_session_strings(c->role->engine->provider->application->session), text, out, error);
 }
 
-static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_error *error)
+static bool refresh(application_q3_native_catalog *c, qa_error *error)
 {
-    if (!retained_current(c, c ? c->role : NULL, restoring))
+    if (!retained_current(c, c ? c->role : NULL))
         return fail(error, QA_ERROR_ARGUMENT, "Native catalog lost its actual initialized returned GAME module");
     qa_native_instance *instance = qa_native_host_instance(c->role->native);
     uint64_t address; uint32_t count;
@@ -296,7 +292,7 @@ static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_er
         if (ok) { qa_id_index_insert(&items, weapon->item, 0, weapon_count); ++weapon_count; }
     }
     uint64_t current_address = 0; uint32_t current_count = 0;
-    if (ok) ok = retained_current(c, c->role, restoring) &&
+    if (ok) ok = retained_current(c, c->role) &&
         table(c, instance, &current_address, &current_count, error) &&
         current_address == address && current_count == count;
     if (!ok) {
@@ -319,17 +315,6 @@ static bool refresh_held(application_q3_native_catalog *c, bool restoring, qa_er
     c->published = candidate;
     return true;
 }
-
-bool application_q3_native_catalog_restore_validate(application_q3_native_catalog *c,
-    const q3g_role *role, qa_error *error)
-{
-    if (!retained_current(c, role, true))
-        return fail(error, QA_ERROR_ARGUMENT, "Native catalog validation requires its real imported process and unpublished role");
-    return refresh_held(c, true, error);
-}
-
-static bool refresh(application_q3_native_catalog *c, qa_error *error)
-{ return refresh_held(c, false, error); }
 
 bool application_q3_native_catalog_records(application_q3_native_catalog *c,
     const application_q3_catalog_record **out, size_t *count, qa_error *error)
