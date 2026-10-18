@@ -25,6 +25,8 @@ typedef struct profile_scope {
     qa_id_index callback_addresses;
     guest_profile_interest *interests;
     size_t interest_count;
+    qa_id_index instruction_addresses, store_pages;
+    bool stores;
     profile_store *pending;
     size_t pending_count, pending_at, pending_capacity;
     uint64_t bypass, boundary_bypass;
@@ -84,6 +86,8 @@ static void scope_free(profile_scope *row)
     if (row->mappings) dr_global_free(row->mappings, row->mapping_count * sizeof(*row->mappings));
     if (row->callbacks) dr_global_free(row->callbacks, row->callback_count * sizeof(*row->callbacks));
     index_free(&row->callback_addresses);
+    index_free(&row->instruction_addresses);
+    index_free(&row->store_pages);
     if (row->interests) dr_global_free(row->interests, row->interest_count * sizeof(*row->interests));
     if (row->pending) dr_global_free(row->pending, row->pending_capacity * sizeof(*row->pending));
     dr_global_free(row, sizeof(*row));
@@ -238,14 +242,37 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
             okay = row->interests[j].kind != interest->kind || row->interests[j].id != interest->id;
     }
     okay = okay && scope_entry_valid(row);
+    size_t points = 0, pages = 0;
+    for (size_t i = 0; okay && i < row->interest_count; ++i) {
+        const guest_profile_interest *interest = row->interests + i;
+        if (interest->kind == GUEST_PROFILE_INTEREST_INSTRUCTION) ++points;
+        else {
+            uint64_t count = ((interest->address + interest->bytes - 1) >> 12) -
+                (interest->address >> 12) + 1;
+            okay = count <= SIZE_MAX - pages;
+            if (okay) pages += (size_t)count;
+        }
+    }
+    if (okay) okay = index_reserve(&row->instruction_addresses, points) &&
+        index_reserve(&row->store_pages, pages);
+    for (size_t i = 0; okay && i < row->interest_count; ++i) {
+        const guest_profile_interest *interest = row->interests + i;
+        if (interest->kind == GUEST_PROFILE_INTEREST_INSTRUCTION)
+            qa_id_index_insert(&row->instruction_addresses,
+                (qa_string_id)(interest->address >> 4), interest->address, i);
+        else {
+            row->stores = true;
+            uint64_t last = (interest->address + interest->bytes - 1) >> 12;
+            for (uint64_t page = interest->address >> 12; page <= last; ++page)
+                qa_id_index_insert(&row->store_pages, (qa_string_id)page, page, i);
+        }
+    }
     if (!okay) { scope_free(row); return NULL; }
     return row;
 }
 static bool scope_stores(const profile_scope *row)
 {
-    if (row) for (size_t i = 0; i < row->interest_count; ++i)
-        if (row->interests[i].kind == GUEST_PROFILE_INTEREST_STORE) return true;
-    return false;
+    return row && row->stores;
 }
 static bool scope_store_code(const profile_scope *row, app_pc pc)
 {
@@ -269,6 +296,13 @@ static bool scope_synthetic_callback(const profile_scope *row, app_pc pc)
     uint64_t address = (uint64_t)(ptr_uint_t)pc;
     return scope_callback(row, address) && synthetic_callback(address);
 }
+static bool instruction_interest(const profile_scope *row, uint64_t address)
+{
+    qa_id_index_cursor cursor = qa_id_index_begin(&row->instruction_addresses,
+        (qa_string_id)(address >> 4), address);
+    size_t index;
+    return qa_id_index_next(&row->instruction_addresses, &cursor, &index);
+}
 static bool scope_point(const profile_scope *row, app_pc pc)
 {
     uint64_t address = (uint64_t)(ptr_uint_t)pc;
@@ -276,10 +310,7 @@ static bool scope_point(const profile_scope *row, app_pc pc)
     if (!row) return false;
     if (address == row->entry || address == row->stop) return true;
     if (scope_callback(row, address) && !synthetic_callback(address)) return true;
-    for (size_t i = 0; i < row->interest_count; ++i)
-        if (row->interests[i].kind == GUEST_PROFILE_INTEREST_INSTRUCTION &&
-            row->interests[i].address == address) return true;
-    return false;
+    return instruction_interest(row, address);
 }
 static void flush_point(uint64_t address)
 {
@@ -458,11 +489,17 @@ static uint64_t operand_address(profile_instruction *description, opnd_t operand
 static void store_interest(uint64_t instruction, uint64_t address, size_t bytes)
 {
     bool watched = false;
-    for (size_t i = 0; i < scope->interest_count; ++i) {
-        const guest_profile_interest *interest = scope->interests + i;
-        if (interest->kind == GUEST_PROFILE_INTEREST_STORE &&
-            address < interest->address + interest->bytes && interest->address < address + bytes) {
-            watched = true; break;
+    uint64_t last = (address + bytes - 1) >> 12;
+    for (uint64_t page = address >> 12; !watched && page <= last; ++page) {
+        qa_id_index_cursor cursor = qa_id_index_begin(&scope->store_pages,
+            (qa_string_id)page, page);
+        size_t index;
+        while (qa_id_index_next(&scope->store_pages, &cursor, &index)) {
+            const guest_profile_interest *interest = scope->interests + index;
+            if (address < interest->address + interest->bytes &&
+                interest->address < address + bytes) {
+                watched = true; break;
+            }
         }
     }
     if (!watched) return;
@@ -579,13 +616,11 @@ static void clean(ptr_uint_t encoded)
             redirect(&cpu, fp, import_entry);
         }
     }
-    if (!bypass_boundary) for (size_t i = 0; i < scope->interest_count; ++i) {
-        const guest_profile_interest *interest = scope->interests + i;
-        if (interest->kind != GUEST_PROFILE_INTEREST_INSTRUCTION || interest->address != (uint64_t)(ptr_uint_t)pc) continue;
+    if (!bypass_boundary && instruction_interest(scope, (uint64_t)(ptr_uint_t)pc)) {
         guest_profile_guard_fault boundary = {GUEST_PROFILE_GUARD_BOUNDARY, 0, 0, scope->id,
-            interest->address, interest->address, 1, interest->address};
+            (uint64_t)(ptr_uint_t)pc, (uint64_t)(ptr_uint_t)pc, 1, (uint64_t)(ptr_uint_t)pc};
         if (!copy_to_app(scope->fault, &boundary, sizeof(boundary))) dr_abort();
-        scope->boundary_bypass = interest->address;
+        scope->boundary_bypass = (uint64_t)(ptr_uint_t)pc;
         redirect(&cpu, fp, import_entry);
     }
     if ((uint64_t)(ptr_uint_t)pc == scope->stop && description->size == 1 && description->opcode == 0xcc) {
