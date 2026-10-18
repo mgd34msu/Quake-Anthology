@@ -144,7 +144,11 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     uint64_t revision = qa_inventory_definition_revision(inventory, actor);
     size_t written = 0;
     for (size_t i = 0; i < total; ++i) {
-        qa_item_definition definition = definitions[i];
+        qa_item_definition definition;bool found;
+        if(!qa_application_equipment_item_definition_read(seat->frontend->application,
+            actor,definitions[i].item,&definition,&found,error))return false;
+        if(!found)continue;
+        definitions[i]=definition;
         const qa_hud_q2_wheel_definition *native_definition=NULL;
         uint32_t native_slot=0;bool native_powerup=false;
         if (native_found && definition.owner==native.owner) {
@@ -180,7 +184,7 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
         size_t retained = 0;
         for (size_t i = 0; i < written; ++i) {
             qa_item_definition definition; bool found;
-            if (!qa_inventory_item_definition_find(inventory, actor, NULL, rows[i].identity.item,
+            if (!qa_application_equipment_item_definition_read(seat->frontend->application, actor, rows[i].identity.item,
                 &definition, &found, error)) return false;
             if (!found || (mode==QA_HUD_WHEEL_WEAPONS && !definition.weapon) ||
                 (mode == QA_HUD_WHEEL_POWERUPS && !(definition.actions & QA_ITEM_USE))) continue;
@@ -254,8 +258,9 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "wheel selection no longer belongs to a live player");
     qa_item_definition definition; bool found;
     qa_actor_owner owner = (qa_actor_owner)(identity.key >> 32);
-    if (!qa_inventory_item_definition_find(qa_application_inventory(seat->frontend->application),
-        actor, owner ? &owner : NULL, identity.item, &definition, &found, error)) return false;
+    if (!qa_application_equipment_item_definition_read(seat->frontend->application,
+        actor,identity.item,&definition,&found,error)) return false;
+    if(owner&&found&&definition.owner!=owner)return true;
     if (found && (mode != QA_HUD_WHEEL_WEAPONS || definition.weapon) &&
         (mode != QA_HUD_WHEEL_POWERUPS || (definition.actions & QA_ITEM_USE))) {
         return request_item(seat,&definition,error);

@@ -2500,19 +2500,13 @@ static bool unified_arsenal_input(qa_application *app, qa_actor_id actor,
     if (context->weapon && arsenal &&
         (arsenal->kind == APPLICATION_PROVIDER_Q1 || arsenal->kind == APPLICATION_PROVIDER_Q2 ||
          arsenal->kind == APPLICATION_PROVIDER_Q3)) {
-        qa_actor_owner item_owner;
-        if (!qa_inventory_item_owner(app->inventory, actor, context->weapon, &item_owner, NULL) ||
-            item_owner != arsenal->owner) return false;
         qa_item_id current = 0;
         if (arsenal->kind == APPLICATION_PROVIDER_Q1 &&
             !qa_application_weapon_read(app, actor, &current, error)) return false;
         if (current != context->weapon) {
-            qa_q1_game_operation operation = {0};
-            if (arsenal->kind == APPLICATION_PROVIDER_Q1 &&
-                !application_control_q1_world_begin(arsenal, &operation, error)) return false;
-            bool selected = qa_inventory_item_action(app->inventory, actor, context->weapon, QA_ITEM_USE, error);
-            qa_q1_game_operation_end(&operation);
-            if (!selected) return false;
+            bool accepted;
+            if(!qa_application_equipment_request_weapon(app,actor,arsenal->owner,
+                context->weapon,&accepted,error))return false;
         }
         if (!live(app, actor)) return true;
         if (application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal)

@@ -47,6 +47,20 @@ static bool q3_item_weapon(application_provider *provider, qa_item_id item,
     return true;
 }
 
+bool qa_application_equipment_item_definition_read(qa_application *app,
+    qa_actor_id actor,qa_item_id item,qa_item_definition *out,bool *found,qa_error *error)
+{
+    if(!qa_inventory_item_definition_find(app->inventory,actor,NULL,item,out,found,error))return false;
+    if(!*found||!out->weapon||out->actions)return true;
+    application_provider *arsenal=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
+    if(!arsenal||arsenal->owner==out->owner)return true;
+    qa_item_definition selected;bool declared;
+    if(!qa_inventory_item_definition_find(app->inventory,actor,&arsenal->owner,item,
+        &selected,&declared,error))return false;
+    if(declared&&selected.weapon)*out=selected;
+    return true;
+}
+
 static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *storage,
     qa_item_definition **out, size_t *count, qa_error *error)
 {
@@ -76,6 +90,12 @@ static bool named_items_read(qa_application *app, qa_actor_id actor, qa_arena *s
     if (capacity && !*out) return false;
     if (!qa_inventory_item_definitions(app->inventory, actor, *out, definitions, count, error))
         return false;
+    for(size_t i=0;i<*count;++i){
+        qa_item_definition item;bool found;
+        if(!qa_application_equipment_item_definition_read(app,actor,(*out)[i].item,
+            &item,&found,error))return false;
+        if(found)(*out)[i]=item;
+    }
     for (size_t i = 0; i < weapons; ++i) {
         qa_item_definition item;
         if (q3) item = (qa_item_definition){.item = q3[i].item, .ammo = q3[i].ammo,
@@ -159,8 +179,12 @@ static qa_command_result named_item_action(qa_application *app, qa_actor_id acto
     bool use = !qa_text_ascii_equal(command->argv[0], "drop");
     qa_item_action action = use ? QA_ITEM_USE : QA_ITEM_DROP;
     if (!weapon && (selected->actions & action)) {
-        return qa_inventory_item_action(app->inventory, actor,
-            selected->item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+        qa_item_definition actual;bool found;
+        if(!qa_inventory_item_definition_find(app->inventory,actor,NULL,selected->item,
+            &actual,&found,error))return QA_COMMAND_FAILED;
+        if(found&&actual.owner==selected->owner)
+            return qa_inventory_item_action(app->inventory, actor,
+                selected->item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     bool accepted = false;
     if (use && selected->weapon) {
