@@ -162,6 +162,12 @@ static bool primary_read(qa_combat *combat, qa_combat_record *entry, qa_combat_s
     } else *out = entry->state;
     if (!ok) return false;
     if (record(combat, actor) != entry || entry->serial != serial) return qa_combat_argument(error, "combat owner changed during state read");
+    if (entry->health.read) {
+        qa_combat_health_binding health = entry->health;
+        ++combat->active_calls; ok = health.read(health.context, &out->health, error); --combat->active_calls;
+    }
+    if (!ok) return false;
+    if (record(combat, actor) != entry || entry->serial != serial) return qa_combat_argument(error, "combat owner changed during state read");
     return state_valid(out, error);
 }
 static bool read_state(qa_combat *combat, qa_combat_record *entry, qa_combat_state *out, qa_error *error) {
@@ -451,10 +457,48 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
     qa_attack last_attack = has_last_attack ? entry->last_attack : (qa_attack){0};
     bool has_origin = qa_actor_id_equal(entry->actor, actor) && entry->has_origin_attack;
     qa_attack origin = has_origin ? entry->origin_attack : (qa_attack){0};
+    qa_combat_health_binding health = previous_active && qa_actor_id_equal(entry->actor, actor)
+        ? entry->health : (qa_combat_health_binding){0};
     *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .external = true,
-        .binding = *binding, .power_inventory = power_inventory, .power_item = power_item,
+        .binding = *binding, .health = health, .power_inventory = power_inventory, .power_item = power_item,
         .last_attack = last_attack, .has_last_attack = has_last_attack,
         .origin_attack = origin, .has_origin_attack = has_origin};
+    return true;
+}
+bool qa_combat_health_current(const qa_combat *combat, qa_actor_id actor, const void *context)
+{
+    if (!combat || !qa_actors_get(combat->actors, actor)) return false;
+    const qa_combat_record *entry = combat->records + actor.slot;
+    return entry->active && qa_actor_id_equal(entry->actor, actor) &&
+        entry->health.read && entry->health.context == context;
+}
+bool qa_combat_bind_health(qa_combat *combat, qa_actor_id actor,
+    const qa_combat_health_binding *binding, qa_error *error)
+{
+    qa_combat_record *entry;
+    if (!binding || !binding->read || !binding->write || !require_record(combat, actor, &entry, error))
+        return qa_combat_argument(error, "Health storage requires its live actor and source callbacks");
+    entry->health = *binding;
+    return true;
+}
+bool qa_combat_detach_health(qa_combat *combat, qa_actor_id actor,
+    const void *context, qa_error *error)
+{
+    if (!qa_combat_health_current(combat, actor, context)) return true;
+    qa_combat_record *entry = record(combat, actor);
+    qa_combat_state state;
+    if (!primary_read(combat, entry, &state, error)) return false;
+    if (!qa_combat_health_current(combat, actor, context)) return true;
+    if (entry->external) {
+        qa_combat_binding binding = entry->binding;
+        ++combat->active_calls;
+        bool ok = binding.write_health(binding.context, state.health, error);
+        --combat->active_calls;
+        if (!ok) return false;
+        if (!qa_combat_health_current(combat, actor, context)) return true;
+    }
+    entry->state.health = state.health;
+    entry->health = (qa_combat_health_binding){0};
     return true;
 }
 bool qa_combat_primary_current(const qa_combat *combat, qa_actor_id actor,
@@ -609,7 +653,11 @@ bool qa_combat_set_health(qa_combat *combat, qa_actor_id actor, double health, q
     qa_combat_cursor *cursor = cursor_for(combat, actor);
     if (cursor && !cursor->reaction_seen && !journal_reserve(cursor, error)) return false;
     uint64_t serial = entry->serial;
-    if (entry->external) {
+    if (entry->health.write) {
+        qa_combat_health_binding binding = entry->health;
+        ++combat->active_calls; bool ok = binding.write(binding.context, health, error); --combat->active_calls;
+        if (!ok) return false;
+    } else if (entry->external) {
         qa_combat_binding binding = entry->binding;
         ++combat->active_calls; bool ok = binding.write_health(binding.context, health, error); --combat->active_calls;
         if (!ok) return false;

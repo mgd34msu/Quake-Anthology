@@ -327,6 +327,98 @@ static bool origin_health_write(void *context, double health, qa_error *error)
 static bool origin_armor_write(void *context, const qa_armor *armor, qa_error *error)
 { (void)error; ((qa_combat_state *)context)->armor = *armor; return true; }
 
+typedef struct health_sources {
+    qa_actor_id actor;
+    qa_combat_state primary, character;
+} health_sources;
+static bool character_health_read(void *context, double *out, qa_error *error)
+{ (void)error; *out = ((qa_combat_state *)context)->health; return true; }
+static bool health_sources_restore(void *context, qa_actor_id actor, uint64_t serial,
+    qa_combat_binding *out, qa_error *error)
+{
+    (void)error; health_sources *source = context;
+    CHECK(serial && qa_actor_id_equal(actor, source->actor));
+    *out = (qa_combat_binding){.context = &source->primary, .read = origin_primary_read,
+        .write_health = origin_health_write, .write_armor = origin_armor_write};
+    return true;
+}
+static bool character_health_restore(void *context, qa_actor_id actor,
+    qa_combat_health_binding *out, qa_error *error)
+{
+    (void)error; health_sources *source = context;
+    CHECK(qa_actor_id_equal(actor, source->actor));
+    *out = (qa_combat_health_binding){.context = &source->character,
+        .read = character_health_read, .write = origin_health_write};
+    return true;
+}
+static void test_character_health_authority(void)
+{
+    qa_error error = {0}; qa_session *session = NULL; qa_combat *combat = NULL;
+    qa_inventory *inventory = NULL; health_sources source = {0}; qa_string_id owner;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 1, .component_capacity = 1}, &session, &error));
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session), "test:health", &owner, &error));
+    CHECK(qa_actors_allocate(qa_session_actor_registry(session), owner, owner, &source.actor, &error));
+    qa_actor_checkpoint checkpoint = {0}; qa_strings *names = NULL;
+    CHECK(qa_actors_checkpoint(qa_session_actor_registry(session), &checkpoint, &error));
+    CHECK(qa_strings_create(&names, &error));
+    CHECK(qa_strings_intern_cstr(names, "test:health", &owner, &error));
+    CHECK(qa_session_destroy(session, &error)); session = NULL;
+    CHECK(qa_session_create_restored(&(qa_session_options){.actor_capacity = 1, .component_capacity = 1},
+        &checkpoint, names, &session, &error));
+    qa_actor_registry *actors = qa_session_actor_registry(session);
+    source.actor = qa_actors_resolve_saved(actors,
+        (qa_saved_actor_id){.generation = source.actor.generation, .slot = source.actor.slot})->id;
+    qa_actor_checkpoint_free(&checkpoint);
+    CHECK(qa_combat_create(actors, qa_session_strings(session), NULL, &combat, &error));
+    CHECK(qa_inventory_create(actors, &inventory, &error));
+    qa_combat_state local = {.health = 100, .mass = 1, .armor.regular = {
+        .kind = QA_ARMOR_Q1, .points = 50, .protection.q1_absorption = .3f}};
+    CHECK(qa_combat_create_actor(combat, source.actor, &local, &error));
+    source.character.health = 125;
+    qa_combat_health_binding health;
+    CHECK(character_health_restore(&source, source.actor, &health, &error));
+    CHECK(qa_combat_bind_health(combat, source.actor, &health, &error));
+    qa_combat_state actual;
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 125 && actual.armor.regular.points == 50);
+    source.character.health = 124;
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 124);
+    source.primary = local; source.primary.health = 7; source.primary.armor.regular.points = 70;
+    qa_combat_binding binding;
+    CHECK(health_sources_restore(&source, source.actor, 1, &binding, &error));
+    CHECK(qa_combat_bind(combat, source.actor, &binding, true, &error));
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 124 && actual.armor.regular.points == 70);
+    CHECK(qa_combat_set_health(combat, source.actor, 110, &error));
+    CHECK(source.character.health == 110 && source.primary.health == 7);
+    qa_armor armor = local.armor; armor.regular.points = 80;
+    CHECK(qa_combat_set_armor(combat, source.actor, &armor, &error));
+    CHECK(source.primary.armor.regular.points == 80);
+    qa_buffer saved = {0};
+    CHECK(qa_persistence_combat_capture(session, combat, inventory, &saved, &error));
+    qa_persistence_gameplay_resolvers resolve = {.context = &source,
+        .combat = health_sources_restore, .health = character_health_restore};
+    CHECK(qa_persistence_combat_restore(session, combat, inventory, &resolve, (qa_bytes){saved.data, saved.size}, &error));
+    source.character.health = 109;
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 109 && actual.armor.regular.points == 80);
+    CHECK(qa_combat_detach_health(combat, source.actor, &source.character, &error));
+    CHECK(source.primary.health == 109 && !qa_combat_health_current(combat, source.actor, &source.character));
+    CHECK(qa_combat_detach_primary(combat, source.actor, qa_combat_storage_serial(combat, source.actor), &source.primary, &error));
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 109 && actual.armor.regular.points == 80);
+    CHECK(qa_combat_bind_health(combat, source.actor, &health, &error));
+    source.character.health = 103;
+    CHECK(qa_combat_detach_health(combat, source.actor, &source.character, &error));
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 103);
+    CHECK(qa_combat_bind_health(combat, source.actor, &health, &error));
+    qa_actor_record released = *qa_actors_get(actors, source.actor);
+    CHECK(qa_actors_release(actors, source.actor, &error)); qa_combat_actor_released(combat, released);
+    qa_actor_id replacement; CHECK(qa_actors_allocate(actors, owner, owner, &replacement, &error));
+    CHECK(replacement.slot == source.actor.slot && replacement.generation != source.actor.generation);
+    CHECK(qa_combat_create_actor(combat, replacement, &local, &error));
+    CHECK(!qa_combat_health_current(combat, replacement, &source.character));
+    CHECK(qa_combat_read(combat, replacement, &actual, &error) && actual.health == 100);
+    qa_buffer_free(&saved); CHECK(qa_inventory_destroy(inventory, &error));
+    CHECK(qa_combat_destroy(combat, &error)); CHECK(qa_session_destroy(session, &error));
+}
+
 typedef struct modifier_identity {
     qa_actor_id origin;
     unsigned calls;
@@ -12329,6 +12421,7 @@ int main(int argc, char **argv)
     test_bounded_handshake();
     test_shared_trajectory();
     test_retired_damage_modifier();
+    test_character_health_authority();
     test_shared_attack_origins();
     test_external_weapon_inventory();
     test_lightstyle_snapshot();

@@ -202,6 +202,11 @@ typedef struct qa_combat_binding {
     bool has_primary_protection[2];
     qa_actor_owner primary_protection[2];
 } qa_combat_binding;
+typedef struct qa_combat_health_binding {
+    void *context;
+    bool (*read)(void *, double *, qa_error *);
+    bool (*write)(void *, double, qa_error *);
+} qa_combat_health_binding;
 typedef enum qa_damage_effect_stage {
     QA_DAMAGE_BEFORE_QUAD, QA_DAMAGE_AFTER_QUAD, QA_DAMAGE_ARMOR_ALLOWED,
     QA_DAMAGE_PROTECTION_APPLIES, QA_DAMAGE_BEFORE_HEALTH, QA_DAMAGE_AFTER_ARMOR,
@@ -344,6 +349,9 @@ bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, q
 bool qa_combat_set_admission(qa_combat *, qa_actor_id, const qa_combat_admission *, qa_error *);
 uint64_t qa_combat_storage_serial(const qa_combat *, qa_actor_id);
 bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool replace, qa_error *);
+bool qa_combat_bind_health(qa_combat *, qa_actor_id, const qa_combat_health_binding *, qa_error *);
+bool qa_combat_health_current(const qa_combat *, qa_actor_id, const void *context);
+bool qa_combat_detach_health(qa_combat *, qa_actor_id, const void *context, qa_error *);
 /* Pure published-primary identity query. Detach requires idle combat and
  * snapshots original primary traits/armor and its authoritative fuel before
  * releasing callbacks. Component protection leases and fuel identity remain. */

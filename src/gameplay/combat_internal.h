@@ -19,6 +19,7 @@ typedef struct qa_combat_record {
     qa_attack last_attack, origin_attack;
     bool has_last_attack, has_origin_attack;
     qa_combat_binding binding;
+    qa_combat_health_binding health;
     qa_combat_admission admission;
     size_t active_admissions;
     qa_inventory *power_inventory;

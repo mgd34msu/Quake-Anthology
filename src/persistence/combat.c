@@ -209,6 +209,8 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
     if ((!fuel && entry->power_item) || (fuel && (!entry->power_item || (!reading && entry->power_inventory != inventory))) ||
         (entry->external && admission)) return fail(io->error, "Invalid saved combat storage ownership");
     if (reading) { entry->active = true; entry->state = primary; entry->power_inventory = fuel ? inventory : NULL; }
+    if (reading && resolve && resolve->health &&
+        !resolve->health(resolve->context, entry->actor, &entry->health, io->error)) return false;
     if (entry->external) {
         bool source_stages[2] = {entry->binding.source_armor_stages[0], entry->binding.source_armor_stages[1]};
         bool has_primary[2] = {entry->binding.has_primary_protection[0], entry->binding.has_primary_protection[1]};
@@ -221,8 +223,15 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
             qa_combat_state observed;
             if (!resolve || !resolve->combat || !resolve->combat(resolve->context, entry->actor, entry->serial, &entry->binding, io->error) ||
                 binding_mask(&entry->binding) != mask || (mask & 7u) != 7u ||
-                !source_primary(combat, &entry->binding, &observed, io->error) ||
-                !same_state(qa_session_strings(io->session), &primary, &observed))
+                !source_primary(combat, &entry->binding, &observed, io->error))
+                return fail(io->error, "Restored source combat authority differs from saved primary");
+            if (entry->health.read) {
+                ++combat->active_calls;
+                bool ok = entry->health.read(entry->health.context, &observed.health, io->error);
+                --combat->active_calls;
+                if (!ok) return false;
+            }
+            if (!same_state(qa_session_strings(io->session), &primary, &observed))
                 return fail(io->error, "Restored source combat authority differs from saved primary");
             for (size_t i = 0; i < 2; ++i)
                 if (entry->binding.source_armor_stages[i] != source_stages[i] ||

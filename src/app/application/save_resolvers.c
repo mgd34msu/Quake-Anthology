@@ -79,6 +79,17 @@ static bool admission(void *opaque, qa_actor_id actor,
                             "Saved damage admission has no restored native callback owner");
 }
 
+static bool health_binding(void *opaque, qa_actor_id actor,
+    qa_combat_health_binding *out, qa_error *error)
+{
+    qa_application *app = opaque;
+    *out = (qa_combat_health_binding){0};
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    struct application_q3_guest *guest = q3g_engine(character);
+    return !guest || !guest->game || !guest->game->combat ||
+        application_q3_combat_health_binding(guest->game->combat, actor, out, error);
+}
+
 static bool protection(void *opaque,qa_actor_id actor,qa_protection_channel channel,
     const qa_protection_claim *claim,qa_protection_binding *out,qa_error *error)
 {
@@ -225,6 +236,6 @@ bool application_save_resolvers(qa_application *app,
     *out = (qa_persistence_gameplay_resolvers){.context = app,
         .combat = combat_binding, .admission = admission, .protection=protection, .inventory_primary = primary,
         .inventory_group = inventory_group, .pickup_observer = pickup_observer, .pickup_rule = pickup_rule,
-        .target = target};
+        .target = target, .health = health_binding};
     return true;
 }

@@ -75,8 +75,30 @@ static combat_actor *actor_create(application_q3_combat *owner, qa_actor_id id, 
 }
 static bool read(void *context, qa_combat_state *out, qa_error *error)
 { return application_q3_combat_state_read(&((combat_actor *)context)->source, out, error); }
+static bool health_read(void *context, double *out, qa_error *error)
+{
+    combat_actor *actor = context;
+    application_q3_combat *owner = actor->owner;
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    ++actor->calls; ++owner->calls; ++owner->role->engine->calls;
+    int32_t value;
+    bool ok = application_q3_combat_word_read(&actor->source,
+        actor->source.entity + d->fields.health, &value, error);
+    if (ok) *out = value;
+    --actor->calls; --owner->calls; --owner->role->engine->calls;
+    actors_collect(owner);
+    return ok;
+}
 static bool health(void *context, double value, qa_error *error)
-{ return application_q3_combat_health_write(&((combat_actor *)context)->source, value, error); }
+{
+    combat_actor *actor = context;
+    application_q3_combat *owner = actor->owner;
+    ++actor->calls; ++owner->calls; ++owner->role->engine->calls;
+    bool ok = application_q3_combat_health_write(&actor->source, value, error);
+    --actor->calls; --owner->calls; --owner->role->engine->calls;
+    actors_collect(owner);
+    return ok;
+}
 static bool armor(void *context, const qa_armor *value, qa_error *error)
 { return application_q3_combat_armor_write(&((combat_actor *)context)->source, value, error); }
 static bool armor_valid(void *context, const qa_armor *value, qa_error *error)
@@ -431,14 +453,19 @@ static bool freed(void *context, const qa_qvm_call *call, int32_t *result, qa_er
             !qa_q3_host_actor(owner->role->host, (uint32_t)slot, false, &released, error)) return false;
     }
     combat_actor *prior = actor_find(owner, released);
-    if (!prior || !prior->bound) released = (qa_actor_id){0};
+    if (!prior || (!prior->bound && !qa_combat_health_current(shared(owner), released, prior)))
+        released = (qa_actor_id){0};
     if (!qa_qvm_proceed(call, result, error)) return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), released);
     combat_actor *actor = actor_find(owner, released);
-    if (record && actor && record->owner == owner->role->engine->provider->owner) {
+    if (record && actor) {
+        bool owned = record->owner == owner->role->engine->provider->owner;
         bool live;
-        if (!application_q3_combat_actor_live(&actor->source, &live, error) ||
-            (!live && !qa_session_release(owner->role->engine->provider->application->session, released, error))) return false;
+        if (!application_q3_combat_actor_live(&actor->source, &live, error)) return false;
+        if (!live && qa_combat_health_current(shared(owner), released, actor) &&
+            !qa_combat_detach_health(shared(owner), released, actor, error)) return false;
+        if (!live && owned && qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), released) &&
+            !qa_session_release(owner->role->engine->provider->application->session, released, error)) return false;
     }
     return q3g_projection_after_free(owner->role, pointer, error) &&
         application_q3_pickups_after_free(owner->role->pickups, call, pointer, error);
@@ -552,8 +579,14 @@ bool application_q3_combat_admit(application_q3_combat *owner, qa_actor_id id, q
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat admission requires its retained live Source owner");
     application_provider *authority = application_provider_for(
         owner->role->engine->provider->application, id, QA_ROLE_COMBAT, "");
-    if (authority && authority != owner->role->engine->provider) return true;
+    if (authority && authority != owner->role->engine->provider) {
+        qa_combat_health_binding value;
+        return application_q3_combat_health_binding(owner, id, &value, error) &&
+            (!value.context || qa_combat_bind_health(shared(owner), id, &value, error));
+    }
     combat_actor *actor = actor_find(owner, id);
+    if (actor && qa_combat_health_current(shared(owner), id, actor) &&
+        !qa_combat_detach_health(shared(owner), id, actor, error)) return false;
     if (actor && actor->bound) return application_q3_combat_actor_current(&actor->source, error);
     if (!actor) { actor = actor_create(owner, id, error); if (!actor) return false; }
     if (!application_q3_combat_actor_read(owner->role, owner->profile, id, &actor->source, error)) return false;
@@ -573,11 +606,30 @@ bool application_q3_combat_binding(application_q3_combat *owner, qa_actor_id id,
         return application_fail(error, QA_ERROR_FORMAT, "Restored combat changed its primary storage serial");
     actor->serial = serial; actor->bound = true; *out = binding(actor); return true;
 }
+bool application_q3_combat_health_binding(application_q3_combat *owner, qa_actor_id id,
+    qa_combat_health_binding *out, qa_error *error)
+{
+    if (!owner || !out || owner->role->retired || !owner->role->host || !owner->role->vm)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original health requires its retained live Source owner");
+    *out = (qa_combat_health_binding){0};
+    application_provider *provider = owner->role->engine->provider;
+    qa_application *app = provider->application;
+    const qa_actor_player *player = qa_actors_player(qa_session_actors(app->session), id);
+    if (!player || !player->present ||
+        application_provider_for(app, id, QA_ROLE_CHARACTER, "") != provider ||
+        application_provider_for(app, id, QA_ROLE_COMBAT, "") == provider) return true;
+    combat_actor *actor = actor_find(owner, id);
+    if (!actor) { actor = actor_create(owner, id, error); if (!actor) return false; }
+    if (!application_q3_combat_actor_read(owner->role, owner->profile, id, &actor->source, error)) return false;
+    *out = (qa_combat_health_binding){.context = actor, .read = health_read, .write = health};
+    return true;
+}
 bool application_q3_combat_actor_released(application_q3_combat *owner, qa_actor_record released, qa_error *error)
 {
-    (void)error;
     combat_actor *actor = owner ? actor_find(owner, released.id) : NULL;
     if (actor) {
+        if (qa_combat_health_current(shared(owner), released.id, actor) &&
+            !qa_combat_detach_health(shared(owner), released.id, actor, error)) return false;
         actor->bound = false;
         qa_actor_index_remove(&owner->actor_index, released.id);
         actor->retired_next = owner->retired; owner->retired = actor;
@@ -611,6 +663,8 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
         (owner->scopes && !application_q3_damage_scopes_quiescent(owner->scopes)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat retains a source action or refused observer cleanup");
     for (combat_actor *actor=owner->actors;actor;actor=actor->next) {
+        if (qa_combat_health_current(shared(owner), actor->source.actor, actor) &&
+            !qa_combat_detach_health(shared(owner), actor->source.actor, actor, error)) return false;
         if (actor->bound && qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), actor->source.actor) &&
             qa_combat_primary_current(shared(owner), actor->source.actor, actor->serial, actor)) {
             if (!qa_combat_detach_primary(shared(owner), actor->source.actor, actor->serial, actor, error)) return false;
