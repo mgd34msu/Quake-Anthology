@@ -872,6 +872,20 @@ static bool selected_drop_timers(qa_q3_game *game, qa_actor_id actor,
     }
     return qa_q3_selected_client_effects_publish(game, actor, &before, error);
 }
+static bool character_respawn_input(qa_q3_game *game, qa_actor_id actor,
+    bool prediction, bool attack, bool use, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+    const qa_q3_player_state *player = &entry->state.player;
+    if (prediction || source_command_active(game, actor) || player->spectator ||
+        !(player->selections & QA_Q3_CHARACTER)) return true;
+    bool forced = game->options.rules.force_respawn_seconds > 0 &&
+        (int64_t)game->now_ms - player->respawn_after >
+            (int64_t)game->options.rules.force_respawn_seconds * 1000;
+    return game->now_ms <= player->respawn_after || !(attack || use || forced) ||
+        !game->options.hooks.respawn ||
+        game->options.hooks.respawn(game->options.hooks.context, actor, error);
+}
 static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
                          float elapsed_ms, const qa_q3_arsenal_source *source,
                          int32_t source_milliseconds, bool *advanced, qa_error *error) {
@@ -933,15 +947,7 @@ static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_contro
     if (combat.health <= 0) {
         if (player->selections & QA_Q3_ARSENAL)
             player->weapon = QA_Q3_W_NONE;
-        bool forced = game->options.rules.force_respawn_seconds > 0 &&
-                      (int64_t)game->now_ms - player->respawn_after >
-                          (int64_t)game->options.rules.force_respawn_seconds * 1000;
-        if (!command->prediction && !source_command_active(game, actor) &&
-            (player->selections & QA_Q3_CHARACTER) &&
-            game->now_ms > player->respawn_after && (attack || use || forced) &&
-            game->options.hooks.respawn)
-            return game->options.hooks.respawn(game->options.hooks.context, actor, error);
-        return true;
+        return character_respawn_input(game, actor, command->prediction, attack, use, error);
     }
     if (player->respawned)
         return true;
@@ -2129,6 +2135,21 @@ qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_pha
             movement->movement_flags |= 0x4000u;
     } else if (phase == QA_MOVE_WEAPON) {
         uint64_t teleport_revision = p->teleport_revision;
+        if (!arsenal_selected && (p->selections & QA_Q3_CHARACTER)) {
+            qa_combat_state combat;
+            if (!qa_combat_read(game->options.services.combat, call->actor, &combat, error))
+                return QA_MOVEMENT_ERROR;
+            bool use = call->command->has_arsenal ? call->command->arsenal.use_holdable :
+                call->command->kind == QA_RULESET_Q3 && (call->command->buttons & 4u);
+            if (combat.health <= 0 && !character_respawn_input(game, call->actor,
+                    call->prediction, (call->command->buttons & 1u) != 0, use, error))
+                return QA_MOVEMENT_ERROR;
+            entry = q3_actor_get(game, call->actor);
+            if (!entry) return QA_MOVEMENT_REMOVED;
+            p = &entry->state.player;
+            if (p->teleport_revision != teleport_revision) call->state_replaced = true;
+            goto phase_done;
+        }
         if (call->command->kind != QA_RULESET_Q3)
             return QA_MOVEMENT_CONTINUE;
         if (!arsenal_selected)
