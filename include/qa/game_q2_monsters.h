@@ -201,6 +201,8 @@ bool qa_q2_monster_path_activator(const qa_q2_game *, qa_actor_id monster,
                                   qa_actor_id *activator);
 bool qa_q2_monster_target_anger(qa_q2_game *, qa_actor_id monster,
                                 qa_actor_id target, qa_error *);
+bool qa_q2_monster_target_classify(qa_q2_game *, qa_actor_id target,
+                                  bool not_counted, qa_error *);
 
 /* Rogue summon placement keeps the source trace rules while sharing the
  * authoritative world. A true return reports a completed query; found/valid

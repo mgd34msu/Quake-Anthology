@@ -189,6 +189,7 @@ static void test_source_dollar_evaluation(void)
 }
 
 void test_q2_brush_animation(void);
+void test_q2_target_anger_editions(void);
 
 static void test_q3_armor_rounding(void)
 {
@@ -12156,6 +12157,7 @@ int main(int argc, char **argv)
     test_source_dollar_evaluation();
     test_q3_armor_rounding();
     test_q2_brush_animation();
+    test_q2_target_anger_editions();
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();

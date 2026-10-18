@@ -83,6 +83,50 @@ static bool use(void *opaque, qa_actor_id actor, qa_actor_id other,
         NULL, error) && application_qc_publish_client_outputs(engine, error);
 }
 
+bool application_qc_acquire_enemy(application_provider *provider, qa_actor_id actor,
+    qa_actor_id enemy, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    const qa_qc_definition *field = engine ? engine->field_bindings->enemy : NULL;
+    if (!engine || !engine->found_target.function || !field || field->type != QA_QC_ENTITY)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "QuakeC enemy acquisition requires an enemy field and FoundTarget export");
+    const qa_actor_registry *actors = qa_session_actors(engine->services.session);
+    if (!qa_actors_get(actors, actor) || !qa_actors_get(actors, enemy)) return true;
+    qa_qc_instance *vm = provider->state.qc.instance;
+    int32_t enemy_reference, self_reference;
+    bool ok = application_qc_reference(engine, enemy, &enemy_reference, error);
+    if (!qa_actors_get(actors, actor) || !qa_actors_get(actors, enemy)) {
+        if (error) *error = (qa_error){0};
+        return true;
+    }
+    if (!ok) return false;
+    ok = application_qc_reference(engine, actor, &self_reference, error);
+    if (!qa_actors_get(actors, actor) || !qa_actors_get(actors, enemy)) {
+        if (error) *error = (qa_error){0};
+        return true;
+    }
+    if (!ok) return false;
+    const qa_qc_definition *time = application_qc_field(
+        engine->global_bindings->time, QA_QC_FLOAT, error);
+    float seconds;
+    if (!time || !qa_qc_global_float(vm, time->offset, &seconds, error)) return false;
+    ok = qa_qc_set_entity_int(vm, self_reference, field->offset, enemy_reference, error);
+    if (!qa_actors_get(actors, actor) || !qa_actors_get(actors, enemy)) {
+        if (error) *error = (qa_error){0};
+        return true;
+    }
+    if (!ok) return false;
+    qa_qc_game_global globals[] = {
+        {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
+        {"time", {QA_QC_GAME_FLOAT, {.number = seconds}}}
+    };
+    return qa_qc_game_call_index(provider->state.qc.game, engine->found_target.index,
+        NULL, 0, globals, sizeof(globals) / sizeof(*globals), NULL, error) &&
+        application_qc_publish_client_outputs(engine, error);
+}
+
 static bool set_name(struct application_qc_state *engine, qa_actor_id actor,
     const qa_qc_definition *definition, qa_string_id name, qa_error *error)
 {

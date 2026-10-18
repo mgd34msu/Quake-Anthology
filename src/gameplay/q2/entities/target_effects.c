@@ -566,36 +566,43 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         if (!record)
             return true;
         q2_actor *native = q2_actor_get(g, target, false, NULL);
-        if (record->owner == g->options.owner && native)
-            native->physics.flags |= QA_PHYSICS_MONSTER;
-        else {
-            qa_q2_entity_services *services = &g->entity_runtime->services;
-            if (!services->mark_monster_target) {
-                qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
-                             "Q2 target anger requires foreign target classification");
-                return false;
-            }
-            if (!services->mark_monster_target(services->context, target, e))
-                return false;
-        }
-        if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
-            return true;
+        bool own = record->owner == g->options.owner && native;
+        bool rerelease = g->options.rules == QA_RULESET_Q2_RERELEASE;
+        qa_builtin_actor_traits traits = {0};
+        bool monster_target = own ? (native->physics.flags & QA_PHYSICS_MONSTER) != 0 :
+            g->services.actor_traits && g->services.actor_traits(g->services.context, target, &traits) && traits.monster;
         qa_combat_state c;
         qa_error missing = {0};
-        bool has_combat = qa_combat_read_traits(g->services.combat, target, &c, &missing);
-        if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
-            return true;
-        if (!has_combat) {
-            if (missing.code != QA_ERROR_NOT_FOUND) {
-                if (e)
-                    *e = missing;
-                return false;
+        if (!rerelease || !monster_target) {
+            if (own) {
+                if (!qa_q2_monster_target_classify(g, target, rerelease, e)) return false;
+            } else {
+                qa_q2_entity_services *services = &g->entity_runtime->services;
+                if (!services->mark_monster_target) {
+                    qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                                 "Q2 target anger requires foreign target classification");
+                    return false;
+                }
+                if (!services->mark_monster_target(services->context, target, e))
+                    return false;
             }
-            c = (qa_combat_state){.health = 300};
-            if (!qa_combat_create_actor(g->services.combat, target, &c, e))
+            if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+                return true;
+            bool has_combat = qa_combat_read_traits(g->services.combat, target, &c, &missing);
+            if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+                return true;
+            if (!has_combat) {
+                if (missing.code != QA_ERROR_NOT_FOUND) {
+                    if (e)
+                        *e = missing;
+                    return false;
+                }
+                c = (qa_combat_state){.health = 300};
+                if (!qa_combat_create_actor(g->services.combat, target, &c, e))
+                    return false;
+            } else if (!qa_combat_set_health(g->services.combat, target, 300, e))
                 return false;
-        } else if (!qa_combat_set_health(g->services.combat, target, 300, e))
-            return false;
+        }
         if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
             return true;
         qa_target_cursor cursor = {0};
@@ -616,7 +623,7 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
                 return true;
             if (!q2_actor_live(g, monster))
                 continue;
-            if (c.health < 0)
+            if (rerelease ? c.health <= 0 : c.health < 0)
                 return true;
             qa_q2_monster_view view;
             if (qa_q2_monster_read(g, monster, &view)) {

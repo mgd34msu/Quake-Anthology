@@ -1546,6 +1546,18 @@ bool qa_q2_monster_path_activator(const qa_q2_game *game, qa_actor_id id,
   return true;
 }
 
+bool qa_q2_monster_target_classify(qa_q2_game *game, qa_actor_id id,
+    bool not_counted, qa_error *error) {
+  q2_actor *actor = q2_actor_get(game, id, false, error);
+  if (!actor) return false;
+  actor->physics.flags |= QA_PHYSICS_MONSTER;
+  if (actor->monster) {
+    actor->monster->good_guy = true;
+    if (not_counted) actor->monster->do_not_count = true;
+  }
+  return true;
+}
+
 bool qa_q2_monster_target_anger(qa_q2_game *game, qa_actor_id id,
                                 qa_actor_id target, qa_error *error) {
   if (target.registry == 0) {
@@ -1560,13 +1572,6 @@ bool qa_q2_monster_target_anger(qa_q2_game *game, qa_actor_id id,
       qa_actors_get(qa_session_actors(game->services.session), target) == NULL)
     return true;
 
-  if (target.slot < game->capacity) {
-    q2_actor *target_actor = game->actors[target.slot];
-    if (target_actor != NULL && qa_actor_id_equal(target_actor->id, target) &&
-        target_actor->monster != NULL &&
-        target_actor->projectile.kind == Q2_PROJECTILE_NONE)
-      target_actor->monster->good_guy = true;
-  }
   context.monster->enemy = target;
   context.monster->target_anger = true;
   return q2m_found_target(&context, target, error);

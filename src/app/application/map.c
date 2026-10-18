@@ -28,6 +28,7 @@
 #include "qa/stamp.h"
 #include "qa/text.h"
 #include "qa/monster_catalog.h"
+#include "guest_qc_targets.h"
 
 #include <float.h>
 #include <math.h>
@@ -38,6 +39,7 @@
 static bool monster_path_read(application_provider *, qa_actor_id, qa_q1_path_state *);
 static bool monster_path_change(application_provider *, qa_actor_id, const qa_q1_path_change *, qa_error *);
 static bool monster_path_touch(application_provider *, qa_actor_id, qa_actor_id, bool *, qa_error *);
+static bool monster_acquire_enemy(qa_application *, qa_actor_id, qa_actor_id, bool anger, qa_error *);
 
 static qa_ruleset_id map_authored_rules(const application_provider *provider)
 {
@@ -1767,6 +1769,8 @@ static bool monster_path_change(application_provider *map, qa_actor_id actor,
     if (change->kind == QA_Q1_PATH_FOLLOW_UNTIL) row->follow_until_ns = (uint64_t)(change->follow_until * 1e9);
     if (change->kind == QA_Q1_PATH_DESTINATION)
         qa_targets_monster_route(map->application->targets, actor, change->reference.registry ? change->target : 0, change->reference);
+    if (change->kind == QA_Q1_PATH_FOUND)
+        return monster_acquire_enemy(map->application, actor, change->reference, false, error);
     if (behavior->kind == APPLICATION_PROVIDER_Q1) {
         qa_q1_path_change converted = *change;
         if (change->kind == QA_Q1_PATH_PAUSE_END || change->kind == QA_Q1_PATH_STAND)
@@ -1789,12 +1793,12 @@ static bool monster_path_change(application_provider *map, qa_actor_id actor,
             monster_path_time(map, behavior, (uint64_t)(change->pause_until * 1e9)), false, error);
     case QA_Q1_PATH_CANCEL_PAUSE:
         return qa_q2_monster_route_advance(behavior->state.q2, actor, state.goal, 0, false, error);
-    case QA_Q1_PATH_FOUND:
-        return qa_q2_monster_action(behavior->state.q2, actor, QA_Q2_MONSTER_FOUND_TARGET, change->reference, 0, error);
     case QA_Q1_PATH_FOLLOW_BEGIN:
         return qa_q2_monster_follow_begin(behavior->state.q2, actor, change->reference, error);
     case QA_Q1_PATH_FOLLOW_UNTIL:
         return true;
+    default:
+        break;
     }
     return false;
 }
@@ -2308,17 +2312,34 @@ static bool q2_player_push(void *opaque, qa_actor_id actor, qa_vec3 velocity,
                                error);
 }
 
+static bool monster_acquire_enemy(qa_application *app, qa_actor_id actor,
+    qa_actor_id target, bool anger, qa_error *error)
+{
+    application_provider *provider = application_provider_for(
+        app, actor, QA_ROLE_MONSTERS, "");
+    if (provider) switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1:
+        return qa_q1_game_path_change(provider->state.q1, actor,
+            &(qa_q1_path_change){.kind = QA_Q1_PATH_FOUND, .reference = target}, error);
+    case APPLICATION_PROVIDER_Q2:
+        return anger ? qa_q2_monster_target_anger(provider->state.q2, actor, target, error) :
+            qa_q2_monster_action(provider->state.q2, actor, QA_Q2_MONSTER_FOUND_TARGET, target, 0, error);
+    case APPLICATION_PROVIDER_QC:
+        return application_qc_acquire_enemy(provider, actor, target, error);
+    case APPLICATION_PROVIDER_QVM:
+    case APPLICATION_PROVIDER_NATIVE:
+    case APPLICATION_PROVIDER_Q3:
+        break;
+    }
+    return application_fail(error, QA_ERROR_UNSUPPORTED,
+                            "Selected monster has no acquire-enemy operation");
+}
+
 static bool q2_target_anger(void *opaque, qa_actor_id actor,
-                            qa_actor_id target, qa_error *error)
+    qa_actor_id target, qa_error *error)
 {
     application_provider *origin = opaque;
-    application_provider *provider = application_provider_for(
-        origin->application, actor, QA_ROLE_MONSTERS, "");
-    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_monster_target_anger(provider->state.q2, actor, target,
-                                          error);
-    return application_fail(error, QA_ERROR_UNSUPPORTED,
-                            "selected monster has no Q2 anger adapter");
+    return monster_acquire_enemy(origin->application, actor, target, true, error);
 }
 
 static bool q2_holds_healthbar(void *opaque, qa_actor_id actor)
