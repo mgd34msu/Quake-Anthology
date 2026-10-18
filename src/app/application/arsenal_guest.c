@@ -961,9 +961,9 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
 }
 
 bool application_arsenal_guest_roles_admit(application_provider *movement,
-    application_provider *arsenal, qa_error *error)
+    application_provider *arsenal, application_provider *character, qa_error *error)
 {
-    return guest_roles_admit(application_guest_input_selected(movement, arsenal, NULL),
+    return guest_roles_admit(application_guest_input_selected(movement, arsenal, character),
         movement, arsenal, error);
 }
 

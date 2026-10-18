@@ -87,7 +87,7 @@ typedef struct application_control_external_stage {
 } application_control_external_stage;
 bool application_arsenal_guest_stage_ready(qa_application *, qa_actor_id);
 bool application_arsenal_guest_roles_admit(application_provider *movement,
-    application_provider *arsenal, qa_error *);
+    application_provider *arsenal, application_provider *character, qa_error *);
 bool application_qc_input_park(application_provider *, qa_actor_id, struct application_qc_parked_input **, qa_error *);
 bool application_qc_input_resume(application_provider *, struct application_qc_parked_input *, qa_error *);
 bool application_qc_input_parked_abort(application_provider *, struct application_qc_parked_input *, qa_error *);

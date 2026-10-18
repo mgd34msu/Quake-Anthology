@@ -4,6 +4,7 @@
 #include "qa/text.h"
 #include "guest_projection_private.h"
 #include "guest_q3_combat.h"
+#include "guest_input_private.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_original_save.h"
@@ -4302,11 +4303,19 @@ bool application_players_bot_allocate(qa_application *app,
     application_provider *character = current_seat_provider(app, &seat, QA_ROLE_CHARACTER);
     application_provider *movement = current_seat_provider(app, &seat, QA_ROLE_MOVEMENT);
     application_provider *arsenal = current_seat_provider(app, &seat, QA_ROLE_ARSENAL);
-    if (!character || character->kind > APPLICATION_PROVIDER_Q3 ||
+    struct application_q3_guest *guest_character = q3g_engine(character);
+    if (!character || (character->kind > APPLICATION_PROVIDER_Q3 && !guest_character) ||
         !movement || (movement->kind > APPLICATION_PROVIDER_Q3 && !q3g_engine(movement)) ||
         !arsenal || !application_bot_arsenal_supported(arsenal))
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "catalogue bot selected roles require native admission owners");
-    if (!application_arsenal_guest_roles_admit(movement, arsenal, error)) return false;
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "catalogue bot selected roles have no supported admission owners");
+    if (guest_character && (!guest_character->game || !guest_character->game->input ||
+        !guest_character->game->combat))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "catalogue original Q3 character requires its actual GAME input and reaction adapters");
+    if (guest_character && application_guest_input_selected(movement, arsenal, character) != character)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "catalogue original Q3 character cannot receive commands through a different guest owner");
+    if (!application_arsenal_guest_roles_admit(movement, arsenal, character, error)) return false;
     uint32_t offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t physical;
     bool available;
