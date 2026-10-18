@@ -7,6 +7,7 @@ typedef struct equipment_scope {
     uint32_t gun;
     size_t source_ordinal;
     void *token;
+    void *capture;
     qa_actor_id actor;
     bool replacing, view, source_pending;
 } equipment_scope;
@@ -190,14 +191,17 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     if (ok) {
         if (replace) scope.gun = scope.frame.start + profile->gun;
         owner->scopes = &scope;
-        ok = qa_qvm_proceed(call, result, error);
+        if (!replace && owner->services.held_source_begin)
+            ok = owner->services.held_source_begin(owner->services.context,
+                scope.actor, scope.view, &parent, &scope.capture, error);
+        if (ok) ok = qa_qvm_proceed(call, result, error);
         owner->scopes = scope.previous;
         bool cancelled = false;
         if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
         if (ok && !cancelled && replace)
             ok = owner->services.held_submit(owner->services.context, scope.token, error);
         if (ok && !cancelled && !replace && owner->services.held_source_completed)
-            ok = owner->services.held_source_completed(owner->services.context, scope.actor, scope.view, error);
+            ok = owner->services.held_source_completed(owner->services.context, scope.capture, error);
     }
     if (scope.token) owner->services.held_release(owner->services.context, scope.token);
     return ok;
@@ -218,7 +222,7 @@ bool application_q3_equipment_source_entity(void *context, const qa_qvm_call *ca
     if (!scope->replacing) {
         scope->source_pending = false;
         if (!owner->services.held_source) return true;
-        return owner->services.held_source(owner->services.context, scope->actor, scope->view,
+        return owner->services.held_source(owner->services.context, scope->capture,
             entity, &scope->source_ordinal, &scope->source_pending, error);
     }
     if (pointer < 0 || (uint32_t)pointer < scope->frame.start ||
@@ -239,8 +243,8 @@ bool application_q3_equipment_source_entity_cancel(application_q3_equipment *own
     bool active;
     if (!selected(owner, &active, error)) return false;
     (void)active;
-    if (!owner->services.held_source_cancel(owner->services.context, scope->actor,
-            scope->view, scope->source_ordinal, error)) return false;
+    if (!owner->services.held_source_cancel(owner->services.context,
+            scope->capture, scope->source_ordinal, error)) return false;
     scope->source_pending = false;
     return true;
 }
@@ -256,8 +260,7 @@ bool application_q3_equipment_source_poly(void *context, const qa_qvm_call *call
     bool active;
     if (!selected(owner, &active, error)) return false;
     (void)active;
-    return owner->services.held_source_poly(owner->services.context, scope->actor,
-        scope->view, vertices, error);
+    return owner->services.held_source_poly(owner->services.context, scope->capture, vertices, error);
 }
 
 bool application_q3_equipment_source_light(void *context, const qa_qvm_call *call, qa_error *error)
@@ -270,7 +273,7 @@ bool application_q3_equipment_source_light(void *context, const qa_qvm_call *cal
     bool active;
     if (!selected(owner, &active, error)) return false;
     (void)active;
-    return owner->services.held_source_light(owner->services.context, scope->actor, scope->view, error);
+    return owner->services.held_source_light(owner->services.context, scope->capture, error);
 }
 
 bool application_q3_equipment_idle(const application_q3_equipment *owner)

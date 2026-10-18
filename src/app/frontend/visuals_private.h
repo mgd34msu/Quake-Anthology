@@ -23,6 +23,9 @@ typedef struct frontend_model {
     const qa_model *model;
     frontend_model_lease *lease;
     qa_scene_model *scene;
+    struct frontend_model *attachment;
+    qa_string_id attachment_tag;
+    bool attachment_prepared;
     qa_string_id path_name;
     const char *path;
 } frontend_model;

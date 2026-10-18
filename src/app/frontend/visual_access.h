@@ -18,6 +18,10 @@ bool frontend_visual_media_acquire(qa_frontend *, qa_actor_owner provider,
 /* Admit currently published actor, static and local weapon resources before
  * any seat starts retaining scene commands. Per-view submission only reads. */
 bool frontend_visuals_prepare(qa_frontend *, qa_error *);
+/* Sample the actual BODY carrier in world space for Q3 weapon-reference
+ * coordinates. Missing authored or admitted carriers leave present false. */
+bool frontend_visual_actor_attachment_sample(qa_frontend *, qa_actor_id,
+    const qa_scene_world_input *, qa_scene_frame *, qa_model_transform *, bool *present, qa_error *);
 /* Pure rendering read of a previously admitted physical media owner. */
 bool frontend_visual_media_read(const qa_frontend *, qa_actor_owner provider,
     qa_game_family, frontend_visual_owner_view *, qa_error *);

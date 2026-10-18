@@ -34,6 +34,8 @@
 #include "particle_delivery.h"
 #include "visuals_private.h"
 #include "equipment_held.h"
+#include "equipment_media.h"
+#include "qa/player_names.h"
 #include <limits.h>
 
 static void visual_content_release(void *context)
@@ -1491,10 +1493,104 @@ static bool static_sources_visit(qa_frontend *frontend, qa_actor_owner exclude,
     return true;
 }
 
+static bool attachment_probe(void *context, qa_string_id path,
+    qa_q2_player_media_kind kind, bool *found, qa_error *error)
+{
+    (void)kind;
+    frontend_visual_owner *owner = context;
+    uint64_t size;
+    return qa_vfs_probe(owner->mounts, qa_strings_cstr(owner->strings, path), found, &size, error);
+}
+
+static bool attachment_prepare(qa_frontend *frontend, frontend_visual_owner *owner,
+    frontend_model *model, qa_error *error)
+{
+    if (model->attachment_prepared) return true;
+    if (!qa_strings_intern_cstr(owner->strings, "tag_weapon", &model->attachment_tag, error)) return false;
+    qa_scene_model_input pose = {0};
+    qa_model_transform_identity(&pose.transform);
+    frontend_held_carrier carrier;
+    bool present;
+    if (!frontend_held_carrier_scene_prepare(model->scene, &pose, model->attachment_tag,
+        &carrier, &present, error)) return false;
+    if (present) { model->attachment_prepared = true; return true; }
+    static const char prefix[] = "players/", suffix[] = "/tris.md2";
+    size_t length = strlen(model->path);
+    if (owner->family == QA_GAME_Q2 && length > sizeof(prefix) + sizeof(suffix) - 2 &&
+        !memcmp(model->path, prefix, sizeof(prefix) - 1) &&
+        !memcmp(model->path + length - (sizeof(suffix) - 1), suffix, sizeof(suffix) - 1)) {
+        qa_q2_player_media media = {0};
+        qa_string_id weapon;
+        qa_bytes name = {(const uint8_t *)model->path + sizeof(prefix) - 1,
+            length - (sizeof(prefix) - 1) - (sizeof(suffix) - 1)};
+        if (!qa_strings_intern(owner->strings, name, &media.model_name, error) ||
+            !qa_strings_intern_cstr(owner->strings, "weapon.md2", &weapon, error) ||
+            !qa_q2_player_media_resolve(owner->strings, NULL, &weapon, 1,
+                owner->rules == QA_RULESET_Q2_RERELEASE, 0, true, false,
+                attachment_probe, owner, &media, error)) return false;
+        if (media.weapon_valid && !model_read(frontend, owner, media.weapons[0], NULL, NULL,
+                false, 0, &model->attachment, error)) return false;
+    }
+    model->attachment_prepared = true;
+    return true;
+}
+
 static bool visual_model_visible(qa_application_visual_view *view)
 {
     if (view->family == QA_GAME_Q2 && view->visual.scale == 0) view->visual.scale = 1;
     return view->visual.alpha > 0 && view->visual.scale != 0;
+}
+
+static qa_scene_model_input visual_model_input(const qa_application_visual_view *view,
+    const frontend_visual_owner *owner, const frontend_model *model,
+    const qa_scene_world_input *world, qa_model_transform placement, float back_lerp)
+{
+    return (qa_scene_model_input){.view = world->view, .transform = placement,
+        .previous_origin = view->previous_origin, .color = {1, 1, 1, view->visual.alpha},
+        .family = owner->family, .model_beam = view->model_beam,
+        .beam_segment_length = (float)view->visual.frame,
+        .frame = view->visual.frame >= 0 ? (uint32_t)view->visual.frame : 0,
+        .old_frame = view->visual.old_frame >= 0 ? (uint32_t)view->visual.old_frame :
+            view->visual.frame >= 0 ? (uint32_t)view->visual.frame : 0,
+        .skin = view->visual.skin >= 0 ? (uint32_t)view->visual.skin : 0,
+        .flags = view->visual.render_flags, .back_lerp = back_lerp,
+        .entity = view->actor.slot, .identity_light = world->identity_light,
+        .seconds = world->seconds, .ambient = {1, 1, 1}, .fog = world->fog,
+        .source_path = model->path};
+}
+
+bool frontend_visual_actor_attachment_sample(qa_frontend *frontend, qa_actor_id actor,
+    const qa_scene_world_input *world, qa_scene_frame *frame, qa_model_transform *out,
+    bool *present, qa_error *error)
+{
+    *present = false;
+    qa_application_visual_view view;
+    bool found;
+    if (!frontend_particle_visual_read(frontend, actor, &view, &found, error)) return false;
+    if (!found || !view.visual.visible || !visual_model_visible(&view) ||
+        view.visual.has_inline_model || !view.visual.models[0]) return true;
+    const frontend_visual_owner *owner = visual_owner_cached(frontend, view.provider, view.family,
+        qa_application_provider_files(frontend->application, view.provider), true);
+    const frontend_model *model = owner ? model_cached(owner, view.visual.models[0],
+        view.model_resources[0], view.family == QA_GAME_Q1 && view.visual.has_player_colors,
+        view.visual.player_colors) : NULL;
+    if (!model || !model->attachment_prepared) return true;
+    float back_lerp;
+    qa_vec3 angles;
+    if (!frontend_particle_q2_entity_sample(frontend, &view, &back_lerp, error) ||
+        !entity_angles(frontend, &view, model->model, &angles, error)) return false;
+    qa_model_transform placement;
+    qa_model_transform_from_angles(&placement, view.body.origin, angles,
+        view.visual.scale, QA_ANGLE_FLOAT_MATH);
+    qa_scene_model_input input = visual_model_input(&view, owner, model, world, placement, back_lerp);
+    frontend_held_carrier carrier;
+    if (!frontend_held_carrier_scene_prepare(model->scene, &input, model->attachment_tag,
+        &carrier, present, error)) return false;
+    if (!*present && model->attachment &&
+        !frontend_held_carrier_scene_prepare(model->attachment->scene, &input, model->attachment_tag,
+            &carrier, present, error)) return false;
+    if (!*present) return true;
+    return frontend_held_carrier_sample(&carrier, &world->view, frame, out, present, error);
 }
 
 bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
@@ -1534,6 +1630,7 @@ bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
                     &model, error)) return false;
                 if (!part && view.skin_path && !qa_scene_model_resource_admit(model->scene,
                     owner->materials,view.skin_path,error)) return false;
+                if (!part && !attachment_prepare(frontend, owner, model, error)) return false;
                 if (!part && !frontend_particle_visual_admit(frontend, &view, model->model, error)) return false;
             }
         }
@@ -1632,16 +1729,10 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 qa_model_transform_from_angles(&model_placement, view.body.origin, angles,
                     view.visual.scale, QA_ANGLE_FLOAT_MATH);
             }
-            qa_scene_model_input input = {.view = world->view, .transform = model_placement,
-                .previous_origin = view.previous_origin, .color = color, .family = owner->family,
-                .model_beam = view.model_beam, .beam_segment_length = (float)view.visual.frame,
-                .frame = view.visual.frame >= 0 ? (uint32_t)view.visual.frame : 0,
-                .old_frame = view.visual.old_frame >= 0 ? (uint32_t)view.visual.old_frame : view.visual.frame >= 0 ? (uint32_t)view.visual.frame : 0,
-                .skin = view.visual.skin >= 0 ? (uint32_t)view.visual.skin : 0, .flags = view.visual.render_flags,
-                .back_lerp=q2_back_lerp,
-                .entity = actor.slot, .identity_light = world->identity_light, .seconds = world->seconds,
-                .ambient = {1, 1, 1}, .fog = world->fog, .source_path = path,
-                .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
+            qa_scene_model_input input = visual_model_input(&view, owner, model, world,
+                model_placement, q2_back_lerp);
+            input.video_frame = frontend_material_movies_frontend_resolve;
+            input.video_context = frontend;
             if (!part && view.skin_path && !qa_scene_model_material(model->scene,owner->materials,
                 view.skin_path,&input.custom_material,error)) return false;
             if (!qa_scene_world_sample_light_input(frontend->scene_world, world, view.body.origin,

@@ -34,14 +34,12 @@ bool frontend_equipment_source_destroy(frontend_equipment_source *, qa_error *);
 void frontend_equipment_source_clear(frontend_equipment_source *);
 /* Actual declared weapon scopes attribute Source queue indices to full actors.
  * Borrow these only at the successful scene_completed callback before clear. */
-bool frontend_equipment_source_scene_actors(const frontend_equipment_source *,
-    size_t entity_count, qa_actor_id *out, qa_error *);
-bool frontend_equipment_source_scene_views(const frontend_equipment_source *,
-    size_t entity_count, bool *out, qa_error *);
+bool frontend_equipment_source_scene_entities(const frontend_equipment_source *,
+    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
 bool frontend_equipment_source_scene_polygons(const frontend_equipment_source *,
-    size_t polygon_count, qa_actor_id *actors, bool *views, qa_error *);
+    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
 bool frontend_equipment_source_scene_lights(const frontend_equipment_source *,
-    size_t light_count, qa_actor_id *actors, bool *views, qa_error *);
+    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
 bool frontend_equipment_source_scene_weapons(const frontend_equipment_source *,
     const qa_application_q3_equipment_source_weapon **rows, size_t *count, qa_error *);
 bool frontend_equipment_source_rebind_ready(const frontend_equipment_source *,

@@ -9,7 +9,7 @@ bool frontend_scene_lights_merge(qa_arena *,qa_scene_world_input *,size_t upper_
     frontend_scene_light_read,void *,bool project,qa_error *);
 bool frontend_scene_lights_span_merge(qa_arena *,qa_scene_world_input *,
     const qa_scene_light *,size_t,bool project,qa_error *);
-bool frontend_scene_lights_companion_merge(qa_arena *,qa_scene_world_input *,
+bool frontend_scene_lights_companion_merge(qa_frontend *,qa_arena *,qa_scene_world_input *,
     const frontend_source_companion_selection *,bool skip_view,qa_error *);
 typedef struct frontend_scene_component_span {
     const qa_frontend *frontend;

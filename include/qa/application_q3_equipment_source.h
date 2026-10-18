@@ -3,6 +3,7 @@
 
 #include "qa/application_equipment.h"
 #include "qa/q3_host.h"
+#include "qa/model.h"
 
 typedef struct qa_application_q3_equipment_draw {
     qa_actor_id actor;
@@ -13,6 +14,8 @@ typedef struct qa_application_q3_equipment_draw {
 typedef struct qa_application_q3_equipment_source_weapon {
     qa_actor_id actor;
     bool view;
+    qa_model_transform attachment;
+    bool has_attachment;
 } qa_application_q3_equipment_source_weapon;
 
 /* The real client frontend lease owns the callback context. Preparation fills
@@ -32,12 +35,14 @@ typedef struct qa_application_q3_equipment_services {
     void (*held_release)(void *, void *token);
     /* Observes refs emitted inside the real declared weapon function while
      * Source proceeds unchanged. View is its actual player-state argument. */
-    bool (*held_source)(void *, qa_actor_id, bool view, const qa_q3_ref_entity *,
+    bool (*held_source_begin)(void *, qa_actor_id, bool view,
+        const qa_q3_ref_entity *, void **capture, qa_error *);
+    bool (*held_source)(void *, void *capture, const qa_q3_ref_entity *,
         size_t *ordinal, bool *observed, qa_error *);
-    bool (*held_source_cancel)(void *, qa_actor_id, bool view, size_t ordinal, qa_error *);
-    bool (*held_source_poly)(void *, qa_actor_id, bool view, size_t vertices, qa_error *);
-    bool (*held_source_light)(void *, qa_actor_id, bool view, qa_error *);
-    bool (*held_source_completed)(void *, qa_actor_id, bool view, qa_error *);
+    bool (*held_source_cancel)(void *, void *capture, size_t ordinal, qa_error *);
+    bool (*held_source_poly)(void *, void *capture, size_t vertices, qa_error *);
+    bool (*held_source_light)(void *, void *capture, qa_error *);
+    bool (*held_source_completed)(void *, void *capture, qa_error *);
 } qa_application_q3_equipment_services;
 
 /* Pure requests from the current actual CGAME owner, during RenderScene or

@@ -52,24 +52,35 @@ bool frontend_scene_lights_span_merge(qa_arena *storage,qa_scene_world_input *wo
 }
 
 typedef struct companion_lights {
+    qa_frontend *frontend;const qa_scene_world_input *world;
     const frontend_source_companion_selection *selection;size_t next;bool skip_view;
 } companion_lights;
 static bool companion_read(void *context,qa_scene_light *light,const qa_q3_refdef **definition,
     bool *view,bool *present,qa_error *error)
 {
-    (void)error;companion_lights *cursor=context;*present=false;
+    companion_lights *cursor=context;*present=false;
     while(cursor->next<cursor->selection->light_count) {
         const frontend_source_companion_light *row=cursor->selection->lights+cursor->next++;
         if(row->view && cursor->skip_view) continue;
         *light=row->light;*definition=row->definition;*view=row->view;*present=true;
+        if (!row->view) {
+            qa_model_transform remap;bool moved;
+            if (!frontend_source_companion_attachment_remap(cursor->frontend,cursor->selection->actor,
+                    row->weapon,cursor->world,&remap,&moved,error)) return false;
+            if (moved) {
+                float origin[3]={light->origin.x,light->origin.y,light->origin.z},placed[3];
+                qa_model_transform_point(&remap,origin,placed);
+                light->origin=qa_v3(placed[0],placed[1],placed[2]);
+            }
+        }
         break;
     }
     return true;
 }
-bool frontend_scene_lights_companion_merge(qa_arena *storage,qa_scene_world_input *world,
+bool frontend_scene_lights_companion_merge(qa_frontend *frontend,qa_arena *storage,qa_scene_world_input *world,
     const frontend_source_companion_selection *selection,bool skip_view,qa_error *error)
 {
-    companion_lights cursor={.selection=selection,.skip_view=skip_view};
+    companion_lights cursor={.frontend=frontend,.world=world,.selection=selection,.skip_view=skip_view};
     return frontend_scene_lights_merge(storage,world,selection->light_count,companion_read,&cursor,true,error);
 }
 
