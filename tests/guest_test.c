@@ -44,7 +44,7 @@ static qa_qc_program *guest_program(qa_qc_api api, bool alpha_field)
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
         "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0tag\0find\0"
         "use\0targetname\0target\0killtarget\0classname\0message\0delay\0wait\0"
-        "self\0other\0activator\0time\0target_use\0alpha\0";
+        "self\0other\0activator\0time\0target_use\0alpha\0flags\0enemy\0FoundTarget\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
@@ -65,13 +65,14 @@ static qa_qc_program *guest_program(qa_qc_api api, bool alpha_field)
         {"nested", 6, 35, 1}, {"normalize", -9, 0, 0}, {"vlen", -12, 0, 0},
         {"rint", -36, 0, 0}, {"spawn", -14, 0, 0},
         {"setorigin", -2, 0, 0}, {"remove", -15, 0, 0},
-        {"projected", 10, 0, 0}, {"random", -7, 0, 0}, {"find", -18, 0, 0}, {"target_use", 18, 0, 0}
+        {"projected", 10, 0, 0}, {"random", -7, 0, 0}, {"find", -18, 0, 0}, {"target_use", 18, 0, 0},
+        {"FoundTarget", 18, 0, 0}
     };
     const uint32_t statement_count = (uint32_t)(sizeof(statements) / sizeof(*statements));
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
     const uint32_t statements_at = 60, definitions_at = statements_at + statement_count * 8;
     const uint32_t fields_at = definitions_at + 4 * 8;
-    const uint32_t field_count = alpha_field ? 14u : 13u;
+    const uint32_t field_count = alpha_field ? 16u : 15u;
     const uint32_t functions_at = fields_at + field_count * 8;
     const uint32_t strings_at = functions_at + function_count * 36;
     const uint32_t globals_at = strings_at + (uint32_t)sizeof(strings);
@@ -87,7 +88,7 @@ static qa_qc_program *guest_program(qa_qc_api api, bool alpha_field)
         qa_store_u32le(bytes + sections[i][0], sections[i][1]);
         qa_store_u32le(bytes + sections[i][0] + 4, sections[i][2]);
     }
-    qa_store_u32le(bytes + 56, alpha_field ? 22u : 21u);
+    qa_store_u32le(bytes + 56, alpha_field ? 24u : 23u);
     memcpy(bytes + strings_at, strings, sizeof(strings));
     for (uint32_t i = 0; i < statement_count; ++i) {
         uint8_t *record = bytes + statements_at + i * 8;
@@ -97,11 +98,11 @@ static qa_qc_program *guest_program(qa_qc_api api, bool alpha_field)
         qa_store_u16le(record + 6, statements[i].c);
     }
     const char *fields[] = {"origin", "mins", "maxs", "size", "tag",
-        "targetname", "target", "killtarget", "classname", "message", "delay", "wait", "use", "alpha"};
+        "targetname", "target", "killtarget", "classname", "message", "delay", "wait", "use", "flags", "enemy", "alpha"};
     for (uint32_t i = 0; i < field_count; ++i) {
         uint8_t *record = bytes + fields_at + i * 8;
         qa_store_u16le(record, i < 4 ? QA_QC_VECTOR : i < 10 ? QA_QC_STRING :
-            i == 12 ? QA_QC_FUNCTION : QA_QC_FLOAT);
+            i == 12 ? QA_QC_FUNCTION : i == 14 ? QA_QC_ENTITY : QA_QC_FLOAT);
         qa_store_u16le(record + 2, (uint16_t)(i < 5 ? i * 3 : i + 8));
         for (size_t offset = 0; offset < sizeof(strings); offset += strlen(strings + offset) + 1)
             if (!strcmp(strings + offset, fields[i]))
@@ -322,6 +323,27 @@ static void shared_targets(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_targets_read(app.targets, foreign, &fields) && fields.targetname == native_name);
     GAME_CHECK(qa_targets_invoke(app.targets, self, foreign, activator, &error));
     GAME_CHECK(qa_qc_global_float(vm, 58, &number, &error) && number == 1);
+    GAME_CHECK(qa_qc_set_entity_float(vm, references[1], engine.field_bindings->flags->offset, 512, &error));
+    GAME_CHECK(application_qc_mark_monster_target(&provider, self, &error));
+    GAME_CHECK(qa_qc_entity_float(vm, references[1], engine.field_bindings->flags->offset,
+        &number, &error) && number == 544);
+    qa_error unsupported = {0};
+    GAME_CHECK(!application_qc_mark_monster_target(&provider, foreign, &unsupported) &&
+        unsupported.code == QA_ERROR_UNSUPPORTED);
+    unsupported = (qa_error){0};
+    GAME_CHECK(!application_qc_acquire_enemy(&provider, self, foreign, &unsupported) &&
+        unsupported.code == QA_ERROR_UNSUPPORTED);
+    GAME_CHECK(qa_qc_entity_int(vm, references[1], engine.field_bindings->enemy->offset, &observed, &error) && observed == 0);
+    engine.found_target.function = qa_qc_program_find_function(fixture->program,
+        "FoundTarget", &engine.found_target.index);
+    GAME_CHECK(engine.found_target.function);
+    GAME_CHECK(application_qc_acquire_enemy(&provider, self, foreign, &error));
+    GAME_CHECK(qa_qc_entity_int(vm, references[1], engine.field_bindings->enemy->offset, &observed, &error) &&
+        observed == references[3]);
+    GAME_CHECK(qa_qc_global_float(vm, 58, &number, &error) && number == 2);
+    GAME_CHECK(qa_qc_global_int(vm, 54, &observed, &error) && observed == references[1]);
+    for (uint32_t i = 0; i < 3; ++i)
+        GAME_CHECK(qa_qc_global_int(vm, 50 + i, &observed, &error) && observed == saved[i]);
     qa_target_use remove = {.source = self, .activator = activator,
         .dialect = QA_RULESET_NETQUAKE, .fields.killtarget = native_name};
     GAME_CHECK(qa_targets_use_now(app.targets, &remove, &error));

@@ -2342,6 +2342,33 @@ static bool q2_target_anger(void *opaque, qa_actor_id actor,
     return monster_acquire_enemy(origin->application, actor, target, true, error);
 }
 
+static bool q2_mark_monster_target(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    application_provider *origin = opaque;
+    application_provider *provider = application_provider_for(
+        origin->application, actor, QA_ROLE_ENTITIES, "");
+    if (provider) switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1: {
+        qa_physics_properties physical;
+        if (!qa_q1_game_physics_read(provider->state.q1, actor, &physical))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Monster target has no Q1 entity fields");
+        physical.flags |= QA_PHYSICS_MONSTER;
+        return qa_q1_game_physics_write(provider->state.q1, actor, &physical, error);
+    }
+    case APPLICATION_PROVIDER_Q2:
+        return qa_q2_monster_target_classify(provider->state.q2, actor,
+            origin->component.clock.kind == QA_RULESET_Q2_RERELEASE, error);
+    case APPLICATION_PROVIDER_QC:
+        return application_qc_mark_monster_target(provider, actor, error);
+    case APPLICATION_PROVIDER_QVM:
+    case APPLICATION_PROVIDER_NATIVE:
+    case APPLICATION_PROVIDER_Q3:
+        break;
+    }
+    return application_fail(error, QA_ERROR_UNSUPPORTED,
+        "Selected entity has no monster-target classification operation");
+}
+
 static bool q2_holds_healthbar(void *opaque, qa_actor_id actor)
 {
     application_provider *origin = opaque;
@@ -2385,6 +2412,7 @@ static qa_q2_entity_services q2_entity_services(application_provider *provider,
         .path_follower = q2_monster_path_follower,
         .path_advance = q2_monster_path_advance,
         .target_anger = q2_target_anger,
+        .mark_monster_target = q2_mark_monster_target,
         .holds_healthbar = q2_holds_healthbar,
         .camera_player = q2_camera_player,
     };

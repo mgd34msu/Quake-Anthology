@@ -127,6 +127,38 @@ bool application_qc_acquire_enemy(application_provider *provider, qa_actor_id ac
         application_qc_publish_client_outputs(engine, error);
 }
 
+bool application_qc_mark_monster_target(application_provider *provider, qa_actor_id actor,
+    qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    const qa_qc_definition *field = engine ? engine->field_bindings->flags : NULL;
+    if (!engine || !field || field->type != QA_QC_FLOAT)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "QuakeC monster classification requires a flags field");
+    const qa_actor_registry *actors = qa_session_actors(engine->services.session);
+    if (!qa_actors_get(actors, actor)) return true;
+    uint32_t slot;
+    if (!owned_slot(engine, actor, &slot, NULL))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "QuakeC monster classification requires an owned entity");
+    qa_qc_instance *vm = provider->state.qc.instance;
+    float flags;
+    int32_t reference;
+    if (!qa_qc_actor_observation_float(vm, slot, actor, field->offset, &flags, error) ||
+        !qa_qc_slot_reference(vm, slot, &reference, error)) return false;
+    uint32_t bits = (uint32_t)qa_source_to_i32(flags) | 32u;
+    int32_t value;
+    memcpy(&value, &bits, sizeof(value));
+    if (flags == (float)value) return true;
+    bool ok = qa_qc_set_entity_float(vm, reference, field->offset, (float)value, error);
+    if (!qa_actors_get(actors, actor)) {
+        if (error) *error = (qa_error){0};
+        return true;
+    }
+    return ok;
+}
+
 static bool set_name(struct application_qc_state *engine, qa_actor_id actor,
     const qa_qc_definition *definition, qa_string_id name, qa_error *error)
 {
