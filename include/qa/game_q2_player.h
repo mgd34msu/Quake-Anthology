@@ -159,7 +159,7 @@ typedef struct qa_q2_player_services {
     bool (*spawned)(void *, qa_actor_id, qa_error *);
     /* The complete source placement, including post-respawn motion/events,
      * precedes this callback. It does not replace inventory's spawned hook. */
-    bool (*spawn_completed)(void *, qa_actor_id, qa_error *);
+    bool (*spawn_completed)(void *, qa_actor_id, qa_actor_id point, qa_error *);
     /* Borrowed CHARACTER members ask the selected campaign to place the same
      * actor before qa_q2_character_respawned publishes its source reset. */
     bool (*request_respawn)(void *, qa_actor_id, qa_error *);

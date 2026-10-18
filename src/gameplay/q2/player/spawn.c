@@ -115,16 +115,17 @@ static bool player_start_items(void *context, qa_actor_id id, qa_error *e) {
 bool qa_q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     return qa_q2_run_actor(g, id, player_start_items, g, e);
 }
-static bool spawn_completed(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+static bool spawn_completed(qa_q2_game *g, qa_actor_id id, qa_actor_id point, qa_error *e) {
     q2_actor *a = q2_actor_live(g, id) ? q2_actor_get(g, id, false, NULL) : NULL;
     if (!a || !a->client || !a->client->info.connected || !a->client->rule.spawned ||
         a->client->rule.awaiting_respawn)
         return true;
     qa_q2_player_services *services = &g->player_runtime->services;
-    return !services->spawn_completed || services->spawn_completed(services->context, id, e);
+    return !services->spawn_completed || services->spawn_completed(services->context, id, point, e);
 }
 static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
-    const qa_q2_landmark *landmark, bool complete, qa_error *e) {
+    const qa_q2_landmark *landmark, bool complete, qa_actor_id *spawn_point, qa_error *e) {
+    if (spawn_point) *spawn_point = (qa_actor_id){0};
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
@@ -142,10 +143,11 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     }
     qa_body_state body;
     qa_vec3 command_view;
+    qa_actor_id point;
     bool found;
     if (!q2_player_spawn_select(g, a, &movement,
                                 s->rule.has_pending_landmark ? &s->rule.pending_landmark : NULL, &body,
-                                &command_view, NULL, &found, e))
+                                &command_view, &point, &found, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
@@ -362,11 +364,12 @@ static bool player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     }
     if (!q2_actor_live(g, id)) return true;
     if (was_waiting && !post_respawn(g, a, e)) return false;
-    return !complete || spawn_completed(g, id, e);
+    if (spawn_point) *spawn_point = point;
+    return !complete || spawn_completed(g, id, point, e);
 }
 bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore,
     const qa_q2_landmark *landmark, qa_error *e) {
-    return player_spawn(g, id, restore, landmark, true, e);
+    return player_spawn(g, id, restore, landmark, true, NULL, e);
 }
 bool qa_q2_player_map_spawn_pose(qa_q2_game *g, qa_actor_id id, const qa_bounds *bounds,
     const qa_q2_landmark *landmark, qa_body_state *out, qa_actor_id *point, bool *found, qa_error *e) {
@@ -422,11 +425,12 @@ bool qa_q2_player_respawn(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_actor_live(g, id))
         return true;
-    if (!player_spawn(g, id, true, NULL, false, e))
+    qa_actor_id point;
+    if (!player_spawn(g, id, true, NULL, false, &point, e))
         return false;
     if (!q2_actor_live(g, id) || a->client->rule.awaiting_respawn)
         return true;
-    return post_respawn(g, a, e) && spawn_completed(g, id, e);
+    return post_respawn(g, a, e) && spawn_completed(g, id, point, e);
 }
 bool qa_q2_player_teleport(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, qa_vec3 angles,
                            qa_error *e) {

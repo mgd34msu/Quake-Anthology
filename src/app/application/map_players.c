@@ -2149,7 +2149,8 @@ static bool q2_source_spawned(void *context, qa_actor_id actor, qa_error *error)
     return application_supplies_spawn(application->supplies, provider, actor, error);
 }
 
-static bool q2_source_spawn_completed(void *context, qa_actor_id actor, qa_error *error)
+static bool q2_source_spawn_completed(void *context, qa_actor_id actor, qa_actor_id point,
+    qa_error *error)
 {
     application_provider *provider = context;
     qa_application *app = provider ? provider->application : NULL;
@@ -2157,7 +2158,15 @@ static bool q2_source_spawn_completed(void *context, qa_actor_id actor, qa_error
         !provider->attached || provider->close_pending || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Completed Q2 spawn lost its actual source");
     if (application_world_provider(app, QA_ROLE_ENTITIES, "") != provider) return true;
-    return application_players_source_spawned(provider, actor, error);
+    if (!point.registry || !app->players)
+        return application_players_source_spawned(provider, actor, error);
+    application_player_spawn_scope scope = {.previous = app->players->spawning,
+        .actor = actor, .point = point};
+    if (!qa_world_body_read(app->world, actor, &scope.body, error)) return false;
+    app->players->spawning = &scope;
+    bool okay = application_players_source_spawned(provider, actor, error);
+    app->players->spawning = scope.previous;
+    return okay;
 }
 
 static bool q2_score_read(void *context, qa_actor_id actor, int32_t *out, qa_error *error)
