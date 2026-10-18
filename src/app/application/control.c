@@ -3556,6 +3556,9 @@ bool qa_application_q3_input_values_read(qa_application *app,uint32_t seat,qa_ac
             !qa_q3_player_read(arsenal->state.q3,actor,&player) || !(player.selections&QA_Q3_ARSENAL))
             return application_fail(error,QA_ERROR_ARGUMENT,"Q3 command selection lost its actual selected arsenal");
         selected=(uint8_t)player.requested_weapon; found=true;
+    } else if (arsenal && arsenal!=primary && q3g_engine(arsenal)) {
+        if (!application_q3_guest_input_values_read(arsenal,seat,actor,&selected,&scale,error)) return false;
+        found=true;
     }
     if (found) { *weapon=selected; *sensitivity=scale; }
     *present=found;
