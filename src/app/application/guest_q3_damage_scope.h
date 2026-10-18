@@ -11,6 +11,9 @@ bool application_q3_damage_scopes_create(struct q3g_role *,
 bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **, qa_error *);
 bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *);
 bool application_q3_damage_scopes_quiescent(const application_q3_damage_scopes *);
+bool application_q3_damage_scopes_enter(application_q3_damage_scopes *,
+    qa_qvm_function_resolver, void *, qa_error *);
+bool application_q3_damage_scopes_leave(application_q3_damage_scopes *, qa_error *);
 void application_q3_damage_scopes_health_projected(application_q3_damage_scopes *, qa_actor_id, double);
 bool application_q3_damage_scope_run(application_q3_damage_scopes *,
     const qa_qvm_call *, const application_q3_combat_actor *,

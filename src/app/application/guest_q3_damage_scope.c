@@ -38,6 +38,9 @@ struct application_q3_damage_scopes {
     const application_q3_combat_profile *profile;
     application_q3_damage_frame *current, *retained;
     qa_qvm_binding resolver;
+    qa_qvm_function_resolver fallback;
+    void *fallback_context;
+    size_t entries;
     size_t frame_bytes;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
@@ -114,7 +117,10 @@ static bool reaction_enter(void *context, const qa_qvm_call *call, int32_t *resu
                 (live || application_q3_damage_scope_cancel(frame, error));
         }
     }
-    return qa_qvm_proceed(call, result, error);
+    void *hook_context = NULL;
+    qa_qvm_function_hook hook = owner->fallback ?
+        owner->fallback(owner->fallback_context, call, &hook_context) : NULL;
+    return hook ? hook(hook_context, call, result, error) : qa_qvm_proceed(call, result, error);
 }
 static qa_qvm_function_hook reaction_resolve(void *context, const qa_qvm_call *call, void **hook_context)
 {
@@ -127,7 +133,7 @@ static qa_qvm_function_hook reaction_resolve(void *context, const qa_qvm_call *c
                 return reaction_enter;
             }
     }
-    return NULL;
+    return owner->fallback ? owner->fallback(owner->fallback_context, call, hook_context) : NULL;
 }
 static bool reaction_refresh(reaction_watch *watch, qa_error *error)
 {
@@ -248,7 +254,7 @@ static bool frame_close(application_q3_damage_frame *frame, qa_error *error)
         if (qa_qvm_unobserve_writes(frame->call.vm, frame->writes, &current)) frame->writes = 0;
         else { first = current; ok = false; }
     }
-    if (!frame->previous && frame->owner->resolver) {
+    if (!frame->previous && !frame->owner->entries && frame->owner->resolver) {
         qa_error current = {0};
         if (qa_qvm_unbind(frame->call.vm, frame->owner->resolver, &current)) frame->owner->resolver = 0;
         else if (ok) { first = current; ok = false; }
@@ -288,6 +294,22 @@ bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *owner
 { return owner && !owner->current && !owner->retained && !owner->resolver; }
 bool application_q3_damage_scopes_quiescent(const application_q3_damage_scopes *owner)
 { return owner && !owner->current; }
+bool application_q3_damage_scopes_enter(application_q3_damage_scopes *owner,
+    qa_qvm_function_resolver fallback, void *context, qa_error *error)
+{
+    if (!owner->entries && !owner->resolver &&
+        !qa_qvm_bind_resolver(owner->role->vm, reaction_resolve, owner, &owner->resolver, error)) return false;
+    owner->fallback = fallback; owner->fallback_context = context;
+    ++owner->entries;
+    return true;
+}
+bool application_q3_damage_scopes_leave(application_q3_damage_scopes *owner, qa_error *error)
+{
+    if (--owner->entries || owner->current) return true;
+    if (owner->resolver && !qa_qvm_unbind(owner->role->vm, owner->resolver, error)) return false;
+    owner->resolver = 0; owner->fallback = NULL; owner->fallback_context = NULL;
+    return true;
+}
 void application_q3_damage_scopes_health_projected(application_q3_damage_scopes *owner,
     qa_actor_id actor, double health)
 {
@@ -299,7 +321,7 @@ bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa
 {
     if (!out || !*out) return true;
     application_q3_damage_scopes *owner = *out;
-    if (owner->current) return fail(error, QA_ERROR_ARGUMENT, "Original Q3 damage scopes still borrow source frames");
+    if (owner->current || owner->entries) return fail(error, QA_ERROR_ARGUMENT, "Original Q3 damage scopes still borrow source frames");
     while (owner->retained) {
         application_q3_damage_frame *frame = owner->retained;
         if (!frame_close(frame, error)) return false;
@@ -359,7 +381,7 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
         ok = reaction_refresh(frame->reactions, error) && reaction_refresh(frame->reactions + 1, error) &&
             qa_qvm_observe_writes_owned(call->vm, ranges, count, store_publish, store_after,
                 store_dispose, frame, &frame->writes, error);
-        if (ok && !frame->previous)
+        if (ok && !frame->previous && !owner->resolver)
             ok = qa_qvm_bind_resolver(call->vm, reaction_resolve, owner, &owner->resolver, error);
     }
     int32_t ignored;

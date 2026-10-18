@@ -32,13 +32,15 @@ struct application_q3_combat {
     qa_actor_index actor_index;
     qa_unified_frame_lease *actor_storage;
     qa_pool actor_pool;
+    qa_id_index reactions;
     size_t actor_chunk;
     combat_actor *actors;
     combat_actor *retired;
     incoming_damage *incoming;
     qa_qvm_binding bindings[3];
     uint64_t sequence;
-    size_t count, calls;
+    size_t count, calls, source_entries;
+    bool direct_bound;
 };
 static qa_combat *shared(application_q3_combat *owner)
 { return owner->role->engine->provider->application->combat; }
@@ -324,6 +326,146 @@ static bool vector(application_q3_combat *owner, int32_t pointer, qa_vec3 *out, 
     *out = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
     return qa_vec_finite(*out) || application_fail(error, QA_ERROR_ARGUMENT, "Original damage has nonfinite source geometry");
 }
+static bool attack_source(application_q3_combat *owner, qa_damage_request *request,
+    int32_t method, uint32_t flags, qa_error *error)
+{
+    application_provider *source = owner->role->engine->provider;
+    qa_application *app = source->application;
+    qa_clock_state clock;
+    if (!qa_session_clock(app->session, source->owner, &clock) ||
+        clock.frame.provider != source->owner || clock.frame.kind != QA_RULESET_Q3)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Reached Source damage has no actual Q3 clock");
+    application_provider *combat = application_provider_for(app, request->target, QA_ROLE_COMBAT, "");
+    application_provider *movement = application_provider_for(app, request->target, QA_ROLE_MOVEMENT, "");
+    application_provider *inventory = application_provider_for(app, request->attack.attacker, QA_ROLE_INVENTORY, "");
+    request->attack.time_ns = clock.frame.time_ns;
+    request->attack.combat_provider = combat ? combat->owner : 0;
+    request->attack.weapon_provider = source->owner;
+    request->attack.movement_provider = movement ? movement->owner : 0;
+    request->attack.inventory_provider = inventory ? inventory->owner : 0;
+    request->attack.cause = (qa_damage_cause){.kind = QA_CAUSE_Q3,
+        .source.q3 = {method, application_q3_combat_canonical_flags(
+            application_q3_combat_profile_definition(owner->profile), flags)}};
+    return qa_attack_next(&owner->sequence, &request->attack, error);
+}
+typedef struct direct_reaction {
+    application_q3_combat *owner;
+    const qa_qvm_call *call;
+    int32_t *result;
+    qa_damage_result reaction;
+} direct_reaction;
+static bool direct_original(void *context, qa_error *error)
+{
+    direct_reaction *reaction = context;
+    return qa_qvm_proceed(reaction->call, reaction->result, error);
+}
+static bool direct_dispatch(void *context, qa_source_reaction_observer *observer, qa_error *error)
+{
+    direct_reaction *reaction = context;
+    return qa_source_reaction_dispatch(observer, &reaction->reaction, 0, (qa_vec3){0},
+        reaction->owner->role->engine->provider->owner, direct_original, reaction, error);
+}
+static bool direct_enter(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+{
+    application_q3_combat *owner = context;
+    application_provider *source = owner->role->engine->provider;
+    qa_application *app = source->application;
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    const qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, call->instruction, 0);
+    size_t kinds = entry ? entry->value : 0;
+    const application_q3_reaction_call *arguments[] = {&d->reactions.pain_call, &d->reactions.die_call};
+    const uint32_t offsets[] = {d->reactions.pain, d->reactions.die};
+    for (size_t i = 0; i < 2; ++i) {
+        if (!(kinds & (1u << i))) continue;
+        const application_q3_reaction_call *a = arguments[i];
+        int32_t target, callback, amount, attacker, inflictor = 0, method = 0;
+        qa_actor_id actor;
+        if (!qa_qvm_call_argument(call, a->target, &target, error) ||
+            !pointer_actor(owner, target, &actor, error)) return false;
+        if (!actor.registry || application_provider_for(app, actor, QA_ROLE_CHARACTER, "") == source) continue;
+        application_q3_combat_actor original;
+        if (!application_q3_combat_actor_read(owner->role, owner->profile, actor, &original, error) ||
+            !application_q3_combat_word_read(&original, original.entity + offsets[i], &callback, error)) return false;
+        if ((uint32_t)callback != call->instruction) continue;
+        if (!qa_qvm_call_argument(call, a->amount, &amount, error) ||
+            !qa_qvm_call_argument(call, a->attacker, &attacker, error) ||
+            (a->inflictor != UINT32_MAX && !qa_qvm_call_argument(call, a->inflictor, &inflictor, error)) ||
+            (a->method != UINT32_MAX && !qa_qvm_call_argument(call, a->method, &method, error))) return false;
+        qa_damage_request request = {.target = actor, .amount = amount};
+        if (!pointer_actor(owner, attacker, &request.attack.attacker, error) ||
+            !pointer_actor(owner, inflictor, &request.attack.inflictor, error) ||
+            !attack_source(owner, &request, method, 0, error)) return false;
+        int32_t health;
+        if (!application_q3_combat_word_read(&original, original.entity + d->fields.health, &health, error) ||
+            !qa_combat_set_health(shared(owner), actor, health, error)) return false;
+        direct_reaction reaction = {.owner = owner, .call = call, .result = result,
+            .reaction = {.applied_damage = amount, .reaction = i ? QA_REACTION_DEATH : QA_REACTION_PAIN}};
+        *result = 0;
+        return qa_combat_source_reaction(shared(owner), &request, &reaction.reaction, error) &&
+            qa_combat_run_source_reaction(shared(owner), &request, &reaction.reaction,
+                direct_dispatch, &reaction, error);
+    }
+    return qa_qvm_proceed(call, result, error);
+}
+static qa_qvm_function_hook direct_resolve(void *context, const qa_qvm_call *call, void **hook_context)
+{
+    application_q3_combat *owner = context;
+    if (!qa_id_index_find(&owner->reactions, call->instruction, 0)) return NULL;
+    *hook_context = owner;
+    return direct_enter;
+}
+bool application_q3_combat_enter(application_q3_combat *owner, qa_error *error)
+{
+    if (!owner) return true;
+    if (!owner->source_entries) {
+        qa_id_index_clear(&owner->reactions);
+        const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+        const uint32_t offsets[] = {d->reactions.pain, d->reactions.die};
+        const application_q3_reaction_call *arguments[] = {&d->reactions.pain_call, &d->reactions.die_call};
+        qa_application *app = owner->role->engine->provider->application;
+        for (combat_actor *actor = owner->actors; actor; actor = actor->next) {
+            if (!qa_actors_get(qa_session_actors(app->session), actor->source.actor) ||
+                application_provider_for(app, actor->source.actor, QA_ROLE_CHARACTER, "") == owner->role->engine->provider) continue;
+            bool live;
+            if (!application_q3_combat_actor_live(&actor->source, &live, error)) return false;
+            if (!live) continue;
+            if (actor->bound && qa_combat_primary_current(shared(owner), actor->source.actor,
+                    actor->serial, actor)) {
+                qa_combat_state current;
+                int32_t source_health;
+                if (!qa_combat_read_traits(shared(owner), actor->source.actor, &current, error) ||
+                    !application_q3_combat_word_read(&actor->source,
+                        actor->source.entity + d->fields.health, &source_health, error)) return false;
+                if (source_health != current.health &&
+                    !application_q3_combat_health_write(&actor->source, current.health, error)) return false;
+            }
+            for (size_t i = 0; i < 2; ++i) {
+                if (!arguments[i]->arguments_present) continue;
+                int32_t pointer;
+                if (!application_q3_combat_word_read(&actor->source, actor->source.entity + offsets[i], &pointer, error)) return false;
+                if (!pointer) continue;
+                qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, (uint32_t)pointer, 0);
+                if (entry) entry->value |= 1u << i;
+                else qa_id_index_insert(&owner->reactions, (uint32_t)pointer, 0, 1u << i);
+            }
+        }
+        owner->direct_bound = owner->reactions.count != 0;
+        if (owner->direct_bound &&
+            !application_q3_damage_scopes_enter(owner->scopes, direct_resolve, owner, error)) {
+            owner->direct_bound = false;
+            return false;
+        }
+    }
+    ++owner->source_entries;
+    return true;
+}
+bool application_q3_combat_leave(application_q3_combat *owner, qa_error *error)
+{
+    if (!owner) return true;
+    if (--owner->source_entries || !owner->direct_bound) return true;
+    owner->direct_bound = false;
+    return application_q3_damage_scopes_leave(owner->scopes, error);
+}
 typedef struct entered_damage {
     application_q3_combat *owner;
     combat_actor *actor;
@@ -400,21 +542,8 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     if (!pointer_actor(owner, words[Q3_DAMAGE_ATTACKER], &request.attack.attacker, error) ||
         !pointer_actor(owner, words[Q3_DAMAGE_INFLICTOR], &request.attack.inflictor, error)) return false;
     qa_application *app = owner->role->engine->provider->application;
-    qa_clock_state clock;
-    if (!qa_session_clock(app->session, owner->role->engine->provider->owner, &clock) ||
-        clock.frame.provider != owner->role->engine->provider->owner || clock.frame.kind != QA_RULESET_Q3)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Reached Source damage has no actual Q3 clock");
-    request.attack.time_ns = clock.frame.time_ns;
     application_provider *combat = application_provider_for(app, request.target, QA_ROLE_COMBAT, "");
-    application_provider *movement = application_provider_for(app, request.target, QA_ROLE_MOVEMENT, "");
-    application_provider *inventory = application_provider_for(app, request.attack.attacker, QA_ROLE_INVENTORY, "");
-    request.attack.combat_provider = combat ? combat->owner : 0;
-    request.attack.weapon_provider = owner->role->engine->provider->owner;
-    request.attack.movement_provider = movement ? movement->owner : 0;
-    request.attack.inventory_provider = inventory ? inventory->owner : 0;
-    request.attack.cause = (qa_damage_cause){.kind = QA_CAUSE_Q3,
-        .source.q3 = {words[Q3_DAMAGE_METHOD], application_q3_combat_canonical_flags(d, (uint32_t)words[Q3_DAMAGE_FLAGS])}};
-    if (!qa_attack_next(&owner->sequence, &request.attack, error)) return false;
+    if (!attack_source(owner, &request, words[Q3_DAMAGE_METHOD], (uint32_t)words[Q3_DAMAGE_FLAGS], error)) return false;
     qa_damage_outcome outcome = {0};
     if (combat && combat != owner->role->engine->provider) {
         ++owner->calls;
@@ -555,6 +684,9 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     if(!owner->actor_storage||!qa_pool_prepare(&owner->actor_pool,
         qa_unified_frame_lease_arena(owner->actor_storage),owner->actor_chunk,
         sizeof(combat_actor),_Alignof(combat_actor),error))return false;
+    owner->reactions.storage = qa_unified_frame_lease_arena(owner->actor_storage);
+    if (owner->actor_chunk > SIZE_MAX / 2 ||
+        !qa_id_index_reserve(&owner->reactions, owner->actor_chunk * 2, error)) return false;
     if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;
     uint32_t entries[] = {d->callbacks.damage, d->callbacks.free, d->armor.check};
     qa_qvm_function_hook hooks[] = {damage, freed, armor_stage};
@@ -565,7 +697,7 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     return true;
 }
 bool application_q3_combat_idle(const application_q3_combat *owner)
-{ return !owner || (!owner->calls && !owner->incoming && application_q3_damage_scopes_idle(owner->scopes)); }
+{ return !owner || (!owner->calls && !owner->source_entries && !owner->incoming && application_q3_damage_scopes_idle(owner->scopes)); }
 bool application_q3_combat_sequence_read(const application_q3_combat *owner,
     uint64_t *out, qa_error *error)
 {
@@ -662,7 +794,7 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
 {
     if (!pointer || !*pointer) return true;
     application_q3_combat *owner = *pointer;
-    if (owner->calls || owner->incoming ||
+    if (owner->calls || owner->source_entries || owner->incoming ||
         (owner->scopes && !application_q3_damage_scopes_quiescent(owner->scopes)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original combat retains a source action or refused observer cleanup");
     for (combat_actor *actor=owner->actors;actor;actor=actor->next) {
@@ -680,6 +812,7 @@ bool application_q3_combat_destroy(application_q3_combat **pointer, qa_error *er
     }
     if (!application_q3_damage_scopes_destroy(&owner->scopes, error)) return false;
     qa_actor_index_destroy(&owner->actor_index);
+    qa_id_index_destroy(&owner->reactions);
     qa_unified_frame_lease_release(owner->actor_storage);
     free(owner); *pointer = NULL; return true;
 }

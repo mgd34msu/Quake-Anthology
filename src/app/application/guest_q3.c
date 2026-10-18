@@ -199,11 +199,23 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
         ok = true;
         if (!source && role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
             ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
+        bool combat_entry = ok && role->combat;
+        if (combat_entry) {
+            ok = application_q3_combat_enter(role->combat, error);
+            combat_entry = ok;
+        }
         if (ok && source)
             ok = qa_qvm_invoke(role->vm, (uint32_t)command, arguments, count, result, error);
         else if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
                 qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
                 qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
+        if (combat_entry) {
+            qa_error cleanup = {0};
+            if (!application_q3_combat_leave(role->combat, &cleanup)) {
+                if (ok && error) *error = cleanup;
+                ok = false;
+            }
+        }
         if (bot_setup) {
             qa_error cleanup = {0};
             if (!qa_qvm_unbind(role->vm, bot_setup, &cleanup)) {
