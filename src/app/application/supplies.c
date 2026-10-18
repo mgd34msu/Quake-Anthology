@@ -763,9 +763,6 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
     qa_error *error) {
     qa_application *app = source->application;
     const struct application_player_roster *roster = app->players;
-    if (!roster || roster->map_provider != source ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != source)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Supply source is not the actual published GAME");
     const application_player_record *record=application_player_record_find(roster,actor);
     if (!record || record->retiring) return application_fail(error, QA_ERROR_ARGUMENT, "Supply source actor has no actual roster admission");
     if (source->kind == APPLICATION_PROVIDER_Q1) {
@@ -780,25 +777,7 @@ static bool source_player_current(application_provider *source, qa_actor_id acto
         uint32_t slot;
         if (!qa_q3_native_client_slot(source->state.q3, actor, &slot, error)) return false;
         if (slot == record->client_slot) return true;
-    } else if (source->kind == APPLICATION_PROVIDER_QC) {
-        struct application_qc_state *engine = source->state.qc.engine;
-        uint32_t slot = record->client_slot + 1;
-        if (slot && engine && slot <= engine->max_clients && engine->clients &&
-            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor))
-            return original_player_current(source, actor, error);
-    } else if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
-        struct application_native_q2 *engine = source->state.native.q2_engine;
-        uint32_t slot = record->client_slot + 1;
-        if (slot && slot < sizeof(engine->clients)/sizeof(*engine->clients) &&
-            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor))
-            return original_player_current(source, actor, error);
-    } else {
-        struct application_q3_guest *engine = q3g_engine(source);
-        uint32_t slot = record->client_slot;
-        if (engine && slot < sizeof(engine->clients)/sizeof(*engine->clients) &&
-            engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor))
-            return original_player_current(source, actor, error);
-    }
+    } else return original_player_current(source, actor, error);
     return application_fail(error, QA_ERROR_ARGUMENT, "Supply actor differs from its actual physical source client");
 }
 static bool pair_current(supply_pair *pair, qa_actor_id actor, qa_error *error) {
@@ -1140,7 +1119,7 @@ bool application_supplies_destroy(application_supplies *owner, qa_error *error) 
     qa_arena_destroy(&owner->storage);
     free(owner); return true;
 }
-bool application_supplies_prepare(application_supplies *owner, application_provider *source,
+static bool pair_prepare(application_supplies *owner, application_provider *source,
     application_provider *arsenal, qa_error *error) {
     if (!owner || !application_supplies_idle(owner) || !source || !arsenal ||
         source->application != owner->application || arsenal->application != owner->application ||
@@ -1171,6 +1150,30 @@ bool application_supplies_prepare(application_supplies *owner, application_provi
     supplies_leave(owner);
     if (!ok) { qa_actor_index_destroy(&pair->actors); qa_supply_destroy(pair->supply); pickup_rules_free(pair); profile_free(&pair->profile); free(pair); return false; }
     pair->next = owner->pairs; owner->pairs = pair; return true;
+}
+bool application_supplies_prepare(application_supplies *owner, application_provider *world_source,
+    const qa_launch_snapshot *snapshot, qa_error *error)
+{
+    if (!pair_prepare(owner, world_source, world_source, error)) return false;
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    const uint64_t gameplay_roles = QA_ROLE_BIT(QA_ROLE_ENTITIES) |
+        QA_ROLE_BIT(QA_ROLE_MOVEMENT) | QA_ROLE_BIT(QA_ROLE_CHARACTER) |
+        QA_ROLE_BIT(QA_ROLE_ARSENAL) | QA_ROLE_BIT(QA_ROLE_COMBAT) |
+        QA_ROLE_BIT(QA_ROLE_INVENTORY) | QA_ROLE_BIT(QA_ROLE_PICKUPS) |
+        QA_ROLE_BIT(QA_ROLE_MONSTERS);
+    for (size_t i = 0; i < qa_launch_snapshot_instance_count(snapshot); ++i) {
+        const qa_launch_instance *source = qa_launch_snapshot_instance(snapshot, i);
+        if (!(source->roles & gameplay_roles)) continue;
+        for (size_t j = 0; j < choices->binding_count; ++j) {
+            const qa_launch_binding *binding = choices->bindings + j;
+            if (binding->role != QA_ROLE_ARSENAL || (binding->selector && binding->selector[0])) continue;
+            const qa_launch_instance *arsenal = qa_launch_snapshot_find(snapshot, binding->instance);
+            if (!arsenal || !arsenal->state)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Selected supply arsenal has no actual candidate instance");
+            if (!pair_prepare(owner, source->state, arsenal->state, error)) return false;
+        }
+    }
+    return true;
 }
 static bool destination_metadata(supply_pair *pair, qa_item_id item,
     qa_inventory_entry *out, qa_error *error) {
@@ -1440,9 +1443,9 @@ bool application_supplies_weapon_sources(application_supplies *owner, applicatio
     supply_pair *pair = pair_find(owner, source, arsenal);
     if (!pair) return application_fail(error, QA_ERROR_NOT_FOUND, "Weapon source mapping lost its prepared supply pair");
     ++owner->calls;
-    bool ok = supply_current(pair, actor, error) &&
+    bool ok = pair_current(pair, actor, error) &&
         qa_supply_weapon_sources(&pair->profile, selected, selected_count,
-            original, original_count, storage, out, error) && supply_current(pair, actor, error);
+            original, original_count, storage, out, error);
     supplies_leave(owner); return ok;
 }
 bool application_supplies_source_for(void *opaque, qa_actor_id actor, qa_supply **out,

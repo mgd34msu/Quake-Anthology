@@ -11,8 +11,8 @@ bool application_supplies_create(qa_application *, qa_inventory *, application_s
                                   qa_error *);
 bool application_supplies_idle(const application_supplies *);
 bool application_supplies_destroy(application_supplies *, qa_error *);
-bool application_supplies_prepare(application_supplies *, application_provider *source,
-                                   application_provider *arsenal, qa_error *);
+bool application_supplies_prepare(application_supplies *, application_provider *world_source,
+                                   const qa_launch_snapshot *, qa_error *);
 bool application_supplies_admit(application_supplies *, application_provider *source,
                                  qa_actor_id, qa_error *);
 bool application_supplies_reconnect(application_supplies *, qa_error *);

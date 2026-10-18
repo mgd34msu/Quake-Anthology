@@ -822,20 +822,9 @@ static bool prepare_supplies(qa_application *application,
 {
     if (publication->supplies || !publication->map_provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Supply publication lost its detached source owner");
-    if (!application_supplies_create(application, application->inventory, &publication->supplies, error) ||
-        !application_supplies_prepare(publication->supplies, publication->map_provider,
-            publication->map_provider, error)) return false;
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
-    for (size_t i = 0; i < choices->binding_count; ++i) {
-        const qa_launch_binding *binding = choices->bindings + i;
-        if (binding->role != QA_ROLE_ARSENAL || (binding->selector && binding->selector[0])) continue;
-        const qa_launch_instance *instance = qa_launch_snapshot_find(publication->candidate, binding->instance);
-        if (!instance || !instance->state)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Selected supply arsenal has no actual candidate instance");
-        if (!application_supplies_prepare(publication->supplies, publication->map_provider, instance->state, error))
-            return false;
-    }
-    return true;
+    return application_supplies_create(application, application->inventory, &publication->supplies, error) &&
+        application_supplies_prepare(publication->supplies, publication->map_provider,
+            publication->candidate, error);
 }
 
 static bool finish_publication(qa_application *application,
