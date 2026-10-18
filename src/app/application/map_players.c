@@ -6027,10 +6027,12 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
              create_q1_selector_options(candidate, roster, &source_options, error) &&
              qa_q1_spawn_selector_checkpoint_restore(roster->q1_selector, &selector, error);
     } else if (ok && (last.generation || last.slot || q1_points)) ok = false;
+    if (ok) candidate->players = roster;
     for (size_t i = 0; ok && i < roster->count; ++i)
         if (roster->records[i].actor.registry)
             ok = application_visual_player_appearance_bind(candidate, roster->records[i].actor, error);
     if (!ok) {
+        if (candidate->players == roster) candidate->players = NULL;
         roster_free(roster);
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "roster continuation disagrees with candidate owners");
         return false;
