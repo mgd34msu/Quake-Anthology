@@ -128,6 +128,7 @@ struct qa_native_instance {
     qa_unified_frame_pool *observation_storage;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, write_depth;
+    bool write_snapshots_pending;
     const qa_native_write_event *active_write_event;
     struct qa_native_write_scope *write_scope;
     struct qa_native_call_scope *call_scope;

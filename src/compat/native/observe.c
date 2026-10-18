@@ -713,18 +713,43 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
     if (!instance || instance->guest != guest || !commit || !commit->bytes || commit->bytes > UINT64_MAX - commit->address)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native write receipt lost its actual memory owner");
     size_t count = 0;
-    for (qa_native_write_observer *b = instance->write_observers; b; b = b->next) ++count;
+    for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
+        if (b->address < commit->address + commit->bytes &&
+            commit->address < b->address + b->size) ++count;
+    if (!count && instance->write_observers && !instance->write_snapshots_pending) {
+        /* Address watches do not dispatch for another virtual address. Retain
+         * their snapshots if the same backing was written through an alias. */
+        for (size_t i = 0; i < guest->mapping_count; ++i) {
+            const qa_native_guest_mapping *mapping = guest->mappings + i;
+            if (mapping->backing != commit->backing) continue;
+            uint64_t begin = commit->backing_offset > mapping->backing_offset ?
+                commit->backing_offset : mapping->backing_offset;
+            uint64_t end = commit->backing_offset + commit->bytes;
+            if (end > mapping->backing_offset + mapping->bytes)
+                end = mapping->backing_offset + mapping->bytes;
+            if (begin < end && mapping->base + (begin - mapping->backing_offset) !=
+                    commit->address + (begin - commit->backing_offset)) {
+                instance->write_snapshots_pending = true;
+                break;
+            }
+        }
+    }
+    /* The final receipt may be outside every watch even though an earlier
+     * part of this instruction changed watched bytes. */
+    if (!count && (!instance->write_snapshots_pending || !commit->instruction_last)) return true;
     if (count > SIZE_MAX / sizeof(uint64_t)) return native_fail(error, QA_ERROR_MEMORY, count, "native write observer inventory overflows");
-    if (!count) return true;
-    qa_unified_frame_lease *storage=qa_unified_frame_lease_acquire(instance->observation_storage,error);
-    if (!storage) return false;
-    uint64_t *ids=qa_unified_frame_lease_alloc(storage,count,sizeof(*ids),_Alignof(uint64_t),error);
-    if (!ids) { qa_unified_frame_lease_release(storage); return false; }
+    qa_unified_frame_lease *storage = count ?
+        qa_unified_frame_lease_acquire(instance->observation_storage,error) : NULL;
+    if (count && !storage) return false;
+    uint64_t *ids = count ?
+        qa_unified_frame_lease_alloc(storage,count,sizeof(*ids),_Alignof(uint64_t),error) : NULL;
+    if (count && !ids) { qa_unified_frame_lease_release(storage); return false; }
     size_t at = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
         if (b->address < commit->address + commit->bytes &&
             commit->address < b->address + b->size) ids[at++] = b->id;
     count = at;
+    if (count) instance->write_snapshots_pending = true;
     bool okay = true;
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_write_observer *binding = instance->write_observers;
@@ -755,7 +780,8 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
         }
     }
     bool cancelled=!okay&&guest_callback_failure(guest,error);
-    if ((okay && commit->instruction_last) || cancelled) {
+    if ((okay && commit->instruction_last && instance->write_snapshots_pending) || cancelled) {
+        instance->write_snapshots_pending = false;
         bool refreshed=true;
         for (qa_native_write_observer *b = instance->write_observers; refreshed && b; b = b->next)
             refreshed = qa_native_guest_read(guest, b->address, b->snapshot.data, b->size, error);
@@ -834,6 +860,7 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
 }
 
 void native_observers_destroy(qa_native_instance *instance) {
+    instance->write_snapshots_pending = false;
     while (instance->pending_entry_observers) {
         qa_native_entry_observer *binding=instance->pending_entry_observers;
         instance->pending_entry_observers=binding->next;

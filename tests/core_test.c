@@ -7,6 +7,7 @@
 #include "qa/inventory.h"
 #include "qa/native.h"
 #include "qa/native_guest.h"
+#include "../src/compat/native/internal.h"
 #include "../src/compat/native/guest/abi.h"
 #include "../src/compat/native/guest/memory_string.h"
 #include "../src/compat/native/guest/elf.h"
@@ -9972,6 +9973,75 @@ static void test_native_string_boundaries(void)
     CHECK(qa_native_guest_destroy(&guest, &error) && !guest);
 }
 
+typedef struct native_write_capture {
+    unsigned calls;
+    uint8_t before, after;
+} native_write_capture;
+
+static bool capture_native_write(void *opaque, qa_native_instance *instance,
+    const qa_native_write_event *event, qa_error *error)
+{
+    native_write_capture *capture = opaque;
+    ++capture->calls;
+    capture->before = event->before.data[0];
+    capture->after = event->after.data[0];
+    (void)instance; (void)error;
+    return true;
+}
+
+static void test_native_write_receipts(void)
+{
+    qa_error error = {0};
+    qa_native_guest *guest = NULL;
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_ELF64,
+            .target = {.os = QA_NATIVE_OS_LINUX, .arch = QA_NATIVE_ARCH_X86_64,
+                .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .pointer_bytes = 8}},
+        .allocation_base = UINT64_C(0x300000),
+        .maximum_backing_bytes = 4 * QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    uint64_t base = UINT64_C(0x100000), boundary = base + QA_NATIVE_GUEST_PAGE;
+    qa_native_guest_mapping first, second, alias;
+    CHECK(qa_native_guest_map(guest, base, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){0}, &first, &error));
+    CHECK(qa_native_guest_map(guest, boundary, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){0}, &second, &error));
+    qa_native_instance instance = {.guest = guest};
+    instance.observation_storage = qa_unified_frame_pool_create(64 * 1024, 1, &error);
+    CHECK(instance.observation_storage);
+    uint8_t snapshot = 0;
+    native_write_capture capture = {0};
+    qa_native_write_observer observer = {.instance = &instance, .id = 1,
+        .address = boundary - 1, .size = 1, .callback = capture_native_write,
+        .context = &capture, .snapshot = {.data = &snapshot, .size = 1}};
+    instance.write_observers = &observer;
+    CHECK(qa_native_guest_observe(guest, native_process_write_commit, &instance, &error));
+    const uint8_t bytes[] = {11, 12};
+    CHECK(qa_native_guest_write(guest, boundary - 1, (qa_bytes){bytes, 2}, &error));
+    CHECK(capture.calls == 1 && capture.before == 0 && capture.after == 11);
+    CHECK(snapshot == 11 && !instance.write_snapshots_pending);
+    qa_unified_frame_lease *busy = qa_unified_frame_lease_acquire(instance.observation_storage, &error);
+    CHECK(busy);
+    CHECK(qa_native_guest_write(guest, base + 32, (qa_bytes){bytes, 1}, &error));
+    CHECK(capture.calls == 1 && snapshot == 11 && !instance.write_snapshots_pending);
+    qa_unified_frame_lease_release(busy);
+    CHECK(qa_native_guest_alias(guest, UINT64_C(0x200000), QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, first.backing, 0, &alias, &error));
+    const uint8_t aliased = 17, changed = 23;
+    CHECK(qa_native_guest_write(guest, alias.base + QA_NATIVE_GUEST_PAGE - 1,
+        (qa_bytes){&aliased, 1}, &error));
+    CHECK(capture.calls == 1 && snapshot == 17 && !instance.write_snapshots_pending);
+    CHECK(qa_native_guest_write(guest, boundary - 1, (qa_bytes){&changed, 1}, &error));
+    CHECK(capture.calls == 2 && capture.before == 17 && capture.after == 23 && snapshot == 23);
+    instance.write_observers = NULL;
+    instance.write_snapshots_pending = true;
+    native_observers_destroy(&instance);
+    CHECK(!instance.write_snapshots_pending);
+    CHECK(qa_native_guest_destroy(&guest, &error));
+    qa_unified_frame_pool_destroy(&instance.observation_storage);
+}
+
 static void test_native_resumable_budget(void)
 {
     qa_error error = {0};
@@ -12124,6 +12194,7 @@ int main(int argc, char **argv)
     test_native_export_visibility();
     test_native_saved_image_references();
     test_native_string_boundaries();
+    test_native_write_receipts();
     test_native_resumable_budget();
     test_native_executable_alias_writes();
     test_native_guest_halt();
