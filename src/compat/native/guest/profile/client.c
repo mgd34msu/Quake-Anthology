@@ -41,6 +41,7 @@ typedef struct profile_instruction {
     byte bytes[15];
     size_t size;
     byte opcode, modrm;
+    bool completion_only;
 } profile_instruction;
 static profile_scope *scope;
 static profile_instruction *instructions;
@@ -341,7 +342,6 @@ static void scope_changed(const profile_scope *before, const profile_scope *afte
         flush_executable(before); flush_executable(after);
         return;
     }
-    if (scope_stores(after)) return;
     uint64_t old_stop = before ? before->stop : 0, new_stop = after ? after->stop : 0;
     if (old_stop != new_stop) { flush_point(old_stop); flush_point(new_stop); }
     size_t old_callbacks = before ? before->callback_count : 0;
@@ -559,6 +559,8 @@ static void clean(ptr_uint_t encoded)
         (scope->phase == PROFILE_ARMED && pc != (app_pc)(ptr_uint_t)scope->entry))) return;
     void *context = dr_get_current_drcontext();
     if (dr_get_thread_id(context) != owner_thread) dr_abort();
+    if (description->completion_only && scope->pending_at == scope->pending_count &&
+        !scope_point(scope, pc)) return;
     byte fp_raw[DR_FPSTATE_BUF_SIZE + DR_FPSTATE_ALIGN];
     byte *fp = (byte *)(((ptr_uint_t)fp_raw + DR_FPSTATE_ALIGN - 1) & ~(ptr_uint_t)(DR_FPSTATE_ALIGN - 1));
     if (!proc_save_fpstate(fp)) dr_abort();
@@ -686,18 +688,27 @@ static dr_emit_flags_t instrument(void *context, void *tag, instrlist_t *list, i
     const emulated_instr_t *emulated = NULL;
     instr_t *original = fetch ? fetch : operands;
     app_pc pc = instr_get_app_pc(original);
-    if (drmgr_in_emulation_region(context, &emulated)) {
+    bool emulating = drmgr_in_emulation_region(context, &emulated);
+    if (emulating) {
         original = emulated->instr; pc = emulated->pc;
     }
     if (!pc) return DR_EMIT_DEFAULT;
     int opcode = instr_get_opcode(original);
     bool adapted = opcode == OP_syscall || opcode == OP_cpuid ||
         opcode == OP_fnstenv || opcode == OP_fnsave;
-    if (pc != control_entry && pc != fault_entry && pc != import_entry &&
-        !adapted && !scope_store_code(scope, pc) && !scope_point(scope, pc)) return DR_EMIT_DEFAULT;
+    bool point = pc == control_entry || pc == fault_entry || pc == import_entry ||
+        adapted || scope_point(scope, pc);
+    bool storing = operands && instr_writes_memory(operands);
+    instr_t *previous = instr_get_prev_app(where);
+    /* Calls and taken branches can finish stores at another block's entry.
+     * Keep REP/emulation hooks intact for its per-iteration store receipts. */
+    bool completion = !previous || instr_writes_memory(previous);
+    if (!point && !(scope_store_code(scope, pc) &&
+            (emulating || storing || completion))) return DR_EMIT_DEFAULT;
     profile_instruction *row = dr_global_alloc(sizeof(*row));
     if (!row) dr_abort();
     memset(row, 0, sizeof(*row)); row->pc = pc;
+    row->completion_only = !point && !emulating && !storing;
     size_t bytes = instr_length(context, original);
     if (!bytes || bytes > 15) dr_abort();
     row->size = bytes;
