@@ -67,6 +67,17 @@ bool application_q3_guest_actor_client(application_provider *provider, qa_actor_
     return true;
 }
 
+bool application_q3_guest_player_state_read(application_provider *provider, qa_actor_id actor,
+    qa_q3_player *out, bool *found, qa_error *error)
+{
+    *found = false;
+    uint32_t slot;
+    if (!application_q3_guest_actor_client(provider, actor, &slot)) return true;
+    if (!qa_q3_host_source_player(q3g_engine(provider)->game->host, slot, out, error)) return false;
+    *found = true;
+    return true;
+}
+
 bool application_q3_guest_input_values_read(application_provider *provider,uint32_t seat,
     qa_actor_id actor,uint8_t *weapon,float *sensitivity,qa_error *error)
 {

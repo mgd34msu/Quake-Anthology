@@ -39,9 +39,10 @@ qa_actor_id application_bot_actor(void *opaque,int32_t number) {
         record->id.slot==(uint32_t)number?record->id:(qa_actor_id){0};
 }
 static qa_vec3 source_vector(const float value[3]) {return qa_v3(value[0],value[1],value[2]);}
-bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
-    int32_t *weapon,int32_t *phase,qa_error *error) {
+static bool source_weapon(application_bots *bots,qa_actor_id actor,
+    int32_t *weapon,int32_t *phase,int32_t *weapon_time,qa_error *error) {
     application_provider *arsenal=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
+    struct application_q3_guest *guest=q3g_engine(arsenal);
     if(!arsenal || !qa_actors_get(qa_session_actors(bots->application->session),actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected weapon has no actual live arsenal owner");
     if(arsenal->kind==APPLICATION_PROVIDER_Q1) {
@@ -55,15 +56,21 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
         if(!application_bot_weapon_slot(arsenal,(int32_t)player.weapon,weapon,error)) return false;
         *phase=player.phase==QA_Q2_ACTIVATING?1:
             player.phase==QA_Q2_DROPPING?2:player.phase==QA_Q2_FIRING?3:0;
-    } else if(application_bot_arsenal_supported(arsenal)) {
+    } else if(application_bot_arsenal_supported(arsenal) ||
+        (arsenal->kind==APPLICATION_PROVIDER_NATIVE && guest && guest->game)) {
         int32_t time;bool present;
         if(!application_bot_q3_weapon_state(arsenal,actor,weapon,phase,&time,&present,error)) return false;
         if(!present)
             return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q3 weapon continuation is absent");
         if((uint32_t)*phase>3)
             return application_fail(error,QA_ERROR_FORMAT,"bot selected Q3 weapon phase is outside its source states");
+        if(weapon_time) *weapon_time=time;
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected original arsenal has no native bot weapon observation");
     return true;
+}
+bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
+    int32_t *weapon,int32_t *phase,qa_error *error) {
+    return source_weapon(bots,actor,weapon,phase,NULL,error);
 }
 static bool native_items(const qa_bot_player_state_view *ps,const qa_bot_inventory_target *inventory,qa_error *error) {
     bool team_arena=ps->product==QA_Q3_TEAM_ARENA;
@@ -129,7 +136,7 @@ static bool native_player(application_bots *bots,application_provider *source,qa
     if(!present || !qa_actor_id_equal(client.actor,actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot player has no actual native source PS owner");
     if(!qa_q3_wire_player_read(source->state.q3,slot,&ps,error)) return false;
-    if(!application_bot_source_weapon(bots,actor,&ps.weapon,&ps.weaponState,error)) return false;
+    if(!source_weapon(bots,actor,&ps.weapon,&ps.weaponState,&ps.weaponTime,error)) return false;
     if(!qa_q3_player_read(source->state.q3,actor,&source_player))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot player native GAME continuation is absent");
     *out=(qa_bot_player){.connected=client.begun,.observer=ps.pmType==2,

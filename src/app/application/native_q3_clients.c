@@ -1554,8 +1554,10 @@ bool application_native_q3_client_movement_parameters(application_provider *prov
         } else if ((equipment->kind == APPLICATION_PROVIDER_QVM ||
                     equipment->kind == APPLICATION_PROVIDER_NATIVE) &&
                    equipment->component.clock.kind == QA_RULESET_Q3) {
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "selected guest Q3 equipment has no typed movement speed capability");
+            qa_q3_player player;
+            bool found;
+            if (!application_q3_guest_player_state_read(equipment, actor, &player, &found, error)) return false;
+            if (found) *speed = player.speed;
         }
     }
     if (!foreign) return true;

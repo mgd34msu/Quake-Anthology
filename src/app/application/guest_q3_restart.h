@@ -28,6 +28,8 @@ bool application_q3_guest_client_sources_rebuild(application_provider *,
 bool application_q3_guest_client_reserve(application_provider *, uint32_t source_slot,
     qa_actor_id, qa_error *);
 bool application_q3_guest_actor_bound(application_provider *, qa_actor_id, uint32_t *source_slot);
+bool application_q3_guest_player_state_read(application_provider *, qa_actor_id,
+    qa_q3_player *, bool *found, qa_error *);
 /* All live providers include failed old owners retained outside the current
  * roster. This reads only genuine host/runtime pointer identity. */
 bool application_q3_guest_bots_borrowed(const qa_application *, const qa_bot_runtime *);

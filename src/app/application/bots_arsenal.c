@@ -3,6 +3,7 @@
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_bots.h"
 #include "guest_q3_private.h"
+#include "guest_q3_restart.h"
 #include "guest_q3_catalog.h"
 #include "guest_q3_weapons.h"
 #include "qa/text.h"
@@ -59,6 +60,13 @@ bool application_bot_q3_weapon_state(application_provider *provider,qa_actor_id 
         qa_q3_player_state player;
         if(!qa_q3_player_read(provider->state.q3,actor,&player)) return true;
         *weapon=(int32_t)player.weapon;*phase=(int32_t)player.weapon_phase;*time=player.weapon_time_ms;
+    } else if(provider && provider->kind==APPLICATION_PROVIDER_NATIVE) {
+        struct application_q3_guest *engine=q3g_engine(provider);
+        if(!engine || !engine->game || engine->game->retired) return true;
+        qa_q3_player player;
+        if(!application_q3_guest_player_state_read(provider,actor,&player,found,error)) return false;
+        if(!*found) return true;
+        *weapon=player.weapon;*phase=player.weaponState;*time=player.weaponTime;
     } else {
         q3g_role *role=q3_guest_arsenal(provider);
         if(!role) return true;
