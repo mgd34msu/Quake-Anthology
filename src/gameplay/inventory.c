@@ -1973,7 +1973,7 @@ bool qa_inventory_pickup_current(qa_inventory *table, qa_actor_id actor, qa_item
 }
 
 bool qa_inventory_pickup_storage_current(const qa_inventory *table,qa_actor_id actor,
-    qa_item_id item,const void *token,uint64_t serial,qa_actor_owner owner)
+    qa_item_id item,const void *token,uint64_t serial)
 {
     if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor)) return false;
     inventory_store *store = table->stores[actor.slot];
@@ -1981,7 +1981,7 @@ bool qa_inventory_pickup_storage_current(const qa_inventory *table,qa_actor_id a
     const pickup_claim *claim = pickup_for(store, item);
     if (!claim || claim->token != token) return false;
     const item_group *group = group_for(store, item);
-    return group ? group->serial == serial && group->owner == owner : store->serial == serial;
+    return group ? group->serial == serial : store->serial == serial;
 }
 
 void qa_inventory_pickup_release(qa_inventory *table, qa_actor_id actor, const void *token)

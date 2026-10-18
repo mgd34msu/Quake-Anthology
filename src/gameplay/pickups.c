@@ -230,7 +230,6 @@ static bool write_current(qa_pickups *service, pickup_registration *registration
             qa_combat_protection_bound(service->combat, (qa_protection_lease){registration->actor, serial, write->resource.channel});
     if (!qa_inventory_pickup_current(service->inventory, registration->actor, write->resource.item, registration) ||
         !qa_inventory_storage_token(service->inventory, registration->actor, write->resource.item, &current_serial, NULL) || current_serial != serial) return false;
-    if (qa_inventory_item_owner(service->inventory, registration->actor, write->resource.item, &owner, NULL) && owner != registration->owner) return false;
     return write->fields == QA_PICKUP_COUNT || qa_inventory_mutable_capacity(service->inventory, registration->actor, write->resource.item);
 }
 
@@ -249,7 +248,7 @@ static bool write_retained(qa_pickups *service,const pickup_registration *regist
     if (!registration->active || !qa_actors_get(service->actors, registration->actor)) return false;
     if (write->resource.kind == QA_PICKUP_INVENTORY)
         return qa_inventory_pickup_storage_current(service->inventory, registration->actor,
-            write->resource.item, registration, serial, registration->owner);
+            write->resource.item, registration, serial);
     qa_actor_owner owner; uint64_t current_serial;
     return qa_combat_protection_owner(service->combat, registration->actor, write->resource.channel,
         &owner, &current_serial) && owner == registration->owner && current_serial == serial &&
@@ -658,8 +657,6 @@ bool qa_pickups_bind(qa_pickups *service, qa_actor_id actor, qa_actor_owner owne
                 if (!ok) fail(e, QA_ERROR_ARGUMENT, "Original pickup protection is not bound to its grant owner");
             } else {
                 ok = qa_inventory_storage_token(service->inventory, actor, write->resource.item, &rule->storage[j], e);
-                if (ok && qa_inventory_item_owner(service->inventory, actor, write->resource.item, &resource_owner, NULL) && resource_owner != owner)
-                    ok = fail(e, QA_ERROR_ARGUMENT, "Original pickup item belongs to another source");
                 if (ok && write->fields != QA_PICKUP_COUNT && !qa_inventory_mutable_capacity(service->inventory, actor, write->resource.item))
                     ok = fail(e, QA_ERROR_ARGUMENT, "Original pickup destination has no mutable capacity");
                 if (ok) ok = qa_inventory_pickup_claim(service->inventory, actor, write->resource.item, registration, e);

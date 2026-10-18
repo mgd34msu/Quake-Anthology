@@ -567,6 +567,12 @@ static bool external_weapon_use(void *context, qa_item_id item, qa_item_action a
     CHECK(item == source->entry.item && action == QA_ITEM_USE);
     ++source->uses; return true;
 }
+static bool external_weapon_pickup(void *context, const qa_pickup_offer *offer,
+    qa_pickup_execution *execution, qa_pickup_outcome *out, qa_error *error)
+{
+    (void)context; (void)offer; (void)execution; (void)error;
+    *out = QA_PICKUP_REFUSED; return true;
+}
 static bool external_weapon_restore(void *context, qa_actor_id actor, uint64_t serial,
     const qa_inventory_source_group *saved, qa_inventory_items *out, qa_error *error)
 {
@@ -627,7 +633,24 @@ static void test_external_weapon_inventory(void)
     CHECK(source.uses == 2);
     qa_inventory_entry read; bool found;
     CHECK(qa_inventory_entry_read(inventory, source.actor, native_item, &read, &error) && read.count == 17);
+    qa_combat *combat = NULL; qa_pickups *pickups = NULL;
+    CHECK(qa_combat_create(qa_session_actor_registry(session), qa_session_strings(session), NULL, &combat, &error));
+    CHECK(qa_combat_create_actor(combat, source.actor, &(qa_combat_state){.health = 100}, &error));
+    CHECK(qa_pickups_create(qa_session_actor_registry(session), combat, inventory, &pickups, &error));
+    qa_string_id grant_owner;
+    CHECK(qa_strings_intern_cstr(qa_session_strings(session), "test:grant-owner", &grant_owner, &error));
+    qa_pickup_write write = {.resource = {.kind = QA_PICKUP_INVENTORY, .item = guest_weapon},
+        .fields = QA_PICKUP_COUNT};
+    qa_pickup_rule rule = {.id = 1, .offered = &guest_weapon, .offered_count = 1,
+        .writes = &write, .write_count = 1, .take = external_weapon_pickup};
+    qa_pickup_lease grant;
+    CHECK(qa_pickups_bind(pickups, source.actor, grant_owner, &rule, 1, &grant, &error));
+    CHECK(qa_pickups_registration_current(pickups, grant, grant_owner));
     CHECK(qa_inventory_close_items(inventory, lease, &error));
+    CHECK(!qa_pickups_registration_current(pickups, grant, grant_owner));
+    CHECK(qa_pickups_close(pickups, grant, &error));
+    CHECK(qa_pickups_destroy(pickups, &error));
+    CHECK(qa_combat_destroy(combat, &error));
     CHECK(qa_inventory_entry_find(inventory, source.actor, guest_weapon, &read, &found, &error) && !found);
     CHECK(qa_inventory_entry_read(inventory, source.actor, native_item, &read, &error) && read.count == 17);
     qa_buffer_free(&saved); CHECK(qa_inventory_destroy(inventory, &error));
