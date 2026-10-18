@@ -107,6 +107,7 @@
 #include "../src/app/application/guest_native_q2_private.h"
 #include "../src/app/application/native_q2_client_stages.h"
 #include "../src/app/application/bots_log.h"
+#include "../src/app/application/bots_setup.h"
 #include "../src/app/application/unified_q3_events.h"
 #include "../src/app/application/events_save.h"
 #include "../src/network/unified/frame_internal.h"
@@ -207,6 +208,53 @@ static void test_q3_armor_rounding(void)
     CHECK(qa_armor_absorb(&armor, 150, (qa_damage_flags){.regular_scale = 1},
         &context, NULL, &result, &error));
     CHECK(result.regular_saved == 100 && result.armor.regular.points == 0);
+}
+
+static void test_bot_personality_fallback(void)
+{
+    qa_error error={0};
+    char root[]="/tmp/qa-bot-files-XXXXXX",directories[3][128],path[256];
+    CHECK(mkdtemp(root));
+    qa_resource_pool *pool=qa_resource_pool_create(&error);CHECK(pool);
+    qa_vfs *launch=qa_vfs_create(pool,&error),*fallback=qa_vfs_create(pool,&error);
+    CHECK(launch && fallback);
+    qa_mount_id mounts[3];
+    const char *paths[]={"scripts/bots.txt","scripts/bots.txt","botfiles/bots/default_c.c"};
+    const char *values[]={"mod personalities","base personalities","default character"};
+    for(size_t i=0;i<3;++i) {
+        CHECK(snprintf(directories[i],sizeof(directories[i]),"%s/%zu",root,i)>0);
+        CHECK(mkdir(directories[i],0700)==0);
+        qa_vfs *files=i?fallback:launch;
+        CHECK(qa_vfs_mount_directory(files,directories[i],QA_ARCHIVE_EXACT,true,&mounts[i],&error));
+        CHECK(qa_vfs_write(files,mounts[i],paths[i],
+            (qa_bytes){(const uint8_t *)values[i],strlen(values[i])},&error));
+    }
+    CHECK(qa_vfs_set_prefix_order(launch,"scripts",mounts,1,&error));
+    qa_vfs *files=qa_vfs_clone(launch,&error);CHECK(files);
+    CHECK(application_bots_files_extend(files,fallback,&error));
+    qa_vfs_destroy(launch);qa_vfs_destroy(fallback);
+    const char *requested[]={paths[0],paths[2]};
+    const char *expected[]={values[0],values[2]};
+    for(size_t i=0;i<2;++i) {
+        qa_resource *resource=NULL;
+        CHECK(qa_vfs_acquire(files,requested[i],&resource,NULL,&error));
+        qa_bytes bytes=qa_resource_bytes(resource);
+        CHECK(bytes.size==strlen(expected[i]) && !memcmp(bytes.data,expected[i],bytes.size));
+        qa_resource_release(resource);
+    }
+    qa_vfs_mount_info mount;
+    CHECK(qa_vfs_mount_at(files,1,&mount) && !mount.writable);
+    CHECK(qa_vfs_mount_at(files,2,&mount) && !mount.writable);
+    qa_vfs_destroy(files);qa_resource_pool_destroy(pool);
+    for(size_t i=0;i<3;++i) {
+        CHECK(snprintf(path,sizeof(path),"%s/%s",directories[i],paths[i])>0 && unlink(path)==0);
+        if(i==2) {
+            CHECK(snprintf(path,sizeof(path),"%s/botfiles/bots",directories[i])>0 && rmdir(path)==0);
+            CHECK(snprintf(path,sizeof(path),"%s/botfiles",directories[i])>0 && rmdir(path)==0);
+        } else CHECK(snprintf(path,sizeof(path),"%s/scripts",directories[i])>0 && rmdir(path)==0);
+        CHECK(rmdir(directories[i])==0);
+    }
+    CHECK(rmdir(root)==0);
 }
 
 static void test_bot_log_resume(void)
@@ -12158,6 +12206,7 @@ int main(int argc, char **argv)
     test_q3_armor_rounding();
     test_q2_brush_animation();
     test_q2_target_anger_editions();
+    test_bot_personality_fallback();
     test_bot_log_resume();
     test_q3_trace_preserves_delta();
     test_bot_awareness_storage();

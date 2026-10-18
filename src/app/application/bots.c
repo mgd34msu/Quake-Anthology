@@ -1114,6 +1114,17 @@ static bool bot_behavior_prepare(application_bots *bots,qa_error *error) {
     if(found) bots->behavior=behavior;
     return true;
 }
+bool application_bots_files_extend(qa_vfs *files,const qa_vfs *fallback,qa_error *error)
+{
+    for(size_t i=0;i<qa_vfs_mount_count(fallback);++i) {
+        qa_vfs_mount_info mount;
+        qa_mount_id retained;
+        if(!qa_vfs_mount_at(fallback,i,&mount) ||
+           !qa_vfs_mount_retained(files,fallback,mount.id,mount.comparison,false,&retained,error)) return false;
+    }
+    return true;
+}
+
 static bool prepare_bots(qa_application *application,const qa_launch_choices *choices,
                                const qa_bsp_view *geometry,bool requested,qa_error *error) {
     uint32_t capacity=0;size_t count=0;size_t guest_count=0;
@@ -1155,31 +1166,32 @@ static bool prepare_bots(qa_application *application,const qa_launch_choices *ch
     if (!application_bots_seats_prepare(bots, error)) goto fail;
     const qa_launch_snapshot *snapshot=application->routing_snapshot?application->routing_snapshot:qa_application_launch(application);
     if(!bot_behavior_prepare(bots,error)) goto fail;
-    bots->files_launch=true;
     bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
     if(!bots->files) goto fail;
-    if(!bots->source_knowledge || guest_count) {
-        qa_resource *probe=NULL;qa_error local={0};
-        bool have_assets=qa_vfs_acquire(bots->files,"botfiles/bots/default_c.c",&probe,NULL,&local);
-        qa_resource_release(probe);
+    {
+        uint64_t size=0;
+        bool have_assets=false;
+        if(!qa_vfs_probe(bots->files,"botfiles/bots/default_c.c",&have_assets,&size,error)) goto fail;
         if(!have_assets) {
-            if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
             bool opened=false;
             for(size_t i=0;i<qa_catalog_count(application->catalog);++i) {
                 const qa_product *product=qa_catalog_at(application->catalog,i);
                 if(product->family!=QA_GAME_Q3 || product->availability!=QA_CONTENT_INSTALLED) continue;
                 qa_vfs *files=NULL;if(!qa_catalog_open(application->catalog,product->id,&files,error)) goto fail;
-                probe=NULL;local=(qa_error){0};have_assets=qa_vfs_acquire(files,"botfiles/bots/default_c.c",&probe,NULL,&local);
-                qa_resource_release(probe);
-                if(have_assets) {
-                    if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->key,&bots->files_product,error)) {
-                        qa_vfs_destroy(files);goto fail;
-                    }
-                    qa_vfs_destroy(bots->files);bots->files=files;bots->files_launch=false;opened=true;break;
+                if(!qa_vfs_probe(files,"botfiles/bots/default_c.c",&have_assets,&size,error)) {
+                    qa_vfs_destroy(files);goto fail;
                 }
-                qa_vfs_destroy(files);if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
+                if(have_assets) {
+                    opened=application_bots_files_extend(bots->files,files,error);
+                    qa_vfs_destroy(files);
+                    if(!opened) goto fail;
+                    break;
+                }
+                qa_vfs_destroy(files);
             }
-            if(!opened && (count || native_q3 || requested)) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
+            if(!opened && (!bots->source_knowledge || guest_count) && (count || native_q3 || requested)) {
+                application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;
+            }
         }
     }
     if(!qa_entities_parse(geometry->lumps[QA_BSP_ENTITIES].bytes,

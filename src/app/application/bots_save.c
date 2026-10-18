@@ -129,20 +129,12 @@ static bool view_field(qa_source_save_io *io,application_bots *bots,qa_vfs **val
     return true;
 }
 static bool files_field(qa_source_save_io *io,application_bots *bots) {
-    bool ok=qa_source_save_bool(io,&bots->files_launch) && qa_source_save_string(io,&bots->files_product) &&
-        !(bots->files_launch && bots->files_product) && (bots->files_launch || bots->files_product) &&
+    /* Older saves put an exclusive launch/product label before the view.
+     * The retained content graph already owns the complete search path. */
+    bool launch_origin=true;
+    qa_string_id product_origin=0;
+    return qa_source_save_bool(io,&launch_origin) && qa_source_save_string(io,&product_origin) &&
         view_field(io,bots,&bots->files,true,true);
-    if(!ok) return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid application bot file origin");
-    qa_application *app=bots->application;
-    if(bots->files_launch)
-        ok=qa_vfs_lookup_equal(bots->files,qa_launch_snapshot_mounts(launch(app)));
-    else {
-        const char *key=qa_strings_cstr(qa_session_strings(app->session),bots->files_product);
-        const qa_product *product=key?qa_catalog_find(app->catalog,key):NULL;
-        ok=product && product->family==QA_GAME_Q3 &&
-            qa_catalog_product_view_current(app->catalog,product->id,bots->files);
-    }
-    return ok?true:bot_save_fail(io,QA_ERROR_FORMAT,"Bot file view differs from its genuine selected content");
 }
 static bool map_field(qa_source_save_io *io,application_bots *bots) {
     qa_application *app=bots->application;

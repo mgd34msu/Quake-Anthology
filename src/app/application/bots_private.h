@@ -83,8 +83,6 @@ typedef struct application_bots {
     float walk_speed;
     application_bot_script_file *script_files;
     qa_vfs *navigation_files;
-    bool files_launch;
-    qa_string_id files_product;
     qa_resource *map_resource;
     qa_resource *source_map_resource;
     qa_bsp_view geometry;
