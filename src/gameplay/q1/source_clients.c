@@ -136,14 +136,18 @@ bool qa_q1_source_clients_configure(qa_q1_game *game,const qa_q1_source_client_s
     game->source_client_observer=services->observer;return true;
 }
 static bool apply(qa_q1_game *game,q1_player *player,qa_error *error) {
-    qa_team_id team=0;char number[32];const char *name=NULL;
-    if(game->options.program==QA_Q1_CTF) name=player->source_team==5?"red":player->source_team==14?"blue":NULL;
-    else if(player->source_team>0) {snprintf(number,sizeof(number),"%.9g",(double)player->source_team);name=number;}
-    if(name && !qa_strings_intern_cstr(qa_session_strings(game->services.session),name,&team,error)) return false;
-    qa_combat_state combat;
-    if(!qa_combat_read_traits(game->services.combat,player->id,&combat,error)) return false;
-    combat.team=qa_team_named(team);
-    if(!qa_combat_set_traits(game->services.combat,player->id,&combat,error)) return false;
+    qa_actor_owner combat_provider=game->host.combat_provider?
+        game->host.combat_provider(game->host.context,player->id):game->options.provider;
+    if(combat_provider==game->options.provider) {
+        qa_team_id team=0;char number[32];const char *name=NULL;
+        if(game->options.program==QA_Q1_CTF) name=player->source_team==5?"red":player->source_team==14?"blue":NULL;
+        else if(player->source_team>0) {snprintf(number,sizeof(number),"%.9g",(double)player->source_team);name=number;}
+        if(name && !qa_strings_intern_cstr(qa_session_strings(game->services.session),name,&team,error)) return false;
+        qa_combat_state combat;
+        if(!qa_combat_read_traits(game->services.combat,player->id,&combat,error)) return false;
+        combat.team=qa_team_named(team);
+        if(!qa_combat_set_traits(game->services.combat,player->id,&combat,error)) return false;
+    }
     if(!q1_alive(game,player->id)) return true;
     const char *automatic=info_named(game,player,game->runtime_names[Q1_NAME_USERINFO_AUTOSWITCH]);
     if(automatic) player->auto_switch=!strcmp(automatic,"new")?QA_Q1_SWITCH_NEW:
