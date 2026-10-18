@@ -671,16 +671,20 @@ static bool provider_current(const application_supplies *owner,
     return provider && provider->application == owner->application && provider->launch &&
         provider->product && provider->constructed && provider->attached && !provider->close_pending;
 }
-static q3g_role *original_q3_arsenal(const application_provider *provider) {
+static q3g_role *original_q3_arsenal_profile(const application_provider *provider) {
     struct application_q3_guest *engine = provider && provider->kind == APPLICATION_PROVIDER_QVM
         ? provider->state.qvm.engine : NULL;
     q3g_role *role = engine ? engine->game : NULL;
     qa_q3_product product;
     return role && engine->provider == provider && role->primary && role->kind == QA_QVM_GAME &&
-        role->ready && !role->retired && !role->source_cleared && role->vm && role->projection &&
+        role->ready && role->vm && role->projection &&
         role->weapons && role->weapon_services && application_q3_catalog_bot_product(role->catalog, &product) &&
         product == QA_Q3_ARENA
         ? role : NULL;
+}
+static q3g_role *original_q3_arsenal(const application_provider *provider) {
+    q3g_role *role = original_q3_arsenal_profile(provider);
+    return role && !role->retired && !role->source_cleared ? role : NULL;
 }
 static supply_pair *pair_find(application_supplies *owner, application_provider *source,
     application_provider *arsenal) {
@@ -1126,7 +1130,7 @@ static bool pair_prepare(application_supplies *owner, application_provider *sour
         !source->constructed || !arsenal->constructed || source->close_pending || arsenal->close_pending ||
         !source->product || !arsenal->product ||
         (source != arsenal && arsenal->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind != APPLICATION_PROVIDER_Q2 &&
-         arsenal->kind != APPLICATION_PROVIDER_Q3 && !original_q3_arsenal(arsenal)))
+         arsenal->kind != APPLICATION_PROVIDER_Q3 && !original_q3_arsenal_profile(arsenal)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Supply preparation needs actual source and qualified arsenal owners");
     if (pair_find(owner, source, arsenal)) return true;
     supply_pair *pair = calloc(1, sizeof(*pair));
