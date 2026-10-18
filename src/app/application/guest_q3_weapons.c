@@ -496,20 +496,16 @@ bool application_q3_weapons_selection_for_item(application_q3_weapons *w, qa_act
 }
 static bool player_read(application_q3_weapons *w, qa_actor_id actor, uint32_t offset, int32_t *out, qa_error *error)
 { q3_weapon_actor source; return out && q3_weapons_actor(w, actor, &source, error) && q3_weapons_read(w, source.player + offset, out, error); }
-bool application_q3_weapons_max_health(application_q3_weapons *w, qa_actor_id actor, int32_t *out, qa_error *error)
-{ return w && player_read(w, actor, w->profile.movement->max_health, out, error); }
 bool application_q3_weapons_set_max_health(application_q3_weapons *w, qa_actor_id actor, int32_t value, qa_error *error)
 {
     q3_weapon_actor source;
     if (value <= 0) return application_fail(error, QA_ERROR_ARGUMENT, "Original maximum health requires a positive int32");
     if (!q3_weapons_actor(w, actor, &source, error) ||
-        !q3_weapons_write(w, source.player + w->profile.movement->max_health, value, error)) return false;
+        !q3_weapons_write(w, source.player + w->role->pose_profile.max_health, value, error)) return false;
     if (!q3_weapons_current(w, &source)) return application_fail(error, QA_ERROR_NOT_FOUND,
         "Original maximum health replaced its Source player");
-    return q3_weapons_write(w, source.player + w->profile.movement->persistent_max_health, value, error);
+    return q3_weapons_write(w, source.player + w->role->pose_profile.persistent_max_health, value, error);
 }
-bool application_q3_weapons_powerup_until(application_q3_weapons *w, qa_actor_id actor, application_q3_weapon_power power, int32_t *out, qa_error *error)
-{ return w && (unsigned)power < 3 && player_read(w, actor, w->profile.powerups[power], out, error); }
 bool application_q3_weapons_score(application_q3_weapons *w, qa_actor_id actor, int32_t *out, qa_error *error)
 { return (w && w->profile.has_match) ? player_read(w, actor, w->profile.score, out, error) : application_fail(error, QA_ERROR_ARGUMENT, "Original source score has no declaration"); }
 bool application_q3_weapons_set_score(application_q3_weapons *w, qa_actor_id actor, int32_t value, qa_error *error)

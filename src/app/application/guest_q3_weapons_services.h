@@ -37,8 +37,6 @@ bool application_q3_weapons_services_match_admit(application_q3_weapons_services
 bool application_q3_weapons_services_match_binding(application_q3_weapons_services *,
     qa_mode_id, qa_actor_id, qa_actor_owner, qa_match_binding *, qa_error *);
 bool application_q3_weapons_services_match_close(application_q3_weapons_services *, qa_error *);
-bool application_q3_weapons_services_pose(void *actual_role, qa_actor_id,
-    qa_q3_selected_source_pose *, qa_error *);
 bool application_q3_weapons_services_selected_damage(void *actual_native_q3_provider, qa_actor_id,
     float *, bool *handled, qa_error *);
 bool application_q3_weapons_services_selected_spawn(void *actual_native_q3_provider, qa_actor_id,

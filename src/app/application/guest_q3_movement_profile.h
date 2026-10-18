@@ -10,7 +10,6 @@ typedef struct application_q3_movement_profile {
     uint32_t movement_move, movement_slice, movement_duck, movement_global;
     uint32_t movement_mins, movement_maxs, movement_trace_callback, movement_trace_mask;
     application_q3_source_region locomotion;
-    uint32_t max_health, persistent_max_health;
     struct {
         uint32_t movement_type, health, team, flags;
         int32_t spectator_team, respawn_flag, *excluded;

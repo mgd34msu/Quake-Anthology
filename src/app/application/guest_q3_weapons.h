@@ -10,7 +10,6 @@ typedef struct application_q3_weapon_prediction {
     int32_t source_weapon, state, time_ms;
 } application_q3_weapon_prediction;
 typedef enum application_q3_weapon_grant { APPLICATION_Q3_GIVE_WEAPONS, APPLICATION_Q3_GIVE_AMMO } application_q3_weapon_grant;
-typedef enum application_q3_weapon_power { APPLICATION_Q3_QUAD, APPLICATION_Q3_HASTE, APPLICATION_Q3_FLIGHT } application_q3_weapon_power;
 typedef struct application_q3_weapon_preparation {
     void *context;
     bool (*finish)(void *, qa_error *);
@@ -62,10 +61,7 @@ bool application_q3_weapons_prediction_read(application_q3_weapons *, qa_actor_i
 bool application_q3_weapons_selection_for_item(application_q3_weapons *, qa_actor_id,
     qa_item_id, int32_t *, qa_error *);
 bool application_q3_weapons_available(application_q3_weapons *, qa_actor_id, bool attacking, bool *, qa_error *);
-bool application_q3_weapons_max_health(application_q3_weapons *, qa_actor_id, int32_t *, qa_error *);
 bool application_q3_weapons_set_max_health(application_q3_weapons *, qa_actor_id, int32_t, qa_error *);
-bool application_q3_weapons_powerup_until(application_q3_weapons *, qa_actor_id,
-    application_q3_weapon_power, int32_t *, qa_error *);
 bool application_q3_weapons_water_level(application_q3_weapons *, qa_actor_id, int32_t *, qa_error *);
 bool application_q3_weapons_score(application_q3_weapons *, qa_actor_id, int32_t *, qa_error *);
 bool application_q3_weapons_set_score(application_q3_weapons *, qa_actor_id, int32_t, qa_error *);

@@ -10167,6 +10167,28 @@ static void test_native_q3_declaration(void)
     CHECK(application_guest_input_attach(&role, &error) && !role.input);
     CHECK(role.input_profile.respawn == 112);
     application_guest_input_profile_free(&role.input_profile);
+    const char *pose = "{\"weapons\":{\"clientStride\":776,\"maxHealth\":208,"
+        "\"persistentMaxHealth\":548,\"powerups\":{\"quad\":316,\"haste\":324,\"flight\":336}}}";
+    CHECK(application_q3_source_pose_profile_read(&role,
+        (qa_bytes){(const uint8_t *)pose, strlen(pose)}, &role.pose_profile, &error));
+    CHECK(role.pose_profile.present && role.pose_profile.client_stride == 776 &&
+        role.pose_profile.max_health == 208 && role.pose_profile.persistent_max_health == 548 &&
+        role.pose_profile.powerups[0] == 316 && role.pose_profile.powerups[1] == 324 &&
+        role.pose_profile.powerups[2] == 336 && !role.weapons && !role.weapon_services);
+    const char *custom_pose = "{\"weapons\":{\"clientStride\":944,\"maxHealth\":220,"
+        "\"persistentMaxHealth\":548,\"powerups\":{\"quad\":312,\"haste\":320,\"flight\":332}}}";
+    CHECK(application_q3_source_pose_profile_read(&role,
+        (qa_bytes){(const uint8_t *)custom_pose, strlen(custom_pose)}, &role.pose_profile, &error));
+    CHECK(role.pose_profile.max_health == 220 && role.pose_profile.powerups[0] == 312 &&
+        role.pose_profile.powerups[1] == 320 && role.pose_profile.powerups[2] == 332);
+    const char *outside_pose = "{\"weapons\":{\"clientStride\":776,\"maxHealth\":776,"
+        "\"persistentMaxHealth\":548,\"powerups\":{\"quad\":316,\"haste\":324,\"flight\":336}}}";
+    CHECK(!application_q3_source_pose_profile_read(&role,
+        (qa_bytes){(const uint8_t *)outside_pose, strlen(outside_pose)}, &role.pose_profile, &error));
+    error = (qa_error){0};
+    CHECK(application_q3_source_pose_profile_read(&role,
+        (qa_bytes){(const uint8_t *)"{}", 2}, &role.pose_profile, &error));
+    CHECK(!role.pose_profile.present);
     qa_native_declaration_destroy(declaration); declaration = NULL;
     qa_strings *strings = NULL;
     CHECK(qa_strings_create(&strings, &error));

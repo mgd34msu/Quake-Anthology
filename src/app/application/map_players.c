@@ -1579,11 +1579,11 @@ static bool guest_selected_respawn(application_provider *source,
 {
     struct application_q3_guest *engine = q3g_engine(source);
     qa_application *app = source ? source->application : NULL;
-    if (!engine || !engine->game || !engine->game->weapon_services ||
+    if (!engine || !engine->game || !engine->game->pose_profile.present ||
         !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 respawn requires its actual original Source player");
     qa_q3_selected_source_services services = {.context = engine->game,
-        .pose = application_q3_weapons_services_pose};
+        .pose = application_q3_source_pose_read};
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *provider = app->providers[i];
         qa_q3_player_state state;
@@ -1809,7 +1809,7 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     bool native_character=source==world && character && character->kind<=APPLICATION_PROVIDER_Q3;
     if(character!=source && !native_character) return true;
     if(character==source) {
-        if(engine->game->weapon_services &&
+        if(engine->game->pose_profile.present &&
            !application_q3_guest_selected_respawn(source,actor,error)) return false;
     }
     if(!respawning || !qa_actors_get(qa_session_actors(app->session),actor)) return true;
@@ -1824,7 +1824,7 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
        !guest_spawn_motion(source,actor,NULL,error)) return false;
     if(native_character) {
         if(!guest_spawn_project(source,actor,error) ||
-           (engine->game->weapon_services && !guest_selected_respawn(source,actor,character,error))) return false;
+           (engine->game->pose_profile.present && !guest_selected_respawn(source,actor,character,error))) return false;
     }
     if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     if(app->supplies && world && !application_supplies_source_spawned(world,actor,error)) return false;
@@ -5469,7 +5469,7 @@ bool application_players_guest_attach(qa_application *application,
     struct application_q3_guest *guest = q3g_engine(provider);
     if (guest && guest->game && application_provider_for(application, actor, QA_ROLE_CHARACTER, "") == provider) {
         if (guest->game->combat && !application_q3_combat_admit(guest->game->combat, actor, error)) goto failed;
-        if (guest->game->weapon_services && !application_q3_guest_selected_respawn(provider, actor, error)) goto failed;
+        if (guest->game->pose_profile.present && !application_q3_guest_selected_respawn(provider, actor, error)) goto failed;
     }
     if (guest && guest->game && guest->game->weapon_services &&
         roster->map_provider == provider &&

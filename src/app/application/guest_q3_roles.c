@@ -668,7 +668,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         primary_bytes = role->artifact->image ?
             (qa_bytes){role->artifact->primary.data, role->artifact->primary.size} :
             qa_native_declaration_primary(role->artifact->declaration);
-        if (!application_q3_movement_profile_read(role, primary_bytes, &role->movement, error) ||
+        if (!application_q3_source_pose_profile_read(role, primary_bytes, &role->pose_profile, error) ||
+            !application_q3_movement_profile_read(role, primary_bytes, &role->movement, error) ||
             !application_guest_input_profile_read(role, primary_bytes, &role->input_profile, error)) goto failed;
     }
     if (kind == QA_QVM_GAME && role->vm) {

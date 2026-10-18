@@ -1975,7 +1975,9 @@ bool application_control_guest_equipment(qa_application *app, application_provid
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original equipment motion source changed during pose admission");
     if (!native_primary) {
         int32_t haste;
-        if (!application_q3_weapons_powerup_until(weapons, actor, APPLICATION_Q3_HASTE, &haste, error)) return false;
+        struct application_q3_guest *engine = q3g_engine(primary);
+        if (!application_q3_source_powerup_read(engine ? engine->game : NULL,
+                actor, APPLICATION_Q3_HASTE, &haste, error)) return false;
         motion.speed_multiplier /= haste == 0 ? 1.0 : 1.3;
     }
     *out = motion;
@@ -3683,13 +3685,13 @@ bool qa_application_control_prediction_read(qa_application *application,
     result.input.environment.has_mode = record->player.player_mode_set;
     result.input.environment.mode = record->player.player_mode;
     result.input.prediction = true;
-    if (physical && physical->kind == APPLICATION_PROVIDER_QVM) {
+    {
         struct application_q3_guest *engine = q3g_engine(physical);
-        if (engine && engine->game && engine->game->weapons) {
+        if (engine && engine->game && engine->game->pose_profile.present) {
             int32_t flight, haste;
-            if (!application_q3_weapons_powerup_until(engine->game->weapons, actor,
+            if (!application_q3_source_powerup_read(engine->game, actor,
                     APPLICATION_Q3_FLIGHT, &flight, error) ||
-                !application_q3_weapons_powerup_until(engine->game->weapons, actor,
+                !application_q3_source_powerup_read(engine->game, actor,
                     APPLICATION_Q3_HASTE, &haste, error)) return false;
             if (!live(application, actor) ||
                 application_world_provider(application, QA_ROLE_ENTITIES, "") != physical ||

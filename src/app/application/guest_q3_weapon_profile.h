@@ -38,7 +38,6 @@ typedef struct application_q3_weapon_profile {
     size_t settled_count, accepted_count;
     application_q3_weapon_catalog_entry *catalog;
     size_t catalog_count;
-    uint32_t powerups[3];
     struct { uint32_t entry; int32_t attack, melee; } animation;
     struct { uint32_t entry, result; application_q3_source_region stop; } damage;
     application_q3_weapon_context *contexts;

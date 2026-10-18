@@ -772,26 +772,6 @@ bool application_q3_weapons_services_q2_muzzle(void *context, const qa_builtin_e
      * The donor's Q2 muzzle animation always requests the non-melee operation. */
     return application_q3_weapons_services_selected_fired(provider, event->actor, 0, error);
 }
-bool application_q3_weapons_services_pose(void *context, qa_actor_id actor,
-    qa_q3_selected_source_pose *out, qa_error *error)
-{
-    q3g_role *role = context; application_q3_weapons_services *s = role ? role->weapon_services : NULL;
-    q3_weapon_actor source; qa_q3_player player; qa_q3_selected_source_pose pose = {0}; qa_combat_state combat;
-    if (!out || !q3_weapon_services_source(s, actor, &source, error)) return false;
-    ++s->calls;
-    bool ok = qa_q3_host_source_player(role->host, source.slot, &player, error) &&
-        application_q3_weapons_max_health(role->weapons, actor, &pose.max_health, error) &&
-        application_q3_weapons_powerup_until(role->weapons, actor, APPLICATION_Q3_QUAD, &pose.quad_until_ms, error) &&
-        application_q3_weapons_powerup_until(role->weapons, actor, APPLICATION_Q3_HASTE, &pose.haste_until_ms, error) &&
-        qa_combat_read(application(s)->combat, actor, &combat, error) && q3_weapons_current(role->weapons, &source);
-    if (ok) {
-        pose.view_angles = qa_v3(player.viewangles[0], player.viewangles[1], player.viewangles[2]);
-        pose.view_height = (float)player.viewheight;
-        pose.team = qa_team_color_number(qa_session_strings(application(s)->session), combat.team, QA_TEAM_COLOR_ALIASES);
-        *out = pose;
-    }
-    --s->calls; return ok;
-}
 bool application_q3_weapons_services_selected_damage(void *context, qa_actor_id actor,
     float *out, bool *handled, qa_error *error)
 {
