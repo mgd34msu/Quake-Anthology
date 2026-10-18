@@ -55,7 +55,7 @@ struct qa_ui_library {
     char status[256], title[512], labels[48][512];
     qa_ui_control controls[48];
     library_page pages[9];
-    library_choice_cache fields[QA_UI_LIBRARY_DOPPLER + 1], campaigns;
+    library_choice_cache fields[QA_UI_LIBRARY_BOT_TEAM + 1], campaigns;
     library_choice_rows *choice_build;
     qa_ui_library_choice *choices;
     size_t choice_count;

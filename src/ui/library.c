@@ -1,5 +1,6 @@
 #include "library_internal.h"
 #include "qa/application_character_selection.h"
+#include "qa/network_q3.h"
 #include <stdio.h>
 
 static const struct { qa_game_family family; qa_product_edition edition; const char *label; } families[] = {
@@ -9,15 +10,20 @@ static const struct { qa_game_family family; qa_product_edition edition; const c
 };
 static const char *field_labels[] = {"Game / mod","Map content","Starting map","Movement","Character source",
     "Character model","Local players","Weapons","Monsters","Difficulty","Game mode","Match rules",
-    "Hook","Hook style","Offhand grenades","Monster source","Monster","Your team","Opponent","Environment","Doppler"};
+    "Hook","Hook style","Offhand grenades","Monster source","Monster","Your team","Opponent","Environment","Doppler",
+    "Bot count","Edit bot","Bot definition","Bot difficulty","Bot team"};
 static const qa_ui_library_field group_fields[][5] = {
     {QA_UI_LIBRARY_PRODUCT,QA_UI_LIBRARY_MAP_PRODUCT,QA_UI_LIBRARY_MAP},
     {QA_UI_LIBRARY_MOVEMENT,QA_UI_LIBRARY_CHARACTER,QA_UI_LIBRARY_MODEL,QA_UI_LIBRARY_SEATS},
     {QA_UI_LIBRARY_WEAPONS,QA_UI_LIBRARY_ENEMIES,QA_UI_LIBRARY_SKILL,QA_UI_LIBRARY_MODE,QA_UI_LIBRARY_RULES},
-    {QA_UI_LIBRARY_GRAPPLE,QA_UI_LIBRARY_GRAPPLE_STYLE,QA_UI_LIBRARY_GRENADES}
+    {QA_UI_LIBRARY_GRAPPLE,QA_UI_LIBRARY_GRAPPLE_STYLE,QA_UI_LIBRARY_GRENADES},
+    {QA_UI_LIBRARY_BOT_COUNT,QA_UI_LIBRARY_BOT_SEAT,QA_UI_LIBRARY_BOT_DEFINITION,QA_UI_LIBRARY_BOT_SKILL,QA_UI_LIBRARY_BOT_TEAM}
 };
-static const size_t group_counts[] = {3,4,5,3};
-static const char *group_titles[] = {"World","Player","Combat","Equipment"};
+static const size_t group_counts[] = {3,4,5,3,5};
+static const char *group_titles[] = {"World","Player","Combat","Equipment","Bots"};
+static bool text_field(qa_ui_library_field field) {
+    return field==QA_UI_LIBRARY_BOT_DEFINITION;
+}
 static bool action(void *,uint32_t,qa_ui_id,const qa_ui_action *,qa_error *);
 static const char *edition_name(qa_product_edition edition) {
     static const char *names[]={"classic","rerelease","quakeworld","demo"};
@@ -518,15 +524,18 @@ static bool action_impl(void *context,uint32_t seat,qa_ui_id control,const qa_ui
     }
     if (page==QA_UI_LIBRARY_CUSTOM && event->kind==QA_UI_ACTIVATE) {
         if (control>=1 && control<=4) { m->group=(unsigned)control-1; return open(m,QA_UI_LIBRARY_CATEGORY,error); }
+        if (control==11) { m->group=4; return open(m,QA_UI_LIBRARY_CATEGORY,error); }
         if (control==5) return open(m,m->services.hosting_menu,error);
         if (control==6) return open(m,m->services.mods_menu,error);
         if (control==7) return launch(m,false,error);
         if (control==9) return open(m,m->services.browser_menu,error);
         if (control==10) return open(m,m->services.lobby_menu,error);
     }
-    if (page==QA_UI_LIBRARY_CATEGORY && (event->kind==QA_UI_ACTIVATE || event->kind==QA_UI_SELECT || event->kind==QA_UI_CHANGE_NUMBER)) {
+    if (page==QA_UI_LIBRARY_CATEGORY && (event->kind==QA_UI_ACTIVATE || event->kind==QA_UI_SELECT || event->kind==QA_UI_CHANGE_NUMBER || event->kind==QA_UI_CHANGE_TEXT || event->kind==QA_UI_SUBMIT)) {
         if (control>=1 && control<=group_counts[m->group]) {
             m->field=group_fields[m->group][control-1]; m->page=0; free(m->monster_classname); m->monster_classname=NULL;
+            if (text_field(m->field)) return (event->kind!=QA_UI_CHANGE_TEXT && event->kind!=QA_UI_SUBMIT) ||
+                select_choice(m,event->value.text,error);
             if (m->field==QA_UI_LIBRARY_GRAPPLE && event->kind==QA_UI_SELECT) {
                 if (!selection_choices(m,m->field,error) || event->value.row>=m->choice_count) return false;
                 size_t row=0;
@@ -725,9 +734,9 @@ static bool arena_menu(qa_ui_library *m,size_t *count,qa_error *error) {
 static bool summary(qa_ui_library *m,size_t *count,qa_error *error) {
     static const qa_ui_library_field fields[]={QA_UI_LIBRARY_PRODUCT,QA_UI_LIBRARY_MAP_PRODUCT,QA_UI_LIBRARY_MAP,
         QA_UI_LIBRARY_MOVEMENT,QA_UI_LIBRARY_CHARACTER,QA_UI_LIBRARY_MODEL,QA_UI_LIBRARY_WEAPONS,QA_UI_LIBRARY_ENEMIES,
-        QA_UI_LIBRARY_GRAPPLE,QA_UI_LIBRARY_GRAPPLE_STYLE,QA_UI_LIBRARY_GRENADES,QA_UI_LIBRARY_MODE};
-    const char *values[12]; char owned[12][512]; size_t rows=0;
-    for (size_t i=0;i<12;++i) {
+        QA_UI_LIBRARY_GRAPPLE,QA_UI_LIBRARY_GRAPPLE_STYLE,QA_UI_LIBRARY_GRENADES,QA_UI_LIBRARY_MODE,QA_UI_LIBRARY_BOT_COUNT};
+    const char *values[sizeof(fields)/sizeof(*fields)]; char owned[sizeof(fields)/sizeof(*fields)][512]; size_t rows=0;
+    for (size_t i=0;i<sizeof(fields)/sizeof(*fields);++i) {
         if (!selection_choices(m,fields[i],error)) return false;
         if (fields[i]==QA_UI_LIBRARY_GRAPPLE_STYLE && !m->choice_count) continue;
         snprintf(owned[rows],sizeof(owned[rows]),"%s",selected_label(m)); values[rows]=field_labels[fields[i]]; ++rows;
@@ -780,13 +789,14 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *error)
         m->controls[count]=text_control(m,180,m->labels[count],64,86,1.6f,512,false); ++count;
     } else if (id==QA_UI_LIBRARY_CUSTOM) {
         title="Custom game";
-        for (unsigned i=0;i<4;++i) m->controls[count++]=button(m,i+1,group_titles[i],i,false,true);
-        m->controls[count++]=button(m,5,m->services.hosting_label?m->services.hosting_label(m->services.context):"Network: local only",4,false,m->services.hosting_menu!=0);
-        m->controls[count++]=button(m,6,"Mods",5,false,m->services.mods_menu!=0);
-        m->controls[count++]=button(m,7,"Play",6,false,true);
-        m->controls[count++]=button(m,99,"Back",7,false,true);
-        if (m->services.browser_menu) m->controls[count++]=button(m,9,"Find servers",8,false,true);
-        if (m->services.lobby_menu) m->controls[count++]=button(m,10,"Local lobby",9,false,true);
+        for (unsigned i=0;i<5;++i) m->controls[count++]=button(m,i==4?11:i+1,group_titles[i],i,false,true);
+        m->controls[count++]=button(m,5,m->services.hosting_label?m->services.hosting_label(m->services.context):"Network: local only",5,false,m->services.hosting_menu!=0);
+        m->controls[count++]=button(m,6,"Mods",6,false,m->services.mods_menu!=0);
+        m->controls[count++]=button(m,7,"Play",7,false,true);
+        m->controls[count++]=button(m,99,"Back",8,false,true);
+        if (m->services.browser_menu) m->controls[count++]=button(m,9,"Find servers",9,false,true);
+        if (m->services.lobby_menu) m->controls[count++]=button(m,10,"Local lobby",10,false,true);
+        for (size_t i=0;i<count;++i) m->controls[i].rect.y=104+(float)i*31;
         if (!summary(m,&count,error)) return false;
     } else if (id==QA_UI_LIBRARY_CATEGORY) {
         title=group_titles[m->group]; unsigned row=0;
@@ -794,7 +804,12 @@ static bool factory(void *context,uint32_t seat,qa_ui_menu *out,qa_error *error)
             qa_ui_library_field field=group_fields[m->group][i];
             if (!selection_choices(m,field,error)) return false;
             if (field==QA_UI_LIBRARY_GRAPPLE_STYLE && !m->choice_count) continue;
-            if (field==QA_UI_LIBRARY_GRAPPLE) {
+            if (text_field(field)) {
+                m->controls[count]=button(m,i+1,field_labels[field],row,true,m->choice_count!=0);
+                m->controls[count].kind=QA_UI_FIELD;
+                m->controls[count].value.field.text=m->selected;
+                m->controls[count].value.field.maximum=QA_Q3_COMMAND_CHARS-1;
+            } else if (field==QA_UI_LIBRARY_GRAPPLE) {
                 size_t selected=0; for (size_t j=0;j<m->choice_count;++j) if (!strcmp(m->selected,m->choices[j].id)) selected=j;
                 /* The donor removes unavailable inline choices. */
                 size_t n=0;
@@ -1006,25 +1021,26 @@ bool qa_ui_library_input(qa_ui_library *m,const qa_input_event *event,bool *hand
 }
 
 bool qa_ui_library_selection_choices(qa_ui_library *m,qa_ui_library_field field,const qa_ui_library_choice **choices,size_t *count,const char **selected,qa_error *error) {
-    if (!m || !choices || !count || !selected || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection rows require their actual field and outputs");
+    if (!m || !choices || !count || !selected || (unsigned)field>QA_UI_LIBRARY_BOT_TEAM) return ui_fail(error,"selection rows require their actual field and outputs");
     if (!selection_choices(m,field,error)) return false;
     *choices=m->choices; *count=m->choice_count; *selected=m->selected; return true;
 }
 bool qa_ui_library_open_selection(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
-    if (!m || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection menu requires its actual owner and field");
+    if (!m || (unsigned)field>QA_UI_LIBRARY_BOT_TEAM) return ui_fail(error,"selection menu requires its actual owner and field");
     m->field=field; m->page=0;
     if (field!=QA_UI_LIBRARY_MONSTER_CLASS) { free(m->monster_classname); m->monster_classname=NULL; }
+    if (text_field(field)) {m->group=4;return open(m,QA_UI_LIBRARY_CATEGORY,error);}
     return open(m,QA_UI_LIBRARY_CHOICES,error);
 }
 bool qa_ui_library_select(qa_ui_library *m,qa_ui_library_field field,const char *choice,qa_error *error) {
-    if (!m || !choice || (unsigned)field>QA_UI_LIBRARY_DOPPLER) return ui_fail(error,"selection requires its authored field");
+    if (!m || !choice || (unsigned)field>QA_UI_LIBRARY_BOT_TEAM) return ui_fail(error,"selection requires its authored field");
     char *id=copy_text(choice,error); if (!id) return false;
     if (!selection_choices(m,field,error)) { free(id); return false; }
     for (size_t i=0;i<m->choice_count;++i) if (!strcmp(id,m->choices[i].id)) {
         if (!prepare_choices(m,field,m->choices+i,1,error)) { free(id); return false; }
         break;
     }
-    bool admitted=false;
+    bool admitted=text_field(field);
     for (size_t i=0;i<m->choice_count;++i) if (!strcmp(id,m->choices[i].id) && !m->choices[i].unavailable) admitted=true;
     if (!admitted) { free(id); return ui_fail(error,"startup choice is unavailable for the selected field"); }
     qa_ui_library_field previous=m->field; m->field=field;

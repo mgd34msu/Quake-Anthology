@@ -7,6 +7,8 @@
 #include "qa/bsp.h"
 #include "qa/id_index.h"
 #include "qa/modes_map.h"
+#include "qa/game_q3_source_types.h"
+#include "qa/text.h"
 #include "../application/guest_q3_grapple_profile.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -48,6 +50,8 @@ struct frontend_startup_selection {
     size_t count, choice_capacity;
     model_preference *models;
     size_t model_count;
+    uint32_t selected_bot;
+    bool bot_selected;
     startup_roster_rows rosters[2];
     unsigned roster_current;
     const qa_launch_draft *roster_draft;
@@ -732,6 +736,28 @@ static bool monster_choices(frontend_startup_selection *s, qa_ui_library *librar
     return true;
 }
 
+static const qa_launch_seat *selected_bot(frontend_startup_selection *s,qa_ui_library *library)
+{
+    const qa_launch_choices *choices=qa_ui_library_choices(library);
+    const qa_launch_seat *first=NULL;
+    for (size_t i=0;i<choices->seat_count;++i) {
+        const qa_launch_seat *seat=choices->seats+i;
+        if (!seat->bot) continue;
+        if (!first) first=seat;
+        if (s->bot_selected && s->selected_bot==seat->id) return seat;
+    }
+    s->bot_selected=first!=NULL;
+    if (first) s->selected_bot=first->id;
+    return first;
+}
+
+static size_t bot_count(const qa_launch_choices *choices)
+{
+    size_t count=0;
+    for (size_t i=0;i<choices->seat_count;++i) count+=choices->seats[i].bot;
+    return count;
+}
+
 bool frontend_startup_selection_choices(void *context, qa_ui_library *library, qa_ui_library_field field,
     const char *classname, const qa_ui_library_choice **out, size_t *count, const char **selected, qa_error *e)
 {
@@ -753,8 +779,56 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
     case QA_UI_LIBRARY_SEATS: {
         unsigned locals = 0;
         for (size_t i = 0; i < c->seat_count; ++i) locals += c->seats[i].local && !c->seats[i].bot;
-        for (unsigned i = 1; ok && i <= 4; ++i) { char id[2] = {(char)('0' + i), 0}; ok = append(s, id, id, NULL, e); }
+        for (unsigned i = 1; ok && i <= 4; ++i) {
+            char id[2] = {(char)('0' + i), 0};
+            const char *reason=bot_count(c) && c->seat_count-locals+i>QA_Q3_SOURCE_CLIENTS?
+                "Remove a bot before adding another player to the 64-client source":"";
+            ok = append(s, id, id, *reason?reason:NULL, e);
+        }
         char id[16]; snprintf(id, sizeof(id), "%u", locals); *selected = text(s, id, e); break;
+    }
+    case QA_UI_LIBRARY_BOT_COUNT: {
+        size_t bots=bot_count(c),people=c->seat_count-bots;
+        size_t maximum=people<QA_Q3_SOURCE_CLIENTS?QA_Q3_SOURCE_CLIENTS-people:0;
+        if (bots>maximum) maximum=bots;
+        for (size_t i=0;ok && i<=maximum;++i) {
+            char id[32];snprintf(id,sizeof(id),"%zu",i);
+            ok=append(s,id,id,NULL,e);
+        }
+        char id[32];snprintf(id,sizeof(id),"%zu",bots);*selected=text(s,id,e);break;
+    }
+    case QA_UI_LIBRARY_BOT_SEAT: {
+        const qa_launch_seat *current=selected_bot(s,library);
+        for (size_t i=0;ok && i<c->seat_count;++i) {
+            const qa_launch_seat *seat=c->seats+i;
+            if (!seat->bot) continue;
+            char id[32],label[512];snprintf(id,sizeof(id),"%u",seat->id);
+            snprintf(label,sizeof(label),"%s (seat %u)",seat->name,seat->id);
+            ok=append(s,id,label,NULL,e);
+            if (seat==current) *selected=text(s,id,e);
+        }
+        break;
+    }
+    case QA_UI_LIBRARY_BOT_DEFINITION:
+    case QA_UI_LIBRARY_BOT_SKILL:
+    case QA_UI_LIBRARY_BOT_TEAM: {
+        const qa_launch_seat *seat=selected_bot(s,library);
+        if (!seat) break;
+        if (field==QA_UI_LIBRARY_BOT_DEFINITION) {
+            const char *definition=seat->bot_definition?seat->bot_definition:seat->name;
+            ok=append(s,definition,definition,NULL,e);*selected=text(s,definition,e);
+        } else if (field==QA_UI_LIBRARY_BOT_SKILL) {
+            for (unsigned i=1;ok && i<=5;++i) {
+                char id[2]={(char)('0'+i),0};ok=append(s,id,id,NULL,e);
+            }
+            char id[48];snprintf(id,sizeof(id),"%.9g",(double)seat->bot_skill);*selected=text(s,id,e);
+        } else {
+            static const char *ids[]={"","free","red","blue","spectator"};
+            static const char *labels[]={"Automatic","Free for all","Red","Blue","Spectator"};
+            for (size_t i=0;ok && i<sizeof(ids)/sizeof(*ids);++i) ok=append(s,ids[i],labels[i],NULL,e);
+            *selected=text(s,seat->spectator?"spectator":seat->team,e);
+        }
+        break;
     }
     case QA_UI_LIBRARY_WEAPONS: {
         const qa_product *p = role_product(library, QA_ROLE_ARSENAL);
@@ -856,6 +930,37 @@ bool frontend_startup_selection_choices(void *context, qa_ui_library *library, q
     *out = s->choices; *count = s->count; return true;
 }
 
+static bool first_seat_id(const qa_launch_choices *choices,uint32_t *out,qa_error *error)
+{
+    for (uint32_t id=0;;++id) {
+        bool used=false;
+        for (size_t i=0;i<choices->seat_count;++i) used|=choices->seats[i].id==id;
+        if (!used) {*out=id;return true;}
+        if (id==UINT32_MAX) return fail(error,"Player seat identities are exhausted");
+    }
+}
+
+static bool select_bot_count(qa_ui_library *library,unsigned requested,qa_error *error)
+{
+    qa_launch_draft *draft=qa_ui_library_draft(library);
+    size_t i=0;unsigned kept=0;
+    while (i<qa_ui_library_choices(library)->seat_count) {
+        qa_launch_seat seat=qa_ui_library_choices(library)->seats[i];
+        if (seat.bot && ++kept>requested) {
+            if (!qa_launch_remove_seat(draft,seat.id,error)) return false;
+        } else ++i;
+    }
+    for (;kept<requested;++kept) {
+        uint32_t id;
+        if (!first_seat_id(qa_ui_library_choices(library),&id,error)) return false;
+        char name[48];snprintf(name,sizeof(name),"Bot %u",kept+1);
+        qa_launch_seat seat={.id=id,.name=name,.team="",.bot=true,
+            .bot_definition="sarge",.bot_skill=3};
+        if (!qa_launch_set_seat(draft,&seat,error)) return false;
+    }
+    return true;
+}
+
 static bool select_seats(qa_ui_library *library, unsigned requested, qa_error *e)
 {
     qa_launch_draft *draft = qa_ui_library_draft(library);
@@ -875,12 +980,8 @@ static bool select_seats(qa_ui_library *library, unsigned requested, qa_error *e
     bool ok = true;
     for (; ok && kept < requested; ++kept) {
         const qa_launch_choices *c = qa_ui_library_choices(library);
-        uint32_t id = 0; bool used;
-        do {
-            used = false;
-            for (size_t n = 0; n < c->seat_count; ++n) used |= c->seats[n].id == id;
-            if (used) ++id;
-        } while (used);
+        uint32_t id;
+        if (!first_seat_id(c,&id,e)) {ok=false;break;}
         char name[32]; snprintf(name, sizeof(name), "Player %u", kept + 1);
         qa_launch_seat seat = {.id = id, .name = name, .team = "", .local = true,
             .input_device = kept, .character_model = declaration.model, .character_skin = declaration.skin,
@@ -1098,6 +1199,20 @@ static bool select_monster(qa_ui_library *library, const char *classname, const 
             .authored_classname = classname ? classname : "", .instance = instance, .classname = target}, e);
 }
 
+static bool select_bot_setting(frontend_startup_selection *s,qa_ui_library *library,
+    qa_ui_library_field field,const char *value,qa_error *error)
+{
+    const qa_launch_seat *current=selected_bot(s,library);
+    if (!current) return fail(error,"Add a bot before editing its settings");
+    qa_launch_seat seat=*current;
+    if (field==QA_UI_LIBRARY_BOT_DEFINITION) seat.bot_definition=value;
+    else if (field==QA_UI_LIBRARY_BOT_SKILL) seat.bot_skill=(float)(value[0]-'0');
+    else {
+        seat.team=value;seat.spectator=!strcmp(value,"spectator");
+    }
+    return qa_launch_set_seat(qa_ui_library_draft(library),&seat,error);
+}
+
 bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa_ui_library_field field,
     const char *classname, const char *choice, qa_error *e)
 {
@@ -1106,6 +1221,10 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
     char *id = copy_text(choice, e), *class_copy = classname ? copy_text(classname, e) : NULL;
     if (!id || (classname && !class_copy)) { free(id); free(class_copy); return false; }
     bool ok;
+    if (field==QA_UI_LIBRARY_BOT_DEFINITION) {
+        ok=select_bot_setting(s,library,field,id,e);
+        free(id);free(class_copy);return ok;
+    }
     if (field == QA_UI_LIBRARY_CHARACTER) {
         clear_rows(s);
         const qa_product *p = role_product(library, QA_ROLE_CHARACTER);
@@ -1144,6 +1263,20 @@ bool frontend_startup_selection_select(void *context, qa_ui_library *library, qa
     case QA_UI_LIBRARY_MODEL:
         ok = apply_model(library, id, e) && remember_model(s, role_product(library, QA_ROLE_CHARACTER), id, e); break;
     case QA_UI_LIBRARY_SEATS: ok = select_seats(library, (unsigned)(id[0] - '0'), e); break;
+    case QA_UI_LIBRARY_BOT_COUNT:
+        ok=select_bot_count(library,(unsigned)qa_parse_decimal_i32(id,QA_DECIMAL_ASCII_CLAMP),e);break;
+    case QA_UI_LIBRARY_BOT_SEAT: {
+        const qa_launch_choices *current=qa_ui_library_choices(library);
+        for (size_t i=0;i<current->seat_count;++i) {
+            const qa_launch_seat *seat=current->seats+i;char key[32];
+            if (!seat->bot) continue;
+            snprintf(key,sizeof(key),"%u",seat->id);
+            if (!strcmp(key,id)) {s->selected_bot=seat->id;s->bot_selected=true;break;}
+        }
+        break;
+    }
+    case QA_UI_LIBRARY_BOT_SKILL:
+    case QA_UI_LIBRARY_BOT_TEAM: ok=select_bot_setting(s,library,field,id,e);break;
     case QA_UI_LIBRARY_WEAPONS:
         if (!strcmp(id, "native")) ok = qa_launch_bind(qa_ui_library_draft(library), &(qa_launch_binding){
             .scope = {.kind = QA_SCOPE_DEFAULT_PLAYER}, .role = QA_ROLE_ARSENAL, .instance = "native:primary"}, e);
