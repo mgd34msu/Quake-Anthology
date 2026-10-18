@@ -67,7 +67,7 @@ bool application_guest_input_actor_idle(const qa_application *, qa_actor_id);
  * this actual GAME's retained weapon hooks and located full-actor player. */
 bool application_arsenal_guest_equipment_handoff_ready(application_provider *, qa_actor_id, qa_error *);
 bool application_control_guest_complete(qa_application *, qa_actor_id,
-                                         const qa_usercmd *, const qa_q3_player *,
+                                         const qa_usercmd *, const qa_q3_player *, const qa_bounds *,
                                          qa_error *);
 typedef struct application_source_input_scope {
     application_provider **owners;

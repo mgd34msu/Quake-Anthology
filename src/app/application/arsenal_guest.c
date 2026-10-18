@@ -16,6 +16,12 @@
 #include "qa/text.h"
 #include <math.h>
 
+typedef struct guest_motion_completion {
+    qa_bounds bounds;
+    int32_t spawn_count;
+    bool has_bounds;
+} guest_motion_completion;
+
 typedef struct guest_client_scope {
     struct guest_client_scope *previous;
     const qa_qvm_call *call;
@@ -44,6 +50,7 @@ typedef struct application_guest_input {
     qa_actor_id command_actor;
     const qa_usercmd *command;
     const application_control_external_stage *stage;
+    guest_motion_completion *completion;
     qa_usercmd applied_command;
     qa_q3_usercmd projected_command;
     struct { qa_actor_id actor; uint64_t sequence; int32_t mode; } completed_mode;
@@ -55,7 +62,7 @@ typedef struct application_guest_input {
 static bool is_guest(const application_provider *);
 static bool guest_follower(application_guest_input *, qa_actor_id);
 static bool guest_completed(application_guest_input *, qa_actor_id, uint32_t, int32_t,
-    const qa_usercmd *, const application_control_external_stage *, qa_error *);
+    const qa_usercmd *, const application_control_external_stage *, const guest_motion_completion *, qa_error *);
 static bool guest_followers_command(qa_application *, application_provider *, qa_actor_id,
     const qa_usercmd *, const application_control_external_stage *, qa_error *);
 static bool guest_provider_command(qa_application *, application_provider *, qa_actor_id,
@@ -316,6 +323,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     const qa_usercmd *previous_command = input->command;
     qa_actor_id previous_command_actor = input->command_actor;
     qa_usercmd frame_command;
+    guest_motion_completion completion = {0}, *previous_completion = input->completion;
     bool deferred = false;
     qa_error preparation = {0};
     if (call->instruction == input->profile.run_client && !input->in_command &&
@@ -326,6 +334,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
         if (deferred) {
             previous_context = application_control_frame_swap(app, &frame_context);
             input->command = &frame_command; input->command_actor = scope.actor;
+            input->completion = &completion;
             input->input_applied = false; input->command_projected = false;
             input->completed_mode.actor = (qa_actor_id){0};
             scope.completed_motion = application_provider_for(app, scope.actor, QA_ROLE_MOVEMENT, "") != guest;
@@ -354,7 +363,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     }
     if (ok && deferred && scope.moved && current(input, &scope, call))
         ok = guest_completed(input, scope.actor, scope.slot, scope.before_time,
-            &frame_command, NULL, error);
+            &frame_command, NULL, &completion, error);
     if (scope.spawn_binding) {
         qa_error cleanup = {0};
         if (!qa_qvm_unbind(input->role->vm, scope.spawn_binding, &cleanup)) {
@@ -365,6 +374,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     if (ok && !current(input, &scope, call)) ok = cancel_client(call, call, error);
     if (deferred) {
         input->command = previous_command; input->command_actor = previous_command_actor;
+        input->completion = previous_completion;
         application_control_frame_swap(app, previous_context);
     }
     input->scope = scope.previous;
@@ -836,6 +846,13 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
             &body_scope, error);
     if (ok && !cancelled && !body_scope.retired && !body_scope.cancelled) ok = qa_qvm_proceed(call, result, error);
     if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
+    if (ok && !cancelled && !slice && !follower && !body_scope.retired && !body_scope.cancelled &&
+        body_scope.accepted && input->completion && qa_actor_id_equal(input->command_actor, scope->actor) &&
+        current(input, scope, call)) {
+        input->completion->bounds = body_scope.accepted_bounds;
+        input->completion->spawn_count = state.persistant[4];
+        input->completion->has_bounds = true;
+    }
     qa_error body_cleanup = {0};
     if (!application_guest_q3_control_end(input->body_control, &body_scope, &body_cleanup)) {
         if (ok && error) *error = body_cleanup;
@@ -1344,7 +1361,7 @@ bool application_arsenal_guest_crouched(application_provider *provider, qa_actor
 
 static bool guest_completed(application_guest_input *input, qa_actor_id actor, uint32_t slot,
     int32_t before_time, const qa_usercmd *command,
-    const application_control_external_stage *stage, qa_error *error)
+    const application_control_external_stage *stage, const guest_motion_completion *completion, qa_error *error)
 {
     application_provider *guest = input->role->engine->provider;
     qa_application *app = guest->application;
@@ -1354,6 +1371,9 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
     qa_q3_player player;
     if (!qa_q3_host_source_player(input->role->host, slot, &player, error)) return false;
     if (player.commandTime == before_time) return true;
+    /* A real ClientSpawn after Pmove owns its newborn hull, not the prior move. */
+    const qa_bounds *bounds = completion && completion->has_bounds &&
+        completion->spawn_count == player.persistant[4] ? &completion->bounds : NULL;
     bool dead;
     if (!foreign_character_dead(input, actor, &dead, NULL, error)) return false;
     if (dead && qa_actor_id_equal(input->completed_mode.actor, actor) &&
@@ -1365,8 +1385,8 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
     applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
     if (dead) applied.buttons = (applied.buttons & ~UINT32_C(5)) | (command->buttons & UINT32_C(5));
     if (application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") == guest &&
-        !(stage ? stage->current(stage) && stage->complete(stage, &applied, &player, error) :
-            application_control_guest_complete(app, actor, &applied, &player, error))) return false;
+        !(stage ? stage->current(stage) && stage->complete(stage, &applied, &player, bounds, error) :
+            application_control_guest_complete(app, actor, &applied, &player, bounds, error))) return false;
     qa_usercmd completed = *command;
     completed.milliseconds = applied.milliseconds;
     if (!dead) completed.buttons = (completed.buttons & ~UINT32_C(5)) | (applied.buttons & UINT32_C(5));
@@ -1417,8 +1437,9 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
      * its attack/use for gauntlet damage or its own respawn request. */
     if (dead) raw.buttons &= ~5;
     if (!qa_q3_host_player_motion(input->role->host, slot, true, error)) return false;
+    guest_motion_completion completion = {0}, *previous_completion = input->completion;
     input->in_command = true; input->command_actor = actor;
-    input->command = command; input->stage = stage; input->input_applied = false;
+    input->command = command; input->stage = stage; input->completion = &completion; input->input_applied = false;
     input->command_projected = false;
     input->completed_mode.actor = (qa_actor_id){0};
     if (guest_follower(input, actor)) {
@@ -1431,13 +1452,13 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
         qa_actor_id_equal(engine->clients[slot].actor, actor))
         ok = application_q3_weapons_services_request_completed(input->role->weapon_services, actor, error);
-    if (ok) ok = guest_completed(input, actor, slot, before_time, command, stage, error);
+    if (ok) ok = guest_completed(input, actor, slot, before_time, command, stage, &completion, error);
     qa_error unwind = {0};
     if (!qa_q3_host_player_motion(input->role->host, slot, false, &unwind)) {
         if (ok && error) *error = unwind;
         ok = false;
     }
-    input->command = NULL; input->stage = NULL; input->in_command = false;
+    input->command = NULL; input->stage = NULL; input->completion = previous_completion; input->in_command = false;
     input->command_actor = (qa_actor_id){0};
     qa_error drain = {0};
     if (!application_guest_clients_drain(guest, &drain)) {

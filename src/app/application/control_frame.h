@@ -83,7 +83,7 @@ typedef struct application_control_external_stage {
     bool (*locomotion)(const struct application_control_external_stage *,
         const qa_usercmd *, qa_usercmd *, qa_error *);
     bool (*complete)(const struct application_control_external_stage *,
-        const qa_usercmd *, const qa_q3_player *, qa_error *);
+        const qa_usercmd *, const qa_q3_player *, const qa_bounds *, qa_error *);
 } application_control_external_stage;
 bool application_arsenal_guest_stage_ready(qa_application *, qa_actor_id);
 bool application_arsenal_guest_roles_admit(application_provider *movement,

@@ -72,7 +72,7 @@ struct application_control_turn {
     size_t parked_count;
 };
 static bool guest_complete(qa_application *, qa_actor_id, const qa_usercmd *,
-    const qa_q3_player *, const application_control_external_stage *, qa_error *);
+    const qa_q3_player *, const qa_bounds *, const application_control_external_stage *, qa_error *);
 
 static bool retained_nq_turn(const application_control_context *context)
 {
@@ -2480,11 +2480,11 @@ static bool external_stage_locomotion(const application_control_external_stage *
     return ok && (!live(move->application, stage->actor) || external_stage_current(stage));
 }
 static bool external_stage_complete(const application_control_external_stage *stage,
-    const qa_usercmd *command, const qa_q3_player *player, qa_error *error)
+    const qa_usercmd *command, const qa_q3_player *player, const qa_bounds *bounds, qa_error *error)
 {
     if (!external_stage_current(stage))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original completion lost its retained physics owner");
-    return guest_complete(stage->application, stage->actor, command, player, stage, error);
+    return guest_complete(stage->application, stage->actor, command, player, bounds, stage, error);
 }
 
 static bool unified_arsenal_input(qa_application *app, qa_actor_id actor,
@@ -3333,7 +3333,7 @@ bool qa_application_control_commands(qa_application *application, qa_actor_id ac
 
 static bool guest_complete(qa_application *application, qa_actor_id actor,
                                          const qa_usercmd *command,
-                                         const qa_q3_player *player,
+                                         const qa_q3_player *player, const qa_bounds *bounds,
                                          const application_control_external_stage *stage, qa_error *error)
 {
     const application_control_context *context = application_control_frame_current(application, actor);
@@ -3364,6 +3364,7 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
     if (ok && live(application, actor)) {
         body.origin = qa_v3(player->origin[0], player->origin[1], player->origin[2]);
         body.velocity = qa_v3(player->velocity[0], player->velocity[1], player->velocity[2]);
+        if (bounds) body.bounds = *bounds;
         body.angles = qa_v3(0, player->viewangles[1], body.angles.z);
         body.ground = (qa_actor_reference){0};
         if (player->groundEntityNum == 1022) {
@@ -3477,8 +3478,8 @@ guest_weapons_finished:
 }
 
 bool application_control_guest_complete(qa_application *application, qa_actor_id actor,
-    const qa_usercmd *command, const qa_q3_player *player, qa_error *error)
-{ return guest_complete(application, actor, command, player, NULL, error); }
+    const qa_usercmd *command, const qa_q3_player *player, const qa_bounds *bounds, qa_error *error)
+{ return guest_complete(application, actor, command, player, bounds, NULL, error); }
 
 bool application_control_velocity(qa_application *application, qa_actor_id actor,
                                    qa_vec3 velocity, qa_error *error)

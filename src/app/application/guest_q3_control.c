@@ -181,12 +181,26 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
                 (flags & ~UINT32_C(1)) | (scope->fixed_crouched ? 1u : 0u), error) &&
             write_word(owner, scope, call, scope->player + 164, height, error) &&
             write_bounds(owner, scope, call, scope->pose.bounds, error);
-        if (ok) *result = 0;
+        if (ok) {
+            scope->accepted_bounds = scope->pose.bounds; scope->accepted = true;
+            *result = 0;
+        }
     } else {
         if (scope->requested && !owner->profile->source->body_trace)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Original requested body bounds require their declared source trace");
-        if (!owner->profile->source->body_trace) return qa_qvm_proceed(call, result, error);
+        if (!owner->profile->source->body_trace) {
+            ok = qa_qvm_proceed(call, result, error);
+            if (ok) ok = observe_cancel(call, scope, error);
+            if (ok && !scope->cancelled && retain_current(owner, scope)) {
+                ok = vector(owner, scope->movement + owner->profile->source->movement_mins,
+                    &scope->accepted_bounds.mins, error) &&
+                    vector(owner, scope->movement + owner->profile->source->movement_maxs,
+                    &scope->accepted_bounds.maxs, error);
+                scope->accepted = ok;
+            }
+            return ok;
+        }
         body_trace trace = {.owner = owner, .scope = scope, .call = call};
         uint32_t flags;
         if (!word(owner, scope->player + 12, &flags, error) ||
