@@ -5,7 +5,10 @@
 #include "guest_q3_control.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_projection_private.h"
+#include "map_players_private.h"
+#include "source_projection.h"
 #include "bots_private.h"
+#include "qa/binary.h"
 #include "qa/q3_abi.h"
 #include "qa/qvm_save.h"
 #include "qa/source_save.h"
@@ -23,6 +26,7 @@ typedef struct guest_client_scope {
     qa_usercmd application_command;
     bool weapon_slice, weapon_reached;
     bool spawning, input_active;
+    qa_qvm_binding spawn_binding;
 } guest_client_scope;
 
 typedef struct application_guest_input {
@@ -144,6 +148,61 @@ bool application_guest_input_bot_setup_bind(q3g_role *role, qa_qvm_binding *out,
         bot_setup, input, out, error);
 }
 
+static application_provider *spawn_world(application_guest_input *input,
+    const guest_client_scope *scope)
+{
+    application_provider *guest = input->role->engine->provider;
+    qa_application *app = guest->application;
+    application_provider *world = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    return scope && scope->spawning && world && world != guest &&
+        world->kind == APPLICATION_PROVIDER_Q1 &&
+        application_provider_for(app, scope->actor, QA_ROLE_CHARACTER, "") == guest ? world : NULL;
+}
+
+static bool select_spawn(void *context, const qa_qvm_call *call, int32_t *result,
+    qa_error *error)
+{
+    application_guest_input *input = context;
+    guest_client_scope *scope = input->scope;
+    application_provider *world = spawn_world(input, scope);
+    if (!world) return qa_qvm_proceed(call, result, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
+    int32_t arguments[2];
+    if (!qa_qvm_call_argument(call, 1, arguments, error) ||
+        !qa_qvm_call_argument(call, 2, arguments + 1, error)) return false;
+    qa_application *app = world->application;
+    qa_body_state body;
+    qa_actor_id point;
+    bool found;
+    if (!application_players_native_q1_spawn_pose(app, world, scope->actor,
+            &body, &found, &point, error)) return false;
+    if (!current(input, scope, call) || !found)
+        return cancel_client(call, scope->call, error);
+    uint32_t slot;
+    if (!q3g_project_actor(input->role, call, point, &slot, error)) return false;
+    if (!current(input, scope, call) ||
+        !qa_actors_get(qa_session_actors(app->session), point))
+        return cancel_client(call, scope->call, error);
+    qa_q3_host_game_data data;
+    if (!qa_q3_host_game_data_read(input->role->host, &data)) return false;
+    uint64_t address = data.entities_address + (uint64_t)slot * data.entity_stride;
+    if (address > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Selected spawn point exceeds its QVM pointer word");
+    qa_bytes span;
+    if (!qa_qvm_span(call->vm, (int32_t)address, 0, data.entity_stride, &span, error)) return false;
+    const qa_vec3 vectors[] = {body.origin, body.angles};
+    for (size_t i = 0; i < 2; ++i) {
+        uint8_t bytes[12];
+        qa_store_f32le(bytes, vectors[i].x);
+        qa_store_f32le(bytes + 4, vectors[i].y);
+        qa_store_f32le(bytes + 8, vectors[i].z);
+        if (!qa_qvm_write(call->vm, (uint32_t)arguments[i],
+                (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
+    }
+    *result = (int32_t)address;
+    return true;
+}
+
 static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
     application_guest_input *input = context;
@@ -181,7 +240,15 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
         return true;
     }
     input->scope = &scope;
-    bool ok = qa_qvm_proceed(call, result, error);
+    bool inherited_spawn_binding = false;
+    for (guest_client_scope *parent = scope.previous; parent; parent = parent->previous)
+        if (parent->spawn_binding) { inherited_spawn_binding = true; break; }
+    bool ok = true;
+    if (spawn_world(input, &scope) && input->profile.source->present &&
+        !inherited_spawn_binding)
+        ok = qa_qvm_bind_function(input->role->vm, input->profile.source->spawn,
+            true, select_spawn, input, &scope.spawn_binding, error);
+    if (ok) ok = qa_qvm_proceed(call, result, error);
     if (ok && call->instruction == input->profile.client_think && accepted_command &&
         borrowed_native_bot(input, scope.actor) && current(input, &scope, call)) {
         /* Q3 defers bot Think to RunClient. Consume the accepted native command
@@ -190,6 +257,13 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
             (uint64_t)scope.slot * scope.data.entity_stride), ignored;
         ok = qa_qvm_invoke_source_callback(call, input->role->image,
             (int32_t)input->profile.run_client, &entity, 1, &ignored, error);
+    }
+    if (scope.spawn_binding) {
+        qa_error cleanup = {0};
+        if (!qa_qvm_unbind(input->role->vm, scope.spawn_binding, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
+        }
     }
     if (ok && !current(input, &scope, call)) ok = cancel_client(call, call, error);
     input->scope = scope.previous;

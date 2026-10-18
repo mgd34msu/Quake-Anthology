@@ -100,7 +100,13 @@ typedef struct application_player_point {
     qa_string_id target;
     uint32_t ordinal;
 } application_player_point;
+typedef struct application_player_spawn_scope {
+    struct application_player_spawn_scope *previous;
+    qa_actor_id actor, point;
+    qa_body_state body;
+} application_player_spawn_scope;
 struct application_player_roster {
+    application_player_spawn_scope *spawning;
     uint64_t revision;
     uint64_t q2_config_revision;
     uint64_t feedback_first,feedback_through,feedback_generation,feedback_revision;
@@ -210,7 +216,7 @@ bool application_player_equipment_selection(qa_application *, const qa_launch_ch
 bool application_players_native_q1_respawn(qa_application *, application_provider *,
     qa_actor_id, qa_q1_travel_state *, bool force, qa_error *);
 bool application_players_native_q1_spawn_pose(qa_application *, application_provider *,
-    qa_actor_id, qa_body_state *, bool *found, qa_error *);
+    qa_actor_id, qa_body_state *, bool *found, qa_actor_id *point, qa_error *);
 bool application_players_selected_character_respawn(void *, qa_actor_id, qa_error *);
 bool application_players_source_spawned(void *, qa_actor_id, qa_error *);
 bool application_players_source_arsenal_spawned(application_provider *, qa_actor_id,

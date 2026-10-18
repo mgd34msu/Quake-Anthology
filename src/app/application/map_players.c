@@ -2264,12 +2264,18 @@ static bool bind_q3_player_roles(qa_application *application,
 }
 
 bool application_players_native_q1_spawn_pose(qa_application *app, application_provider *source,
-    qa_actor_id actor, qa_body_state *body, bool *found, qa_error *error)
+    qa_actor_id actor, qa_body_state *body, bool *found, qa_actor_id *point, qa_error *error)
 {
     if (!app || !source || !body || !found || !app->players ||
         app->players->map_provider != source || source->kind != APPLICATION_PROVIDER_Q1 ||
         source != application_world_provider(app, QA_ROLE_ENTITIES, ""))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector lost its actual map roster");
+    for (const application_player_spawn_scope *scope=app->players->spawning;scope;scope=scope->previous)
+        if (qa_actor_id_equal(scope->actor,actor)) {
+            *body=scope->body; *found=true;
+            if (point) *point=scope->point;
+            return true;
+        }
     const application_player_record *record=application_player_record_find(app->players,actor);
     size_t ordinal=record && !record->retiring && !record->source_begin_pending && !record->deferred ?
         (size_t)(record-app->players->records) : app->players->count;
@@ -2278,7 +2284,7 @@ bool application_players_native_q1_spawn_pose(qa_application *app, application_p
         slot != app->players->records[ordinal].client_slot ||
         !qa_world_body_read(app->world, actor, body, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source selector lost its physical client");
-    if (!spawn_pose(app, ordinal, false, body, found, NULL, error)) return false;
+    if (!spawn_pose(app, ordinal, false, body, found, point, error)) return false;
     return (app->players && ordinal < app->players->count &&
         app->players->map_provider == source &&
         qa_actor_id_equal(app->players->records[ordinal].actor, actor) &&
@@ -3225,9 +3231,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!qa_q2_player_map_spawn_pose(map_source->state.q2, actor, &body.bounds,
                     landmark, &selected, &found, error)) return false;
             if (found) body = selected;
-        } else if (character->kind <= APPLICATION_PROVIDER_Q3 &&
-            (map_source->kind == APPLICATION_PROVIDER_Q1 || character->kind != APPLICATION_PROVIDER_Q2 ||
-             (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)) &&
+        } else if (((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
+            (character->kind <= APPLICATION_PROVIDER_Q3 &&
+             (character->kind != APPLICATION_PROVIDER_Q2 ||
+              (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)))) &&
             !spawn_pose(application, ordinal, false, &body, &found, &source_point, error))
             return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q1 && !found)
@@ -3307,9 +3314,15 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     &original_restored, error)) return false;
         }
         bool source_accepted = true;
-        if (!original_clients_admit(application, choices, seat, record, carry,
+        application_player_spawn_scope spawn_scope={.previous=application->players->spawning,
+            .actor=actor,.point=source_point,.body=body};
+        bool scoped_spawn=map_source->kind==APPLICATION_PROVIDER_Q1 && source_point.registry;
+        if (scoped_spawn) application->players->spawning=&spawn_scope;
+        bool admitted=original_clients_admit(application, choices, seat, record, carry,
             defer_source_begin, initial_local_userinfo, false, false,
-            round, &source_accepted, denial, error)) return false;
+            round, &source_accepted, denial, error);
+        if (scoped_spawn) application->players->spawning=spawn_scope.previous;
+        if (!admitted) return false;
         if (!source_accepted) {
             if (round_accepted) *round_accepted = false;
             return true;
