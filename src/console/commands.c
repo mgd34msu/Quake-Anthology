@@ -954,7 +954,8 @@ static bool register_command(qa_console *console,const qa_command_context *const
     qa_cvars *registry = cvars_for(console,&context);
     cvar_access access=cvar_access_read(registry);
     const qa_cvar_view *variable=cvar_find(access,name);
-    if (context.dialect != QA_RULESET_Q3 && variable && *variable->value)
+    if (context.dialect != QA_RULESET_Q3 && variable && *variable->value &&
+        qa_text_ascii_equal(qa_cvars_canonical_name(registry,name),name))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command name is already a cvar");
     command_contribution *part = calloc(1, sizeof(*part));
     if (!part) return qac_fail(error, QA_ERROR_MEMORY, "retaining console command owner");

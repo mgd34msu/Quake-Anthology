@@ -3534,6 +3534,16 @@ static void test_console_command_precedence(void)
             CHECK(qa_console_execute_now(console,&context,equipment[equipment_index],&error));
             CHECK(counts.called==called+1 && counts.forwarded==forwarded+1);
         }
+        CHECK(qa_cvars_register(cvars,"_cl_color","0",QA_CVAR_ARCHIVE,1,"",&error));
+        release_command_counts color_handler={0};
+        CHECK(qa_console_register_context(console,&context,"color","",context.owner,
+            context.owner,false,release_count_command,&color_handler,&error));
+        CHECK(qa_console_execute_now(console,&context,"color 4 13",&error));
+        CHECK(color_handler.completed==1 && qa_cvars_find(cvars,"_cl_color")->integer==0);
+        CHECK(qa_cvars_register(cvars,"qa_scalar_collision","1",0,1,"",&error));
+        CHECK(!qa_console_register_context(console,&context,"qa_scalar_collision","",context.owner,
+            context.owner,false,release_count_command,&color_handler,&error));
+        CHECK(error.code==QA_ERROR_ARGUMENT); error=(qa_error){0};
         qa_console_destroy(console);qa_cvars_destroy(cvars);
     }
 }
