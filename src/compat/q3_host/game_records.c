@@ -149,6 +149,18 @@ bool qa_q3_host_player(qa_q3_host *host, uint32_t number, qa_q3_player *out, qa_
     return q3_game_end(&call, ok);
 }
 
+bool qa_q3_host_write_entity(qa_q3_host *host, uint32_t number, bool source_tags,
+    const qa_q3_entity *entity, const qa_qvm_entity_shared *shared, qa_error *error)
+{
+    q3_call call;
+    if ((!entity && !shared) || !q3_game_begin(host, &call, error)) return false;
+    q3_record record;
+    bool ok = q3_game_entity_record(&call, number, &record, error) &&
+        (!entity || qa_q3_abi_write_entity(&record.abi, 0, source_tags, entity, error)) &&
+        (!shared || qa_q3_abi_write_shared_entity(&record.abi, 0, shared, error));
+    return q3_game_end(&call, ok);
+}
+
 bool qa_q3_host_write_player(qa_q3_host *host, uint32_t number, bool source_tags,
     const qa_q3_player *value, qa_error *error)
 {

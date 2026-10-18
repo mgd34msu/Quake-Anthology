@@ -61,6 +61,17 @@ bool qa_q3_host_source_pointer(qa_q3_host *host, uint64_t address,
     return true;
 }
 
+bool qa_q3_host_source_pointer_write(qa_q3_host *host, uint64_t address,
+    uint64_t value, qa_error *error)
+{
+    size_t width = host ? host->memory.pointer_bytes : 0;
+    if ((width != 4 && width != 8) || (width == 4 && value > UINT32_MAX))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source pointer exceeds its attached ABI width");
+    uint8_t bytes[8];
+    qa_store_u64le(bytes, value);
+    return qa_q3_host_source_bytes_write(host, address, (qa_bytes){bytes, width}, error);
+}
+
 bool qa_q3_host_source_bytes_project(qa_q3_host *host, uint64_t address,
     qa_bytes bytes, qa_error *error)
 {

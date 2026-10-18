@@ -3,8 +3,10 @@
 
 enum { NATIVE_HOST_CALL_SCRATCH_INITIAL = 64, NATIVE_HOST_CALL_SCRATCH_BYTES = 96 };
 
-bool native_host_call_scratch_prepare(qa_native_host *host, qa_error *error)
+bool qa_native_host_source_scratch_prepare(qa_native_host *host, qa_error *error)
 {
+    if (!host || !host->instance)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source scratch requires its installed host");
     if (host->call_scratch.values) return true;
     qa_native_address base;
     if (!qa_native_allocate(host->instance,
@@ -23,7 +25,7 @@ bool native_host_call_scratch_prepare(qa_native_host *host, qa_error *error)
 qa_native_host_source_touch *native_host_call_scratch_acquire(qa_native_host *host,
     qa_error *error)
 {
-    if (!native_host_call_scratch_prepare(host, error)) return NULL;
+    if (!qa_native_host_source_scratch_prepare(host, error)) return NULL;
     if (host->call_scratch.head == SIZE_MAX) {
         size_t first = host->call_scratch.capacity;
         if (!qa_pool_extend(&host->call_scratch, &host->call_storage, 1, error)) return NULL;
@@ -63,6 +65,19 @@ void native_host_call_scratch_release(qa_native_host *host, size_t slot)
     qa_native_host_source_touch *scratch = qa_pool_at(&host->call_scratch, slot);
     scratch->prepared = false;
     qa_pool_release(&host->call_scratch, slot);
+}
+
+bool qa_native_host_source_scratch_run(qa_native_host *host, size_t bytes,
+    qa_native_host_source_scratch_fn run, void *context, qa_error *error)
+{
+    if (!host || !host->call_scratch.values || !run || !bytes || bytes > NATIVE_HOST_CALL_SCRATCH_BYTES)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source scratch exceeds its prepared callback buffer");
+    size_t slot;
+    qa_native_address address = native_host_call_scratch_take(host, &slot, error);
+    if (!address) return false;
+    bool ok = run(context, address, error);
+    native_host_call_scratch_release(host, slot);
+    return ok;
 }
 
 bool native_host_movement_prepare(qa_native_host *host, qa_error *error)

@@ -10339,8 +10339,36 @@ static void q3_source_commands_check(qa_q3_host *host, uint64_t address, const u
     uint64_t pointer;
     CHECK(qa_q3_host_source_pointer(host, address + 32, &pointer, &error));
     CHECK(pointer == expected);
+    expected += 16;
+    CHECK(qa_q3_host_source_pointer_write(host, address + 32, expected, &error));
+    CHECK(qa_q3_host_source_pointer(host, address + 32, &pointer, &error));
+    CHECK(pointer == expected);
+    if (host->memory.pointer_bytes == 4) {
+        CHECK(!qa_q3_host_source_pointer_write(host, address + 32, UINT64_C(0x100000000), &error));
+        CHECK(qa_q3_host_source_pointer(host, address + 32, &pointer, &error));
+        CHECK(pointer == expected);
+    }
     CHECK(!qa_q3_host_source_bytes_write(host, UINT64_MAX, (qa_bytes){pointer_bytes, 1}, &error));
     CHECK(!host->calls);
+}
+
+static void q3_source_entity_check(qa_q3_host *host, uint64_t address)
+{
+    qa_error error = {0};
+    q3_game_data game = {.entities = address + (host->vm ? qa_qvm_memory_size(host->vm) : 0),
+        .entity_count = 1, .entity_stride = 808};
+    host->game = &game;
+    qa_q3_entity entity = {.number = 0, .pos.base = {11, 22, 33}};
+    qa_qvm_entity_shared shared = {.origin = {11, 22, 33}, .angles = {0, 90, 0},
+        .local_bounds = {{-12, -13, -24}, {12, 13, 32}}};
+    CHECK(qa_q3_host_write_entity(host, 0, true, &entity, &shared, &error));
+    qa_q3_entity actual; qa_qvm_entity_shared actual_shared;
+    CHECK(qa_q3_host_source_entity(host, 0, &actual, &actual_shared, &error));
+    CHECK(!memcmp(actual.pos.base, entity.pos.base, sizeof(entity.pos.base)) &&
+        qa_vec_equal(actual_shared.origin, shared.origin) &&
+        qa_vec_equal(actual_shared.angles, shared.angles) &&
+        qa_bounds_equal(actual_shared.local_bounds, shared.local_bounds) && !host->calls);
+    host->game = NULL;
 }
 
 static bool format_process_current(void *context, const qa_native_guest *guest, qa_error *error)
@@ -10545,6 +10573,7 @@ static void test_q3_source_memory(void)
     CHECK(!qa_q3_host_source_usercmd(&host, end - 23, &command, &error));
     CHECK(!host.calls);
     CHECK(qa_qvm_unobserve_writes(vm, watch, &error));
+    q3_source_entity_check(&host, 1024);
     qa_q3_host_qvm_consumed(&host);
     CHECK(qa_qvm_destroy(vm, &error)); qa_qvm_image_release(image);
 
@@ -10577,6 +10606,7 @@ static void test_q3_source_memory(void)
     CHECK(!qa_q3_host_source_bytes_project(&host, address + QA_NATIVE_GUEST_PAGE,
         (qa_bytes){projected, 1}, &error));
     q3_source_commands_check(&host, address + 64, NULL);
+    q3_source_entity_check(&host, address + 1024);
     CHECK(!qa_q3_host_source_usercmd(&host, address + QA_NATIVE_GUEST_PAGE - 23, &command, &error));
     CHECK(!host.calls);
     qa_arena_destroy(&host.scratch);

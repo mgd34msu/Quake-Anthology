@@ -1270,6 +1270,8 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         } else if (row->flags & ROLE_COMMITTED) {
             if (!role->native || !qa_native_process_restore_pending(qa_native_host_instance(role->native)) ||
                 !qa_native_process_restore_host(qa_native_host_instance(role->native), row->native_host, error)) return false;
+            if (role->kind == QA_QVM_GAME &&
+                !qa_native_host_source_scratch_prepare(role->native, error)) return false;
             if ((qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED) !=
                 ((row->flags & ROLE_INITIALIZED) != 0))
                 return application_fail(error, QA_ERROR_FORMAT, "Native Q3 role Init state differs from its actual process lifecycle");

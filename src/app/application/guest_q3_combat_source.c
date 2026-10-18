@@ -5,7 +5,7 @@ typedef struct damage_lowering {
     const application_q3_combat_actor *target;
     const qa_damage_request *request;
     const qa_qvm_call *parent;
-    application_q3_damage_words_fn invoke;
+    application_q3_damage_values_fn invoke;
     void *context;
     uint32_t flags;
 } damage_lowering;
@@ -34,7 +34,7 @@ uint32_t application_q3_combat_source_flags(const application_q3_combat_definiti
         (flags.no_team_protection ? d->damage_flags.no_team_protection : 0);
 }
 static bool pointer(const application_q3_combat_actor *target, qa_actor_id actor,
-    uint32_t *out, bool *present, qa_error *error)
+    uint64_t *out, bool *present, qa_error *error)
 {
     *out = 0; *present = false;
     if (!actor.registry) return true;
@@ -52,23 +52,18 @@ static bool pointer(const application_q3_combat_actor *target, qa_actor_id actor
     bool live;
     if (!application_q3_combat_actor_read(role, target->profile, actor, &source, error) ||
         !application_q3_combat_actor_live(&source, &live, error)) return false;
-    if (live) {
-        if (source.entity > UINT32_MAX)
-            return application_fail(error, QA_ERROR_ARGUMENT, "Source actor leaves its QVM callback address space");
-        *out = (uint32_t)source.entity; *present = true;
-    }
+    if (live) { *out = source.entity; *present = true; }
     return true;
 }
-static bool source_call(damage_lowering *lowering, uint32_t entry,
-    const int32_t *words, size_t count, int32_t *out, qa_error *error)
+bool application_q3_combat_source_call(q3g_role *role, const qa_qvm_call *parent,
+    uint32_t entry, const qa_native_value *values, size_t count, qa_native_value *out, qa_error *error)
 {
-    q3g_role *role = lowering->target->role;
-    return lowering->parent ? qa_qvm_invoke_source_callback(lowering->parent,
-        role->image, (int32_t)entry, words, count, out, error) :
-        qa_qvm_invoke(role->vm, entry, words, count, out, error);
+    uint64_t address = entry;
+    return (!role->native || qa_native_rva(qa_native_host_instance(role->native), entry, 1, &address, error)) &&
+        qa_q3_host_source_call(role->host, parent, address, values, count, out, error);
 }
-static bool temporary_body(damage_lowering *lowering, uint32_t pointer,
-    uint32_t attacker, const qa_body_state *body, qa_error *error)
+static bool temporary_body(damage_lowering *lowering, uint64_t pointer,
+    uint64_t attacker, const qa_body_state *body, qa_error *error)
 {
     const application_q3_combat_actor *target = lowering->target;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(target->profile);
@@ -77,22 +72,19 @@ static bool temporary_body(damage_lowering *lowering, uint32_t pointer,
         table.entities_address != target->table.entities_address || table.entity_stride != d->entity_stride ||
         table.client_stride != d->client_stride || pointer < table.entities_address ||
         (pointer - table.entities_address) % table.entity_stride ||
-        (pointer - table.entities_address) / table.entity_stride >= table.entity_count ||
-        pointer > qa_qvm_memory_size(target->role->vm) ||
-        d->entity_stride > qa_qvm_memory_size(target->role->vm) - pointer)
+        (pointer - table.entities_address) / table.entity_stride >= table.entity_count)
         return application_fail(error, QA_ERROR_FORMAT, "Temporary inflictor leaves its real located Source table");
+    uint32_t slot = (uint32_t)((pointer - table.entities_address) / table.entity_stride);
     qa_q3_entity entity;
     qa_qvm_entity_shared shared;
-    if (!qa_qvm_read_entity(target->role->vm, (int32_t)pointer, true, &entity, error) ||
-        !qa_qvm_read_shared_entity(target->role->vm, (int32_t)pointer, &shared, error)) return false;
+    if (!qa_q3_host_source_entity(target->role->host, slot, &entity, &shared, error)) return false;
     shared.origin = body->origin; shared.angles = body->angles; shared.local_bounds = body->bounds;
     entity.pos.base[0] = body->origin.x; entity.pos.base[1] = body->origin.y; entity.pos.base[2] = body->origin.z;
     entity.pos.delta[0] = body->velocity.x; entity.pos.delta[1] = body->velocity.y; entity.pos.delta[2] = body->velocity.z;
-    return application_q3_combat_word_write(target, pointer + d->fields.parent, (int32_t)attacker, error) &&
-        qa_qvm_write_entity(target->role->vm, (int32_t)pointer, true, &entity, error) &&
-        qa_qvm_write_shared_entity(target->role->vm, (int32_t)pointer, &shared, error);
+    return qa_q3_host_source_pointer_write(target->role->host, pointer + d->fields.parent, attacker, error) &&
+        qa_q3_host_write_entity(target->role->host, slot, true, &entity, &shared, error);
 }
-static bool scratch_run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *error)
+static bool scratch_run(void *context, uint64_t scratch, qa_error *error)
 {
     damage_lowering *lowering = context;
     const application_q3_combat_actor *target = lowering->target;
@@ -102,84 +94,129 @@ static bool scratch_run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e
     float_store(vectors, request->direction.x); float_store(vectors + 4, request->direction.y);
     float_store(vectors + 8, request->direction.z); float_store(vectors + 12, request->point.x);
     float_store(vectors + 16, request->point.y); float_store(vectors + 20, request->point.z);
-    uint32_t attacker = 0, inflictor = 0;
+    uint64_t attacker = 0, inflictor = 0;
     bool present;
-    if (!qa_qvm_write(vm, scratch, (qa_bytes){vectors, sizeof(vectors)}, error) ||
+    if (!qa_q3_host_source_bytes_write(target->role->host, scratch, (qa_bytes){vectors, sizeof(vectors)}, error) ||
         !pointer(target, request->attack.attacker, &attacker, &present, error) ||
         !pointer(target, request->attack.inflictor, &inflictor, &present, error)) return false;
-    int32_t temporary = 0;
+    qa_native_value temporary = {.type = QA_NATIVE_ADDRESS};
     bool allocated = false, ok = true;
     if (!present && request->attack.inflictor.registry &&
         qa_actors_get(qa_session_actors(target->role->engine->provider->application->session), request->attack.inflictor)) {
+        if (!d->callbacks.has_allocate || !d->callbacks.has_free)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Source has no declared temporary inflictor allocation and release callbacks");
         qa_body_state body;
         ok = qa_world_body_read(target->role->engine->world, request->attack.inflictor, &body, error) &&
-            source_call(lowering, d->callbacks.allocate, NULL, 0, &temporary, error);
-        allocated = ok;
-        if (ok && temporary <= 0)
+            application_q3_combat_source_call(target->role, lowering->parent,
+                d->callbacks.allocate, NULL, 0, &temporary, error);
+        allocated = ok && temporary.as.address != 0;
+        if (ok && !allocated)
             ok = application_fail(error, QA_ERROR_FORMAT, "Actual Source allocation returned no temporary inflictor");
-        if (ok) ok = temporary_body(lowering, (uint32_t)temporary, attacker, &body, error);
-        if (ok) inflictor = (uint32_t)temporary;
+        if (ok) ok = temporary_body(lowering, temporary.as.address, attacker, &body, error);
+        if (ok) inflictor = temporary.as.address;
     }
-    int32_t words[APPLICATION_Q3_COMBAT_ARGUMENTS];
-    memcpy(words, d->damage_call.words, d->damage_call.count * sizeof(*words));
-    words[d->damage_call.positions[Q3_DAMAGE_TARGET]] = (int32_t)target->entity;
-    words[d->damage_call.positions[Q3_DAMAGE_INFLICTOR]] = (int32_t)inflictor;
-    words[d->damage_call.positions[Q3_DAMAGE_ATTACKER]] = (int32_t)attacker;
-    words[d->damage_call.positions[Q3_DAMAGE_DIRECTION]] = (int32_t)scratch;
-    words[d->damage_call.positions[Q3_DAMAGE_POINT]] = (int32_t)scratch + 12;
+    qa_native_value values[Q3_DAMAGE_WORDS] = {
+        [Q3_DAMAGE_TARGET] = {.type = QA_NATIVE_ADDRESS, .as.address = target->entity},
+        [Q3_DAMAGE_INFLICTOR] = {.type = QA_NATIVE_ADDRESS, .as.address = inflictor},
+        [Q3_DAMAGE_ATTACKER] = {.type = QA_NATIVE_ADDRESS, .as.address = attacker},
+        [Q3_DAMAGE_DIRECTION] = {.type = QA_NATIVE_ADDRESS, .as.address = scratch},
+        [Q3_DAMAGE_POINT] = {.type = QA_NATIVE_ADDRESS, .as.address = scratch + 12},
+        [Q3_DAMAGE_AMOUNT] = {.type = QA_NATIVE_I32},
+        [Q3_DAMAGE_FLAGS] = {.type = QA_NATIVE_I32},
+        [Q3_DAMAGE_METHOD] = {.type = QA_NATIVE_I32}};
     double amount = trunc(request->amount);
     if (!isfinite(amount) || amount < INT32_MIN || amount > INT32_MAX)
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Source damage amount leaves its signed argument");
-    if (ok) words[d->damage_call.positions[Q3_DAMAGE_AMOUNT]] = (int32_t)amount;
-    words[d->damage_call.positions[Q3_DAMAGE_FLAGS]] = (int32_t)lowering->flags;
+    if (ok) values[Q3_DAMAGE_AMOUNT].as.i32 = (int32_t)amount;
+    memcpy(&values[Q3_DAMAGE_FLAGS].as.i32, &lowering->flags, sizeof(lowering->flags));
     int32_t method = request->attack.cause.kind == QA_CAUSE_Q3 ? request->attack.cause.source.q3.means_of_death : 0;
     qa_strings *strings = qa_session_strings(target->role->engine->provider->application->session);
     const char *weapon = qa_strings_cstr(strings, request->attack.weapon);
-    if ((weapon && (!strcmp(weapon, "q3:weapon_grapplinghook") || !strcmp(weapon, "q2:weapon_grapple") ||
+    if (d->has_grapple_method && ((weapon && (!strcmp(weapon, "q3:weapon_grapplinghook") || !strcmp(weapon, "q2:weapon_grapple") ||
          !strcmp(weapon, "q2:weapon_hook") || !strcmp(weapon, "ctf:grapple"))) ||
-        (request->attack.cause.kind == QA_CAUSE_Q2 && request->attack.cause.source.q2.means_of_death == 56))
+        (request->attack.cause.kind == QA_CAUSE_Q2 && request->attack.cause.source.q2.means_of_death == 56)))
         method = (int32_t)d->grapple_method;
-    words[d->damage_call.positions[Q3_DAMAGE_METHOD]] = method;
+    values[Q3_DAMAGE_METHOD].as.i32 = method;
     if (ok) ok = application_q3_combat_actor_current(target, error) &&
-        lowering->invoke(lowering->context, words, d->damage_call.count, error);
+        lowering->invoke(lowering->context, values, Q3_DAMAGE_WORDS, error);
     if (allocated) {
-        qa_error cleanup = {0}; int32_t result;
-        if (!source_call(lowering, d->callbacks.free, &temporary, 1, &result, &cleanup)) {
+        qa_error cleanup = {0}; qa_native_value result = {.type = QA_NATIVE_VOID};
+        if (!application_q3_combat_source_call(target->role, lowering->parent,
+                d->callbacks.free, &temporary, 1, &result, &cleanup)) {
             if (ok && error) *error = cleanup;
             ok = false;
         }
     }
     return ok;
 }
+static bool scratch_qvm(void *context, qa_qvm *vm, uint32_t scratch, qa_error *error)
+{ (void)vm; return scratch_run(context, scratch, error); }
 static bool scratch_parent(void *context, const qa_qvm_call *call, uint32_t scratch, qa_error *error)
-{ return scratch_run(context, call->vm, scratch, error); }
+{ (void)call; return scratch_run(context, scratch, error); }
 bool application_q3_combat_source_arguments(const application_q3_combat_actor *target,
     const qa_qvm_call *parent, const qa_damage_request *request, uint32_t original_flags,
-    application_q3_damage_words_fn invoke, void *context, qa_error *error)
+    application_q3_damage_values_fn invoke, void *context, qa_error *error)
 {
     if (!target || !request || !invoke || !qa_actor_id_equal(target->actor, request->target) ||
         (parent && parent->vm != target->role->vm) ||
         !application_q3_combat_actor_current(target, error)) return false;
-    if (!target->role->vm || !target->role->image)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Source combat callbacks are not declared");
-    if (target->entity > UINT32_MAX)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source target leaves its QVM callback address space");
     damage_lowering lowering = {.target = target, .request = request, .parent = parent,
         .invoke = invoke, .context = context,
         .flags = application_q3_combat_source_flags(application_q3_combat_profile_definition(target->profile), request, original_flags)};
+    if (target->role->native)
+        return qa_native_host_source_scratch_run(target->role->native, 24, scratch_run, &lowering, error);
     return parent ? qa_qvm_source_scratch(parent, target->role->image, 24, scratch_parent, &lowering, error) :
-        qa_qvm_source_scratch_run(target->role->vm, target->role->image, 24, scratch_run, &lowering, error);
+        qa_qvm_source_scratch_run(target->role->vm, target->role->image, 24, scratch_qvm, &lowering, error);
+}
+
+typedef struct declared_damage {
+    const application_q3_combat_actor *target;
+    application_q3_damage_values_fn invoke;
+    void *context;
+} declared_damage;
+static bool damage_arguments(void *context, const qa_native_value *roles, size_t count, qa_error *error)
+{
+    declared_damage *damage = context;
+    const application_q3_combat_call *call =
+        &application_q3_combat_profile_definition(damage->target->profile)->damage_call;
+    (void)count;
+    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    bool semantic[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) {
+        values[call->positions[i]] = roles[i];
+        semantic[call->positions[i]] = true;
+    }
+    for (size_t i = 0; i < call->count; ++i) {
+        if (semantic[i]) continue;
+        values[i].type = call->types[i];
+        if (values[i].type == QA_NATIVE_ADDRESS) {
+            uint32_t address;
+            memcpy(&address, call->words + i, sizeof(address));
+            values[i].as.address = address;
+            if (damage->target->role->native &&
+                !qa_native_rva(qa_native_host_instance(damage->target->role->native),
+                    address, 1, &values[i].as.address, error)) return false;
+        } else if (values[i].type == QA_NATIVE_F32)
+            memcpy(&values[i].as.f32, call->words + i, sizeof(*call->words));
+        else memcpy(&values[i].as.i32, call->words + i, sizeof(*call->words));
+    }
+    return damage->invoke(damage->context, values, call->count, error);
 }
 
 bool application_q3_combat_source_damage(const application_q3_combat_actor *target,
     const qa_qvm_call *parent, const qa_damage_request *request, uint32_t original_flags,
-    application_q3_damage_words_fn invoke, void *context, qa_error *error)
+    application_q3_damage_values_fn invoke, void *context, qa_error *error)
 {
     qa_combat_state state;
     if (!target || !request || !invoke || !qa_actor_id_equal(target->actor, request->target) ||
         (parent && parent->vm != target->role->vm) ||
         !application_q3_combat_state_read((void *)target, &state, error)) return false;
     if (!state.can_take_damage) return true;
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(target->profile);
+    if (!d->callbacks.has_damage || !d->damage_call.count)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Source damage has no declared callback and argument layout");
+    declared_damage damage = {.target = target, .invoke = invoke, .context = context};
     return application_q3_combat_source_arguments(target, parent, request, original_flags,
-        invoke, context, error);
+        damage_arguments, &damage, error);
 }

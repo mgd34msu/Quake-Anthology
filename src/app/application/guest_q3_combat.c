@@ -119,14 +119,15 @@ static bool armor_valid(void *context, const qa_armor *value, qa_error *error)
 { return application_q3_combat_armor_validate(&((combat_actor *)context)->source, value, error); }
 static bool empty_armor(void *context, double value, qa_regular_armor *out, bool *present, qa_error *error)
 { return application_q3_combat_empty_armor(&((combat_actor *)context)->source, value, out, present, error); }
-static bool invoke_damage(void *context, const int32_t *words, size_t count, qa_error *error)
+static bool invoke_damage(void *context, const qa_native_value *values, size_t count, qa_error *error)
 {
     incoming_damage *incoming = context;
     application_q3_combat *owner = incoming->actor->owner;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
     incoming->previous = owner->incoming; owner->incoming = incoming;
-    int32_t result;
-    bool ok = qa_qvm_invoke(owner->role->vm, d->callbacks.damage, words, count, &result, error);
+    qa_native_value result = {.type = QA_NATIVE_VOID};
+    bool ok = application_q3_combat_source_call(owner->role, NULL,
+        d->callbacks.damage, values, count, &result, error);
     owner->incoming = incoming->previous;
     return ok && (incoming->entered || application_fail(error, QA_ERROR_FORMAT,
         "Actual Source damage did not enter its admitted callback"));
@@ -185,25 +186,32 @@ static bool reaction_project(character_reaction *reaction, qa_actor_id actor, qa
     return q3g_project_actor(role, NULL, actor, &slot, error);
 }
 
-static bool reaction_world(character_reaction *reaction, int32_t *pointer, qa_error *error)
+static bool reaction_world(character_reaction *reaction, uint64_t *pointer, qa_error *error)
 {
     const application_q3_combat_definition *d =
         application_q3_combat_profile_definition(reaction->owner->profile);
     if (d->reactions.world_slot == UINT32_MAX)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected Q3 reaction has no declared source world entity");
-    uint64_t address = reaction->source.table.entities_address +
-        (uint64_t)d->reactions.world_slot * d->entity_stride;
-    qa_bytes span;
-    if (address > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Source world entity exceeds its QVM address word");
-    if (!qa_qvm_span(reaction->owner->role->vm,
-            (int32_t)address, 0, d->entity_stride, &span, error)) return false;
-    *pointer = (int32_t)address;
+    uint64_t displacement = (uint64_t)d->reactions.world_slot * d->entity_stride;
+    if (displacement > UINT64_MAX - reaction->source.table.entities_address)
+        return application_fail(error, QA_ERROR_FORMAT, "Source world entity exceeds its address space");
+    uint64_t address = reaction->source.table.entities_address + displacement;
+    q3g_role *role = reaction->owner->role;
+    if (role->native) {
+        if (!qa_native_range_check(qa_native_host_instance(role->native), address,
+                d->entity_stride, QA_NATIVE_MEMORY_READ, error)) return false;
+    } else {
+        qa_bytes span;
+        if (address > UINT32_MAX)
+            return application_fail(error, QA_ERROR_FORMAT, "Source world entity exceeds its QVM address word");
+        if (!qa_qvm_span(role->vm, (int32_t)(uint32_t)address, 0, d->entity_stride, &span, error)) return false;
+    }
+    *pointer = address;
     return true;
 }
 
-static bool invoke_reaction(void *context, const int32_t *damage_words, size_t count, qa_error *error)
+static bool invoke_reaction(void *context, const qa_native_value *damage_values, size_t count, qa_error *error)
 {
     character_reaction *reaction = context;
     application_q3_combat *owner = reaction->owner;
@@ -213,8 +221,8 @@ static bool invoke_reaction(void *context, const int32_t *damage_words, size_t c
     bool live;
     if (!reaction_actor_live(reaction, &live, error)) return false;
     if (!live) return true;
-    int32_t attacker = damage_words[d->damage_call.positions[Q3_DAMAGE_ATTACKER]],
-        inflictor = damage_words[d->damage_call.positions[Q3_DAMAGE_INFLICTOR]];
+    uint64_t attacker = damage_values[Q3_DAMAGE_ATTACKER].as.address,
+        inflictor = damage_values[Q3_DAMAGE_INFLICTOR].as.address;
     if ((!attacker && !reaction_world(reaction, &attacker, error)) ||
         (reaction->death && !inflictor && !reaction_world(reaction, &inflictor, error))) return false;
     if (reaction->death) {
@@ -225,23 +233,24 @@ static bool invoke_reaction(void *context, const int32_t *damage_words, size_t c
              !application_q3_combat_word_write(&reaction->source,
                 reaction->source.entity + d->reactions.flags,
                 (int32_t)((uint32_t)flags | d->state.no_knockback), error))) return false;
-        if (!application_q3_combat_word_write(&reaction->source,
+        if (!qa_q3_host_source_pointer_write(owner->role->host,
                 reaction->source.entity + d->reactions.enemy, attacker, error)) return false;
     }
-    int32_t callback;
-    if (!application_q3_combat_word_read(&reaction->source, reaction->source.entity +
+    uint64_t callback;
+    if (!qa_q3_host_source_pointer(owner->role->host, reaction->source.entity +
         (reaction->death ? d->reactions.die : d->reactions.pain), &callback, error)) return false;
     if (!callback) return !reaction->death || application_fail(error, QA_ERROR_UNSUPPORTED,
         "Selected Q3 character has no source death callback");
-    int32_t words[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
-    words[call->target] = damage_words[d->damage_call.positions[Q3_DAMAGE_TARGET]];
-    words[call->attacker] = attacker;
-    words[call->amount] = damage_words[d->damage_call.positions[Q3_DAMAGE_AMOUNT]];
-    if (call->inflictor != UINT32_MAX) words[call->inflictor] = inflictor;
+    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    values[call->target] = damage_values[Q3_DAMAGE_TARGET];
+    values[call->attacker] = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = attacker};
+    values[call->amount] = damage_values[Q3_DAMAGE_AMOUNT];
+    if (call->inflictor != UINT32_MAX)
+        values[call->inflictor] = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = inflictor};
     if (call->method != UINT32_MAX)
-        words[call->method] = damage_words[d->damage_call.positions[Q3_DAMAGE_METHOD]];
-    int32_t result;
-    return qa_qvm_invoke(owner->role->vm, (uint32_t)callback, words, call->count, &result, error);
+        values[call->method] = damage_values[Q3_DAMAGE_METHOD];
+    qa_native_value result = {.type = QA_NATIVE_VOID};
+    return qa_q3_host_source_call(owner->role->host, NULL, callback, values, call->count, &result, error);
 }
 
 bool application_q3_combat_reaction(application_q3_combat *owner,
@@ -249,8 +258,8 @@ bool application_q3_combat_reaction(application_q3_combat *owner,
 {
     if (!outcome) return application_fail(error, QA_ERROR_ARGUMENT, "Source reaction requires its applied outcome");
     if (outcome->stale || outcome->result.reaction == QA_REACTION_NONE) return true;
-    if (!owner || owner->role->retired || !owner->role->vm)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected Q3 character has no retained QVM reaction owner");
+    if (!owner || owner->role->retired || (!owner->role->vm && !owner->role->native))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected Q3 character has no retained source reaction owner");
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
     character_reaction reaction = {.owner = owner,
         .death = outcome->result.reaction == QA_REACTION_DEATH};
@@ -613,7 +622,7 @@ typedef struct entered_damage {
     qa_damage_result *result;
     qa_damage_request original;
 } entered_damage;
-static bool proceed_damage(void *context, const int32_t *words, size_t count, qa_error *error)
+static bool proceed_damage(void *context, const qa_native_value *values, size_t count, qa_error *error)
 {
     entered_damage *entered = context;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(entered->owner->profile);
@@ -629,7 +638,22 @@ static bool proceed_damage(void *context, const int32_t *words, size_t count, qa
             (i == Q3_DAMAGE_POINT && qa_vec_equal(entered->effective->point, entered->original.point)) ||
             (i == Q3_DAMAGE_ATTACKER && qa_actor_id_equal(entered->effective->attack.attacker, entered->original.attack.attacker)) ||
             (i == Q3_DAMAGE_INFLICTOR && qa_actor_id_equal(entered->effective->attack.inflictor, entered->original.attack.inflictor));
-        if (ok) { ++saved; if (!preserve) ok = qa_qvm_call_set_argument(entered->call, position, words[position], error); }
+        if (ok) {
+            ++saved;
+            if (!preserve) {
+                int32_t word;
+                if (i < Q3_DAMAGE_AMOUNT) {
+                    if (values[position].as.address > UINT32_MAX) {
+                        ok = application_fail(error, QA_ERROR_ARGUMENT, "Source pointer exceeds its QVM damage argument width");
+                        word = 0;
+                    } else {
+                        uint32_t pointer = (uint32_t)values[position].as.address;
+                        memcpy(&word, &pointer, sizeof(word));
+                    }
+                } else word = values[position].as.i32;
+                if (ok) ok = qa_qvm_call_set_argument(entered->call, position, word, error);
+            }
+        }
     }
     if (ok) ok = application_q3_damage_scope_run(entered->owner->scopes, entered->call,
         &entered->actor->source, entered->effective, entered->observer, entered->result, error);

@@ -326,6 +326,7 @@ bool qa_q3_host_source_bytes_read(qa_q3_host *, uint64_t address, void *, size_t
 bool qa_q3_host_source_bytes_write(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
 bool qa_q3_host_source_bytes_project(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
 bool qa_q3_host_source_pointer(qa_q3_host *, uint64_t address, uint64_t *, qa_error *);
+bool qa_q3_host_source_pointer_write(qa_q3_host *, uint64_t address, uint64_t, qa_error *);
 bool qa_q3_host_source_usercmd(qa_q3_host *, uint64_t address, qa_q3_usercmd *, qa_error *);
 bool qa_q3_host_write_usercmd(qa_q3_host *, uint64_t address, bool preserve_private,
     const qa_q3_usercmd *, qa_error *);
@@ -337,6 +338,8 @@ bool qa_q3_host_source_call(qa_q3_host *, const qa_qvm_call *parent, uint64_t en
  * call. This constructor uses real QVM offsets, without a synthetic trap. */
 bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);
 bool qa_q3_host_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_shared *, qa_error *);
+bool qa_q3_host_write_entity(qa_q3_host *, uint32_t, bool source_tags,
+    const qa_q3_entity *, const qa_qvm_entity_shared *, qa_error *);
 bool qa_q3_host_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 /* Qualified guest adapters read original enum/flag words. Presentation
  * translation must not reject mod-private words needed by gameplay views. */

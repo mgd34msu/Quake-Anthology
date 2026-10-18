@@ -250,7 +250,6 @@ bool native_host_box_edicts(qa_native_host *, const qa_native_import_call *,
 bool native_host_pmove(qa_native_host *, qa_native_address, qa_error *);
 bool native_host_movement_prepare(qa_native_host *, qa_error *);
 void native_host_movement_dispose(qa_native_host *);
-bool native_host_call_scratch_prepare(qa_native_host *, qa_error *);
 qa_native_host_source_touch *native_host_call_scratch_acquire(qa_native_host *, qa_error *);
 bool native_host_call_scratch_buffer(qa_native_host_source_touch *, qa_error *);
 qa_native_address native_host_call_scratch_take(qa_native_host *, size_t *, qa_error *);

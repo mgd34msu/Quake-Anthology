@@ -792,6 +792,8 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     bool ok = qa_native_host_create_q3(role->module, &role->native_options, &role->native, &failure);
     if (ok) ok = qa_q3_host_attach_native(role->host, role->native, &failure);
     if (ok && role->kind == QA_QVM_GAME)
+        ok = qa_native_host_source_scratch_prepare(role->native, &failure);
+    if (ok && role->kind == QA_QVM_GAME)
         ok = application_guest_input_attach(role, &failure);
     --engine->calls;
     engine->entered_role = previous;

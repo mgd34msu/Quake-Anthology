@@ -425,7 +425,7 @@ bool qa_native_host_create_advance(qa_native_host *host, size_t quantum,
     if (!qa_native_create_advance(host->instance, quantum, complete, error)) return false;
     if (!*complete) return true;
     if (host->kind == NATIVE_HOST_Q2_GAME &&
-        (!native_host_call_scratch_prepare(host, error) || !native_host_fields_refresh(host, error))) return false;
+        (!qa_native_host_source_scratch_prepare(host, error) || !native_host_fields_refresh(host, error))) return false;
     host->constructing = false;
     return true;
 }
@@ -1149,7 +1149,7 @@ bool native_host_import(void *context, qa_native_instance *instance,
     if (!host->callback_depth) qa_arena_reset(&host->text_storage);
     if (bootstrap) {
         host->instance = instance;
-        if (host->kind == NATIVE_HOST_Q2_GAME && !native_host_call_scratch_prepare(host, error)) {
+        if (host->kind == NATIVE_HOST_Q2_GAME && !qa_native_host_source_scratch_prepare(host, error)) {
             host->instance = NULL;
             return false;
         }

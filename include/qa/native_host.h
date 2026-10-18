@@ -401,6 +401,12 @@ bool qa_native_host_source_body_bind(qa_native_host *, uint32_t source_slot,
 bool qa_native_host_source_body_write(qa_native_host *, uint32_t source_slot,
     uint32_t velocity_offset, uint32_t ground_offset, const qa_body_state *, qa_error *);
 typedef struct qa_native_host_source_touch qa_native_host_source_touch;
+/* Prepared at load. Each synchronous callback borrows a distinct guest buffer
+ * from the same pool used by native movement and touch calls. */
+bool qa_native_host_source_scratch_prepare(qa_native_host *, qa_error *);
+typedef bool (*qa_native_host_source_scratch_fn)(void *, qa_native_address, qa_error *);
+bool qa_native_host_source_scratch_run(qa_native_host *, size_t bytes,
+    qa_native_host_source_scratch_fn, void *, qa_error *);
 /* The caller retains even a partially prepared ticket until checked disposal.
  * Arguments borrow its native scratch for one synchronous source call. */
 bool qa_native_host_source_touch_prepare(qa_native_host *, bool rerelease,
