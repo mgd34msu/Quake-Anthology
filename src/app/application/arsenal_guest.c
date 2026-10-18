@@ -1271,7 +1271,13 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest command targets an unconnected source client");
     qa_q3_player player;
     if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
-    qa_q3_usercmd source = {.serverTime = (int32_t)((uint32_t)player.commandTime + command->milliseconds),
+    uint32_t server_time = (uint32_t)player.commandTime + command->milliseconds;
+    if (command->kind == QA_RULESET_NETQUAKE) {
+        const application_control_context *clock = stage ? &stage->source :
+            application_control_frame_current(app, actor);
+        if (clock) server_time = (uint32_t)(application_control_time(clock) / UINT64_C(1000000));
+    }
+    qa_q3_usercmd source = {.serverTime = (int32_t)server_time,
         .buttons = (int32_t)(command->kind == QA_RULESET_Q3 ? command->buttons : command->buttons & 5u),
         .weapon = arsenal == guest ? command->weapon : (uint8_t)player.weapon};
     qa_player_state control;
