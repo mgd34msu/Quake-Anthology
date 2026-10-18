@@ -267,11 +267,11 @@ static bool release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error
            qa_session_release(game->options.services.session, hook, error);
 }
 static q3_actor *selected_source_current(qa_q3_game *game, qa_actor_id actor,
-    uint32_t slot, qa_error *error) {
+    const uint32_t *slot, qa_error *error) {
     uint32_t current;
     q3_actor *entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER &&
-        qa_q3_native_client_slot(game, actor, &current, NULL) && current == slot &&
+        (!slot || (qa_q3_native_client_slot(game, actor, &current, NULL) && current == *slot)) &&
         qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return entry;
     q3_fail(error, "Selected Q3 respawn lost its actual source client");
@@ -281,13 +281,14 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
     const qa_q3_selected_source_services *services, qa_error *error) {
     uint32_t slot;
     if (!game || game->source_restored || game->observation_depth == SIZE_MAX ||
-        !services || !services->pose ||
-        !qa_q3_native_client_slot(game, actor, &slot, error))
+        !services || !services->pose)
         return q3_fail(error, "Selected Q3 respawn requires its actual source player pose");
+    bool has_client = qa_q3_native_client_slot(game, actor, &slot, NULL);
+    const uint32_t *source_slot = has_client ? &slot : NULL;
     qa_q3_selected_source_services callbacks = *services;
     ++game->observation_depth;
     bool okay = release_grapple(game, actor, error);
-    q3_actor *entry = okay ? selected_source_current(game, actor, slot, error) : NULL;
+    q3_actor *entry = okay ? selected_source_current(game, actor, source_slot, error) : NULL;
     if (!entry) { okay = false; goto done; }
     qa_actor_id held = entry->state.player.persistent_item;
     q3_actor *persistent = q3_actor_get(game, held);
@@ -298,7 +299,7 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
         }
         okay = qa_q3_item_availability(game, held, true, 0,
             persistent->state.item.expire_at, error);
-        entry = okay ? selected_source_current(game, actor, slot, error) : NULL;
+        entry = okay ? selected_source_current(game, actor, source_slot, error) : NULL;
         if (!entry) { okay = false; goto done; }
     } else if (held.registry && qa_actors_get(qa_session_actors(game->options.services.session), held)) {
         okay = q3_fail(error, "Selected Q3 persistent powerup requires its genuine return owner");
@@ -314,7 +315,7 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
         .accuracy_hits = prior.accuracy_hits, .impressive_count = prior.impressive_count,
         .player_events = prior.player_events, .deaths = prior.deaths,
         .excellent_count = prior.excellent_count, .gauntlet_frag_count = prior.gauntlet_frag_count,
-        .client_number = (int32_t)slot, .rank = prior.rank,
+        .client_number = has_client ? (int32_t)slot : prior.client_number, .rank = prior.rank,
         .defend_count = prior.defend_count, .assist_count = prior.assist_count,
         .captures = prior.captures,
         .no_target = prior.no_target
@@ -322,22 +323,24 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
     memcpy(fresh.ammo_regeneration_items, prior.ammo_regeneration_items,
         sizeof(fresh.ammo_regeneration_items));
     entry->state.player = fresh;
-    q3_client_state *client = &game->clients[slot];
-    client->rule.switch_team_time_ms = 0;
-    client->rule.old_buttons = client->rule.buttons = client->rule.latched_buttons = 0;
-    client->rule.inactivity_time_ms = 0;
-    client->rule.old_origin = qa_v3(0, 0, 0);
-    client->rule.followed_player = (qa_q3_player){0};
-    client->rule.ready_to_exit = client->rule.inactivity_warning = client->rule.has_followed_player = false;
-    q3_wire_selected_client_clear(game, slot);
+    q3_client_state *client = has_client ? &game->clients[slot] : NULL;
+    if (client) {
+        client->rule.switch_team_time_ms = 0;
+        client->rule.old_buttons = client->rule.buttons = client->rule.latched_buttons = 0;
+        client->rule.inactivity_time_ms = 0;
+        client->rule.old_origin = qa_v3(0, 0, 0);
+        client->rule.followed_player = (qa_q3_player){0};
+        client->rule.ready_to_exit = client->rule.inactivity_warning = client->rule.has_followed_player = false;
+        q3_wire_selected_client_clear(game, slot);
+    }
     for (int weapon = 0; okay && weapon < QA_Q3_WEAPON_COUNT; ++weapon) {
         okay = q3_ammo_timer_store(game, actor, (qa_q3_weapon)weapon, 0, error) &&
-            selected_source_current(game, actor, slot, error) != NULL;
+            selected_source_current(game, actor, source_slot, error) != NULL;
     }
     qa_q3_selected_source_pose pose = {0};
     if (okay) {
         okay = callbacks.pose(callbacks.context, actor, &pose, error);
-        entry = okay ? selected_source_current(game, actor, slot, error) : NULL;
+        entry = okay ? selected_source_current(game, actor, source_slot, error) : NULL;
         if (!entry) { okay = false; goto done; }
         if (!qa_vec_finite(pose.view_angles) || !isfinite(pose.view_height) ||
             pose.max_health < 1 || pose.team < 0 || pose.team > 3) {
@@ -351,8 +354,10 @@ bool qa_q3_selected_source_respawn(qa_q3_game *game, qa_actor_id actor,
         entry->state.player.spectator = pose.team == 3;
         entry->state.player.powerups[QA_Q3_P_QUAD] = pose.quad_until_ms;
         entry->state.player.powerups[QA_Q3_P_HASTE] = pose.haste_until_ms;
-        game->clients[slot].rule.max_health = pose.max_health;
-        game->clients[slot].rule.session.team = pose.team;
+        if (client) {
+            client->rule.max_health = pose.max_health;
+            client->rule.session.team = pose.team;
+        }
     }
 done:
     --game->observation_depth;
