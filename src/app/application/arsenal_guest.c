@@ -319,7 +319,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     bool deferred = false;
     qa_error preparation = {0};
     if (call->instruction == input->profile.run_client && !input->in_command &&
-        ((is_guest(arsenal) && arsenal != guest) || (is_guest(character) && character != guest)) &&
+        ((arsenal && arsenal != guest) || (character && character != guest)) &&
         !guest_follower(input, scope.actor)) {
         deferred = application_control_guest_frame_prepare(app, guest, scope.actor,
             &frame_context, &frame_command, &preparation);
@@ -1363,6 +1363,7 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
     uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
     if (elapsed > INT32_MAX) elapsed = 0;
     applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
+    if (dead) applied.buttons = (applied.buttons & ~UINT32_C(5)) | (command->buttons & UINT32_C(5));
     if (application_provider_for(app, actor, QA_ROLE_MOVEMENT, "") == guest &&
         !(stage ? stage->current(stage) && stage->complete(stage, &applied, &player, error) :
             application_control_guest_complete(app, actor, &applied, &player, error))) return false;

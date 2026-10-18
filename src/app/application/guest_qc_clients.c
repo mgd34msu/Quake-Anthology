@@ -594,7 +594,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC client admission");
     if (reserve && qualified)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "QC component requires its own deferred source admission contract");
-    bool source_map_owned = application_provider_for(provider->application, actor, QA_ROLE_ENTITIES, "") == provider;
+    bool source_map_owned = application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider;
     if (!application_qc_player_map_ready(provider, primary_character, source_map_owned, error)) return false;
     if (qualified) {
         const application_qc_client *existing = application_qc_client_for_actor(engine, actor);
