@@ -423,6 +423,9 @@ bool application_guest_q3_client_console_rebind(struct application_q3_guest *eng
         return application_fail(error, QA_ERROR_ARGUMENT, "Hosted CLIENT rebinding changed its retained Source view");
     row->binding_cvars = actual;
     application_startup_tuple_bound_client(engine->provider, &target);
+    qa_id_index_cursor roles = q3g_role_lookup_begin(engine, kind, seat);
+    q3g_role *role;
+    while ((role = q3g_role_lookup_next(engine, &roles))) role->source_owner = next_game->owner;
     row->binding_cvars = NULL; row->retiring_game = NULL;
     row->retiring_source = (qa_application_startup_source){0}; row->configuration = CLIENT_CONFIGURATION_LIVE;
     return true;

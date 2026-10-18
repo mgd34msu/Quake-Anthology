@@ -872,11 +872,18 @@ bool q3g_role_restart(q3g_role *role, q3g_role **out, qa_error *error)
     while (*position && *position != role) position = &(*position)->next;
     if (!*position || engine->calls || !qa_world_idle(engine->world))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role restart requires its idle published owner");
+    application_provider *client_source = role->client_source;
+    if (!client_source && role->source_owner) {
+        qa_application *application = engine->provider->application;
+        client_source = application_provider_lookup_unique(application, role->source_owner,
+            application->routing_providers ? APPLICATION_PROVIDER_ROUTING : APPLICATION_PROVIDER_PUBLISHED);
+        if (!client_source)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role restart lost its actual retained GAME parent");
+    }
     char *path = q3g_copy_text(role->path, error); if (!path) return false;
     qa_qvm_role kind = role->kind;
     uint32_t seat = role->seat;
     bool primary = role->primary, game = role == engine->game;
-    application_provider *client_source = role->client_source;
     qa_error shutdown_error = {0};
     bool shut_down = q3g_role_shutdown(role, false, &shutdown_error);
     q3g_role *next = role->next;

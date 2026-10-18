@@ -256,7 +256,6 @@ static bool held_source_begin(void *context, qa_actor_id actor, bool view,
 {
     frontend_equipment_source *owner = context;
     *capture = NULL;
-    if (!owner->original_q3_view) return true;
     equipment_source_weapon *row=qa_arena_alloc(&owner->options.frontend->frame.storage,
         sizeof(*row),_Alignof(equipment_source_weapon),error);
     if (!row) return false;
@@ -363,7 +362,7 @@ static bool held_source_cancel(void *context, void *capture,
     const equipment_source_weapon *weapon=capture;
     if (!weapon) return true;
     qa_actor_id actor=weapon->value.actor; bool view=weapon->value.view;
-    if (!owner->original_q3_view || !owner->drawing || !current_owner(owner))
+    if (!owner->drawing || !current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Suppressed Source ref lost its actual Draw attribution");
     for (equipment_source_actor **slot=&owner->source_actors;*slot;slot=&(*slot)->next) {
         equipment_source_actor *row=*slot;
@@ -1021,7 +1020,7 @@ static bool source_element_place(frontend_equipment_source *owner,equipment_sour
 bool frontend_equipment_source_scene_place(frontend_equipment_source *owner,
     const qa_scene_world_input *world,qa_error *error)
 {
-    if (!owner || !owner->drawing || !owner->original_q3_view || world->no_world) return true;
+    if (!owner || !owner->drawing || world->no_world) return true;
     for (equipment_source_actor *row=owner->source_actors;row;row=row->next)
         if (!source_element_place(owner,row->weapon,world,QA_Q3_SCENE_REF,row->entity,error)) return false;
     for (equipment_source_effect *row=owner->source_polygons;row;row=row->next)
