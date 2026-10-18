@@ -48,6 +48,7 @@
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/source_save.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q1_supply.h"
 #include "qa/game_q1_source_birth.h"
@@ -449,6 +450,37 @@ static void guest_bindings_clear(struct application_player_roster *roster,
     application_player_record *record)
 { while (record->guests) guest_binding_remove(roster, record->guests); }
 
+static void carry_clear(application_player_carry *carry)
+{
+    if (carry->inventory != carry->q2.inventory) free(carry->inventory);
+    qa_q1_travel_destroy(carry->q1_source);
+    qa_q2_player_carry_free(&carry->q2);
+    *carry = (application_player_carry){0};
+}
+
+static bool pending_carry_fields(qa_source_save_io *, application_player_carry *);
+
+static bool carry_pending_copy(qa_session *session, const application_player_carry *pending,
+    application_player_carry *carry, qa_error *error)
+{
+    application_player_carry copy = *pending;
+    qa_source_save_io writer = {0}, reader = {0};
+    qa_buffer bytes = {0};
+    bool okay = qa_source_save_writer(&writer, session, error) &&
+        pending_carry_fields(&writer, &copy) && qa_source_save_finish(&writer, &bytes);
+    if (okay) {
+        if (carry->inventory != carry->q2.inventory) free(carry->inventory);
+        carry->inventory = NULL;
+        carry->count = 0;
+        okay = qa_source_save_reader(&reader, session, (qa_bytes){bytes.data, bytes.size}, error) &&
+            pending_carry_fields(&reader, carry) && qa_source_save_finish(&reader, NULL);
+    }
+    qa_source_save_dispose(&reader);
+    qa_source_save_dispose(&writer);
+    qa_buffer_free(&bytes);
+    return okay;
+}
+
 static void roster_free(struct application_player_roster *roster)
 {
     if (roster == NULL)
@@ -460,6 +492,7 @@ static void roster_free(struct application_player_roster *roster)
         application_player_userinfo_clear(roster->records+i);
         free(roster->records[i].bot_definition);
         qa_q1_travel_destroy(roster->records[i].q1_entry);
+        carry_clear(&roster->records[i].pending_carry);
     }
     qa_id_index_destroy(&roster->guest_sources);
     qa_id_index_destroy(&roster->seats);
@@ -480,12 +513,8 @@ void application_players_dispose(application_player_travel *travel)
 {
     if (travel == NULL)
         return;
-    for (size_t i = 0; travel->carry != NULL && i < travel->count; ++i) {
-        if (!travel->carry[i].q2.inventory_owner)
-            free(travel->carry[i].inventory);
-        qa_q1_travel_destroy(travel->carry[i].q1_source);
-        qa_q2_player_carry_free(&travel->carry[i].q2);
-    }
+    for (size_t i = 0; travel->carry != NULL && i < travel->count; ++i)
+        carry_clear(travel->carry + i);
     free(travel->carry);
     free(travel->seats);
     roster_free(travel->roster);
@@ -547,7 +576,6 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
         carry->has_q2 = true;
         carry->inventory = carry->q2.inventory;
         carry->count = carry->q2.count;
-        carry->q2.inventory = NULL;
         carry->q2.count = 0;
     } else {
         if (!qa_inventory_entries(application->inventory, actor, NULL, 0, &carry->count, error))
@@ -625,7 +653,9 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
                 return false;
         }
     }
-    return true;
+    const application_player_record *record = application_player_record_find(application->players, actor);
+    return !record || !record->pending_carry.present ||
+        carry_pending_copy(application->session, &record->pending_carry, carry, error);
 }
 
 static char *player_text(const char *);
@@ -2316,6 +2346,116 @@ static bool apply_loadout(qa_application *application, const qa_launch_choices *
     return true;
 }
 
+static void player_initial_vitals(qa_application *application, const qa_launch_choices *choices,
+    const qa_launch_seat *seat, const application_player_record *record,
+    const application_player_carry *carry, bool keep, bool qw_spectator,
+    qa_combat_state *combat, double *maximum_health)
+{
+    application_provider *character = record->character;
+    qa_q1_program character_program = character->kind == APPLICATION_PROVIDER_Q1
+        ? application_q1_program(character->launch->selection.implementation) : QA_Q1_ID1;
+    const qa_product *character_product = qa_catalog_product(qa_launch_snapshot_catalog(
+        qa_application_launch(application)), character->launch->selection.product);
+    bool mission_pack = character->kind == APPLICATION_PROVIDER_Q1 &&
+        (character_program == QA_Q1_HIPNOTIC || character_program == QA_Q1_ROGUE);
+    bool classic_mission = mission_pack && character_product != NULL &&
+        character_product->edition == QA_EDITION_CLASSIC;
+    bool reduced_health = character->kind == APPLICATION_PROVIDER_Q1 && !deathmatch(choices) &&
+        character_program != QA_Q1_CTF &&
+        ((choices->world.skill == 3 && character_product != NULL &&
+          character_product->edition == QA_EDITION_RERELEASE) ||
+         application_q1_program(character->launch->selection.implementation) == QA_Q1_MG3);
+    *combat = (qa_combat_state){.health = qw_spectator ? 0 : reduced_health ? 50 : 100,
+        .mass = 200, .can_take_damage = !seat->spectator};
+    if (keep) { combat->health = carry->combat.health; combat->armor = carry->combat.armor; }
+    bool q1_carry = character->kind == APPLICATION_PROVIDER_Q1;
+    *maximum_health = keep && carry->character_owner == character->owner
+        ? carry->maximum_health : reduced_health ? 50 : 100;
+    if (classic_mission) *maximum_health = 100;
+    if (keep && q1_carry)
+        combat->health = fmin(*maximum_health, fmax(*maximum_health / 2, combat->health));
+}
+
+static bool restore_player_carry(qa_application *application, const qa_launch_choices *choices,
+    const qa_launch_seat *seat, application_player_record *record,
+    const application_player_carry *carry, bool carry_players, bool new_unit,
+    const qa_combat_state *combat, double maximum_health, qa_error *error)
+{
+    qa_actor_id actor = record->actor;
+    application_provider *character = record->character;
+    application_provider *map_source = application->players->map_provider;
+    application_provider *arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
+    const char *map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
+    bool keep = keep_native_travel(character, choices, carry, carry_players,
+        carry->addon_reset, application->players->world_type, map);
+    bool keep_inventory = keep_native_travel(arsenal, choices, carry, carry_players,
+        carry->arsenal_addon_reset, application->players->world_type, map);
+    bool rogue_reset = arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+        application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_ROGUE &&
+        deathmatch(choices) && selected_teamplay(choices) >= 4;
+    if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
+        !restore_counts(application, actor, carry,
+                                 arsenal->kind == APPLICATION_PROVIDER_Q1,
+                                 new_unit && selected_mode(choices) == QA_MODE_COOPERATIVE, error))
+        return false;
+    if (map_source->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
+        !(map_source->kind == APPLICATION_PROVIDER_QC && record->source_begin_pending)) {
+        float arsenal_maximum = arsenal == character ? (float)maximum_health
+            : keep_inventory && carry->has_q1 && carry->arsenal_owner == arsenal->owner
+                ? carry->q1.max_health : application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_MG3
+                    && !deathmatch(choices) ? 50 : 100;
+        if (map_source->kind == APPLICATION_PROVIDER_QC && map_source->product->family == QA_GAME_Q1) {
+            qa_q1_player_view actual;
+            if (!qa_q1_player_read(arsenal->state.q1, actor, &actual))
+                return application_fail(error, QA_ERROR_NOT_FOUND, "Original QC selected arsenal has retired");
+            arsenal_maximum = actual.max_health;
+        }
+        if (!qa_q1_player_travel_reset(arsenal->state.q1, actor, arsenal_maximum, error))
+            return false;
+        if (carry_players && carry->present && carry->has_mg3 && carry->arsenal_owner == arsenal->owner &&
+            !qa_q1_mg3_progress_restore(arsenal->state.q1, actor, &carry->mg3, error))
+            return false;
+        if (keep_inventory && !rogue_reset && carry->has_q1 && carry->arsenal_owner == arsenal->owner &&
+            !qa_q1_player_select(arsenal->state.q1, actor,
+                carry->q1.weapon == QA_Q1_ROGUE_GRAPPLE && selected_teamplay(choices) < 4
+                    ? QA_Q1_AXE : carry->q1.weapon, error))
+            return false;
+    }
+    if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
+        carry->has_weapon2 && arsenal->kind == APPLICATION_PROVIDER_Q2 &&
+        carry->arsenal_owner == arsenal->owner) {
+        qa_q2_weapon_state state;
+        if (!qa_q2_weapon_read(arsenal->state.q2, actor, &state, error)) return false;
+        state.weapon = carry->weapon2;
+        state.pending = QA_Q2_WEAPON_NONE;
+        if (!qa_q2_weapon_restore(arsenal->state.q2, actor, &state, error)) return false;
+    }
+    if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
+        carry->has_weapon3 && arsenal->kind == APPLICATION_PROVIDER_Q3 &&
+        carry->arsenal_owner == arsenal->owner) {
+        qa_q3_player_state state;
+        if (!qa_q3_player_read(arsenal->state.q3, actor, &state))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 carried arsenal has no admitted state");
+        state.weapon = state.requested_weapon = carry->weapon3;
+        state.has_last_fire = carry->fire3.present;
+        state.last_fire_ms = 0;
+        if (carry->fire3.present) {
+            int32_t source_time;
+            if (!qa_q3_source_clock(arsenal->state.q3, &source_time, error)) return false;
+            uint32_t rebased = (uint32_t)carry->fire3.time_ms +
+                (uint32_t)source_time - (uint32_t)carry->arsenal3_time_ms;
+            memcpy(&state.last_fire_ms, &rebased, sizeof(state.last_fire_ms));
+        }
+        if (!qa_q3_player_restore(arsenal->state.q3, actor, &state, error)) return false;
+    }
+    if ((!keep_inventory && !apply_loadout(application, choices, seat, actor, error)) ||
+        (map_source->kind != APPLICATION_PROVIDER_Q1 && keep &&
+                 (!qa_combat_set_health(application->combat, actor, combat->health, error) ||
+                  (!rogue_reset && !qa_combat_set_armor(application->combat, actor, &combat->armor, error)))))
+        return false;
+    return true;
+}
+
 static unsigned player_scope_priority(qa_application *application,
     qa_launch_scope scope, qa_actor_id actor, uint32_t seat)
 {
@@ -3262,39 +3402,16 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         application_provider *movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
         if (arsenal == NULL || movement == NULL)
             return application_fail(error, QA_ERROR_NOT_FOUND, "selected player services disappeared");
-        bool rogue_reset = arsenal->kind == APPLICATION_PROVIDER_Q1 &&
-            application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_ROGUE &&
-            deathmatch(choices) && selected_teamplay(choices) >= 4;
         qa_ruleset_id movement_kind = (movement->component.clock.kind);
         qa_body_state body = {
             .bounds = application_control_character_postures(character, actor).standing.bounds};
         const char *current_map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
         bool keep = keep_native_travel(character, choices, carry, carry_players,
             carry->addon_reset, application->players->world_type, current_map);
-        bool keep_inventory = keep_native_travel(arsenal, choices, carry, carry_players,
-            carry->arsenal_addon_reset, application->players->world_type, current_map);
-        qa_q1_program character_program = character->kind == APPLICATION_PROVIDER_Q1
-            ? application_q1_program(character->launch->selection.implementation) : QA_Q1_ID1;
-        const qa_product *character_product = qa_catalog_product(qa_launch_snapshot_catalog(
-            qa_application_launch(application)), character->launch->selection.product);
-        bool mission_pack = character->kind == APPLICATION_PROVIDER_Q1 &&
-            (character_program == QA_Q1_HIPNOTIC || character_program == QA_Q1_ROGUE);
-        bool classic_mission = mission_pack && character_product != NULL &&
-            character_product->edition == QA_EDITION_CLASSIC;
-        bool reduced_health = character->kind == APPLICATION_PROVIDER_Q1 && !deathmatch(choices) &&
-            character_program != QA_Q1_CTF &&
-            ((choices->world.skill == 3 && character_product != NULL &&
-              character_product->edition == QA_EDITION_RERELEASE) ||
-             application_q1_program(character->launch->selection.implementation) == QA_Q1_MG3);
-        qa_combat_state combat = {.health = qw_spectator ? 0 : reduced_health ? 50 : 100,
-            .mass = 200, .can_take_damage = !seat->spectator};
-        if (keep) { combat.health = carry->combat.health; combat.armor = carry->combat.armor; }
-        bool q1_carry = character->kind == APPLICATION_PROVIDER_Q1;
-        double maximum_health = keep && carry->character_owner == character->owner
-            ? carry->maximum_health : reduced_health ? 50 : 100;
-        if (classic_mission) maximum_health = 100;
-        if (keep && q1_carry)
-            combat.health = fmin(maximum_health, fmax(maximum_health / 2, combat.health));
+        qa_combat_state combat;
+        double maximum_health;
+        player_initial_vitals(application, choices, seat, record, carry, keep,
+            qw_spectator, &combat, &maximum_health);
         bool original_q3_body = !reserved_player && q3g_engine(character) != NULL;
         if (reserved_player) {
             if (source_completed) {
@@ -3594,66 +3711,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 !application_native_q3_client_begin(map_source, actor, &body, source_command, error))
                 return false;
         }
-        if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
-            !restore_counts(application, actor, carry,
-                                     arsenal->kind == APPLICATION_PROVIDER_Q1,
-                                     new_unit && selected_mode(choices) == QA_MODE_COOPERATIVE, error))
-            return false;
-        if (map_source->kind != APPLICATION_PROVIDER_Q1 && arsenal->kind == APPLICATION_PROVIDER_Q1 &&
-            !(map_source->kind == APPLICATION_PROVIDER_QC && record->source_begin_pending)) {
-            float arsenal_maximum = arsenal == character ? (float)maximum_health
-                : keep_inventory && carry->has_q1 && carry->arsenal_owner == arsenal->owner
-                    ? carry->q1.max_health : application_q1_program(arsenal->launch->selection.implementation) == QA_Q1_MG3
-                        && !deathmatch(choices) ? 50 : 100;
-            if (map_source->kind == APPLICATION_PROVIDER_QC && map_source->product->family == QA_GAME_Q1) {
-                qa_q1_player_view actual;
-                if (!qa_q1_player_read(arsenal->state.q1, actor, &actual))
-                    return application_fail(error, QA_ERROR_NOT_FOUND, "Original QC selected arsenal has retired");
-                arsenal_maximum = actual.max_health;
-            }
-            if (!qa_q1_player_travel_reset(arsenal->state.q1, actor, arsenal_maximum, error))
-                return false;
-            if (carry_players && carry->present && carry->has_mg3 && carry->arsenal_owner == arsenal->owner &&
-                !qa_q1_mg3_progress_restore(arsenal->state.q1, actor, &carry->mg3, error))
-                return false;
-            if (keep_inventory && !rogue_reset && carry->has_q1 && carry->arsenal_owner == arsenal->owner &&
-                !qa_q1_player_select(arsenal->state.q1, actor,
-                    carry->q1.weapon == QA_Q1_ROGUE_GRAPPLE && selected_teamplay(choices) < 4
-                        ? QA_Q1_AXE : carry->q1.weapon, error))
-                return false;
-        }
-        if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
-            carry->has_weapon2 && arsenal->kind == APPLICATION_PROVIDER_Q2 &&
-            carry->arsenal_owner == arsenal->owner) {
-            qa_q2_weapon_state state;
-            if (!qa_q2_weapon_read(arsenal->state.q2, actor, &state, error)) return false;
-            state.weapon = carry->weapon2;
-            state.pending = QA_Q2_WEAPON_NONE;
-            if (!qa_q2_weapon_restore(arsenal->state.q2, actor, &state, error)) return false;
-        }
-        if (map_source->kind != APPLICATION_PROVIDER_Q1 && keep_inventory &&
-            carry->has_weapon3 && arsenal->kind == APPLICATION_PROVIDER_Q3 &&
-            carry->arsenal_owner == arsenal->owner) {
-            qa_q3_player_state state;
-            if (!qa_q3_player_read(arsenal->state.q3, actor, &state))
-                return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 carried arsenal has no admitted state");
-            state.weapon = state.requested_weapon = carry->weapon3;
-            state.has_last_fire = carry->fire3.present;
-            state.last_fire_ms = 0;
-            if (carry->fire3.present) {
-                int32_t source_time;
-                if (!qa_q3_source_clock(arsenal->state.q3, &source_time, error)) return false;
-                uint32_t rebased = (uint32_t)carry->fire3.time_ms +
-                    (uint32_t)source_time - (uint32_t)carry->arsenal3_time_ms;
-                memcpy(&state.last_fire_ms, &rebased, sizeof(state.last_fire_ms));
-            }
-            if (!qa_q3_player_restore(arsenal->state.q3, actor, &state, error)) return false;
-        }
-        if ((!keep_inventory && !apply_loadout(application, choices, seat, actor, error)) ||
-            (map_source->kind != APPLICATION_PROVIDER_Q1 && keep &&
-                     (!qa_combat_set_health(application->combat, actor, combat.health, error) ||
-                      (!rogue_reset && !qa_combat_set_armor(application->combat, actor, &combat.armor, error)))))
-            return false;
+        if (!(q3g_engine(map_source) && defer_source_begin && carry->present) &&
+            !restore_player_carry(application, choices, seat, record, carry,
+                carry_players, new_unit, &combat, maximum_health, error)) return false;
         if (!application_supplies_admit(application->supplies, map_source, actor, error)) return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q2 &&
             !qa_q2_player_start_items(map_source->state.q2, actor, error)) return false;
@@ -3810,6 +3870,11 @@ bool application_players_publish(qa_application *application,
                             PLAYER_ADMISSION_COMPLETE,
                             NULL, &accepted, &denial, error))
             return false;
+        if (accepted && record->source_begin_pending && q3g_engine(source) && travel->carry[i].present) {
+            record->pending_carry = travel->carry[i];
+            record->pending_carry.new_unit |= travel->new_unit;
+            travel->carry[i] = (application_player_carry){0};
+        }
     }
     for (size_t i = 0; i < application->mode_count; ++i) {
         qa_mode_view view;
@@ -4181,6 +4246,7 @@ static void record_free(struct application_player_roster *roster, application_pl
 {
     guest_bindings_clear(roster, record);
     qa_q1_travel_destroy(record->q1_entry);
+    carry_clear(&record->pending_carry);
     application_player_userinfo_clear(record);
     free(record->bot_definition);
     *record = (application_player_record){.retiring = true};
@@ -5418,12 +5484,94 @@ static qa_vec3 roster_read_vec(qa_net_reader *reader)
     return value;
 }
 
+static bool pending_carry_fields(qa_source_save_io *io, application_player_carry *carry)
+{
+    if (!qa_source_save_bool(io, &carry->present)) return false;
+    if (!carry->present) return true;
+    if (!qa_source_save_bool(io, &carry->new_unit) ||
+        !qa_source_save_scalar(io, &carry->combat.health) ||
+        !qa_source_save_armor(io, &carry->combat.armor) ||
+        !qa_source_save_scalar(io, &carry->maximum_health) ||
+        !qa_source_save_string(io, &carry->character_owner) ||
+        !qa_source_save_string(io, &carry->arsenal_owner) ||
+        !qa_source_save_bool(io, &carry->addon_reset) ||
+        !qa_source_save_bool(io, &carry->arsenal_addon_reset) ||
+        !qa_source_save_count(io, &carry->count, SIZE_MAX / sizeof(*carry->inventory))) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && carry->count) {
+        if (carry->count > (io->input.size - io->offset) / 24)
+            return application_fail(io->error, QA_ERROR_FORMAT, "Truncated pending player inventory");
+        carry->inventory = calloc(carry->count, sizeof(*carry->inventory));
+        if (!carry->inventory)
+            return application_fail(io->error, QA_ERROR_MEMORY, "Cannot restore pending player inventory");
+    }
+    for (size_t i = 0; i < carry->count; ++i) {
+        qa_inventory_entry entry = carry->inventory[i], normalized;
+        uint32_t policy = entry.policy;
+        if (!qa_source_save_string(io, &entry.item) || !entry.item ||
+            !qa_source_save_f64(io, &entry.count) || !qa_source_save_f64(io, &entry.capacity) ||
+            !qa_source_save_u32(io, &policy) || policy > QA_COUNT_SOURCE_DOUBLE) return false;
+        entry.policy = (qa_inventory_count_policy)policy;
+        if (!qa_inventory_validate_entry(&entry, &normalized, io->error) ||
+            normalized.count != entry.count || normalized.capacity != entry.capacity) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) carry->inventory[i] = entry;
+    }
+    if (!qa_source_save_bool(io, &carry->has_q1)) return false;
+    if (carry->has_q1) {
+        uint32_t weapon = carry->q1.weapon;
+        if (!qa_source_save_u32(io, &weapon) || weapon >= QA_Q1_WEAPON_COUNT ||
+            !qa_source_save_f32(io, &carry->q1.max_health) || !isfinite(carry->q1.max_health)) return false;
+        carry->q1.weapon = (qa_q1_weapon)weapon;
+    }
+    if (!qa_source_save_bool(io, &carry->has_mg3)) return false;
+    if (carry->has_mg3 &&
+        (!qa_source_save_u32(io, &carry->mg3.health) ||
+         !qa_source_save_u32(io, &carry->mg3.shells) ||
+         !qa_source_save_u32(io, &carry->mg3.nails) ||
+         !qa_source_save_u32(io, &carry->mg3.rockets) ||
+         !qa_source_save_u32(io, &carry->mg3.cells) ||
+         !qa_source_save_u32(io, &carry->mg3.bloody))) return false;
+    if (!qa_source_save_bool(io, &carry->has_weapon2)) return false;
+    if (carry->has_weapon2) {
+        uint32_t weapon = carry->weapon2;
+        if (!qa_source_save_u32(io, &weapon) || weapon >= QA_Q2_WEAPON_COUNT) return false;
+        carry->weapon2 = (qa_q2_weapon)weapon;
+    }
+    if (!qa_source_save_bool(io, &carry->has_weapon3)) return false;
+    if (carry->has_weapon3) {
+        uint32_t weapon = carry->weapon3;
+        if (!qa_source_save_u32(io, &weapon) || weapon >= QA_Q3_WEAPON_COUNT ||
+            !qa_source_save_bool(io, &carry->fire3.present) ||
+            !qa_source_save_i32(io, &carry->fire3.time_ms) ||
+            !qa_source_save_i32(io, &carry->arsenal3_time_ms)) return false;
+        carry->weapon3 = (qa_q3_weapon)weapon;
+    }
+    return true;
+}
+
+static bool roster_pending_fields(qa_source_save_io *io, struct application_player_roster *roster)
+{
+    uint8_t tag[4] = {'C', 'A', 'R', 'Y'};
+    size_t count = roster->count;
+    if (!qa_source_save_bytes(io, tag, sizeof(tag)) || memcmp(tag, "CARY", sizeof(tag)) ||
+        !qa_source_save_count(io, &count, roster->count) || count != roster->count)
+        return application_fail(io->error, QA_ERROR_FORMAT, "Invalid pending player carry extent");
+    for (size_t i = 0; i < count; ++i) {
+        application_player_record *record = roster->records + i;
+        application_player_carry copy = record->pending_carry;
+        application_player_carry *carry = io->direction == QA_SOURCE_SAVE_READ ? &record->pending_carry : &copy;
+        if (!pending_carry_fields(io, carry)) return false;
+        if (carry->present && (!record->source_begin_pending || record->retiring || !q3g_engine(roster->map_provider)))
+            return application_fail(io->error, QA_ERROR_FORMAT, "Pending player carry has no original module Begin");
+    }
+    return true;
+}
+
 bool application_players_checkpoint_capture(qa_application *application, qa_buffer *out,
                                              qa_error *error)
 {
     if (!application || !out || !application->session || !qa_session_safe(application->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "roster checkpoint requires an idle application");
-    const struct application_player_roster *roster = application->players;
+    struct application_player_roster *roster = application->players;
     const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(application));
     const qa_actor_registry *actors = qa_session_actors(application->session);
     size_t size = PLAYER_CHECKPOINT_HEADER;
@@ -5465,8 +5613,20 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
             qa_q1_travel_encode(application->session, record->q1_entry, &entries[i], error) &&
             entries[i].size <= UINT32_MAX && roster_size(&size, entries[i].size, 1, error);
     }
+    qa_buffer pending = {0};
+    bool has_pending = false;
+    for (size_t i = 0; roster && i < roster->count; ++i)
+        has_pending |= roster->records[i].pending_carry.present;
+    if (entry_ok && has_pending) {
+        qa_source_save_io io = {0};
+        entry_ok = qa_source_save_writer(&io, application->session, error) &&
+            roster_pending_fields(&io, roster) && qa_source_save_finish(&io, &pending) &&
+            roster_size(&size, pending.size, 1, error);
+        qa_source_save_dispose(&io);
+    }
     qa_buffer buffer = {.data = entry_ok ? malloc(size) : NULL, .size = size};
     if (!buffer.data) {
+        qa_buffer_free(&pending);
         for (size_t i = 0; roster && i < roster->count; ++i) qa_buffer_free(&entries[i]);
         free(entries);
         if (entry_ok) return application_fail(error, QA_ERROR_MEMORY, "cannot encode canonical roster");
@@ -5534,6 +5694,8 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
         ok = roster_write_actor(&writer, actors, roster->q1_points[i].actor, error);
         qa_net_write_u32(&writer, roster->q1_points[i].kind);
     }
+    if (ok) ok = qa_net_write_data(&writer, pending.data, pending.size);
+    qa_buffer_free(&pending);
     for (size_t i = 0; roster && i < roster->count; ++i) qa_buffer_free(&entries[i]);
     free(entries);
     if (!ok || writer.failed || qa_net_writer_size(&writer) != size) {
@@ -5712,6 +5874,14 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
              roster->q1_points[i].kind <= QA_Q1_SPAWN_TEST &&
              roster_resolve_actor(actors, actor, true, &roster->q1_points[i].actor, error);
     }
+    if (ok && qa_net_reader_remaining(&reader)) {
+        qa_bytes pending;
+        qa_source_save_io io = {0};
+        ok = qa_net_read_bytes(&reader, qa_net_reader_remaining(&reader), &pending) &&
+            qa_source_save_reader(&io, candidate->session, pending, error) &&
+            roster_pending_fields(&io, roster) && qa_source_save_finish(&io, NULL);
+        qa_source_save_dispose(&io);
+    }
     if (ok) ok = qa_net_reader_finish(&reader);
     if (ok && (flags & 2u)) {
         qa_q1_spawn_selector_checkpoint selector;
@@ -5785,7 +5955,8 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
         .name = application_player_name(record), .team = application_player_team(record),
         .bot = application_player_identity(record)->bot,
         .spectator = application_player_identity(record)->spectator};
-    application_player_carry carry = {0};
+    application_player_carry carry = record->pending_carry;
+    record->pending_carry = (application_player_carry){0};
     if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q1) {
         size_t index = (size_t)(record - application->players->records);
         bool spectator = application_player_qw_spectator(application->players->map_provider, record);
@@ -5795,6 +5966,8 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
                 &launch_seat, record, &carry, index, false, false, NULL, false,
                 PLAYER_ADMISSION_BEGIN, NULL, &accepted, NULL, error);
         sources_begun = !spectator;
+        record = application_player_record_live(application->players, actor);
+        if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
         if (ok && accepted && application->modes) {
             qa_string_id name;
             ok = qa_strings_intern_cstr(qa_session_strings(application->session), application_player_name(record), &name, error) &&
@@ -5804,22 +5977,45 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     } else if (application->players->map_provider->kind == APPLICATION_PROVIDER_Q3)
         ok = application_native_q3_client_begin(application->players->map_provider,
                                                 actor, NULL, NULL, error);
+    record = application_player_record_live(application->players, actor);
+    if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
     if (ok && !sources_begun)
         ok = original_clients_admit(application, qa_launch_snapshot_choices(qa_application_launch(application)),
             &launch_seat, record, &carry, false, false, false, false, false,
             NULL, &accepted, NULL, error);
+    record = application_player_record_live(application->players, actor);
+    if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
     if (ok && !accepted) {
+        carry_clear(&carry);
         application->operation = APPLICATION_IDLE;
         return true;
     }
     application_provider *source = application->players->map_provider;
-    bool original_world_character = q3g_engine(source) && record->character->kind <= APPLICATION_PROVIDER_Q3;
+    bool original_world_character = ok && q3g_engine(source) && record->character->kind <= APPLICATION_PROVIDER_Q3;
     if (ok && original_world_character) {
         qa_movement_posture posture = application_control_character_postures(record->character, actor).standing;
-        ok = guest_spawn_motion(source, actor, &posture, error) &&
-            guest_spawn_project(source, actor, error) &&
-            guest_spawn_followers(application, actor, source, error);
+        ok = guest_spawn_motion(source, actor, &posture, error);
+        record = application_player_record_live(application->players, actor);
+        if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
     }
+    if (ok && carry.present) {
+        const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(application));
+        const application_player_carry *pending = &carry;
+        const char *map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
+        bool keep = keep_native_travel(record->character, choices, pending, true,
+            pending->addon_reset, application->players->world_type, map);
+        qa_combat_state combat;
+        double maximum_health;
+        player_initial_vitals(application, choices, &launch_seat, record, pending, keep,
+            application_player_qw_spectator(source, record), &combat, &maximum_health);
+        ok = restore_player_carry(application, choices, &launch_seat, record, pending,
+            true, pending->new_unit, &combat, maximum_health, error);
+        record = application_player_record_live(application->players, actor);
+        if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
+    }
+    if (ok && original_world_character)
+        ok = guest_spawn_project(source, actor, error) &&
+            guest_spawn_followers(application, actor, source, error);
     if (ok && !original_world_character) {
         qa_body_state body;
         ok = qa_world_body_read(application->world, actor, &body, error);
@@ -5842,12 +6038,23 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
             }
         }
     }
+    record = application_player_record_live(application->players, actor);
+    if (!record || !qa_actors_get(qa_session_actors(application->session), actor)) goto retired;
     application->operation = APPLICATION_IDLE;
-    if (!ok) { application_fault(application, error); return false; }
+    if (!ok) {
+        record->pending_carry = carry;
+        application_fault(application, error);
+        return false;
+    }
     record->source_begin_pending = false;
+    carry_clear(&carry);
     ++application->players->revision;
     if (!admit_components(application, actor, error)) {
         application_fault(application, error); return false;
     }
     return application_players_q2_commands_resume(application,NULL,error);
+retired:
+    carry_clear(&carry);
+    application->operation = APPLICATION_IDLE;
+    return true;
 }

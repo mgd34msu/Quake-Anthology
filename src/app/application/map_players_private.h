@@ -31,7 +31,7 @@ typedef struct application_player_carry {
     application_guest_carry guests[7];
     size_t guest_count;
     bool addon_reset, arsenal_addon_reset;
-    bool present, has_q1, has_mg3, has_q2, has_weapon2, has_weapon3;
+    bool present, has_q1, has_mg3, has_q2, has_weapon2, has_weapon3, new_unit;
     bool q3_client;
 } application_player_carry;
 typedef struct application_player_guest_binding {
@@ -61,6 +61,7 @@ typedef struct application_player_record {
     application_player_guest_binding *guests, *last_guest;
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
+    application_player_carry pending_carry;
     qa_player_feedback feedback;
     qa_actor_id feedback_actor;
     uint16_t output_incomplete;
