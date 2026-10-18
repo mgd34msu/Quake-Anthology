@@ -139,6 +139,12 @@ bool application_q3_combat_armor_read(const application_q3_combat_actor *a,
     *out = armor; return true;
 }
 typedef struct armor_store { int32_t points, tier; bool write_tier; } armor_store;
+static bool protection_matches(const application_q3_combat_actor *a,
+    double requested, double current)
+{
+    return requested == current ||
+        (a->role->vm && (float)requested == (float)current);
+}
 static bool armor_plan(const application_q3_combat_actor *a, const qa_armor *armor,
     armor_store *out, qa_error *error)
 {
@@ -155,10 +161,10 @@ static bool armor_plan(const application_q3_combat_actor *a, const qa_armor *arm
     bool active; double current;
     if (!active_tiers(a, &active, error) || !protection(a, active, &current, error)) return false;
     double requested = armor->regular.protection.q3_protection;
-    if (requested == current) return true;
+    if (protection_matches(a, requested, current)) return true;
     const application_q3_combat_definition *d = definition(a);
     if (active) for (size_t i = 0; i < d->armor.tier_count; ++i)
-        if (d->armor.tiers[i].protection == requested) {
+        if (protection_matches(a, requested, d->armor.tiers[i].protection)) {
             out->tier = d->armor.tiers[i].value; out->write_tier = true; return true;
         }
     return fail(error, QA_ERROR_ARGUMENT, "Requested armor protection has no active original Q3 tier");
