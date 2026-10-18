@@ -2,6 +2,7 @@
 #include "guest_q3_grapple_profile.h"
 #include "guest_q3_reference.h"
 #include "qa/json.h"
+#include "qa/network_q3.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -120,13 +121,31 @@ static bool call(const qa_json_document *doc, qa_json_id object,
 static bool reaction(const qa_json_document *doc, qa_json_id object,
     application_q3_reaction_call *out, qa_error *error)
 {
+    *out = (application_q3_reaction_call){.attacker=UINT32_MAX,
+        .inflictor=UINT32_MAX,.method=UINT32_MAX};
     qa_json_id roles = qa_json_get(doc, object, "roles");
     if (!word(doc, qa_json_get(doc, object, "arguments"), &out->count, error) ||
         !word(doc, qa_json_get(doc, roles, "target"), &out->target, error) ||
         !word(doc, qa_json_get(doc, roles, "amount"), &out->amount, error)) return false;
-    return (out->count >= 2 && out->count <= APPLICATION_Q3_COMBAT_ARGUMENTS &&
-        out->target < out->count && out->amount < out->count && out->target != out->amount) ||
-        fail(error, QA_ERROR_FORMAT, "Combat reaction roles leave their original call");
+    if (out->count < 2 || out->count > APPLICATION_Q3_COMBAT_ARGUMENTS ||
+        out->target >= out->count || out->amount >= out->count || out->target == out->amount)
+        return fail(error, QA_ERROR_FORMAT, "Combat reaction roles leave their original call");
+    bool occupied[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    occupied[out->target] = occupied[out->amount] = true;
+    size_t count = 2;
+    const char *names[] = {"attacker", "inflictor", "method"};
+    uint32_t *positions[] = {&out->attacker, &out->inflictor, &out->method};
+    for (size_t i = 0; i < 3; ++i) {
+        qa_json_id role = qa_json_get(doc, roles, names[i]);
+        if (qa_json_type(doc, role) == QA_JSON_NULL) continue;
+        if (!word(doc, role, positions[i], error)) return false;
+        if (*positions[i] >= out->count || occupied[*positions[i]])
+            return fail(error, QA_ERROR_FORMAT, "Combat reaction roles alias another argument");
+        occupied[*positions[i]] = true;
+        ++count;
+    }
+    out->arguments_present = count == out->count && out->attacker != UINT32_MAX;
+    return true;
 }
 static bool teams(application_q3_combat_profile *p, const qa_json_document *doc,
     qa_json_id list, qa_strings *strings, qa_error *error)
@@ -200,6 +219,9 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
     qa_json_id root = qa_json_root(doc), combat = qa_json_get(doc, root, "combat");
     qa_json_id fields = qa_json_get(doc, combat, "fields"), callbacks = qa_json_get(doc, combat, "callbacks");
     qa_json_id reactions = qa_json_get(doc, combat, "reactions"), armor = qa_json_get(doc, combat, "armor");
+    d->reactions.enemy = d->reactions.world_slot = UINT32_MAX;
+    qa_json_id enemy = qa_json_get(doc, reactions, "enemy");
+    qa_json_id world = qa_json_get(doc, reactions, "worldEntity");
     qa_json_id state = qa_json_get(doc, combat, "state"), team = qa_json_get(doc, state, "team"), mass = qa_json_get(doc, state, "mass");
     size_t shared = qa_qvm_shared_entity_bytes(p->abi), memory = qa_qvm_image_memory_size(p->image);
     if (!word(doc, qa_json_get(doc, combat, "entityStride"), &d->entity_stride, error) ||
@@ -207,6 +229,10 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
     if (d->entity_stride < shared || d->client_stride < qa_qvm_player_bytes(p->abi) ||
         d->entity_stride % 4 || d->client_stride % 4 || d->entity_stride > memory || d->client_stride > memory)
         return fail(error, QA_ERROR_FORMAT, "Combat records leave the actual artifact ABI");
+    if (qa_json_type(doc, enemy) != QA_JSON_NULL &&
+        !field(doc, enemy, shared, d->entity_stride, &d->reactions.enemy, error)) return false;
+    if (qa_json_type(doc, world) != QA_JSON_NULL &&
+        !word(doc, world, &d->reactions.world_slot, error)) return false;
     const char *const field_names[] = {"inuse", "health", "takedamage", "parent", "client"};
     uint32_t *field_values[] = {&d->fields.inuse, &d->fields.health, &d->fields.takedamage, &d->fields.parent, &d->fields.client};
     for (size_t i = 0; i < 5; ++i)
@@ -285,8 +311,12 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) d->damage_call.positions[i] = (uint32_t)i;
     d->reactions.flags = 536; d->reactions.pain = lrctf ? 728 : 712;
     d->reactions.die = lrctf ? 732 : 716;
-    d->reactions.pain_call = (application_q3_reaction_call){3, 0, 2};
-    d->reactions.die_call = (application_q3_reaction_call){5, 0, 3};
+    d->reactions.enemy = base ? 768 : UINT32_MAX;
+    d->reactions.world_slot = base ? QA_Q3_ENTITY_WORLD : UINT32_MAX;
+    d->reactions.pain_call = (application_q3_reaction_call){.count=3,.target=0,.amount=2,
+        .attacker=1,.inflictor=UINT32_MAX,.method=UINT32_MAX,.arguments_present=true};
+    d->reactions.die_call = (application_q3_reaction_call){.count=5,.target=0,.amount=3,
+        .attacker=2,.inflictor=1,.method=4,.arguments_present=true};
     d->damage_flags.radius = 1; d->damage_flags.no_armor = 2; d->damage_flags.no_knockback = 4;
     d->damage_flags.no_protection = 8; d->damage_flags.no_team_protection = 16;
     d->state.health_stat = 0; d->state.team_stat = 3; d->state.notarget = 32;

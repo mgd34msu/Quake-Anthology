@@ -149,6 +149,20 @@ static bool scratch_run(void *context, qa_qvm *vm, uint32_t scratch, qa_error *e
 }
 static bool scratch_parent(void *context, const qa_qvm_call *call, uint32_t scratch, qa_error *error)
 { return scratch_run(context, call->vm, scratch, error); }
+bool application_q3_combat_source_arguments(const application_q3_combat_actor *target,
+    const qa_qvm_call *parent, const qa_damage_request *request, uint32_t original_flags,
+    application_q3_damage_words_fn invoke, void *context, qa_error *error)
+{
+    if (!target || !request || !invoke || !qa_actor_id_equal(target->actor, request->target) ||
+        (parent && parent->vm != target->role->vm) ||
+        !application_q3_combat_actor_current(target, error)) return false;
+    damage_lowering lowering = {.target = target, .request = request, .parent = parent,
+        .invoke = invoke, .context = context,
+        .flags = application_q3_combat_source_flags(application_q3_combat_profile_definition(target->profile), request, original_flags)};
+    return parent ? qa_qvm_source_scratch(parent, target->role->image, 24, scratch_parent, &lowering, error) :
+        qa_qvm_source_scratch_run(target->role->vm, target->role->image, 24, scratch_run, &lowering, error);
+}
+
 bool application_q3_combat_source_damage(const application_q3_combat_actor *target,
     const qa_qvm_call *parent, const qa_damage_request *request, uint32_t original_flags,
     application_q3_damage_words_fn invoke, void *context, qa_error *error)
@@ -158,9 +172,6 @@ bool application_q3_combat_source_damage(const application_q3_combat_actor *targ
         (parent && parent->vm != target->role->vm) ||
         !application_q3_combat_state_read((void *)target, &state, error)) return false;
     if (!state.can_take_damage) return true;
-    damage_lowering lowering = {.target = target, .request = request, .parent = parent,
-        .invoke = invoke, .context = context,
-        .flags = application_q3_combat_source_flags(application_q3_combat_profile_definition(target->profile), request, original_flags)};
-    return parent ? qa_qvm_source_scratch(parent, target->role->image, 24, scratch_parent, &lowering, error) :
-        qa_qvm_source_scratch_run(target->role->vm, target->role->image, 24, scratch_run, &lowering, error);
+    return application_q3_combat_source_arguments(target, parent, request, original_flags,
+        invoke, context, error);
 }

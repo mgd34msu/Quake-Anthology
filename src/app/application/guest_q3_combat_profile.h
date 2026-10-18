@@ -19,7 +19,10 @@ typedef struct application_q3_combat_call {
     int32_t words[APPLICATION_Q3_COMBAT_ARGUMENTS];
     size_t count;
 } application_q3_combat_call;
-typedef struct application_q3_reaction_call { uint32_t count, target, amount; } application_q3_reaction_call;
+typedef struct application_q3_reaction_call {
+    uint32_t count, target, amount, attacker, inflictor, method;
+    bool arguments_present;
+} application_q3_reaction_call;
 typedef struct application_q3_combat_mode { uint32_t offset; int32_t value; bool equal; } application_q3_combat_mode;
 typedef struct application_q3_combat_tier { int32_t value; double protection; } application_q3_combat_tier;
 typedef struct application_q3_combat_definition {
@@ -28,7 +31,7 @@ typedef struct application_q3_combat_definition {
     struct { uint32_t allocate, free, damage; } callbacks;
     application_q3_combat_call damage_call;
     struct {
-        uint32_t flags, pain, die;
+        uint32_t flags, pain, die, enemy, world_slot;
         application_q3_reaction_call pain_call, die_call;
     } reactions;
     struct { uint32_t radius, no_armor, no_knockback, no_protection, no_team_protection; } damage_flags;

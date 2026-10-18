@@ -6,6 +6,7 @@
 #include "control_frame.h"
 #include "source_projection.h"
 #include "qa/pool.h"
+#include "qa/text.h"
 
 typedef struct combat_actor {
     struct combat_actor *next,*previous,*retired_next;
@@ -115,6 +116,151 @@ static bool source_damage(void *context, qa_combat *combat, const qa_damage_requ
     actors_collect(owner);
     return ok;
 }
+
+typedef struct character_reaction {
+    application_q3_combat *owner;
+    application_q3_combat_actor source;
+    const application_q3_reaction_call *arguments;
+    bool death;
+} character_reaction;
+
+static bool reaction_actor_live(character_reaction *reaction, bool *live, qa_error *error)
+{
+    q3g_role *role = reaction->owner->role;
+    qa_application *app = role->engine->provider->application;
+    uint32_t slot;
+    *live = false;
+    if (!qa_actors_get(qa_session_actors(app->session), reaction->source.actor) ||
+        !qa_q3_host_actor_slot(role->host, reaction->source.actor, &slot, NULL) ||
+        slot != reaction->source.slot) return true;
+    return application_q3_combat_actor_live(&reaction->source, live, error);
+}
+
+static bool reaction_project(character_reaction *reaction, qa_actor_id actor, qa_error *error)
+{
+    q3g_role *role = reaction->owner->role;
+    qa_application *app = role->engine->provider->application;
+    if (!actor.registry || !qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    const qa_actor_player *player = qa_actors_player(qa_session_actors(app->session), actor);
+    uint32_t slot;
+    if (player && player->present && !qa_q3_host_actor_slot(role->host, actor, &slot, NULL))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected Q3 reaction requires the attacker's admitted source client");
+    return q3g_project_actor(role, NULL, actor, &slot, error);
+}
+
+static bool reaction_world(character_reaction *reaction, int32_t *pointer, qa_error *error)
+{
+    const application_q3_combat_definition *d =
+        application_q3_combat_profile_definition(reaction->owner->profile);
+    if (d->reactions.world_slot == UINT32_MAX)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected Q3 reaction has no declared source world entity");
+    uint64_t address = reaction->source.table.entities_address +
+        (uint64_t)d->reactions.world_slot * d->entity_stride;
+    qa_bytes span;
+    if (address > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Source world entity exceeds its QVM address word");
+    if (!qa_qvm_span(reaction->owner->role->vm,
+            (int32_t)address, 0, d->entity_stride, &span, error)) return false;
+    *pointer = (int32_t)address;
+    return true;
+}
+
+static bool invoke_reaction(void *context, const int32_t *damage_words, size_t count, qa_error *error)
+{
+    character_reaction *reaction = context;
+    application_q3_combat *owner = reaction->owner;
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    const application_q3_reaction_call *call = reaction->arguments;
+    (void)count;
+    bool live;
+    if (!reaction_actor_live(reaction, &live, error)) return false;
+    if (!live) return true;
+    int32_t attacker = damage_words[d->damage_call.positions[Q3_DAMAGE_ATTACKER]],
+        inflictor = damage_words[d->damage_call.positions[Q3_DAMAGE_INFLICTOR]];
+    if ((!attacker && !reaction_world(reaction, &attacker, error)) ||
+        (reaction->death && !inflictor && !reaction_world(reaction, &inflictor, error))) return false;
+    if (reaction->death) {
+        int32_t flags;
+        if (reaction->source.player &&
+            (!application_q3_combat_word_read(&reaction->source,
+                reaction->source.entity + d->reactions.flags, &flags, error) ||
+             !application_q3_combat_word_write(&reaction->source,
+                reaction->source.entity + d->reactions.flags,
+                (int32_t)((uint32_t)flags | d->state.no_knockback), error))) return false;
+        if (!application_q3_combat_word_write(&reaction->source,
+                reaction->source.entity + d->reactions.enemy, attacker, error)) return false;
+    }
+    int32_t callback;
+    if (!application_q3_combat_word_read(&reaction->source, reaction->source.entity +
+        (reaction->death ? d->reactions.die : d->reactions.pain), &callback, error)) return false;
+    if (!callback) return !reaction->death || application_fail(error, QA_ERROR_UNSUPPORTED,
+        "Selected Q3 character has no source death callback");
+    int32_t words[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    words[call->target] = damage_words[d->damage_call.positions[Q3_DAMAGE_TARGET]];
+    words[call->attacker] = attacker;
+    words[call->amount] = damage_words[d->damage_call.positions[Q3_DAMAGE_AMOUNT]];
+    if (call->inflictor != UINT32_MAX) words[call->inflictor] = inflictor;
+    if (call->method != UINT32_MAX)
+        words[call->method] = damage_words[d->damage_call.positions[Q3_DAMAGE_METHOD]];
+    int32_t result;
+    return qa_qvm_invoke(owner->role->vm, (uint32_t)callback, words, call->count, &result, error);
+}
+
+bool application_q3_combat_reaction(application_q3_combat *owner,
+    const qa_damage_outcome *outcome, qa_error *error)
+{
+    if (!outcome) return application_fail(error, QA_ERROR_ARGUMENT, "Source reaction requires its applied outcome");
+    if (outcome->stale || outcome->result.reaction == QA_REACTION_NONE) return true;
+    if (!owner || owner->role->retired || !owner->role->vm)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Selected Q3 character has no retained QVM reaction owner");
+    const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    character_reaction reaction = {.owner = owner,
+        .death = outcome->result.reaction == QA_REACTION_DEATH};
+    reaction.arguments = reaction.death ? &d->reactions.die_call : &d->reactions.pain_call;
+    if (!reaction.arguments->arguments_present || (reaction.death && d->reactions.enemy == UINT32_MAX))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Selected Q3 character reaction lacks declared source arguments or enemy state");
+    qa_application *app = owner->role->engine->provider->application;
+    if (!qa_actors_get(qa_session_actors(app->session), outcome->request.target)) return true;
+    if (!application_q3_combat_actor_read(owner->role, owner->profile,
+            outcome->request.target, &reaction.source, error)) return false;
+    combat_actor *retained = actor_find(owner, outcome->request.target);
+    q3g_role *previous = owner->role->engine->entered_role;
+    owner->role->engine->entered_role = owner->role;
+    ++owner->role->engine->calls; ++owner->calls;
+    if (retained) ++retained->calls;
+    bool live;
+    bool ok = reaction_project(&reaction, outcome->request.attack.attacker, error) &&
+        (qa_actor_id_equal(outcome->request.attack.attacker, outcome->request.attack.inflictor) ||
+         reaction_project(&reaction, outcome->request.attack.inflictor, error)) &&
+        reaction_actor_live(&reaction, &live, error);
+    if (ok && live) {
+        qa_combat_state state = {0};
+        ok = qa_combat_read_traits(shared(owner), outcome->request.target, &state, error);
+        double health = reaction.death ? fmax(-999, state.health) : state.health;
+        if (ok) ok = application_q3_combat_health_write(&reaction.source, qa_source_to_i32(health), error);
+        if (ok && live) {
+            qa_damage_request request = outcome->request;
+            request.amount = outcome->result.applied_damage;
+            ok = application_q3_combat_source_arguments(&reaction.source, NULL, &request, 0,
+                invoke_reaction, &reaction, error);
+        }
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), outcome->request.target);
+        if (ok && record) {
+            ok = reaction_actor_live(&reaction, &live, error);
+            if (ok && !live && record->owner == owner->role->engine->provider->owner)
+                ok = qa_session_release(app->session, outcome->request.target, error);
+        }
+    }
+    if (retained) --retained->calls;
+    --owner->calls; --owner->role->engine->calls;
+    owner->role->engine->entered_role = previous;
+    actors_collect(owner);
+    return ok;
+}
+
 static qa_combat_binding binding(combat_actor *actor)
 {
     return (qa_combat_binding){.context = actor, .read = read, .write_health = health,

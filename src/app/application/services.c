@@ -21,6 +21,7 @@
 #include "qa/game_q3_wire.h"
 #include "guest_q3_mod_operations.h"
 #include "guest_q3_private.h"
+#include "guest_q3_combat.h"
 #include "guest_qc_combat.h"
 #include "guest_native_q2_combat.h"
 
@@ -725,16 +726,19 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
         ok = application_qc_combat_reaction(provider->state.qc.engine, outcome, error);
         break;
     case APPLICATION_PROVIDER_QVM:
-        ok = application_fail(error, QA_ERROR_UNSUPPORTED,
-                              "selected foreign character has no source reaction adapter");
-        break;
-    case APPLICATION_PROVIDER_NATIVE:
-        if(provider->state.native.q2_engine&&application_native_q2_source_actors_declared(provider->state.native.q2_engine)){
+    case APPLICATION_PROVIDER_NATIVE: {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (engine && engine->game && engine->game->combat) {
+            ok = application_q3_combat_reaction(engine->game->combat, outcome, error);
+            break;
+        }
+        if(provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine&&application_native_q2_source_actors_declared(provider->state.native.q2_engine)){
             bool handled=false;
             ok=application_native_q2_source_actors_reaction(provider->state.native.q2_engine,outcome,&handled,error);
             if(ok&&!handled)ok=application_fail(error,QA_ERROR_UNSUPPORTED,"Selected native character has no owned declared reaction actor");
         }else ok=application_fail(error,QA_ERROR_UNSUPPORTED,"selected foreign character has no source reaction adapter");
         break;
+    }
       }
     }
     if (ok && death && application->modes != NULL)
