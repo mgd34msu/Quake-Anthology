@@ -110,7 +110,12 @@ static bool project(pickup_frame *f,qa_item_id item,int32_t count,qa_error *e)
 {
     guest_inventory_projection_word rows[2];size_t n;
     if(!application_guest_inventory_project(f->owner->role,f->recipient.id,item,count,rows,&n,e))return false;
-    qa_qvm_source_word words[2];for(size_t i=0;i<n;++i)words[i]=(qa_qvm_source_word){rows[i].address,rows[i].value};
+    qa_qvm_source_word words[2];
+    for(size_t i=0;i<n;++i){
+        if(rows[i].address>UINT32_MAX)
+            return application_fail(e,QA_ERROR_ARGUMENT,"Original pickup projection exceeds its QVM address width");
+        words[i]=(qa_qvm_source_word){(uint32_t)rows[i].address,rows[i].value};
+    }
     return !n||qa_qvm_source_words_begin_observed(f->owner->role->vm,f->owner->role->image,words,n,&f->projection,e);
 }
 static bool frame_cleanup(pickup_frame *f,qa_error *e)

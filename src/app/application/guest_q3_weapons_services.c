@@ -1030,9 +1030,13 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
                     ok = application_guest_inventory_project(s->role, actor, catalog[original_index].ammo,
                         out->ammo, projected, &word_count, error) && selection_current(s, actor, view.provider, error);
                 if (ok) {
-                    for (size_t i = 0; i < word_count; ++i)
-                        s->drop_words[i] = (qa_qvm_source_word){projected[i].address, projected[i].value};
-                    out->words = s->drop_words; out->word_count = word_count;
+                    for (size_t i = 0; ok && i < word_count; ++i) {
+                        if (projected[i].address > UINT32_MAX)
+                            ok = application_fail(error, QA_ERROR_ARGUMENT,
+                                "Original death-drop projection exceeds its QVM address width");
+                        else s->drop_words[i] = (qa_qvm_source_word){(uint32_t)projected[i].address, projected[i].value};
+                    }
+                    if (ok) { out->words = s->drop_words; out->word_count = word_count; }
                 }
             }
         }

@@ -109,6 +109,7 @@
 #include "../src/app/application/guest_native_q2_private.h"
 #include "../src/app/application/guest_q3_combat_profile.h"
 #include "../src/app/application/guest_input_private.h"
+#include "../src/app/application/guest_projection_private.h"
 #include "../src/app/application/native_q2_client_stages.h"
 #include "../src/app/application/bots_log.h"
 #include "../src/app/application/bots_setup.h"
@@ -10256,6 +10257,36 @@ static void test_native_q3_declaration(void)
     CHECK(definition->reactions.die == 716 && definition->reactions.die_call.arguments_present &&
         definition->reactions.die_call.count == 5 && definition->reactions.die_call.inflictor == 1 &&
         definition->reactions.die_call.method == 4);
+    qa_session *inventory_session = NULL;
+    CHECK(qa_session_create(&(qa_session_options){.actor_capacity = 1, .component_capacity = 1},
+        &inventory_session, &error));
+    qa_application inventory_app = {.session = inventory_session};
+    application_provider inventory_provider = {.application = &inventory_app};
+    struct application_q3_guest inventory_engine = {.provider = &inventory_provider};
+    q3g_artifact inventory_artifact = {.combat_profile = state};
+    role.engine = &inventory_engine; role.artifact = &inventory_artifact;
+    const char *inventory_json =
+        "{\"inventory\":{\"storage\":[{\"kind\":\"bits\","
+        "\"field\":{\"record\":\"client\",\"offset\":192},\"privateMask\":4294967291,"
+        "\"items\":[{\"item\":\"q3:weapon/machinegun\",\"mask\":4}]},"
+        "{\"kind\":\"counter\",\"field\":{\"record\":\"client\",\"offset\":384},"
+        "\"item\":\"q3:ammo/machinegun\",\"capacity\":{\"kind\":\"constant\",\"value\":200}}]}}";
+    application_guest_projection projection = {0};
+    CHECK(application_guest_projection_profile_read(&role,
+        (qa_bytes){(const uint8_t *)inventory_json, strlen(inventory_json)}, &projection, &error));
+    CHECK(projection.has_inventory && !projection.inventory_public && projection.inventory_count == 2 &&
+        projection.entity_stride == 808 && projection.client_stride == 776 &&
+        projection.client_pointer == 516 && projection.state == state);
+    CHECK(projection.inventory[0].mask == 4 && projection.inventory[0].allowed_mask == UINT32_MAX &&
+        projection.inventory[0].field.offset == 192 && projection.inventory[1].field.offset == 384 &&
+        projection.inventory[1].capacity.value.constant == 200);
+    application_guest_projection_profile_free(&projection);
+    projection = (application_guest_projection){0};
+    CHECK(application_guest_projection_profile_read(&role,
+        (qa_bytes){(const uint8_t *)"{}", 2}, &projection, &error) && !projection.has_inventory);
+    application_guest_projection_profile_free(&projection);
+    role.engine = NULL; role.artifact = NULL;
+    CHECK(qa_session_destroy(inventory_session, &error));
     application_q3_combat_profile_destroy(state); state = NULL;
     const char *callbacks =
         "\"callbacks\":{\"allocate\":114,\"free\":115,\"damage\":%u},"

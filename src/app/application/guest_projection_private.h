@@ -80,7 +80,7 @@ bool application_guest_projection_inventory_group(q3g_role *,qa_actor_id,uint64_
 bool application_guest_projection_detach(q3g_role *, qa_actor_id, qa_error *);
 bool application_guest_projection_profile_read(q3g_role *, qa_bytes, application_guest_projection *, qa_error *);
 void application_guest_projection_profile_free(application_guest_projection *);
-typedef struct guest_inventory_projection_word { uint32_t address; int32_t value; } guest_inventory_projection_word;
+typedef struct guest_inventory_projection_word { uint64_t address; int32_t value; } guest_inventory_projection_word;
 /* Compute original RAM substitutions without committing a temporary grant. */
 bool application_guest_inventory_project(q3g_role *, qa_actor_id, qa_item_id, int32_t count,
     guest_inventory_projection_word [2], size_t *, qa_error *);

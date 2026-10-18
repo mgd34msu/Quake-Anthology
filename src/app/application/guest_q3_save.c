@@ -645,7 +645,7 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
             if (!blob(io, &role->executor, committed ? 12 : 0) ||
                 !blob(io, &role->native_host, committed ? 72 : 0) ||
                 (!committed && (role->executor.size || role->native_host.size)) ||
-                !blob(io, &role->resources, 12) || role->projection_count)
+                !blob(io, &role->resources, 12))
                 return state_fail(io, QA_ERROR_FORMAT, "Native Q3 role changes its actual process/resource presence");
         }
     }
@@ -656,7 +656,8 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
 static bool native_role_plain(const q3g_role *role, qa_error *error)
 {
     bool plain = (role && !role->vm && !role->image && role->module &&
-        !role->projection && !role->weapons && !role->weapon_services &&
+        (!role->projection || !role->projection->inventory_public) &&
+        !role->weapons && !role->weapon_services &&
         application_q3_combat_idle(role->combat) && !application_q3_combat_descriptor_count(role->combat) &&
         !role->pickups && !role->equipment && !role->body && !role->weapon_models) ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 role retains an unencoded application callback owner");

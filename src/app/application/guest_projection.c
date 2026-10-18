@@ -58,17 +58,17 @@ static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
     return true;
 }
 
-static bool read_word(q3g_role *role, uint32_t address, uint32_t *out, qa_error *error)
+static bool read_word(q3g_role *role, uint64_t address, uint32_t *out, qa_error *error)
 {
     uint8_t bytes[4];
-    if (!qa_qvm_read(role->vm, address, bytes, sizeof(bytes), error)) return false;
+    if (!qa_q3_host_source_bytes_read(role->host, address, bytes, sizeof(bytes), error)) return false;
     *out = qa_load_u32le(bytes); return true;
 }
 
-static bool write_word(q3g_role *role, uint32_t address, uint32_t word, qa_error *error)
+static bool write_word(q3g_role *role, uint64_t address, uint32_t word, qa_error *error)
 {
     uint8_t bytes[4]; qa_store_u32le(bytes, word);
-    return qa_qvm_write(role->vm, address, (qa_bytes){bytes, sizeof(bytes)}, error);
+    return qa_q3_host_source_bytes_write(role->host, address, (qa_bytes){bytes, sizeof(bytes)}, error);
 }
 
 static bool inventory_refresh(application_guest_projection *p, qa_error *error)
@@ -126,7 +126,7 @@ bool application_guest_inventory_catalog_bind(q3g_role *role,
     p->inventory_catalog = *services; return true;
 }
 
-static bool address(guest_projection_actor *context, guest_field field, uint32_t *out,
+static bool address(guest_projection_actor *context, guest_field field, uint64_t *out,
                     qa_error *error)
 {
     qa_q3_host_game_data data;
@@ -134,22 +134,31 @@ static bool address(guest_projection_actor *context, guest_field field, uint32_t
     application_guest_projection *p = context->projection;
     uint64_t entity = data.entities_address + (uint64_t)context->slot * data.entity_stride;
     uint64_t client = data.clients_address + (uint64_t)context->slot * data.client_stride;
-    if (p->located_inventory) {
-        uint64_t base = field.record == GUEST_CLIENT_RECORD ? client : entity;
-        if (!data.entities_address || !data.clients_address || base > INT32_MAX || base > UINT32_MAX - field.offset)
-            return application_fail(error, QA_ERROR_FORMAT, "Original public inventory lost its located source record");
-        *out = (uint32_t)base + field.offset; return true;
+    if (!data.entities_address || !data.clients_address || entity < data.entities_address ||
+        client < data.clients_address)
+        return application_fail(error, QA_ERROR_FORMAT, "Original inventory lost its located source record");
+    if (!p->located_inventory) {
+        uint64_t pointer;
+        if (!qa_q3_host_source_pointer(p->role->host, entity + p->client_pointer, &pointer, error)) return false;
+        if (pointer != client)
+            return application_fail(error, QA_ERROR_FORMAT, "Guest entity does not own its located client record");
     }
-    if (entity > UINT32_MAX - p->client_pointer || client > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest source client pointer exceeds QVM memory");
-    uint32_t pointer;
-    if (!read_word(p->role, (uint32_t)entity + p->client_pointer, &pointer, error)) return false;
-    if (pointer != client)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest entity does not own its located client record");
     uint64_t base = field.record == GUEST_CLIENT_RECORD ? client : entity;
-    if (base > UINT32_MAX - field.offset)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest projection address exceeds QVM memory");
-    *out = (uint32_t)base + field.offset; return true;
+    if (base > UINT64_MAX - field.offset)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest projection address exceeds source memory");
+    *out = base + field.offset; return true;
+}
+
+static bool qvm_address(guest_projection_actor *context, guest_field field,
+    uint32_t *out, qa_error *error)
+{
+    uint64_t value;
+    if (!address(context, field, &value, error)) return false;
+    if (value > UINT32_MAX) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Original inventory query exceeds its QVM address width");
+        return false;
+    }
+    *out = (uint32_t)value; return true;
 }
 
 static bool capacity_read(guest_projection_actor *context, const guest_inventory_field *field,
@@ -159,20 +168,20 @@ static bool capacity_read(guest_projection_actor *context, const guest_inventory
     q3g_role *role = context->projection->role;
     if (context->projection->inventory_public && !field->mask) {
         uint32_t client, entity;
-        if (!address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) ||
-            !address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error)) return false;
+        if (!qvm_address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) ||
+            !qvm_address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error)) return false;
         guest_inventory_source source = {client, entity, context->slot, field->public_weapon};
         if (!application_guest_public_inventory_capacity(&context->projection->public_inventory,
             role->vm, &source, out, error)) return false;
         uint32_t after_client, after_entity;
-        return address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
-            address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error) &&
+        return qvm_address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
+            qvm_address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error) &&
             ((client == after_client && entity == after_entity) ||
              application_fail(error, QA_ERROR_ARGUMENT, "Original inventory query changed its actual source records"));
     }
     if (capacity->kind == GUEST_CAPACITY_CONSTANT) *out = capacity->value.constant;
     else if (capacity->kind == GUEST_CAPACITY_FIELD) {
-        uint32_t at, word;
+        uint64_t at; uint32_t word;
         if (!address(context, capacity->value.field, &at, error) || !read_word(role, at, &word, error)) return false;
         *out = (int32_t)word;
     } else if (capacity->kind == GUEST_CAPACITY_SOURCE) {
@@ -228,7 +237,7 @@ static bool inventory_at_inner(void *opaque, size_t index, qa_inventory_entry *o
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest inventory index exceeds its declaration");
     guest_inventory_field copied = p->inventory[index];
     const guest_inventory_field *field = &copied;
-    uint32_t at, word; int32_t capacity;
+    uint64_t at; uint32_t word; int32_t capacity;
     if (!address(context, field->field, &at, error) || !read_word(p->role, at, &word, error) ||
         !capacity_read(context, field, &capacity, error)) return false;
     if (field->mask && (word & ~field->allowed_mask))
@@ -254,7 +263,7 @@ static bool inventory_write_inner(void *opaque, const qa_inventory_entry *entry,
         !isfinite(entry->capacity) || floor(entry->capacity) != entry->capacity ||
         entry->capacity < 0 || entry->capacity > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest inventory value exceeds source representation");
-    uint32_t at, capacity_at = 0; int32_t capacity;
+    uint64_t at, capacity_at = 0; int32_t capacity;
     if (!address(context, field->field, &at, error) || !capacity_read(context, field, &capacity, error)) return false;
     if (field->mask) {
         if (entry->policy != QA_COUNT_STACK || (entry->count != 0 && entry->count != 1) || entry->capacity != 1)
@@ -273,7 +282,7 @@ static bool inventory_write_inner(void *opaque, const qa_inventory_entry *entry,
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest inventory capacity is owned by original source");
     if (!write_word(p->role, at, (uint32_t)(int32_t)entry->count, error)) return false;
     if (field->capacity.kind != GUEST_CAPACITY_FIELD) return true;
-    uint32_t current_capacity;
+    uint64_t current_capacity;
     if (!address(context, field->capacity.value.field, &current_capacity, error)) return false;
     if (current_capacity != capacity_at)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest capacity record changed during count publication");
@@ -332,8 +341,8 @@ static bool inventory_acquire(void *opaque, const qa_inventory_entry *before,
     if (ok && (data.entity_stride < 4 || p->public_inventory.acquisition_client > data.entity_stride - 4 ||
         data.client_stride < 4 || p->public_inventory.acquisition_mirror > data.client_stride - 4))
         ok = application_fail(error, QA_ERROR_FORMAT, "Original acquisition fields leave their actual Source records");
-    if (ok) ok = address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) &&
-        address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error) &&
+    if (ok) ok = qvm_address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &client, error) &&
+        qvm_address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error) &&
         read_word(role, entity + p->public_inventory.acquisition_client, &pointer, error);
     if (ok && pointer != client)
         ok = application_fail(error, QA_ERROR_FORMAT, "Original acquisition entity does not own its located client");
@@ -348,8 +357,8 @@ static bool inventory_acquire(void *opaque, const qa_inventory_entry *before,
     }
     if (ok) ok = current(context, &data, error);
     uint32_t after_client, after_entity;
-    if (ok) ok = address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
-        address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error);
+    if (ok) ok = qvm_address(context, (guest_field){GUEST_CLIENT_RECORD, 0}, &after_client, error) &&
+        qvm_address(context, (guest_field){GUEST_ENTITY_RECORD, 0}, &after_entity, error);
     if (ok && (client != after_client || entity != after_entity))
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original acquisition Source records changed during evaluation");
     if (ok) {
@@ -501,7 +510,7 @@ bool application_guest_inventory_project(q3g_role *role, qa_actor_id actor,
     for (size_t i = 0; i < p->inventory_count; ++i)
         if (p->inventory[i].item == item) { field = p->inventory[i]; found = true; break; }
     if (ok && !found) ok = application_fail(error, QA_ERROR_ARGUMENT, "Projected original item has no actual inventory storage");
-    uint32_t at = 0, before = 0; int32_t capacity;
+    uint64_t at = 0; uint32_t before = 0; int32_t capacity;
     if (ok) ok = address(&context, field.field, &at, error) && read_word(role, at, &before, error);
     if (ok && !p->inventory_public) ok = capacity_read(&context, &field, &capacity, error);
     if (ok && field.mask) {
@@ -517,7 +526,7 @@ bool application_guest_inventory_project(q3g_role *role, qa_actor_id actor,
     } else if (ok && (p->inventory_public || (int32_t)before != count))
         words[written++] = (guest_inventory_projection_word){at, count};
     if (ok && !p->inventory_public && field.capacity.kind == GUEST_CAPACITY_FIELD) {
-        uint32_t capacity_at, capacity_before;
+        uint64_t capacity_at; uint32_t capacity_before;
         ok = address(&context, field.capacity.value.field, &capacity_at, error) &&
             read_word(role, capacity_at, &capacity_before, error);
         if (ok && (int32_t)capacity_before != capacity)
@@ -536,6 +545,9 @@ bool application_guest_projection_prepare(q3g_role *role, qa_bytes primary, qa_e
     application_guest_projection *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing qualified guest projection");
     bool okay = application_guest_projection_profile_read(role, primary, p, error);
+    if (okay && role->module && !p->has_inventory) {
+        application_guest_projection_profile_free(p); free(p); return true;
+    }
     const qa_actor_registry *registry = qa_session_actors(role->engine->provider->application->session);
     if (okay) {
         p->actor_chunk = sizeof(role->engine->clients) / sizeof(*role->engine->clients);

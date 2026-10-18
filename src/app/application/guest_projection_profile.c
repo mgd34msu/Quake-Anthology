@@ -85,6 +85,9 @@ static bool capacity(application_guest_projection *p, const qa_json_document *do
     }
     if (!qa_json_string_equal(doc, kind, "source"))
         return application_fail(error, QA_ERROR_FORMAT, "Guest private capacity has no original storage mode");
+    if (!p->role->image)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native inventory source capacity requires a declared native query boundary");
     out->kind = GUEST_CAPACITY_SOURCE;
     if (!constant(p->role, doc, qa_json_get(doc, id, "instruction"), &out->value.constant, error)) return false;
     qa_json_id list = qa_json_get(doc, id, "overrides");
@@ -201,8 +204,8 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
                                                 application_guest_projection *p, qa_error *error)
 {
     p->role = role;
-    if (!role->image) return true;
     if (!primary.size) {
+        if (!role->image) return true;
         bool found;
         if (!application_guest_public_inventory_profile_default(role->image, role->vm, role->abi,
             &p->public_inventory, &found, error)) return false;
@@ -211,18 +214,41 @@ bool application_guest_projection_profile_read(q3g_role *role, qa_bytes primary,
     }
     qa_json_document *doc = NULL;
     if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
-    qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
-    bool ok = word(doc, qa_json_get(doc, input, "entityStride"), &p->entity_stride, error) &&
-        word(doc, qa_json_get(doc, input, "clientStride"), &p->client_stride, error) &&
-        word(doc, qa_json_get(doc, input, "clientPointer"), &p->client_pointer, error);
+    qa_json_id root = qa_json_root(doc), inventory = qa_json_get(doc, root, "inventory");
+    qa_json_id storage = qa_json_get(doc, inventory, "storage");
+    bool ok = true;
+    size_t pointer_bytes = 4;
+    if (role->module) {
+        if (inventory == QA_JSON_NONE || qa_json_type(doc, inventory) == QA_JSON_NULL) {
+            qa_json_destroy(doc); return true;
+        }
+        const application_q3_combat_profile *profile = role->artifact ? role->artifact->combat_profile : NULL;
+        const application_q3_combat_definition *d = application_q3_combat_profile_definition(profile);
+        if (storage == QA_JSON_NONE)
+            ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native inventory requires declared source storage or a native query boundary");
+        else if (!d)
+            ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native inventory storage requires its declared source record layout");
+        else {
+            p->entity_stride = d->entity_stride;
+            p->client_stride = d->client_stride;
+            p->client_pointer = d->fields.client;
+            pointer_bytes = qa_native_module_describe(role->module).image.target.pointer_bytes;
+        }
+    } else {
+        qa_json_id input = qa_json_get(doc, root, "input");
+        ok = word(doc, qa_json_get(doc, input, "entityStride"), &p->entity_stride, error) &&
+            word(doc, qa_json_get(doc, input, "clientStride"), &p->client_stride, error) &&
+            word(doc, qa_json_get(doc, input, "clientPointer"), &p->client_pointer, error);
+    }
     if (ok && (p->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
         p->client_stride < qa_qvm_player_bytes(role->abi) || p->entity_stride % 4 ||
-        p->client_stride % 4 || p->client_pointer % 4 || p->client_pointer > p->entity_stride - 4 ||
-        p->entity_stride > qa_qvm_image_memory_size(role->image) ||
-        p->client_stride > qa_qvm_image_memory_size(role->image)))
+        p->client_stride % 4 || p->client_pointer % 4 || p->entity_stride < pointer_bytes ||
+        p->client_pointer > p->entity_stride - pointer_bytes ||
+        (role->image && (p->entity_stride > qa_qvm_image_memory_size(role->image) ||
+            p->client_stride > qa_qvm_image_memory_size(role->image)))))
         ok = application_fail(error, QA_ERROR_FORMAT, "Guest projection records differ from their source ABI");
-    qa_json_id inventory = qa_json_get(doc, root, "inventory");
-    qa_json_id storage = qa_json_get(doc, inventory, "storage");
     if (ok && storage != QA_JSON_NONE) ok = private_inventory(p, doc, storage, error);
     else if (ok && inventory != QA_JSON_NONE) {
         ok = application_guest_public_inventory_profile_read(role->image, role->vm, role->abi,
