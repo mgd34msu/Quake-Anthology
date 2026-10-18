@@ -149,6 +149,12 @@ static bool bot_setup(void *context, const qa_qvm_call *call, int32_t *result, q
     return true;
 }
 
+uint32_t application_guest_input_respawn_entry(q3g_role *role)
+{
+    application_guest_input *input = role ? role->input : NULL;
+    return input ? input->profile.respawn : 0;
+}
+
 bool application_guest_input_bot_setup_bind(q3g_role *role, qa_qvm_binding *out, qa_error *error)
 {
     application_guest_input *input = role->input;
@@ -317,13 +323,9 @@ static bool motion_project(application_guest_input *input, guest_client_scope *s
     if (!qa_world_body_read_pose(app->world, scope->actor, QA_ENTITY_CLIP_POSE, &body, error) ||
         !qa_application_control_read(app, scope->actor, &control)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
-    qa_actor_id ground_actor = qa_actor_reference_resolve(qa_session_actors(app->session), body.ground);
-    bool grounded = control.ground.hit != QA_TRACE_HIT_NONE;
-    uint32_t ground = grounded ? 1022u : 1023u;
-    if (grounded && body.ground.kind == QA_ACTOR_REFERENCE_SOURCE && body.ground.value.source.owner == input->role->source_owner)
-        ground = body.ground.value.source.slot;
-    else if (grounded && qa_actor_reference_present(body.ground) && !qa_actor_id_equal(ground_actor, app->physics->world_actor) &&
-        !q3g_project_actor(input->role, call, ground_actor, &ground, error)) return false;
+    uint32_t ground = control.ground.hit == QA_TRACE_HIT_WORLD ? 1022u : 1023u;
+    if (control.ground.hit == QA_TRACE_HIT_ACTOR &&
+        !q3g_project_actor(input->role, call, control.ground.actor, &ground, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     const float motion[] = {body.origin.x, body.origin.y, body.origin.z,
                             body.velocity.x, body.velocity.y, body.velocity.z,

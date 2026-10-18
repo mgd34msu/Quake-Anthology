@@ -118,6 +118,7 @@ typedef struct q3g_role {
     qa_arena argument_storage[2];
     unsigned argument_storage_slot;
     unsigned entry_depth;
+    struct q3g_spawn_scope *spawn_scope;
     application_q3_command_storage command_storage;
     qa_q3_host_common_services common;
     qa_q3_host_server_services server;
@@ -198,6 +199,7 @@ bool application_q3_player_entity_text(qa_bytes, qa_buffer *, qa_error *);
 qa_qvm_role q3g_primary_role(const char *);
 bool q3g_source_idle(const struct application_q3_guest *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
+bool application_q3_guest_respawn(application_provider *, qa_actor_id, qa_error *);
 bool q3g_projection_after_free(q3g_role *, int32_t pointer, qa_error *);
 bool q3g_projection_actor_released(q3g_role *, qa_actor_record, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,

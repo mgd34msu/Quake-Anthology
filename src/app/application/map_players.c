@@ -1552,6 +1552,54 @@ bool application_player_source_score_read(application_provider *source,qa_actor_
 static bool q1_finish_respawn(qa_application *,application_provider *,application_provider *,
     application_provider *,qa_actor_id,qa_error *);
 
+static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
+    qa_error *error)
+{
+    qa_application *app = source->application;
+    struct application_q3_guest *engine = q3g_engine(source);
+    qa_q3_player player;
+    qa_qvm_entity_shared shared;
+    uint32_t slot;
+    qa_body_state body;
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) ||
+        !qa_q3_host_source_player(engine->game->host, slot, &player, error) ||
+        !qa_q3_host_source_entity(engine->game->host, slot, NULL, &shared, error) ||
+        !qa_world_body_read_pose(app->world, actor, QA_ENTITY_CLIP_POSE, &body, error)) return false;
+    body.origin = qa_v3(player.origin[0], player.origin[1], player.origin[2]);
+    body.velocity = qa_v3(player.velocity[0], player.velocity[1], player.velocity[2]);
+    body.angles = qa_v3(0, player.viewangles[1], 0);
+    body.ground = (qa_actor_reference){0};
+    bool selected_body = application_provider_for(app, actor, QA_ROLE_BODY, "") == source;
+    if (selected_body) body.bounds = shared.local_bounds;
+    if (!qa_world_body_write(app->world, actor, &body, error)) return false;
+    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    qa_builtin_motion_change change = {.body = body,
+        .view_angles = qa_v3(player.viewangles[0], player.viewangles[1], player.viewangles[2]),
+        .reason = QA_BUILTIN_MOTION_RESET, .force_view_angles = true,
+        .preserve_command_angles = true};
+    if (!application_control_motion_changed(app, actor, &change, error) ||
+        !application_record_motion_change(app, actor, &change, error) ||
+        !application_control_spawn_reset(app, actor, player.pmType == 2, error) ||
+        !qa_world_link(app->world, actor, NULL, error)) return false;
+    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    application_control_record *control = &app->controls[actor.slot];
+    qa_movement_result completed = control->result;
+    completed.state = control->player.state;
+    completed.bounds = body.bounds;
+    completed.ground = (qa_movement_ground){0};
+    completed.view_angles = change.view_angles;
+    completed.view_height = control->player.view_height;
+    completed.view_offset = control->player.view_offset;
+    completed.water_level = control->player.water_level;
+    completed.water_type = control->player.water_type;
+    if (selected_body) {
+        completed.view_height = (float)player.viewheight;
+        completed.view_offset = qa_v3(0, 0, completed.view_height);
+    }
+    application_control_publish_motion(control, &completed);
+    return true;
+}
+
 bool application_players_guest_spawned(application_provider *source,qa_actor_id actor,
     bool respawning,qa_error *error)
 {
@@ -1568,7 +1616,17 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     if(!record || record->source_begin_pending || record->deferred ||
        app->operation==APPLICATION_CONFIGURING) return true;
     application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if(world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source &&
+       !guest_spawn_motion(source,actor,error)) return false;
+    if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     if(app->supplies && world && !application_supplies_source_spawned(world,actor,error)) return false;
+    if(world && world->kind==APPLICATION_PROVIDER_Q1)
+        for(const application_player_spawn_scope *scope=app->players->spawning;scope;scope=scope->previous)
+            if(qa_actor_id_equal(scope->actor,actor)) {
+                if(!qa_q1_game_map_coop_spawn_grant(world->state.q1,actor,scope->point,error)) return false;
+                break;
+            }
+    if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     if(world && world->kind==APPLICATION_PROVIDER_Q1 &&
        !q1_finish_respawn(app,world,source,application_provider_for(app,actor,QA_ROLE_ARSENAL,""),
            actor,error)) return false;
@@ -2676,7 +2734,8 @@ bool application_players_native_q1_respawn(qa_application *app,
     size_t ordinal;
     if (!character || !arsenal || !q1_respawn_current(app, source, character, arsenal,
         actor, &ordinal, error)) return false;
-    if (character->kind > APPLICATION_PROVIDER_Q3)
+    bool guest_character = q3g_engine(character) != NULL;
+    if (character->kind > APPLICATION_PROVIDER_Q3 && !guest_character)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Q1 respawn requires its genuine original character continuation");
     qa_body_state body;
@@ -2687,6 +2746,14 @@ bool application_players_native_q1_respawn(qa_application *app,
     if (!spawn_pose(app, ordinal, force, &body, &found, &point, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
     if (!found) return true;
+    if (guest_character) {
+        application_player_spawn_scope scope = {.previous = app->players->spawning,
+            .actor = actor, .point = point, .body = body};
+        app->players->spawning = &scope;
+        bool okay = application_q3_guest_respawn(character, actor, error);
+        app->players->spawning = scope.previous;
+        return okay;
+    }
     qa_application_visual_view visual;
     qa_physics_properties physics;
     if (!qa_application_visual_read(app, actor, &visual, error)) return false;

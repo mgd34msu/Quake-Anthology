@@ -3370,12 +3370,20 @@ static bool guest_complete(qa_application *application, qa_actor_id actor,
         body.velocity = qa_v3(player->velocity[0], player->velocity[1], player->velocity[2]);
         body.angles = qa_v3(0, player->viewangles[1], body.angles.z);
         body.ground = (qa_actor_reference){0};
-        if (player->groundEntityNum >= 0 && player->groundEntityNum < 1023) {
+        if (player->groundEntityNum == 1022) {
+            qa_movement_ground ground = {.hit = QA_TRACE_HIT_WORLD};
+            body.ground = result_ground(application, actor, &ground);
+        } else if (player->groundEntityNum >= 0 && player->groundEntityNum < 1022) {
             application_provider *provider = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
             struct application_q3_guest *engine = q3g_engine(provider);
+            qa_actor_id ground;
             if (!engine || !engine->game)
                 ok = application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement source disappeared");
-            else body.ground = qa_actor_reference_source(provider->owner, (uint32_t)player->groundEntityNum);
+            else {
+                ok = qa_q3_host_actor(engine->game->host,
+                    (uint32_t)player->groundEntityNum, false, &ground, error);
+                if (ok) body.ground = qa_actor_reference_lifetime(ground);
+            }
         }
         if (ok && live(application, actor))
             ok = qa_world_body_write(application->world, actor, &body, error) &&

@@ -49,6 +49,7 @@ static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa
     const uint32_t entries[] = {p->client_think, p->run_client, p->client_spawn};
     for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
         if (!entry(code, count, entries[i], error)) return false;
+    if (p->respawn && !entry(code, count, p->respawn, error)) return false;
     if (p->bot_setup.entry) {
         if (!entry(code, count, p->bot_setup.entry, error) ||
             !entry(code, count, p->bot_setup.connect, error)) return false;
@@ -92,6 +93,22 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
 
         if (base) {
             p.client_think = 80328; p.run_client = 80387; p.client_spawn = 89754;
+            p.respawn = 88047;
+            const q3_reference_instruction respawn[] = {
+                {88047, QA_QVM_ENTER, 28},
+                {88051, QA_QVM_CONST, 87579}, {88052, QA_QVM_CALL, 0},
+                {88057, QA_QVM_CONST, 89754}, {88058, QA_QVM_CALL, 0},
+                {88068, QA_QVM_CONST, 42}, {88069, QA_QVM_ARG, 12},
+                {88071, QA_QVM_CONST, 129852}, {88072, QA_QVM_CALL, 0},
+                {88094, QA_QVM_LEAVE, 28}
+            };
+            size_t instructions;
+            const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &instructions);
+            for (size_t i = 0; i < sizeof(respawn) / sizeof(*respawn); ++i)
+                if (respawn[i].at >= instructions || code[respawn[i].at].opcode != respawn[i].opcode ||
+                    code[respawn[i].at].operand != respawn[i].operand)
+                    return application_fail(error, QA_ERROR_FORMAT,
+                        "Original respawn differs from its corpse, spawn and teleport sequence");
             p.input_present = p.has_modes = true;
             p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;
             const int32_t intermission[] = {5, 6};
@@ -132,6 +149,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         word(doc, entries, "runClient", &p.run_client, error) &&
         word(doc, entries, "clientSpawn", &p.client_spawn, error) &&
         word(doc, entries, "move", &move, error) && word(doc, entries, "slice", &slice, error);
+    if (ok && qa_json_get(doc, entries, "respawn") != QA_JSON_NONE)
+        ok = word(doc, entries, "respawn", &p.respawn, error);
     if (ok && (entity_stride != p.source->entity_stride || client_stride != p.source->client_stride ||
         client_pointer != p.source->client_pointer || move != p.source->movement_move || slice != p.source->movement_slice))
         ok = application_fail(error, QA_ERROR_FORMAT, "Guest input differs from its declared weapon records or movement entries");
