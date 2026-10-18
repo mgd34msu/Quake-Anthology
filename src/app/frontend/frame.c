@@ -116,8 +116,7 @@ static bool menu_paused(qa_frontend *f,bool *out,qa_error *error)
             qa_application_q3_client_context_read(f->application,receiver,seat,&client,error)) ||
             !qa_application_q3_client_configuration_read(f->application,receiver,QA_QVM_CGAME,seat,&configuration,error)) return false;
         if (client.cvars!=configuration.cvars || client.console!=configuration.console ||
-            !configuration.declaration_owner || (q3 && (client.source_owner!=source.scope.provider ||
-            client.source_cvars!=source.cvars)) || !pause_client_current(f,&client,remote,error))
+            !configuration.declaration_owner || !pause_client_current(f,&client,remote,error))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 pause lost its actual physical CLIENT and primary Source");
         bool opened=qa_ui_menu_opened(f->seats[i].ui,FRONTEND_HOME);
         frontend_pause_cvars *pause=&f->seats[i].pause_cvars;
