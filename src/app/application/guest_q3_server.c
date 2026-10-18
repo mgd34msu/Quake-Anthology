@@ -416,7 +416,8 @@ bool q3g_projection_actor_released(q3g_role *role, qa_actor_record actor, qa_err
         projection_read(role, &projection) && projection.has_free &&
         qa_q3_host_actor_slot(role->host, actor.id, &slot, NULL) &&
         qa_q3_host_game_data_read(role->host, &data) && slot >= data.client_count && slot < QA_Q3_ENTITY_WORLD;
-    return qa_q3_host_actor_released(role->host, actor, error) &&
+    return application_guest_projection_detach(role, actor.id, error) &&
+        qa_q3_host_actor_released(role->host, actor, error) &&
         (!borrowed || application_source_projection_release(&projection, NULL, slot, error));
 }
 

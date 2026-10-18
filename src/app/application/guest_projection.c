@@ -658,8 +658,9 @@ bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_e
     if (!p) return true;
     qa_application *app = role->engine->provider->application;
     guest_projection_actor *context = actor_context(p, actor);
-    if (context && !items_close(context,error)) return false;
-    if (context && context->inventory_bound) {
+    if (!context) return true;
+    if (!items_close(context,error)) return false;
+    if (context->inventory_bound) {
         bool unpublished = context->inventory_prepared &&
             !qa_inventory_primary_current(app->inventory, context->inventory_lease, context);
         if (!unpublished && qa_actors_get(qa_session_actors(app->session), actor) &&
@@ -667,6 +668,11 @@ bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_e
         context->inventory_bound = false;
         context->inventory_prepared = false;
     }
+    guest_projection_actor **link = &p->actors;
+    while (*link != context) link = &(*link)->next;
+    *link = context->next;
+    qa_actor_index_forget_retained(&p->actor_contexts, actor);
+    qa_pool_release(&p->actor_pool, context->storage_slot);
     return true;
 }
 
@@ -766,14 +772,8 @@ bool application_guest_projection_close(q3g_role *role, qa_error *error)
 {
     application_guest_projection *p = role->projection;
     if (!p) return true;
-    for (guest_projection_actor *context = p->actors; context; context = context->next)
-        if (!application_guest_projection_detach(role, context->actor, error)) return false;
-    while (p->actors) {
-        guest_projection_actor *context = p->actors;
-        p->actors = context->next;
-        qa_actor_index_forget_retained(&p->actor_contexts, context->actor);
-        qa_pool_release(&p->actor_pool, context->storage_slot);
-    }
+    while (p->actors)
+        if (!application_guest_projection_detach(role, p->actors->actor, error)) return false;
     qa_actor_index_destroy(&p->actor_contexts);
     if (p->inventory_public) { p->inventory = NULL; p->inventory_count = 0; }
     application_guest_projection_profile_free(p); qa_unified_frame_lease_release(p->storage);

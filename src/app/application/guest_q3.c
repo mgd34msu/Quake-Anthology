@@ -744,13 +744,6 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
             if (error) *error = first;
             return false;
         }
-        if (role->projection) {
-            application_guest_projection *projection = role->projection;
-            for (guest_projection_actor *actor = projection->actors; actor; actor = actor->next)
-                if (!application_guest_projection_detach(role, actor->actor, &current) && ok) {
-                    ok = false; first = current;
-                }
-        }
         q3g_role *next = role->next;
         bool was_game = engine->game == role;
         if (!q3g_role_destroy(role, &current)) {
