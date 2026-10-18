@@ -1820,8 +1820,7 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
         if(!guest_native_character_spawn_motion(source,character,actor,error)) return false;
         if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     }
-    else if(world && world!=source &&
-       (world->kind==APPLICATION_PROVIDER_Q1 || world->kind==APPLICATION_PROVIDER_Q2) &&
+    else if(world && world!=source && world->kind<=APPLICATION_PROVIDER_Q3 &&
        !guest_spawn_motion(source,actor,NULL,error)) return false;
     if(native_character) {
         if(!guest_spawn_project(source,actor,error) ||
@@ -3686,7 +3685,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     landmark, &selected, &source_point, &found, error)) return false;
             if (found) body = selected;
         } else if (!source_completed && !original_world_character && ((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
-            (character->kind <= APPLICATION_PROVIDER_Q3 &&
+            ((character->kind <= APPLICATION_PROVIDER_Q3 || q3g_engine(character)) &&
              (character->kind != APPLICATION_PROVIDER_Q2 ||
               (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)))) &&
             !spawn_pose(application, ordinal, false, &body, &found, &source_point, error))
@@ -3772,8 +3771,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool source_accepted = true;
         application_player_spawn_scope spawn_scope={.previous=application->players->spawning,
             .actor=actor,.point=source_point,.body=body};
-        bool scoped_spawn=(map_source->kind==APPLICATION_PROVIDER_Q1 ||
-            map_source->kind==APPLICATION_PROVIDER_Q2) && source_point.registry;
+        bool scoped_spawn=map_source->kind<=APPLICATION_PROVIDER_Q3 && source_point.registry;
         if (scoped_spawn) application->players->spawning=&spawn_scope;
         bool admitted=original_clients_admit(application, choices, seat, record, carry,
             defer_source_begin, initial_local_userinfo, false, false, source_completed,
@@ -3784,6 +3782,13 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (round_accepted) *round_accepted = false;
             return true;
         }
+        struct application_q3_guest *borrowed_character = q3g_engine(character);
+        uint32_t borrowed_slot;
+        if (map_source != character && borrowed_character && map_source->kind <= APPLICATION_PROVIDER_Q3 &&
+            application_q3_guest_actor_client(character, actor, &borrowed_slot) &&
+            borrowed_character->clients[borrowed_slot].begun &&
+            (!guest_spawn_motion(character, actor, NULL, error) ||
+             !qa_world_body_read(application->world, actor, &body, error))) return false;
         if (map_source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
             !configure_borrowed_q2_character(application, choices, seat,
                 character, actor, error)) return false;
