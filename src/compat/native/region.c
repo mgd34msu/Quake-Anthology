@@ -39,7 +39,7 @@ void native_regions_destroy(qa_native_instance *instance) {
         qa_native_region_binding *binding = instance->regions[index].first;
         while (binding) {
             qa_native_region_binding *next = binding->next;
-            free(binding);
+            qa_unified_frame_lease_release(binding->storage);
             binding = next;
         }
         free(instance->regions[index].path);
@@ -77,9 +77,12 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
         instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, region_id,
                            "active native region bindings cannot be changed");
-    qa_native_region_binding *binding = calloc(1, sizeof(*binding));
-    if (!binding)
-        return native_fail(error, QA_ERROR_MEMORY, region_id, "allocating native region binding");
+    qa_unified_frame_lease *storage = qa_unified_frame_lease_acquire(instance->observation_storage, error);
+    if (!storage) return false;
+    qa_native_region_binding *binding = qa_unified_frame_lease_alloc(storage, 1, sizeof(*binding),
+        _Alignof(qa_native_region_binding), error);
+    if (!binding) { qa_unified_frame_lease_release(storage); return false; }
+    *binding = (qa_native_region_binding){.storage = storage};
     native_region_slot *region = &instance->regions[region_id];
     binding->instance = instance;
     binding->region = region;
@@ -156,8 +159,7 @@ bool qa_native_remove_region(qa_native_region_binding *binding, qa_error *error)
         binding->next->previous = binding->previous;
     else
         region->last = binding->previous;
-    memset(binding, 0, sizeof(*binding));
-    free(binding);
+    qa_unified_frame_lease_release(binding->storage);
     return true;
 }
 void qa_native_unbind_region(qa_native_region_binding *binding) {

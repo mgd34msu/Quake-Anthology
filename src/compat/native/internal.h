@@ -225,6 +225,7 @@ struct qa_native_write_observer {
 };
 
 struct qa_native_region_binding {
+    qa_unified_frame_lease *storage;
     qa_native_region_binding *previous;
     qa_native_region_binding *next;
     struct qa_native_instance *instance;
