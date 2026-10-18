@@ -31,7 +31,8 @@ typedef struct q3g_client {
     qa_q3_usercmd command;
     qa_q3_usercmd commands[QA_Q3_USERCMDS];
     int32_t command_sequence, snapshot_sequence, consumed_server_command, server_id;
-    uint64_t entered_ns;
+    uint64_t entered_ns, shared_command_sequence;
+    bool shared_command_seen;
     application_q3_command_cursor server_commands;
     qa_q3_gamestate *gamestate;
     qa_arena snapshot_storage;

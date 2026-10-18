@@ -334,8 +334,10 @@ bool q3g_client_actor_set(struct application_q3_guest *engine, uint32_t slot,
 {
     q3g_client *client = engine->clients + slot;
     if (!qa_actor_index_remember(&engine->client_actors, actor, slot, error)) return false;
-    if (!qa_actor_id_equal(client->actor, actor))
+    if (!qa_actor_id_equal(client->actor, actor)) {
         qa_actor_index_forget_retained(&engine->client_actors, client->actor);
+        client->shared_command_sequence = 0; client->shared_command_seen = false;
+    }
     client->actor = actor;
     return true;
 }
@@ -344,6 +346,7 @@ void q3g_client_actor_clear(struct application_q3_guest *engine, uint32_t slot)
 {
     q3g_client *client = engine->clients + slot;
     qa_actor_index_forget_retained(&engine->client_actors, client->actor);
+    client->shared_command_sequence = 0; client->shared_command_seen = false;
     client->actor = (qa_actor_id){0};
 }
 

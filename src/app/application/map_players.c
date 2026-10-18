@@ -4339,9 +4339,6 @@ bool application_players_bot_allocate(qa_application *app,
         !guest_character->game->combat))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "catalogue original Q3 character requires its actual GAME input and reaction adapters");
-    if (guest_character && application_guest_input_selected(movement, arsenal, character) != character)
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-            "catalogue original Q3 character cannot receive commands through a different guest owner");
     if (!application_arsenal_guest_roles_admit(movement, arsenal, character, error)) return false;
     uint32_t offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t physical;

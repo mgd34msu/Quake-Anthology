@@ -1420,6 +1420,34 @@ bool application_control_frames_apply_nested(qa_application *app, qa_actor_id ac
     return ok;
 }
 
+const application_control_context *application_control_frame_swap(qa_application *app,
+    const application_control_context *next)
+{
+    const application_control_context *previous = app->control_frames->current;
+    app->control_frames->current = next;
+    return previous;
+}
+
+bool application_control_guest_frame_prepare(qa_application *app, application_provider *provider,
+    qa_actor_id actor, application_control_context *out, qa_usercmd *command, qa_error *error)
+{
+    qa_source_frame frame;
+    if (!app || !app->control_frames || actor.slot >= app->control_frames->capacity ||
+        !qa_session_active_frame(app->session, provider->owner, &frame)) return false;
+    const control_input *input = &app->control_frames->inputs[actor.slot].value;
+    if (!input->seen || !qa_actor_id_equal(input->actor, actor)) return false;
+    if (input->domain == CONTROL_COMMAND_UNIFIED) {
+        if (!unified_command(app, actor, &input->unified, command, error)) return false;
+    } else *command = input->latest;
+    *out = (application_control_context){.actor = actor, .frame = frame,
+        .path = APPLICATION_CONTROL_MIXED, .stage = APPLICATION_CONTROL_COMMAND,
+        .retained = true, .source_guestcmd = true,
+        .source_elapsed_ns = source_interval(app->controls[actor.slot].player.state.kind, frame.elapsed_ns),
+        .arsenal = input->arsenal, .weapon = input->weapon};
+    if (input->domain == CONTROL_COMMAND_UNIFIED) unified_context(out, &input->unified);
+    return true;
+}
+
 const application_control_context *application_control_frame_current(const qa_application *app, qa_actor_id actor)
 {
     const struct application_control_frames *frames = app ? app->control_frames : NULL;
@@ -1450,7 +1478,13 @@ const application_control_context *application_control_frame_current(const qa_ap
         }
     } else {
         application_provider *source = source_provider((qa_application *)app, actor);
-        if (!source || source->owner != owner) return NULL;
+        if (!source || source->owner != owner) {
+            source = application_provider_lookup((qa_application *)app, owner, APPLICATION_PROVIDER_PUBLISHED);
+            if (!original_q3(source) ||
+                (source != application_provider_for((qa_application *)app, actor, QA_ROLE_MOVEMENT, "") &&
+                 source != application_provider_for((qa_application *)app, actor, QA_ROLE_ARSENAL, "") &&
+                 source != application_provider_for((qa_application *)app, actor, QA_ROLE_CHARACTER, ""))) return NULL;
+        }
         if (current->source_nqcmd && (current->command_only || current->path != APPLICATION_CONTROL_NQ_TURN ||
             !source_client(source) || source != application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") ||
             source->component.clock.kind != QA_RULESET_NETQUAKE || !source->component.command_actor ||
@@ -1466,7 +1500,8 @@ const application_control_context *application_control_frame_current(const qa_ap
                 current->command.elapsed_ns : current->command.host_elapsed_ns;
         if (current->source_guestcmd && current->source_input_applied) {
             if (!application_guest_input_interval(app, actor, &interval)) return NULL;
-        } else if (!current->source_usercmd && !current->source_q2cmd && !current->unified_command)
+        } else if (!current->source_usercmd && !current->source_q2cmd && !current->unified_command &&
+            !(current->source_guestcmd && !current->command_only))
             (void)qa_session_advance_interval(app->session, &interval);
         if (actor.slot >= app->control_capacity || source_interval(app->controls[actor.slot].player.state.kind, interval)
             != current->source_elapsed_ns) return NULL;

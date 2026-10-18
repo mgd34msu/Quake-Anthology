@@ -279,6 +279,19 @@ static bool client(qa_source_save_io *io, struct application_q3_guest *engine, q
     return true;
 }
 
+static bool shared_command_fields(qa_source_save_io *io, struct application_q3_guest *engine)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (reading && io->offset == io->input.size) return true;
+    for (size_t i = 0; i < 64; ++i) {
+        q3g_client *client = &engine->clients[i];
+        if (!qa_source_save_bool(io, &client->shared_command_seen) ||
+            (client->shared_command_seen && !qa_source_save_u64(io, &client->shared_command_sequence)))
+            return false;
+    }
+    return true;
+}
+
 static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
 {
     uint32_t product = engine->product;
@@ -303,7 +316,7 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
         if (io->direction == QA_SOURCE_SAVE_READ && engine->clients[i].actor.registry &&
             !q3g_client_actor_set(engine, (uint32_t)i, engine->clients[i].actor, io->error)) return false;
     }
-    return true;
+    return shared_command_fields(io, engine);
 }
 
 static bool owner(application_provider *provider, qa_error *error)

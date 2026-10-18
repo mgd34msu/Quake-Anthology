@@ -119,6 +119,10 @@ bool application_bot_weapon_apply(qa_application *, qa_actor_id, qa_actor_owner,
 bool application_bots_frame_at(qa_application *, const qa_source_frame *, size_t, uint64_t, qa_error *);
 bool application_control_frames_sequence(const qa_application *, qa_actor_id, bool *, uint64_t *);
 const application_control_context *application_control_frame_current(const qa_application *, qa_actor_id);
+const application_control_context *application_control_frame_swap(qa_application *,
+    const application_control_context *);
+bool application_control_guest_frame_prepare(qa_application *, application_provider *,
+    qa_actor_id, application_control_context *, qa_usercmd *, qa_error *);
 bool application_control_frames_owns(const qa_application *, qa_actor_id);
 bool application_control_frames_apply_nested(qa_application *, qa_actor_id,
                                               const qa_usercmd *, qa_usercmd *, qa_error *);
