@@ -55,6 +55,9 @@ bool qa_material_source_vertices(qa_material_source_scratch *, const qa_scene_ve
 bool qa_material_source_scene_begin(qa_material_source_scratch *, qa_scene_frame *, qa_error *);
 bool qa_material_source_scene_view(qa_material_source_scratch *, const qa_scene_world_input *, qa_error *);
 bool qa_material_source_scene_end(qa_material_source_scratch *, qa_scene_frame *, bool submit, qa_error *);
+/* Close queued scene work at a command boundary, then resume the same view
+ * without clearing it. Material execution stays ordered around the command. */
+bool qa_material_source_barrier(qa_material_source_scratch *, qa_scene_frame *, qa_error *);
 bool qa_material_source_picture_begin(qa_material_source_scratch *, qa_scene_frame *, const qa_scene_view *, bool *first, qa_error *);
 bool qa_material_source_picture_end(qa_material_source_scratch *, qa_scene_frame *, qa_error *);
 bool qa_material_source_frame_end(qa_material_source_scratch *, qa_scene_frame *, bool submit, qa_error *);

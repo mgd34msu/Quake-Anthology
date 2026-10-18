@@ -152,6 +152,8 @@ bool frontend_equipment_held_output_pass(frontend_equipment_held_output *output,
     pass.non_normalized_axes = false;
     memset(pass.color, 255, sizeof(pass.color));
     if (material) memcpy(pass.color, source->color, sizeof(pass.color));
+    pass.opacity = source->opacity;
+    pass.has_opacity = source->has_opacity;
     pass.origin = output->parent.origin;
     pass.old_origin = pass.origin;
     output->passes[output->count++] = pass;

@@ -95,5 +95,11 @@ bool qa_native_host_q2_wire_player(qa_native_host *, uint32_t,
     qa_actor_id, qa_q2_player *, qa_error *);
 bool qa_native_host_q2_wire_ping(qa_native_host *, uint32_t,
     qa_actor_id, int32_t *, qa_error *);
+/* The API2023 public entity prefix has an alpha field. Other module ABIs
+ * succeed with field_present=false and retain their original layouts. */
+bool qa_native_host_q2_alpha_read(qa_native_host *, qa_actor_id,
+    float *, bool *field_present, qa_error *);
+bool qa_native_host_q2_alpha_write(qa_native_host *, qa_actor_id,
+    float, bool *field_present, qa_error *);
 
 #endif

@@ -49,7 +49,7 @@ static bool model(qa_unified_frame *frame, size_t *capacity,
         .body_provider = render_source ? render_source->owner : v->provider,
         .q1_effects = v->q1_effects, .origin = v->body.origin, .angles = v->body.angles,
         .view_weapon = view_weapon, .has_previous_origin = (v->visual.render_flags & 128u) && v->family == QA_GAME_Q2,
-        .previous_origin = v->previous_origin, .has_alpha = v->family != QA_GAME_Q3 && !view_weapon};
+        .previous_origin = v->previous_origin, .has_alpha = !view_weapon};
     if (row->visual.old_frame < 0) row->visual.old_frame = row->visual.frame;
     row->path = path; row->content = content;
     row->skin_path = v->skin_path;
@@ -138,6 +138,7 @@ static bool q3_provider_models(qa_application *app, const application_unified_so
         qa_application_visual_view v = {.actor = row.binding.actor, .family = QA_GAME_Q3,
             .visual.frame = row.state.frame, .visual.old_frame = row.state.frame, .visual.effects = (uint32_t)row.state.eFlags,
             .visual.scale = 1, .visual.alpha = 1, .visual.visible = true};
+        if (!qa_application_visual_alpha_read(app, row.binding.actor, &v.visual.alpha, error)) return false;
         qa_trajectory position = trajectory(&row.state.pos), angular = trajectory(&row.state.apos);
         if (!qa_trajectory_position(&position, time, 800, &v.body.origin, error) ||
             !qa_trajectory_position(&angular, time, 800, &v.body.angles, error) ||

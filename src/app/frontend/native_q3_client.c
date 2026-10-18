@@ -528,8 +528,13 @@ static bool body_submit(void *context,const q3n_frame *f,const qa_application_na
     frontend_native_q3 *row=context; *consumed=false;
     if(!frontend_native_q3_cut(row,f,e) || !frontend_native_components_body(row,f,actual->binding.actor,
         part,ref,base,consumed,e)) return false;
-    return (*consumed || !row->composition.body ||
-        row->composition.body(row->composition.context,f,actual,part,ref,base,consumed,e)) && frontend_native_q3_cut(row,f,e);
+    if (!*consumed && row->composition.body &&
+        !row->composition.body(row->composition.context,f,actual,part,ref,base,consumed,e)) return false;
+    if (!*consumed) {
+        if (!frontend_visual_entity(row->frontend,actual->binding.actor,f->presentation,ref,e)) return false;
+        *consumed=true;
+    }
+    return frontend_native_q3_cut(row,f,e);
 }
 static bool packet(void *context,const q3n_frame *f,const qa_application_native_q3_entity *actual,q3n_entity *cent,
     const qa_q3_ref_entity *ref,bool *consumed,qa_error *e)
@@ -537,8 +542,13 @@ static bool packet(void *context,const q3n_frame *f,const qa_application_native_
     frontend_native_q3 *row=context; *consumed=false;
     if(!frontend_native_q3_cut(row,f,e) || !frontend_native_components_body(row,f,actual->binding.actor,
         3,ref,true,consumed,e)) return false;
-    return (*consumed || !row->composition.packet ||
-        row->composition.packet(row->composition.context,f,actual,cent,ref,consumed,e)) && frontend_native_q3_cut(row,f,e);
+    if (!*consumed && row->composition.packet &&
+        !row->composition.packet(row->composition.context,f,actual,cent,ref,consumed,e)) return false;
+    if (!*consumed) {
+        if (!frontend_visual_entity(row->frontend,actual->binding.actor,f->presentation,ref,e)) return false;
+        *consumed=true;
+    }
+    return frontend_native_q3_cut(row,f,e);
 }
 static bool event(void *context,const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *state,
     qa_vec3 position,bool *suppressed,qa_error *e)

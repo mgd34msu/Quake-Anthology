@@ -36,3 +36,35 @@ bool qa_qc_visual_read(const qa_qc_instance *vm, uint32_t slot, qa_actor_id expe
     *out = value;
     return true;
 }
+
+bool qa_qc_alpha_read(const qa_qc_instance *vm, uint32_t slot, qa_actor_id expected,
+    float *out, bool *field_present, qa_error *error)
+{
+    if (!out || !field_present)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "QC alpha requires its opacity and field outputs");
+    if (!qc_retained_actor(vm, slot, expected, error)) return false;
+    const qa_qc_definition *field = vm->program->engine_fields.alpha;
+    float value;
+    if (!scalar(vm, slot, field, true, &value, error)) return false;
+    *field_present = field != NULL;
+    *out = value == 0 ? 1 : fmaxf(0, fminf(1, value));
+    return true;
+}
+
+bool qa_qc_alpha_write(qa_qc_instance *vm, uint32_t slot, qa_actor_id expected,
+    float value, bool *field_present, qa_error *error)
+{
+    if (!field_present || !isfinite(value))
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "QC alpha requires finite opacity and its field result");
+    if (!qc_retained_actor(vm, slot, expected, error)) return false;
+    const qa_qc_definition *field = vm->program->engine_fields.alpha;
+    *field_present = field != NULL;
+    if (!field) return true;
+    if (field->type != QA_QC_FLOAT)
+        return qc_fail(error, QA_ERROR_FORMAT, slot, "QC alpha extension is not a float field");
+    int32_t reference;
+    /* QC zero means default opaque. Quakespasm uses -1 for invisible. */
+    return qa_qc_slot_reference(vm, slot, &reference, error) &&
+        qa_qc_set_entity_float(vm, reference, field->offset,
+            value <= 0 ? -1 : fminf(1, value), error);
+}

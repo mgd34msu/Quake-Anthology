@@ -633,62 +633,18 @@ static bool q1_secret(void *opaque, qa_actor_id source, qa_actor_id player,
                           error);
 }
 
-static application_provider *q1_alpha_provider(application_provider *origin,
-                                                qa_actor_id actor,
-                                                qa_error *error)
-{
-    application_provider *selected = application_provider_for(
-        origin->application, actor, QA_ROLE_BODY, "");
-    if (selected == NULL || !selected->constructed || selected->close_pending) {
-        application_fail(error, QA_ERROR_NOT_FOUND,
-                         "Q1 alpha target has no selected body owner");
-        return NULL;
-    }
-    return selected;
-}
-
 static bool q1_alpha_read(void *opaque, qa_actor_id actor, float *out,
                            qa_error *error)
 {
-    application_provider *selected = q1_alpha_provider(opaque, actor, error);
-    if (selected == NULL)
-        return false;
-    switch (selected->kind) {
-    case APPLICATION_PROVIDER_Q1: {
-        qa_q1_presentation source;
-        if (!qa_q1_game_presentation(selected->state.q1, actor, &source))
-            return application_fail(error, QA_ERROR_NOT_FOUND,
-                                    "Selected Q1 actor has no source alpha owner");
-        *out = source.visual.alpha;
-        return true;
-    }
-    case APPLICATION_PROVIDER_Q2:
-        return qa_q2_alpha_read(selected->state.q2, actor, out, error);
-    case APPLICATION_PROVIDER_Q3:
-        return qa_q3_alpha_read(selected->state.q3, actor, out, error);
-    default:
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Selected guest body has no admitted alpha adapter");
-    }
+    application_provider *provider = opaque;
+    return qa_application_visual_alpha_read(provider->application, actor, out, error);
 }
 
 static bool q1_alpha_write(void *opaque, qa_actor_id actor, float value,
                             qa_error *error)
 {
-    application_provider *selected = q1_alpha_provider(opaque, actor, error);
-    if (selected == NULL)
-        return false;
-    switch (selected->kind) {
-    case APPLICATION_PROVIDER_Q1:
-        return qa_q1_game_alpha(selected->state.q1, actor, value, error);
-    case APPLICATION_PROVIDER_Q2:
-        return qa_q2_alpha(selected->state.q2, actor, value, error);
-    case APPLICATION_PROVIDER_Q3:
-        return qa_q3_alpha(selected->state.q3, actor, value, error);
-    default:
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Selected guest body has no admitted alpha adapter");
-    }
+    application_provider *provider = opaque;
+    return qa_application_visual_alpha_write(provider->application, actor, value, error);
 }
 
 static application_provider *q1_actor_provider(application_provider *origin,
@@ -2204,18 +2160,22 @@ static bool q2_visual(void *opaque, qa_actor_id actor,
     application_actor_views_record *view = application_actor_views_admit(
         application->actor_views, actor, error);
     if (view == NULL) return false;
-    application_q2_visual_record *record = &view->q2_visual;
+    application_visual_record *record = &view->visual;
     uint64_t revision = record->active ? record->revision : 0;
     if (revision == UINT64_MAX)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "Q2 visual revision is exhausted");
-    *record = (application_q2_visual_record){
+    bool alpha_fallback = record->alpha_fallback;
+    float alpha = record->visual.alpha;
+    *record = (application_visual_record){
         .actor = actor,
         .visual = *visual,
+        .alpha_fallback = alpha_fallback,
         .revision = revision + 1,
         .active = true,
     };
-    return application_unified_q2_native_visual(provider, actor, visual, error);
+    if (alpha_fallback) record->visual.alpha = alpha;
+    return application_unified_q2_native_visual(provider, actor, &record->visual, error);
 }
 
 static bool q2_read_visual(void *opaque, qa_actor_id actor,

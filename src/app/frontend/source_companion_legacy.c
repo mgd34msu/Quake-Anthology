@@ -44,7 +44,7 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
         const frontend_source_companion_ref *row=owner->selection->refs+i;
         if(row->view && owner->options.world.view.clip_enabled) continue;
         qa_q3_ref_entity ref;
-        frontend_source_companion_ref_place(row,&owner->options.world,&ref);
+        if (!frontend_source_companion_ref_place(f,owner->selection->actor,row,&owner->options.world,&ref,error)) return false;
         if(!qa_q3_presentation_completed_entity(owner->presentation,owner->capture.assets,owner->world,
             &ref,row->definition->time,&owner->options,order++,frame,error)) return false;
     }

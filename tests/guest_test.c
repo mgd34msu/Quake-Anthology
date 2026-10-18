@@ -6,6 +6,7 @@
 #include "qa/frontend.h"
 #include "qa/application_startup_prepare.h"
 #include "qa/qc.h"
+#include "qa/qc_visual.h"
 #include "../src/app/frontend/internal.h"
 #include "../src/app/application/guest_native_q2_calls.h"
 #include "../src/app/application/guest_qc_targets.h"
@@ -37,13 +38,13 @@ static void guest_component_released(void *state, qa_session *session, qa_actor_
  * float(float x) nested = { return increment(x)+x; };
  * bump stores a result while its temporary locals are restored on return.
  * Builtin declarations use the original pr_cmds.c numbers. */
-static qa_qc_program *guest_program(qa_qc_api api)
+static qa_qc_program *guest_program(qa_qc_api api, bool alpha_field)
 {
     qa_error error = {0};
     static const char strings[] = "\0bump\0increment\0nested\0normalize\0vlen\0rint\0"
         "spawn\0setorigin\0remove\0origin\0mins\0maxs\0size\0fixture.qc\0projected\0random\0tag\0find\0"
         "use\0targetname\0target\0killtarget\0classname\0message\0delay\0wait\0"
-        "self\0other\0activator\0time\0target_use\0";
+        "self\0other\0activator\0time\0target_use\0alpha\0";
     static const qa_qc_statement statements[] = {
         {QA_QC_DONE, 0, 0, 0},
         {QA_QC_ADD_F, 32, 28, 32}, {QA_QC_STORE_F, 32, 29, 0}, {QA_QC_RETURN, 32, 0, 0},
@@ -70,7 +71,8 @@ static qa_qc_program *guest_program(qa_qc_api api)
     const uint32_t function_count = (uint32_t)(sizeof(functions) / sizeof(*functions));
     const uint32_t statements_at = 60, definitions_at = statements_at + statement_count * 8;
     const uint32_t fields_at = definitions_at + 4 * 8;
-    const uint32_t functions_at = fields_at + 13 * 8;
+    const uint32_t field_count = alpha_field ? 14u : 13u;
+    const uint32_t functions_at = fields_at + field_count * 8;
     const uint32_t strings_at = functions_at + function_count * 36;
     const uint32_t globals_at = strings_at + (uint32_t)sizeof(strings);
     uint8_t bytes[2048] = {0};
@@ -78,14 +80,14 @@ static qa_qc_program *guest_program(qa_qc_api api)
     qa_store_u32le(bytes + 4, api == QA_QC_API_QUAKEWORLD ? 54730u : 5927u);
     const uint32_t sections[][3] = {
         {8, statements_at, statement_count}, {16, definitions_at, 4},
-        {24, fields_at, 13}, {32, functions_at, function_count},
+        {24, fields_at, field_count}, {32, functions_at, function_count},
         {40, strings_at, (uint32_t)sizeof(strings)}, {48, globals_at, 64}
     };
     for (size_t i = 0; i < sizeof(sections) / sizeof(*sections); ++i) {
         qa_store_u32le(bytes + sections[i][0], sections[i][1]);
         qa_store_u32le(bytes + sections[i][0] + 4, sections[i][2]);
     }
-    qa_store_u32le(bytes + 56, 21);
+    qa_store_u32le(bytes + 56, alpha_field ? 22u : 21u);
     memcpy(bytes + strings_at, strings, sizeof(strings));
     for (uint32_t i = 0; i < statement_count; ++i) {
         uint8_t *record = bytes + statements_at + i * 8;
@@ -95,11 +97,11 @@ static qa_qc_program *guest_program(qa_qc_api api)
         qa_store_u16le(record + 6, statements[i].c);
     }
     const char *fields[] = {"origin", "mins", "maxs", "size", "tag",
-        "targetname", "target", "killtarget", "classname", "message", "delay", "wait", "use"};
-    for (uint32_t i = 0; i < 13; ++i) {
+        "targetname", "target", "killtarget", "classname", "message", "delay", "wait", "use", "alpha"};
+    for (uint32_t i = 0; i < field_count; ++i) {
         uint8_t *record = bytes + fields_at + i * 8;
         qa_store_u16le(record, i < 4 ? QA_QC_VECTOR : i < 10 ? QA_QC_STRING :
-            i < 12 ? QA_QC_FLOAT : QA_QC_FUNCTION);
+            i == 12 ? QA_QC_FUNCTION : QA_QC_FLOAT);
         qa_store_u16le(record + 2, (uint16_t)(i < 5 ? i * 3 : i + 8));
         for (size_t offset = 0; offset < sizeof(strings); offset += strlen(strings + offset) + 1)
             if (!strcmp(strings + offset, fields[i]))
@@ -571,6 +573,31 @@ static void string_buffer_growth(guest_fixture *shared, qa_actor_owner owner,
         &(qa_qc_options){.profile = profile, .entity_capacity = 4,
             .host = {.session = shared->session, .world = shared->world,
                 .owner = owner, .default_definition = owner}}, &instance, &error));
+    qa_actor_id actor;
+    GAME_CHECK(qa_session_allocate(shared->session, owner, owner, true, 1, &actor, &error));
+    GAME_CHECK(qa_qc_bind_actor(instance, 1, actor, QA_QC_SLOT_OWNED, &error));
+    float alpha;
+    bool present;
+    bool expected = qa_qc_program_resolved_fields(program)->alpha != NULL;
+    GAME_CHECK(qa_qc_alpha_read(instance, 1, actor, &alpha, &present, &error));
+    GAME_CHECK(present == expected && alpha == 1);
+    GAME_CHECK(qa_qc_alpha_write(instance, 1, actor, .5f, &present, &error) && present == expected);
+    GAME_CHECK(qa_qc_alpha_read(instance, 1, actor, &alpha, &present, &error));
+    GAME_CHECK(alpha == (expected ? .5f : 1));
+    GAME_CHECK(qa_qc_alpha_write(instance, 1, actor, 0, &present, &error));
+    GAME_CHECK(qa_qc_alpha_read(instance, 1, actor, &alpha, &present, &error));
+    GAME_CHECK(alpha == (expected ? 0 : 1));
+    if (expected) {
+        int32_t reference;
+        GAME_CHECK(qa_qc_slot_reference(instance, 1, &reference, &error));
+        uint32_t word = qa_qc_program_resolved_fields(program)->alpha->offset;
+        GAME_CHECK(qa_qc_entity_float(instance, reference, word, &alpha, &error) && alpha == -1);
+        GAME_CHECK(qa_qc_set_entity_float(instance, reference, word, .25f, &error));
+        GAME_CHECK(qa_qc_alpha_read(instance, 1, actor, &alpha, &present, &error) && alpha == .25f);
+    }
+    int32_t released_reference;
+    GAME_CHECK(qa_qc_slot_reference(instance, 1, &released_reference, &error));
+    GAME_CHECK(qa_qc_remove_entity(instance, released_reference, &error));
     char payload[4096];
     memset(payload, 'x', sizeof(payload) - 1); payload[sizeof(payload) - 1] = 0;
     int32_t dynamic, first, same;
@@ -1114,7 +1141,7 @@ void test_guest(void)
         &fixture.session, &error));
     GAME_CHECK(qa_world_create(qa_session_actor_registry(fixture.session),
         fixture.map.geometry, NULL, 0, &fixture.world, &error));
-    fixture.program = guest_program(QA_QC_API_NETQUAKE);
+    fixture.program = guest_program(QA_QC_API_NETQUAKE, true);
     qa_actor_owner owner;
     GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture.session),
         "test:guest", &owner, &error));
@@ -1130,7 +1157,7 @@ void test_guest(void)
     find_strings(&fixture);
     string_buffer_growth(&fixture, owner, fixture.program, QA_QC_NETQUAKE);
     checkpoint_strings(fixture.program, QA_QC_NETQUAKE);
-    qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD);
+    qa_qc_program *qw = guest_program(QA_QC_API_QUAKEWORLD, false);
     string_buffer_growth(&fixture, owner, qw, QA_QC_QUAKEWORLD);
     checkpoint_strings(qw, QA_QC_QUAKEWORLD);
     qa_qc_program_destroy(qw);

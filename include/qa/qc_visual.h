@@ -12,4 +12,10 @@ typedef struct qa_qc_visual {
  * The full expected actor qualifies the retained OWNED or BORROWED binding. */
 bool qa_qc_visual_read(const qa_qc_instance *, uint32_t slot, qa_actor_id expected,
     qa_qc_visual *, qa_error *);
+/* Normalized opacity on the retained actor, independent of model admission.
+ * An absent extension field succeeds with field_present=false. */
+bool qa_qc_alpha_read(const qa_qc_instance *, uint32_t slot, qa_actor_id expected,
+    float *, bool *field_present, qa_error *);
+bool qa_qc_alpha_write(qa_qc_instance *, uint32_t slot, qa_actor_id expected,
+    float, bool *field_present, qa_error *);
 #endif

@@ -10,9 +10,124 @@
 #include "native_q3_wire.h"
 #include "qa/application_native_q2_presentation.h"
 #include "qa/game_q3_source.h"
+#include "qa/qc_visual.h"
+#include "qa/qc_observation.h"
+#include "qa/q3_presentation.h"
+#include "qa/native_host_q2_wire.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static application_provider *alpha_provider(qa_application *app, qa_actor_id actor,
+    qa_error *error)
+{
+    if (!app || !qa_actors_get(qa_session_actors(app->session), actor)) {
+        application_fail(error, QA_ERROR_NOT_FOUND, "Actor alpha has no live entity");
+        return NULL;
+    }
+    application_provider *provider = app ? application_provider_for(app, actor, QA_ROLE_BODY, "") : NULL;
+    if (!provider || !provider->constructed || provider->close_pending) {
+        application_fail(error, QA_ERROR_NOT_FOUND, "Actor alpha has no live body owner");
+        return NULL;
+    }
+    return provider;
+}
+
+bool qa_application_visual_alpha_read(qa_application *app, qa_actor_id actor,
+    float *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Actor alpha requires output");
+    application_provider *provider = alpha_provider(app, actor, error);
+    if (!provider) return false;
+    float alpha = 1;
+    bool present = true;
+    switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1: {
+        qa_q1_presentation source;
+        if (!qa_q1_game_presentation(provider->state.q1, actor, &source))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Actor alpha has no live source entity");
+        alpha = source.visual.alpha;
+        break;
+    }
+    case APPLICATION_PROVIDER_Q2:
+        if (!qa_q2_alpha_read(provider->state.q2, actor, &alpha, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_Q3:
+        if (!qa_q3_alpha_read(provider->state.q3, actor, &alpha, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_QC: {
+        uint32_t slot;
+        if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error) ||
+            !qa_qc_alpha_read(provider->state.qc.instance, slot, actor, &alpha, &present, error)) return false;
+        break;
+    }
+    case APPLICATION_PROVIDER_NATIVE:
+        present = provider->state.native.host != NULL;
+        if (present && !qa_native_host_q2_alpha_read(provider->state.native.host, actor, &alpha, &present, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_QVM:
+        present = false;
+        break;
+    }
+    if (!present) {
+        const application_actor_views_record *view = application_actor_views_find(app->actor_views, actor);
+        alpha = view && view->visual.alpha_fallback ? view->visual.visual.alpha : 1;
+    }
+    *out = fmaxf(0, fminf(1, alpha));
+    return true;
+}
+
+bool qa_application_visual_alpha_write(qa_application *app, qa_actor_id actor,
+    float alpha, qa_error *error)
+{
+    if (!isfinite(alpha)) return application_fail(error, QA_ERROR_ARGUMENT, "Actor alpha must be finite");
+    application_provider *provider = alpha_provider(app, actor, error);
+    if (!provider) return false;
+    alpha = fmaxf(0, fminf(1, alpha));
+    bool present = true;
+    switch (provider->kind) {
+    case APPLICATION_PROVIDER_Q1:
+        if (!qa_q1_game_alpha(provider->state.q1, actor, alpha, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_Q2:
+        if (!qa_q2_alpha(provider->state.q2, actor, alpha, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_Q3:
+        if (!qa_q3_alpha(provider->state.q3, actor, alpha, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_QC: {
+        uint32_t slot;
+        if (!qa_qc_actor_observation_slot(provider->state.qc.instance, actor, &slot, error) ||
+            !qa_qc_alpha_write(provider->state.qc.instance, slot, actor, alpha, &present, error)) return false;
+        break;
+    }
+    case APPLICATION_PROVIDER_NATIVE:
+        present = provider->state.native.host != NULL;
+        if (present && !qa_native_host_q2_alpha_write(provider->state.native.host, actor, alpha, &present, error)) return false;
+        break;
+    case APPLICATION_PROVIDER_QVM:
+        present = false;
+        break;
+    }
+    application_actor_views_record *view = present ? application_actor_views_find(app->actor_views, actor) :
+        application_actor_views_admit(app->actor_views, actor, error);
+    if (!present && !view) return false;
+    if (view) {
+        view->visual.alpha_fallback = !present;
+        if (!present) view->visual.visual.alpha = alpha;
+    }
+    return true;
+}
+
+bool qa_application_visual_alpha_apply(qa_application *app, qa_actor_id actor,
+    qa_q3_ref_entity *ref, qa_error *error)
+{
+    float alpha;
+    if (!qa_application_visual_alpha_read(app, actor, &alpha, error)) return false;
+    ref->opacity = alpha;
+    ref->has_opacity = alpha != 1;
+    return true;
+}
 
 static const char *resource_text(qa_application *application, qa_string_id id) {
     return id ? qa_strings_cstr(qa_session_strings(application->session), id) : NULL;
@@ -395,6 +510,7 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
             application_fail(error, QA_ERROR_NOT_FOUND, "Selected body has no source observation");
         return false;
     }
+    if (!qa_application_visual_alpha_read(application, actor, &view.visual.alpha, error)) return false;
     application_provider *map = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (map != NULL && map->constructed && map->kind == APPLICATION_PROVIDER_Q1)
         (void)qa_q1_game_map_effects(map->state.q1, actor, &view.q1_effects);

@@ -1727,11 +1727,32 @@ bool qa_material_source_scene_end(qa_material_source_scratch *source, qa_scene_f
     source->view = (material_source_view){0};
     return true;
 }
+bool qa_material_source_barrier(qa_material_source_scratch *source, qa_scene_frame *frame,
+    qa_error *error)
+{
+    if (!source || !source->collecting || source->issuing) return true;
+    if (source->pictures) return qa_material_source_picture_end(source, frame, error);
+    material_source_view view = source->view;
+    if (view.world && !qa_scene_world_retain(view.world, error)) return false;
+    bool okay = qa_material_source_scene_end(source, frame, true, error) &&
+        qa_material_source_scene_begin(source, frame, error);
+    if (okay) {
+        source->view = view;
+    } else qa_scene_world_release(view.world);
+    return okay;
+}
+
 bool qa_material_source_issue_emitted(qa_material_source_scratch *source, qa_scene_frame *frame, qa_error *error)
 {
     if (!source || !source->issuing) return true;
     return material_source_execute_prefix(source, frame, false, error);
 }
+static bool source_command_barrier(qa_scene_command_kind kind)
+{
+    return kind == QA_SCENE_COMMAND_SWAP || kind == QA_SCENE_COMMAND_OPACITY_BEGIN ||
+        kind == QA_SCENE_COMMAND_OPACITY_END;
+}
+
 static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *frame, bool submit, qa_error *error)
 {
     material_source_submission *pending = source->collecting ? source->head : NULL;
@@ -1787,7 +1808,7 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
                     ok = source->runtime_frame_policy(source->runtime_frame_context, frame, error) &&
                         material_source_current(source, error);
                 }
-                if (ok && !frame->source_skip_backend && (commands[copied].kind == QA_SCENE_COMMAND_SWAP ||
+                if (ok && !frame->source_skip_backend && (source_command_barrier(commands[copied].kind) ||
                     (operation->view.valid && copied == operation->view.command_offset)))
                     ok = source_flush_pending(source, frame, error);
                 size_t reached = copied;
@@ -1843,8 +1864,9 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
                 if (source->runtime_frame_policy)
                     ok = source->runtime_frame_policy(source->runtime_frame_context, frame, error) &&
                         material_source_current(source, error);
-                if (ok && !frame->source_skip_backend) ok = source_flush_pending(source, frame, error);
             }
+            if (ok && !frame->source_skip_backend && source_command_barrier(commands[copied].kind))
+                ok = source_flush_pending(source, frame, error);
             if (ok) ok = qa_scene_frame_emit(frame, commands + copied++, error);
         }
     }

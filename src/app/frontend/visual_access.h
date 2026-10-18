@@ -52,4 +52,9 @@ void frontend_visual_policy_publish(frontend_visual_policy *);
 bool frontend_visual_policy_finish(frontend_visual_policy **, qa_error *);
 bool frontend_visual_policy_abort(frontend_visual_policy **, qa_error *);
 
+bool frontend_visual_entity(qa_frontend *, qa_actor_id, qa_q3_presentation *, const qa_q3_ref_entity *, qa_error *);
+bool frontend_visual_source_body_pass(qa_frontend *, qa_actor_id, qa_q3_presentation *,
+    const qa_q3_ref_entity *, const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
+    int32_t, const qa_q3_scene_options *, uint32_t, qa_scene_frame *, qa_error *);
+
 #endif

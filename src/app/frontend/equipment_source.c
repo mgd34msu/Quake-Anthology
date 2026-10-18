@@ -1029,7 +1029,8 @@ static bool companion_submit(frontend_equipment_source *owner,
         const frontend_source_companion_ref *captured = owner->companion_selection->refs + i;
         if (captured->view && !owner->companion_view_requested) continue;
         qa_q3_ref_entity ref;
-        frontend_source_companion_ref_place(captured,&options->world,&ref);
+        if (!frontend_source_companion_ref_place(owner->options.frontend,owner->companion_selection->actor,
+            captured,&options->world,&ref,error)) return false;
         if (!frontend_source_companion_current(owner->options.frontend, &owner->companion) ||
             !qa_q3_presentation_source_component_entity(owner->options.presentation, owner->companion.assets,
                 &ref, captured->definition->time, options, (*order)++, frame, error)) return false;

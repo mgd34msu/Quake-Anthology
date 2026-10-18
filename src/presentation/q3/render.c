@@ -372,7 +372,34 @@ static bool source_entity_surface_submit(qa_q3_presentation *p, const qa_q3_pres
     return qa_material_submit(material, &empty, context, p->frame, error);
 }
 
-static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+typedef struct entity_opacity_scope {
+    size_t commands, groups;
+    bool active;
+} entity_opacity_scope;
+
+static bool entity_opacity_begin(qa_q3_presentation *p, const qa_q3_ref_entity *entity,
+    entity_opacity_scope *scope, qa_error *error)
+{
+    *scope = (entity_opacity_scope){.commands = p->frame->command_count,
+        .groups = p->frame->group_count, .active = entity->has_opacity && entity->opacity != 1};
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_OPACITY_BEGIN,
+        .data.opacity.value = entity->opacity};
+    return !scope->active || qa_scene_frame_emit(p->frame, &command, error);
+}
+
+static bool entity_opacity_end(qa_q3_presentation *p, const entity_opacity_scope *scope,
+    bool okay, qa_error *error)
+{
+    qa_scene_command command = {.kind = QA_SCENE_COMMAND_OPACITY_END};
+    if (okay && scope->active) okay = qa_scene_frame_emit(p->frame, &command, error);
+    if (!okay) {
+        p->frame->command_count = scope->commands;
+        p->frame->group_count = scope->groups;
+    }
+    return okay;
+}
+
+static bool model_content(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
     const qa_q3_presentation_assets *skin_assets, const qa_q3_presentation_assets *shader_assets,
     const qa_q3_scene_options *options,
                           const qa_q3_ref_entity *entity, uint32_t order,
@@ -481,6 +508,18 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets 
     return qa_scene_model_submit(scene, &input, p->frame, error);
 }
 
+static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_presentation_assets *skin_assets, const qa_q3_presentation_assets *shader_assets,
+    const qa_q3_scene_options *options, const qa_q3_ref_entity *entity, uint32_t order,
+    const int32_t *source_time, bool source_order, qa_error *error)
+{
+    if (entity->has_opacity && entity->opacity == 0) return true;
+    entity_opacity_scope scope;
+    if (!entity_opacity_begin(p, entity, &scope, error)) return false;
+    return entity_opacity_end(p, &scope, model_content(p, assets, skin_assets, shader_assets,
+        options, entity, order, source_time, source_order, error), error);
+}
+
 static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *options,
     qa_game_family content, const qa_scene_model *scene, const qa_q3_ref_entity *entity, qa_scene_model_input *input)
 {
@@ -561,7 +600,10 @@ static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
     if (view_lighting && view_lighting->content == QA_GAME_Q2 && (view_lighting->flags & 1) &&
         input.alias_light.x <= .1f && input.alias_light.y <= .1f && input.alias_light.z <= .1f)
         input.alias_light = qa_v3(.1f, .1f, .1f);
-    return qa_scene_model_submit(scene, &input, frame, error);
+    if (entity->has_opacity && entity->opacity == 0) return true;
+    entity_opacity_scope scope;
+    if (!entity_opacity_begin(p, entity, &scope, error)) return false;
+    return entity_opacity_end(p, &scope, qa_scene_model_submit(scene, &input, frame, error), error);
 }
 
 bool qa_q3_presentation_selected_model(qa_q3_presentation *p, qa_scene_model *scene,
@@ -619,6 +661,7 @@ bool qa_q3_presentation_selected_registered_pass(qa_q3_presentation *p,
     styled.custom_shader = source_pass->custom_shader; styled.shader_time = source_pass->shader_time;
     memset(styled.color, 255, sizeof(styled.color));
     if (material) memcpy(styled.color, source_pass->color, sizeof(styled.color));
+    styled.opacity = source_pass->opacity; styled.has_opacity = source_pass->has_opacity;
     return submit_model(p, assets, assets, material ? source_assets : assets, options, &styled, order, NULL, true, error);
 }
 
@@ -646,6 +689,7 @@ bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *p,
     styled.custom_shader = source_pass->custom_shader;
     styled.custom_skin = shader ? 0 : source_pass->custom_skin;
     memcpy(styled.color, source_pass->color, sizeof(styled.color));
+    styled.opacity = source_pass->opacity; styled.has_opacity = source_pass->has_opacity;
     styled.shader_texcoord = source_pass->shader_texcoord;
     styled.shader_time = source_pass->shader_time;
     styled.flags = source_pass->flags;
@@ -725,13 +769,14 @@ bool qa_q3_presentation_source_body_pass(qa_q3_presentation *p, const qa_q3_ref_
     styled.custom_shader = pass->custom_shader;
     styled.custom_skin = shader ? 0 : pass->custom_skin;
     memcpy(styled.color, pass->color, sizeof(styled.color));
+    styled.opacity = pass->opacity; styled.has_opacity = pass->has_opacity;
     styled.shader_texcoord = pass->shader_texcoord; styled.shader_time = pass->shader_time;
     styled.flags = pass->flags; styled.lighting_origin = pass->lighting_origin;
     styled.shadow_plane = pass->shadow_plane; styled.non_normalized_axes = pass->non_normalized_axes;
     return submit_model(p, primary, materials, materials, options, &styled, order, &time, true, error);
 }
 
-static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+static bool effect_content(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
                            const qa_q3_scene_options *options,
                            const qa_q3_ref_entity *entity, uint32_t order,
                            const int32_t *source_time, qa_error *error)
@@ -789,6 +834,17 @@ static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets
     }
     return qa_scene_frame_group(p->frame, first, QA_SCENE_GROUP_SOURCE, material,
         material->sort, order, fog.index, 0, error);
+}
+
+static bool submit_effect(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_scene_options *options, const qa_q3_ref_entity *entity, uint32_t order,
+    const int32_t *source_time, qa_error *error)
+{
+    if (entity->has_opacity && entity->opacity == 0) return true;
+    entity_opacity_scope scope;
+    if (!entity_opacity_begin(p, entity, &scope, error)) return false;
+    return entity_opacity_end(p, &scope,
+        effect_content(p, assets, options, entity, order, source_time, error), error);
 }
 
 bool qa_q3_presentation_selected_binding_read(const qa_q3_presentation *p,

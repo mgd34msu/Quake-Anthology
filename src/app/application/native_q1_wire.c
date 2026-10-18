@@ -641,7 +641,7 @@ static bool entity_read(qa_application *app, application_native_q1_wire_source *
     qa_q1_presentation presentation;
     bool source_visual = qa_q1_game_presentation(source->provider->state.q1, actor, &presentation);
     value.colormap = player ? slot : source_visual ? (uint8_t)presentation.visual.colormap : 0;
-    value.alpha = qa_q1_alpha_encode(source_visual ? presentation.visual.alpha : visual.visual.alpha);
+    value.alpha = qa_q1_alpha_encode(visual.visual.alpha <= 0 ? -1 : visual.visual.alpha);
     value.scale = qa_q1_scale_encode(source_visual ? presentation.visual.scale : visual.visual.scale);
     qa_physics_properties physics;
     value.step = !player && qa_q1_game_physics_read(source->provider->state.q1, actor, &physics) &&
@@ -756,10 +756,12 @@ bool application_native_q1_wire_clientdata(qa_application *app, qa_actor_id acto
         vector(value.punch, row->player.state.kind == QA_RULESET_NETQUAKE
             ? row->player.state.data.nq.punch_angles : equipment.kick_angles);
         vector(value.velocity, body.velocity);
-        qa_q1_presentation presentation;
-        if (qa_q1_game_presentation(source.provider->state.q1, actor, &presentation))
-            value.weapon_alpha = qa_q1_alpha_encode(presentation.visual.alpha);
-        *out = value;
+        float alpha;
+        okay = qa_application_visual_alpha_read(app, actor, &alpha, error);
+        if (okay) {
+            value.weapon_alpha = qa_q1_alpha_encode(alpha <= 0 ? -1 : alpha);
+            *out = value;
+        }
     } else if (error && error->code == QA_OK)
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q1 clientdata lost its actual source player or selected control");
     application_native_q1_wire_end(&source); return okay;

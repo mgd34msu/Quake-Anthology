@@ -191,16 +191,16 @@ typedef struct application_shader_remap {
     uint64_t time_ns;
 } application_shader_remap;
 
-typedef struct application_q2_visual_record {
+typedef struct application_visual_record {
     qa_actor_id actor;
     qa_entity_visual visual;
     uint64_t revision;
-    bool active;
-} application_q2_visual_record;
+    bool active, alpha_fallback;
+} application_visual_record;
 
 typedef struct application_actor_views_record {
     application_motion_record motion;
-    application_q2_visual_record q2_visual;
+    application_visual_record visual;
 } application_actor_views_record;
 typedef struct application_actor_views application_actor_views;
 application_actor_views *application_actor_views_create(const qa_actor_registry *, qa_error *);

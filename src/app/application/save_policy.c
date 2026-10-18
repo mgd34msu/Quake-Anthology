@@ -80,6 +80,13 @@ const qa_product *qa_application_save_original_product(const qa_application *app
     }
     for (size_t i=0;i<choices->mod_count;++i) if (choices->mods[i].enabled) return NULL;
     for (size_t i=0;i<choices->behavior_count;++i) if (choices->behaviors[i].enabled) return NULL;
+    const qa_actor_registry *actors = qa_session_actors(app->session);
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    while (qa_actors_next(actors, &cursor, &actor)) {
+        const application_actor_views_record *view = application_actor_views_find(app->actor_views, actor->id);
+        if (view && view->visual.alpha_fallback) return NULL;
+    }
     if (choices->loadout_count) return NULL;
     for (size_t i=0;i<choices->monster_count;++i) if (!choices->monsters[i].map_defined) return NULL;
     bool ctf=!strcmp(product->campaign,"ctf"),lm=!strcmp(product->campaign,"lmctf");

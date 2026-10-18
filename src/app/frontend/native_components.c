@@ -1,5 +1,6 @@
 #include "native_components.h"
 #include "component_scene.h"
+#include "visual_access.h"
 #include "scene_lights.h"
 #include "qa/application_q3_components.h"
 #include "qa/q3_assets_save.h"
@@ -136,7 +137,7 @@ bool frontend_native_components_scene_submit(frontend_native_q3 *row,const qa_q3
             for(size_t m=0;m<body.count;++m) if(pass_matches(pose->part,body.parts[m].part) && !body.parts[m].base) visible=false;
         }
         uint32_t order=owner->first_order+(uint32_t)ordinal;
-        if((!pose->base || visible) && !qa_q3_presentation_source_body_pass(row->view.presentation,&pose->ref,
+        if((!pose->base || visible) && !frontend_visual_source_body_pass(row->frontend,pose->actor,row->view.presentation,&pose->ref,
             row->view.assets,&pose->ref,owner->frame->time,options,order,frame,error)) return false;
         bool posed=false;
         for(const component_pose *prior=owner->poses;prior!=pose;prior=prior->next)
@@ -173,7 +174,7 @@ bool frontend_native_components_scene_submit(frontend_native_q3 *row,const qa_q3
                         }
                         if(matches>occurrence) seen=true;
                     }
-                    if(!seen && !qa_q3_presentation_source_body_pass(row->view.presentation,&pose->ref,
+                    if(!seen && !frontend_visual_source_body_pass(row->frontend,pose->actor,row->view.presentation,&pose->ref,
                         child->bodies.assets,part->passes+n,child->bodies.time_ms,options,order,frame,error)) return false;
                 }
             }

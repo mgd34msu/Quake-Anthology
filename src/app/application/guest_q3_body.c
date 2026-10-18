@@ -285,11 +285,27 @@ bool application_q3_body_draw_begin(application_q3_body *owner, qa_error *error)
     owner->busy = false;
     if (okay && (!draw.token || !owner->services.current(owner->services.context, &draw)))
         okay = application_fail(error, QA_ERROR_ARGUMENT, "CGAME body Draw lost its retained source token");
+    bool meshes = false;
+    for (size_t i = 0; i < owner->module.profile->count; ++i) meshes |= owner->module.profile->submissions[i].mesh;
+    if (okay && !draw.capture_active && owner->module.profile->present && meshes) {
+        const qa_actor_registry *actors = qa_session_actors(owner->module.session);
+        uint32_t cursor = 0;
+        const qa_actor_record *actor;
+        while (qa_actors_next(actors, &cursor, &actor)) {
+            const qa_actor_player *player = qa_actors_player(actors, actor->id);
+            if (!player || !player->present) continue;
+            bool hidden, selected;
+            owner->busy = true;
+            okay = owner->services.actor(owner->services.context, &draw, actor->id,
+                &hidden, &selected, error);
+            owner->busy = false;
+            if (!okay) break;
+            if (selected) { draw.capture_active = true; break; }
+        }
+    }
     bool active = draw.hide_active || draw.capture_active;
     if (okay && active && !owner->module.profile->present)
         okay = application_fail(error, QA_ERROR_FORMAT, "Body replacements require artifact-matched cgame-presentation.json");
-    bool meshes = false;
-    for (size_t i = 0; i < owner->module.profile->count; ++i) meshes |= owner->module.profile->submissions[i].mesh;
     if (okay && draw.capture_active && !meshes)
         okay = application_fail(error, QA_ERROR_FORMAT, "Body materials require original player-to-mesh call sites");
     if (okay) okay = enable(owner, active, error);

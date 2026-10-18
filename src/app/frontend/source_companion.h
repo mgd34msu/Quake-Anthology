@@ -46,13 +46,14 @@ typedef struct frontend_source_companion_light {
     bool view;
 } frontend_source_companion_light;
 typedef struct frontend_source_companion_selection {
+    qa_actor_id actor;
     frontend_source_companion_ref *refs;
     frontend_source_companion_polygon *polygons;
     frontend_source_companion_light *lights;
     qa_application_q3_equipment_source_weapon *weapons;
     size_t ref_count, polygon_count, light_count, weapon_count;
 } frontend_source_companion_selection;
-void frontend_source_companion_ref_place(const frontend_source_companion_ref *,const qa_scene_world_input *,qa_q3_ref_entity *);
+bool frontend_source_companion_ref_place(qa_frontend *,qa_actor_id,const frontend_source_companion_ref *,const qa_scene_world_input *,qa_q3_ref_entity *,qa_error *);
 bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *,const qa_scene_world_input *,
     qa_arena *,const qa_scene_vertex **,qa_error *);
 bool frontend_source_companion_selection_read(qa_frontend *,const frontend_source_companion_view *,

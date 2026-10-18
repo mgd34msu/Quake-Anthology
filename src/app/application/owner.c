@@ -811,9 +811,9 @@ bool qa_application_q2_visual_read(const qa_application *application,
     if (application == NULL || out == NULL)
         return false;
     const application_actor_views_record *view = application_actor_views_find(application->actor_views, actor);
-    if (!view || !view->q2_visual.active)
+    if (!view || !view->visual.active)
         return false;
-    const application_q2_visual_record *record = &view->q2_visual;
+    const application_visual_record *record = &view->visual;
     *out = (qa_application_q2_visual_view){.actor = actor,
                                            .visual = record->visual,
                                            .revision = record->revision};

@@ -1647,3 +1647,22 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
     return static_sources_visit(frontend, exclude, world, frame, static_source_submit, error) &&
         (exclude || local_legacy_view_weapon(frontend, seat, local, world, frame, error));
 }
+
+bool frontend_visual_source_body_pass(qa_frontend *frontend, qa_actor_id actor,
+    qa_q3_presentation *presentation, const qa_q3_ref_entity *entity,
+    const qa_q3_presentation_assets *materials, const qa_q3_ref_entity *pass, int32_t time,
+    const qa_q3_scene_options *options, uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    qa_q3_ref_entity styled = *pass;
+    if (!qa_application_visual_alpha_apply(frontend->application, actor, &styled, error)) return false;
+    return qa_q3_presentation_source_body_pass(presentation, entity, materials, &styled,
+        time, options, order, frame, error);
+}
+
+bool frontend_visual_entity(qa_frontend *frontend, qa_actor_id actor,
+    qa_q3_presentation *presentation, const qa_q3_ref_entity *entity, qa_error *error)
+{
+    qa_q3_ref_entity ref = *entity;
+    if (!qa_application_visual_alpha_apply(frontend->application, actor, &ref, error)) return false;
+    return qa_q3_presentation_entity(presentation, &ref, error);
+}

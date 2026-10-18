@@ -25,7 +25,7 @@ static bool provider_ready(const application_provider *provider)
 }
 
 static bool original_visual(application_provider *source, qa_actor_id actor,
-    float *scale, float *opacity, bool *intermission, qa_error *error)
+    float *scale, bool *intermission, qa_error *error)
 {
     if (!provider_ready(source))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected Q3 character lost its actual world source");
@@ -36,7 +36,6 @@ static bool original_visual(application_provider *source, qa_actor_id actor,
         *intermission |= source_intermission;
         if (qa_q1_game_presentation(source->state.q1, actor, &visual)) {
             *scale = visual.visual.scale == 0 ? 1 : visual.visual.scale;
-            *opacity = visual.visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.visual.alpha));
         }
     } else if (source->kind == APPLICATION_PROVIDER_Q2 || source->kind == APPLICATION_PROVIDER_Q3) {
         bool source_intermission;
@@ -59,7 +58,6 @@ static bool original_visual(application_provider *source, qa_actor_id actor,
             qa_qc_visual visual;
             if (!qa_qc_visual_read(instance, slot, actor, &visual, error)) return false;
             *scale = visual.scale == 0 ? 1 : visual.scale;
-            *opacity = visual.alpha == 0 ? 1 : fmaxf(0, fminf(1, visual.alpha));
         }
     }
     return true;
@@ -96,7 +94,8 @@ bool qa_application_selected_q3_character_read(qa_application *app, qa_actor_id 
     view.source_frame = clock.frame;
     bool intermission = application_control_intermission(&control.state);
     if (!original_visual(application_world_provider(app, QA_ROLE_ENTITIES, ""), actor,
-        &view.scale, &view.opacity, &intermission, error)) return false;
+        &view.scale, &intermission, error) ||
+        !qa_application_visual_alpha_read(app, actor, &view.opacity, error)) return false;
     view.present = !control.cutscene && !player.cutscene.active && !intermission &&
         !player.spectator && !player.gibbed && !(player.flags & 128u);
     if (!ready(app) || application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != provider ||

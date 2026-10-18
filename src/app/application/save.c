@@ -145,7 +145,6 @@ static bool controls_velocity_fields(qa_source_save_io *io, application_control_
     if (!reading) {
         for (uint32_t i = 0; i < capacity; ++i)
             if (controls[i].active && controls[i].source_velocity_pending) ++count;
-        if (!count) return true;
     }
     if (!qa_source_save_count(io, &count, capacity)) return false;
     uint32_t cursor = 0, previous = 0;
@@ -166,6 +165,49 @@ static bool controls_velocity_fields(qa_source_save_io *io, application_control_
         if (reading) {
             controls[actor.slot].source_velocity_pending = true;
             controls[actor.slot].source_velocity_revision = revision;
+        }
+    }
+    return true;
+}
+
+static bool controls_alpha_fields(qa_source_save_io *io, qa_application *app,
+    application_actor_views *views)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (reading && io->offset == io->input.size) return true;
+    const qa_actor_registry *actors = qa_session_actors(app->session);
+    size_t count = 0;
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    if (!reading) {
+        while (qa_actors_next(actors, &cursor, &actor)) {
+            const application_actor_views_record *view = application_actor_views_find(views, actor->id);
+            if (view && view->visual.alpha_fallback) ++count;
+        }
+        if (!count) return true;
+    }
+    if (!qa_source_save_count(io, &count, qa_actors_capacity(actors))) return false;
+    cursor = 0;
+    for (size_t i = 0; i < count; ++i) {
+        qa_actor_id id = {0};
+        float alpha = 1;
+        if (!reading) {
+            while (qa_actors_next(actors, &cursor, &actor)) {
+                const application_actor_views_record *view = application_actor_views_find(views, actor->id);
+                if (view && view->visual.alpha_fallback) {
+                    id = actor->id; alpha = view->visual.visual.alpha; break;
+                }
+            }
+        }
+        if (!qa_source_save_actor(io, &id) || !qa_source_save_f32(io, &alpha)) return false;
+        if (!isfinite(alpha) || alpha < 0 || alpha > 1 || !qa_actors_get(actors, id))
+            return application_fail(io->error, QA_ERROR_FORMAT, "Saved actor opacity has no live finite value");
+        if (reading) {
+            application_actor_views_record *view = application_actor_views_admit(views, id, io->error);
+            if (!view) return false;
+            view->visual.actor = id;
+            view->visual.visual.alpha = alpha;
+            view->visual.alpha_fallback = true;
         }
     }
     return true;
@@ -202,6 +244,7 @@ static bool application_controls_capture(qa_application *app, qa_buffer *out, qa
     }
     if (ok) ok = application_control_frames_fields(&io, app, app->controls, NULL, error);
     if (ok) ok = controls_velocity_fields(&io, app->controls, app->control_capacity);
+    if (ok) ok = controls_alpha_fields(&io, app, app->actor_views);
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid control continuation");
     qa_source_save_dispose(&io); return ok;
@@ -221,9 +264,13 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
     const qa_actor_record *actor;
     while (ok && qa_actors_next(actors, &cursor, &actor)) {
         const application_actor_views_record *current = application_actor_views_find(app->actor_views, actor->id);
-        if (current && current->q2_visual.active) {
+        if (current && current->visual.active) {
             application_actor_views_record *candidate = application_actor_views_admit(views, actor->id, error);
-            if (candidate) candidate->q2_visual = current->q2_visual;
+            if (candidate) {
+                candidate->visual = current->visual;
+                candidate->visual.alpha_fallback = false;
+                if (current->visual.alpha_fallback) candidate->visual.visual.alpha = 1;
+            }
             else ok = false;
         }
     }
@@ -250,6 +297,7 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
     }
     if (ok) ok = application_control_frames_fields(&io, app, controls, &frames, error);
     if (ok) ok = controls_velocity_fields(&io, controls, app->control_capacity);
+    if (ok) ok = controls_alpha_fields(&io, app, views);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) ok = application_control_records_prepare(controls, app->control_capacity, error);
     if (ok) {

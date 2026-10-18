@@ -303,6 +303,9 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     /* The command may be borrowed from this frame; snapshot before growth. */
     qa_scene_command copied = *command;
     frame->picture_view_end = 0;
+    if (frame->source_pending &&
+        (copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OPACITY_END) &&
+        !qa_material_source_barrier(frame->source_pending, frame, error)) return false;
     if (frame->source_pending && (copied.kind == QA_SCENE_COMMAND_VIEW || copied.kind == QA_SCENE_COMMAND_TARGET ||
         copied.kind == QA_SCENE_COMMAND_OPACITY_BEGIN || copied.kind == QA_SCENE_COMMAND_OUTPUT_DOMAIN ||
         copied.kind == QA_SCENE_COMMAND_PREBLEND_GAMMA || copied.kind == QA_SCENE_COMMAND_PARTICLES)) {

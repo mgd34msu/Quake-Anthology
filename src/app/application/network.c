@@ -155,7 +155,7 @@ static bool q1_entity_reference(struct application_qc_state *engine, qa_actor_id
 {
     return application_network_q1_qc_entity(engine, entity, NULL, out, error);
 }
-static bool q1_wire_appearance(struct application_qc_state *engine, int32_t reference,
+static bool q1_wire_appearance(struct application_qc_state *engine, qa_actor_id actor, int32_t reference,
     uint8_t *alpha, uint8_t *scale, qa_error *error)
 {
     float value = 0;
@@ -163,6 +163,11 @@ static bool q1_wire_appearance(struct application_qc_state *engine, int32_t refe
         !application_qc_float(engine, reference, engine->field_bindings->alpha, &value, error)) return false;
     if (!isfinite(value))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source alpha");
+    const application_actor_views_record *view = application_actor_views_find(engine->provider->application->actor_views, actor);
+    if (view && view->visual.alpha_fallback) {
+        if (!qa_application_visual_alpha_read(engine->provider->application, actor, &value, error)) return false;
+        if (value <= 0) value = -1;
+    }
     *alpha = qa_q1_alpha_encode(value);
     if (scale) {
         value = 0;
@@ -192,7 +197,7 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
         !q1_wire_scalar(engine, reference, engine->field_bindings->effects, 255, &value.effects, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->origin, value.origin, error) ||
         !q1_wire_vector(engine, reference, engine->field_bindings->angles, value.angles, error) ||
-        !q1_wire_appearance(engine, reference, &value.alpha, &value.scale, error) ||
+        !q1_wire_appearance(engine, entity, reference, &value.alpha, &value.scale, error) ||
         !application_qc_float(engine, reference, engine->field_bindings->movetype, &movetype, error) || !isfinite(movetype)) return false;
     value.step = movetype == 4;
     if (!qa_actors_get(qa_session_actors(app->session), entity))
@@ -405,7 +410,7 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
         if (!value.weapon_model)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source weapon model is not in its ordered precache");
     }
-    if (!q1_wire_appearance(engine, reference, &value.weapon_alpha, NULL, error)) return false;
+    if (!q1_wire_appearance(engine, player, reference, &value.weapon_alpha, NULL, error)) return false;
     *out = value; return true;
 }
 bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,

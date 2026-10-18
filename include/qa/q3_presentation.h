@@ -103,6 +103,9 @@ typedef struct qa_q3_ref_entity {
     qa_vec2 shader_texcoord;
     uint8_t color[4];
     bool non_normalized_axes;
+    /* Engine body opacity is independent of the module's shaderRGBA. */
+    float opacity;
+    bool has_opacity;
 } qa_q3_ref_entity;
 qa_model_transform qa_q3_ref_model_transform(const qa_q3_ref_entity *);
 void qa_q3_ref_entity_remap(qa_q3_ref_entity *,qa_vec3 from_origin,const qa_vec3 from_axis[3],

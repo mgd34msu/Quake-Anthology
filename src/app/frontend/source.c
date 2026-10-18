@@ -1589,6 +1589,11 @@ static bool body_actor(void *context,const qa_application_q3_body_draw *view,qa_
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body roster changed inside Source Draw");
         if (qa_actor_id_equal(body.actor,actor)) *selected=true;
     }
+    if (!*selected && draw->entry.local_source) {
+        float alpha;
+        if (!qa_application_visual_alpha_read(draw->lease->source->application,actor,&alpha,error)) return false;
+        *selected=alpha!=1;
+    }
     return true;
 }
 static bool body_submit(void *context,const qa_application_q3_body_draw *view,qa_actor_id actor,
@@ -1682,7 +1687,7 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                     body.parts[m].part==primary->part) && !body.parts[m].base) visible=false;
         }
         uint32_t order=draw->first_order+ordinal;
-        if ((!primary->base || visible) && !qa_q3_presentation_source_body_pass(lease->source->presentation,
+        if ((!primary->base || visible) && !frontend_visual_source_body_pass(lease->source->frontend,primary->actor,lease->source->presentation,
             &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
             options,order,frame,error)) return false;
         bool posed=false;
@@ -1721,7 +1726,7 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                         }
                         if (matches>occurrence) seen=true;
                     }
-                    if (!seen && !qa_q3_presentation_source_body_pass(lease->source->presentation,&primary->ref,
+                    if (!seen && !frontend_visual_source_body_pass(lease->source->frontend,primary->actor,lease->source->presentation,&primary->ref,
                         draw->components[j].bodies.assets,part->passes+n,draw->components[j].bodies.time_ms,
                         options,order,frame,error)) return false;
                 }
@@ -2221,12 +2226,13 @@ static bool frontend_source_companion_ref_owned(const frontend_source_companion_
     return match;
 }
 
-void frontend_source_companion_ref_place(const frontend_source_companion_ref *row,
-    const qa_scene_world_input *world,qa_q3_ref_entity *ref)
+bool frontend_source_companion_ref_place(qa_frontend *frontend,qa_actor_id actor,const frontend_source_companion_ref *row,
+    const qa_scene_world_input *world,qa_q3_ref_entity *ref,qa_error *error)
 {
     *ref=row->ref;
     if(row->view) qa_q3_ref_entity_remap(ref,row->definition->origin,row->definition->axis,
         world->view.origin,world->view.axis);
+    return qa_application_visual_alpha_apply(frontend->application,actor,ref,error);
 }
 bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *row,
     const qa_scene_world_input *world,qa_arena *storage,const qa_scene_vertex **out,qa_error *error)
@@ -2299,7 +2305,7 @@ bool frontend_source_companion_selection_read(qa_frontend *f,const frontend_sour
     if (capture->selection_ready) { *out=&capture->selection; return true; }
     if (!qa_application_equipment_q3_models_read(f->application,&equipment,view->receipt.client.source.receiver,
             view->receipt.client.source.seat,&models,&registered,error)) return false;
-    frontend_source_companion_selection count={0},result={0};
+    frontend_source_companion_selection count={0},result={.actor=actor};
     if(!companion_selection_walk(capture,actor,&models,registered,&count,error)) return false;
     qa_arena *storage=&f->frame.storage;
 #define ROWS(field,extent,type) \

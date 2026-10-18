@@ -2,6 +2,50 @@
 #include "qa/native_host_q2_wire.h"
 #include <math.h>
 
+enum { Q2_ENTITY_ALPHA_OFFSET = 88 };
+
+static bool alpha_address(qa_native_host *host, qa_actor_id actor,
+    qa_native_address *out, bool *present, qa_error *error)
+{
+    if (!host || !present)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native alpha requires its host and field result");
+    *present = host->kind == NATIVE_HOST_Q2_GAME && host->profile == QA_NATIVE_Q2_GAME_API2023;
+    if (!*present) return true;
+    return qa_native_host_source_address(host, actor, out, error);
+}
+
+bool qa_native_host_q2_alpha_read(qa_native_host *host, qa_actor_id actor,
+    float *out, bool *field_present, qa_error *error)
+{
+    if (!out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native alpha requires its opacity output");
+    qa_native_address address;
+    if (!alpha_address(host, actor, &address, field_present, error)) return false;
+    *out = 1;
+    if (!*field_present) return true;
+    uint8_t bytes[4];
+    if (!native_host_read(host, address + Q2_ENTITY_ALPHA_OFFSET, bytes, sizeof(bytes), error)) return false;
+    float value = qa_load_f32le(bytes);
+    if (!isfinite(value))
+        return native_host_fail(error, QA_ERROR_FORMAT, 0, "Native entity alpha is not finite");
+    *out = value == 0 ? 1 : fmaxf(0, fminf(1, value));
+    return true;
+}
+
+bool qa_native_host_q2_alpha_write(qa_native_host *host, qa_actor_id actor,
+    float value, bool *field_present, qa_error *error)
+{
+    if (!isfinite(value))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native alpha requires finite opacity");
+    qa_native_address address;
+    if (!alpha_address(host, actor, &address, field_present, error)) return false;
+    if (!*field_present) return true;
+    float lowered = value <= 0 ? -1 : fminf(1, value);
+    uint32_t bits;
+    memcpy(&bits, &lowered, sizeof(bits));
+    return native_host_write_u32(host, address + Q2_ENTITY_ALPHA_OFFSET, bits, error);
+}
+
 static bool ready(qa_native_host *host, qa_error *error)
 {
     return (host && host->kind == NATIVE_HOST_Q2_GAME && host->instance &&
@@ -233,7 +277,7 @@ static bool entity_read(qa_native_host *host, uint32_t slot,
     state->sound = qa_load_u32le(bytes + tail + 8);
     state->event = classic ? qa_load_u32le(bytes + 80) : bytes[84];
     if (!classic) {
-        state->alpha = qa_load_f32le(bytes + 88); state->scale = qa_load_f32le(bytes + 92);
+        state->alpha = qa_load_f32le(bytes + Q2_ENTITY_ALPHA_OFFSET); state->scale = qa_load_f32le(bytes + 92);
         state->instance_bits = bytes[96]; state->loop_volume = qa_load_f32le(bytes + 100);
         state->loop_attenuation = qa_load_f32le(bytes + 104);
         state->owner = qa_load_u32le(bytes + 108); state->old_frame = qa_load_u32le(bytes + 112);

@@ -30,6 +30,7 @@ enum { QA_APPLICATION_PROTOCOL_SCRATCH_BYTES = 8192 };
 
 typedef struct qa_application qa_application;
 struct qa_save_image;
+struct qa_q3_ref_entity;
 struct qa_application_q3_round_services;
 struct qa_application_startup_hooks;
 struct qa_application_equipment_event;
@@ -433,6 +434,9 @@ bool qa_application_map_read(const qa_application *, qa_application_map_view *);
 bool qa_application_map_origin_read(const qa_application *, qa_launch_resource_origin *);
 bool qa_application_visual_read(qa_application *, qa_actor_id,
                                   qa_application_visual_view *, qa_error *);
+bool qa_application_visual_alpha_read(qa_application *, qa_actor_id, float *, qa_error *);
+bool qa_application_visual_alpha_write(qa_application *, qa_actor_id, float, qa_error *);
+bool qa_application_visual_alpha_apply(qa_application *, qa_actor_id, struct qa_q3_ref_entity *, qa_error *);
 bool qa_application_weapon_read(qa_application *, qa_actor_id, qa_item_id *, qa_error *);
 bool qa_application_present(qa_application *, uint32_t seat,
                              uint32_t real_milliseconds,
