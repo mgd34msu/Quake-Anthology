@@ -321,6 +321,27 @@ static void binding(struct application_qc_item_actor *a,qa_inventory_items *out)
     *out=(qa_inventory_items){.owner=a->engine->provider->owner,.items=p->admissions,.count=p->definition_count,
         .state={.context=a,.count=entry_count,.at=entry_at,.write=entry_write,.mutable_capacity=mutable_capacity,.checked_count=checked_count,.items_revision=items_revision},.action_context=a,.invoke=invoke};
 }
+static bool admit_items(struct application_qc_item_actor *a,qa_error *e)
+{
+    struct application_qc_state *engine=a->engine;
+    qa_inventory_items source;binding(a,&source);
+    qa_unified_frame_lease *storage=NULL;bool ok=true;
+    if(!engine->provider->state.qc.qualified){
+        storage=application_control_storage_acquire(engine->provider->application,e);
+        qa_item_admission *items=storage?qa_unified_frame_lease_alloc(storage,source.count,
+            sizeof(*items),_Alignof(qa_item_admission),e):NULL;
+        ok=items!=NULL;
+        for(size_t i=0;ok&&i<source.count;++i){
+            items[i]=source.items[i];qa_inventory_entry entry;bool found;
+            ok=qa_inventory_entry_find(engine->services.inventory,a->actor,
+                items[i].definition.item,&entry,&found,e);
+            if(ok)items[i].replace_primary=found;
+        }
+        source.items=items;
+    }
+    if(ok)ok=qa_inventory_bind_items(engine->services.inventory,a->actor,&source,&a->lease,e);
+    qa_unified_frame_lease_release(storage);return ok;
+}
 static struct application_qc_item_actor *actor_create(struct application_qc_state *engine,qa_actor_id actor,qa_error *e)
 {
     struct application_qc_item_store *store=engine->item_store;size_t slot;
@@ -352,8 +373,7 @@ bool application_qc_items_admit(struct application_qc_state *engine,qa_actor_id 
     }else{
         if(!a)a=actor_create(engine,actor,e);
         if(!a)return false;
-        qa_inventory_items source;binding(a,&source);
-        if(!qa_inventory_bind_items(engine->services.inventory,actor,&source,&a->lease,e))return false;
+        if(!admit_items(a,e))return false;
     }
     if(!application_qc_item_weapons_reserve(engine,actor,e))return false;
     qa_equipment_state equipment;
@@ -432,7 +452,9 @@ bool application_qc_items_saved_group(application_provider *provider,qa_actor_id
     struct application_qc_item_actor *a=actor_find(engine,actor);
     if(a&&a->lease.serial&&a->lease.serial!=serial)return application_fail(e,QA_ERROR_FORMAT,"Saved QC inventory duplicates full actor ownership");
     if(!a){a=actor_create(engine,actor,e);if(!a)return false;}a->lease=(qa_inventory_lease){actor,serial};
-    binding(a,out);return true;
+    binding(a,out);
+    if(!provider->state.qc.qualified){out->items=group->items;out->count=group->count;}
+    return true;
 }
 bool application_qc_items_item_read(application_provider *provider,qa_actor_id actor,qa_item_id item,qa_item_admission *out,qa_bytes *icon,qa_bytes *held,bool *found,qa_error *e)
 {
