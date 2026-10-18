@@ -7,6 +7,7 @@
 #include "map_players_private.h"
 #include "unified_q3_events.h"
 #include "source_projection.h"
+#include "control_frame.h"
 #include "qa/text.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
@@ -280,11 +281,8 @@ static bool bot_user_command(void *context, int32_t client, const qa_q3_usercmd 
     const qa_actor_record *actor = qa_actors_get(
         qa_session_actors(role->engine->provider->application->session), role->engine->clients[client].actor);
     if (!actor || actor->owner != role->engine->provider->owner) return true;
-    bool prior = role->engine->round.source_entry;
-    role->engine->round.source_entry = true;
-    bool ok = application_q3_guest_client_think(role->engine->provider, (uint32_t)client, command, error);
-    role->engine->round.source_entry = prior;
-    return ok;
+    return application_control_frames_receive_guest_bot(role->engine->provider->application,
+        actor->id, command, error);
 }
 static bool admit_actor(void *context, qa_actor_id actor, qa_error *error)
 {

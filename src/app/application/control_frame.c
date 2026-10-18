@@ -805,7 +805,7 @@ static bool qc_receipt(qa_application *app, qa_actor_id actor, uint64_t ordinal,
 
 static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     uint64_t sequence, uint64_t ordinal, const qa_q3_usercmd *raw,
-    const qa_usercmd *observation, qa_error *error)
+    const qa_usercmd *observation, bool queued_bot, qa_error *error)
 {
     if (!app || !raw || !app->control_frames || app->state != QA_APPLICATION_RUNNING ||
         (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING) ||
@@ -856,7 +856,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     if (group) {
         *group = (control_group){.lease = group->lease, .actor = actor, .provider = provider->owner, .count = 1,
             .before_source = before_source(provider), .domain = CONTROL_COMMAND_Q3_SOURCE,
-            .source_time_ns = clock.frame.time_ns};
+            .source_time_ns = clock.frame.time_ns, .bot = queued_bot};
         group->commands[0] = command;
     }
     if (provider->kind == APPLICATION_PROVIDER_Q3 &&
@@ -872,7 +872,7 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
     observe_player_light(record, &command);
     input->arsenal = 0; input->weapon = 0; input->impulse = 0;
     if (paused) { paused_input(app, input); return true; }
-    if (group && original_q3(provider)) {
+    if (group && original_q3(provider) && !queued_bot) {
         bool ok = execute_original_q3_group(app, group, error);
         group_release(group);
         if (!ok) application_fault(app, error);
@@ -888,7 +888,15 @@ static bool receive_q3_command(qa_application *app, qa_actor_id actor,
 bool qa_application_control_q3_command(qa_application *app, qa_actor_id actor,
     uint64_t sequence, const qa_q3_usercmd *raw, qa_error *error)
 {
-    return receive_q3_command(app, actor, sequence, 0, raw, NULL, error);
+    return receive_q3_command(app, actor, sequence, 0, raw, NULL, false, error);
+}
+
+bool application_control_frames_receive_guest_bot(qa_application *app, qa_actor_id actor,
+    const qa_q3_usercmd *raw, qa_error *error)
+{
+    bool seen = false; uint64_t sequence = 0;
+    (void)application_control_frames_sequence(app, actor, &seen, &sequence);
+    return receive_q3_command(app, actor, seen ? sequence + 1 : 1, 0, raw, NULL, true, error);
 }
 
 bool qa_application_control_q2_command(qa_application *app, qa_actor_id actor,
@@ -1228,7 +1236,7 @@ bool application_control_frames_receive(qa_application *app, qa_actor_id actor,
                 return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 input group has invalid commands");
         for (size_t i = 0; i < count; ++i) {
             qa_q3_usercmd raw = q3_source_command(&commands[i], false);
-            if (!receive_q3_command(app, actor, commands[i].sequence, (uint64_t)i, &raw, &commands[i], error)) return false;
+            if (!receive_q3_command(app, actor, commands[i].sequence, (uint64_t)i, &raw, &commands[i], false, error)) return false;
         }
         return true;
     }
@@ -1624,7 +1632,7 @@ typedef struct control_apply {
     application_control_outcome outcome;
 } control_apply;
 
-static bool drain(qa_application *, const qa_source_frame *, size_t, bool, bool, qa_error *);
+static bool drain(qa_application *, const qa_source_frame *, size_t, bool, bool, qa_actor_owner, qa_error *);
 static bool nq_selected_command(qa_application *, qa_actor_id, const qa_usercmd *,
     const application_control_context *, qa_usercmd *, qa_error *);
 
@@ -1731,7 +1739,7 @@ bool application_control_frames_prepare(void *opaque, qa_session *session, const
         }
         input->arsenal = 0; input->weapon = 0;
     }
-    return drain(app, frames, count, false, true, error);
+    return drain(app, frames, count, false, true, 0, error);
 }
 
 typedef struct command_group_call {
@@ -2249,7 +2257,7 @@ static bool execute_original_q3_group(qa_application *app, control_group *group,
 }
 
 static bool drain(qa_application *app, const qa_source_frame *frames, size_t count,
-                    bool quakeworld, bool before, qa_error *error)
+                    bool quakeworld, bool before, qa_actor_owner bot_source, qa_error *error)
 {
     struct application_control_frames *owner = app->control_frames;
     if (owner->draining) return application_fail(error, QA_ERROR_ARGUMENT, "Source command drain reentered");
@@ -2265,7 +2273,7 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
                 provider->component.clock.kind == QA_RULESET_QUAKEWORLD) &&
                 !actor_frame(app, candidate->actor, frames, count) && qa_session_frame_pending(app->session, provider->owner);
             if (!candidate_live || (candidate->quakeworld == quakeworld && candidate->before_source == before &&
-                !later_source)) break;
+                (!bot_source || (candidate->bot && candidate->provider == bot_source)) && !later_source)) break;
             link = &candidate->next;
         }
         if (!*link) break;
@@ -2352,6 +2360,12 @@ static bool drain(qa_application *app, const qa_source_frame *frames, size_t cou
     return ok;
 }
 
+bool application_control_frames_guest_bots(qa_application *app,
+    const qa_source_frame *frame, qa_error *error)
+{
+    return drain(app, frame, 1, false, true, frame->provider, error);
+}
+
 bool application_control_frames_commands(void *opaque, qa_session *session, const qa_source_frame *frames,
                                           size_t count, uint64_t host_ns, qa_error *error)
 {
@@ -2399,7 +2413,7 @@ bool application_control_frames_commands(void *opaque, qa_session *session, cons
         }
         if (!application_control_q1_source_prethink(app, record->player.actor, received, error)) return false;
     }
-    return drain(app, frames, count, false, false, error);
+    return drain(app, frames, count, false, false, 0, error);
 }
 
 bool application_control_frames_actor(void *opaque, qa_session *session, qa_actor_id actor,
@@ -2504,7 +2518,7 @@ bool application_control_frames_end(void *opaque, qa_session *session, const qa_
         input->q1_source_frame_number = 0; input->q1_source_sequence = 0;
         input->q1_source_deferred = false;
     }
-    bool ok = drain(app, frames, count, true, false, error);
+    bool ok = drain(app, frames, count, true, false, 0, error);
     for (control_input_slot *slot = app->control_frames->first_input; slot; slot = slot->next) {
         slot->value.frame_owned = false; slot->value.owned_frame_number = 0;
     }

@@ -11,6 +11,7 @@
 #include "guest_q3_combat.h"
 #include "guest_q3_pickups.h"
 #include "guest_input_private.h"
+#include "control_frame.h"
 #include "native_q3_wire.h"
 #include "qa/game_q3_source_types.h"
 #include "q3_sound_events.h"
@@ -304,6 +305,9 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     if (!q3g_publish_information(engine->game, false, error)) return false;
     if (bots && bots->integer && application_bots_guest_runtime(engine->provider->application, engine->provider) &&
         !q3g_call(engine->game, 10, &engine->milliseconds, 1, &result, error)) return false;
+    /* BotUserCommand admits into the common input store while GAME is entered.
+     * Run those commands only after the actual BotAI call has returned. */
+    if (!application_control_frames_guest_bots(engine->provider->application, frame, error)) return false;
     bool ok = q3g_call(engine->game, 8, &engine->milliseconds, 1, &result, error);
     if (ok) ok = application_guest_bots_admit(engine->provider, error);
     if (ok) ok = application_guest_clients_drain(engine->provider, error);

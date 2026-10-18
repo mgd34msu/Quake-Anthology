@@ -1470,9 +1470,18 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
     application_provider *driver = application_guest_input_driver(app, actor);
     if (!application_arsenal_guest_roles_admit(movement, arsenal,
             application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), error)) return false;
-    if (driver != source) return guest_provider_command(app, driver, actor, command, NULL, error);
     qa_q3_usercmd raw;
     qa_usercmd_to_q3(command, &raw);
+    if (driver != source) {
+        if (engine->clients[slot].bot) {
+            bool prior = engine->round.source_entry;
+            engine->round.source_entry = true;
+            bool ok = application_q3_guest_client_think(source, slot, &raw, error);
+            engine->round.source_entry = prior;
+            if (!ok) return false;
+        }
+        return guest_provider_command(app, driver, actor, command, NULL, error);
+    }
     return guest_command(input, actor, slot, &raw, command, NULL, error);
 }
 

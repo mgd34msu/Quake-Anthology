@@ -115,6 +115,9 @@ bool application_control_frames_receive(qa_application *, qa_actor_id,
                                          const qa_usercmd *, size_t, qa_error *);
 bool application_control_frames_receive_bot(qa_application *, qa_actor_id,
                                              const qa_usercmd *, qa_actor_owner, qa_item_id, qa_error *);
+bool application_control_frames_receive_guest_bot(qa_application *, qa_actor_id,
+    const qa_q3_usercmd *, qa_error *);
+bool application_control_frames_guest_bots(qa_application *, const qa_source_frame *, qa_error *);
 bool application_bot_weapon_apply(qa_application *, qa_actor_id, qa_actor_owner, qa_item_id, qa_error *);
 bool application_bots_frame_at(qa_application *, const qa_source_frame *, size_t, uint64_t, qa_error *);
 bool application_control_frames_sequence(const qa_application *, qa_actor_id, bool *, uint64_t *);
