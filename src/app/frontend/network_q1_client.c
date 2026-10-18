@@ -195,44 +195,6 @@ static bool skin_command(void *context,const qa_command_invocation *call,qa_erro
     return frontend_remote_q1_source_read(o->source,&view,error) &&
         frontend_network_q1_skin_command(view.receiver,call,error)==QA_COMMAND_HANDLED;
 }
-static uint32_t decimal_word(const char *text)
-{
-    while(*text==' ' || (*text>=9 && *text<=13)) ++text;
-    bool negative=*text=='-'; if(*text=='-' || *text=='+') ++text;
-    uint32_t value=0,limit=negative?UINT32_C(2147483648):UINT32_C(2147483647);
-    while(*text>='0' && *text<='9') {
-        uint32_t digit=(uint32_t)(*text++-'0');
-        value=value>(limit-digit)/10u?limit:value*10u+digit;
-    }
-    return negative?0u-value:value;
-}
-static bool color_command(void *context,const qa_command_invocation *call,qa_error *error)
-{
-    frontend_network_q1_client *o=context; frontend_client_source_view view;
-    if(!parent(o) || !call || !call->argc || !call->argv ||
-        !pending_invocation(o,call,error) ||
-        !frontend_client_source_metadata_read(o->physical,&view,error)) return false;
-    if(call->argc==1) {
-        const qa_cvar_view *top=qa_cvars_find(view.source.context.cvars,"topcolor"),
-            *bottom=qa_cvars_find(view.source.context.cvars,"bottomcolor");
-        if(!top || !bottom) return false;
-        size_t capacity=strlen(top->value)+strlen(bottom->value)+24; char *text=malloc(capacity);
-        if(!text) return frontend_fail(error,QA_ERROR_MEMORY,"Formatting actual QW player colors");
-        snprintf(text,capacity,"\"color\" is \"%s %s\"\n",top->value,bottom->value);
-        frontend_console_print(o->options.frontend,&call->context,text); free(text);
-    } else {
-        if(!call->argv[1] || (call->argc>2 && !call->argv[2])) return false;
-        unsigned top=decimal_word(call->argv[1])&15u,
-            bottom=decimal_word(call->argc>2?call->argv[2]:call->argv[1])&15u;
-        if(top>13) top=13;
-        if(bottom>13) bottom=13;
-        char value[8]; snprintf(value,sizeof(value),"%u",top);
-        if(!qa_cvars_set(view.source.context.cvars,"topcolor",value,false,error)) return false;
-        snprintf(value,sizeof(value),"%u",bottom);
-        if(!qa_cvars_set(view.source.context.cvars,"bottomcolor",value,false,error)) return false;
-    }
-    return parent(o) && pending_invocation(o,call,error);
-}
 static bool center_command(void *context,const qa_command_invocation *call,qa_error *error)
 {
     frontend_network_q1_client *o=context; frontend_remote_q1_source_view source;
@@ -308,8 +270,7 @@ static bool install(void *context,const qa_application_client_source *source,boo
     for(size_t i=0;i<sizeof(names)/sizeof(*names);++i)
         if(!qa_console_register(source->context.console,names[i],"",source->context.command.owner,
             false,skin_command,o,error)) return false;
-    return qa_console_register(source->context.console,"color","",source->context.command.owner,
-        false,color_command,o,error);
+    return true;
 }
 static frontend_client_source_options physical_options(frontend_network_q1_client *o)
 {

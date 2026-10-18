@@ -5,6 +5,7 @@
 #include "qa/console_cvar_observer.h"
 #include "qa/source_save.h"
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -233,6 +234,60 @@ static qa_command_result forward(void *context, const qa_command_invocation *inv
     --s->calls;
     return result;
 }
+static uint32_t decimal_word(const char *text)
+{
+    while(*text==' ' || (*text>=9 && *text<=13)) ++text;
+    bool negative=*text=='-'; if(*text=='-' || *text=='+') ++text;
+    uint32_t value=0,limit=negative?UINT32_C(2147483648):UINT32_C(2147483647);
+    while(*text>='0' && *text<='9') {
+        uint32_t digit=(uint32_t)(*text++-'0');
+        value=value>(limit-digit)/10u?limit:value*10u+digit;
+    }
+    return negative?0u-value:value;
+}
+static bool color_command(void *context,const qa_command_invocation *call,qa_error *error)
+{
+    frontend_client_source *s=context;
+    if(!call || !call->argc || !call->argv || !active(s,&call->context)) return false;
+    qa_cvars *variables=registry(s);
+    bool nq=call->context.dialect==QA_RULESET_NETQUAKE;
+    if(call->argc==1) {
+        if(nq) {
+            const qa_cvar_view *color=qa_cvars_find(variables,"color");
+            if(!color) return false;
+            char text[96];
+            snprintf(text,sizeof(text),"\"color\" is \"%d %d\"\ncolor <0-13> [0-13]\n",
+                color->integer>>4,color->integer&15);
+            print(s,&call->context,text);
+        } else {
+            const qa_cvar_view *top=qa_cvars_find(variables,"topcolor"),
+                *bottom=qa_cvars_find(variables,"bottomcolor");
+            if(!top || !bottom) return false;
+            size_t capacity=strlen(top->value)+strlen(bottom->value)+24; char *text=malloc(capacity);
+            if(!text) return frontend_fail(error,QA_ERROR_MEMORY,"Formatting actual QW player colors");
+            snprintf(text,capacity,"\"color\" is \"%s %s\"\n",top->value,bottom->value);
+            print(s,&call->context,text); free(text);
+        }
+    } else {
+        if(!call->argv[1] || (call->argc>2 && !call->argv[2])) return false;
+        unsigned top=decimal_word(call->argv[1])&15u,
+            bottom=decimal_word(call->argc>2?call->argv[2]:call->argv[1])&15u;
+        if(top>13) top=13;
+        if(bottom>13) bottom=13;
+        char value[8];
+        if(nq) {
+            snprintf(value,sizeof(value),"%u",top*16u+bottom);
+            if(!qa_cvars_set(variables,"color",value,false,error)) return false;
+            if(s->application.client.owner && forward(s,call,error)==QA_COMMAND_FAILED) return false;
+        } else {
+            snprintf(value,sizeof(value),"%u",top);
+            if(!qa_cvars_set(variables,"topcolor",value,false,error)) return false;
+            snprintf(value,sizeof(value),"%u",bottom);
+            if(!qa_cvars_set(variables,"bottomcolor",value,false,error)) return false;
+        }
+    }
+    return active(s,&call->context);
+}
 static qa_application_client_options app_options(frontend_client_source *s)
 {
     return (qa_application_client_options){.descriptor = descriptor(s), .receiver = s->receiver,
@@ -277,6 +332,9 @@ static bool install_handlers(void *context, const qa_command_context *command, q
 {
     frontend_client_source *s = context;
     (void)command;
+    if((s->command.dialect==QA_RULESET_NETQUAKE || s->command.dialect==QA_RULESET_QUAKEWORLD) &&
+        !qa_console_register_owned(s->console,"color","Set the actual Q1 player colors",
+            s->receiver,s->receiver,false,color_command,s,error)) return false;
     return (!s->options.install || s->options.install(s->options.context, &s->application, s->restored_constructor, error)) &&
         (!s->options.services.install || s->options.services.install(s->options.services.context,
             &s->application, s->restored_constructor, error)) &&
@@ -374,7 +432,8 @@ static bool construct(qa_frontend *f, const frontend_client_source_options *opti
         frontend_fail(error,QA_ERROR_ARGUMENT,"Restored CLIENT retirement lacks its actual disconnect custody"); goto done;
     }
     if (!frontend_client_sources_commands_bind(f,options->physical_seat,error)) goto done;
-    if (options->install || options->services.install) {
+    if (options->install || options->services.install || s->command.dialect==QA_RULESET_NETQUAKE ||
+        s->command.dialect==QA_RULESET_QUAKEWORLD) {
         ++s->calls;
         ok = qa_console_cvar_enter(s->console, &s->command, install_current, s,
             install_handlers, s, error);
