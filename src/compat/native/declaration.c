@@ -470,7 +470,8 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     }
     qa_json_document *document = declaration->document;
     qa_json_id root = qa_json_root(document);
-    if (qa_json_get(document, root, "runtime") != QA_JSON_NONE) {
+    if (qa_json_get(document, root, "runtime") != QA_JSON_NONE &&
+        qa_json_get(document, root, "modules") == QA_JSON_NONE) {
         bool valid = q2 ? callback_document(declaration, selected_path, module, error) :
             native_fail(error, QA_ERROR_FORMAT, 0,
                 "native Q3 primary uses its module declaration, not Q2 callback records");

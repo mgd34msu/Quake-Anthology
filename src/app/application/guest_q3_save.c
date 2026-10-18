@@ -696,7 +696,7 @@ static bool saved_collect(application_provider *provider,
     for (q3g_artifact *a = engine->artifacts; a; a = a->next) {
         if (a->kind != QA_QVM_GAME) continue;
         if (a->qvm ? !a->image || a->module || a->declaration :
-            !a->module || a->image || a->declaration || a->primary.size || a->equipment_presentation.size ||
+            !a->module || a->image || a->primary.size || a->equipment_presentation.size ||
             a->body_resource || a->body_profile.present || a->weapon_models_resource || a->weapon_models_profile.present ||
             a->collision_profile.present || a->collision_scene.size || a->grapple_profile || a->combat_profile) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 artifact lacks its actual immutable backend continuation");
@@ -1009,6 +1009,9 @@ static bool prepare_artifact(application_provider *provider, struct application_
         if (actual.profile != QA_NATIVE_Q3_VMMAIN || !actual.source || strcmp(actual.source, artifact->path) ||
             artifact->abi != QA_QVM_Q3_MODERN)
             return application_fail(error, QA_ERROR_FORMAT, "Native Q3 cache changed its actual module profile, opening or ABI");
+        if (primary && source->declaration && !qa_native_declaration_load(
+            qa_resource_bytes(source->declaration), artifact->path, artifact->module,
+            &artifact->declaration, error)) return false;
         if (primary && source == provider->launch) {
             if (provider->kind != APPLICATION_PROVIDER_NATIVE || provider->state.native.module)
                 return application_fail(error, QA_ERROR_FORMAT, "Native Q3 primary cache changed its actual provider backend");

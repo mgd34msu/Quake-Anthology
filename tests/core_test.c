@@ -10105,7 +10105,7 @@ static void test_native_q3_declaration(void)
     qa_native_module *module = NULL;
     CHECK(qa_native_module_load((qa_bytes){bytes, sizeof(bytes)}, "qagamei386.so",
         QA_NATIVE_Q3_VMMAIN, &module, &error));
-    const char *json = "{\"version\":1,\"modules\":["
+    const char *json = "{\"runtime\":\"native\",\"program\":{\"path\":\"qagamei386.so\"},\"version\":1,\"modules\":["
         "{\"artifactPath\":\"gamex86.dll\",\"apiVersion\":3,\"primary\":{\"other\":true}},"
         "{\"artifactPath\":\"qagamei386.so\",\"apiVersion\":8,\"primary\":{"
         "\"input\":{\"clientSpawn\":{\"entry\":112,\"join\":113}},"
