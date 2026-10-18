@@ -875,8 +875,7 @@ static bool force_death(qa_application *application,
         return true;
     application_provider *character = application_provider_for(
         application, request->target, QA_ROLE_CHARACTER, "");
-    if (character == NULL || !character->constructed ||
-        character->kind > APPLICATION_PROVIDER_Q3)
+    if (character == NULL || !character->constructed)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
                                 "selected character has no direct death adapter");
     qa_combat_state traits;
