@@ -60,6 +60,7 @@ struct application_guest_input {
     guest_native_input_binding native_bindings[GUEST_INPUT_ENTRIES];
     size_t native_count, source_entries;
     qa_native_region_binding *native_locomotion;
+    qa_native_entry_observer *native_spawn;
     uint32_t command_offset;
     application_guest_q3_control *body_control;
     application_q3_weapons *weapons;
@@ -264,20 +265,14 @@ static application_provider *spawn_world(application_guest_input *input,
         application_provider_for(app, scope->actor, QA_ROLE_CHARACTER, "") == guest ? world : NULL;
 }
 
-static bool select_spawn(void *context, const qa_qvm_call *raw_call, int32_t *result,
-    qa_error *error)
+static bool select_spawn_enter(application_guest_input *input,
+    const application_source_call *call, uint64_t *result, bool *selected, qa_error *error)
 {
-    application_source_qvm_call backend;
-    application_source_call source = qvm_call_view(raw_call, result, NULL, 0, &backend);
-    const application_source_call *call = &source;
-    application_guest_input *input = context;
+    *selected = false;
     guest_client_scope *scope = input->scope;
     application_provider *world = spawn_world(input, scope);
     if (!world) return call->proceed(call->context, call->arguments, call->count, error);
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
-    int32_t arguments[2];
-    if (!qa_qvm_call_argument(raw_call, 1, arguments, error) ||
-        !qa_qvm_call_argument(raw_call, 2, arguments + 1, error)) return false;
     qa_application *app = world->application;
     qa_body_state body;
     qa_actor_id point;
@@ -292,23 +287,56 @@ static bool select_spawn(void *context, const qa_qvm_call *raw_call, int32_t *re
         !qa_actors_get(qa_session_actors(app->session), point))
         return cancel_client(call, scope->call, error);
     qa_q3_host_game_data data;
-    if (!qa_q3_host_game_data_read(input->role->host, &data)) return false;
+    qa_q3_entity entity;
+    qa_qvm_entity_shared shared;
+    if (!qa_q3_host_game_data_read(input->role->host, &data) ||
+        !qa_q3_host_source_entity(input->role->host, slot, &entity, &shared, error)) return false;
     uint64_t address = data.entities_address + (uint64_t)slot * data.entity_stride;
-    if (address > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Selected spawn point exceeds its QVM pointer word");
-    qa_bytes span;
-    if (!qa_qvm_span(raw_call->vm, (int32_t)address, 0, data.entity_stride, &span, error)) return false;
     const qa_vec3 vectors[] = {body.origin, body.angles};
     for (size_t i = 0; i < 2; ++i) {
         uint8_t bytes[12];
         qa_store_f32le(bytes, vectors[i].x);
         qa_store_f32le(bytes + 4, vectors[i].y);
         qa_store_f32le(bytes + 8, vectors[i].z);
-        if (!qa_q3_host_source_bytes_write(input->role->host, (uint32_t)arguments[i],
+        if (!qa_q3_host_source_bytes_write(input->role->host, call->arguments[i + 1].as.address,
                 (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     }
     application_q3_guest_spawn_point(input->role, scope->actor, point, &body);
-    *result = (int32_t)address;
+    *result = address; *selected = true;
+    return true;
+}
+
+static bool select_spawn(void *context, const qa_qvm_call *raw_call, int32_t *result,
+    qa_error *error)
+{
+    const qa_native_value_type types[] = {QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS};
+    qa_native_value arguments[3];
+    if (!application_source_qvm_arguments(raw_call, types, 3, arguments, error)) return false;
+    application_source_qvm_call backend;
+    application_source_call call = qvm_call_view(raw_call, result, arguments, 3, &backend);
+    uint64_t address;
+    bool selected;
+    if (!select_spawn_enter(context, &call, &address, &selected, error)) return false;
+    if (!selected) return true;
+    qa_native_value value = {.type = QA_NATIVE_ADDRESS, .as.address = address};
+    return qa_q3_source_value_to_word(&value, result, error);
+}
+
+static bool native_select_spawn(void *context, qa_native_instance *instance,
+    qa_native_entry_observer *binding, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_error *error)
+{
+    (void)instance;
+    application_source_native_call backend = {.binding = binding, .arguments = arguments,
+        .count = count, .result = result};
+    *result = (qa_native_value){.type = QA_NATIVE_ADDRESS};
+    application_source_call call = {.arguments = arguments, .count = count,
+        .context = &backend, .proceed = application_source_native_proceed,
+        .cancel = application_source_native_cancel, .cancelled = application_source_native_cancelled};
+    uint64_t address;
+    bool selected;
+    if (!select_spawn_enter(context, &call, &address, &selected, error)) return false;
+    if (selected) result->as.address = address;
     return true;
 }
 
@@ -1059,6 +1087,13 @@ bool application_guest_input_leave(q3g_role *role, qa_error *error)
     if (input->source_entries && --input->source_entries) return true;
     bool okay = application_guest_q3_control_leave(input->body_control, error);
     qa_error first = error ? *error : (qa_error){0};
+    if (input->native_spawn) {
+        qa_error cleanup = {0};
+        if (!qa_native_unobserve_entry(input->native_spawn, &cleanup)) {
+            if (okay) first = cleanup;
+            okay = false;
+        } else input->native_spawn = NULL;
+    }
     if (input->native_locomotion) {
         qa_error cleanup = {0};
         if (!qa_native_remove_region(input->native_locomotion, &cleanup)) {
@@ -1100,6 +1135,20 @@ bool application_guest_input_enter(q3g_role *role, qa_error *error)
                     native_input_call, entry, &entry->binding, error);
             if (okay) ++input->native_count;
         }
+    }
+    if (okay && input->profile->input_present && input->profile->source->present) {
+        qa_native_instance *instance = qa_native_host_instance(role->native);
+        qa_native_address entry;
+        const qa_native_type parameters[3] = {
+            {.kind = QA_NATIVE_ADDRESS, .count = 1},
+            {.kind = QA_NATIVE_ADDRESS, .count = 1},
+            {.kind = QA_NATIVE_ADDRESS, .count = 1}};
+        qa_native_signature signature = {.abi = qa_native_module_describe(role->module).image.target.abi,
+            .parameters = parameters, .parameter_count = 3,
+            .result = {.kind = QA_NATIVE_ADDRESS, .count = 1}};
+        okay = qa_native_rva(instance, input->profile->source->spawn, 1, &entry, error) &&
+            qa_native_observe_entry(instance, entry, &signature,
+                native_select_spawn, input, &input->native_spawn, error);
     }
     if (okay) okay = application_guest_q3_control_enter(input->body_control, error);
     if (okay && input->profile->input_present && input->profile->source->present)
@@ -1183,7 +1232,7 @@ bool application_guest_input_descriptors(const q3g_role *role,
     application_guest_input *input = role ? role->input : NULL;
     bool idle = (role && (role->vm ? !qa_qvm_active(role->vm) :
         role->module && (!role->native || !qa_native_active(qa_native_host_instance(role->native)))) &&
-        (!input || (!input->scope && !input->in_command && !input->source_entries && !input->native_count && !input->native_locomotion && !input->command &&
+        (!input || (!input->scope && !input->in_command && !input->source_entries && !input->native_count && !input->native_locomotion && !input->native_spawn && !input->command &&
                     !input->stage && !input->completion &&
                     !input->applying.registry && !input->command_actor.registry))) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
