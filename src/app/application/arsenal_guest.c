@@ -1407,9 +1407,17 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
     if (!engine->game->vm) {
         qa_application *app = guest->application;
         if (application_world_provider(app, QA_ROLE_ENTITIES, "") != guest ||
-            movement != guest || arsenal != guest || character != guest)
+            movement != guest || arsenal != guest)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Native Q3 input requires its own world, movement, character and arsenal");
+                "Native Q3 input requires its own world, movement and arsenal");
+        if (character != guest) {
+            if (!character || character->kind > APPLICATION_PROVIDER_Q3)
+                return application_fail(error, QA_ERROR_UNSUPPORTED,
+                    "Native Q3 input requires a built-in foreign character");
+            if (!input->profile->input_present)
+                return application_fail(error, QA_ERROR_UNSUPPORTED,
+                    "Native Q3 character selection requires its declared source input entries");
+        }
         if (actor.registry) {
             const qa_launch_role roles[] = {QA_ROLE_COMBAT, QA_ROLE_INVENTORY,
                 QA_ROLE_PICKUPS, QA_ROLE_EQUIPMENT};
