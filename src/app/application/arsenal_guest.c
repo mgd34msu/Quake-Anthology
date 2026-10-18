@@ -226,8 +226,7 @@ static bool borrowed_native_bot(application_guest_input *input, qa_actor_id acto
     if (!bots->population) return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(provider->application->session), actor);
     qa_bot_admission admission;
-    return record && record->owner != provider->owner &&
-        qa_bots_admission_read(bots->population, actor, &admission, NULL) &&
+    return record && qa_bots_admission_read(bots->population, actor, &admission, NULL) &&
         qa_actor_id_equal(admission.actor, actor);
 }
 
