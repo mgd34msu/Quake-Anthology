@@ -104,7 +104,8 @@ bool sysv_libc_install(guest_sysv_runtime *r, qa_error *error)
         if (!add(r, LC_MATH, i, "libm.so.6", name, versions, 2, &type, 1, type, error)) return false;
     }
     const qa_native_value_type dd[] = {QA_NATIVE_F64, QA_NATIVE_F64};
-    if (!add(r, LC_ATAN2, 0, "libm.so.6", "__atan2_finite", atan, 2, dd, 2, QA_NATIVE_F64, error)) return false;
+    if (!add(r, LC_ATAN2, 0, "libm.so.6", "__atan2_finite", atan, 2, dd, 2, QA_NATIVE_F64, error) ||
+        !add(r, LC_ATAN2, 0, "libm.so.6", "atan2", versions, 2, dd, 2, QA_NATIVE_F64, error)) return false;
     for (size_t f = 0; f < 2; ++f) {
         qa_native_value_type types[] = {f ? QA_NATIVE_F64 : QA_NATIVE_F32,p,p};
         if (!add(r, LC_SINCOS, 0, "libm.so.6", f ? "sincos" : "sincosf", sincos_versions,

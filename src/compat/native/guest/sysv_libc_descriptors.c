@@ -26,6 +26,7 @@ static bool identity(const sysv_service *s)
             return wide && named(s,"__tls_get_addr",2,0) && version(s,"GLIBC_2.3");
         if (!strcmp(s->library,"libm.so.6")) {
             if (named(s,"__atan2_finite",21,0)) return version(s,"GLIBC_2.15");
+            if (named(s,"atan2",21,0)) return version(s,base);
             if (named(s,"sincos",22,0) || named(s,"sincosf",22,0))
                 return version(s,wide ? base : "GLIBC_2.1");
             const char *math[] = {"sin","cos","ceil","floor","sqrt","fabs"};

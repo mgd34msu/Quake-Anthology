@@ -7,6 +7,7 @@
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
 #include "guest_q3_combat.h"
+#include "guest_input_private.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_q3_component_clients.h"
 #include "map_players_private.h"
@@ -144,19 +145,29 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
         application_q3_world_restart_source(provider->application, provider, &startup);
     int32_t arguments[] = {(int32_t)slot, first_time ? 1 : 0, bot ? 1 : 0}, result;
     char reason[2048]="Connection refused";
-    if (engine->game->native) {
-        qa_buffer denial = {0};
+    application_guest_bot_setup bot_setup = {0};
+    qa_buffer native_denial = {0};
+    bool ok = !bot || application_guest_input_bot_setup_bind(engine->game, &bot_setup, error);
+    if (ok && engine->game->native) {
         ++engine->calls;
-        bool ok = qa_native_host_q3_client_connect(engine->game->native, slot, first_time, bot, &denial, error);
+        ok = qa_native_host_q3_client_connect(engine->game->native, slot, first_time, bot, &native_denial, error);
         --engine->calls;
-        if (ok) {
-            *accepted = !denial.data;
-            if(denial.data)snprintf(reason,sizeof(reason),"%s",(const char *)denial.data);
+    } else if (ok) {
+        ok = q3g_call(engine->game, 2, arguments, 3, &result, error);
+    }
+    {
+        qa_error cleanup = {0};
+        if (!application_guest_input_bot_setup_unbind(engine->game, &bot_setup, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
         }
-        qa_buffer_free(&denial);
-        if (!ok) return false;
+    }
+    if (!ok) { qa_buffer_free(&native_denial); return false; }
+    if (engine->game->native) {
+        *accepted = !native_denial.data;
+        if(native_denial.data)snprintf(reason,sizeof(reason),"%s",(const char *)native_denial.data);
+        qa_buffer_free(&native_denial);
     } else {
-        if (!q3g_call(engine->game, 2, arguments, 3, &result, error)) return false;
         if (result) { qa_bytes denial; if (!qa_qvm_read_string(engine->game->vm, result, &denial, error)) return false;
             snprintf(reason,sizeof(reason),"%s",(const char *)denial.data); }
         else *accepted = true;

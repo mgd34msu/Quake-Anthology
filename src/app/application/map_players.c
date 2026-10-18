@@ -4515,7 +4515,8 @@ bool application_players_native_q3_retire(qa_application *app,
             "native Q3 retirement precedes its actual source and wire disconnect");
     if (!application_player_record_find(app->players,actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "native Q3 retiring client has no canonical roster row");
-    return retire_player(app,provider,actor,error);
+    return application_players_character_disconnect(app,provider,actor,error) &&
+        retire_player(app,provider,actor,error);
 }
 
 static bool record_text(qa_application *application, struct application_player_roster *roster,
