@@ -80,9 +80,9 @@ static bool record_current(application_guest_input *input, const guest_client_sc
         scope->slot < data.entity_count && scope->slot < data.client_count)) return false;
     uint8_t bytes[4];
     uint64_t address = data.entities_address + (uint64_t)scope->slot * data.entity_stride + input->profile.source->client_pointer;
-    if (address > UINT32_MAX || !qa_qvm_read(input->role->vm, (uint32_t)address, bytes, sizeof(bytes), NULL) ||
+    if (address > UINT32_MAX || !qa_q3_host_source_bytes_read(input->role->host, address, bytes, sizeof(bytes), NULL) ||
         qa_load_u32le(bytes) != scope->player) return false;
-    return !scope->movement || (qa_qvm_read(input->role->vm, scope->movement, bytes, sizeof(bytes), NULL) &&
+    return !scope->movement || (qa_q3_host_source_bytes_read(input->role->host, scope->movement, bytes, sizeof(bytes), NULL) &&
         qa_load_u32le(bytes) == scope->player);
 }
 
@@ -96,7 +96,7 @@ static bool source_word(application_guest_input *input, uint32_t address,
                          uint32_t *value, qa_error *error)
 {
     uint8_t bytes[4];
-    if (!qa_qvm_read(input->role->vm, address, bytes, sizeof(bytes), error)) return false;
+    if (!qa_q3_host_source_bytes_read(input->role->host, address, bytes, sizeof(bytes), error)) return false;
     *value = qa_load_u32le(bytes); return true;
 }
 

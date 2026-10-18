@@ -8,6 +8,7 @@
 #include "qa/native.h"
 #include "qa/native_guest.h"
 #include "../src/compat/native/internal.h"
+#include "../src/compat/q3_host/internal.h"
 #include "../src/compat/native/guest/abi.h"
 #include "../src/compat/native/guest/memory_string.h"
 #include "../src/compat/native/guest/elf.h"
@@ -10132,6 +10133,59 @@ static void test_native_q3_declaration(void)
     qa_native_module_release(module);
 }
 
+static bool q3_source_native_read(void *context, uint64_t address, void *out,
+    size_t size, qa_error *error)
+{ return qa_native_guest_read(context, address, out, size, error); }
+
+static void test_q3_source_memory(void)
+{
+    qa_error error = {0};
+    uint8_t bytes[46] = {0};
+    qa_store_u32le(bytes, UINT32_C(0x12721444));
+    qa_store_u32le(bytes + 4, 2); qa_store_u32le(bytes + 8, 32);
+    qa_store_u32le(bytes + 12, 10); qa_store_u32le(bytes + 16, 42);
+    qa_store_u32le(bytes + 20, 4); qa_store_u32le(bytes + 28, 131068);
+    bytes[32] = QA_QVM_ENTER; qa_store_u32le(bytes + 33, 8);
+    bytes[37] = QA_QVM_LEAVE; qa_store_u32le(bytes + 38, 8);
+    qa_store_u32le(bytes + 42, UINT32_C(0x12345678));
+    qa_qvm_image *image = NULL; qa_qvm *vm = NULL;
+    CHECK(qa_qvm_image_load((qa_bytes){bytes, sizeof(bytes)}, &image, &error));
+    qa_qvm_options vm_options = {.role = QA_QVM_GAME, .abi = QA_QVM_Q3_MODERN};
+    CHECK(qa_qvm_create(image, &vm_options, &vm, &error));
+    qa_q3_host host = {.options = {.role = QA_QVM_GAME, .abi = QA_QVM_Q3_MODERN}};
+    CHECK(qa_q3_host_attach_qvm(&host, vm, &error));
+    uint8_t word[4];
+    CHECK(qa_q3_host_source_bytes_read(&host, 0, word, sizeof(word), &error));
+    CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
+    size_t end = qa_qvm_memory_size(vm);
+    CHECK(qa_qvm_write(vm, (uint32_t)end - 4, (qa_bytes){bytes + 42, 4}, &error));
+    CHECK(qa_q3_host_source_bytes_read(&host, end - 4, word, sizeof(word), &error));
+    CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
+    CHECK(!qa_q3_host_source_bytes_read(&host, end, word, 1, &error));
+    CHECK(!qa_q3_host_source_bytes_read(&host, UINT64_MAX, word, 1, &error));
+    qa_q3_host_qvm_consumed(&host);
+    CHECK(qa_qvm_destroy(vm, &error)); qa_qvm_image_release(image);
+
+    qa_native_guest_options options = {
+        .image = {.format = QA_NATIVE_IMAGE_ELF64,
+            .target = {.os = QA_NATIVE_OS_LINUX, .arch = QA_NATIVE_ARCH_X86_64,
+                .abi = QA_NATIVE_ABI_SYSTEM_V_X64, .pointer_bytes = 8}},
+        .allocation_base = UINT64_C(0x300000),
+        .maximum_backing_bytes = QA_NATIVE_GUEST_PAGE,
+        .backend = QA_NATIVE_GUEST_EMULATED};
+    qa_native_guest *guest = NULL; qa_native_guest_mapping mapping;
+    CHECK(qa_native_guest_create(&options, &guest, &error));
+    uint64_t address = UINT64_C(0x100001000);
+    CHECK(qa_native_guest_map(guest, address, QA_NATIVE_GUEST_PAGE,
+        QA_NATIVE_GUEST_READ, (qa_bytes){bytes + 42, 4}, &mapping, &error));
+    host.memory = (qa_native_host_guest_memory){.context = guest, .read = q3_source_native_read};
+    CHECK(qa_q3_host_source_bytes_read(&host, address, word, sizeof(word), &error));
+    CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
+    CHECK(!qa_q3_host_source_bytes_read(&host, address + QA_NATIVE_GUEST_PAGE, word, 1, &error));
+    CHECK(!qa_q3_host_source_bytes_read(&host, UINT64_MAX, word, sizeof(word), &error));
+    CHECK(qa_native_guest_destroy(&guest, &error));
+}
+
 static void test_native_export_visibility(void)
 {
     guest_elf_symbol symbol = {.name = "GetCGameAPI", .section = 1, .binding = 1};
@@ -12445,6 +12499,7 @@ int main(int argc, char **argv)
     test_native_export_visibility();
     test_native_saved_image_references();
     test_native_q3_declaration();
+    test_q3_source_memory();
     test_native_string_boundaries();
     test_native_write_receipts();
     test_native_resumable_budget();

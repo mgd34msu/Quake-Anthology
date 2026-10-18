@@ -17,6 +17,21 @@ bool q3_read(const q3_call *call, uint64_t address, void *out, size_t size, qa_e
     return call->memory.read(call->memory.context, address, out, size, error);
 }
 
+bool qa_q3_host_source_bytes_read(qa_q3_host *host, uint64_t address, void *out,
+    size_t size, qa_error *error)
+{
+    if (!host || host->retired || !host->memory.read)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source memory requires an attached host");
+    if (host->vm) {
+        size_t capacity = qa_qvm_memory_size(host->vm);
+        if (address > capacity)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source offset exceeds QVM memory");
+        address += capacity;
+    }
+    q3_call call = {.host = host, .memory = host->memory};
+    return q3_read(&call, address, out, size, error);
+}
+
 bool q3_write(const q3_call *call, uint64_t address, qa_bytes bytes, qa_error *error)
 {
     if ((!bytes.data && bytes.size) || address > UINT64_MAX - bytes.size)

@@ -16,7 +16,7 @@ static bool word(const application_guest_q3_control *owner, uint32_t address,
     uint32_t *out, qa_error *error)
 {
     uint8_t bytes[4];
-    if (!qa_qvm_read(owner->vm, address, bytes, sizeof(bytes), error)) return false;
+    if (!qa_q3_host_source_bytes_read(owner->role->host, address, bytes, sizeof(bytes), error)) return false;
     *out = qa_load_u32le(bytes); return true;
 }
 
@@ -24,7 +24,7 @@ static bool vector(const application_guest_q3_control *owner, uint32_t address,
     qa_vec3 *out, qa_error *error)
 {
     uint8_t bytes[12];
-    if (!qa_qvm_read(owner->vm, address, bytes, sizeof(bytes), error)) return false;
+    if (!qa_q3_host_source_bytes_read(owner->role->host, address, bytes, sizeof(bytes), error)) return false;
     *out = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
     return true;
 }

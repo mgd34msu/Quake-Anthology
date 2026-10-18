@@ -61,7 +61,7 @@ bool application_q3_combat_word_read(const application_q3_combat_actor *a,
 {
     uint8_t bytes[4];
     if (!out || !application_q3_combat_actor_current(a, error) ||
-        !qa_qvm_read(a->role->vm, address, bytes, sizeof(bytes), error)) return false;
+        !qa_q3_host_source_bytes_read(a->role->host, address, bytes, sizeof(bytes), error)) return false;
     *out = qa_load_i32le(bytes); return application_q3_combat_actor_current(a, error);
 }
 bool application_q3_combat_word_write(const application_q3_combat_actor *a,
@@ -299,7 +299,7 @@ bool application_q3_combat_velocity(const application_q3_combat_actor *a,
 {
     uint8_t bytes[12];
     if (!out || !application_q3_combat_actor_current(a, error) ||
-        !qa_qvm_read(a->role->vm, a->player ? a->player + 32 : a->entity + 36,
+        !qa_q3_host_source_bytes_read(a->role->host, a->player ? a->player + 32 : a->entity + 36,
             bytes, sizeof(bytes), error)) return false;
     qa_vec3 value = qa_v3(qa_load_f32le(bytes), qa_load_f32le(bytes + 4), qa_load_f32le(bytes + 8));
     if (!qa_vec_finite(value)) return fail(error, QA_ERROR_FORMAT, "Original Q3 source velocity is not finite");
