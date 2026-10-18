@@ -331,18 +331,6 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     if (!product || product->availability != QA_CONTENT_INSTALLED)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "launch product is not installed");
     const char *map = frontend->options.map;
-    const qa_catalog_start *starts = NULL;
-    const qa_catalog_episode *episode = NULL;
-    size_t count = 0;
-    if (!map) {
-        starts = qa_catalog_starts(catalog, product->id, &episode, &count);
-        if (count) map = starts[0].path;
-        else {
-            const qa_catalog_map *maps = qa_catalog_maps(catalog, product->id, &count);
-            if (count) map = maps[0].path;
-        }
-    }
-    if (!map) return frontend_fail(error, QA_ERROR_ARGUMENT, "launch product has no installed map");
     char *selected_map = frontend->options.map ? frontend_launch_map_path(map, error) : NULL;
     if (frontend->options.map && !selected_map) return false;
     if (selected_map) map = selected_map;
@@ -373,7 +361,6 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
         }
     }
     qa_launch_world world = qa_launch_draft_choices(draft)->world;
-    if (starts && count) world.start_command = episode && episode->command && *episode->command ? episode->command : starts[0].bsp;
     bool ok = true;
     if (frontend->options.map_game) {
         const qa_product *geometry = frontend_product_selection(catalog, frontend->options.map_game);
