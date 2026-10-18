@@ -1947,8 +1947,10 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
 static bool install_input_commands(frontend_config_source *source,qa_error *error)
 {
     if (source->bindings || !source->seat_count) return true;
-    qa_input_console_options input={.console=source->console,.owner=source->command.owner,
-        .user=source,.seat=binding_seat,.print=print,.context=source->command};
+    qa_command_context command;
+    if (!current_command(source,&command,error)) return false;
+    qa_input_console_options input={.console=source->console,.owner=command.owner,
+        .user=source,.seat=binding_seat,.print=print,.context=command};
     source->bindings=qa_input_console_create(&input,error);
     return source->bindings!=NULL;
 }
