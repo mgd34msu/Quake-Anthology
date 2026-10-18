@@ -678,8 +678,11 @@ bool frontend_source_identity_used(const qa_frontend *,uint64_t);
 bool frontend_q3_configuration(qa_frontend *,uint8_t out[11332],qa_error *);
 bool frontend_source_prepare_scene(qa_frontend *,qa_application *,uint32_t,
     const qa_q3_refdef *,qa_q3_scene_options *,qa_error *);
+typedef enum frontend_local_body_visibility {
+    FRONTEND_LOCAL_BODY_DEFAULT, FRONTEND_LOCAL_BODY_HIDDEN, FRONTEND_LOCAL_BODY_VISIBLE
+} frontend_local_body_visibility;
 bool frontend_source_submit_scene(qa_frontend *,uint32_t,qa_actor_owner,
-    const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
+    const qa_q3_scene_options *,frontend_local_body_visibility,qa_scene_frame *,qa_error *);
 bool frontend_source_cgame_recipient(const qa_frontend *,uint32_t,qa_actor_owner *,qa_error *);
 struct qa_application_client_source;
 bool frontend_source_client_commands_bind(qa_frontend *,uint32_t,const struct qa_application_client_source *,qa_error *);
@@ -725,7 +728,8 @@ bool frontend_native_q2_world_text_font(qa_frontend *, qa_string_id,
     const qa_font **, qa_error *);
 void frontend_native_q2_retire_world(qa_frontend *);
 void frontend_visuals_destroy(qa_frontend *);
-bool frontend_visuals_submit(qa_frontend *, uint32_t, qa_actor_owner exclude, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
+bool frontend_visuals_submit(qa_frontend *, uint32_t, qa_actor_owner exclude, const qa_scene_world_input *,
+    frontend_local_body_visibility, qa_scene_frame *, qa_error *);
 qa_scene_rect frontend_viewport(const qa_frontend *, unsigned);
 bool frontend_view_background(qa_frontend *, qa_scene_rect, const qa_scene_view *, qa_error *);
 #endif

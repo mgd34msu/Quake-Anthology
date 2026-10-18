@@ -422,7 +422,8 @@ static bool native_visuals(void *context, const qa_scene_world_input *input,
     qa_scene_frame *frame, qa_error *error)
 {
     native_scene_context *value = context;
-    return frontend_visuals_submit(value->frontend, value->seat, value->exclude, input, frame, error);
+    return frontend_visuals_submit(value->frontend, value->seat, value->exclude, input,
+        FRONTEND_LOCAL_BODY_DEFAULT, frame, error);
 }
 
 static bool native_particles(void *context, const qa_scene_world_input *input,

@@ -210,26 +210,29 @@ static bool declaration(const qa_qvm_image *image, qa_bytes bytes,
 static bool stock(application_q3_body_profile *profile, qa_error *error)
 {
 
-    bool first = application_q3_reference_image(profile->image, Q3_REFERENCE_LRCTF_CGAME),
+    bool base = application_q3_reference_image(profile->image, Q3_REFERENCE_BASE_CGAME),
+        first = application_q3_reference_image(profile->image, Q3_REFERENCE_LRCTF_CGAME),
         second = application_q3_reference_image(profile->image, Q3_REFERENCE_THREEWAVE_CGAME);
-    if (!first && !second) return true;
+    if (!base && !first && !second) return true;
+    static const uint32_t original[] = {71707};
     static const uint32_t a[] = {45608,81284,46022,47069,47502,47708,47822,48149,47699,45882,45800};
     static const uint32_t b[] = {36612,62937,36804,38561,39712,39826,39870,39534,40520};
-    const uint32_t *entries = first ? a : b;
-    profile->present = true; profile->count = first ? sizeof(a) / sizeof(*a) : sizeof(b) / sizeof(*b);
+    const uint32_t *entries = base ? original : first ? a : b;
+    profile->present = true; profile->count = base ? sizeof(original) / sizeof(*original) :
+        first ? sizeof(a) / sizeof(*a) : sizeof(b) / sizeof(*b);
     profile->submissions = calloc(profile->count, sizeof(*profile->submissions));
     if (!profile->submissions) return application_fail(error, QA_ERROR_MEMORY, "Retaining stock body boundaries");
     for (size_t i = 0; i < profile->count; ++i) {
         application_q3_body_submission *row = profile->submissions + i;
         row->entry = entries[i];
-        if (row->entry != (first ? 81284u : 62937u)) continue;
-        row->mesh = true; row->mesh_entry = first ? 80824 : 61925;
+        if (row->entry != (base ? 71707u : first ? 81284u : 62937u)) continue;
+        row->mesh = true; row->mesh_entry = base ? 71283 : first ? 80824 : 61925;
         row->mesh_state_argument = 1; row->mesh_shader_offset = 112;
         row->call_count = 3; row->calls = calloc(3, sizeof(*row->calls));
         if (!row->calls) return application_fail(error, QA_ERROR_MEMORY, "Retaining stock body mesh calls");
-        row->calls[0] = (application_q3_body_call){first ? 82085u : 63314u, QA_APPLICATION_Q3_BODY_LOWER};
-        row->calls[1] = (application_q3_body_call){first ? 82484u : 63546u, QA_APPLICATION_Q3_BODY_UPPER};
-        row->calls[2] = (application_q3_body_call){first ? 82781u : 63772u, QA_APPLICATION_Q3_BODY_HEAD};
+        row->calls[0] = (application_q3_body_call){base ? 71921u : first ? 82085u : 63314u, QA_APPLICATION_Q3_BODY_LOWER};
+        row->calls[1] = (application_q3_body_call){base ? 71990u : first ? 82484u : 63546u, QA_APPLICATION_Q3_BODY_UPPER};
+        row->calls[2] = (application_q3_body_call){base ? 72053u : first ? 82781u : 63772u, QA_APPLICATION_Q3_BODY_HEAD};
     }
     return true;
 }

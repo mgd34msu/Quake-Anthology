@@ -172,6 +172,7 @@ static void body_scene_clear(frontend_source_lease *);
 static bool body_scene_prepare(frontend_source_lease *,qa_q3_scene_options *,qa_error *);
 static void body_scene_completed(frontend_source_lease *);
 static bool body_scene_submit(frontend_source_lease *,const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
+static frontend_local_body_visibility body_scene_local_visibility(const frontend_source_lease *);
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool companion_capture(qa_frontend *,uint32_t,qa_scene_rect,qa_error *);
@@ -627,12 +628,13 @@ bool frontend_source_prepare_scene(qa_frontend *frontend,qa_application *applica
     return true;
 }
 bool frontend_source_submit_scene(qa_frontend *frontend,uint32_t seat,qa_actor_owner owner,
-    const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
+    const qa_q3_scene_options *options,frontend_local_body_visibility local_visibility,
+    qa_scene_frame *frame,qa_error *error)
 {
     if (!frontend || seat>=frontend->options.seats || !owner || !options || frame!=&frontend->frame)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission requires its actual owner, frame and physical seat");
     if (options->world.no_world) return true;
-    return frontend_visuals_submit(frontend,seat,owner,&options->world,frame,error) &&
+    return frontend_visuals_submit(frontend,seat,owner,&options->world,local_visibility,frame,error) &&
         frontend_particle_draw(frontend,seat,&options->world,error) &&
         frontend_event_debug(frontend,&options->world.view,error) &&
         frontend_tools_debug(frontend,&options->world.view,error);
@@ -741,7 +743,8 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
     if (source->companion && source->companion->entered)
         return frame==&source->companion->frame ||
             frontend_fail(error,QA_ERROR_ARGUMENT,"Companion scene left its genuine private output frame");
-    if (!frontend_source_submit_scene(source->frontend,source->seat,source->owner,options,frame,error)) return false;
+    if (!frontend_source_submit_scene(source->frontend,source->seat,source->owner,options,
+        body_scene_local_visibility(scope->lease),frame,error)) return false;
     if (!body_scene_submit(scope->lease,options,frame,error)) return false;
     if (scope->lease->equipment &&
         !frontend_equipment_source_submit(scope->lease->equipment,options,frame,error)) return false;
@@ -1509,7 +1512,7 @@ typedef struct source_body_ref {
     uint32_t helper;
     qa_q3_ref_entity ref;
     const qa_resource *resource;
-    bool base;
+    bool base, generic;
 } source_body_ref;
 struct source_body_draw {
     frontend_source_lease *lease;
@@ -1577,18 +1580,39 @@ static bool body_prepare(void *context,qa_actor_owner receiver,uint32_t seat,
     }
     return body_current(lease,out) || frontend_fail(error,QA_ERROR_ARGUMENT,"Source body Draw changed during preparation");
 }
+static bool body_component(source_body_draw *draw,qa_actor_id actor,bool *selected,qa_error *error)
+{
+    *selected=false;
+    for (size_t i=0;i<draw->count;++i) for (size_t j=0;j<draw->components[i].bodies.count;++j) {
+        qa_application_q3_component_actor body;
+        if (!qa_application_q3_component_body_at(&draw->components[i].bodies,j,&body))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body roster changed inside Source Draw");
+        if (qa_actor_id_equal(body.actor,actor)) { *selected=true; return true; }
+    }
+    return true;
+}
+static bool body_generic(source_body_draw *draw,qa_actor_id actor,bool *selected,qa_error *error)
+{
+    *selected=false;
+    if (!draw->entry.local_source) return true;
+    frontend_source *source=draw->lease->source;
+    qa_application_visual_view visual; bool found;
+    if (!frontend_particle_visual_read(source->frontend,actor,&visual,&found,error)) return false;
+    if (!found || visual.provider==source->owner || visual.visual.has_inline_model ||
+        !visual.visual.models[0]) return true;
+    frontend_visual_model_view model;
+    *selected=frontend_visual_model_cached_read(source->frontend,visual.provider,
+        visual.family,visual.visual.models[0],&model) && model.model && model.scene;
+    return true;
+}
 static bool body_actor(void *context,const qa_application_q3_body_draw *view,qa_actor_id actor,
     bool *hidden,bool *selected,qa_error *error)
 {
     if (!hidden || !selected || !body_current(context,view))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body selection left its genuine whole Draw receipt");
-    *hidden=false; *selected=false; source_body_draw *draw=view->token;
-    for (size_t i=0;i<draw->count;++i) for (size_t j=0;j<draw->components[i].bodies.count;++j) {
-        qa_application_q3_component_actor body;
-        if (!qa_application_q3_component_body_at(&draw->components[i].bodies,j,&body))
-            return frontend_fail(error,QA_ERROR_ARGUMENT,"Component body roster changed inside Source Draw");
-        if (qa_actor_id_equal(body.actor,actor)) *selected=true;
-    }
+    *hidden=false; source_body_draw *draw=view->token;
+    if (!body_component(draw,actor,selected,error)) return false;
+    if (!*selected && !body_generic(draw,actor,selected,error)) return false;
     if (!*selected && draw->entry.local_source) {
         float alpha;
         if (!qa_application_visual_alpha_read(draw->lease->source->application,actor,&alpha,error)) return false;
@@ -1604,6 +1628,30 @@ static bool body_submit(void *context,const qa_application_q3_body_draw *view,qa
     *handled=false;
     if (!selected) return true;
     source_body_draw *draw=view->token;
+    bool component,generic=false;
+    if (!body_component(draw,actor,&component,error) ||
+        (!component && !body_generic(draw,actor,&generic,error))) return false;
+    if (generic) {
+        *handled=true;
+        if (!qa_actor_id_equal(actor,draw->entry.source.source_actor))
+            return body_current(context,view);
+        for (source_body_ref *record=draw->refs;record;record=record->next)
+            if (record->generic && qa_actor_id_equal(record->actor,actor)) {
+                if (base) {
+                    if (record->base) record->ref.flags&=ref->flags;
+                    else record->ref=*ref;
+                    record->base=true;
+                }
+                return body_current(context,view);
+            }
+        source_body_ref *record=qa_arena_alloc(&draw->lease->source->frontend->frame.storage,
+            sizeof(*record),_Alignof(source_body_ref),error);
+        if (!record) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining selected body visibility");
+        *record=(source_body_ref){.actor=actor,.part=part,.helper=helper,.ref=*ref,.base=base,.generic=true};
+        if (draw->last_ref) draw->last_ref->next=record; else draw->refs=record;
+        draw->last_ref=record;
+        return body_current(context,view);
+    }
     qa_q3_model_opening opening;
     if (ref->kind!=QA_Q3_REF_MODEL || ref->model<=0 ||
         !qa_q3_assets_model_opening(draw->lease->source->assets,(size_t)(ref->model-1),
@@ -1636,6 +1684,14 @@ static void body_scene_clear(frontend_source_lease *lease)
 }
 static void body_scene_completed(frontend_source_lease *lease)
 { if (lease->body_draw) lease->body_draw->components_submitted=true; }
+static frontend_local_body_visibility body_scene_local_visibility(const frontend_source_lease *lease)
+{
+    const source_body_draw *draw=lease->body_draw;
+    for (const source_body_ref *record=draw?draw->refs:NULL;record;record=record->next)
+        if (record->generic && qa_actor_id_equal(record->actor,draw->entry.source.source_actor))
+            return record->ref.flags&2 ? FRONTEND_LOCAL_BODY_HIDDEN : FRONTEND_LOCAL_BODY_VISIBLE;
+    return FRONTEND_LOCAL_BODY_DEFAULT;
+}
 static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options *options,qa_error *error)
 {
     source_body_draw *draw=lease->body_draw;
@@ -1644,6 +1700,7 @@ static bool body_scene_prepare(frontend_source_lease *lease,qa_q3_scene_options 
     if (!body_current(lease,&view) || options->first_entity>=1022 || draw->ref_count>1022-options->first_entity)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene order left its actual Draw inventory");
     for (const source_body_ref *primary=draw->refs;primary;primary=primary->next) {
+        if (primary->generic) continue;
         if (!frontend_visual_registered_materials_admit(lease->source->assets, &primary->ref,
             lease->source->assets, &primary->ref, error)) return false;
         for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
@@ -1675,7 +1732,8 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
     qa_application_q3_body_draw view={.token=draw};
     if (!body_current(lease,&view)) return frontend_fail(error,QA_ERROR_ARGUMENT,"Body scene lost its retained component receipts");
     uint32_t ordinal=0;
-    for (const source_body_ref *primary=draw->refs;primary;primary=primary->next,++ordinal) {
+    for (const source_body_ref *primary=draw->refs;primary;primary=primary->next) {
+        if (primary->generic) continue;
         bool visible=true;
         for (size_t j=0;j<draw->count;++j) for (size_t k=0;k<draw->components[j].bodies.count;++k) {
             qa_application_q3_component_actor body;
@@ -1686,7 +1744,7 @@ static bool body_scene_submit(frontend_source_lease *lease,const qa_q3_scene_opt
                 if ((primary->part==QA_APPLICATION_Q3_BODY || body.parts[m].part==QA_APPLICATION_Q3_BODY ||
                     body.parts[m].part==primary->part) && !body.parts[m].base) visible=false;
         }
-        uint32_t order=draw->first_order+ordinal;
+        uint32_t order=draw->first_order+ordinal++;
         if ((!primary->base || visible) && !frontend_visual_source_body_pass(lease->source->frontend,primary->actor,lease->source->presentation,
             &primary->ref,lease->source->assets,&primary->ref,draw->entry.source.source_milliseconds,
             options,order,frame,error)) return false;

@@ -1556,7 +1556,8 @@ bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
 }
 
 bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owner exclude,
-    const qa_scene_world_input *world, qa_scene_frame *frame, qa_error *error)
+    const qa_scene_world_input *world, frontend_local_body_visibility local_visibility,
+    qa_scene_frame *frame, qa_error *error)
 {
     qa_actor_id local = {0};
     uint32_t launch_seat;
@@ -1573,7 +1574,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
         if (frontend_native_q3_actor_admitted(frontend, seat, actor)) continue;
         if (qa_actor_id_equal(actor, local) && !world->view.clip_enabled &&
             !qa_scene_world_q1_mirror_scope(frontend->scene_world, world, frame)) {
-            if (!frontend->seats[seat].q1_chase) continue;
+            if (local_visibility == FRONTEND_LOCAL_BODY_HIDDEN ||
+                (local_visibility == FRONTEND_LOCAL_BODY_DEFAULT && !frontend->seats[seat].q1_chase)) continue;
         }
         qa_application_visual_view view;bool found;
         if (!frontend_particle_visual_read(frontend,actor,&view,&found,error)) return false;

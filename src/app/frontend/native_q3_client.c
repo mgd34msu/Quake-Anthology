@@ -269,7 +269,8 @@ static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scen
     if(!frontend_native_q3_current(row))return false;
     if(row->composition.submit_view && !row->composition.submit_view(row->composition.context,options,frame,e))return false;
     return frontend_native_components_scene_submit(row,options,frame,e) &&
-        frontend_source_submit_scene(f,row->view.seat,row->view.source_owner,options,frame,e) && frontend_native_q3_current(row);
+        frontend_source_submit_scene(f,row->view.seat,row->view.source_owner,options,
+            FRONTEND_LOCAL_BODY_DEFAULT,frame,e) && frontend_native_q3_current(row);
 }
 static void scene_cleared(void *context)
 {
