@@ -124,8 +124,9 @@ static bool client_end_frame(application_provider *provider, qa_actor_id actor,
         qa_collision_contents_decode(control.water_type,
             qa_ruleset_descriptors[control.state.kind].family), QA_GAME_Q3, 0);
     bool publish, live;
+    bool environment = application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider;
     if (!qa_q3_client_end_prepare(game, actor, control.water_level,
-            water_type, &publish, error) ||
+            water_type, environment, &publish, error) ||
         !client_current(provider, actor, slot, frame, &live, error)) return false;
     if (!live || !publish) return true;
 
