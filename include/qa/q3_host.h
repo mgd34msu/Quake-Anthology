@@ -323,6 +323,7 @@ typedef struct qa_q3_host_game_data {
 bool qa_q3_host_game_data_read(const qa_q3_host *, qa_q3_host_game_data *);
 /* Private module fields use the same untagged addresses as game_data_read. */
 bool qa_q3_host_source_bytes_read(qa_q3_host *, uint64_t address, void *, size_t, qa_error *);
+bool qa_q3_host_source_bytes_project(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
 /* Generic component declarations qualify original tables before any source
  * call. This constructor uses real QVM offsets, without a synthetic trap. */
 bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);

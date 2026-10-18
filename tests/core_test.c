@@ -10163,6 +10163,12 @@ static void test_q3_source_memory(void)
     CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
     CHECK(!qa_q3_host_source_bytes_read(&host, end, word, 1, &error));
     CHECK(!qa_q3_host_source_bytes_read(&host, UINT64_MAX, word, 1, &error));
+    uint8_t projected[4]; qa_store_u32le(projected, UINT32_C(0x87654321));
+    CHECK(qa_q3_host_source_bytes_project(&host, 0, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(qa_q3_host_source_bytes_read(&host, 0, word, sizeof(word), &error));
+    CHECK(qa_load_u32le(word) == UINT32_C(0x87654321));
+    CHECK(!qa_q3_host_source_bytes_project(&host, end, (qa_bytes){projected, 1}, &error));
+    CHECK(!qa_q3_host_source_bytes_project(&host, UINT64_MAX, (qa_bytes){projected, 1}, &error));
     qa_q3_host_qvm_consumed(&host);
     CHECK(qa_qvm_destroy(vm, &error)); qa_qvm_image_release(image);
 
@@ -10179,10 +10185,18 @@ static void test_q3_source_memory(void)
     CHECK(qa_native_guest_map(guest, address, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ, (qa_bytes){bytes + 42, 4}, &mapping, &error));
     host.memory = (qa_native_host_guest_memory){.context = guest, .read = q3_source_native_read};
+    qa_native_instance instance = {.guest = guest}; host.native = &instance;
     CHECK(qa_q3_host_source_bytes_read(&host, address, word, sizeof(word), &error));
     CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
     CHECK(!qa_q3_host_source_bytes_read(&host, address + QA_NATIVE_GUEST_PAGE, word, 1, &error));
     CHECK(!qa_q3_host_source_bytes_read(&host, UINT64_MAX, word, sizeof(word), &error));
+    CHECK(!qa_q3_host_source_bytes_project(&host, address, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(qa_native_guest_protect(guest, mapping.id, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, &error));
+    CHECK(qa_q3_host_source_bytes_project(&host, address, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(qa_q3_host_source_bytes_read(&host, address, word, sizeof(word), &error));
+    CHECK(qa_load_u32le(word) == UINT32_C(0x87654321));
+    CHECK(!qa_q3_host_source_bytes_project(&host, address + QA_NATIVE_GUEST_PAGE,
+        (qa_bytes){projected, 1}, &error));
     CHECK(qa_native_guest_destroy(&guest, &error));
 }
 
@@ -10264,6 +10278,8 @@ static void test_native_string_boundaries(void)
 typedef struct native_write_capture {
     unsigned calls;
     uint8_t before, after;
+    bool project;
+    uint8_t projected;
 } native_write_capture;
 
 static bool capture_native_write(void *opaque, qa_native_instance *instance,
@@ -10273,7 +10289,11 @@ static bool capture_native_write(void *opaque, qa_native_instance *instance,
     ++capture->calls;
     capture->before = event->before.data[event->offset];
     capture->after = event->after.data[event->offset];
-    (void)instance; (void)error;
+    if (capture->project) {
+        capture->project = false;
+        return qa_native_project(instance, event->address + event->offset,
+            (qa_bytes){&capture->projected, 1}, error);
+    }
     return true;
 }
 
@@ -10316,6 +10336,12 @@ static void test_native_write_receipts(void)
     qa_unified_frame_lease_release(busy);
     CHECK(qa_native_guest_alias(guest, UINT64_C(0x200000), QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, first.backing, 0, &alias, &error));
+    const uint8_t projected = 13;
+    CHECK(qa_native_project(&instance, boundary - 1, (qa_bytes){&projected, 1}, &error));
+    CHECK(capture.calls == 1 && snapshot == projected && !instance.write_snapshots_pending);
+    CHECK(qa_native_project(&instance, alias.base + QA_NATIVE_GUEST_PAGE - 1,
+        (qa_bytes){bytes, 1}, &error));
+    CHECK(capture.calls == 1 && snapshot == 11 && !instance.write_snapshots_pending);
     const uint8_t aliased = 17, changed = 23;
     CHECK(qa_native_guest_write(guest, alias.base + QA_NATIVE_GUEST_PAGE - 1,
         (qa_bytes){&aliased, 1}, &error));
@@ -10337,6 +10363,11 @@ static void test_native_write_receipts(void)
     qa_unified_frame_lease_release(busy);
     CHECK(qa_native_guest_write(guest, base + 33, (qa_bytes){&changed, 1}, &error));
     CHECK(capture.calls == 3 && capture.before == 0 && capture.after == 23 && fields[1] == 23);
+    capture.project = true; capture.projected = projected;
+    CHECK(qa_native_guest_write(guest, base + 33, (qa_bytes){&changed, 1}, &error));
+    CHECK(capture.calls == 4 && capture.before == 23 && capture.after == 23 && fields[1] == projected);
+    CHECK(qa_native_guest_write(guest, base + 33, (qa_bytes){&changed, 1}, &error));
+    CHECK(capture.calls == 5 && capture.before == projected && capture.after == 23 && fields[1] == 23);
     instance.write_observers = NULL;
     instance.write_snapshots_pending = true;
     native_observers_destroy(&instance);

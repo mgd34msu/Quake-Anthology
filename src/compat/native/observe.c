@@ -722,11 +722,36 @@ static bool write_selected(const qa_native_write_observer *binding,
     return false;
 }
 
+static bool project_snapshots(qa_native_instance *instance, qa_native_guest *guest,
+    const qa_native_guest_commit *commit, qa_error *error)
+{
+    if (!instance->write_observers || instance->write_snapshots_pending) return true;
+    for (size_t i = 0; i < guest->mapping_count; ++i) {
+        const qa_native_guest_mapping *mapping = guest->mappings + i;
+        if (mapping->backing != commit->backing) continue;
+        uint64_t begin = commit->backing_offset > mapping->backing_offset
+            ? commit->backing_offset : mapping->backing_offset;
+        uint64_t end = commit->backing_offset + commit->bytes;
+        if (end > mapping->backing_offset + mapping->bytes) end = mapping->backing_offset + mapping->bytes;
+        if (begin >= end) continue;
+        uint64_t address = mapping->base + (begin - mapping->backing_offset);
+        uint64_t limit = address + (end - begin);
+        for (qa_native_write_observer *b = instance->write_observers; b; b = b->next) {
+            uint64_t first = address > b->address ? address : b->address;
+            uint64_t last = limit < b->address + b->size ? limit : b->address + b->size;
+            if (first < last && !qa_native_guest_read(guest, first,
+                b->snapshot.data + (size_t)(first - b->address), (size_t)(last - first), error)) return false;
+        }
+    }
+    return true;
+}
+
 bool native_process_write_commit(void *context, qa_native_guest *guest,
     const qa_native_guest_commit *commit, qa_error *error) {
     qa_native_instance *instance = context;
     if (!instance || instance->guest != guest || !commit || !commit->bytes || commit->bytes > UINT64_MAX - commit->address)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native write receipt lost its actual memory owner");
+    if (instance->projecting) return project_snapshots(instance, guest, commit, error);
     size_t count = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
         if (write_selected(b, commit)) ++count;

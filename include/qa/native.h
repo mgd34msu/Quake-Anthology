@@ -477,6 +477,9 @@ bool qa_native_read(const qa_native_instance *instance, qa_native_address source
                     size_t bytes, qa_error *error);
 bool qa_native_write(qa_native_instance *instance, qa_native_address destination, qa_bytes bytes,
                      qa_error *error);
+/* Canonical-to-module refresh uses the same mappings and permissions, without
+ * publishing a source store. Later observers start from the refreshed bytes. */
+bool qa_native_project(qa_native_instance *, qa_native_address, qa_bytes, qa_error *);
 enum {
     QA_NATIVE_MEMORY_READ = 1,
     QA_NATIVE_MEMORY_WRITE = 2,

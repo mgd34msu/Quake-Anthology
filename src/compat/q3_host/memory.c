@@ -32,6 +32,20 @@ bool qa_q3_host_source_bytes_read(qa_q3_host *host, uint64_t address, void *out,
     return q3_read(&call, address, out, size, error);
 }
 
+bool qa_q3_host_source_bytes_project(qa_q3_host *host, uint64_t address,
+    qa_bytes bytes, qa_error *error)
+{
+    if (!host || host->retired || (!host->vm && !host->native))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source projection requires an attached host");
+    if (host->vm) {
+        if (address > UINT32_MAX)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source offset exceeds QVM memory");
+        return qa_qvm_source_bytes_write(host->vm, qa_qvm_image_of(host->vm),
+            (uint32_t)address, bytes, error);
+    }
+    return qa_native_project(host->native, address, bytes, error);
+}
+
 bool q3_write(const q3_call *call, uint64_t address, qa_bytes bytes, qa_error *error)
 {
     if ((!bytes.data && bytes.size) || address > UINT64_MAX - bytes.size)

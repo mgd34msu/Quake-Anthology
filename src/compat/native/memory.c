@@ -57,6 +57,17 @@ bool qa_native_write(qa_native_instance *instance, qa_native_address destination
     return qa_native_guest_write(instance->guest, destination, bytes, error);
 }
 
+bool qa_native_project(qa_native_instance *instance, qa_native_address destination,
+    qa_bytes bytes, qa_error *error)
+{
+    if (!instance) return qa_native_write(instance, destination, bytes, error);
+    bool previous = instance->projecting;
+    instance->projecting = true;
+    bool okay = qa_native_write(instance, destination, bytes, error);
+    instance->projecting = previous;
+    return okay;
+}
+
 bool qa_native_string_span(const qa_native_instance *instance, qa_native_address source,
                            size_t maximum, qa_bytes *out, qa_error *error)
 {

@@ -166,9 +166,9 @@ bool application_q3_combat_health_write(void *opaque, double health, qa_error *e
     if (!application_q3_combat_actor_current(a, error) || !integer(health, &value, error)) return false;
     const application_q3_combat_definition *d = definition(a);
     uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)value);
-    return qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+    return qa_q3_host_source_bytes_project(a->role->host,
             a->entity + d->fields.health, (qa_bytes){bytes, sizeof(bytes)}, error) &&
-        (!a->player || qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+        (!a->player || qa_q3_host_source_bytes_project(a->role->host,
             a->player + 184 + d->state.health_stat * 4, (qa_bytes){bytes, sizeof(bytes)}, error));
 }
 bool application_q3_combat_empty_armor(void *opaque, double points,
@@ -246,7 +246,7 @@ bool application_q3_combat_traits_write(void *opaque, const qa_combat_state *tra
         return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 non-client has no source team field");
     for (size_t i = 0; i < count; ++i) {
         uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)words[i].value);
-        if (!qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+        if (!qa_q3_host_source_bytes_project(a->role->host,
                 words[i].offset, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     }
     return true;
