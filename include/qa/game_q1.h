@@ -567,7 +567,8 @@ bool qa_q1_game_monster_count(qa_q1_game *, qa_actor_id monster, qa_actor_id att
     bool killed, bool classic_fish, qa_error *);
 bool qa_q1_game_monster_counts(const qa_q1_game *, uint32_t *total, uint32_t *killed);
 /* Source alpha retains finite authored fade overshoot before retirement. */
-bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);
+bool qa_q1_game_alpha_read(qa_q1_game *, qa_actor_id, float *, bool *field_present, qa_error *);
+bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, bool *field_present, qa_error *);
 bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
 /* Native STEP after think, and surviving TOSS collisions. Character movement
  * runs its own selected movement callback and must not dispatch this twice. */

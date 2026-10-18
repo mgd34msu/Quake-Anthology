@@ -407,12 +407,7 @@ bool application_native_horde_head(void *opaque, qa_actor_id actor,
 bool application_native_horde_alpha(void *opaque, qa_actor_id actor,
     float alpha, qa_error *error)
 {
-    qa_application *application = opaque;
-    application_provider *provider = application_provider_for(application, actor, QA_ROLE_ENTITIES, "");
-    if (!provider || provider->kind != APPLICATION_PROVIDER_Q1)
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "Horde loot has no native alpha owner");
-    return qa_q1_game_alpha(provider->state.q1, actor, alpha, error);
+    return qa_application_visual_alpha_write(opaque, actor, alpha, error);
 }
 
 float application_native_horde_random(void *opaque, qa_mode_id mode)

@@ -193,22 +193,32 @@ bool qa_q1_game_monster_counts(const qa_q1_game *g, uint32_t *total, uint32_t *k
     *killed = g->killed_monsters;
     return true;
 }
-bool qa_q1_game_alpha(qa_q1_game *g, qa_actor_id actor, float alpha, qa_error *error) {
-    if (!isfinite(alpha)) {
+bool qa_q1_game_alpha_read(qa_q1_game *g, qa_actor_id actor, float *out,
+    bool *field_present, qa_error *error) {
+    if (!out || !field_present || !q1_alive(g, actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 alpha read requires its live actor and outputs");
+        return false;
+    }
+    const q1_actor *entity = q1_entity_const(g, actor);
+    *field_present = entity && entity->native;
+    *out = *field_present ? entity->alpha : 1;
+    return true;
+}
+bool qa_q1_game_alpha(qa_q1_game *g, qa_actor_id actor, float alpha,
+    bool *field_present, qa_error *error) {
+    if (!field_present || !isfinite(alpha) || !q1_alive(g, actor)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 actor alpha");
         return false;
     }
+    q1_actor *entity = q1_entity(g, actor);
+    *field_present = entity && entity->native;
+    if (!*field_present) return true;
     qa_q1_game_operation operation;
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    q1_actor *entity = q1_entity(g, actor);
-    bool ok = entity && entity->native;
-    if (ok)
-        entity->alpha = alpha;
-    else
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 alpha requires a live native actor");
+    entity->alpha = alpha;
     qa_q1_game_operation_end(&operation);
-    return ok;
+    return true;
 }
 const q1_actor *q1_entity_const(const qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || actor.slot >= g->capacity ||
