@@ -58,7 +58,12 @@ static bool create_process(qa_native_module *module, const qa_native_options *op
     instance->module = module; instance->options = *options;
     instance->lifecycle = QA_NATIVE_LOADED;
     if (!native_instance_setup_identity(instance, options, error)) { free(instance); return false; }
-    instance->observation_storage=qa_unified_frame_pool_create(0,0,error);
+    size_t observation_leases;
+    if (!native_size_add(instance->region_count, 128, &observation_leases)) {
+        native_regions_destroy(instance); free(instance);
+        return native_fail(error, QA_ERROR_MEMORY, 0, "Native region observer storage exceeds address space");
+    }
+    instance->observation_storage=qa_unified_frame_pool_create(0,observation_leases,error);
     if (!instance->observation_storage) { native_regions_destroy(instance); free(instance); return false; }
     qa_native_module_retain(module);
     qa_native_instance *previous = native_active_instance;
