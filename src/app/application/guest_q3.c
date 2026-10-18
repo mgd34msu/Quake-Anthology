@@ -675,7 +675,8 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
     qa_q3_gamestate_init(&engine->gamestate);
     q3g_clients_clear(engine);
     for (q3g_role *role = engine->roles; role; role = role->next)
-        if (!qa_q3_host_set_entity_text(role->host, (qa_bytes){(const uint8_t *)copy, text.size}, error)) return false;
+        if (role->kind != QA_QVM_UI &&
+            !qa_q3_host_set_entity_text(role->host, (qa_bytes){(const uint8_t *)copy, text.size}, error)) return false;
     engine->map_ready = true;
     engine->loaded_compatibility = false;
     engine->loaded_game_type = engine->loaded_max_clients = 0;
