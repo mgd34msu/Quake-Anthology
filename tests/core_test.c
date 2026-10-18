@@ -108,6 +108,7 @@
 #include "../src/app/application/control_frame.h"
 #include "../src/app/application/guest_native_q2_private.h"
 #include "../src/app/application/guest_q3_combat_profile.h"
+#include "../src/app/application/guest_input_private.h"
 #include "../src/app/application/native_q2_client_stages.h"
 #include "../src/app/application/bots_log.h"
 #include "../src/app/application/bots_setup.h"
@@ -10145,6 +10146,21 @@ static void test_native_q3_declaration(void)
     CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)invalid, strlen(invalid)},
         "qagamei386.so", module, &declaration, &error));
     CHECK(!declaration && error.code == QA_ERROR_FORMAT);
+    const char *lifecycle = "{\"version\":1,\"modules\":[{\"artifactPath\":\"qagamei386.so\","
+        "\"apiVersion\":8,\"primary\":{\"input\":{\"entries\":{"
+        "\"respawn\":{\"entry\":112,\"join\":112}}}}}]}";
+    error = (qa_error){0};
+    CHECK(qa_native_declaration_load((qa_bytes){(const uint8_t *)lifecycle, strlen(lifecycle)},
+        "qagamei386.so", module, &declaration, &error));
+    q3g_role role = {.kind = QA_QVM_GAME, .module = module, .declaration = declaration};
+    CHECK(application_guest_input_profile_read(&role, qa_native_declaration_primary(declaration),
+        &role.input_profile, &error));
+    CHECK(role.input_profile.respawn == 112 && !role.input_profile.input_present &&
+        role.input_profile.source == &role.movement);
+    CHECK(application_guest_input_attach(&role, &error) && !role.input);
+    CHECK(role.input_profile.respawn == 112);
+    application_guest_input_profile_free(&role.input_profile);
+    qa_native_declaration_destroy(declaration); declaration = NULL;
     qa_strings *strings = NULL;
     CHECK(qa_strings_create(&strings, &error));
     application_q3_combat_profile *state = NULL;

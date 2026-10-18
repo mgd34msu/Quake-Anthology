@@ -165,6 +165,7 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         !application_q3_weapons_destroy(&role->weapons, error) ||
         !application_q3_weapons_services_destroy(&role->weapon_services, error) ||
         !application_guest_projection_close(role, error)) return false;
+    application_guest_input_profile_free(&role->input_profile);
     application_q3_movement_profile_free(&role->movement);
     application_q3_pickup_profile_free(&role->pickup_profile);
     application_q3_catalog_destroy(role->catalog);
@@ -656,10 +657,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             role->committed = true;
         }
     }
-    if (kind == QA_QVM_GAME && role->vm) {
-        qa_bytes primary_bytes = role->artifact->image ?
+    qa_bytes primary_bytes = {0};
+    if (kind == QA_QVM_GAME) {
+        primary_bytes = role->artifact->image ?
             (qa_bytes){role->artifact->primary.data, role->artifact->primary.size} :
             qa_native_declaration_primary(role->artifact->declaration);
+        if (!application_q3_movement_profile_read(role, primary_bytes, &role->movement, error) ||
+            !application_guest_input_profile_read(role, primary_bytes, &role->input_profile, error)) goto failed;
+    }
+    if (kind == QA_QVM_GAME && role->vm) {
         if (role->artifact->items_resource && !qa_resource_bytes(role->artifact->items_resource).size) {
             application_fail(error, QA_ERROR_FORMAT, "Restored Q3 item declaration is empty"); goto failed;
         }
@@ -673,8 +679,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             if (!application_guest_inventory_catalog_bind(role, &inventory_catalog, error)) goto failed;
         }
         application_q3_weapon_profile weapons = {0};
-        if (!application_q3_movement_profile_read(role, primary_bytes, &role->movement, error) ||
-            !application_q3_weapon_profile_read(role, primary_bytes, NULL, 0, &weapons, error)) goto failed;
+        if (!application_q3_weapon_profile_read(role, primary_bytes, NULL, 0, &weapons, error)) goto failed;
         if (weapons.present) {
             if (!application_q3_weapons_services_create(role, &role->weapon_services, error)) {
                 application_q3_weapon_profile_free(&weapons); goto failed;
@@ -684,7 +689,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 application_q3_weapon_profile_free(&weapons); goto failed;
             }
         } else application_q3_weapon_profile_free(&weapons);
-        if (!application_guest_input_attach(role, primary_bytes, error)) goto failed;
+        if (!application_guest_input_attach(role, error)) goto failed;
         if (role->weapons && !engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
         if (role->artifact->combat_profile && !application_q3_combat_create(role,
             role->artifact->combat_profile, &role->combat, error)) goto failed;
@@ -778,8 +783,7 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     bool ok = qa_native_host_create_q3(role->module, &role->native_options, &role->native, &failure);
     if (ok) ok = qa_q3_host_attach_native(role->host, role->native, &failure);
     if (ok && role->kind == QA_QVM_GAME)
-        ok = application_guest_input_attach(role,
-            qa_native_declaration_primary(role->artifact->declaration), &failure);
+        ok = application_guest_input_attach(role, &failure);
     --engine->calls;
     engine->entered_role = previous;
     if (!ok) {

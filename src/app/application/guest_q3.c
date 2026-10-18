@@ -126,8 +126,13 @@ static bool spawn_complete(q3g_role *role, q3g_spawn_scope *scope, qa_error *err
     return true;
 }
 
+typedef struct q3g_source_invocation {
+    uint32_t entry;
+    uint64_t actor_address;
+} q3g_source_invocation;
+
 static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments, size_t count,
-    bool source, int32_t *result, qa_error *error)
+    const q3g_source_invocation *source, int32_t *result, qa_error *error)
 {
     if (!role || !role->host || role->retired || role->engine->restore_pending ||
         (role->source_cleared && role->engine->initializing_role != role) ||
@@ -135,9 +140,9 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
             !(role->kind == QA_QVM_GAME && role->shutdown_entry && role->engine->calls && command == 6)) ||
         !result || count > 9 || (count && !arguments))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
-    if (source && (role->kind != QA_QVM_GAME || !role->vm))
+    if (source && (role->kind != QA_QVM_GAME || (!role->vm && !role->module)))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Original respawn requires its declared QVM source entry");
+            "Original respawn requires its declared GAME source entry");
     if (role->kind == QA_QVM_CGAME && role->abi == QA_QVM_Q3_116N && command > 5)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Legacy CGAME has no requested export");
     bool client_init = !source && role->kind != QA_QVM_GAME && command == (role->kind == QA_QVM_UI ? 1 : 0);
@@ -146,7 +151,7 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
         return application_fail(error, QA_ERROR_ARGUMENT, "Client Init requires its actual source invocation arguments");
     if (!q3g_role_activate(role, error)) return false;
     q3g_spawn_scope spawned;
-    if (!spawn_capture(role, command, source, &spawned, error)) return false;
+    if (!spawn_capture(role, command, source != NULL, &spawned, error)) return false;
     q3g_fire_scope fire = {0};
     if (!q3g_fire_begin(role, &fire, error)) return false;
     bool drawing = !source && role->kind == QA_QVM_CGAME && command == 3;
@@ -188,10 +193,26 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     ++role->entry_depth;
     bool ok;
     if (role->native) {
-        ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
-        if (command == (role->kind == QA_QVM_UI ? 1 : 0) &&
-            qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED)
-            role->initialized = true;
+        if (source) {
+            qa_native_instance *instance = qa_native_host_instance(role->native);
+            qa_native_module_info module = qa_native_module_describe(role->module);
+            qa_native_address entry;
+            const qa_native_type parameter = {.kind = QA_NATIVE_ADDRESS, .count = 1};
+            const qa_native_signature signature = {.abi = module.image.target.abi,
+                .parameters = &parameter, .parameter_count = 1,
+                .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+            const qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
+                .as.address = source->actor_address};
+            qa_native_value returned = {.type = QA_NATIVE_VOID};
+            ok = qa_native_rva(instance, source->entry, 1, &entry, error) &&
+                qa_native_invoke(instance, entry, &signature, &argument, 1, &returned, error);
+            if (ok) *result = 0;
+        } else {
+            ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
+            if (command == (role->kind == QA_QVM_UI ? 1 : 0) &&
+                qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED)
+                role->initialized = true;
+        }
     }
     else {
         int32_t words[10] = {command};
@@ -205,9 +226,14 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
             ok = application_q3_combat_enter(role->combat, error);
             combat_entry = ok;
         }
-        if (ok && source)
-            ok = qa_qvm_invoke(role->vm, (uint32_t)command, arguments, count, result, error);
-        else if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
+        if (ok && source) {
+            if (source->actor_address > INT32_MAX)
+                ok = application_fail(error, QA_ERROR_FORMAT, "Original respawn entity exceeds its QVM pointer word");
+            else {
+                int32_t argument = (int32_t)source->actor_address;
+                ok = qa_qvm_invoke(role->vm, source->entry, &argument, 1, result, error);
+            }
+        } else if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
                 qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
                 qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
         if (combat_entry) {
@@ -253,7 +279,7 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
 bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t count,
     int32_t *result, qa_error *error)
 {
-    return q3g_invoke(role, command, arguments, count, false, result, error);
+    return q3g_invoke(role, command, arguments, count, NULL, result, error);
 }
 
 bool application_q3_guest_respawn(application_provider *provider, qa_actor_id actor,
@@ -261,7 +287,7 @@ bool application_q3_guest_respawn(application_provider *provider, qa_actor_id ac
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *role = engine ? engine->game : NULL;
-    uint32_t entry = application_guest_input_respawn_entry(role), slot;
+    uint32_t entry = role ? role->input_profile.respawn : 0, slot;
     if (!entry)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Selected original character has no declared corpse and respawn operation");
@@ -271,10 +297,9 @@ bool application_q3_guest_respawn(application_provider *provider, qa_actor_id ac
     qa_q3_host_game_data data;
     if (!qa_q3_host_game_data_read(role->host, &data)) return false;
     uint64_t address = data.entities_address + (uint64_t)slot * data.entity_stride;
-    if (address > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Original respawn entity exceeds its QVM pointer word");
-    int32_t argument = (int32_t)address, result;
-    return q3g_invoke(role, (int32_t)entry, &argument, 1, true, &result, error);
+    q3g_source_invocation source = {.entry = entry, .actor_address = address};
+    int32_t result;
+    return q3g_invoke(role, 0, NULL, 0, &source, &result, error);
 }
 
 qa_qvm_role q3g_primary_role(const char *path)

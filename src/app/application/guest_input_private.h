@@ -5,27 +5,11 @@
 #include "guest_q3_weapons.h"
 #include "qa/network_unified_frame_pool.h"
 
-typedef struct application_guest_input_profile {
-    const application_q3_movement_profile *source;
-    uint32_t client_think, run_client, client_spawn, respawn;
-    uint32_t client_command;
-    struct { uint32_t entry, connect, call; } bot_setup;
-    int32_t *intermission_modes;
-    size_t intermission_count;
-    int32_t normal_mode, noclip_mode, freeze_mode, dead_mode;
-    bool input_present, has_modes, has_dead_mode;
-} application_guest_input_profile;
-
-bool application_guest_input_profile_read(q3g_role *, qa_bytes primary,
-                                           application_guest_input_profile *, qa_error *);
-void application_guest_input_profile_free(application_guest_input_profile *);
-
 /* Borrows the GAME movement declaration independently of its weapon owner. */
-bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
+bool application_guest_input_attach(q3g_role *, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
 /* The caller removes this temporary binding after the genuine Connect export. */
 bool application_guest_input_bot_setup_bind(q3g_role *, qa_qvm_binding *, qa_error *);
-uint32_t application_guest_input_respawn_entry(q3g_role *);
 bool application_guest_input_prepare_weapon(void *role, qa_actor_id,
     const qa_qvm_call *, qa_unified_frame_lease *, application_q3_weapon_preparation *, qa_error *);
 bool application_guest_input_weapon_completed(void *role, qa_actor_id,

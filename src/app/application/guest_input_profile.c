@@ -1,5 +1,5 @@
 #include "guest_q3_reference.h"
-#include "guest_input_private.h"
+#include "guest_q3_private.h"
 #include "qa/json.h"
 
 static bool word(const qa_json_document *doc, qa_json_id object, const char *key,
@@ -97,7 +97,18 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
     application_guest_input_profile p = {.source = &role->movement,
         .client_command = UINT32_MAX};
-    if (!role->image) { *out = p; return true; }
+    if (!role->image) {
+        if (role->declaration) {
+            qa_native_declared_region region; qa_error local = {0};
+            if (qa_native_declaration_find_region(role->declaration,
+                    "/input/entries/respawn", &region, &local)) p.respawn = region.entry_rva;
+            else if (local.code != QA_ERROR_NOT_FOUND) {
+                if (error) *error = local;
+                return false;
+            }
+        }
+        *out = p; return true;
+    }
     bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
     if (base) {
         p.bot_setup.entry = 56212;

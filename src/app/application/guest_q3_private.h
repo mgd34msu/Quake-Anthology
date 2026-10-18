@@ -7,6 +7,7 @@
 #include "native_process_owner.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_movement_profile.h"
+#include "guest_q3_input_profile.h"
 #include "guest_q3_equipment.h"
 #include "guest_q3_grapple_profile.h"
 #include "guest_q3_fire.h"
@@ -98,6 +99,7 @@ typedef struct q3g_role {
     q3g_artifact *artifact;
     const qa_launch_instance *descriptor;
     application_q3_movement_profile movement;
+    application_guest_input_profile input_profile;
     struct application_guest_input *input;
     struct application_guest_projection *projection;
     struct application_q3_catalog *catalog;
