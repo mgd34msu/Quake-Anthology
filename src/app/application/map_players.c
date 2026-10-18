@@ -2151,8 +2151,6 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
         application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Selected character respawn lost its actual player binding");
-    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
-    if (selected_mode(choices) == QA_MODE_SINGLE_PLAYER) return true;
     application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
     if (!source || source != app->players->map_provider)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -2165,8 +2163,11 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
         return qa_q2_player_respawn(source->state.q2, actor, error);
     if (q3g_engine(source))
         return application_q3_guest_respawn(source, actor, error);
-    if (source->kind == APPLICATION_PROVIDER_QC && character->kind == APPLICATION_PROVIDER_Q1)
+    if (source->kind == APPLICATION_PROVIDER_QC && character->kind == APPLICATION_PROVIDER_Q1) {
+        const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
+        if (selected_mode(choices) == QA_MODE_SINGLE_PLAYER) return true;
         return selected_qc_native_respawn(character, source, actor, error);
+    }
     return application_fail(error, QA_ERROR_UNSUPPORTED,
         "Selected character respawn requires its genuine original source continuation");
 }
