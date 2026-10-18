@@ -3540,6 +3540,15 @@ static void test_console_command_precedence(void)
             context.owner,false,release_count_command,&color_handler,&error));
         CHECK(qa_console_execute_now(console,&context,"color 4 13",&error));
         CHECK(color_handler.completed==1 && qa_cvars_find(cvars,"_cl_color")->integer==0);
+        CHECK(qa_cvars_set(cvars,"color","102",false,&error));
+        CHECK(qa_cvars_find(cvars,"color")->integer==102 && qa_cvars_find(cvars,"_cl_color")->integer==102);
+        CHECK(qa_cvars_find(cvars,"color1")->integer==6 && qa_cvars_find(cvars,"color2")->integer==6);
+        CHECK(qa_cvars_set(cvars,"_cl_color","136",false,&error));
+        CHECK(qa_cvars_find(cvars,"color")->integer==136 && qa_cvars_find(cvars,"_cl_color")->integer==136);
+        CHECK(qa_cvars_find(cvars,"color1")->integer==6 && qa_cvars_find(cvars,"color2")->integer==6);
+        CHECK(qa_cvars_set(cvars,"autoswitch","2",false,&error));
+        CHECK(qa_cvars_find(cvars,"autoswitch")->integer==2);
+        CHECK(!strcmp(qa_cvars_find(cvars,"qts_weapon_autoswitch")->value,"always"));
         CHECK(qa_cvars_register(cvars,"qa_scalar_collision","1",0,1,"",&error));
         CHECK(!qa_console_register_context(console,&context,"qa_scalar_collision","",context.owner,
             context.owner,false,release_count_command,&color_handler,&error));

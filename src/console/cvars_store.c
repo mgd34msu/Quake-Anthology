@@ -128,6 +128,15 @@ const qa_cvar_catalog_conversion *qac_cvars_conversion(const qa_cvars *registry,
     if (conversion->role_scope==QA_CATALOG_CGAME && options.role!=QA_CVAR_ROLE_CGAME) return NULL;
     return conversion;
 }
+bool qac_cvar_detail_binding_matches(const qa_cvar_catalog_binding *first,
+    const qa_cvar_catalog_binding *second,qa_ruleset_id dialect)
+{
+    if(first==second) return true;
+    if(!first || !second || first->row_index!=second->row_index || first->seat!=second->seat ||
+        first->side_scope!=second->side_scope || first->canonical!=second->canonical ||
+        first->conversion[dialect]!=second->conversion[dialect]) return false;
+    return qa_cvar_catalog_conversions[first->conversion[dialect]].operation==QA_CATALOG_OP_PLAYER_COLORS;
+}
 
 void qac_cvars_refresh(qa_cvars *registry, cvar *entry)
 {
@@ -189,7 +198,8 @@ const qa_cvar_view *qac_cvars_project_alias(const qa_cvars *registry,
         view->modified=alias->modified;
     }
     const cvar_detail *detail=canonical->details;
-    while (detail && (detail->binding!=binding || detail->dialect!=options.dialect)) detail=detail->next;
+    while (detail && (detail->dialect!=options.dialect ||
+        !qac_cvar_detail_binding_matches(detail->binding,binding,options.dialect))) detail=detail->next;
     if (!alias || binding) {
         view->value=project_text(registry,values,binding,entry->view.value,entry->view.value,
             detail?detail->value:NULL,cache->value,false,false);

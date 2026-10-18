@@ -240,6 +240,8 @@ const qa_cvar_view *qac_cvars_values_handle(const qa_cvars *, cvar_values *, siz
 size_t qac_cvars_values_count(const qa_cvars *, const cvar_values *, bool aliases, bool whole_store);
 const qa_cvar_catalog_conversion *qac_cvars_conversion(const qa_cvars *,
     const cvar_values *, const qa_cvar_catalog_binding *);
+bool qac_cvar_detail_binding_matches(const qa_cvar_catalog_binding *,
+    const qa_cvar_catalog_binding *, qa_ruleset_id);
 qa_cvar_options qac_cvars_view_options(const qa_cvars *, const cvar_values *);
 cvar *qac_cvars_source_row(qa_cvars *, cvar_values *, cvar *, qa_error *);
 cvar_alias *qac_cvars_source_alias(qa_cvars *, cvar_values *, cvar_alias *, qa_error *);

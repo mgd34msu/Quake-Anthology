@@ -1000,7 +1000,8 @@ static bool write_prepare(cvar_target target,cvar_write *write,qa_error *error)
         write->owned_detail=qac_copy(write->detail_value,error);
         if (!write->owned_detail) goto failed;
         for (cvar_detail *detail=canonical->details;detail;detail=detail->next)
-            if (detail->binding==write->detail_binding && detail->dialect==write->detail_dialect) { write->detail=detail; break; }
+            if (detail->dialect==write->detail_dialect &&
+                qac_cvar_detail_binding_matches(detail->binding,write->detail_binding,write->detail_dialect)) { write->detail=detail; break; }
         if (!write->detail) {
             write->allocated_detail=calloc(1,sizeof(*write->allocated_detail));
             if (!write->allocated_detail) { qac_fail(error,QA_ERROR_MEMORY,"retaining canonical enum metadata"); goto failed; }
@@ -1491,7 +1492,8 @@ static bool convert_input_as(cvar_target target,const qa_cvar_catalog_binding *b
             qa_cvar_catalog_string(qa_cvar_catalog_rows[binding->row_index].name));
         const cvar *canonical=qac_cvars_canonical(entry);
         for (const cvar_detail *detail=canonical?canonical->details:NULL;detail;detail=detail->next)
-            if (detail->binding==binding && detail->dialect==options.dialect) { input.detail=detail->value; break; }
+            if (detail->dialect==options.dialect &&
+                qac_cvar_detail_binding_matches(detail->binding,binding,options.dialect)) { input.detail=detail->value; break; }
     }
     return qac_cvar_write_conversion(&input,out,error);
 }
@@ -1664,7 +1666,8 @@ static bool write_policy(cvar_target target,cvar_write *write,const char *name,
     write->mark=strcmp(write->pending && canonical->view.latched_value?canonical->view.latched_value:canonical->view.value,write->value)!=0;
     if (write->detail_binding) {
         const cvar_detail *detail=canonical->details;
-        while (detail && (detail->binding!=write->detail_binding || detail->dialect!=write->detail_dialect)) detail=detail->next;
+        while (detail && (detail->dialect!=write->detail_dialect ||
+            !qac_cvar_detail_binding_matches(detail->binding,write->detail_binding,write->detail_dialect))) detail=detail->next;
         const char *previous=detail?(write->pending?detail->latched_value:detail->value):NULL;
         if ((!previous)!=(!write->detail_value) || (previous && strcmp(previous,write->detail_value))) write->mark=true;
     }
