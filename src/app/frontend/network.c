@@ -3489,7 +3489,7 @@ bool frontend_network_client_services(qa_frontend *f, qa_application *applicatio
     qa_actor_owner owner, qa_qvm_role role,
     uint32_t seat, qa_q3_host_options *host, qa_error *error)
 {
-    if (f->options.network_protocol.kind != QA_NET_Q3_68 || role == QA_QVM_GAME) return true;
+    if (role == QA_QVM_GAME || !q3_client_seat(f,owner,seat)) return true;
     uint32_t ordinal;
     if (!qa_application_constructor_seat_ordinal(application, owner, seat, &ordinal, error))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 remote connection owns one local client seat");
