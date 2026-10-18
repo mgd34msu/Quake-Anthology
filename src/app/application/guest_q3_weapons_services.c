@@ -730,7 +730,7 @@ bool application_q3_weapons_services_q2_input(void *context, qa_actor_id actor,
     bool available, attacking;
     if (!application_q3_weapons_available(role->weapons, actor, false, &available, error) ||
         !application_q3_weapons_available(role->weapons, actor, true, &attacking, error) ||
-        !qa_qvm_read_player(role->vm, (int32_t)source.player, true, &player, error) ||
+        !qa_q3_host_source_player(role->host, source.slot, &player, error) ||
         !qa_world_body_read(app->world, actor, &body, error)) return false;
     bool pressed = input->attack;
     if (!application_guest_input_weapon_slice(app, actor)) {
@@ -779,7 +779,7 @@ bool application_q3_weapons_services_pose(void *context, qa_actor_id actor,
     q3_weapon_actor source; qa_q3_player player; qa_q3_selected_source_pose pose = {0}; qa_combat_state combat;
     if (!out || !q3_weapon_services_source(s, actor, &source, error)) return false;
     ++s->calls;
-    bool ok = qa_qvm_read_player(role->vm, (int32_t)source.player, true, &player, error) &&
+    bool ok = qa_q3_host_source_player(role->host, source.slot, &player, error) &&
         application_q3_weapons_max_health(role->weapons, actor, &pose.max_health, error) &&
         application_q3_weapons_powerup_until(role->weapons, actor, APPLICATION_Q3_QUAD, &pose.quad_until_ms, error) &&
         application_q3_weapons_powerup_until(role->weapons, actor, APPLICATION_Q3_HASTE, &pose.haste_until_ms, error) &&

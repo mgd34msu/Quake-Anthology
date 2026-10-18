@@ -49,7 +49,7 @@ struct application_q3_combat {
     size_t native_count;
     uint64_t sequence;
     size_t count, calls, source_entries;
-    bool direct_bound, native_rebound;
+    bool direct_bound;
 };
 static qa_combat *shared(application_q3_combat *owner)
 { return owner->role->engine->provider->application->combat; }
@@ -537,18 +537,18 @@ static bool native_reactions_enter(application_q3_combat *owner, qa_error *error
 }
 static bool native_reactions_rebind(application_q3_combat *owner, qa_error *error)
 {
-    if (owner->native_rebound) return true;
-    qa_q3_host_game_data table;
-    if (!qa_q3_host_game_data_read(owner->role->host, &table)) return true;
+    struct application_q3_guest *engine = owner->role->engine;
     qa_application *app = owner->role->engine->provider->application;
-    for (uint32_t slot = 0; slot < table.entity_count; ++slot) {
-        qa_actor_id actor;
-        if (!qa_q3_host_actor(owner->role->host, slot, false, &actor, error)) return false;
-        if (!actor.registry || !qa_actors_get(qa_session_actors(app->session), actor) ||
+    const qa_id_index *clients = &engine->client_actors.retained;
+    for (size_t i = 0; i < clients->count; ++i) {
+        uint32_t slot = (uint32_t)clients->entries[i].value;
+        const q3g_client *client = engine->clients + slot;
+        qa_actor_id actor = client->actor;
+        if (!client->connected || !client->begun || client->pending_retirement ||
+            actor_find(owner, actor) || !qa_actors_get(qa_session_actors(app->session), actor) ||
             application_provider_for(app, actor, QA_ROLE_CHARACTER, "") == owner->role->engine->provider) continue;
         if (!application_q3_combat_admit(owner, actor, error)) return false;
     }
-    owner->native_rebound = true;
     return true;
 }
 bool application_q3_combat_enter(application_q3_combat *owner, qa_error *error)
@@ -836,7 +836,6 @@ bool application_q3_combat_create(q3g_role *role, const application_q3_combat_pr
     if (!role->vm) {
         owner->native_bindings = qa_arena_alloc(qa_unified_frame_lease_arena(owner->actor_storage),
             owner->actor_chunk * 2 * sizeof(*owner->native_bindings), _Alignof(native_reaction_binding), error);
-        owner->native_rebound = !role->engine->restore_pending;
         return owner->native_bindings != NULL;
     }
     if (!application_q3_damage_scopes_create(role, profile, &owner->scopes, error)) return false;

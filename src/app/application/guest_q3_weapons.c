@@ -555,7 +555,7 @@ bool application_q3_weapons_prediction_read(application_q3_weapons *w, qa_actor_
 {
     q3_weapon_actor source; qa_q3_player player;
     if (!out || !q3_weapons_actor(w, actor, &source, error) ||
-        !qa_qvm_read_player(w->role->vm, (int32_t)source.player, true, &player, error)) return false;
+        !qa_q3_host_source_player(w->role->host, source.slot, &player, error)) return false;
     if (!q3_weapons_current(w, &source))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original prediction lost its current Source player");
     *out = (application_q3_weapon_prediction){player.weapon, player.weaponState, player.weaponTime};
@@ -668,7 +668,7 @@ static bool scratch_action(void *context, qa_qvm *vm, uint32_t offset, qa_error 
     qa_q3_player player;
     qa_vec3 input = action->angles;
     if (action->spawn) {
-        if (!qa_qvm_read_player(vm, (int32_t)action->actor.player, true, &player, error)) return false;
+        if (!qa_q3_host_source_player(w->role->host, action->actor.slot, &player, error)) return false;
         input = qa_v3(player.origin[0], player.origin[1], player.origin[2]);
     }
     uint8_t bytes[12]; const float values[] = {input.x, input.y, input.z};
@@ -703,8 +703,8 @@ bool application_q3_weapons_teleport_state(application_q3_weapons *w, qa_actor_i
     qa_vec3 origin, qa_vec3 velocity, qa_vec3 angles, int32_t hold, qa_error *error)
 {
     weapon_scratch_action action = {.weapons = w, .angles = angles}; qa_q3_player state;
-    if (!q3_weapons_actor(w, actor, &action.actor, error) || !qa_qvm_read_player(w->role->vm,
-        (int32_t)action.actor.player, true, &state, error)) return false;
+    if (!q3_weapons_actor(w, actor, &action.actor, error) ||
+        !qa_q3_host_source_player(w->role->host, action.actor.slot, &state, error)) return false;
     const float position[] = {origin.x, origin.y, origin.z}, motion[] = {velocity.x, velocity.y, velocity.z};
     memcpy(state.origin, position, sizeof(position)); memcpy(state.velocity, motion, sizeof(motion));
     state.groundEntityNum = 1023; state.eFlags ^= 4; state.pmFlags |= 64; state.pmTime = hold;

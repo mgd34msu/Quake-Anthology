@@ -458,7 +458,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     qa_q3_usercmd source;
     qa_q3_player player;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
-        !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &player, error)) return false;
+        !qa_q3_host_source_player(input->role->host, scope->slot, &player, error)) return false;
     qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
@@ -569,7 +569,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_q3_usercmd source;
     qa_q3_player player;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
-        !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &player, error)) return false;
+        !qa_q3_host_source_player(input->role->host, scope->slot, &player, error)) return false;
     qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest source input lost its continuation");
@@ -754,7 +754,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     bool slice = call->instruction == input->profile->source->movement_slice;
     qa_q3_usercmd command; qa_q3_player state;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &command, error) ||
-        !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &state, error)) {
+        !qa_q3_host_source_player(input->role->host, scope->slot, &state, error)) {
         scope->movement = previous; return false;
     }
     int64_t elapsed = (int64_t)command.serverTime - (int64_t)state.commandTime;
@@ -857,7 +857,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     if (ok && !cancelled && scope->weapon_slice && !body_scope.retired && !body_scope.cancelled &&
         current(input, scope, call)) {
         qa_q3_player completed;
-        ok = qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &completed, error) &&
+        ok = qa_q3_host_source_player(input->role->host, scope->slot, &completed, error) &&
             application_q3_weapons_services_slice_finish(input->role, scope->actor,
                 &scope->application_command, &completed, scope->weapon_reached, error);
     }
@@ -1305,7 +1305,7 @@ bool application_arsenal_guest_equipment_handoff_ready(application_provider *pro
         return application_fail(error, QA_ERROR_NOT_FOUND,
             "Original Q3 equipment handoff lost its located source player");
     qa_q3_player player;
-    return qa_qvm_read_player(role->vm, (int32_t)scope.player, true, &player, error);
+    return qa_q3_host_source_player(role->host, scope.slot, &player, error);
 }
 
 bool application_arsenal_guest_output_admit(application_provider *provider, uint8_t channels,

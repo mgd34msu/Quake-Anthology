@@ -627,6 +627,12 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 .inventory = app->inventory, .targets = app->targets, .owner = provider->owner},
         };
         if (!application_q3_guest_native_options(app, provider, kind, seat, &native.instance, error)) goto failed;
+        if (kind == QA_QVM_GAME && role->artifact->combat_profile) {
+            const application_q3_combat_definition *combat =
+                application_q3_combat_profile_definition(role->artifact->combat_profile);
+            native.instance.observe = combat->reactions.pain_call.arguments_present ||
+                combat->reactions.die_call.arguments_present;
+        }
         if (role->declaration) {
             native.instance.declaration = role->declaration;
         }
