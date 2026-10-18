@@ -157,8 +157,9 @@ bool qa_q3_host_source_call(qa_q3_host *host, const qa_qvm_call *parent, uint64_
         int32_t *words = count ? qa_arena_alloc(&host->scratch, count * sizeof(*words),
             _Alignof(int32_t), error) : NULL;
         qa_native_value checked = {.type = result->type};
-        ok = (!count || words) && qa_q3_source_word_to_value(&checked, 0, error) && entry <= INT32_MAX;
-        if (entry > INT32_MAX)
+        uint64_t maximum_entry = parent ? UINT32_MAX : INT32_MAX;
+        ok = (!count || words) && qa_q3_source_word_to_value(&checked, 0, error) && entry <= maximum_entry;
+        if (entry > maximum_entry)
             q3_fail(error, QA_ERROR_ARGUMENT, 0, "Source entry exceeds its QVM instruction width");
         for (size_t i = 0; ok && i < count; ++i)
             ok = qa_q3_source_value_to_word(arguments + i, words + i, error);

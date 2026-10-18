@@ -10584,6 +10584,25 @@ static void test_native_vsprintf(void)
     }
 }
 
+static bool q3_source_import(void *context, const qa_qvm_call *call, int32_t trap,
+    int32_t *result, qa_error *error)
+{
+    CHECK(trap == 0);
+    ++*(unsigned *)context;
+    return qa_qvm_call_argument(call, 0, result, error);
+}
+
+static bool q3_source_imported_callback(void *context, const qa_qvm_call *call,
+    int32_t *result, qa_error *error)
+{
+    qa_native_value argument = {.type = QA_NATIVE_I32, .as.i32 = -37};
+    qa_native_value returned = {.type = QA_NATIVE_I32};
+    if (!qa_q3_host_source_call(context, call, UINT32_MAX,
+            &argument, 1, &returned, error)) return false;
+    *result = returned.as.i32;
+    return true;
+}
+
 static void test_q3_source_memory(void)
 {
     qa_error error = {0};
@@ -10604,7 +10623,9 @@ static void test_q3_source_memory(void)
     qa_store_u32le(bytes + 69, UINT32_C(0x12345678));
     qa_qvm_image *image = NULL; qa_qvm *vm = NULL;
     CHECK(qa_qvm_image_load((qa_bytes){bytes, sizeof(bytes)}, &image, &error));
-    qa_qvm_options vm_options = {.role = QA_QVM_GAME, .abi = QA_QVM_Q3_MODERN};
+    unsigned imports = 0;
+    qa_qvm_options vm_options = {.role = QA_QVM_GAME, .abi = QA_QVM_Q3_MODERN,
+        .syscall = q3_source_import, .context = &imports};
     CHECK(qa_qvm_create(image, &vm_options, &vm, &error));
     qa_q3_host host = {.options = {.role = QA_QVM_GAME, .abi = QA_QVM_Q3_MODERN}};
     CHECK(qa_q3_host_attach_qvm(&host, vm, &error));
@@ -10636,6 +10657,12 @@ static void test_q3_source_memory(void)
     returned.type = QA_NATIVE_U32;
     CHECK(qa_q3_host_source_call(&host, NULL, 2, &argument, 1, &returned, &error));
     CHECK(returned.as.u32 == argument.as.u32 && !host.calls);
+    qa_qvm_binding imported;
+    CHECK(qa_qvm_bind_function(vm, 2, true, q3_source_imported_callback, &host, &imported, &error));
+    returned.type = QA_NATIVE_I32;
+    CHECK(qa_q3_host_source_call(&host, NULL, 2, &argument, 1, &returned, &error));
+    CHECK(returned.as.i32 == -37 && imports == 1 && !host.calls);
+    CHECK(qa_qvm_unbind(vm, imported, &error));
     uint8_t word[4];
     CHECK(qa_q3_host_source_bytes_read(&host, 0, word, sizeof(word), &error));
     CHECK(qa_load_u32le(word) == UINT32_C(0x12345678));
