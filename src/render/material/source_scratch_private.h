@@ -95,7 +95,6 @@ struct qa_material_source_scratch {
     float far_clip;
     material_source_entity entity;
     qa_q3_source_scene_bank *scene_bank;
-    qa_material_order *queued_order;
     const qa_scene_image *(*runtime_video_frame)(void *, uint64_t, double, qa_error *);
     void *runtime_video_context;
     qa_scene_source_diagnostics_read_fn runtime_diagnostics;
@@ -139,7 +138,4 @@ bool material_source_texture_bind(qa_material_source_scratch *, const qa_scene_i
 bool material_source_lightmap_set(qa_material_source_scratch *, const qa_scene_image *, qa_error *);
 bool material_source_deform_overflow(qa_material_source_scratch *, const qa_material_context *,
     qa_scene_frame *, qa_error *);
-bool material_source_order_attach(qa_material_order *, qa_material_source_scratch *, qa_error *);
-void material_source_order_detach(qa_material_order *, qa_material_source_scratch *);
-void material_source_sort_inserted(qa_material_source_scratch *, uint32_t);
 #endif

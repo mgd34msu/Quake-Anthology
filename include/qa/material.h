@@ -11,7 +11,6 @@ qa_material_order *qa_material_order_create(qa_error *);
 void qa_material_order_destroy(qa_material_order *);
 bool qa_material_order_prepare(qa_material_order *, qa_error *);
 bool qa_material_order_rank(const qa_material_order *, const qa_material *, uint32_t *, qa_error *);
-const qa_material *qa_material_order_sorted_at(const qa_material_order *, uint32_t);
 /* Physical membership, including an unpublished record; never prepares sort. */
 bool qa_material_order_has_record(const qa_material_order *, const qa_material *);
 /* Published renderer-wide registrations; array lives in scratch, materials

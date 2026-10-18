@@ -187,7 +187,6 @@ bool qa_render_source_texture_subimage(qa_render_source_texture *texture,const q
 }
 void material_source_release(qa_material_source_scratch *source)
 {
-    material_source_order_detach(source->queued_order, source);
     const qa_material *material = source->material;
     source->material = NULL;
     qa_material_release(material);

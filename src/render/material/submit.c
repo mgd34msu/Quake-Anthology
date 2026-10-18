@@ -25,24 +25,10 @@ bool qa_material_source_no_bind_image(qa_material_source_scratch *source,
     if (!source || !out || !qa_render_controls_source_dlight_read(source->owner, &dlight, error)) return false;
     *out = dlight ? dlight : requested; return true;
 }
-static void source_sort_fix_rows(material_source_submission *row, uint32_t inserted)
-{
-    for (; row; row = row->next) {
-        uint32_t packed = row->packed_sort, shader = (packed >> 17) & 16383u;
-        if (shader >= inserted) row->packed_sort = ((shader + 1) << 17) |
-            (packed & UINT32_C(0x1ffff));
-    }
-}
-void material_source_sort_inserted(qa_material_source_scratch *source, uint32_t inserted)
-{
-    for (material_source_operation *operation = source->operations; operation; operation = operation->next)
-        if (!operation->pictures) source_sort_fix_rows(operation->head, inserted);
-}
 static bool source_sort_capture(material_source_submission *row, qa_scene_frame *frame, qa_error *error)
 {
     uint32_t rank;
-    if (!qa_material_order_prepare(frame->material_order, error) ||
-        !qa_material_order_rank(frame->material_order, row->original, &rank, error)) return false;
+    if (!qa_material_order_rank(frame->material_order, row->original, &rank, error)) return false;
     row->packed_sort = (rank << 17) | (row->context.entity << 7) |
         (row->context.fog_index << 2) | (row->context.source_dlighted ? 1u : 0u);
     return true;
@@ -1049,9 +1035,6 @@ bool qa_material_source_scene_begin(qa_material_source_scratch *source, qa_scene
         if (frame->source_pending) { material_source_leave(source); qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Frame already owns pending Source work"); return false; }
     }
     source->submitting = false; source->collecting = true; source->frame = frame;
-    if (!material_source_order_attach(frame->material_order, source, error)) {
-        source->collecting = false; material_source_leave(source); return false;
-    }
     source->pictures = false; frame->source_pending = source;
     source->head = source->tail = NULL; source->submission_count = 0;
     source->sky = (qa_material_context){0};
@@ -1235,7 +1218,7 @@ static bool source_collect(const qa_material *original, const qa_scene_mesh *mes
         }
         row->context.texts = texts;
     }
-    if (!source_sort_capture(row, frame, error) || !qa_material_retain(original, error)) return false;
+    if (!qa_material_retain(original, error)) return false;
     if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
         qa_material_release(original); return false;
     }
@@ -1331,7 +1314,7 @@ bool qa_material_source_commands(const qa_material *material, const qa_material_
         if (!row->commands) return false;
         memcpy(row->commands, frame->commands + first, row->command_count * sizeof(*row->commands));
     }
-    if (!source_sort_capture(row, frame, error) || !qa_material_retain(material, error)) return false;
+    if (!qa_material_retain(material, error)) return false;
     if (context->source_light_world && !qa_scene_world_retain((qa_scene_world *)context->source_light_world, error)) {
         qa_material_release(material); return false;
     }
@@ -1487,11 +1470,13 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
         }
         material_source_submission *row = source->head;
         for (size_t i = 0; ok && i < count; ++i, row = row->next) {
+            if (!source->pictures) ok = source_sort_capture(row, frame, error);
             if (ok) {
                 rows[i] = row; ordered[i] = groups + i;
                 groups[i] = (qa_scene_group){.ordinal = i, .source_sort = row->packed_sort};
             }
         }
+        if (ok && !source->pictures) ok = material_source_sort(ordered, count, error);
     }
     source->collecting = false; source->dispatching = true;
     const material_source_submission *batch = NULL;
@@ -1504,17 +1489,10 @@ static bool source_dispatch_scene(qa_material_source_scratch *source, qa_scene_f
         uint32_t next_key = row->packed_sort;
         if (!source->pictures) {
             material_source_submission *decoded = decoded_rows + decoded_count;
-            uint32_t shader = (next_key >> 17) & 16383u;
-            const qa_material *sorted_material = qa_material_order_sorted_at(frame->material_order, shader);
-            if (!sorted_material) {
-                qa_error_set(error, QA_ERROR_FORMAT, shader, "Source packed sort selects an absent registered shader");
-                ok = false; break;
-            }
             qa_scene_fog_volume fog;
             if (!qa_scene_world_source_fog_read(source->world, (next_key >> 2) & 31u, &fog, error) ||
-                !qa_material_retain(sorted_material, error)) { ok = false; break; }
+                !qa_material_retain(row->original, error)) { ok = false; break; }
             *decoded = *row;
-            decoded->original = sorted_material;
             decoded->context.entity = (next_key >> 7) & 1023u;
             decoded->context.fog_index = fog.index;
             decoded->context.fog = fog.fog;
@@ -1696,22 +1674,6 @@ bool qa_material_source_scene_end(qa_material_source_scratch *source, qa_scene_f
         return false;
     }
     if (!submit) return source_issue(source, frame, false, error);
-    if (!source->pictures && source->submission_count > 1) {
-        size_t count = source->submission_count;
-        material_source_submission **rows = frame_array(frame, count, sizeof(*rows), alignof(material_source_submission *), error);
-        qa_scene_group *groups = frame_array(frame, count, sizeof(*groups), alignof(qa_scene_group), error);
-        qa_scene_group **ordered = frame_array(frame, count, sizeof(*ordered), alignof(qa_scene_group *), error);
-        if (!rows || !groups || !ordered) return false;
-        material_source_submission *row = source->head;
-        for (size_t i = 0; i < count; ++i, row = row->next) {
-            rows[i] = row; groups[i] = (qa_scene_group){.ordinal = i, .source_sort = row->packed_sort};
-            ordered[i] = groups + i;
-        }
-        if (!material_source_sort(ordered, count, error)) return false;
-        source->head = rows[ordered[0]->ordinal]; source->tail = rows[ordered[count - 1]->ordinal];
-        for (size_t i = 0; i < count; ++i)
-            rows[ordered[i]->ordinal]->next = i + 1 < count ? rows[ordered[i + 1]->ordinal] : NULL;
-    }
     material_source_operation *operation = frame_array(frame, 1, sizeof(*operation),
         alignof(material_source_operation), error);
     if (!operation) return false;
@@ -1897,7 +1859,6 @@ static bool source_issue(qa_material_source_scratch *source, qa_scene_frame *fra
     source->issued_count = 0; source->issue_started = false;
     source->collecting = source->pictures = source->dispatching = source->issuing = false;
     frame->source_pending = NULL;
-    material_source_order_detach(source->queued_order, source);
     material_source_leave(source);
     return ok;
 }
