@@ -411,7 +411,8 @@ bool q3g_projection_after_free(q3g_role *role, uint64_t pointer, qa_error *error
 bool q3g_projection_actor_released(q3g_role *role, qa_actor_record actor, qa_error *error)
 {
     application_source_projection projection; uint32_t slot = 0; qa_q3_host_game_data data;
-    bool borrowed = actor.owner != role->engine->provider->owner &&
+    bool borrowed = (role->initialized || role->shutdown_entry) &&
+        actor.owner != role->engine->provider->owner &&
         projection_read(role, &projection) && projection.has_free &&
         qa_q3_host_actor_slot(role->host, actor.id, &slot, NULL) &&
         qa_q3_host_game_data_read(role->host, &data) && slot >= data.client_count && slot < QA_Q3_ENTITY_WORLD;
