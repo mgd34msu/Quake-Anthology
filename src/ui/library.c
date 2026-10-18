@@ -172,18 +172,26 @@ static const qa_product *role_choice_product(const qa_catalog *catalog,const cha
     }
     return NULL;
 }
+static bool role_choice_add_original(qa_ui_library *m,const qa_product *product,qa_error *error) {
+    if (!product || product->program_kind!=QA_PROGRAM_BUILTIN || !role_original_available(m->catalog,product)) return true;
+    const char *id=role_choice_id(m,product,true,error);
+    char label[512];
+    snprintf(label,sizeof(label),"%s (%s, installed original module)",product->title,edition_name(product->edition));
+    return id && choice_add(m,id,label,NULL,error);
+}
 static bool select_role(qa_launch_draft *draft,qa_catalog *catalog,qa_launch_role role,qa_product_id product,bool original,qa_error *error) {
     qa_launch_draft *defaults=NULL;
     if (!qa_launch_draft_create(catalog,product,NULL,&defaults,error)) return false;
     const qa_launch_choices *v=qa_launch_draft_choices(defaults);
     qa_launch_provider provider=v->providers[0];
-    provider.instance=role==QA_ROLE_MOVEMENT?"startup:movement":"startup:character";
+    provider.instance=role==QA_ROLE_MOVEMENT?"startup:movement":
+        role==QA_ROLE_ARSENAL?"startup:weapons":"startup:character";
     bool ok=qa_launch_set_provider(draft,&provider,error) &&
         (!original || qa_launch_select_original(draft,provider.instance,error));
     const qa_launch_role character_roles[]={QA_ROLE_CHARACTER,QA_ROLE_BODY,QA_ROLE_SKIN,QA_ROLE_VOICE};
-    size_t count=role==QA_ROLE_MOVEMENT?1:4;
+    size_t count=role==QA_ROLE_CHARACTER?4:1;
     for (size_t i=0;i<count && ok;++i) {
-        qa_launch_role actual=role==QA_ROLE_MOVEMENT?role:character_roles[i];
+        qa_launch_role actual=role==QA_ROLE_CHARACTER?character_roles[i]:role;
         const qa_launch_binding *binding=qa_launch_binding_for(v,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},actual,"");
         qa_launch_binding b=*binding; b.instance=provider.instance; ok=qa_launch_bind(draft,&b,error);
     }
@@ -218,11 +226,7 @@ static bool product_choices(qa_ui_library *m,qa_ui_library_field field,qa_error 
         }
         char label[512]; snprintf(label,sizeof(label),"%s (%s)",p->title,edition_name(p->edition));
         if (!choice_add(m,p->key,label,p->availability==QA_CONTENT_INSTALLED?NULL:"Content is not installed",error)) return false;
-        if (role && p->program_kind==QA_PROGRAM_BUILTIN && role_original_available(m->catalog,p)) {
-            const char *id=role_choice_id(m,p,true,error);
-            snprintf(label,sizeof(label),"%s (%s, installed original module)",p->title,edition_name(p->edition));
-            if (!id || !choice_add(m,id,label,NULL,error)) return false;
-        }
+        if (role && !role_choice_add_original(m,p,error)) return false;
     }
     return true;
 }
@@ -271,8 +275,24 @@ static bool selection_build(qa_ui_library *m,qa_ui_library_field field,qa_error 
     if (m->services.choices) {
         const qa_ui_library_choice *choices=NULL; size_t count=0; const char *selected=NULL;
         if (!m->services.choices(m->services.context,m,field,m->monster_classname,&choices,&count,&selected,error)) return false;
-        if (!choices_reserve(m,count,error) || !choices_selected(m,selected,error)) return false;
-        for (size_t i=0;i<count;++i) if (!choice_add(m,choices[i].id,choices[i].label,choices[i].unavailable,error)) return false;
+        bool arsenal=field==QA_UI_LIBRARY_WEAPONS;
+        if (arsenal && count>SIZE_MAX/2) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"startup provider rows exceed addressable storage"); return false;
+        }
+        if (!choices_reserve(m,arsenal?count*2:count,error)) return false;
+        if (arsenal) {
+            const qa_launch_provider *provider=role_provider(v,QA_ROLE_ARSENAL);
+            const qa_product *product=provider?qa_catalog_product(m->catalog,provider->product):NULL;
+            if (role_uses_original(m->catalog,product,provider)) {
+                selected=role_choice_id(m,product,product->program_kind==QA_PROGRAM_BUILTIN,error);
+                if (!selected) return false;
+            }
+        }
+        if (!choices_selected(m,selected,error)) return false;
+        for (size_t i=0;i<count;++i) {
+            if (!choice_add(m,choices[i].id,choices[i].label,choices[i].unavailable,error)) return false;
+            if (arsenal && !role_choice_add_original(m,qa_catalog_find(m->catalog,choices[i].id),error)) return false;
+        }
     }
     return true;
 }
@@ -407,11 +427,15 @@ static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
         }
         return qa_launch_set_world(m->draft,&world,error);
     }
-    if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
+    if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER || field==QA_UI_LIBRARY_WEAPONS) {
         bool original;
         const qa_product *p=role_choice_product(m->catalog,id,&original);
-        if (!p || !select_role(m->draft,m->catalog,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER,p->id,original,error)) return false;
-        return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || service_select(m,field,NULL,p->key,error);
+        if (field!=QA_UI_LIBRARY_WEAPONS || original) {
+            qa_launch_role role=field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:
+                field==QA_UI_LIBRARY_WEAPONS?QA_ROLE_ARSENAL:QA_ROLE_CHARACTER;
+            if (!p || !select_role(m->draft,m->catalog,role,p->id,original,error)) return false;
+            return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || service_select(m,field,NULL,p->key,error);
+        }
     }
     if (field==QA_UI_LIBRARY_SKILL) { qa_launch_world world=qa_ui_library_choices(m)->world; world.skill=id[0]-'0'; return qa_launch_set_world(m->draft,&world,error); }
     if (field==QA_UI_LIBRARY_MODE) return qa_ui_library_select_mode(m,!strcmp(id,"singleplayer")?QA_MODE_SINGLE_PLAYER:!strcmp(id,"coop")?QA_MODE_COOPERATIVE:QA_MODE_FFA,error);
