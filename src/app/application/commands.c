@@ -13,6 +13,7 @@
 #include "startup_flow.h"
 #include "bots_catalog.h"
 #include "guest_q3_components.h"
+#include "guest_q3_component_clients.h"
 #include "unified_q3_events.h"
 #include "qa/application_players.h"
 #include "qa/application_equipment.h"
@@ -199,6 +200,56 @@ static bool host_reply(application_provider *source, const qa_command_invocation
     return recipient.registry ? application_source_message(source, recipient, text, error) :
         qa_application_log_emit(source->application, &command->context, text,
             QA_APPLICATION_LOG_CONSOLE, error);
+}
+
+static qa_command_result host_kick(qa_application *app,
+    const qa_command_invocation *command, qa_error *error)
+{
+    if (!q3_command_named(command->argv[0], "kick")) return QA_COMMAND_UNHANDLED;
+    if (command->context.origin == QA_COMMAND_REMOTE) return QA_COMMAND_HANDLED;
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (app->state != QA_APPLICATION_RUNNING || !source || !source->constructed || !app->players)
+        return QA_COMMAND_UNHANDLED;
+    if (command->argc != 2)
+        return host_reply(source, command, (qa_actor_id){0},
+            "Usage: kick <player name|slot|all|allbots>\n", error)
+            ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
+    const char *target = command->argv[1];
+    bool all = qa_text_ascii_equal(target, "all"), allbots = qa_text_ascii_equal(target, "allbots");
+    int32_t parsed = qa_parse_decimal_i32(target, QA_DECIMAL_SIGNED_WRAP);
+    char number[12]; qa_format_q3_integer(parsed, number);
+    uint32_t numbered = parsed >= 0 && !strcmp(target, number) ? (uint32_t)parsed : UINT32_MAX;
+    char wanted[1024], actual[1024];
+    bool named = qa_text_q3_name_key((qa_bytes){(const uint8_t *)target, strlen(target)},
+        wanted, sizeof(wanted));
+    bool matched = false;
+    for (size_t i = 0; i < app->players->count; ++i) {
+        application_player_record *record = app->players->records + i;
+        if (record->retiring || !qa_actors_get(qa_session_actors(app->session), record->actor)) continue;
+        bool bot = application_player_identity(record)->bot;
+        const char *name = application_player_name(record);
+        if (!name) name = "unnamed";
+        if (allbots ? !bot : !all && record->client_slot != numbered &&
+            (!named || !qa_text_q3_name_key((qa_bytes){(const uint8_t *)name, strlen(name)},
+                actual, sizeof(actual)) || strcmp(wanted, actual))) continue;
+        if (!record->remote && !bot) {
+            if (!all && !allbots) {
+                if (!host_reply(source, command, (qa_actor_id){0}, "Cannot kick host player\n", error))
+                    return QA_COMMAND_FAILED;
+                matched = true;
+            }
+            continue;
+        }
+        matched = true;
+        if ((bot && !application_bots_catalog_remove_begin(app, record->client_slot, error)) ||
+            !application_clients_reject(app, source->owner, record->actor, "was kicked", NULL, error))
+            return QA_COMMAND_FAILED;
+    }
+    if (!matched && !all && !allbots) {
+        char text[1152]; snprintf(text, sizeof(text), "Player %.1023s is not on the server\n", target);
+        if (!host_reply(source, command, (qa_actor_id){0}, text, error)) return QA_COMMAND_FAILED;
+    }
+    return QA_COMMAND_HANDLED;
 }
 
 typedef struct host_status_player {
@@ -404,6 +455,8 @@ static qa_command_result q1_host_command(qa_application *application,
 qa_command_result qa_application_host_command(qa_application *application,
     const qa_command_invocation *command, qa_error *error)
 {
+    qa_command_result kick = host_kick(application, command, error);
+    if (kick != QA_COMMAND_UNHANDLED) return kick;
     if (q3_command_named(command->argv[0],"forceteam")) {
         if (command->context.origin==QA_COMMAND_REMOTE) return QA_COMMAND_HANDLED;
         if (command->argc!=3)

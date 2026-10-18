@@ -91,6 +91,23 @@ bool qa_text_q3_color_escape(uint32_t current,uint32_t next,uint8_t *index)
     return true;
 }
 
+bool qa_text_q3_name_key(qa_bytes text, char *out, size_t capacity)
+{
+    if (!out || !capacity || (text.size && !text.data)) return false;
+    size_t used = 0;
+    for (size_t i = 0; i < text.size && text.data[i]; ++i) {
+        uint8_t byte = text.data[i], color;
+        if (i + 1 < text.size && qa_text_q3_color_escape(byte, text.data[i + 1], &color))
+            ++i;
+        else if (byte >= 32 && byte <= 126) {
+            if (used == capacity - 1) return false;
+            out[used++] = (char)qa_text_ascii_lower(byte);
+        }
+    }
+    out[used] = 0;
+    return true;
+}
+
 bool qa_info_key_equal(qa_bytes key,qa_bytes wanted,unsigned policy)
 {
     return qa_text_bytes_equal(key,wanted,(policy&QA_INFO_CASE_FOLD)!=0);

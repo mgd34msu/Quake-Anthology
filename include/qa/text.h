@@ -37,6 +37,9 @@ bool qa_text_ascii_equal(const char *, const char *);
 /* Q3 Q_IsColorString/ColorIndex after source-byte or UTF-8 scalar decoding.
  * A literal caret or end of text leaves the palette index unchanged. */
 bool qa_text_q3_color_escape(uint32_t current, uint32_t next, uint8_t *index);
+/* Q3 client-name matching: strip colors and nonprintable bytes, fold ASCII.
+ * Stops at NUL; capacity includes the terminator. No allocation. */
+bool qa_text_q3_name_key(qa_bytes text, char *out, size_t capacity);
 /* Quake backslash info pairs, borrowed from the NUL-terminated input. Cursor
  * starts at the string and ends at the next delimiter or terminator. */
 bool qa_info_next(const char **cursor,qa_bytes *key,qa_bytes *value);

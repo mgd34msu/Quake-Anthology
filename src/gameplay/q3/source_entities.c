@@ -2,28 +2,11 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_clients.h"
 
-static bool normalized_name(const char *text, size_t source_capacity,
-    char out[QA_Q3_NATIVE_NETNAME]) {
-    size_t used = 0;
-    for (size_t index = 0; source_capacity && index < source_capacity - 1 && text[index]; ++index) {
-        unsigned char byte = (unsigned char)text[index];
-        uint8_t color;
-        if (index + 1 < source_capacity - 1 &&
-            qa_text_q3_color_escape(byte, (unsigned char)text[index + 1], &color))
-            ++index;
-        else if (byte >= 32 && byte <= 126) {
-            if (used == QA_Q3_NATIVE_NETNAME - 1) return false;
-            out[used++] = (char)qa_text_ascii_lower(byte);
-        }
-    }
-    out[used] = 0;
-    return true;
-}
-
 qa_string_id qa_q3_client_name_key(const qa_q3_game *game, const char *text,
     size_t source_capacity) {
     char key[QA_Q3_NATIVE_NETNAME];
-    if (!game || !text || !normalized_name(text, source_capacity, key)) return QA_STRING_NONE;
+    if (!game || !text || !qa_text_q3_name_key((qa_bytes){(const uint8_t *)text,
+            source_capacity ? source_capacity - 1 : 0}, key, sizeof(key))) return QA_STRING_NONE;
     return qa_strings_find(qa_session_strings(game->options.services.session),
         (qa_bytes){(const uint8_t *)key, strlen(key)});
 }
@@ -73,7 +56,8 @@ bool q3_client_name_store(qa_q3_game *game, q3_client_state *client,
     qa_strings *strings = qa_session_strings(game->options.services.session);
     qa_string_id source, key;
     char normalized[QA_Q3_NATIVE_NETNAME];
-    normalized_name(name, QA_Q3_NATIVE_NETNAME, normalized);
+    qa_text_q3_name_key((qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME - 1},
+        normalized, sizeof(normalized));
     if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME}, &source, error) ||
         !qa_strings_intern_cstr(strings, normalized, &key, error)) return false;
     client_name_key_store(game, client, key);
@@ -714,7 +698,8 @@ bool q3_source_prepare(qa_q3_game *game, const qa_q3_checkpoint *saved,
     for (uint32_t slot = 0; slot < QA_Q3_NATIVE_CLIENTS; ++slot) {
         const char *name = saved->clients[slot].netname;
         char key[QA_Q3_NATIVE_NETNAME];
-        normalized_name(name, QA_Q3_NATIVE_NETNAME, key);
+        qa_text_q3_name_key((qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME - 1},
+            key, sizeof(key));
         if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)name, QA_Q3_NATIVE_NETNAME},
                 &names->source[slot], error) ||
             !qa_strings_intern_cstr(strings, name, &names->player[slot], error) ||

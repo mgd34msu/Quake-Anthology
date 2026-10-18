@@ -210,7 +210,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
-    if (client_name(name,"status") || client_name(name,"forceteam")) {
+    if (client_name(name,"status") || client_name(name,"forceteam") || client_name(name,"kick")) {
         bool status=client_name(name,"status");
         if (!status && invocation->context.origin==QA_COMMAND_REMOTE) return true;
         qa_command_result result = frontend_network_client_only(frontend) ? QA_COMMAND_UNHANDLED :
@@ -219,7 +219,7 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
             result = frontend_console_forward(frontend,invocation,error);
         if (result == QA_COMMAND_UNHANDLED)
             return qa_application_log_emit(frontend->application,&invocation->context,
-                status?"Server is not running.\n":"No local Q3 team server is running.\n",
+                client_name(name,"forceteam")?"No local Q3 team server is running.\n":"Server is not running.\n",
                 QA_APPLICATION_LOG_CONSOLE,error);
         return result != QA_COMMAND_FAILED;
     }
@@ -401,7 +401,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting", "local_join", "local_drop",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
-        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "restart", "killserver", "status", "forceteam"};
+        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "restart", "killserver", "status", "forceteam", "kick"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         bool engine_command = !client_name(names[i], "weapnext") && !client_name(names[i], "weapprev");
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,

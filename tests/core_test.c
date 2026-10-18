@@ -8200,6 +8200,14 @@ static void test_cvar_info_storage(void)
     CHECK(!qa_text_q3_color_escape('^','^',&color) && color==1);
     CHECK(!qa_text_q3_color_escape('^',0,&color) && color==1);
     CHECK(!qa_text_q3_color_escape('x','1',&color) && color==1);
+    char name_key[32];
+    static const uint8_t colored_name[] = "^1SaRGe^7\001\351^^";
+    CHECK(qa_text_q3_name_key((qa_bytes){colored_name, sizeof(colored_name) - 1},
+        name_key, sizeof(name_key)) && !strcmp(name_key, "sarge^^"));
+    CHECK(qa_text_q3_name_key((qa_bytes){(const uint8_t *)"A\0B", 3},
+        name_key, sizeof(name_key)) && !strcmp(name_key, "a"));
+    CHECK(!qa_text_q3_name_key((qa_bytes){(const uint8_t *)"ab", 2}, name_key, 2));
+    CHECK(qa_text_q3_name_key((qa_bytes){NULL, 0}, name_key, 1) && !name_key[0]);
     qa_error color_error={0};
     qa_console_buffer *color_buffer=qa_console_buffer_create(QA_RULESET_Q3,32,128,&color_error);
     CHECK(color_buffer);
