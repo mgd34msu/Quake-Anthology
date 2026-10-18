@@ -86,6 +86,7 @@ struct application_qc_state {
     const qa_qc_engine_globals *global_bindings;
     application_qc_command_export command_exports[2];
     application_qc_command_export found_target;
+    uint32_t weapon_dispatcher;
     size_t command_depth;
     qa_world *world;
     qa_builtin_services services;

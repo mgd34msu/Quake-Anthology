@@ -1377,6 +1377,13 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     struct application_qc_state *engine = provider->state.qc.engine;
     engine->services = application_builtin_services(app, world, app->physics);
     const struct application_qc_profile *profile = provider->state.qc.qualified;
+    if (!profile) {
+        uint32_t dispatcher = 0;
+        const qa_qc_function *function = qa_qc_program_find_function(
+            provider->state.qc.program, "W_WeaponFrame", &dispatcher);
+        if (function && function->first_statement > 0 && !function->parameter_count)
+            engine->weapon_dispatcher = dispatcher;
+    }
     if (!application_startup_source_preinit(provider, console, cvars, &command, error) ||
         (app->operation != APPLICATION_PERSISTING && !application_startup_apply_latched(provider, cvars, error))) return false;
     const qa_cvar_view *skill = qa_cvars_find(cvars, "skill"), *deathmatch = qa_cvars_find(cvars, "deathmatch");

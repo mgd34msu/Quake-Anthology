@@ -527,7 +527,8 @@ bool application_qc_item_weapons_replace(struct application_qc_state *engine,qa_
     const qa_qc_call_event *event,qa_qc_call_next next,bool *handled,qa_error *e)
 {
     const struct application_qc_item_weapons *p=profile(engine->provider);*handled=false;
-    if(!p || event->function!=p->dispatcher)return true;
+    uint32_t dispatcher=p?p->dispatcher:engine->weapon_dispatcher;
+    if(!dispatcher || event->function!=dispatcher)return true;
     *handled=true;bool selected;
     if(!source_selected(engine,vm,&selected,e))return false;
     if(selected)return qa_qc_call_continue(next,e);
