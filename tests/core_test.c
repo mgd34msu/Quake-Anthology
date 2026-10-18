@@ -10863,6 +10863,15 @@ static bool capture_native_write(void *opaque, qa_native_instance *instance,
     return true;
 }
 
+static void test_native_register_names(void)
+{
+    qa_native_register reg;
+    CHECK(qa_native_register_find((qa_bytes){(const uint8_t *)"eax", 3}, &reg) && reg == QA_NATIVE_RAX);
+    CHECK(qa_native_register_find((qa_bytes){(const uint8_t *)"esi", 3}, &reg) && reg == QA_NATIVE_RSI);
+    CHECK(qa_native_register_find((qa_bytes){(const uint8_t *)"r15", 3}, &reg) && reg == QA_NATIVE_R15);
+    CHECK(!qa_native_register_find((qa_bytes){(const uint8_t *)"e8", 2}, &reg));
+}
+
 static void test_native_write_receipts(void)
 {
     qa_error error = {0};
@@ -13101,6 +13110,7 @@ int main(int argc, char **argv)
     test_native_vsprintf();
     test_native_sysv_platform_save();
     test_native_string_boundaries();
+    test_native_register_names();
     test_native_write_receipts();
     test_native_resumable_budget();
     test_native_executable_alias_writes();
