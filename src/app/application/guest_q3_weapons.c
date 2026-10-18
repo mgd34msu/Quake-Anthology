@@ -56,7 +56,8 @@ static bool projection_begin(application_q3_weapons *w, const qa_qvm_source_word
 static bool located(application_q3_weapons *w, uint32_t slot, q3_weapon_actor *out, qa_error *error)
 {
     qa_q3_host_game_data data;
-    if (!qa_q3_host_game_data_read(w->role->host, &data) || slot >= data.client_count || slot >= data.entity_count)
+    if (!qa_q3_host_game_data_read(w->role->host, &data) || slot >= data.client_count || slot >= data.entity_count ||
+        slot >= sizeof(w->role->engine->clients) / sizeof(*w->role->engine->clients))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon actor has no located source record");
     if (data.client_stride != w->profile.client_stride || data.entity_stride != w->profile.entity_stride)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon records changed their admitted layout");
@@ -65,13 +66,25 @@ static bool located(application_q3_weapons *w, uint32_t slot, q3_weapon_actor *o
     if (entity + w->profile.entity_stride > qa_qvm_memory_size(w->role->vm) ||
         player + w->profile.client_stride > qa_qvm_memory_size(w->role->vm) || entity > UINT32_MAX || player > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon player leaves its real source allocation");
-    int32_t pointer; qa_actor_id actor;
+    int32_t pointer;
+    qa_actor_id actor = w->role->engine->clients[slot].actor;
+    uint32_t physical;
     if (!q3_weapons_read(w, (uint32_t)entity + w->profile.client_pointer, &pointer, error) ||
-        !qa_q3_host_actor(w->role->host, slot, false, &actor, error)) return false;
-    if ((uint32_t)pointer != player || !actor.registry ||
+        !qa_q3_host_actor_slot(w->role->host, actor, &physical, error)) return false;
+    if ((uint32_t)pointer != player || physical != slot || !actor.registry ||
         !qa_actors_get(qa_session_actors(w->role->engine->provider->application->session), actor))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon client lost its actual full actor identity");
     *out = (q3_weapon_actor){actor, data, slot, (uint32_t)entity, (uint32_t)player};
+    return true;
+}
+static bool present_actor(application_q3_weapons *w, uint32_t slot,
+    q3_weapon_actor *out, bool *present, qa_error *error)
+{
+    const q3g_client *client = w->role->engine->clients + slot;
+    *present = false;
+    if (!client->actor.registry || (client->pending_retirement && !client->begun)) return true;
+    if (!located(w, slot, out, error)) return false;
+    *present = true;
     return true;
 }
 bool q3_weapons_actor(application_q3_weapons *w, qa_actor_id actor, q3_weapon_actor *out, qa_error *error)
@@ -144,11 +157,7 @@ static bool dispatcher_actor(application_q3_weapons *w, const qa_qvm_call *call,
     uint64_t slot = (pointer - data.clients_address) / data.client_stride;
     if (slot >= data.client_count || slot > UINT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon dispatcher client is outside its source roster");
-    qa_actor_id actor;
-    if (!qa_q3_host_actor(w->role->host, (uint32_t)slot, false, &actor, error)) return false;
-    if (!actor.registry) return true;
-    if (!located(w, (uint32_t)slot, out, error)) return false;
-    *present = true; return true;
+    return present_actor(w, (uint32_t)slot, out, present, error);
 }
 typedef struct weapon_branch_context {
     application_q3_weapons *weapons;
@@ -236,11 +245,7 @@ static bool entity_actor(application_q3_weapons *w, const qa_qvm_call *call, uin
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon action has no actual entity pointer");
     uint64_t slot = (pointer - data.entities_address) / data.entity_stride;
     if (slot >= data.client_count) return true;
-    qa_actor_id actor;
-    if (!qa_q3_host_actor(w->role->host, (uint32_t)slot, false, &actor, error)) return false;
-    if (!actor.registry) return true;
-    if (!located(w, (uint32_t)slot, out, error)) return false;
-    *present = true; return true;
+    return present_actor(w, (uint32_t)slot, out, present, error);
 }
 typedef struct weapon_grant_scope { application_q3_weapons *weapons; q3_weapon_actor actor; const qa_qvm_call *call; } weapon_grant_scope;
 typedef struct weapon_grant_branch { weapon_grant_scope *scope; application_q3_weapon_grant category; } weapon_grant_branch;

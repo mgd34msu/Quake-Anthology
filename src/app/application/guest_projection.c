@@ -581,15 +581,11 @@ static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out
         *out = state;
         return true;
     }
-    if (!p || !p->state || !role->artifact || p->state != role->artifact->combat_profile)
+    const application_q3_combat_profile *profile = role->artifact ? role->artifact->combat_profile : NULL;
+    if (!profile)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Guest player state requires a qualified original combat interface");
     application_q3_combat_actor source;
-    if (!application_q3_combat_actor_read(role, p->state, actor, &source, error)) return false;
-    guest_projection_actor context = {.projection = p, .actor = actor, .slot = source.slot};
-    uint32_t entity;
-    if (!address(&context, (guest_field){GUEST_ENTITY_RECORD, 0}, &entity, error)) return false;
-    if (entity != source.entity)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest player state changed its physical source entity");
+    if (!application_q3_combat_actor_read(role, profile, actor, &source, error)) return false;
     bool live;
     if (!application_q3_combat_actor_live(&source, &live, error)) return false;
     if (!live) return application_fail(error, QA_ERROR_ARGUMENT, "Guest player source entity has not been admitted");
@@ -597,8 +593,6 @@ static bool player_state(q3g_role *role, qa_actor_id actor, qa_combat_state *out
     if (!application_q3_combat_state_read(&source, &state, error)) return false;
     if (state.armor.regular.points < 0)
         return application_fail(error, QA_ERROR_FORMAT, "Guest source armor points are negative");
-    qa_q3_host_game_data data;
-    if (!current(&context, &data, error)) return false;
     *out = state;
     return true;
 }
