@@ -2165,7 +2165,14 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
         return application_q3_guest_respawn(source, actor, error);
     if (source->kind == APPLICATION_PROVIDER_QC && character->kind == APPLICATION_PROVIDER_Q1) {
         const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
-        if (selected_mode(choices) == QA_MODE_SINGLE_PLAYER) return true;
+        if (selected_mode(choices) == QA_MODE_SINGLE_PLAYER) {
+            const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
+            if (!map || !*map)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Q1 restart lost its actual source map");
+            return qa_application_queue_map_travel(app,
+                &(qa_application_travel_request){.provider = source->owner, .cause = actor,
+                    .geometry = app->map_geometry, .expression = map, .carry_players = false}, error);
+        }
         return selected_qc_native_respawn(character, source, actor, error);
     }
     return application_fail(error, QA_ERROR_UNSUPPORTED,

@@ -2,7 +2,7 @@
 #include "internal.h"
 #include "save_content.h"
 #include "guest_native_q2_private.h"
-#include "map_private.h"
+#include "map_travel_private.h"
 #include "map_players_private.h"
 #include "save_private.h"
 #include "bots_save_private.h"
@@ -1509,8 +1509,11 @@ bool application_publication_retire_sources(qa_application *application,
     for (size_t i = 0; retired_services && i < application->provider_count; ++i)
         retired_services = application_q3_guest_client_sources_retire(application->providers[i],
             old_source, publication->map_provider, choices, error);
-    if (retired_services)
-        retired_services = retire_map_services(application, true, false, error);
+    if (retired_services) {
+        const struct application_map_state *travel = application->map_state;
+        bool carry = !travel || !travel->loading || travel->load_carry;
+        retired_services = retire_map_services(application, carry, false, error);
+    }
     if (retired_services)
         retired_services = application_native_q3_clients_drain(application, error) &&
             application_q3_world_restart_shutdown(application, publication, error);

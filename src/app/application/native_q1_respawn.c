@@ -213,7 +213,7 @@ bool application_native_q1_request_respawn(void *opaque, qa_actor_id actor, qa_e
         const char *map = qa_strings_cstr(qa_session_strings(app->session), app->current_map);
         okay = map && *map;
         if (!okay) application_fail(error, QA_ERROR_ARGUMENT, "Q1 restart lost its actual source map");
-        if (okay) okay = application_source_queue_map_travel(app,
+        if (okay) okay = qa_application_queue_map_travel(app,
             &(qa_application_travel_request){.provider = provider->owner, .cause = actor,
                 .geometry = app->map_geometry, .expression = map, .carry_players = false}, error) &&
                 current(&call, error);
