@@ -4,6 +4,7 @@
 #include "qa/text.h"
 #include "guest_projection_private.h"
 #include "guest_q3_combat.h"
+#include "guest_q3_combat_state.h"
 #include "guest_input_private.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_native_q2_private.h"
@@ -1483,8 +1484,8 @@ bool application_q3_native_deathmatch_destination(application_provider *provider
     *origin = point.origin; *angles = point.angles; return true;
 }
 
-bool application_q3_guest_selected_respawn(application_provider *source,
-    qa_actor_id actor, qa_error *error)
+static bool guest_selected_respawn(application_provider *source,
+    qa_actor_id actor, application_provider *except, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(source);
     qa_application *app = source ? source->application : NULL;
@@ -1496,12 +1497,18 @@ bool application_q3_guest_selected_respawn(application_provider *source,
     for (size_t i = 0; i < app->provider_count; ++i) {
         application_provider *provider = app->providers[i];
         qa_q3_player_state state;
-        if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        if (!provider || provider == except || provider->kind != APPLICATION_PROVIDER_Q3 ||
             !qa_q3_player_read(provider->state.q3, actor, &state)) continue;
         if (!provider->constructed || !provider->attached || provider->close_pending ||
             !qa_q3_selected_source_respawn(provider->state.q3, actor, &services, error)) return false;
     }
     return true;
+}
+
+bool application_q3_guest_selected_respawn(application_provider *source,
+    qa_actor_id actor, qa_error *error)
+{
+    return guest_selected_respawn(source, actor, NULL, error);
 }
 
 bool application_player_source_score_read(application_provider *source,qa_actor_id actor,
@@ -1551,6 +1558,65 @@ bool application_player_source_score_read(application_provider *source,qa_actor_
 
 static bool q1_finish_respawn(qa_application *,application_provider *,application_provider *,
     application_provider *,qa_actor_id,qa_error *);
+static bool native_q1_character_spawn(application_provider *, application_provider *,
+    qa_actor_id, const float *, float, qa_error *);
+
+static bool guest_native_character_spawn(application_provider *source,
+    application_provider *character, qa_actor_id actor, qa_movement_posture *posture,
+    qa_error *error)
+{
+    qa_application *app = source->application;
+    struct application_q3_guest *engine = q3g_engine(source);
+    if (character->kind == APPLICATION_PROVIDER_Q1) {
+        qa_builtin_actor_traits traits;
+        if (!qa_q1_game_actor_traits(character->state.q1, actor, &traits))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 character spawn has no retained native traits");
+        float maximum = (float)traits.max_health;
+        if (!native_q1_character_spawn(character, source, actor,
+                &maximum, maximum, error) ||
+            !qa_combat_set_armor(app->combat, actor, &(qa_armor){0}, error)) return false;
+    } else if (character->kind == APPLICATION_PROVIDER_Q2) {
+        if (!qa_q2_character_spawn_vitals(character->state.q2, actor, error) ||
+            !qa_q2_character_respawned(character->state.q2, actor, error)) return false;
+    } else {
+        uint32_t slot;
+        qa_q3_player player;
+        qa_body_state body;
+        qa_combat_state combat;
+        if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) ||
+            !qa_q3_host_source_player(engine->game->host, slot, &player, error) ||
+            !qa_world_body_read_pose(app->world, actor, QA_ENTITY_CLIP_POSE, &body, error) ||
+            !qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
+        body.origin = qa_v3(player.origin[0], player.origin[1], player.origin[2]);
+        body.velocity = qa_v3(player.velocity[0], player.velocity[1], player.velocity[2]);
+        body.angles = qa_v3(player.viewangles[0], player.viewangles[1], player.viewangles[2]);
+        body.ground = (qa_actor_reference){0};
+        if (!qa_q3_spawn_player(character->state.q3, actor, &body, combat.team, error)) return false;
+    }
+    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    *posture = application_control_character_postures(character, actor).standing;
+    return true;
+}
+
+static bool guest_spawn_project(application_provider *source, qa_actor_id actor,
+    qa_error *error)
+{
+    qa_application *app = source->application;
+    struct application_q3_guest *engine = q3g_engine(source);
+    qa_body_state body;
+    qa_player_state control;
+    qa_combat_state combat;
+    application_q3_combat_actor original;
+    if (!qa_world_body_read_pose(app->world, actor, QA_ENTITY_CLIP_POSE, &body, error) ||
+        !qa_application_control_read(app, actor, &control) ||
+        !qa_combat_read_traits(app->combat, actor, &combat, error) ||
+        !qa_q3_host_player_spawn_pose(engine->game->host, actor, &body,
+            control.view_angles, qa_source_to_i32(control.view_height), error) ||
+        !application_q3_combat_actor_read(engine->game,
+            engine->game->artifact ? engine->game->artifact->combat_profile : NULL,
+            actor, &original, error)) return false;
+    return application_q3_combat_health_write(&original, combat.health, error);
+}
 
 static bool guest_spawn_followers(qa_application *app, qa_actor_id actor,
     application_provider *source, qa_error *error)
@@ -1581,7 +1647,7 @@ static bool guest_spawn_followers(qa_application *app, qa_actor_id actor,
 }
 
 static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
-    qa_error *error)
+    const qa_movement_posture *posture, qa_error *error)
 {
     qa_application *app = source->application;
     struct application_q3_guest *engine = q3g_engine(source);
@@ -1598,7 +1664,8 @@ static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
     body.angles = qa_v3(0, player.viewangles[1], 0);
     body.ground = (qa_actor_reference){0};
     bool selected_body = application_provider_for(app, actor, QA_ROLE_BODY, "") == source;
-    if (selected_body) body.bounds = shared.local_bounds;
+    if (posture) body.bounds = posture->bounds;
+    else if (selected_body) body.bounds = shared.local_bounds;
     if (!qa_world_body_write(app->world, actor, &body, error)) return false;
     if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
     qa_builtin_motion_change change = {.body = body,
@@ -1620,8 +1687,8 @@ static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
     completed.view_offset = control->player.view_offset;
     completed.water_level = control->player.water_level;
     completed.water_type = control->player.water_type;
-    if (selected_body) {
-        completed.view_height = (float)player.viewheight;
+    if (posture || selected_body) {
+        completed.view_height = posture ? posture->view_height : (float)player.viewheight;
         completed.view_offset = qa_v3(0, 0, completed.view_height);
     }
     application_control_publish_motion(control, &completed);
@@ -1635,17 +1702,30 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     qa_application *app=source->application;
     if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     if(!application_guest_actor_admit(source,actor,error)) return false;
-    if(application_provider_for(app,actor,QA_ROLE_CHARACTER,"")!=source) return true;
-    if(engine->game->combat && !application_q3_combat_admit(engine->game->combat,actor,error)) return false;
-    if(engine->game->weapon_services &&
-       !application_q3_guest_selected_respawn(source,actor,error)) return false;
+    application_provider *character=application_provider_for(app,actor,QA_ROLE_CHARACTER,"");
+    application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    bool native_character=source==world && character && character->kind<=APPLICATION_PROVIDER_Q3;
+    if(character!=source && !native_character) return true;
+    if(character==source) {
+        if(engine->game->combat && !application_q3_combat_admit(engine->game->combat,actor,error)) return false;
+        if(engine->game->weapon_services &&
+           !application_q3_guest_selected_respawn(source,actor,error)) return false;
+    }
     if(!respawning || !qa_actors_get(qa_session_actors(app->session),actor)) return true;
     const application_player_record *record=application_player_record_live(app->players,actor);
     if(!record || record->source_begin_pending || record->deferred ||
        app->operation==APPLICATION_CONFIGURING) return true;
-    application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
-    if(world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source &&
-       !guest_spawn_motion(source,actor,error)) return false;
+    qa_movement_posture posture;
+    if(native_character) {
+        if(!guest_native_character_spawn(source,character,actor,&posture,error)) return false;
+        if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
+    }
+    if((native_character || (world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source)) &&
+       !guest_spawn_motion(source,actor,native_character?&posture:NULL,error)) return false;
+    if(native_character) {
+        if(!guest_spawn_project(source,actor,error) ||
+           (engine->game->weapon_services && !guest_selected_respawn(source,actor,character,error))) return false;
+    }
     if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     if(app->supplies && world && !application_supplies_source_spawned(world,actor,error)) return false;
     if(world && world->kind==APPLICATION_PROVIDER_Q1)
@@ -2081,6 +2161,8 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
         return application_native_q3_client_respawn(source, actor, error);
     if (source->kind == APPLICATION_PROVIDER_Q2)
         return qa_q2_player_respawn(source->state.q2, actor, error);
+    if (q3g_engine(source))
+        return application_q3_guest_respawn(source, actor, error);
     if (source->kind == APPLICATION_PROVIDER_QC && character->kind == APPLICATION_PROVIDER_Q1)
         return selected_qc_native_respawn(character, source, actor, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,

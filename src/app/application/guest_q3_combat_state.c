@@ -181,6 +181,76 @@ bool application_q3_combat_empty_armor(void *opaque, double points,
     if (*selected) { armor.regular.points = points; *out = armor.regular; }
     return true;
 }
+static qa_team_ref source_team(const application_q3_combat_actor *a, int32_t value)
+{
+    const application_q3_combat_definition *d = definition(a);
+    qa_team_id team = 0;
+    for (size_t i = 0; i < d->state.team_count; ++i)
+        if (d->state.teams[i].value == value) { team = d->state.teams[i].team; break; }
+    const application_q3_weapon_profile *weapons = application_q3_weapons_profile(a->role->weapons);
+    if (weapons && weapons->has_match)
+        for (size_t i = 0; i < weapons->team_count; ++i)
+            if (weapons->teams[i].source == team) { team = weapons->teams[i].team; break; }
+    return qa_team_named(team);
+}
+bool application_q3_combat_traits_write(void *opaque, const qa_combat_state *traits, qa_error *error)
+{
+    application_q3_combat_actor *a = opaque;
+    if (!traits || !application_q3_combat_actor_current(a, error)) return false;
+    const application_q3_combat_definition *d = definition(a);
+    qa_qvm_source_word words[4]; size_t count = 0;
+    int32_t damageable, flags;
+    if (!application_q3_combat_word_read(a, a->entity + d->fields.takedamage, &damageable, error) ||
+        !application_q3_combat_word_read(a, a->entity + d->reactions.flags, &flags, error)) return false;
+    if ((damageable != 0) != traits->can_take_damage)
+        words[count++] = (qa_qvm_source_word){a->entity + d->fields.takedamage, traits->can_take_damage};
+    if ((traits->invulnerable && !d->state.invulnerable) ||
+        (traits->no_knockback && !d->state.no_knockback))
+        return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 traits lack the requested source flag");
+    uint32_t next_flags = ((uint32_t)flags & ~(d->state.invulnerable | d->state.no_knockback)) |
+        (traits->invulnerable ? d->state.invulnerable : 0) |
+        (traits->no_knockback ? d->state.no_knockback : 0);
+    if (next_flags != (uint32_t)flags)
+        words[count++] = (qa_qvm_source_word){a->entity + d->reactions.flags, (int32_t)next_flags};
+    if (d->state.mass_kind == Q3_COMBAT_MASS_CONSTANT) {
+        if (traits->mass != d->state.mass.constant)
+            return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 mass is its source constant");
+    } else {
+        int32_t mass, previous;
+        if (d->state.mass_kind == Q3_COMBAT_MASS_INT32) {
+            if (!integer(traits->mass, &mass, error)) return false;
+        } else {
+            float value = (float)traits->mass;
+            if (!isfinite(value) || value < 0)
+                return fail(error, QA_ERROR_ARGUMENT, "Original Q3 mass exceeds its source float");
+            memcpy(&mass, &value, sizeof(mass));
+        }
+        if (!application_q3_combat_word_read(a, a->entity + d->state.mass.offset, &previous, error)) return false;
+        if (mass != previous) words[count++] = (qa_qvm_source_word){a->entity + d->state.mass.offset, mass};
+    }
+    if (a->player) {
+        int32_t previous;
+        uint32_t address = a->player + 248 + d->state.team_stat * 4;
+        qa_strings *strings = qa_session_strings(a->role->engine->provider->application->session);
+        if (!application_q3_combat_word_read(a, address, &previous, error)) return false;
+        if (!qa_team_equal(strings, source_team(a, previous), traits->team)) {
+            bool found = false;
+            for (size_t i = 0; i < d->state.team_count; ++i)
+                if (qa_team_equal(strings, source_team(a, d->state.teams[i].value), traits->team)) {
+                    words[count++] = (qa_qvm_source_word){address, d->state.teams[i].value};
+                    found = true; break;
+                }
+            if (!found) return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 traits have no declared source team");
+        }
+    } else if (qa_team_present(traits->team))
+        return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 non-client has no source team field");
+    for (size_t i = 0; i < count; ++i) {
+        uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)words[i].value);
+        if (!qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+                words[i].offset, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
+    }
+    return true;
+}
 bool application_q3_combat_state_read(void *opaque, qa_combat_state *out, qa_error *error)
 {
     application_q3_combat_actor *a = opaque;
@@ -211,15 +281,8 @@ bool application_q3_combat_state_read(void *opaque, qa_combat_state *out, qa_err
         return fail(error, QA_ERROR_FORMAT, "Original Q3 source mass is not finite and nonnegative");
     if (a->player) {
         int32_t team;
-        qa_team_id named_team = 0;
         if (!application_q3_combat_word_read(a, a->player + 248 + d->state.team_stat * 4, &team, error)) return false;
-        for (size_t i = 0; i < d->state.team_count; ++i)
-            if (d->state.teams[i].value == team) { named_team = d->state.teams[i].team; break; }
-        const application_q3_weapon_profile *weapons = application_q3_weapons_profile(a->role->weapons);
-        if (weapons && weapons->has_match)
-            for (size_t i = 0; i < weapons->team_count; ++i)
-                if (weapons->teams[i].source == named_team) { named_team = weapons->teams[i].team; break; }
-        state.team = qa_team_named(named_team);
+        state.team = source_team(a, team);
     }
     *out = state; return true;
 }

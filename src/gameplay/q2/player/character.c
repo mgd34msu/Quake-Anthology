@@ -80,3 +80,12 @@ bool qa_q2_character_respawned(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     }
     return qa_q2_run_actor(g, id, respawned, g, e);
 }
+
+static bool spawn_vitals(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
+    q2_actor *a = q2_client(g, id, e);
+    return a && q2_player_fresh_vitals(g, a, e);
+}
+bool qa_q2_character_spawn_vitals(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    return qa_q2_run_actor(g, id, spawn_vitals, g, e);
+}

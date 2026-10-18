@@ -39,6 +39,7 @@ typedef struct q2_players {
     qa_pool client_records;
 } q2_players;
 q2_actor *q2_client(qa_q2_game *, qa_actor_id, qa_error *);
+bool q2_player_fresh_vitals(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_info(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
 bool q2_player_score_read(qa_q2_game *, qa_actor_id, int32_t *, qa_error *);
 q2_player_list *q2_player_list_acquire(qa_q2_game *, bool scores, qa_error *);

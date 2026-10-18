@@ -75,6 +75,8 @@ static combat_actor *actor_create(application_q3_combat *owner, qa_actor_id id, 
 }
 static bool read(void *context, qa_combat_state *out, qa_error *error)
 { return application_q3_combat_state_read(&((combat_actor *)context)->source, out, error); }
+static bool traits_write(void *context, const qa_combat_state *traits, qa_error *error)
+{ return application_q3_combat_traits_write(&((combat_actor *)context)->source, traits, error); }
 static bool health_read(void *context, double *out, qa_error *error)
 {
     combat_actor *actor = context;
@@ -288,7 +290,7 @@ bool application_q3_combat_reaction(application_q3_combat *owner,
 
 static qa_combat_binding binding(combat_actor *actor)
 {
-    return (qa_combat_binding){.context = actor, .read = read, .write_health = health,
+    return (qa_combat_binding){.context = actor, .read = read, .write_traits = traits_write, .write_health = health,
         .write_armor = armor, .validate_armor = armor_valid, .empty_regular_armor = empty_armor,
         .source_damage = source_damage, .source_armor_stages = {true, true},
         .has_primary_protection = {true, false},

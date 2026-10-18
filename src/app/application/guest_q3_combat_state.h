@@ -19,6 +19,7 @@ bool application_q3_combat_actor_read(struct q3g_role *,
 bool application_q3_combat_actor_current(const application_q3_combat_actor *, qa_error *);
 bool application_q3_combat_actor_live(const application_q3_combat_actor *, bool *, qa_error *);
 bool application_q3_combat_state_read(void *, qa_combat_state *, qa_error *);
+bool application_q3_combat_traits_write(void *, const qa_combat_state *, qa_error *);
 bool application_q3_combat_health_write(void *, double, qa_error *);
 bool application_q3_combat_armor_read(const application_q3_combat_actor *, qa_armor *, qa_error *);
 bool application_q3_combat_armor_validate(void *, const qa_armor *, qa_error *);

@@ -313,6 +313,7 @@ bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission 
  * Q2's source spawn selection. The installed campaign owns respawn travel
  * and environment damage; configured members retain Q2 view and feedback. */
 bool qa_q2_character_configure(qa_q2_game *, qa_actor_id, qa_string_id model, int skin, qa_error *);
+bool qa_q2_character_spawn_vitals(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_character_respawned(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_userinfo_storage(qa_q2_game *, qa_actor_id, const char *, qa_error *);

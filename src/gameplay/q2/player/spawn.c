@@ -28,6 +28,18 @@ static bool post_respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     return true;
 }
+bool q2_player_fresh_vitals(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (!qa_combat_set_health(g->services.combat, a->id, 100, e) ||
+        !qa_combat_set_armor(g->services.combat, a->id, &(qa_armor){0}, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    q2_power_state *powers = q2_powers(g, a->id, e);
+    if (!powers)
+        return false;
+    powers->maximum_health = 100;
+    return true;
+}
 static bool fresh_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_client_state *s = a->client;
     if (!q2_player_inventory_set(g, a->id, s->rule.use_inventory ? NULL : s->rule.spawn_inventory,
@@ -39,15 +51,10 @@ static bool fresh_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    if (!qa_combat_set_health(g->services.combat, a->id, 100, e) ||
-        !qa_combat_set_armor(g->services.combat, a->id, &(qa_armor){0}, e))
+    if (!q2_player_fresh_vitals(g, a, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    q2_power_state *powers = q2_powers(g, a->id, e);
-    if (!powers)
-        return false;
-    powers->maximum_health = 100;
     s->info.selected_item = s->rule.use_inventory ? g->items[QA_Q2_BLASTER] : 0;
     if (s->rule.use_inventory)
         s->rule.pending_start_items = true;

@@ -402,6 +402,7 @@ static void test_character_health_authority(void)
     CHECK(health_sources_restore(&source, source.actor, 1, &binding, &error));
     CHECK(qa_combat_bind(combat, source.actor, &binding, true, &error));
     CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 124 && actual.armor.regular.points == 70);
+    CHECK(qa_combat_set_traits(combat, source.actor, &actual, &error));
     CHECK(qa_combat_set_health(combat, source.actor, 110, &error));
     CHECK(source.character.health == 110 && source.primary.health == 7);
     qa_armor armor = local.armor; armor.regular.points = 80;

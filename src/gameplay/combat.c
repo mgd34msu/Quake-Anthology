@@ -742,7 +742,14 @@ bool qa_combat_set_traits(qa_combat *combat, qa_actor_id actor, const qa_combat_
     if (entry->external) {
         qa_combat_binding binding = entry->binding;
         uint64_t serial = entry->serial;
-        if (!binding.write_traits) return qa_combat_argument(error, "source combat traits are not mutable");
+        if (!binding.write_traits) {
+            qa_combat_state current;
+            if (!primary_read(combat, entry, &current, error)) return false;
+            return (current.mass == traits->mass && current.can_take_damage == traits->can_take_damage &&
+                current.invulnerable == traits->invulnerable && current.no_knockback == traits->no_knockback &&
+                qa_team_equal(combat->strings, current.team, traits->team)) ||
+                qa_combat_argument(error, "source combat traits are not mutable");
+        }
         ++combat->active_calls; bool ok = binding.write_traits(binding.context, traits, error); --combat->active_calls;
         return ok && (record(combat, actor) == entry && entry->serial == serial
             ? true : qa_combat_argument(error, "combat traits storage changed during write"));
