@@ -50,7 +50,7 @@ typedef struct application_q3_weapon_profile {
     } availability;
     uint32_t powerups[3];
     struct { uint32_t entry; int32_t attack, melee; } animation;
-    uint32_t water_entity, water_movement;
+    uint32_t water_entity, water_movement, water_type_movement;
     struct { uint32_t entry, result; application_q3_weapon_region stop; } damage;
     application_q3_weapon_context *contexts;
     size_t context_count;

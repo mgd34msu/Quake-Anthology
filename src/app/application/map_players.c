@@ -1549,6 +1549,9 @@ bool application_player_source_score_read(application_provider *source,qa_actor_
     *out=player.persistant[0];return true;
 }
 
+static bool q1_finish_respawn(qa_application *,application_provider *,application_provider *,
+    application_provider *,qa_actor_id,qa_error *);
+
 bool application_players_guest_spawned(application_provider *source,qa_actor_id actor,
     bool respawning,qa_error *error)
 {
@@ -1565,8 +1568,11 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     if(!record || record->source_begin_pending || record->deferred ||
        app->operation==APPLICATION_CONFIGURING) return true;
     application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
-    return (!app->supplies || !world || application_supplies_source_spawned(world,actor,error)) &&
-        (!app->equipment || qa_equipment_respawn(app->equipment,actor,error)) &&
+    if(app->supplies && world && !application_supplies_source_spawned(world,actor,error)) return false;
+    if(world && world->kind==APPLICATION_PROVIDER_Q1 &&
+       !q1_finish_respawn(app,world,source,application_provider_for(app,actor,QA_ROLE_ARSENAL,""),
+           actor,error)) return false;
+    return (!app->equipment || qa_equipment_respawn(app->equipment,actor,error)) &&
         admit_components(app,actor,error);
 }
 
@@ -2598,6 +2604,32 @@ static bool q1_spawn_overlap(qa_application *app, application_provider *source,
     return okay;
 }
 
+static bool q1_finish_respawn(qa_application *app, application_provider *source,
+    application_provider *character, application_provider *arsenal, qa_actor_id actor,
+    qa_error *error)
+{
+    size_t ordinal;
+    if (!qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
+        !q1_spawn_overlap(app, source, character, arsenal, actor, true, error)) return false;
+    if (!source->q1_level)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 respawn lost its actual level-rule owner");
+    if (!qa_q1_level_reset_player(source->q1_level, actor, error) ||
+        !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
+    for (size_t i = 0; app->modes && i < app->mode_count; ++i) {
+        qa_mode_id mode = app->mode_ids[i];
+        qa_mode_view view;
+        if (!qa_modes_read(app->modes, mode, &view, error)) return false;
+        if (!view.rules.enabled || view.rules.kind != QA_MODE_HORDE ||
+            application_mode_provider(app, mode) != source) continue;
+        if (!qa_modes_player_respawn(app->modes, mode, actor, error) ||
+            !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
+    }
+    return qa_q1_source_client_spawned(source->state.q1, actor, error) &&
+        q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error) &&
+        application_native_q1_composition_birth(source, actor, false, error) &&
+        q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error);
+}
+
 static bool q1_finish_first_spawn(qa_application *app, const qa_launch_choices *choices,
     application_provider *source, application_provider *character,
     application_provider *arsenal, qa_actor_id actor, qa_actor_id point,
@@ -2723,26 +2755,8 @@ bool application_players_native_q1_respawn(qa_application *app,
     if (!qa_world_set_collision(app->world, actor, &collision, error) ||
         !qa_world_link(app->world, actor, NULL, error)) return false;
     if (!qa_q1_game_map_coop_spawn_grant(source->state.q1, actor, point, error) ||
-        !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error) ||
-        !qa_q1_source_current_ammo_select(source->state.q1, actor, error) ||
-        !q1_spawn_overlap(app, source, character, arsenal, actor, true, error)) return false;
-    if (!source->q1_level)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 respawn lost its actual level-rule owner");
-    if (!qa_q1_level_reset_player(source->q1_level, actor, error) ||
         !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    for (size_t i = 0; app->modes && i < app->mode_count; ++i) {
-        qa_mode_id mode = app->mode_ids[i];
-        qa_mode_view view;
-        if (!qa_modes_read(app->modes, mode, &view, error)) return false;
-        if (!view.rules.enabled || view.rules.kind != QA_MODE_HORDE ||
-            application_mode_provider(app, mode) != source) continue;
-        if (!qa_modes_player_respawn(app->modes, mode, actor, error) ||
-            !q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error)) return false;
-    }
-    return qa_q1_source_client_spawned(source->state.q1, actor, error) &&
-        q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error) &&
-        application_native_q1_composition_birth(source, actor, false, error) &&
-        q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error) &&
+    return q1_finish_respawn(app, source, character, arsenal, actor, error) &&
         admit_components(app, actor, error) &&
         q1_respawn_current(app, source, character, arsenal, actor, &ordinal, error);
 }

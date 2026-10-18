@@ -416,9 +416,14 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         if (!qa_qvm_write(input->role->vm, scope->movement + offset, (qa_bytes){bytes, 4}, error)) return false;
         if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
-    uint8_t water[8]; qa_store_u32le(water, (uint32_t)control.water_level);
-    qa_store_u32le(water + 4, (uint32_t)control.water_type);
+    uint8_t water[4]; qa_store_u32le(water, (uint32_t)control.water_level);
     if (!qa_qvm_write(input->role->vm, scope->movement + input->profile.source->water_movement,
+                       (qa_bytes){water, sizeof(water)}, error)) return false;
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
+    qa_collision_bits contents = qa_collision_contents_decode(control.water_type,
+        qa_ruleset_read(control.state.kind)->family);
+    qa_store_u32le(water, (uint32_t)qa_collision_contents_export(contents, QA_GAME_Q3, 0));
+    if (!qa_qvm_write(input->role->vm, scope->movement + input->profile.source->water_type_movement,
                        (qa_bytes){water, sizeof(water)}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     *skip = true; return true;
@@ -618,9 +623,9 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     scope->movement = (uint32_t)movement;
     uint64_t end = (uint64_t)scope->movement + 28;
     const uint32_t offsets[] = {input->profile.source->movement_mins, input->profile.source->movement_maxs,
-                               input->profile.source->water_movement};
+                               input->profile.source->water_movement, input->profile.source->water_type_movement};
     for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
-        uint64_t limit = (uint64_t)scope->movement + offsets[i] + (i == 2 ? 8u : 12u);
+        uint64_t limit = (uint64_t)scope->movement + offsets[i] + (i < 2 ? 12u : 4u);
         if (limit > end) end = limit;
     }
     if (end > qa_qvm_memory_size(input->role->vm)) {

@@ -227,6 +227,12 @@ static bool declared(q3g_role *role, qa_bytes bytes, application_q3_weapon_profi
         word(doc, teleport, "entry", &p->teleport_entry, error) && word(doc, teleport, "spawn", &p->spawn, error) &&
         word(doc, teleport, "view", &p->view, error) && evaluation(doc, qa_json_get(doc, teleport, "region"), &p->teleport, &p->teleport_inputs, error) &&
         evaluation(doc, qa_json_get(doc, teleport, "objectives"), &p->objectives, &p->objective_inputs, error);
+    if (ok) {
+        qa_json_id type = qa_json_get(doc, water, "typeMovementOffset");
+        if (type != QA_JSON_NONE) ok = u32(doc, type, &p->water_type_movement, error);
+        else if (p->water_movement >= 4) p->water_type_movement = p->water_movement - 4;
+        else ok = application_fail(error, QA_ERROR_FORMAT, "Original movement water fields leave their Source layout");
+    }
     if (ok) ok = word(doc, drop, "entry", &p->drop.entry, error) && word(doc, drop, "argument", &p->drop.argument, error) &&
         word(doc, drop, "weapon", &p->drop.weapon, error) && region(doc, qa_json_get(doc, drop, "region"), &p->drop.region, error);
     p->drop.inventory = qa_json_string_equal(doc, qa_json_get(doc, drop, "ammo"), "inventory");
@@ -309,6 +315,7 @@ static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *
     for (size_t i = 0; i < p->settled_count; ++i) if (!aligned(p->settled[i].offset, p->client_stride, 4, error)) return false;
     for (size_t i = 0; i < p->accepted_count; ++i) if (!aligned(p->accepted[i].offset, p->client_stride, 4, error)) return false;
     if (!aligned(p->water_entity, p->entity_stride, 4, error) || !aligned(p->water_movement, memory, 4, error) ||
+        !aligned(p->water_type_movement, memory, 4, error) ||
         !aligned(p->movement_mins, memory, 12, error) || !aligned(p->movement_maxs, memory, 12, error) ||
         !aligned(p->delay_player, memory, 4, error) || !aligned(p->drop.weapon, p->entity_stride, 4, error) ||
         (!p->drop.inventory && !aligned(p->drop.ammo, p->client_stride, 64, error)) ||
@@ -368,7 +375,7 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
         .body_trace = true, .locomotion = {75331, 75401}, .max_health = 208, .persistent_max_health = 548,
         .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
             .flags = 12, .respawn_flag = 512, .excluded_count = 5}, .powerups = {316, 324, 336},
-        .animation = {68268, 7, 8}, .water_entity = 788, .water_movement = 208,
+        .animation = {68268, 7, 8}, .water_entity = 788, .water_movement = 208, .water_type_movement = 204,
         .damage = {133602, 1296924, {133622, 133654}}, .context_count = 1,
         .delay = {.entry = 74337, .join = 74353, .input_count = 1, .result_offset = 12},
         .delay_global = 961696, .teleport_entry = 78919, .spawn = 87345, .view = 87959,
@@ -386,7 +393,7 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
         .body_trace = true, .locomotion = {35397, 35503}, .max_health = 220, .persistent_max_health = 548,
         .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
             .flags = 12, .respawn_flag = 512, .excluded_count = 5}, .powerups = {312, 320, 332},
-        .animation = {27646, 7, 8}, .water_entity = 788, .water_movement = 208,
+        .animation = {27646, 7, 8}, .water_entity = 788, .water_movement = 208, .water_type_movement = 204,
         .damage = {217003, 1616724, {217081, 217113}}, .context_count = 1,
         .delay = {.entry = 34318, .join = 34350, .input_count = 1, .result_offset = 12},
         .delay_global = 1091860, .teleport_entry = 118339, .spawn = 127849, .view = 128463,
