@@ -67,13 +67,3 @@ bool application_q3_weapons_services_restore(application_q3_weapons_services *s,
     }
     qa_unified_frame_lease_release(storage); return ok;
 }
-bool application_q3_weapons_services_validate(application_q3_weapons_services *s, qa_error *error)
-{
-    if (!s || !application_q3_weapons_services_idle(s))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Source weapon requests need their idle retained owner");
-    for (q3_weapon_actor_state *state = s->first_request; state; state = state->request_next) {
-        q3_weapon_actor source;
-        if (!q3_weapon_services_source(s, state->actor, &source, error)) return false;
-    }
-    return true;
-}

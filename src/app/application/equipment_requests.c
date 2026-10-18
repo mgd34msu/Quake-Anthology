@@ -367,7 +367,9 @@ bool application_equipment_primary_select(void *context,qa_actor_id actor,qa_act
         else {
             int32_t weapon;
             if(!q3_item_weapon(provider,item,&weapon,e)) return false;
-            ok=application_guest_q3_client_weapon(provider,actor,weapon,accepted,e);
+            application_q3_client_weapon_result result;
+            ok=application_guest_q3_client_weapon(provider,actor,weapon,&result,e);
+            *accepted=ok&&result==APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED;
         }
     } else if(provider->kind==APPLICATION_PROVIDER_NATIVE&&provider->state.native.q2_engine)
         ok=application_native_q2_weapon_request(provider,actor,item,accepted,e);

@@ -188,12 +188,13 @@ bool application_guest_q3_functions_restore(q3g_role *role, qa_bytes bytes,
         ok = application_fail(error, QA_ERROR_FORMAT, "Composed input identities differ from their actual constructor");
     if (ok && functions.input_count)
         memcpy(bindings, input.bindings, functions.input_count * sizeof(*bindings));
+    bool legacy_native_requests = !role->vm && !role->weapons && role->weapon_services && !request_bytes.size;
     if (ok && (weapons.count != functions.weapons_count ||
-        (request_bytes.size != 0) != (role->weapon_services != NULL)))
+        (!legacy_native_requests && (request_bytes.size != 0) != (role->weapon_services != NULL))))
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved weapon actions differ from their actual constructor");
     if (ok && functions.weapons_count)
         memcpy(bindings + functions.input_count, weapons.bindings, functions.weapons_count * sizeof(*bindings));
-    if (ok && role->weapon_services)
+    if (ok && role->weapon_services && request_bytes.size)
         ok = application_q3_weapons_services_restore(role->weapon_services, request_bytes, error);
     if (ok && (pickup_bytes.size != 0) != (role->pickups != NULL))
         ok = application_fail(error, QA_ERROR_FORMAT, "Saved pickup owner differs from its actual Source profile");

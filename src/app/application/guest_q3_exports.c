@@ -808,9 +808,9 @@ bool application_q3_guest_role_command(application_provider *provider,qa_qvm_rol
 }
 
 bool application_guest_q3_client_weapon(application_provider *provider, qa_actor_id actor,
-    int32_t weapon, bool *handled, qa_error *error)
+    int32_t weapon, application_q3_client_weapon_result *out, qa_error *error)
 {
-    *handled = false;
+    *out = APPLICATION_Q3_CLIENT_WEAPON_UNAVAILABLE;
     uint32_t seat;
     if (!qa_application_player_seat(provider->application, actor, &seat)) return true;
     struct application_q3_guest *engine = q3g_engine(provider);
@@ -825,9 +825,19 @@ bool application_guest_q3_client_weapon(application_provider *provider, qa_actor
                 !role->init_succeeded || !role->local_client || role->client_source != provider ||
                 role->client_engine != engine || role->client >= 64 ||
                 !qa_actor_id_equal(engine->clients[role->client].actor, actor)) continue;
+            const q3g_client *client = engine->clients + role->client;
+            const qa_q3_snapshot *snapshot = client->has_snapshot ?
+                &client->snapshots[(uint32_t)client->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value : NULL;
+            if (!snapshot || !snapshot->valid || snapshot->message_number != client->snapshot_sequence) {
+                *out = APPLICATION_Q3_CLIENT_WEAPON_WAITING;
+                return true;
+            }
             char command[32];
             snprintf(command, sizeof(command), "weapon %i", weapon);
-            return role_console_command(role, 0, command, NULL, handled, error);
+            bool handled = false;
+            bool ok = role_console_command(role, 0, command, NULL, &handled, error);
+            if (ok && handled) *out = APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED;
+            return ok;
         }
     }
     return true;

@@ -15,6 +15,7 @@
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
 #include "guest_q3_combat.h"
+#include "guest_q3_weapons_services.h"
 #include "qa/persistence_content.h"
 #include "qa/native_module_save.h"
 #include "qa/persistence_application.h"
@@ -673,7 +674,7 @@ static bool native_role_plain(const q3g_role *role, qa_error *error)
 {
     bool plain = (role && !role->vm && !role->image && role->module &&
         (!role->projection || !role->projection->inventory_public) &&
-        !role->weapons && !role->weapon_services &&
+        !role->weapons && application_q3_weapons_services_idle(role->weapon_services) &&
         application_q3_combat_idle(role->combat) && !application_q3_combat_descriptor_count(role->combat) &&
         !role->pickups && !role->equipment && !role->body && !role->weapon_models) ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 role retains an unencoded application callback owner");

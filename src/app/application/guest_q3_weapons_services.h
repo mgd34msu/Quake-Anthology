@@ -9,8 +9,8 @@
 
 typedef struct application_q3_weapons_services application_q3_weapons_services;
 
-/* A real GAME owns this callback and request continuation before Init. Native
- * selected arsenals and inventory remain their existing publication owners. */
+/* A real GAME owns the request continuation before Init. Optimized callbacks
+ * additionally require that GAME's actual weapon profile. */
 bool application_q3_weapons_services_create(struct q3g_role *,
     application_q3_weapons_services **, qa_error *);
 bool application_q3_weapons_services_destroy(application_q3_weapons_services **, qa_error *);
@@ -23,8 +23,8 @@ void application_q3_weapons_services_actor_released(application_q3_weapons_servi
 bool application_q3_weapons_services_select_intent(application_q3_weapons_services *,
     qa_actor_id, qa_actor_owner arsenal, qa_item_id, bool *admitted, qa_error *);
 /* Source commands retain requested int32 selection until that same located
- * full actor's actual Source selection reaches it. Only physical usercmd
- * publication narrows to its actual ABI byte; the retained request stays int32. */
+ * full actor's actual Source selection reaches it. Native requests retry the
+ * actual CG command after snapshot admission without overriding its usercmd. */
 bool application_q3_weapons_services_request(application_q3_weapons_services *, qa_actor_id,
     int32_t *, bool *, qa_error *);
 bool application_q3_weapons_services_request_completed(application_q3_weapons_services *,

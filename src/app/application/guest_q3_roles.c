@@ -705,6 +705,9 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             &role->catalog, error)) goto failed;
     if (kind == QA_QVM_GAME && role->module &&
         !application_guest_projection_prepare(role, primary_bytes, error)) goto failed;
+    if (kind == QA_QVM_GAME && role->module && role->catalog && role->projection &&
+        role->projection->has_inventory &&
+        !application_q3_weapons_services_create(role, &role->weapon_services, error)) goto failed;
     qa_qvm_compatibility_free(&compatibility);
     role->ready = true; *out = role; return true;
 failed:

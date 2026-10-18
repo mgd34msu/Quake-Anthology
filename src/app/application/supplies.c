@@ -873,10 +873,15 @@ static bool q3_request_weapon(supply_pair *pair, qa_actor_id actor,
     q3g_role *role = original_q3_arsenal(pair->arsenal);
     bool admitted = false;
     if (!role) return application_fail(error, QA_ERROR_NOT_FOUND, "Original Q3 supply lost its actual weapon owner");
-    bool requested = role->weapon_services ?
-        application_q3_weapons_services_select_intent(role->weapon_services, actor,
-            pair->arsenal->owner, weapon->item, &admitted, error) :
-        application_guest_q3_client_weapon(pair->arsenal, actor, weapon->weapon, &admitted, error);
+    bool requested;
+    if (role->weapon_services)
+        requested = application_q3_weapons_services_select_intent(role->weapon_services, actor,
+            pair->arsenal->owner, weapon->item, &admitted, error);
+    else {
+        application_q3_client_weapon_result result;
+        requested = application_guest_q3_client_weapon(pair->arsenal, actor, weapon->weapon, &result, error);
+        admitted = requested && result == APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED;
+    }
     return requested && pair_current(pair, actor, error) &&
         (admitted || application_fail(error,
             role->weapon_services ? QA_ERROR_NOT_FOUND : QA_ERROR_UNSUPPORTED,
