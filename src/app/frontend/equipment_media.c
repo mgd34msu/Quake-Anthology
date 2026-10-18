@@ -185,16 +185,8 @@ bool frontend_held_carrier_sample(const frontend_held_carrier *carrier,
 void frontend_held_carrier_ref(const qa_model_transform *carrier,
     const qa_q3_ref_entity *source, qa_q3_ref_entity *out)
 {
-    qa_model_transform local = qa_q3_ref_model_transform(source), world;
-    qa_model_transform_compose(carrier, &local, &world);
-    *out = *source;
-    out->origin = qa_v3(world.origin[0], world.origin[1], world.origin[2]);
+    qa_q3_ref_entity_transform(carrier,source,out);
     out->old_origin = out->origin;
-    for (size_t i = 0; i < 3; ++i) {
-        out->axis[i] = qa_v3(world.axes[i][0] * world.scale[i],
-            world.axes[i][1] * world.scale[i], world.axes[i][2] * world.scale[i]);
-        out->non_normalized_axes |= world.scale[i] != 1;
-    }
 }
 
 bool frontend_equipment_media_namespace_current(const qa_frontend *frontend,

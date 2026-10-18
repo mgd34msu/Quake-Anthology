@@ -5,6 +5,7 @@
 #include "equipment_gear_world_output.h"
 #include "source_companion.h"
 #include "scene_lights.h"
+#include "visual_access.h"
 #include "qa/ui_preferences.h"
 
 typedef struct equipment_packet {
@@ -22,7 +23,7 @@ typedef struct equipment_world_packet {
 typedef struct equipment_source_actor {
     struct equipment_source_actor *next;
     size_t entity;
-    const qa_application_q3_equipment_source_weapon *weapon;
+    struct equipment_source_weapon *weapon;
     qa_actor_id actor;
     bool view;
 } equipment_source_actor;
@@ -30,7 +31,7 @@ typedef struct equipment_source_actor {
 typedef struct equipment_source_effect {
     struct equipment_source_effect *next;
     size_t ordinal;
-    const qa_application_q3_equipment_source_weapon *weapon;
+    struct equipment_source_weapon *weapon;
     qa_actor_id actor;
     bool view;
 } equipment_source_effect;
@@ -38,6 +39,9 @@ typedef struct equipment_source_effect {
 typedef struct equipment_source_weapon {
     struct equipment_source_weapon *next;
     qa_application_q3_equipment_source_weapon value;
+    qa_model_transform attachment;
+    bool has_attachment, sampled, has_remap;
+    qa_model_transform remap;
 } equipment_source_weapon;
 
 struct frontend_equipment_source {
@@ -189,54 +193,47 @@ static bool source_scene_current(const frontend_equipment_source *owner,
 }
 
 bool frontend_equipment_source_scene_entities(const frontend_equipment_source *owner,
-    size_t count, qa_actor_id *actors, bool *views,
-    const qa_application_q3_equipment_source_weapon **weapons, qa_error *error)
+    size_t count, qa_actor_id *actors, bool *views, qa_error *error)
 {
     if (!source_scene_current(owner, count, error)) return false;
     for (size_t i = 0; i < count; ++i) {
-        actors[i] = (qa_actor_id){0}; views[i] = false; weapons[i] = NULL;
+        actors[i] = (qa_actor_id){0}; views[i] = false;
     }
     for (const equipment_source_actor *row=owner->source_actors;row;row=row->next) {
         actors[row->entity]=row->actor; views[row->entity]=row->view;
-        weapons[row->entity]=row->weapon;
     }
     return true;
 }
 
 static bool source_effects_read(const frontend_equipment_source *owner,
     const equipment_source_effect *rows, size_t row_count, size_t count,
-    qa_actor_id *actors, bool *views,
-    const qa_application_q3_equipment_source_weapon **weapons, qa_error *error)
+    qa_actor_id *actors, bool *views, qa_error *error)
 {
-    if (!owner || (count && (!actors || !views || !weapons)) || count > SIZE_MAX / sizeof(*actors))
+    if (!owner || (count && (!actors || !views)) || count > SIZE_MAX / sizeof(*actors))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects require their actual output extent");
     if ((!owner->drawing && row_count) || (owner->drawing && !current_owner(owner)))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effects lost their actual declared Draw");
-    if (count) { memset(actors, 0, count * sizeof(*actors)); memset(views, 0, count * sizeof(*views));
-        memset(weapons, 0, count * sizeof(*weapons)); }
+    if (count) { memset(actors, 0, count * sizeof(*actors)); memset(views, 0, count * sizeof(*views)); }
     for (const equipment_source_effect *row=rows;row;row=row->next) {
         if (row->ordinal>=count)
             return frontend_fail(error, QA_ERROR_FORMAT, "Source effects leave their reached scene queue");
         actors[row->ordinal]=row->actor; views[row->ordinal]=row->view;
-        weapons[row->ordinal]=row->weapon;
     }
     return true;
 }
 
 bool frontend_equipment_source_scene_polygons(const frontend_equipment_source *owner,
-    size_t count, qa_actor_id *actors, bool *views,
-    const qa_application_q3_equipment_source_weapon **weapons, qa_error *error)
+    size_t count, qa_actor_id *actors, bool *views, qa_error *error)
 {
     return source_effects_read(owner, owner ? owner->source_polygons : NULL,
-        owner ? owner->source_polygon_count : 0, count, actors, views, weapons, error);
+        owner ? owner->source_polygon_count : 0, count, actors, views, error);
 }
 
 bool frontend_equipment_source_scene_lights(const frontend_equipment_source *owner,
-    size_t count, qa_actor_id *actors, bool *views,
-    const qa_application_q3_equipment_source_weapon **weapons, qa_error *error)
+    size_t count, qa_actor_id *actors, bool *views, qa_error *error)
 {
     return source_effects_read(owner, owner ? owner->source_lights : NULL,
-        owner ? owner->source_light_count : 0, count, actors, views, weapons, error);
+        owner ? owner->source_light_count : 0, count, actors, views, error);
 }
 
 bool frontend_equipment_source_scene_weapons(const frontend_equipment_source *owner,
@@ -275,8 +272,8 @@ static bool held_source_begin(void *context, qa_actor_id actor, bool view,
             qa_model_transform_identity(&socket);
             memcpy(socket.origin,tag.origin,sizeof(socket.origin));
             memcpy(socket.axes,tag.axes,sizeof(socket.axes));
-            qa_model_transform_compose(&pose,&socket,&row->value.attachment);
-            row->value.has_attachment=true;
+            qa_model_transform_compose(&pose,&socket,&row->attachment);
+            row->has_attachment=true;
         }
     }
     *capture=row;
@@ -318,7 +315,7 @@ static bool held_source_effect(frontend_equipment_source *owner, void *capture,
     equipment_source_effect *row=qa_arena_alloc(&owner->options.frontend->frame.storage,
         sizeof(*row),_Alignof(equipment_source_effect),error);
     if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Source weapon effect attribution");
-    *row=(equipment_source_effect){.next=*rows,.ordinal=ordinal,.weapon=&weapon->value,.actor=actor,.view=view};
+    *row=(equipment_source_effect){.next=*rows,.ordinal=ordinal,.weapon=weapon,.actor=actor,.view=view};
     *rows=row; ++*count;
     return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
         "Source weapon effect changed its genuine Draw namespace");
@@ -352,7 +349,7 @@ static bool held_source(void *context, void *capture,
     equipment_source_actor *row=qa_arena_alloc(&owner->options.frontend->frame.storage,
         sizeof(*row),_Alignof(equipment_source_actor),error);
     if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Source weapon actor attribution");
-    *row=(equipment_source_actor){.next=owner->source_actors,.entity=entity,.weapon=&weapon->value,.actor=actor,.view=view};
+    *row=(equipment_source_actor){.next=owner->source_actors,.entity=entity,.weapon=weapon,.actor=actor,.view=view};
     owner->source_actors=row; ++owner->source_actor_count;
     *ordinal = entity; *observed = true;
     return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
@@ -1003,11 +1000,42 @@ static bool build_world(frontend_equipment_source *owner, qa_error *error)
     return true;
 }
 
+static bool source_element_place(frontend_equipment_source *owner,equipment_source_weapon *weapon,
+    const qa_scene_world_input *world,qa_q3_scene_element kind,size_t ordinal,qa_error *error)
+{
+    if (!weapon || weapon->value.view || !weapon->has_attachment) return true;
+    if (!weapon->sampled) {
+        qa_model_transform target,inverse;
+        if (!frontend_visual_actor_attachment_sample(owner->options.frontend,weapon->value.actor,world,
+                &owner->options.frontend->frame,&target,&weapon->has_remap,error)) return false;
+        if (weapon->has_remap) {
+            weapon->has_remap=qa_model_transform_inverse(&weapon->attachment,&inverse);
+            if (weapon->has_remap) qa_model_transform_compose(&target,&inverse,&weapon->remap);
+        }
+        weapon->sampled=true;
+    }
+    return !weapon->has_remap || qa_q3_presentation_scene_transform(owner->options.presentation,
+        kind,ordinal,&weapon->remap,error);
+}
+
+bool frontend_equipment_source_scene_place(frontend_equipment_source *owner,
+    const qa_scene_world_input *world,qa_error *error)
+{
+    if (!owner || !owner->drawing || !owner->original_q3_view || world->no_world) return true;
+    for (equipment_source_actor *row=owner->source_actors;row;row=row->next)
+        if (!source_element_place(owner,row->weapon,world,QA_Q3_SCENE_REF,row->entity,error)) return false;
+    for (equipment_source_effect *row=owner->source_polygons;row;row=row->next)
+        if (!source_element_place(owner,row->weapon,world,QA_Q3_SCENE_POLYGON,row->ordinal,error)) return false;
+    for (equipment_source_effect *row=owner->source_lights;row;row=row->next)
+        if (!source_element_place(owner,row->weapon,world,QA_Q3_SCENE_LIGHT,row->ordinal,error)) return false;
+    return true;
+}
+
 static bool companion_lights_prepare(frontend_equipment_source *owner,
     qa_q3_scene_options *options, qa_error *error)
 {
     if (!owner->companion_selected || options->world.no_world) return true;
-    if(!frontend_scene_lights_companion_merge(owner->options.frontend,&owner->options.frontend->frame.storage,
+    if(!frontend_scene_lights_companion_merge(&owner->options.frontend->frame.storage,
         &options->world,owner->companion_selection,!owner->companion_view_requested,error) ||
         !frontend_source_companion_current(owner->options.frontend,&owner->companion)) return false;
     owner->view_lights=options->world.lights;
@@ -1071,7 +1099,7 @@ static bool companion_submit(frontend_equipment_source *owner,
         const frontend_source_companion_polygon *captured = owner->companion_selection->polygons + i;
         if (captured->view && !owner->companion_view_requested) continue;
         const qa_scene_vertex *vertices;
-        if(!frontend_source_companion_polygon_vertices(owner->options.frontend,owner->companion_selection->actor,captured,&options->world,&frame->storage,&vertices,error)) return false;
+        if(!frontend_source_companion_polygon_vertices(captured,&options->world,&frame->storage,&vertices,error)) return false;
         bool okay = frontend_source_companion_current(owner->options.frontend, &owner->companion) &&
             qa_q3_presentation_source_component_poly(owner->options.presentation, owner->companion.assets,
                 captured->polygon.shader, vertices, captured->polygon.count, &captured->polygon.fog,

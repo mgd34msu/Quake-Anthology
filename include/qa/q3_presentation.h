@@ -108,6 +108,7 @@ typedef struct qa_q3_ref_entity {
     bool has_opacity;
 } qa_q3_ref_entity;
 qa_model_transform qa_q3_ref_model_transform(const qa_q3_ref_entity *);
+void qa_q3_ref_entity_transform(const qa_model_transform *, const qa_q3_ref_entity *, qa_q3_ref_entity *);
 void qa_q3_ref_entity_remap(qa_q3_ref_entity *,qa_vec3 from_origin,const qa_vec3 from_axis[3],
     qa_vec3 to_origin,const qa_vec3 to_axis[3]);
 typedef struct qa_q3_refdef {
@@ -255,6 +256,12 @@ void qa_q3_presentation_frontend_rebind(qa_q3_presentation *, const qa_scene_fra
                                          qa_scene_frame *destination, qa_audio_engine *, uint64_t bus);
 qa_q3_presentation_assets *qa_q3_presentation_resources(qa_q3_presentation *);
 bool qa_q3_presentation_frame(qa_q3_presentation *, qa_scene_frame *, qa_scene_rect, qa_error *);
+typedef enum qa_q3_scene_element {
+    QA_Q3_SCENE_REF, QA_Q3_SCENE_POLYGON, QA_Q3_SCENE_LIGHT
+} qa_q3_scene_element;
+/* Transform an admitted element during prepare_view, before its scene submits. */
+bool qa_q3_presentation_scene_transform(qa_q3_presentation *, qa_q3_scene_element,
+    size_t ordinal, const qa_model_transform *, qa_error *);
 bool qa_q3_presentation_world(qa_q3_presentation *, qa_scene_world *, qa_collision_geometry *,
                               qa_bytes entity_text, qa_error *);
 /* Call for every seat sharing the registry after source calls finish and

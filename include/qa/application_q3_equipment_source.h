@@ -3,7 +3,6 @@
 
 #include "qa/application_equipment.h"
 #include "qa/q3_host.h"
-#include "qa/model.h"
 
 typedef struct qa_application_q3_equipment_draw {
     qa_actor_id actor;
@@ -14,8 +13,6 @@ typedef struct qa_application_q3_equipment_draw {
 typedef struct qa_application_q3_equipment_source_weapon {
     qa_actor_id actor;
     bool view;
-    qa_model_transform attachment;
-    bool has_attachment;
 } qa_application_q3_equipment_source_weapon;
 
 /* The real client frontend lease owns the callback context. Preparation fills

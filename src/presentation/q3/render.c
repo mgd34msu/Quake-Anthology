@@ -81,6 +81,62 @@ qa_model_transform qa_q3_ref_model_transform(const qa_q3_ref_entity *entity)
     return transform;
 }
 
+static qa_vec3 transform_point(const qa_model_transform *transform, qa_vec3 point)
+{
+    float value[3]={point.x,point.y,point.z},out[3];
+    qa_model_transform_point(transform,value,out);
+    return qa_v3(out[0],out[1],out[2]);
+}
+
+void qa_q3_ref_entity_transform(const qa_model_transform *transform,
+    const qa_q3_ref_entity *source, qa_q3_ref_entity *out)
+{
+    qa_model_transform local=qa_q3_ref_model_transform(source),world;
+    qa_model_transform_compose(transform,&local,&world);
+    qa_q3_ref_entity result=*source;
+    result.origin=qa_v3(world.origin[0],world.origin[1],world.origin[2]);
+    result.old_origin=transform_point(transform,source->old_origin);
+    result.lighting_origin=transform_point(transform,source->lighting_origin);
+    for (unsigned i=0;i<3;++i)
+        result.axis[i]=qa_v3(world.axes[i][0],world.axes[i][1],world.axes[i][2]);
+    result.non_normalized_axes=true;
+    *out=result;
+}
+
+bool qa_q3_presentation_scene_transform(qa_q3_presentation *p,qa_q3_scene_element kind,
+    size_t ordinal,const qa_model_transform *transform,qa_error *error)
+{
+    qa_q3_source_scene_bank *bank=q3p_scene_bank(p,error);
+    if (!bank) return false;
+    if (kind==QA_Q3_SCENE_REF && ordinal<p->entity_count) {
+        qa_q3_source_entity_cell *cell=bank->entities+bank->membership.first_entity+ordinal;
+        qa_q3_ref_entity_transform(transform,&cell->value,&cell->value);
+        cell->lighting_calculated=false;
+        p->entities[ordinal]=cell->value;
+        return true;
+    }
+    if (kind==QA_Q3_SCENE_POLYGON && ordinal<p->polygon_count) {
+        qa_q3_source_polygon_cell *cell=bank->polygons+bank->membership.first_polygon+ordinal;
+        q3p_polygon *polygon=p->polygons+ordinal;
+        qa_bounds bounds={0};
+        for (size_t i=0;i<cell->count;++i) {
+            qa_vec3 placed=transform_point(transform,bank->vertices[cell->first+i].position);
+            bank->vertices[cell->first+i].position=placed;
+            p->vertices[polygon->first+i].position=placed;
+            bounds=i?qa_bounds_union(bounds,(qa_bounds){placed,placed}):(qa_bounds){placed,placed};
+        }
+        if (cell->count) qa_scene_world_fog_for_bounds(p->world,bounds,&cell->fog);
+        polygon->fog=cell->fog;
+        return true;
+    }
+    if (kind==QA_Q3_SCENE_LIGHT && ordinal<p->light_count) {
+        qa_scene_light *light=bank->lights+bank->membership.first_light+ordinal;
+        light->origin=transform_point(transform,light->origin);
+        return true;
+    }
+    return q3p_fail(error,QA_ERROR_ARGUMENT,"Scene transform selects no admitted element");
+}
+
 static float bounds_radius(const qa_model_bounds *bounds)
 {
     return qa_vec_length(qa_v3(fmaxf(fabsf(bounds->min[0]), fabsf(bounds->max[0])),

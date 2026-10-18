@@ -15,19 +15,16 @@ typedef struct frontend_source_companion_packet {
     const qa_q3_ref_entity *entities;
     const qa_actor_id *entity_actors;
     const bool *entity_views;
-    const qa_application_q3_equipment_source_weapon *const *entity_weapons;
     size_t entity_count;
     const qa_q3_scene_polygon *polygons;
     const qa_actor_id *polygon_actors;
     const bool *polygon_views;
-    const qa_application_q3_equipment_source_weapon *const *polygon_weapons;
     size_t polygon_count;
     const qa_scene_vertex *vertices;
     size_t vertex_count;
     const qa_scene_light *lights;
     const qa_actor_id *light_actors;
     const bool *light_views;
-    const qa_application_q3_equipment_source_weapon *const *light_weapons;
     size_t light_count;
     const qa_application_q3_equipment_source_weapon *weapons;
     size_t weapon_count;
@@ -36,20 +33,17 @@ typedef struct frontend_source_companion_ref {
     qa_q3_ref_entity ref;
     const qa_q3_refdef *definition;
     bool view;
-    const qa_application_q3_equipment_source_weapon *weapon;
 } frontend_source_companion_ref;
 typedef struct frontend_source_companion_polygon {
     qa_q3_scene_polygon polygon;
     const qa_scene_vertex *vertices;
     const qa_q3_refdef *definition;
     bool view;
-    const qa_application_q3_equipment_source_weapon *weapon;
 } frontend_source_companion_polygon;
 typedef struct frontend_source_companion_light {
     qa_scene_light light;
     const qa_q3_refdef *definition;
     bool view;
-    const qa_application_q3_equipment_source_weapon *weapon;
 } frontend_source_companion_light;
 typedef struct frontend_source_companion_selection {
     qa_actor_id actor;
@@ -60,10 +54,7 @@ typedef struct frontend_source_companion_selection {
     size_t ref_count, polygon_count, light_count, weapon_count;
 } frontend_source_companion_selection;
 bool frontend_source_companion_ref_place(qa_frontend *,qa_actor_id,const frontend_source_companion_ref *,const qa_scene_world_input *,qa_q3_ref_entity *,qa_error *);
-bool frontend_source_companion_attachment_remap(qa_frontend *,qa_actor_id,
-    const qa_application_q3_equipment_source_weapon *,const qa_scene_world_input *,
-    qa_model_transform *,bool *,qa_error *);
-bool frontend_source_companion_polygon_vertices(qa_frontend *,qa_actor_id,const frontend_source_companion_polygon *,const qa_scene_world_input *,
+bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *,const qa_scene_world_input *,
     qa_arena *,const qa_scene_vertex **,qa_error *);
 bool frontend_source_companion_selection_read(qa_frontend *,const frontend_source_companion_view *,
     const frontend_source_companion_selection **,qa_error *);

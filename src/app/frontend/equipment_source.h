@@ -35,11 +35,11 @@ void frontend_equipment_source_clear(frontend_equipment_source *);
 /* Actual declared weapon scopes attribute Source queue indices to full actors.
  * Borrow these only at the successful scene_completed callback before clear. */
 bool frontend_equipment_source_scene_entities(const frontend_equipment_source *,
-    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
+    size_t, qa_actor_id *, bool *, qa_error *);
 bool frontend_equipment_source_scene_polygons(const frontend_equipment_source *,
-    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
+    size_t, qa_actor_id *, bool *, qa_error *);
 bool frontend_equipment_source_scene_lights(const frontend_equipment_source *,
-    size_t, qa_actor_id *, bool *, const qa_application_q3_equipment_source_weapon **, qa_error *);
+    size_t, qa_actor_id *, bool *, qa_error *);
 bool frontend_equipment_source_scene_weapons(const frontend_equipment_source *,
     const qa_application_q3_equipment_source_weapon **rows, size_t *count, qa_error *);
 bool frontend_equipment_source_rebind_ready(const frontend_equipment_source *,
@@ -66,6 +66,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *,
 bool frontend_equipment_source_native_view(frontend_equipment_source *, float field_of_view,
     bool *consumed, qa_error *);
 /* Called by the real source renderer owner at its current view boundaries. */
+bool frontend_equipment_source_scene_place(frontend_equipment_source *,const qa_scene_world_input *,qa_error *);
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *,
     const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);
 bool frontend_equipment_source_submit(frontend_equipment_source *,

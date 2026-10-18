@@ -28,7 +28,7 @@ bool frontend_source_companion_legacy_prepare(qa_frontend *f,uint32_t physical,q
     owner->options.world.identity_light=1;
     qa_scene_state_default(&owner->options.state);
     if (!frontend_q3_generic_recipient(f,&owner->options.world,error)) return false;
-    if(!frontend_scene_lights_companion_merge(f,&f->frame.storage,input,owner->selection,
+    if(!frontend_scene_lights_companion_merge(&f->frame.storage,input,owner->selection,
         input->view.clip_enabled,error) || !frontend_source_companion_current(f,&capture)) return false;
     owner->options.world=*input; owner->options.world.identity_light=1;
     return frontend_q3_generic_recipient(f,&owner->options.world,error);
@@ -52,7 +52,7 @@ bool frontend_source_companion_legacy_submit(frontend_source_companion_legacy *o
         const frontend_source_companion_polygon *row=owner->selection->polygons+i;
         if(row->view && owner->options.world.view.clip_enabled) continue;
         const qa_scene_vertex *vertices;
-        if(!frontend_source_companion_polygon_vertices(f,owner->selection->actor,row,&owner->options.world,&frame->storage,&vertices,error)) return false;
+        if(!frontend_source_companion_polygon_vertices(row,&owner->options.world,&frame->storage,&vertices,error)) return false;
         qa_q3_scene_options projected;
         const qa_q3_scene_options *options=&owner->options;
         if(row->view) {

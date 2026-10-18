@@ -6,8 +6,6 @@
 #include "source_client_registry.h"
 #include "video_guests.h"
 #include "source_companion.h"
-#include "visual_access.h"
-#include "equipment_media.h"
 #include "scene_lights.h"
 #include "qa/application_q3_collision.h"
 #include "qa/application_q3_body_entry.h"
@@ -713,6 +711,8 @@ static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scen
             qa_angle_axis(camera.angles,options->world.view.axis,QA_ANGLE_FLOAT_MATH);
         }
     }
+    if (scope->lease->equipment &&
+        !frontend_equipment_source_scene_place(scope->lease->equipment,&options->world,error)) return false;
     if (!frontend_source_prepare_scene(source->frontend,source->application,source->seat,definition,options,error)) return false;
     if (scope->effects && !frontend_source_effects_prepare(scope->effects,definition,options,error)) return false;
     if (scope->lease->equipment &&
@@ -788,37 +788,34 @@ static bool scene_completed(void *context,const qa_q3_refdef *definition,const q
         qa_q3_ref_entity *refs=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*refs),_Alignof(qa_q3_ref_entity),error):NULL;
         qa_actor_id *actors=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*actors),_Alignof(qa_actor_id),error):NULL;
         bool *views=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*views),_Alignof(bool),error):NULL;
-        const qa_application_q3_equipment_source_weapon **entity_weapons=entity_count?qa_arena_alloc(storage,entity_count*sizeof(*entity_weapons),_Alignof(qa_application_q3_equipment_source_weapon *),error):NULL;
         qa_q3_scene_polygon *polys=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*polys),_Alignof(qa_q3_scene_polygon),error):NULL;
         qa_actor_id *poly_actors=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*poly_actors),_Alignof(qa_actor_id),error):NULL;
         bool *poly_views=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*poly_views),_Alignof(bool),error):NULL;
-        const qa_application_q3_equipment_source_weapon **poly_weapons=polygon_count?qa_arena_alloc(storage,polygon_count*sizeof(*poly_weapons),_Alignof(qa_application_q3_equipment_source_weapon *),error):NULL;
         qa_scene_vertex *verts=vertex_count?qa_arena_alloc(storage,vertex_count*sizeof(*verts),_Alignof(qa_scene_vertex),error):NULL;
         qa_scene_light *lit=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit),_Alignof(qa_scene_light),error):NULL;
         qa_actor_id *lit_actors=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit_actors),_Alignof(qa_actor_id),error):NULL;
         bool *lit_views=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit_views),_Alignof(bool),error):NULL;
-        const qa_application_q3_equipment_source_weapon **lit_weapons=light_count?qa_arena_alloc(storage,light_count*sizeof(*lit_weapons),_Alignof(qa_application_q3_equipment_source_weapon *),error):NULL;
         packet->view=(frontend_source_companion_packet){.definition=*definition,.entities=refs,
-            .entity_actors=actors,.entity_views=views,.entity_weapons=entity_weapons,.entity_count=entity_count,
-            .polygons=polys,.polygon_actors=poly_actors,.polygon_views=poly_views,.polygon_weapons=poly_weapons,.polygon_count=polygon_count,
+            .entity_actors=actors,.entity_views=views,.entity_count=entity_count,
+            .polygons=polys,.polygon_actors=poly_actors,.polygon_views=poly_views,.polygon_count=polygon_count,
             .vertices=verts,.vertex_count=vertex_count,.lights=lit,.light_actors=lit_actors,
-            .light_views=lit_views,.light_weapons=lit_weapons,.light_count=light_count};
-        if ((entity_count && (!refs || !actors || !views || !entity_weapons)) ||
-            (polygon_count && (!polys || !poly_actors || !poly_views || !poly_weapons)) ||
-            (vertex_count && !verts) || (light_count && (!lit || !lit_actors || !lit_views || !lit_weapons))) {
+            .light_views=lit_views,.light_count=light_count};
+        if ((entity_count && (!refs || !actors || !views)) ||
+            (polygon_count && (!polys || !poly_actors || !poly_views)) ||
+            (vertex_count && !verts) || (light_count && (!lit || !lit_actors || !lit_views))) {
             return frontend_fail(error,QA_ERROR_MEMORY,"Retaining genuine companion scene values");
         }
-        if (entity_count) { memset(actors,0,entity_count*sizeof(*actors)); memset(views,0,entity_count*sizeof(*views)); memset(entity_weapons,0,entity_count*sizeof(*entity_weapons)); }
-        if (polygon_count) { memset(poly_actors,0,polygon_count*sizeof(*poly_actors)); memset(poly_views,0,polygon_count*sizeof(*poly_views)); memset(poly_weapons,0,polygon_count*sizeof(*poly_weapons)); }
-        if (light_count) { memset(lit_actors,0,light_count*sizeof(*lit_actors)); memset(lit_views,0,light_count*sizeof(*lit_views)); memset(lit_weapons,0,light_count*sizeof(*lit_weapons)); }
+        if (entity_count) { memset(actors,0,entity_count*sizeof(*actors)); memset(views,0,entity_count*sizeof(*views)); }
+        if (polygon_count) { memset(poly_actors,0,polygon_count*sizeof(*poly_actors)); memset(poly_views,0,polygon_count*sizeof(*poly_views)); }
+        if (light_count) { memset(lit_actors,0,light_count*sizeof(*lit_actors)); memset(lit_views,0,light_count*sizeof(*lit_views)); }
         if (entity_count) memcpy(refs,entities,entity_count*sizeof(*refs));
         if (polygon_count) memcpy(polys,polygons,polygon_count*sizeof(*polys));
         if (vertex_count) memcpy(verts,vertices,vertex_count*sizeof(*verts));
         if (light_count) memcpy(lit,lights,light_count*sizeof(*lit));
         if (scope->lease->equipment &&
-            (!frontend_equipment_source_scene_entities(scope->lease->equipment,entity_count,actors,views,entity_weapons,error) ||
-             !frontend_equipment_source_scene_polygons(scope->lease->equipment,polygon_count,poly_actors,poly_views,poly_weapons,error) ||
-             !frontend_equipment_source_scene_lights(scope->lease->equipment,light_count,lit_actors,lit_views,lit_weapons,error))) {
+            (!frontend_equipment_source_scene_entities(scope->lease->equipment,entity_count,actors,views,error) ||
+             !frontend_equipment_source_scene_polygons(scope->lease->equipment,polygon_count,poly_actors,poly_views,error) ||
+             !frontend_equipment_source_scene_lights(scope->lease->equipment,light_count,lit_actors,lit_views,error))) {
             return false;
         }
         const qa_application_q3_equipment_source_weapon *weapons=NULL;
@@ -2289,61 +2286,23 @@ static bool frontend_source_companion_ref_owned(const frontend_source_companion_
     return match;
 }
 
-bool frontend_source_companion_attachment_remap(qa_frontend *frontend,qa_actor_id actor,
-    const qa_application_q3_equipment_source_weapon *weapon,const qa_scene_world_input *world,
-    qa_model_transform *out,bool *present,qa_error *error)
-{
-    *present=false;
-    if (!weapon || weapon->view || !weapon->has_attachment) return true;
-    qa_model_transform target,inverse;
-    if (!frontend_visual_actor_attachment_sample(frontend,actor,world,&frontend->frame,
-            &target,present,error)) return false;
-    if (!*present) return true;
-    if (!qa_model_transform_inverse(&weapon->attachment,&inverse)) {
-        *present=false;return true;
-    }
-    qa_model_transform_compose(&target,&inverse,out);
-    return true;
-}
-
 bool frontend_source_companion_ref_place(qa_frontend *frontend,qa_actor_id actor,const frontend_source_companion_ref *row,
     const qa_scene_world_input *world,qa_q3_ref_entity *ref,qa_error *error)
 {
     *ref=row->ref;
     if(row->view) qa_q3_ref_entity_remap(ref,row->definition->origin,row->definition->axis,
         world->view.origin,world->view.axis);
-    else {
-        qa_model_transform remap;bool present;
-        if (!frontend_source_companion_attachment_remap(frontend,actor,row->weapon,world,&remap,&present,error)) return false;
-        if (present) {
-            frontend_held_carrier_ref(&remap,&row->ref,ref);
-            float old[3]={row->ref.old_origin.x,row->ref.old_origin.y,row->ref.old_origin.z},moved[3];
-            qa_model_transform_point(&remap,old,moved);
-            ref->old_origin=qa_v3(moved[0],moved[1],moved[2]);
-        }
-    }
     return qa_application_visual_alpha_apply(frontend->application,actor,ref,error);
 }
-bool frontend_source_companion_polygon_vertices(qa_frontend *frontend,qa_actor_id actor,
-    const frontend_source_companion_polygon *row,const qa_scene_world_input *world,
-    qa_arena *storage,const qa_scene_vertex **out,qa_error *error)
+bool frontend_source_companion_polygon_vertices(const frontend_source_companion_polygon *row,
+    const qa_scene_world_input *world,qa_arena *storage,const qa_scene_vertex **out,qa_error *error)
 {
     *out=row->vertices;
-    if(!row->polygon.count) return true;
-    qa_model_transform remap;bool present=false;
-    if (!row->view && !frontend_source_companion_attachment_remap(frontend,actor,row->weapon,
-            world,&remap,&present,error)) return false;
-    if (!row->view && !present) return true;
+    if(!row->view || !row->polygon.count) return true;
     qa_scene_vertex *vertices=qa_arena_alloc(storage,row->polygon.count*sizeof(*vertices),_Alignof(qa_scene_vertex),error);
     if(!vertices) return false;
-    if (row->view) qa_scene_vertices_remap(vertices,row->vertices,row->polygon.count,row->definition->origin,row->definition->axis,
+    qa_scene_vertices_remap(vertices,row->vertices,row->polygon.count,row->definition->origin,row->definition->axis,
         world->view.origin,world->view.axis);
-    else for (size_t i=0;i<row->polygon.count;++i) {
-        vertices[i]=row->vertices[i];
-        float p[3]={vertices[i].position.x,vertices[i].position.y,vertices[i].position.z},moved[3];
-        qa_model_transform_point(&remap,p,moved);
-        vertices[i].position=qa_v3(moved[0],moved[1],moved[2]);
-    }
     *out=vertices;
     return true;
 }
@@ -2360,8 +2319,7 @@ static bool companion_selection_walk(const source_companion *capture,qa_actor_id
             if (!frontend_source_companion_ref_owned(packet,i,actor,models,registered,&is_view)) continue;
             if (result->ref_count>=1021)
                 return frontend_fail(error,QA_ERROR_FORMAT,"Selected Source weapon refs exceed the real scene extent");
-            if(result->refs) result->refs[result->ref_count]=(frontend_source_companion_ref){packet->entities[i],&packet->definition,is_view,
-                packet->entity_weapons ? packet->entity_weapons[i] : NULL};
+            if(result->refs) result->refs[result->ref_count]=(frontend_source_companion_ref){packet->entities[i],&packet->definition,is_view};
             ++result->ref_count;
         }
         for (size_t i=0;i<packet->polygon_count;++i) {
@@ -2371,7 +2329,6 @@ static bool companion_selection_walk(const source_companion *capture,qa_actor_id
                 frontend_source_companion_polygon *row=result->polygons+result->polygon_count;
                 *row=(frontend_source_companion_polygon){.polygon=*polygon,.definition=&packet->definition,
                     .view=packet->polygon_views && packet->polygon_views[i],
-                    .weapon=packet->polygon_weapons ? packet->polygon_weapons[i] : NULL,
                     .vertices=polygon->count?packet->vertices+polygon->first:NULL};
                 row->polygon.first=0;
             }
@@ -2380,7 +2337,7 @@ static bool companion_selection_walk(const source_companion *capture,qa_actor_id
         for (size_t i=0;i<packet->light_count;++i) {
             if (!packet->light_actors || !qa_actor_id_equal(packet->light_actors[i],actor)) continue;
             if(result->lights) result->lights[result->light_count]=(frontend_source_companion_light){packet->lights[i],&packet->definition,
-                packet->light_views && packet->light_views[i],packet->light_weapons ? packet->light_weapons[i] : NULL};
+                packet->light_views && packet->light_views[i]};
             ++result->light_count;
         }
         for (size_t i=0;i<packet->weapon_count;++i) {
