@@ -138,36 +138,79 @@ bool qa_ui_library_select_mode(qa_ui_library *m,qa_mode_kind kind,qa_error *erro
     if (!qa_launch_set_mode(m->draft,&mode,error)) return false;
     m->mode_preference=kind; return true;
 }
-static bool select_role(qa_launch_draft *draft,qa_catalog *catalog,qa_launch_role role,qa_product_id product,qa_error *error) {
+static const char original_suffix[]="/original";
+static bool role_original_available(const qa_catalog *catalog,const qa_product *product) {
+    return product && product->availability==QA_CONTENT_INSTALLED && product->program && *product->program &&
+        qa_catalog_product(catalog,product->program_product)!=NULL;
+}
+static bool role_uses_original(const qa_catalog *catalog,const qa_product *product,const qa_launch_provider *provider) {
+    const qa_product *program=product?qa_catalog_product(catalog,product->program_product):NULL;
+    return program && provider && provider->runtime!=QA_PROGRAM_BUILTIN &&
+        (!provider->component || !*provider->component) && provider->artifact && product->program &&
+        !strcmp(provider->artifact,product->program) && !strcmp(provider->implementation,program->key);
+}
+static const char *role_choice_id(qa_ui_library *m,const qa_product *product,bool original,qa_error *error) {
+    if (!original) return product->key;
+    size_t length=strlen(product->key);
+    if (length>SIZE_MAX-sizeof(original_suffix)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"startup provider choice exceeds addressable storage"); return NULL;
+    }
+    char *id=qa_arena_alloc(&m->choice_build->storage,length+sizeof(original_suffix),1,error);
+    if (id) { memcpy(id,product->key,length); memcpy(id+length,original_suffix,sizeof(original_suffix)); }
+    return id;
+}
+static const qa_product *role_choice_product(const qa_catalog *catalog,const char *id,bool *original) {
+    *original=false;
+    const qa_product *product=qa_catalog_find(catalog,id);
+    if (product) return product;
+    for (size_t i=0;i<qa_catalog_count(catalog);++i) {
+        const qa_product *candidate=qa_catalog_at(catalog,i);
+        size_t length=strlen(candidate->key);
+        if (!strncmp(id,candidate->key,length) && !strcmp(id+length,original_suffix)) {
+            *original=true; return candidate;
+        }
+    }
+    return NULL;
+}
+static bool select_role(qa_launch_draft *draft,qa_catalog *catalog,qa_launch_role role,qa_product_id product,bool original,qa_error *error) {
     qa_launch_draft *defaults=NULL;
     if (!qa_launch_draft_create(catalog,product,NULL,&defaults,error)) return false;
     const qa_launch_choices *v=qa_launch_draft_choices(defaults);
     qa_launch_provider provider=v->providers[0];
     provider.instance=role==QA_ROLE_MOVEMENT?"startup:movement":"startup:character";
-    bool ok=qa_launch_set_provider(draft,&provider,error);
+    bool ok=qa_launch_set_provider(draft,&provider,error) &&
+        (!original || qa_launch_select_original(draft,provider.instance,error));
     const qa_launch_role character_roles[]={QA_ROLE_CHARACTER,QA_ROLE_BODY,QA_ROLE_SKIN,QA_ROLE_VOICE};
     size_t count=role==QA_ROLE_MOVEMENT?1:4;
     for (size_t i=0;i<count && ok;++i) {
         qa_launch_role actual=role==QA_ROLE_MOVEMENT?role:character_roles[i];
-        const qa_launch_binding *original=qa_launch_binding_for(v,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},actual,"");
-        qa_launch_binding b=*original; b.instance=provider.instance; ok=qa_launch_bind(draft,&b,error);
+        const qa_launch_binding *binding=qa_launch_binding_for(v,(qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},actual,"");
+        qa_launch_binding b=*binding; b.instance=provider.instance; ok=qa_launch_bind(draft,&b,error);
     }
     qa_launch_draft_destroy(defaults); return ok;
 }
 static bool product_choices(qa_ui_library *m,qa_ui_library_field field,qa_error *error) {
     const qa_launch_choices *v=qa_ui_library_choices(m);
+    bool role=field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER;
+    const qa_launch_provider *selected_provider=role?role_provider(v,
+        field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER):NULL;
     qa_product_id selected=v->world.preset;
     if (field==QA_UI_LIBRARY_MAP_PRODUCT) selected=v->world.geometry;
-    if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
-        const qa_launch_provider *p=role_provider(v,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER);
-        selected=p?p->product:0;
-    }
+    if (role) selected=selected_provider?selected_provider->product:0;
     const qa_product *selected_product=qa_catalog_product(m->catalog,selected);
-    if (!choices_reserve(m,qa_catalog_count(m->catalog),error) ||
-        (selected_product && !choices_selected(m,selected_product->key,error))) return false;
+    size_t count=qa_catalog_count(m->catalog);
+    if (role && count>SIZE_MAX/2) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"startup provider rows exceed addressable storage"); return false;
+    }
+    if (!choices_reserve(m,role?count*2:count,error)) return false;
+    if (selected_product) {
+        const char *id=role_choice_id(m,selected_product,role && selected_product->program_kind==QA_PROGRAM_BUILTIN &&
+            role_uses_original(m->catalog,selected_product,selected_provider),error);
+        if (!id || !choices_selected(m,id,error)) return false;
+    }
     for (size_t i=0;i<qa_catalog_count(m->catalog);++i) {
         const qa_product *p=qa_catalog_at(m->catalog,i);
-        if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
+        if (role) {
             bool base=(!strcmp(p->campaign,"id1") && p->edition!=QA_EDITION_DEMO) ||
                 (!strcmp(p->campaign,"baseq2") && p->edition!=QA_EDITION_DEMO) || !strcmp(p->key,"q3-baseq3");
             if (p->edition==QA_EDITION_QUAKEWORLD) base=field==QA_UI_LIBRARY_MOVEMENT;
@@ -175,6 +218,11 @@ static bool product_choices(qa_ui_library *m,qa_ui_library_field field,qa_error 
         }
         char label[512]; snprintf(label,sizeof(label),"%s (%s)",p->title,edition_name(p->edition));
         if (!choice_add(m,p->key,label,p->availability==QA_CONTENT_INSTALLED?NULL:"Content is not installed",error)) return false;
+        if (role && p->program_kind==QA_PROGRAM_BUILTIN && role_original_available(m->catalog,p)) {
+            const char *id=role_choice_id(m,p,true,error);
+            snprintf(label,sizeof(label),"%s (%s, installed original module)",p->title,edition_name(p->edition));
+            if (!id || !choice_add(m,id,label,NULL,error)) return false;
+        }
     }
     return true;
 }
@@ -301,7 +349,9 @@ static bool select_custom_product(qa_ui_library *m,qa_product_id product,qa_erro
     for (size_t i=0;i<2 && ok;++i) {
         const qa_launch_provider *p=role_provider(old,selected_roles[i]);
         if (p && !strcmp(p->instance,"native:primary")) {
-            ok=select_role(candidate,m->catalog,selected_roles[i],p->product,error);
+            const qa_product *source_product=qa_catalog_product(m->catalog,p->product);
+            ok=select_role(candidate,m->catalog,selected_roles[i],p->product,
+                role_uses_original(m->catalog,source_product,p),error);
             if (selected_roles[i]==QA_ROLE_CHARACTER) {
                 const qa_launch_role definitions[]={QA_ROLE_BODY,QA_ROLE_SKIN,QA_ROLE_VOICE};
                 for (size_t j=0;j<3 && ok;++j) {
@@ -358,9 +408,10 @@ static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
         return qa_launch_set_world(m->draft,&world,error);
     }
     if (field==QA_UI_LIBRARY_MOVEMENT || field==QA_UI_LIBRARY_CHARACTER) {
-        const qa_product *p=qa_catalog_find(m->catalog,id);
-        if (!p || !select_role(m->draft,m->catalog,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER,p->id,error)) return false;
-        return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || service_select(m,field,NULL,id,error);
+        bool original;
+        const qa_product *p=role_choice_product(m->catalog,id,&original);
+        if (!p || !select_role(m->draft,m->catalog,field==QA_UI_LIBRARY_MOVEMENT?QA_ROLE_MOVEMENT:QA_ROLE_CHARACTER,p->id,original,error)) return false;
+        return field!=QA_UI_LIBRARY_CHARACTER || !m->services.select || service_select(m,field,NULL,p->key,error);
     }
     if (field==QA_UI_LIBRARY_SKILL) { qa_launch_world world=qa_ui_library_choices(m)->world; world.skill=id[0]-'0'; return qa_launch_set_world(m->draft,&world,error); }
     if (field==QA_UI_LIBRARY_MODE) return qa_ui_library_select_mode(m,!strcmp(id,"singleplayer")?QA_MODE_SINGLE_PLAYER:!strcmp(id,"coop")?QA_MODE_COOPERATIVE:QA_MODE_FFA,error);
