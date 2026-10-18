@@ -151,7 +151,7 @@ static bool cleanup(qa_q1_game *g, q1_actor *e, qa_error *error) {
             break;
         if (found && traits.monster && q1_health(g, actor) <= 0 && trigger(g, id) &&
             q1_alive(g, actor))
-            ok = qa_session_release(g->services.session, actor, error);
+            ok = qa_targets_remove(g->targets, actor, error);
     }
     qa_world_snapshot_release(&list);
     e = trigger(g, id);

@@ -325,10 +325,16 @@ static void shared_targets(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_targets_use_now(app.targets, &remove, &error));
     GAME_CHECK(native_state.removals == 1 &&
         qa_actors_get(qa_session_actors(fixture->session), foreign));
+    GAME_CHECK(qa_targets_remove(app.targets, foreign, &error));
+    GAME_CHECK(native_state.removals == 2 &&
+        qa_actors_get(qa_session_actors(fixture->session), foreign));
     native_state.protected = false;
     GAME_CHECK(qa_targets_use_now(app.targets, &remove, &error));
-    GAME_CHECK(native_state.removals == 2 &&
+    GAME_CHECK(native_state.removals == 3 &&
         !qa_actors_get(qa_session_actors(fixture->session), foreign));
+    GAME_CHECK(qa_targets_remove(app.targets, foreign, &error) && native_state.removals == 3);
+    GAME_CHECK(qa_targets_remove(app.targets, activator, &error));
+    GAME_CHECK(!qa_actors_get(qa_session_actors(fixture->session), activator));
     GAME_CHECK(qa_session_remove(fixture->session, owner, &error));
     GAME_CHECK(qa_qc_game_destroy(provider.state.qc.game, &error));
     GAME_CHECK(qa_session_remove(fixture->session, foreign_owner, &error));

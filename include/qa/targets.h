@@ -149,6 +149,9 @@ bool qa_targets_pick(qa_targets *, qa_string_id name, uint32_t random, size_t ma
  * may retire or replace the binding; the replacement is never invoked here. */
 bool qa_targets_invoke(qa_targets *, qa_actor_id target, qa_actor_id other,
                        qa_actor_id activator, qa_error *);
+/* Authored removal honors the current source owner and its protected rows.
+ * Actors without a source removal binding use ordinary session retirement. */
+bool qa_targets_remove(qa_targets *, qa_actor_id, qa_error *);
 /* Source invocation reads current fields. Explicit requests serve authored
  * substitutions and delayed actors; their initial fields are value snapshots.
  */

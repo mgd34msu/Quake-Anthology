@@ -721,6 +721,21 @@ bool qa_targets_invoke(qa_targets *targets, qa_actor_id actor, qa_actor_id other
     use_invocation use = {targets, *entry, targets->binding_serial[actor.slot], other, activator};
     return qa_session_invoke(targets->options.session, actor, QA_INVOKE_USE, invoke, &use, error);
 }
+bool qa_targets_remove(qa_targets *targets, qa_actor_id actor, qa_error *error) {
+    if (!targets) return fail(error, "Authored removal requires the shared router");
+    const qa_target_binding *entry = binding(targets, actor);
+    if (entry && entry->before_remove) {
+        qa_target_binding current = *entry;
+        if (!current.before_remove(current.context, actor, error)) return false;
+    }
+    if (!live(targets, actor)) return true;
+    entry = binding(targets, actor);
+    if (entry && entry->remove) {
+        qa_target_binding current = *entry;
+        return current.remove(current.context, actor, error);
+    }
+    return qa_session_release(targets->options.session, actor, error);
+}
 static bool use_now(qa_targets *targets, qa_target_use request, target_snapshot_scope **scope,
                     qa_error *error) {
     bool q1 = request.dialect == QA_RULESET_NETQUAKE || request.dialect == QA_RULESET_QUAKEWORLD;
@@ -759,20 +774,7 @@ static bool use_now(qa_targets *targets, qa_target_use request, target_snapshot_
         if (!snapshot(targets, request.fields.killtarget, scope, &victims, &count, error))
             return false;
         for (size_t i = 0; i < count; ++i) {
-            const qa_target_binding *entry = binding(targets, victims[i]);
-            if (entry && entry->before_remove) {
-                qa_target_binding current = *entry;
-                if (!current.before_remove(current.context, victims[i], error))
-                    return false;
-            }
-            if (live(targets, victims[i])) {
-                entry = binding(targets, victims[i]);
-                if (entry && entry->remove) {
-                    qa_target_binding current = *entry;
-                    if (!current.remove(current.context, victims[i], error)) return false;
-                } else if (!qa_session_release(targets->options.session, victims[i], error))
-                    return false;
-            }
+            if (!qa_targets_remove(targets, victims[i], error)) return false;
             if (!q1 && !live(targets, request.source))
                 return true;
         }

@@ -479,7 +479,7 @@ bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e)
     if (!q2_actor_live(g, a->id))
         return true;
     if (!creature)
-        return !q2_ent(g, other) || qa_session_release(g->services.session, other, e);
+        return qa_targets_remove(g->entity_runtime->services.targets, other, e);
     if (smart || (s->spawnflags & 4) || s->wait < 0)
         return true;
     bool reverse = s->mover->phase == 3;

@@ -178,7 +178,8 @@ static bool camera(qa_q2_game *g, q2_actor *a, qa_error *e) {
                       qa_targets_read(g->entity_runtime->services.targets, target, &path);
     if (skip || !has_target) {
         if (s->killtarget) {
-            if (q2_actor_live(g, s->enemy) && !qa_session_release(g->services.session, s->enemy, e))
+            if (q2_actor_live(g, s->enemy) &&
+                !qa_targets_remove(g->entity_runtime->services.targets, s->enemy, e))
                 return false;
             if (!q2_actor_live(g, a->id))
                 return true;

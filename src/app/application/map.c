@@ -1058,7 +1058,7 @@ static bool q1_campaign_source_options(
 static bool q1_retire_actor(void *opaque, qa_actor_id actor, qa_error *error)
 {
     application_provider *provider = opaque;
-    return qa_session_release(provider->application->session, actor, error);
+    return qa_targets_remove(provider->application->targets, actor, error);
 }
 
 static bool q1_schedule_remove(void *opaque, qa_actor_id actor, double delay,
