@@ -232,6 +232,8 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
             scope_range(row, address, 1, QA_NATIVE_GUEST_EXECUTE, NULL);
         if (okay) qa_id_index_insert(&row->callback_addresses, (qa_string_id)(address >> 4), address, i);
     }
+    qa_id_index identities = {0};
+    if (okay) okay = index_reserve(&identities, row->interest_count);
     for (size_t i = 0; okay && i < row->interest_count; ++i) {
         const guest_profile_interest *interest = row->interests + i;
         okay = interest->id && interest->address &&
@@ -239,9 +241,10 @@ static profile_scope *scope_read(const guest_profile_guard_control *control)
                 scope_range(row, interest->address, interest->bytes, QA_NATIVE_GUEST_READ, NULL) :
              interest->kind == GUEST_PROFILE_INTEREST_INSTRUCTION && !interest->bytes &&
                 scope_range(row, interest->address, 1, QA_NATIVE_GUEST_EXECUTE, NULL));
-        for (size_t j = 0; okay && j < i; ++j)
-            okay = row->interests[j].kind != interest->kind || row->interests[j].id != interest->id;
+        okay = okay && !qa_id_index_find(&identities, (qa_string_id)interest->kind, interest->id);
+        if (okay) qa_id_index_insert(&identities, (qa_string_id)interest->kind, interest->id, i);
     }
+    index_free(&identities);
     okay = okay && scope_entry_valid(row);
     size_t points = 0, pages = 0;
     for (size_t i = 0; okay && i < row->interest_count; ++i) {

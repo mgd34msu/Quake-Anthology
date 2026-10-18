@@ -187,9 +187,16 @@ static bool watch(native_target_row *row, qa_error *error)
     if (row->watch && row->watched == address) return true;
     if (!qa_native_unobserve_writes(row->watch, error)) return false;
     row->watch = NULL;
-    for (unsigned i = 0; i < TARGET_TEXT_COUNT; ++i)
+    qa_native_write_span spans[TARGET_TEXT_COUNT];
+    for (unsigned i = 0; i < TARGET_TEXT_COUNT; ++i) {
         if (!text_read(row, i, error)) return false;
-    if (!qa_native_observe_writes(instance(owner), address, owner->watch_bytes,
+        spans[i] = (qa_native_write_span){
+            .offset = text_offset(owner->profile, i) - owner->watch_start,
+            .bytes = owner->profile->target.pointer_bytes};
+    }
+    if (!qa_native_observe_writes(instance(owner), &(qa_native_write_watch){
+            .address = address, .bytes = owner->watch_bytes,
+            .spans = spans, .span_count = TARGET_TEXT_COUNT},
             changed, row, &row->watch, error)) return false;
     row->watched = address;
     return true;

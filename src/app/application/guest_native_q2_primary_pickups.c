@@ -276,9 +276,13 @@ static bool run_source(void *context, const qa_pickup_offer *offer, qa_pickup_se
     if (selection != QA_PICKUP_SELECT_ORIGINAL) {
         qa_native_address records[] = {f->pickup_address, f->recipient_address};
         for (size_t i = 0; ok && i < 2; ++i) {
-            ok = qa_native_observe_writes(instance(o), records[i] + o->inuse, o->inuse_bytes, changed, f, &f->watches[i * 2], e);
+            ok = qa_native_observe_writes(instance(o), &(qa_native_write_watch){
+                .address = records[i] + o->inuse, .bytes = o->inuse_bytes},
+                changed, f, &f->watches[i * 2], e);
             if (ok && o->has_generation) ok = integer(o, records[i] + o->generation, 4, &f->generations[i], e) &&
-                qa_native_observe_writes(instance(o), records[i] + o->generation, 4, changed, f, &f->watches[i * 2 + 1], e);
+                qa_native_observe_writes(instance(o), &(qa_native_write_watch){
+                    .address = records[i] + o->generation, .bytes = 4},
+                    changed, f, &f->watches[i * 2 + 1], e);
         }
     }
     if (ok) {

@@ -707,6 +707,21 @@ bool qa_native_write_scope_close(qa_native_write_scope **out,qa_error *error)
     qa_unified_frame_lease_release(scope->storage); *out=NULL; return true;
 }
 
+static bool write_selected(const qa_native_write_observer *binding,
+    const qa_native_guest_commit *commit)
+{
+    if (binding->address >= commit->address + commit->bytes ||
+        commit->address >= binding->address + binding->size) return false;
+    if (!binding->interest_count) return true;
+    for (size_t i = 0; i < binding->interest_count; ++i) {
+        qa_native_write_span span = binding->interests[i].span;
+        uint64_t address = binding->address + span.offset;
+        if (address < commit->address + commit->bytes &&
+            commit->address < address + span.bytes) return true;
+    }
+    return false;
+}
+
 bool native_process_write_commit(void *context, qa_native_guest *guest,
     const qa_native_guest_commit *commit, qa_error *error) {
     qa_native_instance *instance = context;
@@ -714,8 +729,7 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native write receipt lost its actual memory owner");
     size_t count = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
-        if (b->address < commit->address + commit->bytes &&
-            commit->address < b->address + b->size) ++count;
+        if (write_selected(b, commit)) ++count;
     if (!count && instance->write_observers && !instance->write_snapshots_pending) {
         /* Address watches do not dispatch for another virtual address. Retain
          * their snapshots if the same backing was written through an alias. */
@@ -746,8 +760,7 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
     if (count && !ids) { qa_unified_frame_lease_release(storage); return false; }
     size_t at = 0;
     for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
-        if (b->address < commit->address + commit->bytes &&
-            commit->address < b->address + b->size) ids[at++] = b->id;
+        if (write_selected(b, commit)) ids[at++] = b->id;
     count = at;
     if (count) instance->write_snapshots_pending = true;
     bool okay = true;
@@ -797,14 +810,38 @@ static void write_observer_destroy(qa_native_write_observer *binding)
     qa_arena_destroy(&storage);
 }
 
-bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address address,
-                              size_t bytes, qa_native_write_observer_fn callback, void *context,
+static bool write_interests_remove(qa_native_write_observer *binding, qa_error *error)
+{
+    qa_native_instance *instance = binding->instance;
+    bool control_needed = !qa_native_terminal(instance) || instance->active_depth ||
+        instance->callback_depth || instance->region_depth || instance->write_depth;
+    while (binding->installed_interests) {
+        const native_write_interest *interest = binding->interests + binding->installed_interests - 1;
+        if (control_needed && !guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
+                interest->id, binding->address + interest->span.offset,
+                interest->span.bytes, true, error)) return false;
+        --binding->installed_interests;
+    }
+    return true;
+}
+
+bool qa_native_observe_writes(qa_native_instance *instance, const qa_native_write_watch *watch,
+                              qa_native_write_observer_fn callback, void *context,
                               qa_native_write_observer **out, qa_error *error) {
     if (!observer_boundary(instance, error))
         return false;
+    qa_native_address address = watch ? watch->address : 0;
+    size_t bytes = watch ? watch->bytes : 0;
     if (!address || !bytes || bytes > NATIVE_MAX_WATCH_BYTES ||
         bytes > UINT64_MAX - address || !callback || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, bytes, "native write watch range is invalid");
+    size_t count = watch->span_count ? watch->span_count : 1;
+    if ((watch->span_count && !watch->spans) || count > SIZE_MAX / sizeof(native_write_interest))
+        return native_fail(error, QA_ERROR_ARGUMENT, count, "native write selections are invalid");
+    for (size_t i = 0; i < watch->span_count; ++i)
+        if (!watch->spans[i].bytes || watch->spans[i].offset >= bytes ||
+            watch->spans[i].bytes > bytes - watch->spans[i].offset)
+            return native_fail(error, QA_ERROR_ARGUMENT, i, "native write selection leaves its watch");
     qa_arena storage; qa_arena_init_pool(&storage, &instance->guest->scratch_pages);
     qa_native_write_observer *binding = qa_arena_alloc(&storage, sizeof(*binding), _Alignof(qa_native_write_observer), error);
     if (!binding) { qa_arena_destroy(&storage); return false; }
@@ -814,6 +851,10 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
     binding->size = bytes;
     binding->callback = callback;
     binding->context = context;
+    binding->interests = qa_arena_alloc(&storage, count * sizeof(*binding->interests),
+        _Alignof(native_write_interest), error);
+    if (!binding->interests) { qa_arena_destroy(&storage); return false; }
+    binding->interest_count = count;
     bool ok = next_id(instance, &binding->id, error);
     if (ok) {
         binding->snapshot.data = qa_arena_alloc(&storage, bytes, 1, error); binding->snapshot.size = bytes;
@@ -823,10 +864,20 @@ bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address ad
             ok = qa_native_guest_observe(instance->guest, native_process_write_commit, instance, error);
             if (ok) instance->process_observing = true;
         }
-        if (ok) ok = guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
-            binding->id, address, bytes, false, error);
+        for (size_t i = 0; ok && i < count; ++i) {
+            native_write_interest *interest = binding->interests + i;
+            interest->span = watch->span_count ? watch->spans[i] :
+                (qa_native_write_span){.bytes = bytes};
+            if (i) ok = next_id(instance, &interest->id, error);
+            else interest->id = binding->id;
+            if (ok) ok = guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
+                interest->id, address + interest->span.offset, interest->span.bytes, false, error);
+            if (ok) ++binding->installed_interests;
+        }
     }
     if (!ok) {
+        qa_error cleanup = {0};
+        (void)write_interests_remove(binding, &cleanup);
         qa_arena_destroy(&storage);
         return false;
     }
@@ -845,11 +896,7 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
         return false;
     if (binding->active_calls)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native write watch cannot be removed");
-    bool control_needed = !qa_native_terminal(instance) || instance->active_depth ||
-        instance->callback_depth || instance->region_depth || instance->write_depth;
-    if (control_needed &&
-        !guest_native_interest(instance->guest, GUEST_PROFILE_INTEREST_STORE,
-            binding->id, binding->address, binding->size, true, error)) return false;
+    if (!write_interests_remove(binding, error)) return false;
     qa_native_write_observer **cursor = &instance->write_observers;
     while (*cursor && *cursor != binding)
         cursor = &(*cursor)->next;

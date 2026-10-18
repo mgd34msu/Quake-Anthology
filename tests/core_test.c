@@ -9983,8 +9983,8 @@ static bool capture_native_write(void *opaque, qa_native_instance *instance,
 {
     native_write_capture *capture = opaque;
     ++capture->calls;
-    capture->before = event->before.data[0];
-    capture->after = event->after.data[0];
+    capture->before = event->before.data[event->offset];
+    capture->after = event->after.data[event->offset];
     (void)instance; (void)error;
     return true;
 }
@@ -10034,6 +10034,21 @@ static void test_native_write_receipts(void)
     CHECK(capture.calls == 1 && snapshot == 17 && !instance.write_snapshots_pending);
     CHECK(qa_native_guest_write(guest, boundary - 1, (qa_bytes){&changed, 1}, &error));
     CHECK(capture.calls == 2 && capture.before == 17 && capture.after == 23 && snapshot == 23);
+    uint8_t fields[3];
+    CHECK(qa_native_guest_read(guest, base + 32, fields, sizeof(fields), &error));
+    native_write_interest selected[] = {
+        {.span = {.offset = 1, .bytes = 1}, .id = 2},
+        {.span = {.offset = 1, .bytes = 1}, .id = 3}};
+    observer.address = base + 32; observer.size = sizeof(fields);
+    observer.snapshot = (qa_buffer){.data = fields, .size = sizeof(fields)};
+    observer.interests = selected; observer.interest_count = 2;
+    busy = qa_unified_frame_lease_acquire(instance.observation_storage, &error);
+    CHECK(busy);
+    CHECK(qa_native_guest_write(guest, base + 32, (qa_bytes){&aliased, 1}, &error));
+    CHECK(capture.calls == 2);
+    qa_unified_frame_lease_release(busy);
+    CHECK(qa_native_guest_write(guest, base + 33, (qa_bytes){&changed, 1}, &error));
+    CHECK(capture.calls == 3 && capture.before == 0 && capture.after == 23 && fields[1] == 23);
     instance.write_observers = NULL;
     instance.write_snapshots_pending = true;
     native_observers_destroy(&instance);

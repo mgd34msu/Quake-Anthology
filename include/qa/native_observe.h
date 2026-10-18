@@ -71,8 +71,18 @@ bool qa_native_call_scope_resolve(qa_native_call_scope *,bool completed,
  * An unresolved failed call becomes terminal; no late CPU/result recovery. */
 bool qa_native_call_scope_abandon(qa_native_call_scope *,qa_error *);
 bool qa_native_call_scope_close(qa_native_call_scope **,qa_error *);
-bool qa_native_observe_writes(qa_native_instance *instance, qa_native_address address,
-                              size_t bytes, qa_native_write_observer_fn callback, void *context,
+typedef struct qa_native_write_span { size_t offset, bytes; } qa_native_write_span;
+typedef struct qa_native_write_watch {
+    qa_native_address address;
+    size_t bytes;
+    const qa_native_write_span *spans;
+    size_t span_count;
+} qa_native_write_watch;
+/* Optional copied spans select the fields that deliver callbacks. Snapshots
+ * retain the complete range, but only selected bytes have before/after history.
+ * With no spans, every byte is selected, including unchanged stores. */
+bool qa_native_observe_writes(qa_native_instance *instance, const qa_native_write_watch *,
+                              qa_native_write_observer_fn callback, void *context,
                               qa_native_write_observer **out, qa_error *error);
 bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *error);
 /* Borrow the actual paused emulated CPU for synchronous Source reactions.

@@ -364,7 +364,8 @@ static bool watch(native_source_actor *r,qa_error *e)
         if(w->binding&&w->address==field) continue;
         if(w->binding&&!qa_native_unobserve_writes(w->binding,e)) return false;
         w->binding=NULL;w->actor=r;w->kind=i;w->address=field;
-        if(!qa_native_observe_writes(instance(o),field,pointer,changed,w,&w->binding,e)) return false;
+        if(!qa_native_observe_writes(instance(o), &(qa_native_write_watch){.address = field, .bytes = pointer},
+            changed,w,&w->binding,e)) return false;
     }
     return true;
 }

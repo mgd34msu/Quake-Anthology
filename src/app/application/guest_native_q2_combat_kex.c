@@ -340,10 +340,12 @@ bool application_q2_kex_damage_track(struct application_q2_kex_damage *p,
     if (record->source.address != source->address || record->source.generation != source->generation)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original KEX monster source lifetime changed");
     record->active = true;
-    if (!record->mod_watch && !qa_native_observe_writes(native(p), source->address + p->profile->monster_mod + 2,
-        1, mod_store, record, &record->mod_watch, error)) return false;
-    if (!record->blood_watch && !qa_native_observe_writes(native(p), source->address + p->profile->monster_blood,
-        4, blood_store, record, &record->blood_watch, error)) return false;
+    if (!record->mod_watch && !qa_native_observe_writes(native(p), &(qa_native_write_watch){
+        .address = source->address + p->profile->monster_mod + 2, .bytes = 1},
+        mod_store, record, &record->mod_watch, error)) return false;
+    if (!record->blood_watch && !qa_native_observe_writes(native(p), &(qa_native_write_watch){
+        .address = source->address + p->profile->monster_blood, .bytes = 4},
+        blood_store, record, &record->blood_watch, error)) return false;
     return true;
 }
 void application_q2_kex_damage_released(struct application_q2_kex_damage *p, qa_actor_id actor)

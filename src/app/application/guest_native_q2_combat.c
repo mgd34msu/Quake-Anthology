@@ -490,10 +490,12 @@ bool application_native_q2_combat_resources_begin(struct application_native_q2 *
     qa_native_address client = 0;
     bool okay = application_q2_combat_armor_read(&record->source, &scope->frame.armor, error) &&
         pointer_read(p, record->source.address + p->profile.client_pointer, &client, error) &&
-        qa_native_observe_writes(native(p), record->source.address + p->profile.flags,
-            p->profile.kex ? 8 : 4, committed_resources, scope, &scope->frame.flags_watch, error);
-    if (okay && client) okay = qa_native_observe_writes(native(p), client + p->profile.inventory,
-        (size_t)p->profile.inventory_count * 4, committed_resources, scope, &scope->frame.armor_watch, error);
+        qa_native_observe_writes(native(p), &(qa_native_write_watch){
+            .address = record->source.address + p->profile.flags, .bytes = p->profile.kex ? 8 : 4},
+            committed_resources, scope, &scope->frame.flags_watch, error);
+    if (okay && client) okay = qa_native_observe_writes(native(p), &(qa_native_write_watch){
+        .address = client + p->profile.inventory, .bytes = (size_t)p->profile.inventory_count * 4},
+        committed_resources, scope, &scope->frame.armor_watch, error);
     if (okay) { *out = scope; return true; }
     qa_error cleanup = {0};
     (void)application_native_q2_combat_resources_end(scope, &cleanup); return false;
@@ -629,17 +631,22 @@ static bool execute_damage(combat_record *record, combat_incoming *incoming,
             ensure_reaction(p, pain, APPLICATION_Q2_PAIN, error) && ensure_reaction(p, die, APPLICATION_Q2_DEATH, error);
         if (ok) { frame->health = state.health; frame->armor = state.armor; }
     }
-    if (ok) ok = qa_native_observe_writes(native(p), record->source.address + p->profile.health, 4,
+    if (ok) ok = qa_native_observe_writes(native(p), &(qa_native_write_watch){
+        .address = record->source.address + p->profile.health, .bytes = 4},
         committed_health, frame, &frame->health_watch, error) &&
-        qa_native_observe_writes(native(p), record->source.address + p->profile.velocity, 12,
+        qa_native_observe_writes(native(p), &(qa_native_write_watch){
+            .address = record->source.address + p->profile.velocity, .bytes = 12},
         committed_velocity, frame, &frame->velocity_watch, error) &&
         pointer_read(p, record->source.address + p->profile.client_pointer, &client, error) &&
-        qa_native_observe_writes(native(p), record->source.address + p->profile.pain, p->profile.target.pointer_bytes,
+        qa_native_observe_writes(native(p), &(qa_native_write_watch){
+            .address = record->source.address + p->profile.pain, .bytes = p->profile.target.pointer_bytes},
             committed_callback, frame, &frame->pain_watch, error) &&
-        qa_native_observe_writes(native(p), record->source.address + p->profile.die, p->profile.target.pointer_bytes,
+        qa_native_observe_writes(native(p), &(qa_native_write_watch){
+            .address = record->source.address + p->profile.die, .bytes = p->profile.target.pointer_bytes},
             committed_callback, frame, &frame->die_watch, error);
-    if (ok && client) ok = qa_native_observe_writes(native(p), client + p->profile.inventory,
-        (size_t)p->profile.inventory_count * 4, committed_armor, frame, &frame->armor_watch, error);
+    if (ok && client) ok = qa_native_observe_writes(native(p), &(qa_native_write_watch){
+        .address = client + p->profile.inventory, .bytes = (size_t)p->profile.inventory_count * 4},
+        committed_armor, frame, &frame->armor_watch, error);
     if (ok) ok = application_q2_kex_damage_track(p->kex, &record->source, error);
     application_q2_call *call = &p->profile.calls[APPLICATION_Q2_DAMAGE];
     qa_native_value fields[APPLICATION_Q2_FIELD_COUNT] = {0};

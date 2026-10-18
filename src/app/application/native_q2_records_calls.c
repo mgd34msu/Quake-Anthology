@@ -466,8 +466,9 @@ bool application_native_q2_records_pickup_begin(application_native_q2_records *o
             nqr_record *record=o->records+i;
             if(record->client&&!row->client) continue;
             qa_native_address base;
-            ok=nqr_address(o,row,record,&base,e)&&qa_native_observe_writes(o->options.instance,base,
-                record->stride,pickup_stored,s,s->watches+s->count,e);
+            ok=nqr_address(o,row,record,&base,e)&&qa_native_observe_writes(o->options.instance,
+                &(qa_native_write_watch){.address = base, .bytes = record->stride},
+                pickup_stored,s,s->watches+s->count,e);
             if(ok) ++s->count;
         }
     }

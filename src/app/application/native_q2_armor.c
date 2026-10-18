@@ -448,8 +448,10 @@ bool application_native_q2_armor_observe(application_native_q2_armor *o,qa_actor
     for(size_t i=0;i<watch->count;++i) {
         armor_watch_field *f=watch->fields+i; f->owner=watch; f->field=field_at(o,i);
         if(!application_native_q2_field_address(o->options.callbacks,actor,f->field,&f->address,e)||
-            !qa_native_observe_writes(application_native_q2_callbacks_instance(o->options.callbacks),f->address,
-                application_native_q2_field_size(f->field->encoding),watched,f,&f->binding,e)) return false;
+            !qa_native_observe_writes(application_native_q2_callbacks_instance(o->options.callbacks),
+                &(qa_native_write_watch){.address = f->address,
+                    .bytes = application_native_q2_field_size(f->field->encoding)},
+                watched,f,&f->binding,e)) return false;
     }
     return true;
 }

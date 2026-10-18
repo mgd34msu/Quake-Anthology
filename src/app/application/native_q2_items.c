@@ -529,8 +529,10 @@ static bool actor_watch(item_actor *a,qa_error *e)
     for(size_t i=0;i<a->watch_count;++i) {
         item_watch *watch=a->watches+i;
         if(watch->binding) continue;
-        if(!qa_native_observe_writes(application_native_q2_callbacks_instance(o->options.callbacks),watch->address,
-            application_native_q2_field_size(watch->field?watch->field->encoding:o->storage[watch->storage].source_encoding),watched,watch,&watch->binding,e)) return false;
+        if(!qa_native_observe_writes(application_native_q2_callbacks_instance(o->options.callbacks),
+            &(qa_native_write_watch){.address = watch->address,
+                .bytes = application_native_q2_field_size(watch->field?watch->field->encoding:
+                    o->storage[watch->storage].source_encoding)},watched,watch,&watch->binding,e)) return false;
     }
     if(!current(a,e)) return false;
     a->ready=true;

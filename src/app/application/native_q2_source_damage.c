@@ -175,9 +175,11 @@ static bool actor_watches(declared_damage_actor *r,qa_error *e)
     qa_native_address base;if(!address_for(o,r->actor,&base,e))return false;
     if(r->watched&&r->watched!=base&&!actor_watches_close(r,e))return false;
     r->watched=base;
-    if(!r->receipt_watch&&!qa_native_observe_writes(instance(o),base+o->receipt,1,deferred_changed,r,&r->receipt_watch,e))return false;
-    return r->blood_watch||qa_native_observe_writes(instance(o),base+o->blood.offset,
-        application_native_q2_field_size(o->blood.encoding),deferred_changed,r,&r->blood_watch,e);
+    if(!r->receipt_watch&&!qa_native_observe_writes(instance(o), &(qa_native_write_watch){
+        .address = base+o->receipt, .bytes = 1},deferred_changed,r,&r->receipt_watch,e))return false;
+    return r->blood_watch||qa_native_observe_writes(instance(o), &(qa_native_write_watch){
+        .address = base+o->blood.offset, .bytes = application_native_q2_field_size(o->blood.encoding)},
+        deferred_changed,r,&r->blood_watch,e);
 }
 static bool state_read(void *context,qa_combat_state *out,qa_error *e)
 {
@@ -293,8 +295,10 @@ static bool observed_damage(void *context,qa_error *e)
     if(ok) {
         f->health=state.health;
         ok=application_native_q2_source_combat_projection_armor_observe(o->state,f->target,armor_changed,f,&f->armor_watch,e)&&
-            qa_native_observe_writes(instance(o),health,bytes,health_changed,f,&f->health_watch,e)&&
-            qa_native_observe_writes(instance(o),base+o->velocity,12,velocity_changed,f,&f->velocity_watch,e)&&
+            qa_native_observe_writes(instance(o), &(qa_native_write_watch){.address = health, .bytes = bytes},
+                health_changed,f,&f->health_watch,e)&&
+            qa_native_observe_writes(instance(o), &(qa_native_write_watch){.address = base+o->velocity, .bytes = 12},
+                velocity_changed,f,&f->velocity_watch,e)&&
             original_damage(f,e);
     }
     f->active=false;qa_error cleanup={0};

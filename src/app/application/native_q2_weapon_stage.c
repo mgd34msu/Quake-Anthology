@@ -546,7 +546,9 @@ bool application_native_q2_weapon_stage_admit(application_native_q2_weapon_stage
         a->bound=true;
     } else if(!qa_equipment_weapon_binding_is(o->options.equipment,actor,o->options.owner,a)) return false;
     for(size_t i=0;i<a->watch_count;++i) if(!a->watches[i].binding&&
-        !qa_native_observe_writes(instance(o),a->watches[i].address,o->pointer_bytes,selection_written,a->watches+i,&a->watches[i].binding,e)) return false;
+        !qa_native_observe_writes(instance(o), &(qa_native_write_watch){
+            .address = a->watches[i].address, .bytes = o->pointer_bytes},
+            selection_written,a->watches+i,&a->watches[i].binding,e)) return false;
     return current(a,e);
 }
 bool application_native_q2_weapon_stage_accepts_attack(application_native_q2_weapon_stage *o,qa_actor_id actor,bool *out,qa_error *e)

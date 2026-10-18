@@ -204,6 +204,10 @@ struct qa_native_entry_observer {
     uint64_t guest_id;
 };
 
+typedef struct native_write_interest {
+    qa_native_write_span span;
+    uint64_t id;
+} native_write_interest;
 struct qa_native_write_observer {
     qa_arena storage;
     qa_native_write_observer *next;
@@ -215,6 +219,8 @@ struct qa_native_write_observer {
     void *context;
     uint32_t active_calls;
     qa_buffer snapshot;
+    native_write_interest *interests;
+    size_t interest_count, installed_interests;
 };
 
 struct qa_native_region_binding {
