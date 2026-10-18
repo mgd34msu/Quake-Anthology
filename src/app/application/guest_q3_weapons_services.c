@@ -248,7 +248,7 @@ bool application_q3_weapons_services_match_close(application_q3_weapons_services
     }
     s->closing_match = false; return true;
 }
-static bool native_selected(application_q3_weapons_services *s, qa_actor_id actor,
+static bool selected_arsenal(application_q3_weapons_services *s, qa_actor_id actor,
     application_provider **out, bool *present, qa_error *error)
 {
     q3_weapon_actor source;
@@ -259,17 +259,8 @@ static bool native_selected(application_q3_weapons_services *s, qa_actor_id acto
     if (!p || p == s->role->engine->provider) return true;
     if (!p->constructed || !p->attached || p->close_pending)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Selected arsenal grant lost its current publication");
-    if (p->kind == APPLICATION_PROVIDER_Q1) {
-        qa_q1_player_view player; *present = qa_q1_player_read(p->state.q1, actor, &player);
-    } else if (p->kind == APPLICATION_PROVIDER_Q2) {
-        qa_q2_weapon_state player;
-        if (!qa_q2_weapon_read(p->state.q2, actor, &player, error)) return false;
-        *present = true;
-    } else if (p->kind == APPLICATION_PROVIDER_Q3) {
-        qa_q3_player_state player;
-        *present = qa_q3_player_read(p->state.q3, actor, &player) && (player.selections & QA_Q3_ARSENAL);
-    }
-    return *present || application_fail(error, QA_ERROR_NOT_FOUND, "Selected original weapon services have no admitted native arsenal actor");
+    *present = true;
+    return true;
 }
 static bool selected(void *context, qa_actor_id actor)
 {
@@ -910,13 +901,13 @@ static bool selection_current(application_q3_weapons_services *s, qa_actor_id ac
     application_provider *p, qa_error *error)
 {
     application_provider *actual; bool present;
-    return native_selected(s, actor, &actual, &present, error) && present &&
+    return selected_arsenal(s, actor, &actual, &present, error) && present &&
         (actual == p || application_fail(error, QA_ERROR_NOT_FOUND, "Selected arsenal changed during its original Source action"));
 }
 static bool inventory_read(application_q3_weapons_services *s, qa_actor_id actor,
     selected_inventory *out, bool *present, qa_error *error)
 {
-    if (!native_selected(s, actor, &out->provider, present, error)) return false;
+    if (!selected_arsenal(s, actor, &out->provider, present, error)) return false;
     if (!*present) return true;
     qa_inventory *inventory = application(s)->inventory;
     qa_arena_init_pool(&out->storage, &s->inventory_pages);

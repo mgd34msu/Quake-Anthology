@@ -51,10 +51,10 @@ typedef struct application_guest_input {
 } application_guest_input;
 
 static bool is_guest(const application_provider *);
-static bool character_follower(application_guest_input *, qa_actor_id);
+static bool guest_follower(application_guest_input *, qa_actor_id);
 static bool guest_completed(application_guest_input *, qa_actor_id, uint32_t, int32_t,
     const qa_usercmd *, const application_control_external_stage *, qa_error *);
-static bool guest_character_command(qa_application *, application_provider *, qa_actor_id,
+static bool guest_followers_command(qa_application *, application_provider *, qa_actor_id,
     const qa_usercmd *, const application_control_external_stage *, qa_error *);
 
 
@@ -258,6 +258,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     input->scope = &scope;
     application_provider *guest = input->role->engine->provider;
     qa_application *app = guest->application;
+    application_provider *arsenal = application_provider_for(app, scope.actor, QA_ROLE_ARSENAL, "");
     application_provider *character = application_provider_for(app, scope.actor, QA_ROLE_CHARACTER, "");
     application_control_context frame_context;
     const application_control_context *previous_context = NULL;
@@ -267,7 +268,8 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     bool deferred = false;
     qa_error preparation = {0};
     if (call->instruction == input->profile.run_client && !input->in_command &&
-        is_guest(character) && character != guest && !character_follower(input, scope.actor)) {
+        ((is_guest(arsenal) && arsenal != guest) || (is_guest(character) && character != guest)) &&
+        !guest_follower(input, scope.actor)) {
         deferred = application_control_guest_frame_prepare(app, guest, scope.actor,
             &frame_context, &frame_command, &preparation);
         if (deferred) {
@@ -375,7 +377,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     *skip = false;
     if (!scope || scope->spawning) return true;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
-    if (scope->completed_motion || character_follower(input, scope->actor)) {
+    if (scope->completed_motion || guest_follower(input, scope->actor)) {
         if (!motion_project(input, scope, call, error)) return false;
         *skip = true; return true;
     }
@@ -687,7 +689,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         scope->movement = previous;
         return application_fail(error, QA_ERROR_FORMAT, "Guest movement projection leaves source memory");
     }
-    bool follower = scope->completed_motion || character_follower(input, scope->actor);
+    bool follower = scope->completed_motion || guest_follower(input, scope->actor);
     bool slice = call->instruction == input->profile.source->movement_slice;
     qa_q3_usercmd command; qa_q3_player state;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &command, error) ||
@@ -1070,18 +1072,34 @@ static bool is_guest(const application_provider *provider)
 application_provider *application_guest_input_selected(application_provider *movement,
     application_provider *arsenal, application_provider *character)
 {
-    return is_guest(arsenal) ? arsenal : is_guest(movement) ? movement :
+    return is_guest(movement) ? movement : is_guest(arsenal) ? arsenal :
         is_guest(character) ? character : NULL;
 }
 
-static bool character_follower(application_guest_input *input, qa_actor_id actor)
+static size_t selected_guests(application_provider *movement, application_provider *arsenal,
+    application_provider *character, application_provider *out[3])
+{
+    application_provider *roles[] = {
+        application_guest_input_selected(movement, arsenal, character), arsenal, character};
+    size_t count = 0;
+    for (size_t i = 0; i < sizeof(roles) / sizeof(*roles); ++i) {
+        if (!is_guest(roles[i])) continue;
+        size_t j = 0;
+        while (j < count && out[j] != roles[i]) ++j;
+        if (j == count) out[count++] = roles[i];
+    }
+    return count;
+}
+
+static bool guest_follower(application_guest_input *input, qa_actor_id actor)
 {
     application_provider *guest = input->role->engine->provider;
     qa_application *app = guest->application;
-    if (application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != guest) return false;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (arsenal != guest && application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != guest)
+        return false;
     application_provider *driver = application_guest_input_selected(
-        application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""),
-        application_provider_for(app, actor, QA_ROLE_ARSENAL, ""), NULL);
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""), arsenal, NULL);
     if (driver) return driver != guest;
     application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
     return is_guest(source) && source != guest;
@@ -1114,10 +1132,11 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
 bool application_arsenal_guest_roles_admit(application_provider *movement,
     application_provider *arsenal, application_provider *character, qa_error *error)
 {
-    application_provider *driver = application_guest_input_selected(movement, arsenal, character);
-    return guest_roles_admit(driver, movement, arsenal, false, error) &&
-        (!is_guest(character) || character == driver ||
-            guest_roles_admit(character, movement, arsenal, true, error));
+    application_provider *guests[3];
+    size_t count = selected_guests(movement, arsenal, character, guests);
+    for (size_t i = 0; i < count; ++i)
+        if (!guest_roles_admit(guests[i], movement, arsenal, i != 0, error)) return false;
+    return true;
 }
 
 bool application_guest_input_source_weapons(qa_application *app, qa_actor_id actor)
@@ -1238,7 +1257,7 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
     qa_usercmd completed = *command;
     completed.milliseconds = applied.milliseconds;
     completed.buttons = (completed.buttons & ~UINT32_C(5)) | (applied.buttons & UINT32_C(5));
-    return guest_character_command(app, guest, actor, &completed, stage, error);
+    return guest_followers_command(app, guest, actor, &completed, stage, error);
 }
 
 static bool guest_command(application_guest_input *input, qa_actor_id actor, uint32_t slot,
@@ -1283,7 +1302,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
     input->in_command = true; input->command_actor = actor;
     input->command = command; input->stage = stage; input->input_applied = false;
     input->command_projected = false;
-    if (character_follower(input, actor)) {
+    if (guest_follower(input, actor)) {
         engine->clients[slot].shared_command_sequence = command->sequence;
         engine->clients[slot].shared_command_seen = true;
     }
@@ -1344,7 +1363,7 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
-    if (!guest_roles_admit(guest, movement, arsenal, input && character_follower(input, actor), error)) return false;
+    if (!guest_roles_admit(guest, movement, arsenal, input && guest_follower(input, actor), error)) return false;
     uint32_t slot;
     if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error)) return false;
     if (slot >= 64 || !engine->clients[slot].connected ||
@@ -1392,21 +1411,28 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
     return guest_command(input, actor, slot, &source, command, stage, error);
 }
 
-static bool guest_character_command(qa_application *app, application_provider *driver,
+static bool guest_followers_command(qa_application *app, application_provider *driver,
     qa_actor_id actor, const qa_usercmd *command,
     const application_control_external_stage *stage, qa_error *error)
 {
-    if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
-    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
-    if (!is_guest(character) || character == driver) return true;
-    struct application_q3_guest *engine = q3g_engine(character);
-    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
-    if (!input || !character_follower(input, actor)) return true;
-    uint32_t slot;
-    if (!application_q3_guest_actor_client(character, actor, &slot)) return true;
-    const q3g_client *client = &engine->clients[slot];
-    if (client->shared_command_seen && client->shared_command_sequence == command->sequence) return true;
-    return guest_provider_command(app, character, actor, command, stage, error);
+    application_provider *guests[3];
+    size_t count = selected_guests(application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""),
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, ""),
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), guests);
+    for (size_t i = 0; i < count; ++i) {
+        if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+        application_provider *guest = guests[i];
+        if (guest == driver) continue;
+        struct application_q3_guest *engine = q3g_engine(guest);
+        application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+        if (!input || !guest_follower(input, actor)) continue;
+        uint32_t slot;
+        if (!application_q3_guest_actor_client(guest, actor, &slot)) continue;
+        const q3g_client *client = &engine->clients[slot];
+        if (client->shared_command_seen && client->shared_command_sequence == command->sequence) continue;
+        if (!guest_provider_command(app, guest, actor, command, stage, error)) return false;
+    }
+    return true;
 }
 
 static bool guest_move(qa_application *app, qa_actor_id actor,
@@ -1460,7 +1486,9 @@ bool application_arsenal_guest_stage_ready(qa_application *app, qa_actor_id acto
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
-    application_provider *guest = application_guest_input_selected(movement, arsenal, character);
-    return guest_ready(guest, movement, arsenal, actor, false) &&
-        (!is_guest(character) || character == guest || guest_ready(character, movement, arsenal, actor, true));
+    application_provider *guests[3];
+    size_t count = selected_guests(movement, arsenal, character, guests);
+    for (size_t i = 0; i < count; ++i)
+        if (!guest_ready(guests[i], movement, arsenal, actor, i != 0)) return false;
+    return true;
 }

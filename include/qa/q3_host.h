@@ -331,6 +331,10 @@ bool qa_q3_host_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 bool qa_q3_host_source_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_shared *, qa_error *);
 bool qa_q3_host_source_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 bool qa_q3_host_write_player(qa_q3_host *, uint32_t, const qa_q3_player *, qa_error *);
+/* A completed shared spawn supplies motion without replacing module-owned
+ * command time, health, inventory or movement flags. */
+bool qa_q3_host_player_spawn_pose(qa_q3_host *, qa_actor_id, const qa_body_state *,
+                                  qa_vec3 view_angles, int32_t view_height, qa_error *);
 /* Mutates only public playerState motion/view fields. The application retains
  * cutscene lifetime, suppresses input callbacks, and updates canonical body,
  * combat and links. The latest source usercmd supplies forced-view deltas. */

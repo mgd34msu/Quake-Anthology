@@ -192,11 +192,11 @@ static bool control_vector(const player_control_write *write, size_t offset, qa_
         control_current(write, error);
 }
 
-bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 origin,
-                                qa_vec3 angles, int32_t height, qa_error *error)
+static bool player_pose(qa_q3_host *host, qa_actor_id actor, qa_vec3 origin,
+    qa_vec3 velocity, qa_vec3 angles, int32_t height, const int32_t *type, qa_error *error)
 {
     q3_call call;
-    if (!qa_vec_finite(origin) || !qa_vec_finite(angles))
+    if (!qa_vec_finite(origin) || !qa_vec_finite(velocity) || !qa_vec_finite(angles))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 controlled view must be finite");
     if (!q3_game_begin(host, &call, error)) return false;
     uint32_t number;
@@ -213,8 +213,9 @@ bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 ori
     if (ok) ok = control_current(&write, error) && q3_game_player_record(&call, number, &record, error);
     if (ok) {
         write.address = record.address;
-        ok = control_word(&write, 4, 4, error) && control_vector(&write, 20, origin, error) &&
-             control_vector(&write, 32, (qa_vec3){0}, error) &&
+        ok = (!type || control_word(&write, 4, (uint32_t)*type, error)) &&
+             control_vector(&write, 20, origin, error) &&
+             control_vector(&write, 32, velocity, error) &&
              control_word(&write, 68, 1023, error);
     }
     const float components[] = {angles.x, angles.y, angles.z};
@@ -225,6 +226,19 @@ bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 ori
     if (ok) ok = control_vector(&write, 152, angles, error) &&
                  control_word(&write, 164, (uint32_t)height, error);
     return q3_game_end(&call, ok);
+}
+
+bool qa_q3_host_player_spawn_pose(qa_q3_host *host, qa_actor_id actor,
+    const qa_body_state *body, qa_vec3 angles, int32_t height, qa_error *error)
+{
+    return player_pose(host, actor, body->origin, body->velocity, angles, height, NULL, error);
+}
+
+bool qa_q3_host_player_cutscene(qa_q3_host *host, qa_actor_id actor, qa_vec3 origin,
+    qa_vec3 angles, int32_t height, qa_error *error)
+{
+    const int32_t freeze = 4;
+    return player_pose(host, actor, origin, (qa_vec3){0}, angles, height, &freeze, error);
 }
 
 bool qa_q3_host_player_cutscene_clear(qa_q3_host *host, qa_actor_id actor,

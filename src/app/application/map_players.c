@@ -1552,6 +1552,34 @@ bool application_player_source_score_read(application_provider *source,qa_actor_
 static bool q1_finish_respawn(qa_application *,application_provider *,application_provider *,
     application_provider *,qa_actor_id,qa_error *);
 
+static bool guest_spawn_followers(qa_application *app, qa_actor_id actor,
+    application_provider *source, qa_error *error)
+{
+    application_provider *selected[] = {
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""),
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, ""),
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, "")};
+    qa_body_state body;
+    qa_player_state control;
+    if (!qa_world_body_read_pose(app->world, actor, QA_ENTITY_CLIP_POSE, &body, error) ||
+        !qa_application_control_read(app, actor, &control)) return false;
+    for (size_t i = 0; i < sizeof(selected) / sizeof(*selected); ++i) {
+        application_provider *provider = selected[i];
+        if (!provider || provider == source) continue;
+        bool duplicate = false;
+        for (size_t j = 0; j < i; ++j) duplicate |= selected[j] == provider;
+        if (duplicate) continue;
+        struct application_q3_guest *engine = q3g_engine(provider);
+        uint32_t slot;
+        if (!engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot) ||
+            !engine->clients[slot].begun) continue;
+        if (!qa_q3_host_player_spawn_pose(engine->game->host, actor, &body,
+                control.view_angles, qa_source_to_i32(control.view_height), error)) return false;
+        if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
+    }
+    return true;
+}
+
 static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
     qa_error *error)
 {
@@ -1630,6 +1658,7 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     if(world && world->kind==APPLICATION_PROVIDER_Q1 &&
        !q1_finish_respawn(app,world,source,application_provider_for(app,actor,QA_ROLE_ARSENAL,""),
            actor,error)) return false;
+    if(!guest_spawn_followers(app,actor,source,error)) return false;
     return (!app->equipment || qa_equipment_respawn(app->equipment,actor,error)) &&
         admit_components(app,actor,error);
 }
@@ -3580,6 +3609,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!q1_finish_first_spawn(application, choices, map_source, character,
                 arsenal, actor, source_point, phase != PLAYER_ADMISSION_BEGIN, error)) return false;
         }
+        if (found && !guest_spawn_followers(application, actor, character, error)) return false;
     return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
         admit_components(application, actor, error);
 }
