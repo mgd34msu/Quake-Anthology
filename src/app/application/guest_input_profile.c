@@ -28,6 +28,41 @@ static bool mode(const qa_json_document *doc, qa_json_id object, const char *key
     return true;
 }
 
+static bool output_modes(const qa_json_document *doc, qa_json_id input,
+    application_guest_input_profile *p, bool require_intermission, qa_error *error)
+{
+    bool ok = true;
+    qa_json_id modes = qa_json_get(doc, input, "movementModes");
+    if (modes != QA_JSON_NONE) {
+        ok = mode(doc, modes, "normal", &p->normal_mode, error) &&
+             mode(doc, modes, "noclip", &p->noclip_mode, error) &&
+             mode(doc, modes, "freeze", &p->freeze_mode, error);
+        p->has_modes = ok;
+        if (ok && qa_json_get(doc, modes, "dead") != QA_JSON_NONE) {
+            ok = mode(doc, modes, "dead", &p->dead_mode, error);
+            p->has_dead_mode = ok;
+        }
+    }
+    qa_json_id intermission = qa_json_get(doc, input, "intermission");
+    if (ok && !require_intermission && intermission == QA_JSON_NONE) return true;
+    if (ok && qa_json_type(doc, intermission) != QA_JSON_ARRAY)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Guest input intermission modes require a source list");
+    p->intermission_count = qa_json_size(doc, intermission);
+    if (ok && p->intermission_count) {
+        p->intermission_modes = calloc(p->intermission_count, sizeof(*p->intermission_modes));
+        if (!p->intermission_modes)
+            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest intermission modes");
+    }
+    for (size_t i = 0; ok && i < p->intermission_count; ++i) {
+        int64_t value;
+        ok = qa_json_i64(doc, qa_json_at(doc, intermission, i), &value, error);
+        if (ok && (value < INT32_MIN || value > INT32_MAX))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest intermission mode exceeds its source word");
+        if (ok) p->intermission_modes[i] = (int32_t)value;
+    }
+    return ok;
+}
+
 static bool entry(const qa_qvm_instruction *code, size_t count, uint32_t at,
                    qa_error *error)
 {
@@ -107,6 +142,13 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                 return false;
             }
         }
+        if (primary.size) {
+            qa_json_document *doc = NULL;
+            if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
+            bool ok = output_modes(doc, qa_json_get(doc, qa_json_root(doc), "input"), &p, false, error);
+            qa_json_destroy(doc);
+            if (!ok) { application_guest_input_profile_free(&p); return false; }
+        }
         *out = p; return true;
     }
     bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
@@ -177,33 +219,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         ok = word(doc, entries, "respawn", &p.respawn, error);
     if (ok && qa_json_get(doc, input, "clientCommand") != QA_JSON_NONE)
         ok = word(doc, input, "clientCommand", &p.client_command, error);
-    qa_json_id modes = qa_json_get(doc, input, "movementModes");
-    if (ok && modes != QA_JSON_NONE) {
-        ok = mode(doc, modes, "normal", &p.normal_mode, error) &&
-             mode(doc, modes, "noclip", &p.noclip_mode, error) &&
-             mode(doc, modes, "freeze", &p.freeze_mode, error);
-        p.has_modes = ok;
-        if (ok && qa_json_get(doc, modes, "dead") != QA_JSON_NONE) {
-            ok = mode(doc, modes, "dead", &p.dead_mode, error);
-            p.has_dead_mode = ok;
-        }
-    }
-    qa_json_id intermission = qa_json_get(doc, input, "intermission");
-    if (ok && qa_json_type(doc, intermission) != QA_JSON_ARRAY)
-        ok = application_fail(error, QA_ERROR_FORMAT, "Guest input intermission modes require a source list");
-    p.intermission_count = qa_json_size(doc, intermission);
-    if (ok && p.intermission_count) {
-        p.intermission_modes = calloc(p.intermission_count, sizeof(*p.intermission_modes));
-        if (!p.intermission_modes)
-            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest intermission modes");
-    }
-    for (size_t i = 0; ok && i < p.intermission_count; ++i) {
-        int64_t value;
-        ok = qa_json_i64(doc, qa_json_at(doc, intermission, i), &value, error);
-        if (ok && (value < INT32_MIN || value > INT32_MAX))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Guest intermission mode exceeds its source word");
-        if (ok) p.intermission_modes[i] = (int32_t)value;
-    }
+    if (ok) ok = output_modes(doc, input, &p, true, error);
     qa_json_destroy(doc);
     p.input_present = ok;
     if (ok) ok = qualify(role, &p, error);

@@ -10148,7 +10148,9 @@ static void test_native_q3_declaration(void)
     CHECK(!declaration && error.code == QA_ERROR_FORMAT);
     const char *lifecycle = "{\"version\":1,\"modules\":[{\"artifactPath\":\"qagamei386.so\","
         "\"apiVersion\":8,\"primary\":{\"input\":{\"entries\":{"
-        "\"respawn\":{\"entry\":112,\"join\":112}}}}}]}";
+        "\"respawn\":{\"entry\":112,\"join\":112}},"
+        "\"movementModes\":{\"normal\":0,\"noclip\":1,\"freeze\":4,\"dead\":3},"
+        "\"intermission\":[5,6]}}}]}";
     error = (qa_error){0};
     CHECK(qa_native_declaration_load((qa_bytes){(const uint8_t *)lifecycle, strlen(lifecycle)},
         "qagamei386.so", module, &declaration, &error));
@@ -10157,6 +10159,11 @@ static void test_native_q3_declaration(void)
         &role.input_profile, &error));
     CHECK(role.input_profile.respawn == 112 && !role.input_profile.input_present &&
         role.input_profile.source == &role.movement);
+    CHECK(role.input_profile.has_modes && role.input_profile.normal_mode == 0 &&
+        role.input_profile.noclip_mode == 1 && role.input_profile.freeze_mode == 4 &&
+        role.input_profile.has_dead_mode && role.input_profile.dead_mode == 3);
+    CHECK(role.input_profile.intermission_count == 2 && role.input_profile.intermission_modes[0] == 5 &&
+        role.input_profile.intermission_modes[1] == 6);
     CHECK(application_guest_input_attach(&role, &error) && !role.input);
     CHECK(role.input_profile.respawn == 112);
     application_guest_input_profile_free(&role.input_profile);

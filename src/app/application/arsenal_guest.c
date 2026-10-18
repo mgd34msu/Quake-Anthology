@@ -1315,7 +1315,7 @@ bool application_arsenal_guest_output_admit(application_provider *provider, uint
     struct application_q3_guest *engine = q3g_engine(provider);
     const application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     if ((channels & (1u << APPLICATION_CLIENT_MOVEMENT_MODE)) &&
-        (!input || !input->profile->has_modes))
+        (!input || !engine->game->input_profile.has_modes))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Original Q3 movement modes need an artifact-qualified input declaration");
     if ((channels & (1u << APPLICATION_CLIENT_BODY_SHAPE)) &&
@@ -1331,13 +1331,13 @@ bool application_arsenal_guest_outputs(application_provider *provider, qa_actor_
     if (!out || !is_guest(provider) || !provider->constructed || !provider->attached || provider->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 output use lost its actual source owner");
     struct application_q3_guest *engine = q3g_engine(provider);
-    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     uint32_t slot; qa_q3_player player;
     if (!engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot) ||
         !qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
+    const application_guest_input_profile *profile = &engine->game->input_profile;
     *out = (application_client_outputs){0};
-    if (input) for (size_t i = 0; i < input->profile->intermission_count; ++i)
-        if (player.pmType == input->profile->intermission_modes[i]) return true;
+    for (size_t i = 0; i < profile->intermission_count; ++i)
+        if (player.pmType == profile->intermission_modes[i]) return true;
     return application_qc_control_outputs(provider->application, actor, out, error);
 }
 
