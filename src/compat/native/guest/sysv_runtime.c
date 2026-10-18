@@ -1086,7 +1086,7 @@ static bool runtime_fields(qa_source_save_io *io,guest_sysv_runtime *r)
         sysv_service *s = r->services[i]; uint32_t group = s->group;
         if (!qa_source_save_u64(io,&s->id) || !qa_source_save_u64(io,&s->address) ||
             !qa_source_save_u64(io,&s->a) || !qa_source_save_u64(io,&s->b) || !qa_source_save_u64(io,&s->c) ||
-            !qa_source_save_u32(io,&s->operation) || !qa_source_save_u32(io,&group) || group > SYSV_FORMAT ||
+            !qa_source_save_u32(io,&s->operation) || !qa_source_save_u32(io,&group) ||
             !codec_text(io,&s->library) || !codec_text(io,&s->name) || !codec_text(io,&s->version) ||
             !codec_text(io,&s->detail) || !qa_source_save_count(io,&s->parameter_count,8)) return false;
         s->group = (sysv_group)group;

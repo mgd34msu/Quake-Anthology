@@ -10209,6 +10209,68 @@ static bool q3_source_native_read(void *context, uint64_t address, void *out,
 static bool format_process_current(void *context, const qa_native_guest *guest, qa_error *error)
 { (void)error; return context == guest; }
 
+static bool saved_sysv_current(void *context, const qa_native_guest *guest, qa_error *error)
+{ (void)error; return *(qa_native_guest **)context == guest; }
+
+static bool saved_sysv_clock(void *context, int32_t id, int64_t *seconds,
+    int32_t *nanoseconds, qa_error *error)
+{
+    (void)context; (void)error;
+    CHECK(id == 2);
+    *seconds = 7; *nanoseconds = 250000000;
+    return true;
+}
+
+static void test_native_sysv_platform_save(void)
+{
+    for (unsigned width = 4; width <= 8; width += 4) {
+        qa_error error = {0};
+        qa_native_guest_options options = {
+            .image = {.format = width == 4 ? QA_NATIVE_IMAGE_ELF32 : QA_NATIVE_IMAGE_ELF64,
+                .target = {.os = QA_NATIVE_OS_LINUX, .pointer_bytes = (uint8_t)width,
+                    .arch = width == 4 ? QA_NATIVE_ARCH_I386 : QA_NATIVE_ARCH_X86_64,
+                    .abi = width == 4 ? QA_NATIVE_ABI_SYSTEM_V_I386 : QA_NATIVE_ABI_SYSTEM_V_X64}},
+            .allocation_base = UINT64_C(0x3000000), .maximum_backing_bytes = 16 * 1024 * 1024,
+            .backend = QA_NATIVE_GUEST_EMULATED};
+        qa_native_guest *guest = NULL, *restored = NULL;
+        CHECK(qa_native_guest_create(&options, &guest, &error));
+        qa_native_guest_mapping returned;
+        CHECK(qa_native_guest_map(guest, UINT64_C(0x4000000), QA_NATIVE_GUEST_PAGE,
+            QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_EXECUTE, (qa_bytes){0}, &returned, &error));
+        qa_native_guest *current = guest;
+        guest_sysv_options runtime_options = {.scope = 1, .first_function = 1,
+            .trap_base = UINT64_C(0x5000000), .trap_bytes = 65536,
+            .return_trap = returned.base, .instruction_budget = 10000,
+            .bindings = {.current = saved_sysv_current, .clock = saved_sysv_clock, .context = &current}};
+        guest_sysv_runtime *runtime = NULL, *decoded = NULL;
+        CHECK(guest_sysv_create(guest, &runtime_options, &runtime, &error));
+        qa_buffer saved = {0}, memory = {0};
+        CHECK(guest_sysv_checkpoint(runtime, &saved, &error));
+        CHECK(guest_sysv_decode((qa_bytes){saved.data, saved.size}, &options.image.target,
+            &runtime_options.bindings, &decoded, &error));
+        CHECK(qa_native_guest_checkpoint(guest, NULL, &memory, &error));
+        CHECK(qa_native_guest_restore((qa_bytes){memory.data, memory.size}, &options,
+            guest_sysv_callback, decoded, NULL, &restored, &error));
+        current = restored;
+        CHECK(guest_sysv_attach(decoded, restored, &error));
+        sysv_service *clock = NULL;
+        for (size_t i = 0; i < decoded->service_count; ++i)
+            if (decoded->services[i]->group == SYSV_PLATFORM &&
+                !strcmp(decoded->services[i]->name, "clock")) { clock = decoded->services[i]; break; }
+        CHECK(clock && sysv_service_valid(clock, &error));
+        qa_native_value result;
+        CHECK(sysv_platform_call(clock, NULL, &result, &error));
+        CHECK((width == 4 && result.type == QA_NATIVE_I32 && result.as.i32 == 7250000) ||
+            (width == 8 && result.type == QA_NATIVE_I64 && result.as.i64 == 7250000));
+        CHECK(guest_sysv_retire(decoded, &error));
+        CHECK(qa_native_guest_destroy(&restored, &error)); guest_sysv_abandon(&decoded);
+        current = guest;
+        CHECK(guest_sysv_retire(runtime, &error));
+        CHECK(qa_native_guest_destroy(&guest, &error)); guest_sysv_abandon(&runtime);
+        qa_buffer_free(&saved); qa_buffer_free(&memory);
+    }
+}
+
 static void test_native_vsprintf(void)
 {
     for (unsigned pointer_bytes = 4; pointer_bytes <= 8; pointer_bytes += 4) {
@@ -12661,6 +12723,7 @@ int main(int argc, char **argv)
     test_native_q3_declaration();
     test_q3_source_memory();
     test_native_vsprintf();
+    test_native_sysv_platform_save();
     test_native_string_boundaries();
     test_native_write_receipts();
     test_native_resumable_budget();
