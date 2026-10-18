@@ -760,7 +760,8 @@ static bool role_console_command(q3g_role *role,int32_t time,const char *text,
             application_provider *source_provider=application_provider_lookup(app,source_owner,
                 APPLICATION_PROVIDER_PUBLISHED);
             struct application_q3_guest *source_game=q3g_engine(source_provider);
-            bool retained_requests=source_game && source_game->game && source_game->game->weapon_services;
+            bool retained_requests=source_game && source_game->game &&
+                source_game->game->weapon_services && !source_game->game->weapons;
             if (selected.provider==source_owner && selected.q3_weapon>=0 && !retained_requests) {
                 snprintf(weapon,sizeof(weapon),"weapon %i",selected.q3_weapon);
                 text=weapon;

@@ -40,6 +40,9 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
     application_provider *combat = application_provider_for(app, actor, QA_ROLE_COMBAT, "");
     if (combat && combat->kind == APPLICATION_PROVIDER_QC)
         return application_qc_combat_saved_binding(combat->state.qc.engine,actor,serial,out,error);
+    struct application_q3_guest *source = q3g_engine(combat);
+    if (source && source->game && source->game->combat)
+        return application_q3_combat_binding(source->game->combat, actor, serial, out, error);
     application_q3_component *component=application_q3_components_actor_owner(app,actor);
     if(component) return application_q3_component_combat_binding(component,actor,serial,out,error);
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
@@ -47,7 +50,7 @@ static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
     if (provider && provider->kind == APPLICATION_PROVIDER_QC)
         return application_qc_combat_saved_binding(provider->state.qc.engine,actor,serial,out,error);
     application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
-    struct application_q3_guest *source = character ? q3g_engine(character) : NULL;
+    source = q3g_engine(character);
     if (source && source->game && source->game->combat)
         return application_q3_combat_binding(source->game->combat, actor, serial, out, error);
     if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE &&
