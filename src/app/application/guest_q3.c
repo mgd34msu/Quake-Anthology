@@ -193,43 +193,28 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     ++role->entry_depth;
     bool ok = !role->combat || application_q3_combat_enter(role->combat, error);
     bool combat_entry = ok && role->combat;
-    if (ok && role->native) {
-        if (source) {
-            qa_native_instance *instance = qa_native_host_instance(role->native);
-            qa_native_module_info module = qa_native_module_describe(role->module);
-            qa_native_address entry;
-            const qa_native_type parameter = {.kind = QA_NATIVE_ADDRESS, .count = 1};
-            const qa_native_signature signature = {.abi = module.image.target.abi,
-                .parameters = &parameter, .parameter_count = 1,
-                .result = {.kind = QA_NATIVE_VOID, .count = 1}};
-            const qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
-                .as.address = source->actor_address};
-            qa_native_value returned = {.type = QA_NATIVE_VOID};
-            ok = qa_native_rva(instance, source->entry, 1, &entry, error) &&
-                qa_native_invoke(instance, entry, &signature, &argument, 1, &returned, error);
-            if (ok) *result = 0;
-        } else {
-            ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
-            if (command == (role->kind == QA_QVM_UI ? 1 : 0) &&
-                qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED)
-                role->initialized = true;
-        }
-    }
-    else if (ok) {
+    if (ok && source) {
+        uint64_t entry = source->entry;
+        if (role->native)
+            ok = qa_native_rva(qa_native_host_instance(role->native), source->entry, 1, &entry, error);
+        const qa_native_value argument = {.type = QA_NATIVE_ADDRESS,
+            .as.address = source->actor_address};
+        qa_native_value returned = {.type = QA_NATIVE_VOID};
+        if (ok) ok = qa_q3_host_source_call(role->host, NULL, entry, &argument, 1, &returned, error);
+        if (ok) *result = 0;
+    } else if (ok && role->native) {
+        ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
+        if (command == (role->kind == QA_QVM_UI ? 1 : 0) &&
+            qa_native_get_lifecycle(qa_native_host_instance(role->native)) == QA_NATIVE_INITIALIZED)
+            role->initialized = true;
+    } else if (ok) {
         int32_t words[10] = {command};
         if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
         qa_qvm_binding bot_setup = 0;
         ok = true;
         if (!source && role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
             ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
-        if (ok && source) {
-            if (source->actor_address > INT32_MAX)
-                ok = application_fail(error, QA_ERROR_FORMAT, "Original respawn entity exceeds its QVM pointer word");
-            else {
-                int32_t argument = (int32_t)source->actor_address;
-                ok = qa_qvm_invoke(role->vm, source->entry, &argument, 1, result, error);
-            }
-        } else if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
+        if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
                 qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
                 qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
         if (bot_setup) {

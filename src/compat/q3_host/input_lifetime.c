@@ -103,3 +103,88 @@ bool qa_q3_host_source_player(qa_q3_host *host, uint32_t slot, qa_q3_player *out
         qa_q3_abi_read_player(&record.abi, 0, true, out, error);
     return q3_game_end(&call, ok);
 }
+
+static bool source_argument_word(const qa_native_value *value, int32_t *out, qa_error *error)
+{
+    switch (value->type) {
+    case QA_NATIVE_I8: *out = value->as.i8; return true;
+    case QA_NATIVE_U8: *out = value->as.u8; return true;
+    case QA_NATIVE_I16: *out = value->as.i16; return true;
+    case QA_NATIVE_U16: *out = value->as.u16; return true;
+    case QA_NATIVE_I32: *out = value->as.i32; return true;
+    case QA_NATIVE_U32: memcpy(out, &value->as.u32, sizeof(*out)); return true;
+    case QA_NATIVE_F32: memcpy(out, &value->as.f32, sizeof(*out)); return true;
+    case QA_NATIVE_ADDRESS:
+        if (value->as.address <= UINT32_MAX) {
+            uint32_t word = (uint32_t)value->as.address;
+            memcpy(out, &word, sizeof(*out)); return true;
+        }
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Source pointer exceeds its QVM argument width");
+    default:
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Source argument has no QVM word representation");
+    }
+}
+
+static bool source_result_word(qa_native_value *out, int32_t word, qa_error *error)
+{
+    switch (out->type) {
+    case QA_NATIVE_VOID: return true;
+    case QA_NATIVE_I8: out->as.i8 = (int8_t)word; return true;
+    case QA_NATIVE_U8: out->as.u8 = (uint8_t)word; return true;
+    case QA_NATIVE_I16: out->as.i16 = (int16_t)word; return true;
+    case QA_NATIVE_U16: out->as.u16 = (uint16_t)word; return true;
+    case QA_NATIVE_I32: out->as.i32 = word; return true;
+    case QA_NATIVE_U32: out->as.u32 = (uint32_t)word; return true;
+    case QA_NATIVE_F32: memcpy(&out->as.f32, &word, sizeof(word)); return true;
+    case QA_NATIVE_ADDRESS: out->as.address = (uint32_t)word; return true;
+    default:
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Source result has no QVM word representation");
+    }
+}
+
+bool qa_q3_host_source_call(qa_q3_host *host, const qa_qvm_call *parent, uint64_t entry,
+    const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
+{
+    if (!host || host->retired || (!host->vm && !host->native) || (count && !arguments) ||
+        (parent && parent->vm != host->vm) || count > SIZE_MAX / sizeof(qa_native_type))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Source callback requires its attached executor and arguments");
+    qa_native_value discarded = {.type = QA_NATIVE_VOID};
+    if (!result) result = &discarded;
+    q3_call call = {.host = host};
+    ++host->calls;
+    bool ok = true;
+    if (host->vm) {
+        int32_t *words = count ? qa_arena_alloc(&host->scratch, count * sizeof(*words),
+            _Alignof(int32_t), error) : NULL;
+        qa_native_value checked = {.type = result->type};
+        ok = (!count || words) && source_result_word(&checked, 0, error) && entry <= INT32_MAX;
+        if (entry > INT32_MAX)
+            q3_fail(error, QA_ERROR_ARGUMENT, 0, "Source entry exceeds its QVM instruction width");
+        for (size_t i = 0; ok && i < count; ++i)
+            ok = source_argument_word(arguments + i, words + i, error);
+        int32_t word;
+        if (ok) ok = parent ? qa_qvm_invoke_source_callback(parent, qa_qvm_image_of(host->vm),
+                (int32_t)(uint32_t)entry, words, count, &word, error) :
+            qa_qvm_invoke(host->vm, (uint32_t)entry, words, count, &word, error);
+        if (ok) ok = source_result_word(result, word, error);
+    } else {
+        qa_native_type *parameters = count ? qa_arena_alloc(&host->scratch,
+            count * sizeof(*parameters), _Alignof(qa_native_type), error) : NULL;
+        ok = (!count || parameters) && (unsigned)result->type < QA_NATIVE_BYTES;
+        if ((unsigned)result->type >= QA_NATIVE_BYTES)
+            q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Source scalar callback has an aggregate result");
+        for (size_t i = 0; ok && i < count; ++i) {
+            ok = arguments[i].type > QA_NATIVE_VOID && arguments[i].type < QA_NATIVE_BYTES;
+            if (!ok) q3_fail(error, QA_ERROR_UNSUPPORTED, i, "Source scalar callback has an aggregate argument");
+            else parameters[i] = (qa_native_type){.kind = arguments[i].type, .count = 1};
+        }
+        if (ok) {
+            qa_native_signature signature = {
+                .abi = qa_native_module_describe(qa_native_get_module(host->native)).image.target.abi,
+                .parameters = parameters, .parameter_count = count,
+                .result = {.kind = result->type, .count = 1}};
+            ok = qa_native_invoke(host->native, entry, &signature, arguments, count, result, error);
+        }
+    }
+    return q3_game_end(&call, ok);
+}

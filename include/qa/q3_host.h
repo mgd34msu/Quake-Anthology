@@ -329,6 +329,10 @@ bool qa_q3_host_source_pointer(qa_q3_host *, uint64_t address, uint64_t *, qa_er
 bool qa_q3_host_source_usercmd(qa_q3_host *, uint64_t address, qa_q3_usercmd *, qa_error *);
 bool qa_q3_host_write_usercmd(qa_q3_host *, uint64_t address, bool preserve_private,
     const qa_q3_usercmd *, qa_error *);
+/* Original scalar callbacks retain native pointer widths and QVM word bits.
+ * entry is an actual native address or a QVM instruction index. */
+bool qa_q3_host_source_call(qa_q3_host *, const qa_qvm_call *parent, uint64_t entry,
+    const qa_native_value *, size_t count, qa_native_value *result, qa_error *);
 /* Generic component declarations qualify original tables before any source
  * call. This constructor uses real QVM offsets, without a synthetic trap. */
 bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);
