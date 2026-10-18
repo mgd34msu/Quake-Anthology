@@ -56,6 +56,8 @@ static bool guest_completed(application_guest_input *, qa_actor_id, uint32_t, in
     const qa_usercmd *, const application_control_external_stage *, qa_error *);
 static bool guest_followers_command(qa_application *, application_provider *, qa_actor_id,
     const qa_usercmd *, const application_control_external_stage *, qa_error *);
+static bool guest_provider_command(qa_application *, application_provider *, qa_actor_id,
+    const qa_usercmd *, const application_control_external_stage *, qa_error *);
 
 
 static bool cancel_client(const qa_qvm_call *call, const qa_qvm_call *client, qa_error *error)
@@ -633,8 +635,8 @@ bool application_guest_input_weapon_completed(void *context, qa_actor_id actor,
 
 bool application_guest_input_weapon_slice(const qa_application *app, qa_actor_id actor)
 {
-    application_provider *source = app ? application_world_provider((qa_application *)app, QA_ROLE_ENTITIES, "") : NULL;
-    struct application_q3_guest *engine = source && source->kind == APPLICATION_PROVIDER_QVM ? q3g_engine(source) : NULL;
+    application_provider *source = application_guest_input_driver(app, actor);
+    struct application_q3_guest *engine = source ? q3g_engine(source) : NULL;
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     guest_client_scope *scope = input ? input->scope : NULL;
     return scope && scope->weapon_slice && scope->input_active &&
@@ -704,16 +706,14 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     uint32_t before_type = 0, projected_type = 0;
     bool type_projected = false;
     bool ok = true, cancelled = false;
-    scope->weapon_slice = slice && input->weapons && input->weapons == input->role->weapons &&
-        application_world_provider(input->role->engine->provider->application, QA_ROLE_ENTITIES, "") ==
-            input->role->engine->provider &&
-        application_provider_for(input->role->engine->provider->application, scope->actor, QA_ROLE_ARSENAL, "") !=
-            input->role->engine->provider;
+    qa_application *app = input->role->engine->provider->application;
+    scope->weapon_slice = slice && !follower &&
+        application_guest_input_driver(app, scope->actor) == input->role->engine->provider &&
+        application_guest_input_source_weapons(app, scope->actor);
     scope->weapon_reached = false;
     if (!slice) {
         scope->equipment = (qa_q3_equipment_motion){0}; scope->equipment_active = false;
-        if (application_world_provider(input->role->engine->provider->application, QA_ROLE_ENTITIES, "") ==
-            input->role->engine->provider)
+        if (!follower && application_guest_input_driver(app, scope->actor) == input->role->engine->provider)
             ok = equipment_admit(input, scope, call, error);
     }
     if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
@@ -734,7 +734,6 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
             .join = input->profile.source->locomotion.join, .enter = replace_locomotion, .context = input};
         ok = qa_qvm_bind_regions(call, &binding, 1, error);
     }
-    qa_application *app = input->role->engine->provider->application;
     if (ok && !cancelled && slice && !follower) {
         application_client_outputs outputs;
         ok = application_control_outputs(app, scope->actor, &outputs, error);
@@ -1076,6 +1075,19 @@ application_provider *application_guest_input_selected(application_provider *mov
         is_guest(character) ? character : NULL;
 }
 
+application_provider *application_guest_input_driver(const qa_application *application, qa_actor_id actor)
+{
+    if (!application) return NULL;
+    qa_application *app = (qa_application *)application;
+    application_provider *driver = application_guest_input_selected(
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""),
+        application_provider_for(app, actor, QA_ROLE_ARSENAL, ""),
+        application_provider_for(app, actor, QA_ROLE_CHARACTER, ""));
+    if (driver) return driver;
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    return is_guest(source) ? source : NULL;
+}
+
 static size_t selected_guests(application_provider *movement, application_provider *arsenal,
     application_provider *character, application_provider *out[3])
 {
@@ -1095,14 +1107,10 @@ static bool guest_follower(application_guest_input *input, qa_actor_id actor)
 {
     application_provider *guest = input->role->engine->provider;
     qa_application *app = guest->application;
-    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
-    if (arsenal != guest && application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != guest)
-        return false;
-    application_provider *driver = application_guest_input_selected(
-        application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""), arsenal, NULL);
-    if (driver) return driver != guest;
-    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
-    return is_guest(source) && source != guest;
+    return application_guest_input_driver(app, actor) != guest &&
+        (application_world_provider(app, QA_ROLE_ENTITIES, "") == guest ||
+         application_provider_for(app, actor, QA_ROLE_ARSENAL, "") == guest ||
+         application_provider_for(app, actor, QA_ROLE_CHARACTER, "") == guest);
 }
 
 static bool weapons_capable(const application_guest_input *input)
@@ -1141,14 +1149,15 @@ bool application_arsenal_guest_roles_admit(application_provider *movement,
 
 bool application_guest_input_source_weapons(qa_application *app, qa_actor_id actor)
 {
-    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    application_provider *primary = application_guest_input_driver(app, actor);
+    application_provider *arsenal = app ? application_provider_for(app, actor, QA_ROLE_ARSENAL, "") : NULL;
     struct application_q3_guest *engine = primary ? q3g_engine(primary) : NULL;
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
-    return primary && primary->kind == APPLICATION_PROVIDER_QVM && primary->constructed &&
-        primary->attached && !primary->close_pending && input && input->role == engine->game &&
-        input->profile.input_present && input->binding_count == 5 && weapons_capable(input) &&
+    return primary && primary->constructed && primary->attached && !primary->close_pending &&
+        input && input->role == engine->game && input->profile.input_present &&
+        input->binding_count == 5 && weapons_capable(input) &&
         qa_actors_get(qa_session_actors(app->session), actor) &&
-        application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != primary;
+        arsenal && arsenal->kind <= APPLICATION_PROVIDER_Q3 && arsenal != primary;
 }
 
 bool application_arsenal_guest_equipment_handoff_ready(application_provider *provider,
@@ -1345,11 +1354,14 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
         (arsenal != source && !weapons_capable(input)))
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Original Q3 command requires qualified movement and weapon source regions");
-    if ((is_guest(movement) && movement != source) ||
-        !qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) || slot >= 64 ||
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) || slot >= 64 ||
         !engine->clients[slot].connected || !engine->clients[slot].begun ||
         engine->clients[slot].pending_retirement || !qa_actor_id_equal(engine->clients[slot].actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 command has no current source client");
+    application_provider *driver = application_guest_input_driver(app, actor);
+    if (!application_arsenal_guest_roles_admit(movement, arsenal,
+            application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), error)) return false;
+    if (driver != source) return guest_provider_command(app, driver, actor, command, NULL, error);
     qa_q3_usercmd raw;
     qa_usercmd_to_q3(command, &raw);
     return guest_command(input, actor, slot, &raw, command, NULL, error);
@@ -1385,9 +1397,21 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest command has no shared control view");
     qa_input_command_basis from = {.kind = command->kind}, to = {
         .kind = QA_RULESET_Q3, .words = true, .relative = true, .wrap_words = true};
+    const application_control_context *context = application_control_frame_current(app, actor);
+    bool raw_guest = command->kind == QA_RULESET_Q3 && context && context->source_guestcmd && context->command_only;
     if (command->kind == QA_RULESET_Q3 || command->kind == QA_RULESET_Q2_CLASSIC) {
         from.words = from.relative = from.wrap_words = from.repack_words = true;
-        for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_RULESET_Q3 ?
+        if (raw_guest) {
+            application_provider *physical = application_provider_lookup(app, context->command.provider,
+                APPLICATION_PROVIDER_PUBLISHED);
+            struct application_q3_guest *source_engine = physical ? q3g_engine(physical) : NULL;
+            qa_q3_player source_player;
+            uint32_t source_slot;
+            if (!source_engine || !source_engine->game ||
+                !application_q3_guest_actor_client(physical, actor, &source_slot) ||
+                !qa_q3_host_source_player(source_engine->game->host, source_slot, &source_player, error)) return false;
+            memcpy(from.delta_words, source_player.deltaAngles, sizeof(from.delta_words));
+        } else for (unsigned i = 0; i < 3; ++i) from.delta_words[i] = command->kind == QA_RULESET_Q3 ?
             control.state.data.q3.delta_angle_words[i] : control.state.data.q2.delta_angle_shorts[i];
     } else if (command->kind == QA_RULESET_Q2_RERELEASE) {
         from.relative = true; from.delta_angles = control.state.data.q2r.delta_angles;
@@ -1401,7 +1425,8 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
     projected.weapon = source.weapon;
     if (command->kind == QA_RULESET_Q3 && movement == guest) {
         projected.server_time_ms = command->server_time_ms;
-        memcpy(projected.angle_words, command->angle_words, sizeof(projected.angle_words));
+        if (!raw_guest || context->command.provider == guest->owner)
+            memcpy(projected.angle_words, command->angle_words, sizeof(projected.angle_words));
     }
     qa_usercmd_to_q3(&projected, &source);
     if (command->kind == QA_RULESET_Q2_RERELEASE) {
@@ -1415,10 +1440,16 @@ static bool guest_followers_command(qa_application *app, application_provider *d
     qa_actor_id actor, const qa_usercmd *command,
     const application_control_external_stage *stage, qa_error *error)
 {
-    application_provider *guests[3];
+    application_provider *guests[4];
     size_t count = selected_guests(application_provider_for(app, actor, QA_ROLE_MOVEMENT, ""),
         application_provider_for(app, actor, QA_ROLE_ARSENAL, ""),
         application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), guests);
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (is_guest(source)) {
+        size_t i = 0;
+        while (i < count && guests[i] != source) ++i;
+        if (i == count) guests[count++] = source;
+    }
     for (size_t i = 0; i < count; ++i) {
         if (!qa_actors_get(qa_session_actors(app->session), actor)) return true;
         application_provider *guest = guests[i];

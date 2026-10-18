@@ -4031,6 +4031,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
             !q1_finish_first_spawn(application,
                 qa_launch_snapshot_choices(qa_application_launch(application)), source,
                 character, arsenal, actor, source_point, true, error)) return false;
+        if (!guest_spawn_followers(application, actor, character, error)) return false;
         if (!admit_components(application, actor, error)) return false;
     }
     return true;

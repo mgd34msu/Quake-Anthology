@@ -1941,7 +1941,8 @@ bool application_control_guest_equipment(qa_application *app, application_provid
         !live(app, actor) || actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||
         !qa_actor_id_equal(app->controls[actor.slot].player.actor, actor) ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != primary)
+        (native_primary ? application_world_provider(app, QA_ROLE_ENTITIES, "") :
+            application_guest_input_driver(app, actor)) != primary)
         return application_fail(error, QA_ERROR_ARGUMENT,
             "Original equipment motion requires its admitted source player");
     qa_q3_equipment_motion motion = {.speed_multiplier = 1};
@@ -1969,7 +1970,8 @@ bool application_control_guest_equipment(qa_application *app, application_provid
     if (!qa_q3_selected_equipment_motion(arsenal->state.q3, actor, &postures.crouched, &motion, error)) return false;
     if (!live(app, actor) || application_provider_for(app, actor, QA_ROLE_ARSENAL, "") != arsenal ||
         application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != character ||
-        application_world_provider(app, QA_ROLE_ENTITIES, "") != primary)
+        (native_primary ? application_world_provider(app, QA_ROLE_ENTITIES, "") :
+            application_guest_input_driver(app, actor)) != primary)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original equipment motion source changed during pose admission");
     if (!native_primary) {
         int32_t haste;
@@ -1992,7 +1994,7 @@ static bool guest_weapon_delay_current(const guest_weapon_delay *delay, qa_actor
     return (live(delay->app, actor) && delay->primary->constructed && delay->primary->attached &&
         !delay->primary->close_pending && delay->arsenal->constructed && delay->arsenal->attached &&
         !delay->arsenal->close_pending &&
-        application_world_provider(delay->app, QA_ROLE_ENTITIES, "") == delay->primary &&
+        application_guest_input_driver(delay->app, actor) == delay->primary &&
         application_provider_for(delay->app, actor, QA_ROLE_ARSENAL, "") == delay->arsenal &&
         application_guest_input_weapon_slice(delay->app, actor)) ||
         application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon slice lost its source or selected arsenal");
@@ -2001,7 +2003,7 @@ static bool guest_weapon_delay_current(const guest_weapon_delay *delay, qa_actor
 bool application_control_guest_weapon_step(qa_application *app, qa_actor_id actor,
     const qa_usercmd *command, const qa_q3_player *player, bool reached, qa_error *error)
 {
-    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    application_provider *primary = app ? application_guest_input_driver(app, actor) : NULL;
     struct application_q3_guest *engine = primary ? q3g_engine(primary) : NULL;
     application_provider *arsenal = app ? application_provider_for(app, actor, QA_ROLE_ARSENAL, "") : NULL;
     if (!app || !command || !player || command->kind != QA_RULESET_Q3 ||
