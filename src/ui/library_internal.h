@@ -51,7 +51,7 @@ struct qa_ui_library {
     qa_ui_library_field field;
     size_t page, roster_page;
     char *monster_classname;
-    bool last_authored;
+    bool last_authored, draft_selected;
     char status[256], title[512], labels[48][512];
     qa_ui_control controls[48];
     library_page pages[9];

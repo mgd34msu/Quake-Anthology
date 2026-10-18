@@ -36,6 +36,7 @@ static void choices_invalidate(qa_ui_library *m) {
 static bool service_select(qa_ui_library *m,qa_ui_library_field field,const char *classname,
     const char *choice,qa_error *error) {
     bool ok=m->services.select(m->services.context,m,field,classname,choice,error);
+    if (ok) m->draft_selected=true;
     for (size_t i=0;i<sizeof(m->fields)/sizeof(*m->fields);++i) m->fields[i].valid=false;
     m->arena_valid=false; return ok;
 }
@@ -50,7 +51,29 @@ static qa_ui_control button(qa_ui_library *m,qa_ui_id id,const char *label,unsig
     return (qa_ui_control){.id=id,.kind=QA_UI_BUTTON,.label=label,.rect={64,118+(float)row*34,wide?512:224,30},
         .visible=true,.enabled=enabled,.context=m,.action=action};
 }
-static bool open(qa_ui_library *m,qa_ui_id id,qa_error *error) { return qa_ui_open(m->ui,id,m->ui->time_ms,error); }
+static qa_mode_kind draft_mode(const qa_launch_draft *draft,qa_mode_kind fallback) {
+    const qa_launch_choices *current=qa_launch_draft_choices(draft);
+    qa_mode_kind kind=current->mode_count?current->modes[0].rules.kind:QA_MODE_SINGLE_PLAYER;
+    return kind==QA_MODE_SINGLE_PLAYER || kind==QA_MODE_COOPERATIVE || kind==QA_MODE_FFA?kind:fallback;
+}
+static bool open(qa_ui_library *m,qa_ui_id id,qa_error *error) {
+    const qa_launch_snapshot *active=id==QA_UI_LIBRARY_CUSTOM && !m->draft_selected?
+        qa_application_launch(m->application):NULL;
+    if (active) {
+        qa_launch_draft *draft=NULL;
+        if (!qa_launch_snapshot_draft_copy(active,&draft,error)) return false;
+        if (qa_launch_draft_catalog(draft)!=m->catalog) {
+            qa_launch_draft *rebased=NULL;
+            bool ok=qa_launch_draft_rebase(draft,m->catalog,&rebased,error);
+            qa_launch_draft_destroy(draft);
+            if (!ok) return false;
+            draft=rebased;
+        }
+        qa_launch_draft_destroy(m->draft); m->draft=draft; choices_invalidate(m);
+        m->mode_preference=draft_mode(draft,QA_MODE_SINGLE_PLAYER);
+    }
+    return qa_ui_open(m->ui,id,m->ui->time_ms,error);
+}
 static void choices_read(qa_ui_library *m,const library_choice_rows *rows) {
     m->choices=rows->rows; m->choice_count=rows->count;
     m->selected=rows->selected?rows->selected:"";
@@ -120,8 +143,8 @@ static bool select_preset(qa_ui_library *m,qa_product_id product,bool authored,q
     if (authored && p->family==QA_GAME_Q3) world.skill=1;
     if (!qa_launch_set_world(draft,&world,error)) { qa_launch_draft_destroy(draft); return false; }
     qa_launch_draft_destroy(m->draft); m->draft=draft; choices_invalidate(m);
-    m->mode_preference=authored?QA_MODE_SINGLE_PLAYER:qa_launch_draft_choices(draft)->modes[0].rules.kind;
-    if (m->mode_preference!=QA_MODE_SINGLE_PLAYER && m->mode_preference!=QA_MODE_COOPERATIVE) m->mode_preference=QA_MODE_FFA;
+    m->draft_selected=true;
+    m->mode_preference=authored?QA_MODE_SINGLE_PLAYER:draft_mode(draft,QA_MODE_FFA);
     if (authored) { m->native_product=product; m->native_skill=p->family==QA_GAME_Q3?2:1; m->arena_number=-1; }
     m->status[0]=0; return true;
 }
@@ -136,6 +159,7 @@ bool qa_ui_library_select_mode(qa_ui_library *m,qa_mode_kind kind,qa_error *erro
     const qa_product *p=qa_catalog_product(m->catalog,v->world.preset);
     if (p) mode.rules.ruleset=qa_product_ruleset(p,p->family);
     if (!qa_launch_set_mode(m->draft,&mode,error)) return false;
+    m->draft_selected=true;
     m->mode_preference=kind; return true;
 }
 static const char original_suffix[]="/original";
@@ -399,7 +423,7 @@ static bool select_custom_product(qa_ui_library *m,qa_product_id product,qa_erro
     qa_launch_draft_destroy(m->draft); m->draft=candidate; choices_invalidate(m);
     return true;
 }
-static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
+static bool select_choice_apply(qa_ui_library *m,const char *id,qa_error *error) {
     qa_ui_library_field field=m->field;
     if (field==QA_UI_LIBRARY_DOPPLER) {
         qa_launch_world world=qa_ui_library_choices(m)->world; world.doppler=strcmp(id,"disabled")!=0;
@@ -440,6 +464,11 @@ static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
     if (field==QA_UI_LIBRARY_SKILL) { qa_launch_world world=qa_ui_library_choices(m)->world; world.skill=id[0]-'0'; return qa_launch_set_world(m->draft,&world,error); }
     if (field==QA_UI_LIBRARY_MODE) return qa_ui_library_select_mode(m,!strcmp(id,"singleplayer")?QA_MODE_SINGLE_PLAYER:!strcmp(id,"coop")?QA_MODE_COOPERATIVE:QA_MODE_FFA,error);
     return m->services.select && service_select(m,field,m->monster_classname,id,error);
+}
+static bool select_choice(qa_ui_library *m,const char *id,qa_error *error) {
+    bool ok=select_choice_apply(m,id,error);
+    if (ok) m->draft_selected=true;
+    return ok;
 }
 static bool launch(qa_ui_library *m,bool authored,qa_error *error) {
     m->last_authored=authored;
@@ -925,9 +954,7 @@ bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
     const qa_launch_snapshot *active=qa_application_launch(application);
     if (active) {
         if (!qa_launch_snapshot_draft_copy(active,&menu->draft,error)) { ui_library_clear(menu); free(menu); return false; }
-        const qa_launch_choices *current=qa_launch_draft_choices(menu->draft);
-        menu->mode_preference=current->mode_count?current->modes[0].rules.kind:QA_MODE_SINGLE_PLAYER;
-        if (menu->mode_preference!=QA_MODE_COOPERATIVE && menu->mode_preference!=QA_MODE_FFA) menu->mode_preference=QA_MODE_SINGLE_PLAYER;
+        menu->mode_preference=draft_mode(menu->draft,QA_MODE_SINGLE_PLAYER);
     } else for (size_t i=0;i<qa_catalog_count(menu->catalog);++i) {
         const qa_product *p=qa_catalog_at(menu->catalog,i);
         if (p->availability==QA_CONTENT_INSTALLED) {
@@ -935,6 +962,7 @@ bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
             break;
         }
     }
+    menu->draft_selected=false;
     if (!register_pages(menu,error)) { ui_library_clear(menu); free(menu); return false; }
     *out=menu; return true;
 }
@@ -1006,7 +1034,7 @@ bool qa_ui_library_select(qa_ui_library *m,qa_ui_library_field field,const char 
 qa_mode_kind qa_ui_library_mode_preference(const qa_ui_library *m) { return m?m->mode_preference:QA_MODE_SINGLE_PLAYER; }
 bool qa_ui_library_mode_preference_set(qa_ui_library *m,qa_mode_kind kind,qa_error *error) {
     if (!m || (kind!=QA_MODE_SINGLE_PLAYER && kind!=QA_MODE_COOPERATIVE && kind!=QA_MODE_FFA)) return ui_fail(error,"startup mode preference is outside its authored choices");
-    m->mode_preference=kind; return true;
+    m->mode_preference=kind; m->draft_selected=true; return true;
 }
 bool qa_ui_library_select_preset(qa_ui_library *m,const char *key,const char *start,qa_error *error) {
     const qa_product *p=m && key?qa_catalog_find(m->catalog,key):NULL;
