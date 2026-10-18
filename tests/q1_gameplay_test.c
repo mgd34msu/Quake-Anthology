@@ -692,6 +692,8 @@ static void source_client_reservations(void)
     row.actor = damage_player(&fixture, true);
     GAME_CHECK(application_player_source_slot_occupied(&app, &source, 0, &occupied, &error) && occupied);
     GAME_CHECK(qa_q1_source_bind_client(fixture.game, 1, row.actor, &error));
+    double score;
+    GAME_CHECK(application_player_source_score_read(&source,row.actor,&score,&error) && score==0);
     row.actor = (qa_actor_id){0};
     GAME_CHECK(application_player_source_slot_occupied(&app, &source, 0, &occupied, &error) && !occupied);
     GAME_CHECK(application_player_source_slot_occupied(&app, &source, 1, &occupied, &error) && occupied);

@@ -1503,6 +1503,51 @@ bool application_q3_guest_selected_respawn(application_provider *source,
     return true;
 }
 
+bool application_player_source_score_read(application_provider *source,qa_actor_id actor,
+    double *out,qa_error *error)
+{
+    if(source->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_source_client_view view;
+        if(!qa_q1_source_client_read(source->state.q1,actor,&view))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Source score has no Q1 client");
+        *out=view.frags;return true;
+    }
+    if(source->kind==APPLICATION_PROVIDER_QC) {
+        struct application_qc_state *engine=source->state.qc.engine;
+        int32_t reference;float score;
+        if(!application_qc_reference(engine,actor,&reference,error) ||
+           !application_qc_float(engine,reference,engine->field_bindings->frags,&score,error)) return false;
+        *out=score;return true;
+    }
+    if(source->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_player_info view;
+        if(!qa_q2_player_read(source->state.q2,actor,&view))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"Source score has no Q2 client");
+        *out=view.score;return true;
+    }
+    if(source->kind==APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
+        int32_t score;bool handled;
+        if(!application_native_q2_player_score_read(source->state.native.q2_engine,actor,
+            &score,&handled,error)) return false;
+        if(!handled) return application_fail(error,QA_ERROR_UNSUPPORTED,"Native Q2 source has no player score field");
+        *out=score;return true;
+    }
+    uint32_t slot;
+    if(source->kind==APPLICATION_PROVIDER_Q3) {
+        int32_t score;
+        if(!qa_q3_native_client_slot(source->state.q3,actor,&slot,error) ||
+           !qa_q3_wire_client_source_score_read(source->state.q3,slot,&score,error)) return false;
+        *out=score;return true;
+    }
+    struct application_q3_guest *engine=q3g_engine(source);
+    qa_q3_player player;
+    if(!engine || !engine->game)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Source has no player score interface");
+    if(!qa_q3_host_actor_slot(engine->game->host,actor,&slot,error) ||
+       !qa_q3_host_source_player(engine->game->host,slot,&player,error)) return false;
+    *out=player.persistant[0];return true;
+}
+
 bool application_players_guest_spawned(application_provider *source,qa_actor_id actor,
     bool respawning,qa_error *error)
 {

@@ -349,36 +349,7 @@ bool application_clients_reject(qa_application *app,qa_actor_owner owner,qa_acto
 }
 static bool source_score(application_q3_component_client_adapter *a,qa_actor_id actor,double *out,qa_error *e)
 {
-    application_provider *source=a->source;
-    if(source->kind==APPLICATION_PROVIDER_Q1) {
-        qa_q1_source_client_view view;
-        if(!qa_q1_source_client_read(source->state.q1,actor,&view))
-            return application_fail(e,QA_ERROR_NOT_FOUND,"Component score lost its actual Q1 client");
-        *out=view.frags;return true;
-    }
-    if(source->kind==APPLICATION_PROVIDER_QC) {
-        int32_t reference;float score;struct application_qc_state *engine=source->state.qc.engine;
-        if(!application_qc_reference(engine,actor,&reference,e)||
-            !application_qc_float(engine,reference, engine->field_bindings->frags,&score,e)) return false;
-        *out=score;return true;
-    }
-    if(source->kind==APPLICATION_PROVIDER_Q2) {
-        qa_q2_player_info view;
-        if(!qa_q2_player_read(source->state.q2,actor,&view))
-            return application_fail(e,QA_ERROR_NOT_FOUND,"Component score lost its actual Q2 player state");
-        *out=view.score;return true;
-    }
-    int32_t score;
-    if(source->kind==APPLICATION_PROVIDER_Q3) {
-        application_player_record *p=player(a,actor);
-        if(!p||!qa_q3_wire_client_source_score_read(source->state.q3,p->client_slot,&score,e)) return false;
-    } else {
-        struct application_q3_guest *engine=q3g_engine(source);
-        if(!engine||!engine->game||!engine->game->weapons)
-            return application_fail(e,QA_ERROR_UNSUPPORTED,"Component score needs a genuine Source match declaration");
-        if(!application_q3_weapons_score(engine->game->weapons,actor,&score,e)) return false;
-    }
-    *out=score;return true;
+    return application_player_source_score_read(a->source,actor,out,e);
 }
 static bool source_set_score(application_q3_component_client_adapter *a,qa_actor_id actor,double score,qa_error *e)
 {

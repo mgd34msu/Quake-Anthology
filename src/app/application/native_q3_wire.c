@@ -6,6 +6,8 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "control_frame.h"
+#include "map_players_private.h"
+#include "qa/text.h"
 
 static bool native_source_actor(application_provider *provider, qa_actor_id actor,
     uint32_t *slot, qa_error *error)
@@ -41,6 +43,7 @@ static bool native_mode(void *context, qa_actor_id actor, qa_q3_wire_mode *out,
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 wire requires its match score output");
     if (!native_source_actor(provider, actor, &slot, error)) return false;
     bool scoped = application_native_q3_source_entered(provider);
+    bool source_score = false;
     qa_mode_id mode;
     if (scoped) {
         bool found;
@@ -49,12 +52,19 @@ static bool native_mode(void *context, qa_actor_id actor, qa_q3_wire_mode *out,
             return application_fail(error, QA_ERROR_NOT_FOUND,
                 "Native Q3 wire has no actual associated match score owner");
     } else {
-        if (!app->primary_mode_ready)
-            return application_fail(error, QA_ERROR_ARGUMENT,
-                "Native Q3 wire has no current selected match score owner");
-        mode = app->primary_mode;
+        if (app->primary_mode_ready) mode = app->primary_mode;
+        else {
+            application_provider *source=application_world_provider(app,QA_ROLE_ENTITIES,"");
+            double score;
+            if (!source || source==provider)
+                return application_fail(error, QA_ERROR_ARGUMENT,
+                    "Native Q3 wire has no current selected match score owner");
+            if (!application_player_source_score_read(source,actor,&score,error)) return false;
+            value.score=qa_source_to_i32(score);
+            source_score=true;
+        }
     }
-    if (!qa_modes_score(app->modes, mode, actor, &value.score, error) ||
+    if ((!source_score && !qa_modes_score(app->modes, mode, actor, &value.score, error)) ||
         (scoped && !application_native_q3_source_mode_current(provider, mode, error)) ||
         !native_source_actor(provider, actor, &actual_slot, error)) return false;
     if (actual_slot != slot)
