@@ -173,7 +173,7 @@ application_provider *application_startup_flow_provider(const qa_application *ap
         application_provider *provider = app->startup_preinit_provider;
         const qa_launch_instance *instance = provider && provider->launch && app->routing_snapshot
             ? qa_launch_snapshot_find(app->routing_snapshot, provider->launch->selection.instance) : NULL;
-        return provider && instance && instance->state == provider && provider->owner == owner &&
+        return provider && instance && instance->storage == provider->launch->storage && provider->owner == owner &&
             provider->application == app && !provider->attached && !provider->close_pending
             ? provider : NULL;
     }
