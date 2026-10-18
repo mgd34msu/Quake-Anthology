@@ -280,7 +280,7 @@ static bool bot_user_command(void *context, int32_t client, const qa_q3_usercmd 
     if (!application_guest_bots_admit(role->engine->provider, error)) return false;
     const qa_actor_record *actor = qa_actors_get(
         qa_session_actors(role->engine->provider->application->session), role->engine->clients[client].actor);
-    if (!actor || actor->owner != role->engine->provider->owner) return true;
+    if (!actor) return true;
     return application_control_frames_receive_guest_bot(role->engine->provider->application,
         actor->id, command, error);
 }
