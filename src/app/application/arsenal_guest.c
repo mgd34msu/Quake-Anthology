@@ -1887,7 +1887,8 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
     if (command->kind == QA_RULESET_Q2_RERELEASE) {
         if (command->buttons & 8u) source.upmove = 127;
         if (command->buttons & 16u) source.upmove = -127;
-    } else if ((command->buttons & 2u) && source.upmove == 0) source.upmove = 127;
+    } else if ((command->kind == QA_RULESET_NETQUAKE || command->kind == QA_RULESET_QUAKEWORLD) &&
+        (command->buttons & 2u) && source.upmove == 0) source.upmove = 127;
     return guest_command(input, actor, slot, &source, command, stage, error);
 }
 
