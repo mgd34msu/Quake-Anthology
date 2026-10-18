@@ -1356,11 +1356,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its prepared physical configuration");
     frontend_config_source *configured=preparation.source_cvars?
         frontend_config_store_source(frontend->config_store,preparation.source_cvars):NULL;
-    frontend_key_profile *profile=client_config?client_view.keys:configured?frontend_config_source_keys(configured):NULL;
+    frontend_key_profile *profile=configured?frontend_config_source_keys(configured):client_config?client_view.keys:NULL;
     if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
     bool packet_client=host->client.gamestate!=NULL;
-    if ((configured && !client_config && frontend_config_source_cvars(configured)!=preparation.source_cvars) ||
-        ((client_config || configured) && (!profile || !frontend_key_profile_state(profile))))
+    if ((client_config || configured) && (!profile || !frontend_key_profile_state(profile)))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require their prepared physical configuration and registry");
     if (frontend->source_restoring && (!frontend->seats || !frontend->seats[ordinal].input || !frontend->seats[ordinal].console))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
@@ -1464,9 +1463,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     qa_application_startup_source parent_game;
     if(!qa_application_q3_client_configuration_read(application,owner,role,seat,&client_tuple,error) ||
         client_tuple.console!=host->console || client_tuple.cvars!=host->cvars ||
-        (!client_config && (!configured || !frontend_config_source_tuple(configured,&parent_game))) ||
+        (!client_config && !configured) ||
+        (configured && !frontend_config_source_tuple(configured,&parent_game)) ||
         !frontend_config_host_cvars_prepare(&lease->namespaces,frontend->config_store,application,
-            &client_tuple,client_config?NULL:&parent_game,&host->cvar_namespaces,error))
+            &client_tuple,configured?&parent_game:NULL,&host->cvar_namespaces,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT host namespaces require the adopted physical tuple and actual GAME parent");
     host->input=(qa_q3_host_input_services){.context=&lease->namespaces,
         .bindings=frontend_config_host_bindings};
@@ -1832,15 +1832,16 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
         bool client_config=frontend_client_configuration_read(f,client_tuple.cvars,&client_view,NULL);
         frontend_config_source *configured=preparation->source_cvars?
             frontend_config_store_source(f->config_store,preparation->source_cvars):NULL;
+        frontend_key_profile *profile=configured?frontend_config_source_keys(configured):client_config?client_view.keys:NULL;
         if ((!client_config && !configured) || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
-            lease->cvars!=host->cvars)
+            lease->cvars!=host->cvars || lease->source->key_profile!=profile)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its canonical source seat registry");
         if (client_config && (!client_view.ready ||
             client_view.console!=host->console || client_tuple.console!=host->console ||
             client_view.cvars!=host->cvars || client_tuple.cvars!=host->cvars ||
             client_view.scope.provider!=preparation->receiver || client_view.scope.seat!=preparation->seat ||
             (!client_view.neutral.owner && client_view.scope.kind!=client_tuple.scope.kind) || client_view.physical_seat!=lease->source->seat ||
-            client_view.keys!=lease->source->key_profile || !frontend_client_configuration_current(&client_view)))
+            !frontend_client_configuration_current(&client_view)))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its decoded physical configuration");
         if (!client_config && preparation->restoring && !frontend_config_source_restore_seat_registry(configured,
             preparation->seat,lease->registry,NULL,error)) return false;

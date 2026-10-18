@@ -1496,8 +1496,13 @@ static bool registry_inventory(const frontend_config_store *manager,qa_applicati
                 !game->released || !instance(game) ||
                 !game_scope(game->scope) || !qa_cvars_same_store(qa_console_cvars(game->console),game->cvars)))
                 return fail(error,QA_ERROR_ARGUMENT,"Host namespaces lost their retained hosted GAME parent");
-            if (parent_game && namespace_game(manager,application,parent_game,error)!=game)
-                return fail(error,QA_ERROR_ARGUMENT,"Host namespaces name another actual GAME parent");
+            if (parent_game) {
+                frontend_config_source *parent=namespace_game(manager,application,parent_game,error);
+                if (!parent) return false;
+                if (hosted && parent!=game)
+                    return fail(error,QA_ERROR_ARGUMENT,"Host namespaces name another actual GAME parent");
+                game=parent;
+            }
         } else {
             game=namespace_game(manager,application,parent_game,error);
             size_t seat=game?seat_index(game,authority->scope.seat):0;
