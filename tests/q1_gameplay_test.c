@@ -5,6 +5,8 @@
 #include "qa/game_q1_maps.h"
 #include "qa/game_q1_bots.h"
 #include "qa/movement.h"
+#include "../src/app/application/map_players_private.h"
+#include "../src/app/application/network_unified.h"
 
 typedef struct q1_fixture {
     gameplay_map map;
@@ -671,6 +673,29 @@ static qa_actor_id damage_player(q1_fixture *fixture, bool bot)
     GAME_CHECK(identity != NULL);
     *identity = (qa_actor_player){.present = true, .bot = bot};
     return actor;
+}
+
+static void source_client_reservations(void)
+{
+    qa_error error = {0};
+    q1_fixture fixture;
+    fixture_create_rules_clients(&fixture, QA_Q1_CLASSIC, 1, false, QA_Q1_ID1,
+        false, 0, QA_RULESET_NETQUAKE, 2);
+    application_player_record row = {.client_slot = 0};
+    struct application_player_roster roster = {.records = &row, .count = 1};
+    qa_application app = {.session = fixture.session, .players = &roster};
+    application_provider source = {.kind = APPLICATION_PROVIDER_Q1, .state.q1 = fixture.game};
+    uint32_t maximum;
+    GAME_CHECK(application_player_source_capacity(&source, &maximum, false, &error) && maximum == 2);
+    bool occupied;
+    GAME_CHECK(application_player_source_slot_occupied(&app, &source, 0, &occupied, &error) && !occupied);
+    row.actor = damage_player(&fixture, true);
+    GAME_CHECK(application_player_source_slot_occupied(&app, &source, 0, &occupied, &error) && occupied);
+    GAME_CHECK(qa_q1_source_bind_client(fixture.game, 1, row.actor, &error));
+    row.actor = (qa_actor_id){0};
+    GAME_CHECK(application_player_source_slot_occupied(&app, &source, 0, &occupied, &error) && !occupied);
+    GAME_CHECK(application_player_source_slot_occupied(&app, &source, 1, &occupied, &error) && occupied);
+    fixture_destroy(&fixture);
 }
 
 static void player_damage_check(q1_fixture *fixture, qa_actor_id target, qa_actor_id attacker,
@@ -1585,6 +1610,7 @@ static void qw_shooter_newmis(void)
 void test_q1_gameplay(void);
 void test_q1_gameplay(void)
 {
+    source_client_reservations();
     hub_spawn(QA_Q1_MG1);
     hub_spawn(QA_Q1_DOPA);
     addon_spawn_multiplayer(QA_Q1_MG1, true);

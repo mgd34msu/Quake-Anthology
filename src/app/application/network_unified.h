@@ -7,6 +7,7 @@
 #include "qa/unified_frame_components.h"
 
 struct qa_unified_world_frame;
+struct application_provider;
 
 /* Borrows the installed Source, not an actor's selected CHARACTER. The receipt
  * expires at the next application publication or Source frame. */
@@ -25,8 +26,10 @@ bool application_unified_source_read(qa_application *, application_unified_sourc
 bool application_unified_source_current(const qa_application *, const application_unified_source *);
 bool application_unified_source_checkpoint_read(qa_application *, application_unified_source *, qa_error *);
 bool application_unified_source_checkpoint_current(const qa_application *, const application_unified_source *);
-bool application_unified_source_slot_occupied(qa_application *, uint32_t client_slot,
-    bool *, qa_error *);
+bool application_player_source_capacity(struct application_provider *, uint32_t *, bool checkpoint,
+    qa_error *);
+bool application_player_source_slot_occupied(qa_application *, struct application_provider *,
+    uint32_t client_slot, bool *, qa_error *);
 bool application_unified_player_read(qa_application *, qa_net_client_id, qa_net_seat_id,
     qa_unified_session_player *, qa_error *);
 bool application_unified_player_current(qa_application *, qa_net_client_id,

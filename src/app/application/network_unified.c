@@ -42,7 +42,8 @@ static bool source_ready(const qa_application *app, const application_provider *
         source->map_bound && !source->close_pending && source->owner && source->launch && source->product;
 }
 
-static bool capacity(application_provider *source, uint32_t *out, bool checkpoint, qa_error *error)
+bool application_player_source_capacity(application_provider *source, uint32_t *out,
+    bool checkpoint, qa_error *error)
 {
     if (source->kind == APPLICATION_PROVIDER_Q1)
         return qa_q1_bot_max_clients(source->state.q1, out, error);
@@ -276,7 +277,7 @@ static bool source_read(qa_application *app, application_unified_source *out, bo
     uint32_t maximum;
     if (!qa_session_clock(app->session, source->owner, &clock) ||
         clock.frame.provider != source->owner || clock.frame.kind != source->component.clock.kind ||
-        !capacity(source, &maximum, checkpoint, error))
+        !application_player_source_capacity(source, &maximum, checkpoint, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified hosting lost its actual Source clock or client owner");
     if (!maximum || maximum > 256 || (source->product->family != QA_GAME_Q1 &&
         source->product->family != QA_GAME_Q2 && source->product->family != QA_GAME_Q3))
@@ -302,7 +303,7 @@ static bool source_current(const qa_application *app, const application_unified_
         app->session == receipt->session && app->world == receipt->world &&
         app->publication_generation == receipt->publication && app->map_revision == receipt->map_revision &&
         app->frame_revision == receipt->frame_revision &&
-        capacity(source, &maximum, checkpoint, NULL) && maximum == receipt->max_clients &&
+        application_player_source_capacity(source, &maximum, checkpoint, NULL) && maximum == receipt->max_clients &&
         qa_session_clock(app->session, source->owner, &clock) &&
         qa_source_frame_equal(clock.frame, receipt->frame);
 }
@@ -311,18 +312,17 @@ bool application_unified_source_current(const qa_application *app, const applica
 bool application_unified_source_checkpoint_current(const qa_application *app, const application_unified_source *receipt)
 { return source_current(app,receipt,true); }
 
-bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot,
-    bool *out, qa_error *error)
+bool application_player_source_slot_occupied(qa_application *app, application_provider *source,
+    uint32_t slot, bool *out, qa_error *error)
 {
-    application_unified_source receipt;
-    if (!out || !application_unified_source_read(app, &receipt, error)) return false;
-    if (slot >= receipt.max_clients)
+    uint32_t maximum;
+    if (!out || !application_player_source_capacity(source, &maximum, false, error)) return false;
+    if (slot >= maximum)
         return application_fail(error, QA_ERROR_ARGUMENT, "Unified admission exceeds its actual Source capacity");
-    application_provider *source = primary(app);
     bool occupied = false;
     for (size_t i = 0; i < app->players->count; ++i) {
         const application_player_record *row = app->players->records + i;
-        occupied |= !row->retiring && row->client_slot == slot;
+        occupied |= !row->retiring && row->actor.registry && row->client_slot == slot;
     }
     if (source->kind == APPLICATION_PROVIDER_Q1) {
         qa_actor_id actor;
@@ -351,8 +351,6 @@ bool application_unified_source_slot_occupied(qa_application *app, uint32_t slot
         const q3g_client *client = q3g_engine(source)->clients + slot;
         occupied |= client->reserved || client->allocated || client->connected || client->pending_retirement;
     }
-    if (!application_unified_source_current(app, &receipt))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Unified admission changed its actual Source receipt");
     *out = occupied;
     return true;
 }
@@ -901,7 +899,7 @@ bool application_unified_player_admit(qa_application *app,
             (uint32_t)reserved->integer : 0;
         for (uint32_t slot = first; slot < source.max_clients; ++slot) {
             bool occupied;
-            if (!application_unified_source_slot_occupied(app, slot, &occupied, error)) goto done;
+            if (!application_player_source_slot_occupied(app, provider, slot, &occupied, error)) goto done;
             if (!occupied) { canonical.source_slot = slot; break; }
         }
         if (canonical.source_slot == UINT32_MAX) {

@@ -937,6 +937,23 @@ static bool weapons_capable(const application_guest_input *input)
         application_q3_weapons_descriptor_count(input->weapons) == 6;
 }
 
+bool application_arsenal_guest_roles_admit(application_provider *movement,
+    application_provider *arsenal, qa_error *error)
+{
+    application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
+    if (!guest) return true;
+    struct application_q3_guest *engine = q3g_engine(guest);
+    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+    if (!input || input->in_command)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Guest input owner is missing or already active");
+    if ((movement != guest && !(input->profile.source && input->profile.source->present)) ||
+        (arsenal != guest && !weapons_capable(input)))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Mixed Q3 guest roles require qualified source movement and weapon contracts");
+    if (is_guest(movement) && movement != guest)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Two Q3 guest movement owners require an explicit cross-artifact contract");
+    return true;
+}
+
 bool application_guest_input_source_weapons(qa_application *app, qa_actor_id actor)
 {
     application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
@@ -1151,15 +1168,9 @@ static bool guest_move(qa_application *app, qa_actor_id actor,
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
     if (!guest) return true;
+    if (!application_arsenal_guest_roles_admit(movement, arsenal, error)) return false;
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
-    if (!input || input->in_command)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Guest input owner is missing or already active");
-    if ((movement != guest && !(input->profile.source && input->profile.source->present)) ||
-        (arsenal != guest && !weapons_capable(input)))
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Mixed Q3 guest roles require qualified source movement and weapon contracts");
-    if (is_guest(movement) && movement != guest)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Two Q3 guest movement owners require an explicit cross-artifact contract");
     uint32_t slot;
     if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error)) return false;
     if (slot >= 64 || !engine->clients[slot].connected ||
@@ -1223,12 +1234,9 @@ bool application_arsenal_guest_stage_ready(qa_application *app, qa_actor_id acto
     application_provider *guest = is_guest(arsenal) ? arsenal : is_guest(movement) ? movement : NULL;
     if (!guest) return true;
     struct application_q3_guest *engine = q3g_engine(guest);
-    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     uint32_t slot;
-    return guest->constructed && guest->attached && !guest->close_pending && input && !input->in_command &&
-        !(is_guest(movement) && movement != guest) &&
-        (movement == guest || (input->profile.source && input->profile.source->present)) &&
-        (arsenal == guest || weapons_capable(input)) &&
+    return guest->constructed && guest->attached && !guest->close_pending &&
+        application_arsenal_guest_roles_admit(movement, arsenal, NULL) &&
         qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) && slot < 64 &&
         engine->clients[slot].connected && engine->clients[slot].begun &&
         !engine->clients[slot].pending_retirement && qa_actor_id_equal(engine->clients[slot].actor, actor);

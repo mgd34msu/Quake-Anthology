@@ -4147,6 +4147,9 @@ static bool remote_character_slot_occupied(qa_application *app,
     return true;
 }
 
+static bool player_source_slot(qa_application *, application_provider *, application_provider *,
+    const qa_launch_seat *, uint32_t, uint32_t *, bool *, qa_error *);
+
 static bool application_seat_free_first(qa_application *app,uint32_t *out,qa_error *error)
 {
     const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(app));
@@ -4213,15 +4216,10 @@ bool application_players_bot_allocate(qa_application *app,
     if (!source || source != application_bot_source(app->bots) || !source->constructed ||
         !source->attached || source->close_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "bot allocation lost its actual source owner");
-    uint32_t maximum;
-    if (source->kind == APPLICATION_PROVIDER_Q3) {
-        if (!qa_q3_source_max_clients(source->state.q3, &maximum, error)) return false;
-    } else if (app->bots->shared_world &&
-        (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_Q2)) {
-        maximum = application_bot_world_max_clients(app->bots->shared_world);
-    } else return application_fail(error, QA_ERROR_UNSUPPORTED, "bot catalogue allocation has no native or shared GAME owner");
-    if (maximum > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "bot physical client extent exceeds its source word");
+    if (source->kind != APPLICATION_PROVIDER_Q3 &&
+        !(app->bots->shared_world &&
+          (source->kind == APPLICATION_PROVIDER_Q1 || source->kind == APPLICATION_PROVIDER_Q2)))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "bot catalogue allocation has no native or shared GAME owner");
     qa_launch_seat seat = selected_seat ? *selected_seat : (qa_launch_seat){.name = "", .team = "", .bot = true};
     size_t pending = SIZE_MAX;
     if (selected_seat)
@@ -4239,39 +4237,16 @@ bool application_players_bot_allocate(qa_application *app,
     application_provider *movement = current_seat_provider(app, &seat, QA_ROLE_MOVEMENT);
     application_provider *arsenal = current_seat_provider(app, &seat, QA_ROLE_ARSENAL);
     if (!character || character->kind > APPLICATION_PROVIDER_Q3 ||
-        !movement || movement->kind > APPLICATION_PROVIDER_Q3 ||
+        !movement || (movement->kind > APPLICATION_PROVIDER_Q3 && !q3g_engine(movement)) ||
         !arsenal || !application_bot_arsenal_supported(arsenal))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "catalogue bot selected roles require native admission owners");
+    if (!application_arsenal_guest_roles_admit(movement, arsenal, error)) return false;
     uint32_t offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t physical;
-    for (physical = 0; physical < maximum; ++physical) {
-        bool occupied = qa_actors_at_source(qa_session_actors(app->session),
-            character->owner, physical + offset) != NULL;
-        for (size_t i = 0; i < app->players->count; ++i)
-            occupied |= !app->players->records[i].retiring &&
-                app->players->records[i].actor.registry && app->players->records[i].client_slot == physical;
-        if (source->kind == APPLICATION_PROVIDER_Q3) {
-            qa_q3_source_binding row;
-            if (!qa_q3_source_binding_read(source->state.q3, physical, &row, error)) return false;
-            occupied |= row.actor.registry != 0;
-        } else {
-            uint32_t cursor = 0;
-            const qa_actor_record *actor;
-            while (!occupied && qa_actors_next(qa_session_actors(app->session), &cursor, &actor)) {
-                if (source->kind == APPLICATION_PROVIDER_Q2) {
-                    qa_q2_player_info client;
-                    occupied = qa_q2_player_read(source->state.q2, actor->id, &client) &&
-                        client.connected && client.slot == physical;
-                } else {
-                    qa_q1_source_client_view client;
-                    occupied = qa_q1_source_client_read(source->state.q1, actor->id, &client) &&
-                        client.slot == physical;
-                }
-            }
-        }
-        if (!occupied) break;
-    }
-    if (physical == maximum) return true;
+    bool available;
+    if (!player_source_slot(app, source, character, &seat, UINT32_MAX,
+        &physical, &available, error)) return false;
+    if (!available) return true;
     application_player_record record = {.pending_identity = {.bot = true, .spectator = seat.spectator}, .seat = seat.id, .client_slot = physical,
         .source_slot = physical + offset, .configured_actor = seat.actor,
         .character = character,  .dynamic = true, };
@@ -4371,54 +4346,57 @@ typedef struct player_admission_request {
 } player_admission_request;
 
 static bool player_source_slot(qa_application *application, application_provider *source,
-    application_provider *character, uint32_t requested, uint32_t *out,
+    application_provider *character, const qa_launch_seat *seat, uint32_t requested, uint32_t *out,
     bool *available, qa_error *error)
 {
     *available=false;
     uint32_t source_offset = source->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
     uint32_t character_offset = character->component.clock.kind == QA_RULESET_Q3 ? 0u : 1u;
-    application_unified_source source_receipt;
-    if (!application_unified_source_read(application, &source_receipt, error) ||
-        source_receipt.owner != source->owner) return false;
-    uint32_t capacity = source_receipt.max_clients;
+    uint32_t capacity;
+    if (!application_player_source_capacity(source, &capacity, false, error)) return false;
     if (qw_reserved_character(character) && character->state.qc.engine->max_clients < capacity)
         capacity = character->state.qc.engine->max_clients;
+    application_provider *guests[sizeof(player_roles) / sizeof(*player_roles)];
+    size_t guest_count = 0;
+    for (size_t i = 0; i < sizeof(player_roles) / sizeof(*player_roles); ++i) {
+        application_provider *provider = current_seat_provider(application, seat, player_roles[i]);
+        if (provider == source || !q3g_engine(provider)) continue;
+        bool retained = false;
+        for (size_t j = 0; j < guest_count; ++j) retained |= guests[j] == provider;
+        if (retained) continue;
+        uint32_t maximum;
+        if (!application_player_source_capacity(provider, &maximum, false, error)) return false;
+        if (maximum < capacity) capacity = maximum;
+        guests[guest_count++] = provider;
+    }
     uint32_t client_slot;
-    if (requested == UINT32_MAX) {
-        client_slot = 0;
-        for (;;) {
-            if (client_slot >= capacity)
-                return true;
-            bool occupied;
-            bool source_occupied;
-            if (!application_unified_source_slot_occupied(application, client_slot, &source_occupied, error) ||
-                !remote_character_slot_occupied(application, character,
-                    client_slot + character_offset, &occupied, error)) return false;
-            occupied |= source_occupied;
-            for (size_t i = 0; i < application->players->count; ++i)
-                occupied |= !application->players->records[i].retiring &&
-                    application->players->records[i].client_slot == client_slot;
-            if (!occupied) break;
-            ++client_slot;
-        }
-    } else {
+    if (requested == UINT32_MAX) client_slot = 0;
+    else {
         if (requested < source_offset)
             return application_fail(error, QA_ERROR_ARGUMENT, "game source slot is unavailable");
         client_slot = requested - source_offset;
     }
-    if (client_slot >= capacity)
-        return application_fail(error, QA_ERROR_ARGUMENT, "character source slot is unavailable");
-    uint32_t source_slot = client_slot + character_offset;
-    bool occupied;
-    bool source_occupied;
-    if (!application_unified_source_slot_occupied(application, client_slot, &source_occupied, error) ||
-        !remote_character_slot_occupied(application, character, source_slot, &occupied, error)) return false;
-    occupied |= source_occupied;
-    if (occupied)
-        return application_fail(error, QA_ERROR_ARGUMENT, "source slot is unavailable");
-    for (size_t i = 0; i < application->players->count; ++i)
-        if (!application->players->records[i].retiring && application->players->records[i].client_slot == client_slot)
-            return application_fail(error, QA_ERROR_ARGUMENT, "client slot collides with an admitted player");
+    for (;;) {
+        if (client_slot >= capacity)
+            return requested == UINT32_MAX ? true :
+                application_fail(error, QA_ERROR_ARGUMENT, "character source slot is unavailable");
+        bool occupied;
+        bool source_occupied;
+        if (!application_player_source_slot_occupied(application, source, client_slot, &source_occupied, error) ||
+            !remote_character_slot_occupied(application, character,
+                client_slot + character_offset, &occupied, error)) return false;
+        occupied |= source_occupied;
+        for (size_t i = 0; i < guest_count; ++i) {
+            bool guest_occupied;
+            if (!application_player_source_slot_occupied(application, guests[i], client_slot,
+                &guest_occupied, error)) return false;
+            occupied |= guest_occupied;
+        }
+        if (!occupied) break;
+        if (requested != UINT32_MAX)
+            return application_fail(error, QA_ERROR_ARGUMENT, "source slot is unavailable");
+        ++client_slot;
+    }
     *out=client_slot;
     *available=true;
     return true;
@@ -4461,7 +4439,7 @@ static bool player_attach(qa_application *application,
     }
     uint32_t client_slot;
     bool available;
-    if (!player_source_slot(application,source,character,request->source_slot,&client_slot,&available,error))
+    if (!player_source_slot(application,source,character,seat,request->source_slot,&client_slot,&available,error))
         return false;
     if (!available){snprintf(out->reason,sizeof(out->reason),"Server is full");return true;}
     uint32_t source_slot=client_slot+(character->component.clock.kind==QA_RULESET_Q3?0u:1u);
@@ -4540,7 +4518,7 @@ bool qa_application_local_player_available(qa_application *application, uint32_t
         if (!allowed) return true;
     }
     uint32_t slot;
-    return player_source_slot(application,source,character,UINT32_MAX,&slot,available,error);
+    return player_source_slot(application,source,character,&seat,UINT32_MAX,&slot,available,error);
 }
 
 bool qa_application_local_player_attach(qa_application *application, uint32_t logical_seat,
