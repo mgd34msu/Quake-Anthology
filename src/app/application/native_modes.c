@@ -120,9 +120,6 @@ bool application_native_q3_source_mode(application_provider *provider, qa_mode_i
         admitted = true;
     }
     if (!admitted) return true;
-    if (!application_native_q3_source_entered(provider))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-            "Supplemental Q3 mode lost its actual Source operation");
     *out = selected;
     *found = true;
     return true;

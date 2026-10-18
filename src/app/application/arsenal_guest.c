@@ -911,9 +911,9 @@ bool application_guest_input_attach(q3g_role *role, qa_bytes primary, qa_error *
         qa_qvm_saved_function descriptors[6];
         bool qualified = role->vm && !qa_qvm_active(role->vm) &&
             application_q3_weapons_idle(role->weapons) && source &&
-            input->profile.source == source && (!source->present || input->profile.input_present);
+            input->profile.source == source->movement && (!source->present || input->profile.input_present);
         if (!qualified)
-            application_fail(error, QA_ERROR_ARGUMENT, "Original input must borrow its actual idle weapon declaration");
+            application_fail(error, QA_ERROR_ARGUMENT, "Original input and weapons must share their actual idle GAME declaration");
         if (!qualified ||
             application_q3_weapons_descriptor_count(role->weapons) != (source->present ? 6u : 0u) ||
             !application_q3_weapons_descriptors(role->weapons, descriptors, source->present ? 6u : 0u, error)) {

@@ -82,21 +82,12 @@ static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa
             if (code[pc].opcode == QA_QVM_ENTER)
                 return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup call leaves its original Connect function");
     }
-    const application_q3_weapon_profile *source = p->source;
+    const application_q3_movement_profile *source = p->source;
     if (!source) return application_fail(error, QA_ERROR_FORMAT, "Guest input has no qualified source movement declaration");
     if (p->client_command != UINT32_MAX && (p->client_command % 4 ||
         source->client_stride < 24 || p->client_command > source->client_stride - 24))
         return application_fail(error, QA_ERROR_FORMAT, "Guest retained command leaves its declared client record");
-    if (source->present) return true;
-    size_t memory = qa_qvm_image_memory_size(role->image);
-    if (source->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
-        source->client_stride < qa_qvm_player_bytes(role->abi) ||
-        source->entity_stride > memory || source->client_stride > memory ||
-        source->entity_stride % 4 || source->client_stride % 4 || source->client_pointer % 4 ||
-        source->client_pointer > source->entity_stride - 4)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest input records differ from their source ABI");
-    return entry(code, count, source->movement_move, error) &&
-        entry(code, count, source->movement_slice, error);
+    return true;
 }
 
 bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
@@ -104,7 +95,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
 {
     if (!role || !out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
-    application_guest_input_profile p = {.source = application_q3_weapons_profile(role->weapons),
+    application_guest_input_profile p = {.source = &role->movement,
         .client_command = UINT32_MAX};
     if (!role->image) { *out = p; return true; }
     bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
@@ -143,10 +134,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
             memcpy(p.intermission_modes, intermission, sizeof(intermission));
             p.intermission_count = sizeof(intermission) / sizeof(*intermission);
         } else if (application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME)) {
-            static const application_q3_weapon_profile source = {
-                .entity_stride = 856, .client_stride = 872, .client_pointer = 516,
-                .movement_move = 22369, .movement_slice = 21620};
-            p = (application_guest_input_profile){.source = &source,
+            p = (application_guest_input_profile){.source = &role->movement,
                 .client_think = 114858, .run_client = 114917, .client_spawn = 125027,
                 .client_command = 472,
                 .input_present = true, .has_modes = true, .has_dead_mode = true,
@@ -169,23 +157,15 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
     if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
     qa_json_id entries = qa_json_get(doc, input, "entries");
-    uint32_t entity_stride, client_stride, client_pointer, move, slice;
-    bool ok = p.source && p.source->present;
-    if (!ok) application_fail(error, QA_ERROR_FORMAT, "Guest input requires its actual retained weapon movement declaration");
-    if (ok) ok = word(doc, input, "entityStride", &entity_stride, error) &&
-        word(doc, input, "clientStride", &client_stride, error) &&
-        word(doc, input, "clientPointer", &client_pointer, error) &&
-        word(doc, entries, "clientThink", &p.client_think, error) &&
+    bool ok = p.source->entity_stride != 0;
+    if (!ok) application_fail(error, QA_ERROR_FORMAT, "Guest input requires its actual retained movement declaration");
+    if (ok) ok = word(doc, entries, "clientThink", &p.client_think, error) &&
         word(doc, entries, "runClient", &p.run_client, error) &&
-        word(doc, entries, "clientSpawn", &p.client_spawn, error) &&
-        word(doc, entries, "move", &move, error) && word(doc, entries, "slice", &slice, error);
+        word(doc, entries, "clientSpawn", &p.client_spawn, error);
     if (ok && qa_json_get(doc, entries, "respawn") != QA_JSON_NONE)
         ok = word(doc, entries, "respawn", &p.respawn, error);
     if (ok && qa_json_get(doc, input, "clientCommand") != QA_JSON_NONE)
         ok = word(doc, input, "clientCommand", &p.client_command, error);
-    if (ok && (entity_stride != p.source->entity_stride || client_stride != p.source->client_stride ||
-        client_pointer != p.source->client_pointer || move != p.source->movement_move || slice != p.source->movement_slice))
-        ok = application_fail(error, QA_ERROR_FORMAT, "Guest input differs from its declared weapon records or movement entries");
     qa_json_id modes = qa_json_get(doc, input, "movementModes");
     if (ok && modes != QA_JSON_NONE) {
         ok = mode(doc, modes, "normal", &p.normal_mode, error) &&

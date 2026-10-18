@@ -34,7 +34,7 @@ static bool current(const application_guest_q3_control *owner,
 {
     if (!owner || !scope || owner->role->retired || owner->role->vm != owner->vm ||
         owner->role->image != owner->image ||
-        owner->profile->source != application_q3_weapons_profile(owner->role->weapons) ||
+        owner->profile->source != &owner->role->movement ||
         !qa_actors_get(qa_session_actors(owner->role->engine->provider->application->session), scope->actor))
         return false;
     qa_actor_id actor; qa_q3_host_game_data data;
@@ -218,7 +218,7 @@ bool application_guest_q3_control_attach(q3g_role *role, const application_guest
     if (!role || !profile || !out || *out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control requires an unattached GAME owner");
     if (!profile->source || !profile->source->present) return true;
-    if (!profile->input_present || profile->source != application_q3_weapons_profile(role->weapons) ||
+    if (!profile->input_present || profile->source != &role->movement ||
         !role->vm || !role->image || role->retired || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
         qa_qvm_get_abi(role->vm) != role->abi ||
         (qa_qvm_image_of(role->vm) != role->image))
@@ -255,7 +255,7 @@ bool application_guest_q3_control_supports_pose(const application_guest_q3_contr
 {
     return owner && owner->binding && !owner->role->retired &&
         owner->role->vm == owner->vm && owner->role->image == owner->image &&
-        owner->profile->source == application_q3_weapons_profile(owner->role->weapons);
+        owner->profile->source == &owner->role->movement;
 }
 
 qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_control *owner)

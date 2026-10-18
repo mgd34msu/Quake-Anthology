@@ -6,7 +6,7 @@
 #include "qa/network_unified_frame_pool.h"
 
 typedef struct application_guest_input_profile {
-    const application_q3_weapon_profile *source;
+    const application_q3_movement_profile *source;
     uint32_t client_think, run_client, client_spawn, respawn;
     uint32_t client_command;
     struct { uint32_t entry, connect, call; } bot_setup;
@@ -20,8 +20,7 @@ bool application_guest_input_profile_read(q3g_role *, qa_bytes primary,
                                            application_guest_input_profile *, qa_error *);
 void application_guest_input_profile_free(application_guest_input_profile *);
 
-/* Borrows the role's genuine weapon declaration when it has that owner.
- * Detach drops this borrow before the role destroys the weapon owner. */
+/* Borrows the GAME movement declaration independently of its weapon owner. */
 bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
 /* The caller removes this temporary binding after the genuine Connect export. */

@@ -98,7 +98,7 @@ static bool match_declaration(q3g_role *role, const qa_json_document *doc, qa_js
     return true;
 }
 static bool region(const qa_json_document *doc, qa_json_id id,
-    application_q3_weapon_region *out, qa_error *error)
+    application_q3_source_region *out, qa_error *error)
 { return word(doc, id, "entry", &out->entry, error) && word(doc, id, "join", &out->join, error); }
 static bool evaluation(const qa_json_document *doc, qa_json_id id,
     qa_qvm_region_evaluation *out, uint32_t **storage, qa_error *error)
@@ -143,7 +143,7 @@ void application_q3_weapon_profile_free(application_q3_weapon_profile *p)
 {
     if (!p) return;
     free(p->indirections); free(p->predicates); free(p->settled); free(p->accepted);
-    free(p->catalog); free(p->availability.excluded); free(p->contexts);
+    free(p->catalog); free(p->contexts);
     free(p->delay_inputs); free(p->teleport_inputs); free(p->objective_inputs);
     for (size_t i = 0; p->teams && i < p->team_count; ++i) free(p->teams[i].arguments);
     free(p->teams);
@@ -157,15 +157,14 @@ static bool declared(q3g_role *role, qa_bytes bytes, application_q3_weapon_profi
     qa_json_id root = qa_json_get(doc, qa_json_root(doc), "weapons"), stage = qa_json_get(doc, root, "stage"),
         dispatcher = qa_json_get(doc, stage, "dispatcher"), actor = qa_json_get(doc, dispatcher, "actor"),
         pointer = qa_json_get(doc, actor, "pointer"), selection = qa_json_get(doc, stage, "selection"),
-        request = qa_json_get(doc, stage, "request"), move = qa_json_get(doc, root, "equipmentMovement"),
-        availability = qa_json_get(doc, root, "availability"), powers = qa_json_get(doc, root, "powerups"),
-        animation = qa_json_get(doc, root, "torsoAnimation"), water = qa_json_get(doc, root, "waterLevel"),
+        request = qa_json_get(doc, stage, "request"), powers = qa_json_get(doc, root, "powerups"),
+        animation = qa_json_get(doc, root, "torsoAnimation"),
         damage = qa_json_get(doc, root, "damageFactor"), delay = qa_json_get(doc, root, "delayPlayer"),
         teleport = qa_json_get(doc, root, "teleport"), drop = qa_json_get(doc, root, "drop"),
         give = qa_json_get(doc, root, "give"), named = qa_json_get(doc, give, "named");
-    bool ok = word(doc, root, "entityStride", &p->entity_stride, error) &&
-        word(doc, root, "clientStride", &p->client_stride, error) && word(doc, root, "clientPointer", &p->client_pointer, error) &&
-        word(doc, dispatcher, "entry", &p->dispatcher, error) &&
+    if (root == QA_JSON_NONE) { qa_json_destroy(doc); return true; }
+    p->present = true;
+    bool ok = word(doc, dispatcher, "entry", &p->dispatcher, error) &&
         qa_json_string_equal(doc, qa_json_get(doc, actor, "record"), "client");
     qa_json_id kind = qa_json_get(doc, pointer, "kind");
     p->pointer_global = qa_json_string_equal(doc, kind, "global");
@@ -194,45 +193,17 @@ static bool declared(q3g_role *role, qa_bytes bytes, application_q3_weapon_profi
         ok = signed_word(doc, row, "value", &p->catalog[i].weapon, error) &&
             identity(role, doc, qa_json_get(doc, row, "item"), &p->catalog[i].item, error);
     }
-    if (ok) ok = word(doc, move, "move", &p->movement_move, error) && word(doc, move, "slice", &p->movement_slice, error) &&
-        word(doc, move, "duck", &p->movement_duck, error) && word(doc, move, "movementGlobal", &p->movement_global, error) &&
-        word(doc, move, "mins", &p->movement_mins, error) && word(doc, move, "maxs", &p->movement_maxs, error) &&
-        region(doc, qa_json_get(doc, move, "locomotion"), &p->locomotion, error);
-    qa_json_id trace = qa_json_get(doc, move, "bodyTrace");
-    p->body_trace = trace != QA_JSON_NONE;
-    if (ok && p->body_trace) ok = word(doc, trace, "callback", &p->movement_trace_callback, error) &&
-        word(doc, trace, "mask", &p->movement_trace_mask, error);
-    if (ok) ok = word(doc, root, "maxHealth", &p->max_health, error) &&
-        word(doc, root, "persistentMaxHealth", &p->persistent_max_health, error) &&
-        word(doc, availability, "movementType", &p->availability.movement_type, error) &&
-        word(doc, availability, "health", &p->availability.health, error) &&
-        word(doc, availability, "team", &p->availability.team, error) &&
-        word(doc, availability, "flags", &p->availability.flags, error) &&
-        signed_word(doc, availability, "spectatorTeam", &p->availability.spectator_team, error) &&
-        signed_word(doc, availability, "respawnFlag", &p->availability.respawn_flag, error);
-    rows = qa_json_get(doc, availability, "excluded");
-    if (ok) { void *allocation = NULL; ok = list(doc, rows, &allocation, &p->availability.excluded_count,
-        sizeof(*p->availability.excluded), error); p->availability.excluded = allocation; }
-    for (size_t i = 0; ok && i < p->availability.excluded_count; ++i)
-        ok = i32(doc, qa_json_at(doc, rows, i), p->availability.excluded + i, error);
     const char *power_names[] = {"quad", "haste", "flight"};
     for (size_t i = 0; ok && i < 3; ++i) ok = word(doc, powers, power_names[i], p->powerups + i, error);
     if (ok) ok = word(doc, animation, "entry", &p->animation.entry, error) &&
         signed_word(doc, animation, "attack", &p->animation.attack, error) && signed_word(doc, animation, "melee", &p->animation.melee, error) &&
-        word(doc, water, "entityOffset", &p->water_entity, error) && word(doc, water, "movementOffset", &p->water_movement, error) &&
         word(doc, damage, "entry", &p->damage.entry, error) && word(doc, damage, "result", &p->damage.result, error) &&
         region(doc, qa_json_get(doc, damage, "stop"), &p->damage.stop, error) &&
         evaluation(doc, qa_json_get(doc, root, "delay"), &p->delay, &p->delay_inputs, error) &&
         word(doc, delay, "movementGlobal", &p->delay_global, error) && word(doc, delay, "playerOffset", &p->delay_player, error) &&
-        word(doc, teleport, "entry", &p->teleport_entry, error) && word(doc, teleport, "spawn", &p->spawn, error) &&
-        word(doc, teleport, "view", &p->view, error) && evaluation(doc, qa_json_get(doc, teleport, "region"), &p->teleport, &p->teleport_inputs, error) &&
+        word(doc, teleport, "entry", &p->teleport_entry, error) &&
+        evaluation(doc, qa_json_get(doc, teleport, "region"), &p->teleport, &p->teleport_inputs, error) &&
         evaluation(doc, qa_json_get(doc, teleport, "objectives"), &p->objectives, &p->objective_inputs, error);
-    if (ok) {
-        qa_json_id type = qa_json_get(doc, water, "typeMovementOffset");
-        if (type != QA_JSON_NONE) ok = u32(doc, type, &p->water_type_movement, error);
-        else if (p->water_movement >= 4) p->water_type_movement = p->water_movement - 4;
-        else ok = application_fail(error, QA_ERROR_FORMAT, "Original movement water fields leave their Source layout");
-    }
     if (ok) ok = word(doc, drop, "entry", &p->drop.entry, error) && word(doc, drop, "argument", &p->drop.argument, error) &&
         word(doc, drop, "weapon", &p->drop.weapon, error) && region(doc, qa_json_get(doc, drop, "region"), &p->drop.region, error);
     p->drop.inventory = qa_json_string_equal(doc, qa_json_get(doc, drop, "ammo"), "inventory");
@@ -274,26 +245,184 @@ static bool aligned(uint32_t offset, size_t bytes, size_t extent, qa_error *erro
     return (!(offset & 3) && bytes >= extent && offset <= bytes - extent) ||
         application_fail(error, QA_ERROR_FORMAT, "Original weapon field leaves its declared record");
 }
-static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *error)
+void application_q3_movement_profile_free(application_q3_movement_profile *p)
 {
+    if (!p) return;
+    free(p->availability.excluded);
+    *p = (application_q3_movement_profile){0};
+}
+
+static bool movement_declared(const qa_json_document *doc,
+    application_q3_movement_profile *p, qa_error *error)
+{
+    qa_json_id root = qa_json_get(doc, qa_json_root(doc), "weapons");
+    if (root == QA_JSON_NONE) {
+        qa_json_id input = qa_json_get(doc, qa_json_root(doc), "input");
+        if (input == QA_JSON_NONE) return true;
+        qa_json_id entries = qa_json_get(doc, input, "entries");
+        return word(doc, input, "entityStride", &p->entity_stride, error) &&
+            word(doc, input, "clientStride", &p->client_stride, error) &&
+            word(doc, input, "clientPointer", &p->client_pointer, error) &&
+            word(doc, entries, "move", &p->movement_move, error) &&
+            word(doc, entries, "slice", &p->movement_slice, error);
+    }
+    qa_json_id move = qa_json_get(doc, root, "equipmentMovement"),
+        availability = qa_json_get(doc, root, "availability"),
+        water = qa_json_get(doc, root, "waterLevel"),
+        teleport = qa_json_get(doc, root, "teleport");
+    p->present = true;
+    bool ok = word(doc, root, "entityStride", &p->entity_stride, error) &&
+        word(doc, root, "clientStride", &p->client_stride, error) &&
+        word(doc, root, "clientPointer", &p->client_pointer, error) &&
+        word(doc, move, "move", &p->movement_move, error) &&
+        word(doc, move, "slice", &p->movement_slice, error) &&
+        word(doc, move, "duck", &p->movement_duck, error) &&
+        word(doc, move, "movementGlobal", &p->movement_global, error) &&
+        word(doc, move, "mins", &p->movement_mins, error) &&
+        word(doc, move, "maxs", &p->movement_maxs, error) &&
+        region(doc, qa_json_get(doc, move, "locomotion"), &p->locomotion, error);
+    qa_json_id trace = qa_json_get(doc, move, "bodyTrace");
+    p->body_trace = trace != QA_JSON_NONE;
+    if (ok && p->body_trace) ok = word(doc, trace, "callback", &p->movement_trace_callback, error) &&
+        word(doc, trace, "mask", &p->movement_trace_mask, error);
+    if (ok) ok = word(doc, root, "maxHealth", &p->max_health, error) &&
+        word(doc, root, "persistentMaxHealth", &p->persistent_max_health, error) &&
+        word(doc, availability, "movementType", &p->availability.movement_type, error) &&
+        word(doc, availability, "health", &p->availability.health, error) &&
+        word(doc, availability, "team", &p->availability.team, error) &&
+        word(doc, availability, "flags", &p->availability.flags, error) &&
+        signed_word(doc, availability, "spectatorTeam", &p->availability.spectator_team, error) &&
+        signed_word(doc, availability, "respawnFlag", &p->availability.respawn_flag, error);
+    qa_json_id rows = qa_json_get(doc, availability, "excluded");
+    if (ok) {
+        void *allocation = NULL;
+        ok = list(doc, rows, &allocation, &p->availability.excluded_count,
+            sizeof(*p->availability.excluded), error);
+        p->availability.excluded = allocation;
+    }
+    for (size_t i = 0; ok && i < p->availability.excluded_count; ++i)
+        ok = i32(doc, qa_json_at(doc, rows, i), p->availability.excluded + i, error);
+    if (ok) ok = word(doc, water, "entityOffset", &p->water_entity, error) &&
+        word(doc, water, "movementOffset", &p->water_movement, error) &&
+        word(doc, teleport, "spawn", &p->spawn, error) && word(doc, teleport, "view", &p->view, error);
+    if (ok) {
+        qa_json_id type = qa_json_get(doc, water, "typeMovementOffset");
+        if (type != QA_JSON_NONE) ok = u32(doc, type, &p->water_type_movement, error);
+        else if (p->water_movement >= 4) p->water_type_movement = p->water_movement - 4;
+        else ok = application_fail(error, QA_ERROR_FORMAT, "Original movement water fields leave their Source layout");
+    }
+    qa_json_id input = qa_json_get(doc, qa_json_root(doc), "input");
+    if (ok && input != QA_JSON_NONE) {
+        qa_json_id entries = qa_json_get(doc, input, "entries");
+        uint32_t entity_stride, client_stride, client_pointer, move_entry, slice_entry;
+        ok = word(doc, input, "entityStride", &entity_stride, error) &&
+            word(doc, input, "clientStride", &client_stride, error) &&
+            word(doc, input, "clientPointer", &client_pointer, error) &&
+            word(doc, entries, "move", &move_entry, error) && word(doc, entries, "slice", &slice_entry, error);
+        if (ok && (entity_stride != p->entity_stride || client_stride != p->client_stride ||
+            client_pointer != p->client_pointer || move_entry != p->movement_move || slice_entry != p->movement_slice))
+            ok = application_fail(error, QA_ERROR_FORMAT,
+                "Guest input differs from its declared GAME records or movement entries");
+    }
+    return ok;
+}
+
+static bool movement_qualify(q3g_role *role, const application_q3_movement_profile *p, qa_error *error)
+{
+    if (!p->entity_stride) return true;
     size_t count, memory = qa_qvm_image_memory_size(role->image);
     const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
     if ((p->entity_stride & 3) || (p->client_stride & 3) || p->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
         p->client_stride < qa_qvm_player_bytes(role->abi) || p->entity_stride > memory || p->client_stride > memory ||
         !aligned(p->client_pointer, p->entity_stride, 4, error))
-        return application_fail(error, QA_ERROR_FORMAT, "Original weapon records differ from their admitted source ABI");
-    const uint32_t entries[] = {p->dispatcher, p->request, p->movement_duck, p->give.entry,
+        return application_fail(error, QA_ERROR_FORMAT, "Original movement records differ from their admitted source ABI");
+    if (!original_entry(code, count, p->movement_move, error) ||
+        !original_entry(code, count, p->movement_slice, error)) return false;
+    if (!p->present) return true;
+    const uint32_t entries[] = {p->movement_duck, p->spawn, p->view};
+    for (size_t i = 0; i < sizeof(entries) / sizeof(*entries); ++i)
+        if (!original_entry(code, count, entries[i], error)) return false;
+    if (p->availability.respawn_flag <= 0)
+        return application_fail(error, QA_ERROR_FORMAT, "Original movement availability omits its respawn flag");
+    const uint32_t fields[] = {p->max_health, p->persistent_max_health,
+        p->availability.movement_type, p->availability.health, p->availability.team, p->availability.flags};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
+        if (!aligned(fields[i], p->client_stride, 4, error)) return false;
+    return aligned(p->water_entity, p->entity_stride, 4, error) &&
+        aligned(p->water_movement, memory, 4, error) && aligned(p->water_type_movement, memory, 4, error) &&
+        aligned(p->movement_mins, memory, 12, error) && aligned(p->movement_maxs, memory, 12, error) &&
+        (!p->body_trace || (aligned(p->movement_trace_callback, memory, 4, error) &&
+            aligned(p->movement_trace_mask, memory, 4, error))) &&
+        qa_qvm_qualify_global_word(role->image, p->movement_global, error) &&
+        qa_qvm_qualify_source_region(role->image, p->movement_slice, p->locomotion.entry, p->locomotion.join, error);
+}
+
+static bool movement_stock(q3g_role *role, application_q3_movement_profile *p, qa_error *error)
+{
+    bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    if (base) *p = (application_q3_movement_profile){.present = true,
+        .entity_stride = 808, .client_stride = 776, .client_pointer = 516,
+        .movement_move = 75433, .movement_slice = 74710, .movement_duck = 72850, .movement_global = 961696,
+        .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
+        .body_trace = true, .locomotion = {75331, 75401}, .max_health = 208, .persistent_max_health = 548,
+        .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
+            .flags = 12, .respawn_flag = 512, .excluded_count = 5},
+        .water_entity = 788, .water_movement = 208, .water_type_movement = 204, .spawn = 87345, .view = 87959};
+    else if (application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME))
+        *p = (application_q3_movement_profile){.present = true,
+            .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
+            .movement_move = 35535, .movement_slice = 34707, .movement_duck = 32561, .movement_global = 1091860,
+            .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
+            .body_trace = true, .locomotion = {35397, 35503}, .max_health = 220, .persistent_max_health = 548,
+            .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
+                .flags = 12, .respawn_flag = 512, .excluded_count = 5},
+            .water_entity = 788, .water_movement = 208, .water_type_movement = 204, .spawn = 127849, .view = 128463};
+    else if (application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME))
+        *p = (application_q3_movement_profile){.entity_stride = 856, .client_stride = 872,
+            .client_pointer = 516, .movement_move = 22369, .movement_slice = 21620};
+    if (!p->present) return true;
+    const int32_t excluded[] = {1, 2, 4, base ? 5 : 7, base ? 6 : 8};
+    p->availability.excluded = malloc(sizeof(excluded));
+    if (!p->availability.excluded)
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining original movement availability");
+    memcpy(p->availability.excluded, excluded, sizeof(excluded));
+    return true;
+}
+
+bool application_q3_movement_profile_read(q3g_role *role, qa_bytes primary,
+    application_q3_movement_profile *out, qa_error *error)
+{
+    if (!role || role->kind != QA_QVM_GAME || !out || (primary.size && !primary.data))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original movement requires its actual GAME artifact");
+    application_q3_movement_profile p = {0};
+    if (!role->image) { *out = p; return true; }
+    bool ok;
+    if (primary.size) {
+        qa_json_document *doc = NULL;
+        if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
+        ok = movement_declared(doc, &p, error);
+        qa_json_destroy(doc);
+    } else ok = movement_stock(role, &p, error);
+    if (ok) ok = movement_qualify(role, &p, error);
+    if (!ok) { application_q3_movement_profile_free(&p); return false; }
+    *out = p; return true;
+}
+
+static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *error)
+{
+    size_t count, memory = qa_qvm_image_memory_size(role->image);
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
+    const uint32_t entries[] = {p->dispatcher, p->request, p->movement->movement_duck, p->give.entry,
         p->drop.entry, p->damage.entry, p->teleport_entry};
     for (size_t i = 0; i < sizeof(entries) / sizeof(*entries); ++i) {
         if (!original_entry(code, count, entries[i], error)) return false;
         for (size_t j = 0; j < i; ++j) if (entries[i] == entries[j])
             return application_fail(error, QA_ERROR_FORMAT, "Original weapon interfaces overlap function ownership");
     }
-    if (!original_entry(code, count, p->movement_move, error) || !original_entry(code, count, p->movement_slice, error) ||
-        !original_entry(code, count, p->animation.entry, error) || !original_entry(code, count, p->spawn, error) ||
-        !original_entry(code, count, p->view, error) || !p->predicate_count || !p->settled_count || !p->accepted_count ||
+    if (!original_entry(code, count, p->animation.entry, error) ||
+        !p->predicate_count || !p->settled_count || !p->accepted_count ||
         p->request_argument >= 62 || p->give.argument >= 62 || p->drop.argument >= 62 ||
-        p->availability.respawn_flag <= 0 || p->animation.attack < 0 || p->animation.melee < 0)
+        p->animation.attack < 0 || p->animation.melee < 0)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon interface omits its decisions or argument ABI");
     if (p->pointer_offset & 3) return application_fail(error, QA_ERROR_FORMAT, "Original weapon pointer path is unaligned");
     if (p->pointer_global) {
@@ -307,27 +436,19 @@ static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *
         for (size_t j = 0; j < i; ++j) if (p->predicates[i].instruction == p->predicates[j].instruction)
             return application_fail(error, QA_ERROR_FORMAT, "Original weapon predicate is repeated");
     }
-    const uint32_t fields[] = {p->selection_offset, p->max_health, p->persistent_max_health,
-        p->availability.movement_type, p->availability.health, p->availability.team, p->availability.flags,
-        p->powerups[0], p->powerups[1], p->powerups[2]};
+    const uint32_t fields[] = {p->selection_offset, p->powerups[0], p->powerups[1], p->powerups[2]};
     for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
-        if (!aligned(fields[i], p->client_stride, 4, error)) return false;
-    for (size_t i = 0; i < p->settled_count; ++i) if (!aligned(p->settled[i].offset, p->client_stride, 4, error)) return false;
-    for (size_t i = 0; i < p->accepted_count; ++i) if (!aligned(p->accepted[i].offset, p->client_stride, 4, error)) return false;
-    if (!aligned(p->water_entity, p->entity_stride, 4, error) || !aligned(p->water_movement, memory, 4, error) ||
-        !aligned(p->water_type_movement, memory, 4, error) ||
-        !aligned(p->movement_mins, memory, 12, error) || !aligned(p->movement_maxs, memory, 12, error) ||
-        !aligned(p->delay_player, memory, 4, error) || !aligned(p->drop.weapon, p->entity_stride, 4, error) ||
-        (!p->drop.inventory && !aligned(p->drop.ammo, p->client_stride, 64, error)) ||
-        (p->has_match && !aligned(p->score, p->client_stride, 4, error)) ||
-        !qa_qvm_qualify_global_word(role->image, p->movement_global, error) ||
+        if (!aligned(fields[i], p->movement->client_stride, 4, error)) return false;
+    for (size_t i = 0; i < p->settled_count; ++i) if (!aligned(p->settled[i].offset, p->movement->client_stride, 4, error)) return false;
+    for (size_t i = 0; i < p->accepted_count; ++i) if (!aligned(p->accepted[i].offset, p->movement->client_stride, 4, error)) return false;
+    if (!aligned(p->delay_player, memory, 4, error) || !aligned(p->drop.weapon, p->movement->entity_stride, 4, error) ||
+        (!p->drop.inventory && !aligned(p->drop.ammo, p->movement->client_stride, 64, error)) ||
+        (p->has_match && !aligned(p->score, p->movement->client_stride, 4, error)) ||
         !qa_qvm_qualify_global_word(role->image, p->delay_global, error) ||
         !qa_qvm_qualify_global_word(role->image, p->damage.result, error)) return false;
-    if (p->body_trace && (!aligned(p->movement_trace_callback, memory, 4, error) ||
-        !aligned(p->movement_trace_mask, memory, 4, error))) return false;
     for (size_t i = 0; i < p->catalog_count; ++i) {
         if (p->catalog[i].weapon <= 0 || !p->catalog[i].item ||
-            (!p->drop.inventory && (uint64_t)p->drop.ammo + (uint64_t)p->catalog[i].weapon * 4 + 4 > p->client_stride))
+            (!p->drop.inventory && (uint64_t)p->drop.ammo + (uint64_t)p->catalog[i].weapon * 4 + 4 > p->movement->client_stride))
             return application_fail(error, QA_ERROR_FORMAT, "Original weapon selection leaves its inventory declaration");
         for (size_t j = 0; j < i; ++j) if (p->catalog[j].weapon == p->catalog[i].weapon || p->catalog[j].item == p->catalog[i].item)
             return application_fail(error, QA_ERROR_FORMAT, "Original weapon selection repeats a source value or item");
@@ -349,7 +470,6 @@ static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *
     return qa_qvm_source_scratch_qualify(role->image, 36, &scratch, error) &&
         original_branch(code, count, p->give.entry, p->give.weapons, error) &&
         original_branch(code, count, p->give.entry, p->give.ammo, error) &&
-        qa_qvm_qualify_source_region(role->image, p->movement_slice, p->locomotion.entry, p->locomotion.join, error) &&
         qa_qvm_qualify_source_region(role->image, p->damage.entry, p->damage.stop.entry, p->damage.stop.join, error) &&
         qa_qvm_qualify_region(role->image, p->dispatcher, &p->delay, error) &&
         qa_qvm_qualify_region(role->image, p->teleport_entry, &p->teleport, error) &&
@@ -366,37 +486,29 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     if (!base && !application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) return true;
     const application_q3_catalog_weapon *actual = NULL;
     if (!catalog && !application_q3_catalog_weapons(role->catalog, &actual, &count, error)) return false;
-    if (base) *p = (application_q3_weapon_profile){.present = true, .entity_stride = 808, .client_stride = 776, .client_pointer = 516,
+    if (base) *p = (application_q3_weapon_profile){.present = true,
         .dispatcher = 73821, .request = 73644, .selection_offset = 144,
         .pointer_global = true, .pointer_base = 961696, .indirection_count = 1,
         .predicate_count = 1, .settled_count = 2, .accepted_count = 1, .catalog_count = count,
-        .movement_move = 75433, .movement_slice = 74710, .movement_duck = 72850, .movement_global = 961696,
-        .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
-        .body_trace = true, .locomotion = {75331, 75401}, .max_health = 208, .persistent_max_health = 548,
-        .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
-            .flags = 12, .respawn_flag = 512, .excluded_count = 5}, .powerups = {316, 324, 336},
-        .animation = {68268, 7, 8}, .water_entity = 788, .water_movement = 208, .water_type_movement = 204,
+        .powerups = {316, 324, 336},
+        .animation = {68268, 7, 8},
         .damage = {133602, 1296924, {133622, 133654}}, .context_count = 1,
         .delay = {.entry = 74337, .join = 74353, .input_count = 1, .result_offset = 12},
-        .delay_global = 961696, .teleport_entry = 78919, .spawn = 87345, .view = 87959,
+        .delay_global = 961696, .teleport_entry = 78919,
         .teleport = {.entry = 79090, .join = 79264, .result_offset = -1},
         .objectives = {.entry = 79090, .join = 79239, .result_offset = -1},
         .drop = {.entry = 98632, .weapon = 192, .ammo = 376, .region = {98633, 98736}},
         .give = {.entry = 91735, .weapons = 91849, .ammo = 91899, .name = 24, .item = 36, .named = {92098, 92109}},
         .has_match = true, .score = 248, .team_count = 3};
-    else *p = (application_q3_weapon_profile){.present = true, .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
+    else *p = (application_q3_weapon_profile){.present = true,
         .dispatcher = 33648, .request = 33226, .selection_offset = 144,
         .pointer_global = true, .pointer_base = 1091860, .indirection_count = 1,
         .predicate_count = 1, .settled_count = 2, .accepted_count = 1, .catalog_count = count,
-        .movement_move = 35535, .movement_slice = 34707, .movement_duck = 32561, .movement_global = 1091860,
-        .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
-        .body_trace = true, .locomotion = {35397, 35503}, .max_health = 220, .persistent_max_health = 548,
-        .availability = {.movement_type = 4, .health = 184, .team = 260, .spectator_team = 3,
-            .flags = 12, .respawn_flag = 512, .excluded_count = 5}, .powerups = {312, 320, 332},
-        .animation = {27646, 7, 8}, .water_entity = 788, .water_movement = 208, .water_type_movement = 204,
+        .powerups = {312, 320, 332},
+        .animation = {27646, 7, 8},
         .damage = {217003, 1616724, {217081, 217113}}, .context_count = 1,
         .delay = {.entry = 34318, .join = 34350, .input_count = 1, .result_offset = 12},
-        .delay_global = 1091860, .teleport_entry = 118339, .spawn = 127849, .view = 128463,
+        .delay_global = 1091860, .teleport_entry = 118339,
         .teleport = {.entry = 118552, .join = 118726, .result_offset = -1},
         .objectives = {.entry = 118552, .join = 118701, .result_offset = -1},
         .drop = {.entry = 158347, .weapon = 192, .ammo = 376, .region = {158571, 158674}},
@@ -405,11 +517,10 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     p->indirections = calloc(1, sizeof(*p->indirections));
     p->predicates = malloc(sizeof(*p->predicates)); p->settled = malloc(2 * sizeof(*p->settled));
     p->accepted = malloc(sizeof(*p->accepted)); p->catalog = count ? malloc(count * sizeof(*p->catalog)) : NULL;
-    p->availability.excluded = malloc(5 * sizeof(*p->availability.excluded));
     p->contexts = calloc(1, sizeof(*p->contexts)); p->delay_inputs = malloc(sizeof(*p->delay_inputs));
     p->teams = calloc(p->team_count, sizeof(*p->teams));
     if (!p->indirections || !p->predicates || !p->settled || !p->accepted || (count && !p->catalog) ||
-        !p->availability.excluded || !p->contexts || !p->delay_inputs || !p->teams)
+        !p->contexts || !p->delay_inputs || !p->teams)
         return application_fail(error, QA_ERROR_MEMORY, "Retaining authored original weapon profile");
     p->predicates[0] = (application_q3_weapon_predicate){base ? 74104 : 34044, false};
     p->settled[0] = (application_q3_weapon_test){.offset = 44, .at_most = true};
@@ -418,8 +529,6 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     if (catalog && count) memcpy(p->catalog, catalog, count * sizeof(*catalog));
     else for (size_t i = 0; i < count; ++i)
         p->catalog[i] = (application_q3_weapon_catalog_entry){actual[i].weapon, actual[i].item, actual[i].ammo};
-    const int32_t excluded[] = {1, 2, 4, base ? 5 : 7, base ? 6 : 8};
-    memcpy(p->availability.excluded, excluded, sizeof(excluded));
     *p->delay_inputs = 12; p->delay.inputs = p->delay_inputs;
     qa_strings *strings = qa_session_strings(role->engine->provider->application->session);
     const char *sources[] = {"q3:1", "q3:2", NULL}, *teams[] = {"team:red", "team:blue", NULL},
@@ -444,7 +553,8 @@ bool application_q3_weapon_profile_read(q3g_role *role, qa_bytes primary,
         (count && !catalog) || count > SIZE_MAX / sizeof(*catalog))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapons require their actual GAME artifact and item catalog");
     application_q3_weapon_profile p = {0};
-    bool ok = primary.size ? (p.present = true, declared(role, primary, &p, error)) : stock(role, catalog, count, &p, error);
+    bool ok = primary.size ? declared(role, primary, &p, error) : stock(role, catalog, count, &p, error);
+    p.movement = &role->movement;
     if (ok && p.present) {
         p.image = role->image; p.abi = role->abi;
         if (catalog) ok = application_q3_weapon_profile_catalog(&p, catalog, count, error);

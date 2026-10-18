@@ -165,6 +165,7 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         !application_q3_weapons_destroy(&role->weapons, error) ||
         !application_q3_weapons_services_destroy(&role->weapon_services, error) ||
         !application_guest_projection_close(role, error)) return false;
+    application_q3_movement_profile_free(&role->movement);
     application_q3_pickup_profile_free(&role->pickup_profile);
     application_q3_catalog_destroy(role->catalog);
     role->catalog = NULL;
@@ -671,7 +672,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             if (!application_guest_inventory_catalog_bind(role, &inventory_catalog, error)) goto failed;
         }
         application_q3_weapon_profile weapons = {0};
-        if (!application_q3_weapon_profile_read(role, primary_bytes, NULL, 0, &weapons, error)) goto failed;
+        if (!application_q3_movement_profile_read(role, primary_bytes, &role->movement, error) ||
+            !application_q3_weapon_profile_read(role, primary_bytes, NULL, 0, &weapons, error)) goto failed;
         if (weapons.present) {
             if (!application_q3_weapons_services_create(role, &role->weapon_services, error)) {
                 application_q3_weapon_profile_free(&weapons); goto failed;

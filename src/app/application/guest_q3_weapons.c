@@ -59,17 +59,17 @@ static bool located(application_q3_weapons *w, uint32_t slot, q3_weapon_actor *o
     if (!qa_q3_host_game_data_read(w->role->host, &data) || slot >= data.client_count || slot >= data.entity_count ||
         slot >= sizeof(w->role->engine->clients) / sizeof(*w->role->engine->clients))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon actor has no located source record");
-    if (data.client_stride != w->profile.client_stride || data.entity_stride != w->profile.entity_stride)
+    if (data.client_stride != w->profile.movement->client_stride || data.entity_stride != w->profile.movement->entity_stride)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon records changed their admitted layout");
     uint64_t entity = data.entities_address + (uint64_t)slot * data.entity_stride,
         player = data.clients_address + (uint64_t)slot * data.client_stride;
-    if (entity + w->profile.entity_stride > qa_qvm_memory_size(w->role->vm) ||
-        player + w->profile.client_stride > qa_qvm_memory_size(w->role->vm) || entity > UINT32_MAX || player > INT32_MAX)
+    if (entity + w->profile.movement->entity_stride > qa_qvm_memory_size(w->role->vm) ||
+        player + w->profile.movement->client_stride > qa_qvm_memory_size(w->role->vm) || entity > UINT32_MAX || player > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon player leaves its real source allocation");
     int32_t pointer;
     qa_actor_id actor = w->role->engine->clients[slot].actor;
     uint32_t physical;
-    if (!q3_weapons_read(w, (uint32_t)entity + w->profile.client_pointer, &pointer, error) ||
+    if (!q3_weapons_read(w, (uint32_t)entity + w->profile.movement->client_pointer, &pointer, error) ||
         !qa_q3_host_actor_slot(w->role->host, actor, &physical, error)) return false;
     if ((uint32_t)pointer != player || physical != slot || !actor.registry ||
         !qa_actors_get(qa_session_actors(w->role->engine->provider->application->session), actor))
@@ -472,14 +472,14 @@ bool application_q3_weapons_available(application_q3_weapons *w, qa_actor_id act
 {
     q3_weapon_actor source; int32_t type, health, team, flags;
     if (!out || !q3_weapons_actor(w, actor, &source, error) ||
-        !q3_weapons_read(w, source.player + w->profile.availability.movement_type, &type, error) ||
-        !q3_weapons_read(w, source.player + w->profile.availability.health, &health, error) ||
-        !q3_weapons_read(w, source.player + w->profile.availability.team, &team, error) ||
-        !q3_weapons_read(w, source.player + w->profile.availability.flags, &flags, error)) return false;
-    bool available = health > 0 && team != w->profile.availability.spectator_team &&
-        (!attacking || !((uint32_t)flags & (uint32_t)w->profile.availability.respawn_flag));
-    for (size_t i = 0; available && i < w->profile.availability.excluded_count; ++i)
-        if (type == w->profile.availability.excluded[i]) available = false;
+        !q3_weapons_read(w, source.player + w->profile.movement->availability.movement_type, &type, error) ||
+        !q3_weapons_read(w, source.player + w->profile.movement->availability.health, &health, error) ||
+        !q3_weapons_read(w, source.player + w->profile.movement->availability.team, &team, error) ||
+        !q3_weapons_read(w, source.player + w->profile.movement->availability.flags, &flags, error)) return false;
+    bool available = health > 0 && team != w->profile.movement->availability.spectator_team &&
+        (!attacking || !((uint32_t)flags & (uint32_t)w->profile.movement->availability.respawn_flag));
+    for (size_t i = 0; available && i < w->profile.movement->availability.excluded_count; ++i)
+        if (type == w->profile.movement->availability.excluded[i]) available = false;
     *out = available; return true;
 }
 bool application_q3_weapons_selection_for_item(application_q3_weapons *w, qa_actor_id actor,
@@ -497,16 +497,16 @@ bool application_q3_weapons_selection_for_item(application_q3_weapons *w, qa_act
 static bool player_read(application_q3_weapons *w, qa_actor_id actor, uint32_t offset, int32_t *out, qa_error *error)
 { q3_weapon_actor source; return out && q3_weapons_actor(w, actor, &source, error) && q3_weapons_read(w, source.player + offset, out, error); }
 bool application_q3_weapons_max_health(application_q3_weapons *w, qa_actor_id actor, int32_t *out, qa_error *error)
-{ return w && player_read(w, actor, w->profile.max_health, out, error); }
+{ return w && player_read(w, actor, w->profile.movement->max_health, out, error); }
 bool application_q3_weapons_set_max_health(application_q3_weapons *w, qa_actor_id actor, int32_t value, qa_error *error)
 {
     q3_weapon_actor source;
     if (value <= 0) return application_fail(error, QA_ERROR_ARGUMENT, "Original maximum health requires a positive int32");
     if (!q3_weapons_actor(w, actor, &source, error) ||
-        !q3_weapons_write(w, source.player + w->profile.max_health, value, error)) return false;
+        !q3_weapons_write(w, source.player + w->profile.movement->max_health, value, error)) return false;
     if (!q3_weapons_current(w, &source)) return application_fail(error, QA_ERROR_NOT_FOUND,
         "Original maximum health replaced its Source player");
-    return q3_weapons_write(w, source.player + w->profile.persistent_max_health, value, error);
+    return q3_weapons_write(w, source.player + w->profile.movement->persistent_max_health, value, error);
 }
 bool application_q3_weapons_powerup_until(application_q3_weapons *w, qa_actor_id actor, application_q3_weapon_power power, int32_t *out, qa_error *error)
 { return w && (unsigned)power < 3 && player_read(w, actor, w->profile.powerups[power], out, error); }
@@ -545,9 +545,9 @@ bool application_q3_weapons_water_level(application_q3_weapons *w, qa_actor_id a
     if (!out || !q3_weapons_actor(w, actor, &source, error) || !q3_weapons_read(w, w->profile.delay_global, &movement, error)) return false;
     if (movement > 0 && (uint64_t)(uint32_t)movement + w->profile.delay_player + 4 <= qa_qvm_memory_size(w->role->vm)) {
         if (!q3_weapons_read(w, (uint32_t)movement + w->profile.delay_player, &player, error)) return false;
-        if ((uint32_t)player == source.player) return q3_weapons_read(w, (uint32_t)movement + w->profile.water_movement, out, error);
+        if ((uint32_t)player == source.player) return q3_weapons_read(w, (uint32_t)movement + w->profile.movement->water_movement, out, error);
     }
-    return q3_weapons_read(w, source.entity + w->profile.water_entity, out, error);
+    return q3_weapons_read(w, source.entity + w->profile.movement->water_entity, out, error);
 }
 
 bool application_q3_weapons_prediction_read(application_q3_weapons *w, qa_actor_id actor,
@@ -677,7 +677,7 @@ static bool scratch_action(void *context, qa_qvm *vm, uint32_t offset, qa_error 
     int32_t words[3], result;
     if (action->spawn) { words[0] = (int32_t)offset; words[1] = (int32_t)(offset + 12); words[2] = (int32_t)(offset + 24); }
     else { words[0] = (int32_t)action->actor.entity; words[1] = (int32_t)offset; }
-    if (!qa_qvm_invoke(vm, action->spawn ? w->profile.spawn : w->profile.view, words, action->spawn ? 3 : 2, &result, error)) return false;
+    if (!qa_qvm_invoke(vm, action->spawn ? w->profile.movement->spawn : w->profile.movement->view, words, action->spawn ? 3 : 2, &result, error)) return false;
     if (action->spawn) {
         if (!q3_weapons_current(w, &action->actor)) return application_fail(error, QA_ERROR_NOT_FOUND, "Original spawn selector retired its player");
         uint8_t output[24];
