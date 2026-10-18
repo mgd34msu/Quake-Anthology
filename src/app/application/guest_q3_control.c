@@ -9,6 +9,9 @@ struct application_guest_q3_control {
     qa_qvm_image *image;
     const application_guest_input_profile *profile;
     qa_qvm_binding binding;
+    qa_native_entry_observer *native_binding;
+    uint64_t movement_global, native_entry;
+    size_t source_entries;
     application_guest_q3_control_scope *scope;
 };
 
@@ -176,8 +179,16 @@ static bool qvm_trace(void *context, const qa_qvm_call *call, uint32_t at, qa_er
     return perform_trace(context, at, error);
 }
 
+static bool native_trace(void *context, qa_native_address at, qa_error *error)
+{
+    return perform_trace(context, at, error);
+}
+
 static bool trace_run(body_trace *trace, qa_error *error)
 {
+    if (trace->owner->role->native)
+        return qa_native_host_source_scratch_run(trace->owner->role->native, 92,
+            native_trace, trace, error);
     return qa_qvm_source_scratch(trace->call->qvm, trace->owner->image, 92,
         qvm_trace, trace, error);
 }
@@ -193,7 +204,7 @@ static bool duck_enter(application_guest_q3_control *owner,
         return scope->client_call->cancel(scope->client_call->context, error);
     uint64_t movement;
     if (!qa_q3_host_source_pointer(owner->role->host,
-        owner->profile->source->movement_global, &movement, error)) return false;
+        owner->movement_global, &movement, error)) return false;
     if (movement != scope->movement)
         return call->proceed(call->context, call->arguments, call->count, error);
     bool ok;
@@ -259,25 +270,72 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     return duck_enter(context, &source, error);
 }
 
+static bool native_duck(void *context, qa_native_instance *instance,
+    qa_native_entry_observer *binding, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_error *error)
+{
+    (void)instance;
+    application_guest_q3_control *owner = context;
+    *result = (qa_native_value){.type = QA_NATIVE_VOID};
+    application_source_native_call backend = {.binding = binding, .arguments = arguments,
+        .count = count, .result = result};
+    application_source_call call = {.entry = owner->native_entry,
+        .arguments = arguments, .count = count, .context = &backend,
+        .proceed = application_source_native_proceed, .cancel = application_source_native_cancel,
+        .cancelled = application_source_native_cancelled};
+    return duck_enter(owner, &call, error);
+}
+
+bool application_guest_q3_control_enter(application_guest_q3_control *owner, qa_error *error)
+{
+    if (!owner || owner->vm) return true;
+    if (!owner->source_entries) {
+        qa_native_instance *instance = qa_native_host_instance(owner->role->native);
+        uint64_t entry;
+        if (!qa_native_rva(instance, owner->profile->source->movement_duck, 1, &entry, error) ||
+            !qa_native_rva(instance, owner->profile->source->movement_global,
+                qa_native_module_describe(qa_native_get_module(instance)).image.target.pointer_bytes,
+                &owner->movement_global, error)) return false;
+        owner->native_entry = entry;
+        qa_native_signature signature = {
+            .abi = qa_native_module_describe(qa_native_get_module(instance)).image.target.abi,
+            .result = {.kind = QA_NATIVE_VOID, .count = 1}};
+        if (!qa_native_observe_entry(instance, entry, &signature, native_duck, owner,
+                &owner->native_binding, error)) return false;
+    }
+    ++owner->source_entries;
+    return true;
+}
+
+bool application_guest_q3_control_leave(application_guest_q3_control *owner, qa_error *error)
+{
+    if (!owner || owner->vm) return true;
+    if (owner->source_entries && --owner->source_entries) return true;
+    if (owner->native_binding && !qa_native_unobserve_entry(owner->native_binding, error)) return false;
+    owner->native_binding = NULL;
+    return true;
+}
+
 bool application_guest_q3_control_attach(q3g_role *role, const application_guest_input_profile *profile,
     application_guest_q3_control **out, qa_error *error)
 {
     if (!role || !profile || !out || *out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control requires an unattached GAME owner");
-    if (!profile->source || !profile->source->present) return true;
+    if (!profile->source || !profile->source->body_present) return true;
     if (!profile->input_present || profile->source != &role->movement ||
-        !role->vm || !role->image || role->retired || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
-        qa_qvm_get_abi(role->vm) != role->abi ||
-        (qa_qvm_image_of(role->vm) != role->image))
-        return application_fail(error, QA_ERROR_FORMAT, "Original body control has no admitted QVM movement declaration");
+        role->retired || (role->vm ? !role->image || qa_qvm_get_role(role->vm) != QA_QVM_GAME ||
+            qa_qvm_get_abi(role->vm) != role->abi || qa_qvm_image_of(role->vm) != role->image : !role->module))
+        return application_fail(error, QA_ERROR_FORMAT, "Original body control has no admitted movement declaration");
     uint32_t scratch;
-    if (profile->source->body_trace &&
+    if (role->vm && profile->source->body_trace &&
         !qa_qvm_source_scratch_qualify(role->image, 92, &scratch, error)) return false;
     application_guest_q3_control *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original body control owner");
     *owner = (application_guest_q3_control){.role = role, .vm = role->vm,
-        .image = role->image, .profile = profile};
-    if (!qa_qvm_bind_function(owner->vm, owner->profile->source->movement_duck, true, duck, owner, &owner->binding, error)) {
+        .image = role->image, .profile = profile,
+        .movement_global = profile->source->movement_global};
+    if (role->vm && !qa_qvm_bind_function(owner->vm, owner->profile->source->movement_duck,
+            true, duck, owner, &owner->binding, error)) {
         free(owner); return false;
     }
     *out = owner; return true;
@@ -287,9 +345,10 @@ bool application_guest_q3_control_detach(application_guest_q3_control **address,
 {
     application_guest_q3_control *owner = address ? *address : NULL;
     if (!owner) return true;
-    if (owner->scope || qa_qvm_active(owner->vm))
+    if (owner->scope || owner->source_entries || (owner->vm && qa_qvm_active(owner->vm)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control still owns a source movement scope");
-    if (!qa_qvm_unbind(owner->vm, owner->binding, error)) return false;
+    if ((owner->vm && !qa_qvm_unbind(owner->vm, owner->binding, error)) ||
+        !application_guest_q3_control_leave(owner, error)) return false;
     free(owner); *address = NULL; return true;
 }
 
@@ -300,7 +359,7 @@ bool application_guest_q3_control_supports_body(const application_guest_q3_contr
 
 bool application_guest_q3_control_supports_pose(const application_guest_q3_control *owner)
 {
-    return owner && owner->binding && !owner->role->retired &&
+    return owner && (owner->vm ? owner->binding != 0 : owner->role->module != NULL) && !owner->role->retired &&
         owner->role->vm == owner->vm && owner->role->image == owner->image &&
         owner->profile->source == &owner->role->movement;
 }
@@ -313,9 +372,10 @@ qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_c
 bool application_guest_q3_control_descriptor(const application_guest_q3_control *owner,
     qa_qvm_saved_function *out, qa_error *error)
 {
-    if (!out || (owner && (owner->scope || !application_guest_q3_control_supports_pose(owner))))
+    if (!out || (owner && (owner->scope || owner->source_entries || owner->native_binding ||
+            !application_guest_q3_control_supports_pose(owner))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body control descriptor requires its idle admitted owner");
-    *out = owner ? (qa_qvm_saved_function){owner->binding, owner->profile->source->movement_duck, true, duck, (void *)owner}
+    *out = owner && owner->vm ? (qa_qvm_saved_function){owner->binding, owner->profile->source->movement_duck, true, duck, (void *)owner}
                  : (qa_qvm_saved_function){0};
     return true;
 }
@@ -334,11 +394,13 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     if (!scope) return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope requires its destination");
     *scope = (application_guest_q3_control_scope){0};
     if (!owner) return true;
-    if (!application_guest_q3_control_supports_pose(owner) || !call || !call->qvm || call->qvm->vm != owner->vm ||
-        !client || !client->qvm || client->qvm->vm != owner->vm ||
-        (client->entry != owner->profile->client_think && client->entry != owner->profile->run_client) ||
-        call->entry != owner->profile->source->movement_move || call->count != 1 || !call->arguments ||
-        call->arguments[0].type != QA_NATIVE_ADDRESS || !movement || (movement & 3u) || player > INT32_MAX)
+    if (!application_guest_q3_control_supports_pose(owner) || !call || !client ||
+        (owner->vm ? !call->qvm || call->qvm->vm != owner->vm || !client->qvm || client->qvm->vm != owner->vm :
+            call->qvm || client->qvm || !owner->source_entries) ||
+        (owner->vm && ((client->entry != owner->profile->client_think && client->entry != owner->profile->run_client) ||
+            call->entry != owner->profile->source->movement_move)) || call->count != 1 || !call->arguments ||
+        call->arguments[0].type != QA_NATIVE_ADDRESS || !movement || (movement & 3u) ||
+        (owner->vm && player > INT32_MAX))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope has no genuine source move");
     if (!observe_cancel(call, scope, error)) return false;
     if (scope->cancelled) return true;
@@ -359,7 +421,7 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
     const uint32_t offsets[] = {owner->profile->source->movement_mins, owner->profile->source->movement_maxs, owner->profile->source->movement_trace_callback, owner->profile->source->movement_trace_mask};
     size_t offset_count = owner->profile->source->body_trace ? sizeof(offsets) / sizeof(offsets[0]) : 2;
     for (size_t i = 0; i < offset_count; ++i)
-        if ((uint64_t)movement + offsets[i] + (i < 2 ? 12u : 4u) > qa_qvm_memory_size(owner->vm))
+        if (owner->vm && (uint64_t)movement + offsets[i] + (i < 2 ? 12u : 4u) > qa_qvm_memory_size(owner->vm))
             return application_fail(error, QA_ERROR_FORMAT, "Original body scope leaves its source movement record");
     scope->actor = actor; scope->slot = slot; scope->player = player; scope->movement = movement;
     scope->client_call = client;

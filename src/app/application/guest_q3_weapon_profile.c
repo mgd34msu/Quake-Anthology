@@ -356,71 +356,107 @@ void application_q3_movement_profile_free(application_q3_movement_profile *p)
     *p = (application_q3_movement_profile){0};
 }
 
-static bool movement_declared(const qa_json_document *doc,
+bool application_q3_source_entry_read(q3g_role *role, const qa_json_document *doc,
+    qa_json_id id, const char *path, uint32_t *out, qa_error *error)
+{
+    if (role->image) return u32(doc, id, out, error);
+    qa_native_declared_region declared;
+    if (!qa_native_declaration_find_region(role->declaration, path, &declared, error)) return false;
+    *out = declared.entry_rva;
+    return true;
+}
+
+static bool movement_body(const qa_json_document *doc, qa_json_id move,
     application_q3_movement_profile *p, qa_error *error)
 {
-    qa_json_id root = qa_json_get(doc, qa_json_root(doc), "weapons");
-    if (root == QA_JSON_NONE) {
-        qa_json_id input = qa_json_get(doc, qa_json_root(doc), "input");
-        if (input == QA_JSON_NONE) return true;
-        qa_json_id entries = qa_json_get(doc, input, "entries");
-        return word(doc, input, "entityStride", &p->entity_stride, error) &&
-            word(doc, input, "clientStride", &p->client_stride, error) &&
-            word(doc, input, "clientPointer", &p->client_pointer, error) &&
-            word(doc, entries, "move", &p->movement_move, error) &&
-            word(doc, entries, "slice", &p->movement_slice, error);
-    }
-    qa_json_id move = qa_json_get(doc, root, "equipmentMovement"),
-        availability = qa_json_get(doc, root, "availability"),
-        water = qa_json_get(doc, root, "waterLevel"),
-        teleport = qa_json_get(doc, root, "teleport");
-    p->present = true;
-    bool ok = word(doc, root, "entityStride", &p->entity_stride, error) &&
-        word(doc, root, "clientStride", &p->client_stride, error) &&
-        word(doc, root, "clientPointer", &p->client_pointer, error) &&
-        word(doc, move, "move", &p->movement_move, error) &&
-        word(doc, move, "slice", &p->movement_slice, error) &&
-        word(doc, move, "duck", &p->movement_duck, error) &&
-        word(doc, move, "movementGlobal", &p->movement_global, error) &&
+    bool ok = word(doc, move, "movementGlobal", &p->movement_global, error) &&
         word(doc, move, "mins", &p->movement_mins, error) &&
-        word(doc, move, "maxs", &p->movement_maxs, error) &&
-        region(doc, qa_json_get(doc, move, "locomotion"), &p->locomotion, error);
+        word(doc, move, "maxs", &p->movement_maxs, error);
     qa_json_id trace = qa_json_get(doc, move, "bodyTrace");
     p->body_trace = trace != QA_JSON_NONE;
     if (ok && p->body_trace) ok = word(doc, trace, "callback", &p->movement_trace_callback, error) &&
         word(doc, trace, "mask", &p->movement_trace_mask, error);
-    if (ok) ok = word(doc, availability, "movementType", &p->availability.movement_type, error) &&
-        word(doc, availability, "health", &p->availability.health, error) &&
-        word(doc, availability, "team", &p->availability.team, error) &&
-        word(doc, availability, "flags", &p->availability.flags, error) &&
-        signed_word(doc, availability, "spectatorTeam", &p->availability.spectator_team, error) &&
-        signed_word(doc, availability, "respawnFlag", &p->availability.respawn_flag, error);
-    qa_json_id rows = qa_json_get(doc, availability, "excluded");
-    if (ok) {
-        void *allocation = NULL;
-        ok = list(doc, rows, &allocation, &p->availability.excluded_count,
-            sizeof(*p->availability.excluded), error);
-        p->availability.excluded = allocation;
+    p->body_present = ok;
+    return ok;
+}
+
+static bool movement_declared(q3g_role *role, const qa_json_document *doc,
+    application_q3_movement_profile *p, qa_error *error)
+{
+    qa_json_id input = qa_json_get(doc, qa_json_root(doc), "input"),
+        weapons = qa_json_get(doc, qa_json_root(doc), "weapons"),
+        move = qa_json_get(doc, weapons, "equipmentMovement");
+    bool equipment = move != QA_JSON_NONE;
+    qa_json_id root = equipment ? weapons : input;
+    if (!equipment) move = qa_json_get(doc, input, "equipmentMovement");
+    qa_json_id entries = equipment ? move : qa_json_get(doc, input, "entries");
+    if (root == QA_JSON_NONE || (move == QA_JSON_NONE &&
+        qa_json_get(doc, entries, "move") == QA_JSON_NONE &&
+        qa_json_get(doc, entries, "slice") == QA_JSON_NONE)) return true;
+    bool ok = word(doc, root, "entityStride", &p->entity_stride, error) &&
+        word(doc, root, "clientStride", &p->client_stride, error) &&
+        word(doc, root, "clientPointer", &p->client_pointer, error) &&
+        application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "move"),
+            equipment ? "/weapons/equipmentMovement/move" : "/input/entries/move",
+            &p->movement_move, error) &&
+        application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "slice"),
+            equipment ? "/weapons/equipmentMovement/slice" : "/input/entries/slice",
+            &p->movement_slice, error);
+    if (ok && (move != QA_JSON_NONE || qa_json_get(doc, entries, "duck") != QA_JSON_NONE)) {
+        ok = application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "duck"),
+            equipment ? "/weapons/equipmentMovement/duck" : "/input/entries/duck",
+            &p->movement_duck, error);
     }
-    for (size_t i = 0; ok && i < p->availability.excluded_count; ++i)
-        ok = i32(doc, qa_json_at(doc, rows, i), p->availability.excluded + i, error);
-    if (ok) ok = word(doc, water, "entityOffset", &p->water_entity, error) &&
-        word(doc, water, "movementOffset", &p->water_movement, error) &&
-        word(doc, teleport, "spawn", &p->spawn, error) && word(doc, teleport, "view", &p->view, error);
-    if (ok) {
-        qa_json_id type = qa_json_get(doc, water, "typeMovementOffset");
-        if (type != QA_JSON_NONE) ok = u32(doc, type, &p->water_type_movement, error);
-        else if (p->water_movement >= 4) p->water_type_movement = p->water_movement - 4;
-        else ok = application_fail(error, QA_ERROR_FORMAT, "Original movement water fields leave their Source layout");
+    if (ok && move != QA_JSON_NONE) {
+        ok = movement_body(doc, move, p, error);
+        qa_json_id locomotion = qa_json_get(doc, move, "locomotion");
+        if (ok && role->image && locomotion != QA_JSON_NONE) {
+            ok = region(doc, locomotion, &p->locomotion, error);
+            p->present = ok;
+        }
     }
-    qa_json_id input = qa_json_get(doc, qa_json_root(doc), "input");
-    if (ok && input != QA_JSON_NONE) {
-        qa_json_id entries = qa_json_get(doc, input, "entries");
+    if (ok && p->present) {
+        qa_json_id availability = qa_json_get(doc, root, "availability"),
+            water = qa_json_get(doc, root, "waterLevel"),
+            teleport = qa_json_get(doc, root, "teleport");
+        ok = word(doc, availability, "movementType", &p->availability.movement_type, error) &&
+            word(doc, availability, "health", &p->availability.health, error) &&
+            word(doc, availability, "team", &p->availability.team, error) &&
+            word(doc, availability, "flags", &p->availability.flags, error) &&
+            signed_word(doc, availability, "spectatorTeam", &p->availability.spectator_team, error) &&
+            signed_word(doc, availability, "respawnFlag", &p->availability.respawn_flag, error);
+        qa_json_id rows = qa_json_get(doc, availability, "excluded");
+        if (ok) {
+            void *allocation = NULL;
+            ok = list(doc, rows, &allocation, &p->availability.excluded_count,
+                sizeof(*p->availability.excluded), error);
+            p->availability.excluded = allocation;
+        }
+        for (size_t i = 0; ok && i < p->availability.excluded_count; ++i)
+            ok = i32(doc, qa_json_at(doc, rows, i), p->availability.excluded + i, error);
+        if (ok) ok = word(doc, water, "entityOffset", &p->water_entity, error) &&
+            word(doc, water, "movementOffset", &p->water_movement, error) &&
+            application_q3_source_entry_read(role, doc, qa_json_get(doc, teleport, "spawn"),
+                equipment ? "/weapons/teleport/spawn" : "/input/teleport/spawn", &p->spawn, error) &&
+            application_q3_source_entry_read(role, doc, qa_json_get(doc, teleport, "view"),
+                equipment ? "/weapons/teleport/view" : "/input/teleport/view", &p->view, error);
+        if (ok) {
+            qa_json_id type = qa_json_get(doc, water, "typeMovementOffset");
+            if (type != QA_JSON_NONE) ok = u32(doc, type, &p->water_type_movement, error);
+            else if (p->water_movement >= 4) p->water_type_movement = p->water_movement - 4;
+            else ok = application_fail(error, QA_ERROR_FORMAT, "Original movement water fields leave their Source layout");
+        }
+    }
+    if (ok && equipment && input != QA_JSON_NONE) {
+        qa_json_id input_entries = qa_json_get(doc, input, "entries");
         uint32_t entity_stride, client_stride, client_pointer, move_entry, slice_entry;
         ok = word(doc, input, "entityStride", &entity_stride, error) &&
             word(doc, input, "clientStride", &client_stride, error) &&
             word(doc, input, "clientPointer", &client_pointer, error) &&
-            word(doc, entries, "move", &move_entry, error) && word(doc, entries, "slice", &slice_entry, error);
+            application_q3_source_entry_read(role, doc, qa_json_get(doc, input_entries, "move"),
+                "/input/entries/move", &move_entry, error) &&
+            application_q3_source_entry_read(role, doc, qa_json_get(doc, input_entries, "slice"),
+                "/input/entries/slice", &slice_entry, error);
         if (ok && (entity_stride != p->entity_stride || client_stride != p->client_stride ||
             client_pointer != p->client_pointer || move_entry != p->movement_move || slice_entry != p->movement_slice))
             ok = application_fail(error, QA_ERROR_FORMAT,
@@ -432,6 +468,16 @@ static bool movement_declared(const qa_json_document *doc,
 static bool movement_qualify(q3g_role *role, const application_q3_movement_profile *p, qa_error *error)
 {
     if (!p->entity_stride) return true;
+    if (!role->image) {
+        size_t pointer_bytes = qa_native_module_describe(role->module).image.target.pointer_bytes;
+        if (p->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
+            p->client_stride < qa_qvm_player_bytes(role->abi) || p->entity_stride < pointer_bytes ||
+            p->client_pointer > p->entity_stride - pointer_bytes)
+            return application_fail(error, QA_ERROR_FORMAT,
+                "Original movement records differ from their admitted source ABI");
+        return !p->body_present ||
+            qa_native_module_mutable_range(role->module, p->movement_global, pointer_bytes, error);
+    }
     size_t count, memory = qa_qvm_image_memory_size(role->image);
     const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
     if ((p->entity_stride & 3) || (p->client_stride & 3) || p->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
@@ -440,8 +486,15 @@ static bool movement_qualify(q3g_role *role, const application_q3_movement_profi
         return application_fail(error, QA_ERROR_FORMAT, "Original movement records differ from their admitted source ABI");
     if (!original_entry(code, count, p->movement_move, error) ||
         !original_entry(code, count, p->movement_slice, error)) return false;
+    if (p->body_present &&
+        (!original_entry(code, count, p->movement_duck, error) ||
+         !aligned(p->movement_mins, memory, 12, error) ||
+         !aligned(p->movement_maxs, memory, 12, error) ||
+         (p->body_trace && (!aligned(p->movement_trace_callback, memory, 4, error) ||
+            !aligned(p->movement_trace_mask, memory, 4, error))) ||
+         !qa_qvm_qualify_global_word(role->image, p->movement_global, error))) return false;
     if (!p->present) return true;
-    const uint32_t entries[] = {p->movement_duck, p->spawn, p->view};
+    const uint32_t entries[] = {p->spawn, p->view};
     for (size_t i = 0; i < sizeof(entries) / sizeof(*entries); ++i)
         if (!original_entry(code, count, entries[i], error)) return false;
     if (p->availability.respawn_flag <= 0)
@@ -452,17 +505,13 @@ static bool movement_qualify(q3g_role *role, const application_q3_movement_profi
         if (!aligned(fields[i], p->client_stride, 4, error)) return false;
     return aligned(p->water_entity, p->entity_stride, 4, error) &&
         aligned(p->water_movement, memory, 4, error) && aligned(p->water_type_movement, memory, 4, error) &&
-        aligned(p->movement_mins, memory, 12, error) && aligned(p->movement_maxs, memory, 12, error) &&
-        (!p->body_trace || (aligned(p->movement_trace_callback, memory, 4, error) &&
-            aligned(p->movement_trace_mask, memory, 4, error))) &&
-        qa_qvm_qualify_global_word(role->image, p->movement_global, error) &&
         qa_qvm_qualify_source_region(role->image, p->movement_slice, p->locomotion.entry, p->locomotion.join, error);
 }
 
 static bool movement_stock(q3g_role *role, application_q3_movement_profile *p, qa_error *error)
 {
     bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
-    if (base) *p = (application_q3_movement_profile){.present = true,
+    if (base) *p = (application_q3_movement_profile){.body_present = true, .present = true,
         .entity_stride = 808, .client_stride = 776, .client_pointer = 516,
         .movement_move = 75433, .movement_slice = 74710, .movement_duck = 72850, .movement_global = 961696,
         .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
@@ -471,7 +520,7 @@ static bool movement_stock(q3g_role *role, application_q3_movement_profile *p, q
             .flags = 12, .respawn_flag = 512, .excluded_count = 5},
         .water_entity = 788, .water_movement = 208, .water_type_movement = 204, .spawn = 87345, .view = 87959};
     else if (application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME))
-        *p = (application_q3_movement_profile){.present = true,
+        *p = (application_q3_movement_profile){.body_present = true, .present = true,
             .entity_stride = 876, .client_stride = 944, .client_pointer = 516,
             .movement_move = 35535, .movement_slice = 34707, .movement_duck = 32561, .movement_global = 1091860,
             .movement_mins = 180, .movement_maxs = 192, .movement_trace_callback = 224, .movement_trace_mask = 28,
@@ -497,14 +546,13 @@ bool application_q3_movement_profile_read(q3g_role *role, qa_bytes primary,
     if (!role || role->kind != QA_QVM_GAME || !out || (primary.size && !primary.data))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original movement requires its actual GAME artifact");
     application_q3_movement_profile p = {0};
-    if (!role->image) { *out = p; return true; }
     bool ok;
     if (primary.size) {
         qa_json_document *doc = NULL;
         if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
-        ok = movement_declared(doc, &p, error);
+        ok = movement_declared(role, doc, &p, error);
         qa_json_destroy(doc);
-    } else ok = movement_stock(role, &p, error);
+    } else ok = !role->image || movement_stock(role, &p, error);
     if (ok) ok = movement_qualify(role, &p, error);
     if (!ok) { application_q3_movement_profile_free(&p); return false; }
     *out = p; return true;

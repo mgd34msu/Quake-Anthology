@@ -8,6 +8,8 @@
 /* Borrows the GAME movement declaration independently of its weapon owner. */
 bool application_guest_input_attach(q3g_role *, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
+bool application_guest_input_enter(q3g_role *, qa_error *);
+bool application_guest_input_leave(q3g_role *, qa_error *);
 /* The caller removes this temporary binding after the genuine Connect export. */
 bool application_guest_input_bot_setup_bind(q3g_role *, qa_qvm_binding *, qa_error *);
 bool application_guest_input_prepare_weapon(void *role, qa_actor_id,

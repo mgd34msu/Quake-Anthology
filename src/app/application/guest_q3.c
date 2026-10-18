@@ -193,6 +193,8 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     ++role->entry_depth;
     bool ok = !role->combat || application_q3_combat_enter(role->combat, error);
     bool combat_entry = ok && role->combat;
+    if (ok) ok = application_guest_input_enter(role, error);
+    bool input_entry = ok;
     if (ok && source) {
         uint64_t entry = source->entry;
         if (role->native)
@@ -223,6 +225,13 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
                 if (ok && error) *error = cleanup;
                 ok = false;
             }
+        }
+    }
+    if (input_entry) {
+        qa_error cleanup = {0};
+        if (!application_guest_input_leave(role, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
         }
     }
     if (combat_entry) {

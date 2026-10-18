@@ -1935,8 +1935,9 @@ bool application_control_guest_equipment(qa_application *app, application_provid
         ? primary->state.native.q2_engine : NULL;
     bool native_primary = native && (native->profile == QA_NATIVE_Q2_GAME_API3 ||
         native->profile == QA_NATIVE_Q2_GAME_API2023);
+    bool native_q3_primary = primary && primary->kind == APPLICATION_PROVIDER_NATIVE && q3g_engine(primary);
     if (!app || !primary || primary->application != app ||
-        (primary->kind != APPLICATION_PROVIDER_QVM && !native_primary) ||
+        (primary->kind != APPLICATION_PROVIDER_QVM && !native_primary && !native_q3_primary) ||
         !primary->constructed || !primary->attached || primary->close_pending || !out ||
         !live(app, actor) || actor.slot >= app->control_capacity ||
         !app->controls[actor.slot].active || app->controls[actor.slot].retired ||

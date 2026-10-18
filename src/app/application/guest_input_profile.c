@@ -99,13 +99,15 @@ void application_guest_input_profile_free(application_guest_input_profile *profi
 
 static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa_error *error)
 {
-    size_t count;
-    const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
-    const uint32_t entries[] = {p->client_think, p->run_client, p->client_spawn};
-    for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
-        if (!entry(code, count, entries[i], error)) return false;
-    if (p->respawn && !entry(code, count, p->respawn, error)) return false;
-    if (p->bot_setup.entry) {
+    size_t count = 0;
+    const qa_qvm_instruction *code = role->image ? qa_qvm_image_instructions(role->image, &count) : NULL;
+    if (role->image) {
+        const uint32_t entries[] = {p->client_think, p->run_client, p->client_spawn};
+        for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
+            if (!entry(code, count, entries[i], error)) return false;
+        if (p->respawn && !entry(code, count, p->respawn, error)) return false;
+    }
+    if (role->image && p->bot_setup.entry) {
         if (!entry(code, count, p->bot_setup.entry, error) ||
             !entry(code, count, p->bot_setup.connect, error)) return false;
         uint32_t call = p->bot_setup.call;
@@ -132,33 +134,14 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
     application_guest_input_profile p = {.source = &role->movement,
         .client_command = UINT32_MAX};
-    if (!role->image) {
-        if (role->declaration) {
-            qa_native_declared_region region; qa_error local = {0};
-            if (qa_native_declaration_find_region(role->declaration,
-                    "/input/entries/respawn", &region, &local)) p.respawn = region.entry_rva;
-            else if (local.code != QA_ERROR_NOT_FOUND) {
-                if (error) *error = local;
-                return false;
-            }
-        }
-        if (primary.size) {
-            qa_json_document *doc = NULL;
-            if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
-            bool ok = output_modes(doc, qa_json_get(doc, qa_json_root(doc), "input"), &p, false, error);
-            qa_json_destroy(doc);
-            if (!ok) { application_guest_input_profile_free(&p); return false; }
-        }
-        *out = p; return true;
-    }
-    bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
+    bool base = role->image && application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
     if (base) {
         p.bot_setup.entry = 56212;
         p.bot_setup.connect = 84729;
         p.bot_setup.call = 84804;
     }
     if (!primary.size) {
-
+        if (!role->image) { *out = p; return true; }
         if (base) {
             p.client_think = 80328; p.run_client = 80387; p.client_spawn = 89754;
             p.client_command = 472;
@@ -210,19 +193,30 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
     if (!qa_json_parse(QA_JSON_STRICT, primary, &doc, error)) return false;
     qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
     qa_json_id entries = qa_json_get(doc, input, "entries");
-    bool ok = p.source->entity_stride != 0;
+    bool declared = role->image || qa_json_get(doc, entries, "clientThink") != QA_JSON_NONE ||
+        qa_json_get(doc, entries, "runClient") != QA_JSON_NONE ||
+        qa_json_get(doc, entries, "clientSpawn") != QA_JSON_NONE ||
+        qa_json_get(doc, entries, "move") != QA_JSON_NONE ||
+        qa_json_get(doc, entries, "slice") != QA_JSON_NONE ||
+        qa_json_get(doc, entries, "duck") != QA_JSON_NONE;
+    bool ok = !declared || p.source->entity_stride != 0;
     if (!ok) application_fail(error, QA_ERROR_FORMAT, "Guest input requires its actual retained movement declaration");
-    if (ok) ok = word(doc, entries, "clientThink", &p.client_think, error) &&
-        word(doc, entries, "runClient", &p.run_client, error) &&
-        word(doc, entries, "clientSpawn", &p.client_spawn, error);
+    if (ok && declared) ok =
+        application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "clientThink"),
+            "/input/entries/clientThink", &p.client_think, error) &&
+        application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "runClient"),
+            "/input/entries/runClient", &p.run_client, error) &&
+        application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "clientSpawn"),
+            "/input/entries/clientSpawn", &p.client_spawn, error);
     if (ok && qa_json_get(doc, entries, "respawn") != QA_JSON_NONE)
-        ok = word(doc, entries, "respawn", &p.respawn, error);
+        ok = application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "respawn"),
+            "/input/entries/respawn", &p.respawn, error);
     if (ok && qa_json_get(doc, input, "clientCommand") != QA_JSON_NONE)
         ok = word(doc, input, "clientCommand", &p.client_command, error);
-    if (ok) ok = output_modes(doc, input, &p, true, error);
+    if (ok) ok = output_modes(doc, input, &p, role->image != NULL, error);
     qa_json_destroy(doc);
-    p.input_present = ok;
-    if (ok) ok = qualify(role, &p, error);
+    p.input_present = ok && declared;
+    if (ok && p.input_present) ok = qualify(role, &p, error);
     if (!ok) { application_guest_input_profile_free(&p); return false; }
     *out = p; return true;
 }

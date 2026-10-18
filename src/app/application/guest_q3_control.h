@@ -21,6 +21,8 @@ typedef struct application_guest_q3_control_scope {
 bool application_guest_q3_control_attach(q3g_role *, const application_guest_input_profile *,
     application_guest_q3_control **, qa_error *);
 bool application_guest_q3_control_detach(application_guest_q3_control **, qa_error *);
+bool application_guest_q3_control_enter(application_guest_q3_control *, qa_error *);
+bool application_guest_q3_control_leave(application_guest_q3_control *, qa_error *);
 bool application_guest_q3_control_supports_body(const application_guest_q3_control *);
 bool application_guest_q3_control_supports_pose(const application_guest_q3_control *);
 qa_qvm_binding application_guest_q3_control_binding(const application_guest_q3_control *);

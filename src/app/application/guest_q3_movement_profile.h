@@ -2,6 +2,7 @@
 #define QA_APPLICATION_GUEST_Q3_MOVEMENT_PROFILE_H
 
 #include "qa/qvm.h"
+#include "qa/json.h"
 
 struct q3g_role;
 typedef struct application_q3_source_region { uint32_t entry, join; } application_q3_source_region;
@@ -17,9 +18,11 @@ typedef struct application_q3_movement_profile {
     } availability;
     uint32_t water_entity, water_movement, water_type_movement;
     uint32_t spawn, view;
-    bool body_trace, present;
+    bool body_trace, body_present, present;
 } application_q3_movement_profile;
 
+bool application_q3_source_entry_read(struct q3g_role *, const qa_json_document *,
+    qa_json_id, const char *path, uint32_t *, qa_error *);
 /* GAME owns the declaration. Input and equipment borrow it independently. */
 bool application_q3_movement_profile_read(struct q3g_role *, qa_bytes primary,
     application_q3_movement_profile *, qa_error *);
