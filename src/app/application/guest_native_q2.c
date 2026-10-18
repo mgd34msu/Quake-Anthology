@@ -11,6 +11,7 @@
 #include "unified_events.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_targets.h"
 #include "guest_native_q2_primary_pickups.h"
 #include "guest_q2_control.h"
 #include "q3_product.h"
@@ -200,6 +201,11 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
     qa_error error = {0};
     if (!application_native_q2_foreign_released(engine, actor.id, &error))
         application_fault(engine->provider->application, &error);
+    if (!application_native_q2_targets_released(engine, actor.id, &error)) {
+        qa_error log_error = {0};
+        (void)qa_application_log_emit(engine->provider->application,
+            &engine->command_context, error.message, 0, &log_error);
+    }
     application_native_q2_stages_released(engine, actor.id);
     application_native_q2_source_actors_released(engine, actor.id);
     application_native_q2_wire_released(engine, actor.id);
@@ -335,6 +341,7 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         !application_native_q2_attack_prepare(engine, error) ||
         !application_native_q2_prediction_prepare(engine, error)) return false;
     if (!application_native_q2_combat_prepare(engine, error) ||
+        !application_native_q2_targets_prepare(engine, error) ||
         !application_q2_control_prepare(engine, error) ||
         !application_native_q2_primary_pickups_prepare(engine, error)) return false;
     qa_ruleset_id dialect = provider->launch->selection.clock.kind;
@@ -712,6 +719,7 @@ bool application_native_q2_initialize_supplemental(application_provider *provide
     --engine->calls;
     if(!ok)return false;
     engine->map_ready=provider->map_bound=true;
+    if (!application_native_q2_targets_refresh(engine, error)) return false;
     qa_cvars_set_server_active(engine->cvars,true);
     if(engine->inventory_rows&&(!application_native_q2_inventory_rows_prepare(engine->inventory_rows,error)||
         !application_native_q2_inventory_scanner_activate(engine->inventory_scanner,error)))return false;
@@ -920,7 +928,8 @@ bool application_native_q2_spawn_map_advance(application_provider *provider, con
             qa_cvars_set_server_active(engine->cvars, true);
             if (original) ok = application_native_q2_restore_finish(provider, error);
             else {
-                if (engine->inventory_rows) ok = application_native_q2_inventory_rows_prepare(engine->inventory_rows, error) &&
+                ok = application_native_q2_targets_refresh(engine, error);
+                if (ok && engine->inventory_rows) ok = application_native_q2_inventory_rows_prepare(engine->inventory_rows, error) &&
                     application_native_q2_inventory_scanner_activate(engine->inventory_scanner, error);
                 if (ok) ok = application_native_q2_callbacks_register(engine, error);
             }
@@ -995,6 +1004,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     if (!application_q2_control_suspend(engine, error)) return false;
     if (!application_native_q2_callbacks_suspend(engine, error)) return false;
     if (!application_native_q2_source_actors_suspend(engine, error)) return false;
+    if (!application_native_q2_targets_close(engine, error)) return false;
     if (!application_native_q2_publication_retire(engine->publication, error)) return false;
     application_native_q2_visibility_destroy(&engine->visibility);
     engine->map_admission_prepared = false;
@@ -1043,6 +1053,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
             engine->initialized = false;
         }
         if (!application_native_q2_attack_close(engine, error)) return false;
+        if (!application_native_q2_targets_close(engine, error)) return false;
         if (!application_native_q2_combat_close(engine, error)) return false;
         if (!application_q2_control_close(engine, error)) return false;
         if (!application_native_q2_callbacks_close(engine, error)) return false;
@@ -1055,6 +1066,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         if (!closed) { if (error) *error = cleanup; return false; }
     }
     if (!application_native_q2_attack_close(engine, error)) return false;
+    if (!application_native_q2_targets_close(engine, error)) return false;
     if (!application_native_q2_combat_close(engine, error)) return false;
     if (!application_q2_control_close(engine, error)) return false;
     if (!application_native_q2_callbacks_close(engine, error)) return false;

@@ -583,7 +583,7 @@ static bool bindings_current(qa_q3_game *game, qa_error *error)
             if (!state->active) continue;
             qa_target_binding expected_target, actual_target;
             if (!q3_map_target_binding(game, state->actor, &expected_target) ||
-                !qa_persistence_targets_binding(game->map->options.targets, state->actor, &actual_target) ||
+                !qa_targets_binding(game->map->options.targets, state->actor, &actual_target) ||
                 actual_target.source != expected_target.source ||
                 actual_target.context != expected_target.context ||
                 actual_target.read != expected_target.read || actual_target.use != expected_target.use ||

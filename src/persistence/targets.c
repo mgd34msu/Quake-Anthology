@@ -7,14 +7,6 @@
 static bool fail(qa_error *error, const char *text)
 { qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", text); return false; }
 
-bool qa_persistence_targets_binding(const qa_targets *targets, qa_actor_id actor, qa_target_binding *out)
-{
-    if (!targets || !out || actor.slot >= targets->capacity ||
-        !qa_actors_get(qa_session_actors(targets->options.session), actor) ||
-        !qa_actor_id_equal(targets->bindings[actor.slot].actor, actor)) return false;
-    *out = targets->bindings[actor.slot]; return true;
-}
-
 static uint32_t callbacks(const qa_target_binding *binding)
 {
     return (binding->read ? 1u : 0u) | (binding->use ? 2u : 0u) | (binding->field ? 4u : 0u) |

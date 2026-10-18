@@ -1294,6 +1294,7 @@ add_library(qa_application STATIC
     src/app/application/guest_native_q2_combat.c
     src/app/application/guest_native_q2_combat_kex.c
     src/app/application/guest_native_q2_combat_state.c
+    src/app/application/guest_native_q2_targets.c
     src/app/application/guest_native_q2_hud.c
     src/app/application/guest_native_q2_inventory.c
     src/app/application/guest_native_q2_save.c

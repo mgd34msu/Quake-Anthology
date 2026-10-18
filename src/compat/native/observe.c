@@ -721,7 +721,10 @@ bool native_process_write_commit(void *context, qa_native_guest *guest,
     uint64_t *ids=qa_unified_frame_lease_alloc(storage,count,sizeof(*ids),_Alignof(uint64_t),error);
     if (!ids) { qa_unified_frame_lease_release(storage); return false; }
     size_t at = 0;
-    for (qa_native_write_observer *b = instance->write_observers; b; b = b->next) ids[at++] = b->id;
+    for (qa_native_write_observer *b = instance->write_observers; b; b = b->next)
+        if (b->address < commit->address + commit->bytes &&
+            commit->address < b->address + b->size) ids[at++] = b->id;
+    count = at;
     bool okay = true;
     for (size_t i = 0; okay && i < count; ++i) {
         qa_native_write_observer *binding = instance->write_observers;

@@ -166,8 +166,20 @@ static bool target_restore(void *context, qa_bytes state, qa_error *error)
 static bool target_stored(void *context, qa_qc_instance *vm,
     const qa_qc_store_event *event, qa_error *error)
 { return application_qc_targets_stored(context, vm, event, error); }
+typedef struct target_native_fixture {
+    qa_session *session;
+    qa_string_id name;
+    unsigned removals;
+    bool protected;
+} target_native_fixture;
 static bool target_native_read(void *context, qa_actor_id actor, qa_authored_target *out)
-{ (void)actor; *out = (qa_authored_target){.targetname = *(qa_string_id *)context}; return true; }
+{ (void)actor; *out = (qa_authored_target){.targetname = ((target_native_fixture *)context)->name}; return true; }
+static bool target_native_remove(void *context, qa_actor_id actor, qa_error *error)
+{
+    target_native_fixture *native = context;
+    ++native->removals;
+    return native->protected || qa_session_release(native->session, actor, error);
+}
 static void target_released(void *context, qa_session *session, qa_actor_record record)
 {
     (void)session;
@@ -235,8 +247,10 @@ static void shared_targets(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_qc_bind_actor(vm, 2, activator, QA_QC_SLOT_OWNED, &error));
     qa_string_id native_name;
     GAME_CHECK(qa_strings_intern_cstr(qa_session_strings(fixture->session), "native-target", &native_name, &error));
+    target_native_fixture native_state = {.session = fixture->session,
+        .name = native_name, .protected = true};
     qa_target_binding native = {.actor = foreign, .source = QA_RULESET_Q3,
-        .context = &native_name, .read = target_native_read};
+        .context = &native_state, .read = target_native_read, .remove = target_native_remove};
     GAME_CHECK(qa_targets_bind(app.targets, &native, &error));
     qa_body_state body = {0};
     GAME_CHECK(qa_world_body_create(fixture->world, foreign, &body, &error));
@@ -306,6 +320,15 @@ static void shared_targets(guest_fixture *fixture, qa_actor_owner owner)
     GAME_CHECK(qa_targets_read(app.targets, foreign, &fields) && fields.targetname == native_name);
     GAME_CHECK(qa_targets_invoke(app.targets, self, foreign, activator, &error));
     GAME_CHECK(qa_qc_global_float(vm, 58, &number, &error) && number == 1);
+    qa_target_use remove = {.source = self, .activator = activator,
+        .dialect = QA_RULESET_NETQUAKE, .fields.killtarget = native_name};
+    GAME_CHECK(qa_targets_use_now(app.targets, &remove, &error));
+    GAME_CHECK(native_state.removals == 1 &&
+        qa_actors_get(qa_session_actors(fixture->session), foreign));
+    native_state.protected = false;
+    GAME_CHECK(qa_targets_use_now(app.targets, &remove, &error));
+    GAME_CHECK(native_state.removals == 2 &&
+        !qa_actors_get(qa_session_actors(fixture->session), foreign));
     GAME_CHECK(qa_session_remove(fixture->session, owner, &error));
     GAME_CHECK(qa_qc_game_destroy(provider.state.qc.game, &error));
     GAME_CHECK(qa_session_remove(fixture->session, foreign_owner, &error));

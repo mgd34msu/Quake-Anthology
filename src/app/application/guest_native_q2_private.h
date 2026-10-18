@@ -53,6 +53,7 @@ struct application_native_q2 {
     struct application_native_q2_baseline *baseline;
     application_provider *provider;
     qa_world *world;
+    struct application_native_q2_targets *source_targets;
     qa_native_profile profile;
     qa_native_declaration *declaration;
     struct application_native_q2_callbacks *callbacks;

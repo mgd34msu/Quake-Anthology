@@ -19,6 +19,10 @@ typedef struct application_q2_combat_profile {
     bool kex, resolved;
     uint32_t entity_bytes, client_bytes, client_pointer, health, damageable, flags,
         mass, velocity, pain, die, generation, inuse, svflags, classname;
+    struct {
+        bool present;
+        uint32_t targetname, target, killtarget, message, use, delay, wait, free_entry;
+    } authored;
     uint32_t inventory, inventory_count, invincible, team, userinfo, userinfo_bytes,
         view_angles, time, item_table, item_stride, item_classname, item_info,
         normal, energy, screen, shield, cells, empty;
@@ -52,7 +56,7 @@ bool application_native_q2_inventory_item(struct application_native_q2 *, uint32
 bool application_q2_combat_profile_read(struct application_native_q2 *,
     application_q2_combat_profile *, qa_error *);
 bool application_q2_combat_profile_load(application_q2_combat_profile *, qa_error *);
-const application_q2_combat_profile *application_native_q2_combat_profile(
+application_q2_combat_profile *application_native_q2_combat_profile(
     const struct application_native_q2 *);
 bool application_q2_combat_classname(const application_q2_combat_profile *, qa_actor_id,
     qa_native_address *, bool *present, qa_error *);

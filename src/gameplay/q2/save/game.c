@@ -47,7 +47,7 @@ static bool actor_capture(qa_q2_game *g, q2_actor *a, actor_save *s, qa_error *e
         s->observation_serial = a->item->observation.serial;
     qa_target_binding binding;
     s->has_targets = (a->entity || a->item) &&
-        qa_persistence_targets_binding(g->entity_runtime->services.targets, a->id, &binding) &&
+        qa_targets_binding(g->entity_runtime->services.targets, a->id, &binding) &&
         binding.context == g;
     return q2_save_reference(g, a->id, &s->id, e) &&
            qa_q2_actor_capture(g, a->id, &s->actor, e) &&
@@ -437,7 +437,7 @@ bool qa_q2_game_restore_finish(qa_q2_game *g, qa_error *e) {
         }
         qa_target_binding actual, expected;
         qa_targets *targets = g->entity_runtime->services.targets;
-        bool target_bound = qa_persistence_targets_binding(targets, a->id, &actual);
+        bool target_bound = qa_targets_binding(targets, a->id, &actual);
         if (a->restore_targets) {
             if (!target_bound ||
                 !qa_q2_game_target_binding(g, a->id, &expected, e) ||

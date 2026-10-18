@@ -156,7 +156,7 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
         bool target = false;
         if (io->values.direction == QA_SOURCE_SAVE_WRITE && g->maps) {
             qa_target_binding actual, expected;
-            if (qa_persistence_targets_binding(g->targets, actor->id, &actual) &&
+            if (qa_targets_binding(g->targets, actor->id, &actual) &&
                 actual.context == g) {
                 if (!qa_q1_game_target_binding(g, actor->id, &expected, io->values.error) ||
                     !same_target(&actual, &expected))
@@ -586,7 +586,7 @@ bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {
         if (!g->maps)
             continue;
         qa_target_binding actual, expected;
-        bool bound = qa_persistence_targets_binding(g->targets, actor->id, &actual);
+        bool bound = qa_targets_binding(g->targets, actor->id, &actual);
         if (actor->restored_target) {
             if (!bound || !qa_q1_game_target_binding(g, actor->id, &expected, error) ||
                 !same_target(&actual, &expected)) {

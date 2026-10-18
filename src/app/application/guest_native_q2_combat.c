@@ -171,7 +171,7 @@ static combat_record *record_for(struct application_native_q2_combat *p, qa_acto
     size_t value;
     return qa_actor_index_find(&p->record_index, actor, &value) ? (combat_record *)(uintptr_t)value : NULL;
 }
-const application_q2_combat_profile *application_native_q2_combat_profile(
+application_q2_combat_profile *application_native_q2_combat_profile(
     const struct application_native_q2 *engine)
 {
     return engine && engine->source_combat ? &engine->source_combat->profile : NULL;

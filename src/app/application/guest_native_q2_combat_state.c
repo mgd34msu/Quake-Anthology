@@ -230,6 +230,27 @@ bool application_q2_combat_profile_read(struct application_native_q2 *engine,
             !item(p, armor, "shield", &unused, error) || !item(p, armor, "cells", &unused, error)) return false;
     }
 #undef READ
+    const char *const target_names[] = {"targetname", "target", "killtarget", "message",
+        p->kex ? "use.value" : "use", "delay", "wait"};
+    uint32_t *target_offsets[] = {&p->authored.targetname, &p->authored.target,
+        &p->authored.killtarget, &p->authored.message, &p->authored.use,
+        &p->authored.delay, &p->authored.wait};
+    p->authored.present = p->classname != UINT32_MAX;
+    qa_json_id target_layout = qa_json_get(doc, p->world, p->kex ? "edict" : "fields");
+    for (size_t i = 0; i < sizeof(target_names) / sizeof(*target_names); ++i) {
+        uint32_t *offset = target_offsets[i];
+        *offset = UINT32_MAX;
+        if (p->kex) {
+            if (!field(doc, target_layout, target_names[i], i < 5 ? "pointer" : "float32",
+                    1, offset, true, error)) return false;
+        } else if (qa_json_get(doc, target_layout, target_names[i]) != QA_JSON_NONE &&
+            !word(doc, target_layout, target_names[i], offset, error)) return false;
+        if (*offset == UINT32_MAX) p->authored.present = false;
+        else if (!range(*offset, i < 5 ? p->target.pointer_bytes : 4,
+                p->entity_bytes, error)) return false;
+    }
+    if (p->authored.present &&
+        !word(doc, entries, "free", &p->authored.free_entry, error)) return false;
     qa_json_id inventory = qa_json_get(doc, root, "inventory"); uint32_t actual_pointer, actual_offset, actual_count;
     if (!word(doc, inventory, "client", &actual_pointer, error) ||
         !word(doc, inventory, "inventory", &actual_offset, error) ||

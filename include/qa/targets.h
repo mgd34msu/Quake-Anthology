@@ -66,6 +66,9 @@ typedef struct qa_target_binding {
     bool (*set_delay)(void *, qa_actor_id, float seconds, qa_error *);
     /* Source killtarget removal may splice an actor out of its native team. */
     bool (*before_remove)(void *, qa_actor_id, qa_error *);
+    /* External owners perform their actual source removal and reconciliation.
+     * A source-protected row may remain live after a successful call. */
+    bool (*remove)(void *, qa_actor_id, qa_error *);
     /* Native source shader targets retain their own AddRemap registry and
      * source clock. This callback belongs to the exact actor binding. */
     bool (*remap_shader)(void *, qa_actor_id source, qa_string_id old_name,
@@ -100,6 +103,7 @@ qa_targets *qa_targets_create(const qa_target_options *, qa_error *);
 const qa_string_id *qa_targets_field_keys(const qa_targets *);
 void qa_targets_destroy(qa_targets *);
 bool qa_targets_bind(qa_targets *, const qa_target_binding *, qa_error *);
+bool qa_targets_binding(const qa_targets *, qa_actor_id, qa_target_binding *);
 void qa_targets_unbind(qa_targets *, qa_actor_id);
 /* Provider teardown removes only its own current binding. */
 void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_context);

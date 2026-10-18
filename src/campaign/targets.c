@@ -35,6 +35,13 @@ static bool valid_string(const qa_targets *targets, qa_string_id id) {
     qa_bytes text = qa_strings_text(qa_session_strings(targets->options.session), id);
     return text.data && !memchr(text.data, 0, text.size);
 }
+bool qa_targets_binding(const qa_targets *targets, qa_actor_id actor, qa_target_binding *out) {
+    if (!targets || !out) return false;
+    const qa_target_binding *entry = binding(targets, actor);
+    if (!entry) return false;
+    *out = *entry;
+    return true;
+}
 static bool valid_fields(const qa_targets *targets, const qa_authored_target *fields) {
     return isfinite(fields->delay_seconds) && isfinite(fields->wait_seconds) &&
            valid_string(targets, fields->classname) && valid_string(targets, fields->targetname) &&
@@ -190,11 +197,16 @@ static bool monster_before_remove(void *opaque, qa_actor_id actor, qa_error *err
     qa_target_binding native = ((target_monster *)opaque)->native;
     return !native.before_remove || native.before_remove(native.context, actor, error);
 }
+static bool monster_remove(void *opaque, qa_actor_id actor, qa_error *error) {
+    qa_target_binding native = ((target_monster *)opaque)->native;
+    return native.remove(native.context, actor, error);
+}
 static qa_target_binding monster_binding(target_monster *monster) {
     return (qa_target_binding){.actor = monster->native.actor, .source = monster->authored.source,
         .context = monster, .read = monster_read, .use = monster_use, .field = monster_field,
         .set_targetname = monster_targetname, .set_target = monster_target, .set_delay = monster_delay,
-        .before_remove = monster_before_remove};
+        .before_remove = monster_before_remove,
+        .remove = monster->native.remove ? monster_remove : NULL};
 }
 void qa_targets_monsters_configure(qa_targets *targets, void *context,
     bool (*resolve)(void *, qa_actor_owner, qa_monster_mission *, qa_error *)) {
@@ -753,9 +765,14 @@ static bool use_now(qa_targets *targets, qa_target_use request, target_snapshot_
                 if (!current.before_remove(current.context, victims[i], error))
                     return false;
             }
-            if (live(targets, victims[i]) &&
-                !qa_session_release(targets->options.session, victims[i], error))
-                return false;
+            if (live(targets, victims[i])) {
+                entry = binding(targets, victims[i]);
+                if (entry && entry->remove) {
+                    qa_target_binding current = *entry;
+                    if (!current.remove(current.context, victims[i], error)) return false;
+                } else if (!qa_session_release(targets->options.session, victims[i], error))
+                    return false;
+            }
             if (!q1 && !live(targets, request.source))
                 return true;
         }

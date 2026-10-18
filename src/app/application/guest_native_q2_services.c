@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_targets.h"
 #include "native_q2_client_stages.h"
 #include "native_q2_source_actors.h"
 #include "guest_native_q2_combat.h"
@@ -662,7 +663,8 @@ bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slo
     if (!qa_session_bind_execution(engine->provider->application->session, actor,
         engine->provider->owner, error)) return false;
     if (!engine->map_ready && application_q2_original_source(engine->provider)) return true;
-    return application_native_q2_source_actors_declared(engine) ?
+    bool ok = application_native_q2_source_actors_declared(engine) ?
          application_native_q2_source_actors_admit(engine, slot, actor, error) :
          application_native_q2_combat_admit(engine, slot, actor, true, error);
+    return ok && application_native_q2_targets_admit(engine, slot, actor, true, error);
 }

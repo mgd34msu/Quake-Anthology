@@ -5,6 +5,7 @@
 #include "guest_qc_internal.h"
 #include "guest_qc_objectives.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_targets.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q3_save.h"
@@ -380,13 +381,16 @@ static bool restore_think(void *context, qa_actor_owner owner, qa_actor_id actor
     return application_fail(error, QA_ERROR_FORMAT, "saved scheduler callback names an absent selected provider");
 }
 
-static bool restore_qc_bindings(void *context, qa_error *error)
+static bool restore_entity_bindings(void *context, qa_error *error)
 {
     qa_application *candidate = context;
     for (size_t i = 0; i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
         if (!provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_QC &&
             !application_qc_bind_entities(provider, error)) return false;
+        if (!provider->trajectory_only && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            provider->state.native.q2_engine &&
+            !application_native_q2_targets_refresh(provider->state.native.q2_engine, error)) return false;
     }
     return true;
 }
@@ -398,7 +402,7 @@ bool application_save_foundation_finish(qa_application *candidate,
         candidate->session == NULL || !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "foundation restore requires an isolated prepared candidate");
     if (!qa_world_checkpoint_restore(candidate->world, &value->world,
-            restore_qc_bindings, candidate, error)) return false;
+            restore_entity_bindings, candidate, error)) return false;
     bool redundant_clock = false;
     for (size_t i = 0; i < value->session.component_count; ++i) {
         application_provider *provider = application_provider_lookup(candidate,

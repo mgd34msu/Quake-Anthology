@@ -147,10 +147,15 @@ bool application_qc_targets_bind(struct application_qc_state *engine,
 {
     (void)vm;
     if (access->binding.kind != QA_QC_SLOT_OWNED) return true;
+    qa_targets *targets = engine->provider->application->targets;
+    qa_target_binding current;
+    if (qa_targets_binding(targets, access->binding.actor, &current) &&
+        current.context == engine && current.read == read && current.use == use)
+        return true;
     qa_target_binding binding;
     if (!application_qc_target_binding(engine->provider, access->binding.actor,
             &binding, error) ||
-        !qa_targets_bind(engine->provider->application->targets, &binding, error))
+        !qa_targets_bind(targets, &binding, error))
         return false;
     return true;
 }

@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_targets.h"
 #include "guest_native_q2_original_save.h"
 #include "guest_q2_control.h"
 #include "qa/network.h"
@@ -78,6 +79,7 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     if (!application_native_q2_inventory_scanner_suspend(engine->inventory_scanner,error)) return false;
     if (!application_native_q2_callbacks_suspend(engine,error)) return false;
     if (!application_native_q2_source_actors_suspend(engine,error)) return false;
+    if (!application_native_q2_targets_close(engine,error)) return false;
     if (!application_native_q2_stages_close(engine,error)) return false;
     if (!application_native_q2_attack_suspend(engine, error) ||
         !application_native_q2_combat_suspend(engine, error)) return false;
@@ -116,6 +118,7 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
                 return false;
         }
     }
+    if (!application_native_q2_targets_refresh(engine, error)) return false;
     if (!application_native_q2_visibility_validate(engine, error)) return false;
     if(!application_native_q2_callbacks_finish_restore(engine,error)) return false;
     if(engine->inventory_rows&&engine->map_ready&&

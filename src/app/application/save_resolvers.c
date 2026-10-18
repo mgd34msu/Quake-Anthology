@@ -7,6 +7,7 @@
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_targets.h"
 #include "native_q2_callbacks.h"
 #include "native_q2_inventory_rows.h"
 #include "native_q2_source_actors.h"
@@ -204,6 +205,8 @@ static bool target(void *opaque, qa_actor_id actor, qa_ruleset_id clock,
             ok = qa_q3_game_target_binding(provider->state.q3, actor, out, error);
         else if (provider->kind == APPLICATION_PROVIDER_QC)
             ok = application_qc_target_binding(provider, actor, out, error);
+        else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+            ok = application_native_q2_targets_binding(provider, actor, out, error);
     }
     if (ok && out->source == clock)
         return true;

@@ -39,6 +39,5 @@ bool qa_persistence_pickups_restore(qa_session *, qa_pickups *,
 bool qa_persistence_targets_capture(qa_targets *, qa_buffer *, qa_error *);
 bool qa_persistence_targets_restore(qa_targets *,
     const qa_persistence_gameplay_resolvers *, qa_bytes, qa_error *);
-bool qa_persistence_targets_binding(const qa_targets *, qa_actor_id, qa_target_binding *);
 
 #endif
