@@ -12,7 +12,6 @@ typedef struct damage_delivery {
 } damage_delivery;
 typedef struct reaction_watch {
     struct application_q3_damage_frame *frame;
-    qa_qvm_binding binding;
     uint32_t offset, pointer;
     application_q3_reaction_call arguments;
     qa_reaction kind;
@@ -38,6 +37,7 @@ struct application_q3_damage_scopes {
     q3g_role *role;
     const application_q3_combat_profile *profile;
     application_q3_damage_frame *current, *retained;
+    qa_qvm_binding resolver;
     size_t frame_bytes;
 };
 static bool fail(qa_error *error, qa_status status, const char *text)
@@ -75,35 +75,67 @@ static bool touches(const qa_qvm_committed_write *event, uint32_t at, size_t siz
     }
     return false;
 }
-static bool reaction_enter(void *context, const qa_qvm_call *call, qa_error *error)
+typedef struct original_reaction {
+    const qa_qvm_call *call;
+    int32_t *result;
+} original_reaction;
+static bool reaction_original(void *context, qa_error *error)
 {
-    reaction_watch *watch = context; application_q3_damage_frame *frame = watch->frame;
-    bool report; int32_t pointer, target, amount;
-    if (!reporting(frame, &report, error)) return false;
-    if (!report) return true;
-    if (!application_q3_combat_word_read(&frame->source, frame->source.entity + watch->offset, &pointer, error) ||
-        !qa_qvm_call_argument(call, watch->arguments.target, &target, error)) return false;
-    if ((uint32_t)pointer != watch->pointer || (uint32_t)target != frame->source.entity) return true;
-    if (!qa_qvm_call_argument(call, watch->arguments.amount, &amount, error)) return false;
-    frame->reacting = true;
-    frame->result = (qa_damage_result){.applied_damage = amount, .reaction = watch->kind};
-    if (!qa_damage_before_reaction(frame->observer, &frame->result, error)) return false;
-    bool live;
-    return actor_live(frame, &live, error) && (live || application_q3_damage_scope_cancel(frame, error));
+    original_reaction *original = context;
+    return qa_qvm_proceed(original->call, original->result, error);
+}
+static bool reaction_enter(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+{
+    application_q3_damage_scopes *owner = context;
+    for (application_q3_damage_frame *frame = owner->current; frame; frame = frame->previous) {
+        if (!frame->active || frame->reacting) continue;
+        for (size_t i = 0; i < 2; ++i) {
+            reaction_watch *watch = frame->reactions + i;
+            if (!watch->pointer || call->instruction != watch->pointer) continue;
+            int32_t target, pointer, amount;
+            if (!qa_qvm_call_argument(call, watch->arguments.target, &target, error)) return false;
+            if ((uint32_t)target != frame->source.entity) continue;
+            bool report;
+            if (!reporting(frame, &report, error)) return false;
+            if (!report) continue;
+            if (!application_q3_combat_word_read(&frame->source,
+                    frame->source.entity + watch->offset, &pointer, error)) return false;
+            if ((uint32_t)pointer != call->instruction) continue;
+            if (!qa_qvm_call_argument(call, watch->arguments.amount, &amount, error)) return false;
+            frame->reacting = true;
+            frame->result = (qa_damage_result){.applied_damage = amount, .reaction = watch->kind};
+            original_reaction original = {call, result};
+            *result = 0;
+            if (!qa_damage_dispatch_source_reaction(frame->observer, &frame->result,
+                    frame->request->knockback, frame->request->point,
+                    owner->role->engine->provider->owner, reaction_original, &original, error)) return false;
+            bool live;
+            return actor_live(frame, &live, error) &&
+                (live || application_q3_damage_scope_cancel(frame, error));
+        }
+    }
+    return qa_qvm_proceed(call, result, error);
+}
+static qa_qvm_function_hook reaction_resolve(void *context, const qa_qvm_call *call, void **hook_context)
+{
+    application_q3_damage_scopes *owner = context;
+    for (application_q3_damage_frame *frame = owner->current; frame; frame = frame->previous) {
+        if (!frame->active || frame->reacting) continue;
+        for (size_t i = 0; i < 2; ++i)
+            if (frame->reactions[i].pointer && call->instruction == frame->reactions[i].pointer) {
+                *hook_context = owner;
+                return reaction_enter;
+            }
+    }
+    return NULL;
 }
 static bool reaction_refresh(reaction_watch *watch, qa_error *error)
 {
     application_q3_damage_frame *frame = watch->frame; int32_t pointer;
     if (!application_q3_combat_word_read(&frame->source,
         frame->source.entity + watch->offset, &pointer, error)) return false;
-    if ((uint32_t)pointer == watch->pointer) return true;
-    if (watch->binding) {
-        if (!qa_qvm_unbind(frame->call.vm, watch->binding, error)) return false;
-        watch->binding = 0;
-    }
     watch->pointer = (uint32_t)pointer;
-    return !pointer || qa_qvm_observe_function(frame->call.vm, (uint32_t)pointer,
-        reaction_enter, watch, &watch->binding, error);
+    return true;
 }
 static bool store_publish(void *context, qa_qvm *vm,
     const qa_qvm_committed_write *event, qa_error *error)
@@ -216,9 +248,9 @@ static bool frame_close(application_q3_damage_frame *frame, qa_error *error)
         if (qa_qvm_unobserve_writes(frame->call.vm, frame->writes, &current)) frame->writes = 0;
         else { first = current; ok = false; }
     }
-    for (size_t i = 0; i < 2; ++i) if (frame->reactions[i].binding) {
+    if (!frame->previous && frame->owner->resolver) {
         qa_error current = {0};
-        if (qa_qvm_unbind(frame->call.vm, frame->reactions[i].binding, &current)) frame->reactions[i].binding = 0;
+        if (qa_qvm_unbind(frame->call.vm, frame->owner->resolver, &current)) frame->owner->resolver = 0;
         else if (ok) { first = current; ok = false; }
     }
     if (!ok && error) *error = first;
@@ -253,7 +285,7 @@ bool application_q3_damage_scopes_create(q3g_role *role,
     owner->role = role; owner->profile = profile; *out = owner; return true;
 }
 bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *owner)
-{ return owner && !owner->current && !owner->retained; }
+{ return owner && !owner->current && !owner->retained && !owner->resolver; }
 bool application_q3_damage_scopes_quiescent(const application_q3_damage_scopes *owner)
 { return owner && !owner->current; }
 void application_q3_damage_scopes_health_projected(application_q3_damage_scopes *owner,
@@ -327,6 +359,8 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
         ok = reaction_refresh(frame->reactions, error) && reaction_refresh(frame->reactions + 1, error) &&
             qa_qvm_observe_writes_owned(call->vm, ranges, count, store_publish, store_after,
                 store_dispose, frame, &frame->writes, error);
+        if (ok && !frame->previous)
+            ok = qa_qvm_bind_resolver(call->vm, reaction_resolve, owner, &owner->resolver, error);
     }
     int32_t ignored;
     if (ok) ok = qa_qvm_proceed(call, &ignored, error);
