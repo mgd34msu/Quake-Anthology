@@ -27,12 +27,29 @@ typedef struct q3g_spawn_row {
     qa_actor_id actor;
     uint32_t slot;
     int32_t count;
+    application_player_spawn_scope selected;
 } q3g_spawn_row;
 typedef struct q3g_spawn_scope {
     struct q3g_spawn_scope *previous;
     size_t count;
     q3g_spawn_row clients[64];
 } q3g_spawn_scope;
+
+void application_q3_guest_spawn_point(q3g_role *role, qa_actor_id actor,
+    qa_actor_id point, const qa_body_state *body)
+{
+    qa_application *app = role->engine->provider->application;
+    for (const application_player_spawn_scope *selected = app->players->spawning;
+         selected; selected = selected->previous)
+        if (qa_actor_id_equal(selected->actor, actor)) return;
+    for (q3g_spawn_scope *scope = role->spawn_scope; scope; scope = scope->previous)
+        for (size_t i = 0; i < scope->count; ++i)
+            if (qa_actor_id_equal(scope->clients[i].actor, actor)) {
+                scope->clients[i].selected = (application_player_spawn_scope){
+                    .actor = actor, .point = point, .body = *body};
+                return;
+            }
+}
 
 static bool spawn_client_current(q3g_role *role, const q3g_spawn_row *row)
 {
@@ -91,7 +108,14 @@ static bool spawn_complete(q3g_role *role, q3g_spawn_scope *scope, qa_error *err
         if (player.clientNum != (int32_t)row->slot || player.persistant[4] == row->count ||
             !spawn_client_current(role, row)) continue;
         row->count = player.persistant[4];
-        if (!application_players_guest_spawned(engine->provider, row->actor, true, error)) return false;
+        bool selected = row->selected.actor.registry != 0;
+        if (selected) {
+            row->selected.previous = app->players->spawning;
+            app->players->spawning = &row->selected;
+        }
+        bool completed = application_players_guest_spawned(engine->provider, row->actor, true, error);
+        if (selected) app->players->spawning = row->selected.previous;
+        if (!completed) return false;
         for (q3g_spawn_scope *parent = scope->previous; parent; parent = parent->previous)
             for (size_t j = 0; j < parent->count; ++j)
                 if (parent->clients[j].slot == row->slot &&

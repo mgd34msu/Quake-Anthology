@@ -214,6 +214,7 @@ static bool select_spawn(void *context, const qa_qvm_call *call, int32_t *result
         if (!qa_qvm_write(call->vm, (uint32_t)arguments[i],
                 (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     }
+    application_q3_guest_spawn_point(input->role, scope->actor, point, &body);
     *result = (int32_t)address;
     return true;
 }
