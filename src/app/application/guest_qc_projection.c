@@ -1,6 +1,7 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_combat.h"
 #include "guest_qc_targets.h"
+#include "control_frame.h"
 
 static bool controls_body(struct application_qc_state *engine, qa_actor_id actor)
 {
@@ -76,7 +77,11 @@ bool application_qc_project_body_store(struct application_qc_state *engine, qa_q
     qa_qc_slot_binding binding;
     if (!qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
     if (binding.kind != QA_QC_SLOT_BORROWED) return true;
-    if (!controls_body(engine, actor)) {
+    const application_control_context *control =
+        application_control_frame_current(engine->provider->application, actor);
+    bool source_control = event->depth && control &&
+        application_control_provider(control) == engine->provider->owner;
+    if (!controls_body(engine, actor) && !source_control) {
         const qa_actor_record *source = qa_actors_get(qa_session_actors(engine->services.session), actor);
         const application_qc_client *client = application_qc_client_for_actor(engine, actor);
         if (!source || source->owner != engine->provider->owner ||
