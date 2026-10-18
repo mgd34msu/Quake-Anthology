@@ -239,8 +239,10 @@ bool application_q3_combat_reaction(application_q3_combat *owner,
     if (ok && live) {
         qa_combat_state state = {0};
         ok = qa_combat_read_traits(shared(owner), outcome->request.target, &state, error);
-        double health = reaction.death ? fmax(-999, state.health) : state.health;
-        if (ok) ok = application_q3_combat_health_write(&reaction.source, qa_source_to_i32(health), error);
+        if (ok) ok = application_q3_combat_health_write(&reaction.source, qa_source_to_i32(state.health), error);
+        if (ok && reaction.death && state.health < -999)
+            ok = application_q3_combat_word_write(&reaction.source,
+                reaction.source.entity + d->fields.health, -999, error);
         if (ok && live) {
             qa_damage_request request = outcome->request;
             request.amount = outcome->result.applied_damage;
