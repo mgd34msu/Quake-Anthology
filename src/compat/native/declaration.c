@@ -59,11 +59,13 @@ static bool normalize_path(qa_bytes input, char **out, qa_error *error) {
 }
 
 static bool required_primary(const qa_json_document *document, qa_json_id primary,
-                             qa_error *error) {
+                             qa_native_profile profile, qa_error *error) {
     static const char *required[] = {"weapons", "player",  "commands", "inventory",
                                      "drop",    "pickups", "world"};
     if (!json_object(document, primary, "primary", error))
         return false;
+    if (profile == QA_NATIVE_Q3_VMMAIN)
+        return true;
     for (size_t index = 0; index < sizeof(required) / sizeof(required[0]); ++index) {
         qa_json_id section = qa_json_get(document, primary, required[index]);
         if (!json_object(document, section, required[index], error))
@@ -439,10 +441,12 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     if (!artifact_path || !module || !out || (!json.data && json.size))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native declaration bytes, artifact and module are required");
-    if (module->info.profile != QA_NATIVE_Q2_GAME_API3 &&
-        module->info.profile != QA_NATIVE_Q2_GAME_API2023)
+    const native_profile_spec *profile = native_profile(module->info.profile);
+    bool q2 = module->info.profile == QA_NATIVE_Q2_GAME_API3 ||
+        module->info.profile == QA_NATIVE_Q2_GAME_API2023;
+    if (!q2 && module->info.profile != QA_NATIVE_Q3_VMMAIN)
         return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
-                           "native primary declarations apply only to Q2 game modules");
+                           "native primary declaration requires a game module");
     char *selected_path = NULL;
     if (!normalize_path((qa_bytes){(const uint8_t *)artifact_path, strlen(artifact_path)},
                         &selected_path, error))
@@ -467,7 +471,9 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
     qa_json_document *document = declaration->document;
     qa_json_id root = qa_json_root(document);
     if (qa_json_get(document, root, "runtime") != QA_JSON_NONE) {
-        bool valid = callback_document(declaration, selected_path, module, error);
+        bool valid = q2 ? callback_document(declaration, selected_path, module, error) :
+            native_fail(error, QA_ERROR_FORMAT, 0,
+                "native Q3 primary uses its module declaration, not Q2 callback records");
         if (valid) {
             declaration->primary = root;
             valid = collect_regions(declaration, module, root, "", 0, error) &&
@@ -519,9 +525,9 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
                 qa_json_i64(document, qa_json_get(document, entry, "apiVersion"), &api_version,
                             error) &&
                 normalize_path((qa_bytes){path_text.data, path_text.size}, &paths[index], error);
-        if (valid && api_version != 3 && api_version != 2023) {
+        if (valid && api_version != 3 && api_version != 2023 && api_version != 8) {
             qa_error_set(error, QA_ERROR_FORMAT, index,
-                         "native declaration module API must be 3 or 2023");
+                         "native declaration module has an unsupported game API");
             valid = false;
         }
         for (size_t previous = 0; valid && previous < index; ++previous) {
@@ -532,13 +538,13 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
             }
         }
         if (valid && !strcmp(paths[index], selected_path)) {
-            int64_t expected_api = module->info.profile == QA_NATIVE_Q2_GAME_API3 ? 3 : 2023;
+            int64_t expected_api = profile->api_version;
             if (api_version != expected_api) {
                 qa_error_set(error, QA_ERROR_FORMAT, index,
                              "native declaration API does not match its selected module");
                 valid = false;
             } else {
-                valid = required_primary(document, primary, error);
+                valid = required_primary(document, primary, module->info.profile, error);
                 if (valid)
                     selected_primary = primary;
             }
@@ -555,11 +561,12 @@ bool qa_native_declaration_load(qa_bytes json, const char *artifact_path,
         declaration->primary = selected_primary;
         declaration->primary_offset = (size_t)(primary_source.data - declaration->json);
         declaration->primary_size = primary_source.size;
-        valid = collect_regions(declaration, module, selected_primary, "", 0, error) &&
-            inventory_regions(declaration, module, selected_primary, error) &&
-            movement_points(declaration, module, selected_primary, error) &&
-            pickup_regions(declaration, module, selected_primary, error) &&
-            drop_regions(declaration, module, selected_primary, error);
+        valid = collect_regions(declaration, module, selected_primary, "", 0, error);
+        if (valid && q2)
+            valid = inventory_regions(declaration, module, selected_primary, error) &&
+                movement_points(declaration, module, selected_primary, error) &&
+                pickup_regions(declaration, module, selected_primary, error) &&
+                drop_regions(declaration, module, selected_primary, error);
     }
     for (size_t index = 0; index < module_count; ++index)
         free(paths[index]);

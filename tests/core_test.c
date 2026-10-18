@@ -10089,6 +10089,49 @@ static void test_native_saved_image_references(void)
     guest_elf_close(&program); guest_elf_close(&library);
 }
 
+static void test_native_q3_declaration(void)
+{
+    qa_error error = {0};
+    uint8_t bytes[128] = {0};
+    memcpy(bytes, "\x7f" "ELF", 4); bytes[4] = bytes[5] = bytes[6] = 1;
+    qa_store_u16le(bytes + 16, 3); qa_store_u16le(bytes + 18, 3);
+    qa_store_u32le(bytes + 20, 1); qa_store_u32le(bytes + 24, 112);
+    qa_store_u32le(bytes + 28, 52); qa_store_u16le(bytes + 40, 52);
+    qa_store_u16le(bytes + 42, 32); qa_store_u16le(bytes + 44, 1);
+    qa_store_u32le(bytes + 52, 1); qa_store_u32le(bytes + 68, sizeof(bytes));
+    qa_store_u32le(bytes + 72, 4096); qa_store_u32le(bytes + 76, 5);
+    qa_store_u32le(bytes + 80, 4096);
+    qa_native_module *module = NULL;
+    CHECK(qa_native_module_load((qa_bytes){bytes, sizeof(bytes)}, "qagamei386.so",
+        QA_NATIVE_Q3_VMMAIN, &module, &error));
+    const char *json = "{\"version\":1,\"modules\":["
+        "{\"artifactPath\":\"gamex86.dll\",\"apiVersion\":3,\"primary\":{\"other\":true}},"
+        "{\"artifactPath\":\"qagamei386.so\",\"apiVersion\":8,\"primary\":{"
+        "\"input\":{\"clientSpawn\":{\"entry\":112,\"join\":113}},"
+        "\"combat\":{\"entityStride\":808}}}]}";
+    qa_native_declaration *declaration = NULL;
+    CHECK(qa_native_declaration_load((qa_bytes){(const uint8_t *)json, strlen(json)},
+        "qagamei386.so", module, &declaration, &error));
+    uint64_t stride = 0;
+    CHECK(qa_native_declaration_u64(declaration, "/combat/entityStride", &stride, &error));
+    CHECK(stride == 808 && qa_native_declaration_primary(declaration).size);
+    qa_native_declared_region region;
+    CHECK(qa_native_declaration_region_count(declaration) == 1);
+    CHECK(qa_native_declaration_find_region(declaration, "/input/clientSpawn", &region, &error));
+    CHECK(region.entry_rva == 112 && region.join_rva == 113);
+    qa_native_declaration_destroy(declaration); declaration = NULL;
+    CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)json, strlen(json)},
+        "gamex86.dll", module, &declaration, &error));
+    CHECK(!declaration && error.code == QA_ERROR_FORMAT);
+    error = (qa_error){0};
+    const char *outside = "{\"version\":1,\"modules\":[{\"artifactPath\":\"qagamei386.so\","
+        "\"apiVersion\":8,\"primary\":{\"input\":{\"spawn\":{\"entry\":4096,\"join\":4097}}}}]}";
+    CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)outside, strlen(outside)},
+        "qagamei386.so", module, &declaration, &error));
+    CHECK(!declaration && error.code == QA_ERROR_FORMAT);
+    qa_native_module_release(module);
+}
+
 static void test_native_export_visibility(void)
 {
     guest_elf_symbol symbol = {.name = "GetCGameAPI", .section = 1, .binding = 1};
@@ -12401,6 +12444,7 @@ int main(int argc, char **argv)
     test_native_import_slot_identity();
     test_native_export_visibility();
     test_native_saved_image_references();
+    test_native_q3_declaration();
     test_native_string_boundaries();
     test_native_write_receipts();
     test_native_resumable_budget();
