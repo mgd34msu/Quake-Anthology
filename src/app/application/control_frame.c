@@ -2450,7 +2450,7 @@ bool application_control_frames_actor(void *opaque, qa_session *session, qa_acto
         else ready = application_control_turn_resume(input->turn, error);
     }
     if (ready && provider && provider->kind == APPLICATION_PROVIDER_QC)
-        ready = application_qc_control_before_actor(provider, actor, frame, error);
+        ready = application_qc_control_before_actor(provider, actor, error);
     if (!ready) {
         struct application_control_turn *turn = input->turn; input->turn = NULL;
         qa_error cleanup = {0};

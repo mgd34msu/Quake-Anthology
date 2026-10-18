@@ -1006,11 +1006,11 @@ static bool control_command_think(struct application_qc_state *engine, qa_actor_
     return qa_session_invoke(engine->services.session, actor, QA_INVOKE_THINK, control_invoke_think, &call, error);
 }
 bool application_qc_control_before_actor(application_provider *provider, qa_actor_id actor,
-                                           const qa_source_frame *frame, qa_error *error)
+                                       qa_error *error)
 {
     struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
-    if (!engine || !frame || frame->provider != provider->owner)
-        return application_fail(error, QA_ERROR_ARGUMENT, "QC actor control needs its actual execution frame");
+    if (!engine)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC actor control has no source runtime");
     if (provider->state.qc.qualified) return true;
     const qa_qc_definition *field = provider->state.qc.engine->global_bindings->force_retouch;
     if (!field) return true;
