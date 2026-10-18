@@ -812,31 +812,26 @@ static bool retire(void *context,const qa_application_client_source *source,qa_e
             if (!qa_input_seat_recipient_retired_consume(input,actual.context.console,actual.context.cvars,
                 &actual.context.command,e)) return false;
             row->recipient_returned=true;
-        } else if (row->retirement_release &&
-            (qa_input_release_failed_is(row->retirement_release,input) || !active(row,&command))) {
-            neutral_retirement_history history={row,&actual};
-            if (!frontend_seat_engine_recipient_retirement_ready(f,row->physical_seat,row->retirement_release,
-                QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement_history,&history,&command,e)) return false;
-            qa_input_release_retirement_publish(row->retirement_release);
-            row->retirement_release=NULL; row->retirement_input=NULL;
-            frontend_seat_engine_recipient_publish(f,row->physical_seat,&command);
-            if (!qa_input_seat_recipient_retired_consume(input,actual.context.console,actual.context.cvars,
-                &actual.context.command,e)) return false;
-            row->recipient_returned=true;
         } else {
-            if (!active(row,&command))
-                return fail(e,QA_ERROR_ARGUMENT,"CLIENT held retirement lost its active physical namespace");
             qa_input_release_scope all={.all=true,.controller=-1};
             if (!row->retirement_release) {
                 if (!qa_input_release_prepare(input,&all,(double)f->wall_time_ns/1000000.0,&row->retirement_release,e)) return false;
                 row->retirement_input=input; row->retirement_started=true;
             }
-            qa_input_release_outcome outcome=QA_INPUT_RELEASE_UNENTERED;
-            if (!qa_input_release_advance(row->retirement_release,&outcome,e)) return false;
-            if (outcome==QA_INPUT_RELEASE_WAITING) return false;
-            if (outcome!=QA_INPUT_RELEASE_COMPLETED || !qa_input_release_ready(row->retirement_release,input,&all,e) ||
-                !frontend_seat_engine_recipient_ready(f,row->physical_seat,&command,e)) return false;
-            qa_input_release_publish(row->retirement_release); row->retirement_release=NULL; row->retirement_input=NULL;
+            if (qa_input_release_failed_is(row->retirement_release,input) || !active(row,&command)) {
+                neutral_retirement_history history={row,&actual};
+                if (!frontend_seat_engine_recipient_retirement_ready(f,row->physical_seat,row->retirement_release,
+                    QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement_history,&history,&command,e)) return false;
+                qa_input_release_retirement_publish(row->retirement_release);
+            } else {
+                qa_input_release_outcome outcome=QA_INPUT_RELEASE_UNENTERED;
+                if (!qa_input_release_advance(row->retirement_release,&outcome,e)) return false;
+                if (outcome==QA_INPUT_RELEASE_WAITING) return false;
+                if (outcome!=QA_INPUT_RELEASE_COMPLETED || !qa_input_release_ready(row->retirement_release,input,&all,e) ||
+                    !frontend_seat_engine_recipient_ready(f,row->physical_seat,&command,e)) return false;
+                qa_input_release_publish(row->retirement_release);
+            }
+            row->retirement_release=NULL; row->retirement_input=NULL;
             frontend_seat_engine_recipient_publish(f,row->physical_seat,&command);
             if (!qa_input_seat_recipient_retired_consume(input,actual.context.console,actual.context.cvars,
                 &actual.context.command,e)) return false;

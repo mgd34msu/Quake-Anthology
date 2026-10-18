@@ -98,16 +98,10 @@ bool frontend_seat_context_ready(void *context,uint32_t ordinal,const qa_command
     if (f && f->application && f->seats && ordinal<f->options.seats && seat==f->seats+ordinal &&
         seat->id==ordinal && command && command->owner && command->owner<=UINT32_MAX) {
         qa_application_client_source source;
-        qa_input_release_scope all={.all=true,.controller=-1};
-        qa_input_release *release=qa_input_seat_release_read(seat->input);
-        bool captured_release=f->capture && release &&
-            qa_input_release_scope_owned(release,seat->input,&all,NULL);
         if (qa_application_client_physical_read(f->application,(qa_actor_owner)command->owner,command->seat,&source,NULL) &&
             source.context.physical_seat==ordinal && qa_application_client_associated(f->application,&source) &&
             (qa_application_command_context_active(f->application,command) ||
-                ((f->source_restoring || (captured_release &&
-                        qa_input_release_console(release)==source.context.console)) &&
-                    qa_application_client_retirement_current(f->application,&source)))) {
+                qa_application_client_retirement_current(f->application,&source))) {
             const qa_command_context *actual=&source.context.command;
             if (command->origin==QA_COMMAND_SEAT && !command->script && !command->console_text &&
                 command->owner==actual->owner && command->session==actual->session &&
