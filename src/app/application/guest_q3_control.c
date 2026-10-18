@@ -12,7 +12,7 @@ struct application_guest_q3_control {
     application_guest_q3_control_scope *scope;
 };
 
-static bool word(const application_guest_q3_control *owner, uint32_t address,
+static bool word(const application_guest_q3_control *owner, uint64_t address,
     uint32_t *out, qa_error *error)
 {
     uint8_t bytes[4];
@@ -20,7 +20,7 @@ static bool word(const application_guest_q3_control *owner, uint32_t address,
     *out = qa_load_u32le(bytes); return true;
 }
 
-static bool vector(const application_guest_q3_control *owner, uint32_t address,
+static bool vector(const application_guest_q3_control *owner, uint64_t address,
     qa_vec3 *out, qa_error *error)
 {
     uint8_t bytes[12];
@@ -48,10 +48,11 @@ static bool current(const application_guest_q3_control *owner,
         scope->slot < data.entity_count && scope->slot < data.client_count;
     if (!live) return false;
     uint64_t entity = data.entities_address + (uint64_t)scope->slot * data.entity_stride;
-    uint32_t player, movement_player;
-    return entity <= UINT32_MAX - owner->profile->source->client_pointer &&
-        word(owner, (uint32_t)entity + owner->profile->source->client_pointer, &player, NULL) && player == scope->player &&
-        word(owner, scope->movement, &movement_player, NULL) && movement_player == scope->player;
+    uint64_t player, movement_player;
+    return qa_q3_host_source_pointer(owner->role->host,
+        entity + owner->profile->source->client_pointer, &player, NULL) && player == scope->player &&
+        qa_q3_host_source_pointer(owner->role->host, scope->movement, &movement_player, NULL) &&
+        movement_player == scope->player;
 }
 
 static bool retain_current(const application_guest_q3_control *owner,
@@ -71,23 +72,24 @@ static bool observe_cancel(const qa_qvm_call *call,
 
 static bool write_word(application_guest_q3_control *owner,
     application_guest_q3_control_scope *scope, const qa_qvm_call *call,
-    uint32_t address, uint32_t value, qa_error *error)
+    uint64_t address, uint32_t value, qa_error *error)
 {
     if (!observe_cancel(call, scope, error)) return false;
     if (scope->cancelled || !retain_current(owner, scope)) return true;
     uint8_t bytes[4]; qa_store_u32le(bytes, value);
-    if (!qa_qvm_write(owner->vm, address, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
+    if (!qa_q3_host_source_bytes_write(owner->role->host, address,
+            (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     (void)retain_current(owner, scope); return observe_cancel(call, scope, error);
 }
 
 static bool write_vector(application_guest_q3_control *owner,
     application_guest_q3_control_scope *scope, const qa_qvm_call *call,
-    uint32_t address, qa_vec3 value, qa_error *error)
+    uint64_t address, qa_vec3 value, qa_error *error)
 {
     const float components[] = {value.x, value.y, value.z};
     for (size_t i = 0; i < 3; ++i) {
         uint32_t bits; memcpy(&bits, components + i, sizeof(bits));
-        if (!write_word(owner, scope, call, address + (uint32_t)i * 4, bits, error)) return false;
+        if (!write_word(owner, scope, call, address + (uint64_t)i * 4, bits, error)) return false;
         if (scope->retired || scope->cancelled) break;
     }
     return true;
@@ -295,7 +297,7 @@ void application_guest_q3_control_restore_binding(application_guest_q3_control *
 
 bool application_guest_q3_control_begin(application_guest_q3_control *owner, const qa_qvm_call *call,
     const qa_qvm_call *client,
-    qa_actor_id actor, uint32_t slot, uint32_t player, uint32_t movement,
+    qa_actor_id actor, uint32_t slot, uint64_t player, uint64_t movement,
     const qa_movement_environment *equipment, application_guest_q3_control_scope *scope, qa_error *error)
 {
     if (!scope) return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope requires its destination");
@@ -316,13 +318,12 @@ bool application_guest_q3_control_begin(application_guest_q3_control *owner, con
         scope->data.clients_address + (uint64_t)slot * owner->profile->source->client_stride != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope differs from its located source client");
     uint64_t entity = scope->data.entities_address + (uint64_t)slot * owner->profile->source->entity_stride;
-    uint32_t pointer;
-    if (entity > UINT32_MAX - owner->profile->source->client_pointer)
-        return application_fail(error, QA_ERROR_FORMAT, "Original body source entity leaves QVM memory");
-    if (!word(owner, (uint32_t)entity + owner->profile->source->client_pointer, &pointer, error)) return false;
+    uint64_t pointer;
+    if (!qa_q3_host_source_pointer(owner->role->host,
+            entity + owner->profile->source->client_pointer, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope does not own its source player pointer");
-    if (!word(owner, movement, &pointer, error)) return false;
+    if (!qa_q3_host_source_pointer(owner->role->host, movement, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Original body scope does not own its source player pointer");
     const uint32_t offsets[] = {owner->profile->source->movement_mins, owner->profile->source->movement_maxs, owner->profile->source->movement_trace_callback, owner->profile->source->movement_trace_mask};

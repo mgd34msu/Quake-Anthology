@@ -10257,7 +10257,7 @@ static bool q3_source_write_seen(void *context, qa_qvm *vm,
     return true;
 }
 
-static void q3_source_commands_check(qa_q3_host *host, uint64_t address)
+static void q3_source_commands_check(qa_q3_host *host, uint64_t address, const unsigned *writes)
 {
     qa_error error = {0};
     for (unsigned modern = 0; modern < 2; ++modern) {
@@ -10267,7 +10267,9 @@ static void q3_source_commands_check(qa_q3_host *host, uint64_t address)
             (qa_bytes){&private_buttons, 1}, &error));
         qa_q3_usercmd expected = {.serverTime = 1234567, .angles = {-32768, 65535, 17},
             .buttons = 2049, .weapon = 9, .forwardmove = -127, .rightmove = 127, .upmove = -20}, actual;
+        unsigned before = writes ? *writes : 0;
         CHECK(qa_q3_host_write_usercmd(host, address, true, &expected, &error));
+        CHECK(!writes || *writes > before);
         CHECK(qa_q3_host_source_usercmd(host, address, &actual, &error));
         CHECK(actual.serverTime == expected.serverTime && actual.buttons == expected.buttons &&
             actual.weapon == expected.weapon && actual.forwardmove == expected.forwardmove &&
@@ -10286,6 +10288,15 @@ static void q3_source_commands_check(qa_q3_host *host, uint64_t address)
     host->options.abi = QA_QVM_Q3_MODERN;
     CHECK(!qa_q3_host_source_usercmd(host, 0, &(qa_q3_usercmd){0}, &error));
     CHECK(!qa_q3_host_source_usercmd(host, UINT64_MAX, &(qa_q3_usercmd){0}, &error));
+    uint8_t pointer_bytes[8];
+    uint64_t expected = host->memory.pointer_bytes == 8 ? UINT64_C(0x100002345) : UINT64_C(0xf0002345);
+    qa_store_u64le(pointer_bytes, expected);
+    CHECK(qa_q3_host_source_bytes_write(host, address + 32,
+        (qa_bytes){pointer_bytes, host->memory.pointer_bytes}, &error));
+    uint64_t pointer;
+    CHECK(qa_q3_host_source_pointer(host, address + 32, &pointer, &error));
+    CHECK(pointer == expected);
+    CHECK(!qa_q3_host_source_bytes_write(host, UINT64_MAX, (qa_bytes){pointer_bytes, 1}, &error));
     CHECK(!host->calls);
 }
 
@@ -10443,10 +10454,12 @@ static void test_q3_source_memory(void)
     CHECK(qa_load_u32le(word) == UINT32_C(0x87654321));
     CHECK(!qa_q3_host_source_bytes_project(&host, end, (qa_bytes){projected, 1}, &error));
     CHECK(!qa_q3_host_source_bytes_project(&host, UINT64_MAX, (qa_bytes){projected, 1}, &error));
+    CHECK(qa_q3_host_source_bytes_write(&host, 0, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(!qa_q3_host_source_bytes_write(&host, end, (qa_bytes){projected, 1}, &error));
     unsigned writes = 0; qa_qvm_binding watch;
     qa_qvm_write_range range = {64, 24};
     CHECK(qa_qvm_observe_writes(vm, &range, 1, q3_source_write_seen, NULL, &writes, &watch, &error));
-    q3_source_commands_check(&host, 64);
+    q3_source_commands_check(&host, 64, &writes);
     CHECK(writes);
     qa_q3_usercmd command;
     CHECK(qa_q3_host_source_usercmd(&host, end + 64, &command, &error));
@@ -10469,7 +10482,7 @@ static void test_q3_source_memory(void)
     uint64_t address = UINT64_C(0x100001000);
     CHECK(qa_native_guest_map(guest, address, QA_NATIVE_GUEST_PAGE,
         QA_NATIVE_GUEST_READ, (qa_bytes){bytes + 42, 4}, &mapping, &error));
-    host.memory = (qa_native_host_guest_memory){.context = guest, .read = q3_source_native_read,
+    host.memory = (qa_native_host_guest_memory){.context = guest, .pointer_bytes = 8, .read = q3_source_native_read,
         .write = q3_source_native_write};
     qa_native_instance instance = {.guest = guest}; host.native = &instance;
     CHECK(qa_q3_host_source_bytes_read(&host, address, word, sizeof(word), &error));
@@ -10477,13 +10490,15 @@ static void test_q3_source_memory(void)
     CHECK(!qa_q3_host_source_bytes_read(&host, address + QA_NATIVE_GUEST_PAGE, word, 1, &error));
     CHECK(!qa_q3_host_source_bytes_read(&host, UINT64_MAX, word, sizeof(word), &error));
     CHECK(!qa_q3_host_source_bytes_project(&host, address, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(!qa_q3_host_source_bytes_write(&host, address, (qa_bytes){projected, sizeof(projected)}, &error));
+    CHECK(!host.calls);
     CHECK(qa_native_guest_protect(guest, mapping.id, QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, &error));
     CHECK(qa_q3_host_source_bytes_project(&host, address, (qa_bytes){projected, sizeof(projected)}, &error));
     CHECK(qa_q3_host_source_bytes_read(&host, address, word, sizeof(word), &error));
     CHECK(qa_load_u32le(word) == UINT32_C(0x87654321));
     CHECK(!qa_q3_host_source_bytes_project(&host, address + QA_NATIVE_GUEST_PAGE,
         (qa_bytes){projected, 1}, &error));
-    q3_source_commands_check(&host, address + 64);
+    q3_source_commands_check(&host, address + 64, NULL);
     CHECK(!qa_q3_host_source_usercmd(&host, address + QA_NATIVE_GUEST_PAGE - 23, &command, &error));
     CHECK(!host.calls);
     qa_arena_destroy(&host.scratch);

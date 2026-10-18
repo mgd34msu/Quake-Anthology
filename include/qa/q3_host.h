@@ -323,7 +323,9 @@ typedef struct qa_q3_host_game_data {
 bool qa_q3_host_game_data_read(const qa_q3_host *, qa_q3_host_game_data *);
 /* Private module fields use the same untagged addresses as game_data_read. */
 bool qa_q3_host_source_bytes_read(qa_q3_host *, uint64_t address, void *, size_t, qa_error *);
+bool qa_q3_host_source_bytes_write(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
 bool qa_q3_host_source_bytes_project(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
+bool qa_q3_host_source_pointer(qa_q3_host *, uint64_t address, uint64_t *, qa_error *);
 bool qa_q3_host_source_usercmd(qa_q3_host *, uint64_t address, qa_q3_usercmd *, qa_error *);
 bool qa_q3_host_write_usercmd(qa_q3_host *, uint64_t address, bool preserve_private,
     const qa_q3_usercmd *, qa_error *);

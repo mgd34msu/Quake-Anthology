@@ -80,12 +80,7 @@ bool application_q3_combat_word_write(const application_q3_combat_actor *a,
 {
     uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)value);
     if (!application_q3_combat_actor_current(a, error)) return false;
-    bool ok;
-    if (a->role->vm) {
-        if (address > UINT32_MAX)
-            return fail(error, QA_ERROR_ARGUMENT, "Original combat write leaves its QVM address space");
-        ok = qa_qvm_write(a->role->vm, (uint32_t)address, (qa_bytes){bytes, sizeof(bytes)}, error);
-    } else ok = qa_native_write(qa_native_host_instance(a->role->native), address,
+    bool ok = qa_q3_host_source_bytes_write(a->role->host, address,
         (qa_bytes){bytes, sizeof(bytes)}, error);
     return ok && application_q3_combat_actor_current(a, error);
 }

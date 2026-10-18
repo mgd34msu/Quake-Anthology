@@ -27,7 +27,8 @@ typedef struct guest_client_scope {
     const qa_qvm_call *call;
     qa_actor_id actor;
     qa_q3_host_game_data data;
-    uint32_t slot, player, movement, milliseconds;
+    uint32_t slot, milliseconds;
+    uint64_t player, movement;
     qa_q3_equipment_motion equipment;
     bool equipment_active;
     qa_usercmd application_command;
@@ -85,12 +86,12 @@ static bool record_current(application_guest_input *input, const guest_client_sc
         data.entities_address == scope->data.entities_address && data.clients_address == scope->data.clients_address &&
         data.entity_stride == scope->data.entity_stride && data.client_stride == scope->data.client_stride &&
         scope->slot < data.entity_count && scope->slot < data.client_count)) return false;
-    uint8_t bytes[4];
+    uint64_t pointer;
     uint64_t address = data.entities_address + (uint64_t)scope->slot * data.entity_stride + input->profile->source->client_pointer;
-    if (address > UINT32_MAX || !qa_q3_host_source_bytes_read(input->role->host, address, bytes, sizeof(bytes), NULL) ||
-        qa_load_u32le(bytes) != scope->player) return false;
-    return !scope->movement || (qa_q3_host_source_bytes_read(input->role->host, scope->movement, bytes, sizeof(bytes), NULL) &&
-        qa_load_u32le(bytes) == scope->player);
+    if (!qa_q3_host_source_pointer(input->role->host, address, &pointer, NULL) ||
+        pointer != scope->player) return false;
+    return !scope->movement || (qa_q3_host_source_pointer(input->role->host, scope->movement, &pointer, NULL) &&
+        pointer == scope->player);
 }
 
 static bool current(application_guest_input *input, const guest_client_scope *scope, const qa_qvm_call *call)
@@ -99,7 +100,7 @@ static bool current(application_guest_input *input, const guest_client_scope *sc
     return qa_qvm_call_cancelled(call, &cancelled, NULL) && !cancelled && record_current(input, scope);
 }
 
-static bool source_word(application_guest_input *input, uint32_t address,
+static bool source_word(application_guest_input *input, uint64_t address,
                          uint32_t *value, qa_error *error)
 {
     uint8_t bytes[4];
@@ -120,7 +121,7 @@ static bool foreign_character_dead(application_guest_input *input, qa_actor_id a
     return true;
 }
 
-static uint32_t source_health_address(const application_guest_input *input, uint32_t player)
+static uint64_t source_health_address(const application_guest_input *input, uint64_t player)
 {
     const application_q3_combat_profile *profile = input->role->artifact->combat_profile;
     uint32_t offset = profile ? 184 + application_q3_combat_profile_definition(profile)->state.health_stat * 4 :
@@ -157,10 +158,9 @@ static bool slot_player(application_guest_input *input, uint32_t slot,
         return application_fail(error, QA_ERROR_FORMAT, "Guest input records changed their qualified layout");
     uint64_t entity = data.entities_address + (uint64_t)slot * data.entity_stride;
     uint64_t player = data.clients_address + (uint64_t)slot * data.client_stride;
-    if (entity > UINT32_MAX - input->profile->source->client_pointer || player > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Guest input pointer leaves QVM memory");
-    uint32_t pointer;
-    if (!source_word(input, (uint32_t)entity + input->profile->source->client_pointer, &pointer, error)) return false;
+    uint64_t pointer;
+    if (!qa_q3_host_source_pointer(input->role->host,
+            entity + input->profile->source->client_pointer, &pointer, error)) return false;
     if (pointer != player)
         return application_fail(error, QA_ERROR_FORMAT, "Guest client does not own its located player record");
     qa_actor_id actor;
@@ -263,7 +263,7 @@ static bool select_spawn(void *context, const qa_qvm_call *call, int32_t *result
         qa_store_f32le(bytes, vectors[i].x);
         qa_store_f32le(bytes + 4, vectors[i].y);
         qa_store_f32le(bytes + 8, vectors[i].z);
-        if (!qa_qvm_write(call->vm, (uint32_t)arguments[i],
+        if (!qa_q3_host_source_bytes_write(input->role->host, (uint32_t)arguments[i],
                 (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     }
     application_q3_guest_spawn_point(input->role, scope->actor, point, &body);
@@ -394,17 +394,17 @@ static bool motion_project(application_guest_input *input, guest_client_scope *s
     for (size_t i = 0; i < sizeof(motion) / sizeof(motion[0]); ++i) {
         uint32_t bits; memcpy(&bits, &motion[i], sizeof(bits)); uint8_t bytes[4]; qa_store_u32le(bytes, bits);
         uint32_t offset = i < 6 ? 20u + (uint32_t)i * 4 : 152u + (uint32_t)(i - 6) * 4;
-        if (!qa_qvm_write(input->role->vm, scope->player + offset, (qa_bytes){bytes, 4}, error)) return false;
+        if (!qa_q3_host_source_bytes_write(input->role->host, scope->player + offset, (qa_bytes){bytes, 4}, error)) return false;
         if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
     uint8_t word[4]; qa_store_u32le(word, ground);
-    if (!qa_qvm_write(input->role->vm, scope->player + 68, (qa_bytes){word, 4}, error)) return false;
+    if (!qa_q3_host_source_bytes_write(input->role->host, scope->player + 68, (qa_bytes){word, 4}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (!isfinite(control.view_height) || control.view_height < (float)INT32_MIN ||
         (double)control.view_height > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Guest view height exceeds its source word");
     qa_store_u32le(word, (uint32_t)(int32_t)control.view_height);
-    if (!qa_qvm_write(input->role->vm, scope->player + 164, (qa_bytes){word, 4}, error)) return false;
+    if (!qa_q3_host_source_bytes_write(input->role->host, scope->player + 164, (qa_bytes){word, 4}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     const float bounds[] = {body.bounds.mins.x, body.bounds.mins.y, body.bounds.mins.z,
                             body.bounds.maxs.x, body.bounds.maxs.y, body.bounds.maxs.z};
@@ -412,17 +412,17 @@ static bool motion_project(application_guest_input *input, guest_client_scope *s
         uint32_t bits; memcpy(&bits, &bounds[i], sizeof(bits)); uint8_t bytes[4]; qa_store_u32le(bytes, bits);
         uint32_t offset = i < 3 ? input->profile->source->movement_mins + (uint32_t)i * 4
                                : input->profile->source->movement_maxs + (uint32_t)(i - 3) * 4;
-        if (!qa_qvm_write(input->role->vm, scope->movement + offset, (qa_bytes){bytes, 4}, error)) return false;
+        if (!qa_q3_host_source_bytes_write(input->role->host, scope->movement + offset, (qa_bytes){bytes, 4}, error)) return false;
         if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
     uint8_t water[4]; qa_store_u32le(water, (uint32_t)control.water_level);
-    if (!qa_qvm_write(input->role->vm, scope->movement + input->profile->source->water_movement,
+    if (!qa_q3_host_source_bytes_write(input->role->host, scope->movement + input->profile->source->water_movement,
                        (qa_bytes){water, sizeof(water)}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     qa_collision_bits contents = qa_collision_contents_decode(control.water_type,
         qa_ruleset_read(control.state.kind)->family);
     qa_store_u32le(water, (uint32_t)qa_collision_contents_export(contents, QA_GAME_Q3, 0));
-    if (!qa_qvm_write(input->role->vm, scope->movement + input->profile->source->water_type_movement,
+    if (!qa_q3_host_source_bytes_write(input->role->host, scope->movement + input->profile->source->water_type_movement,
                        (qa_bytes){water, sizeof(water)}, error)) return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     return true;
@@ -445,9 +445,9 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         if (movement == scope->movement) {
             uint32_t axes = input->role->abi == QA_QVM_Q3_116N ? 20u : 21u;
             uint8_t zero[12] = {0};
-            if (!qa_qvm_write(input->role->vm, scope->movement + 4 + axes,
+            if (!qa_q3_host_source_bytes_write(input->role->host, scope->movement + 4 + axes,
                     (qa_bytes){zero, 3}, error) ||
-                !qa_qvm_write(input->role->vm, scope->player + 32,
+                !qa_q3_host_source_bytes_write(input->role->host, scope->player + 32,
                     (qa_bytes){zero, sizeof(zero)}, error)) return false;
             *skip = true; return true;
         }
@@ -626,7 +626,8 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
 typedef struct guest_weapon_preparation {
     application_guest_input *input;
     guest_client_scope *scope;
-    uint32_t address, previous, projected;
+    uint64_t address;
+    uint32_t previous, projected;
     size_t bytes;
 } guest_weapon_preparation;
 
@@ -636,10 +637,10 @@ static bool finish_weapon(void *context, qa_error *error)
     bool okay = true;
     if (record_current(prepared->input, prepared->scope)) {
         uint8_t bytes[4];
-        okay = qa_qvm_read(prepared->input->role->vm, prepared->address, bytes, prepared->bytes, error);
+        okay = qa_q3_host_source_bytes_read(prepared->input->role->host, prepared->address, bytes, prepared->bytes, error);
         if (okay && (prepared->bytes == 1 ? bytes[0] : qa_load_u32le(bytes)) == prepared->projected) {
             qa_store_u32le(bytes, prepared->previous);
-            okay = qa_qvm_write(prepared->input->role->vm, prepared->address,
+            okay = qa_q3_host_source_bytes_write(prepared->input->role->host, prepared->address,
                 (qa_bytes){bytes, prepared->bytes}, error);
         }
     }
@@ -669,11 +670,11 @@ bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
     *prepared = (guest_weapon_preparation){.input = input, .scope = scope,
         .address = scope->movement + 4 + (legacy ? 4u : 16u), .bytes = legacy ? 1u : 4u};
     uint8_t bytes[4] = {0};
-    if (!qa_qvm_read(role->vm, prepared->address, bytes, prepared->bytes, error)) return false;
+    if (!qa_q3_host_source_bytes_read(role->host, prepared->address, bytes, prepared->bytes, error)) return false;
     prepared->previous = legacy ? bytes[0] : qa_load_u32le(bytes);
     prepared->projected = prepared->previous & ~UINT32_C(4);
     qa_store_u32le(bytes, prepared->projected);
-    if (!qa_qvm_write(role->vm, prepared->address, (qa_bytes){bytes, prepared->bytes}, error)) return false;
+    if (!qa_q3_host_source_bytes_write(role->host, prepared->address, (qa_bytes){bytes, prepared->bytes}, error)) return false;
     *out = (application_q3_weapon_preparation){prepared, finish_weapon};
     return true;
 }
@@ -718,7 +719,7 @@ static bool equipment_admit(application_guest_input *input, guest_client_scope *
     int32_t speed; memcpy(&speed, &bits, sizeof(speed));
     float value = (float)((double)speed * scope->equipment.speed_multiplier);
     uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)qa_source_to_i32(value));
-    if (!qa_qvm_write(input->role->vm, scope->player + 52, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
+    if (!qa_q3_host_source_bytes_write(input->role->host, scope->player + 52, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     scope->equipment_active = true;
     return true;
 }
@@ -728,11 +729,12 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     application_guest_input *input = context;
     guest_client_scope *scope = input->scope;
     if (!scope || scope->spawning) return qa_qvm_proceed(call, result, error);
-    int32_t movement; uint32_t player;
+    int32_t movement; uint64_t player;
     if (!qa_qvm_call_argument(call, 0, &movement, error) ||
-        !source_word(input, (uint32_t)movement, &player, error)) return false;
+        !qa_q3_host_source_pointer(input->role->host, (uint32_t)movement, &player, error)) return false;
     if (player != scope->player) return qa_qvm_proceed(call, result, error);
-    uint32_t previous = scope->movement, previous_ms = scope->milliseconds;
+    uint64_t previous = scope->movement;
+    uint32_t previous_ms = scope->milliseconds;
     bool previous_active = scope->input_active;
     qa_q3_equipment_motion previous_equipment = scope->equipment;
     bool previous_equipment_active = scope->equipment_active;
@@ -806,11 +808,11 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
                 source_word(input, source_health_address(input, scope->player), &before_health, error);
             uint8_t bytes[4]; qa_store_u32le(bytes, projected_type);
             type_projected = ok;
-            if (ok) ok = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+            if (ok) ok = qa_q3_host_source_bytes_project(input->role->host,
                 scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, error);
             qa_store_u32le(bytes, projected_health);
             health_projected = ok;
-            if (ok) ok = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+            if (ok) ok = qa_q3_host_source_bytes_project(input->role->host,
                 source_health_address(input, scope->player), (qa_bytes){bytes, sizeof(bytes)}, error);
         }
     }
@@ -827,7 +829,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
                 ok = source_word(input, scope->player + 4, &before_type, error);
                 uint8_t bytes[4]; qa_store_u32le(bytes, projected_type);
                 type_projected = ok;
-                if (ok) ok = qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, error);
+                if (ok) ok = qa_q3_host_source_bytes_write(input->role->host, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, error);
             }
         }
     }
@@ -881,7 +883,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         bool restored = source_word(input, source_health_address(input, scope->player), &value, &restore);
         if (restored && value == projected_health) {
             uint8_t bytes[4]; qa_store_u32le(bytes, before_health);
-            restored = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+            restored = qa_q3_host_source_bytes_project(input->role->host,
                 source_health_address(input, scope->player), (qa_bytes){bytes, sizeof(bytes)}, &restore);
         }
         if (!restored) { if (ok && error) *error = restore; ok = false; }
@@ -891,9 +893,9 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         bool restored = source_word(input, scope->player + 4, &value, &restore);
         if (restored && value == projected_type) {
             uint8_t bytes[4]; qa_store_u32le(bytes, before_type);
-            restored = dead ? qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+            restored = dead ? qa_q3_host_source_bytes_project(input->role->host,
                 scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore) :
-                qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore);
+                qa_q3_host_source_bytes_write(input->role->host, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore);
         }
         if (!restored) { if (ok && error) *error = restore; ok = false; }
     }

@@ -361,13 +361,7 @@ static bool attack_source(application_q3_combat *owner, qa_damage_request *reque
 static bool reaction_pointer(const application_q3_combat_actor *source, uint32_t offset,
     uint64_t *out, qa_error *error)
 {
-    size_t width = source->role->module ?
-        qa_native_module_describe(source->role->module).image.target.pointer_bytes : 4;
-    uint8_t bytes[8];
-    if (!qa_q3_host_source_bytes_read(source->role->host, source->entity + offset,
-            bytes, width, error)) return false;
-    *out = width == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
-    return true;
+    return qa_q3_host_source_pointer(source->role->host, source->entity + offset, out, error);
 }
 typedef struct direct_reaction {
     application_q3_combat *owner;

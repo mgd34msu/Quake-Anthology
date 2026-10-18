@@ -10,7 +10,8 @@ typedef struct application_guest_q3_control_scope {
     const qa_qvm_call *client_call;
     qa_actor_id actor;
     qa_q3_host_game_data data;
-    uint32_t slot, player, movement;
+    uint32_t slot;
+    uint64_t player, movement;
     qa_bounds current_bounds, requested_bounds, accepted_bounds;
     qa_movement_posture pose;
     bool active, requested, accepted, fixed_pose, fixed_crouched, retired, cancelled;
@@ -31,7 +32,7 @@ void application_guest_q3_control_restore_binding(application_guest_q3_control *
  * Equipment, when supplied, must come from the actual selected source owner. */
 bool application_guest_q3_control_begin(application_guest_q3_control *, const qa_qvm_call *move,
     const qa_qvm_call *client,
-    qa_actor_id, uint32_t slot, uint32_t player, uint32_t movement,
+    qa_actor_id, uint32_t slot, uint64_t player, uint64_t movement,
     const qa_movement_environment *, application_guest_q3_control_scope *, qa_error *);
 bool application_guest_q3_control_end(application_guest_q3_control *,
     application_guest_q3_control_scope *, qa_error *);

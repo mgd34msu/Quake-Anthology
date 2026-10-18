@@ -17,19 +17,48 @@ bool q3_read(const q3_call *call, uint64_t address, void *out, size_t size, qa_e
     return call->memory.read(call->memory.context, address, out, size, error);
 }
 
+static bool source_address(const qa_q3_host *host, uint64_t *address, qa_error *error)
+{
+    if (host->vm) {
+        size_t capacity = qa_qvm_memory_size(host->vm);
+        if (*address > capacity)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source offset exceeds QVM memory");
+        *address += capacity;
+    }
+    return true;
+}
+
 bool qa_q3_host_source_bytes_read(qa_q3_host *host, uint64_t address, void *out,
     size_t size, qa_error *error)
 {
     if (!host || host->retired || !host->memory.read)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source memory requires an attached host");
-    if (host->vm) {
-        size_t capacity = qa_qvm_memory_size(host->vm);
-        if (address > capacity)
-            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source offset exceeds QVM memory");
-        address += capacity;
-    }
+    if (!source_address(host, &address, error)) return false;
     q3_call call = {.host = host, .memory = host->memory};
     return q3_read(&call, address, out, size, error);
+}
+
+bool qa_q3_host_source_bytes_write(qa_q3_host *host, uint64_t address,
+    qa_bytes bytes, qa_error *error)
+{
+    if (!host || host->retired || !host->memory.write)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source memory requires an attached writable host");
+    if (!source_address(host, &address, error)) return false;
+    q3_call call = {.host = host, .memory = host->memory};
+    ++host->calls;
+    return q3_game_end(&call, q3_write(&call, address, bytes, error));
+}
+
+bool qa_q3_host_source_pointer(qa_q3_host *host, uint64_t address,
+    uint64_t *out, qa_error *error)
+{
+    size_t width = host ? host->memory.pointer_bytes : 0;
+    if (!out || (width != 4 && width != 8))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source pointer requires its attached ABI width");
+    uint8_t bytes[8];
+    if (!qa_q3_host_source_bytes_read(host, address, bytes, width, error)) return false;
+    *out = width == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
+    return true;
 }
 
 bool qa_q3_host_source_bytes_project(qa_q3_host *host, uint64_t address,
