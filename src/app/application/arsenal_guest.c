@@ -138,11 +138,11 @@ static bool lower_retained_actions(application_guest_input *input,
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "Original deferred input has no declared retained command");
     qa_q3_usercmd command;
-    int32_t pointer = (int32_t)(scope->player + input->profile->client_command);
-    if (!qa_qvm_read_usercmd(input->role->vm, pointer, &command, error)) return false;
+    uint64_t pointer = (uint64_t)scope->player + input->profile->client_command;
+    if (!qa_q3_host_source_usercmd(input->role->host, pointer, &command, error)) return false;
     if (!(command.buttons & 5)) return true;
     command.buttons &= ~5;
-    return qa_qvm_write_usercmd(input->role->vm, pointer, true, &command, error);
+    return qa_q3_host_write_usercmd(input->role->host, pointer, true, &command, error);
 }
 
 static bool slot_player(application_guest_input *input, uint32_t slot,
@@ -457,7 +457,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         return true;
     qa_q3_usercmd source;
     qa_q3_player player;
-    if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
+    if (!qa_q3_host_source_usercmd(input->role->host, (uint64_t)scope->movement + 4, &source, error) ||
         !qa_q3_host_source_player(input->role->host, scope->slot, &player, error)) return false;
     qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
@@ -536,7 +536,7 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
     if (aim_changed) memcpy(updated.angles, projected.angle_words, sizeof(updated.angles));
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
-        !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
+        !qa_q3_host_write_usercmd(input->role->host, (uint64_t)scope->movement + 4, true, &updated, error))
         return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) { input->projected_command = updated; input->command_projected = true; }
@@ -568,7 +568,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     qa_application *app = input->role->engine->provider->application;
     qa_q3_usercmd source;
     qa_q3_player player;
-    if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
+    if (!qa_q3_host_source_usercmd(input->role->host, (uint64_t)scope->movement + 4, &source, error) ||
         !qa_q3_host_source_player(input->role->host, scope->slot, &player, error)) return false;
     qa_player_state control;
     if (!qa_application_control_read(app, scope->actor, &control))
@@ -613,7 +613,7 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
     if (!foreign_character_dead(input, scope->actor, &dead, NULL, error)) return false;
     if (dead) updated.buttons &= ~5;
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
-        !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
+        !qa_q3_host_write_usercmd(input->role->host, (uint64_t)scope->movement + 4, true, &updated, error))
         return false;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) {
@@ -753,7 +753,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     bool follower = scope->completed_motion || guest_follower(input, scope->actor);
     bool slice = call->instruction == input->profile->source->movement_slice;
     qa_q3_usercmd command; qa_q3_player state;
-    if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &command, error) ||
+    if (!qa_q3_host_source_usercmd(input->role->host, (uint64_t)scope->movement + 4, &command, error) ||
         !qa_q3_host_source_player(input->role->host, scope->slot, &state, error)) {
         scope->movement = previous; return false;
     }

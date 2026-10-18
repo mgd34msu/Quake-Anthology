@@ -705,7 +705,7 @@ bool application_q3_weapons_teleport_state(application_q3_weapons *w, qa_actor_i
     memcpy(state.origin, position, sizeof(position)); memcpy(state.velocity, motion, sizeof(motion));
     state.groundEntityNum = 1023; state.eFlags ^= 4; state.pmFlags |= 64; state.pmTime = hold;
     ++w->calls;
-    bool ok = qa_qvm_write_player(w->role->vm, (int32_t)action.actor.player, true, true, &state, error);
+    bool ok = qa_q3_host_write_player(w->role->host, action.actor.slot, true, &state, error);
     if (ok && !q3_weapons_current(w, &action.actor)) ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original teleport state retired its player before view selection");
     if (ok) ok = qa_qvm_source_scratch_run(w->role->vm, w->role->image, 12, scratch_action, &action, error);
     --w->calls; return ok;

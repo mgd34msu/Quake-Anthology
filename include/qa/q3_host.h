@@ -324,6 +324,9 @@ bool qa_q3_host_game_data_read(const qa_q3_host *, qa_q3_host_game_data *);
 /* Private module fields use the same untagged addresses as game_data_read. */
 bool qa_q3_host_source_bytes_read(qa_q3_host *, uint64_t address, void *, size_t, qa_error *);
 bool qa_q3_host_source_bytes_project(qa_q3_host *, uint64_t address, qa_bytes, qa_error *);
+bool qa_q3_host_source_usercmd(qa_q3_host *, uint64_t address, qa_q3_usercmd *, qa_error *);
+bool qa_q3_host_write_usercmd(qa_q3_host *, uint64_t address, bool preserve_private,
+    const qa_q3_usercmd *, qa_error *);
 /* Generic component declarations qualify original tables before any source
  * call. This constructor uses real QVM offsets, without a synthetic trap. */
 bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);
@@ -333,7 +336,8 @@ bool qa_q3_host_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
  * translation must not reject mod-private words needed by gameplay views. */
 bool qa_q3_host_source_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_shared *, qa_error *);
 bool qa_q3_host_source_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
-bool qa_q3_host_write_player(qa_q3_host *, uint32_t, const qa_q3_player *, qa_error *);
+bool qa_q3_host_write_player(qa_q3_host *, uint32_t, bool source_tags,
+    const qa_q3_player *, qa_error *);
 /* A completed shared spawn supplies motion without replacing module-owned
  * command time, health, inventory or movement flags. */
 bool qa_q3_host_player_spawn_pose(qa_q3_host *, qa_actor_id, const qa_body_state *,

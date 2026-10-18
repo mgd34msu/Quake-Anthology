@@ -149,13 +149,14 @@ bool qa_q3_host_player(qa_q3_host *host, uint32_t number, qa_q3_player *out, qa_
     return q3_game_end(&call, ok);
 }
 
-bool qa_q3_host_write_player(qa_q3_host *host, uint32_t number, const qa_q3_player *value, qa_error *error)
+bool qa_q3_host_write_player(qa_q3_host *host, uint32_t number, bool source_tags,
+    const qa_q3_player *value, qa_error *error)
 {
     q3_call call;
     if (!q3_game_begin(host, &call, error)) return false;
     q3_record record;
     bool ok = q3_game_player_record(&call, number, &record, error) &&
-              qa_q3_abi_write_player(&record.abi, 0, false, true, value, error);
+              qa_q3_abi_write_player(&record.abi, 0, source_tags, true, value, error);
     return q3_game_end(&call, ok);
 }
 

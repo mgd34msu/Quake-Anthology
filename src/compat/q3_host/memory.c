@@ -46,6 +46,42 @@ bool qa_q3_host_source_bytes_project(qa_q3_host *host, uint64_t address,
     return qa_native_project(host->native, address, bytes, error);
 }
 
+static bool source_usercmd_begin(qa_q3_host *host, uint64_t address,
+    q3_call *call, q3_record *record, qa_error *error)
+{
+    if (!host || host->retired || !host->memory.read || !address)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source command requires an attached host and pointer");
+    if (host->vm) {
+        if (address > UINT32_MAX)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 source command exceeds QVM pointer width");
+        address = qa_qvm_memory_size(host->vm) +
+            (uint64_t)qa_qvm_mask_address(host->vm, (int32_t)(uint32_t)address);
+    }
+    *call = (q3_call){.host = host, .memory = host->memory, .vm = host->vm,
+        .native = host->native, .native_host = host->native_host,
+        .native_profile = host->native_profile};
+    ++host->calls;
+    if (!q3_record_open(call, address, 24, record, error)) return q3_game_end(call, false);
+    return true;
+}
+
+bool qa_q3_host_source_usercmd(qa_q3_host *host, uint64_t address,
+    qa_q3_usercmd *out, qa_error *error)
+{
+    q3_call call; q3_record record;
+    if (!source_usercmd_begin(host, address, &call, &record, error)) return false;
+    return q3_game_end(&call, qa_q3_abi_read_usercmd(&record.abi, 0, out, error));
+}
+
+bool qa_q3_host_write_usercmd(qa_q3_host *host, uint64_t address,
+    bool preserve_private, const qa_q3_usercmd *value, qa_error *error)
+{
+    q3_call call; q3_record record;
+    if (!source_usercmd_begin(host, address, &call, &record, error)) return false;
+    return q3_game_end(&call,
+        qa_q3_abi_write_usercmd(&record.abi, 0, preserve_private, value, error));
+}
+
 bool q3_write(const q3_call *call, uint64_t address, qa_bytes bytes, qa_error *error)
 {
     if ((!bytes.data && bytes.size) || address > UINT64_MAX - bytes.size)
