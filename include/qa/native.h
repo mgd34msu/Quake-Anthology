@@ -104,6 +104,7 @@ bool qa_native_module_load(qa_bytes image, const char *source, qa_native_profile
 /* Immutable image metadata must identify one writable, non-executable source
  * section/load segment; ELF RELRO is excluded. No source code executes. */
 bool qa_native_module_mutable_range(const qa_native_module *, uint64_t rva, uint64_t bytes, qa_error *);
+bool qa_native_module_executable_rva(const qa_native_module *, uint32_t rva);
 void qa_native_module_retain(qa_native_module *module);
 void qa_native_module_release(qa_native_module *module);
 qa_native_module_info qa_native_module_describe(const qa_native_module *module);

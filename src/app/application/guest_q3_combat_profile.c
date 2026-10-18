@@ -18,6 +18,11 @@ struct application_q3_combat_profile {
     application_q3_combat_mode *modes;
     application_q3_combat_tier *tiers;
 };
+static const qa_native_value_type damage_argument_types[Q3_DAMAGE_WORDS] = {
+    QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS, QA_NATIVE_ADDRESS,
+    QA_NATIVE_ADDRESS, QA_NATIVE_I32, QA_NATIVE_I32, QA_NATIVE_I32};
+static const qa_native_value_type armor_argument_types[Q3_ARMOR_WORDS] = {
+    QA_NATIVE_ADDRESS, QA_NATIVE_I32, QA_NATIVE_I32};
 static bool fail(qa_error *error, qa_status status, const char *text)
 { qa_error_set(error, status, 0, "%s", text); return false; }
 static bool word(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
@@ -44,12 +49,23 @@ static bool field(const qa_json_document *doc, qa_json_id id, size_t minimum,
         *out >= minimum && *out <= extent - width) ||
         fail(error, QA_ERROR_FORMAT, "Combat field leaves its original private entity record"));
 }
-static bool entry(const qa_json_document *doc, qa_json_id id, const qa_qvm_image *image,
+static bool entry(const qa_json_document *doc, qa_json_id id, const application_q3_combat_profile *p,
     uint32_t *out, qa_error *error)
 {
-    size_t count; const qa_qvm_instruction *code = qa_qvm_image_instructions(image, &count);
-    return word(doc, id, out, error) && ((*out < count && code[*out].opcode == QA_QVM_ENTER) ||
-        fail(error, QA_ERROR_FORMAT, "Combat callback is not its original function entry"));
+    if (!word(doc, id, out, error)) return false;
+    if (p->module)
+        return qa_native_module_executable_rva(p->module, *out) ||
+            fail(error, QA_ERROR_FORMAT, "Combat callback leaves its native executable image");
+    size_t count; const qa_qvm_instruction *code = qa_qvm_image_instructions(p->image, &count);
+    return (*out < count && code[*out].opcode == QA_QVM_ENTER) ||
+        fail(error, QA_ERROR_FORMAT, "Combat callback is not its original function entry");
+}
+static bool callback(const qa_json_document *doc, qa_json_id object, const char *name,
+    const application_q3_combat_profile *p, uint32_t *out, bool *present, qa_error *error)
+{
+    qa_json_id id = qa_json_get(doc, object, name);
+    *present = id != QA_JSON_NONE && qa_json_type(doc, id) != QA_JSON_NULL;
+    return (!p->image && !*present) || entry(doc, id, p, out, error);
 }
 static bool stat(const qa_json_document *doc, qa_json_id id, uint32_t *out, qa_error *error)
 { return word(doc, id, out, error) && (*out < 16 || fail(error, QA_ERROR_FORMAT, "Combat stat leaves its public player record")); }
@@ -62,11 +78,13 @@ static bool fraction(const qa_json_document *doc, qa_json_id id, double *out, qa
     *out = value; return true;
 }
 static bool masks(const qa_json_document *doc, qa_json_id object,
-    const char *const *names, uint32_t **values, size_t count, qa_error *error)
+    const char *const *names, uint32_t **values, size_t count, bool required, qa_error *error)
 {
     uint32_t occupied = 0;
     for (size_t i = 0; i < count; ++i) {
-        if (!word(doc, qa_json_get(doc, object, names[i]), values[i], error)) return false;
+        qa_json_id id = qa_json_get(doc, object, names[i]);
+        if (!required && (id == QA_JSON_NONE || qa_json_type(doc, id) == QA_JSON_NULL)) continue;
+        if (!word(doc, id, values[i], error)) return false;
         uint32_t value = *values[i];
         if (!value || (value & (value - 1)) || (occupied & value))
             return fail(error, QA_ERROR_FORMAT, "Combat masks overlap or are not individual source bits");
@@ -75,7 +93,8 @@ static bool masks(const qa_json_document *doc, qa_json_id object,
     return true;
 }
 static bool call(const qa_json_document *doc, qa_json_id object,
-    const char *const *names, size_t roles_count, const qa_qvm_image *image,
+    const char *const *names, const qa_native_value_type *types, size_t roles_count,
+    const application_q3_combat_profile *p,
     application_q3_combat_call *out, qa_error *error)
 {
     qa_json_id roles = qa_json_get(doc, object, "roles"), extras = qa_json_get(doc, object, "extras");
@@ -91,6 +110,7 @@ static bool call(const qa_json_document *doc, qa_json_id object,
         if (position >= out->count || occupied[position])
             return fail(error, QA_ERROR_FORMAT, "Combat roles do not own distinct original arguments");
         occupied[position] = true; out->positions[i] = position;
+        out->types[position] = types[i];
     }
     for (size_t i = 0; i < extra_count; ++i) {
         qa_json_id at = qa_json_at(doc, extras, i), kind = qa_json_get(doc, at, "kind");
@@ -102,12 +122,17 @@ static bool call(const qa_json_document *doc, qa_json_id object,
         qa_json_id value = qa_json_get(doc, at, "value");
         if (qa_json_string_equal(doc, kind, "int32")) {
             if (!integer(doc, value, &out->words[position], error)) return false;
+            out->types[position] = QA_NATIVE_I32;
         } else if (qa_json_string_equal(doc, kind, "address")) {
             uint32_t address;
             if (!word(doc, value, &address, error)) return false;
             /* Address extras name bytes inside the original source extent. */
-            if (!qa_qvm_qualify_source_span(image, address, 1, error)) return false;
+            if (p->image) {
+                if (!qa_qvm_qualify_source_span(p->image, address, 1, error)) return false;
+            } else if (address >= qa_native_module_describe(p->module).image.image_bytes)
+                return fail(error, QA_ERROR_FORMAT, "Combat address extra leaves its native image");
             memcpy(out->words + position, &address, sizeof(address));
+            out->types[position] = QA_NATIVE_ADDRESS;
         } else if (qa_json_string_equal(doc, kind, "float32")) {
             double number;
             if (!qa_json_number(doc, value, &number, error)) return false;
@@ -115,6 +140,7 @@ static bool call(const qa_json_document *doc, qa_json_id object,
             if (!isfinite(number) || !isfinite(native))
                 return fail(error, QA_ERROR_FORMAT, "Combat extra is not a finite binary32 value");
             memcpy(out->words + position, &native, sizeof(native));
+            out->types[position] = QA_NATIVE_F32;
         } else return fail(error, QA_ERROR_FORMAT, "Combat extra has no source word representation");
     }
     return true;
@@ -259,22 +285,32 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
                 d->entity_stride, pointer_bytes, reaction_fields[i], error) ||
             !reaction(doc, at, reaction_values[i], error)) return false;
     }
-    if (p->image) {
-        if (!entry(doc, qa_json_get(doc, callbacks, "allocate"), p->image, &d->callbacks.allocate, error) ||
-            !entry(doc, qa_json_get(doc, callbacks, "free"), p->image, &d->callbacks.free, error) ||
-            !entry(doc, qa_json_get(doc, callbacks, "damage"), p->image, &d->callbacks.damage, error) ||
-            !call(doc, qa_json_get(doc, combat, "damageCall"), damage_names, Q3_DAMAGE_WORDS, p->image, &d->damage_call, error) ||
-            !entry(doc, qa_json_get(doc, armor, "checkArmor"), p->image, &d->armor.check, error) ||
-            !call(doc, qa_json_get(doc, armor, "call"), armor_names, Q3_ARMOR_WORDS, p->image, &d->armor.call, error) ||
-            !word(doc, qa_json_get(doc, combat, "grappleDamageMethod"), &d->grapple_method, error)) return false;
+    if (!callback(doc, callbacks, "allocate", p, &d->callbacks.allocate, &d->callbacks.has_allocate, error) ||
+        !callback(doc, callbacks, "free", p, &d->callbacks.free, &d->callbacks.has_free, error) ||
+        !callback(doc, callbacks, "damage", p, &d->callbacks.damage, &d->callbacks.has_damage, error) ||
+        !callback(doc, armor, "checkArmor", p, &d->armor.check, &d->armor.has_check, error)) return false;
+    qa_json_id damage_call = qa_json_get(doc, combat, "damageCall");
+    qa_json_id armor_call = qa_json_get(doc, armor, "call");
+    if ((p->image || (damage_call != QA_JSON_NONE && qa_json_type(doc, damage_call) != QA_JSON_NULL)) &&
+        !call(doc, damage_call, damage_names, damage_argument_types, Q3_DAMAGE_WORDS, p, &d->damage_call, error)) return false;
+    if ((p->image || (armor_call != QA_JSON_NONE && qa_json_type(doc, armor_call) != QA_JSON_NULL)) &&
+        !call(doc, armor_call, armor_names, armor_argument_types, Q3_ARMOR_WORDS, p, &d->armor.call, error)) return false;
+    qa_json_id grapple = qa_json_get(doc, combat, "grappleDamageMethod");
+    d->has_grapple_method = grapple != QA_JSON_NONE && qa_json_type(doc, grapple) != QA_JSON_NULL;
+    if (p->image || d->has_grapple_method) {
+        if (!word(doc, grapple, &d->grapple_method, error)) return false;
         if (d->grapple_method > INT32_MAX)
             return fail(error, QA_ERROR_FORMAT, "Combat damage method exceeds its signed original argument");
+    }
+    qa_json_id damage_flags = qa_json_get(doc, combat, "damageFlags");
+    d->has_damage_flags = damage_flags != QA_JSON_NONE && qa_json_type(doc, damage_flags) != QA_JSON_NULL;
+    if (p->image || d->has_damage_flags) {
         uint32_t *damage_masks[] = {&d->damage_flags.radius, &d->damage_flags.no_armor, &d->damage_flags.no_knockback,
             &d->damage_flags.no_protection, &d->damage_flags.no_team_protection};
-        if (!masks(doc, qa_json_get(doc, combat, "damageFlags"), damage_mask_names, damage_masks, 5, error)) return false;
+        if (!masks(doc, damage_flags, damage_mask_names, damage_masks, 5, p->image != NULL, error)) return false;
     }
     uint32_t *state_masks[] = {&d->state.notarget, &d->state.invulnerable, &d->state.no_knockback};
-    if (!masks(doc, qa_json_get(doc, state, "flags"), state_mask_names, state_masks, 3, error)) return false;
+    if (!masks(doc, qa_json_get(doc, state, "flags"), state_mask_names, state_masks, 3, true, error)) return false;
     if (qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "constant")) {
         double value;
         if (!qa_json_number(doc, qa_json_get(doc, mass, "value"), &value, error)) return false;
@@ -322,6 +358,8 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     }
     d->damage_call.count = Q3_DAMAGE_WORDS;
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) d->damage_call.positions[i] = (uint32_t)i;
+    memcpy(d->damage_call.types, damage_argument_types, sizeof(damage_argument_types));
+    d->callbacks.has_allocate = d->callbacks.has_free = d->callbacks.has_damage = true;
     d->reactions.flags = 536; d->reactions.pain = lrctf ? 728 : 712;
     d->reactions.die = lrctf ? 732 : 716;
     d->reactions.enemy = base ? 768 : UINT32_MAX;
@@ -332,12 +370,15 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
         .attacker=2,.inflictor=1,.method=4,.arguments_present=true};
     d->damage_flags.radius = 1; d->damage_flags.no_armor = 2; d->damage_flags.no_knockback = 4;
     d->damage_flags.no_protection = 8; d->damage_flags.no_team_protection = 16;
+    d->has_damage_flags = d->has_grapple_method = true;
     d->state.health_stat = 0; d->state.team_stat = 3; d->state.notarget = 32;
     d->state.invulnerable = 16; d->state.no_knockback = 2048;
     d->state.mass_kind = Q3_COMBAT_MASS_CONSTANT; d->state.mass.constant = 200;
     d->armor.check = base ? 100625 : threewave ? 161690 : 139839; d->armor.points_stat = threewave ? 6 : 3;
     d->armor.protection = base ? .66f : .66; d->armor.call.count = Q3_ARMOR_WORDS;
     for (size_t i = 0; i < Q3_ARMOR_WORDS; ++i) d->armor.call.positions[i] = (uint32_t)i;
+    memcpy(d->armor.call.types, armor_argument_types, sizeof(armor_argument_types));
+    d->armor.has_check = true;
     application_q3_grapple_profile_destroy(grapple);
     p->teams = calloc(2, sizeof(*p->teams));
     if (!p->teams) return fail(error, QA_ERROR_MEMORY, "Retaining source-authored combat teams");

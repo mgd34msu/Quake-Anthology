@@ -172,11 +172,11 @@ static bool executable_elf_rva(const qa_native_module *module, uint32_t rva) {
     return false;
 }
 
-static bool executable_rva(const qa_native_module *module, uint32_t rva) {
-    return module->info.image.format == QA_NATIVE_IMAGE_PE32 ||
+bool qa_native_module_executable_rva(const qa_native_module *module, uint32_t rva) {
+    return module && (module->info.image.format == QA_NATIVE_IMAGE_PE32 ||
                    module->info.image.format == QA_NATIVE_IMAGE_PE32_PLUS
                ? executable_pe_rva(module, rva)
-               : executable_elf_rva(module, rva);
+               : executable_elf_rva(module, rva));
 }
 
 static bool append_path(char **out, const char *prefix, qa_bytes component, bool array,
@@ -222,9 +222,9 @@ static bool append_region(qa_native_declaration *declaration, const qa_native_mo
          (frame_entry > UINT32_MAX || frame_exit > UINT32_MAX || frame_entry == frame_exit)))
         return native_fail(error, QA_ERROR_FORMAT, 0,
                            "native declaration has invalid region boundaries");
-    if (!executable_rva(module, (uint32_t)entry) || !executable_rva(module, (uint32_t)join) ||
-        (has_frame && (!executable_rva(module, (uint32_t)frame_entry) ||
-                       !executable_rva(module, (uint32_t)frame_exit))))
+    if (!qa_native_module_executable_rva(module, (uint32_t)entry) || !qa_native_module_executable_rva(module, (uint32_t)join) ||
+        (has_frame && (!qa_native_module_executable_rva(module, (uint32_t)frame_entry) ||
+                       !qa_native_module_executable_rva(module, (uint32_t)frame_exit))))
         return native_fail(error, QA_ERROR_FORMAT, 0,
                            "native declaration region leaves executable sections");
     if (declaration->region_count == UINT32_MAX)

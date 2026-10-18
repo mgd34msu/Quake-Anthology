@@ -10108,6 +10108,9 @@ static void test_native_q3_declaration(void)
     qa_native_module *module = NULL;
     CHECK(qa_native_module_load((qa_bytes){bytes, sizeof(bytes)}, "qagamei386.so",
         QA_NATIVE_Q3_VMMAIN, &module, &error));
+    CHECK(qa_native_module_executable_rva(module, 112));
+    CHECK(!qa_native_module_executable_rva(module, 4096));
+    CHECK(!qa_native_module_executable_rva(NULL, 112));
     const char *json = "{\"runtime\":\"native\",\"program\":{\"path\":\"qagamei386.so\"},\"version\":1,\"modules\":["
         "{\"artifactPath\":\"gamex86.dll\",\"apiVersion\":3,\"primary\":{\"other\":true}},"
         "{\"artifactPath\":\"qagamei386.so\",\"apiVersion\":8,\"primary\":{"
@@ -10224,12 +10227,52 @@ static void test_native_q3_declaration(void)
         definition->armor.protection == 0.66 && definition->state.team_count == 2);
     CHECK(!definition->callbacks.allocate && !definition->callbacks.free &&
         !definition->callbacks.damage && !definition->armor.check);
+    CHECK(!definition->callbacks.has_allocate && !definition->callbacks.has_free &&
+        !definition->callbacks.has_damage && !definition->armor.has_check &&
+        !definition->has_damage_flags && !definition->has_grapple_method);
     CHECK(definition->reactions.pain == 712 && definition->reactions.pain_call.arguments_present &&
         definition->reactions.pain_call.count == 3 && definition->reactions.pain_call.amount == 2);
     CHECK(definition->reactions.die == 716 && definition->reactions.die_call.arguments_present &&
         definition->reactions.die_call.count == 5 && definition->reactions.die_call.inflictor == 1 &&
         definition->reactions.die_call.method == 4);
     application_q3_combat_profile_destroy(state); state = NULL;
+    const char *callbacks =
+        "\"callbacks\":{\"allocate\":114,\"free\":115,\"damage\":%u},"
+        "\"damageCall\":{\"roles\":{\"target\":0,\"inflictor\":1,\"attacker\":2,"
+        "\"direction\":3,\"point\":4,\"amount\":5,\"flags\":6,\"method\":7},"
+        "\"extras\":[{\"index\":8,\"kind\":\"float32\",\"value\":1.25},"
+        "{\"index\":9,\"kind\":\"address\",\"value\":120}]},"
+        "\"damageFlags\":{\"radius\":1,\"noArmor\":2,\"noKnockback\":4,\"noProtection\":8},"
+        "\"grappleDamageMethod\":20,";
+    char callback_fields[1024], callback_primary[2560];
+    for (unsigned bad_callback = 0; bad_callback < 2; ++bad_callback) {
+        int fields_length = snprintf(callback_fields, sizeof(callback_fields), callbacks, bad_callback ? 4096u : 112u);
+        CHECK(fields_length > 0 && (size_t)fields_length < sizeof(callback_fields));
+        int callback_length = snprintf(callback_primary, sizeof(callback_primary), "{\"combat\":{%s%s",
+            callback_fields, primary + strlen("{\"combat\":{"));
+        CHECK(callback_length > 0 && (size_t)callback_length < sizeof(callback_primary));
+        bool ok = application_q3_combat_profile_create(NULL, module, QA_QVM_GAME, QA_QVM_Q3_MODERN,
+            "qagamei386.so", (qa_bytes){(const uint8_t *)callback_primary, (size_t)callback_length}, strings, &state, &error);
+        CHECK(ok == !bad_callback);
+        if (ok) {
+            definition = application_q3_combat_profile_definition(state);
+            CHECK(definition->callbacks.has_allocate && definition->callbacks.allocate == 114 &&
+                definition->callbacks.has_free && definition->callbacks.free == 115 &&
+                definition->callbacks.has_damage && definition->callbacks.damage == 112);
+            CHECK(definition->damage_call.count == 10 &&
+                definition->damage_call.types[0] == QA_NATIVE_ADDRESS &&
+                definition->damage_call.types[5] == QA_NATIVE_I32 &&
+                definition->damage_call.types[8] == QA_NATIVE_F32 &&
+                definition->damage_call.types[9] == QA_NATIVE_ADDRESS &&
+                definition->damage_call.words[9] == 120);
+            float extra;
+            memcpy(&extra, definition->damage_call.words + 8, sizeof(extra));
+            CHECK(extra == 1.25f && definition->has_damage_flags &&
+                !definition->damage_flags.no_team_protection && definition->has_grapple_method &&
+                definition->grapple_method == 20 && !definition->armor.has_check);
+            application_q3_combat_profile_destroy(state); state = NULL;
+        } else CHECK(!state && error.code == QA_ERROR_FORMAT);
+    }
     length = snprintf(primary, sizeof(primary), state_format, 808u);
     CHECK(length > 0 && (size_t)length < sizeof(primary));
     error = (qa_error){0};
