@@ -11,6 +11,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_pickups.h"
 #include "guest_q3_catalog.h"
+#include "guest_q3_client_console.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_projection_private.h"
 #include "guest_q3_save.h"
@@ -672,15 +673,14 @@ static bool provider_current(const application_supplies *owner,
         provider->product && provider->constructed && provider->attached && !provider->close_pending;
 }
 static q3g_role *original_q3_arsenal_profile(const application_provider *provider) {
-    struct application_q3_guest *engine = provider && provider->kind == APPLICATION_PROVIDER_QVM
-        ? provider->state.qvm.engine : NULL;
+    struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *role = engine ? engine->game : NULL;
+    if (!role || engine->provider != provider || !role->primary || role->kind != QA_QVM_GAME ||
+        !role->ready || !role->projection) return NULL;
+    if (role->module && role->projection->has_inventory && role->catalog) return role;
     qa_q3_product product;
-    return role && engine->provider == provider && role->primary && role->kind == QA_QVM_GAME &&
-        role->ready && role->vm && role->projection &&
-        role->weapons && role->weapon_services && application_q3_catalog_bot_product(role->catalog, &product) &&
-        product == QA_Q3_ARENA
-        ? role : NULL;
+    return role->vm && role->weapons && role->weapon_services &&
+        application_q3_catalog_bot_product(role->catalog, &product) && product == QA_Q3_ARENA ? role : NULL;
 }
 static q3g_role *original_q3_arsenal(const application_provider *provider) {
     q3g_role *role = original_q3_arsenal_profile(provider);
@@ -851,8 +851,16 @@ static bool q3_active_weapon(supply_pair *pair, qa_actor_id actor, int32_t *out,
         return true;
     }
     q3g_role *role = original_q3_arsenal(pair->arsenal);
-    application_q3_weapon_prediction prediction;
     if (!role) return application_fail(error, QA_ERROR_NOT_FOUND, "Original Q3 supply lost its actual weapon owner");
+    if (!role->weapons) {
+        uint32_t slot;
+        qa_q3_player player;
+        if (!qa_q3_host_actor_slot(role->host, actor, &slot, error) ||
+            !qa_q3_host_source_player(role->host, slot, &player, error)) return false;
+        *out = player.weapon;
+        return true;
+    }
+    application_q3_weapon_prediction prediction;
     if (!application_q3_weapons_prediction_read(role->weapons, actor, &prediction, error)) return false;
     *out = prediction.source_weapon;
     return true;
@@ -865,9 +873,15 @@ static bool q3_request_weapon(supply_pair *pair, qa_actor_id actor,
     q3g_role *role = original_q3_arsenal(pair->arsenal);
     bool admitted = false;
     if (!role) return application_fail(error, QA_ERROR_NOT_FOUND, "Original Q3 supply lost its actual weapon owner");
-    return application_q3_weapons_services_select_intent(role->weapon_services, actor,
-        pair->arsenal->owner, weapon->item, &admitted, error) && pair_current(pair, actor, error) &&
-        (admitted || application_fail(error, QA_ERROR_NOT_FOUND, "Selected original supply weapon was not admitted"));
+    bool requested = role->weapon_services ?
+        application_q3_weapons_services_select_intent(role->weapon_services, actor,
+            pair->arsenal->owner, weapon->item, &admitted, error) :
+        application_guest_q3_client_weapon(pair->arsenal, actor, weapon->weapon, &admitted, error);
+    return requested && pair_current(pair, actor, error) &&
+        (admitted || application_fail(error,
+            role->weapon_services ? QA_ERROR_NOT_FOUND : QA_ERROR_UNSUPPORTED,
+            role->weapon_services ? "Selected original supply weapon was not admitted" :
+                "Original Q3 supply selection has no actual source client command"));
 }
 static application_q3_pickups *original_q3_pickups(const supply_pair *pair) {
     struct application_q3_guest *engine = q3g_engine(pair->source);
