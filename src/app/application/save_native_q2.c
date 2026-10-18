@@ -140,6 +140,8 @@ bool application_source_baseline_prepare(application_provider *target,
                 source->product_catalog, source->product, qa_launch_snapshot_choices(snapshot), error) ||
             !qa_session_add(app->session, &source->component, error)) return false;
         source->component_attached = source->attached = true;
+        if (source->kind == APPLICATION_PROVIDER_Q3 &&
+            !application_native_q3_settings_register(source, error)) return false;
     }
     if (target_q3 && target_q3->game) {
         qa_console *console = NULL;
