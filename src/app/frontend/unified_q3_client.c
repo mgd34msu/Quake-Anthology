@@ -365,35 +365,30 @@ static bool receive(client_history *h, const frontend_unified_q3_source_view *v,
     }
     h->number = previous+1; h->time = v->time; h->unsealed_snapshot = true; return true;
 }
-static bool source_basis(frontend_unified_q3_client *c,const frontend_unified_q3_source_view *v,
-    const client_history *h,uint64_t revision,q3n_compiled_source_basis *out,qa_error *e)
+static q3n_compiled_source_basis source_basis(frontend_unified_q3_client *c,
+    const frontend_unified_q3_source_view *v,const client_history *h,uint64_t revision)
 {
-    char value[8192]; const char *info = qa_q3_configstring(&h->reached->value,0);
-    if (!qa_q3_info_value(info,"g_gametype",value,sizeof(value),e)) return false;
-    int32_t game_type = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
-    if (!qa_q3_info_value(info,"sv_maxclients",value,sizeof(value),e)) return false;
-    int32_t max_clients = qa_parse_decimal_i32(value,QA_DECIMAL_SIGNED_WRAP);
-    *out = (q3n_compiled_source_basis){.application=c->domain->application,
+    return (q3n_compiled_source_basis){.application=c->domain->application,
         .registry=frontend_remote_unified_registry(c->replica),.provider=v->provider->source_owner,.receiver=c->receiver,
         .instance=c->instance,.content=v->files,.assets=v->assets,.product=v->product,
         .publication=v->publication,.map_revision=v->map_revision,.serial=revision,.viewer=v->viewer,
         .seat=c->domain->seat.index,.physical_seat=c->domain->physical_seat,.client_number=(int32_t)v->client_number,
-        .time=h->time,.game_type=game_type,.max_clients=max_clients,.level_start_time=qa_parse_decimal_i32(qa_q3_configstring(&h->reached->value,21),QA_DECIMAL_SIGNED_WRAP),
+        .time=h->time,.game_type=v->game_type,.max_clients=(int32_t)v->max_clients,.level_start_time=v->level_start,
         .snapshot_bit=v->snapshot_bit,
-        .initial_command=0,.reached_command=h->command_sequence,.initialized=c->initialized}; return true;
+        .initial_command=0,.reached_command=h->command_sequence,.initialized=c->initialized};
 }
 static bool source_read(void *context, q3n_compiled_source_basis *out, qa_error *e)
 {
     frontend_unified_q3_client *c = context; frontend_unified_q3_source_view v;
     if (!out || !observation(c,&v)) return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT source receipt has retired");
-    return source_basis(c,&v,c->history,c->revision,out,e);
+    *out=source_basis(c,&v,c->history,c->revision); return true;
 }
 static bool checkpoint_read(void *context,q3n_compiled_source_basis *out,qa_error *e)
 {
     frontend_unified_q3_client *c = context; frontend_unified_q3_source_view v;
     if (!out || !c || c->busy || c->video || !(observation(c,&v) || cold_source_observation(c,&v)))
         return fail(e,QA_ERROR_ARGUMENT,"Compiled CLIENT cold receipt lost its actual retained owner");
-    return source_basis(c,&v,c->history,c->revision,out,e);
+    *out=source_basis(c,&v,c->history,c->revision); return true;
 }
 static bool basis_equal(const q3n_compiled_source_basis *a,const q3n_compiled_source_basis *b)
 {
@@ -412,17 +407,17 @@ static bool source_current(void *context, const q3n_compiled_source_basis *b)
     frontend_unified_q3_client *c = context; q3n_compiled_source_basis a;
     if (source_read(context,&a,NULL) && basis_equal(&a,b)) return true;
     const frontend_unified_q3_client_frame *t = c ? c->prepared : NULL;
-    return t && t->owner == c && frontend_unified_q3_source_current(&t->source) &&
-        source_basis(c,&t->source,t->history,t->revision,&a,NULL) && basis_equal(&a,b);
+    if (!t || t->owner != c || !frontend_unified_q3_source_current(&t->source)) return false;
+    a=source_basis(c,&t->source,t->history,t->revision); return basis_equal(&a,b);
 }
 static bool checkpoint_current(void *context,const q3n_compiled_source_basis *b)
 {
     frontend_unified_q3_client *c = context; q3n_compiled_source_basis a;
     if (checkpoint_read(context,&a,NULL) && basis_equal(&a,b)) return true;
     const frontend_unified_q3_client_frame *t = c ? c->prepared : NULL;
-    return t && !c->busy && !c->video && t->owner == c &&
-        frontend_unified_q3_source_checkpoint_current(&t->source) &&
-        source_basis(c,&t->source,t->history,t->revision,&a,NULL) && basis_equal(&a,b);
+    if (!t || c->busy || c->video || t->owner != c ||
+        !frontend_unified_q3_source_checkpoint_current(&t->source)) return false;
+    a=source_basis(c,&t->source,t->history,t->revision); return basis_equal(&a,b);
 }
 static bool configstring(void *context, uint32_t index, const char **out, uint64_t *revision, qa_error *e)
 {
@@ -498,8 +493,8 @@ bool frontend_unified_q3_client_prepare(frontend_unified_q3_client *c, const fro
     c->prepared = t;
     if (round) {
         q3n_compiled_source_view before;
+        t->candidate=source_basis(c,v,t->history,t->revision);
         ok = q3n_compiled_source_read(c->source,&before,e) &&
-            source_basis(c,v,t->history,t->revision,&t->candidate,e) &&
             q3n_compiled_source_rebind_prepare(c->source,&before,&t->candidate,&t->rebind,e);
     }
     if (!ok) { frontend_unified_q3_client_abort(&t); return false; }
