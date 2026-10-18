@@ -4,6 +4,7 @@
 #include "engine_shutdown.h"
 #include "unified_q3_events.h"
 #include "map_players_private.h"
+#include "guest_q3_private.h"
 #include "native_q1_console.h"
 #include "native_q1_wire.h"
 #include "native_q1_powers.h"
@@ -236,9 +237,19 @@ bool application_native_grant_arsenal(void *opaque, qa_actor_id actor,
     case APPLICATION_PROVIDER_Q3:
         *handled = true;
         return qa_q3_game_grant_arsenal(selected->state.q3, actor, ammo, error);
-    case APPLICATION_PROVIDER_QC:
     case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
+    case APPLICATION_PROVIDER_NATIVE: {
+        struct application_q3_guest *engine = q3g_engine(selected);
+        if (engine && engine->game) {
+            const char *arguments[] = {"give", ammo ? "ammo" : "weapons"};
+            *handled = true;
+            return application_q3_guest_client_command_vector(selected, actor,
+                arguments, sizeof(arguments) / sizeof(*arguments), error);
+        }
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "selected arsenal has no direct grant adapter");
+    }
+    case APPLICATION_PROVIDER_QC:
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "selected arsenal has no direct grant adapter");
     }
@@ -262,9 +273,25 @@ bool application_native_give_item(void *opaque, qa_actor_id actor,
         return qa_q2_game_give_item(selected->state.q2, actor, count, arguments, handled, error);
     case APPLICATION_PROVIDER_Q3:
         return qa_q3_game_give_item(selected->state.q3, actor, count, arguments, handled, error);
-    case APPLICATION_PROVIDER_QC:
     case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
+    case APPLICATION_PROVIDER_NATIVE: {
+        struct application_q3_guest *engine = q3g_engine(selected);
+        if (engine && engine->game) {
+            if (engine->command_depth == sizeof(engine->client_commands) / sizeof(*engine->client_commands))
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 command nesting exceeds fixed storage");
+            application_q3_command_storage *storage = engine->client_commands + engine->command_depth;
+            if (count >= sizeof(storage->values) / sizeof(*storage->values))
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 item grant exceeds command token storage");
+            storage->values[0] = "give";
+            for (size_t i = 0; i < count; ++i) storage->values[i + 1] = (char *)arguments[i];
+            *handled = true;
+            return application_q3_guest_client_command_vector(selected, actor,
+                (const char *const *)storage->values, count + 1, error);
+        }
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "selected arsenal has no direct item grant adapter");
+    }
+    case APPLICATION_PROVIDER_QC:
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "selected arsenal has no direct item grant adapter");
     }
