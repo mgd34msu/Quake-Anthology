@@ -116,6 +116,7 @@ typedef struct q3g_role {
     qa_command_tokens arguments;
     qa_arena argument_storage[2];
     unsigned argument_storage_slot;
+    unsigned entry_depth;
     application_q3_command_storage command_storage;
     qa_q3_host_common_services common;
     qa_q3_host_server_services server;

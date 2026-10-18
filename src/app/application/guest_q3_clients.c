@@ -192,12 +192,7 @@ bool application_q3_guest_client_begin(application_provider *provider, uint32_t 
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retired during source begin");
     client->begun = true;
     client->carry_pending = false;
-    if (!application_guest_actor_admit(provider, client->actor, error)) return false;
-    if (application_provider_for(provider->application, client->actor, QA_ROLE_CHARACTER, "") == provider) {
-        if (engine->game->combat && !application_q3_combat_admit(engine->game->combat, client->actor, error)) return false;
-        if (engine->game->weapon_services &&
-            !application_q3_guest_selected_respawn(provider, client->actor, error)) return false;
-    }
+    if (!application_players_guest_spawned(provider, client->actor, false, error)) return false;
     uint32_t seat;
     if (engine->game->weapon_services &&
         application_world_provider(provider->application, QA_ROLE_ENTITIES, "") == provider &&

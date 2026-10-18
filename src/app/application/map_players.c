@@ -1503,6 +1503,27 @@ bool application_q3_guest_selected_respawn(application_provider *source,
     return true;
 }
 
+bool application_players_guest_spawned(application_provider *source,qa_actor_id actor,
+    bool respawning,qa_error *error)
+{
+    struct application_q3_guest *engine=q3g_engine(source);
+    qa_application *app=source->application;
+    if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
+    if(!application_guest_actor_admit(source,actor,error)) return false;
+    if(application_provider_for(app,actor,QA_ROLE_CHARACTER,"")!=source) return true;
+    if(engine->game->combat && !application_q3_combat_admit(engine->game->combat,actor,error)) return false;
+    if(engine->game->weapon_services &&
+       !application_q3_guest_selected_respawn(source,actor,error)) return false;
+    if(!respawning || !qa_actors_get(qa_session_actors(app->session),actor)) return true;
+    const application_player_record *record=application_player_record_live(app->players,actor);
+    if(!record || record->source_begin_pending || record->deferred ||
+       app->operation==APPLICATION_CONFIGURING) return true;
+    application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    return (!app->supplies || !world || application_supplies_source_spawned(world,actor,error)) &&
+        (!app->equipment || qa_equipment_respawn(app->equipment,actor,error)) &&
+        admit_components(app,actor,error);
+}
+
 static bool q3_pose_read(application_provider *provider, uint32_t slot,
     qa_vec3 *origin, qa_vec3 *angles, qa_error *error)
 {
