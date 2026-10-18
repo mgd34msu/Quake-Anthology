@@ -1166,7 +1166,8 @@ static bool frontend_step(qa_frontend *frontend,
                 ok=commands(frontend,*playing,true,error);
         }
         if (ok && ready && !replay && !qa_application_should_stop(frontend->application))
-            ok=qa_application_q3_output_drain(frontend->application,error);
+            ok=qa_application_clients_drain(frontend->application,error) &&
+                qa_application_q3_output_drain(frontend->application,error);
         if (ok && ready && !qa_application_should_stop(frontend->application) && cinematic) {
             bool rendered=false;
             /* Playback owns its separate media clock. A console fallback may
