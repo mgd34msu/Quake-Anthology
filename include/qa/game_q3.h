@@ -708,8 +708,8 @@ typedef struct qa_q3_entity_view {
 } qa_q3_entity_view;
 bool qa_q3_entity_read(const qa_q3_game *, qa_actor_id, qa_q3_entity_view *, qa_error *);
 /* Unified presentation extension; finite authored fade overshoot is retained. */
-bool qa_q3_alpha_read(const qa_q3_game *, qa_actor_id, float *, qa_error *);
-bool qa_q3_alpha(qa_q3_game *, qa_actor_id, float, qa_error *);
+bool qa_q3_alpha_read(qa_q3_game *, qa_actor_id, float *, bool *field_present, qa_error *);
+bool qa_q3_alpha(qa_q3_game *, qa_actor_id, float, bool *field_present, qa_error *);
 bool qa_q3_frame(qa_q3_game *, int32_t previous_ms, int32_t now_ms, qa_error *);
 bool qa_q3_actor_frame(qa_q3_game *, qa_actor_id, qa_error *);
 void qa_q3_actor_released(qa_q3_game *, qa_actor_record);

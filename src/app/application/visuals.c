@@ -53,7 +53,7 @@ bool qa_application_visual_alpha_read(qa_application *app, qa_actor_id actor,
         if (!qa_q2_alpha_read(provider->state.q2, actor, &alpha, error)) return false;
         break;
     case APPLICATION_PROVIDER_Q3:
-        if (!qa_q3_alpha_read(provider->state.q3, actor, &alpha, error)) return false;
+        if (!qa_q3_alpha_read(provider->state.q3, actor, &alpha, &present, error)) return false;
         break;
     case APPLICATION_PROVIDER_QC: {
         uint32_t slot;
@@ -93,7 +93,7 @@ bool qa_application_visual_alpha_write(qa_application *app, qa_actor_id actor,
         if (!qa_q2_alpha(provider->state.q2, actor, alpha, error)) return false;
         break;
     case APPLICATION_PROVIDER_Q3:
-        if (!qa_q3_alpha(provider->state.q3, actor, alpha, error)) return false;
+        if (!qa_q3_alpha(provider->state.q3, actor, alpha, &present, error)) return false;
         break;
     case APPLICATION_PROVIDER_QC: {
         uint32_t slot;
