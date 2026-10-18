@@ -7,7 +7,6 @@
 #include <string.h>
 
 #define QVM_OPERANDS 256u
-#define QVM_ARGUMENTS 62u
 #define NO_INSTRUCTION UINT32_MAX
 
 typedef struct operands {
@@ -1063,7 +1062,7 @@ static bool source_arguments(qa_qvm *vm, uint32_t caller, size_t *out, qa_error 
         if (instruction->opcode != QA_QVM_ENTER) continue;
         if (instruction->operand < 8 || (instruction->operand & 3) != 0) return error_at(error, caller, "QVM call has no aligned caller frame");
         size_t words = ((uint32_t)instruction->operand - 8) / 4;
-        *out = words < QVM_ARGUMENTS ? words : QVM_ARGUMENTS; return true;
+        *out = words < QA_QVM_ARGUMENTS ? words : QA_QVM_ARGUMENTS; return true;
     }
     return error_at(error, caller, "QVM call has no caller function");
 }
@@ -1415,14 +1414,14 @@ static bool invoke(qa_qvm *vm, uint32_t instruction, const int32_t *words, size_
     if (error == NULL) error = &local_error;
     if (!qa_qvm_execution_reentry(vm, error)) return false;
     execution *exec = state(vm);
-    if (out == NULL || (count != 0 && words == NULL) || count > (instruction == 0 ? 10u : QVM_ARGUMENTS)
+    if (out == NULL || (count != 0 && words == NULL) || count > (instruction == 0 ? 10u : QA_QVM_ARGUMENTS)
         || instruction >= vm->image->instruction_count || (instruction != 0 && !function(vm->image, instruction, error))) {
         error_at(error, instruction, "QVM invocation needs an entry, output and bounded arguments"); latch(vm, error); return false;
     }
     bool root = exec->active == NULL;
     if (root) { exec->failed = false; exec->failure = (qa_error){0}; exec->instructions = 0; }
     if (!healthy(vm, error)) { if (!exec->failed && exec->cancelled != NULL) { *out = 0; return true; } return false; }
-    int32_t arguments[QVM_ARGUMENTS] = {0};
+    int32_t arguments[QA_QVM_ARGUMENTS] = {0};
     if (count != 0) memcpy(arguments, words, count * sizeof(*arguments));
     size_t reserved = count < 10 ? 10 : count;
     uint32_t base;
@@ -1480,7 +1479,7 @@ bool qa_qvm_execution_source_callback(const qa_qvm_call *call, const qa_qvm_imag
     qa_qvm *vm = call->vm;
     execution *exec = state(vm);
     if (!image || image != vm->image || !out || (count && !words) ||
-        count > QVM_ARGUMENTS || exec->counter)
+        count > QA_QVM_ARGUMENTS || exec->counter)
         return error_at(error, 0, "QVM source callback differs from its admitted image or source scope");
     if (pointer >= 0) {
         if (!function(image, (uint32_t)pointer, error)) return false;
@@ -1490,7 +1489,7 @@ bool qa_qvm_execution_source_callback(const qa_qvm_call *call, const qa_qvm_imag
         if (!exec->failed && exec->cancelled) { *out = 0; return true; }
         return false;
     }
-    int32_t arguments[QVM_ARGUMENTS];
+    int32_t arguments[QA_QVM_ARGUMENTS];
     if (count) memcpy(arguments, words, count * sizeof(*arguments));
     uint32_t base;
     uint32_t floor = exec->active->floor;

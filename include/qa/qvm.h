@@ -4,6 +4,8 @@
 #include "qa/common.h"
 #include "qa/math.h"
 
+enum { QA_QVM_ARGUMENTS = 62 };
+
 typedef enum qa_qvm_opcode {
     QA_QVM_UNDEF, QA_QVM_IGNORE, QA_QVM_BREAK, QA_QVM_ENTER, QA_QVM_LEAVE,
     QA_QVM_CALL, QA_QVM_PUSH, QA_QVM_POP, QA_QVM_CONST, QA_QVM_LOCAL, QA_QVM_JUMP,

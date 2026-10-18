@@ -181,8 +181,8 @@ static bool damage_arguments(void *context, const qa_native_value *roles, size_t
     const application_q3_combat_call *call =
         &application_q3_combat_profile_definition(damage->target->profile)->damage_call;
     (void)count;
-    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
-    bool semantic[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    qa_native_value values[QA_QVM_ARGUMENTS] = {0};
+    bool semantic[QA_QVM_ARGUMENTS] = {0};
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) {
         values[call->positions[i]] = roles[i];
         semantic[call->positions[i]] = true;

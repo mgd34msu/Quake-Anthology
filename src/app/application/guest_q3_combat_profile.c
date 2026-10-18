@@ -100,10 +100,10 @@ static bool call(const qa_json_document *doc, qa_json_id object,
     qa_json_id roles = qa_json_get(doc, object, "roles"), extras = qa_json_get(doc, object, "extras");
     if (!array(doc, extras, error)) return false;
     size_t extra_count = qa_json_size(doc, extras);
-    if (extra_count > APPLICATION_Q3_COMBAT_ARGUMENTS - roles_count)
+    if (extra_count > QA_QVM_ARGUMENTS - roles_count)
         return fail(error, QA_ERROR_FORMAT, "Combat arguments exceed original OP_ARG capacity");
     out->count = roles_count + extra_count;
-    bool occupied[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    bool occupied[QA_QVM_ARGUMENTS] = {0};
     for (size_t i = 0; i < roles_count; ++i) {
         uint32_t position;
         if (!word(doc, qa_json_get(doc, roles, names[i]), &position, error)) return false;
@@ -154,10 +154,10 @@ static bool reaction(const qa_json_document *doc, qa_json_id object,
     if (!word(doc, qa_json_get(doc, object, "arguments"), &out->count, error) ||
         !word(doc, qa_json_get(doc, roles, "target"), &out->target, error) ||
         !word(doc, qa_json_get(doc, roles, "amount"), &out->amount, error)) return false;
-    if (out->count < 2 || out->count > APPLICATION_Q3_COMBAT_ARGUMENTS ||
+    if (out->count < 2 || out->count > QA_QVM_ARGUMENTS ||
         out->target >= out->count || out->amount >= out->count || out->target == out->amount)
         return fail(error, QA_ERROR_FORMAT, "Combat reaction roles leave their original call");
-    bool occupied[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    bool occupied[QA_QVM_ARGUMENTS] = {0};
     occupied[out->target] = occupied[out->amount] = true;
     size_t count = 2;
     const char *names[] = {"attacker", "inflictor", "method"};

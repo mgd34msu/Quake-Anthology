@@ -6,7 +6,6 @@
 #include "qa/native.h"
 #include "qa/strings.h"
 
-enum { APPLICATION_Q3_COMBAT_ARGUMENTS = 62 };
 typedef enum application_q3_damage_word {
     Q3_DAMAGE_TARGET, Q3_DAMAGE_INFLICTOR, Q3_DAMAGE_ATTACKER,
     Q3_DAMAGE_DIRECTION, Q3_DAMAGE_POINT, Q3_DAMAGE_AMOUNT,
@@ -17,8 +16,8 @@ typedef enum application_q3_armor_word {
 } application_q3_armor_word;
 typedef struct application_q3_combat_call {
     uint32_t positions[Q3_DAMAGE_WORDS];
-    int32_t words[APPLICATION_Q3_COMBAT_ARGUMENTS];
-    qa_native_value_type types[APPLICATION_Q3_COMBAT_ARGUMENTS];
+    int32_t words[QA_QVM_ARGUMENTS];
+    qa_native_value_type types[QA_QVM_ARGUMENTS];
     size_t count;
 } application_q3_combat_call;
 typedef struct application_q3_reaction_call {

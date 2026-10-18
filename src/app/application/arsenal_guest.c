@@ -26,6 +26,8 @@ typedef struct guest_motion_completion {
 typedef struct guest_client_scope {
     struct guest_client_scope *previous;
     const qa_qvm_call *call;
+    int32_t *result;
+    qa_native_value argument;
     qa_actor_id actor;
     qa_q3_host_game_data data;
     uint32_t slot, milliseconds;
@@ -293,7 +295,9 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
         if (number > UINT32_MAX) return qa_qvm_proceed(call, result, error);
         slot = (uint32_t)number;
     }
-    guest_client_scope scope = {.previous = input->scope, .call = call, .spawning = spawning};
+    guest_client_scope scope = {.previous = input->scope, .call = call, .result = result, .spawning = spawning};
+    scope.argument.type = call->instruction == input->profile->client_think ? QA_NATIVE_I32 : QA_NATIVE_ADDRESS;
+    if (!qa_q3_source_word_to_value(&scope.argument, argument, error)) return false;
     bool present;
     if (!slot_player(input, slot, &scope, &present, error)) return false;
     if (!present) return qa_qvm_proceed(call, result, error);
@@ -730,9 +734,11 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     application_guest_input *input = context;
     guest_client_scope *scope = input->scope;
     if (!scope || scope->spawning) return qa_qvm_proceed(call, result, error);
-    int32_t movement; uint64_t player;
-    if (!qa_qvm_call_argument(call, 0, &movement, error) ||
-        !qa_q3_host_source_pointer(input->role->host, (uint32_t)movement, &player, error)) return false;
+    qa_native_value move_argument;
+    const qa_native_value_type move_type = QA_NATIVE_ADDRESS;
+    uint64_t player;
+    if (!application_source_qvm_arguments(call, &move_type, 1, &move_argument, error) ||
+        !qa_q3_host_source_pointer(input->role->host, move_argument.as.address, &player, error)) return false;
     if (player != scope->player) return qa_qvm_proceed(call, result, error);
     uint64_t previous = scope->movement;
     uint32_t previous_ms = scope->milliseconds;
@@ -741,7 +747,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     bool previous_equipment_active = scope->equipment_active;
     qa_usercmd previous_application = scope->application_command;
     bool previous_weapon_slice = scope->weapon_slice, previous_weapon_reached = scope->weapon_reached;
-    scope->movement = (uint32_t)movement;
+    scope->movement = move_argument.as.address;
     uint64_t end = (uint64_t)scope->movement + 28;
     const uint32_t offsets[] = {input->profile->source->movement_mins, input->profile->source->movement_maxs,
                                input->profile->source->water_movement, input->profile->source->water_type_movement};
@@ -765,6 +771,15 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
                                 : elapsed > 1000 ? 1000 : elapsed < 0 ? 0 : (uint32_t)elapsed;
     application_source_input_scope input_scope = {0};
     application_guest_q3_control_scope body_scope = {0};
+    application_source_qvm_call move_backend = {call, result}, client_backend = {scope->call, scope->result};
+    application_source_call move_call = {.qvm = call, .entry = call->instruction,
+        .arguments = &move_argument, .count = 1, .context = &move_backend,
+        .proceed = application_source_qvm_proceed, .cancel = application_source_qvm_cancel,
+        .cancelled = application_source_qvm_cancelled};
+    application_source_call client_call = {.qvm = scope->call, .entry = scope->call->instruction,
+        .arguments = &scope->argument, .count = 1, .context = &client_backend,
+        .proceed = application_source_qvm_proceed, .cancel = application_source_qvm_cancel,
+        .cancelled = application_source_qvm_cancelled};
     uint32_t before_type = 0, projected_type = 0, before_health = 0, projected_health = 0;
     bool type_projected = false, health_projected = false, dead = false;
     bool ok = true, cancelled = false;
@@ -837,10 +852,12 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
     if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
     qa_movement_environment equipment = {.fixed_pose = scope->equipment.fixed_pose,
         .fixed_crouched = scope->equipment.fixed_pose, .pose = scope->equipment.pose};
-    if (ok && !cancelled && !slice && !follower)
-        ok = application_guest_q3_control_begin(input->body_control, call, scope->call, scope->actor,
-            scope->slot, scope->player, scope->movement, scope->equipment_active ? &equipment : NULL,
-            &body_scope, error);
+    if (ok && !cancelled && !slice && !follower) {
+        ok = application_source_qvm_arguments(call, &move_type, 1, &move_argument, error) &&
+            application_guest_q3_control_begin(input->body_control, &move_call, &client_call, scope->actor,
+                scope->slot, scope->player, scope->movement, scope->equipment_active ? &equipment : NULL,
+                &body_scope, error);
+    }
     if (ok && !cancelled && !body_scope.retired && !body_scope.cancelled) ok = qa_qvm_proceed(call, result, error);
     if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
     if (ok && !cancelled && !slice && !follower && !body_scope.retired && !body_scope.cancelled &&

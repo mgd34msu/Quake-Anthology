@@ -28,7 +28,7 @@ struct application_q3_damage_frame {
     struct application_q3_damage_scopes *owner;
     qa_unified_frame_lease *storage;
     application_q3_combat_actor source;
-    application_q3_damage_call invocation;
+    application_source_call invocation;
     qa_qvm_call qvm_call;
     const qa_damage_request *request;
     qa_damage_observer *observer;
@@ -430,7 +430,7 @@ bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa
     free(owner); *out = NULL; return true;
 }
 bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
-    const application_q3_damage_call *call, const application_q3_combat_actor *source,
+    const application_source_call *call, const application_q3_combat_actor *source,
     const qa_damage_request *request, qa_damage_observer *observer, qa_damage_result *out, qa_error *error)
 {
     if (!owner || !call || !source || !request || !observer || !out || owner->retained ||
@@ -519,7 +519,7 @@ application_q3_damage_frame *application_q3_damage_scope_current(application_q3_
 }
 const qa_damage_request *application_q3_damage_scope_request(const application_q3_damage_frame *frame)
 { return frame && frame->active ? frame->request : NULL; }
-const application_q3_damage_call *application_q3_damage_scope_call(const application_q3_damage_frame *frame)
+const application_source_call *application_q3_damage_scope_call(const application_q3_damage_frame *frame)
 { return frame && frame->active ? &frame->invocation : NULL; }
 const application_q3_combat_actor *application_q3_damage_scope_actor(const application_q3_damage_frame *frame)
 { return frame && frame->active ? &frame->source : NULL; }

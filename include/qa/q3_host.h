@@ -332,6 +332,8 @@ bool qa_q3_host_write_usercmd(qa_q3_host *, uint64_t address, bool preserve_priv
     const qa_q3_usercmd *, qa_error *);
 /* Original scalar callbacks retain native pointer widths and QVM word bits.
  * entry is an actual native address or a QVM instruction index. */
+bool qa_q3_source_value_to_word(const qa_native_value *, int32_t *, qa_error *);
+bool qa_q3_source_word_to_value(qa_native_value *, int32_t word, qa_error *);
 bool qa_q3_host_source_call(qa_q3_host *, const qa_qvm_call *parent, uint64_t entry,
     const qa_native_value *, size_t count, qa_native_value *result, qa_error *);
 /* Generic component declarations qualify original tables before any source

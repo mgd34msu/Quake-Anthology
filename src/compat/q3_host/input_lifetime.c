@@ -104,7 +104,7 @@ bool qa_q3_host_source_player(qa_q3_host *host, uint32_t slot, qa_q3_player *out
     return q3_game_end(&call, ok);
 }
 
-static bool source_argument_word(const qa_native_value *value, int32_t *out, qa_error *error)
+bool qa_q3_source_value_to_word(const qa_native_value *value, int32_t *out, qa_error *error)
 {
     switch (value->type) {
     case QA_NATIVE_I8: *out = value->as.i8; return true;
@@ -125,7 +125,7 @@ static bool source_argument_word(const qa_native_value *value, int32_t *out, qa_
     }
 }
 
-static bool source_result_word(qa_native_value *out, int32_t word, qa_error *error)
+bool qa_q3_source_word_to_value(qa_native_value *out, int32_t word, qa_error *error)
 {
     switch (out->type) {
     case QA_NATIVE_VOID: return true;
@@ -157,16 +157,16 @@ bool qa_q3_host_source_call(qa_q3_host *host, const qa_qvm_call *parent, uint64_
         int32_t *words = count ? qa_arena_alloc(&host->scratch, count * sizeof(*words),
             _Alignof(int32_t), error) : NULL;
         qa_native_value checked = {.type = result->type};
-        ok = (!count || words) && source_result_word(&checked, 0, error) && entry <= INT32_MAX;
+        ok = (!count || words) && qa_q3_source_word_to_value(&checked, 0, error) && entry <= INT32_MAX;
         if (entry > INT32_MAX)
             q3_fail(error, QA_ERROR_ARGUMENT, 0, "Source entry exceeds its QVM instruction width");
         for (size_t i = 0; ok && i < count; ++i)
-            ok = source_argument_word(arguments + i, words + i, error);
+            ok = qa_q3_source_value_to_word(arguments + i, words + i, error);
         int32_t word;
         if (ok) ok = parent ? qa_qvm_invoke_source_callback(parent, qa_qvm_image_of(host->vm),
                 (int32_t)(uint32_t)entry, words, count, &word, error) :
             qa_qvm_invoke(host->vm, (uint32_t)entry, words, count, &word, error);
-        if (ok) ok = source_result_word(result, word, error);
+        if (ok) ok = qa_q3_source_word_to_value(result, word, error);
     } else {
         qa_native_type *parameters = count ? qa_arena_alloc(&host->scratch,
             count * sizeof(*parameters), _Alignof(qa_native_type), error) : NULL;

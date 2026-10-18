@@ -62,16 +62,16 @@ static bool retain_current(const application_guest_q3_control *owner,
     return !scope->retired;
 }
 
-static bool observe_cancel(const qa_qvm_call *call,
+static bool observe_cancel(const application_source_call *call,
     application_guest_q3_control_scope *scope, qa_error *error)
 {
     bool cancelled;
-    if (!qa_qvm_call_cancelled(call, &cancelled, error)) return false;
+    if (!call->cancelled(call->context, &cancelled, error)) return false;
     scope->cancelled = scope->cancelled || cancelled; return true;
 }
 
 static bool write_word(application_guest_q3_control *owner,
-    application_guest_q3_control_scope *scope, const qa_qvm_call *call,
+    application_guest_q3_control_scope *scope, const application_source_call *call,
     uint64_t address, uint32_t value, qa_error *error)
 {
     if (!observe_cancel(call, scope, error)) return false;
@@ -83,7 +83,7 @@ static bool write_word(application_guest_q3_control *owner,
 }
 
 static bool write_vector(application_guest_q3_control *owner,
-    application_guest_q3_control_scope *scope, const qa_qvm_call *call,
+    application_guest_q3_control_scope *scope, const application_source_call *call,
     uint64_t address, qa_vec3 value, qa_error *error)
 {
     const float components[] = {value.x, value.y, value.z};
@@ -96,7 +96,7 @@ static bool write_vector(application_guest_q3_control *owner,
 }
 
 static bool write_bounds(application_guest_q3_control *owner,
-    application_guest_q3_control_scope *scope, const qa_qvm_call *call,
+    application_guest_q3_control_scope *scope, const application_source_call *call,
     qa_bounds value, qa_error *error)
 {
     return write_vector(owner, scope, call, scope->movement + owner->profile->source->movement_mins, value.mins, error) &&
@@ -106,7 +106,7 @@ static bool write_bounds(application_guest_q3_control *owner,
 typedef struct body_trace {
     application_guest_q3_control *owner;
     application_guest_q3_control_scope *scope;
-    const qa_qvm_call *call;
+    const application_source_call *call;
     qa_bounds requested, previous;
     uint32_t previous_duck, previous_height;
 } body_trace;
@@ -132,10 +132,10 @@ static bool apply_bounds(body_trace *trace, bool accepted, qa_error *error)
     return true;
 }
 
-static bool perform_trace(void *context, const qa_qvm_call *call, uint32_t at,
+static bool perform_trace(body_trace *trace, uint64_t at,
     qa_error *error)
 {
-    body_trace *trace = context;
+    const application_source_call *call = trace->call;
     application_guest_q3_control *owner = trace->owner;
     application_guest_q3_control_scope *scope = trace->scope;
     if (!observe_cancel(call, scope, error)) return false;
@@ -146,34 +146,56 @@ static bool perform_trace(void *context, const qa_qvm_call *call, uint32_t at,
         !write_vector(owner, scope, call, at + 68, trace->requested.mins, error) ||
         !write_vector(owner, scope, call, at + 80, trace->requested.maxs, error)) return false;
     if (scope->cancelled || !retain_current(owner, scope)) return true;
-    uint32_t pointer, mask, client;
-    if (!word(owner, scope->movement + owner->profile->source->movement_trace_callback, &pointer, error) ||
+    uint64_t callback;
+    uint32_t mask, client;
+    if (!qa_q3_host_source_pointer(owner->role->host,
+            scope->movement + owner->profile->source->movement_trace_callback, &callback, error) ||
         !word(owner, scope->movement + owner->profile->source->movement_trace_mask, &mask, error) ||
         !word(owner, scope->player + 140, &client, error)) return false;
-    int32_t callback, mask_word, client_word;
-    memcpy(&callback, &pointer, 4); memcpy(&mask_word, &mask, 4); memcpy(&client_word, &client, 4);
-    const int32_t arguments[] = {(int32_t)at, (int32_t)(at + 56), (int32_t)(at + 68),
-        (int32_t)(at + 80), (int32_t)(at + 56), client_word, mask_word};
-    int32_t result;
-    if (!qa_qvm_invoke_source_callback(call, owner->image, callback, arguments,
-        sizeof(arguments) / sizeof(arguments[0]), &result, error)) return false;
+    int32_t mask_word, client_word;
+    memcpy(&mask_word, &mask, 4); memcpy(&client_word, &client, 4);
+    const qa_native_value arguments[] = {
+        {.type = QA_NATIVE_ADDRESS, .as.address = at},
+        {.type = QA_NATIVE_ADDRESS, .as.address = at + 56},
+        {.type = QA_NATIVE_ADDRESS, .as.address = at + 68},
+        {.type = QA_NATIVE_ADDRESS, .as.address = at + 80},
+        {.type = QA_NATIVE_ADDRESS, .as.address = at + 56},
+        {.type = QA_NATIVE_I32, .as.i32 = client_word},
+        {.type = QA_NATIVE_I32, .as.i32 = mask_word}};
+    if (!qa_q3_host_source_call(owner->role->host, call->qvm, callback, arguments,
+        sizeof(arguments) / sizeof(arguments[0]), NULL, error)) return false;
     if (!observe_cancel(call, scope, error)) return false;
     if (scope->cancelled || !retain_current(owner, scope)) return true;
     uint32_t all_solid;
     return word(owner, at, &all_solid, error) && apply_bounds(trace, all_solid == 0, error);
 }
 
-static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+static bool qvm_trace(void *context, const qa_qvm_call *call, uint32_t at, qa_error *error)
 {
-    application_guest_q3_control *owner = context;
+    (void)call;
+    return perform_trace(context, at, error);
+}
+
+static bool trace_run(body_trace *trace, qa_error *error)
+{
+    return qa_qvm_source_scratch(trace->call->qvm, trace->owner->image, 92,
+        qvm_trace, trace, error);
+}
+
+static bool duck_enter(application_guest_q3_control *owner,
+    const application_source_call *call, qa_error *error)
+{
     application_guest_q3_control_scope *scope = owner->scope;
-    if (!scope) return qa_qvm_proceed(call, result, error);
+    if (!scope) return call->proceed(call->context, call->arguments, call->count, error);
     if (!observe_cancel(call, scope, error)) return false;
-    if (scope->cancelled) { *result = 0; return true; }
-    if (!retain_current(owner, scope)) { *result = 0; return qa_qvm_cancel(scope->client_call, error); }
-    uint32_t movement;
-    if (!word(owner, owner->profile->source->movement_global, &movement, error)) return false;
-    if (movement != scope->movement) return qa_qvm_proceed(call, result, error);
+    if (scope->cancelled) return true;
+    if (!retain_current(owner, scope))
+        return scope->client_call->cancel(scope->client_call->context, error);
+    uint64_t movement;
+    if (!qa_q3_host_source_pointer(owner->role->host,
+        owner->profile->source->movement_global, &movement, error)) return false;
+    if (movement != scope->movement)
+        return call->proceed(call->context, call->arguments, call->count, error);
     bool ok;
     if (scope->fixed_pose) {
         uint32_t flags;
@@ -185,14 +207,13 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
             write_bounds(owner, scope, call, scope->pose.bounds, error);
         if (ok) {
             scope->accepted_bounds = scope->pose.bounds; scope->accepted = true;
-            *result = 0;
         }
     } else {
         if (scope->requested && !owner->profile->source->body_trace)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Original requested body bounds require their declared source trace");
         if (!owner->profile->source->body_trace) {
-            ok = qa_qvm_proceed(call, result, error);
+            ok = call->proceed(call->context, call->arguments, call->count, error);
             if (ok) ok = observe_cancel(call, scope, error);
             if (ok && !scope->cancelled && retain_current(owner, scope)) {
                 ok = vector(owner, scope->movement + owner->profile->source->movement_mins,
@@ -208,7 +229,7 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         if (!word(owner, scope->player + 12, &flags, error) ||
             !word(owner, scope->player + 164, &trace.previous_height, error)) return false;
         trace.previous_duck = flags & 1u;
-        ok = qa_qvm_proceed(call, result, error);
+        ok = call->proceed(call->context, call->arguments, call->count, error);
         if (ok) ok = observe_cancel(call, scope, error);
         if (ok && !scope->cancelled && retain_current(owner, scope)) {
             if (scope->requested) trace.requested = scope->requested_bounds;
@@ -216,16 +237,26 @@ static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_err
                 vector(owner, scope->movement + owner->profile->source->movement_maxs, &trace.requested.maxs, error);
             trace.previous = scope->accepted ? scope->accepted_bounds : scope->current_bounds;
             bool expands = qa_bounds_expands(trace.previous,trace.requested);
-            if (ok) ok = expands ? qa_qvm_source_scratch(call, owner->image, 92,
-                perform_trace, &trace, error) : apply_bounds(&trace, true, error);
+            if (ok) ok = expands ? trace_run(&trace, error) : apply_bounds(&trace, true, error);
         }
     }
     if (ok) {
         (void)retain_current(owner, scope);
         ok = observe_cancel(call, scope, error);
     }
-    if (ok && scope->retired && !scope->cancelled) ok = qa_qvm_cancel(scope->client_call, error);
+    if (ok && scope->retired && !scope->cancelled)
+        ok = scope->client_call->cancel(scope->client_call->context, error);
     return ok;
+}
+
+static bool duck(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+{
+    *result = 0;
+    application_source_qvm_call backend = {call, result};
+    application_source_call source = {.qvm = call, .entry = call->instruction,
+        .context = &backend, .proceed = application_source_qvm_proceed,
+        .cancel = application_source_qvm_cancel, .cancelled = application_source_qvm_cancelled};
+    return duck_enter(context, &source, error);
 }
 
 bool application_guest_q3_control_attach(q3g_role *role, const application_guest_input_profile *profile,
@@ -295,24 +326,23 @@ void application_guest_q3_control_restore_binding(application_guest_q3_control *
     owner->binding = binding;
 }
 
-bool application_guest_q3_control_begin(application_guest_q3_control *owner, const qa_qvm_call *call,
-    const qa_qvm_call *client,
+bool application_guest_q3_control_begin(application_guest_q3_control *owner, const application_source_call *call,
+    const application_source_call *client,
     qa_actor_id actor, uint32_t slot, uint64_t player, uint64_t movement,
     const qa_movement_environment *equipment, application_guest_q3_control_scope *scope, qa_error *error)
 {
     if (!scope) return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope requires its destination");
     *scope = (application_guest_q3_control_scope){0};
     if (!owner) return true;
-    if (!application_guest_q3_control_supports_pose(owner) || !call || call->vm != owner->vm ||
-        !client || client->vm != owner->vm ||
-        (client->instruction != owner->profile->client_think && client->instruction != owner->profile->run_client) ||
-        call->instruction != owner->profile->source->movement_move || !movement || (movement & 3u) || player > INT32_MAX)
+    if (!application_guest_q3_control_supports_pose(owner) || !call || !call->qvm || call->qvm->vm != owner->vm ||
+        !client || !client->qvm || client->qvm->vm != owner->vm ||
+        (client->entry != owner->profile->client_think && client->entry != owner->profile->run_client) ||
+        call->entry != owner->profile->source->movement_move || call->count != 1 || !call->arguments ||
+        call->arguments[0].type != QA_NATIVE_ADDRESS || !movement || (movement & 3u) || player > INT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Original body scope has no genuine source move");
-    int32_t argument;
-    if (!qa_qvm_call_argument(call, 0, &argument, error)) return false;
     if (!observe_cancel(call, scope, error)) return false;
     if (scope->cancelled) return true;
-    if ((uint32_t)argument != movement || !qa_q3_host_game_data_read(owner->role->host, &scope->data) ||
+    if (call->arguments[0].as.address != movement || !qa_q3_host_game_data_read(owner->role->host, &scope->data) ||
         slot >= scope->data.client_count || slot >= scope->data.entity_count ||
         scope->data.entity_stride != owner->profile->source->entity_stride || scope->data.client_stride != owner->profile->source->client_stride ||
         scope->data.clients_address + (uint64_t)slot * owner->profile->source->client_stride != player)

@@ -280,7 +280,7 @@ static bool invoke_reaction(void *context, const qa_native_value *damage_values,
         (reaction->death ? d->reactions.die : d->reactions.pain), &callback, error)) return false;
     if (!callback) return !reaction->death || application_fail(error, QA_ERROR_UNSUPPORTED,
         "Selected Q3 character has no source death callback");
-    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS] = {0};
+    qa_native_value values[QA_QVM_ARGUMENTS] = {0};
     values[call->target] = damage_values[Q3_DAMAGE_TARGET];
     values[call->attacker] = (qa_native_value){.type = QA_NATIVE_ADDRESS, .as.address = attacker};
     values[call->amount] = damage_values[Q3_DAMAGE_AMOUNT];
@@ -465,13 +465,9 @@ bool application_q3_combat_direct_reaction(application_q3_combat *owner,
     }
     return call->proceed(call->context, error);
 }
-typedef struct qvm_reaction {
-    const qa_qvm_call *call;
-    int32_t *result;
-} qvm_reaction;
 static bool qvm_reaction_integer(void *context, uint32_t index, int32_t *out, qa_error *error)
 {
-    qvm_reaction *source = context;
+    application_source_qvm_call *source = context;
     return qa_qvm_call_argument(source->call, index, out, error);
 }
 static bool qvm_reaction_pointer(void *context, uint32_t index, uint64_t *out, qa_error *error)
@@ -482,12 +478,12 @@ static bool qvm_reaction_pointer(void *context, uint32_t index, uint64_t *out, q
 }
 static bool qvm_reaction_proceed(void *context, qa_error *error)
 {
-    qvm_reaction *source = context;
-    return qa_qvm_proceed(source->call, source->result, error);
+    application_source_qvm_call *source = context;
+    return application_source_qvm_proceed(source, NULL, 0, error);
 }
 static bool direct_enter(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
-    qvm_reaction source = {call, result};
+    application_source_qvm_call source = {call, result};
     application_q3_reaction_invocation invocation = {.address = call->instruction,
         .context = &source, .pointer = qvm_reaction_pointer,
         .integer = qvm_reaction_integer, .proceed = qvm_reaction_proceed};
@@ -501,107 +497,25 @@ static qa_qvm_function_hook direct_resolve(void *context, const qa_qvm_call *cal
     *hook_context = owner;
     return direct_enter;
 }
-typedef struct native_reaction_call {
-    qa_native_entry_observer *binding;
-    const qa_native_value *arguments;
-    size_t count;
-    qa_native_value *result;
-    qa_error cancellation;
-    bool cancelling;
-} native_reaction_call;
-typedef struct qvm_damage_call {
-    const qa_qvm_call *call;
-    int32_t *result;
-} qvm_damage_call;
-static bool qvm_values(const qa_qvm_call *call, const qa_native_value_type *types,
-    size_t count, qa_native_value *values, qa_error *error)
-{
-    for (size_t i = 0; i < count; ++i) {
-        int32_t word;
-        if (!qa_qvm_call_argument(call, i, &word, error)) return false;
-        values[i].type = types ? types[i] : QA_NATIVE_ADDRESS;
-        if (values[i].type == QA_NATIVE_ADDRESS) values[i].as.address = (uint32_t)word;
-        else if (values[i].type == QA_NATIVE_F32) memcpy(&values[i].as.f32, &word, sizeof(word));
-        else values[i].as.i32 = word;
-    }
-    return true;
-}
-static bool qvm_damage_proceed(void *context, const qa_native_value *values, size_t count, qa_error *error)
-{
-    qvm_damage_call *source = context;
-    int32_t prior[APPLICATION_Q3_COMBAT_ARGUMENTS];
-    size_t saved = 0;
-    bool ok = true;
-    for (size_t i = 0; ok && i < count; ++i) {
-        int32_t word;
-        if (values[i].type == QA_NATIVE_ADDRESS) {
-            if (values[i].as.address > UINT32_MAX) {
-                ok = application_fail(error, QA_ERROR_ARGUMENT, "Source pointer exceeds its QVM argument width");
-                break;
-            }
-            uint32_t pointer = (uint32_t)values[i].as.address;
-            memcpy(&word, &pointer, sizeof(word));
-        } else if (values[i].type == QA_NATIVE_F32) memcpy(&word, &values[i].as.f32, sizeof(word));
-        else word = values[i].as.i32;
-        if (!qa_qvm_call_argument(source->call, i, prior + i, error)) { ok = false; break; }
-        ++saved;
-        if (word != prior[i]) ok = qa_qvm_call_set_argument(source->call, i, word, error);
-    }
-    if (ok) ok = qa_qvm_proceed(source->call, source->result, error);
-    qa_error first = error ? *error : (qa_error){0};
-    for (size_t i = 0; i < saved; ++i) {
-        qa_error restore = {0};
-        if (!qa_qvm_call_set_argument(source->call, i, prior[i], &restore)) {
-            if (ok) first = restore;
-            ok = false;
-        }
-    }
-    if (!ok && error) *error = first;
-    return ok;
-}
-static bool qvm_damage_cancel(void *context, qa_error *error)
-{ return qa_qvm_cancel(((qvm_damage_call *)context)->call, error); }
-static bool native_damage_accepts(void *context, const qa_error *error)
-{
-    native_reaction_call *call = context;
-    return call->cancelling && qa_error_same(error, &call->cancellation);
-}
-static bool native_damage_cancel(void *context, qa_error *error)
-{
-    native_reaction_call *call = context;
-    application_fail(&call->cancellation, QA_ERROR_ARGUMENT, "Original Q3 damage target retired during its source callback");
-    call->cancelling = true;
-    if (error) *error = call->cancellation;
-    return false;
-}
-static bool native_damage_proceed(void *context, const qa_native_value *values, size_t count, qa_error *error)
-{
-    native_reaction_call *call = context;
-    if (call->result->type != QA_NATIVE_VOID)
-        return qa_native_invoke_original(call->binding, values, count, call->result, error);
-    bool cancelled;
-    return qa_native_invoke_original_cancellable(call->binding, values, count, call->result,
-        native_damage_accepts, call, &cancelled, error);
-}
-static bool damage_enter(application_q3_combat *, const application_q3_damage_call *, qa_error *);
-static bool freed_enter(application_q3_combat *, const application_q3_damage_call *, qa_error *);
-static bool armor_enter(application_q3_combat *, const application_q3_damage_call *, int32_t *, qa_error *);
+static bool damage_enter(application_q3_combat *, const application_source_call *, qa_error *);
+static bool freed_enter(application_q3_combat *, const application_source_call *, qa_error *);
+static bool armor_enter(application_q3_combat *, const application_source_call *, int32_t *, qa_error *);
 static bool native_reaction_pointer(void *context, uint32_t index, uint64_t *out, qa_error *error)
 {
     (void)error;
-    *out = ((native_reaction_call *)context)->arguments[index].as.address;
+    *out = ((application_source_native_call *)context)->arguments[index].as.address;
     return true;
 }
 static bool native_reaction_integer(void *context, uint32_t index, int32_t *out, qa_error *error)
 {
     (void)error;
-    *out = ((native_reaction_call *)context)->arguments[index].as.i32;
+    *out = ((application_source_native_call *)context)->arguments[index].as.i32;
     return true;
 }
 static bool native_reaction_proceed(void *context, qa_error *error)
 {
-    native_reaction_call *call = context;
-    return qa_native_invoke_original(call->binding, call->arguments, call->count, call->result, error);
+    application_source_native_call *call = context;
+    return application_source_native_proceed(call, call->arguments, call->count, error);
 }
 static bool native_reaction_enter(void *context, qa_native_instance *instance,
     qa_native_entry_observer *binding, const qa_native_value *arguments, size_t count,
@@ -609,11 +523,12 @@ static bool native_reaction_enter(void *context, qa_native_instance *instance,
 {
     (void)instance;
     native_reaction_binding *entry = context;
-    native_reaction_call source = {.binding = binding, .arguments = arguments, .count = count, .result = result};
+    application_source_native_call source = {.binding = binding, .arguments = arguments, .count = count, .result = result};
     if (entry->kind != NATIVE_COMBAT_REACTION) {
         *result = (qa_native_value){.type = entry->kind == NATIVE_COMBAT_ARMOR ? QA_NATIVE_I32 : QA_NATIVE_VOID};
-        application_q3_damage_call call = {.entry = entry->address, .arguments = arguments, .count = count,
-            .context = &source, .proceed = native_damage_proceed, .cancel = native_damage_cancel};
+        application_source_call call = {.entry = entry->address, .arguments = arguments, .count = count,
+            .context = &source, .proceed = application_source_native_proceed, .cancel = application_source_native_cancel,
+            .cancelled = application_source_native_cancelled};
         if (entry->kind == NATIVE_COMBAT_DAMAGE) return damage_enter(entry->owner, &call, error);
         if (entry->kind == NATIVE_COMBAT_FREE) return freed_enter(entry->owner, &call, error);
         return armor_enter(entry->owner, &call, &result->as.i32, error);
@@ -669,7 +584,7 @@ static bool native_reaction_bind(void *context, uint64_t address,
     application_q3_combat *owner = context;
     if (!call->arguments_present)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native damage reaction has no declared argument layout");
-    qa_native_type parameters[APPLICATION_Q3_COMBAT_ARGUMENTS];
+    qa_native_type parameters[QA_QVM_ARGUMENTS];
     for (size_t i = 0; i < call->count; ++i)
         parameters[i] = (qa_native_type){.kind = QA_NATIVE_I32, .count = 1};
     parameters[call->target].kind = parameters[call->attacker].kind = QA_NATIVE_ADDRESS;
@@ -682,7 +597,7 @@ static bool native_declared_bind(application_q3_combat *owner, uint32_t entry,
 {
     uint64_t address;
     if (!qa_native_rva(qa_native_host_instance(owner->role->native), entry, 1, &address, error)) return false;
-    qa_native_type parameters[APPLICATION_Q3_COMBAT_ARGUMENTS];
+    qa_native_type parameters[QA_QVM_ARGUMENTS];
     size_t count = call ? call->count : 1;
     for (size_t i = 0; i < count; ++i)
         parameters[i] = (qa_native_type){.kind = call ? call->types[i] : QA_NATIVE_ADDRESS, .count = 1};
@@ -790,7 +705,7 @@ bool application_q3_combat_leave(application_q3_combat *owner, qa_error *error)
 typedef struct entered_damage {
     application_q3_combat *owner;
     combat_actor *actor;
-    const application_q3_damage_call *call;
+    const application_source_call *call;
     uint32_t flags;
     const qa_damage_request *effective;
     qa_damage_observer *observer;
@@ -803,7 +718,7 @@ static bool proceed_damage(void *context, const qa_native_value *values, size_t 
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(entered->owner->profile);
     if (count != d->damage_call.count)
         return application_fail(error, QA_ERROR_FORMAT, "Lowered Source damage omits its declared argument words");
-    qa_native_value arguments[APPLICATION_Q3_COMBAT_ARGUMENTS];
+    qa_native_value arguments[QA_QVM_ARGUMENTS];
     memcpy(arguments, entered->call->arguments, count * sizeof(*arguments));
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i) {
         uint32_t position = d->damage_call.positions[i];
@@ -813,7 +728,7 @@ static bool proceed_damage(void *context, const qa_native_value *values, size_t 
             (i == Q3_DAMAGE_INFLICTOR && qa_actor_id_equal(entered->effective->attack.inflictor, entered->original.attack.inflictor));
         if (!preserve) arguments[position] = values[position];
     }
-    application_q3_damage_call lowered = *entered->call;
+    application_source_call lowered = *entered->call;
     lowered.arguments = arguments;
     return application_q3_damage_scope_run(entered->owner->scopes, &lowered,
         &entered->actor->source, entered->effective, entered->observer, entered->result, error);
@@ -829,7 +744,7 @@ static bool entered_source(void *context, qa_combat *combat, const qa_damage_req
         entered->flags, proceed_damage, entered, error);
 }
 static bool damage_enter(application_q3_combat *owner,
-    const application_q3_damage_call *call, qa_error *error)
+    const application_source_call *call, qa_error *error)
 {
     incoming_damage *incoming = owner->incoming;
     if (incoming && !incoming->entered) {
@@ -887,17 +802,18 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
 {
     application_q3_combat *owner = context;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
-    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS];
-    if (!qvm_values(call, d->damage_call.types, d->damage_call.count, values, error)) return false;
-    qvm_damage_call source = {call, result};
-    application_q3_damage_call invocation = {.qvm = call, .entry = call->instruction,
+    qa_native_value values[QA_QVM_ARGUMENTS];
+    if (!application_source_qvm_arguments(call, d->damage_call.types, d->damage_call.count, values, error)) return false;
+    application_source_qvm_call source = {call, result};
+    application_source_call invocation = {.qvm = call, .entry = call->instruction,
         .arguments = values, .count = d->damage_call.count, .context = &source,
-        .proceed = qvm_damage_proceed, .cancel = qvm_damage_cancel};
+        .proceed = application_source_qvm_proceed, .cancel = application_source_qvm_cancel,
+        .cancelled = application_source_qvm_cancelled};
     *result = 0;
     return damage_enter(owner, &invocation, error);
 }
 static bool freed_enter(application_q3_combat *owner,
-    const application_q3_damage_call *call, qa_error *error)
+    const application_source_call *call, qa_error *error)
 {
     uint64_t pointer = call->arguments[0].as.address;
     qa_actor_id released = {0}; qa_q3_host_game_data table;
@@ -929,15 +845,16 @@ static bool freed_enter(application_q3_combat *owner,
 static bool freed(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
 {
     qa_native_value value;
-    if (!qvm_values(call, NULL, 1, &value, error)) return false;
-    qvm_damage_call source = {call, result};
-    application_q3_damage_call invocation = {.qvm = call, .entry = call->instruction,
+    if (!application_source_qvm_arguments(call, NULL, 1, &value, error)) return false;
+    application_source_qvm_call source = {call, result};
+    application_source_call invocation = {.qvm = call, .entry = call->instruction,
         .arguments = &value, .count = 1, .context = &source,
-        .proceed = qvm_damage_proceed, .cancel = qvm_damage_cancel};
+        .proceed = application_source_qvm_proceed, .cancel = application_source_qvm_cancel,
+        .cancelled = application_source_qvm_cancelled};
     return freed_enter(context, &invocation, error);
 }
 static bool armor_enter(application_q3_combat *owner,
-    const application_q3_damage_call *call, int32_t *result, qa_error *error)
+    const application_source_call *call, int32_t *result, qa_error *error)
 {
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
     uint64_t target = call->arguments[d->armor.call.positions[Q3_ARMOR_TARGET]].as.address;
@@ -954,7 +871,7 @@ static bool armor_enter(application_q3_combat *owner,
     if (!foreign_regular && !foreign_power) return call->proceed(call->context, call->arguments, call->count, error);
     qa_damage_flags flags = qa_attack_flags(&request->attack);
     flags.no_armor = ((uint32_t)source_flags & d->damage_flags.no_armor) != 0;
-    const application_q3_damage_call *damage_call = application_q3_damage_scope_call(frame);
+    const application_source_call *damage_call = application_q3_damage_scope_call(frame);
     qa_damage_geometry geometry = {.normal = request->normal};
     if (!vector(owner, damage_call->arguments[d->damage_call.positions[Q3_DAMAGE_DIRECTION]].as.address,
             &geometry.direction, error) ||
@@ -972,7 +889,7 @@ static bool armor_enter(application_q3_combat *owner,
     if (!isfinite(saved) || saved < 0 || saved > fmax(0, amount))
         return application_fail(error, QA_ERROR_ARGUMENT, "Selected power armor exceeds reached source damage");
     int32_t power_saved = (int32_t)trunc(saved), remaining = amount - power_saved;
-    qa_native_value arguments[APPLICATION_Q3_COMBAT_ARGUMENTS];
+    qa_native_value arguments[QA_QVM_ARGUMENTS];
     memcpy(arguments, call->arguments, call->count * sizeof(*arguments));
     arguments[d->armor.call.positions[Q3_ARMOR_AMOUNT]].as.i32 = remaining;
     bool ok;
@@ -1002,12 +919,13 @@ static bool armor_stage(void *context, const qa_qvm_call *call, int32_t *result,
 {
     application_q3_combat *owner = context;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
-    qa_native_value values[APPLICATION_Q3_COMBAT_ARGUMENTS];
-    if (!qvm_values(call, d->armor.call.types, d->armor.call.count, values, error)) return false;
-    qvm_damage_call source = {call, result};
-    application_q3_damage_call invocation = {.qvm = call, .entry = call->instruction,
+    qa_native_value values[QA_QVM_ARGUMENTS];
+    if (!application_source_qvm_arguments(call, d->armor.call.types, d->armor.call.count, values, error)) return false;
+    application_source_qvm_call source = {call, result};
+    application_source_call invocation = {.qvm = call, .entry = call->instruction,
         .arguments = values, .count = d->armor.call.count, .context = &source,
-        .proceed = qvm_damage_proceed, .cancel = qvm_damage_cancel};
+        .proceed = application_source_qvm_proceed, .cancel = application_source_qvm_cancel,
+        .cancelled = application_source_qvm_cancelled};
     return armor_enter(owner, &invocation, result, error);
 }
 bool application_q3_combat_create(q3g_role *role, const application_q3_combat_profile *profile,
