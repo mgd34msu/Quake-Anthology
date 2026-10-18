@@ -1514,10 +1514,18 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input owner is missing or already active");
     if (!engine->game->vm) {
         qa_application *app = guest->application;
-        if (application_world_provider(app, QA_ROLE_ENTITIES, "") != guest ||
-            arsenal != guest)
+        application_provider *world = application_world_provider(app, QA_ROLE_ENTITIES, "");
+        if (arsenal != guest)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Native Q3 input requires its own world and arsenal");
+                "Native Q3 input requires its own arsenal");
+        if (world != guest) {
+            if (!world || world->kind != APPLICATION_PROVIDER_Q1 || movement != guest || character != guest)
+                return application_fail(error, QA_ERROR_UNSUPPORTED,
+                    "Secondary native Q3 input requires its player bundle on a Q1 world");
+            if (!input->profile->input_present || !input->profile->source || !input->profile->source->present)
+                return application_fail(error, QA_ERROR_UNSUPPORTED,
+                    "Secondary native Q3 input requires its declared input and spawn contract");
+        }
         if (movement != guest && (!movement || movement->kind > APPLICATION_PROVIDER_Q3))
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Native Q3 input requires an admitted built-in foreign movement owner");
