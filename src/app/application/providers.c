@@ -982,13 +982,16 @@ static bool seed_number(qa_cvars *cvars, const char *name, float number,
 }
 
 bool application_provider_seed_cvars(application_provider *provider, qa_cvars *cvars,
-    const qa_launch_choices *choices, qa_error *error)
+    const qa_launch_choices *choices, const qa_launch_choices *previous, qa_error *error)
 {
     application_native_profile profile;
     if (!native_profile(provider->launch, choices, &profile, error)) return false;
     qa_mode_rules mode = {0};
     bool found = selected_mode(choices, &mode);
-    bool mode_unset = !qa_cvars_is_set(cvars, "g_gametype");
+    qa_mode_rules old_mode;
+    bool mode_changed = found && previous && selected_mode(previous, &old_mode) &&
+        (mode.kind != old_mode.kind || mode.source != old_mode.source);
+    bool mode_unset = mode_changed || !qa_cvars_is_set(cvars, "g_gametype");
     if (profile.family != QA_GAME_Q3) {
         if (!seed_number(cvars, "skill", (float)profile.skill, error) ||
             !seed_number(cvars, "gamecfg", (float)profile.gamecfg, error)) return false;

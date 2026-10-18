@@ -219,7 +219,7 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
     const qa_launch_snapshot *snapshot = app->routing_snapshot
         ? app->routing_snapshot : qa_application_launch(app);
     if (!application_provider_seed_cvars(provider, actual,
-            qa_launch_snapshot_choices(snapshot), error)) return false;
+            qa_launch_snapshot_choices(snapshot), qa_launch_snapshot_choices(previous), error)) return false;
     if (!app->startup || app->startup_hooks || provider->product->family == QA_GAME_Q1) return true;
     for (size_t i = 0; i < app->startup->count; ++i) {
         application_startup_row *row = &app->startup->rows[i];

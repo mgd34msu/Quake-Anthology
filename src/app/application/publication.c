@@ -1464,7 +1464,8 @@ static bool publication_stage_values(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "Default activation lost its real candidate GAME view");
     if (!qa_cvars_select_dialect(actual.cvars, qa_cvars_dialect(actual.cvars), error) ||
         !application_provider_seed_cvars(source, actual.cvars,
-            qa_launch_snapshot_choices(publication->candidate), error) ||
+            qa_launch_snapshot_choices(publication->candidate),
+            qa_launch_snapshot_choices(publication->previous), error) ||
         !qa_cvars_apply_latched(application->cvars, NULL, error) ||
         !application_q3_campaign_launch_retired(application, publication, actual.cvars, error)) return false;
     if (publication->source_capacity_prepared &&
