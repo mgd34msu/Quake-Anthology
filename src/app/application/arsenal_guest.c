@@ -135,6 +135,16 @@ static bool source_word(application_guest_input *input, uint64_t address,
     *value = qa_load_u32le(bytes); return true;
 }
 
+static bool source_movement(application_guest_input *input, uint64_t *movement, qa_error *error)
+{
+    uint64_t address = input->profile->source->movement_global;
+    if (input->role->native && !qa_native_rva(qa_native_host_instance(input->role->native),
+            input->profile->source->movement_global,
+            qa_native_module_describe(input->role->module).image.target.pointer_bytes,
+            &address, error)) return false;
+    return qa_q3_host_source_pointer(input->role->host, address, movement, error);
+}
+
 static bool foreign_character_dead(application_guest_input *input, qa_actor_id actor,
     bool *dead, double *health, qa_error *error)
 {
@@ -457,12 +467,9 @@ static bool motion_project(application_guest_input *input, guest_client_scope *s
     return true;
 }
 
-static bool replace_locomotion(void *context, const qa_qvm_call *raw_call, bool *skip, qa_error *error)
+static bool replace_locomotion_enter(application_guest_input *input,
+    const application_source_call *call, bool *skip, qa_error *error)
 {
-    application_source_qvm_call backend;
-    application_source_call source_call = qvm_call_view(raw_call, NULL, NULL, 0, &backend);
-    const application_source_call *call = &source_call;
-    application_guest_input *input = context;
     guest_client_scope *scope = input->scope;
     *skip = false;
     if (!scope || scope->spawning) return true;
@@ -472,8 +479,8 @@ static bool replace_locomotion(void *context, const qa_qvm_call *raw_call, bool 
         *skip = true; return true;
     }
     if (scope->equipment_active && scope->equipment.fixed_pose) {
-        uint32_t movement;
-        if (!source_word(input, input->profile->source->movement_global, &movement, error)) return false;
+        uint64_t movement;
+        if (!source_movement(input, &movement, error)) return false;
         if (movement == scope->movement) {
             uint32_t axes = input->role->abi == QA_QVM_Q3_116N ? 20u : 21u;
             uint8_t zero[12] = {0};
@@ -574,6 +581,13 @@ static bool replace_locomotion(void *context, const qa_qvm_call *raw_call, bool 
     if (input->command) { input->projected_command = updated; input->command_projected = true; }
     if (!motion_project(input, scope, call, error)) return false;
     *skip = true; return true;
+}
+
+static bool replace_locomotion(void *context, const qa_qvm_call *raw_call, bool *skip, qa_error *error)
+{
+    application_source_qvm_call backend;
+    application_source_call call = qvm_call_view(raw_call, NULL, NULL, 0, &backend);
+    return replace_locomotion_enter(context, &call, skip, error);
 }
 
 static qa_vec3 source_view_angles(const application_guest_input *input,
@@ -695,8 +709,8 @@ bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
     if (!scope || !scope->equipment_active || !scope->equipment.owns_holdable_input ||
         !qa_actor_id_equal(scope->actor, actor)) return true;
     if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
-    uint32_t movement;
-    if (!source_word(input, input->profile->source->movement_global, &movement, error)) return false;
+    uint64_t movement;
+    if (!source_movement(input, &movement, error)) return false;
     if (movement != scope->movement) return true;
     guest_weapon_preparation *prepared = qa_unified_frame_lease_alloc(storage, 1,
         sizeof(*prepared), _Alignof(guest_weapon_preparation), error);
@@ -1598,7 +1612,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         int32_t requested; bool pending;
         if (!application_q3_weapons_services_request(input->role->weapon_services,
                 actor, &requested, &pending, error)) return false;
-        if (pending) raw.weapon = (uint8_t)requested;
+        if (pending && input->role->vm) raw.weapon = (uint8_t)requested;
         request_pending = pending;
     }
     const application_control_context *context = application_control_frame_current(app, actor);
