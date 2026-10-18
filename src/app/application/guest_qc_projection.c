@@ -2,6 +2,32 @@
 #include "guest_qc_combat.h"
 #include "guest_qc_targets.h"
 #include "control_frame.h"
+#include "qa/application_equipment.h"
+
+static bool project_current_ammo(struct application_qc_state *engine, qa_qc_instance *vm,
+    const qa_qc_entity_access *access, qa_error *error)
+{
+    const qa_qc_definition *field = engine->field_bindings->currentammo;
+    if (access->kind != QA_QC_ENTITY_READ || access->binding.kind != QA_QC_SLOT_BORROWED ||
+        !field || field->type != QA_QC_FLOAT || field->offset < access->word ||
+        field->offset >= access->word + access->count) return true;
+    qa_actor_id actor = access->binding.actor;
+    const application_qc_client *client = application_qc_client_for_actor(engine, actor);
+    qa_application *app = engine->provider->application;
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    if (!client || !client->spawned || !arsenal || arsenal == engine->provider) return true;
+    qa_item_id item;
+    if (!qa_application_weapon_read(app, actor, &item, error)) return false;
+    double count = 0;
+    if (item) {
+        qa_item_definition definition; bool found;
+        if (!qa_application_equipment_item_definition_read(app, actor, item, &definition, &found, error)) return false;
+        if (!found) return true;
+        if (definition.ammo && !qa_inventory_count_read(app->inventory, actor, definition.ammo, &count, error))
+            return false;
+    }
+    return qa_qc_project_entity_float(vm, access->reference, field->offset, (float)count, error);
+}
 
 static bool controls_body(struct application_qc_state *engine, qa_actor_id actor)
 {
@@ -44,7 +70,9 @@ bool application_qc_prepare_entity(void *opaque, qa_qc_instance *vm,
     struct application_qc_state *engine = opaque;
     if (engine->projecting || access->binding.kind == QA_QC_SLOT_WORLD || access->binding.kind == QA_QC_SLOT_FREE) return true;
     if (access->kind != QA_QC_ENTITY_BIND)
-        return application_qc_project_declared(engine, vm, access, error);
+        return engine->provider->state.qc.qualified
+            ? application_qc_project_declared(engine, vm, access, error)
+            : project_current_ammo(engine, vm, access, error);
     if (application_qc_restore_pending(engine)) return true;
     return bind_entity(engine, vm, access, error);
 }
