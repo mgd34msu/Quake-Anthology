@@ -3,6 +3,7 @@
 #include "control_frame.h"
 #include "client_outputs.h"
 #include "guest_q3_control.h"
+#include "guest_q3_combat_profile.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_projection_private.h"
 #include "map_players_private.h"
@@ -45,6 +46,7 @@ typedef struct application_guest_input {
     const application_control_external_stage *stage;
     qa_usercmd applied_command;
     qa_q3_usercmd projected_command;
+    struct { qa_actor_id actor; uint64_t sequence; int32_t mode; } completed_mode;
     bool command_projected;
     bool input_applied;
     bool in_command;
@@ -98,6 +100,44 @@ static bool source_word(application_guest_input *input, uint32_t address,
     *value = qa_load_u32le(bytes); return true;
 }
 
+static bool foreign_character_dead(application_guest_input *input, qa_actor_id actor,
+    bool *dead, double *health, qa_error *error)
+{
+    application_provider *guest = input->role->engine->provider;
+    *dead = false;
+    if (application_provider_for(guest->application, actor, QA_ROLE_CHARACTER, "") == guest) return true;
+    qa_combat_state state;
+    if (!qa_combat_read_traits(guest->application->combat, actor, &state, error)) return false;
+    *dead = state.health <= 0;
+    if (health) *health = state.health;
+    return true;
+}
+
+static uint32_t source_health_address(const application_guest_input *input, uint32_t player)
+{
+    const application_q3_combat_profile *profile = input->role->artifact->combat_profile;
+    uint32_t offset = profile ? 184 + application_q3_combat_profile_definition(profile)->state.health_stat * 4 :
+        input->profile.source->present ? input->profile.source->availability.health : 184;
+    return player + offset;
+}
+
+static bool lower_retained_actions(application_guest_input *input,
+    guest_client_scope *scope, qa_error *error)
+{
+    bool dead;
+    if (!foreign_character_dead(input, scope->actor, &dead, NULL, error)) return false;
+    if (!dead) return true;
+    if (input->profile.client_command == UINT32_MAX)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original deferred input has no declared retained command");
+    qa_q3_usercmd command;
+    int32_t pointer = (int32_t)(scope->player + input->profile.client_command);
+    if (!qa_qvm_read_usercmd(input->role->vm, pointer, &command, error)) return false;
+    if (!(command.buttons & 5)) return true;
+    command.buttons &= ~5;
+    return qa_qvm_write_usercmd(input->role->vm, pointer, true, &command, error);
+}
+
 static bool slot_player(application_guest_input *input, uint32_t slot,
                          guest_client_scope *scope, bool *present, qa_error *error)
 {
@@ -127,8 +167,17 @@ static bool borrowed_native_bot(application_guest_input *input, qa_actor_id acto
 {
     application_provider *provider = input->role->engine->provider;
     application_bots *bots = provider->application->bots;
-    if (!input->profile.bot_setup.entry || !bots || !bots->population ||
-        application_bot_source(bots) == provider) return false;
+    if (!input->profile.bot_setup.entry || !bots) return false;
+    application_provider *source=application_bot_source(bots);
+    if (!source || source==provider) return false;
+    struct application_q3_guest *original=q3g_engine(source);
+    if (original) {
+        const application_player_record *row=application_player_record_live(provider->application->players,actor);
+        uint32_t slot;
+        return row && application_player_identity(row)->bot &&
+            application_q3_guest_actor_client(source,actor,&slot) && original->clients[slot].bot;
+    }
+    if (!bots->population) return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(provider->application->session), actor);
     qa_bot_admission admission;
     return record && record->owner != provider->owner &&
@@ -146,7 +195,7 @@ static bool bot_setup(void *context, const qa_qvm_call *call, int32_t *result, q
     if (!qa_q3_host_actor(input->role->host, (uint32_t)slot, false, &actor, error)) return false;
     if (!borrowed_native_bot(input, actor))
         return qa_qvm_proceed(call, result, error);
-    /* The selected native AI has already completed setup for this actor. */
+    /* The actual world AI has already completed setup for this actor. */
     *result = 1;
     return true;
 }
@@ -278,6 +327,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
             previous_context = application_control_frame_swap(app, &frame_context);
             input->command = &frame_command; input->command_actor = scope.actor;
             input->input_applied = false; input->command_projected = false;
+            input->completed_mode.actor = (qa_actor_id){0};
             scope.completed_motion = application_provider_for(app, scope.actor, QA_ROLE_MOVEMENT, "") != guest;
         }
     }
@@ -286,6 +336,8 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
         if (parent->spawn_binding) { inherited_spawn_binding = true; break; }
     bool ok = preparation.code == 0;
     if (!ok && error) *error = preparation;
+    if (ok && call->instruction == input->profile.run_client)
+        ok = lower_retained_actions(input, &scope, error);
     if (ok && spawn_world(input, &scope) && input->profile.source->present &&
         !inherited_spawn_binding)
         ok = qa_qvm_bind_function(input->role->vm, input->profile.source->spawn,
@@ -553,6 +605,9 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
         if (outputs.has_stance) updated.upmove = outputs.crouched ?
             (int8_t)-fmax(1, fabs((double)updated.upmove)) : updated.upmove < 0 ? 0 : updated.upmove;
     }
+    bool dead;
+    if (!foreign_character_dead(input, scope->actor, &dead, NULL, error)) return false;
+    if (dead) updated.buttons &= ~5;
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
         !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
         return false;
@@ -703,8 +758,8 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
                                 : elapsed > 1000 ? 1000 : elapsed < 0 ? 0 : (uint32_t)elapsed;
     application_source_input_scope input_scope = {0};
     application_guest_q3_control_scope body_scope = {0};
-    uint32_t before_type = 0, projected_type = 0;
-    bool type_projected = false;
+    uint32_t before_type = 0, projected_type = 0, before_health = 0, projected_health = 0;
+    bool type_projected = false, health_projected = false, dead = false;
     bool ok = true, cancelled = false;
     qa_application *app = input->role->engine->provider->application;
     scope->weapon_slice = slice && !follower &&
@@ -734,7 +789,28 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
             .join = input->profile.source->locomotion.join, .enter = replace_locomotion, .context = input};
         ok = qa_qvm_bind_regions(call, &binding, 1, error);
     }
-    if (ok && !cancelled && slice && !follower) {
+    double health = 0;
+    if (ok && !cancelled) ok = foreign_character_dead(input, scope->actor, &dead, &health, error);
+    if (ok && !cancelled && dead) {
+        if (!input->profile.has_dead_mode)
+            ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Original movement has no declared dead mode");
+        else {
+            projected_type = (uint32_t)input->profile.dead_mode;
+            projected_health = (uint32_t)qa_source_to_i32(health);
+            ok = source_word(input, scope->player + 4, &before_type, error) &&
+                source_word(input, source_health_address(input, scope->player), &before_health, error);
+            uint8_t bytes[4]; qa_store_u32le(bytes, projected_type);
+            type_projected = ok;
+            if (ok) ok = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+                scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, error);
+            qa_store_u32le(bytes, projected_health);
+            health_projected = ok;
+            if (ok) ok = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+                source_health_address(input, scope->player), (qa_bytes){bytes, sizeof(bytes)}, error);
+        }
+    }
+    if (ok && !cancelled && slice && !follower && !dead) {
         application_client_outputs outputs;
         ok = application_control_outputs(app, scope->actor, &outputs, error);
         if (ok && !current(input, scope, call)) ok = cancel_client(call, scope->call, error);
@@ -779,12 +855,34 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         if (ok && error) *error = cleanup;
         ok = false;
     }
+    if (ok && !cancelled && !slice && dead && !body_scope.retired && !body_scope.cancelled &&
+        input->command && record_current(input, scope)) {
+        uint32_t mode;
+        ok = source_word(input, scope->player + 4, &mode, error);
+        if (ok) {
+            input->completed_mode.actor = scope->actor;
+            input->completed_mode.sequence = input->command->sequence;
+            input->completed_mode.mode = (int32_t)mode;
+        }
+    }
+    if (health_projected && record_current(input, scope)) {
+        qa_error restore = {0}; uint32_t value;
+        bool restored = source_word(input, source_health_address(input, scope->player), &value, &restore);
+        if (restored && value == projected_health) {
+            uint8_t bytes[4]; qa_store_u32le(bytes, before_health);
+            restored = qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+                source_health_address(input, scope->player), (qa_bytes){bytes, sizeof(bytes)}, &restore);
+        }
+        if (!restored) { if (ok && error) *error = restore; ok = false; }
+    }
     if (type_projected && record_current(input, scope)) {
         qa_error restore = {0}; uint32_t value;
         bool restored = source_word(input, scope->player + 4, &value, &restore);
         if (restored && value == projected_type) {
             uint8_t bytes[4]; qa_store_u32le(bytes, before_type);
-            restored = qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore);
+            restored = dead ? qa_qvm_source_bytes_write(input->role->vm, input->role->image,
+                scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore) :
+                qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore);
         }
         if (!restored) { if (ok && error) *error = restore; ok = false; }
     }
@@ -1256,6 +1354,11 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
     qa_q3_player player;
     if (!qa_q3_host_source_player(input->role->host, slot, &player, error)) return false;
     if (player.commandTime == before_time) return true;
+    bool dead;
+    if (!foreign_character_dead(input, actor, &dead, NULL, error)) return false;
+    if (dead && qa_actor_id_equal(input->completed_mode.actor, actor) &&
+        input->completed_mode.sequence == command->sequence)
+        player.pmType = input->completed_mode.mode;
     qa_usercmd applied = input->input_applied ? input->applied_command : *command;
     uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
     if (elapsed > INT32_MAX) elapsed = 0;
@@ -1265,7 +1368,7 @@ static bool guest_completed(application_guest_input *input, qa_actor_id actor, u
             application_control_guest_complete(app, actor, &applied, &player, error))) return false;
     qa_usercmd completed = *command;
     completed.milliseconds = applied.milliseconds;
-    completed.buttons = (completed.buttons & ~UINT32_C(5)) | (applied.buttons & UINT32_C(5));
+    if (!dead) completed.buttons = (completed.buttons & ~UINT32_C(5)) | (applied.buttons & UINT32_C(5));
     return guest_followers_command(app, guest, actor, &completed, stage, error);
 }
 
@@ -1307,10 +1410,16 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
             raw.weapon = (uint8_t)selection;
         }
     }
+    bool dead;
+    if (!foreign_character_dead(input, actor, &dead, NULL, error)) return false;
+    /* The real command still reaches CHARACTER; another source must not use
+     * its attack/use for gauntlet damage or its own respawn request. */
+    if (dead) raw.buttons &= ~5;
     if (!qa_q3_host_player_motion(input->role->host, slot, true, error)) return false;
     input->in_command = true; input->command_actor = actor;
     input->command = command; input->stage = stage; input->input_applied = false;
     input->command_projected = false;
+    input->completed_mode.actor = (qa_actor_id){0};
     if (guest_follower(input, actor)) {
         engine->clients[slot].shared_command_sequence = command->sequence;
         engine->clients[slot].shared_command_seen = true;

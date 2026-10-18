@@ -35,6 +35,26 @@ static bool entry(const qa_qvm_instruction *code, size_t count, uint32_t at,
            application_fail(error, QA_ERROR_FORMAT, "Guest input entry is not an original function");
 }
 
+static bool command_pointer(q3g_role *role, const application_guest_input_profile *p,
+    uint32_t at, qa_error *error)
+{
+    const q3_reference_instruction expected[] = {
+        {at, QA_QVM_LOCAL, 24}, {at + 1, QA_QVM_LOAD4, 0},
+        {at + 2, QA_QVM_CONST, (int32_t)p->source->client_pointer},
+        {at + 3, QA_QVM_ADD, 0}, {at + 4, QA_QVM_LOAD4, 0},
+        {at + 5, QA_QVM_CONST, (int32_t)p->client_command},
+        {at + 6, QA_QVM_ADD, 0}
+    };
+    size_t count;
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
+    for (size_t i = 0; i < sizeof(expected) / sizeof(*expected); ++i)
+        if (expected[i].at >= count || code[expected[i].at].opcode != expected[i].opcode ||
+            code[expected[i].at].operand != expected[i].operand)
+            return application_fail(error, QA_ERROR_FORMAT,
+                "Original RunClient command differs from its declared source pointer");
+    return true;
+}
+
 void application_guest_input_profile_free(application_guest_input_profile *profile)
 {
     if (!profile) return;
@@ -64,6 +84,9 @@ static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa
     }
     const application_q3_weapon_profile *source = p->source;
     if (!source) return application_fail(error, QA_ERROR_FORMAT, "Guest input has no qualified source movement declaration");
+    if (p->client_command != UINT32_MAX && (p->client_command % 4 ||
+        source->client_stride < 24 || p->client_command > source->client_stride - 24))
+        return application_fail(error, QA_ERROR_FORMAT, "Guest retained command leaves its declared client record");
     if (source->present) return true;
     size_t memory = qa_qvm_image_memory_size(role->image);
     if (source->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
@@ -81,7 +104,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
 {
     if (!role || !out || role->kind != QA_QVM_GAME)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
-    application_guest_input_profile p = {.source = application_q3_weapons_profile(role->weapons)};
+    application_guest_input_profile p = {.source = application_q3_weapons_profile(role->weapons),
+        .client_command = UINT32_MAX};
     if (!role->image) { *out = p; return true; }
     bool base = application_q3_reference_image(role->image, Q3_REFERENCE_BASE_GAME);
     if (base) {
@@ -93,6 +117,7 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
 
         if (base) {
             p.client_think = 80328; p.run_client = 80387; p.client_spawn = 89754;
+            p.client_command = 472;
             p.respawn = 88047;
             const q3_reference_instruction respawn[] = {
                 {88047, QA_QVM_ENTER, 28},
@@ -109,8 +134,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                     code[respawn[i].at].operand != respawn[i].operand)
                     return application_fail(error, QA_ERROR_FORMAT,
                         "Original respawn differs from its corpse, spawn and teleport sequence");
-            p.input_present = p.has_modes = true;
-            p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;
+            p.input_present = p.has_modes = p.has_dead_mode = true;
+            p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4; p.dead_mode = 3;
             const int32_t intermission[] = {5, 6};
             p.intermission_modes = malloc(sizeof(intermission));
             if (!p.intermission_modes)
@@ -123,12 +148,17 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                 .movement_move = 22369, .movement_slice = 21620};
             p = (application_guest_input_profile){.source = &source,
                 .client_think = 114858, .run_client = 114917, .client_spawn = 125027,
-                .input_present = true, .has_modes = true, .normal_mode = 0,
-                .noclip_mode = 1, .freeze_mode = 4};
+                .client_command = 472,
+                .input_present = true, .has_modes = true, .has_dead_mode = true,
+                .normal_mode = 0, .noclip_mode = 1, .freeze_mode = 4, .dead_mode = 3};
         } else if (application_q3_reference_image(role->image, Q3_REFERENCE_THREEWAVE_GAME)) {
             p.client_think = 120292; p.run_client = 120383; p.client_spawn = 132015;
-            p.input_present = p.has_modes = true;
-            p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4;
+            p.input_present = p.has_modes = p.has_dead_mode = true;
+            p.normal_mode = 0; p.noclip_mode = 1; p.freeze_mode = 4; p.dead_mode = 3;
+        }
+        if ((base || application_q3_reference_image(role->image, Q3_REFERENCE_LRCTF_GAME)) &&
+            !command_pointer(role, &p, base ? 80408 : 114938, error)) {
+            application_guest_input_profile_free(&p); return false;
         }
         if (p.input_present && !qualify(role, &p, error)) {
             application_guest_input_profile_free(&p); return false;
@@ -151,6 +181,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         word(doc, entries, "move", &move, error) && word(doc, entries, "slice", &slice, error);
     if (ok && qa_json_get(doc, entries, "respawn") != QA_JSON_NONE)
         ok = word(doc, entries, "respawn", &p.respawn, error);
+    if (ok && qa_json_get(doc, input, "clientCommand") != QA_JSON_NONE)
+        ok = word(doc, input, "clientCommand", &p.client_command, error);
     if (ok && (entity_stride != p.source->entity_stride || client_stride != p.source->client_stride ||
         client_pointer != p.source->client_pointer || move != p.source->movement_move || slice != p.source->movement_slice))
         ok = application_fail(error, QA_ERROR_FORMAT, "Guest input differs from its declared weapon records or movement entries");
@@ -160,6 +192,10 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
              mode(doc, modes, "noclip", &p.noclip_mode, error) &&
              mode(doc, modes, "freeze", &p.freeze_mode, error);
         p.has_modes = ok;
+        if (ok && qa_json_get(doc, modes, "dead") != QA_JSON_NONE) {
+            ok = mode(doc, modes, "dead", &p.dead_mode, error);
+            p.has_dead_mode = ok;
+        }
     }
     qa_json_id intermission = qa_json_get(doc, input, "intermission");
     if (ok && qa_json_type(doc, intermission) != QA_JSON_ARRAY)
