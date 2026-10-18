@@ -57,7 +57,8 @@ qa_map_launch_policy qa_application_map_launch_command(const char *name)
         {"map", QA_MAP_LAUNCH_Q3_MAP},
         {"devmap", QA_MAP_LAUNCH_Q3_DEVMAP},
         {"spmap", QA_MAP_LAUNCH_Q3_SPMAP},
-        {"spdevmap", QA_MAP_LAUNCH_Q3_SPDEVMAP}
+        {"spdevmap", QA_MAP_LAUNCH_Q3_SPDEVMAP},
+        {"restart", QA_MAP_LAUNCH_RESTART}
     };
     if (name) for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
         if (qa_text_ascii_equal(name, commands[i].name)) return commands[i].policy;
@@ -338,7 +339,7 @@ static bool set_map_draft(qa_launch_draft *draft, const char *path,
 bool application_q3_map_launch_prepare(qa_application *application, qa_launch_draft *draft,
     qa_map_launch_policy policy, qa_error *error)
 {
-    if (policy == QA_MAP_LAUNCH_DEFAULT) return true;
+    if (policy == QA_MAP_LAUNCH_DEFAULT || policy == QA_MAP_LAUNCH_RESTART) return true;
     qa_cvars *cvars = qa_application_cvars(application);
     if (!qa_cvars_apply_latched(cvars, "g_gametype", error)) return false;
     qa_cvar_view game_type;
@@ -374,7 +375,7 @@ bool application_q3_map_launch_prepare(qa_application *application, qa_launch_dr
 bool application_q3_map_launch_finish(qa_application *application,
     qa_map_launch_policy policy, qa_error *error)
 {
-    return policy == QA_MAP_LAUNCH_DEFAULT ||
+    return policy == QA_MAP_LAUNCH_DEFAULT || policy == QA_MAP_LAUNCH_RESTART ||
         qa_cvars_set(qa_application_cvars(application), "sv_cheats",
             policy == QA_MAP_LAUNCH_Q3_DEVMAP ? "1" : "0", true, error);
 }
@@ -503,7 +504,7 @@ static bool queue_transition(qa_application *application,
             request->provider, APPLICATION_PROVIDER_PUBLISHED);
         if (!source) source = application_world_provider(application, QA_ROLE_ENTITIES, "");
         qa_q3_product_policy product;
-        if (request->map_launch != QA_MAP_LAUNCH_Q3_MAP &&
+        if (request->map_launch != QA_MAP_LAUNCH_Q3_MAP && request->map_launch != QA_MAP_LAUNCH_RESTART &&
             qa_application_q3_product_policy_read(application, &product) && product.prerelease_demo) {
             qa_travel_route_free(&route);
             return source ? application_source_log(source, "Unknown map command\n", true, error) : true;
@@ -1465,7 +1466,7 @@ bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes byte
     if (ok) ok = application_campaign_fields(&io,candidate,false);
     uint32_t policy = QA_MAP_LAUNCH_DEFAULT;
     if (ok && io.offset < io.input.size) ok = qa_source_save_u32(&io, &policy);
-    if (ok && policy > QA_MAP_LAUNCH_Q3_SPDEVMAP) {
+    if (ok && policy > QA_MAP_LAUNCH_RESTART) {
         qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Invalid map launch policy");
         ok = false;
     }

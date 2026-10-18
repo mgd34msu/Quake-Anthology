@@ -1,4 +1,5 @@
 #include "map_players_private.h"
+#include "map_travel_private.h"
 #include "guest_native_q2_attack.h"
 #include "client_events.h"
 #include "qa/text.h"
@@ -174,6 +175,13 @@ static bool admit_components(qa_application *app, qa_actor_id actor, qa_error *e
     return component_player(app, roster, actor, error) &&
         (app->components == components || application_fail(error, QA_ERROR_ARGUMENT,
             "Component admission changed its physical component owner"));
+}
+
+static bool player_entry_capture(qa_application *, qa_actor_id, qa_error *);
+
+static bool player_entry_admit(qa_application *app, qa_actor_id actor, qa_error *error)
+{
+    return admit_components(app, actor, error) && player_entry_capture(app, actor, error);
 }
 
 bool application_players_declared_clients_admit(qa_application *app, qa_error *error)
@@ -474,6 +482,11 @@ static bool carry_pending_copy(qa_session *session, const application_player_car
         carry->count = 0;
         okay = qa_source_save_reader(&reader, session, (qa_bytes){bytes.data, bytes.size}, error) &&
             pending_carry_fields(&reader, carry) && qa_source_save_finish(&reader, NULL);
+        if (okay && carry->has_q2) {
+            carry->q2.health = carry->combat.health;
+            carry->q2.maximum_health = carry->maximum_health;
+            carry->q2.armor = carry->combat.armor;
+        }
     }
     qa_source_save_dispose(&reader);
     qa_source_save_dispose(&writer);
@@ -493,6 +506,7 @@ static void roster_free(struct application_player_roster *roster)
         free(roster->records[i].bot_definition);
         qa_q1_travel_destroy(roster->records[i].q1_entry);
         carry_clear(&roster->records[i].pending_carry);
+        carry_clear(&roster->records[i].entry_carry);
     }
     qa_id_index_destroy(&roster->guest_sources);
     qa_id_index_destroy(&roster->seats);
@@ -594,9 +608,9 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
                 "player travel inventory changed its retained extent");
     }
     carry->present = true;
-    for (size_t i = 0; i < sizeof(player_roles) / sizeof(player_roles[0]); ++i) {
-        application_provider *provider = application_provider_for(
-            application, actor, player_roles[i], "");
+    for (size_t i = 0; i <= sizeof(player_roles) / sizeof(player_roles[0]); ++i) {
+        application_provider *provider = i == 0 ? source : application_provider_for(
+            application, actor, player_roles[i - 1], "");
         if (provider == NULL || provider->kind <= APPLICATION_PROVIDER_Q3)
             continue;
         bool duplicate = false;
@@ -656,6 +670,23 @@ static bool capture_player(qa_application *application, qa_actor_id actor,
     const application_player_record *record = application_player_record_find(application->players, actor);
     return !record || !record->pending_carry.present ||
         carry_pending_copy(application->session, &record->pending_carry, carry, error);
+}
+
+static bool player_entry_capture(qa_application *app, qa_actor_id actor, qa_error *error)
+{
+    application_player_record *record = application_player_record_live(app->players, actor);
+    if (!record || record->entry_carry.present || record->source_begin_pending || record->deferred)
+        return true;
+    if (app->q1_original_save && app->players->map_provider->kind == APPLICATION_PROVIDER_QC)
+        return true;
+    application_player_carry captured = {0};
+    bool okay = capture_player(app, actor, &captured, error);
+    record = application_player_record_live(app->players, actor);
+    if (!record || !qa_actors_get(qa_session_actors(app->session), actor)) okay = true;
+    else if (okay && !record->entry_carry.present)
+        okay = carry_pending_copy(app->session, &captured, &record->entry_carry, error);
+    carry_clear(&captured);
+    return okay;
 }
 
 static char *player_text(const char *);
@@ -882,6 +913,8 @@ bool application_players_prepare(qa_application *application,
                                   application_player_travel **out, qa_error *error)
 {
     const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
+    bool restart = application->map_state && application->map_state->loading &&
+        application->map_state->map_launch == QA_MAP_LAUNCH_RESTART;
     bool q3_replacement = application_q3_world_restart_active(application) ||
         (application->world && application->players &&
          publication->map_provider == application->players->map_provider &&
@@ -984,7 +1017,7 @@ bool application_players_prepare(qa_application *application,
         application_players_dispose(travel);
         return false;
     }
-    travel->carry_players = carry_players;
+    travel->carry_players = carry_players || restart;
     travel->new_unit = new_unit;
     travel->has_landmark = landmark != NULL;
     if (landmark != NULL)
@@ -1099,10 +1132,36 @@ bool application_players_prepare(qa_application *application,
             application_players_dispose(travel);
             return false;
         }
-        if (carry_players && had_player &&
+        if ((carry_players || restart) && had_player &&
             !capture_player(application, previous, &travel->carry[i], error)) {
             application_players_dispose(travel);
             return false;
+        }
+        if (restart && had_player) {
+            old = application_player_record_live(application->players, previous);
+            if (old && old->entry_carry.present &&
+                !carry_pending_copy(application->session, &old->entry_carry,
+                    &travel->carry[i], error)) {
+                application_players_dispose(travel);
+                return false;
+            }
+            if (!old || !old->entry_carry.present) {
+                application_player_carry connections = travel->carry[i];
+                travel->carry[i] = (application_player_carry){
+                    .previous_actor = connections.previous_actor,
+                    .q3_client = connections.q3_client, .q3_command = connections.q3_command,
+                    .guest_count = connections.guest_count};
+                memcpy(travel->carry[i].guests, connections.guests, sizeof(connections.guests));
+                carry_clear(&connections);
+            }
+            if (old && old->q1_entry) {
+                if (!qa_q1_travel_retain(old->q1_entry, error)) {
+                    application_players_dispose(travel);
+                    return false;
+                }
+                qa_q1_travel_destroy(travel->carry[i].q1_source);
+                travel->carry[i].q1_source = old->q1_entry;
+            }
         }
     }
     for (size_t i = 0; i < publication->next_count; ++i) {
@@ -2209,7 +2268,8 @@ bool application_players_selected_character_respawn(void *opaque, qa_actor_id ac
                 return application_fail(error, QA_ERROR_ARGUMENT, "Q1 restart lost its actual source map");
             return qa_application_queue_map_travel(app,
                 &(qa_application_travel_request){.provider = source->owner, .cause = actor,
-                    .geometry = app->map_geometry, .expression = map, .carry_players = false}, error);
+                    .geometry = app->map_geometry, .expression = map, .carry_players = false,
+                    .map_launch = QA_MAP_LAUNCH_RESTART}, error);
         }
         return selected_qc_native_respawn(character, source, actor, error);
     }
@@ -2381,6 +2441,9 @@ static bool restore_player_carry(qa_application *application, const qa_launch_ch
     const application_player_carry *carry, bool carry_players, bool new_unit,
     const qa_combat_state *combat, double maximum_health, qa_error *error)
 {
+    if (!carry->present && application->map_state &&
+        application->map_state->map_launch == QA_MAP_LAUNCH_RESTART)
+        return true;
     qa_actor_id actor = record->actor;
     application_provider *character = record->character;
     application_provider *map_source = application->players->map_provider;
@@ -3557,7 +3620,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!application_native_q1_spectator_begin(map_source, actor, error)) return false;
             record->source_begin_pending = false;
             ++application->players->revision;
-            return admit_components(application, actor, error);
+            return player_entry_admit(application, actor, error);
         }
         bool found = true;
         qa_actor_id source_point = {0};
@@ -3735,7 +3798,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 .water_level = control->player.water_level, .water_type = control->player.water_type};
             application_control_publish_motion(control, &completed);
             return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
-                admit_components(application, actor, error);
+                player_entry_admit(application, actor, error);
         }
         body.bounds = application_control_character_postures(character, actor).standing.bounds;
         if (map_source->kind == APPLICATION_PROVIDER_Q1) body.ground = (qa_actor_reference){0};
@@ -3802,7 +3865,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (found && !guest_spawn_followers(application, actor,
                 source_completed || original_world_spawn ? map_source : character, error)) return false;
     return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
-        admit_components(application, actor, error);
+        player_entry_admit(application, actor, error);
 }
 
 static bool q3_player_points(qa_application *application,
@@ -4228,7 +4291,7 @@ bool application_players_advance(qa_application *application, qa_error *error)
                 qa_launch_snapshot_choices(qa_application_launch(application)), source,
                 character, arsenal, actor, source_point, true, error)) return false;
         if (!guest_spawn_followers(application, actor, character, error)) return false;
-        if (!admit_components(application, actor, error)) return false;
+        if (!player_entry_admit(application, actor, error)) return false;
     }
     return true;
 }
@@ -4247,6 +4310,7 @@ static void record_free(struct application_player_roster *roster, application_pl
     guest_bindings_clear(roster, record);
     qa_q1_travel_destroy(record->q1_entry);
     carry_clear(&record->pending_carry);
+    carry_clear(&record->entry_carry);
     application_player_userinfo_clear(record);
     free(record->bot_definition);
     *record = (application_player_record){.retiring = true};
@@ -4775,7 +4839,7 @@ bool application_players_bot_begin(qa_application *app, uint32_t physical, qa_er
     if (!okay) { application_fault(app, error); return false; }
     record->source_begin_pending = false;
     ++app->players->revision;
-    if (!admit_components(app, record->actor, error)) {
+    if (!player_entry_admit(app, record->actor, error)) {
         application_fault(app, error); return false;
     }
     return true;
@@ -5548,19 +5612,24 @@ static bool pending_carry_fields(qa_source_save_io *io, application_player_carry
     return true;
 }
 
-static bool roster_pending_fields(qa_source_save_io *io, struct application_player_roster *roster)
+static bool roster_carry_fields(qa_source_save_io *io, struct application_player_roster *roster,
+    bool entry)
 {
-    uint8_t tag[4] = {'C', 'A', 'R', 'Y'};
+    const char *name = entry ? "ENTR" : "CARY";
+    uint8_t tag[4]; memcpy(tag, name, sizeof(tag));
     size_t count = roster->count;
-    if (!qa_source_save_bytes(io, tag, sizeof(tag)) || memcmp(tag, "CARY", sizeof(tag)) ||
+    if (!qa_source_save_bytes(io, tag, sizeof(tag)) || memcmp(tag, name, sizeof(tag)) ||
         !qa_source_save_count(io, &count, roster->count) || count != roster->count)
-        return application_fail(io->error, QA_ERROR_FORMAT, "Invalid pending player carry extent");
+        return application_fail(io->error, QA_ERROR_FORMAT, "Invalid player carry extent");
     for (size_t i = 0; i < count; ++i) {
         application_player_record *record = roster->records + i;
-        application_player_carry copy = record->pending_carry;
-        application_player_carry *carry = io->direction == QA_SOURCE_SAVE_READ ? &record->pending_carry : &copy;
+        application_player_carry *stored = entry ? &record->entry_carry : &record->pending_carry;
+        application_player_carry copy = *stored;
+        application_player_carry *carry = io->direction == QA_SOURCE_SAVE_READ ? stored : &copy;
         if (!pending_carry_fields(io, carry)) return false;
-        if (carry->present && (!record->source_begin_pending || record->retiring || !q3g_engine(roster->map_provider)))
+        if (carry->present && record->retiring)
+            return application_fail(io->error, QA_ERROR_FORMAT, "Retired player retains carry state");
+        if (!entry && carry->present && (!record->source_begin_pending || !q3g_engine(roster->map_provider)))
             return application_fail(io->error, QA_ERROR_FORMAT, "Pending player carry has no original module Begin");
     }
     return true;
@@ -5614,13 +5683,17 @@ bool application_players_checkpoint_capture(qa_application *application, qa_buff
             entries[i].size <= UINT32_MAX && roster_size(&size, entries[i].size, 1, error);
     }
     qa_buffer pending = {0};
-    bool has_pending = false;
-    for (size_t i = 0; roster && i < roster->count; ++i)
+    bool has_pending = false, has_entry = false;
+    for (size_t i = 0; roster && i < roster->count; ++i) {
         has_pending |= roster->records[i].pending_carry.present;
-    if (entry_ok && has_pending) {
+        has_entry |= roster->records[i].entry_carry.present;
+    }
+    if (entry_ok && (has_pending || has_entry)) {
         qa_source_save_io io = {0};
         entry_ok = qa_source_save_writer(&io, application->session, error) &&
-            roster_pending_fields(&io, roster) && qa_source_save_finish(&io, &pending) &&
+            (!has_pending || roster_carry_fields(&io, roster, false)) &&
+            (!has_entry || roster_carry_fields(&io, roster, true)) &&
+            qa_source_save_finish(&io, &pending) &&
             roster_size(&size, pending.size, 1, error);
         qa_source_save_dispose(&io);
     }
@@ -5878,8 +5951,21 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
         qa_bytes pending;
         qa_source_save_io io = {0};
         ok = qa_net_read_bytes(&reader, qa_net_reader_remaining(&reader), &pending) &&
-            qa_source_save_reader(&io, candidate->session, pending, error) &&
-            roster_pending_fields(&io, roster) && qa_source_save_finish(&io, NULL);
+            qa_source_save_reader(&io, candidate->session, pending, error);
+        bool seen_pending = false, seen_entry = false;
+        while (ok && io.offset < io.input.size) {
+            const uint8_t *tag = io.input.data + io.offset;
+            bool entry = io.input.size - io.offset >= 4 && !memcmp(tag, "ENTR", 4);
+            bool carry = io.input.size - io.offset >= 4 && !memcmp(tag, "CARY", 4);
+            if ((!entry && !carry) || (entry ? seen_entry : seen_pending)) {
+                ok = application_fail(error, QA_ERROR_FORMAT, "Invalid roster carry extension");
+                break;
+            }
+            ok = roster_carry_fields(&io, roster, entry);
+            if (entry) seen_entry = true;
+            else seen_pending = true;
+        }
+        if (ok) ok = qa_source_save_finish(&io, NULL);
         qa_source_save_dispose(&io);
     }
     if (ok) ok = qa_net_reader_finish(&reader);
@@ -6049,7 +6135,7 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     record->source_begin_pending = false;
     carry_clear(&carry);
     ++application->players->revision;
-    if (!admit_components(application, actor, error)) {
+    if (!player_entry_admit(application, actor, error)) {
         application_fault(application, error); return false;
     }
     return application_players_q2_commands_resume(application,NULL,error);

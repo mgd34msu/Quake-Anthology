@@ -76,7 +76,8 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
     bool parked=frontend_config_store_parked_current(f->config_store,source);
     bool q2=parked || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
         source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2;
-    bool map=policy!=QA_MAP_LAUNCH_DEFAULT,gamemap=client_name(name,"gamemap");
+    bool restart=policy==QA_MAP_LAUNCH_RESTART;
+    bool map=policy!=QA_MAP_LAUNCH_DEFAULT && !restart,gamemap=client_name(name,"gamemap");
     if (policy==QA_MAP_LAUNCH_Q3_MAP && source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME)
         policy=QA_MAP_LAUNCH_DEFAULT;
     bool changelevel=client_name(name,"changelevel");
@@ -102,15 +103,17 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
         f->server_stop_generation=generation;
         return true;
     }
-    if (map || gamemap || changelevel) {
+    if (map || gamemap || changelevel || restart) {
         *handled=true;
-        if (call->argc!=2) {
+        if (call->argc!=(restart?1:2)) {
             frontend_console_print(f,&call->context,"usage: ");
             frontend_console_print(f,&call->context,name);
-            frontend_console_print(f,&call->context," <map>\n");
+            frontend_console_print(f,&call->context,restart?"\n":" <map>\n");
             return true;
         }
-        const char *destination=call->argv[1];
+        qa_application_map_view current;
+        if (restart && !qa_application_map_read(f->application,&current)) return true;
+        const char *destination=restart?current.name:call->argv[1];
         if (policy==QA_MAP_LAUNCH_DEFAULT && (!q2 || (map && !strchr(destination,'.')))) {
             size_t length=strlen(destination);
             bool prefix=!strncmp(destination,"maps/",5);
@@ -137,7 +140,7 @@ static bool world_command(qa_frontend *f,const qa_application_startup_source *so
         bool stopping=f->server_stop_owner==source->scope.provider && !f->server_stopped;
         qa_application_travel_request request={
             .provider=source->scope.provider,.cause=call->context.actor,.expression=destination,
-            .new_unit=map,.carry_players=!map && !stopping && !parked,
+            .new_unit=map,.carry_players=!map && !restart && !stopping && !parked,
             .complete_campaign=changelevel,.map_launch=policy};
         bool queued=q2 && policy==QA_MAP_LAUNCH_DEFAULT?qa_application_queue_travel(f->application,&request,error):
             qa_application_queue_map_travel(f->application,&request,error);
@@ -300,6 +303,7 @@ setting_failed:
         qa_application_startup_source source; bool present=false,handled=false;
         if (!frontend_config_store_primary_server_read(frontend->config_store,&source,&present,error)) return false;
         if (!present) {
+            if (map_launch==QA_MAP_LAUNCH_RESTART) return true;
             if (map_launch!=QA_MAP_LAUNCH_DEFAULT) {
                 if (invocation->argc!=2) {
                     frontend_console_print(frontend,&invocation->context,"usage: ");
@@ -397,7 +401,7 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
         "cinematic", "cinematicpause", "stopcinematic", "cd", "music", "sky", "actualimagegrid", "midiinfo", "server_setting", "local_join", "local_drop",
         "play", "soundinfo", "s_info", "soundlist", "s_list", "stopsound", "s_stop",
-        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "killserver", "status", "forceteam"};
+        "map", "devmap", "spmap", "spdevmap", "gamemap", "changelevel", "restart", "killserver", "status", "forceteam"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         bool engine_command = !client_name(names[i], "weapnext") && !client_name(names[i], "weapprev");
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,

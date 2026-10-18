@@ -28,7 +28,7 @@ typedef struct application_player_carry {
     qa_q3_usercmd q3_command;
     qa_actor_id previous_actor;
     qa_actor_owner character_owner, arsenal_owner;
-    application_guest_carry guests[7];
+    application_guest_carry guests[8];
     size_t guest_count;
     bool addon_reset, arsenal_addon_reset;
     bool present, has_q1, has_mg3, has_q2, has_weapon2, has_weapon3, new_unit;
@@ -62,6 +62,7 @@ typedef struct application_player_record {
     size_t guest_count;
     qa_q1_travel_state *q1_entry;
     application_player_carry pending_carry;
+    application_player_carry entry_carry;
     qa_player_feedback feedback;
     qa_actor_id feedback_actor;
     uint16_t output_incomplete;

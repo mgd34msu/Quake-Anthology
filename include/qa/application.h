@@ -87,7 +87,8 @@ typedef enum qa_map_launch_policy {
     QA_MAP_LAUNCH_Q3_MAP,
     QA_MAP_LAUNCH_Q3_DEVMAP,
     QA_MAP_LAUNCH_Q3_SPMAP,
-    QA_MAP_LAUNCH_Q3_SPDEVMAP
+    QA_MAP_LAUNCH_Q3_SPDEVMAP,
+    QA_MAP_LAUNCH_RESTART
 } qa_map_launch_policy;
 typedef struct qa_application_travel_request {
     qa_actor_owner provider;
