@@ -1219,7 +1219,7 @@ static bool local_legacy_view_weapon(qa_frontend *frontend, uint32_t seat, qa_ac
     qa_application_equipment_view weapon;
     if (!qa_application_equipment_read(frontend->application, actor, &weapon, error)) return false;
     if (weapon.selected && weapon.family == QA_GAME_Q3 && weapon.has_q3_source &&
-        !weapon.source_slot && !weapon.original_qvm && !weapon.equipment_slot)
+        !weapon.source_slot && !weapon.original_source && !weapon.equipment_slot)
         return frontend_equipment_q3_local_view(frontend, seat, &weapon, world, frame, error);
     if (!legacy_weapon_visible(frontend, &weapon)) return true;
     qa_application_camera_view camera;

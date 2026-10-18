@@ -3,6 +3,7 @@
 
 #include "guest_q3_weapon_models_profile.h"
 #include "qa/application_q3_weapon_models.h"
+#include "qa/q3_host.h"
 #include "qa/qvm_save.h"
 #include "qa/session.h"
 
@@ -12,13 +13,13 @@ typedef struct application_q3_weapon_models_module {
     qa_session *session;
     qa_qvm *vm;
     const qa_qvm_image *image;
-    qa_qvm *game_vm;
-    const qa_qvm_image *game_image;
+    qa_q3_host *game_host;
+    qa_qvm_abi game_abi;
     const char *game_artifact_path;
     const application_q3_weapon_models_profile *profile;
     qa_q3_presentation_assets *assets;
     void *context;
-    bool (*current)(void *, const qa_qvm *actual_cgame, const qa_qvm *actual_game,
+    bool (*current)(void *, const qa_qvm *actual_cgame, const qa_q3_host *actual_game,
         const qa_q3_presentation_assets *, qa_error *);
     bool importing;
 } application_q3_weapon_models_module;
@@ -46,7 +47,7 @@ bool application_q3_weapon_models_restore(application_q3_weapon_models *, qa_byt
     qa_qvm_binding *saved_binding, qa_error *);
 bool application_q3_weapon_models_qualify(application_q3_weapon_models *, qa_error *);
 bool application_q3_weapon_models_namespace(application_q3_weapon_models *,
-    const qa_qvm *actual_cgame, const qa_qvm *actual_game,
+    const qa_qvm *actual_cgame, const qa_q3_host *actual_game,
     const qa_q3_presentation_assets *actual_assets, qa_error *);
 
 #endif

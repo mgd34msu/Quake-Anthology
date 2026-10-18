@@ -2300,7 +2300,7 @@ bool frontend_source_companion_selection_read(qa_frontend *f,const frontend_sour
     qa_application_q3_weapon_models models; bool registered;
     qa_actor_id actor=view->receipt.actor;
     if (!qa_application_equipment_read(f->application,actor,&equipment,error)) return false;
-    if (!equipment.selected || !equipment.original_qvm || equipment.provider!=view->receipt.client.source.source_owner)
+    if (!equipment.selected || !equipment.original_source || equipment.provider!=view->receipt.client.source.source_owner)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Companion selection left its selected original GAME provider");
     if (capture->selection_ready) { *out=&capture->selection; return true; }
     if (!qa_application_equipment_q3_models_read(f->application,&equipment,view->receipt.client.source.receiver,

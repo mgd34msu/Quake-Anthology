@@ -71,7 +71,7 @@ static bool original_q3_match(const frontend_equipment_source *owner,
     const qa_application_equipment_view *source, bool *matching, qa_error *error)
 {
     *matching = false;
-    if (!source->original_qvm || source->equipment_slot ||
+    if (!source->original_source || source->equipment_slot ||
         owner->client.source_owner != source->provider) return true;
     return qa_application_equipment_q3_source_draw_match(owner->options.frontend->application,
         source, owner->options.receiver, owner->options.seat, owner->options.assets, matching, error);
@@ -389,7 +389,7 @@ static bool held_admit(frontend_equipment_source *owner,
             !qa_strings_text(qa_session_strings(owner->client.session), source->view_model).size))) return true;
     qa_error observed = {0}; bool original = false;
     bool okay = original_q3_match(owner, source, &original, &observed);
-    if (okay && (original || (source->original_qvm && companion_held(owner, source->actor)))) return true;
+    if (okay && (original || (source->original_source && companion_held(owner, source->actor)))) return true;
     frontend_equipment_media *media = NULL;
     frontend_equipment_q3_presenter *presenter = NULL;
     bool authored = false;
@@ -470,7 +470,7 @@ static bool prepare(void *context, qa_actor_owner receiver, uint32_t seat,
                     &owner->selection,&media,&icon,error)||!current_owner(owner))return false;
             }
             if (!original_q3_match(owner, &owner->selection, &owner->original_q3_view, error)) return false;
-            if (!owner->original_q3_view && owner->selection.original_qvm) {
+            if (!owner->original_q3_view && owner->selection.original_source) {
                 bool captured;
                 if (!companion_prepare(owner, &captured, error)) return false;
             }
@@ -608,7 +608,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
     *selected = false;
     qa_application_equipment_view source;
     if (!frontend_equipment_source_selected_read(owner, actor, &source, error)) return false;
-    if (source.selected && source.original_qvm) {
+    if (source.selected && source.original_source) {
         bool original;
         if (!original_q3_match(owner, &source, &original, error)) return false;
         if (original) {
@@ -618,7 +618,7 @@ bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
                 "Original held weapon lost its genuine Source Draw");
         }
     }
-    if (source.selected && source.original_qvm && companion_held(owner, actor)) {
+    if (source.selected && source.original_source && companion_held(owner, actor)) {
         equipment_packet *packet=qa_arena_alloc(&owner->options.frontend->frame.storage,
             sizeof(*packet),_Alignof(equipment_packet),error);
         if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining captured Source held replacement");
@@ -754,7 +754,7 @@ bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held equipment requires its actual active receiver");
     qa_application_equipment_view source;
     if (!frontend_equipment_source_selected_read(owner, actor, &source, error)) return false;
-    if (source.selected && source.original_qvm && companion_held(owner, actor)) {
+    if (source.selected && source.original_source && companion_held(owner, actor)) {
         *submitted = true;
         return current_owner(owner) || frontend_fail(error, QA_ERROR_ARGUMENT,
             "Native held replacement retired its genuine Source capture");

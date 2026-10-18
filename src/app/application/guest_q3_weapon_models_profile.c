@@ -23,9 +23,9 @@ void application_q3_weapon_models_profile_free(application_q3_weapon_models_prof
     *profile = (application_q3_weapon_models_profile){0};
 }
 bool application_q3_weapon_models_profile_namespace(const application_q3_weapon_models_profile *profile,
-    const qa_qvm_image *image, qa_qvm_abi abi, const char *path, qa_error *error)
+    qa_qvm_abi abi, const char *path, qa_error *error)
 {
-    if (!profile || !profile->present || !profile->game_artifact_path || !image || !path ||
+    if (!profile || !profile->present || !profile->game_artifact_path || !path ||
         profile->game_abi != abi)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt has a different actual GAME namespace");
     char *normalized = qa_vfs_normalize_path(path, error);

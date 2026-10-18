@@ -18,8 +18,10 @@ static struct application_q3_guest *role_game_engine(const q3g_role *role, qa_er
     if (!source->provider || source->provider->application != engine->provider->application ||
         q3g_engine(source->provider) != source || source->world != engine->world ||
         !source->game || source->game->engine != source || source->game->kind != QA_QVM_GAME ||
-        source->game->retired || !source->game->vm || !source->game->image || !source->game->host ||
-        !source->game->artifact || source->game->image != source->game->artifact->image) {
+        source->game->retired || !source->game->host || !source->game->artifact ||
+        (source->game->artifact->qvm ?
+            !source->game->vm || !source->game->image || source->game->image != source->game->artifact->image :
+            !source->game->module || source->game->module != source->game->artifact->module)) {
         application_fail(error, QA_ERROR_ARGUMENT, "CG weapon models lost their actual original GAME parent");
         return NULL;
     }
@@ -34,7 +36,7 @@ static struct application_q3_guest *role_game_engine(const q3g_role *role, qa_er
     return source;
 }
 
-static bool role_current(void *context, const qa_qvm *cgame, const qa_qvm *game,
+static bool role_current(void *context, const qa_qvm *cgame, const qa_q3_host *game,
     const qa_q3_presentation_assets *assets, qa_error *error)
 {
     q3g_role *role = context;
@@ -47,11 +49,10 @@ static bool role_current(void *context, const qa_qvm *cgame, const qa_qvm *game,
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model role lost its actual retained module parents");
     struct application_q3_guest *source = role_game_engine(role, error);
     if (!source) return false;
-    if (source->game->vm != game)
-        return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model registry changed its retained GAME executor");
+    if (source->game->host != game)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model registry changed its retained GAME host");
     const application_q3_weapon_models_module *module = &role->weapon_models->module;
-    if (source->game->image != module->game_image || source->game->path != module->game_artifact_path ||
-        source->game->abi != module->profile->game_abi)
+    if (source->game->path != module->game_artifact_path || source->game->abi != module->game_abi)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt has a different actual GAME namespace");
     bool retained = engine->constructing_role == role || engine->initializing_role == role || engine->entered_role == role;
     for (q3g_role *current = engine->roles; !retained && current; current = current->next)
@@ -79,7 +80,7 @@ bool application_q3_weapon_models_role_create(q3g_role *role,
         return application_fail(error, QA_ERROR_ARGUMENT, "Declared CG weapon models have no actual matched GAME constructor");
     application_q3_weapon_models_module module = {
         .session = role->engine->provider->application->session, .vm = role->vm, .image = role->image,
-        .game_vm = source->game->vm, .game_image = source->game->image,
+        .game_host = source->game->host, .game_abi = source->game->abi,
         .game_artifact_path = source->game->path, .profile = profile,
         .assets = qa_q3_host_presentation_resources(role->host), .context = role,
         .current = role_current, .importing = role->engine->restore_pending};
@@ -97,26 +98,22 @@ bool application_q3_weapon_models_current(const application_q3_weapon_models *ow
     if (!owner || !owner->module.vm || !owner->module.image || !owner->module.profile ||
         !owner->module.assets || !owner->module.current)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt lost its actual module or model registry");
-    if (!owner->module.current(owner->module.context, owner->module.vm, owner->module.game_vm,
+    if (!owner->module.current(owner->module.context, owner->module.vm, owner->module.game_host,
         owner->module.assets, error)) return false;
     if (qa_qvm_get_role(owner->module.vm) != QA_QVM_CGAME ||
         qa_qvm_get_abi(owner->module.vm) != owner->module.profile->abi ||
         qa_qvm_image_of(owner->module.vm) != owner->module.profile->image)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon receipt lost its actual module or model registry");
-    if (owner->module.profile->present && (!owner->module.game_vm || !owner->module.game_image ||
-        !owner->module.game_artifact_path ||
-        qa_qvm_get_role(owner->module.game_vm) != QA_QVM_GAME ||
-        qa_qvm_get_abi(owner->module.game_vm) != owner->module.profile->game_abi ||
-        qa_qvm_image_of(owner->module.game_vm) != owner->module.game_image))
+    if (owner->module.profile->present && (!owner->module.game_host ||
+        !owner->module.game_artifact_path || owner->module.game_abi != owner->module.profile->game_abi))
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model owner changed its actual GAME namespace");
-    return qa_qvm_read(owner->module.vm, 0, NULL, 0, error) &&
-        (!owner->module.profile->present || qa_qvm_read(owner->module.game_vm, 0, NULL, 0, error));
+    return qa_qvm_read(owner->module.vm, 0, NULL, 0, error);
 }
 bool application_q3_weapon_models_namespace(application_q3_weapon_models *owner,
-    const qa_qvm *cgame, const qa_qvm *game, const qa_q3_presentation_assets *assets,
+    const qa_qvm *cgame, const qa_q3_host *game, const qa_q3_presentation_assets *assets,
     qa_error *error)
 {
-    if (!owner || owner->module.vm != cgame || owner->module.game_vm != game ||
+    if (!owner || owner->module.vm != cgame || owner->module.game_host != game ||
         owner->module.assets != assets)
         return application_fail(error, QA_ERROR_ARGUMENT, "CG weapon model receipt has different actual role parents");
     return application_q3_weapon_models_current(owner, error);
@@ -260,7 +257,7 @@ bool application_q3_weapon_models_create(const application_q3_weapon_models_modu
     if (!qa_id_index_reserve(&owner->receipts, count * 2, error)) return false;
     if (!application_q3_weapon_models_current(owner, error)) return false;
     if (module->profile->present && !application_q3_weapon_models_profile_namespace(module->profile,
-        module->game_image, qa_qvm_get_abi(module->game_vm), module->game_artifact_path, error)) return false;
+        module->game_abi, module->game_artifact_path, error)) return false;
     return !module->profile->present || qa_qvm_bind_function(module->vm, module->profile->registration,
         false, registration, owner, &owner->binding, error);
 }

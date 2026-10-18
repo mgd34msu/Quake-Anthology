@@ -401,7 +401,7 @@ bool qa_application_q3_arsenal_client_read(qa_application *app, qa_actor_id acto
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw requires its actual player and launch seat");
     application_provider *provider = application_provider_for(app, actor, QA_ROLE_ARSENAL, NULL);
     struct application_q3_guest *engine = q3g_engine(provider);
-    if (!engine || !engine->game || !engine->game->vm ||
+    if (!engine || !engine->game || !engine->game->host ||
         application_provider_for(app, actor, QA_ROLE_HUD, NULL) == provider) {
         *out = (qa_application_q3_arsenal_client){0}; *present = false;
         return true;
@@ -426,7 +426,7 @@ bool qa_application_q3_arsenal_client_read(qa_application *app, qa_actor_id acto
         value.client.source.source_owner != provider->owner || !value.client.context.frontend_lifetime)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal Draw has no initialized matching GAME companion");
     if (!application_q3_weapon_models_namespace(role->weapon_models, role->vm,
-        engine->game->vm, qa_q3_host_presentation_resources(role->host), error)) return false;
+        engine->game->host, qa_q3_host_presentation_resources(role->host), error)) return false;
     *out = value; *present = true;
     return true;
 }

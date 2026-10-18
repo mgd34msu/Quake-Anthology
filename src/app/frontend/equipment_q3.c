@@ -413,7 +413,7 @@ static double local_view_clock(void *context)
 static bool local_source_visible(const qa_application_equipment_view *source)
 {
     return source->selected && source->family == QA_GAME_Q3 && source->has_q3_source &&
-        !source->source_slot && !source->original_qvm && !source->equipment_slot && source->visible &&
+        !source->source_slot && !source->original_source && !source->equipment_slot && source->visible &&
         source->q3_weapon != QA_Q3_W_NONE &&
         source->q3_source.persistant[3] != 3 && source->q3_source.pmType != 5;
 }
@@ -488,7 +488,7 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
     if (!frontend || !source || !world || frame != &frontend->frame ||
         physical_seat >= frontend->options.seats || world->view.seat != physical_seat ||
         !source->selected || source->family != QA_GAME_Q3 || !source->has_q3_source ||
-        source->source_slot || source->original_qvm || source->equipment_slot ||
+        source->source_slot || source->original_source || source->equipment_slot ||
         !frontend_seat_launch_id_read(frontend, physical_seat, &launch_seat))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected view requires its actual local seat and scene");
     equipment_local_view call = {frontend, physical_seat, launch_seat, source};

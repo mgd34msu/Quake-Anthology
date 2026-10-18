@@ -36,7 +36,7 @@ typedef struct qa_application_equipment_view {
     /* A controller-selected EQUIPMENT slot has its own genuine source
      * namespace and is independent of the actor's ARSENAL binding. */
     bool equipment_slot;
-    bool original_qvm;
+    bool original_source;
     bool source_slot;
     qa_weapon_presentation source_binding;
     qa_item_id pending;
