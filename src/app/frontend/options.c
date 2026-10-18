@@ -226,9 +226,6 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             else options->frame_limit = number;
         }
     }
-    if (options->original && options->game_type) {
-        frontend_fail(error, QA_ERROR_ARGUMENT, "select --original or --game-type"); goto fail;
-    }
     if (!options->game && (options->original || options->game_type || options->map || options->map_game || options->movement || options->character || options->character_model || options->weapons || options->monsters || options->mod_count || options->weapon_behavior_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }

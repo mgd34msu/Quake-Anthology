@@ -184,9 +184,10 @@ bool frontend_launch_overlay(qa_launch_draft *draft, const char *name, uint64_t 
         qa_launch_provider selected = choices->providers[0]; selected.instance = instance;
         ok = qa_launch_set_provider(draft, &selected, error);
     }
+    qa_launch_scope_kind source_scope = scope.kind == QA_SCOPE_WORLD ? QA_SCOPE_WORLD : QA_SCOPE_DEFAULT_PLAYER;
     for (size_t i = 0; i < choices->binding_count && ok; ++i) {
         const qa_launch_binding *binding = &choices->bindings[i];
-        if (binding->scope.kind!=QA_SCOPE_DEFAULT_PLAYER || !(roles & QA_ROLE_BIT(binding->role))) continue;
+        if (binding->scope.kind != source_scope || !(roles & QA_ROLE_BIT(binding->role))) continue;
         const qa_launch_provider *provider = NULL;
         for (size_t j = 0; j < choices->provider_count; ++j)
             if (!strcmp(choices->providers[j].instance, binding->instance)) provider = &choices->providers[j];
@@ -332,13 +333,25 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     bool created = qa_launch_draft_create(catalog, product->id, map, &draft, error);
     free(selected_map);
     if (!created) return false;
-    if (frontend->options.original && !qa_launch_select_original(draft, "native:primary", error)) {
-        qa_launch_draft_destroy(draft);
-        return false;
-    }
     if (frontend->options.game_type && !qa_launch_select_game_type(draft, frontend->options.game_type, error)) {
         qa_launch_draft_destroy(draft);
         return false;
+    }
+    if (frontend->options.original) {
+        bool selected;
+        if (frontend->options.game_type) {
+            const qa_launch_binding *source = qa_launch_binding_for(qa_launch_draft_choices(draft),
+                (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+            const char *instance = source->instance;
+            selected = frontend_launch_overlay(draft, frontend->options.game_type, UINT64_MAX,
+                instance, (qa_launch_scope){.kind = QA_SCOPE_WORLD}, error) &&
+                frontend_launch_overlay(draft, frontend->options.game_type, UINT64_MAX,
+                    instance, (qa_launch_scope){.kind = QA_SCOPE_DEFAULT_PLAYER}, error);
+        } else selected = qa_launch_select_original(draft, "native:primary", error);
+        if (!selected) {
+            qa_launch_draft_destroy(draft);
+            return false;
+        }
     }
     if (!frontend->options.dedicated) {
         const qa_launch_choices *choices = qa_launch_draft_choices(draft);
