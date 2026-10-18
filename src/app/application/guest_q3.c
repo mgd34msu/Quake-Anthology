@@ -664,7 +664,7 @@ bool application_q3_guest_spawn_map(application_provider *provider, const qa_bsp
         }
         for (q3g_role *role = engine->roles; role;) {
             q3g_role *next = role->next;
-            if (role->kind == QA_QVM_CGAME) {
+            if (role->kind == QA_QVM_CGAME || (role->kind == QA_QVM_UI && role->retired)) {
                 q3g_role *replacement;
                 if (!q3g_role_restart(role, &replacement, error)) { free(copy); return false; }
             }
