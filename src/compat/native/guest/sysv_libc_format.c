@@ -505,21 +505,26 @@ bool sysv_format_install(guest_sysv_runtime *r,qa_error *error)
             versions,2,i ? checked : normal,i ? 6 : 4,QA_NATIVE_I32,NULL,NULL,error)) return false;
     }
     const qa_native_value_type entry[] = {pointer,size,pointer};
+    const qa_native_value_type unbounded[] = {pointer,pointer,pointer};
     const char *versions[] = {base,NULL};
     return sysv_service_add(r,SYSV_FORMAT,3,0,0,0,"libc.so.6","snprintf",
-        versions,2,entry,3,QA_NATIVE_I32,NULL,NULL,error) && sysv_scan_install(r,error);
+        versions,2,entry,3,QA_NATIVE_I32,NULL,NULL,error) &&
+        sysv_service_add(r,SYSV_FORMAT,6,0,0,0,"libc.so.6","vsprintf",
+            versions,2,unbounded,3,QA_NATIVE_I32,NULL,NULL,error) && sysv_scan_install(r,error);
 }
 bool sysv_format_call(sysv_service *service,const qa_native_value *args,qa_native_value *out,qa_error *error)
 {
-    if (service->operation >= 4) return sysv_scan_call(service,args,out,error);
+    if (service->operation == 4 || service->operation == 5) return sysv_scan_call(service,args,out,error);
     bool checked = service->operation == 2;
     bool entry = service->operation == 3;
+    bool unbounded = service->operation == 6;
     qa_arena scratch; qa_arena_init_pool(&scratch, &service->runtime->guest->scratch_pages);
     formatter owner = {.scratch = &scratch}; formatter *f = &owner;
     f->runtime = service->runtime; f->guest = f->runtime->guest; f->target = f->runtime->target;
-    f->destination = args[0].as.address; f->capacity = sysv_integer(args+1);
-    f->format = args[checked ? 4 : 2].as.address;
-    if (!entry) f->arguments = args[checked ? 5 : 3].as.address;
+    f->destination = args[0].as.address;
+    f->capacity = unbounded ? UINT64_MAX - f->destination : sysv_integer(args+1);
+    f->format = args[unbounded ? 1 : checked ? 4 : 2].as.address;
+    if (!entry) f->arguments = args[unbounded ? 2 : checked ? 5 : 3].as.address;
     f->fortify = checked && args[2].as.i32 > 0; out->type = QA_NATIVE_I32;
     bool ok = true;
     if (checked && sysv_integer(args+3) < f->capacity) ok = sysv_fail(error,QA_ERROR_ARGUMENT,"glibc fortified destination size is smaller than maxlen");

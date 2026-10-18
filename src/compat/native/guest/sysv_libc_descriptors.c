@@ -17,6 +17,7 @@ static bool identity(const sysv_service *s)
             ((named(s,"vsnprintf",1,0) && version(s,base)) ||
              (named(s,"__vsnprintf_chk",2,0) && version(s,"GLIBC_2.3.4")) ||
              (named(s,"snprintf",3,0) && version(s,base)) ||
+             (named(s,"vsprintf",6,0) && version(s,base)) ||
              (named(s,"sscanf",4,0) && version(s,base)) ||
              (named(s,"__isoc99_sscanf",4,0) && version(s,"GLIBC_2.7")) ||
              (named(s,"__isoc23_sscanf",5,0) && version(s,"GLIBC_2.38")));
@@ -150,8 +151,9 @@ bool sysv_service_valid(const sysv_service *s,qa_error *error)
     switch (s->group) {
     case SYSV_RUNTIME: count = 1; valid = valid && s->detail && !s->a; break;
     case SYSV_FORMAT:
-        valid = valid && !s->a && s->operation >= 1 && s->operation <= 5;
-        count = s->operation == 1 ? 4 : s->operation == 2 ? 6 : s->operation == 3 ? 3 : 2;
+        valid = valid && !s->a && s->operation >= 1 && s->operation <= 6;
+        count = s->operation == 1 ? 4 : s->operation == 2 ? 6 :
+            s->operation == 3 || s->operation == 6 ? 3 : 2;
         result = QA_NATIVE_I32;
         if (s->operation <= 3) parameters[1] = z;
         if (s->operation == 2) { parameters[2] = QA_NATIVE_I32; parameters[3] = z; }

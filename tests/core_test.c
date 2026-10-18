@@ -13,6 +13,7 @@
 #include "../src/compat/native/guest/memory_string.h"
 #include "../src/compat/native/guest/elf.h"
 #include "../src/compat/native/guest/profile/artifact.h"
+#include "../src/compat/native/guest/sysv_libc_private.h"
 #include "qa/pool.h"
 #include "qa/operation.h"
 #include "qa/random.h"
@@ -10150,6 +10151,66 @@ static bool q3_source_native_read(void *context, uint64_t address, void *out,
     size_t size, qa_error *error)
 { return qa_native_guest_read(context, address, out, size, error); }
 
+static bool format_process_current(void *context, const qa_native_guest *guest, qa_error *error)
+{ (void)error; return context == guest; }
+
+static void test_native_vsprintf(void)
+{
+    for (unsigned pointer_bytes = 4; pointer_bytes <= 8; pointer_bytes += 4) {
+        qa_error error = {0};
+        qa_native_guest_options options = {
+            .image = {.format = pointer_bytes == 4 ? QA_NATIVE_IMAGE_ELF32 : QA_NATIVE_IMAGE_ELF64,
+                .target = {.os = QA_NATIVE_OS_LINUX, .pointer_bytes = (uint8_t)pointer_bytes,
+                    .arch = pointer_bytes == 4 ? QA_NATIVE_ARCH_I386 : QA_NATIVE_ARCH_X86_64,
+                    .abi = pointer_bytes == 4 ? QA_NATIVE_ABI_SYSTEM_V_I386 : QA_NATIVE_ABI_SYSTEM_V_X64}},
+            .allocation_base = UINT64_C(0x300000),
+            .maximum_backing_bytes = QA_NATIVE_GUEST_PAGE, .backend = QA_NATIVE_GUEST_EMULATED};
+        qa_native_guest *guest = NULL;
+        CHECK(qa_native_guest_create(&options, &guest, &error));
+        uint64_t base = UINT64_C(0x400000);
+        uint8_t bytes[QA_NATIVE_GUEST_PAGE] = {0};
+        memcpy(bytes, "%d/%s/%.1f%n", sizeof("%d/%s/%.1f%n"));
+        memcpy(bytes + 80, "ok", 3); bytes[522] = 0xa5;
+        if (pointer_bytes == 4) {
+            qa_store_u32le(bytes + 128, (uint32_t)-7);
+            qa_store_u32le(bytes + 132, (uint32_t)base + 80);
+            qa_store_u64le(bytes + 136, UINT64_C(0x4004000000000000));
+            qa_store_u32le(bytes + 144, (uint32_t)base + 1020);
+        } else {
+            qa_store_u32le(bytes + 132, 48);
+            qa_store_u64le(bytes + 136, base + 192); qa_store_u64le(bytes + 144, base + 256);
+            qa_store_u64le(bytes + 256, (uint32_t)-7);
+            qa_store_u64le(bytes + 264, base + 80); qa_store_u64le(bytes + 272, base + 1020);
+            qa_store_u64le(bytes + 304, UINT64_C(0x4004000000000000));
+        }
+        qa_native_guest_mapping mapping;
+        CHECK(qa_native_guest_map(guest, base, sizeof(bytes),
+            QA_NATIVE_GUEST_READ | QA_NATIVE_GUEST_WRITE, (qa_bytes){bytes, sizeof(bytes)}, &mapping, &error));
+        guest_sysv_runtime runtime = {.guest = guest, .target = options.image.target,
+            .options = {.bindings = {.current = format_process_current, .context = guest}}};
+        sysv_service service = {.runtime = &runtime, .group = SYSV_FORMAT, .operation = 6,
+            .library = "libc.so.6", .name = "vsprintf",
+            .version = pointer_bytes == 4 ? "GLIBC_2.0" : "GLIBC_2.2.5", .parameter_count = 3,
+            .result = {.kind = QA_NATIVE_I32}};
+        for (unsigned i = 0; i < 3; ++i) service.parameters[i].kind = QA_NATIVE_ADDRESS;
+        CHECK(sysv_service_valid(&service, &error));
+        qa_native_value arguments[] = {{.type = QA_NATIVE_ADDRESS, .as.address = base + 512},
+            {.type = QA_NATIVE_ADDRESS, .as.address = base},
+            {.type = QA_NATIVE_ADDRESS, .as.address = base + 128}}, result;
+        CHECK(sysv_format_call(&service, arguments, &result, &error));
+        CHECK(result.type == QA_NATIVE_I32 && result.as.i32 == 9);
+        uint8_t output[11], count[4];
+        CHECK(qa_native_guest_read(guest, base + 512, output, sizeof(output), &error));
+        CHECK(!memcmp(output, "-7/ok/2.5", 10) && output[10] == 0xa5);
+        CHECK(qa_native_guest_read(guest, base + 1020, count, sizeof(count), &error));
+        CHECK(qa_load_u32le(count) == 9);
+        CHECK(qa_native_guest_write(guest, base, (qa_bytes){bytes, sizeof(bytes)}, &error));
+        arguments[0].as.address = base + sizeof(bytes) - 3;
+        CHECK(!sysv_format_call(&service, arguments, &result, &error));
+        CHECK(qa_native_guest_destroy(&guest, &error));
+    }
+}
+
 static void test_q3_source_memory(void)
 {
     qa_error error = {0};
@@ -12544,6 +12605,7 @@ int main(int argc, char **argv)
     test_native_saved_image_references();
     test_native_q3_declaration();
     test_q3_source_memory();
+    test_native_vsprintf();
     test_native_string_boundaries();
     test_native_write_receipts();
     test_native_resumable_budget();
