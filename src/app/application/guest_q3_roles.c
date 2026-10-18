@@ -624,7 +624,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             const application_q3_combat_definition *combat =
                 application_q3_combat_profile_definition(role->artifact->combat_profile);
             native.instance.observe = combat->reactions.pain_call.arguments_present ||
-                combat->reactions.die_call.arguments_present;
+                combat->reactions.die_call.arguments_present || combat->callbacks.has_damage ||
+                combat->callbacks.has_free || combat->armor.has_check;
         }
         if (role->declaration) {
             native.instance.declaration = role->declaration;
