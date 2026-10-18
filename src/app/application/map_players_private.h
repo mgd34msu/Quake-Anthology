@@ -223,6 +223,8 @@ bool application_players_bot_retire_pending(qa_application *,application_provide
 bool application_players_bot_sources_connect(qa_application *, application_player_record *,
     bool first_time, bool *accepted, qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
+bool application_player_equipment_row(qa_application *, const qa_launch_choices *,
+    qa_actor_id, const uint32_t *seat, const qa_launch_equipment **, qa_error *);
 bool application_player_equipment_selection(qa_application *, const qa_launch_choices *,
     qa_actor_id, uint32_t seat, qa_equipment_selection *, qa_equipment_source_selection *, qa_error *);
 bool application_players_native_q1_respawn(qa_application *, application_provider *,

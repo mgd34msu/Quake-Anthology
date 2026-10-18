@@ -290,6 +290,31 @@ static const qa_launch_binding *selected_binding(qa_application *application,
     return bindings[role];
 }
 
+static bool equipment_fallback(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, const char *selector,
+    const char **out)
+{
+    *out = NULL;
+    if (!choices || (selector && *selector) || !actor_is_player(application, actor, choices))
+        return true;
+    uint32_t seat;
+    bool has_seat = qa_application_player_seat(application, actor, &seat);
+    for (size_t i = 0; !has_seat && i < choices->seat_count; ++i) {
+        qa_actor_id live;
+        if (qa_actor_id_equal(choices->seats[i].actor, actor) ||
+            (qa_application_player_actor(application, choices->seats[i].id, &live) &&
+             qa_actor_id_equal(live, actor))) {
+            seat = choices->seats[i].id;
+            has_seat = true;
+        }
+    }
+    const qa_launch_equipment *selected;
+    if (!application_player_equipment_row(application, choices, actor,
+        has_seat ? &seat : NULL, &selected, NULL)) return false;
+    if (selected) *out = selected->instance;
+    return true;
+}
+
 void application_actor_routes_clear(qa_application *application)
 {
     qa_actor_index_clear(&application->actor_route_index);
@@ -349,8 +374,12 @@ static const application_actor_routes *actor_routes(qa_application *application,
 
     routes->resolving = true;
     const qa_launch_binding *bindings[QA_ROLE_COUNT] = {0};
-    selected_bindings(application, qa_launch_snapshot_choices(snapshot), actor, "",
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    selected_bindings(application, choices, actor, "",
                       (QA_ROLE_BIT(QA_ROLE_COUNT) - 1u), bindings);
+    const char *equipment = NULL;
+    bool equipment_ok = bindings[QA_ROLE_EQUIPMENT] ||
+        equipment_fallback(application, choices, actor, "", &equipment);
     const qa_actor_record *source_record =
         qa_actors_get(qa_session_actors(application->session), actor);
     application_provider *source = source_record ? provider_owned(application, source_record->owner) : NULL;
@@ -359,10 +388,11 @@ static const application_actor_routes *actor_routes(qa_application *application,
     application_actor_routes prepared = {
         .owner = routes->owner, .definition = routes->definition, .source = source, .ready = true};
     for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
-        prepared.providers[role] = bindings[role] ?
-            provider_named(application, bindings[role]->instance) : source;
-        prepared.instances[role] = bindings[role] ?
-            qa_launch_snapshot_find(snapshot, bindings[role]->instance) : source_instance;
+        if (role == QA_ROLE_EQUIPMENT && !equipment_ok) continue;
+        const char *instance = bindings[role] ? bindings[role]->instance :
+            role == QA_ROLE_EQUIPMENT ? equipment : NULL;
+        prepared.providers[role] = instance ? provider_named(application, instance) : source;
+        prepared.instances[role] = instance ? qa_launch_snapshot_find(snapshot, instance) : source_instance;
     }
     record = qa_actors_get(qa_session_actors(application->session), actor);
     size_t current_row;
@@ -406,6 +436,12 @@ const qa_launch_instance *qa_application_selected_instance(qa_application *appli
     const qa_launch_binding *binding = selected_binding(application,
         qa_launch_snapshot_choices(snapshot), actor, role, selector);
     if (binding) return qa_launch_snapshot_find(snapshot, binding->instance);
+    if (role == QA_ROLE_EQUIPMENT) {
+        const char *equipment;
+        if (!equipment_fallback(application, qa_launch_snapshot_choices(snapshot), actor, selector, &equipment))
+            return NULL;
+        if (equipment) return qa_launch_snapshot_find(snapshot, equipment);
+    }
     application_provider *source = application_actor_source_provider(application, actor);
     return source && source->launch ?
         qa_launch_snapshot_find(snapshot, source->launch->selection.instance) : NULL;
@@ -424,8 +460,14 @@ application_provider *application_provider_for(qa_application *application,
         return routes->providers[role];
     const qa_launch_binding *binding = selected_binding(application,
         active_choices(application), actor, role, selector);
-    return binding ? provider_named(application, binding->instance) :
-        application_actor_source_provider(application, actor);
+    if (binding) return provider_named(application, binding->instance);
+    if (role == QA_ROLE_EQUIPMENT) {
+        const char *equipment;
+        if (!equipment_fallback(application, active_choices(application), actor, selector, &equipment))
+            return NULL;
+        if (equipment) return provider_named(application, equipment);
+    }
+    return application_actor_source_provider(application, actor);
 }
 
 qa_actor_owner qa_application_selected_owner(qa_application *application,

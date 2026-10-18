@@ -142,7 +142,8 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
         QA_ROLE_ENGINE_BEHAVIOR, QA_ROLE_MONSTERS, QA_ROLE_MODE};
     static const qa_launch_role player_roles[] = {QA_ROLE_MOVEMENT, QA_ROLE_CHARACTER, QA_ROLE_BODY,
         QA_ROLE_SKIN, QA_ROLE_VOICE, QA_ROLE_ARSENAL, QA_ROLE_COMBAT, QA_ROLE_INVENTORY,
-        QA_ROLE_PICKUPS, QA_ROLE_HUD, QA_ROLE_EFFECTS, QA_ROLE_AUDIO, QA_ROLE_MUSIC, QA_ROLE_MENU, QA_ROLE_BOTS};
+        QA_ROLE_PICKUPS, QA_ROLE_HUD, QA_ROLE_EFFECTS, QA_ROLE_AUDIO, QA_ROLE_MUSIC, QA_ROLE_MENU, QA_ROLE_BOTS,
+        QA_ROLE_EQUIPMENT};
     qa_launch_binding binding = {.scope = {.kind = QA_SCOPE_WORLD}, .instance = provider.instance};
     for (size_t i = 0; i < sizeof(world_roles) / sizeof(world_roles[0]); ++i) {
         binding.role = world_roles[i];
@@ -170,9 +171,5 @@ bool launch_defaults(qa_launch_draft *d, qa_product_id product, const char *map,
             .release_on_teleport = true, .grapple = ctf ? (p->family == QA_GAME_Q1 ? QA_GRAPPLE_THREEWAVE : QA_GRAPPLE_Q2_CTF)
                 : lm ? QA_GRAPPLE_LMCTF : QA_GRAPPLE_DISABLED}};
     if (!qa_launch_set_equipment(d, &equipment, error)) return false;
-    if (equipment.selection.grapple != QA_GRAPPLE_DISABLED) {
-        binding.role = QA_ROLE_EQUIPMENT; binding.definition = "";
-        if (!qa_launch_bind(d, &binding, error)) return false;
-    }
     return true;
 }

@@ -2521,10 +2521,10 @@ static bool restore_player_carry(qa_application *application, const qa_launch_ch
 }
 
 static unsigned player_scope_priority(qa_application *application,
-    qa_launch_scope scope, qa_actor_id actor, uint32_t seat)
+    qa_launch_scope scope, qa_actor_id actor, const uint32_t *seat)
 {
     if (scope.kind == QA_SCOPE_DEFAULT_PLAYER) return 1;
-    if (scope.kind == QA_SCOPE_SEAT) return scope.seat == seat ? 2 : 0;
+    if (scope.kind == QA_SCOPE_SEAT) return seat && scope.seat == *seat ? 2 : 0;
     if (scope.kind != QA_SCOPE_ACTOR) return 0;
     if (qa_actor_id_equal(scope.actor, actor)) return 4;
     qa_actor_id configured;
@@ -2548,13 +2548,10 @@ static bool equipment_owner(qa_application *application, const char *instance,
     return application_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment provider is absent");
 }
 
-bool application_player_equipment_selection(qa_application *application,
-    const qa_launch_choices *choices, qa_actor_id actor, uint32_t seat,
-    qa_equipment_selection *selection, qa_equipment_source_selection *sources, qa_error *error)
+bool application_player_equipment_row(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, const uint32_t *seat,
+    const qa_launch_equipment **out, qa_error *error)
 {
-    if (!application || !choices || !selection || !sources || !application->session ||
-        !qa_actors_get(qa_session_actors(application->session), actor))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment selection requires its actual player and launch");
     const qa_launch_binding *binding = NULL;
     unsigned binding_priority = 0;
     for (size_t i = 0; i < choices->binding_count; ++i) {
@@ -2584,6 +2581,19 @@ bool application_player_equipment_selection(qa_application *application,
             return application_fail(error, QA_ERROR_ARGUMENT, "Player has competing complete equipment selections");
         selected = bound;
     }
+    *out = selected;
+    return true;
+}
+
+bool application_player_equipment_selection(qa_application *application,
+    const qa_launch_choices *choices, qa_actor_id actor, uint32_t seat,
+    qa_equipment_selection *selection, qa_equipment_source_selection *sources, qa_error *error)
+{
+    if (!application || !choices || !selection || !sources || !application->session ||
+        !qa_actors_get(qa_session_actors(application->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment selection requires its actual player and launch");
+    const qa_launch_equipment *selected;
+    if (!application_player_equipment_row(application, choices, actor, &seat, &selected, error)) return false;
     *selection = (qa_equipment_selection){0};
     *sources = (qa_equipment_source_selection){0};
     if (selected) {
