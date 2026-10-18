@@ -14,7 +14,7 @@ struct q3n_hud {
     /* Explicit local GAME receipt. Remote draw reads its real Network ring
      * through options.oldest_command without retaining a second sample. */
     int32_t oldest_command_time;
-    bool has_oldest_command, busy;
+    bool has_oldest_command, busy, weapon_requested;
 };
 typedef struct q3n_hud_draw {
     q3n_hud *owner;

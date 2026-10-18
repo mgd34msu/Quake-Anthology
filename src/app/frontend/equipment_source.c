@@ -359,6 +359,11 @@ static void release_draw(void *context)
 {
     frontend_equipment_source *owner = context;
     if (!owner || owner->active || owner->submitting) return;
+    bool hud = false, view = false;
+    if (owner->draw.selected && !owner->original_q3_view && owner->selection.visible &&
+        requests(owner, &hud, &view, NULL) && hud)
+        frontend_hud_weapon_request(owner->options.frontend, owner->options.physical_seat,
+            owner->selection.actor);
     frontend_equipment_source_clear(owner);
     frontend_equipment_media_release(owner->view_media); owner->view_media = NULL;
     frontend_equipment_q3_release(owner->q3_presenter); owner->q3_presenter = NULL;
@@ -871,6 +876,7 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
             const qa_q3_player *source = &gear.gear.player;
             q3n_selected_weapon_view view = {.origin = origin, .angles = camera.angles,
                 .horizontal_speed = hypot((double)source->velocity[0], (double)source->velocity[1]),
+                .field_of_view = fov,
                 .bob_cycle = source->bobCycle, .draw_gun = true};
             bool submitted = false;
             if (!frontend_equipment_gear_view(owner->gear_presenter, &gear, &view, fov,
@@ -883,6 +889,7 @@ static bool build_view(frontend_equipment_source *owner, qa_vec3 offset, float f
             const qa_q3_player *source = &owner->selection.q3_source;
             q3n_selected_weapon_view view = {.origin = origin, .angles = camera.angles,
                 .horizontal_speed = hypot((double)source->velocity[0], (double)source->velocity[1]),
+                .field_of_view = fov,
                 .bob_cycle = source->bobCycle, .draw_gun = true};
             bool submitted = false; qa_ui_preferences preferences;
             if (!qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),qa_application_ui_preference_handles(owner->options.frontend->application),

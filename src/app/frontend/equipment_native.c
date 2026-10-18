@@ -10,7 +10,7 @@ typedef struct equipment_native {
     qa_application_q3_equipment_services services;
     qa_application_q3_equipment_draw draw;
     const q3n_frame *frame;
-    bool entered, hud_requested, view_requested;
+    bool entered, view_requested;
 } equipment_native;
 
 static bool current(const equipment_native *owner, const q3n_frame *frame)
@@ -36,7 +36,8 @@ static bool requests(void *context, bool *hud, bool *view, qa_error *error)
     const equipment_native *owner = context;
     if (!owner || !hud || !view)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native equipment requests require their real composition owner");
-    *hud = owner->hud_requested; *view = owner->view_requested; return true;
+    *hud = owner->draw.selected && owner->frame && q3n_hud_weapon_requested(owner->frame->hud);
+    *view = owner->view_requested; return true;
 }
 static bool warning(void *context, const q3n_frame *frame, q3n_weapon_hud *out, qa_error *error)
 {
@@ -53,10 +54,9 @@ static bool begin(void *context, const q3n_frame *frame, qa_error *error)
     if (!owner || owner->entered || !frontend_equipment_source_idle(owner->source))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native selected frame requires its returned receiver");
     owner->entered = true; owner->frame = frame;
-    owner->hud_requested = owner->view_requested = false;
+    owner->view_requested = false;
     if (!current(owner, frame) || !owner->services.prepare(owner->services.context,
             owner->owners.receiver, owner->owners.launch_seat, &owner->draw, error)) return false;
-    owner->hud_requested = owner->draw.selected;
     return true;
 }
 static void end(void *context)

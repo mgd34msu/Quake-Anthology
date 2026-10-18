@@ -47,7 +47,7 @@ static bool hud(void *context, const qa_qvm_call *call, int32_t *result, qa_erro
     bool active;
     if (!selected(hook->owner, &active, error)) return false;
     if (!active) return qa_qvm_proceed(call, result, error);
-    hook->owner->hud_requested = true;
+    if (!hook->owner->profile->status_regions) hook->owner->hud_requested = true;
     *result = 0;
     return true;
 }

@@ -62,6 +62,7 @@ bool q3n_hud_create_compiled(const q3n_hud_options *, q3n_hud **, qa_error *);
 void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);
+bool q3n_hud_weapon_requested(const q3n_hud *);
 bool q3n_hud_weapon_read(q3n_hud *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
 void q3n_hud_scores(q3n_hud *, bool show, int32_t source_time);
 /* Stamps the shared scoreboard request clock before reliable output. An

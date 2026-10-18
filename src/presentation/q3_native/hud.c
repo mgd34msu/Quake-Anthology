@@ -59,6 +59,7 @@ bool q3n_hud_create_compiled(const q3n_hud_options *options,q3n_hud **out,qa_err
 void q3n_hud_destroy(q3n_hud *o) { if(o && !o->busy)free(o); }
 bool q3n_hud_idle(const q3n_hud *o) { return o && !o->busy; }
 const q3n_hud_state *q3n_hud_read(const q3n_hud *o) { return o?&o->state:NULL; }
+bool q3n_hud_weapon_requested(const q3n_hud *o) { return o && o->weapon_requested; }
 bool q3n_hud_weapon_read(q3n_hud *o,const q3n_frame *f,q3n_weapon_hud *out,qa_error *e)
 {
     if(!out || !q3nh_current(o,f,e))return false;
@@ -416,6 +417,7 @@ static bool weapon_string(void *context,int32_t x,int32_t y,const char *text,con
 { q3n_hud_draw *d=context; (void)error; return q3nh_text(d,(float)x,(float)y,text,16,16,color,false,true,0); }
 static bool active_status(q3n_hud_draw *d)
 {
+    d->owner->weapon_requested = d->settings->draw_status;
     if(d->owner->product==QA_Q3_TEAM_ARENA) {
         if(d->settings->draw_status && (!d->owner->options.mission_paint(d->owner->options.context,d->frame,false,false,d->error) ||
            !d->owner->options.mission_timed(d->owner->options.context,d->frame,d->error)))return false;
@@ -458,6 +460,7 @@ bool q3n_hud_frame(q3n_hud *o,const q3n_frame *f,const q3n_hud_settings *setting
        player->options.remote_client!=o->options.remote_client ||
        player->options.compiled_source!=o->options.compiled_source ||
        (f->remote && f->remote->snapshots.stage!=Q3N_REMOTE_COMPLETED_FRAME))return false;
+    o->weapon_requested = false;
     q3n_hud_draw d={.owner=o,.frame=f,.settings=settings,.commands=commands,.player=player,.viewport=viewport,.error=e};
     if(!q3nh_preferences(&d) || !q3n_hud_weapon_read(o,f,&d.weapon_hud,e))return false;
     o->busy=true; q3nh_anchor(&d,320,240);

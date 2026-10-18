@@ -15,6 +15,7 @@ typedef struct q3n_event_settings q3n_event_settings;
 typedef struct q3n_particles q3n_particles;
 typedef struct q3n_view q3n_view;
 typedef struct q3n_player_state q3n_player_state;
+typedef struct q3n_hud q3n_hud;
 typedef struct q3n_server_commands q3n_server_commands;
 typedef struct qa_native_q3_client_service qa_native_q3_client_service;
 
@@ -48,6 +49,7 @@ typedef struct q3n_frame {
     q3n_particles *particles;
     q3n_view *view;
     q3n_player_state *player_state;
+    q3n_hud *hud;
     q3n_server_commands *server_commands;
     qa_native_q3_client_service *client_service;
     qa_native_q3_wire_reader *reader;

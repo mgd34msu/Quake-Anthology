@@ -9,6 +9,7 @@
 #include "remote_unified_presentation.h"
 #include "remote_unified_render.h"
 #include "equipment_media.h"
+#include "equipment_q3.h"
 #include "q3_render_policy.h"
 #include "qa/q3_source_scene_bank.h"
 #include "../../presentation/q3_native/events.h"
@@ -673,12 +674,7 @@ bool frontend_unified_q3_selected_weapon(frontend_unified_q3 *o,const qa_unified
             .angles=qa_axes_angles(world->view.axis,QA_AXES_FLOAT_COMPONENTS),.horizontal_speed=wire->horizontal_speed,
             .field_of_view=atanf(1/world->view.projection.m[0])*114.59155902616464f,
             .bob_cycle=wire->bob_cycle,.draw_gun=true};
-        qa_cvars *cvars=qa_application_cvars(o->frontend->application);
-        const frontend_engine_cvar_handles *refs=&o->frontend->engine_cvars;
-        const qa_cvar_view *x=qa_cvars_read(cvars,refs->cg_gunX),*y=qa_cvars_read(cvars,refs->cg_gunY),
-            *z=qa_cvars_read(cvars,refs->cg_gunZ),*gun_frame=qa_cvars_read(cvars,refs->cg_gun_frame);
-        camera.gun_offset=qa_v3(x?(float)x->number:0,y?(float)y->number:0,z?(float)z->number:0);
-        camera.gun_frame=gun_frame?gun_frame->integer:0;
+        frontend_equipment_q3_view_settings(o->frontend,camera.field_of_view,&camera);
         q3n_selected_weapon_media media;
         if (!model->anchor) {
             q3n_selected_media_request load={.weapon=wire->weapon,.view_required=true,

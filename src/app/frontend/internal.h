@@ -473,6 +473,7 @@ const qa_product *frontend_product_selection(qa_catalog *,const char *);
 const qa_product *frontend_product_current(const qa_frontend *);
 bool frontend_present(qa_frontend *, qa_error *);
 bool frontend_hud_content_prepare(qa_frontend *, uint32_t, qa_error *);
+void frontend_hud_weapon_request(qa_frontend *, uint32_t, qa_actor_id);
 bool frontend_hud_source_visible(const qa_frontend *,uint32_t physical_seat,uint32_t authored_seat,qa_actor_owner);
 bool frontend_frame_cancel(qa_frontend *, qa_error *);
 bool frontend_display_ready(qa_frontend *, bool *ready, qa_error *);

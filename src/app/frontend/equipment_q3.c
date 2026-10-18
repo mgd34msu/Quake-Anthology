@@ -8,6 +8,8 @@
 #include "material_movies.h"
 #include "equipment_media.h"
 
+#include <math.h>
+
 typedef struct equipment_q3_output {
     frontend_equipment_q3_presenter *presenter;
     qa_application_equipment_view source;
@@ -281,6 +283,21 @@ static void output_release(void *context)
 { frontend_equipment_q3_release(((equipment_q3_output *)context)->presenter); }
 static bool base_group(void *,size_t *,qa_error *);
 
+void frontend_equipment_q3_view_settings(const qa_frontend *frontend, float field_of_view,
+    q3n_selected_weapon_view *view)
+{
+    qa_cvars *cvars = qa_application_cvars(frontend->application);
+    const frontend_engine_cvar_handles *handles = &frontend->engine_cvars;
+    const qa_cvar_view *x = qa_cvars_read(cvars, handles->cg_gunX),
+        *y = qa_cvars_read(cvars, handles->cg_gunY),
+        *z = qa_cvars_read(cvars, handles->cg_gunZ),
+        *frame = qa_cvars_read(cvars, handles->cg_gun_frame);
+    view->field_of_view = field_of_view;
+    view->gun_offset = qa_v3(x ? (float)x->number : 0, y ? (float)y->number : 0,
+        z ? (float)z->number : 0);
+    view->gun_frame = frame ? frame->integer : 0;
+}
+
 static bool draw_output(frontend_equipment_q3_presenter *presenter, const qa_application_equipment_view *source,
     const q3n_selected_weapon_view *view, const q3n_selected_weapon_held *held, bool reduced_flashes,
     void *context, bool (*current)(void *), equipment_q3_output *output, bool *submitted, qa_error *error)
@@ -289,6 +306,7 @@ static bool draw_output(frontend_equipment_q3_presenter *presenter, const qa_app
     if (!presenter || !source || !output || !submitted || (!view && !held) || !current || !current(context) ||
         !source_current(presenter->owner, source) || !qa_actor_id_equal(source->actor, presenter->actor))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected Q3 draw lost its authentic presenter and recipient");
+    if (!source->visible) return true;
     output->presenter=presenter; output->source=*source;
     output->draw=(frontend_equipment_output){.refs=output->refs,
         .capacity=sizeof(output->refs)/sizeof(*output->refs),.assets=presenter->owner->view.assets,
@@ -306,6 +324,7 @@ static bool draw_output(frontend_equipment_q3_presenter *presenter, const qa_app
         q3n_selected_animation animation = {0}; bool character;
         ok = q3n_selected_media_animation(presenter->owner->view.media, &animation, &character, error);
         q3n_selected_weapon_view actual = *view; actual.animations = animation.config;
+        frontend_equipment_q3_view_settings(presenter->owner->frontend, view->field_of_view, &actual);
         if (ok) ok = q3n_weapons_selected_view(presenter->owner->weapons, &media,
             &presenter->state, &request, &actual, submitted, error);
     } else if (ok) {
@@ -497,6 +516,7 @@ bool frontend_equipment_q3_local_view(qa_frontend *frontend, uint32_t physical_s
     if (!frontend_q3_generic_recipient(frontend, &options.world, error)) return false;
     q3n_selected_weapon_view view = {.origin = world->view.origin, .angles = camera.angles,
         .horizontal_speed = hypot((double)source->q3_source.velocity[0], (double)source->q3_source.velocity[1]),
+        .field_of_view = atanf(1 / world->view.projection.m[0]) * 114.59155902616464f,
         .bob_cycle = source->q3_source.bobCycle, .draw_gun = true};
     qa_ui_preferences preferences;
     if (!qa_ui_preferences_read(qa_application_cvars(frontend->application),qa_application_ui_preference_handles(frontend->application), physical_seat, &preferences, error) ||

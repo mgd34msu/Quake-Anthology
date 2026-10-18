@@ -172,7 +172,7 @@ static q3n_frame frame_base(q3n_native *o,const qa_application_native_q3_present
 {
     return (q3n_frame){.application=o->options.application,.source=*source,.presentation=o->options.presentation,
         .assets=o->assets,.clients=o->clients,.media=o->media,.weapons=o->weapons,.events=o->events,
-        .particles=o->particles,.view=o->view,.player_state=o->player_state,.server_commands=o->commands,
+        .particles=o->particles,.view=o->view,.player_state=o->player_state,.hud=o->hud,.server_commands=o->commands,
         .client_service=o->options.client,.reader=o->options.reader,.entities=o->entities,.seat=o->seat,.viewing_client=o->physical_client,
         .physical_presentation_seat=o->physical_presentation_seat,
         .viewing_actor=o->recipient->source_actor,.time=source->source_time_ms,.frame_milliseconds=o->frame_milliseconds,

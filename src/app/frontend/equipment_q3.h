@@ -30,6 +30,8 @@ bool frontend_equipment_q3_local_view(qa_frontend *, uint32_t physical_seat,
     const qa_application_equipment_view *, const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool frontend_equipment_q3_retain(frontend_equipment_q3_presenter *, qa_error *);
 void frontend_equipment_q3_release(frontend_equipment_q3_presenter *);
+void frontend_equipment_q3_view_settings(const qa_frontend *, float field_of_view,
+    q3n_selected_weapon_view *);
 bool frontend_equipment_q3_view(frontend_equipment_q3_presenter *,
     const qa_application_equipment_view *, const q3n_selected_weapon_view *, bool reduced_flashes,
     void *context, bool (*current)(void *), frontend_equipment_output **,

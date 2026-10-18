@@ -52,8 +52,19 @@ bool frontend_hud_source_visible(const qa_frontend *f,uint32_t physical,uint32_t
 struct frontend_hud_frame {
     qa_hud_frame frame;
     qa_hud_content *content;
-    bool available,native_entered,qc_status,source_weapon_status;
+    bool available,native_entered,qc_status,source_weapon_status,weapon_requested;
 };
+
+void frontend_hud_weapon_request(qa_frontend *frontend, uint32_t physical, qa_actor_id actor)
+{
+    frontend_hud_frame *pending = frontend->seats[physical].hud_frame;
+    if (!pending || !qa_actor_id_equal(pending->frame.actor, actor)) return;
+    pending->weapon_requested = true;
+    pending->source_weapon_status = true;
+    pending->available = true;
+    if (!pending->frame.weapon_only) pending->content = NULL;
+    pending->frame.weapon_only = true;
+}
 
 void frontend_player_light_sample(qa_frontend *frontend, qa_scene_world *world,
     const qa_scene_world_input *input)
@@ -615,9 +626,10 @@ static bool scene_build(qa_frontend *frontend, bool *render, qa_error *error)
             }
         }
         if (!frontend_q3_generic_overlay_begin(frontend,rect,error)) return false;
-        if(live&&!common_hud_drawn&&(!native_rendered||source_weapon_status||qc_status)) {
+        if(live&&((!common_hud_drawn&&(!native_rendered||source_weapon_status||qc_status))||
+            seat->hud_frame->weapon_requested)) {
             frontend_hud_frame *pending=seat->hud_frame;
-            pending->available=true;pending->native_entered=native_rendered;
+            pending->available=true;pending->native_entered=native_rendered||common_hud_drawn;
             pending->frame.center_owned=source_center_owned;
             if(!frontend_hud_content_prepare(frontend,i,error)||
                 !qa_hud_draw_prepared(seat->hud,pending->content,true,&frontend->frame,error)) return false;
