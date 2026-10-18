@@ -71,7 +71,7 @@ struct frontend_unified_render {
     float height;
     double seconds, field_of_view;
     int64_t milliseconds;
-    bool explicit_fov, source_view_offset, busy;
+    bool explicit_fov, source_view_offset, busy, weapon_requested;
     bool has_blend,has_damage_blend;
     bool feedback_seen;
     uint64_t feedback_cycle;
@@ -146,11 +146,22 @@ static bool hud_read(void *context, const qa_hud_frame *frame, qa_hud_data *out,
 {
     frontend_unified_render *r=context;
     const frontend_remote_unified_domain *d=frontend_remote_unified_domain_read(r->replica);
+    const qa_unified_player_ui *ui=&qa_unified_document_frame(r->frame)->player->ui;
     if (!r->busy || !d || frame->seat!=d->physical_seat)
         return frontend_unified_fail(error,QA_ERROR_ARGUMENT,"Unified HUD changed its received physical seat");
-    *out=(qa_hud_data){.vitals=r->vitals,.vital_count=frame->source_status_native?0:r->ammo_label?3:2,.source_vitals=true,
+    *out=(qa_hud_data){.vitals=r->vitals,.vital_count=frame->source_status_native?0:r->ammo_label&&!ui->weapon_status?3:2,.source_vitals=true,
         .health_team_face=r->team_face,.q1=r->q1,.crosshair_visible=r->preferences.crosshair,
         .crosshair_size=r->preferences.crosshair_size,.crosshair_color={1,1,1,1}};
+    if(r->weapon_requested && ui->weapon_status) {
+        const qa_unified_weapon_status *weapon=ui->weapon_status;
+        out->selected_weapon=weapon->item;
+        out->weapon=(qa_hud_weapon){.present=true,.label=weapon->label,
+            .ammo_count=weapon->count,.finite_ammo=weapon->finite,
+            .has_ammo_to_start=weapon->has_ammo_to_start,.low_ammo=weapon->low,
+            .native_status=frame->weapon_only,
+            .aggregate_low=ui->arsenal_warning==QA_AMMO_LOW,
+            .aggregate_empty=ui->arsenal_warning==QA_AMMO_EMPTY};
+    }
     qa_application_camera_view camera;bool has_view=false,has_vitals=false;
     if(!frontend_unified_render_client_presentation_read(r,frame->actor,&camera,out->source_values,
         &has_view,&has_vitals,error))return false;
@@ -642,6 +653,7 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     qa_scene_view view={.viewport=frontend_viewport(r->frontend,d->physical_seat),.origin=r->origin,
         .clear_depth=true,.depth=1,.seat=d->physical_seat};
     bool source_status=false;
+    r->weapon_requested=false;
     if (children && children->status_replacement &&
         !children->status_replacement(children->context,&source_status,e)) return false;
     if (children && children->q1_status) children->q1_status(children->context,&r->q1);
@@ -776,12 +788,12 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
     if (okay) view=world.view;
     qa_scene_rect output = frontend_viewport(r->frontend, d->physical_seat);
     qa_hud_content *hud_content=NULL;
-    if (okay) okay=qa_hud_prepare_content(r->hud,&(qa_hud_options){.ui=r->frontend->seats[d->physical_seat].ui,
-        .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation},
-        &(qa_hud_frame){.seat=d->physical_seat,.actor=player,
+    qa_hud_options hud_options={.ui=r->frontend->seats[d->physical_seat].ui,
+        .application=d->application,.seat=d->physical_seat,.context=r,.read=hud_read,.presentation=hud_presentation};
+    qa_hud_frame hud_frame={.seat=d->physical_seat,.actor=player,
         .time_ns=r->seconds>0?(uint64_t)(r->seconds*1e9):0,.viewport=view.viewport,.safe_area=output,.scale=r->preferences.hud_scale,.visible=true,
-        .source_status_native=source_status,.show_scores=qa_input_seat_action_active(r->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)},
-        &r->frontend->frame,&hud_content,e);
+        .source_status_native=source_status,.show_scores=qa_input_seat_action_active(r->frontend->seats[d->physical_seat].input,QA_INPUT_SCORES)};
+    if (okay) okay=qa_hud_prepare_content(r->hud,&hud_options,&hud_frame,&r->frontend->frame,&hud_content,e);
     if (okay) okay=frontend_view_background(r->frontend,output,&view,e);
     if (okay && children && children->lights)
         okay=children->lights(children->context,&view,&world,&world.lights,&world.light_count,e);
@@ -804,8 +816,19 @@ bool frontend_unified_render_draw(frontend_unified_render *r,const frontend_unif
                 view.viewport,view.viewport,(qa_vec4){0,0,1,1},r->feedback_blend,e);
     }
     if (okay) okay=qa_hud_draw_prepared(r->hud,hud_content,false,&r->frontend->frame,e);
+    bool weapon_requested=true;
     if (okay && children && children->hud)
-        okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,e);
+        okay=children->hud(children->context,r->frontend->seats[d->physical_seat].ui,view.viewport,&r->frontend->frame,
+            &weapon_requested,e);
+    const qa_unified_player_ui *ui=&qa_unified_document_frame(r->frame)->player->ui;
+    if(okay && weapon_requested && ui->weapon_status &&
+        (ui->selected_arsenal || (!source_status && !r->q1.present))) {
+        r->weapon_requested=true;
+        qa_hud_content *weapon_content=NULL;
+        hud_frame.weapon_only=true;
+        okay=qa_hud_prepare_content(r->hud,&hud_options,&hud_frame,&r->frontend->frame,&weapon_content,e) &&
+            qa_hud_draw_prepared(r->hud,weapon_content,false,&r->frontend->frame,e);
+    }
     if (okay) { *listener=(qa_audio_listener){.seat=d->physical_seat,.actor=player.slot,.origin=view.origin,.gain=1};
         memcpy(listener->axis,view.axis,sizeof(view.axis)); }
     if (!okay)

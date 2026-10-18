@@ -57,7 +57,7 @@ typedef struct frontend_unified_render_children {
     bool (*blend)(void *,const qa_scene_world_input *,qa_vec4,qa_scene_frame *,qa_error *);
     bool (*player_blend)(void *,qa_actor_id,bool,const qa_vec4 *,bool,const qa_vec4 *,
         qa_scene_rect,qa_scene_frame *,qa_error *);
-    bool (*hud)(void *, qa_ui *, qa_scene_rect, qa_scene_frame *, qa_error *);
+    bool (*hud)(void *, qa_ui *, qa_scene_rect, qa_scene_frame *, bool *weapon_requested, qa_error *);
     bool (*model)(void *, qa_actor_id, qa_string_id content, qa_string_id path, qa_scene_model_input *, qa_error *);
     bool (*model_after)(void *, qa_actor_id, qa_string_id content, qa_string_id path,
         const qa_scene_model_input *, qa_scene_frame *, qa_error *);

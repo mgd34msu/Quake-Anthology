@@ -1187,9 +1187,11 @@ static bool view_origin(void *context,qa_actor_id actor,qa_vec3 origin,float fov
 }
 static void q1_status(void *context,qa_hud_q1_status *status)
 { frontend_unified_q1_hud_status(((unified_presentation *)context)->q1,status); }
-static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame *frame, qa_error *error)
+static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame *frame,
+    bool *weapon_requested, qa_error *error)
 {
     unified_presentation *p = context;
+    *weapon_requested=true;
     qa_q3_presentation *recipient=NULL;
     if (!(frontend_unified_q1_hud(p->q1,ui,viewport,frame,error) &&
         frontend_unified_q2_hud(p->q2,ui,viewport,frame,error) &&
@@ -1200,6 +1202,12 @@ static bool hud(void *context, qa_ui *ui, qa_scene_rect viewport, qa_scene_frame
     for (unified_q3_client_row *row=p->q3_clients;row;row=row->next) {
         bool rendered=false;
         if (!row->cg_prepared || !frontend_unified_q3_runtime_factory_hud(row->factory,&rendered,error)) return false;
+        if(row->primary_view) {
+            frontend_unified_q3_runtime_owners owners;
+            if(!frontend_unified_q3_runtime_owners_read(
+                frontend_unified_q3_runtime_factory_runtime(row->factory),&owners,error)) return false;
+            *weapon_requested=q3n_hud_weapon_requested(owners.hud);
+        }
         source_center_owned|=rendered;
     }
     return frontend_unified_events_draw(p->events,viewport,source_center_owned,frame,error);

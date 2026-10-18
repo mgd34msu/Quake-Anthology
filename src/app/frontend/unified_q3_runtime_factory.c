@@ -11,6 +11,7 @@
 #include "qa/scene_world_save.h"
 #include "qa/console_cvars_prepare.h"
 #include "qa/q3_source_scene_bank.h"
+#include "qa/unified_frame_player.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -63,6 +64,21 @@ static bool frame_settings(void *context,const q3n_compiled_frame *frame,bool lo
         !o->options.status_replacement(o->options.context,frame,&replacement,e))return false;
     if(replacement)out->hud.draw_status=false;
     return q3n_compiled_frame_current(frame) && frontend_unified_q3_runtime_factory_current(o);
+}
+static bool weapon_warning(void *context,const q3n_frame *frame,q3n_weapon_hud *out,qa_error *error)
+{
+    frontend_unified_q3_runtime_factory *o=context;
+    if(!cut(o,frame,error))return false;
+    *out=(q3n_weapon_hud){0};
+    const qa_unified_frame *received=qa_unified_document_frame(frontend_remote_unified_frame(o->options.replica));
+    qa_actor_id viewer;uint32_t source_number;
+    if(received && received->player &&
+        frontend_remote_unified_player(o->options.replica,&viewer,&source_number) &&
+        qa_actor_id_equal(viewer,frame->compiled->source.basis.viewer)) {
+        out->selected=received->player->ui.selected_arsenal;
+        out->warning=(int32_t)received->player->ui.arsenal_warning;
+    }
+    return true;
 }
 
 static bool command_current(void *context,const frontend_unified_q3_commands_options *options,bool checkpoint)
@@ -316,6 +332,8 @@ bool frontend_unified_q3_runtime_factory_create(const frontend_unified_q3_runtim
     operations.presentation.rail_segment_length=32;
     operations.commands.context=o;operations.commands.compiled_register=registered;operations.commands.initialize_stage=initialize_stage;
     operations.hud.context=o;operations.hud.compiled_oldest_command=oldest;operations.hud.client_command=reliable;
+    operations.hud.weapon_warning=weapon_warning;
+    operations.player_state.context=o;operations.player_state.weapon_warning=weapon_warning;
     frontend_unified_q3_runtime_services_options services={.frontend=options->frontend,.replica=options->replica,.media=options->media,
         .client=options->client,.source=options->source,.events=options->events,.receiver=options->receiver,.audio_owner=options->audio_owner,
         .audio_context=options->audio_context,.audio_actor=options->audio_actor,.entered_frame=entered,
