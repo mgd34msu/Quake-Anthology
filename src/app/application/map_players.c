@@ -1410,7 +1410,7 @@ static bool spawn_pose(qa_application *application, size_t ordinal, bool force,
     if (source_point) *source_point = (qa_actor_id){0};
     application_provider *character = roster->records[ordinal].character;
     if (roster->map_provider->kind == APPLICATION_PROVIDER_Q2 && character &&
-        character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2) {
+        character != roster->map_provider) {
         qa_body_state selected;
         if (!qa_q2_player_map_spawn_pose(roster->map_provider->state.q2,
                 roster->records[ordinal].actor, &body->bounds, NULL, &selected, source_point, found, error)) return false;
@@ -1820,7 +1820,8 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
         if(!guest_native_character_spawn_motion(source,character,actor,error)) return false;
         if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     }
-    else if(world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source &&
+    else if(world && world!=source &&
+       (world->kind==APPLICATION_PROVIDER_Q1 || world->kind==APPLICATION_PROVIDER_Q2) &&
        !guest_spawn_motion(source,actor,NULL,error)) return false;
     if(native_character) {
         if(!guest_spawn_project(source,actor,error) ||
@@ -3678,8 +3679,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         bool found = true;
         qa_actor_id source_point = {0};
-        bool q2_map_spawn = map_source->kind == APPLICATION_PROVIDER_Q2 &&
-            character->kind <= APPLICATION_PROVIDER_Q3 && character->kind != APPLICATION_PROVIDER_Q2;
+        bool q2_map_spawn = map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character;
         if (q2_map_spawn) {
             qa_body_state selected;
             if (!qa_q2_player_map_spawn_pose(map_source->state.q2, actor, &body.bounds,
@@ -3772,7 +3772,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         bool source_accepted = true;
         application_player_spawn_scope spawn_scope={.previous=application->players->spawning,
             .actor=actor,.point=source_point,.body=body};
-        bool scoped_spawn=map_source->kind==APPLICATION_PROVIDER_Q1 && source_point.registry;
+        bool scoped_spawn=(map_source->kind==APPLICATION_PROVIDER_Q1 ||
+            map_source->kind==APPLICATION_PROVIDER_Q2) && source_point.registry;
         if (scoped_spawn) application->players->spawning=&spawn_scope;
         bool admitted=original_clients_admit(application, choices, seat, record, carry,
             defer_source_begin, initial_local_userinfo, false, false, source_completed,

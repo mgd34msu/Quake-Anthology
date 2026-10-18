@@ -261,7 +261,7 @@ static application_provider *spawn_world(application_guest_input *input,
     qa_application *app = guest->application;
     application_provider *world = application_world_provider(app, QA_ROLE_ENTITIES, "");
     return scope && scope->spawning && world && world != guest &&
-        world->kind == APPLICATION_PROVIDER_Q1 &&
+        (world->kind == APPLICATION_PROVIDER_Q1 || world->kind == APPLICATION_PROVIDER_Q2) &&
         application_provider_for(app, scope->actor, QA_ROLE_CHARACTER, "") == guest ? world : NULL;
 }
 
@@ -1519,9 +1519,10 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
             return application_fail(error, QA_ERROR_UNSUPPORTED,
                 "Native Q3 input requires its own arsenal");
         if (world != guest) {
-            if (!world || world->kind != APPLICATION_PROVIDER_Q1 || movement != guest || character != guest)
+            if (!world || (world->kind != APPLICATION_PROVIDER_Q1 && world->kind != APPLICATION_PROVIDER_Q2) ||
+                movement != guest || character != guest)
                 return application_fail(error, QA_ERROR_UNSUPPORTED,
-                    "Secondary native Q3 input requires its player bundle on a Q1 world");
+                    "Secondary native Q3 input requires its player bundle and an admitted world spawn service");
             if (!input->profile->input_present || !input->profile->source || !input->profile->source->present)
                 return application_fail(error, QA_ERROR_UNSUPPORTED,
                     "Secondary native Q3 input requires its declared input and spawn contract");
