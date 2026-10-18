@@ -892,6 +892,24 @@ static bool remember_failure(bool ok, bool *failed, qa_error *saved, qa_error *e
 static bool damage_observe_current(qa_damage_observer *observer, const qa_damage_mutation *mutation, qa_error *error) {
     if (!observer->open || !mutation) return qa_combat_argument(error, "source damage observer is closed");
     qa_damage_mutation captured = *mutation;
+    if (captured.kind == QA_MUTATION_HEALTH) {
+        qa_combat *combat = observer->combat;
+        qa_combat_cursor *cursor = observer->cursor;
+        qa_actor_id actor = cursor->outcome->request.target;
+        qa_combat_record *entry = record(combat, actor);
+        if (entry && entry->health.write) {
+            if (!cursor->active || entry->serial != cursor->binding_serial || cursor->reaction_seen)
+                return qa_combat_argument(error, "damage observation is closed or its owner retired");
+            if (!isfinite(captured.value.health.after) || captured.value.health.before != cursor->observed.health)
+                return qa_combat_argument(error, "observed health differs from authoritative store");
+            qa_combat_health_binding health = entry->health;
+            ++combat->active_calls;
+            bool ok = health.write(health.context, captured.value.health.after, error);
+            --combat->active_calls;
+            if (!ok) return false;
+            if (!qa_combat_live(combat, actor)) return true;
+        }
+    }
     if (captured.kind == QA_MUTATION_ARMOR) {
         qa_combat_record *entry = record(observer->combat, observer->cursor->outcome->request.target);
         if (!entry) return qa_combat_argument(error, "source damage actor retired");
@@ -1184,6 +1202,16 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
     }
     if (!observe_public(combat, request->target, false, error) || !observe_public(combat, request->target, true, error)) return false;
     qa_combat_state initial; if (!read_state(combat, entry, &initial, error)) return false;
+    if (allowed && source && entry->external && entry->health.read) {
+        qa_combat_binding binding = entry->binding;
+        ++combat->active_calls;
+        bool projected = binding.write_health(binding.context, initial.health, error);
+        --combat->active_calls;
+        if (!projected) return false;
+        if (!qa_combat_live(combat, request->target)) { outcome->stale = true; goto confirm; }
+        if (record(combat, request->target) != entry || entry->serial != serial)
+            return qa_combat_argument(error, "damage source changed its owner");
+    }
     qa_combat_cursor cursor = {.previous = combat->current, .outcome = outcome, .journals = combat->journals, .observed = initial, .binding_serial = serial, .active = true};
     combat->current = &cursor;
     qa_damage_result result = {0}; bool ok = true;

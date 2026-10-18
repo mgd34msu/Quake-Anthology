@@ -351,6 +351,21 @@ static bool character_health_restore(void *context, qa_actor_id actor,
         .read = character_health_read, .write = origin_health_write};
     return true;
 }
+static bool character_source_damage(void *context, qa_combat *combat,
+    const qa_damage_request *request, qa_damage_observer *observer,
+    qa_damage_result *result, qa_error *error)
+{
+    health_sources *source = context; qa_combat_state current;
+    CHECK(qa_combat_read(combat, request->target, &current, error));
+    CHECK(source->primary.health == current.health);
+    double before = source->primary.health;
+    source->primary.health -= request->amount;
+    qa_damage_mutation change = {.kind = QA_MUTATION_HEALTH,
+        .value.health = {before, source->primary.health}};
+    if (!qa_damage_observe(observer, &change, error)) return false;
+    *result = (qa_damage_result){.applied_damage = request->amount};
+    return true;
+}
 static void test_character_health_authority(void)
 {
     qa_error error = {0}; qa_session *session = NULL; qa_combat *combat = NULL;
@@ -392,6 +407,17 @@ static void test_character_health_authority(void)
     qa_armor armor = local.armor; armor.regular.points = 80;
     CHECK(qa_combat_set_armor(combat, source.actor, &armor, &error));
     CHECK(source.primary.armor.regular.points == 80);
+    qa_damage_outcome outcome = {0};
+    qa_damage_request hit = {.target = source.actor, .amount = 11,
+        .attack = {.attacker = source.actor, .inflictor = source.actor,
+            .combat_provider = owner, .cause.kind = QA_CAUSE_Q3}};
+    CHECK(qa_combat_run_source(combat, &hit, character_source_damage, &source, &outcome, &error));
+    CHECK(source.character.health == 99 && source.primary.health == 99);
+    CHECK(outcome.mutation_count == 1 && outcome.mutations[0].kind == QA_MUTATION_HEALTH &&
+        outcome.mutations[0].value.health.before == 110 && outcome.mutations[0].value.health.after == 99);
+    CHECK(qa_combat_read(combat, source.actor, &actual, &error) && actual.health == 99 && actual.armor.regular.points == 80);
+    qa_damage_outcome_release(&outcome);
+    source.primary.health = 7;
     qa_buffer saved = {0};
     CHECK(qa_persistence_combat_capture(session, combat, inventory, &saved, &error));
     qa_persistence_gameplay_resolvers resolve = {.context = &source,

@@ -95,6 +95,7 @@ static bool health(void *context, double value, qa_error *error)
     application_q3_combat *owner = actor->owner;
     ++actor->calls; ++owner->calls; ++owner->role->engine->calls;
     bool ok = application_q3_combat_health_write(&actor->source, value, error);
+    if (ok) application_q3_damage_scopes_health_projected(owner->scopes, actor->source.actor, value);
     --actor->calls; --owner->calls; --owner->role->engine->calls;
     actors_collect(owner);
     return ok;

@@ -256,6 +256,13 @@ bool application_q3_damage_scopes_idle(const application_q3_damage_scopes *owner
 { return owner && !owner->current && !owner->retained; }
 bool application_q3_damage_scopes_quiescent(const application_q3_damage_scopes *owner)
 { return owner && !owner->current; }
+void application_q3_damage_scopes_health_projected(application_q3_damage_scopes *owner,
+    qa_actor_id actor, double health)
+{
+    for (application_q3_damage_frame *frame = owner ? owner->current : NULL;
+         frame; frame = frame->previous)
+        if (frame->active && qa_actor_id_equal(frame->source.actor, actor)) frame->health = health;
+}
 bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa_error *error)
 {
     if (!out || !*out) return true;

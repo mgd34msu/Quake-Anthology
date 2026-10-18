@@ -165,9 +165,11 @@ bool application_q3_combat_health_write(void *opaque, double health, qa_error *e
     application_q3_combat_actor *a = opaque; int32_t value;
     if (!application_q3_combat_actor_current(a, error) || !integer(health, &value, error)) return false;
     const application_q3_combat_definition *d = definition(a);
-    return application_q3_combat_word_write(a, a->entity + d->fields.health, value, error) &&
-        (!a->player || application_q3_combat_word_write(a,
-            a->player + 184 + d->state.health_stat * 4, value, error));
+    uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)value);
+    return qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+            a->entity + d->fields.health, (qa_bytes){bytes, sizeof(bytes)}, error) &&
+        (!a->player || qa_qvm_source_bytes_write(a->role->vm, a->role->image,
+            a->player + 184 + d->state.health_stat * 4, (qa_bytes){bytes, sizeof(bytes)}, error));
 }
 bool application_q3_combat_empty_armor(void *opaque, double points,
     qa_regular_armor *out, bool *selected, qa_error *error)
