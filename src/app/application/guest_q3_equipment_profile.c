@@ -172,12 +172,33 @@ static bool declared(qa_bytes bytes, application_q3_equipment_profile *profile, 
 
 static bool stock(const qa_qvm_image *image, application_q3_equipment_profile *profile, qa_error *error)
 {
-
+    bool base = application_q3_reference_image(image, Q3_REFERENCE_BASE_CGAME);
     bool first = application_q3_reference_image(image, Q3_REFERENCE_LRCTF_CGAME);
     bool second = application_q3_reference_image(image, Q3_REFERENCE_THREEWAVE_CGAME);
-    if (!first && !second) return true;
+    if (!base && !first && !second) return true;
     profile->present = true; profile->view_taken = true; profile->warning_low = 1; profile->warning_empty = 2;
     profile->parent_argument = 0; profile->state_argument = 1; profile->entity_argument = 2;
+    if (base) {
+        profile->hud = 93260;
+        profile->view_entry = 92899; profile->view_decision = 92989;
+        profile->warning_entry = 32120; profile->warning_state = 934596;
+        profile->held_entry = 92146; profile->gun = 168;
+        profile->status_regions = true; profile->status_count = 1;
+        profile->status = calloc(1, sizeof(*profile->status));
+        if (!profile->status)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining stock equipment boundaries");
+        static const application_q3_equipment_region regions[] = {
+            {26294, 26379}, {26473, 26596}
+        };
+        application_q3_equipment_status *status = profile->status;
+        status->entry = 26236; status->decision = 26240; status->taken = true;
+        status->ammo_count = sizeof(regions) / sizeof(*regions);
+        status->ammo = malloc(sizeof(regions));
+        if (!status->ammo)
+            return application_fail(error, QA_ERROR_MEMORY, "Retaining stock equipment ammo regions");
+        memcpy(status->ammo, regions, sizeof(regions));
+        return true;
+    }
     profile->hud = first ? 108261 : 106815;
     profile->view_entry = first ? 107738 : 105885;
     profile->view_decision = first ? 107828 : 105975;

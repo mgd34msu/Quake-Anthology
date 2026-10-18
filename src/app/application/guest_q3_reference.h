@@ -4,6 +4,7 @@
 
 typedef enum application_q3_reference {
     Q3_REFERENCE_BASE_GAME,
+    Q3_REFERENCE_BASE_CGAME,
     Q3_REFERENCE_THREEWAVE_GAME,
     Q3_REFERENCE_LRCTF_GAME,
     Q3_REFERENCE_THREEWAVE_CGAME,
@@ -56,6 +57,59 @@ static inline bool application_q3_reference_image(const qa_qvm_image *image, app
         if (info.source_bytes != 469796 || info.instruction_count != 146672 ||
             info.code_length != 436836 || info.data_length != 8684 ||
             info.literal_length != 24244 || info.bss_length != 1420188) return false;
+        expected = anchors; length = sizeof(anchors) / sizeof(*anchors); break;
+    }
+    case Q3_REFERENCE_BASE_CGAME: {
+        static const q3_reference_instruction anchors[] = {
+            {26236, QA_QVM_ENTER, 120},
+            {26237, QA_QVM_CONST, 49624},
+            {26240, QA_QVM_NE, 26243},
+            {26294, QA_QVM_LOCAL, 100},
+            {26308, QA_QVM_EQ, 26379},
+            {26318, QA_QVM_EQ, 26379},
+            {26377, QA_QVM_CALL, 0},
+            {26379, QA_QVM_CONST, 1133412352},
+            {26473, QA_QVM_LOCAL, 44},
+            {26479, QA_QVM_EQ, 26596},
+            {26498, QA_QVM_LEI, 26596},
+            {26543, QA_QVM_CONST, 24941},
+            {26594, QA_QVM_CALL, 0},
+            {26596, QA_QVM_LOCAL, 40},
+            {32120, QA_QVM_ENTER, 36},
+            {32127, QA_QVM_CONST, 934596},
+            {32133, QA_QVM_CONST, 934596},
+            {32136, QA_QVM_NE, 32142},
+            {32138, QA_QVM_CONST, 22391},
+            {32143, QA_QVM_CONST, 22374},
+            {72337, QA_QVM_ENTER, 36},
+            {72418, QA_QVM_CONST, 934596},
+            {72441, QA_QVM_CONST, 934596},
+            {72446, QA_QVM_CONST, 934596},
+            {92146, QA_QVM_ENTER, 524},
+            {92148, QA_QVM_LOCAL, 540},
+            {92157, QA_QVM_CONST, 89614},
+            {92168, QA_QVM_LOCAL, 168},
+            {92172, QA_QVM_CONST, 140},
+            {92178, QA_QVM_LOCAL, 532},
+            {92197, QA_QVM_LOCAL, 536},
+            {92385, QA_QVM_LOCAL, 168},
+            {92400, QA_QVM_CONST, 29199},
+            {92402, QA_QVM_CONST, 38494},
+            {92405, QA_QVM_LOCAL, 168},
+            {92493, QA_QVM_CONST, 29188},
+            {92795, QA_QVM_CONST, 29178},
+            {92899, QA_QVM_ENTER, 208},
+            {92924, QA_QVM_CONST, 44728},
+            {92927, QA_QVM_NE, 92986},
+            {92986, QA_QVM_CONST, 935192},
+            {92989, QA_QVM_EQ, 92992},
+            {93255, QA_QVM_CONST, 92146},
+            {93256, QA_QVM_CALL, 0},
+            {93260, QA_QVM_ENTER, 76},
+        };
+        if (info.source_bytes != 325220 || info.instruction_count != 99903 ||
+            info.code_length != 294824 || info.data_length != 9980 ||
+            info.literal_length != 20384 || info.bss_length != 3856588) return false;
         expected = anchors; length = sizeof(anchors) / sizeof(*anchors); break;
     }
     case Q3_REFERENCE_THREEWAVE_GAME: {
