@@ -4484,8 +4484,9 @@ bool application_players_component_retire(qa_application *app,application_provid
     qa_actor_id actor,qa_error *error)
 {
     if(!app||!app->players||app->players->map_provider!=source||!source||
-        source->application!=app||!app->session||!qa_session_safe(app->session)||
-        !qa_world_idle(app->world)||!application_rankings_idle(app))
+        source->application!=app||!app->session||
+        (qa_actors_get(qa_session_actors(app->session),actor)&&
+         (!qa_session_safe(app->session)||!qa_world_idle(app->world)||!application_rankings_idle(app))))
         return application_fail(error,QA_ERROR_ARGUMENT,"Component drop has not returned to its actual source roster");
     return retire_player(app,source,actor,error);
 }
@@ -5516,13 +5517,6 @@ bool application_players_guest_detach(qa_application *application,
         if (binding->identity != provider->launch->identity)
             return application_fail(error, QA_ERROR_ARGUMENT, "guest roster detach has another provider identity");
         guest_binding_remove(roster, binding);
-        if (record->dynamic && !record->remote && record->character == provider && record->guest_count == 0) {
-            application_actor_routes_invalidate(application, actor);
-            qa_actor_index_remove(&roster->actors, record->actor);
-            record_free(roster, record);
-            ++roster->revision;
-            record->dynamic = true;
-        }
     }
     return true;
 }

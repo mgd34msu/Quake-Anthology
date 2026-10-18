@@ -32,7 +32,6 @@ bool application_guest_client_drop(application_provider *provider, uint32_t slot
     if (!qa_q3_host_retire_input(engine->game->host, slot, true, error)) { free(copy); return false; }
     free(client->retirement_reason); client->retirement_reason = copy;
     client->disconnect_pending = client->connected || client->pending_bot;
-    client->connected = false;
     client->pending_retirement = true;
     client->pending_bot = false;
     return true;
@@ -74,6 +73,7 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
                     ok = false; first = current;
                 }
             }
+            client->connected = false;
         }
         if (!qa_q3_host_input_idle(engine->game->host, slot) || !qa_world_idle(engine->world) ||
             !application_guest_input_actor_idle(provider->application, client->actor)) continue;
@@ -106,6 +106,13 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
         } else if (record && !qa_session_release(provider->application->session, actor, &current)) {
             if (ok) { ok = false; first = current; }
             if (qa_actors_get(qa_session_actors(provider->application->session), actor)) continue;
+        }
+        qa_application *application = provider->application;
+        if (!qa_actors_get(qa_session_actors(application->session), actor) && application->players &&
+            !application_players_component_retire(application, application->players->map_provider,
+                actor, &current)) {
+            if (ok) { ok = false; first = current; }
+            continue;
         }
         if (!qa_q3_host_retire_input(engine->game->host, slot, false, &current)) {
             if (ok) { ok = false; first = current; }

@@ -252,22 +252,8 @@ bool application_q3_guest_client_userinfo(application_provider *provider, uint32
 
 bool application_q3_guest_client_disconnect(application_provider *provider, uint32_t slot, qa_error *error)
 {
-    struct application_q3_guest *engine;
-    q3g_client *client = client_slot(provider, slot, &engine, error);
-    if (!client) return false;
-    qa_error first = {0};
-    bool ok = true;
-    if (client->connected) {
-        int32_t argument = (int32_t)slot, result;
-        client->connected = false;
-        client->disconnect_started = true;
-        ok = q3g_call(engine->game, 5, &argument, 1, &result, &first);
-    }
-    qa_error current = {0};
-    if (!application_guest_client_drop(provider, slot, "", &current) && ok) { ok = false; first = current; }
-    if (!application_guest_clients_drain(provider, &current) && ok) { ok = false; first = current; }
-    if (!ok && error) *error = first;
-    return ok;
+    return application_guest_client_drop(provider, slot, "", error) &&
+        application_guest_clients_drain(provider, error);
 }
 
 bool application_q3_guest_client_think(application_provider *provider, uint32_t slot,
