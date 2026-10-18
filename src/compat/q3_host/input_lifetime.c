@@ -142,6 +142,14 @@ bool qa_q3_source_word_to_value(qa_native_value *out, int32_t word, qa_error *er
     }
 }
 
+const qa_native_region_event *qa_q3_host_source_region_swap(qa_q3_host *host,
+    const qa_native_region_event *event)
+{
+    const qa_native_region_event *previous = host->source_region;
+    host->source_region = event;
+    return previous;
+}
+
 bool qa_q3_host_source_call(qa_q3_host *host, const qa_qvm_call *parent, uint64_t entry,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -184,7 +192,9 @@ bool qa_q3_host_source_call(qa_q3_host *host, const qa_qvm_call *parent, uint64_
                 .abi = qa_native_module_describe(qa_native_get_module(host->native)).image.target.abi,
                 .parameters = parameters, .parameter_count = count,
                 .result = {.kind = result->type, .count = 1}};
-            ok = qa_native_invoke(host->native, entry, &signature, arguments, count, result, error);
+            ok = host->source_region ? qa_native_region_invoke(host->native, host->source_region,
+                entry, &signature, arguments, count, result, error) :
+                qa_native_invoke(host->native, entry, &signature, arguments, count, result, error);
         }
     }
     return q3_game_end(&call, ok);

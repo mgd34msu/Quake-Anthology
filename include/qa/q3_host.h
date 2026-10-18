@@ -336,6 +336,8 @@ bool qa_q3_source_value_to_word(const qa_native_value *, int32_t *, qa_error *);
 bool qa_q3_source_word_to_value(qa_native_value *, int32_t word, qa_error *);
 bool qa_q3_host_source_call(qa_q3_host *, const qa_qvm_call *parent, uint64_t entry,
     const qa_native_value *, size_t count, qa_native_value *result, qa_error *);
+/* The borrowed native region is lexical; restore the previous value before returning. */
+const qa_native_region_event *qa_q3_host_source_region_swap(qa_q3_host *, const qa_native_region_event *);
 /* Generic component declarations qualify original tables before any source
  * call. This constructor uses real QVM offsets, without a synthetic trap. */
 bool qa_q3_host_game_data_bind(qa_q3_host *,qa_qvm *,const qa_q3_host_game_data *,qa_error *);

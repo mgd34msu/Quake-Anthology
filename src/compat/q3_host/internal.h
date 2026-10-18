@@ -133,6 +133,7 @@ struct qa_q3_host {
     qa_qvm *vm;
     qa_native_instance *native;
     qa_native_host *native_host;
+    const qa_native_region_event *source_region;
     qa_native_host_guest_memory memory;
     qa_native_profile native_profile;
     q3_game_data *game;

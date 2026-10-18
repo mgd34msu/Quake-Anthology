@@ -38,7 +38,7 @@ typedef struct guest_native_input_binding {
 
 typedef struct guest_client_scope {
     struct guest_client_scope *previous;
-    const application_source_call *call;
+    const application_source_call *call, *movement_call;
     qa_actor_id actor;
     qa_q3_host_game_data data;
     uint32_t slot, milliseconds;
@@ -47,7 +47,7 @@ typedef struct guest_client_scope {
     bool equipment_active;
     qa_usercmd application_command;
     bool weapon_slice, weapon_reached;
-    bool spawning, input_active, moved, completed_motion;
+    bool spawning, input_active, moved, completed_motion, movement_slice;
     int32_t before_time;
     qa_qvm_binding spawn_binding;
 } guest_client_scope;
@@ -59,6 +59,7 @@ struct application_guest_input {
     size_t binding_count;
     guest_native_input_binding native_bindings[GUEST_INPUT_ENTRIES];
     size_t native_count, source_entries;
+    qa_native_region_binding *native_locomotion;
     uint32_t command_offset;
     application_guest_q3_control *body_control;
     application_q3_weapons *weapons;
@@ -785,13 +786,15 @@ static bool source_move_enter(application_guest_input *input, const application_
     if (!qa_q3_host_source_pointer(input->role->host, movement, &player, error)) return false;
     if (player != scope->player) return call->proceed(call->context, call->arguments, call->count, error);
     uint64_t previous = scope->movement;
+    const application_source_call *previous_call = scope->movement_call;
+    bool previous_slice = scope->movement_slice;
     uint32_t previous_ms = scope->milliseconds;
     bool previous_active = scope->input_active;
     qa_q3_equipment_motion previous_equipment = scope->equipment;
     bool previous_equipment_active = scope->equipment_active;
     qa_usercmd previous_application = scope->application_command;
     bool previous_weapon_slice = scope->weapon_slice, previous_weapon_reached = scope->weapon_reached;
-    scope->movement = movement;
+    scope->movement = movement; scope->movement_call = call; scope->movement_slice = slice;
     uint64_t end = (uint64_t)scope->movement + input->command_offset + 24;
     const uint32_t offsets[] = {input->profile->source->movement_mins, input->profile->source->movement_maxs,
                                input->profile->source->water_movement, input->profile->source->water_type_movement};
@@ -800,14 +803,15 @@ static bool source_move_enter(application_guest_input *input, const application_
         if (limit > end) end = limit;
     }
     if (input->role->vm && end > qa_qvm_memory_size(input->role->vm)) {
-        scope->movement = previous;
+        scope->movement = previous; scope->movement_call = previous_call; scope->movement_slice = previous_slice;
         return application_fail(error, QA_ERROR_FORMAT, "Guest movement projection leaves source memory");
     }
     bool follower = scope->completed_motion || guest_follower(input, scope->actor);
     qa_q3_usercmd command; qa_q3_player state;
     if (!qa_q3_host_source_usercmd(input->role->host, (uint64_t)scope->movement + input->command_offset, &command, error) ||
         !qa_q3_host_source_player(input->role->host, scope->slot, &state, error)) {
-        scope->movement = previous; return false;
+        scope->movement = previous; scope->movement_call = previous_call; scope->movement_slice = previous_slice;
+        return false;
     }
     int64_t elapsed = (int64_t)command.serverTime - (int64_t)state.commandTime;
     scope->milliseconds = slice ? elapsed > 200 ? 200 : elapsed < 1 ? 1 : (uint32_t)elapsed
@@ -834,7 +838,8 @@ static bool source_move_enter(application_guest_input *input, const application_
     if (ok && !current(input, scope, call)) {
         qa_error cleanup = {0};
         (void)application_control_source_abort(&input_scope, &cleanup);
-        scope->movement = previous; scope->milliseconds = previous_ms; scope->input_active = previous_active;
+        scope->movement = previous; scope->movement_call = previous_call; scope->movement_slice = previous_slice;
+        scope->milliseconds = previous_ms; scope->input_active = previous_active;
         scope->equipment = previous_equipment; scope->equipment_active = previous_equipment_active;
         scope->application_command = previous_application;
         scope->weapon_slice = previous_weapon_slice; scope->weapon_reached = previous_weapon_reached;
@@ -955,7 +960,8 @@ static bool source_move_enter(application_guest_input *input, const application_
     if (ok && !cancelled && !slice && current(input, scope, call)) {
         scope->moved = true; scope->before_time = state.commandTime;
     }
-    scope->movement = previous; scope->milliseconds = previous_ms; scope->input_active = previous_active;
+    scope->movement = previous; scope->movement_call = previous_call; scope->movement_slice = previous_slice;
+    scope->milliseconds = previous_ms; scope->input_active = previous_active;
     scope->equipment = previous_equipment; scope->equipment_active = previous_equipment_active;
     scope->application_command = previous_application;
     scope->weapon_slice = previous_weapon_slice; scope->weapon_reached = previous_weapon_reached;
@@ -1018,6 +1024,34 @@ static bool native_input_call(void *context, qa_native_instance *instance,
         source_move_enter(entry->input, &call, entry->operation == GUEST_INPUT_SLICE, error);
 }
 
+static bool native_locomotion(void *context, qa_native_instance *instance,
+    const qa_native_region_event *event, qa_native_region_decision *decision, qa_error *error)
+{
+    (void)instance;
+    application_guest_input *input = context;
+    *decision = (qa_native_region_decision){.action = QA_NATIVE_REGION_CONTINUE};
+    guest_client_scope *scope = input->scope;
+    if (event->phase != QA_NATIVE_REGION_ENTER || !scope ||
+        !scope->movement_call || !scope->movement_slice) return true;
+    uint64_t movement;
+    if (!source_movement(input, &movement, error)) return false;
+    if (movement != scope->movement) return true;
+    bool skip;
+    const qa_native_region_event *previous = qa_q3_host_source_region_swap(input->role->host, event);
+    bool okay = replace_locomotion_enter(input, scope->movement_call, &skip, error);
+    qa_q3_host_source_region_swap(input->role->host, previous);
+    if (!okay) return false;
+    if (skip) {
+        if (input->profile->source->native_has_movement_register) {
+            decision->replace_state = true;
+            decision->state = event->state;
+            decision->state.registers[input->profile->source->native_movement_register] = movement;
+        }
+        decision->action = QA_NATIVE_REGION_SKIP_TO_JOIN;
+    }
+    return true;
+}
+
 bool application_guest_input_leave(q3g_role *role, qa_error *error)
 {
     application_guest_input *input = role ? role->input : NULL;
@@ -1025,6 +1059,13 @@ bool application_guest_input_leave(q3g_role *role, qa_error *error)
     if (input->source_entries && --input->source_entries) return true;
     bool okay = application_guest_q3_control_leave(input->body_control, error);
     qa_error first = error ? *error : (qa_error){0};
+    if (input->native_locomotion) {
+        qa_error cleanup = {0};
+        if (!qa_native_remove_region(input->native_locomotion, &cleanup)) {
+            if (okay) first = cleanup;
+            okay = false;
+        } else input->native_locomotion = NULL;
+    }
     while (input->native_count) {
         guest_native_input_binding *entry = input->native_bindings + input->native_count - 1;
         qa_error cleanup = {0};
@@ -1061,6 +1102,10 @@ bool application_guest_input_enter(q3g_role *role, qa_error *error)
         }
     }
     if (okay) okay = application_guest_q3_control_enter(input->body_control, error);
+    if (okay && input->profile->input_present && input->profile->source->present)
+        okay = qa_native_bind_region(qa_native_host_instance(role->native),
+            input->profile->source->native_locomotion_region, native_locomotion, input,
+            &input->native_locomotion, error);
     if (!okay) {
         qa_error first = error ? *error : (qa_error){0}, cleanup = {0};
         (void)application_guest_input_leave(role, &cleanup);
@@ -1138,7 +1183,7 @@ bool application_guest_input_descriptors(const q3g_role *role,
     application_guest_input *input = role ? role->input : NULL;
     bool idle = (role && (role->vm ? !qa_qvm_active(role->vm) :
         role->module && (!role->native || !qa_native_active(qa_native_host_instance(role->native)))) &&
-        (!input || (!input->scope && !input->in_command && !input->source_entries && !input->native_count && !input->command &&
+        (!input || (!input->scope && !input->in_command && !input->source_entries && !input->native_count && !input->native_locomotion && !input->command &&
                     !input->stage && !input->completion &&
                     !input->applying.registry && !input->command_actor.registry))) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
@@ -1421,9 +1466,12 @@ static bool guest_roles_admit(application_provider *guest, application_provider 
     if (!engine->game->vm) {
         qa_application *app = guest->application;
         if (application_world_provider(app, QA_ROLE_ENTITIES, "") != guest ||
-            movement != guest || arsenal != guest)
+            arsenal != guest)
             return application_fail(error, QA_ERROR_UNSUPPORTED,
-                "Native Q3 input requires its own world, movement and arsenal");
+                "Native Q3 input requires its own world and arsenal");
+        if (movement != guest && (!movement || movement->kind > APPLICATION_PROVIDER_Q3))
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native Q3 input requires an admitted built-in foreign movement owner");
         if (character != guest) {
             if (!character || character->kind > APPLICATION_PROVIDER_Q3)
                 return application_fail(error, QA_ERROR_UNSUPPORTED,

@@ -11,6 +11,8 @@ typedef struct application_q3_movement_profile {
     uint32_t movement_move, movement_slice, movement_duck, movement_global;
     uint32_t movement_mins, movement_maxs, movement_trace_callback, movement_trace_mask;
     application_q3_source_region locomotion;
+    uint32_t native_locomotion_region;
+    uint32_t native_movement_register;
     struct {
         uint32_t movement_type, health, team, flags;
         int32_t spectator_team, respawn_flag, *excluded;
@@ -18,7 +20,7 @@ typedef struct application_q3_movement_profile {
     } availability;
     uint32_t water_entity, water_movement, water_type_movement;
     uint32_t spawn, view;
-    bool body_trace, body_present, present;
+    bool body_trace, body_present, present, native_has_movement_register;
 } application_q3_movement_profile;
 
 bool application_q3_source_entry_read(struct q3g_role *, const qa_json_document *,

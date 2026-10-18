@@ -410,8 +410,36 @@ static bool movement_declared(q3g_role *role, const qa_json_document *doc,
     if (ok && move != QA_JSON_NONE) {
         ok = movement_body(doc, move, p, error);
         qa_json_id locomotion = qa_json_get(doc, move, "locomotion");
-        if (ok && role->image && locomotion != QA_JSON_NONE) {
-            ok = region(doc, locomotion, &p->locomotion, error);
+        if (ok && locomotion != QA_JSON_NONE) {
+            if (role->image) ok = region(doc, locomotion, &p->locomotion, error);
+            else {
+                qa_native_declared_region declared;
+                ok = qa_native_declaration_find_region(role->declaration,
+                    equipment ? "/weapons/equipmentMovement/locomotion" :
+                        "/input/equipmentMovement/locomotion", &declared, error);
+                if (ok && (declared.entry_rva == declared.join_rva ||
+                    (declared.has_frame && declared.frame_entry_rva != p->movement_slice)))
+                    ok = application_fail(error, QA_ERROR_FORMAT,
+                        "Native locomotion requires a declared region in its source movement frame");
+                if (ok) {
+                    p->locomotion = (application_q3_source_region){declared.entry_rva, declared.join_rva};
+                    p->native_locomotion_region = declared.id;
+                }
+                qa_json_id output = qa_json_get(doc, locomotion, "movementRegister");
+                if (ok && output != QA_JSON_NONE) {
+                    qa_buffer name = {0};
+                    qa_native_register reg;
+                    ok = qa_json_string(doc, output, &name, error);
+                    if (ok && !qa_native_register_find((qa_bytes){name.data, name.size}, &reg))
+                        ok = application_fail(error, QA_ERROR_FORMAT,
+                            "Native locomotion output names an unknown source register");
+                    if (ok) {
+                        p->native_movement_register = reg;
+                        p->native_has_movement_register = true;
+                    }
+                    qa_buffer_free(&name);
+                }
+            }
             p->present = ok;
         }
     }
@@ -465,6 +493,17 @@ static bool movement_declared(q3g_role *role, const qa_json_document *doc,
     return ok;
 }
 
+static bool movement_fields(const application_q3_movement_profile *p, qa_error *error)
+{
+    if (p->availability.respawn_flag <= 0)
+        return application_fail(error, QA_ERROR_FORMAT, "Original movement availability omits its respawn flag");
+    const uint32_t fields[] = {p->availability.movement_type, p->availability.health,
+        p->availability.team, p->availability.flags};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
+        if (!aligned(fields[i], p->client_stride, 4, error)) return false;
+    return aligned(p->water_entity, p->entity_stride, 4, error);
+}
+
 static bool movement_qualify(q3g_role *role, const application_q3_movement_profile *p, qa_error *error)
 {
     if (!p->entity_stride) return true;
@@ -475,8 +514,9 @@ static bool movement_qualify(q3g_role *role, const application_q3_movement_profi
             p->client_pointer > p->entity_stride - pointer_bytes)
             return application_fail(error, QA_ERROR_FORMAT,
                 "Original movement records differ from their admitted source ABI");
-        return !p->body_present ||
-            qa_native_module_mutable_range(role->module, p->movement_global, pointer_bytes, error);
+        return (!p->body_present ||
+            qa_native_module_mutable_range(role->module, p->movement_global, pointer_bytes, error)) &&
+            (!p->present || movement_fields(p, error));
     }
     size_t count, memory = qa_qvm_image_memory_size(role->image);
     const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
@@ -497,13 +537,7 @@ static bool movement_qualify(q3g_role *role, const application_q3_movement_profi
     const uint32_t entries[] = {p->spawn, p->view};
     for (size_t i = 0; i < sizeof(entries) / sizeof(*entries); ++i)
         if (!original_entry(code, count, entries[i], error)) return false;
-    if (p->availability.respawn_flag <= 0)
-        return application_fail(error, QA_ERROR_FORMAT, "Original movement availability omits its respawn flag");
-    const uint32_t fields[] = {p->availability.movement_type, p->availability.health,
-        p->availability.team, p->availability.flags};
-    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i)
-        if (!aligned(fields[i], p->client_stride, 4, error)) return false;
-    return aligned(p->water_entity, p->entity_stride, 4, error) &&
+    return movement_fields(p, error) &&
         aligned(p->water_movement, memory, 4, error) && aligned(p->water_type_movement, memory, 4, error) &&
         qa_qvm_qualify_source_region(role->image, p->movement_slice, p->locomotion.entry, p->locomotion.join, error);
 }
