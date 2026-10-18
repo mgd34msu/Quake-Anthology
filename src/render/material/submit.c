@@ -1913,7 +1913,7 @@ bool qa_material_submit(const qa_material *original, const qa_scene_mesh *mesh,
         return source_collect(original, mesh, context, frame, error);
     if ((mesh->vertex_count == 0 || mesh->index_count == 0) &&
         !(context->source_scratch && context->source_writer == QA_SOURCE_WRITE_CLOUD)) return true;
-    if (!context->source_scratch && frame->source_pending &&
+    if (!context->source_scratch && frame->source_pending && !frame->source_pending->collecting &&
         !qa_material_source_swap_end(frame->source_pending, frame, error)) return false;
     const qa_material *material = original;
     if (material->remapped != NULL) material = material->remapped;
