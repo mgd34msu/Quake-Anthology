@@ -1704,10 +1704,12 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     if(!application_guest_actor_admit(source,actor,error)) return false;
     application_provider *character=application_provider_for(app,actor,QA_ROLE_CHARACTER,"");
     application_provider *world=application_world_provider(app,QA_ROLE_ENTITIES,"");
+    if(engine->game->combat && (character==source ||
+       application_provider_for(app,actor,QA_ROLE_COMBAT,"")==source) &&
+       !application_q3_combat_admit(engine->game->combat,actor,error)) return false;
     bool native_character=source==world && character && character->kind<=APPLICATION_PROVIDER_Q3;
     if(character!=source && !native_character) return true;
     if(character==source) {
-        if(engine->game->combat && !application_q3_combat_admit(engine->game->combat,actor,error)) return false;
         if(engine->game->weapon_services &&
            !application_q3_guest_selected_respawn(source,actor,error)) return false;
     }
