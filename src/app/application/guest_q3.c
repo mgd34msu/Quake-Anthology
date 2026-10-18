@@ -195,6 +195,9 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     bool combat_entry = ok && role->combat;
     if (ok) ok = application_guest_input_enter(role, error);
     bool input_entry = ok;
+    application_guest_bot_setup bot_setup = {0};
+    if (ok && !source && role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
+        ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
     if (ok && source) {
         uint64_t entry = source->entry;
         if (role->native)
@@ -212,19 +215,15 @@ static bool q3g_invoke(q3g_role *role, int32_t command, const int32_t *arguments
     } else if (ok) {
         int32_t words[10] = {command};
         if (count) memcpy(words + 1, arguments, count * sizeof(*arguments));
-        qa_qvm_binding bot_setup = 0;
-        ok = true;
-        if (!source && role->kind == QA_QVM_GAME && command == 2 && count == 3 && arguments[2])
-            ok = application_guest_input_bot_setup_bind(role, &bot_setup, error);
-        if (ok) ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
-                qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
-                qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
-        if (bot_setup) {
-            qa_error cleanup = {0};
-            if (!qa_qvm_unbind(role->vm, bot_setup, &cleanup)) {
-                if (ok && error) *error = cleanup;
-                ok = false;
-            }
+        ok = command == (role->kind == QA_QVM_UI ? 1 : 0) ?
+            qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
+            qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
+    }
+    {
+        qa_error cleanup = {0};
+        if (!application_guest_input_bot_setup_unbind(role, &bot_setup, &cleanup)) {
+            if (ok && error) *error = cleanup;
+            ok = false;
         }
     }
     if (input_entry) {

@@ -7,6 +7,7 @@
 #include "qa/bots_catalog.h"
 #include "qa/arena.h"
 #include "qa/pool.h"
+#include "guest_q3_catalog.h"
 #include <math.h>
 
 static inline bool application_bot_integer(double value,int32_t *out,qa_error *error) {
@@ -190,6 +191,10 @@ bool application_bot_inventory(application_bots *,qa_actor_id,const qa_bot_inven
 typedef struct application_bot_q3_arsenal {
     qa_q3_product product;
     qa_item_id weapons[QA_Q3_WEAPON_COUNT], ammo[QA_Q3_WEAPON_COUNT];
+    const application_q3_catalog_weapon *rows;
+    size_t count;
+    qa_bot_runtime *runtime;
+    bool guest, stock_rules;
 } application_bot_q3_arsenal;
 bool application_bot_arsenal_supported(const application_provider *);
 bool application_bot_q3_arsenal_read(application_provider *,application_bot_q3_arsenal *,bool *,qa_error *);

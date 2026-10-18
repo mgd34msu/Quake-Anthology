@@ -108,16 +108,18 @@ static bool qualify(q3g_role *role, const application_guest_input_profile *p, qa
         if (p->respawn && !entry(code, count, p->respawn, error)) return false;
     }
     if (role->image && p->bot_setup.entry) {
-        if (!entry(code, count, p->bot_setup.entry, error) ||
-            !entry(code, count, p->bot_setup.connect, error)) return false;
-        uint32_t call = p->bot_setup.call;
-        if (call <= p->bot_setup.connect || call >= count - 1 ||
-            code[call].opcode != QA_QVM_CONST || code[call].operand != (int32_t)p->bot_setup.entry ||
-            code[call + 1].opcode != QA_QVM_CALL)
-            return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup differs from its original Connect call");
-        for (uint32_t pc = p->bot_setup.connect + 1; pc <= call; ++pc)
-            if (code[pc].opcode == QA_QVM_ENTER)
-                return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup call leaves its original Connect function");
+        if (!entry(code, count, p->bot_setup.entry, error)) return false;
+        if (p->bot_setup.connect || p->bot_setup.call) {
+            if (!entry(code, count, p->bot_setup.connect, error)) return false;
+            uint32_t call = p->bot_setup.call;
+            if (call <= p->bot_setup.connect || call >= count - 1 ||
+                code[call].opcode != QA_QVM_CONST || code[call].operand != (int32_t)p->bot_setup.entry ||
+                code[call + 1].opcode != QA_QVM_CALL)
+                return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup differs from its original Connect call");
+            for (uint32_t pc = p->bot_setup.connect + 1; pc <= call; ++pc)
+                if (code[pc].opcode == QA_QVM_ENTER)
+                    return application_fail(error, QA_ERROR_FORMAT, "Guest bot setup call leaves its original Connect function");
+        }
     }
     const application_q3_movement_profile *source = p->source;
     if (!source) return application_fail(error, QA_ERROR_FORMAT, "Guest input has no qualified source movement declaration");
@@ -211,6 +213,9 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
     if (ok && qa_json_get(doc, entries, "respawn") != QA_JSON_NONE)
         ok = application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "respawn"),
             "/input/entries/respawn", &p.respawn, error);
+    if (ok && qa_json_get(doc, entries, "botSetup") != QA_JSON_NONE)
+        ok = application_q3_source_entry_read(role, doc, qa_json_get(doc, entries, "botSetup"),
+            "/input/entries/botSetup", &p.bot_setup.entry, error);
     if (ok && qa_json_get(doc, input, "clientCommand") != QA_JSON_NONE)
         ok = word(doc, input, "clientCommand", &p.client_command, error);
     if (ok) ok = output_modes(doc, input, &p, role->image != NULL, error);

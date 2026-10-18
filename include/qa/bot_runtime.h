@@ -147,6 +147,10 @@ bool qa_bot_runtime_weapon_weights_from(qa_bot_runtime *, uint32_t, void *contex
                                           int32_t *source_result, qa_error *);
 bool qa_bot_runtime_weapon_info(qa_bot_runtime *, uint32_t, uint32_t weapon,
                                  qa_bot_weapon_info *, qa_bot_projectile_info *, bool *, qa_error *);
+/* Read this runtime's admitted weapon configuration without borrowing a bot's
+ * learned-weight handle. Used when another owner supplies the bot's AI. */
+bool qa_bot_runtime_weapon_config_info(qa_bot_runtime *, uint32_t weapon,
+    qa_bot_weapon_info *, qa_bot_projectile_info *, bool *, qa_error *);
 bool qa_bot_runtime_weapon_choose(qa_bot_runtime *, uint32_t, const int32_t *inventory, size_t,
                                    uint32_t *weapon, qa_error *);
 bool qa_bot_runtime_weapon_choose_view(qa_bot_runtime *, uint32_t,

@@ -230,27 +230,82 @@ static bool borrowed_native_bot(application_guest_input *input, qa_actor_id acto
         qa_actor_id_equal(admission.actor, actor);
 }
 
-static bool bot_setup(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+static bool bot_setup_enter(application_guest_input *input,
+    const application_source_call *call, bool *borrowed, qa_error *error)
 {
-    application_guest_input *input = context;
-    int32_t slot;
-    if (!qa_qvm_call_argument(call, 0, &slot, error)) return false;
-    if (slot < 0) return qa_qvm_proceed(call, result, error);
-    qa_actor_id actor;
-    if (!qa_q3_host_actor(input->role->host, (uint32_t)slot, false, &actor, error)) return false;
-    if (!borrowed_native_bot(input, actor))
-        return qa_qvm_proceed(call, result, error);
-    /* The actual world AI has already completed setup for this actor. */
-    *result = 1;
+    *borrowed = false;
+    int32_t slot = call->arguments[0].as.i32;
+    if (slot >= 0) {
+        qa_actor_id actor;
+        if (!qa_q3_host_actor(input->role->host, (uint32_t)slot, false, &actor, error)) return false;
+        *borrowed = borrowed_native_bot(input, actor);
+    }
+    return *borrowed || call->proceed(call->context, call->arguments, call->count, error);
+}
+
+static bool bot_setup(void *context, const qa_qvm_call *raw_call, int32_t *result,
+    qa_error *error)
+{
+    const qa_native_value_type types[] = {QA_NATIVE_I32, QA_NATIVE_ADDRESS, QA_NATIVE_I32};
+    qa_native_value arguments[3];
+    if (!application_source_qvm_arguments(raw_call, types, 3, arguments, error)) return false;
+    application_source_qvm_call backend;
+    application_source_call call = qvm_call_view(raw_call, result, arguments, 3, &backend);
+    bool borrowed;
+    if (!bot_setup_enter(context, &call, &borrowed, error)) return false;
+    if (borrowed) *result = 1;
     return true;
 }
 
-bool application_guest_input_bot_setup_bind(q3g_role *role, qa_qvm_binding *out, qa_error *error)
+static bool native_bot_setup(void *context, qa_native_instance *instance,
+    qa_native_entry_observer *binding, const qa_native_value *arguments, size_t count,
+    qa_native_value *result, qa_error *error)
+{
+    (void)instance;
+    *result = (qa_native_value){.type = QA_NATIVE_I32};
+    application_source_native_call backend = {.binding = binding, .arguments = arguments,
+        .count = count, .result = result};
+    application_source_call call = {.arguments = arguments, .count = count,
+        .context = &backend, .proceed = application_source_native_proceed};
+    bool borrowed;
+    if (!bot_setup_enter(context, &call, &borrowed, error)) return false;
+    if (borrowed) result->as.i32 = 1;
+    return true;
+}
+
+bool application_guest_input_bot_setup_bind(q3g_role *role,
+    application_guest_bot_setup *out, qa_error *error)
 {
     application_guest_input *input = role->input;
     if (!input || !input->profile->bot_setup.entry) return true;
-    return qa_qvm_bind_function(role->vm, input->profile->bot_setup.entry, false,
-        bot_setup, input, out, error);
+    if (role->vm)
+        return qa_qvm_bind_function(role->vm, input->profile->bot_setup.entry, false,
+            bot_setup, input, &out->qvm, error);
+    qa_native_instance *instance = qa_native_host_instance(role->native);
+    const qa_native_type parameters[] = {
+        {.kind = QA_NATIVE_I32, .count = 1},
+        {.kind = QA_NATIVE_ADDRESS, .count = 1},
+        {.kind = QA_NATIVE_I32, .count = 1}};
+    qa_native_signature signature = {.abi = qa_native_module_describe(role->module).image.target.abi,
+        .parameters = parameters, .parameter_count = 3,
+        .result = {.kind = QA_NATIVE_I32, .count = 1}};
+    qa_native_address entry;
+    return qa_native_rva(instance, input->profile->bot_setup.entry, 1, &entry, error) &&
+        qa_native_observe_entry(instance, entry, &signature, native_bot_setup, input, &out->native, error);
+}
+
+bool application_guest_input_bot_setup_unbind(q3g_role *role,
+    application_guest_bot_setup *binding, qa_error *error)
+{
+    if (binding->native) {
+        if (!qa_native_unobserve_entry(binding->native, error)) return false;
+        binding->native = NULL;
+    }
+    if (binding->qvm) {
+        if (!qa_qvm_unbind(role->vm, binding->qvm, error)) return false;
+        binding->qvm = 0;
+    }
+    return true;
 }
 
 static application_provider *spawn_world(application_guest_input *input,

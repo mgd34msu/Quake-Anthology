@@ -343,7 +343,7 @@ bool qa_bot_runtime_weapon_weights_from(qa_bot_runtime *r, uint32_t id, void *co
                                           int32_t *result, qa_error *e) {
     return weapon_weights(r, id, NULL, context, read, result, e);
 }
-static bool weapon_info_ready(qa_bot_runtime *r,uint32_t id,uint32_t number,bool *ready,qa_error *e) {
+static bool weapon_info_ready(qa_bot_runtime *r,const uint32_t *id,uint32_t number,bool *ready,qa_error *e) {
     *ready=false;
     if (!r->weapon_config) return true;
     int32_t capacity;
@@ -352,15 +352,16 @@ static bool weapon_info_ready(qa_bot_runtime *r,uint32_t id,uint32_t number,bool
         return bot_runtime_weapon_emit(r,QA_SCRIPT_ERROR,"weapon number out of range",
             r->weapon_config->source->path,e);
     }
-    bot_weapon_state *state;
-    if(!source_weapon_state(r,id,&state,e)) return false;
-    if(!state) return true;
+    if (id) {
+        bot_weapon_state *state;
+        if(!source_weapon_state(r,*id,&state,e)) return false;
+        if(!state) return true;
+    }
     *ready=true;
     return true;
 }
-bool qa_bot_runtime_weapon_info(qa_bot_runtime *r, uint32_t id, uint32_t number,
-                                 qa_bot_weapon_info *weapon, qa_bot_projectile_info *projectile,
-                                 bool *found, qa_error *e) {
+static bool weapon_info_read(qa_bot_runtime *r, const uint32_t *id, uint32_t number,
+    qa_bot_weapon_info *weapon, qa_bot_projectile_info *projectile, bool *found, qa_error *e) {
     if(!r || !weapon || !projectile || !found) return bot_runtime_fail(e,"missing weapon AI output");
     *found=false;bool ready;
     if(!weapon_info_ready(r,id,number,&ready,e)) return false;
@@ -368,11 +369,19 @@ bool qa_bot_runtime_weapon_info(qa_bot_runtime *r, uint32_t id, uint32_t number,
     if(!bot_weapons_source_info(r->weapon_config,number,weapon,projectile,e)) return false;
     *found=true;return true;
 }
+bool qa_bot_runtime_weapon_info(qa_bot_runtime *r, uint32_t id, uint32_t number,
+    qa_bot_weapon_info *weapon, qa_bot_projectile_info *projectile, bool *found, qa_error *e) {
+    return weapon_info_read(r,&id,number,weapon,projectile,found,e);
+}
+bool qa_bot_runtime_weapon_config_info(qa_bot_runtime *r, uint32_t number,
+    qa_bot_weapon_info *weapon, qa_bot_projectile_info *projectile, bool *found, qa_error *e) {
+    return weapon_info_read(r,NULL,number,weapon,projectile,found,e);
+}
 bool qa_bot_runtime_weapon_source_info(qa_bot_runtime *r,uint32_t id,uint32_t number,
     qa_bytes *out,bool *found,qa_error *e) {
     if(!r || !out || !found) return bot_runtime_fail(e,"missing source weapon byte output");
     *found=false;bool ready;
-    if(!weapon_info_ready(r,id,number,&ready,e)) return false;
+    if(!weapon_info_ready(r,&id,number,&ready,e)) return false;
     if(!ready) return true;
     if(!bot_weapons_source_bytes(r->weapon_config,number,out,e)) return false;
     *found=true;return true;

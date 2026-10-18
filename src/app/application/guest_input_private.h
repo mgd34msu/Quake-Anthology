@@ -4,6 +4,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_weapons.h"
 #include "qa/network_unified_frame_pool.h"
+#include "qa/native_observe.h"
 
 /* Borrows the GAME movement declaration independently of its weapon owner. */
 bool application_guest_input_attach(q3g_role *, qa_error *);
@@ -11,7 +12,12 @@ bool application_guest_input_detach(q3g_role *, qa_error *);
 bool application_guest_input_enter(q3g_role *, qa_error *);
 bool application_guest_input_leave(q3g_role *, qa_error *);
 /* The caller removes this temporary binding after the genuine Connect export. */
-bool application_guest_input_bot_setup_bind(q3g_role *, qa_qvm_binding *, qa_error *);
+typedef struct application_guest_bot_setup {
+    qa_qvm_binding qvm;
+    qa_native_entry_observer *native;
+} application_guest_bot_setup;
+bool application_guest_input_bot_setup_bind(q3g_role *, application_guest_bot_setup *, qa_error *);
+bool application_guest_input_bot_setup_unbind(q3g_role *, application_guest_bot_setup *, qa_error *);
 bool application_guest_input_prepare_weapon(void *role, qa_actor_id,
     const qa_qvm_call *, qa_unified_frame_lease *, application_q3_weapon_preparation *, qa_error *);
 bool application_guest_input_weapon_completed(void *role, qa_actor_id,
