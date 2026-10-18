@@ -1695,6 +1695,15 @@ static bool guest_spawn_motion(application_provider *source, qa_actor_id actor,
     return true;
 }
 
+static bool guest_native_character_spawn_motion(application_provider *source,
+    application_provider *character, qa_actor_id actor, qa_error *error)
+{
+    qa_movement_posture posture;
+    if (!guest_native_character_spawn(source, character, actor, &posture, error)) return false;
+    return !qa_actors_get(qa_session_actors(source->application->session), actor) ||
+        guest_spawn_motion(source, actor, &posture, error);
+}
+
 bool application_players_guest_spawned(application_provider *source,qa_actor_id actor,
     bool respawning,qa_error *error)
 {
@@ -1717,13 +1726,12 @@ bool application_players_guest_spawned(application_provider *source,qa_actor_id 
     const application_player_record *record=application_player_record_live(app->players,actor);
     if(!record || record->source_begin_pending || record->deferred ||
        app->operation==APPLICATION_CONFIGURING) return true;
-    qa_movement_posture posture;
     if(native_character) {
-        if(!guest_native_character_spawn(source,character,actor,&posture,error)) return false;
+        if(!guest_native_character_spawn_motion(source,character,actor,error)) return false;
         if(!qa_actors_get(qa_session_actors(app->session),actor)) return true;
     }
-    if((native_character || (world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source)) &&
-       !guest_spawn_motion(source,actor,native_character?&posture:NULL,error)) return false;
+    else if(world && world->kind==APPLICATION_PROVIDER_Q1 && world!=source &&
+       !guest_spawn_motion(source,actor,NULL,error)) return false;
     if(native_character) {
         if(!guest_spawn_project(source,actor,error) ||
            (engine->game->weapon_services && !guest_selected_respawn(source,actor,character,error))) return false;
@@ -3224,6 +3232,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         application_actor_routes_bind(application, source_actor);
         qa_actor_id actor = record->actor;
         application_provider *map_source = application->players->map_provider;
+        bool original_world_birth = !reserved_player && !carry->present && !carry->q3_client &&
+            !defer_source_begin && !record->source_begin_pending && !record->deferred &&
+            character->kind <= APPLICATION_PROVIDER_Q3 && q3g_engine(map_source);
         if (initial_local_userinfo && !seat->bot &&
             (character->component.clock.kind == QA_RULESET_Q3 || map_source->component.clock.kind == QA_RULESET_Q3) &&
             !q3_initial_userinfo(application,application->catalog,choices,record,seat,true,error))
@@ -3441,7 +3452,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!qa_q2_player_map_spawn_pose(map_source->state.q2, actor, &body.bounds,
                     landmark, &selected, &found, error)) return false;
             if (found) body = selected;
-        } else if (!source_completed && ((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
+        } else if (!source_completed && !original_world_birth && ((map_source->kind == APPLICATION_PROVIDER_Q1 && !defer_source_begin) ||
             (character->kind <= APPLICATION_PROVIDER_Q3 &&
              (character->kind != APPLICATION_PROVIDER_Q2 ||
               (reserved_player && map_source->kind == APPLICATION_PROVIDER_Q3)))) &&
@@ -3468,7 +3479,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             return false;
         if (!admit_control(application, actor, body.angles, error))
             return false;
-        if (!spawn_q3_player_roles(application, actor, &body, combat.team, error)) return false;
+        if (!original_world_birth &&
+            !spawn_q3_player_roles(application, actor, &body, combat.team, error)) return false;
         if (map_source->kind == APPLICATION_PROVIDER_Q3) {
             if (application_world_provider(application, QA_ROLE_ENTITIES, "") != map_source ||
                 !record->userinfo)
@@ -3491,6 +3503,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
              !qa_combat_read_traits(application->combat, actor, &combat, error))) return false;
         bool selected_spawn = false;
         bool original_restored = false;
+        bool original_world_spawn = false;
         if (character->kind == APPLICATION_PROVIDER_Q2) {
             char userinfo[2304];
             if (!application_character_userinfo(application,application->catalog,choices,seat,QA_GAME_Q2,
@@ -3537,6 +3550,24 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (round_accepted) *round_accepted = false;
             return true;
         }
+        if (map_source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
+            !configure_borrowed_q2_character(application, choices, seat,
+                character, actor, error)) return false;
+        uint32_t original_slot;
+        original_world_spawn = original_world_birth && !original_restored &&
+            application_q3_guest_actor_client(map_source, actor, &original_slot);
+        if (original_world_spawn) {
+            if (character->kind == APPLICATION_PROVIDER_Q2) {
+                if (!guest_native_character_spawn_motion(map_source, character, actor, error)) return false;
+            } else {
+                qa_movement_posture posture = application_control_character_postures(character, actor).standing;
+                if (!guest_spawn_motion(map_source, actor, &posture, error)) return false;
+            }
+            if (!qa_actors_get(qa_session_actors(application->session), actor)) return true;
+            if (!qa_world_body_read(application->world, actor, &body, error)) return false;
+            source_view = application->controls[actor.slot].player.view_angles;
+            if (!spawn_q3_player_roles(application, actor, &body, combat.team, error)) return false;
+        }
         if (character->kind == APPLICATION_PROVIDER_Q2) {
             if (map_source->kind <= APPLICATION_PROVIDER_Q3) {
                 if (!application_supplies_admit(application->supplies, map_source, actor, error) ||
@@ -3544,13 +3575,10 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                      !application_supplies_spawn(application->supplies, map_source, actor, error))) return false;
                 selected_spawn = true;
             }
-            if (map_source != character &&
-                !configure_borrowed_q2_character(application, choices, seat,
-                    character, actor, error)) return false;
             if (source_completed) {
                 if (!qa_q2_character_spawn_vitals(character->state.q2, actor, error) ||
                     !qa_q2_character_respawned(character->state.q2, actor, error)) return false;
-            } else if (map_source->kind != APPLICATION_PROVIDER_Q1 && !original_restored &&
+            } else if (!original_world_spawn && map_source->kind != APPLICATION_PROVIDER_Q1 && !original_restored &&
                 !qa_q2_player_spawn(character->state.q2, actor, false, landmark, error)) return false;
             found = !record->deferred;
         }
@@ -3667,11 +3695,11 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!q1_source_control_spawn(application, actor, &body, error) ||
                 !q1_selected_q3_respawn(application, map_source, actor, error)) return false;
         } else {
-            qa_builtin_motion_change change = {.body = body, .view_angles = source_completed ? source_view : body.angles,
+            qa_builtin_motion_change change = {.body = body, .view_angles = source_completed || original_world_spawn ? source_view : body.angles,
                                                  .reason = QA_BUILTIN_MOTION_RESET};
             if (!application_control_motion_changed(application, actor, &change, error)) return false;
         }
-        if (found && !source_completed && map_source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
+        if (found && !source_completed && !original_world_spawn && map_source != character && character->kind == APPLICATION_PROVIDER_Q2 &&
             !qa_q2_character_respawned(character->state.q2, actor, error)) return false;
         qa_combat_state traits;
         if (!qa_combat_read_traits(application->combat, actor, &traits, error)) return false;
@@ -3711,8 +3739,9 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             if (!q1_finish_first_spawn(application, choices, map_source, character,
                 arsenal, actor, source_point, phase != PLAYER_ADMISSION_BEGIN, error)) return false;
         }
-        if (found && source_completed && !guest_spawn_project(map_source, actor, error)) return false;
-        if (found && !guest_spawn_followers(application, actor, source_completed ? map_source : character, error)) return false;
+        if (found && (source_completed || original_world_spawn) && !guest_spawn_project(map_source, actor, error)) return false;
+        if (found && !guest_spawn_followers(application, actor,
+                source_completed || original_world_spawn ? map_source : character, error)) return false;
     return phase == PLAYER_ADMISSION_BEGIN || record->source_begin_pending || record->deferred ||
         admit_components(application, actor, error);
 }
