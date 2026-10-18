@@ -11,6 +11,9 @@
 typedef struct application_guest_carry {
     qa_actor_owner owner;
     uint64_t identity;
+    float qc_parms[16];
+    uint8_t qc_colors;
+    bool has_qc_parms;
 } application_guest_carry;
 typedef struct application_player_carry {
     qa_combat_state combat;
@@ -178,6 +181,7 @@ struct application_player_travel {
     qa_q2_landmark landmark;
     bool carry_players, new_unit, has_landmark;
 };
+void application_players_source_carry(qa_application *, application_publication *);
 
 typedef struct application_q3_round_player_admission {
     const qa_q3_usercmd *command;

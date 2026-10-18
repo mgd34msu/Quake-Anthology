@@ -183,7 +183,8 @@ bool application_qc_think_binding(application_provider *,qa_actor_id,uint32_t,
                                   qa_think_fn *,void **,qa_error *);
 bool application_qc_input_abort(application_provider *, qa_actor_id, bool, qa_error *);
 bool application_qc_reserve_player(application_provider *, uint32_t slot, uint32_t seat,
-    qa_actor_id, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *);
+    qa_actor_id, const char *name, bool spectator, bool new_player, bool primary_character,
+    const float *parms, uint8_t colors, qa_error *);
 bool application_qc_begin_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_prepare_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_classic_qw(const struct application_qc_state *);

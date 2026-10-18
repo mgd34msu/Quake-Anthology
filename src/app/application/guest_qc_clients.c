@@ -585,7 +585,8 @@ static bool source_spawn_colors(struct application_qc_state *engine, int32_t ref
 }
 static bool bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
                                  qa_actor_id actor, const char *name, bool spectator,
-                                 bool new_player, bool primary_character, bool reserve, qa_error *error)
+                                 bool new_player, bool primary_character, bool reserve,
+                                 const float *spawn_parms, uint8_t colors, qa_error *error)
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     const struct application_qc_profile *qualified = provider->state.qc.qualified;
@@ -641,7 +642,12 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     if (!client->connected || !qa_actor_id_equal(client->actor, actor)) {
         client->receipt_seen = false; client->receipt_sequence = client->receipt_ordinal = 0;
     }
-    if (!client->connected && new_player) client->colors = 0;
+    if (spawn_parms && !qualified) {
+        memcpy(client->parms, spawn_parms, sizeof(client->parms));
+        client->has_parms = true;
+        client->colors = colors;
+        new_player = false;
+    } else if (!client->connected && new_player) client->colors = 0;
     if (!qa_actor_id_equal(client->actor, actor)) qa_actor_index_remove(&engine->client_index, client->actor);
     client->actor = actor; client->seat = seat; client->connected = true; client->spectator = spectator;
     qa_actor_index_put(&engine->client_index, actor, slot);
@@ -698,11 +704,15 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     return application_control_ensure(provider->application, actor, body.angles, &control, error);
 }
 bool application_qc_bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
-    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *error)
-{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, false, error); }
+    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character,
+    const float *spawn_parms, uint8_t colors, qa_error *error)
+{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, false,
+    spawn_parms, colors, error); }
 bool application_qc_reserve_player(application_provider *provider, uint32_t slot, uint32_t seat,
-    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *error)
-{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, true, error); }
+    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character,
+    const float *spawn_parms, uint8_t colors, qa_error *error)
+{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, true,
+    spawn_parms, colors, error); }
 bool application_qc_prepare_player(application_provider *provider, qa_actor_id actor, qa_error *error)
 {
     struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ?

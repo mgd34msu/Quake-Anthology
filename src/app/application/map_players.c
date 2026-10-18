@@ -164,7 +164,8 @@ static bool admit_components(qa_application *app, qa_actor_id actor, qa_error *e
             ? provider->state.qc.qualified : NULL;
         if (!profile || !profile->clients) continue;
         if (!application_qc_bind_player(provider, actual->client_slot + 1, actual->seat,
-            actor, application_player_name(actual), application_player_identity(actual)->spectator, true, provider == actual->character, error))
+            actor, application_player_name(actual), application_player_identity(actual)->spectator, true,
+            provider == actual->character, NULL, 0, error))
             return false;
         actual = component_player(app, roster, actor, error);
         if (!actual || app->components != components)
@@ -3279,6 +3280,34 @@ static bool reject_player(qa_application *app,application_provider *provider,
     return true;
 }
 
+void application_players_source_carry(qa_application *app, application_publication *publication)
+{
+    application_player_travel *travel = publication->players;
+    for (size_t i = 0; travel && i < travel->count; ++i) {
+        application_player_carry *carry = travel->carry + i;
+        for (size_t j = 0; j < carry->guest_count; ++j) {
+            application_guest_carry *guest = carry->guests + j;
+            application_provider *old = application_provider_lookup(app, guest->owner,
+                APPLICATION_PROVIDER_ROUTING);
+            if (!old || old->kind != APPLICATION_PROVIDER_QC || old->state.qc.qualified) continue;
+            application_provider *next = NULL;
+            for (size_t k = 0; k < publication->next_count; ++k)
+                if (publication->next[k]->owner == guest->owner) { next = publication->next[k]; break; }
+            if (!next || next->kind != APPLICATION_PROVIDER_QC ||
+                old->launch->artifact != next->launch->artifact ||
+                old->launch->declaration != next->launch->declaration ||
+                old->launch->selection.product != next->launch->selection.product ||
+                old->component.clock.kind != next->launch->selection.clock.kind) continue;
+            const application_qc_client *client = application_qc_client_for_actor(
+                old->state.qc.engine, carry->previous_actor);
+            if (!client || !client->connected || !client->has_parms) continue;
+            memcpy(guest->qc_parms, client->parms, sizeof(guest->qc_parms));
+            guest->qc_colors = client->colors;
+            guest->has_qc_parms = true;
+        }
+    }
+}
+
 static bool original_clients_admit(qa_application *application, const qa_launch_choices *choices,
     const qa_launch_seat *seat, application_player_record *record,
     const application_player_carry *carry, bool defer_source_begin, bool initial_local_userinfo,
@@ -3302,9 +3331,13 @@ static bool original_clients_admit(qa_application *application, const qa_launch_
             selected |= application_provider_for(application, actor, player_roles[k], "") == provider;
         if (!selected) continue;
         bool continued = false;
+        const application_guest_carry *source_carry = NULL;
         for (size_t k = 0; carry && k < carry->guest_count; ++k)
-            continued |= carry->guests[k].owner == provider->owner &&
-                carry->guests[k].identity == provider->launch->identity;
+            if (carry->guests[k].owner == provider->owner) {
+                source_carry = carry->guests + k;
+                continued = source_carry->identity == provider->launch->identity;
+                break;
+            }
         if (provider->kind == APPLICATION_PROVIDER_QC) {
             if (provider->component.clock.kind == QA_RULESET_QUAKEWORLD &&
                 !qw_initial_userinfo(application, record, error)) return false;
@@ -3320,7 +3353,9 @@ static bool original_clients_admit(qa_application *application, const qa_launch_
             if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
                 (provider, record->client_slot + 1, seat->id, actor,
                  application_player_name(record), seat->spectator, !continued,
-                 provider == character, error)) return false;
+                 provider == character,
+                 source_carry && source_carry->has_qc_parms ? source_carry->qc_parms : NULL,
+                 source_carry ? source_carry->qc_colors : 0, error)) return false;
             if (defer_source_begin) record->source_begin_pending = true;
         } else if (provider->component.clock.kind == QA_RULESET_Q3) {
             if (round) {

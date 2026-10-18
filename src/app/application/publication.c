@@ -1513,6 +1513,7 @@ bool application_publication_retire_sources(qa_application *application,
         const struct application_map_state *travel = application->map_state;
         bool carry = !travel || !travel->loading || travel->load_carry;
         retired_services = retire_map_services(application, carry, false, error);
+        if (retired_services) application_players_source_carry(application, publication);
     }
     if (retired_services)
         retired_services = application_native_q3_clients_drain(application, error) &&

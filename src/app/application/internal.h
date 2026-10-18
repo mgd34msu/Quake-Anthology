@@ -579,7 +579,7 @@ bool application_qc_water_transition(application_provider *, qa_actor_id, qa_err
 bool application_qc_actor_traits(application_provider *, qa_actor_id, qa_builtin_actor_traits *);
 bool application_qc_bind_player(application_provider *, uint32_t, uint32_t,
                                 qa_actor_id, const char *, bool, bool,
-                                bool primary_character, qa_error *);
+                                bool primary_character, const float *parms, uint8_t colors, qa_error *);
 bool application_qc_player_map_ready(application_provider *, bool primary_character,
                                       bool source_map_owned, qa_error *);
 bool application_qc_player_roster_ready(application_provider *,
