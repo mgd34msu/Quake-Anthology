@@ -11,10 +11,12 @@
 #include "native_q3_wire_state.h"
 #include "unified_q3_events.h"
 #include "guest_qc_internal.h"
+#include "guest_q3_private.h"
 #include "qa/game_q1_bots.h"
 #include "qa/game_q3_source.h"
 #include "qa/text.h"
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 static bool source(application_bots *bots,application_provider **out,qa_error *error) {
@@ -280,7 +282,8 @@ bool application_bots_spawn_admitted(const qa_application *app) {
 }
 bool application_bots_admission_seat(const qa_application *app,const qa_launch_seat **desired) {
     const application_bots *bots=app?app->bots:NULL;
-    if(!bots || !bots->catalogue || !desired || qa_bot_catalog_can_destroy(bots->catalogue)) return false;
+    if(!bots || !desired || (!bots->catalogue_seat &&
+       (!bots->catalogue || qa_bot_catalog_can_destroy(bots->catalogue)))) return false;
     *desired=bots->catalogue_seat;return true;
 }
 bool application_bots_catalog_check_spawn(void *context,qa_error *error) {
@@ -335,9 +338,50 @@ bool application_bots_catalog_add(qa_application *app,const qa_bot_catalog_add_r
 bool application_bots_catalog_add_seat(qa_application *app,const qa_launch_seat *seat,
     const qa_bot_catalog_add_request *request,qa_error *error) {
     application_bots *bots=app?app->bots:NULL;
-    if(!bots || !seat || !seat->bot || bots->catalogue_seat || !bots->catalogue ||
-       !qa_bot_catalog_can_destroy(bots->catalogue))
+    if(!bots || !seat || !seat->bot || bots->catalogue_seat)
         return application_fail(error,QA_ERROR_ARGUMENT,"launch bot admission requires its actual exclusive seat");
+    application_provider *source=application_bot_source(bots);
+    struct application_q3_guest *original=q3g_engine(source);
+    if(original) {
+        if(!request || !request->definition_name || !request->public_name || !request->team)
+            return application_fail(error,QA_ERROR_ARGUMENT,"original bot launch requires its definition, name and team");
+        char texts[3][QA_Q3_BIG_INFO_CHARS],skill[48],delay[32];
+        const char *inputs[]={request->definition_name,request->team,request->public_name};
+        for(size_t i=0;i<3;++i) {
+            size_t written;
+            if(!qa_text_to_source_bytes((qa_bytes){(const uint8_t *)inputs[i],strlen(inputs[i])},
+                (uint8_t *)texts[i],sizeof(texts[i]),&written,error)) return false;
+        }
+        snprintf(skill,sizeof(skill),"%.9g",(double)request->skill);
+        snprintf(delay,sizeof(delay),"%d",request->delay_ms);
+        const char *arguments[]={"addbot",texts[0],skill,texts[1],delay,texts[2]};
+        int32_t physical=-1;qa_actor_id actor={0};bool handled=false;
+        bots->catalogue_seat=seat;
+        bool okay=application_players_bot_allocate(app,seat,&physical,error);
+        if(okay && physical>=0) {
+            actor=original->clients[physical].actor;
+            okay=application_q3_guest_console_vector(source,arguments,
+                sizeof(arguments)/sizeof(*arguments),&handled,error);
+        }
+        bots->catalogue_seat=NULL;
+        bool admitted=okay && physical>=0 && handled &&
+            qa_actors_get(qa_session_actors(app->session),actor) &&
+            original->clients[physical].allocated && !original->clients[physical].pending_retirement;
+        if(admitted) return true;
+        qa_error failure=error?*error:(qa_error){0};
+        if(physical>=0) {
+            qa_error cleanup={0};
+            if(!application_players_bot_cancel(app,source,(uint32_t)physical,actor,&cleanup)) {
+                if(error)*error=cleanup;
+                return false;
+            }
+        }
+        if(!okay) {if(error)*error=failure;return false;}
+        return print(bots,physical<0?"Unable to add bot. All player slots are in use.\n":
+            "Original GAME did not admit the selected catalogue bot.\n",error);
+    }
+    if(!bots->catalogue || !qa_bot_catalog_can_destroy(bots->catalogue))
+        return application_fail(error,QA_ERROR_ARGUMENT,"launch bot admission requires its actual idle catalogue");
     bots->catalogue_seat=seat;bool okay=application_bots_catalog_add(app,request,error);
     bots->catalogue_seat=NULL;return okay;
 }

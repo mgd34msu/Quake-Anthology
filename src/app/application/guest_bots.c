@@ -1,6 +1,8 @@
 #include "guest_projection_private.h"
 #include "bots_private.h"
 #include "guest_q3_console.h"
+#include "map_players_private.h"
+#include "bots_catalog.h"
 
 bool application_guest_bot_allocate(application_provider *provider, int32_t *out,
                                      qa_error *error)
@@ -17,6 +19,16 @@ bool application_guest_bot_allocate(application_provider *provider, int32_t *out
         if (maximum->integer < 1 || maximum->integer > 64)
             return application_fail(error, QA_ERROR_FORMAT, "Guest source maximum clients exceeds its admitted server ABI");
         if ((uint32_t)maximum->integer < count) count = (uint32_t)maximum->integer;
+    }
+    const qa_launch_seat *selected=NULL;
+    if(application_bot_source(provider->application->bots)==provider &&
+       application_bots_admission_seat(provider->application,&selected) && selected) {
+        if(!application_players_bot_reserved(provider->application,provider,selected,out,error)) return false;
+        q3g_client *client=engine->clients+*out;
+        client->pending_bot=true;
+        client->disconnect_started=false;
+        client->entered_ns=qa_session_elapsed(provider->application->session);
+        return true;
     }
     for (uint32_t slot = 0; slot < count && slot < data.entity_count; ++slot) {
         q3g_client *client = &engine->clients[slot];
@@ -47,16 +59,18 @@ static bool bots_admit(application_provider *provider, qa_error *error)
             !qa_actor_id_equal(actor, client->actor) ||
             !qa_actors_get(qa_session_actors(provider->application->session), actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "Pending guest bot actor generation retired");
-        /* Source-internal ClientConnect and ClientBegin have completed before
-         * this boundary; they do not call the application client wrappers. */
+        qa_q3_player player;
+        if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
+        /* G_AddBot may queue ClientBegin for a later GAME_RUN_FRAME. The public
+         * spawn counter changes only when that actual ClientSpawn completes. */
+        if (player.clientNum != (int32_t)slot || player.persistant[4] <= 0) continue;
+        client->reserved = false;
         client->allocated = client->connected = client->bot = client->begun = true;
         if (!application_guest_actor_admit(provider, actor, error)) return false;
         if (!client->roster_attached) {
             qa_combat_state state;
-            qa_q3_player player;
             char name[QA_Q3_BIG_INFO_CHARS], skin[QA_Q3_BIG_INFO_CHARS];
             if (!application_guest_player_state(provider, actor, &state, error) ||
-                !qa_q3_host_source_player(engine->game->host, slot, &player, error) ||
                 !qa_q3_info_value(client->userinfo ? client->userinfo : "", "name", name, sizeof(name), error) ||
                 !qa_q3_info_value(client->userinfo ? client->userinfo : "", "model", skin, sizeof(skin), error)) return false;
             qa_builtin_player_info info = {.name = name, .skin = skin, .slot = slot,

@@ -305,9 +305,11 @@ bool application_q3_damage_scopes_enter(application_q3_damage_scopes *owner,
 }
 bool application_q3_damage_scopes_leave(application_q3_damage_scopes *owner, qa_error *error)
 {
-    if (--owner->entries || owner->current) return true;
+    if (--owner->entries) return true;
+    owner->fallback = NULL; owner->fallback_context = NULL;
+    if (owner->current) return true;
     if (owner->resolver && !qa_qvm_unbind(owner->role->vm, owner->resolver, error)) return false;
-    owner->resolver = 0; owner->fallback = NULL; owner->fallback_context = NULL;
+    owner->resolver = 0;
     return true;
 }
 void application_q3_damage_scopes_health_projected(application_q3_damage_scopes *owner,
@@ -327,6 +329,7 @@ bool application_q3_damage_scopes_destroy(application_q3_damage_scopes **out, qa
         if (!frame_close(frame, error)) return false;
         owner->retained = frame->retained_next; frame_free(frame);
     }
+    if (owner->resolver && !qa_qvm_unbind(owner->role->vm, owner->resolver, error)) return false;
     free(owner); *out = NULL; return true;
 }
 bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,

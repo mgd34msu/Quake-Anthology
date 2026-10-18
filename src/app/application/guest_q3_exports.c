@@ -697,15 +697,15 @@ bool application_q3_guest_role_call(application_provider *provider, qa_qvm_role 
     return q3g_call(role, command, arguments, count, result, error);
 }
 
-bool application_q3_guest_console_command(application_provider *provider, const char *text,
-                                            bool *handled, qa_error *error)
+static bool console_command(application_provider *provider, const char *text,
+    const char *const *arguments, size_t count, bool *handled, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || !engine->game || !engine->game->initialized ||
-        engine->round.phase != Q3G_ROUND_NONE || !text || !handled)
+        engine->round.phase != Q3G_ROUND_NONE || !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console command requires initialized game");
     qa_command_tokens prior;
-    if(!q3g_command_begin(engine,text,NULL,0,&prior,error)) return false;
+    if(!q3g_command_begin(engine,text,arguments,count,&prior,error)) return false;
     int32_t result;
     bool ok = q3g_call(engine->game, 9, NULL, 0, &result, error);
     q3g_command_end(engine,prior);
@@ -713,6 +713,17 @@ bool application_q3_guest_console_command(application_provider *provider, const 
     if (ok) ok = application_guest_bots_admit(provider, error);
     if (ok) ok = application_guest_clients_drain(provider, error);
     return ok;
+}
+bool application_q3_guest_console_command(application_provider *provider, const char *text,
+    bool *handled, qa_error *error)
+{
+    if(!text) return application_fail(error,QA_ERROR_ARGUMENT,"Q3 console command requires text");
+    return console_command(provider,text,NULL,0,handled,error);
+}
+bool application_q3_guest_console_vector(application_provider *provider,
+    const char *const *arguments,size_t count,bool *handled,qa_error *error)
+{
+    return console_command(provider,NULL,arguments,count,handled,error);
 }
 
 static bool role_console_command(q3g_role *role,int32_t time,const char *text,

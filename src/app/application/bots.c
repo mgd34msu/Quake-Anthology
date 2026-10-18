@@ -1328,10 +1328,9 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
     if(!application_bots_prepare(application,choices,geometry,entities,error)) return false;
     application_bots *bots=application->bots;bool native=false;
     application_provider *source=bots?bot_source(bots):NULL;
-    if(source && (source->kind==APPLICATION_PROVIDER_QVM || source->kind==APPLICATION_PROVIDER_NATIVE) &&
-       source->product && source->product->family==QA_GAME_Q3 && q3g_engine(source)) return true;
-    if(source && source->kind==APPLICATION_PROVIDER_Q3) {
-        if(!application_bots_native_q3_initialize(source,error)) return false;
+    if(source && (source->kind==APPLICATION_PROVIDER_Q3 || q3g_engine(source))) {
+        if(source->kind==APPLICATION_PROVIDER_Q3 &&
+           !application_bots_native_q3_initialize(source,error)) return false;
         for(size_t i=0;i<choices->seat_count;++i) {
             qa_actor_id actor;
             if(choices->seats[i].bot && !qa_application_player_actor(application,choices->seats[i].id,&actor) &&

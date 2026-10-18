@@ -1,6 +1,7 @@
 #include "guest_projection_private.h"
 #include "guest_input_private.h"
 #include "client_events.h"
+#include "map_players_private.h"
 
 bool application_guest_actor_admit(application_provider *provider, qa_actor_id actor,
                                    qa_error *error)
@@ -77,6 +78,10 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
         if (!qa_q3_host_input_idle(engine->game->host, slot) || !qa_world_idle(engine->world) ||
             !application_guest_input_actor_idle(provider->application, client->actor)) continue;
         qa_actor_id actor = client->actor;
+        if (!application_players_bot_retire_pending(provider->application,provider,slot,actor,&current)) {
+            if (ok) { ok=false;first=current; }
+            continue;
+        }
         if (client->roster_attached) {
             const qa_actor_record *retiring = qa_actors_get(
                 qa_session_actors(provider->application->session), actor);

@@ -194,6 +194,8 @@ void q3g_role_publish(q3g_role **position, q3g_role *, q3g_role *next);
 bool q3g_command_begin(struct application_q3_guest *,const char *,const char *const *,size_t,
     qa_command_tokens *,qa_error *);
 void q3g_command_end(struct application_q3_guest *,qa_command_tokens);
+bool application_q3_guest_console_vector(application_provider *,const char *const *,size_t,
+    bool *,qa_error *);
 bool q3g_world_begin(struct application_q3_guest *, qa_error *);
 bool application_q3_player_entity_text(qa_bytes, qa_buffer *, qa_error *);
 qa_qvm_role q3g_primary_role(const char *);

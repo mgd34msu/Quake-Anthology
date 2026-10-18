@@ -208,6 +208,12 @@ bool application_players_source_disconnect(qa_application *,application_provider
 bool application_players_character_disconnect(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_component_retire(qa_application *,application_provider *,qa_actor_id,qa_error *);
 bool application_players_bot_allocate(qa_application *,const qa_launch_seat *,int32_t *,qa_error *);
+bool application_players_bot_reserved(qa_application *,application_provider *,
+    const qa_launch_seat *,int32_t *,qa_error *);
+bool application_players_bot_cancel(qa_application *,application_provider *,
+    uint32_t,qa_actor_id,qa_error *);
+bool application_players_bot_retire_pending(qa_application *,application_provider *,
+    uint32_t,qa_actor_id,qa_error *);
 bool application_players_bot_sources_connect(qa_application *, application_player_record *,
     bool first_time, bool *accepted, qa_error *);
 bool application_players_bot_begin(qa_application *,uint32_t,qa_error *);
