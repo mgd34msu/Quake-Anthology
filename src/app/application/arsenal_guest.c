@@ -1717,7 +1717,7 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         int32_t requested; bool pending;
         if (!application_q3_weapons_services_request(input->role->weapon_services,
                 actor, &requested, &pending, error)) return false;
-        if (pending && input->role->vm) raw.weapon = (uint8_t)requested;
+        if (pending) raw.weapon = (uint8_t)requested;
         request_pending = pending;
     }
     const application_control_context *context = application_control_frame_current(app, actor);
