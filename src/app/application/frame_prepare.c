@@ -6,6 +6,7 @@
 
 bool qa_application_prepare_frame(qa_application *app, qa_error *error)
 {
+    if (!qa_application_clients_drain(app, error)) return false;
     qa_application_travel_view travel;
     bool pending_map = qa_application_travel_read(app, &travel) &&
         travel.target.kind == QA_TRAVEL_MAP;
