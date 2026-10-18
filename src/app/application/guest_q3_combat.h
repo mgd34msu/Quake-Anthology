@@ -5,6 +5,15 @@
 #include "qa/qvm_save.h"
 
 typedef struct application_q3_combat application_q3_combat;
+typedef struct application_q3_reaction_invocation {
+    uint64_t address;
+    void *context;
+    bool (*pointer)(void *, uint32_t, uint64_t *, qa_error *);
+    bool (*integer)(void *, uint32_t, int32_t *, qa_error *);
+    bool (*proceed)(void *, qa_error *);
+} application_q3_reaction_invocation;
+bool application_q3_combat_direct_reaction(application_q3_combat *,
+    const application_q3_reaction_invocation *, qa_error *);
 bool application_q3_combat_create(struct q3g_role *, const application_q3_combat_profile *,
     application_q3_combat **, qa_error *);
 bool application_q3_combat_destroy(application_q3_combat **, qa_error *);

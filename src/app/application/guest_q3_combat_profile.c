@@ -248,15 +248,22 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
         !stat(doc, qa_json_get(doc, state, "healthStat"), &d->state.health_stat, error) ||
         !stat(doc, qa_json_get(doc, team, "persistentStat"), &d->state.team_stat, error) ||
         !teams(p, doc, qa_json_get(doc, team, "values"), strings, error)) return false;
+    const char *const reaction_names[] = {"pain", "die"};
+    const char *const reaction_calls[] = {"painCall", "dieCall"};
+    uint32_t *reaction_fields[] = {&d->reactions.pain, &d->reactions.die};
+    application_q3_reaction_call *reaction_values[] = {&d->reactions.pain_call, &d->reactions.die_call};
+    for (size_t i = 0; i < 2; ++i) {
+        qa_json_id at = qa_json_get(doc, reactions, reaction_calls[i]);
+        if (!p->image && at == QA_JSON_NONE) continue;
+        if (!field(doc, qa_json_get(doc, reactions, reaction_names[i]), shared,
+                d->entity_stride, pointer_bytes, reaction_fields[i], error) ||
+            !reaction(doc, at, reaction_values[i], error)) return false;
+    }
     if (p->image) {
         if (!entry(doc, qa_json_get(doc, callbacks, "allocate"), p->image, &d->callbacks.allocate, error) ||
             !entry(doc, qa_json_get(doc, callbacks, "free"), p->image, &d->callbacks.free, error) ||
             !entry(doc, qa_json_get(doc, callbacks, "damage"), p->image, &d->callbacks.damage, error) ||
             !call(doc, qa_json_get(doc, combat, "damageCall"), damage_names, Q3_DAMAGE_WORDS, p->image, &d->damage_call, error) ||
-            !field(doc, qa_json_get(doc, reactions, "pain"), shared, d->entity_stride, 4, &d->reactions.pain, error) ||
-            !field(doc, qa_json_get(doc, reactions, "die"), shared, d->entity_stride, 4, &d->reactions.die, error) ||
-            !reaction(doc, qa_json_get(doc, reactions, "painCall"), &d->reactions.pain_call, error) ||
-            !reaction(doc, qa_json_get(doc, reactions, "dieCall"), &d->reactions.die_call, error) ||
             !entry(doc, qa_json_get(doc, armor, "checkArmor"), p->image, &d->armor.check, error) ||
             !call(doc, qa_json_get(doc, armor, "call"), armor_names, Q3_ARMOR_WORDS, p->image, &d->armor.call, error) ||
             !word(doc, qa_json_get(doc, combat, "grappleDamageMethod"), &d->grapple_method, error)) return false;

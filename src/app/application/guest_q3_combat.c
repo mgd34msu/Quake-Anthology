@@ -298,7 +298,7 @@ static qa_combat_binding binding(combat_actor *actor)
         .has_primary_protection = {true, false},
         .primary_protection = {actor->owner->role->engine->provider->owner, 0}};
 }
-static bool pointer_actor(application_q3_combat *owner, int32_t pointer,
+static bool pointer_actor(application_q3_combat *owner, uint64_t pointer,
     qa_actor_id *out, qa_error *error)
 {
     *out = (qa_actor_id){0};
@@ -306,14 +306,15 @@ static bool pointer_actor(application_q3_combat *owner, int32_t pointer,
     qa_q3_host_game_data table;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
     if (!qa_q3_host_game_data_read(owner->role->host, &table) || table.entity_stride != d->entity_stride ||
-        table.client_stride != d->client_stride || pointer < 0 || (uint32_t)pointer < table.entities_address ||
-        ((uint32_t)pointer - table.entities_address) % table.entity_stride ||
-        ((uint32_t)pointer - table.entities_address) / table.entity_stride >= table.entity_count)
+        table.client_stride != d->client_stride || pointer < table.entities_address ||
+        (pointer - table.entities_address) % table.entity_stride ||
+        (pointer - table.entities_address) / table.entity_stride >= table.entity_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Damage pointer leaves its declared located Source entity");
-    uint32_t slot = (uint32_t)(((uint32_t)pointer - table.entities_address) / table.entity_stride);
+    uint32_t slot = (uint32_t)((pointer - table.entities_address) / table.entity_stride);
     if (slot >= 1022) return true;
     uint8_t inuse[4];
-    if (!qa_qvm_read(owner->role->vm, (uint32_t)pointer + d->fields.inuse, inuse, sizeof(inuse), error)) return false;
+    if (!qa_q3_host_source_bytes_read(owner->role->host, pointer + d->fields.inuse,
+            inuse, sizeof(inuse), error)) return false;
     if (!qa_load_i32le(inuse)) return true;
     return qa_q3_host_actor(owner->role->host, slot, true, out, error);
 }
@@ -348,49 +349,56 @@ static bool attack_source(application_q3_combat *owner, qa_damage_request *reque
             application_q3_combat_profile_definition(owner->profile), flags)}};
     return qa_attack_next(&owner->sequence, &request->attack, error);
 }
+static bool reaction_pointer(const application_q3_combat_actor *source, uint32_t offset,
+    uint64_t *out, qa_error *error)
+{
+    size_t width = source->role->module ?
+        qa_native_module_describe(source->role->module).image.target.pointer_bytes : 4;
+    uint8_t bytes[8];
+    if (!qa_q3_host_source_bytes_read(source->role->host, source->entity + offset,
+            bytes, width, error)) return false;
+    *out = width == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
+    return true;
+}
 typedef struct direct_reaction {
     application_q3_combat *owner;
-    const qa_qvm_call *call;
-    int32_t *result;
+    const application_q3_reaction_invocation *call;
     qa_damage_result reaction;
 } direct_reaction;
-static bool direct_original(void *context, qa_error *error)
-{
-    direct_reaction *reaction = context;
-    return qa_qvm_proceed(reaction->call, reaction->result, error);
-}
 static bool direct_dispatch(void *context, qa_source_reaction_observer *observer, qa_error *error)
 {
     direct_reaction *reaction = context;
     return qa_source_reaction_dispatch(observer, &reaction->reaction, 0, (qa_vec3){0},
-        reaction->owner->role->engine->provider->owner, direct_original, reaction, error);
+        reaction->owner->role->engine->provider->owner,
+        reaction->call->proceed, reaction->call->context, error);
 }
-static bool direct_enter(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+bool application_q3_combat_direct_reaction(application_q3_combat *owner,
+    const application_q3_reaction_invocation *call, qa_error *error)
 {
-    application_q3_combat *owner = context;
     application_provider *source = owner->role->engine->provider;
     qa_application *app = source->application;
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
-    const qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, call->instruction, 0);
+    const qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, QA_STRING_NONE, call->address);
     size_t kinds = entry ? entry->value : 0;
     const application_q3_reaction_call *arguments[] = {&d->reactions.pain_call, &d->reactions.die_call};
     const uint32_t offsets[] = {d->reactions.pain, d->reactions.die};
     for (size_t i = 0; i < 2; ++i) {
         if (!(kinds & (1u << i))) continue;
         const application_q3_reaction_call *a = arguments[i];
-        int32_t target, callback, amount, attacker, inflictor = 0, method = 0;
+        uint64_t target, callback, attacker, inflictor = 0;
+        int32_t amount, method = 0;
         qa_actor_id actor;
-        if (!qa_qvm_call_argument(call, a->target, &target, error) ||
+        if (!call->pointer(call->context, a->target, &target, error) ||
             !pointer_actor(owner, target, &actor, error)) return false;
         if (!actor.registry || application_provider_for(app, actor, QA_ROLE_CHARACTER, "") == source) continue;
         application_q3_combat_actor original;
         if (!application_q3_combat_actor_read(owner->role, owner->profile, actor, &original, error) ||
-            !application_q3_combat_word_read(&original, original.entity + offsets[i], &callback, error)) return false;
-        if ((uint32_t)callback != call->instruction) continue;
-        if (!qa_qvm_call_argument(call, a->amount, &amount, error) ||
-            !qa_qvm_call_argument(call, a->attacker, &attacker, error) ||
-            (a->inflictor != UINT32_MAX && !qa_qvm_call_argument(call, a->inflictor, &inflictor, error)) ||
-            (a->method != UINT32_MAX && !qa_qvm_call_argument(call, a->method, &method, error))) return false;
+            !reaction_pointer(&original, offsets[i], &callback, error)) return false;
+        if (callback != call->address) continue;
+        if (!call->integer(call->context, a->amount, &amount, error) ||
+            !call->pointer(call->context, a->attacker, &attacker, error) ||
+            (a->inflictor != UINT32_MAX && !call->pointer(call->context, a->inflictor, &inflictor, error)) ||
+            (a->method != UINT32_MAX && !call->integer(call->context, a->method, &method, error))) return false;
         qa_damage_request request = {.target = actor, .amount = amount};
         if (!pointer_actor(owner, attacker, &request.attack.attacker, error) ||
             !pointer_actor(owner, inflictor, &request.attack.inflictor, error) ||
@@ -398,19 +406,47 @@ static bool direct_enter(void *context, const qa_qvm_call *call, int32_t *result
         int32_t health;
         if (!application_q3_combat_word_read(&original, original.entity + d->fields.health, &health, error) ||
             !qa_combat_set_health(shared(owner), actor, health, error)) return false;
-        direct_reaction reaction = {.owner = owner, .call = call, .result = result,
+        direct_reaction reaction = {.owner = owner, .call = call,
             .reaction = {.applied_damage = amount, .reaction = i ? QA_REACTION_DEATH : QA_REACTION_PAIN}};
-        *result = 0;
         return qa_combat_source_reaction(shared(owner), &request, &reaction.reaction, error) &&
             qa_combat_run_source_reaction(shared(owner), &request, &reaction.reaction,
                 direct_dispatch, &reaction, error);
     }
-    return qa_qvm_proceed(call, result, error);
+    return call->proceed(call->context, error);
+}
+typedef struct qvm_reaction {
+    const qa_qvm_call *call;
+    int32_t *result;
+} qvm_reaction;
+static bool qvm_reaction_integer(void *context, uint32_t index, int32_t *out, qa_error *error)
+{
+    qvm_reaction *source = context;
+    return qa_qvm_call_argument(source->call, index, out, error);
+}
+static bool qvm_reaction_pointer(void *context, uint32_t index, uint64_t *out, qa_error *error)
+{
+    int32_t word;
+    if (!qvm_reaction_integer(context, index, &word, error)) return false;
+    *out = (uint32_t)word; return true;
+}
+static bool qvm_reaction_proceed(void *context, qa_error *error)
+{
+    qvm_reaction *source = context;
+    return qa_qvm_proceed(source->call, source->result, error);
+}
+static bool direct_enter(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)
+{
+    qvm_reaction source = {call, result};
+    application_q3_reaction_invocation invocation = {.address = call->instruction,
+        .context = &source, .pointer = qvm_reaction_pointer,
+        .integer = qvm_reaction_integer, .proceed = qvm_reaction_proceed};
+    *result = 0;
+    return application_q3_combat_direct_reaction(context, &invocation, error);
 }
 static qa_qvm_function_hook direct_resolve(void *context, const qa_qvm_call *call, void **hook_context)
 {
     application_q3_combat *owner = context;
-    if (!qa_id_index_find(&owner->reactions, call->instruction, 0)) return NULL;
+    if (!qa_id_index_find(&owner->reactions, QA_STRING_NONE, call->instruction)) return NULL;
     *hook_context = owner;
     return direct_enter;
 }
@@ -441,12 +477,12 @@ bool application_q3_combat_enter(application_q3_combat *owner, qa_error *error)
             }
             for (size_t i = 0; i < 2; ++i) {
                 if (!arguments[i]->arguments_present) continue;
-                int32_t pointer;
-                if (!application_q3_combat_word_read(&actor->source, actor->source.entity + offsets[i], &pointer, error)) return false;
+                uint64_t pointer;
+                if (!reaction_pointer(&actor->source, offsets[i], &pointer, error)) return false;
                 if (!pointer) continue;
-                qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, (uint32_t)pointer, 0);
+                qa_id_index_entry *entry = qa_id_index_find(&owner->reactions, QA_STRING_NONE, pointer);
                 if (entry) entry->value |= 1u << i;
-                else qa_id_index_insert(&owner->reactions, (uint32_t)pointer, 0, 1u << i);
+                else qa_id_index_insert(&owner->reactions, QA_STRING_NONE, pointer, 1u << i);
             }
         }
         owner->direct_bound = owner->reactions.count != 0;
@@ -531,7 +567,7 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
     for (size_t i = 0; i < Q3_DAMAGE_WORDS; ++i)
         if (!qa_qvm_call_argument(call, d->damage_call.positions[i], words + i, error)) return false;
     qa_actor_id target_id;
-    if (!pointer_actor(owner, words[Q3_DAMAGE_TARGET], &target_id, error)) return false;
+    if (!pointer_actor(owner, (uint32_t)words[Q3_DAMAGE_TARGET], &target_id, error)) return false;
     if (!target_id.registry) return qa_qvm_proceed(call, result, error);
     qa_damage_request request = {.target = target_id, .amount = words[Q3_DAMAGE_AMOUNT],
         .knockback = (words[Q3_DAMAGE_DIRECTION] && !((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.no_knockback)) ?
@@ -539,8 +575,8 @@ static bool damage(void *context, const qa_qvm_call *call, int32_t *result, qa_e
         .radius = ((uint32_t)words[Q3_DAMAGE_FLAGS] & d->damage_flags.radius) != 0};
     if (!vector(owner, words[Q3_DAMAGE_DIRECTION], &request.direction, error) ||
         !vector(owner, words[Q3_DAMAGE_POINT], &request.point, error)) return false;
-    if (!pointer_actor(owner, words[Q3_DAMAGE_ATTACKER], &request.attack.attacker, error) ||
-        !pointer_actor(owner, words[Q3_DAMAGE_INFLICTOR], &request.attack.inflictor, error)) return false;
+    if (!pointer_actor(owner, (uint32_t)words[Q3_DAMAGE_ATTACKER], &request.attack.attacker, error) ||
+        !pointer_actor(owner, (uint32_t)words[Q3_DAMAGE_INFLICTOR], &request.attack.inflictor, error)) return false;
     qa_application *app = owner->role->engine->provider->application;
     application_provider *combat = application_provider_for(app, request.target, QA_ROLE_COMBAT, "");
     if (!attack_source(owner, &request, words[Q3_DAMAGE_METHOD], (uint32_t)words[Q3_DAMAGE_FLAGS], error)) return false;

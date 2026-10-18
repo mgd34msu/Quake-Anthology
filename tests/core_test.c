@@ -10178,13 +10178,17 @@ static void test_native_q3_declaration(void)
     const char *state_format =
         "{\"combat\":{\"entityStride\":808,\"clientStride\":776,"
         "\"fields\":{\"inuse\":520,\"health\":%u,\"takedamage\":736,\"parent\":600,\"client\":516},"
-        "\"reactions\":{\"flags\":536},"
+        "\"reactions\":{\"flags\":536,\"pain\":712,\"die\":716,"
+        "\"painCall\":{\"arguments\":3,\"roles\":{\"target\":0,\"attacker\":1,"
+        "\"amount\":2,\"inflictor\":null,\"method\":null}},"
+        "\"dieCall\":{\"arguments\":5,\"roles\":{\"target\":0,\"attacker\":2,"
+        "\"amount\":3,\"inflictor\":1,\"method\":4}}},"
         "\"state\":{\"healthStat\":0,\"team\":{\"persistentStat\":3,"
         "\"values\":[{\"value\":1,\"team\":\"q3:1\"},{\"value\":2,\"team\":\"q3:2\"}]},"
         "\"flags\":{\"notarget\":32,\"invulnerable\":16,\"noKnockback\":2048},"
         "\"mass\":{\"kind\":\"constant\",\"value\":200}},"
         "\"armor\":{\"pointsStat\":3,\"protection\":0.66,\"tiers\":null}}}";
-    char primary[1024];
+    char primary[1536];
     int length = snprintf(primary, sizeof(primary), state_format, 732u);
     CHECK(length > 0 && (size_t)length < sizeof(primary));
     CHECK(application_q3_combat_profile_create(NULL, module, QA_QVM_GAME, QA_QVM_Q3_MODERN,
@@ -10198,6 +10202,11 @@ static void test_native_q3_declaration(void)
         definition->armor.protection == 0.66 && definition->state.team_count == 2);
     CHECK(!definition->callbacks.allocate && !definition->callbacks.free &&
         !definition->callbacks.damage && !definition->armor.check);
+    CHECK(definition->reactions.pain == 712 && definition->reactions.pain_call.arguments_present &&
+        definition->reactions.pain_call.count == 3 && definition->reactions.pain_call.amount == 2);
+    CHECK(definition->reactions.die == 716 && definition->reactions.die_call.arguments_present &&
+        definition->reactions.die_call.count == 5 && definition->reactions.die_call.inflictor == 1 &&
+        definition->reactions.die_call.method == 4);
     application_q3_combat_profile_destroy(state); state = NULL;
     length = snprintf(primary, sizeof(primary), state_format, 808u);
     CHECK(length > 0 && (size_t)length < sizeof(primary));
