@@ -455,6 +455,10 @@ bool qa_application_guest_menu_set(qa_application *, uint32_t seat,
 bool qa_application_guest_source_actor(qa_application *, qa_actor_owner,
                                         uint32_t seat, int32_t source_number,
                                         qa_actor_id *, qa_error *);
+/* Audio may outlive the source entity in the snapshot that supplied it. */
+bool qa_application_guest_source_audio_actor(qa_application *, qa_actor_owner,
+                                            uint32_t seat, int32_t source_number,
+                                            qa_actor_id *, qa_error *);
 bool qa_application_guest_input(qa_application *, uint32_t seat,
                                  const qa_input_event *, bool *consumed, qa_error *);
 bool qa_application_capture_command_context(qa_application *, const qa_command_context *,

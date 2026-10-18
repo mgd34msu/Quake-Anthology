@@ -1,9 +1,10 @@
 #include "guest_q3_private.h"
 #include "guest_qc_internal.h"
+#include "native_q3_wire_state.h"
 
-bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner,
+static bool source_actor(qa_application *app, qa_actor_owner owner,
                                         uint32_t seat, int32_t number,
-                                        qa_actor_id *out, qa_error *error)
+                                        qa_actor_id *out, bool audio, qa_error *error)
 {
     if (!app || !owner || !out || number < 0 || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid source actor observation");
@@ -27,6 +28,18 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
                 if (role->kind == QA_QVM_CGAME && role->seat == seat &&
                     role->ready && !role->retired) {
                     external_client = true;
+                    if (audio) {
+                        bool found=false;
+                        if (role->native_client) {
+                            if (!application_native_q3_wire_audio_actor(role->native_client,(uint32_t)number,
+                                role->draw_arguments[0],role->draw_entry,out,&found,error)) return false;
+                        } else if (role->client_engine && role->client<QA_Q3_SOURCE_CLIENTS)
+                            found=application_q3_source_receipts_read(
+                                &role->client_engine->clients[role->client].source_receipts,
+                                (uint32_t)number,role->draw_arguments[0],role->draw_entry,out);
+                        if (found) return true;
+                        return application_fail(error,QA_ERROR_NOT_FOUND,"Source audio entity has no received snapshot actor");
+                    }
                     bool present = false;
                     if (role->client_services.source_actor &&
                         !role->client_services.source_actor(role->client_services.context,
@@ -55,3 +68,10 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
         return application_fail(error, QA_ERROR_NOT_FOUND, "Source actor has no live canonical projection");
     return true;
 }
+
+bool qa_application_guest_source_actor(qa_application *app,qa_actor_owner owner,uint32_t seat,
+    int32_t number,qa_actor_id *out,qa_error *error)
+{ return source_actor(app,owner,seat,number,out,false,error); }
+bool qa_application_guest_source_audio_actor(qa_application *app,qa_actor_owner owner,uint32_t seat,
+    int32_t number,qa_actor_id *out,qa_error *error)
+{ return source_actor(app,owner,seat,number,out,true,error); }

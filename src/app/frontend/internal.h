@@ -541,6 +541,7 @@ void frontend_binding_cancel(void *, uint32_t);
 void frontend_bindings_destroy(frontend_seat *);
 void frontend_wheel_command(void *, qa_input_seat *, bool, bool);
 uint64_t frontend_audio_actor(qa_frontend *, qa_actor_id, qa_error *);
+uint64_t frontend_audio_retained_actor(qa_frontend *, qa_actor_id, qa_error *);
 void frontend_audio_collect(qa_frontend *);
 bool frontend_audio_domain_prepare(qa_frontend *, frontend_audio_domain *,
     const qa_actor_registry *, qa_error *);

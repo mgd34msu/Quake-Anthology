@@ -494,13 +494,13 @@ static bool source_actor(void *context, int32_t number, uint64_t *out, qa_error 
     if (number < 0) { *out = QA_AUDIO_NO_ACTOR; return true; }
     qa_actor_id actor = {0};
     qa_error observed = {0};
-    if (!qa_application_guest_source_actor(source->application, source->owner,
+    if (!qa_application_guest_source_audio_actor(source->application, source->owner,
             source->launch_seat, number, &actor, &observed)) {
         if (observed.code == QA_ERROR_NOT_FOUND) { *out = QA_AUDIO_NO_ACTOR; return true; }
         if (error) *error = observed;
         return false;
     }
-    *out = frontend_audio_actor(source->frontend, actor, error);
+    *out = frontend_audio_retained_actor(source->frontend, actor, error);
     return *out != QA_AUDIO_NO_ACTOR;
 }
 static bool listener(void *context, const qa_audio_listener *value, qa_error *error)

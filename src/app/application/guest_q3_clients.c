@@ -118,6 +118,8 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source human slot belongs to another admitted seat");
         engine->seats[slot] = seat;
     }
+    if (!application_q3_source_receipts_prepare(&client->source_receipts,error)) return false;
+    application_q3_source_receipts_clear(&client->source_receipts);
     char *copy = q3g_copy_text(info, error); if (!copy) return false;
     if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error) ||
         !q3g_client_actor_set(engine, slot, actor, error)) { free(copy); return false; }
@@ -356,6 +358,7 @@ void q3g_clients_clear(struct application_q3_guest *engine)
     for (size_t i = 0; i < 64; ++i) {
         q3g_client *client = &engine->clients[i];
         free(client->userinfo); free(client->retirement_reason); free(client->gamestate);
+        application_q3_source_receipts_destroy(&client->source_receipts);
         application_q3_command_clear(&client->server_commands);
         qa_arena storage = client->snapshot_storage;
         qa_q3_snapshot_slot retained[QA_Q3_PACKET_BACKUP];
@@ -395,6 +398,16 @@ void q3g_clients_destroy(struct application_q3_guest *engine)
     }
 }
 
+static bool snapshot_actor(void *context,uint32_t number,qa_actor_id *out,qa_error *error)
+{
+    struct application_q3_guest *engine=context;
+    *out=(qa_actor_id){0};
+    qa_q3_host_game_data data;
+    if (!qa_q3_host_game_data_read(engine->game->host,&data) || number>=data.entity_count || number>=QA_Q3_ENTITY_WORLD)
+        return true;
+    return qa_q3_host_actor(engine->game->host,number,false,out,error);
+}
+
 bool application_q3_guest_publish_snapshot(application_provider *provider, uint32_t slot,
                                              const qa_q3_snapshot *value, int32_t ping,
                                              qa_error *error)
@@ -408,7 +421,8 @@ bool application_q3_guest_publish_snapshot(application_provider *provider, uint3
     if (client->has_snapshot && value->message_number <= client->snapshot_sequence)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 snapshot publication is stale");
     qa_q3_snapshot_slot *snapshot = &client->snapshots[(uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)];
-    if (!qa_q3_slot_store(snapshot, value, error)) return false;
+    if (!application_q3_source_receipts_capture(&client->source_receipts,value,snapshot_actor,engine,error) ||
+        !qa_q3_slot_store(snapshot, value, error)) return false;
     snapshot->ping = ping;
     client->snapshot_sequence = value->message_number; client->has_snapshot = true;
     return true;
@@ -447,6 +461,7 @@ static bool snapshot(void *context, int32_t number, const qa_q3_snapshot **out, 
         memcpy(&distance, &distance_bits, sizeof(distance));
         if (distance >= 2048) return true;
         *out = &value->value; *ping = value->ping;
+        application_q3_source_receipts_delivered(&client->source_receipts,number);
     }
     return true;
 }

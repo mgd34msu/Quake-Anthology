@@ -1234,6 +1234,7 @@ add_library(qa_application STATIC
     src/app/application/source_trajectory_qc.c
     src/app/application/source_projection.c
     src/app/application/source_call.c
+    src/app/application/q3_source_receipts.c
     src/app/application/source_trajectory_qvm.c
     src/app/application/source_trajectory_native.c
     src/app/application/q3_asset_selection.c

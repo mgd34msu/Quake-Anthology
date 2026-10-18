@@ -320,7 +320,7 @@ bool frontend_audio_actor_for_id(const qa_frontend *frontend, uint64_t id, qa_ac
     if (row->retired) return false;
     *actor = row->actor; return true;
 }
-static uint64_t retained_actor(qa_frontend *frontend, qa_actor_id actor, qa_error *error)
+uint64_t frontend_audio_retained_actor(qa_frontend *frontend, qa_actor_id actor, qa_error *error)
 {
     return frontend_audio_bind(frontend, &frontend->audio_local, actor, true, error);
 }
@@ -344,7 +344,7 @@ uint64_t frontend_audio_native_q3_actor(frontend_native_q3 *row,
     /* CG can first position a received entity after GAME has freed it. Its
      * retained full generation owns the sound; its decoded position follows
      * through S_UpdateEntityPosition, without reading a replacement body. */
-    return retained_actor(row->frontend, actor, error);
+    return frontend_audio_retained_actor(row->frontend, actor, error);
 }
 static bool retained_event_source(qa_frontend *frontend, qa_actor_owner owner, qa_game_family family,
     qa_error *error)
@@ -373,7 +373,7 @@ uint64_t frontend_audio_retained_event_actor(qa_frontend *frontend,
         return QA_AUDIO_NO_ACTOR;
     }
     if (!retained_event_source(frontend,event->provider,event->family,error)) return QA_AUDIO_NO_ACTOR;
-    return retained_actor(frontend, event->actor, error);
+    return frontend_audio_retained_actor(frontend, event->actor, error);
 }
 uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
     const qa_application_protocol_event *message, qa_actor_id actor, qa_error *error)
@@ -401,5 +401,5 @@ uint64_t frontend_audio_q2_protocol_actor(qa_frontend *frontend,
             frontend_fail(error,QA_ERROR_ARGUMENT,"Q2 protocol sound lost its captured actor reference");
         return QA_AUDIO_NO_ACTOR;
     }
-    return retained_actor(frontend,actor,error);
+    return frontend_audio_retained_actor(frontend,actor,error);
 }

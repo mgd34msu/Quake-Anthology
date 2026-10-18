@@ -17,7 +17,7 @@
 #include "q3_sound_events.h"
 #include "map_players_private.h"
 
-struct application_q3_guest *q3g_engine(application_provider *provider)
+struct application_q3_guest *q3g_engine(const application_provider *provider)
 {
     if (!provider) return NULL;
     return provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.engine :

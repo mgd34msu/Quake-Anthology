@@ -277,6 +277,8 @@ static bool client(qa_source_save_io *io, struct application_q3_guest *engine, q
          value->snapshots[(uint32_t)value->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value.message_number !=
          value->snapshot_sequence)))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 client continuation");
+    if (io->direction==QA_SOURCE_SAVE_READ && value->allocated &&
+        !application_q3_source_receipts_prepare(&value->source_receipts,io->error)) { io->failed=true; return false; }
     return true;
 }
 
@@ -290,6 +292,20 @@ static bool shared_command_fields(qa_source_save_io *io, struct application_q3_g
             (client->shared_command_seen && !qa_source_save_u64(io, &client->shared_command_sequence)))
             return false;
     }
+    return true;
+}
+
+static bool receipt_actor_fields(qa_source_save_io *io,qa_actor_id *actor,bool checkpoint)
+{ (void)checkpoint; return qa_source_save_actor(io,actor); }
+static bool source_receipt_fields(qa_source_save_io *io,struct application_q3_guest *engine)
+{
+    if (io->direction==QA_SOURCE_SAVE_READ && io->offset==io->input.size) return true;
+    uint8_t magic[4]={'Q','3','S','R'};
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"Q3SR",sizeof(magic)))
+        return state_fail(io,QA_ERROR_FORMAT,"Invalid Q3 snapshot receipt tail");
+    for (size_t i=0;i<QA_Q3_SOURCE_CLIENTS;++i)
+        if (!application_q3_source_receipts_fields(io,&engine->clients[i].source_receipts,receipt_actor_fields,true))
+            return false;
     return true;
 }
 
@@ -317,7 +333,7 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
         if (io->direction == QA_SOURCE_SAVE_READ && engine->clients[i].actor.registry &&
             !q3g_client_actor_set(engine, (uint32_t)i, engine->clients[i].actor, io->error)) return false;
     }
-    return shared_command_fields(io, engine);
+    return shared_command_fields(io, engine) && source_receipt_fields(io,engine);
 }
 
 static bool owner(application_provider *provider, qa_error *error)

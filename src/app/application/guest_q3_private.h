@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "q3_command_tokens.h"
+#include "q3_source_receipts.h"
 #include "unified_q3_events.h"
 #include "native_process_owner.h"
 #include "guest_q3_equipment_profile.h"
@@ -40,6 +41,7 @@ typedef struct q3g_client {
     qa_q3_gamestate *gamestate;
     qa_arena snapshot_storage;
     qa_q3_snapshot_slot snapshots[QA_Q3_PACKET_BACKUP];
+    application_q3_source_receipts source_receipts;
     float sensitivity;
     int32_t weapon;
     qa_q3_big_configstring big_configstring;
@@ -192,7 +194,7 @@ struct application_q3_guest {
     bool map_ready, loaded_compatibility, draining_clients, restore_pending, startup_restart, handoff_ready;
 };
 
-struct application_q3_guest *q3g_engine(application_provider *);
+struct application_q3_guest *q3g_engine(const application_provider *);
 qa_id_index_cursor q3g_role_lookup_begin(const struct application_q3_guest *, qa_qvm_role, uint32_t seat);
 q3g_role *q3g_role_lookup_next(const struct application_q3_guest *, qa_id_index_cursor *);
 void q3g_roles_reindex(struct application_q3_guest *);

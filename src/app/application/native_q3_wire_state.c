@@ -1,4 +1,6 @@
 #include "native_q3_wire_state.h"
+#include "guest_q3_private.h"
+#include "q3_source_receipts.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
 #include "native_q3_wire.h"
@@ -48,7 +50,7 @@ typedef struct native_q3_wire_client {
     uint64_t entered_ns;
     float sensitivity;
     qa_q3_gamestate *gamestate;
-    qa_actor_id source_actors[QA_Q3_SOURCE_ENTITIES];
+    application_q3_source_receipts source_receipts;
     int32_t bot_entities[256];
     uint32_t bot_entity_count;
     native_q3_wire_snapshot snapshots[QA_Q3_PACKET_BACKUP];
@@ -114,16 +116,18 @@ struct application_native_q3_wire_carry {
 void qa_application_audio_source_actors_visit(const qa_application *app,
     void (*visit)(void *, qa_actor_id), void *context)
 {
-    for (const application_provider *provider = app ? app->live_providers : NULL;
+    for (application_provider *provider = app ? app->live_providers : NULL;
          provider; provider = provider->next_live) {
+        const struct application_q3_guest *engine=q3g_engine(provider);
+        if (engine) for (size_t i=0;i<QA_Q3_SOURCE_CLIENTS;++i)
+            application_q3_source_receipts_visit(&engine->clients[i].source_receipts,visit,context);
         const struct application_native_q3_wire *wire = provider->native_q3_wire;
         if (!wire) continue;
         for (size_t i = 0; i < QA_Q3_SOURCE_CLIENTS; ++i) {
             if (!wire->slot_readers[i]) continue;
             const native_q3_wire_client *client = wire->clients + i;
             if (client->actor.registry) visit(context, client->actor);
-            for (size_t j = 0; j < QA_Q3_SOURCE_ENTITIES; ++j)
-                if (client->source_actors[j].registry) visit(context, client->source_actors[j]);
+            application_q3_source_receipts_visit(&client->source_receipts,visit,context);
         }
     }
 }
@@ -239,7 +243,7 @@ static void client_world_clear(native_q3_wire_client *client)
     bot_view_clear(client);
     client->actor = (qa_actor_id){0};
     client->begun = false;
-    memset(client->source_actors, 0, sizeof(client->source_actors));
+    application_q3_source_receipts_clear(&client->source_receipts);
     free(client->gamestate);
     client->gamestate = NULL;
     qa_q3_big_configstring_clear(&client->big_configstring);
@@ -267,6 +271,7 @@ static void clients_clear(struct application_native_q3_wire *wire)
         qa_arena_destroy(&wire->clients[i].userinfo_storage);
         qa_arena_destroy(&wire->clients[i].drop_storage);
         free(wire->clients[i].gamestate);
+        application_q3_source_receipts_destroy(&wire->clients[i].source_receipts);
         for (size_t j = 0; j < QA_Q3_PACKET_BACKUP; ++j)
             if (!wire->clients[i].snapshots[j].reserved) free(wire->clients[i].snapshots[j].entities);
         wire->clients[i] = (native_q3_wire_client){.seat = UINT32_MAX, .sensitivity = 1};
@@ -426,7 +431,10 @@ bool application_native_q3_wire_connect(application_provider *provider, uint32_t
     qa_q3_entity *snapshots=client->snapshots[0].reserved?client->snapshots[0].entities:NULL;
     qa_arena_destroy(&client->drop_storage);
     application_q3_command_clear(&client->server_commands);
-    *client = (native_q3_wire_client){.actor = actor, .seat = seat,
+    application_q3_source_receipts receipts=client->source_receipts;
+    if (!application_q3_source_receipts_prepare(&receipts,error)) return false;
+    application_q3_source_receipts_clear(&receipts);
+    *client = (native_q3_wire_client){.actor = actor, .seat = seat, .source_receipts=receipts,
         .userinfo = copy, .userinfo_storage=userinfo_storage,
         .admitted = true, .bot = bot, .sensitivity = 1,
         .entered_ns = qa_session_elapsed(provider->application->session)};
@@ -465,6 +473,7 @@ bool application_native_q3_wire_disconnect(application_provider *provider, uint3
     qa_arena_destroy(&client->drop_storage);
     client_world_clear(client);
     application_q3_command_clear(&client->server_commands);
+    application_q3_source_receipts_destroy(&client->source_receipts);
     *client = (native_q3_wire_client){.seat = UINT32_MAX, .userinfo = userinfo,
         .userinfo_storage=userinfo_storage,.sensitivity = 1};
     snapshots_bind(client,snapshots);
@@ -871,6 +880,18 @@ bool application_native_q3_wire_gamestate(application_provider *provider, uint32
     return true;
 }
 
+static bool native_snapshot_actor(void *context,uint32_t number,qa_actor_id *out,qa_error *error)
+{
+    application_provider *provider=context;
+    uint32_t count;
+    *out=(qa_actor_id){0};
+    if (!qa_q3_source_entity_count(provider->state.q3,&count,error)) return false;
+    if (number>=count) return true;
+    qa_q3_source_binding binding;
+    if (!qa_q3_source_binding_read(provider->state.q3,number,&binding,error)) return false;
+    *out=binding.actor; return true;
+}
+
 bool application_native_q3_wire_snapshot(application_provider *provider, uint32_t slot,
     const qa_q3_snapshot *value, int32_t ping, qa_error *error)
 {
@@ -892,16 +913,8 @@ bool application_native_q3_wire_snapshot(application_provider *provider, uint32_
             return application_fail(error, QA_ERROR_FORMAT, "Native Q3 snapshot entity order is invalid");
         previous = value->entities[i].number;
     }
-    qa_actor_id observed[QA_Q3_SOURCE_ENTITIES];
-    memcpy(observed, client->source_actors, sizeof(observed));
-    uint32_t count;
-    if (!qa_q3_source_entity_count(provider->state.q3, &count, error) || count > QA_Q3_SOURCE_ENTITIES)
-        return application_fail(error, QA_ERROR_FORMAT, "Native Q3 snapshot source namespace exceeds its physical extent");
-    for (uint32_t number = 0; number < count; ++number) {
-        qa_q3_source_binding binding;
-        if (!qa_q3_source_binding_read(provider->state.q3, number, &binding, error)) return false;
-        if (binding.actor.registry) observed[number] = binding.actor;
-    }
+    if (!application_q3_source_receipts_capture(&client->source_receipts,value,
+        native_snapshot_actor,provider,error)) return false;
     native_q3_wire_snapshot *snapshot = &client->snapshots[
         (uint32_t)value->message_number & (QA_Q3_PACKET_BACKUP - 1)];
     uint32_t cursor = 0;
@@ -919,7 +932,6 @@ bool application_native_q3_wire_snapshot(application_provider *provider, uint32_
     snapshot->ping = ping;
     client->snapshot_sequence = value->message_number;
     client->has_snapshot = true;
-    memcpy(client->source_actors, observed, sizeof(observed));
     return true;
 }
 
@@ -954,7 +966,7 @@ bool application_native_q3_wire_round_begin(application_provider *provider, qa_e
         bot_view_clear(client);
         client->actor = (qa_actor_id){0};
         client->begun = false;
-        memset(client->source_actors, 0, sizeof(client->source_actors));
+        application_q3_source_receipts_clear(&client->source_receipts);
     }
     return true;
 }
@@ -1244,6 +1256,7 @@ static bool leased_snapshot(void *context, int32_t number, const qa_q3_snapshot 
     if (distance >= 2048) return true;
     *out = &snapshot->value;
     *ping = snapshot->ping;
+    application_q3_source_receipts_delivered(&client->source_receipts,number);
     return true;
 }
 
@@ -1350,8 +1363,7 @@ static bool leased_source_actor(void *context, uint32_t number, qa_actor_id *out
     *present = false;
     if (number >= QA_Q3_SOURCE_ENTITIES) return true;
     native_q3_wire_client *client = &lease->wire->clients[lease->slot];
-    if (client->source_actors[number].registry) {
-        *out = client->source_actors[number];
+    if (application_q3_source_receipts_read(&client->source_receipts,number,0,false,out)) {
         *present = qa_actors_get(qa_session_actors(lease->wire->provider->application->session), *out) != NULL;
         return true;
     }
@@ -1366,6 +1378,15 @@ static bool leased_source_actor(void *context, uint32_t number, qa_actor_id *out
         *out = binding.actor;
         *present = true;
     }
+    return true;
+}
+
+bool application_native_q3_wire_audio_actor(application_native_q3_wire_client_lease *lease,
+    uint32_t number,int32_t time,bool timed,qa_actor_id *out,bool *found,qa_error *error)
+{
+    native_q3_wire_client *client=leased_client(lease,error);
+    if (!client) return false;
+    *found=application_q3_source_receipts_read(&client->source_receipts,number,time,timed,out);
     return true;
 }
 
@@ -2065,22 +2086,25 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
             return fields_failure(io, "Native Q3 saved bot visibility has an invalid physical entity order");
         previous_bot = client->bot_entities[i];
     }
+    qa_actor_id source_actors[QA_Q3_SOURCE_ENTITIES]={0};
     size_t source_count = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE)
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        application_q3_source_receipts_latest(&client->source_receipts,source_actors);
         for (size_t i = 0; i < QA_Q3_SOURCE_ENTITIES; ++i)
-            if (client->source_actors[i].registry) ++source_count;
+            if (source_actors[i].registry) ++source_count;
+    }
     if (!qa_source_save_count(io, &source_count, QA_Q3_SOURCE_ENTITIES)) return false;
     uint32_t previous_source = 0;
     for (size_t row = 0, cursor = 0; row < source_count; ++row) {
         uint32_t index = 0;
         if (io->direction == QA_SOURCE_SAVE_WRITE) {
-            while (cursor < QA_Q3_SOURCE_ENTITIES && !client->source_actors[cursor].registry) ++cursor;
+            while (cursor < QA_Q3_SOURCE_ENTITIES && !source_actors[cursor].registry) ++cursor;
             index = (uint32_t)cursor++;
         }
         if (!qa_source_save_u32(io, &index) || index >= QA_Q3_SOURCE_ENTITIES ||
             (row && index <= previous_source) || !client->admitted ||
-            !actor_fields(io, &client->source_actors[index], checkpoint) ||
-            !client->source_actors[index].registry)
+            !actor_fields(io, &source_actors[index], checkpoint) ||
+            !source_actors[index].registry)
             return fields_failure(io, "Native Q3 saved source namespace has no engine admission");
         previous_source = index;
     }
@@ -2110,6 +2134,10 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
     if (!continued_string_fields(io, client)) return false;
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
         if (!snapshot_fields(io, &client->snapshots[i], i)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ && client->has_snapshot &&
+        !application_q3_source_receipts_legacy(&client->source_receipts,
+            &client->snapshots[(uint32_t)client->snapshot_sequence&(QA_Q3_PACKET_BACKUP-1)].value,
+            source_actors,io->error)) { io->failed=true; return false; }
     if (client->command_sequence < 0 || client->server_commands.sequence < 0 ||
         client->server_commands.acknowledged < 0 || client->server_commands.acknowledged > client->server_commands.sequence ||
         ((int64_t)client->server_commands.sequence - client->server_commands.acknowledged > QA_Q3_RELIABLE &&
@@ -2142,6 +2170,8 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
             snapshot->server_command_number < 0))
             return fields_failure(io, "Native Q3 saved snapshot exceeds its retained source counters");
     }
+    if (io->direction==QA_SOURCE_SAVE_READ && client->admitted &&
+        !application_q3_source_receipts_prepare(&client->source_receipts,io->error)) { io->failed=true; return false; }
     return true;
 }
 
@@ -2179,6 +2209,13 @@ static bool wire_fields(qa_source_save_io *io, struct application_native_q3_wire
              wire->clients[slot].gamestate->command_sequence > wire->clients[slot].server_commands.sequence))
             return fields_failure(io, "Native Q3 saved gamestate has no exact admitted source client");
     }
+    if (io->direction==QA_SOURCE_SAVE_READ && io->offset==io->input.size) return true;
+    uint8_t receipt_magic[4]={'Q','3','S','R'};
+    if (!qa_source_save_bytes(io,receipt_magic,sizeof(receipt_magic)) ||
+        memcmp(receipt_magic,"Q3SR",sizeof(receipt_magic)))
+        return fields_failure(io,"Invalid Q3 snapshot receipt tail");
+    for (size_t i=0;i<QA_Q3_SOURCE_CLIENTS;++i)
+        if (!application_q3_source_receipts_fields(io,&wire->clients[i].source_receipts,actor_fields,checkpoint)) return false;
     return true;
 }
 

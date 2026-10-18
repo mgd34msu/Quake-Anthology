@@ -42,6 +42,7 @@
 #include "qa/campaign.h"
 #include "../src/app/application/source_objectives.h"
 #include "../src/app/application/source_projection.h"
+#include "../src/app/application/q3_source_receipts.h"
 #include "../src/app/application/map_travel_private.h"
 #include "../src/gameplay/modes/internal.h"
 #include "qa/modes_map.h"
@@ -10603,6 +10604,40 @@ static bool q3_source_imported_callback(void *context, const qa_qvm_call *call,
     return true;
 }
 
+static bool snapshot_receipt_actor(void *context, uint32_t number, qa_actor_id *out, qa_error *error)
+{
+    (void)error;
+    *out = ((const qa_actor_id *)context)[number];
+    return true;
+}
+
+static void test_q3_snapshot_actor_lifetimes(void)
+{
+    qa_error error = {0};
+    application_q3_source_receipts receipts = {0};
+    qa_actor_id actors[8] = {[0] = {1, 1, 0}, [7] = {1, 2, 5}}, found;
+    qa_actor_id first = actors[7];
+    qa_q3_entity entity = {.number = 7};
+    qa_q3_snapshot snapshot = {.valid = true, .message_number = 1, .server_time = 100,
+        .entity_count = 1, .entities = &entity, .player = {.clientNum = 0}};
+    CHECK(application_q3_source_receipts_prepare(&receipts, &error));
+    CHECK(application_q3_source_receipts_capture(&receipts, &snapshot, snapshot_receipt_actor, actors, &error));
+    application_q3_source_receipts_delivered(&receipts, 1);
+    actors[7].generation = 3;
+    snapshot.message_number = 2; snapshot.server_time = 200;
+    CHECK(application_q3_source_receipts_capture(&receipts, &snapshot, snapshot_receipt_actor, actors, &error));
+    CHECK(application_q3_source_receipts_read(&receipts, 7, 250, true, &found));
+    CHECK(qa_actor_id_equal(found, first));
+    application_q3_source_receipts_delivered(&receipts, 2);
+    CHECK(application_q3_source_receipts_read(&receipts, 7, 150, true, &found));
+    CHECK(qa_actor_id_equal(found, first));
+    CHECK(application_q3_source_receipts_read(&receipts, 7, 250, true, &found));
+    CHECK(qa_actor_id_equal(found, actors[7]));
+    application_q3_source_receipts_clear(&receipts);
+    CHECK(!application_q3_source_receipts_read(&receipts, 7, 250, true, &found));
+    application_q3_source_receipts_destroy(&receipts);
+}
+
 static void test_q3_source_memory(void)
 {
     qa_error error = {0};
@@ -13061,6 +13096,7 @@ int main(int argc, char **argv)
     test_native_export_visibility();
     test_native_saved_image_references();
     test_native_q3_declaration();
+    test_q3_snapshot_actor_lifetimes();
     test_q3_source_memory();
     test_native_vsprintf();
     test_native_sysv_platform_save();

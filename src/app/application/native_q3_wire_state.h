@@ -95,6 +95,8 @@ bool application_native_q3_wire_client_effect(application_native_q3_wire_client_
     qa_application_q3_client_effect, const char *, qa_error *);
 bool application_native_q3_wire_client_topology_read(application_native_q3_wire_client_lease *,
     application_native_q3_wire_client_topology *, qa_error *);
+bool application_native_q3_wire_audio_actor(application_native_q3_wire_client_lease *, uint32_t,
+    int32_t time, bool timed, qa_actor_id *, bool *found, qa_error *);
 bool application_native_q3_wire_client_time(application_native_q3_wire_client_lease *,
     int32_t *, qa_error *);
 
