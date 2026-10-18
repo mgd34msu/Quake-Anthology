@@ -430,7 +430,7 @@ bool application_q3_weapons_create(q3g_role *role, application_q3_weapon_profile
 const application_q3_weapon_profile *application_q3_weapons_profile(const application_q3_weapons *w)
 { return w ? &w->profile : NULL; }
 bool application_q3_weapons_catalog_refresh(application_q3_weapons *w,
-    const application_q3_weapon_catalog_entry *entries, size_t count, qa_error *error)
+    const application_q3_catalog_weapon *entries, size_t count, qa_error *error)
 {
     if (!w || !w->role->image || !w->role->vm || w->role->abi != w->profile.abi ||
         w->role->image != w->profile.image)
@@ -489,8 +489,8 @@ bool application_q3_weapons_selection_for_item(application_q3_weapons *w, qa_act
     if (!item || !out) return application_fail(error, QA_ERROR_ARGUMENT,
         "Original weapon intent requires its canonical item and output");
     if (!q3_weapons_actor(w, actor, &source, error)) return false;
-    for (size_t i = 0; i < w->profile.catalog_count; ++i)
-        if (w->profile.catalog[i].item == item) { *out = w->profile.catalog[i].weapon; return true; }
+    if (application_q3_catalog_weapon_selection(w->profile.catalog,
+            w->profile.catalog_count, item, out)) return true;
     return application_fail(error, QA_ERROR_NOT_FOUND,
         "Original weapon intent has no declared Source selection value");
 }

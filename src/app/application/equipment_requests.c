@@ -40,8 +40,7 @@ static bool q3_item_weapon(application_provider *provider, qa_item_id item,
             size_t count;
             if (!application_q3_catalog_weapons(engine->game->catalog, &weapons, &count, error))
                 return false;
-            for (size_t i = 0; i < count; ++i)
-                if (weapons[i].item == item) { *weapon = weapons[i].weapon; break; }
+            (void)application_q3_catalog_weapon_selection(weapons, count, item, weapon);
         }
     }
     return true;

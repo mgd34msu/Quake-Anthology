@@ -42,6 +42,8 @@ bool application_q3_catalog_records(application_q3_catalog *,
     const application_q3_catalog_record **, size_t *, qa_error *);
 bool application_q3_catalog_weapons(application_q3_catalog *,
     const application_q3_catalog_weapon **, size_t *, qa_error *);
+bool application_q3_catalog_weapon_selection(const application_q3_catalog_weapon *,
+    size_t, qa_item_id, int32_t *);
 bool application_q3_catalog_ammo_label(application_q3_catalog *, qa_item_id,
     const char **, qa_error *);
 bool application_q3_catalog_items_revision(application_q3_catalog *,uint64_t *,qa_error *);

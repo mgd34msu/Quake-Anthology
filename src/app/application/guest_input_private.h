@@ -26,7 +26,7 @@ bool application_control_guest_equipment(qa_application *, application_provider 
 bool application_guest_input_checkpoint(q3g_role *, qa_buffer *, qa_error *);
 /* These descriptors enumerate only this real owner. The composition owner
  * qualifies the complete executor inventory together with equipment hooks. */
-bool application_guest_input_descriptors(q3g_role *, qa_qvm_saved_function [6],
+bool application_guest_input_descriptors(const q3g_role *, qa_qvm_saved_function [6],
     size_t *count, qa_error *);
 typedef struct application_guest_input_saved {
     qa_qvm_binding bindings[6];

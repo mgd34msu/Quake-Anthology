@@ -578,7 +578,7 @@ static bool qualify(q3g_role *role, application_q3_weapon_profile *p, qa_error *
         qa_qvm_qualify_source_region(role->image, p->drop.entry, p->drop.region.entry, p->drop.region.join, error);
 }
 
-static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *catalog, size_t count,
+static bool stock(q3g_role *role, const application_q3_catalog_weapon *catalog, size_t count,
     application_q3_weapon_profile *p, qa_error *error)
 {
 
@@ -624,9 +624,10 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
     p->settled[0] = (application_q3_weapon_test){.offset = 44, .at_most = true};
     p->settled[1] = (application_q3_weapon_test){.offset = 148};
     p->accepted[0] = (application_q3_weapon_test){.offset = 148, .value = 2};
-    if (catalog && count) memcpy(p->catalog, catalog, count * sizeof(*catalog));
-    else for (size_t i = 0; i < count; ++i)
-        p->catalog[i] = (application_q3_weapon_catalog_entry){actual[i].weapon, actual[i].item, actual[i].ammo};
+    const application_q3_catalog_weapon *rows = catalog ? catalog : actual;
+    for (size_t i = 0; i < count; ++i)
+        p->catalog[i] = (application_q3_catalog_weapon){.weapon = rows[i].weapon,
+            .item = rows[i].item, .ammo = rows[i].ammo};
     *p->delay_inputs = 12; p->delay.inputs = p->delay_inputs;
     qa_strings *strings = qa_session_strings(role->engine->provider->application->session);
     const char *sources[] = {"q3:1", "q3:2", NULL}, *teams[] = {"team:red", "team:blue", NULL},
@@ -645,7 +646,7 @@ static bool stock(q3g_role *role, const application_q3_weapon_catalog_entry *cat
 }
 
 bool application_q3_weapon_profile_read(q3g_role *role, qa_bytes primary,
-    const application_q3_weapon_catalog_entry *catalog, size_t count, application_q3_weapon_profile *out, qa_error *error)
+    const application_q3_catalog_weapon *catalog, size_t count, application_q3_weapon_profile *out, qa_error *error)
 {
     if (!role || !role->image || role->kind != QA_QVM_GAME || !out || (primary.size && !primary.data) ||
         (count && !catalog) || count > SIZE_MAX / sizeof(*catalog))
@@ -663,7 +664,7 @@ bool application_q3_weapon_profile_read(q3g_role *role, qa_bytes primary,
 }
 
 bool application_q3_weapon_profile_catalog(application_q3_weapon_profile *p,
-    const application_q3_weapon_catalog_entry *catalog, size_t count, qa_error *error)
+    const application_q3_catalog_weapon *catalog, size_t count, qa_error *error)
 {
     if (!p || !p->present || (count && !catalog) || p->catalog_count != count)
         return application_fail(error, QA_ERROR_FORMAT, "Original weapon selection differs from its actual item table");

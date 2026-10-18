@@ -47,7 +47,7 @@ const application_q3_weapon_profile *application_q3_weapons_profile(const applic
 /* Qualifies an actual catalog read after Source Init or restored RAM. The
  * constructor may retain a declared live selection before that table exists. */
 bool application_q3_weapons_catalog_refresh(application_q3_weapons *,
-    const application_q3_weapon_catalog_entry *, size_t, qa_error *);
+    const application_q3_catalog_weapon *, size_t, qa_error *);
 size_t application_q3_weapons_descriptor_count(const application_q3_weapons *);
 bool application_q3_weapons_descriptors(const application_q3_weapons *,
     qa_qvm_saved_function *, size_t, qa_error *);

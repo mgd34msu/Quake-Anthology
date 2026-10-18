@@ -917,7 +917,7 @@ static bool inventory_read(application_q3_weapons_services *s, qa_actor_id actor
         selection_current(s, actor, out->provider, error);
 }
 static bool catalog_read(application_q3_weapons_services *s, qa_arena *storage,
-    application_q3_weapon_catalog_entry **out, size_t *count, qa_error *error)
+    application_q3_catalog_weapon **out, size_t *count, qa_error *error)
 {
     if (!application_q3_catalog_current(s->role->catalog, s->image, s->vm, s->abi))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Original Source grant lost its actual item catalog");
@@ -925,10 +925,10 @@ static bool catalog_read(application_q3_weapons_services *s, qa_arena *storage,
     if (!application_q3_catalog_weapons(s->role->catalog, &borrowed, count, error)) return false;
     if (*count > SIZE_MAX / sizeof(**out))
         return application_fail(error, QA_ERROR_MEMORY, "Actual Source catalog exceeds its retained roster extent");
-    *out = *count ? qa_arena_alloc(storage, *count * sizeof(**out), _Alignof(application_q3_weapon_catalog_entry), error) : NULL;
+    *out = *count ? qa_arena_alloc(storage, *count * sizeof(**out), _Alignof(application_q3_catalog_weapon), error) : NULL;
     if (*count && !*out) return application_fail(error, QA_ERROR_MEMORY, "Retaining original catalog across inventory callbacks");
     for (size_t i = 0; i < *count; ++i)
-        (*out)[i] = (application_q3_weapon_catalog_entry){borrowed[i].weapon, borrowed[i].item, borrowed[i].ammo};
+        (*out)[i] = (application_q3_catalog_weapon){.weapon = borrowed[i].weapon, .item = borrowed[i].item, .ammo = borrowed[i].ammo};
     return application_q3_weapons_catalog_refresh(s->role->weapons, *out, *count, error);
 }
 static bool give_category(void *context, qa_actor_id actor, application_q3_weapon_grant category, qa_error *error)
@@ -987,7 +987,7 @@ static bool drop_selected(void *context, qa_actor_id actor, application_q3_weapo
     if (ok && present) ok = qa_application_weapon_read(application(s), actor, &active, error) &&
         selection_current(s, actor, view.provider, error);
     if (ok && present) out->present = out->inventory = true;
-    application_q3_weapon_catalog_entry *catalog = NULL; size_t count = 0;
+    application_q3_catalog_weapon *catalog = NULL; size_t count = 0;
     qa_supply_weapon *selected_roster = NULL, *original_roster = NULL;
     qa_item_id *sources = NULL;
     if (ok && present && active) ok = catalog_read(s, &view.storage, &catalog, &count, error);

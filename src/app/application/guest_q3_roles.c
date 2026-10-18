@@ -82,14 +82,7 @@ bool q3g_role_catalog_refresh(q3g_role *role, qa_error *error)
     if (!application_q3_catalog_weapons(role->catalog, &borrowed, &count, error)) return false;
     if (!role->weapons) return true;
     if (!count && !role->initialized && !role->engine->restore_pending) return true;
-    if (count > SIZE_MAX / sizeof(application_q3_weapon_catalog_entry))
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Source weapon roster");
-    application_q3_weapon_catalog_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
-    if (count && !entries) return application_fail(error, QA_ERROR_MEMORY, "Retaining genuine Source weapon roster");
-    for (size_t i = 0; i < count; ++i)
-        entries[i] = (application_q3_weapon_catalog_entry){borrowed[i].weapon, borrowed[i].item, borrowed[i].ammo};
-    bool ok = application_q3_weapons_catalog_refresh(role->weapons, entries, count, error);
-    free(entries); return ok;
+    return application_q3_weapons_catalog_refresh(role->weapons, borrowed, count, error);
 }
 
 static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t pointer,
@@ -696,9 +689,9 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 application_q3_weapon_profile_free(&weapons); goto failed;
             }
         } else application_q3_weapon_profile_free(&weapons);
-        if (!application_guest_input_attach(role, error)) goto failed;
         if (role->weapons && !engine->restore_pending && !q3g_role_catalog_refresh(role, error)) goto failed;
     }
+    if (kind == QA_QVM_GAME && !application_guest_input_attach(role, error)) goto failed;
     if (kind == QA_QVM_GAME && role->artifact->combat_profile && !application_q3_combat_create(role,
         role->artifact->combat_profile, &role->combat, error)) goto failed;
     if (kind == QA_QVM_GAME && role->vm) {
@@ -793,8 +786,6 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     if (ok) ok = qa_q3_host_attach_native(role->host, role->native, &failure);
     if (ok && role->kind == QA_QVM_GAME)
         ok = qa_native_host_source_scratch_prepare(role->native, &failure);
-    if (ok && role->kind == QA_QVM_GAME)
-        ok = application_guest_input_attach(role, &failure);
     --engine->calls;
     engine->entered_role = previous;
     if (!ok) {

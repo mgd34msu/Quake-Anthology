@@ -655,11 +655,17 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved, const applic
 
 static bool native_role_plain(const q3g_role *role, qa_error *error)
 {
-    return (role && !role->vm && !role->image && role->module && !role->input &&
+    bool plain = (role && !role->vm && !role->image && role->module &&
         !role->projection && !role->weapons && !role->weapon_services &&
         application_q3_combat_idle(role->combat) && !application_q3_combat_descriptor_count(role->combat) &&
         !role->pickups && !role->equipment && !role->body && !role->weapon_models) ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q3 role retains an unencoded application callback owner");
+    if (!plain) return false;
+    qa_qvm_saved_function descriptors[6] = {0};
+    size_t count;
+    return application_guest_input_descriptors(role, descriptors, &count, error) &&
+        (!count || application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native Q3 input retains QVM instruction callbacks"));
 }
 
 static bool saved_collect(application_provider *provider,

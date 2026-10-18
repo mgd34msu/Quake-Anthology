@@ -4,6 +4,7 @@
 #include "client_outputs.h"
 #include "guest_q3_control.h"
 #include "guest_q3_combat_profile.h"
+#include "guest_q3_catalog.h"
 #include "guest_q3_weapons_services.h"
 #include "guest_projection_private.h"
 #include "map_players_private.h"
@@ -915,7 +916,6 @@ bool application_guest_input_attach(q3g_role *role, qa_error *error)
 {
     if (!role || role->kind != QA_QVM_GAME || role->input)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input hooks require an unattached game role");
-    if (!role->vm) return true;
     application_guest_input *input = calloc(1, sizeof(*input));
     if (!input) return application_fail(error, QA_ERROR_MEMORY, "Allocating guest input owner");
     input->role = role; input->profile = &role->input_profile;
@@ -935,7 +935,7 @@ bool application_guest_input_attach(q3g_role *role, qa_error *error)
         input->weapons = role->weapons;
     }
     role->input = input;
-    if (!input->profile->input_present) return true;
+    if (!role->vm || !input->profile->input_present) return true;
     const uint32_t entries[] = {input->profile->client_think, input->profile->run_client,
         input->profile->client_spawn, input->profile->source->movement_move, input->profile->source->movement_slice};
     size_t count = 5;
@@ -958,7 +958,8 @@ bool application_guest_input_detach(q3g_role *role, qa_error *error)
 {
     application_guest_input *input = role ? role->input : NULL;
     if (!input) return true;
-    if (input->scope || input->in_command || (role->vm && qa_qvm_active(role->vm)))
+    if (input->scope || input->in_command || (role->vm && qa_qvm_active(role->vm)) ||
+        (role->native && qa_native_active(qa_native_host_instance(role->native))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input hooks still own a source invocation");
     if (!application_guest_q3_control_detach(&input->body_control, error)) return false;
     input->body_binding = 0;
@@ -972,16 +973,21 @@ bool application_guest_input_detach(q3g_role *role, qa_error *error)
     return true;
 }
 
-bool application_guest_input_descriptors(q3g_role *role,
+bool application_guest_input_descriptors(const q3g_role *role,
     qa_qvm_saved_function descriptors[6], size_t *out_count, qa_error *error)
 {
     application_guest_input *input = role ? role->input : NULL;
     bool idle = (role && (role->vm ? !qa_qvm_active(role->vm) :
-        role->module && !input && (!role->native || !qa_native_active(qa_native_host_instance(role->native)))) &&
+        role->module && (!role->native || !qa_native_active(qa_native_host_instance(role->native)))) &&
         (!input || (!input->scope && !input->in_command && !input->command &&
+                    !input->stage && !input->completion &&
                     !input->applying.registry && !input->command_actor.registry))) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
     if (!idle) return false;
+    if (!role->vm && input && (input->profile->input_present || input->weapons ||
+        input->body_control || input->body_binding || input->binding_count))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Native Q3 input retains an unencoded instruction callback owner");
     size_t count = input && input->profile->input_present ? 5u : 0;
     if (input && input->binding_count != count)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 input callback count differs from its source declaration");
@@ -1044,9 +1050,19 @@ static bool input_fields(qa_source_save_io *io, application_guest_input *input)
     const uint8_t expected[8] = {'Q','A','G','3','I','N',0,0};
     bool present = input != NULL;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_bool(io, &present) || present != (input != NULL))
+        !qa_source_save_bool(io, &present))
         return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input checkpoint declaration differs");
-    if (!present) return true;
+    if (present != (input != NULL) && !(io->direction == QA_SOURCE_SAVE_READ && !present &&
+        input && !input->role->vm && input->role->module && !input->profile->input_present))
+        return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input checkpoint declaration differs");
+    if (!present) {
+        if (input) {
+            input->applied_command = (qa_usercmd){0};
+            input->projected_command = (qa_q3_usercmd){0};
+            input->command_projected = input->input_applied = false;
+        }
+        return true;
+    }
     if (!qa_source_save_count(io, &input->binding_count, 5)) return false;
     for (size_t i = 0; i < 5; ++i)
         if (!qa_source_save_u64(io, &input->bindings[i])) return false;
@@ -1234,13 +1250,29 @@ static bool weapons_capable(const application_guest_input *input)
 }
 
 static bool guest_roles_admit(application_provider *guest, application_provider *movement,
-    application_provider *arsenal, bool follower, qa_error *error)
+    application_provider *arsenal, application_provider *character, qa_actor_id actor,
+    bool follower, qa_error *error)
 {
     if (!guest) return true;
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     if (!input || input->in_command)
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input owner is missing or already active");
+    if (!engine->game->vm) {
+        qa_application *app = guest->application;
+        if (application_world_provider(app, QA_ROLE_ENTITIES, "") != guest ||
+            movement != guest || arsenal != guest || character != guest)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Native Q3 input requires its own world, movement, character and arsenal");
+        if (actor.registry) {
+            const qa_launch_role roles[] = {QA_ROLE_BODY, QA_ROLE_COMBAT, QA_ROLE_INVENTORY,
+                QA_ROLE_PICKUPS, QA_ROLE_EQUIPMENT};
+            for (size_t i = 0; i < sizeof(roles) / sizeof(*roles); ++i)
+                if (application_provider_for(app, actor, roles[i], "") != guest)
+                    return application_fail(error, QA_ERROR_UNSUPPORTED,
+                        "Native Q3 input has no qualified mixed player-role interception");
+        }
+    }
     if ((movement != guest && !(input->profile->source && input->profile->source->present)) ||
         (arsenal != guest && !weapons_capable(input)))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Mixed Q3 guest roles require qualified source movement and weapon contracts");
@@ -1255,7 +1287,8 @@ bool application_arsenal_guest_roles_admit(application_provider *movement,
     application_provider *guests[3];
     size_t count = selected_guests(movement, arsenal, character, guests);
     for (size_t i = 0; i < count; ++i)
-        if (!guest_roles_admit(guests[i], movement, arsenal, i != 0, error)) return false;
+        if (!guest_roles_admit(guests[i], movement, arsenal, character,
+                (qa_actor_id){0}, i != 0, error)) return false;
     return true;
 }
 
@@ -1423,8 +1456,17 @@ static bool guest_command(application_guest_input *input, qa_actor_id actor, uin
         raw.buttons = (raw.buttons & ~4) | (context->unified_holdable ? 4 : 0);
         if (context->weapon && arsenal == guest) {
             int32_t selection;
-            if (!input->weapons || !application_q3_weapons_selection_for_item(input->weapons,
-                    actor, context->weapon, &selection, error)) return false;
+            if (input->weapons) {
+                if (!application_q3_weapons_selection_for_item(input->weapons,
+                        actor, context->weapon, &selection, error)) return false;
+            } else {
+                const application_q3_catalog_weapon *weapons;
+                size_t count;
+                if (!application_q3_catalog_weapons(input->role->catalog, &weapons, &count, error)) return false;
+                if (!application_q3_catalog_weapon_selection(weapons, count, context->weapon, &selection))
+                    return application_fail(error, QA_ERROR_NOT_FOUND,
+                        "Original command weapon is absent from its source catalogue");
+            }
             raw.weapon = (uint8_t)selection;
         }
     }
@@ -1477,18 +1519,15 @@ bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id a
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, "");
+    application_provider *driver = application_guest_input_driver(app, actor);
     uint32_t slot;
-    if (!input || input->in_command || (movement != source && !(input->profile->source && input->profile->source->present)) ||
-        (arsenal != source && !weapons_capable(input)))
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-            "Original Q3 command requires qualified movement and weapon source regions");
+    if (!guest_roles_admit(source, movement, arsenal, character, actor, driver != source, error)) return false;
     if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) || slot >= 64 ||
         !engine->clients[slot].connected || !engine->clients[slot].begun ||
         engine->clients[slot].pending_retirement || !qa_actor_id_equal(engine->clients[slot].actor, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 command has no current source client");
-    application_provider *driver = application_guest_input_driver(app, actor);
-    if (!application_arsenal_guest_roles_admit(movement, arsenal,
-            application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), error)) return false;
+    if (!application_arsenal_guest_roles_admit(movement, arsenal, character, error)) return false;
     qa_q3_usercmd raw;
     qa_usercmd_to_q3(command, &raw);
     if (driver != source) {
@@ -1512,7 +1551,9 @@ static bool guest_provider_command(qa_application *app, application_provider *gu
     application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     struct application_q3_guest *engine = q3g_engine(guest);
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
-    if (!guest_roles_admit(guest, movement, arsenal, input && guest_follower(input, actor), error)) return false;
+    if (!guest_roles_admit(guest, movement, arsenal,
+            application_provider_for(app, actor, QA_ROLE_CHARACTER, ""), actor,
+            input && guest_follower(input, actor), error)) return false;
     uint32_t slot;
     if (!qa_q3_host_actor_slot(engine->game->host, actor, &slot, error)) return false;
     if (slot >= 64 || !engine->clients[slot].connected ||
@@ -1643,7 +1684,8 @@ static bool guest_ready(application_provider *guest, application_provider *movem
     struct application_q3_guest *engine = q3g_engine(guest);
     uint32_t slot;
     return guest->constructed && guest->attached && !guest->close_pending &&
-        guest_roles_admit(guest, movement, arsenal, follower, NULL) &&
+        guest_roles_admit(guest, movement, arsenal,
+            application_provider_for(guest->application, actor, QA_ROLE_CHARACTER, ""), actor, follower, NULL) &&
         qa_q3_host_actor_slot(engine->game->host, actor, &slot, NULL) && slot < 64 &&
         engine->clients[slot].connected && engine->clients[slot].begun &&
         !engine->clients[slot].pending_retirement && qa_actor_id_equal(engine->clients[slot].actor, actor);

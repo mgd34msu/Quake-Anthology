@@ -2,15 +2,12 @@
 #define QA_APPLICATION_GUEST_Q3_WEAPON_PROFILE_H
 
 #include "qa/gameplay.h"
+#include "guest_q3_catalog.h"
 #include "guest_q3_movement_profile.h"
 #include "qa/qvm.h"
 #include "qa/strings.h"
 
 struct q3g_role;
-typedef struct application_q3_weapon_catalog_entry {
-    int32_t weapon;
-    qa_item_id item, ammo;
-} application_q3_weapon_catalog_entry;
 typedef struct application_q3_weapon_test {
     uint32_t offset, mask;
     int32_t value;
@@ -36,7 +33,7 @@ typedef struct application_q3_weapon_profile {
     size_t predicate_count;
     application_q3_weapon_test *settled, *accepted;
     size_t settled_count, accepted_count;
-    application_q3_weapon_catalog_entry *catalog;
+    application_q3_catalog_weapon *catalog;
     size_t catalog_count;
     struct { uint32_t entry; int32_t attack, melee; } animation;
     struct { uint32_t entry, result; application_q3_source_region stop; } damage;
@@ -61,12 +58,12 @@ typedef struct application_q3_weapon_profile {
  * All owned arrays preserve its physical order and the admitted declaration.
  * Unknown undeclared artifacts return a genuinely absent profile. */
 bool application_q3_weapon_profile_read(struct q3g_role *, qa_bytes primary,
-    const application_q3_weapon_catalog_entry *, size_t, application_q3_weapon_profile *, qa_error *);
+    const application_q3_catalog_weapon *, size_t, application_q3_weapon_profile *, qa_error *);
 void application_q3_weapon_profile_free(application_q3_weapon_profile *);
 /* A declared live table is genuinely absent before its source Init. Validate
  * its actual roster once populated, or after detached source RAM restoration.
  * This does not execute or manufacture the table. */
 bool application_q3_weapon_profile_catalog(application_q3_weapon_profile *,
-    const application_q3_weapon_catalog_entry *, size_t, qa_error *);
+    const application_q3_catalog_weapon *, size_t, qa_error *);
 
 #endif

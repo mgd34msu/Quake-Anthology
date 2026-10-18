@@ -490,6 +490,13 @@ bool application_q3_catalog_weapons(application_q3_catalog *c,
     if (c->live && !refresh(c, true, true, e)) return false;
     *out = c->weapons; *count = c->weapon_count; return true;
 }
+bool application_q3_catalog_weapon_selection(const application_q3_catalog_weapon *rows,
+    size_t count, qa_item_id item, int32_t *out)
+{
+    for (size_t i = 0; i < count; ++i)
+        if (rows[i].item == item) { *out = rows[i].weapon; return true; }
+    return false;
+}
 bool application_q3_catalog_standard(const application_q3_catalog *c)
 { return c && !c->native && !c->table; }
 bool application_q3_catalog_bot_product(const application_q3_catalog *c, qa_q3_product *out)

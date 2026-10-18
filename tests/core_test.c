@@ -10167,8 +10167,29 @@ static void test_native_q3_declaration(void)
         role.input_profile.has_dead_mode && role.input_profile.dead_mode == 3);
     CHECK(role.input_profile.intermission_count == 2 && role.input_profile.intermission_modes[0] == 5 &&
         role.input_profile.intermission_modes[1] == 6);
-    CHECK(application_guest_input_attach(&role, &error) && !role.input);
-    CHECK(role.input_profile.respawn == 112);
+    CHECK(application_guest_input_attach(&role, &error) && role.input);
+    qa_qvm_saved_function input_descriptors[6] = {0};
+    size_t input_count = SIZE_MAX;
+    CHECK(application_guest_input_descriptors(&role, input_descriptors, &input_count, &error));
+    CHECK(input_count == 0 && role.input_profile.respawn == 112);
+    qa_buffer input_state = {0}, legacy_input_state = {0};
+    CHECK(application_guest_input_checkpoint(&role, &input_state, &error));
+    q3g_role legacy_role = role;
+    legacy_role.input = NULL;
+    CHECK(application_guest_input_checkpoint(&legacy_role, &legacy_input_state, &error));
+    struct application_q3_guest input_engine = {.restore_pending = true};
+    role.engine = &input_engine;
+    application_guest_input_saved input_saved = {0};
+    CHECK(application_guest_input_prepare_restore(&role,
+        (qa_bytes){input_state.data, input_state.size}, &input_saved, &error));
+    CHECK(input_saved.binding_count == 0 && !input_saved.command_projected && !input_saved.input_applied);
+    application_guest_input_adopt_restore(&role, &input_saved);
+    CHECK(application_guest_input_prepare_restore(&role,
+        (qa_bytes){legacy_input_state.data, legacy_input_state.size}, &input_saved, &error));
+    CHECK(input_saved.binding_count == 0 && !input_saved.applied_command.sequence);
+    CHECK(application_guest_input_detach(&role, &error) && !role.input);
+    qa_buffer_free(&input_state); qa_buffer_free(&legacy_input_state);
+    role.engine = NULL;
     application_guest_input_profile_free(&role.input_profile);
     const char *pose = "{\"weapons\":{\"clientStride\":776,\"maxHealth\":208,"
         "\"persistentMaxHealth\":548,\"powerups\":{\"quad\":316,\"haste\":324,\"flight\":336}}}";
