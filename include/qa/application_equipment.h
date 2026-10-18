@@ -73,6 +73,9 @@ bool qa_application_equipment_request_weapon(qa_application *, qa_actor_id,
     qa_actor_owner, qa_item_id, bool *accepted, qa_error *);
 bool qa_application_equipment_item_definition_read(qa_application *, qa_actor_id,
     qa_item_id, qa_item_definition *, bool *found, qa_error *);
+bool qa_application_equipment_item_action(qa_application *, qa_actor_id,
+    const qa_item_definition *, qa_item_action, bool force_weapon, bool *accepted,
+    qa_application_item_selection *, qa_error *);
 /* Resolve an authored Quake wheel slot against its actual admitted arsenal. */
 bool qa_application_q1_wheel_item_read(qa_application *, qa_actor_id,
     qa_actor_owner source, int32_t impulse, const uint32_t *authored_weapon_bits,

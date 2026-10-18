@@ -781,10 +781,8 @@ static qa_command_result command_dispatch(qa_application *application,
             return QA_COMMAND_FAILED;
         }
         bool accepted;
-        bool okay=definition.weapon ? qa_application_equipment_request_weapon(application,
-            command.context.actor,definition.owner,definition.item,&accepted,error) :
-            qa_inventory_item_action(application->inventory,command.context.actor,
-                definition.item,QA_ITEM_USE,error);
+        bool okay=qa_application_equipment_item_action(application,command.context.actor,
+            &definition,QA_ITEM_USE,false,&accepted,NULL,error);
         return okay ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
     }
     qa_q1_chat_mode chat = qa_q1_chat_command_read(QA_RULESET_NETQUAKE, command.argv[0], true);

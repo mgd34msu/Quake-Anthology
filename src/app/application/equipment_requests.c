@@ -170,31 +170,47 @@ qa_command_result application_equipment_item_resolve(qa_application *app,
     return QA_COMMAND_HANDLED;
 }
 
+bool qa_application_equipment_item_action(qa_application *app,qa_actor_id actor,
+    const qa_item_definition *selected,qa_item_action action,bool force_weapon,
+    bool *accepted,qa_application_item_selection *selection,qa_error *error)
+{
+    *accepted=false;
+    if(selection)*selection=(qa_application_item_selection){.q3_weapon=-1};
+    if (!force_weapon && (selected->actions & action)) {
+        qa_item_definition actual;bool found;
+        if(!qa_inventory_item_definition_find(app->inventory,actor,NULL,selected->item,
+            &actual,&found,error))return false;
+        if(found&&actual.owner==selected->owner){
+            if(!qa_inventory_item_action(app->inventory,actor,selected->item,action,error))return false;
+            *accepted=true;return true;
+        }
+    }
+    if (action==QA_ITEM_USE && selected->weapon) {
+        application_provider *arsenal=application_provider_for(app,actor,QA_ROLE_ARSENAL,"");
+        qa_actor_owner owner=force_weapon&&arsenal?arsenal->owner:selected->owner;
+        if (!qa_application_equipment_request_weapon(app, actor,
+            owner, selected->item, accepted, error)) return false;
+        if (*accepted && selection) {
+            application_provider *provider=application_provider_lookup(app,owner,APPLICATION_PROVIDER_PUBLISHED);
+            qa_application_item_selection result={.item=selected->item,.provider=owner,.q3_weapon=-1};
+            if(!q3_item_weapon(provider,selected->item,&result.q3_weapon,error))return false;
+            *selection=result;
+        }
+    }
+    return true;
+}
+
 static qa_command_result named_item_action(qa_application *app, qa_actor_id actor,
     const qa_command_invocation *command, const qa_item_definition *selected,
-    qa_arena *storage, const qa_application_item_selection *requested,
-    qa_application_item_selection *selection, qa_error *error)
+    qa_arena *storage,qa_application_item_selection *selection, qa_error *error)
 {
     bool weapon = qa_text_ascii_equal(command->argv[0], "weapon");
     bool use = !qa_text_ascii_equal(command->argv[0], "drop");
     qa_item_action action = use ? QA_ITEM_USE : QA_ITEM_DROP;
-    if (!weapon && (selected->actions & action)) {
-        qa_item_definition actual;bool found;
-        if(!qa_inventory_item_definition_find(app->inventory,actor,NULL,selected->item,
-            &actual,&found,error))return QA_COMMAND_FAILED;
-        if(found&&actual.owner==selected->owner)
-            return qa_inventory_item_action(app->inventory, actor,
-                selected->item, action, error) ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
-    }
-    bool accepted = false;
-    if (use && selected->weapon) {
-        if (!qa_application_equipment_request_weapon(app, actor,
-            selected->owner, selected->item, &accepted, error)) return QA_COMMAND_FAILED;
-        if (accepted) {
-            if (selection) *selection = *requested;
-            return QA_COMMAND_HANDLED;
-        }
-    }
+    bool accepted;
+    if(!qa_application_equipment_item_action(app,actor,selected,action,weapon,
+        &accepted,selection,error))return QA_COMMAND_FAILED;
+    if(accepted)return QA_COMMAND_HANDLED;
     size_t extent = strlen(selected->label) + 32;
     char *message = qa_arena_alloc(storage, extent, 1, error);
     if (!message) return QA_COMMAND_FAILED;
@@ -211,12 +227,11 @@ qa_command_result qa_application_item_command(qa_application *app, qa_actor_id a
     qa_arena storage = {0};
     qa_console_command_arena(command->console, &storage);
     qa_item_definition item;
-    qa_application_item_selection requested = {.q3_weapon = -1};
     qa_command_result result = application_equipment_item_resolve(app, actor, command,
-        &storage, &item, selection ? &requested : NULL, error);
+        &storage, &item, NULL, error);
     if (result == QA_COMMAND_HANDLED && item.item)
         result = named_item_action(app, actor, command, &item, &storage,
-            &requested, selection, error);
+            selection, error);
     qa_arena_destroy(&storage);
     return result;
 }
