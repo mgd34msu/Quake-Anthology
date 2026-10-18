@@ -1499,8 +1499,6 @@ static bool registry_inventory(const frontend_config_store *manager,qa_applicati
             if (parent_game) {
                 frontend_config_source *parent=namespace_game(manager,application,parent_game,error);
                 if (!parent) return false;
-                if (hosted && parent!=game)
-                    return fail(error,QA_ERROR_ARGUMENT,"Host namespaces name another actual GAME parent");
                 game=parent;
             }
         } else {

@@ -298,13 +298,15 @@ bool application_q3_guest_services_descriptor(qa_application *application,
             break;
         }
     }
+    bool prepared = true;
     if (application->q3_services != NULL) {
         if (engine) engine->constructing_services = &services;
-        bool prepared = application->q3_services(application->guest_context, application,
+        prepared = application->q3_services(application->guest_context, application,
             provider->owner, role, seat, &services, error);
         if (engine) engine->constructing_services = NULL;
-        if (!prepared) return false;
     }
+    *out = services;
+    if (!prepared) return false;
     if (role != QA_QVM_GAME && application->q3_services == NULL)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 UI/cgame needs a platform/client service owner");
     if (role != QA_QVM_GAME && descriptor != provider->launch &&
@@ -332,8 +334,7 @@ bool application_q3_guest_services_descriptor(qa_application *application,
     }
     if (!writable_owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed their selected write-root authority");
-    services.command_context.cvar_view = qa_cvars_view_identity(services.cvars);
-    *out = services;
+    out->command_context.cvar_view = qa_cvars_view_identity(services.cvars);
     return true;
 }
 
