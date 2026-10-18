@@ -301,11 +301,16 @@ static bool language_prepare(application_provider *p, qa_actor_id actor,
     pending->next = ticket->pending; ticket->pending = pending;
     return true;
 }
+static application_provider *language_source(qa_application *app, qa_actor_id actor) {
+    application_provider *world = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    return world && world->kind == APPLICATION_PROVIDER_Q1 ? world :
+        app ? application_provider_for(app, actor, QA_ROLE_CHARACTER, "") : NULL;
+}
 bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_id actor,
     const char *language, application_native_q1_wire_language_ticket **out, qa_error *error) {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 language admission ticket");
     *out = NULL;
-    application_provider *primary = app ? application_provider_for(app, actor, QA_ROLE_CHARACTER, "") : NULL;
+    application_provider *primary = language_source(app, actor);
     if (!primary || primary->kind != APPLICATION_PROVIDER_Q1 || !qa_q1_wire_enabled(primary->state.q1)) return true;
     bool required;
     if (!wire_registration_required(primary, application_world_provider(app, QA_ROLE_ENTITIES, ""), &required, error)) return false;
@@ -329,7 +334,7 @@ bool application_native_q1_wire_language_prepare(qa_application *app, qa_actor_i
     }
     uint32_t current_slot;
     if (app->destroy_requested || primary->close_pending ||
-        application_provider_for(app, actor, QA_ROLE_CHARACTER, "") != primary ||
+        language_source(app, actor) != primary ||
         !qa_q1_native_client_slot(primary->state.q1, actor, &current_slot, error) || current_slot != slot) {
         application_native_q1_wire_language_abort(ticket);
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 language recipient changed during catalog admission");
@@ -412,7 +417,7 @@ bool qa_application_language_ready_is(const qa_application_language_ticket *held
     if (!ticket || !app || ticket->application!=app || app->destroy_requested || !app->session ||
         !language || !ticket->language || strcmp(ticket->language,language) ||
         !qa_actor_id_equal(ticket->actor,actor) || !qa_actors_get(qa_session_actors(app->session),actor) ||
-        !ticket->pending || application_provider_for(ticket->application,actor,QA_ROLE_CHARACTER,"")!=ticket->primary)
+        !ticket->pending || language_source(ticket->application,actor)!=ticket->primary)
         return false;
     uint32_t slot;
     if (!ticket->primary || ticket->primary->kind!=APPLICATION_PROVIDER_Q1 ||
@@ -958,14 +963,14 @@ static bool emit_text(qa_application *app, application_provider *wire,
         char output[1024]; const char *value = format;
         if (formatted) {
             native_q1_wire_language *row = language_row(source->native_q1_wire, actor);
-            if (!row || !row->catalog) { okay = application_fail(error, QA_ERROR_NOT_FOUND, "Q1 wire text has no admitted recipient catalog"); break; }
+            const qa_localization *catalog = row ? row->catalog : NULL;
             if (source->product->edition != QA_EDITION_RERELEASE &&
-                (*format != '$' || !qa_localization_find(row->catalog, format + 1))) {
+                (*format != '$' || !qa_localization_find(catalog, format + 1))) {
                 qa_unified_frame_lease *scratch = application_control_storage_acquire(app, error);
                 okay = scratch && qa_q1_classic_text(format, arguments, event->argument_count,
                     qa_unified_frame_lease_arena(scratch), output, sizeof(output), error);
                 qa_unified_frame_lease_release(scratch);
-            } else (void)qa_localize_presentation(row->catalog, format, arguments,
+            } else (void)qa_localize_presentation(catalog, format, arguments,
                 event->argument_count, true, output, sizeof(output));
             value = output;
         }
