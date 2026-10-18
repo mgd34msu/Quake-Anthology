@@ -198,9 +198,17 @@ typedef struct application_visual_record {
     bool active, alpha_fallback;
 } application_visual_record;
 
+typedef struct application_appearance_record {
+    qa_actor_owner provider;
+    qa_product_id content;
+    qa_string_id input_skin, model, skin_path;
+    uint64_t generation;
+} application_appearance_record;
+
 typedef struct application_actor_views_record {
     application_motion_record motion;
     application_visual_record visual;
+    application_appearance_record appearance;
 } application_actor_views_record;
 typedef struct application_actor_views application_actor_views;
 application_actor_views *application_actor_views_create(const qa_actor_registry *, qa_error *);
@@ -208,6 +216,7 @@ void application_actor_views_destroy(application_actor_views *);
 application_actor_views_record *application_actor_views_find(application_actor_views *, qa_actor_id);
 application_actor_views_record *application_actor_views_admit(application_actor_views *, qa_actor_id, qa_error *);
 void application_actor_views_remove(application_actor_views *, qa_actor_id);
+bool application_visual_player_appearance_bind(qa_application *, qa_actor_id, qa_error *);
 
 typedef struct application_publication {
     struct application_publication *failed_next;

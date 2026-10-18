@@ -105,7 +105,7 @@ static bool materials_admit(void *context,qa_scene_model *node,qa_error *error)
         for (size_t i = 0; i < node->source->mesh_count; ++i)
             for (size_t j = 0; j < node->source->meshes[i].shader_count; ++j) {
                 const scene_model_image *image = node->meshes[i].shaders[j];
-                if (image && !scene_model_resource_admit(node, materials, image->name_id, error)) return false;
+                if (image && !qa_scene_model_resource_admit(node, materials, image->name_id, error)) return false;
             }
     }
     if (skin && node->source->format != QA_MODEL_MDL) {
@@ -114,7 +114,7 @@ static bool materials_admit(void *context,qa_scene_model *node,qa_error *error)
             node->source->mesh_count ? &node->meshes[0].surface : NULL,
             sizeof(*node->meshes), node->source->mesh_count, &bindings, error)) return false;
         for (size_t i = 0; bindings && i < node->source->mesh_count; ++i)
-            if (bindings[i] != SIZE_MAX && !scene_model_resource_admit(node, materials,
+            if (bindings[i] != SIZE_MAX && !qa_scene_model_resource_admit(node, materials,
                 skin->mappings[bindings[i]].shader_id, error)) return false;
     }
     return true;
@@ -924,7 +924,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
                 *out = external; return true;
             }
             if (input->material_library) {
-                if (!scene_model_material(model, input->material_library,
+                if (!qa_scene_model_material(model, input->material_library,
                     input->custom_skin->mappings[i].shader_id, &external->material, error)) return false;
                 *out = external; return true;
             }
@@ -948,7 +948,7 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         if (input->material_library) {
             scene_model_image *registered = model->meshes[index].shaders[skin];
             if (!registered) return true;
-            if (!scene_model_material(model, input->material_library, registered->name_id,
+            if (!qa_scene_model_material(model, input->material_library, registered->name_id,
                 &external->material, error)) return false;
             if (qa_material_library_has_source_profile(input->material_library) && external->material->default_shader &&
                 (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))

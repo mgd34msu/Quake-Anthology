@@ -1090,6 +1090,10 @@ bool qa_scene_model_skin_admit(qa_scene_model *, const qa_model_skin_map *, qa_e
 bool qa_scene_model_materials_admit(qa_scene_model *, const qa_model_skin_map *,
     qa_material_library *, qa_error *);
 bool qa_scene_model_materials_ready(const qa_scene_model *, const qa_material_library *);
+/* Admit an external skin into the same model/material binding cache. */
+bool qa_scene_model_resource_admit(qa_scene_model *, qa_material_library *, qa_string_id, qa_error *);
+bool qa_scene_model_material(qa_scene_model *, qa_material_library *, qa_string_id,
+    const qa_material **, qa_error *);
 bool qa_scene_model_lerp_tag(const qa_scene_model *, qa_string_id name,
     uint32_t from, uint32_t to, float fraction, qa_model_tag *);
 bool qa_scene_model_grip_bind(qa_scene_model *, const char *joint,

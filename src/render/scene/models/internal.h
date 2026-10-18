@@ -119,9 +119,6 @@ static inline void model_bounds_add(qa_bounds *b, qa_vec3 p) {
 
 bool scene_model_external(qa_scene_model *, const char *, qa_scene_frame *, scene_model_image **, qa_error *);
 bool scene_model_external_id(qa_scene_model *, qa_string_id, scene_model_image **, qa_error *);
-bool scene_model_material(qa_scene_model *, qa_material_library *, qa_string_id,
-                         const qa_material **, qa_error *);
-bool scene_model_resource_admit(qa_scene_model *, qa_material_library *, qa_string_id, qa_error *);
 void scene_model_bindings_destroy(qa_scene_model *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,
                          bool sprite, scene_model_image **, qa_error *);

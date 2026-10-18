@@ -3,6 +3,10 @@
 
 #include "qa/application_native_q2_presentation.h"
 #include "qa/native_host_q2_wire.h"
+#include "qa/player_names.h"
+
+bool application_q2_player_media_probe(qa_strings *, qa_vfs *, bool rerelease,
+    qa_string_id, qa_q2_player_media_kind, bool *, qa_error *);
 
 typedef struct application_native_q2_appearance {
     qa_application_native_q2_presentation source;

@@ -264,12 +264,15 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
     const qa_actor_record *actor;
     while (ok && qa_actors_next(actors, &cursor, &actor)) {
         const application_actor_views_record *current = application_actor_views_find(app->actor_views, actor->id);
-        if (current && current->visual.active) {
+        if (current && (current->visual.active || current->appearance.provider)) {
             application_actor_views_record *candidate = application_actor_views_admit(views, actor->id, error);
             if (candidate) {
-                candidate->visual = current->visual;
-                candidate->visual.alpha_fallback = false;
-                if (current->visual.alpha_fallback) candidate->visual.visual.alpha = 1;
+                candidate->appearance = current->appearance;
+                if (current->visual.active) {
+                    candidate->visual = current->visual;
+                    candidate->visual.alpha_fallback = false;
+                    if (current->visual.alpha_fallback) candidate->visual.visual.alpha = 1;
+                }
             }
             else ok = false;
         }

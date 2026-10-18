@@ -2133,6 +2133,7 @@ static bool q2_player_event(void *context, const qa_q2_player_event *event, qa_e
             !qa_strings_intern_cstr(strings, event->text, &identity->name, error)) return false;
         if (application_provider_for(app, event->actor, QA_ROLE_SKIN, "") == provider &&
             !qa_player_skin_bind(strings, event->skin, provider->product->edition == QA_EDITION_RERELEASE, &identity->skin, &identity->model, error)) return false;
+        if (!application_visual_player_appearance_bind(app, event->actor, error)) return false;
     }
     return application_emit_q2_player(context, event, error);
 }
@@ -2338,7 +2339,8 @@ static bool configure_borrowed_q2_character(qa_application *app,
     qa_string_id id;
     bool okay = qa_strings_intern_cstr(qa_session_strings(app->session), path, &id, error);
     free(path);
-    return okay && qa_q2_character_configure(character->state.q2, actor, id, 0, error);
+    return okay && qa_q2_character_configure(character->state.q2, actor, id, 0, error) &&
+        application_visual_player_appearance_bind(app, actor, error);
 }
 
 bool application_players_restore_prepare(qa_application *application,
@@ -4523,7 +4525,10 @@ static bool record_text(qa_application *application, struct application_player_r
         record_free(roster, record);
         return application_fail(error, QA_ERROR_MEMORY, "cannot retain player connection text");
     }
-    if (record->actor.registry) record_bind_identity(application, record);
+    if (record->actor.registry) {
+        record_bind_identity(application, record);
+        return application_visual_player_appearance_bind(application, record->actor, error);
+    }
     return true;
 }
 
@@ -6022,6 +6027,9 @@ bool application_players_checkpoint_restore(qa_application *candidate, qa_bytes 
              create_q1_selector_options(candidate, roster, &source_options, error) &&
              qa_q1_spawn_selector_checkpoint_restore(roster->q1_selector, &selector, error);
     } else if (ok && (last.generation || last.slot || q1_points)) ok = false;
+    for (size_t i = 0; ok && i < roster->count; ++i)
+        if (roster->records[i].actor.registry)
+            ok = application_visual_player_appearance_bind(candidate, roster->records[i].actor, error);
     if (!ok) {
         roster_free(roster);
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "roster continuation disagrees with candidate owners");

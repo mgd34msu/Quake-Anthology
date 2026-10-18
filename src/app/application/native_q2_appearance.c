@@ -17,6 +17,19 @@ static struct application_native_q2 *engine_read(qa_application *app,
         !engine->calls && engine->hud_names.configured ? engine : NULL;
 }
 
+bool application_q2_player_media_probe(qa_strings *strings, qa_vfs *files, bool rerelease,
+    qa_string_id name, qa_q2_player_media_kind kind, bool *found, qa_error *error)
+{
+    const char *path = qa_strings_cstr(strings, name);
+    char picture[4096];
+    if (kind == QA_Q2_PLAYER_MEDIA_ICON) {
+        if (!qa_scene_q2_picture_path(path, rerelease, picture, sizeof(picture), error)) return false;
+        path = picture;
+    }
+    uint64_t size;
+    return qa_vfs_probe(files, path, found, &size, error);
+}
+
 static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kind kind,
     bool *found, qa_error *error)
 {
@@ -35,14 +48,8 @@ static bool media_probe(void *context, qa_string_id name, qa_q2_player_media_kin
         return true;
     }
     if (!qa_id_index_reserve(&engine->media_probes, 1, error)) return false;
-    const char *path = qa_strings_cstr(qa_session_strings(engine->provider->application->session), name);
-    char picture[4096];
-    if(kind==QA_Q2_PLAYER_MEDIA_ICON) {
-        if(!qa_scene_q2_picture_path(path,engine->hud_names.layout.extended,picture,sizeof(picture),error)) return false;
-        path=picture;
-    }
-    uint64_t size;
-    if (!qa_vfs_probe(files, path, found, &size, error)) return false;
+    if (!application_q2_player_media_probe(qa_session_strings(engine->provider->application->session),
+        files, engine->hud_names.layout.extended, name, kind, found, error)) return false;
     qa_id_index_insert(&engine->media_probes, name, 0, *found);
     return true;
 }

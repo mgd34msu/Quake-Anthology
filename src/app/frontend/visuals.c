@@ -1532,6 +1532,8 @@ bool frontend_visuals_prepare(qa_frontend *frontend, qa_error *error)
                 if (!model_read(frontend, owner, path, view.model_resources[part], view.model_openings[part],
                     view.family == QA_GAME_Q1 && view.visual.has_player_colors, view.visual.player_colors,
                     &model, error)) return false;
+                if (!part && view.skin_path && !qa_scene_model_resource_admit(model->scene,
+                    owner->materials,view.skin_path,error)) return false;
                 if (!part && !frontend_particle_visual_admit(frontend, &view, model->model, error)) return false;
             }
         }
@@ -1640,6 +1642,8 @@ bool frontend_visuals_submit(qa_frontend *frontend, uint32_t seat, qa_actor_owne
                 .entity = actor.slot, .identity_light = world->identity_light, .seconds = world->seconds,
                 .ambient = {1, 1, 1}, .fog = world->fog, .source_path = path,
                 .video_frame = frontend_material_movies_frontend_resolve, .video_context = frontend};
+            if (!part && view.skin_path && !qa_scene_model_material(model->scene,owner->materials,
+                view.skin_path,&input.custom_material,error)) return false;
             if (!qa_scene_world_sample_light_input(frontend->scene_world, world, view.body.origin,
                 &input.ambient, &input.directed, &input.light_direction, error)) return false;
             if (!frontend_legacy_model_input(frontend->scene_world, world, &input, error)) return false;

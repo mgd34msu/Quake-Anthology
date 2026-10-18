@@ -6,6 +6,7 @@
 #include "qa/game_q1_bots.h"
 #include "visual_visibility.h"
 #include "native_q2_console.h"
+#include "native_q2_appearance.h"
 #include "guest_native_q2_private.h"
 #include "native_q3_wire.h"
 #include "qa/application_native_q2_presentation.h"
@@ -17,6 +18,61 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct appearance_probe {
+    qa_strings *strings;
+    qa_vfs *files;
+    bool rerelease, skin_found;
+} appearance_probe;
+
+static bool player_media_probe(void *context, qa_string_id name,
+    qa_q2_player_media_kind kind, bool *found, qa_error *error)
+{
+    appearance_probe *probe = context;
+    if (!application_q2_player_media_probe(probe->strings, probe->files,
+        probe->rerelease, name, kind, found, error)) return false;
+    if (kind == QA_Q2_PLAYER_MEDIA_SKIN) probe->skin_found = *found;
+    return true;
+}
+
+bool application_visual_player_appearance_bind(qa_application *app, qa_actor_id actor,
+    qa_error *error)
+{
+    application_actor_views_record *view = app ? application_actor_views_find(app->actor_views, actor) : NULL;
+    application_provider *body = app ? application_provider_for(app, actor, QA_ROLE_BODY, "") : NULL;
+    application_provider *skin = app ? application_provider_for(app, actor, QA_ROLE_SKIN, "") : NULL;
+    const qa_actor_player *identity = app && app->session ?
+        qa_actors_player(qa_session_actors(app->session), actor) : NULL;
+    if (!body || body->kind != APPLICATION_PROVIDER_Q2 || !skin || !identity ||
+        !identity->present || !identity->skin || !body->launch || !skin->launch ||
+        !skin->product || !skin->launch->content ||
+        skin->launch->content != body->launch->content) {
+        if (view) view->appearance = (application_appearance_record){0};
+        return true;
+    }
+    uint64_t generation = qa_vfs_lookup_generation(skin->launch->content);
+    if (view && view->appearance.provider == skin->owner &&
+        view->appearance.content == skin->product->id &&
+        view->appearance.input_skin == identity->skin && view->appearance.generation == generation)
+        return true;
+    qa_strings *strings = qa_session_strings(app->session);
+    bool rerelease = skin->product->edition == QA_EDITION_RERELEASE;
+    qa_hud_q2_player_names names = qa_hud_q2_appearance_names_read(
+        qa_strings_cstr(strings, identity->skin), rerelease);
+    qa_hud_q2_player_ids ids = {0};
+    if (!qa_strings_intern(strings, names.model, &ids.model, error) ||
+        !qa_strings_intern(strings, names.skin, &ids.skin, error)) return false;
+    appearance_probe probe = {strings, skin->launch->content, rerelease, false};
+    qa_q2_player_media media = {0};
+    if (!qa_q2_player_media_resolve(strings, &ids, NULL, 0, rerelease, 0, false, true,
+        player_media_probe, &probe, &media, error)) return false;
+    if (!view && !(view = application_actor_views_admit(app->actor_views, actor, error))) return false;
+    view->appearance = (application_appearance_record){.provider = skin->owner,
+        .content = skin->product->id, .input_skin = identity->skin,
+        .model = media.model, .skin_path = probe.skin_found ? media.skin : QA_STRING_NONE,
+        .generation = generation};
+    return true;
+}
 
 static application_provider *alpha_provider(qa_application *app, qa_actor_id actor,
     qa_error *error)
@@ -507,6 +563,13 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         return false;
     }
     if (!qa_application_visual_alpha_read(application, actor, &view.visual.alpha, error)) return false;
+    const application_actor_views_record *retained = application_actor_views_find(application->actor_views, actor);
+    application_provider *skin = application_provider_for(application, actor, QA_ROLE_SKIN, "");
+    if (retained && skin && skin->launch && body->launch &&
+        retained->appearance.provider == skin->owner &&
+        skin->launch->content == body->launch->content &&
+        retained->appearance.model == view.visual.models[0] && view.visual.skin == 0)
+        view.skin_path = retained->appearance.skin_path;
     application_provider *map = application_world_provider(application, QA_ROLE_ENTITIES, "");
     if (map != NULL && map->constructed && map->kind == APPLICATION_PROVIDER_Q1)
         (void)qa_q1_game_map_effects(map->state.q1, actor, &view.q1_effects);

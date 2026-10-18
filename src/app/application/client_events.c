@@ -318,6 +318,7 @@ bool application_client_userinfo_changed(qa_application *app, qa_actor_id actor,
             app->publication_generation != generation || app->players->map_provider != source))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "Client listener replaced its canonical actor or publication");
     }
+    if (ok) ok = application_visual_player_appearance_bind(app, actor, error);
     qa_launch_snapshot_release(launch);
     qa_unified_frame_lease_release(storage); return ok;
 }

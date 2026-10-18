@@ -79,7 +79,7 @@ static scene_model_resource_binding *binding_find(qa_scene_model *model,
     return entry ? (scene_model_resource_binding *)(uintptr_t)entry->value : NULL;
 }
 
-bool scene_model_resource_admit(qa_scene_model *model, qa_material_library *materials,
+bool qa_scene_model_resource_admit(qa_scene_model *model, qa_material_library *materials,
     qa_string_id shader, qa_error *error)
 {
     if (binding_find(model, materials, shader)) return true;
@@ -106,7 +106,7 @@ bool scene_model_resource_admit(qa_scene_model *model, qa_material_library *mate
     return true;
 }
 
-bool scene_model_material(qa_scene_model *model, qa_material_library *materials,
+bool qa_scene_model_material(qa_scene_model *model, qa_material_library *materials,
     qa_string_id shader, const qa_material **out, qa_error *error)
 {
     const scene_model_resource_binding *binding = binding_find(model, materials, shader);
@@ -146,8 +146,8 @@ bool scene_model_external(qa_scene_model *model, const char *name, qa_scene_fram
     free(owned);
     if (!image) return false;
     if (model->options.family == QA_GAME_Q3) {
-        if (!scene_model_resource_admit(model, model->materials, image->name_id, error) ||
-            !scene_model_material(model, model->materials, image->name_id, &image->material, error)) goto fail;
+        if (!qa_scene_model_resource_admit(model, model->materials, image->name_id, error) ||
+            !qa_scene_model_material(model, model->materials, image->name_id, &image->material, error)) goto fail;
         if (qa_material_library_has_source_profile(model->materials) && image->material->default_shader &&
             (model->source->format == QA_MODEL_MD3 || model->source->format == QA_MODEL_MD4))
             image->material = qa_material_library_builtin(model->materials, QA_MATERIAL_BUILTIN_DEFAULT);
