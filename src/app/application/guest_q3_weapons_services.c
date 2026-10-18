@@ -343,15 +343,15 @@ bool application_q3_weapons_services_select_intent(application_q3_weapons_servic
     if (ok && !is_active) ok = qa_inventory_count_read(app->inventory, actor, item, &count, error);
     if (ok && (!request_source(s, actor, &slot, error) || !request_owner_current(s, actor)))
         ok = application_fail(error, QA_ERROR_NOT_FOUND, "Original weapon selection replaced its real actor or inventory owner");
-    if (ok && is_active) {
-        request_remove(s, actor_state_find(s, actor));
-        *admitted = true;
-    } else if (ok && count > 0) {
+    if (ok && (is_active || count > 0)) {
         application_q3_client_weapon_result dispatch = APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED;
         if (!s->role->weapons)
             ok = application_guest_q3_client_weapon(provider, actor, weapon, &dispatch, error);
-        if (ok && request_owner_current(s, actor) && dispatch != APPLICATION_Q3_CLIENT_WEAPON_UNAVAILABLE) {
-            ok = request_source(s, actor, &slot, error) && q3_weapon_request_store(s, actor, weapon, error);
+        if (ok && request_owner_current(s, actor)) {
+            ok = request_source(s, actor, &slot, error);
+            if (ok && is_active && dispatch == APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED)
+                request_remove(s, actor_state_find(s, actor));
+            else if (ok) ok = q3_weapon_request_store(s, actor, weapon, error);
             if (ok) *admitted = true;
         }
     }
@@ -368,21 +368,8 @@ bool application_q3_weapons_services_request(application_q3_weapons_services *s,
     uint32_t slot;
     if (!request_source(s, actor, &slot, error)) return false;
     int32_t weapon = state->weapon;
-    if (!s->role->weapons) {
-        ++s->calls;
-        application_q3_client_weapon_result dispatch;
-        bool ok = application_guest_q3_client_weapon(s->role->engine->provider, actor, weapon, &dispatch, error);
-        --s->calls;
-        if (!ok) return false;
-        /* A missing CLIENT can be rebound without losing an admitted request. */
-        if (!request_owner_current(s, actor)) {
-            request_remove(s, actor_state_find(s, actor)); return true;
-        }
-        if (!request_source(s, actor, &slot, error)) return false;
-        state = actor_state_find(s, actor);
-    }
     *present = state && state->requested;
-    if (*present) *out = state->weapon;
+    if (*present) *out = weapon;
     return true;
 }
 bool application_q3_weapons_services_request_completed(application_q3_weapons_services *s,
@@ -394,18 +381,30 @@ bool application_q3_weapons_services_request_completed(application_q3_weapons_se
     if (!request_owner_current(s, actor)) { request_remove(s, state); return true; }
     uint32_t slot;
     if (!request_source(s, actor, &slot, error)) return false;
-    int32_t selection;
+    int32_t selection, weapon = state->weapon;
     if (s->role->weapons) {
         q3_weapon_actor source;
         if (!q3_weapons_actor(s->role->weapons, actor, &source, error) ||
             !q3_weapons_read(s->role->weapons, source.player +
                 s->role->weapons->profile.selection_offset, &selection, error)) return false;
     } else {
+        ++s->calls;
+        application_q3_client_weapon_result dispatch;
+        bool ok = application_guest_q3_client_weapon(s->role->engine->provider, actor, weapon, &dispatch, error);
+        --s->calls;
+        if (!ok) return false;
+        if (!request_owner_current(s, actor)) {
+            request_remove(s, actor_state_find(s, actor)); return true;
+        }
+        if (!request_source(s, actor, &slot, error)) return false;
+        state = actor_state_find(s, actor);
+        if (!state || !state->requested || state->weapon != weapon ||
+            dispatch != APPLICATION_Q3_CLIENT_WEAPON_DISPATCHED) return true;
         qa_q3_player player;
         if (!qa_q3_host_source_player(s->role->host, slot, &player, error)) return false;
         selection = player.weapon;
     }
-    if (selection == state->weapon) request_remove(s, state);
+    if (selection == weapon) request_remove(s, state);
     return true;
 }
 bool application_q3_weapons_services_validate(application_q3_weapons_services *s, qa_error *error)
