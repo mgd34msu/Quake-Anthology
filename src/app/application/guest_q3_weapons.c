@@ -204,7 +204,8 @@ static bool dispatch(void *context, const qa_qvm_call *call, int32_t *result, qa
         if (ok && error) *error = cleanup;
         ok = false;
     }
-    if (ok && q3_weapons_current(w, &actor)) ok = w->services.completed(w->services.context, actor.actor, scope.reached, error);
+    if (ok && q3_weapons_current(w, &actor))
+        ok = w->services.completed(w->services.context, actor.actor, call, scope.reached, error);
     w->dispatch = scope.previous; qa_unified_frame_lease_release(storage); return ok;
 }
 static bool request(void *context, const qa_qvm_call *call, int32_t *result, qa_error *error)

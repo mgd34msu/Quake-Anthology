@@ -993,11 +993,12 @@ static bool give_named(void *context, qa_actor_id actor, qa_bytes bytes, bool *h
     }
     qa_unified_frame_lease_release(storage); return ok;
 }
-static bool completed(void *context, qa_actor_id actor, bool reached, qa_error *error)
+static bool completed(void *context, qa_actor_id actor,const qa_qvm_call *call,
+    bool reached, qa_error *error)
 {
     application_q3_weapons_services *s = context; q3_weapon_actor source;
     if (!q3_weapon_services_source(s, actor, &source, error)) return false;
-    return application_guest_input_weapon_completed(s->role, actor, reached, error);
+    return application_guest_input_weapon_completed(s->role, actor, call, reached, error);
 }
 static bool prepare(void *context, qa_actor_id actor, const qa_qvm_call *call,
     qa_unified_frame_lease *storage, application_q3_weapon_preparation *out, qa_error *error)

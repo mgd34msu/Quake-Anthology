@@ -482,7 +482,7 @@ bool application_guest_input_prepare_weapon(void *context, qa_actor_id actor,
 }
 
 bool application_guest_input_weapon_completed(void *context, qa_actor_id actor,
-    bool reached, qa_error *error)
+    const qa_qvm_call *call,bool reached, qa_error *error)
 {
     q3g_role *role = context;
     application_guest_input *input = role ? role->input : NULL;
@@ -490,7 +490,7 @@ bool application_guest_input_weapon_completed(void *context, qa_actor_id actor,
         return application_fail(error, QA_ERROR_ARGUMENT, "Original weapon decision lost its actual input owner");
     guest_client_scope *scope = input->scope;
     if (!scope || !scope->weapon_slice || !qa_actor_id_equal(scope->actor, actor)) return true;
-    if (!current(input, scope, scope->call)) return cancel_client(scope->call, scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     scope->weapon_reached = reached;
     return true;
 }
@@ -502,7 +502,7 @@ bool application_guest_input_weapon_slice(const qa_application *app, qa_actor_id
     application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
     guest_client_scope *scope = input ? input->scope : NULL;
     return scope && scope->weapon_slice && scope->input_active &&
-        qa_actor_id_equal(scope->actor, actor) && current(input, scope, scope->call);
+        qa_actor_id_equal(scope->actor, actor) && record_current(input, scope);
 }
 
 static bool equipment_admit(application_guest_input *input, guest_client_scope *scope,

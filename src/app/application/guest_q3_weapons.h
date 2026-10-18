@@ -26,7 +26,7 @@ typedef struct application_q3_weapon_services {
     bool (*selected)(void *, qa_actor_id);
     bool (*attempted)(void *, qa_actor_id, int32_t, qa_error *);
     bool (*accepted)(void *, qa_actor_id, int32_t, qa_error *);
-    bool (*completed)(void *, qa_actor_id, bool reached_attack_decision, qa_error *);
+    bool (*completed)(void *, qa_actor_id, const qa_qvm_call *, bool reached_attack_decision, qa_error *);
     bool (*give)(void *, qa_actor_id, application_q3_weapon_grant, qa_error *);
     bool (*give_item)(void *, qa_actor_id, qa_bytes, bool *handled, qa_error *);
     bool (*drop)(void *, qa_actor_id, application_q3_weapon_drop *, qa_error *);
