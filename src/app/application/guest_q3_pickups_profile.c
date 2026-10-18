@@ -137,7 +137,7 @@ static bool known(q3g_role *role,application_q3_pickup_profile *p,qa_error *e)
     p->dropped_flag=4096;p->weapon_type=1;p->ammo_type=2;p->item_argument=1;p->player_argument=2;
     p->touch=stock?103974:168574;p->free=stock?129805:211210;
     p->objective_count=1;p->objective_types=malloc(sizeof(*p->objective_types));
-    p->grant_count=stock?2:3;p->grants=calloc(p->grant_count,sizeof(*p->grants));
+    p->grant_count=3;p->grants=calloc(p->grant_count,sizeof(*p->grants));
     if(!p->objective_types||!p->grants)return application_fail(e,QA_ERROR_MEMORY,"Retaining exact pickup profile");
     p->objective_types[0]=8;
     if(!one_call(&p->gate,stock?65953:20482,stock?104007:168697,stock?0:168873,e)||
@@ -148,11 +148,13 @@ static bool known(q3g_role *role,application_q3_pickup_profile *p,qa_error *e)
     ammo->item_type=2;ammo->accepted_return=103265;ammo->eligibility=stock?Q3_PICKUP_ELIGIBLE:Q3_PICKUP_THREEWAVE_LITHIUM;
     if(!one_call(&armor->function,stock?103594:167408,stock?104107:169094,0,e)||
         !one_call(&ammo->function,stock?103220:166848,stock?104091:169078,0,e))return false;
-    if(three){ammo->region=true;ammo->entry=166875;ammo->join=166893;ammo->quantity=20;
-        application_q3_pickup_grant *w=p->grants+2;w->item_type=1;w->region=true;w->weapon=true;
-        w->entry=167099;w->join=167173;w->quantity=20;w->bits_offset=204;w->ammo_offset=376;
-        w->evaluation=(qa_qvm_region_evaluation){.entry=166958,.join=167099,.result_offset=20};w->eligibility=Q3_PICKUP_THREEWAVE_LITHIUM;
-        if(!one_call(&w->function,166897,169062,0,e))return false;}
+    ammo->region=true;ammo->entry=stock?103247:166875;ammo->join=stock?103265:166893;ammo->quantity=20;
+    application_q3_pickup_grant *w=p->grants+2;w->item_type=1;w->region=true;w->weapon=true;
+    w->entry=stock?103372:167099;w->join=stock?103446:167173;w->quantity=20;
+    w->bits_offset=stock?192:204;w->ammo_offset=376;
+    w->evaluation=(qa_qvm_region_evaluation){.entry=stock?103270:166958,.join=w->entry,.result_offset=20};
+    w->eligibility=stock?Q3_PICKUP_ELIGIBLE:Q3_PICKUP_THREEWAVE_LITHIUM;
+    if(!one_call(&w->function,stock?103269:166897,stock?104075:169062,0,e))return false;
     return true;
 }
 static bool qualify_function(const qa_qvm_instruction *code,size_t n,const application_q3_pickup_function *f,qa_error *e)
