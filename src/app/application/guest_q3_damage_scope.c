@@ -2,7 +2,7 @@
 #include "guest_q3_private.h"
 #include "control_frame.h"
 
-typedef struct damage_change { uint32_t address; qa_damage_mutation mutation; } damage_change;
+typedef struct damage_change { uint64_t address; qa_damage_mutation mutation; } damage_change;
 typedef struct damage_delivery {
     struct damage_delivery *next;
     qa_unified_frame_lease *storage;
@@ -69,7 +69,7 @@ bool application_q3_damage_scope_cancel(application_q3_damage_frame *frame, qa_e
     if (!qa_qvm_cancel(&frame->call, error)) return false;
     frame->cancelled = true; return true;
 }
-static bool touches(const qa_qvm_committed_write *event, uint32_t at, size_t size)
+static bool touches(const qa_qvm_committed_write *event, uint64_t at, size_t size)
 {
     for (size_t i = 0; i < event->count; ++i) {
         const qa_qvm_committed_range *range = event->ranges + i;
@@ -158,7 +158,7 @@ static bool store_publish(void *context, qa_qvm *vm,
     bool report;
     if (!reporting(frame, &report, error)) return false;
     damage_change changes[3]; size_t count = 0;
-    uint32_t health_at = frame->source.entity + d->fields.health;
+    uint64_t health_at = frame->source.entity + d->fields.health;
     if (touches(event, health_at, 4)) {
         int32_t word;
         if (!application_q3_combat_word_read(&frame->source, health_at, &word, error)) goto failed;
@@ -168,24 +168,24 @@ static bool store_publish(void *context, qa_qvm *vm,
             {.kind = QA_MUTATION_HEALTH, .value.health = {before, after}}};
     }
     if (frame->source.player) {
-        uint32_t first = UINT32_MAX;
-        uint32_t points = frame->source.player + 184 + d->armor.points_stat * 4;
+        uint64_t first = UINT64_MAX;
+        uint64_t points = frame->source.player + 184 + d->armor.points_stat * 4;
         if (touches(event, points, 4)) first = points;
         if (d->armor.mode_count) {
-            uint32_t tier = frame->source.player + 184 + d->armor.tier_stat * 4;
+            uint64_t tier = frame->source.player + 184 + d->armor.tier_stat * 4;
             if (touches(event, tier, 4) && tier < first) first = tier;
             for (size_t i = 0; i < d->armor.mode_count; ++i)
                 if (touches(event, d->armor.modes[i].offset, 4) && d->armor.modes[i].offset < first)
                     first = d->armor.modes[i].offset;
         }
-        if (first != UINT32_MAX) {
+        if (first != UINT64_MAX) {
             qa_armor before = frame->armor;
             if (!application_q3_combat_armor_read(&frame->source, &frame->armor, error)) goto failed;
             if (!qa_armor_equal(before, frame->armor)) changes[count++] = (damage_change){first,
                 {.kind = QA_MUTATION_ARMOR, .value.armor = {before, frame->armor}}};
         }
     }
-    uint32_t velocity_at = frame->source.player ? frame->source.player + 32 : frame->source.entity + 36;
+    uint64_t velocity_at = frame->source.player ? frame->source.player + 32 : frame->source.entity + 36;
     if (touches(event, velocity_at, 12)) {
         qa_vec3 before = frame->velocity;
         if (!application_q3_combat_velocity(&frame->source, &frame->velocity, error)) goto failed;
@@ -341,6 +341,10 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
         !qa_actor_id_equal(source->actor, request->target) || !application_q3_combat_actor_current(source, error))
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 damage scope lost its entered actor namespace");
     const application_q3_combat_definition *d = application_q3_combat_profile_definition(owner->profile);
+    if (source->entity > UINT32_MAX - (d->entity_stride - 1) ||
+        (source->player && source->player > UINT32_MAX - (d->client_stride - 1)))
+        return fail(error, QA_ERROR_ARGUMENT, "Source combat records leave their QVM observer address space");
+    uint32_t entity = (uint32_t)source->entity, player = (uint32_t)source->player;
     int32_t target;
     if (call->instruction != d->callbacks.damage ||
         !qa_qvm_call_argument(call, d->damage_call.positions[Q3_DAMAGE_TARGET], &target, error) ||
@@ -369,14 +373,14 @@ bool application_q3_damage_scope_run(application_q3_damage_scopes *owner,
     qa_qvm_write_range *ranges = (qa_qvm_write_range *)(frame + 1);
     size_t count = 0;
     if (ok) {
-        ranges[count++] = (qa_qvm_write_range){source->entity + d->fields.health, 4};
-        ranges[count++] = (qa_qvm_write_range){source->player ? source->player + 32 : source->entity + 36, 12};
-        ranges[count++] = (qa_qvm_write_range){source->entity + d->reactions.pain, 4};
-        ranges[count++] = (qa_qvm_write_range){source->entity + d->reactions.die, 4};
+        ranges[count++] = (qa_qvm_write_range){entity + d->fields.health, 4};
+        ranges[count++] = (qa_qvm_write_range){player ? player + 32 : entity + 36, 12};
+        ranges[count++] = (qa_qvm_write_range){entity + d->reactions.pain, 4};
+        ranges[count++] = (qa_qvm_write_range){entity + d->reactions.die, 4};
         if (source->player) {
-            ranges[count++] = (qa_qvm_write_range){source->player + 184 + d->armor.points_stat * 4, 4};
+            ranges[count++] = (qa_qvm_write_range){player + 184 + d->armor.points_stat * 4, 4};
             if (d->armor.mode_count) {
-                ranges[count++] = (qa_qvm_write_range){source->player + 184 + d->armor.tier_stat * 4, 4};
+                ranges[count++] = (qa_qvm_write_range){player + 184 + d->armor.tier_stat * 4, 4};
                 for (size_t i = 0; i < d->armor.mode_count; ++i)
                     ranges[count++] = (qa_qvm_write_range){d->armor.modes[i].offset, 4};
             }

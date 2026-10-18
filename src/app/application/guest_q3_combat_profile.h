@@ -3,6 +3,7 @@
 
 #include "qa/gameplay.h"
 #include "qa/qvm.h"
+#include "qa/native.h"
 #include "qa/strings.h"
 
 enum { APPLICATION_Q3_COMBAT_ARGUMENTS = 62 };
@@ -55,13 +56,14 @@ typedef struct application_q3_combat_definition {
 } application_q3_combat_definition;
 typedef struct application_q3_combat_profile application_q3_combat_profile;
 
-/* primary is already matched to these held artifact bytes. Without a declared
- * primary, only the two exact source-authored executable cards are admitted. */
-bool application_q3_combat_profile_create(qa_qvm_image *, qa_qvm_role, qa_qvm_abi,
+/* primary belongs to this retained artifact. Native declarations supply state;
+ * executable callback qualification remains specific to QVM images. */
+bool application_q3_combat_profile_create(qa_qvm_image *, qa_native_module *, qa_qvm_role, qa_qvm_abi,
     const char *path, qa_bytes primary, qa_strings *, application_q3_combat_profile **, qa_error *);
 void application_q3_combat_profile_destroy(application_q3_combat_profile *);
 const application_q3_combat_definition *application_q3_combat_profile_definition(const application_q3_combat_profile *);
 const qa_qvm_image *application_q3_combat_profile_image(const application_q3_combat_profile *);
+const qa_native_module *application_q3_combat_profile_module(const application_q3_combat_profile *);
 qa_qvm_abi application_q3_combat_profile_abi(const application_q3_combat_profile *);
 const char *application_q3_combat_profile_path(const application_q3_combat_profile *);
 

@@ -19,15 +19,19 @@ bool application_q3_combat_actor_current(const application_q3_combat_actor *a, q
     if (!a || !a->role || !a->profile || !a->actor.registry)
         return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat requires its retained full actor");
     q3g_role *role = a->role; qa_q3_host_game_data table; uint32_t slot;
-    if (role->kind != QA_QVM_GAME || !role->host || !role->vm ||
-        role->image != application_q3_combat_profile_image(a->profile) ||
+    const qa_qvm_image *image = application_q3_combat_profile_image(a->profile);
+    const qa_native_module *module = application_q3_combat_profile_module(a->profile);
+    bool executor = image ? role->vm && role->image == image && !role->module &&
+        qa_qvm_get_role(role->vm) == QA_QVM_GAME && qa_qvm_get_abi(role->vm) == role->abi &&
+        qa_qvm_image_of(role->vm) == image :
+        role->native && role->module == module && !role->vm &&
+        qa_native_get_module(qa_native_host_instance(role->native)) == module;
+    if (role->kind != QA_QVM_GAME || !role->host || !executor ||
         role->abi != application_q3_combat_profile_abi(a->profile) ||
         !role->path || strcmp(role->path, application_q3_combat_profile_path(a->profile)) ||
-        qa_qvm_get_role(role->vm) != QA_QVM_GAME || qa_qvm_get_abi(role->vm) != role->abi ||
-        (qa_qvm_image_of(role->vm) != role->image) ||
         !qa_q3_host_game_data_read(role->host, &table) || !table_equal(table, a->table) || a->slot >= table.entity_count)
         return fail(error, QA_ERROR_NOT_FOUND, "Original Q3 combat executor or located table changed");
-    return qa_qvm_read(role->vm, 0, NULL, 0, error) &&
+    return (!image || qa_qvm_read(role->vm, 0, NULL, 0, error)) &&
         qa_q3_host_actor_slot(role->host, a->actor, &slot, error) &&
         (slot == a->slot || fail(error, QA_ERROR_NOT_FOUND, "Original Q3 combat actor changed source slot"));
 }
@@ -46,18 +50,25 @@ bool application_q3_combat_actor_read(q3g_role *role,
     uint64_t entity = a.table.entities_address + (uint64_t)a.slot * d->entity_stride;
     uint64_t player = a.slot < a.table.client_count ?
         a.table.clients_address + (uint64_t)a.slot * d->client_stride : 0;
-    if (!a.table.entities_address || entity > UINT32_MAX ||
-        (a.slot < a.table.client_count && (!a.table.clients_address || player > UINT32_MAX)))
-        return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat pointers leave their QVM address space");
-    a.entity = (uint32_t)entity; a.player = (uint32_t)player;
-    if (!application_q3_combat_actor_current(&a, error) ||
-        entity > qa_qvm_memory_size(role->vm) || d->entity_stride > qa_qvm_memory_size(role->vm) - entity ||
-        (player && (player > qa_qvm_memory_size(role->vm) || d->client_stride > qa_qvm_memory_size(role->vm) - player)))
-        return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat records leave live source memory");
+    if (!a.table.entities_address || entity < a.table.entities_address ||
+        (a.slot < a.table.client_count && (!a.table.clients_address || player < a.table.clients_address)))
+        return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat pointers leave their located source table");
+    a.entity = entity; a.player = player;
+    if (!application_q3_combat_actor_current(&a, error)) return false;
+    if (role->vm) {
+        size_t capacity = qa_qvm_memory_size(role->vm);
+        if (entity > capacity || d->entity_stride > capacity - entity ||
+            (player && (player > capacity || d->client_stride > capacity - player)))
+            return fail(error, QA_ERROR_ARGUMENT, "Original Q3 combat records leave live source memory");
+    } else {
+        qa_native_instance *native = qa_native_host_instance(role->native);
+        if (!qa_native_range_check(native, entity, d->entity_stride, QA_NATIVE_MEMORY_READ, error) ||
+            (player && !qa_native_range_check(native, player, d->client_stride, QA_NATIVE_MEMORY_READ, error))) return false;
+    }
     *out = a; return true;
 }
 bool application_q3_combat_word_read(const application_q3_combat_actor *a,
-    uint32_t address, int32_t *out, qa_error *error)
+    uint64_t address, int32_t *out, qa_error *error)
 {
     uint8_t bytes[4];
     if (!out || !application_q3_combat_actor_current(a, error) ||
@@ -65,12 +76,18 @@ bool application_q3_combat_word_read(const application_q3_combat_actor *a,
     *out = qa_load_i32le(bytes); return application_q3_combat_actor_current(a, error);
 }
 bool application_q3_combat_word_write(const application_q3_combat_actor *a,
-    uint32_t address, int32_t value, qa_error *error)
+    uint64_t address, int32_t value, qa_error *error)
 {
     uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)value);
-    return application_q3_combat_actor_current(a, error) &&
-        qa_qvm_write(a->role->vm, address, (qa_bytes){bytes, sizeof(bytes)}, error) &&
-        application_q3_combat_actor_current(a, error);
+    if (!application_q3_combat_actor_current(a, error)) return false;
+    bool ok;
+    if (a->role->vm) {
+        if (address > UINT32_MAX)
+            return fail(error, QA_ERROR_ARGUMENT, "Original combat write leaves its QVM address space");
+        ok = qa_qvm_write(a->role->vm, (uint32_t)address, (qa_bytes){bytes, sizeof(bytes)}, error);
+    } else ok = qa_native_write(qa_native_host_instance(a->role->native), address,
+        (qa_bytes){bytes, sizeof(bytes)}, error);
+    return ok && application_q3_combat_actor_current(a, error);
 }
 static bool integer(double value, int32_t *out, qa_error *error)
 {
@@ -91,7 +108,10 @@ static bool active_tiers(const application_q3_combat_actor *a, bool *out, qa_err
     const application_q3_combat_definition *d = definition(a); *out = false;
     for (size_t i = 0; i < d->armor.mode_count; ++i) {
         const application_q3_combat_mode *mode = d->armor.modes + i; int32_t value;
-        if (!application_q3_combat_word_read(a, mode->offset, &value, error)) return false;
+        uint64_t address = mode->offset;
+        if (a->role->native && !qa_native_rva(qa_native_host_instance(a->role->native),
+                mode->offset, 4, &address, error)) return false;
+        if (!application_q3_combat_word_read(a, address, &value, error)) return false;
         if (mode->equal ? value == mode->value : value != mode->value) { *out = true; break; }
     }
     return true;
@@ -198,20 +218,22 @@ bool application_q3_combat_traits_write(void *opaque, const qa_combat_state *tra
     application_q3_combat_actor *a = opaque;
     if (!traits || !application_q3_combat_actor_current(a, error)) return false;
     const application_q3_combat_definition *d = definition(a);
-    qa_qvm_source_word words[4]; size_t count = 0;
+    uint64_t addresses[4]; int32_t values[4]; size_t count = 0;
     int32_t damageable, flags;
     if (!application_q3_combat_word_read(a, a->entity + d->fields.takedamage, &damageable, error) ||
         !application_q3_combat_word_read(a, a->entity + d->reactions.flags, &flags, error)) return false;
-    if ((damageable != 0) != traits->can_take_damage)
-        words[count++] = (qa_qvm_source_word){a->entity + d->fields.takedamage, traits->can_take_damage};
+    if ((damageable != 0) != traits->can_take_damage) {
+        addresses[count] = a->entity + d->fields.takedamage; values[count++] = traits->can_take_damage;
+    }
     if ((traits->invulnerable && !d->state.invulnerable) ||
         (traits->no_knockback && !d->state.no_knockback))
         return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 traits lack the requested source flag");
     uint32_t next_flags = ((uint32_t)flags & ~(d->state.invulnerable | d->state.no_knockback)) |
         (traits->invulnerable ? d->state.invulnerable : 0) |
         (traits->no_knockback ? d->state.no_knockback : 0);
-    if (next_flags != (uint32_t)flags)
-        words[count++] = (qa_qvm_source_word){a->entity + d->reactions.flags, (int32_t)next_flags};
+    if (next_flags != (uint32_t)flags) {
+        addresses[count] = a->entity + d->reactions.flags; values[count++] = (int32_t)next_flags;
+    }
     if (d->state.mass_kind == Q3_COMBAT_MASS_CONSTANT) {
         if (traits->mass != d->state.mass.constant)
             return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 mass is its source constant");
@@ -226,18 +248,18 @@ bool application_q3_combat_traits_write(void *opaque, const qa_combat_state *tra
             memcpy(&mass, &value, sizeof(mass));
         }
         if (!application_q3_combat_word_read(a, a->entity + d->state.mass.offset, &previous, error)) return false;
-        if (mass != previous) words[count++] = (qa_qvm_source_word){a->entity + d->state.mass.offset, mass};
+        if (mass != previous) { addresses[count] = a->entity + d->state.mass.offset; values[count++] = mass; }
     }
     if (a->player) {
         int32_t previous;
-        uint32_t address = a->player + 248 + d->state.team_stat * 4;
+        uint64_t address = a->player + 248 + d->state.team_stat * 4;
         qa_strings *strings = qa_session_strings(a->role->engine->provider->application->session);
         if (!application_q3_combat_word_read(a, address, &previous, error)) return false;
         if (!qa_team_equal(strings, source_team(a, previous), traits->team)) {
             bool found = false;
             for (size_t i = 0; i < d->state.team_count; ++i)
                 if (qa_team_equal(strings, source_team(a, d->state.teams[i].value), traits->team)) {
-                    words[count++] = (qa_qvm_source_word){address, d->state.teams[i].value};
+                    addresses[count] = address; values[count++] = d->state.teams[i].value;
                     found = true; break;
                 }
             if (!found) return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 traits have no declared source team");
@@ -245,9 +267,9 @@ bool application_q3_combat_traits_write(void *opaque, const qa_combat_state *tra
     } else if (qa_team_present(traits->team))
         return fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 non-client has no source team field");
     for (size_t i = 0; i < count; ++i) {
-        uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)words[i].value);
+        uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)values[i]);
         if (!qa_q3_host_source_bytes_project(a->role->host,
-                words[i].offset, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
+                addresses[i], (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
     }
     return true;
 }

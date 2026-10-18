@@ -107,6 +107,7 @@
 #include "../src/app/application/internal.h"
 #include "../src/app/application/control_frame.h"
 #include "../src/app/application/guest_native_q2_private.h"
+#include "../src/app/application/guest_q3_combat_profile.h"
 #include "../src/app/application/native_q2_client_stages.h"
 #include "../src/app/application/bots_log.h"
 #include "../src/app/application/bots_setup.h"
@@ -10144,7 +10145,45 @@ static void test_native_q3_declaration(void)
     CHECK(!qa_native_declaration_load((qa_bytes){(const uint8_t *)invalid, strlen(invalid)},
         "qagamei386.so", module, &declaration, &error));
     CHECK(!declaration && error.code == QA_ERROR_FORMAT);
+    qa_strings *strings = NULL;
+    CHECK(qa_strings_create(&strings, &error));
+    application_q3_combat_profile *state = NULL;
+    const char *empty = "{}";
+    CHECK(application_q3_combat_profile_create(NULL, module, QA_QVM_GAME, QA_QVM_Q3_MODERN,
+        "qagamei386.so", (qa_bytes){(const uint8_t *)empty, strlen(empty)}, strings, &state, &error));
+    CHECK(!state);
+    const char *state_format =
+        "{\"combat\":{\"entityStride\":808,\"clientStride\":776,"
+        "\"fields\":{\"inuse\":520,\"health\":%u,\"takedamage\":736,\"parent\":600,\"client\":516},"
+        "\"reactions\":{\"flags\":536},"
+        "\"state\":{\"healthStat\":0,\"team\":{\"persistentStat\":3,"
+        "\"values\":[{\"value\":1,\"team\":\"q3:1\"},{\"value\":2,\"team\":\"q3:2\"}]},"
+        "\"flags\":{\"notarget\":32,\"invulnerable\":16,\"noKnockback\":2048},"
+        "\"mass\":{\"kind\":\"constant\",\"value\":200}},"
+        "\"armor\":{\"pointsStat\":3,\"protection\":0.66,\"tiers\":null}}}";
+    char primary[1024];
+    int length = snprintf(primary, sizeof(primary), state_format, 732u);
+    CHECK(length > 0 && (size_t)length < sizeof(primary));
+    CHECK(application_q3_combat_profile_create(NULL, module, QA_QVM_GAME, QA_QVM_Q3_MODERN,
+        "qagamei386.so", (qa_bytes){(const uint8_t *)primary, (size_t)length}, strings, &state, &error));
+    const application_q3_combat_definition *definition = application_q3_combat_profile_definition(state);
+    CHECK(state && application_q3_combat_profile_module(state) == module &&
+        !application_q3_combat_profile_image(state));
+    CHECK(definition && definition->entity_stride == 808 && definition->client_stride == 776 &&
+        definition->fields.health == 732 && definition->state.health_stat == 0 &&
+        definition->state.mass.constant == 200 && definition->armor.points_stat == 3 &&
+        definition->armor.protection == 0.66 && definition->state.team_count == 2);
+    CHECK(!definition->callbacks.allocate && !definition->callbacks.free &&
+        !definition->callbacks.damage && !definition->armor.check);
+    application_q3_combat_profile_destroy(state); state = NULL;
+    length = snprintf(primary, sizeof(primary), state_format, 808u);
+    CHECK(length > 0 && (size_t)length < sizeof(primary));
+    error = (qa_error){0};
+    CHECK(!application_q3_combat_profile_create(NULL, module, QA_QVM_GAME, QA_QVM_Q3_MODERN,
+        "qagamei386.so", (qa_bytes){(const uint8_t *)primary, (size_t)length}, strings, &state, &error));
+    CHECK(!state && error.code == QA_ERROR_FORMAT);
     qa_native_module_release(module);
+    qa_strings_destroy(strings);
 }
 
 static bool q3_source_native_read(void *context, uint64_t address, void *out,

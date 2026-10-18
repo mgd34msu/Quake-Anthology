@@ -10,6 +10,7 @@
 
 struct application_q3_combat_profile {
     qa_qvm_image *image;
+    qa_native_module *module;
     qa_qvm_abi abi;
     char *path;
     application_q3_combat_definition definition;
@@ -37,10 +38,10 @@ static bool integer(const qa_json_document *doc, qa_json_id id, int32_t *out, qa
 static bool array(const qa_json_document *doc, qa_json_id id, qa_error *error)
 { return qa_json_type(doc, id) == QA_JSON_ARRAY || fail(error, QA_ERROR_FORMAT, "Combat declaration requires its source list"); }
 static bool field(const qa_json_document *doc, qa_json_id id, size_t minimum,
-    uint32_t extent, uint32_t *out, qa_error *error)
+    uint32_t extent, size_t width, uint32_t *out, qa_error *error)
 {
-    return word(doc, id, out, error) && ((*out % 4 == 0 && extent >= 4 &&
-        *out >= minimum && *out <= extent - 4) ||
+    return word(doc, id, out, error) && ((*out % 4 == 0 && extent >= width &&
+        *out >= minimum && *out <= extent - width) ||
         fail(error, QA_ERROR_FORMAT, "Combat field leaves its original private entity record"));
 }
 static bool entry(const qa_json_document *doc, qa_json_id id, const qa_qvm_image *image,
@@ -193,7 +194,8 @@ static bool armor_modes(application_q3_combat_profile *p, const qa_json_document
         qa_json_id at = qa_json_at(doc, modes, i), comparison = qa_json_get(doc, at, "comparison");
         application_q3_combat_mode *mode = p->modes + i;
         if (!word(doc, qa_json_get(doc, at, "offset"), &mode->offset, error) ||
-            !qa_qvm_qualify_global_word(p->image, mode->offset, error) ||
+            !(p->image ? qa_qvm_qualify_global_word(p->image, mode->offset, error) :
+                qa_native_module_mutable_range(p->module, mode->offset, 4, error)) ||
             !integer(doc, qa_json_get(doc, at, "value"), &mode->value, error)) return false;
         mode->equal = qa_json_string_equal(doc, comparison, "equal");
         if (!mode->equal && !qa_json_string_equal(doc, comparison, "not-equal"))
@@ -223,45 +225,49 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
     qa_json_id enemy = qa_json_get(doc, reactions, "enemy");
     qa_json_id world = qa_json_get(doc, reactions, "worldEntity");
     qa_json_id state = qa_json_get(doc, combat, "state"), team = qa_json_get(doc, state, "team"), mass = qa_json_get(doc, state, "mass");
-    size_t shared = qa_qvm_shared_entity_bytes(p->abi), memory = qa_qvm_image_memory_size(p->image);
+    size_t shared = qa_qvm_shared_entity_bytes(p->abi);
+    size_t memory = p->image ? qa_qvm_image_memory_size(p->image) : UINT32_MAX;
+    size_t pointer_bytes = p->module ? qa_native_module_describe(p->module).image.target.pointer_bytes : 4;
     if (!word(doc, qa_json_get(doc, combat, "entityStride"), &d->entity_stride, error) ||
         !word(doc, qa_json_get(doc, combat, "clientStride"), &d->client_stride, error)) return false;
     if (d->entity_stride < shared || d->client_stride < qa_qvm_player_bytes(p->abi) ||
         d->entity_stride % 4 || d->client_stride % 4 || d->entity_stride > memory || d->client_stride > memory)
         return fail(error, QA_ERROR_FORMAT, "Combat records leave the actual artifact ABI");
-    if (qa_json_type(doc, enemy) != QA_JSON_NULL &&
-        !field(doc, enemy, shared, d->entity_stride, &d->reactions.enemy, error)) return false;
-    if (qa_json_type(doc, world) != QA_JSON_NULL &&
+    if (enemy != QA_JSON_NONE && qa_json_type(doc, enemy) != QA_JSON_NULL &&
+        !field(doc, enemy, shared, d->entity_stride, pointer_bytes, &d->reactions.enemy, error)) return false;
+    if (world != QA_JSON_NONE && qa_json_type(doc, world) != QA_JSON_NULL &&
         !word(doc, world, &d->reactions.world_slot, error)) return false;
     const char *const field_names[] = {"inuse", "health", "takedamage", "parent", "client"};
     uint32_t *field_values[] = {&d->fields.inuse, &d->fields.health, &d->fields.takedamage, &d->fields.parent, &d->fields.client};
     for (size_t i = 0; i < 5; ++i)
-        if (!field(doc, qa_json_get(doc, fields, field_names[i]), shared, d->entity_stride, field_values[i], error)) return false;
-    if (!entry(doc, qa_json_get(doc, callbacks, "allocate"), p->image, &d->callbacks.allocate, error) ||
-        !entry(doc, qa_json_get(doc, callbacks, "free"), p->image, &d->callbacks.free, error) ||
-        !entry(doc, qa_json_get(doc, callbacks, "damage"), p->image, &d->callbacks.damage, error) ||
-        !call(doc, qa_json_get(doc, combat, "damageCall"), damage_names, Q3_DAMAGE_WORDS, p->image, &d->damage_call, error) ||
-        !field(doc, qa_json_get(doc, reactions, "flags"), shared, d->entity_stride, &d->reactions.flags, error) ||
-        !field(doc, qa_json_get(doc, reactions, "pain"), shared, d->entity_stride, &d->reactions.pain, error) ||
-        !field(doc, qa_json_get(doc, reactions, "die"), shared, d->entity_stride, &d->reactions.die, error) ||
-        !reaction(doc, qa_json_get(doc, reactions, "painCall"), &d->reactions.pain_call, error) ||
-        !reaction(doc, qa_json_get(doc, reactions, "dieCall"), &d->reactions.die_call, error) ||
-        !entry(doc, qa_json_get(doc, armor, "checkArmor"), p->image, &d->armor.check, error) ||
-        !call(doc, qa_json_get(doc, armor, "call"), armor_names, Q3_ARMOR_WORDS, p->image, &d->armor.call, error) ||
+        if (!field(doc, qa_json_get(doc, fields, field_names[i]), shared, d->entity_stride, i >= 3 ? pointer_bytes : 4, field_values[i], error)) return false;
+    if (!field(doc, qa_json_get(doc, reactions, "flags"), shared, d->entity_stride, 4, &d->reactions.flags, error) ||
         !stat(doc, qa_json_get(doc, armor, "pointsStat"), &d->armor.points_stat, error) ||
         !fraction(doc, qa_json_get(doc, armor, "protection"), &d->armor.protection, error) ||
         !armor_modes(p, doc, qa_json_get(doc, armor, "tiers"), error) ||
         !stat(doc, qa_json_get(doc, state, "healthStat"), &d->state.health_stat, error) ||
         !stat(doc, qa_json_get(doc, team, "persistentStat"), &d->state.team_stat, error) ||
-        !teams(p, doc, qa_json_get(doc, team, "values"), strings, error) ||
-        !word(doc, qa_json_get(doc, combat, "grappleDamageMethod"), &d->grapple_method, error)) return false;
-    if (d->grapple_method > INT32_MAX)
-        return fail(error, QA_ERROR_FORMAT, "Combat damage method exceeds its signed original argument");
-    uint32_t *damage_masks[] = {&d->damage_flags.radius, &d->damage_flags.no_armor, &d->damage_flags.no_knockback,
-        &d->damage_flags.no_protection, &d->damage_flags.no_team_protection};
+        !teams(p, doc, qa_json_get(doc, team, "values"), strings, error)) return false;
+    if (p->image) {
+        if (!entry(doc, qa_json_get(doc, callbacks, "allocate"), p->image, &d->callbacks.allocate, error) ||
+            !entry(doc, qa_json_get(doc, callbacks, "free"), p->image, &d->callbacks.free, error) ||
+            !entry(doc, qa_json_get(doc, callbacks, "damage"), p->image, &d->callbacks.damage, error) ||
+            !call(doc, qa_json_get(doc, combat, "damageCall"), damage_names, Q3_DAMAGE_WORDS, p->image, &d->damage_call, error) ||
+            !field(doc, qa_json_get(doc, reactions, "pain"), shared, d->entity_stride, 4, &d->reactions.pain, error) ||
+            !field(doc, qa_json_get(doc, reactions, "die"), shared, d->entity_stride, 4, &d->reactions.die, error) ||
+            !reaction(doc, qa_json_get(doc, reactions, "painCall"), &d->reactions.pain_call, error) ||
+            !reaction(doc, qa_json_get(doc, reactions, "dieCall"), &d->reactions.die_call, error) ||
+            !entry(doc, qa_json_get(doc, armor, "checkArmor"), p->image, &d->armor.check, error) ||
+            !call(doc, qa_json_get(doc, armor, "call"), armor_names, Q3_ARMOR_WORDS, p->image, &d->armor.call, error) ||
+            !word(doc, qa_json_get(doc, combat, "grappleDamageMethod"), &d->grapple_method, error)) return false;
+        if (d->grapple_method > INT32_MAX)
+            return fail(error, QA_ERROR_FORMAT, "Combat damage method exceeds its signed original argument");
+        uint32_t *damage_masks[] = {&d->damage_flags.radius, &d->damage_flags.no_armor, &d->damage_flags.no_knockback,
+            &d->damage_flags.no_protection, &d->damage_flags.no_team_protection};
+        if (!masks(doc, qa_json_get(doc, combat, "damageFlags"), damage_mask_names, damage_masks, 5, error)) return false;
+    }
     uint32_t *state_masks[] = {&d->state.notarget, &d->state.invulnerable, &d->state.no_knockback};
-    if (!masks(doc, qa_json_get(doc, combat, "damageFlags"), damage_mask_names, damage_masks, 5, error) ||
-        !masks(doc, qa_json_get(doc, state, "flags"), state_mask_names, state_masks, 3, error)) return false;
+    if (!masks(doc, qa_json_get(doc, state, "flags"), state_mask_names, state_masks, 3, error)) return false;
     if (qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "constant")) {
         double value;
         if (!qa_json_number(doc, qa_json_get(doc, mass, "value"), &value, error)) return false;
@@ -270,14 +276,14 @@ static bool parse(application_q3_combat_profile *p, const qa_json_document *doc,
             return fail(error, QA_ERROR_FORMAT, "Combat mass is not finite and nonnegative");
     } else {
         if (!qa_json_string_equal(doc, qa_json_get(doc, mass, "kind"), "entity") ||
-            !field(doc, qa_json_get(doc, mass, "offset"), shared, d->entity_stride, &d->state.mass.offset, error))
+            !field(doc, qa_json_get(doc, mass, "offset"), shared, d->entity_stride, 4, &d->state.mass.offset, error))
             return fail(error, QA_ERROR_FORMAT, "Combat mass has no original private field");
         qa_json_id storage = qa_json_get(doc, mass, "storage");
         if (qa_json_string_equal(doc, storage, "int32")) d->state.mass_kind = Q3_COMBAT_MASS_INT32;
         else if (qa_json_string_equal(doc, storage, "float32")) d->state.mass_kind = Q3_COMBAT_MASS_FLOAT32;
         else return fail(error, QA_ERROR_FORMAT, "Combat mass has no original source representation");
     }
-    return qa_qvm_source_scratch_qualify(p->image, 24, &d->scratch, error);
+    return !p->image || qa_qvm_source_scratch_qualify(p->image, 24, &d->scratch, error);
 }
 static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
     bool *found, qa_error *error)
@@ -356,22 +362,28 @@ static bool builtin(application_q3_combat_profile *p, qa_strings *strings,
             return fail(error, QA_ERROR_FORMAT, "Source-authored reaction leaves its private entity record");
     return qa_qvm_source_scratch_qualify(p->image, 24, &d->scratch, error);
 }
-bool application_q3_combat_profile_create(qa_qvm_image *image, qa_qvm_role role, qa_qvm_abi abi,
+bool application_q3_combat_profile_create(qa_qvm_image *image, qa_native_module *module, qa_qvm_role role, qa_qvm_abi abi,
     const char *path, qa_bytes primary, qa_strings *strings, application_q3_combat_profile **out, qa_error *error)
 {
-    if (!image || role != QA_QVM_GAME || (unsigned)abi > QA_QVM_Q3_116N ||
+    if ((!image == !module) || role != QA_QVM_GAME || (unsigned)abi > QA_QVM_Q3_116N ||
         !path || !*path || !strings || !out || *out || (primary.size && !primary.data))
         return fail(error, QA_ERROR_ARGUMENT, "Combat metadata requires its actual GAME artifact and empty owner");
     application_q3_combat_profile *p = calloc(1, sizeof(*p));
     if (!p) return fail(error, QA_ERROR_MEMORY, "Retaining immutable original combat metadata");
-    qa_qvm_image_retain(image); p->image = image; p->abi = abi;
+    qa_qvm_image_retain(image); qa_native_module_retain(module);
+    p->image = image; p->module = module; p->abi = abi;
     size_t length = strlen(path) + 1;
     p->path = malloc(length);
     if (!p->path) { application_q3_combat_profile_destroy(p); return fail(error, QA_ERROR_MEMORY, "Retaining original combat artifact path"); }
     memcpy(p->path, path, length);
-    qa_json_document *doc = NULL; bool found = true;
-    bool ok = primary.size ? qa_json_parse(QA_JSON_STRICT, primary, &doc, error) && parse(p, doc, strings, error) :
-        builtin(p, strings, &found, error);
+    qa_json_document *doc = NULL; bool found = false, ok = true;
+    if (primary.size) {
+        ok = qa_json_parse(QA_JSON_STRICT, primary, &doc, error);
+        if (ok) {
+            found = qa_json_get(doc, qa_json_root(doc), "combat") != QA_JSON_NONE;
+            if (found) ok = parse(p, doc, strings, error);
+        }
+    } else if (image) ok = builtin(p, strings, &found, error);
     qa_json_destroy(doc);
     if (!ok) { application_q3_combat_profile_destroy(p); return false; }
     if (!found) { application_q3_combat_profile_destroy(p); return true; }
@@ -381,12 +393,14 @@ void application_q3_combat_profile_destroy(application_q3_combat_profile *p)
 {
     if (!p) return;
     free(p->teams); free(p->modes); free(p->tiers); free(p->path);
-    qa_qvm_image_release(p->image); free(p);
+    qa_qvm_image_release(p->image); qa_native_module_release(p->module); free(p);
 }
 const application_q3_combat_definition *application_q3_combat_profile_definition(const application_q3_combat_profile *p)
 { return p ? &p->definition : NULL; }
 const qa_qvm_image *application_q3_combat_profile_image(const application_q3_combat_profile *p)
 { return p ? p->image : NULL; }
+const qa_native_module *application_q3_combat_profile_module(const application_q3_combat_profile *p)
+{ return p ? p->module : NULL; }
 qa_qvm_abi application_q3_combat_profile_abi(const application_q3_combat_profile *p)
 { return p ? p->abi : QA_QVM_Q3_MODERN; }
 const char *application_q3_combat_profile_path(const application_q3_combat_profile *p)

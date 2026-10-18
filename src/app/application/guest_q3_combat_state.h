@@ -10,7 +10,8 @@ typedef struct application_q3_combat_actor {
     const application_q3_combat_profile *profile;
     qa_actor_id actor;
     qa_q3_host_game_data table;
-    uint32_t slot, entity, player;
+    uint32_t slot;
+    uint64_t entity, player;
 } application_q3_combat_actor;
 
 bool application_q3_combat_actor_read(struct q3g_role *,
@@ -27,7 +28,7 @@ bool application_q3_combat_armor_write(void *, const qa_armor *, qa_error *);
 bool application_q3_combat_empty_armor(void *, double, qa_regular_armor *, bool *, qa_error *);
 bool application_q3_combat_notarget(const application_q3_combat_actor *, bool *, qa_error *);
 bool application_q3_combat_velocity(const application_q3_combat_actor *, qa_vec3 *, qa_error *);
-bool application_q3_combat_word_read(const application_q3_combat_actor *, uint32_t, int32_t *, qa_error *);
-bool application_q3_combat_word_write(const application_q3_combat_actor *, uint32_t, int32_t, qa_error *);
+bool application_q3_combat_word_read(const application_q3_combat_actor *, uint64_t, int32_t *, qa_error *);
+bool application_q3_combat_word_write(const application_q3_combat_actor *, uint64_t, int32_t, qa_error *);
 
 #endif

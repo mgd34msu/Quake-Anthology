@@ -698,7 +698,7 @@ static bool saved_collect(application_provider *provider,
         if (a->qvm ? !a->image || a->module || a->declaration :
             !a->module || a->image || a->primary.size || a->equipment_presentation.size ||
             a->body_resource || a->body_profile.present || a->weapon_models_resource || a->weapon_models_profile.present ||
-            a->collision_profile.present || a->collision_scene.size || a->grapple_profile || a->combat_profile) {
+            a->collision_profile.present || a->collision_scene.size || a->grapple_profile) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 artifact lacks its actual immutable backend continuation");
         }
         if (a->grapple_profile && (a->kind != QA_QVM_GAME ||
@@ -706,6 +706,14 @@ static bool saved_collect(application_provider *provider,
             strcmp(application_q3_grapple_profile_path(a->grapple_profile), a->path))) {
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
                 "GAME grapple metadata leaves its retained immutable artifact");
+        }
+        if (a->combat_profile &&
+            (application_q3_combat_profile_image(a->combat_profile) != a->image ||
+             application_q3_combat_profile_module(a->combat_profile) != a->module ||
+             application_q3_combat_profile_abi(a->combat_profile) != a->abi ||
+             strcmp(application_q3_combat_profile_path(a->combat_profile), a->path))) {
+            saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                "GAME combat metadata leaves its retained immutable artifact");
         }
         if (!a->resource) {
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact lost its retained immutable bytes");
@@ -1018,7 +1026,10 @@ static bool prepare_artifact(application_provider *provider, struct application_
             qa_native_module_retain(artifact->module);
             provider->state.native.module = artifact->module;
         }
-        return true;
+        return artifact->kind != QA_QVM_GAME ||
+            application_q3_combat_profile_create(NULL, artifact->module, artifact->kind,
+                artifact->abi, artifact->path, qa_native_declaration_primary(artifact->declaration),
+                qa_session_strings(provider->application->session), &artifact->combat_profile, error);
     }
     if (primary && source == provider->launch) {
         artifact->image = provider->state.qvm.image;
@@ -1041,7 +1052,7 @@ static bool prepare_artifact(application_provider *provider, struct application_
                 artifact->abi, artifact->path, qa_session_strings(provider->application->session),
                 &artifact->grapple_profile, error);
         if (ok && artifact->kind == QA_QVM_GAME)
-            ok = application_q3_combat_profile_create(artifact->image, artifact->kind,
+            ok = application_q3_combat_profile_create(artifact->image, NULL, artifact->kind,
                 artifact->abi, artifact->path, (qa_bytes){artifact->primary.data, artifact->primary.size},
                 qa_session_strings(provider->application->session), &artifact->combat_profile, error);
     }

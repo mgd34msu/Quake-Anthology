@@ -52,7 +52,11 @@ static bool pointer(const application_q3_combat_actor *target, qa_actor_id actor
     bool live;
     if (!application_q3_combat_actor_read(role, target->profile, actor, &source, error) ||
         !application_q3_combat_actor_live(&source, &live, error)) return false;
-    if (live) { *out = source.entity; *present = true; }
+    if (live) {
+        if (source.entity > UINT32_MAX)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Source actor leaves its QVM callback address space");
+        *out = (uint32_t)source.entity; *present = true;
+    }
     return true;
 }
 static bool source_call(damage_lowering *lowering, uint32_t entry,
@@ -156,6 +160,10 @@ bool application_q3_combat_source_arguments(const application_q3_combat_actor *t
     if (!target || !request || !invoke || !qa_actor_id_equal(target->actor, request->target) ||
         (parent && parent->vm != target->role->vm) ||
         !application_q3_combat_actor_current(target, error)) return false;
+    if (!target->role->vm || !target->role->image)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Source combat callbacks are not declared");
+    if (target->entity > UINT32_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source target leaves its QVM callback address space");
     damage_lowering lowering = {.target = target, .request = request, .parent = parent,
         .invoke = invoke, .context = context,
         .flags = application_q3_combat_source_flags(application_q3_combat_profile_definition(target->profile), request, original_flags)};

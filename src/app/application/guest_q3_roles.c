@@ -476,8 +476,9 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         shared->equipment_presentation = compatibility.equipment_presentation;
         compatibility.equipment_presentation = (qa_buffer){0};
-        if (kind == QA_QVM_GAME && role->image && !application_q3_combat_profile_create(role->image,
-            kind, shared->abi, path, (qa_bytes){shared->primary.data, shared->primary.size},
+        if (kind == QA_QVM_GAME && !application_q3_combat_profile_create(role->image, role->module,
+            kind, shared->abi, path, role->image ? (qa_bytes){shared->primary.data, shared->primary.size} :
+                qa_native_declaration_primary(shared->declaration),
             strings, &shared->combat_profile, error)) goto failed;
         if (kind == QA_QVM_GAME && role->image && !shared->primary.size) {
             bool found = false;
