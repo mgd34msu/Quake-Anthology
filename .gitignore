@@ -1,0 +1,43 @@
+# Build output
+/build/
+/*.o
+*.o
+*.a
+*.so
+*.d
+/quake-anthology
+/test-foundation
+/test-*
+
+# Local runtime data and generated output (mirrors quake-anthology-ts)
+/qfiles/
+/saves/
+/captures/
+/screenshots/
+/coverage/
+/.cache/
+/.artifacts/
+*.log
+/core
+/core.[0-9]*
+
+# Machine-specific environment; keep documented examples.
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# LLM settings and credentials stored beside the application.
+/chatgpt.key
+/other.key
+/other.service
+/llm.json
+/chatgpt.key.*.tmp
+/other.key.*.tmp
+/other.service.*.tmp
+/llm.json.*.tmp
+
+# Editor / tooling
+*.swp
+*~
+compile_commands.json
