@@ -1,0 +1,179 @@
+/* Port of network/q1/constants.ts (constants dumped mechanically via bun JSON). GPL-2.0-or-later. */
+#ifndef QA_NETWORK_Q1_CONSTANTS_H
+#define QA_NETWORK_Q1_CONSTANTS_H
+#include <stdint.h>
+
+#define QA_Q1_B_ALPHA 4
+#define QA_Q1_B_LARGEFRAME 2
+#define QA_Q1_B_LARGEMODEL 1
+#define QA_Q1_B_SCALE 8
+typedef enum qa_q1_clcopst {
+  QA_Q1_CLC_BAD = 0,
+  QA_Q1_CLC_NOP = 1,
+  QA_Q1_CLC_DISCONNECT = 2,
+  QA_Q1_CLC_MOVE = 3,
+  QA_Q1_CLC_STRINGCMD = 4,
+} qa_q1_clcopst;
+#define QA_Q1_HAS_CLCOPST 1
+#define QA_Q1_DEFAULT_SOUND_PACKET_ATTENUATION 1
+#define QA_Q1_DEFAULT_SOUND_PACKET_VOLUME 255
+#define QA_Q1_DEFAULT_VIEWHEIGHT 22
+#define QA_Q1_ENTALPHA_DEFAULT 0
+#define QA_Q1_ENTALPHA_ONE 255
+#define QA_Q1_ENTALPHA_ZERO 1
+#define QA_Q1_ENTSCALE_DEFAULT 16
+#define QA_Q1_GAME_COOP 0
+#define QA_Q1_GAME_DEATHMATCH 1
+#define QA_Q1_PRFL_24BITCOORD 8
+#define QA_Q1_PRFL_ALPHASANITY 64
+#define QA_Q1_PRFL_EDICTSCALE 32
+#define QA_Q1_PRFL_FLOATANGLE 4
+#define QA_Q1_PRFL_FLOATCOORD 16
+#define QA_Q1_PRFL_INT32COORD 128
+#define QA_Q1_PRFL_MOREFLAGS -2147483648
+#define QA_Q1_PRFL_SHORTANGLE 2
+#define QA_Q1_PRFL_SUPPORTED 190
+#define QA_Q1_PROMPT_BEGIN 0
+#define QA_Q1_PROMPT_CHOICE 1
+#define QA_Q1_PROMPT_CLEAR 2
+#define QA_Q1_PROTOCOL_FITZQUAKE 666
+#define QA_Q1_PROTOCOL_NETQUAKE 15
+#define QA_Q1_PROTOCOL_RMQ 999
+#define QA_Q1_PROTOCOL_VERSION 15
+#define QA_Q1_SND_ATTENUATION 2
+#define QA_Q1_SND_LARGEENTITY 8
+#define QA_Q1_SND_LARGESOUND 16
+#define QA_Q1_SND_LOOPING 4
+#define QA_Q1_SND_VOLUME 1
+#define QA_Q1_SU_AMMO2 262144
+#define QA_Q1_SU_ARMOR 8192
+#define QA_Q1_SU_ARMOR2 131072
+#define QA_Q1_SU_CELLS2 4194304
+#define QA_Q1_SU_EXTEND1 32768
+#define QA_Q1_SU_EXTEND2 8388608
+#define QA_Q1_SU_EXTEND3 -2147483648
+#define QA_Q1_SU_IDEALPITCH 2
+#define QA_Q1_SU_INWATER 2048
+#define QA_Q1_SU_ITEMS 512
+#define QA_Q1_SU_NAILS2 1048576
+#define QA_Q1_SU_ONGROUND 1024
+#define QA_Q1_SU_PUNCH1 4
+#define QA_Q1_SU_PUNCH2 8
+#define QA_Q1_SU_PUNCH3 16
+#define QA_Q1_SU_ROCKETS2 2097152
+#define QA_Q1_SU_SHELLS2 524288
+#define QA_Q1_SU_VELOCITY1 32
+#define QA_Q1_SU_VELOCITY2 64
+#define QA_Q1_SU_VELOCITY3 128
+#define QA_Q1_SU_VIEWHEIGHT 1
+#define QA_Q1_SU_WEAPON 16384
+#define QA_Q1_SU_WEAPON2 65536
+#define QA_Q1_SU_WEAPONALPHA 33554432
+#define QA_Q1_SU_WEAPONFRAME 4096
+#define QA_Q1_SU_WEAPONFRAME2 16777216
+typedef enum qa_q1_svcopst {
+  QA_Q1_SVC_BAD = 0,
+  QA_Q1_SVC_NOP = 1,
+  QA_Q1_SVC_DISCONNECT = 2,
+  QA_Q1_SVC_UPDATESTAT = 3,
+  QA_Q1_SVC_VERSION = 4,
+  QA_Q1_SVC_SETVIEW = 5,
+  QA_Q1_SVC_SOUND = 6,
+  QA_Q1_SVC_TIME = 7,
+  QA_Q1_SVC_PRINT = 8,
+  QA_Q1_SVC_STUFFTEXT = 9,
+  QA_Q1_SVC_SETANGLE = 10,
+  QA_Q1_SVC_SERVERINFO = 11,
+  QA_Q1_SVC_LIGHTSTYLE = 12,
+  QA_Q1_SVC_UPDATENAME = 13,
+  QA_Q1_SVC_UPDATEFRAGS = 14,
+  QA_Q1_SVC_CLIENTDATA = 15,
+  QA_Q1_SVC_STOPSOUND = 16,
+  QA_Q1_SVC_UPDATECOLORS = 17,
+  QA_Q1_SVC_PARTICLE = 18,
+  QA_Q1_SVC_DAMAGE = 19,
+  QA_Q1_SVC_SPAWNSTATIC = 20,
+  QA_Q1_SVC_SPAWNBASELINE = 22,
+  QA_Q1_SVC_TEMP_ENTITY = 23,
+  QA_Q1_SVC_SETPAUSE = 24,
+  QA_Q1_SVC_SIGNONNUM = 25,
+  QA_Q1_SVC_CENTERPRINT = 26,
+  QA_Q1_SVC_KILLEDMONSTER = 27,
+  QA_Q1_SVC_FOUNDSECRET = 28,
+  QA_Q1_SVC_SPAWNSTATICSOUND = 29,
+  QA_Q1_SVC_INTERMISSION = 30,
+  QA_Q1_SVC_FINALE = 31,
+  QA_Q1_SVC_CDTRACK = 32,
+  QA_Q1_SVC_SELLSCREEN = 33,
+  QA_Q1_SVC_CUTSCENE = 34,
+} qa_q1_svcopst;
+#define QA_Q1_HAS_SVCOPST 1
+#define QA_Q1_TE_BEAM 13
+#define QA_Q1_TE_EXPLOSION 3
+#define QA_Q1_TE_EXPLOSION2 12
+#define QA_Q1_TE_GUNSHOT 2
+#define QA_Q1_TE_KNIGHTSPIKE 8
+#define QA_Q1_TE_LAVASPLASH 10
+#define QA_Q1_TE_LIGHTNING1 5
+#define QA_Q1_TE_LIGHTNING2 6
+#define QA_Q1_TE_LIGHTNING3 9
+#define QA_Q1_TE_SPIKE 0
+#define QA_Q1_TE_SUPERSPIKE 1
+#define QA_Q1_TE_TAREXPLOSION 4
+#define QA_Q1_TE_TELEPORT 11
+#define QA_Q1_TE_WIZSPIKE 7
+#define QA_Q1_U_ALPHA 65536
+#define QA_Q1_U_ANGLE1 256
+#define QA_Q1_U_ANGLE2 16
+#define QA_Q1_U_ANGLE3 512
+#define QA_Q1_U_COLORMAP 2048
+#define QA_Q1_U_EFFECTS 8192
+#define QA_Q1_U_EXTEND1 32768
+#define QA_Q1_U_EXTEND2 8388608
+#define QA_Q1_U_FRAME 64
+#define QA_Q1_U_FRAME2 131072
+#define QA_Q1_U_LERPFINISH 524288
+#define QA_Q1_U_LONGENTITY 16384
+#define QA_Q1_U_MODEL 1024
+#define QA_Q1_U_MODEL2 262144
+#define QA_Q1_U_MOREBITS 1
+#define QA_Q1_U_NOLERP 32
+#define QA_Q1_U_ORIGIN1 2
+#define QA_Q1_U_ORIGIN2 4
+#define QA_Q1_U_ORIGIN3 8
+#define QA_Q1_U_SCALE 1048576
+#define QA_Q1_U_SIGNAL 128
+#define QA_Q1_U_SKIN 4096
+#define QA_Q1_U_STEP 32
+#define QA_Q1_U_UNUSED21 2097152
+#define QA_Q1_U_UNUSED22 4194304
+#define QA_Q1_svc_achievement 52
+#define QA_Q1_svc_backtolobby 55
+#define QA_Q1_svc_bf 40
+#define QA_Q1_svc_botchat 38
+#define QA_Q1_svc_chat 53
+#define QA_Q1_svc_fog 41
+#define QA_Q1_svc_levelcompleted 54
+#define QA_Q1_svc_localsound 56
+#define QA_Q1_svc_prompt 57
+#define QA_Q1_svc_rawprint 49
+#define QA_Q1_svc_seq 51
+#define QA_Q1_svc_servervars 50
+#define QA_Q1_svc_setviews 45
+#define QA_Q1_svc_skybox 37
+#define QA_Q1_svc_spawnbaseline2 42
+#define QA_Q1_svc_spawnedmonster 39
+#define QA_Q1_svc_spawnstatic2 43
+#define QA_Q1_svc_spawnstaticsound2 44
+#define QA_Q1_svc_updateping 46
+#define QA_Q1_svc_updateplinfo 48
+#define QA_Q1_svc_updatesocial 47
+
+double qa_q1_rint(double x);
+double qa_q1_entalpha_encode(double a);
+double qa_q1_entalpha_decode(double a);
+double qa_q1_entalpha_tosave(double a);
+double qa_q1_entscale_encode(double a);
+double qa_q1_entscale_decode(double a);
+
+#endif

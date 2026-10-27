@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -35,6 +36,7 @@ static int checks = 0;
     checks++;                                                           \
     pid_t pid = fork();                                                 \
     if (pid == 0) {                                                     \
+      (void)prctl(PR_SET_DUMPABLE, 0); /* no coredump for expected aborts */ \
       freopen("/dev/null", "w", stderr);                                \
       __VA_ARGS__;                                                      \
       _exit(0);                                                         \

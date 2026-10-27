@@ -1,0 +1,10 @@
+/* Port of src/content/q2/rerelease/monsters/base-variants/makron.ts.
+ * GPL-2.0-or-later. */
+#ifndef QA_CONTENT_Q2_RERELEASE_MONSTERS_BASE_VARIANTS_MAKRON_H
+#define QA_CONTENT_Q2_RERELEASE_MONSTERS_BASE_VARIANTS_MAKRON_H
+#include "qa/content/q2/foundation/monsters/index.h"
+/* TS tossRereleaseMakron. */
+qa_actor_id qa_q2rm_toss_rerelease_makron(qa_q2m_context *context, qa_q2m_monsters *monsters);
+/* TS rereleaseMakronDefinition (built once on first use). */
+const qa_q2m_definition *qa_q2rm_get_rerelease_makron_definition(void);
+#endif

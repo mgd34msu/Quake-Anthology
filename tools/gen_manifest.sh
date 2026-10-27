@@ -13,7 +13,7 @@ find "$TS_SRC" -type f | sort | while IFS= read -r f; do
       cbase=$(printf '%s' "$base" | tr '-' '_')
       csrc="src/$cbase.c"
       hdr="include/qa/$cbase.h"
-      if [ -f "$csrc" ]; then status=ported; else status=pending; fi
+      if [ -f "$csrc" ]; then status=ported; elif [ -f "$hdr" ]; then status=header-only; else status=pending; fi
       printf 'src/%s\t%s\t%s\t%s\n' "$rel" "$csrc" "$hdr" "$status" >> "$OUT.tmp"
       ;;
     *)

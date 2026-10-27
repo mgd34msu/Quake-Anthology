@@ -67,5 +67,12 @@ Dependency order, each step with ported tests before moving on:
    `debug`.
 7. `app/bootstrap` and `main` last: they wire everything together.
 
+## Tests
+
+- `CHECK_ABORTS` fork children (the `toThrow(RangeError)` reproduction)
+  must call `prctl(PR_SET_DUMPABLE, 0)` first: expected aborts otherwise
+  flood systemd-coredump and desktop crash notifications. `make test`
+  also runs under `ulimit -c 0`.
+
 Per-file status is generated into `docs/manifest.tsv` by
 `tools/gen_manifest.sh`; regenerate after each module lands.
