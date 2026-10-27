@@ -11,7 +11,7 @@ qa_bounds qa_compat_qc_link_bounds(qa_body_state s, double flags, const qa_numer
 }
 bool qa_compat_qc_world_host_is_free_entity(qa_compat_qc_world_host *h, int64_t slot) { return qa_compat_qc_actor_bindings_is_free_entity(&h->bindings_state, slot); }
 int64_t qa_compat_qc_world_host_reference(qa_compat_qc_world_host *h, qa_actor_id actor) {
-  if (!qa_session_actor_registry_is_live(h->options.actors, actor)) qa_compat_qc_program_error(h->options.program->source, "cannot encode a stale actor as a QC entity");
+  if (!qa_session_actor_registry_is_live(h->options.actors, actor)) qa_compat_qc_program_error("progs.dat", "cannot encode a stale actor as a QC entity");
   qa_actor_source_result src = qa_session_actor_registry_source_of(h->options.actors, actor);
   if (src.has_value && strcmp(src.provider, h->options.slots_options.provider) == 0) return qa_compat_qc_entity_memory_reference(h->options.entities, src.slot);
   return h->options.foreign_reference(h->options.ctx, actor);
@@ -25,7 +25,7 @@ static bool body_actor(void *ctx, int64_t ref, qa_actor_id *out) {
   return false;
 }
 qa_owned_actor qa_compat_qc_world_host_actor(qa_compat_qc_world_host *h, int64_t slot) {
-  if (qa_compat_qc_world_host_is_free_entity(h, slot)) qa_compat_qc_program_error(h->options.program->source, "world builtin references a free source edict");
+  if (qa_compat_qc_world_host_is_free_entity(h, slot)) qa_compat_qc_program_error("progs.dat", "world builtin references a free source edict");
   qa_owned_actor borrowed;
   if (h->options.foreign_actor && h->options.foreign_actor(h->options.ctx, slot, &borrowed)) { qa_session_actor_registry_assert_owned(h->options.actors, borrowed); return borrowed; }
   qa_owned_actor actor;

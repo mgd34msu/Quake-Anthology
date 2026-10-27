@@ -37,10 +37,4 @@ void qa_compat_q2_rerelease_core_imports_refresh_cvars(qa_compat_q2_rerelease_co
 bool qa_compat_q2_rerelease_core_imports_cvar(qa_compat_q2_rerelease_core_imports *c, const qa_cvar_snapshot *value, qa_guest_address *out);
 void qa_compat_q2_rerelease_core_imports_free(qa_compat_q2_rerelease_core_imports *c, bool has, qa_guest_address address);
 qa_guest_call_result qa_compat_q2_rerelease_core_imports_invoke(qa_compat_q2_rerelease_core_imports *c, qa_compat_q2_rerelease_import_call call);
-/* TS withRereleaseWeaponProvisioning / weapon cvar key order. */
-extern const char *const qa_compat_q2_rerelease_weapon_cvar_keys[];
-extern const size_t qa_compat_q2_rerelease_weapon_cvar_key_count;
-/* capture is a qa_save_value from qa_cvar_registry_capture_world_transfer_state. */
-qa_original_weapon_provisioning qa_compat_q2_with_rerelease_weapon_provisioning(
-    qa_cvar_registry *cvars, void *operation_ctx, qa_original_weapon_provisioning (*operation)(void *));
 #endif

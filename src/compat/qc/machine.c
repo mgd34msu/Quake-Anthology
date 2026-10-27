@@ -37,7 +37,7 @@ static const qa_compat_qc_inline_region *region_at(qa_compat_qc_machine *m, int6
 }
 bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_options o) {
   memset(m, 0, sizeof *m); m->options = o; m->program = o.program; m->entities = o.entities; m->numeric = o.numeric;
-  if (o.entities->layout.field_words != o.program->entity_field_words) qa_compat_qc_program_error(o.program->source, "entity field layout disagrees with program");
+  if (o.entities->layout.field_words != o.program->entity_field_words) qa_compat_qc_program_error("progs.dat", "entity field layout disagrees with program");
   m->globals_bytes = malloc(o.program->initial_globals_length ? o.program->initial_globals_length : 1);
   if (!m->globals_bytes) return false;
   memcpy(m->globals_bytes, o.program->initial_globals, o.program->initial_globals_length);
@@ -51,7 +51,7 @@ bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_opt
     m->boundary_function_count = o.function_boundary->function_count;
     for (size_t i = 0; i < m->boundary_function_count; i++) {
       const qa_compat_qc_function *fn = qa_compat_qc_program_function_at(o.program, m->boundary_functions[i]);
-      if (fn->named_builtin || fn->first_statement < 0) qa_compat_qc_program_error(o.program->source, "function boundary requires an interpreted function");
+      if (fn->named_builtin || fn->first_statement < 0) qa_compat_qc_program_error("progs.dat", "function boundary requires an interpreted function");
     }
   }
   if (o.inline_boundary) for (size_t ri = 0; ri < o.inline_boundary->region_count; ri++) {
@@ -60,7 +60,7 @@ bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_opt
     int64_t end = (int64_t)o.program->statement_count;
     for (size_t i = 0; i < o.program->function_count; i++) if (o.program->functions[i].first_statement > fn->first_statement && o.program->functions[i].first_statement < end) end = o.program->functions[i].first_statement;
     if (fn->named_builtin || fn->first_statement <= 0 || region.entry < fn->first_statement || region.exit <= region.entry || region.exit >= end || region_at(m, region.entry))
-      qa_compat_qc_program_error(o.program->source, "invalid inline source region");
+      qa_compat_qc_program_error("progs.dat", "invalid inline source region");
     if (region.has_standalone) {
       int64_t sw = region.standalone_saved; bool global = region.standalone_scope && strcmp(region.standalone_scope, "global") == 0;
       bool ok;
@@ -68,7 +68,7 @@ bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_opt
         bool is_float = false; for (size_t i = 0; i < o.program->global_count; i++) if (o.program->globals[i].offset == sw && strcmp(o.program->globals[i].type, "float") == 0) is_float = true;
         ok = sw >= 28 && sw * 4 + 4 <= (int64_t)m->globals.byte_length && !(sw >= fn->parameter_start && sw < fn->parameter_start + fn->local_words) && is_float;
       } else ok = sw >= fn->parameter_start && sw < fn->parameter_start + fn->local_words;
-      if (!ok) qa_compat_qc_program_error(o.program->source, "invalid standalone inline result");
+      if (!ok) qa_compat_qc_program_error("progs.dat", "invalid standalone inline result");
     }
     qa_compat_qc_inline_region *nr = realloc(m->inline_regions, (m->inline_region_count + 1) * sizeof *nr); if (!nr) goto oom;
     m->inline_regions = nr; m->inline_regions[m->inline_region_count++] = region;
@@ -185,12 +185,13 @@ static Staging capture_staging(qa_compat_qc_machine *m) {
   return s;
 }
 static void restore_staging(qa_compat_qc_machine *m, Staging s) { if (s.valid) { memcpy(m->globals.bytes + 4, s.words, 108); m->argument_count = s.argument_count; } }
-static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, const qa_compat_qc_frame *stop_frame);
+/* stop_frame is a frame index (TS Frame identity survives realloc), -1 = none. */
+static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, int64_t stop_frame);
 static void run_function(qa_compat_qc_machine *m, const qa_compat_qc_function *fn, int64_t *budget) {
   int64_t exit_depth = (int64_t)m->frame_count;
   qa_compat_qc_builtin b = get_builtin(m, fn);
   if (b.fn) { call_builtin(m, b); return; }
-  enter(m, fn); run_statements(m, exit_depth, budget, NULL, NULL);
+  enter(m, fn); run_statements(m, exit_depth, budget, NULL, -1);
 }
 /* Function boundary execution plumbing */
 typedef struct {
@@ -262,10 +263,9 @@ double qa_compat_qc_machine_execute_region(qa_compat_qc_machine *m, qa_compat_qc
   int64_t depth = (int64_t)m->frame_count, prev_args = m->argument_count;
   m->argument_count = argument_count; enter(m, fn);
   if (m->frame_count == 0) qa_compat_qc_machine_fail(m, "standalone inline execution has no frame");
-  const qa_compat_qc_frame *frame = &m->frames[m->frame_count - 1];
   m->statement = region.entry - 1;
   int64_t budget = m->statement_limit;
-  run_statements(m, depth, &budget, admitted, frame);
+  run_statements(m, depth, &budget, admitted, depth);
   double result = qa_compat_qc_words_float(&m->globals, saved);
   while ((int64_t)m->frame_count > depth) leave(m);
   if (has_prev) qa_compat_qc_words_set_int(&m->globals, saved, prev);
@@ -278,21 +278,21 @@ static double byte_compare(const char *l, const char *r) {
   return 0;
 }
 /* Inline continuation plumbing */
-typedef struct { qa_compat_qc_machine *m; int64_t exit_depth; int64_t *budget; const qa_compat_qc_inline_region *region; const qa_compat_qc_frame *frame; bool *active, *called; } InlineCtx;
+typedef struct { qa_compat_qc_machine *m; int64_t exit_depth; int64_t *budget; const qa_compat_qc_inline_region *region; int64_t frame; bool *active, *called; } InlineCtx;
 static void inline_decide(InlineCtx *e, bool skip) {
   qa_compat_qc_machine *m = e->m;
   if (!*e->active || *e->called) qa_compat_qc_machine_fail(m, "inline continuation must execute once inside its boundary");
-  if (m->frame_count == 0 || &m->frames[m->frame_count - 1] != e->frame || m->function_index != e->region->function_index) qa_compat_qc_machine_fail(m, "inline continuation belongs to another source frame");
+  if (m->frame_count == 0 || (int64_t)m->frame_count - 1 != e->frame || m->function_index != e->region->function_index) qa_compat_qc_machine_fail(m, "inline continuation belongs to another source frame");
   if (skip && !e->region->replaceable) qa_compat_qc_machine_fail(m, "inline source region is not admitted for replacement");
   *e->called = true;
   if (skip) m->statement = e->region->exit - 1; else run_statements(m, e->exit_depth, e->budget, e->region, e->frame);
 }
 static void inline_run(void *ctx) { inline_decide(ctx, false); }
 static void inline_skip(void *ctx) { inline_decide(ctx, true); }
-static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, const qa_compat_qc_frame *stop_frame) {
+static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, int64_t stop_frame) {
   const qa_compat_qc_inline_boundary *boundary = m->inline_region_count ? m->options.inline_boundary : NULL;
   while ((int64_t)m->frame_count > exit_depth) {
-    if (stop_region && m->frame_count && &m->frames[m->frame_count - 1] == stop_frame) {
+    if (stop_region && m->frame_count && (int64_t)m->frame_count - 1 == stop_frame) {
       if (m->statement + 1 == stop_region->exit) return;
       if (m->statement + 1 < stop_region->entry || m->statement + 1 > stop_region->exit) qa_compat_qc_machine_fail(m, "inline source region escaped its continuation");
     }
@@ -300,9 +300,9 @@ static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t 
     if (m->statement < 0 || m->statement >= (int64_t)m->program->statement_count) qa_compat_qc_machine_fail(m, "statement outside program");
     qa_compat_qc_statement st = m->program->statements[m->statement];
     const qa_compat_qc_inline_region *region = boundary ? region_at(m, m->statement) : NULL;
-    if (boundary && region && region->function_index == m->function_index && !(stop_region && stop_frame == &m->frames[m->frame_count - 1] && stop_region->entry == m->statement)) {
+    if (boundary && region && region->function_index == m->function_index && !(stop_region && stop_frame == (int64_t)m->frame_count - 1 && stop_region->entry == m->statement)) {
       if (m->frame_count == 0) qa_compat_qc_machine_fail(m, "inline source region has no frame");
-      const qa_compat_qc_frame *frame = &m->frames[m->frame_count - 1];
+      int64_t frame = (int64_t)m->frame_count - 1;
       bool active = true, called = false; m->statement--;
       InlineCtx ic = {m, exit_depth, budget, region, frame, &active, &called};
       qa_compat_qc_inline_continuation cont = {&ic, inline_run, inline_skip};
@@ -391,7 +391,7 @@ static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t 
           if(obs) m->options.observe_entity_store(m->options.ctx,(qa_compat_qc_entity_store_observation){m->function_index,m->statement,qa_compat_qc_words_int(g,qa_compat_qc_machine_global_offset(m,"self")),word,before,4,self->bytes+word*4,4});
         } break; }
       case QA_QC_OP_DONE: case QA_QC_OP_RETURN:
-        if (stop_region && m->frame_count && &m->frames[m->frame_count-1]==stop_frame) qa_compat_qc_machine_fail(m,"inline source region returned before its continuation");
+        if (stop_region && m->frame_count && (int64_t)m->frame_count-1==stop_frame) qa_compat_qc_machine_fail(m,"inline source region returned before its continuation");
         qa_compat_qc_words_copy_words(g,g,a,1,3); leave(m); break;
       default: qa_compat_qc_machine_fail(m,"unsupported opcode %d",(int)st.opcode);
     }

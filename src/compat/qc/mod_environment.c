@@ -5,7 +5,7 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 typedef qa_compat_qc_mod_environment E;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 static void env_print(void *ctx, const char *text) { E *e = ctx; if (e->services->engine && e->services->engine->print) e->services->engine->print(e->services->engine->ctx, text); (void)e; }
 /* print fn signature check: qa_command_print_fn */
 static void b_cvar(void *ctx, qa_compat_qc_machine *m) { E *e=ctx; qa_compat_qc_machine_return_float(m, qa_cvar_registry_variable_value(e->cvars, qa_compat_qc_machine_arg_string(m,0))); }

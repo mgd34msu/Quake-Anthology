@@ -2,9 +2,8 @@
  * Port of src/network/q2/connectionless.ts. Host callbacks are
  * fn + ctx (executeRcon is synchronous per PORTING; output flushes
  * like the TS finally block even on abort-free return).
- * Mirrors (TS-owner: src/network/services/discovery.ts, not yet
- * landed in C): qa_q2_mirror_server_status and
- * qa_q2_mirror_discovery_wire; remove when services/discovery lands.
+ * ServerStatus/DiscoveryWire use the landed services/discovery
+ * types (qa_server_status / qa_discovery_wire).
  * GPL-2.0-or-later.
  */
 #ifndef QA_NETWORK_Q2_CONNECTIONLESS_H
@@ -17,6 +16,7 @@
 #include "qa/contracts/protocol.h"
 #include "qa/network/common/endpoint.h"
 #include "qa/network/q2/handshake.h"
+#include "qa/network/services/discovery.h"
 
 /* TS Q2Status player row (borrowed name on input). */
 typedef struct qa_q2_status_player {
@@ -35,55 +35,28 @@ typedef struct qa_q2_status {
 /* TS q2StatusText(status, maximumBytes=1384): malloc'd or NULL. */
 char *qa_q2_status_text(const qa_q2_status *status, bool has_maximum, double maximum);
 
-/* --- Mirror of ServerStatus (services/discovery.ts owner). --- */
-typedef struct qa_q2_mirror_rule {
-  char *key;
-  char *value;
-} qa_q2_mirror_rule;
-typedef struct qa_q2_mirror_player_detail {
-  char *name;
-  double score;
-  double ping;
-} qa_q2_mirror_player_detail;
-typedef struct qa_q2_mirror_server_status {
-  char *name;
-  char *map;
-  double players;
-  double max_players;
-  qa_q2_mirror_rule *rules;
-  size_t rule_count;
-  qa_q2_mirror_player_detail *player_details;
-  size_t player_detail_count;
-  qa_q2_protocol_identity protocol; /* TS wire {kind:"source"} */
-} qa_q2_mirror_server_status;
-
-void qa_q2_mirror_server_status_free(qa_q2_mirror_server_status *status);
-/* TS readQ2Status: false is TS null (also false on OOM). */
+/* TS readQ2Status: false is TS null (also false on OOM). The result
+ * is the landed qa_server_status (free with qa_server_status_destroy;
+ * wire is {kind:"source", protocol}). */
 bool qa_q2_read_status(const qa_q2_connectionless_message *message,
                        qa_q2_protocol_identity protocol,
-                       qa_q2_mirror_server_status *out);
+                       qa_server_status *out);
 
-/* --- Mirror of DiscoveryWire (services/discovery.ts owner). --- */
-typedef enum qa_q2_discovery_query_kind {
-  QA_Q2_DISCOVERY_INFO, QA_Q2_DISCOVERY_STATUS
-} qa_q2_discovery_query_kind;
 typedef qa_q2_status (*qa_q2_status_fn)(void *ctx);
-typedef struct qa_q2_mirror_discovery_wire {
+/* Closure state for the landed qa_discovery_wire (caller-owned;
+ * wire.ctx points at it). */
+typedef struct qa_q2_discovery_wire_state {
   qa_q2_protocol_identity protocol;
   qa_q2_status_fn status;
   void *status_ctx;
-} qa_q2_mirror_discovery_wire;
+} qa_q2_discovery_wire_state;
 
-/* TS q2DiscoveryWire + its three closures (malloc'd or NULL). */
-void qa_q2_discovery_wire_init(qa_q2_mirror_discovery_wire *wire,
-                               qa_q2_protocol_identity protocol, qa_q2_status_fn status,
-                               void *ctx);
-uint8_t *qa_q2_discovery_wire_query(const qa_q2_mirror_discovery_wire *wire,
-                                    qa_q2_discovery_query_kind kind, size_t *out_length);
-uint8_t *qa_q2_discovery_wire_master_query(const qa_q2_mirror_discovery_wire *wire,
-                                           size_t *out_length);
-uint8_t *qa_q2_discovery_wire_heartbeat(const qa_q2_mirror_discovery_wire *wire,
-                                        bool active, size_t *out_length);
+/* TS q2DiscoveryWire(protocol, status): fills a landed
+ * qa_discovery_wire whose callbacks malloc their byte results. */
+void qa_q2_discovery_wire_init(qa_discovery_wire *wire,
+                               qa_q2_discovery_wire_state *state,
+                               qa_q2_protocol_identity protocol,
+                               qa_q2_status_fn status, void *ctx);
 
 /* TS readQ2MasterReply: NULL is TS null; otherwise malloc'd list. */
 qa_net_address *qa_q2_read_master_reply(const uint8_t *bytes, size_t length,

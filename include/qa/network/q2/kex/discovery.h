@@ -3,8 +3,8 @@
  * plus mDNS DNS-SD (KexMdns). The Node dgram socket becomes a POSIX
  * UDP multicast socket pumped by qa_kex_mdns_poll (PORTING async
  * rule); hostname/interfaces come from gethostname/getifaddrs.
- * ServerStatus reuses the connectionless mirror (services/discovery
- * owner). found/failed are fn + ctx (failed gets owned message text
+ * ServerStatus is the landed qa_server_status. found/failed are
+ * fn + ctx (failed gets owned message text
  * copied as a borrowed C string). GPL-2.0-or-later.
  */
 #ifndef QA_NETWORK_Q2_KEX_DISCOVERY_H
@@ -20,7 +20,7 @@
 /* TS kexDiscoveryQuery / readKexDiscovery. */
 uint8_t *qa_kex_discovery_query(size_t *out_length);
 bool qa_kex_read_discovery(const uint8_t *bytes, size_t length,
-                           qa_q2_mirror_server_status *out);
+                           qa_server_status *out);
 
 typedef void (*qa_kex_mdns_found_fn)(void *ctx, const qa_net_address *address);
 typedef void (*qa_kex_mdns_failed_fn)(void *ctx, const char *message);

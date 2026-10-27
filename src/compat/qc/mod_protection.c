@@ -10,8 +10,8 @@ struct ProtEntry { qa_actor_id actor; qa_client_id client; struct ProtLane *lane
 typedef struct { bool has_regular; qa_regular_armor_state regular; bool has_powered; qa_powered_protection_state powered; } Projection;
 struct ProtStage { qa_actor_id actor; qa_protection_observer observer; Projection before; };
 typedef qa_compat_qc_mod_protection P;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
-static bool client_eq(qa_client_id a, qa_client_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
+static bool client_eq(qa_client_id a, qa_client_id b){return qa_same_client(a, b);}
 /* q1qc view builder (program data only) */
 static qa_q1qc_program qv; static qa_q1qc_definition *qv_g,*qv_f; static qa_q1qc_function *qv_fn; static qa_q1qc_statement *qv_st;
 static const qa_q1qc_program *qview(qa_compat_qc_program *p){

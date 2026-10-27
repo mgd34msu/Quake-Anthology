@@ -641,6 +641,7 @@ static qa_source_weapon_presentation binding_read(void *ctx) {
 }
 
 static qa_source_weapon_binding make_binding(qa_qvm_mod_items_runtime *items, item_entry *entry) {
+  if (items->weapons == NULL) qa_range_error("QVM weapon stage is absent");
   binding_state *state = xmalloc(sizeof *state);
   state->items = items;
   state->entry = entry;

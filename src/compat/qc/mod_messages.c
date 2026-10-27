@@ -6,7 +6,7 @@
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
 typedef qa_compat_qc_mod_messages M;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 static bool client_fn_impl(void *ctx, qa_actor_id actor) {
   M *m = ctx;
   return !m->operations.has_clients ? m->operations.client_is_player(m->operations.ctx, actor) : m->operations.clients_for_actor(m->operations.ctx, actor);

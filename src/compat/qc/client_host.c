@@ -26,14 +26,14 @@ static void b_checkclient(void *ctx, qa_compat_qc_machine *m) {
 }
 static int64_t efield(qa_compat_qc_program *p, const char *n) {
   const qa_compat_qc_definition *d = qa_compat_qc_program_field_named(p, n);
-  if (!d) qa_compat_qc_program_error(p->source, "missing entity field %s", n);
+  if (!d) qa_compat_qc_program_error("progs.dat", "missing entity field %s", n);
   return d->offset;
 }
 bool qa_compat_qc_client_host_init(qa_compat_qc_client_host *h, qa_compat_qc_world_host *w, qa_compat_qc_client_host_services services) {
   memset(h, 0, sizeof *h); h->world = w; h->services = services;
-  if (services.max_clients < 1 || services.max_clients >= w->options.entities->count) qa_compat_qc_program_error(w->options.program->source, "invalid reserved QC client range");
+  if (services.max_clients < 1 || services.max_clients >= w->options.entities->count) qa_compat_qc_program_error("progs.dat", "invalid reserved QC client range");
   for (int64_t slot = 0; slot <= services.max_clients; slot++) {
-    qa_owned_actor a; if (!qa_source_actor_slots_at(w->options.slots, slot, &a)) qa_compat_qc_program_error(w->options.program->source, "missing reserved QC client/world slot %lld", (long long)slot);
+    qa_owned_actor a; if (!qa_source_actor_slots_at(w->options.slots, slot, &a)) qa_compat_qc_program_error("progs.dat", "missing reserved QC client/world slot %lld", (long long)slot);
   }
   h->origin = efield(w->options.program, "origin"); h->view_ofs = efield(w->options.program, "view_ofs");
   h->health = efield(w->options.program, "health"); h->flags = efield(w->options.program, "flags");
@@ -44,7 +44,7 @@ bool qa_compat_qc_client_host_init(qa_compat_qc_client_host *h, qa_compat_qc_wor
 }
 void qa_compat_qc_client_host_destroy(qa_compat_qc_client_host *h) { qa_q1_client_visibility_destroy(h->visibility); memset(h, 0, sizeof *h); }
 typedef struct { qa_compat_qc_aim_state *s; qa_compat_qc_machine *m; int64_t reference; qa_actor_id self; const qa_compat_qc_aim_target_ref *targets; size_t count; } AimCtx;
-static bool actor_eq(qa_actor_id a, qa_actor_id b) { return a.slot == b.slot && a.generation == b.generation && a.token == b.token && a.session.token == b.session.token; }
+static bool actor_eq(qa_actor_id a, qa_actor_id b) { return qa_same_actor(a, b); }
 static qa_body_state_result aim_body(void *ctx, qa_actor_id a) { return qa_shared_body_table_read(((AimCtx *)ctx)->s->world->options.bodies, a); }
 static bool aim_eligible(void *ctx, qa_actor_id target) {
   AimCtx *c = ctx; const qa_compat_qc_aim_target_ref *projected = NULL;

@@ -47,7 +47,7 @@ static void field_offsets(qa_compat_qc_borrowed_actors *b) {
   int64_t maxw = 0;
   for (int i = 0; i < 14; i++) { b->offsets[i] = qa_compat_qc_machine_field_offset(vm, names[i]); int64_t end = b->offsets[i] + (i < 8 ? 3 : 1); if (end > maxw) maxw = end; }
   b->fields_by_word = malloc((size_t)(maxw ? maxw : 1) * sizeof(int64_t));
-  if (!b->fields_by_word) qa_compat_qc_program_error(vm->program->source, "borrowed field allocation failed");
+  if (!b->fields_by_word) qa_compat_qc_program_error("progs.dat", "borrowed field allocation failed");
   for (int64_t i = 0; i < maxw; i++) b->fields_by_word[i] = -1;
   b->fields_by_word_count = (size_t)maxw;
   for (int i = 0; i < 14; i++) { int64_t width = i < 8 ? 3 : 1; for (int64_t w = b->offsets[i]; w < b->offsets[i] + width; w++) b->fields_by_word[w] = i; }
@@ -61,7 +61,7 @@ static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *
   bool any_vec = false; for (int i = 0; i < 8; i++) if (requested[i]) any_vec = true;
   if (any_vec) {
     qa_body_state_result body_r = b->host.bodies.read(b->host.bodies.ctx, row->actor.id);
-    if (!body_r.has_value) qa_compat_qc_program_error(vm->program->source, "Borrowed QC actor has no canonical body");
+    if (!body_r.has_value) qa_compat_qc_program_error("progs.dat", "Borrowed QC actor has no canonical body");
     qa_body_state body = body_r.value;
     qa_linked_body_result linked = (requested[F_ABSMIN] || requested[F_ABSMAX]) ? b->host.bodies.linked(b->host.bodies.ctx, row->actor.id) : (qa_linked_body_result){0};
     for (int i = 0; i < 8; i++) if (requested[i]) {
@@ -77,7 +77,7 @@ static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *
         default: v = (qa_vec3){body.bounds.max.x - body.bounds.min.x, body.bounds.max.y - body.bounds.min.y, body.bounds.max.z - body.bounds.min.z}; break;
       }
       if (!isfinite((double)qa_float32(v.x)) || !isfinite((double)qa_float32(v.y)) || !isfinite((double)qa_float32(v.z)))
-        qa_compat_qc_program_error(vm->program->source, "Borrowed actor geometry exceeds QC binary32 range");
+        qa_compat_qc_program_error("progs.dat", "Borrowed actor geometry exceeds QC binary32 range");
       qa_compat_qc_words_set_vector(fields, b->offsets[i], v);
     }
   }
@@ -85,7 +85,7 @@ static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *
     double health = 0; bool can = false; bool has = b->host.combat_read(b->host.ctx, row->actor.id, &health, &can);
     if (!has) { health = 0; can = false; }
     if (requested[F_HEALTH]) {
-      if (!isfinite((double)qa_float32(health))) qa_compat_qc_program_error(vm->program->source, "Borrowed actor health exceeds QC binary32 range");
+      if (!isfinite((double)qa_float32(health))) qa_compat_qc_program_error("progs.dat", "Borrowed actor health exceeds QC binary32 range");
       qa_compat_qc_words_set_float(fields, b->offsets[F_HEALTH], health);
     }
     if (requested[F_TAKEDAMAGE]) qa_compat_qc_words_set_float(fields, b->offsets[F_TAKEDAMAGE], can ? 1 : 0);
@@ -103,9 +103,9 @@ static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *
 }
 int64_t qa_compat_qc_borrowed_actors_reference(qa_compat_qc_borrowed_actors *b, qa_actor_id actor) {
   qa_owned_actor owned;
-  if (!qa_session_actor_registry_resolve_owned(b->host.actors, actor, &owned)) qa_compat_qc_program_error(b->host.machine(b->host.ctx)->program->source, "Cannot borrow a retired canonical actor");
+  if (!qa_session_actor_registry_resolve_owned(b->host.actors, actor, &owned)) qa_compat_qc_program_error("progs.dat", "Cannot borrow a retired canonical actor");
   qa_actor_source_result src = qa_session_actor_registry_source_of(b->host.actors, actor);
-  if (src.has_value && strcmp(src.provider, b->host.slots_options.provider) == 0) qa_compat_qc_program_error(b->host.machine(b->host.ctx)->program->source, "Source actors must use their original QC row");
+  if (src.has_value && strcmp(src.provider, b->host.slots_options.provider) == 0) qa_compat_qc_program_error("progs.dat", "Source actors must use their original QC row");
   qa_compat_qc_borrowed_row *existing = find_actor(b, owned);
   if (existing) return qa_compat_qc_entity_memory_reference(b->host.machine(b->host.ctx)->entities, existing->slot);
   qa_source_slot_storage *storage = &b->host.slots_options.storage;
@@ -117,11 +117,11 @@ int64_t qa_compat_qc_borrowed_actors_reference(qa_compat_qc_borrowed_actors *b, 
     qa_source_slot_state state = storage->read(storage->ctx, slot);
     if (state.free && (strcmp(lifetime->reuse, "immediate") == 0 || lifetime->reusable_after(lifetime->ctx, state.freed_at, now))) { selected = slot; break; }
   }
-  if (selected >= (int64_t)b->host.slots_options.capacity) qa_compat_qc_program_error(b->host.machine(b->host.ctx)->program->source, "No free QC row for a borrowed actor");
-  qa_owned_actor at; if (qa_source_actor_slots_at(b->host.slots, selected, &at) || find_slot(b, selected)) qa_compat_qc_program_error(b->host.machine(b->host.ctx)->program->source, "Borrowed QC row collides with a current source actor");
+  if (selected >= (int64_t)b->host.slots_options.capacity) qa_compat_qc_program_error("progs.dat", "No free QC row for a borrowed actor");
+  qa_owned_actor at; if (qa_source_actor_slots_at(b->host.slots, selected, &at) || find_slot(b, selected)) qa_compat_qc_program_error("progs.dat", "Borrowed QC row collides with a current source actor");
   if (selected == count) storage->set_count(storage->ctx, (double)(count + 1));
   storage->initialize(storage->ctx, selected, owned);
-  if (b->row_count == b->row_capacity) { size_t c = b->row_capacity ? b->row_capacity * 2 : 8; void *p = realloc(b->rows, c * sizeof *b->rows); if (!p) qa_compat_qc_program_error(b->host.machine(b->host.ctx)->program->source, "borrowed row allocation failed"); b->rows = p; b->row_capacity = c; }
+  if (b->row_count == b->row_capacity) { size_t c = b->row_capacity ? b->row_capacity * 2 : 8; void *p = realloc(b->rows, c * sizeof *b->rows); if (!p) qa_compat_qc_program_error("progs.dat", "borrowed row allocation failed"); b->rows = p; b->row_capacity = c; }
   b->rows[b->row_count] = (qa_compat_qc_borrowed_row){owned, selected, NULL};
   qa_compat_qc_borrowed_row *row = &b->rows[b->row_count++];
   bool requested[14] = {0}; for (int i = 0; i < 8; i++) requested[i] = true;
@@ -138,7 +138,7 @@ void qa_compat_qc_borrowed_actors_access(qa_compat_qc_borrowed_actors *b, int64_
   if (strcmp(kind, "write") == 0) {
     for (int64_t cur = word; cur < word + words; cur++) {
       int64_t f = (cur >= 0 && cur < (int64_t)b->fields_by_word_count) ? b->fields_by_word[cur] : -1;
-      if (f >= 0 && f != F_CHAIN && f != F_INVSND) qa_compat_qc_program_error(vm->program->source, "Original QC cannot mutate borrowed field %s outside its source owner", names[f]);
+      if (f >= 0 && f != F_CHAIN && f != F_INVSND) qa_compat_qc_program_error("progs.dat", "Original QC cannot mutate borrowed field %s outside its source owner", names[f]);
     }
     return;
   }

@@ -62,12 +62,12 @@ static void p_write(void *ctx, qa_q1_physics_entity e) {
   qa_compat_qc_words_set_float(w, fld(s, "nextthink"), e.next_think_seconds);
 }
 static void invoke_cb(S *s, qa_actor_id actor, const char *name, const qa_actor_id *other) {
-  int64_t slot; if (!source_slot(s, actor, &slot)) qa_compat_qc_program_error(s->world->options.program->source, "pusher callback requires a live QC actor");
+  int64_t slot; if (!source_slot(s, actor, &slot)) qa_compat_qc_program_error("progs.dat", "pusher callback requires a live QC actor");
   int32_t callback = qa_compat_qc_words_int(qa_compat_qc_entity_memory_at(s->world->options.entities, slot), fld(s, name));
   if (callback == 0 && strcmp(name, "blocked") == 0) return;
   if (s->invoke) {
     qa_owned_actor owner;
-    if (!qa_session_actor_registry_resolve_owned(s->world->options.actors, actor, &owner)) qa_compat_qc_program_error(s->world->options.program->source, "pusher callback lost its source owner");
+    if (!qa_session_actor_registry_resolve_owned(s->world->options.actors, actor, &owner)) qa_compat_qc_program_error("progs.dat", "pusher callback lost its source owner");
     s->invoke(s->ctx, owner, name, other); return;
   }
   qa_compat_qc_machine *vm = s->vm;
@@ -97,7 +97,7 @@ static void out_collision(void *ctx, qa_owned_actor actor, bool enabled) {
 }
 static void out_think(void *ctx, qa_owned_actor actor) { invoke_cb(ctx, actor.id, "think", NULL); }
 qa_q1_pusher_services qa_compat_qc_create_pusher_services(qa_compat_qc_world_host *world, qa_compat_qc_machine *vm, S *st) {
-  if (vm->program != world->options.program || vm->entities != world->options.entities) qa_compat_qc_program_error(world->options.program->source, "pusher belongs to another QC machine");
+  if (vm->program != world->options.program || vm->entities != world->options.entities) qa_compat_qc_program_error("progs.dat", "pusher belongs to another QC machine");
   st->world = world; st->vm = vm;
   qa_compat_qc_pusher_projection proj = {st, p_read, p_write, p_link, p_blocked};
   st->inner = st->physical(st->ctx, proj);

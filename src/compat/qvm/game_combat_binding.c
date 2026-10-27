@@ -937,8 +937,10 @@ void qa_qvm_combat_bindings_close(qa_qvm_combat_bindings *bindings) {
   memset(bindings->admitted_present, 0, sizeof bindings->admitted_present);
   memset(bindings->proxies_present, 0, sizeof bindings->proxies_present);
   remove_unused_armor_hook(bindings);
-  while (bindings->removal_count > 0)
-    qa_qvm_module_unbind(&bindings->options.game->module, bindings->removals[--bindings->removal_count]);
+  /* TS removals.runAll(): forward order. */
+  for (size_t i = 0; i < bindings->removal_count; i++)
+    qa_qvm_module_unbind(&bindings->options.game->module, bindings->removals[i]);
+  bindings->removal_count = 0;
   if (bindings->release_subscription != 0 && bindings->options.source != NULL)
     qa_session_actor_registry_off_release(bindings->options.source->actors,
                                           bindings->release_subscription);

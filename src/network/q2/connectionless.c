@@ -66,23 +66,6 @@ char *qa_q2_status_text(const qa_q2_status *status, bool has_maximum, double max
   return result;
 }
 
-void qa_q2_mirror_server_status_free(qa_q2_mirror_server_status *status) {
-  free(status->name);
-  free(status->map);
-  if (status->rules != NULL) {
-    for (size_t i = 0; i < status->rule_count; i++) {
-      free(status->rules[i].key);
-      free(status->rules[i].value);
-    }
-    free(status->rules);
-  }
-  if (status->player_details != NULL) {
-    for (size_t i = 0; i < status->player_detail_count; i++) free(status->player_details[i].name);
-    free(status->player_details);
-  }
-  memset(status, 0, sizeof *status);
-}
-
 static bool split_all(const char *text, char separator, char ***out, size_t *out_count) {
   size_t capacity = 8;
   size_t count = 0;
@@ -122,8 +105,7 @@ static void free_split(char **parts, size_t count) {
 }
 
 bool qa_q2_read_status(const qa_q2_connectionless_message *message,
-                       qa_q2_protocol_identity protocol,
-                       qa_q2_mirror_server_status *out) {
+                       qa_q2_protocol_identity protocol, qa_server_status *out) {
   memset(out, 0, sizeof *out);
   if (strcmp(message->command != NULL ? message->command : "", "print") != 0) return false;
   char **lines = NULL;
@@ -140,68 +122,19 @@ bool qa_q2_read_status(const qa_q2_connectionless_message *message,
     free_split(lines, line_count);
     return false;
   }
-  size_t rule_capacity = 8;
-  size_t rule_count = 0;
-  qa_q2_mirror_rule *rules = (qa_q2_mirror_rule *)calloc(rule_capacity, sizeof *rules);
-  if (rules == NULL) {
-    free_split(fields, field_count);
-    free_split(lines, line_count);
-    return false;
-  }
+  qa_qw_info rules;
+  qa_qw_info_init(&rules);
   bool oom = false;
-  for (size_t i = 0; i + 1 < field_count && !oom; i += 2) {
-    long at = -1;
-    for (size_t k = 0; k < rule_count; k++) {
-      if (strcmp(rules[k].key, fields[i]) == 0) at = (long)k;
-    }
-    char *value = dup_str(fields[i + 1]);
-    if (value == NULL) { oom = true; break; }
-    if (at >= 0) {
-      free(rules[at].value);
-      rules[at].value = value;
-    } else {
-      if (rule_count == rule_capacity) {
-        rule_capacity *= 2;
-        qa_q2_mirror_rule *grown =
-            (qa_q2_mirror_rule *)realloc(rules, rule_capacity * sizeof *grown);
-        if (grown == NULL) {
-          free(value);
-          oom = true;
-          break;
-        }
-        rules = grown;
-      }
-      char *owned_key = dup_str(fields[i]);
-      if (owned_key == NULL) {
-        free(value);
-        oom = true;
-        break;
-      }
-      rules[rule_count].key = owned_key;
-      rules[rule_count].value = value;
-      rule_count++;
-    }
+  for (size_t i = 0; i + 1 < field_count; i += 2) {
+    qa_qw_info_set(&rules, fields[i], fields[i + 1]);
   }
   free_split(fields, field_count);
-  if (oom) {
-    for (size_t i = 0; i < rule_count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
-    free_split(lines, line_count);
-    return false;
-  }
   size_t player_capacity = 8;
   size_t player_count = 0;
-  qa_q2_mirror_player_detail *players =
-      (qa_q2_mirror_player_detail *)calloc(player_capacity, sizeof *players);
+  qa_player_detail *players =
+      (qa_player_detail *)calloc(player_capacity, sizeof *players);
   if (players == NULL) {
-    for (size_t i = 0; i < rule_count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
+    qa_qw_info_destroy(&rules);
     free_split(lines, line_count);
     return false;
   }
@@ -237,7 +170,7 @@ bool qa_q2_read_status(const qa_q2_connectionless_message *message,
     if (name_len < 1 || name_start[name_len - 1] != '"') continue;
     if (player_count == player_capacity) {
       player_capacity *= 2;
-      qa_q2_mirror_player_detail *grown = (qa_q2_mirror_player_detail *)realloc(
+      qa_player_detail *grown = (qa_player_detail *)realloc(
           players, player_capacity * sizeof *grown);
       if (grown == NULL) { oom = true; break; }
       players = grown;
@@ -250,33 +183,23 @@ bool qa_q2_read_status(const qa_q2_connectionless_message *message,
   }
   free_split(lines, line_count);
   if (oom) {
-    for (size_t i = 0; i < rule_count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
+    qa_qw_info_destroy(&rules);
     for (size_t i = 0; i < player_count; i++) free(players[i].name);
     free(players);
     return false;
   }
-  const char *hostname = "";
-  const char *mapname = "";
-  double max_clients = 0;
-  for (size_t i = 0; i < rule_count; i++) {
-    if (strcmp(rules[i].key, "hostname") == 0) hostname = rules[i].value;
-    if (strcmp(rules[i].key, "mapname") == 0) mapname = rules[i].value;
-    if (strcmp(rules[i].key, "maxclients") == 0) max_clients = strtod(rules[i].value, NULL);
-  }
+  const char *hostname = qa_qw_info_get(&rules, "hostname");
+  const char *mapname = qa_qw_info_get(&rules, "mapname");
+  const char *max_text = qa_qw_info_get(&rules, "maxclients");
+  if (hostname == NULL) hostname = "";
+  if (mapname == NULL) mapname = "";
+  double max_clients = max_text != NULL ? strtod(max_text, NULL) : 0;
   out->name = dup_str(hostname);
   out->map = dup_str(mapname);
   if (out->name == NULL || out->map == NULL) {
     free(out->name);
     free(out->map);
-    for (size_t i = 0; i < rule_count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
+    qa_qw_info_destroy(&rules);
     for (size_t i = 0; i < player_count; i++) free(players[i].name);
     free(players);
     memset(out, 0, sizeof *out);
@@ -285,46 +208,37 @@ bool qa_q2_read_status(const qa_q2_connectionless_message *message,
   out->players = (double)player_count;
   out->max_players = max_clients;
   out->rules = rules;
-  out->rule_count = rule_count;
   out->player_details = players;
-  out->player_detail_count = player_count;
-  out->protocol = protocol;
+  out->player_count = player_count;
+  memset(&out->wire, 0, sizeof out->wire);
+  out->wire.protocol = protocol;
   return true;
 }
 
-void qa_q2_discovery_wire_init(qa_q2_mirror_discovery_wire *wire,
-                               qa_q2_protocol_identity protocol, qa_q2_status_fn status,
-                               void *ctx) {
-  wire->protocol = protocol;
-  wire->status = status;
-  wire->status_ctx = ctx;
-}
-
-uint8_t *qa_q2_discovery_wire_query(const qa_q2_mirror_discovery_wire *wire,
-                                    qa_q2_discovery_query_kind kind, size_t *out_length) {
-  if (kind == QA_Q2_DISCOVERY_INFO) {
+static uint8_t *discovery_query(void *vctx, const char *kind,
+                                const char *challenge, size_t *out_len) {
+  (void)challenge;
+  qa_q2_discovery_wire_state *state = (qa_q2_discovery_wire_state *)vctx;
+  if (kind != NULL && strcmp(kind, "info") == 0) {
     char buffer[64];
     (void)snprintf(buffer, sizeof buffer, "info %lld",
-                   (long long)wire->protocol.version);
-    return qa_q2_out_of_band(buffer, false, out_length);
+                   (long long)state->protocol.version);
+    return qa_q2_out_of_band(buffer, false, out_len);
   }
-  return qa_q2_out_of_band("status", false, out_length);
+  return qa_q2_out_of_band("status", false, out_len);
 }
-
-uint8_t *qa_q2_discovery_wire_master_query(const qa_q2_mirror_discovery_wire *wire,
-                                           size_t *out_length) {
-  (void)wire;
+static uint8_t *discovery_master_query(void *vctx, size_t *out_len) {
+  (void)vctx;
   uint8_t *out = (uint8_t *)malloc(5);
   if (out == NULL) return NULL;
   memcpy(out, "query", 5);
-  if (out_length != NULL) *out_length = 5;
+  if (out_len != NULL) *out_len = 5;
   return out;
 }
-
-uint8_t *qa_q2_discovery_wire_heartbeat(const qa_q2_mirror_discovery_wire *wire,
-                                        bool active, size_t *out_length) {
-  if (!active) return qa_q2_out_of_band("shutdown", false, out_length);
-  qa_q2_status status = wire->status(wire->status_ctx);
+static uint8_t *discovery_heartbeat(void *vctx, bool active, size_t *out_len) {
+  if (!active) return qa_q2_out_of_band("shutdown", false, out_len);
+  qa_q2_discovery_wire_state *state = (qa_q2_discovery_wire_state *)vctx;
+  qa_q2_status status = state->status(state->status_ctx);
   char *text = qa_q2_status_text(&status, false, 0);
   if (text == NULL) return NULL;
   size_t needed = strlen("heartbeat\n") + strlen(text) + 1;
@@ -335,9 +249,21 @@ uint8_t *qa_q2_discovery_wire_heartbeat(const qa_q2_mirror_discovery_wire *wire,
   }
   (void)snprintf(full, needed, "heartbeat\n%s", text);
   free(text);
-  uint8_t *out = qa_q2_out_of_band(full, false, out_length);
+  uint8_t *out = qa_q2_out_of_band(full, false, out_len);
   free(full);
   return out;
+}
+void qa_q2_discovery_wire_init(qa_discovery_wire *wire,
+                               qa_q2_discovery_wire_state *state,
+                               qa_q2_protocol_identity protocol,
+                               qa_q2_status_fn status, void *ctx) {
+  state->protocol = protocol;
+  state->status = status;
+  state->status_ctx = ctx;
+  wire->ctx = state;
+  wire->query = discovery_query;
+  wire->master_query = discovery_master_query;
+  wire->heartbeat = discovery_heartbeat;
 }
 
 void qa_q2_master_reply_free(qa_net_address *addresses, size_t count) {

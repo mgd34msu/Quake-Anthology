@@ -4,9 +4,8 @@
  * machinery collapses to direct synchronous recursion; cancellation
  * uses setjmp/longjmp back to the intercepting frame, returning 0
  * from the cancelled source call as in the TS. Region qualification
- * (regions.ts, qvm-b) and symbol names (symbols.ts, qvm-b) are
- * approximated by the owner frame size / numeric PCs; see the slice
- * report. GPL-2.0-or-later.
+ * and symbol names use the landed regions/symbols ports.
+ * GPL-2.0-or-later.
  */
 #include "qa/compat/qvm/interpreter.h"
 
@@ -386,10 +385,38 @@ struct qa_qvm_interpreter {
   size_t observer_count, observer_capacity;
   bool has_resolver;
   qa_qvm_function_resolver resolver;
-  const qa_qvmx_registration *registration;
+  const qa_qvm_vm_registration *registration;
+  qa_qvmy_interpreter registry_view; /* snapshot bound into the registry */
+  const qa_qvm_allocation_profile *allocation_profile; /* borrowed, for symbols */
+  qa_qvm_symbols symbols;
   /* cancellation scopes: token pointer -> source_call */
   source_call **cancel_targets;
   size_t cancel_count, cancel_capacity;
+};
+
+/* TS live()/assertAllocation(): the C address space has no publishing
+ * state, so only the freed-registration check remains observable. */
+static void assert_live(const qa_qvm_interpreter *interp) {
+  if (interp->registration != NULL) {
+    qa_qvm_vm_binding binding = qa_qvm_vm_registration_get_binding(interp->registration);
+    if (binding.kind != NULL && strcmp(binding.kind, "freed") == 0)
+      qa_range_error("QVM registration has been freed");
+  }
+}
+
+static void assert_live_cb(void *ctx) { assert_live((const qa_qvm_interpreter *)ctx); }
+
+/* TS QvmOpcode reverse-enum names for the trace>1 debug print. */
+static const char *const opcode_names[] = {
+    "OP_UNDEF", "OP_IGNORE", "OP_BREAK", "OP_ENTER", "OP_LEAVE", "OP_CALL",
+    "OP_PUSH", "OP_POP", "OP_CONST", "OP_LOCAL", "OP_JUMP", "OP_EQ", "OP_NE",
+    "OP_LTI", "OP_LEI", "OP_GTI", "OP_GEI", "OP_LTU", "OP_LEU", "OP_GTU",
+    "OP_GEU", "OP_EQF", "OP_NEF", "OP_LTF", "OP_LEF", "OP_GTF", "OP_GEF",
+    "OP_LOAD1", "OP_LOAD2", "OP_LOAD4", "OP_STORE1", "OP_STORE2", "OP_STORE4",
+    "OP_ARG", "OP_BLOCK_COPY", "OP_SEX8", "OP_SEX16", "OP_NEGI", "OP_ADD",
+    "OP_SUB", "OP_DIVI", "OP_DIVU", "OP_MODI", "OP_MODU", "OP_MULI", "OP_MULU",
+    "OP_BAND", "OP_BOR", "OP_BXOR", "OP_BCOM", "OP_LSH", "OP_RSHI", "OP_RSHU",
+    "OP_NEGF", "OP_ADDF", "OP_SUBF", "OP_DIVF", "OP_MULF", "OP_CVIF", "OP_CVFI",
 };
 
 static int64_t target_pc(qa_qvm_interpreter *interp, double index) {
@@ -528,6 +555,7 @@ static double host_invoke(void *ctx, const double *args, size_t arg_count, bool 
   host_ctx *host = ctx;
   (void)has_index;
   check_cancellation(host->function_scope);
+  assert_live(host->interp);
   return execute(host->interp, args, arg_count, (int64_t)instruction_index, NULL,
                  host->function_scope, evaluation);
 }
@@ -611,28 +639,75 @@ static void intercept_branches(void *ctx, const qa_qvm_branch_binding *bindings,
   }
 }
 
+static int64_t to_region_word(double value) {
+  return is_safe_integer(value) ? (int64_t)value : INT64_MIN;
+}
+
+static qa_qvmy_region_instruction *region_instructions(qa_qvm_interpreter *interp) {
+  qa_qvmy_region_instruction *list =
+      malloc((interp->instruction_count == 0 ? 1 : interp->instruction_count) * sizeof *list);
+  if (list == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < interp->instruction_count; i++) {
+    list[i].opcode = (int32_t)interp->instructions[i].opcode;
+    list[i].operand_width = interp->instructions[i].operand_width;
+    list[i].operand = interp->instructions[i].operand;
+    list[i].byte_offset = interp->instructions[i].byte_offset;
+  }
+  return list;
+}
+
+static int64_t qualify_region(qa_qvm_interpreter *interp, int64_t owner, double entry, double join) {
+  qa_qvmy_region_instruction *list = region_instructions(interp);
+  int64_t frame = qa_qvm_qualify_region(list, interp->instruction_count, owner,
+                                         to_region_word(entry), to_region_word(join));
+  free(list);
+  return frame;
+}
+
+static int64_t qualify_evaluation(qa_qvm_interpreter *interp, int64_t owner,
+                                   const qa_qvm_region_evaluation *region, const char *access) {
+  qa_qvmy_region_instruction *list = region_instructions(interp);
+  int64_t frame = qa_qvm_qualify_region_evaluation(list, interp->instruction_count, owner, region,
+                                                    access);
+  free(list);
+  return frame;
+}
+
 static void intercept_regions(void *ctx, const qa_qvm_region_binding *bindings, size_t count) {
   intercept_ctx *ic = ctx;
   qa_qvm_interpreter *interp = ic->interp;
   if (ic->proceeded || ic->source->regions != NULL)
     qa_range_error("QVM regions must bind once before proceeding");
-  /* Mirror simplification: frame size is the owner OP_ENTER operand;
-   * full qualification is regions.ts (qvm-b slice). */
-  int64_t frame_size = interp->instructions[ic->instruction_index].operand;
   ic->source->regions = calloc(count == 0 ? 1 : count, sizeof(source_region));
   if (ic->source->regions == NULL) qa_range_error("out of memory");
   ic->source->region_count = count;
-  double previous = (double)ic->instruction_index;
-  for (size_t i = 0; i < count; i++) {
-    if (bindings[i].entry < previous) qa_range_error("QVM original regions overlap");
-    previous = bindings[i].join;
-    ic->source->regions[i].binding = bindings[i];
-    ic->source->regions[i].entry_pc = target_pc(interp, bindings[i].entry);
-    ic->source->regions[i].join_pc = target_pc(interp, bindings[i].join);
-    ic->source->regions[i].frame_size = frame_size;
-    ic->source->regions[i].stack = ic->source->stack - frame_size;
-    ic->source->regions[i].state = 0;
+  /* TS sorts a copy of the bindings by entry before the overlap check. */
+  size_t *order = malloc((count == 0 ? 1 : count) * sizeof *order);
+  if (order == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < count; i++) order[i] = i;
+  for (size_t i = 1; i < count; i++) {
+    size_t key = order[i], j = i;
+    while (j > 0 && bindings[order[j - 1]].entry > bindings[key].entry) {
+      order[j] = order[j - 1];
+      j--;
+    }
+    order[j] = key;
   }
+  double previous = (double)ic->instruction_index;
+  for (size_t n = 0; n < count; n++) {
+    size_t i = order[n];
+    if (bindings[i].entry < previous) qa_range_error("QVM original regions overlap");
+    int64_t frame_size = qualify_region(interp, ic->instruction_index, bindings[i].entry,
+                                         bindings[i].join);
+    previous = bindings[i].join;
+    ic->source->regions[n].binding = bindings[i];
+    ic->source->regions[n].entry_pc = target_pc(interp, bindings[i].entry);
+    ic->source->regions[n].join_pc = target_pc(interp, bindings[i].join);
+    ic->source->regions[n].frame_size = frame_size;
+    ic->source->regions[n].stack = ic->source->stack - frame_size;
+    ic->source->regions[n].state = 0;
+  }
+  free(order);
 }
 
 static double intercept_evaluate_region(void *ctx, qa_qvmx_region_evaluation region,
@@ -640,6 +715,7 @@ static double intercept_evaluate_region(void *ctx, qa_qvmx_region_evaluation reg
   intercept_ctx *ic = ctx;
   if (ic->proceeded) qa_range_error("QVM function continuation can only run once");
   ic->proceeded = true;
+  int64_t frame_size = qualify_evaluation(ic->interp, ic->instruction_index, &region, "source");
   if (input_count != region.input_count)
     qa_range_error("QVM region live-ins differ from its qualified frame");
   for (size_t i = 0; i < input_count; i++) (void)signed_word(inputs[i]);
@@ -649,7 +725,7 @@ static double intercept_evaluate_region(void *ctx, qa_qvmx_region_evaluation reg
   if (ic->source->eval_inputs == NULL) qa_range_error("out of memory");
   memcpy(ic->source->eval_inputs, inputs, input_count * sizeof(double));
   ic->source->eval_input_count = input_count;
-  ic->source->eval_frame_size = ic->interp->instructions[ic->instruction_index].operand;
+  ic->source->eval_frame_size = frame_size;
   static const double unused_args[10] = {0};
   return execute(ic->interp, unused_args, 10, ic->instruction_index, ic->source, NULL, NULL);
 }
@@ -849,6 +925,19 @@ static int64_t evaluation_stack_start(qa_qvm_interpreter *interp,
   return (int64_t)stack->start;
 }
 
+/* TS debugString(): `${indent()}${operands.count}` via registration print. */
+static void debug_print(qa_qvm_interpreter *interp, int operand_count, const char *tail) {
+  if (interp->registration == NULL) return;
+  if (interp->call_level < 0) qa_range_error("VM indentation requires a nonnegative call level");
+  int64_t count = interp->call_level < 20 ? interp->call_level : 20;
+  char indent[41];
+  memset(indent, ' ', (size_t)(2 * count));
+  indent[2 * count] = '\0';
+  char line[1200];
+  snprintf(line, sizeof line, "%s%d%s", indent, operand_count, tail);
+  qa_qvm_vm_registration_print(interp->registration, line);
+}
+
 static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg_count,
                       int64_t instruction_index, source_call *source,
                       source_call *function_scope,
@@ -863,11 +952,22 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
       qa_range_error("QVM private invocation requires an original function entry");
   }
   for (size_t i = 0; i < arg_count; i++) (void)signed_word(args[i]);
+  if (source == NULL && interp->registration != NULL)
+    qa_qvm_vm_registration_print_call(interp->registration,
+                                      arg_count > 0 ? (int64_t)args[0] : 0);
+  qa_qvm_execution_profile profile = {"release", 0, 0};
+  if (interp->registration != NULL)
+    profile = qa_qvm_vm_registration_execution_profile(interp->registration);
+  bool debug = profile.kind != NULL && strcmp(profile.kind, "debug") == 0;
+  bool previous_debug = interp->debug;
+  int32_t trace = debug ? profile.trace : 0;
   bool has_evaluation = false;
   evaluation_local evaluation;
   memset(&evaluation, 0, sizeof evaluation);
   const qa_qvm_evaluation_stack *read_only_stack = NULL;
   if (read_only != NULL) {
+    int64_t frame_size =
+        qualify_evaluation(interp, instruction_index, &read_only->region, "read-only");
     if (read_only->input_count != read_only->region.input_count)
       qa_range_error("Read-only QVM region live-ins differ from its qualified frame");
     for (size_t i = 0; i < read_only->input_count; i++) (void)signed_word(read_only->inputs[i]);
@@ -875,7 +975,7 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
     evaluation.region = read_only->region;
     evaluation.inputs = read_only->inputs;
     evaluation.input_count = read_only->input_count;
-    evaluation.frame_size = interp->instructions[instruction_index].operand;
+    evaluation.frame_size = frame_size;
     if (read_only->has_stack) read_only_stack = &read_only->stack;
   } else if (source != NULL && source->has_evaluation) {
     has_evaluation = true;
@@ -894,10 +994,13 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
                               : source->stack;
   if (evaluation_floor >= 0 && sp < evaluation_floor)
     qa_range_error("QVM evaluation stack would overlap source data");
+  interp->debug = debug;
+  interp->registry_view.debug_enabled = debug;
   int64_t evaluation_stack = sp;
   invocation frame;
   memset(&frame, 0, sizeof frame);
   frame.ops = source != NULL ? source->ops : &frame.owned_ops;
+  if (source == NULL) frame.owned_ops.debug = debug;
   frame.sp = &sp;
   frame.function_scope = source != NULL ? source
                          : function_scope != NULL ? function_scope
@@ -919,6 +1022,7 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
     for (size_t i = 0; i < argument_words; i++)
       write_word(interp, sp + 8 + (int64_t)i * 4, i < arg_count ? (int32_t)args[i] : 0);
     interp->call_level = 0;
+    if (interp->registration != NULL) qa_qvm_vm_registration_debug(interp->registration, 0);
     if (read_only == NULL && interp->counter == NULL) {
       for (size_t i = 0; i < interp->hook_count && !finished; i++) {
         hook_entry *entry = &interp->hooks[i];
@@ -933,6 +1037,8 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
   }
   int64_t pc = finished ? 0 : target_pc(interp, (double)instruction_index);
   bool evaluation_started = false;
+  qa_qvm_function_symbol profile_symbol = {0, NULL, NULL, 0};
+  if (debug) profile_symbol = qa_qvm_symbols_value_to_function_symbol(&interp->symbols, 0);
   operands *ops = frame.ops;
   while (!finished) {
     counter_scope *counter = interp->counter;
@@ -986,6 +1092,18 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
       if ((sp & 3) != 0) qa_common_error(QA_COMMON_ERROR_DROP, "VM program stack misaligned");
     }
     int32_t opcode = code_word(interp, pc++);
+    if (debug) {
+      if (trace > 1) {
+        if (opcode < 0 || opcode >= (int32_t)(sizeof opcode_names / sizeof opcode_names[0]))
+          qa_common_error(QA_COMMON_ERROR_DROP, "Bad VM instruction");
+        char tail[64];
+        snprintf(tail, sizeof tail, " %s\n", opcode_names[opcode]);
+        debug_print(interp, ops->depth, tail);
+      }
+      qa_qvm_function_symbol_set_profile_count(
+          &profile_symbol,
+          (int32_t)((uint32_t)qa_qvm_function_symbol_get_profile_count(&profile_symbol) + 1u));
+    }
     switch ((qa_qvm_opcode)opcode) {
       case QA_QVM_OP_UNDEF: case QA_QVM_OP_IGNORE:
         if (interp->debug) qa_common_error(QA_COMMON_ERROR_DROP, "Bad VM instruction");
@@ -1002,6 +1120,8 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
       case QA_QVM_OP_PUSH: operands_reserve(ops); break;
       case QA_QVM_OP_POP: operands_drop(ops); break;
       case QA_QVM_OP_ENTER: {
+        if (debug)
+          profile_symbol = qa_qvm_symbols_value_to_function_symbol(&interp->symbols, (int32_t)pc);
         int32_t size = code_word(interp, pc);
         if (evaluation_floor >= 0 && (size < 0 || size % 4 != 0 || sp - size < evaluation_floor))
           qa_range_error("QVM evaluation stack would overlap source data");
@@ -1015,7 +1135,19 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
                        (int32_t)evaluation.inputs[i]);
           pc = target_pc(interp, evaluation.region.entry);
         }
-        if (interp->debug) write_word(interp, sp + 4, (int32_t)(sp + size));
+        if (interp->debug) {
+          write_word(interp, sp + 4, (int32_t)(sp + size));
+          if (trace != 0) {
+            char symbol[1024], tail[1100];
+            qa_qvm_symbols_value_to_symbol(&interp->symbols, (int32_t)(pc - 5), symbol,
+                                           sizeof symbol);
+            snprintf(tail, sizeof tail, "---> %s\n", symbol);
+            debug_print(interp, ops->depth, tail);
+            if (profile.break_function != 0 && pc - 5 == profile.break_function)
+              interp->breaks = (int32_t)((uint32_t)interp->breaks + 1u);
+            interp->call_level++;
+          }
+        }
         break;
       }
       case QA_QVM_OP_LEAVE: {
@@ -1028,6 +1160,18 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
           target = returns[--return_count];
           if (return_count == 0 || returns[--return_count] != sp)
             qa_range_error("QVM function returned with an invalid program stack");
+        }
+        if (debug) {
+          profile_symbol =
+              qa_qvm_symbols_value_to_function_symbol(&interp->symbols, (int32_t)target);
+          if (trace != 0) {
+            char symbol[1024], tail[1100];
+            interp->call_level--;
+            qa_qvm_symbols_value_to_symbol(&interp->symbols, (int32_t)target, symbol,
+                                           sizeof symbol);
+            snprintf(tail, sizeof tail, "<--- %s\n", symbol);
+            debug_print(interp, ops->depth, tail);
+          }
         }
         if (source != NULL && sp == source->stack && (!interp->compiled || return_count == 0)) {
           if (target != source->return_pc || ops->depth != source->operand_depth + 1)
@@ -1107,6 +1251,11 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
           }
         } else {
           if (counter != NULL) qa_range_error("QVM counter evaluation cannot call an engine service");
+          if (trace != 0) {
+            char tail[64];
+            snprintf(tail, sizeof tail, "---> systemcall(%lld)\n", (long long)(-1 - target));
+            debug_print(interp, ops->depth, tail);
+          }
           int64_t saved_level = interp->call_level;
           interp->program_stack = sp - 4;
           int32_t saved_frame = interp->debug ? read_word(interp, sp + 4) : 0;
@@ -1127,10 +1276,17 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
           double value = interp->system_call.call(interp->system_call.ctx, &call);
           value = signed_word(value);
           check_cancellation(frame.function_scope);
+          assert_live(interp);
           if (interp->debug) write_word(interp, sp + 4, saved_frame);
           operands_push(ops, (int32_t)value);
           pc = !interp->compiled ? read_word(interp, sp) : return_pc;
           interp->call_level = saved_level;
+          if (trace != 0) {
+            char symbol[1024], tail[1100];
+            qa_qvm_symbols_value_to_symbol(&interp->symbols, (int32_t)pc, symbol, sizeof symbol);
+            snprintf(tail, sizeof tail, "<--- %s\n", symbol);
+            debug_print(interp, ops->depth, tail);
+          }
         }
         break;
       }
@@ -1254,7 +1410,11 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
   }
   interp->program_stack = entry_stack;
   interp->active = frame.previous;
-  if (frame.previous != NULL) interp->call_level = previous_call_level;
+  if (frame.previous != NULL) {
+    interp->debug = previous_debug;
+    interp->registry_view.debug_enabled = previous_debug;
+    interp->call_level = previous_call_level;
+  }
   return final_result;
 }
 
@@ -1275,10 +1435,17 @@ static uint8_t *allocate_bytes(qa_qvm_interpreter *interp, const qa_qvm_allocati
   return (uint8_t *)allocation.bytes;
 }
 
+static uint8_t *symbols_allocate(void *ctx, size_t bytes, const char *resource) {
+  qa_qvm_interpreter *interp = ctx;
+  bool owned = true;
+  return allocate_bytes(interp, interp->allocation_profile, "VM_LoadSymbols", bytes,
+                        resource != NULL ? resource : interp->source, &owned);
+}
+
 qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
                                               qa_qvm_interpreter_system_call system_call,
                                               const qa_qvm_allocation_profile *profile,
-                                              const qa_qvmx_registration *registration,
+                                              const qa_qvm_vm_registration *registration,
                                               qa_qvm_semantics semantics,
                                               const qa_qvm_store_effect *store_effect) {
   qa_qvm_interpreter *interp = calloc(1, sizeof *interp);
@@ -1297,14 +1464,15 @@ qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
   interp->memory_initialized_end = image->data_length + image->literal_length;
   interp->compiled = semantics != NULL && strcmp(semantics, "compiled") == 0;
   interp->registration = registration;
+  interp->allocation_profile = profile;
   bool owned = true;
   interp->memory = allocate_bytes(interp, profile, "VM_Create:dataBase",
                                   (size_t)image->allocated_data_length, image->source, &owned);
   if (interp->memory == NULL) { free(interp->source); free(interp); return NULL; }
   interp->memory_owned = owned;
   interp->memory_length = (size_t)image->allocated_data_length;
-  if (registration != NULL && registration->bind_data != NULL)
-    registration->bind_data(registration->ctx, interp->memory, interp->memory_length);
+  if (registration != NULL)
+    qa_qvm_vm_registration_bind_data(registration, interp->memory_length);
   interp->address_space.bytes = interp->memory;
   interp->address_space.length = interp->memory_length;
   /* QvmMemory construction validates the allocation shape. */
@@ -1314,17 +1482,17 @@ qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
   memcpy(interp->memory, image->initialized_data, image->initialized_length);
   interp->data_mask = image->data_mask;
   interp->program_stack = (int64_t)interp->memory_length;
-  if (registration != NULL && registration->bind_instruction_pointers_length != NULL)
-    registration->bind_instruction_pointers_length(registration->ctx,
-                                                   (double)image->instruction_count * 4);
+  if (registration != NULL)
+    qa_qvm_vm_registration_bind_instruction_pointers_length(
+        registration, (int64_t)image->instruction_count * 4);
   bool pointers_owned = true;
   uint8_t *pointers = allocate_bytes(interp, profile, "VM_Create:instructionPointers",
                                      image->instruction_count * 4, image->source, &pointers_owned);
   if (pointers == NULL) { qa_qvm_interpreter_destroy(interp); return NULL; }
   (void)pointers_owned;
   interp->instruction_pointers = (int32_t *)pointers;
-  if (registration != NULL && registration->bind_code_length != NULL)
-    registration->bind_code_length(registration->ctx, (double)image->code_length);
+  if (registration != NULL)
+    qa_qvm_vm_registration_bind_code_length(registration, (int64_t)image->code_length);
   bool code_owned = true;
   uint8_t *code = allocate_bytes(interp, profile, "VM_PrepareInterpreter",
                                  (size_t)image->code_length * 4, image->source, &code_owned);
@@ -1332,6 +1500,8 @@ qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
   (void)code_owned;
   interp->code = (int32_t *)code;
   interp->code_length = (size_t)image->code_length;
+  qa_qvm_symbols_init(&interp->symbols, interp->instruction_pointers,
+                      image->instruction_count, symbols_allocate, interp, assert_live_cb, interp);
   for (size_t i = 0; i < image->instruction_count; i++)
     interp->instruction_pointers[i] = (int32_t)image->instructions[i].byte_offset;
   for (size_t i = 0; i < image->instruction_count; i++) {
@@ -1343,13 +1513,21 @@ qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
               ? (int32_t)target_pc(interp, instruction->operand)
               : instruction->operand;
   }
-  if (registration != NULL && registration->bind_interpreter != NULL)
-    registration->bind_interpreter(registration->ctx, interp);
+  if (registration != NULL) {
+    interp->registry_view.ctx = interp;
+    interp->registry_view.code_length = (int64_t)interp->code_length;
+    interp->registry_view.instruction_pointers_length = (int64_t)interp->instruction_count * 4;
+    interp->registry_view.memory_length = (int64_t)interp->memory_length;
+    interp->registry_view.debug_enabled = interp->debug;
+    interp->registry_view.symbols = &interp->symbols;
+    qa_qvm_vm_registration_bind_interpreter(registration, &interp->registry_view);
+  }
   return interp;
 }
 
 void qa_qvm_interpreter_destroy(qa_qvm_interpreter *interp) {
   if (interp == NULL) return;
+  qa_qvm_symbols_destroy(&interp->symbols);
   if (interp->memory_owned) free(interp->memory);
   free(interp->instruction_pointers);
   free(interp->code);
@@ -1379,9 +1557,11 @@ double qa_qvm_interpreter_get_break_count(const qa_qvm_interpreter *interp) {
 }
 bool qa_qvm_interpreter_get_debug_enabled(const qa_qvm_interpreter *interp) { return interp->debug; }
 double qa_qvm_interpreter_get_code_length(qa_qvm_interpreter *interp) {
+  assert_live(interp);
   return (double)interp->code_length;
 }
 double qa_qvm_interpreter_get_instruction_pointers_length(qa_qvm_interpreter *interp) {
+  assert_live(interp);
   return (double)interp->instruction_count * 4;
 }
 
@@ -1406,6 +1586,7 @@ static void unbind_resolver(void *ctx) {
 
 static qa_qvm_unbind bind_entry(qa_qvm_interpreter *interp, double instruction_index,
                                 qa_qvm_function_hook hook, bool invocations) {
+  assert_live(interp);
   if (!is_safe_integer(instruction_index) || instruction_index < 0 ||
       code_word(interp, target_pc(interp, instruction_index)) != QA_QVM_OP_ENTER)
     qa_range_error("QVM hook requires a function entry instruction");
@@ -1442,6 +1623,7 @@ qa_qvm_unbind qa_qvm_interpreter_bind_invocation(qa_qvm_interpreter *interp,
 }
 qa_qvm_unbind qa_qvm_interpreter_bind_function_resolver(qa_qvm_interpreter *interp,
                                                         qa_qvm_function_resolver resolver) {
+  assert_live(interp);
   if (interp->has_resolver) qa_range_error("QVM already has a function resolver");
   interp->resolver = resolver;
   interp->has_resolver = true;
@@ -1454,6 +1636,7 @@ qa_qvm_unbind qa_qvm_interpreter_bind_function_resolver(qa_qvm_interpreter *inte
 qa_qvm_unbind qa_qvm_interpreter_observe_function(qa_qvm_interpreter *interp,
                                                   double instruction_index,
                                                   qa_qvm_function_observer observer) {
+  assert_live(interp);
   if (!is_safe_integer(instruction_index) || instruction_index < 0 ||
       code_word(interp, target_pc(interp, instruction_index)) != QA_QVM_OP_ENTER)
     qa_range_error("QVM observer requires a function entry instruction");
@@ -1479,6 +1662,7 @@ qa_qvm_unbind qa_qvm_interpreter_observe_function(qa_qvm_interpreter *interp,
 void qa_qvm_interpreter_restore_data(qa_qvm_interpreter *interp, const uint8_t *data,
                                      size_t length) {
   if (interp->root_active) qa_range_error("Cannot restore an active QVM");
+  assert_live(interp);
   if (length != interp->memory_length) qa_range_error("QVM checkpoint allocation mismatch");
   memcpy(interp->memory, data, length);
 }
@@ -1495,7 +1679,7 @@ char *qa_qvm_interpreter_indent(const qa_qvm_interpreter *interp) {
 
 char *qa_qvm_interpreter_stack_trace(qa_qvm_interpreter *interp, double program_counter,
                                      double program_stack) {
-  /* Symbol names come from symbols.ts (qvm-b); PCs stand in until then. */
+  assert_live(interp);
   size_t capacity = 256, used = 0;
   char *text = malloc(capacity);
   if (text == NULL) return NULL;
@@ -1503,9 +1687,10 @@ char *qa_qvm_interpreter_stack_trace(qa_qvm_interpreter *interp, double program_
   int64_t pc = (int64_t)program_counter, stack = (int64_t)program_stack;
   int count = 0;
   do {
-    char line[32];
-    int written = snprintf(line, sizeof line, "%lld\n", (long long)pc);
-    if (used + (size_t)written + 1 > capacity) {
+    char symbol[1024], line[1100];
+    qa_qvm_symbols_value_to_symbol(&interp->symbols, (int32_t)pc, symbol, sizeof symbol);
+    int written = snprintf(line, sizeof line, "%s\n", symbol);
+    while (used + (size_t)written + 1 > capacity) {
       capacity *= 2;
       char *grown = realloc(text, capacity);
       if (grown == NULL) { free(text); return NULL; }
@@ -1520,14 +1705,16 @@ char *qa_qvm_interpreter_stack_trace(qa_qvm_interpreter *interp, double program_
 }
 
 void qa_qvm_interpreter_load_symbols(qa_qvm_interpreter *interp,
-                                     qa_qvmx_symbol_load_options options) {
-  /* Symbol storage is symbols.ts (qvm-b slice); loading is accepted and
-   * retained nowhere until that slice lands. */
-  (void)interp;
-  (void)options;
+                                     const qa_qvm_symbol_load_options *options) {
+  qa_qvm_symbols_load(&interp->symbols, options);
+}
+
+qa_qvm_symbols *qa_qvm_interpreter_get_symbols(qa_qvm_interpreter *interp) {
+  return &interp->symbols;
 }
 
 qa_qvmx_view qa_qvm_interpreter_pointer(qa_qvm_interpreter *interp, double word) {
+  assert_live(interp);
   bool is_null = false;
   size_t offset = qa_qvmx_memory_pointer_offset(&interp->address_space, word, &is_null);
   qa_qvmx_view view = {is_null ? NULL : interp->memory + offset,
@@ -1537,6 +1724,7 @@ qa_qvmx_view qa_qvm_interpreter_pointer(qa_qvm_interpreter *interp, double word)
 
 void qa_qvm_interpreter_restart(qa_qvm_interpreter *interp, const qa_qvm_data_image *image) {
   if (interp->root_active) qa_range_error("Cannot restart an active QVM");
+  assert_live(interp);
   if (image->allocated_data_length > (int64_t)interp->memory_length)
     qa_range_error("QVM restart would exceed its original allocation");
   memset(interp->memory, 0, (size_t)image->allocated_data_length);
@@ -1548,6 +1736,7 @@ double qa_qvm_interpreter_invoke(qa_qvm_interpreter *interp, const double *args,
                                  const qa_qvm_read_only_evaluation *evaluation) {
   if (interp->root_active)
     qa_range_error("QVM is already active; recursive calls belong to the current syscall");
+  assert_live(interp);
   interp->root_active = true;
   double result = execute(interp, args, arg_count, (int64_t)instruction_index, NULL, NULL, evaluation);
   interp->root_active = false;
@@ -1564,6 +1753,7 @@ double qa_qvm_interpreter_evaluate_counter(qa_qvm_interpreter *interp, double ad
                                            size_t function_count,
                                            double (*execute_fn)(void *ctx), void *execute_ctx,
                                            const qa_qvm_evaluation_stack *stack) {
+  assert_live(interp);
   interp_range(interp, (int64_t)address, 4);
   (void)signed_word(initial);
   if ((int64_t)address % 4 != 0 || address + 4 > (double)interp->source_data_end ||

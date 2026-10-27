@@ -11,7 +11,7 @@ struct qa_compat_qc_mod_input_capture {
   int64_t *entered; size_t entered_count, entered_capacity;
 };
 typedef qa_compat_qc_mod_input I;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 void qa_compat_qc_mod_input_init(I *in, qa_compat_qc_machine *m, const qa_compat_qc_mod_input_field *f, size_t n, void *ctx, int64_t (*ref)(void *, qa_actor_id), bool (*live)(void *, qa_actor_id)) {
   memset(in,0,sizeof *in); in->machine=m; in->fields=f; in->field_count=n; in->ctx=ctx; in->reference=ref; in->live=live;
 }

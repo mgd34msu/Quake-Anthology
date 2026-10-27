@@ -4,12 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Mirrored QvmUiImport / QvmUiExport values (TS abi.ts). */
+#include "qa/compat/qvm/abi.h"
+
+/* Landed QvmUiImport / QvmUiExport values (TS abi.ts). */
 enum {
-  UI_GET_CDKEY = 54,
-  UI_SET_CDKEY = 55,
-  UI_VERIFY_CDKEY = 82,
-  UI_HASUNIQUECDKEY = 10,
+  UI_GET_CDKEY = QA_QVM_UI_IMPORT_UI_GET_CDKEY,
+  UI_SET_CDKEY = QA_QVM_UI_IMPORT_UI_SET_CDKEY,
+  UI_VERIFY_CDKEY = QA_QVM_UI_IMPORT_UI_VERIFY_CDKEY,
+  UI_HASUNIQUECDKEY = QA_QVM_UI_EXPORT_UI_HASUNIQUECDKEY,
 };
 
 typedef struct write_target {

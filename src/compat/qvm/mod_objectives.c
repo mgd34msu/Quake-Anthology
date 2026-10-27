@@ -40,11 +40,12 @@ int64_t qa_qvm_resolve_objective_address(qa_qvm_memory *memory, int64_t end,
   for (size_t i = 0; i < address->pointer.indirections.count; i++) {
     current(current_ctx);
     if (pointer == 0) qa_range_error("Objective selector follows a null source pointer");
-    int64_t at = word(end, (double)(word(end, (double)pointer) +
-                                     (int64_t)address->pointer.indirections.values[i]));
+    /* TS adds the offset in double; word() validates the sum. */
+    int64_t at = word(end, (double)word(end, (double)pointer) +
+                               address->pointer.indirections.values[i]);
     pointer = read_word(memory, at);
   }
   current(current_ctx);
   if (pointer == 0) qa_range_error("Objective selector follows a null source pointer");
-  return word(end, (double)(word(end, (double)pointer) + (int64_t)address->pointer.offset));
+  return word(end, (double)word(end, (double)pointer) + address->pointer.offset);
 }

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/abi.h"
 #include "qa/compat/qvm/operations.h"
 #include "qa/compat/qvm/player_record.h"
 #include "qa/core/math.h"
@@ -929,10 +930,14 @@ static void refresh_context(qa_qvm_mod_presentation *presentation, qa_qvm_presen
   presentation->revision = context->game_state_revision;
 }
 
-/* Mirrored QvmCgameImport values (TS abi.ts). */
+/* Landed QvmCgameImport / QvmCgameExport values (TS abi.ts). */
 enum {
-  CG_GETGAMESTATE = 15, CG_GETCURRENTSNAPSHOTNUMBER = 46, CG_GETSNAPSHOT = 47,
-  CG_GETSERVERCOMMAND = 48, CG_R_ADDREFENTITYTOSCENE = 77, CG_CONSOLE_COMMAND = 7,
+  CG_GETGAMESTATE = QA_QVM_CGAME_IMPORT_CG_GETGAMESTATE,
+  CG_GETCURRENTSNAPSHOTNUMBER = QA_QVM_CGAME_IMPORT_CG_GETCURRENTSNAPSHOTNUMBER,
+  CG_GETSNAPSHOT = QA_QVM_CGAME_IMPORT_CG_GETSNAPSHOT,
+  CG_GETSERVERCOMMAND = QA_QVM_CGAME_IMPORT_CG_GETSERVERCOMMAND,
+  CG_R_ADDREFENTITYTOSCENE = QA_QVM_CGAME_IMPORT_CG_R_ADDREFENTITYTOSCENE,
+  CG_CONSOLE_COMMAND = QA_QVM_CGAME_EXPORT_CG_CONSOLE_COMMAND,
 };
 
 static int32_t word_at(const qa_qvm_host_call *call, size_t index) {

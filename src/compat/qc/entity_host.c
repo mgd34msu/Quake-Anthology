@@ -23,7 +23,7 @@ static void s_initialize(void *ctx, int64_t slot, qa_owned_actor actor) {
 }
 static void s_clear_freed(void *ctx, int64_t slot, qa_source_time now) {
   S *s = ctx;
-  if (now.kind != QA_SOURCE_TIME_SECONDS) qa_compat_qc_program_error(s->program->source, "QC source free time must use seconds");
+  if (now.kind != QA_SOURCE_TIME_SECONDS) qa_compat_qc_program_error("progs.dat", "QC source free time must use seconds");
   size_t ref = (size_t)qa_compat_qc_entity_memory_reference(s->entities, slot);
   wr_i32(s->entities->bytes, ref + (size_t)s->metadata.free_offset_bytes, 1);
   qa_compat_qc_words *w = qa_compat_qc_entity_memory_at(s->entities, slot);
@@ -36,7 +36,7 @@ static void s_clear_freed(void *ctx, int64_t slot, qa_source_time now) {
 static bool s_can_free(void *ctx, int64_t slot) { (void)ctx; (void)slot; return true; }
 static int64_t foff(qa_compat_qc_program *p, const char *n) {
   const qa_compat_qc_definition *d = qa_compat_qc_program_field_named(p, n);
-  if (!d) qa_compat_qc_program_error(p->source, "missing entity field %s", n);
+  if (!d) qa_compat_qc_program_error("progs.dat", "missing entity field %s", n);
   return d->offset;
 }
 qa_source_slot_storage qa_compat_qc_create_source_slot_storage(qa_compat_qc_program *p, qa_compat_qc_entity_memory *e, qa_compat_qc_edict_metadata_layout md, S *st) {

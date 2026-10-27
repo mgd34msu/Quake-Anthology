@@ -353,12 +353,13 @@ qa_source_damage_result qa_qvm_damage_scopes_run(qa_qvm_damage_scopes *scopes,
     reaction_refresh(&run, i, reaction_contexts);
   }
   (void)call->proceed(call->call_ctx);
+  /* TS removals.runAll(): main watch first, then per-reaction pairs. */
+  qa_qvm_memory_writes_unobserve(&game->module.memory->writes, watch);
   for (int i = 0; i < 2; i++) {
     if (run.reactions[i].has_removal)
       qa_qvm_module_unbind(&game->module, run.reactions[i].removal);
     qa_qvm_memory_writes_unobserve(&game->module.memory->writes, refresh_watches[i]);
   }
-  qa_qvm_memory_writes_unobserve(&game->module.memory->writes, watch);
   scopes->frame_count--;
   return run.result;
 }

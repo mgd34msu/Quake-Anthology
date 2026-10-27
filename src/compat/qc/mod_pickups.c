@@ -7,8 +7,8 @@
 #include "qa/foundation/support.h"
 typedef qa_compat_qc_mod_pickups P;
 typedef struct qa_compat_qc_mod_pickups_entry Entry;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
-static bool client_eq(qa_client_id a, qa_client_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
+static bool client_eq(qa_client_id a, qa_client_id b){return qa_same_client(a, b);}
 static Entry *find_entry(P *p, qa_actor_id a){ for(size_t i=0;i<p->entry_count;i++){ if(actor_eq(p->entries[i].actor,a)) return &p->entries[i]; } return NULL; }
 typedef struct { P *p; qa_actor_id actor; const qa_mod_pickup_rule *definition; Entry *entry; } TakeCtx;
 static TakeCtx take_storage[512]; static size_t take_count;

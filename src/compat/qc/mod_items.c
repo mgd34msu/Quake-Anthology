@@ -9,7 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 typedef qa_compat_qc_mod_items I;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 static int64_t check_field(qa_compat_qc_program *p, qa_mod_callback_declaration decl, const char *name, const char *type, bool input) {
   const qa_compat_qc_definition *d = qa_compat_qc_program_field_named(p, name);
   bool declared = false;

@@ -6,7 +6,7 @@
 typedef qa_compat_qc_movement_state_compat S;
 static int64_t foff(S *s, const char *n) {
   const qa_compat_qc_definition *d = qa_compat_qc_program_field_named(s->world->options.program, n);
-  if (!d) qa_compat_qc_program_error(s->world->options.program->source, "missing entity field %s", n);
+  if (!d) qa_compat_qc_program_error("progs.dat", "missing entity field %s", n);
   return d->offset;
 }
 static bool source_slot(S *s, qa_actor_id actor, int64_t *out) {
@@ -116,7 +116,7 @@ qa_compat_qc_movement_bindings qa_compat_qc_create_movement_bindings(qa_compat_q
   return r;
 }
 qa_compat_qc_touch_callback qa_compat_qc_create_touch_callback(qa_compat_qc_world_host *world, qa_compat_qc_machine *vm, void *ctx, double (*server_time)(void *), qa_compat_qc_touch_state *st) {
-  if (vm->program != world->options.program || vm->entities != world->options.entities) qa_compat_qc_program_error(world->options.program->source, "touch callback belongs to another QC machine");
+  if (vm->program != world->options.program || vm->entities != world->options.entities) qa_compat_qc_program_error("progs.dat", "touch callback belongs to another QC machine");
   st->world = world; st->vm = vm; st->ctx = ctx; st->server_time = server_time;
   st->solid = qa_compat_qc_machine_field_offset(vm, "solid"); st->touch = qa_compat_qc_machine_field_offset(vm, "touch");
   return (qa_compat_qc_touch_callback){st};

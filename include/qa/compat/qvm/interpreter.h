@@ -5,9 +5,8 @@
  *    (invokeAsync/proceedAsync run the synchronous path; the TS async
  *    interleavings have no C counterpart, see docs/PORTING.md).
  *  - qa_qvmx_* types/functions mirror qvm-b-owned TS files
- *    (memory.ts, syscalls.ts, operations.ts, regions.ts, symbols.ts,
- *    registry.ts) with a unique prefix so this slice does not depend
- *    on that slice's headers; reconcile when qvm-b lands.
+ *    (memory.ts, syscalls.ts, operations.ts, regions.ts) with a unique
+ *    prefix; symbols.ts/registry.ts use their landed headers.
  */
 #ifndef QA_COMPAT_QVM_INTERPRETER_H
 #define QA_COMPAT_QVM_INTERPRETER_H
@@ -19,6 +18,9 @@
 
 #include "qa/compat/qvm/allocation.h"
 #include "qa/compat/qvm/image.h"
+#include "qa/compat/qvm/regions.h"
+#include "qa/compat/qvm/registry.h"
+#include "qa/compat/qvm/symbols.h"
 #include "qa/contracts/execution.h"
 #include "qa/foundation/support.h"
 
@@ -30,14 +32,8 @@ typedef struct qa_qvm_cancellation_scope { const void *token; } qa_qvm_cancellat
 
 typedef struct qa_qvm_evaluation_stack { double start, end; } qa_qvm_evaluation_stack;
 
-/* Mirrors src/compat/qvm/regions.ts QvmRegionEvaluation (qvm-b slice). */
-typedef struct qa_qvmx_region_evaluation {
-  double entry, join;
-  const double *inputs;
-  size_t input_count;
-  bool has_result;
-  double result;
-} qa_qvmx_region_evaluation;
+/* TS QvmRegionEvaluation is the landed qa_qvm_region_evaluation (regions.h). */
+typedef qa_qvm_region_evaluation qa_qvmx_region_evaluation;
 
 typedef struct qa_qvm_read_only_evaluation {
   bool has_stack;
@@ -134,8 +130,7 @@ int32_t qa_qvmx_evaluate_unary(qa_qvm_opcode opcode, int32_t word);
 int32_t qa_qvmx_evaluate_binary(qa_qvm_opcode opcode, int32_t left, int32_t right);
 bool qa_qvmx_evaluate_branch(qa_qvm_opcode opcode, int32_t left, int32_t right);
 
-/* Mirrors of src/compat/qvm/syscalls.ts (qvm-b slice). */
-typedef const char *qa_qvmx_role; /* "qagame" | "cgame" | "ui" */
+/* TS QvmRole is the landed qa_qvm_role (syscalls.h). */
 
 /* ---- interpreter.ts proper ---- */
 typedef struct qa_qvm_syscall qa_qvm_syscall;
@@ -237,21 +232,10 @@ typedef struct qa_qvm_function_observer {
 
 typedef const char *qa_qvm_semantics; /* "interpreted" | "compiled" */
 
-/* Mirror of src/compat/qvm/symbols.ts QvmSymbolLoadOptions (qvm-b slice). */
-typedef struct qa_qvmx_symbol_load_options {
-  const uint8_t *bytes;
-  size_t length;
-  const char *source;
-} qa_qvmx_symbol_load_options;
+/* TS QvmSymbolLoadOptions is the landed qa_qvm_symbol_load_options (symbols.h). */
 
-/* Mirror of src/compat/qvm/registry.ts VmRegistration (qvm-b slice): all optional. */
-typedef struct qa_qvmx_registration {
-  void *ctx;
-  void (*bind_data)(void *ctx, uint8_t *bytes, size_t length);
-  void (*bind_instruction_pointers_length)(void *ctx, double length);
-  void (*bind_code_length)(void *ctx, double length);
-  void (*bind_interpreter)(void *ctx, void *interpreter);
-} qa_qvmx_registration;
+/* TS VmRegistration is the landed qa_qvm_vm_registration (registry.h);
+ * create() takes it by pointer, NULL for the TS null default. */
 
 typedef struct qa_qvm_interpreter qa_qvm_interpreter;
 
@@ -266,7 +250,7 @@ typedef struct qa_qvm_store_effect {
 qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
                                               qa_qvm_interpreter_system_call system_call,
                                               const qa_qvm_allocation_profile *profile,
-                                              const qa_qvmx_registration *registration,
+                                              const qa_qvm_vm_registration *registration,
                                               qa_qvm_semantics semantics,
                                               const qa_qvm_store_effect *store_effect);
 void qa_qvm_interpreter_destroy(qa_qvm_interpreter *interpreter);
@@ -303,7 +287,9 @@ char *qa_qvm_interpreter_indent(const qa_qvm_interpreter *interpreter);
 char *qa_qvm_interpreter_stack_trace(qa_qvm_interpreter *interpreter, double program_counter,
                                      double program_stack);
 void qa_qvm_interpreter_load_symbols(qa_qvm_interpreter *interpreter,
-                                     qa_qvmx_symbol_load_options options);
+                                     const qa_qvm_symbol_load_options *options);
+/* TS readonly symbols: borrowed pointer to interpreter-owned storage. */
+qa_qvm_symbols *qa_qvm_interpreter_get_symbols(qa_qvm_interpreter *interpreter);
 /* TS pointer(word): Uint8Array|null -> view with bytes NULL for the null word. */
 qa_qvmx_view qa_qvm_interpreter_pointer(qa_qvm_interpreter *interpreter, double word);
 void qa_qvm_interpreter_restart(qa_qvm_interpreter *interpreter, const qa_qvm_data_image *image);

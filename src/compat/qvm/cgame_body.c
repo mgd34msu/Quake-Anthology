@@ -121,8 +121,10 @@ bool qa_qvm_body_submissions_get_captures_player_meshes(
 }
 
 static void run_removals(qa_qvm_body_submissions *submissions) {
-  while (submissions->removal_count > 0)
-    qa_qvm_module_unbind(submissions->module, submissions->removals[--submissions->removal_count]);
+  /* TS removals.runAll(): forward order. */
+  for (size_t i = 0; i < submissions->removal_count; i++)
+    qa_qvm_module_unbind(submissions->module, submissions->removals[i]);
+  submissions->removal_count = 0;
 }
 
 static void push_removal(qa_qvm_body_submissions *submissions, size_t id) {

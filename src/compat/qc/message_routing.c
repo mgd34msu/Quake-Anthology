@@ -1,7 +1,7 @@
 /* Port of src/compat/qc/message-routing.ts. GPL-2.0-or-later. */
 #include "qa/compat/qc/message_routing.h"
 #include <string.h>
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 bool qa_compat_qc_receives_quakeworld_message(qa_actor_id actor, qa_compat_qc_message_destination d, qa_compat_qc_message_origin origin, qa_compat_qc_message_visibility visibility) {
   if (d.kind == QA_QC_DEST_CLIENT) return actor_eq(actor, d.actor);
   if (d.kind == QA_QC_DEST_SIGNON) return false;

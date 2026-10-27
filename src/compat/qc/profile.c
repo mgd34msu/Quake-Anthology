@@ -38,7 +38,7 @@ void qa_compat_qc_host_description_destroy(qa_compat_qc_host_description *d) {
 }
 bool qa_compat_qc_describe_host(const qa_compat_qc_program *p, qa_compat_qc_host_kind kind, qa_compat_qc_entity_layout entities, const qa_compat_qc_builtin_registry *reg, const char *const *ext, size_t ext_n, qa_compat_qc_host_description *out) {
   memset(out, 0, sizeof *out);
-  if ((strcmp(kind, "quakeworld") == 0) != (p->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD)) qa_compat_qc_program_error(p->source, "host kind disagrees with program API");
+  if ((strcmp(kind, "quakeworld") == 0) != (p->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD)) qa_compat_qc_program_error("progs.dat", "host kind disagrees with program API");
   out->global_fields = calloc(p->global_count ? p->global_count : 1, sizeof *out->global_fields);
   out->entity_fields = calloc(p->field_count ? p->field_count : 1, sizeof *out->entity_fields);
   if (!out->global_fields || !out->entity_fields) goto oom;

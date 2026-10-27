@@ -3,9 +3,11 @@
 #include <ctype.h>
 #include <string.h>
 void qa_q2_bot_set_weapon(qa_q2_bot_exports_host *h, int64_t entity, int64_t weapon, bool instant) {
-  if (weapon <= 0 || weapon > h->item_count) return; qa_q2_bot_client_view bot;
+  if (weapon <= 0 || weapon > h->item_count) return;
+  qa_q2_bot_client_view bot;
   if (!h->get_bot(h->ctx, entity, &bot) || !bot.bot || !bot.has_client || h->inventory(h->ctx, entity, weapon) == 0) return;
-  if (bot.current_weapon == weapon || bot.pending_weapon == weapon) return; qa_q2_bot_item_view item;
+  if (bot.current_weapon == weapon || bot.pending_weapon == weapon) return;
+  qa_q2_bot_item_view item;
   if (!h->get_item(h->ctx, weapon, &item) || !item.weapon || !item.use_callback) return;
   h->disable_weapon_chains(h->ctx, entity); h->use_item(h->ctx, item.use_callback, entity, item.id);
   if (instant) h->change_weapon_instantly(h->ctx, entity);
@@ -27,11 +29,13 @@ void qa_q2_bot_use_item(qa_q2_bot_exports_host *h, int64_t entity, int64_t item_
   if (!has_item || !item.use_callback) return;
   h->disable_weapon_chains(h->ctx, entity); h->use_item(h->ctx, item.use_callback, entity, item.id);
 }
-static bool eq_lower(const char *a, const char *b) { while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false; a++; b++; } return *a == *b; }
+static bool eq_lower(const char *a, const char *b) { while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+a++; b++; } return *a == *b; }
 int64_t qa_q2_bot_get_item_id(qa_q2_bot_exports_host *h, const char *classname) {
   if (!classname || !classname[0]) return -1;
   if (eq_lower(classname, "none")) return 0;
-  for (int64_t i = 0; i < h->item_count; i++) { qa_q2_bot_item_view item; if (h->get_item(h->ctx, i, &item) && item.classname && item.classname[0] && eq_lower(item.classname, classname)) return item.id; }
+  for (int64_t i = 0; i < h->item_count; i++) { qa_q2_bot_item_view item; if (h->get_item(h->ctx, i, &item) && item.classname && item.classname[0] && eq_lower(item.classname, classname)) return item.id;
+  }
   return -1;
 }
 void qa_q2_edict_force_look_at_point(qa_q2_bot_exports_host *h, int64_t entity, qa_bot_vec3 point) {

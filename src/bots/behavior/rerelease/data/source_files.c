@@ -7,6 +7,8 @@ char *qa_read_bot_source_text(qa_bot_asset_files *files, const char *path) {
   uint8_t *bytes = malloc(len ? (size_t)len : 1); if (!bytes) return NULL;
   if (len) (void)qa_bot_asset_files_read(files, path, bytes, (size_t)len);
   size_t end = (size_t)len; while (end > 0 && bytes[end - 1] == 0) end--;
-  char *text = malloc(end + 1); if (!text) { free(bytes); return NULL; }
-  for (size_t i = 0; i < end; i++) text[i] = (char)bytes[i]; text[end] = 0; free(bytes); return text;
+  char *text = malloc(end + 1); if (!text) { free(bytes); return NULL;
+  }
+  for (size_t i = 0; i < end; i++) text[i] = (char)bytes[i];
+  text[end] = 0; free(bytes); return text;
 }

@@ -56,7 +56,7 @@ uint8_t *qa_kex_discovery_query(size_t *out_length) {
 }
 
 bool qa_kex_read_discovery(const uint8_t *bytes, size_t length,
-                           qa_q2_mirror_server_status *out) {
+                           qa_server_status *out) {
   memset(out, 0, sizeof *out);
   qa_kex_packet_reader reader;
   qa_kex_packet_reader_init(&reader, bytes, length);
@@ -68,13 +68,8 @@ bool qa_kex_read_discovery(const uint8_t *bytes, size_t length,
     free(name);
     qa_q2_throw_error("Invalid KEX lobby status");
   }
-  size_t capacity = 8;
-  size_t count = 0;
-  qa_q2_mirror_rule *rules = (qa_q2_mirror_rule *)calloc(capacity, sizeof *rules);
-  if (rules == NULL) {
-    free(name);
-    return false;
-  }
+  qa_qw_info rules;
+  qa_qw_info_init(&rules);
   bool oom = false;
   while (qa_kex_packet_reader_remaining(&reader) != 0 && !oom) {
     char *key = qa_kex_packet_reader_string(&reader);
@@ -85,76 +80,40 @@ bool qa_kex_read_discovery(const uint8_t *bytes, size_t length,
       oom = true;
       break;
     }
-    if (count >= 256) {
+    if (rules.count >= 256) {
       free(key);
       free(value);
-      for (size_t i = 0; i < count; i++) {
-        free(rules[i].key);
-        free(rules[i].value);
-      }
-      free(rules);
+      qa_qw_info_destroy(&rules);
       free(name);
       qa_q2_throw_error("KEX lobby has too many attributes");
     }
-    long at = -1;
-    for (size_t i = 0; i < count; i++) {
-      if (strcmp(rules[i].key, key) == 0) at = (long)i;
-    }
-    if (at >= 0) {
-      free(rules[at].value);
-      rules[at].value = value;
-      free(key);
-    } else {
-      if (count == capacity) {
-        capacity *= 2;
-        qa_q2_mirror_rule *grown =
-            (qa_q2_mirror_rule *)realloc(rules, capacity * sizeof *grown);
-        if (grown == NULL) {
-          free(key);
-          free(value);
-          oom = true;
-          break;
-        }
-        rules = grown;
-      }
-      rules[count].key = key;
-      rules[count].value = value;
-      count++;
-    }
+    qa_qw_info_set(&rules, key, value);
+    free(key);
+    free(value);
   }
   if (oom) {
-    for (size_t i = 0; i < count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
+    qa_qw_info_destroy(&rules);
     free(name);
     return false;
   }
-  const char *mapname = "";
-  for (size_t i = 0; i < count; i++) {
-    if (strcmp(rules[i].key, "map") == 0) mapname = rules[i].value;
-  }
+  const char *mapname = qa_qw_info_get(&rules, "map");
+  if (mapname == NULL) mapname = "";
   out->name = name;
   out->map = dup_str(mapname);
   if (out->map == NULL) {
     free(name);
-    for (size_t i = 0; i < count; i++) {
-      free(rules[i].key);
-      free(rules[i].value);
-    }
-    free(rules);
+    qa_qw_info_destroy(&rules);
     memset(out, 0, sizeof *out);
     return false;
   }
   out->players = (double)players;
   out->max_players = (double)maximum;
   out->rules = rules;
-  out->rule_count = count;
-  out->protocol.kind = "q2-kex";
-  out->protocol.version = 2023;
-  out->protocol.flags = 0;
-  out->protocol.revision = 0;
+  memset(&out->wire, 0, sizeof out->wire);
+  out->wire.protocol.kind = "q2-kex";
+  out->wire.protocol.version = 2023;
+  out->wire.protocol.flags = 0;
+  out->wire.protocol.revision = 0;
   return true;
 }
 

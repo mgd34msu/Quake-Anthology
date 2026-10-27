@@ -11,7 +11,7 @@
 #include "qa/foundation/support.h"
 
 /* Finale */
-static bool actor_eq(qa_actor_id a, qa_actor_id b) { return a.slot == b.slot && a.generation == b.generation && a.token == b.token && a.session.token == b.session.token; }
+static bool actor_eq(qa_actor_id a, qa_actor_id b) { return qa_same_actor(a, b); }
 void qa_compat_qc_finale_ack_init(qa_compat_qc_finale_ack *a) { memset(a, 0, sizeof *a); }
 void qa_compat_qc_finale_ack_destroy(qa_compat_qc_finale_ack *a) { free(a->actors); free(a->held); memset(a, 0, sizeof *a); }
 void qa_compat_qc_finale_ack_reset(qa_compat_qc_finale_ack *a) { a->has_last_poll = false; a->acknowledged = false; a->count = 0; }

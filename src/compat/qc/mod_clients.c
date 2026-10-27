@@ -6,8 +6,8 @@
 #include "qa/foundation/support.h"
 #include "qa/world/session/mod_client_input.h"
 typedef qa_compat_qc_mod_client_bindings B;
-static bool actor_eq(qa_actor_id a, qa_actor_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
-static bool client_eq(qa_client_id a, qa_client_id b){return a.slot==b.slot&&a.generation==b.generation&&a.token==b.token&&a.session.token==b.session.token;}
+static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
+static bool client_eq(qa_client_id a, qa_client_id b){return qa_same_client(a, b);}
 static qa_compat_qc_mod_client_entry *find_entry(B *b, qa_actor_id a){ for(size_t i=0;i<b->entry_count;i++){ if(actor_eq(b->entries[i].actor,a)) return &b->entries[i]; } return NULL; }
 static qa_mod_client_services *svc(B *b){ return b->operations.services; }
 static qa_compat_qc_mod_client_entry *require_entry(B *b, qa_actor_id actor) {
