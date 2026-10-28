@@ -1,36 +1,45 @@
 /* See include/qa/compat/qvm/script_record.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/script_record.h"
 
-#include <math.h>
 #include <string.h>
 
 #include "qa/core/binary/index.h"
 #include "qa/foundation/support.h"
 
-static void write_token(qa_qvm_writable_view *view, const char *text, int32_t type,
-                        double subtype, double integer_value, double float_value) {
+/* TS stringLength over byte text (charCode > 255 cannot occur). */
+static size_t string_length(const char *text, size_t extent) {
+  for (size_t index = 0; index < extent; index++) {
+    if ((uint8_t)text[index] == 0) return index;
+    if (index >= 1023)
+      qa_range_error("QVM pc_token_t string exceeds 1023 source bytes");
+  }
+  return extent;
+}
+
+static void write_token(qa_qvm_writable_view *view, const char *text,
+                        size_t extent, int32_t type, int64_t subtype,
+                        uint32_t integer_value, double float_value) {
   if (view->length < QA_QVM_SCRIPT_TOKEN_BYTES)
-    qa_binary_error("QVM pc_token_t", 0, "record requires %d bytes, received %lld",
+    qa_binary_error("QVM pc_token_t", 0,
+                    "record requires %d bytes, received %lld",
                     QA_QVM_SCRIPT_TOKEN_BYTES, (long long)view->length);
-  /* TS stringLength: C text is bytes, so the >255 check is inherent;
-   * embedded NULs cannot occur in a C string. */
-  size_t length = strlen(text);
-  if (length > 1023) qa_range_error("QVM pc_token_t string exceeds 1023 source bytes");
-  if (subtype != trunc(subtype) || subtype < -2147483648.0 || subtype > 2147483647.0)
+  size_t length = string_length(text, extent);
+  /* TS also requires Number.isSafeInteger(integerValue); a uint32
+   * source always satisfies it, and setInt32 wraps modulo 2^32. */
+  if (subtype < -2147483648LL || subtype > 2147483647LL)
     qa_range_error("QVM pc_token_t requires an int32 source subtype");
-  if (!isfinite(integer_value) || integer_value != trunc(integer_value) ||
-      integer_value < -9007199254740991.0 || integer_value > 9007199254740991.0)
-    qa_range_error("QVM pc_token_t requires an exactly represented source integer");
   bool leading_quote = type == 1 && length > 0 && (uint8_t)text[0] == 34;
   size_t stripped_length = length - (leading_quote ? 1 : 0);
   if (type == 1 && stripped_length == 0)
-    qa_range_error("QVM pc_token_t cannot encode undefined empty StripDoubleQuotes input");
+    qa_range_error(
+        "QVM pc_token_t cannot encode undefined empty StripDoubleQuotes "
+        "input");
   for (size_t i = 0; i < length; i++)
     qa_qvm_writable_view_set_uint8(view, (int64_t)(16 + i), (uint8_t)text[i]);
   qa_qvm_writable_view_set_uint8(view, (int64_t)(16 + length), 0);
   qa_qvm_writable_view_set_int32(view, 0, type, true);
   qa_qvm_writable_view_set_int32(view, 4, (int32_t)subtype, true);
-  qa_qvm_writable_view_set_int32(view, 8, (int32_t)(uint32_t)(int64_t)integer_value, true);
+  qa_qvm_writable_view_set_int32(view, 8, (int32_t)integer_value, true);
   qa_qvm_writable_view_set_float32(view, 12, float_value, true);
   if (leading_quote) {
     for (size_t i = 0; i < length; i++) {
@@ -38,25 +47,36 @@ static void write_token(qa_qvm_writable_view *view, const char *text, int32_t ty
       qa_qvm_writable_view_set_uint8(view, (int64_t)(16 + i), byte);
     }
   }
-  if (type == 1 && qa_qvm_writable_view_get_uint8(view, (int64_t)(16 + stripped_length - 1)) == 34)
+  if (type == 1 &&
+      qa_qvm_writable_view_get_uint8(view, (int64_t)(16 + stripped_length - 1)) == 34)
     qa_qvm_writable_view_set_uint8(view, (int64_t)(16 + stripped_length - 1), 0);
 }
 
-static int32_t token_type(const char *kind) {
-  if (strcmp(kind, "primitive") == 0) return 0;
-  if (strcmp(kind, "string") == 0) return 1;
-  if (strcmp(kind, "literal") == 0) return 2;
-  if (strcmp(kind, "number") == 0) return 3;
-  if (strcmp(kind, "name") == 0) return 4;
-  if (strcmp(kind, "punctuation") == 0) return 5;
-  qa_range_error("Unknown script token kind %s", kind);
+static int32_t token_type(qa_ui_script_token_kind kind) {
+  switch (kind) {
+    case QA_UI_SCRIPT_KIND_PRIMITIVE: return 0;
+    case QA_UI_SCRIPT_KIND_STRING: return 1;
+    case QA_UI_SCRIPT_KIND_LITERAL: return 2;
+    case QA_UI_SCRIPT_KIND_NUMBER: return 3;
+    case QA_UI_SCRIPT_KIND_NAME: return 4;
+    case QA_UI_SCRIPT_KIND_PUNCTUATION: return 5;
+  }
+  return 0;
 }
 
-void qa_qvm_write_script_token(qa_qvm_writable_view *view, const qa_qvmy_script_token_record *value) {
-  write_token(view, value->token_text, token_type(value->token_kind),
-              value->subtype, value->integer_value, value->float_value);
+void qa_qvm_write_script_token(qa_qvm_writable_view *view,
+                               const qa_ui_script_token_record *value) {
+  write_token(view, value->token->text, value->token->text_length,
+              token_type(value->token->kind), value->subtype,
+              value->integer_value, value->float_value);
 }
 
-void qa_qvm_write_script_token_memory(qa_qvm_writable_view *view, const qa_qvmy_source_token_memory *value) {
-  write_token(view, value->string, value->type, value->subtype, value->integer_value, value->float_value);
+void qa_qvm_write_script_token_memory(qa_qvm_writable_view *view,
+                                      qa_ui_source_token_memory *value) {
+  char text[QA_UI_SOURCE_TOKEN_STRING_BYTES];
+  qa_ui_source_token_string(value, text);
+  write_token(view, text, strlen(text), qa_ui_source_token_type(value),
+              qa_ui_source_token_subtype(value),
+              qa_ui_source_token_integer_value(value),
+              qa_ui_source_token_float_value(value));
 }

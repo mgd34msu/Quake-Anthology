@@ -28,7 +28,7 @@ qa_vec3 qa_q3_game_evaluate_trajectory_mirror(qa_q3_game_trajectory_mirror tr, d
     double dt = seconds(qa_int32(at - tr.time)); qa_vec3 r = qa_add3(tr.base, qa_scale3(tr.delta, dt));
     double fall = f32(f32(0.5 * 800 * dt) * dt); return qa_math_vec3(r.x, r.y, r.z - fall);
   }
-  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectory: unknown trType: %g", tr.time); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
+  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectory: unknown trType: %g", tr.type); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
 }
 qa_vec3 qa_q3_game_evaluate_trajectory_delta_mirror(qa_q3_game_trajectory_mirror tr, double at) {
   qa_vec3 zero = {0, 0, 0};
@@ -37,7 +37,7 @@ qa_vec3 qa_q3_game_evaluate_trajectory_delta_mirror(qa_q3_game_trajectory_mirror
   if (tr.type == QA_Q3_TR_SINE) return qa_scale3(tr.delta, f32(f32(cos(periodic_radians(tr, at))) * 0.5));
   if (tr.type == QA_Q3_TR_LINEAR_STOP) return at > qa_int32(tr.time + tr.duration) ? zero : tr.delta;
   if (tr.type == QA_Q3_TR_GRAVITY) { double dt = seconds(qa_int32(at - tr.time)); return qa_math_vec3(tr.delta.x, tr.delta.y, tr.delta.z - f32(800 * dt)); }
-  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectoryDelta: unknown trType: %g", tr.time); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
+  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectoryDelta: unknown trType: %g", tr.type); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
 }
 double qa_q3_game_slots_get_mirror(const qa_q3_game_player_slots_mirror *s, size_t i) {
   if (i >= s->length) qa_range_error("Player state slot %zu outside %zu", i, s->length);
@@ -48,9 +48,9 @@ void qa_q3_game_slots_set_mirror(qa_q3_game_player_slots_mirror *s, size_t i, do
   s->values[i] = qa_int32(v);
 }
 void qa_q3_game_player_state_add_event_mirror(qa_q3_game_player_state_mirror *ps, double ev, double parm) {
-  /* Mirror simplification: ring into events slots by sequence in generic. */
-  size_t i = ps->events.length ? (size_t)((int)ps->generic % (int)ps->events.length) : 0;
-  if (ps->events.length) { qa_q3_game_slots_set_mirror(&ps->events, i, ev); qa_q3_game_slots_set_mirror(&ps->event_parms, i, parm); ps->generic += 1; }
+  /* Mirror of shared/player-state.ts addEvent ring over eventSequence. */
+  size_t i = ps->events.length ? (size_t)((int)ps->event_sequence % (int)ps->events.length) : 0;
+  if (ps->events.length) { qa_q3_game_slots_set_mirror(&ps->events, i, ev); qa_q3_game_slots_set_mirror(&ps->event_parms, i, parm); ps->event_sequence += 1; }
 }
 void qa_q3_player_team_state_init(qa_q3_player_team_state *s) { memset(s, 0, sizeof *s); s->state = QA_Q3_TEAM_STATE_BEGIN; }
 void qa_q3_client_session_init(qa_q3_client_session *s) { memset(s, 0, sizeof *s); s->session_team = 0; s->spectator_state = QA_Q3_SPEC_NOT; }
@@ -80,6 +80,11 @@ const char *qa_q3_game_entity_classname(const qa_q3_game_entity *e) {
 static char *dupstr(const char *v) { if (!v) return NULL; size_t n = strlen(v); char *d = malloc(n + 1); if (d) memcpy(d, v, n + 1); return d; }
 void qa_q3_game_entity_set_classname(qa_q3_game_entity *e, const char *v) { free(e->classname); e->classname = dupstr(v); e->classname_client = NULL; }
 void qa_q3_game_entity_bind_client_name(qa_q3_game_entity *e, qa_q3_game_client *c) { e->classname_client = c; }
+qa_q3_game_classname_capture qa_q3_game_entity_capture_classname(const qa_q3_game_entity *e) {
+  qa_q3_game_classname_capture out; memset(&out, 0, sizeof out);
+  if (e->classname_client) { out.kind = 1; out.client = e->classname_client; } else out.value = e->classname;
+  return out;
+}
 double qa_q3_game_entity_health(const qa_q3_game_entity *e) { return e->binding.body.health; }
 void qa_q3_game_entity_set_health(qa_q3_game_entity *e, double v) { e->binding.body.health = v; }
 bool qa_q3_game_entity_takedamage(const qa_q3_game_entity *e) { return e->binding.body.takedamage; }

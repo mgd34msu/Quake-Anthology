@@ -2,11 +2,10 @@
  * Port of src/ui/common/legacy/team-arena/memory.ts: UI_Alloc,
  * UI_InitMemory, String_Alloc and String_Report (ui_shared.c).
  * C accommodations:
- *  - The typed-pointer kinds for menu.ts objects (UiScript,
- *    UiItemDefinition, UiMenuDefinition, shader/model/sound
- *    references; TS owner src/ui/common/legacy/menu.ts, not yet
- *    ported) are mirrored as opaque `void *` values with the same
- *    alias checks and error strings.
+ *  - The typed-pointer kinds hold the real menu.ts types from
+ *    include/qa/ui/common/legacy/menu.h (forward-declared here to
+ *    avoid an include cycle) with the same alias checks and error
+ *    strings.
  *  - stringArray's live getter/setter array becomes indexed
  *    get/set functions. String reads malloc (NULL only on OOM, or
  *    the TS undefined/null where the function says so).
@@ -95,27 +94,35 @@ bool qa_ui_memory_allocation_is_null_pointer(
 qa_ui_memory_allocation *qa_ui_memory_allocation_get_allocation_pointer(
     qa_ui_memory_allocation *allocation, int64_t offset);
 
-/* menu.ts typed pointers, mirrored opaque (see header note). */
-void *qa_ui_memory_allocation_get_script(qa_ui_memory_allocation *allocation,
-                                         int64_t offset);
+/* menu.ts typed pointers (real types in legacy/menu.h). */
+typedef struct qa_ui_menu_script qa_ui_menu_script;
+typedef struct qa_ui_item_definition qa_ui_item_definition;
+typedef struct qa_ui_menu_definition qa_ui_menu_definition;
+typedef struct qa_ui_resource_reference qa_ui_resource_reference;
+
+qa_ui_menu_script *qa_ui_memory_allocation_get_script(
+    qa_ui_memory_allocation *allocation, int64_t offset);
 void qa_ui_memory_allocation_set_script(qa_ui_memory_allocation *allocation,
-                                        int64_t offset, void *value);
-void *qa_ui_memory_allocation_get_item(qa_ui_memory_allocation *allocation,
-                                       int64_t offset);
+                                        int64_t offset,
+                                        qa_ui_menu_script *value);
+qa_ui_item_definition *qa_ui_memory_allocation_get_item(
+    qa_ui_memory_allocation *allocation, int64_t offset);
 void qa_ui_memory_allocation_set_item(qa_ui_memory_allocation *allocation,
-                                      int64_t offset, void *value);
-void *qa_ui_memory_allocation_get_menu(qa_ui_memory_allocation *allocation,
-                                       int64_t offset);
+                                      int64_t offset,
+                                      qa_ui_item_definition *value);
+qa_ui_menu_definition *qa_ui_memory_allocation_get_menu(
+    qa_ui_memory_allocation *allocation, int64_t offset);
 void qa_ui_memory_allocation_set_menu(qa_ui_memory_allocation *allocation,
-                                      int64_t offset, void *value);
-void *qa_ui_memory_allocation_get_resource(
+                                      int64_t offset,
+                                      qa_ui_menu_definition *value);
+qa_ui_resource_reference *qa_ui_memory_allocation_get_resource(
     qa_ui_memory_allocation *allocation, int64_t offset);
 /* False is TS undefined handle. */
 bool qa_ui_memory_allocation_get_resource_handle(
     qa_ui_memory_allocation *allocation, int64_t offset, int32_t *out);
 void qa_ui_memory_allocation_set_resource(
-    qa_ui_memory_allocation *allocation, int64_t offset, void *value,
-    bool has_handle, int32_t handle);
+    qa_ui_memory_allocation *allocation, int64_t offset,
+    qa_ui_resource_reference *value, bool has_handle, int32_t handle);
 
 /** TS (text) => void print callback. */
 typedef void (*qa_ui_team_arena_print_fn)(void *ctx, const char *text);

@@ -1,6 +1,8 @@
 /* Port of src/content/q3/base/game/misc.ts. GPL-2.0-or-later.
- * ServerWorld/snapshot mirrors: TS owners ../world.ts, ../shared/snapshot-state.ts,
- * ../../team-arena/client-spawn.ts, ../shared/direction-byte.ts (unported). */
+ * ServerWorld/snapshot/setClientViewAngle mirrors: TS owners ../world.ts,
+ * ../shared/snapshot-state.ts, ../../team-arena/client-spawn.ts (landed
+ * real types are record-shaped; game mirror stays). directionToByte
+ * delegates to landed shared/direction_byte.h. */
 #ifndef QA_CONTENT_Q3_BASE_GAME_MISC_H
 #define QA_CONTENT_Q3_BASE_GAME_MISC_H
 #include <stdbool.h>
@@ -17,8 +19,8 @@ typedef struct qa_q3_kill_box_host {
   bool (*has_linked_bounds)(void *ctx, qa_actor_id actor); bool (*is_player)(void *ctx, qa_actor_id actor);
   qa_q3_damage_participant (*participant)(void *ctx, qa_actor_id actor);
 } qa_q3_kill_box_host;
-void qa_q3_kill_box(qa_q3_combat_context *context, qa_q3_kill_box_host host, qa_q3_game_entity *entity);
-typedef struct qa_q3_teleport_context { qa_q3_combat_context *combat; qa_q3_kill_box_host kill_box; qa_q3_server_world_mirror world; } qa_q3_teleport_context;
+void qa_q3_kill_box(qa_q3_game_combat_context *context, qa_q3_kill_box_host host, qa_q3_game_entity *entity);
+typedef struct qa_q3_teleport_context { qa_q3_game_combat_context *combat; qa_q3_kill_box_host kill_box; qa_q3_server_world_mirror world; } qa_q3_teleport_context;
 void qa_q3_teleport_player(qa_q3_teleport_context context, qa_q3_game_entity *player, qa_vec3 origin, qa_vec3 angles);
 typedef struct qa_q3_portal_context { qa_q3_target_selection_context selection; qa_q3_server_world_mirror world; double time; } qa_q3_portal_context;
 void qa_q3_locate_camera(qa_q3_portal_context context, qa_q3_game_entity *entity);

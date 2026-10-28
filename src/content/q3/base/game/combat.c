@@ -5,7 +5,7 @@
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
 enum { MOD_JUICED = 27, ET_MOVER = 4 };
-bool qa_q3_invulnerability_blocks(qa_q3_combat_context *c, qa_q3_game_entity *target, const qa_vec3 *dir, const qa_vec3 *point, double mod) {
+bool qa_q3_invulnerability_blocks(qa_q3_game_combat_context *c, qa_q3_game_entity *target, const qa_vec3 *dir, const qa_vec3 *point, double mod) {
   if (c->product != QA_Q3_PRODUCT_MISSIONPACK || !target->client || mod == MOD_JUICED || target->client->invulnerability_time <= c->time) return false;
   if (dir && point && c->invulnerability_effect) c->invulnerability_effect(c->ctx, target, *dir, *point);
   return true;
@@ -27,7 +27,7 @@ qa_q3_admit_result qa_q3_admit_target_damage(double intermission, qa_q3_game_ent
   }
   return QA_Q3_ADMIT_HANDLED;
 }
-void qa_q3_combat_damage(qa_q3_combat_context *c, qa_q3_damage_participant target, const qa_q3_damage_participant *inflictor,
+void qa_q3_combat_damage(qa_q3_game_combat_context *c, qa_q3_damage_participant target, const qa_q3_damage_participant *inflictor,
     const qa_q3_use_participant *attacker, qa_q3_damage_direction *direction, const qa_vec3 *point, double amount, double flags, double mod) {
   (void)inflictor; (void)attacker; (void)mod;
   if (c->intermission_queued != 0) return;
@@ -55,14 +55,14 @@ void qa_q3_combat_damage(qa_q3_combat_context *c, qa_q3_damage_participant targe
   qa_vec3 pt = point ? *point : e->r.current_origin;
   if (c->apply_damage) c->apply_damage(c->ctx, qa_q3_game_entity_actor(e).id, amount, amount, impulse, pt, ((int)flags & QA_Q3_DAMAGE_RADIUS) != 0);
 }
-bool qa_q3_combat_can_damage(qa_q3_combat_context *c, qa_q3_damage_participant target, qa_vec3 origin) {
+bool qa_q3_combat_can_damage(qa_q3_game_combat_context *c, qa_q3_damage_participant target, qa_vec3 origin) {
   if (!target.entity) return false;
   qa_bounds b = {target.entity->r.mins, target.entity->r.maxs};
   /* TS uses linked bounds via actors.linkedBounds; mirror uses r bounds offset by origin. */
   qa_bounds world = {qa_add3(target.entity->r.current_origin, b.min), qa_add3(target.entity->r.current_origin, b.max)};
   return qa_q3_can_damage(c->spatial, qa_q3_game_entity_actor(target.entity).id, world, origin);
 }
-bool qa_q3_combat_radius_damage(qa_q3_combat_context *c, qa_vec3 origin, qa_q3_damage_participant attacker, double amount, double radius, const qa_q3_damage_participant *ignore, double mod) {
+bool qa_q3_combat_radius_damage(qa_q3_game_combat_context *c, qa_vec3 origin, qa_q3_damage_participant attacker, double amount, double radius, const qa_q3_damage_participant *ignore, double mod) {
   (void)attacker; (void)mod;
   if (!c->has_radius_host) qa_range_error("Combat radius damage requires a radius host");
   const qa_actor_id *ig = NULL; qa_actor_id ig_id;

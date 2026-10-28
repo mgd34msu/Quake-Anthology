@@ -19,7 +19,7 @@ typedef struct qa_q3_ta_spawn_pose { qa_vec3 origin, angles; } qa_q3_ta_spawn_po
 /* TS ClientEventsContext services (+ product/combat/personalPortal). */
 typedef struct qa_q3_ta_client_events_context {
   qa_q3_base_product product;
-  qa_q3_combat_context *combat;
+  qa_q3_game_combat_context *combat;
   qa_q3_base_server_world *world; /* borrowed */
   qa_q3_teleport_context teleport; /* for qa_q3_teleport_player */
   double dmflags;
@@ -44,7 +44,7 @@ void qa_q3_ta_client_events(qa_q3_ta_client_events_context *context, qa_q3_game_
 /* TS Q3HoldableContext: teleport closure as fn+ctx. */
 typedef struct qa_q3_ta_holdable_context {
   qa_q3_base_product product;
-  qa_q3_combat_context *combat;
+  qa_q3_game_combat_context *combat;
   void *ctx;
   void (*teleport)(void *ctx, qa_q3_game_entity *entity);
   void (*start_kamikaze)(void *ctx, qa_q3_game_entity *entity);
@@ -56,7 +56,7 @@ void qa_q3_ta_use_holdable(qa_q3_ta_holdable_context *context, qa_q3_game_entity
 /* TS Pick<ClientEventsContext, "drops" | "product" | "combat"> (+ generic1). */
 typedef struct qa_q3_ta_teleport_objectives_context {
   qa_q3_base_product product;
-  qa_q3_combat_context *combat;
+  qa_q3_game_combat_context *combat;
   void *ctx;
   qa_q3_game_entity *(*drop_item)(void *ctx, qa_q3_game_entity *entity,
       const qa_q3_base_item_definition *item, double angle);

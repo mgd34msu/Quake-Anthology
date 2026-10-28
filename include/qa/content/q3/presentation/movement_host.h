@@ -1,15 +1,15 @@
 /* Port of src/content/q3/presentation/movement-host.ts. GPL-2.0-or-later.
- * Mirrored types (TS owners in src/content/q3/base/shared/, unported):
- * SourcePlayerState / UserCommand reuse the landed mirrors in
- * qa/content/q3/base/game/state.h. Replace when shared/ lands. */
+ * SourcePlayerState / UserCommand are the landed base/shared records
+ * (qa/content/q3/base/shared/player_state.h); shared/ has landed, so the
+ * old base/game/state.h mirrors are replaced. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_MOVEMENT_HOST_H
 #define QA_CONTENT_Q3_PRESENTATION_MOVEMENT_HOST_H
 #include <stdbool.h>
-#include "qa/content/q3/base/game/state.h"
+#include "qa/content/q3/base/shared/player_state.h"
 #include "qa/content/q3/presentation/collision_host.h"
 #include "qa/contracts/math.h"
-typedef qa_q3_game_player_state_mirror qa_q3_pres_source_player_state;
-typedef qa_q3_game_user_command_mirror qa_q3_pres_user_command;
+typedef qa_q3_base_source_player_state qa_q3_pres_source_player_state;
+typedef qa_q3_base_user_command qa_q3_pres_user_command;
 /* TS MovementTrace extends TraceResult { readonly entityNum }. */
 typedef struct qa_q3_pres_movement_trace {
   qa_q3_trace_result result;

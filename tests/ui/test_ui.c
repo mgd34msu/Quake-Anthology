@@ -42,10 +42,23 @@
 #include "qa/ui/common/captions.h"
 #include "qa/ui/common/layout.h"
 #include "qa/ui/common/legacy/borders.h"
+#include "qa/core/commands/index.h"
+#include "qa/core/cvars/index.h"
+#include "qa/ui/common/legacy/input.h"
+#include "qa/ui/common/legacy/menu.h"
+#include "qa/ui/common/legacy/runtime.h"
 #include "qa/ui/common/menu_theme.h"
 #include "qa/ui/common/skin.h"
+#include "qa/ui/hud/index.h"
 #include "qa/ui/hud/powerups.h"
 #include "qa/ui/hud/q1_wheel.h"
+#include "qa/ui/hud/q2_native.h"
+#include "qa/ui/hud/q2_rerelease_layout.h"
+#include "qa/ui/library/inventory.h"
+#include "qa/ui/library/match.h"
+#include "qa/ui/library/menu.h"
+#include "qa/ui/mods/menu.h"
+#include "qa/ui/saves/menu.h"
 #include "qa/ui/hud/weapon.h"
 #include "qa/ui/hud/wheel.h"
 
@@ -1396,6 +1409,1188 @@ static void test_local_lobby_menu(void) {
   harness_destroy(&h);
 }
 
+/* ---- hud/q2-native + q2-rerelease-layout + hud/index +
+ * library/{inventory,match,menu} + mods/menu + saves/menu ----
+ * (appended section; ports tests/ui/hud/q2-native.test.ts,
+ * tests/ui/hud/splitscreen-readability.test.ts (occupied rects),
+ * tests/ui/library/menu.test.ts, tests/ui/library-menu.test.ts
+ * (library + inventory), tests/ui/mods/menu.test.ts) */
+
+static const char *q2_statusbar =
+    "yb -24 xv 0 hnum xv 50 pic 0 if 2 xv 100 anum xv 150 pic 2 endif "
+    "if 4 xv 200 rnum xv 250 pic 4 endif if 6 xv 296 pic 6 endif yb -50 "
+    "if 7 xv 0 pic 7 xv 26 yb -42 stat_string 8 yb -50 endif if 9 xv 262 "
+    "num 2 10 xv 296 pic 9 endif if 11 xv 148 pic 11 endif";
+
+static bool op_is_pic(const qa_native_q2_hud_operations *ops, size_t i,
+                      double x, double y, const char *name) {
+  if (i >= ops->count) return false;
+  const qa_native_q2_hud_operation *op = &ops->operations[i];
+  return op->kind == QA_Q2_HUD_OP_PICTURE && near(op->x, x) && near(op->y, y)
+         && op->name != NULL && strcmp(op->name, name) == 0;
+}
+static bool ops_have_pic(const qa_native_q2_hud_operations *ops, double x,
+                         double y, const char *name) {
+  for (size_t i = 0; i < ops->count; i++)
+    if (op_is_pic(ops, i, x, y, name)) return true;
+  return false;
+}
+static bool ops_have_text(const qa_native_q2_hud_operations *ops,
+                          qa_native_q2_hud_operation_kind kind, double x,
+                          double y, const char *text, bool alternate) {
+  for (size_t i = 0; i < ops->count; i++) {
+    const qa_native_q2_hud_operation *op = &ops->operations[i];
+    if (op->kind == kind && near(op->x, x) && near(op->y, y)
+        && op->text != NULL && strcmp(op->text, text) == 0
+        && op->alternate == alternate)
+      return true;
+  }
+  return false;
+}
+
+typedef struct q2_fixture {
+  double stats[64];
+  double inventory[256];
+  qa_native_q2_config_string configs[40];
+  char item_names[25][16];
+  qa_native_q2_hud_frame frame;
+} q2_fixture;
+
+static void q2_classic_fixture(q2_fixture *f) {
+  memset(f, 0, sizeof *f);
+  f->stats[0] = 1;
+  f->stats[1] = 100;
+  f->stats[2] = 2;
+  f->stats[3] = 50;
+  f->stats[4] = 3;
+  f->stats[5] = 75;
+  f->configs[0] = (qa_native_q2_config_string){ 5, q2_statusbar };
+  f->configs[1] = (qa_native_q2_config_string){ 545, "i_health" };
+  f->configs[2] = (qa_native_q2_config_string){ 546, "a_shells" };
+  f->configs[3] = (qa_native_q2_config_string){ 547, "i_combatarmor" };
+  f->frame.protocol = (qa_q2_protocol_identity){ "q2-classic", 34, 0, 0 };
+  f->frame.stats = f->stats;
+  f->frame.stat_count = 32;
+  f->frame.configstrings = f->configs;
+  f->frame.configstring_count = 4;
+  f->frame.layout = "";
+  f->frame.inventory = f->inventory;
+  f->frame.inventory_count = 0;
+  f->frame.server_frame = 4;
+  f->frame.time_milliseconds = 100;
+}
+
+static const char *q2_binding_q(void *ctx, const char *command) {
+  (void)ctx;
+  return strcmp(command, "use Item 23") == 0 ? "Q" : "";
+}
+
+static void test_q2_classic_hud(void) {
+  q2_fixture f;
+  q2_classic_fixture(&f);
+  qa_native_q2_hud_operations ops;
+  CHECK(qa_q2_native_hud_operations(&f.frame, 640, 480, NULL, NULL, NULL,
+                                    NULL, NULL, &ops));
+  CHECK(op_is_pic(&ops, 0, 162, 456, "num_1"));
+  CHECK(op_is_pic(&ops, 1, 178, 456, "num_0"));
+  CHECK(op_is_pic(&ops, 3, 210, 456, "i_health"));
+  CHECK(ops_have_pic(&ops, 310, 456, "a_shells"));
+  CHECK(ops_have_pic(&ops, 410, 456, "i_combatarmor"));
+  bool has_inventory_pic = false;
+  for (size_t i = 0; i < ops.count; i++)
+    if (ops.operations[i].kind == QA_Q2_HUD_OP_PICTURE
+        && strcmp(ops.operations[i].name, "inventory") == 0)
+      has_inventory_pic = true;
+  CHECK(!has_inventory_pic);
+  qa_native_q2_hud_operations_free(&ops);
+  /* Donor flashing/suppression + malformed index abort. */
+  f.stats[1] = 12;
+  f.stats[3] = -1;
+  f.stats[5] = 0;
+  f.stats[15] = 1;
+  CHECK(qa_q2_layout_operations("hnum anum rnum", &f.frame, 320, 240, NULL,
+                                NULL, &ops));
+  CHECK(ops.count == 3 && op_is_pic(&ops, 0, 0, 0, "field_3")
+        && ops.operations[1].name != NULL
+        && strcmp(ops.operations[1].name, "anum_1") == 0
+        && strcmp(ops.operations[2].name, "anum_2") == 0);
+  qa_native_q2_hud_operations_free(&ops);
+  CHECK_ABORTS(qa_q2_layout_operations("pic 999", &f.frame, 320, 240, NULL,
+                                       NULL, &ops));
+  /* svc_inventory scroll + exact use binding row. */
+  q2_classic_fixture(&f);
+  f.stats[13] = 2;
+  f.stats[12] = 23;
+  for (size_t i = 2; i < 27; i++) f.inventory[i] = (double)i;
+  f.frame.inventory_count = 256;
+  size_t at = 4;
+  for (size_t i = 2; i < 27; i++) {
+    snprintf(f.item_names[i - 2], sizeof f.item_names[i - 2], "Item %zu", i);
+    f.configs[at++] =
+        (qa_native_q2_config_string){ 1056 + (double)i, f.item_names[i - 2] };
+  }
+  f.frame.configstring_count = at;
+  CHECK(qa_q2_native_hud_operations(&f.frame, 640, 480, q2_binding_q, NULL,
+                                    NULL, NULL, NULL, &ops));
+  CHECK(ops_have_pic(&ops, 192, 128, "inventory"));
+  size_t item_rows = 0;
+  bool first_ok = false, selected_ok = false;
+  for (size_t i = 0; i < ops.count; i++) {
+    const qa_native_q2_hud_operation *op = &ops.operations[i];
+    if (op->kind == QA_Q2_HUD_OP_TEXT && strstr(op->text, "Item ") != NULL) {
+      if (item_rows == 0)
+        first_ok = strcmp(op->text, "        10 Item 10") == 0 && op->alternate;
+      if (strcmp(op->text, "     Q  23 Item 23") == 0 && near(op->x, 216)
+          && near(op->y, 264) && !op->alternate)
+        selected_ok = true;
+      item_rows++;
+    }
+  }
+  CHECK(item_rows == 17 && first_ok && selected_ok);
+  qa_native_q2_hud_operations_free(&ops);
+  CHECK(qa_q2_native_hud_operations(&f.frame, 640, 480, NULL, NULL,
+                                    "layout-overlay", NULL, NULL, &ops));
+  CHECK(ops.count == 0);
+  qa_native_q2_hud_operations_free(&ops);
+}
+
+static qa_vec2 rr_measure6(void *ctx, const char *text) {
+  (void)ctx;
+  double widest = 0, lines = 1, current = 0;
+  for (const char *p = text;; p++) {
+    if (*p == '\n' || *p == '\0') {
+      if (current * 6 > widest) widest = current * 6;
+      current = 0;
+      if (*p == '\0') break;
+      lines++;
+    } else {
+      current++;
+    }
+  }
+  return (qa_vec2){ widest, lines * 10 };
+}
+static char rr_localize_buffer[256];
+static const char *rr_localize(void *ctx, const char *text,
+                               const char *const *args, size_t arg_count) {
+  (void)ctx;
+  if (strcmp(text, "$g_pc_goals") == 0) return "Goals";
+  if (strcmp(text, "$m_eou_press_button") == 0) return "Press a button";
+  if (strcmp(text, "$g_score_time") == 0) {
+    snprintf(rr_localize_buffer, sizeof rr_localize_buffer, "Time: %s",
+             arg_count > 0 ? args[0] : "");
+    return rr_localize_buffer;
+  }
+  if (strcmp(text, "{}: 2/4") == 0) return "Goals: 2/4";
+  if (strcmp(text, "$level") == 0) return "Level";
+  if (strcmp(text, "$score") == 0) return "Score";
+  if (strcmp(text, "$boss") == 0) return "Boss";
+  if (strcmp(text, "$story") == 0) return "First line\nSecond line";
+  if (strcmp(text, "$shells") == 0) return "Shells";
+  return text;
+}
+
+static void test_q2_rerelease_hud(void) {
+  q2_fixture f;
+  memset(&f, 0, sizeof f);
+  qa_native_q2_hud_table table;
+  qa_native_q2_hud_table_init(&table);
+  qa_native_q2_hud_environment env;
+  memset(&env, 0, sizeof env);
+  env.table = &table;
+  env.use_font = true;
+  env.font_line_height = 10;
+  env.measure = rr_measure6;
+  env.localize = rr_localize;
+  f.frame.protocol = (qa_q2_protocol_identity){ "q2-rerelease", 1038, 0, 0 };
+  f.frame.stats = f.stats;
+  f.frame.stat_count = 64;
+  f.frame.layout = "";
+  f.frame.has_frame_time_milliseconds = true;
+  f.frame.frame_time_milliseconds = 50;
+  const char *layout =
+      "xv 265 yv 164 loc_rstring2 1 \"{}: 2/4\" \"$g_pc_goals\" if 0 ifgef 0 "
+      "loc_string 0 \"hidden\" endif endif ifgef 8 yb -48 xv 0 loc_cstring2 0 "
+      "\"$m_eou_press_button\" endif xr -8 yt 8 time_limit 1208";
+  qa_native_q2_hud_operations ops;
+  f.frame.server_frame = 7;
+  CHECK(qa_q2_layout_operations(layout, &f.frame, 640, 480, NULL, &env, &ops));
+  CHECK(ops_have_text(&ops, QA_Q2_HUD_OP_FONT_TEXT, 365, 283, "Goals: 2/4",
+                      true));
+  bool any_hidden = false;
+  for (size_t i = 0; i < ops.count; i++)
+    if (ops.operations[i].text != NULL
+        && (strcmp(ops.operations[i].text, "hidden") == 0
+            || strcmp(ops.operations[i].text, "Press a button") == 0))
+      any_hidden = true;
+  CHECK(!any_hidden);
+  qa_native_q2_hud_operations_free(&ops);
+  f.frame.server_frame = 8;
+  CHECK(qa_q2_layout_operations(layout, &f.frame, 640, 480, NULL, &env, &ops));
+  CHECK(ops_have_text(&ops, QA_Q2_HUD_OP_FONT_TEXT, 278, 431,
+                      "Press a button", true));
+  CHECK(ops_have_text(&ops, QA_Q2_HUD_OP_FONT_TEXT, 566, 7, "Time: 01:00",
+                      true));
+  qa_native_q2_hud_operations_free(&ops);
+  CHECK_ABORTS(qa_q2_layout_operations("loc_string 8 \"bad\"", &f.frame, 320,
+                                       240, NULL, &env, &ops));
+  CHECK_ABORTS(qa_q2_layout_operations("endif", &f.frame, 320, 240, NULL,
+                                       &env, &ops));
+  /* Table shared between authored status and svc_layout. */
+  f.stats[13] = 1;
+  f.configs[0] = (qa_native_q2_config_string){
+    5, "start_table 2 \"$level\" \"$score\" table_row 2 \"Outer Base\" \"12\""
+  };
+  f.frame.configstrings = f.configs;
+  f.frame.configstring_count = 1;
+  f.frame.layout = "xv 160 yt 0 draw_table";
+  CHECK(qa_q2_native_hud_operations(&f.frame, 640, 480, NULL, NULL, NULL,
+                                    NULL, &env, &ops));
+  bool fill_ok = false;
+  for (size_t i = 0; i < ops.count; i++) {
+    const qa_native_q2_hud_operation *op = &ops.operations[i];
+    if (op->kind == QA_Q2_HUD_OP_FILL && near(op->x, 272) && near(op->y, 8)
+        && near(op->width, 96) && near(op->height, 18))
+      fill_ok = true;
+  }
+  CHECK(fill_ok);
+  CHECK(ops_have_text(&ops, QA_Q2_HUD_OP_FONT_TEXT, 287, 7, "Level", true));
+  CHECK(ops_have_text(&ops, QA_Q2_HUD_OP_FONT_TEXT, 356, 16, "12", false));
+  qa_native_q2_hud_operations_free(&ops);
+  /* lives_num + packed health bars + dogtag. */
+  memset(f.stats, 0, sizeof f.stats);
+  f.stats[49] = 2;
+  f.stats[52] = 255 | (128 << 8);
+  f.configs[0] = (qa_native_q2_config_string){ 12104, "$boss" };
+  f.configs[1] =
+      (qa_native_q2_config_string){ 11582, "Marine\\male/grunt\\eagle" };
+  f.frame.configstring_count = 2;
+  CHECK(qa_q2_layout_operations(
+      "xl 0 yt 20 lives_num 49 health_bars xl 10 yt 80 dogtag 0", &f.frame,
+      320, 240, NULL, &env, &ops));
+  CHECK(op_is_pic(&ops, 0, 2, 20, "anum_0"));
+  bool bar_ok = false, dogtag_ok = false;
+  for (size_t i = 0; i < ops.count; i++) {
+    const qa_native_q2_hud_operation *op = &ops.operations[i];
+    if (op->kind == QA_Q2_HUD_OP_FILL && near(op->x, 80) && near(op->y, 30)
+        && near(op->width, 160) && near(op->height, 4)
+        && near(op->color.x, 1))
+      bar_ok = true;
+    if (op->kind == QA_Q2_HUD_OP_SIZED_PICTURE && near(op->x, 10)
+        && near(op->y, 80) && near(op->width, 198)
+        && strcmp(op->name, "/tags/eagle.pcx") == 0)
+      dogtag_ok = true;
+  }
+  CHECK(bar_ok && dogtag_ok);
+  qa_native_q2_hud_operations_free(&ops);
+  qa_native_q2_hud_table_destroy(&table);
+}
+
+static void test_hud_index(void) {
+  qa_ui_hud_rects rects;
+  CHECK(qa_ui_hud_vital_rects_for(2, 1, 42, &rects));
+  CHECK(rects.count == 2 && near(rects.rects[0].x, 160)
+        && near(rects.rects[0].y, 434) && near(rects.rects[0].width, 156));
+  qa_ui_hud_rects_free(&rects);
+  test_ui_harness h;
+  harness_init(&h);
+  qa_seat_hud_messages *messages = qa_seat_hud_messages_create(h.seat);
+  CHECK(messages != NULL);
+  qa_source_time zero = { QA_SOURCE_TIME_MILLISECONDS, 0 };
+  qa_source_time five_s = { QA_SOURCE_TIME_SECONDS, 5 };
+  qa_seat_hud_messages_notify(messages, h.seat, "hello", true, zero, five_s);
+  qa_seat_hud_messages_center_print(messages, h.seat, "centered", zero, five_s,
+                                    true, 125);
+  qa_seat_hud_active active;
+  CHECK(qa_seat_hud_messages_active(messages, 100, &active));
+  CHECK(active.notification_count == 1 && active.has_center_print
+        && strcmp(active.center_print.text, "centered") == 0);
+  qa_seat_hud_active_free(&active);
+  /* Queued non-instant print starts after the current one ends. */
+  qa_seat_hud_messages_center_print(messages, h.seat, "next", zero,
+                                    (qa_source_time){ QA_SOURCE_TIME_MILLISECONDS, 1000 },
+                                    false, 100);
+  CHECK(qa_seat_hud_messages_active(messages, 5100, &active));
+  CHECK(active.has_center_print
+        && strcmp(active.center_print.text, "next") == 0
+        && near(active.center_print.starts.value, 5000)
+        && near(active.center_print.duration.value, 1400));
+  qa_seat_hud_active_free(&active);
+  qa_ui_hud_point_of_interest point;
+  memset(&point, 0, sizeof point);
+  point.id = 7;
+  point.image = "resource:test:poi";
+  point.expires_milliseconds = 10000;
+  CHECK(qa_seat_hud_messages_add_point(messages, h.seat, point, 0, 64));
+  CHECK(qa_seat_hud_messages_active(messages, 0, &active));
+  CHECK(active.point_count == 1);
+  qa_seat_hud_active_free(&active);
+  qa_seat_hud_messages_remove_point(messages, 7);
+  CHECK(qa_seat_hud_messages_active(messages, 0, &active));
+  CHECK(active.point_count == 0);
+  qa_seat_hud_active_free(&active);
+  qa_seat_id other = qa_identity_owner_seat(&h.identity, 1);
+  CHECK_ABORTS(qa_seat_hud_messages_notify(messages, other, "x", false, zero,
+                                           five_s));
+  /* drawCommonHud over empty data: clip, crosshair fills, clip. */
+  qa_ui_common_hud_data data = qa_ui_empty_hud_data(h.seat);
+  qa_ui_seat_preferences prefs;
+  qa_ui_seat_preferences_init(&prefs, h.seat, NULL);
+  qa_ui_common_hud_draw_options options;
+  memset(&options, 0, sizeof options);
+  options.skin = qa_ui_default_skin("resource:test:font");
+  options.measure_text = measure8;
+  options.preferences = qa_ui_seat_preferences_values(&prefs);
+  options.messages = messages;
+  options.localize = identity_localize;
+  qa_ui_draw_context context;
+  memset(&context, 0, sizeof context);
+  context.binding.seat = h.seat;
+  context.binding.viewport = rect(0, 0, 640, 480);
+  context.binding.safe_area = rect(0, 0, 640, 480);
+  context.binding.hud_scale = 1;
+  context.time_milliseconds = 100;
+  qa_ui_hud_commands commands;
+  CHECK(qa_ui_draw_common_hud(context, &data, &options, &commands));
+  CHECK(commands.count >= 4
+        && commands.commands[0].kind == QA_UI_DRAW_CLIP
+        && commands.commands[commands.count - 1].kind == QA_UI_DRAW_CLIP
+        && !commands.commands[commands.count - 1].has_clip_rect);
+  qa_ui_hud_commands_free(&commands);
+  CHECK(qa_ui_hud_vital_occupied_rects(context, 3, 1, 1.5, 8, &rects));
+  CHECK(rects.count == 3 && rects.rects[0].x < rects.rects[1].x);
+  qa_ui_hud_rects_free(&rects);
+  qa_ui_common_hud_data wrong = qa_ui_empty_hud_data(other);
+  CHECK_ABORTS(qa_ui_draw_common_hud(context, &wrong, &options, &commands));
+  qa_seat_hud_messages_destroy(messages);
+  harness_destroy(&h);
+}
+
+static void send_click(test_ui_harness *h, double x, double y) {
+  qa_seat_input_event event;
+  memset(&event, 0, sizeof event);
+  event.seat = h->seat;
+  event.kind = "mouse-motion";
+  event.position = (qa_vec2){ x, y };
+  (void)qa_native_ui_controller_input(h->controller, event);
+  memset(&event, 0, sizeof event);
+  event.seat = h->seat;
+  event.kind = "mouse-button";
+  event.button = 1;
+  event.down = true;
+  (void)qa_native_ui_controller_input(h->controller, event);
+  event.down = false;
+  (void)qa_native_ui_controller_input(h->controller, event);
+}
+
+typedef struct fake_library {
+  qa_ui_library_entry entries[2];
+  int refreshes;
+  char opened[8][32];
+  size_t opened_count;
+} fake_library;
+static const qa_ui_library_entry *fake_library_entries(void *ctx,
+                                                       size_t *out) {
+  fake_library *f = ctx;
+  *out = 2;
+  return f->entries;
+}
+static const char *fake_library_status(void *ctx) {
+  (void)ctx;
+  return "";
+}
+static void fake_library_refresh(void *ctx) { ((fake_library *)ctx)->refreshes++; }
+static void fake_library_activate(void *ctx, const char *id) {
+  fake_library *f = ctx;
+  snprintf(f->opened[f->opened_count], sizeof f->opened[0], "%s", id);
+  f->opened_count++;
+}
+
+typedef struct fake_commands {
+  char log[16][96];
+  size_t count;
+} fake_commands;
+static void fake_command_record(void *ctx, const char *name,
+                                const char *const *args, size_t arg_count) {
+  fake_commands *f = ctx;
+  char *line = f->log[f->count];
+  snprintf(line, sizeof f->log[0], "%s", name);
+  for (size_t i = 0; i < arg_count; i++) {
+    strncat(line, " ", sizeof f->log[0] - strlen(line) - 1);
+    strncat(line, args[i], sizeof f->log[0] - strlen(line) - 1);
+  }
+  f->count++;
+}
+static const qa_ui_hud_inventory_item fake_inv_items[1] = {
+  { "q2:item_quad", "Quad damage", 1, true, NULL, NULL }
+};
+static const qa_ui_hud_inventory_item *fake_inv_list(void *ctx, size_t *out) {
+  (void)ctx;
+  *out = 1;
+  return fake_inv_items;
+}
+
+static void test_library_inventory_match_menus(void) {
+  test_ui_harness h;
+  harness_init(&h);
+  /* library: keyboard selection does not activate; Enter opens. */
+  fake_library library;
+  memset(&library, 0, sizeof library);
+  library.entries[0] = (qa_ui_library_entry){ "one", "Demo one", NULL, NULL };
+  library.entries[1] = (qa_ui_library_entry){ "two", "Demo two", NULL, NULL };
+  qa_ui_library_menu_service service;
+  memset(&service, 0, sizeof service);
+  service.ctx = &library;
+  service.entries = fake_library_entries;
+  service.status = fake_library_status;
+  service.refresh = fake_library_refresh;
+  service.activate = fake_library_activate;
+  qa_ui_settings_menus menus =
+      qa_ui_register_library_menu(h.controller, "menu:test:library", "Demos",
+                                  &service);
+  qa_native_ui_controller_open_menu(h.controller, menus.root);
+  CHECK(library.refreshes == 1);
+  CHECK(draw_has(&h, "Demo one"));
+  send_key(&h, QA_KEY_TAB);
+  send_key(&h, QA_KEY_DOWN);
+  CHECK(library.opened_count == 0);
+  send_key(&h, QA_KEY_ENTER);
+  CHECK(library.opened_count == 1 && strcmp(library.opened[0], "two") == 0);
+  qa_ui_settings_menus_dispose(&menus);
+  /* inventory: activate uses the item; close dispatches putaway. */
+  fake_commands commands;
+  memset(&commands, 0, sizeof commands);
+  qa_ui_settings_menus inv_menus = qa_ui_register_inventory_menu(
+      h.controller, fake_inv_list, NULL, fake_command_record, &commands);
+  qa_native_ui_controller_open_menu(h.controller, inv_menus.root);
+  CHECK(draw_has(&h, "Quad damage"));
+  send_key(&h, QA_KEY_ENTER);
+  CHECK(commands.count == 1
+        && strcmp(commands.log[0], "use q2:item_quad") == 0);
+  send_key(&h, QA_KEY_ESCAPE);
+  CHECK(commands.count == 2 && strcmp(commands.log[1], "putaway") == 0);
+  qa_ui_settings_menus_dispose(&inv_menus);
+  /* match: Join team dispatches through the command callback. */
+  memset(&commands, 0, sizeof commands);
+  qa_ui_settings_menus match_menus = qa_ui_register_match_menu(
+      h.controller, fake_command_record, &commands);
+  qa_native_ui_controller_open_menu(h.controller, match_menus.root);
+  CHECK(draw_has(&h, "Join team"));
+  send_click(&h, 100, 145); /* Join team button (64,130,496,30) */
+  CHECK(commands.count == 1 && strcmp(commands.log[0], "team red") == 0);
+  qa_ui_settings_menus_dispose(&match_menus);
+  harness_destroy(&h);
+}
+
+typedef struct fake_mods {
+  qa_ui_mod_menu_row rows[3];
+  bool enabled[3];
+  int refreshes;
+} fake_mods;
+static const qa_ui_mod_menu_row *fake_mods_rows(void *ctx, size_t *out) {
+  fake_mods *f = ctx;
+  for (size_t i = 0; i < 3; i++) f->rows[i].enabled = f->enabled[i];
+  *out = 3;
+  return f->rows;
+}
+static void fake_mods_set_enabled(void *ctx, const char *id, bool enabled) {
+  fake_mods *f = ctx;
+  for (size_t i = 0; i < 3; i++)
+    if (strcmp(f->rows[i].id, id) == 0) f->enabled[i] = enabled;
+}
+static void fake_mods_refresh(void *ctx) { ((fake_mods *)ctx)->refreshes++; }
+static const char *fake_mods_status(void *ctx) {
+  (void)ctx;
+  return "";
+}
+
+typedef struct fake_saves {
+  qa_ui_startup_save_row rows[1];
+  int saves;
+  char saved_name[64];
+} fake_saves;
+static qa_ui_startup_save_list fake_saves_list(void *ctx) {
+  fake_saves *f = ctx;
+  return (qa_ui_startup_save_list){ f->rows, 1, NULL };
+}
+static const char *fake_saves_refresh(void *ctx) {
+  (void)ctx;
+  return NULL;
+}
+static const char *fake_saves_unavailable(void *ctx, const char *action) {
+  (void)ctx;
+  (void)action;
+  return NULL;
+}
+static const char *fake_saves_save(void *ctx, const char *name,
+                                   const char *overwrite) {
+  (void)overwrite;
+  fake_saves *f = ctx;
+  f->saves++;
+  snprintf(f->saved_name, sizeof f->saved_name, "%s", name);
+  return NULL;
+}
+static const char *fake_saves_load(void *ctx, const char *id) {
+  (void)ctx;
+  (void)id;
+  return NULL;
+}
+
+static void test_mods_saves_menus(void) {
+  test_ui_harness h;
+  harness_init(&h);
+  /* mods: Tab to the list, Enter toggles; unavailable stays off. */
+  fake_mods mods;
+  memset(&mods, 0, sizeof mods);
+  mods.rows[0] =
+      (qa_ui_mod_menu_row){ "q1:weather", "Storm effects", "Quake", false, NULL };
+  mods.rows[1] = (qa_ui_mod_menu_row){ "q2:monsters", "Monster variety",
+                                       "Quake II", false, NULL };
+  mods.rows[2] = (qa_ui_mod_menu_row){
+    "q2:expansion", "Expansion enemies", "Quake II rerelease", false,
+    "Requires installed expansion content."
+  };
+  qa_ui_mod_menu_service mod_service;
+  memset(&mod_service, 0, sizeof mod_service);
+  mod_service.ctx = &mods;
+  mod_service.rows = fake_mods_rows;
+  mod_service.set_enabled = fake_mods_set_enabled;
+  mod_service.refresh = fake_mods_refresh;
+  mod_service.status = fake_mods_status;
+  qa_ui_settings_menus mod_menus =
+      qa_ui_register_mod_menu(h.controller, &mod_service);
+  qa_native_ui_controller_open_menu(h.controller, mod_menus.root);
+  CHECK(mods.refreshes == 1);
+  CHECK(draw_has(&h, "Disabled"));
+  send_key(&h, QA_KEY_TAB);
+  send_key(&h, QA_KEY_ENTER);
+  CHECK(mods.enabled[0] && !mods.enabled[1]);
+  CHECK(draw_has(&h, "Disable"));
+  send_key(&h, QA_KEY_END);
+  CHECK(draw_has(&h, "Requires installed expansion content."));
+  send_key(&h, QA_KEY_ENTER);
+  CHECK(!mods.enabled[2]);
+  qa_ui_settings_menus_dispose(&mod_menus);
+  /* saves with no service: remote-games reason is shown. */
+  qa_ui_saved_game_menus no_saves =
+      qa_ui_register_saved_game_menus(h.controller, NULL);
+  qa_native_ui_controller_open_menu(h.controller, no_saves.load);
+  CHECK(draw_has(&h, "Remote games cannot be saved or loaded here."));
+  qa_ui_saved_game_menus_dispose(&no_saves);
+  /* saves: New picks the first free "Save %03d" draft and writes. */
+  fake_saves saves;
+  memset(&saves, 0, sizeof saves);
+  saves.rows[0] = (qa_ui_startup_save_row){ "slot-1", "Save 001", "base1",
+                                            "q2", 0, NULL };
+  qa_ui_saved_game_menu_service save_service;
+  memset(&save_service, 0, sizeof save_service);
+  save_service.ctx = &saves;
+  save_service.list = fake_saves_list;
+  save_service.refresh = fake_saves_refresh;
+  save_service.unavailable = fake_saves_unavailable;
+  save_service.save = fake_saves_save;
+  save_service.load = fake_saves_load;
+  qa_ui_saved_game_menus save_menus =
+      qa_ui_register_saved_game_menus(h.controller, &save_service);
+  qa_native_ui_controller_open_menu(h.controller, save_menus.save);
+  CHECK(draw_has(&h, "New saved game"));
+  CHECK(draw_has(&h, "Save 001 - base1"));
+  send_click(&h, 100, 100); /* New saved game (menuRow 0) */
+  CHECK(menu_is(&h, "menu:saves:name"));
+  CHECK(draw_has(&h, "Save 002"));
+  send_click(&h, 100, 184); /* Save game (menuRow 3) */
+  CHECK(saves.saves == 1 && strcmp(saves.saved_name, "Save 002") == 0);
+  qa_ui_saved_game_menus_dispose(&save_menus);
+  harness_destroy(&h);
+}
+/* ---- end appended hud/library/mods/saves section ---- */
+
+/* ---- legacy menu/runtime/input (ui/common/legacy/{menu,runtime,input}.ts;
+ * synthetic counterpart of tests/ui/common/legacy/retail.test.ts) ---- */
+
+static const char *legacy_menu_text =
+    "assetGlobalDef {\n"
+    "  fadeClamp 0.75\n"
+    "  fadeCycle 10\n"
+    "  fadeAmount 0.1\n"
+    "  shadowColor 0 0 0 0.25\n"
+    "  cursor \"ui/cursor.tga\"\n"
+    "}\n"
+    "menuDef {\n"
+    "  name \"main\"\n"
+    "  rect 0 0 640 480\n"
+    "  visible 1\n"
+    "  onOpen { setCvar ui_opened 1 }\n"
+    "  itemDef {\n"
+    "    name \"play\"\n"
+    "    group \"grpMenu\"\n"
+    "    type 1\n"
+    "    rect 100 100 120 24\n"
+    "    visible 1\n"
+    "    text \"Play\"\n"
+    "    action { show confirm ; hide grpMenu }\n"
+    "  }\n"
+    "  itemDef {\n"
+    "    name \"confirm\"\n"
+    "    type 1\n"
+    "    rect 100 140 120 24\n"
+    "    text \"Confirm\"\n"
+    "    action { exec \"map_restart\" ; close \"main\" }\n"
+    "  }\n"
+    "  itemDef {\n"
+    "    name \"volume\"\n"
+    "    type 12\n"
+    "    rect 100 180 120 24\n"
+    "    visible 1\n"
+    "    cvar \"s_volume\"\n"
+    "    cvarFloatList { \"Low\" 0.25 \"High\" 0.75 }\n"
+    "  }\n"
+    "  itemDef {\n"
+    "    name \"ext\"\n"
+    "    type 1\n"
+    "    rect 100 220 120 24\n"
+    "    visible 1\n"
+    "    text \"Ext\"\n"
+    "    action { myExternal 42 }\n"
+    "  }\n"
+    "}\n";
+
+static const char *legacy_set_text = "{ loadMenu { \"ui/test.menu\" } }";
+
+static bool legacy_resolve_named(const char *path, qa_ui_script_source *out) {
+  const char *text = NULL;
+  if (strcmp(path, "ui/menus.txt") == 0 || strcmp(path, "ui/hud.txt") == 0)
+    text = legacy_set_text;
+  else if (strcmp(path, "ui/test.menu") == 0)
+    text = legacy_menu_text;
+  if (text == NULL) return false;
+  memset(out, 0, sizeof *out);
+  out->path = path;
+  out->text = (const uint8_t *)text;
+  out->text_length = strlen(text);
+  return true;
+}
+
+static bool legacy_resolve_root(void *ctx, const char *path,
+                                qa_ui_script_source *out) {
+  (void)ctx;
+  return legacy_resolve_named(path, out);
+}
+
+static bool legacy_resolve_include(void *ctx,
+                                   const qa_ui_script_include_request *request,
+                                   qa_ui_script_source *out) {
+  (void)ctx;
+  if (legacy_resolve_named(request->requested_path, out)) return true;
+  /* posix join(dirname(from), requested) */
+  const char *slash = strrchr(request->from_path, '/');
+  if (slash == NULL) return false;
+  size_t dir_length = (size_t)(slash - request->from_path) + 1;
+  char joined[256];
+  snprintf(joined, sizeof joined, "%.*s%s", (int)dir_length,
+           request->from_path, request->requested_path);
+  static char joined_path[256];
+  snprintf(joined_path, sizeof joined_path, "%s", joined);
+  return legacy_resolve_named(joined_path, out);
+}
+
+static double legacy_random(void *ctx) {
+  (void)ctx;
+  return 7;
+}
+
+typedef struct legacy_host_log {
+  int prints, play_local, backgrounds, stops, restarts, external;
+  int fonts, pictures, pauses;
+  bool overstrike;
+  char external_token[32];
+} legacy_host_log;
+
+static void legacy_print(void *ctx, const char *text) {
+  (void)text;
+  ((legacy_host_log *)ctx)->prints++;
+}
+static void legacy_play_local(void *ctx, qa_ui_runtime_sound_arg sound) {
+  (void)sound;
+  ((legacy_host_log *)ctx)->play_local++;
+}
+static void legacy_start_background(void *ctx, const char *path) {
+  (void)path;
+  ((legacy_host_log *)ctx)->backgrounds++;
+}
+static void legacy_stop_background(void *ctx) {
+  ((legacy_host_log *)ctx)->stops++;
+}
+static void legacy_register_font(void *ctx, const char *path,
+                                 double point_size) {
+  (void)path;
+  (void)point_size;
+  ((legacy_host_log *)ctx)->fonts++;
+}
+static bool legacy_register_picture(void *ctx, const char *path,
+                                    qa_picture_asset *out) {
+  ((legacy_host_log *)ctx)->pictures++;
+  memset(out, 0, sizeof *out);
+  out->kind = QA_PICTURE_IMAGE;
+  out->image.name = path;
+  return true;
+}
+static bool legacy_no_picture(void *ctx, const char *path,
+                              qa_picture_asset *out) {
+  (void)ctx;
+  (void)path;
+  (void)out;
+  return false;
+}
+static bool legacy_no_sound(void *ctx, const char *path, qa_pcm_sound *out) {
+  (void)ctx;
+  (void)path;
+  (void)out;
+  return false;
+}
+static qa_q3_pres_scene_model legacy_register_model(void *ctx,
+                                                    const char *path) {
+  (void)ctx;
+  (void)path;
+  return qa_q3_pres_default_model;
+}
+static bool legacy_no_model(void *ctx, const char *path,
+                            qa_q3_pres_scene_model *out) {
+  (void)ctx;
+  (void)path;
+  (void)out;
+  return false;
+}
+static qa_ui_cinematic_asset legacy_prepare_cinematic(void *ctx,
+                                                      const char *path) {
+  (void)ctx;
+  qa_ui_cinematic_asset asset = {path};
+  return asset;
+}
+static bool legacy_cine_play(void *ctx, qa_ui_cinematic_asset asset,
+                             qa_rect rect, qa_ui_cinematic_instance *out) {
+  (void)ctx;
+  (void)asset;
+  (void)rect;
+  (void)out;
+  return false;
+}
+static void legacy_cine_noop(void *ctx, double handle) {
+  (void)ctx;
+  (void)handle;
+}
+static void legacy_cine_run(void *ctx, double handle, double time) {
+  (void)ctx;
+  (void)handle;
+  (void)time;
+}
+static void legacy_cine_draw(void *ctx, double handle, qa_rect rect,
+                             const qa_draw2d *draw) {
+  (void)ctx;
+  (void)handle;
+  (void)rect;
+  (void)draw;
+}
+static void legacy_paint_model(void *ctx,
+                               const qa_ui_model_paint_request *request) {
+  (void)ctx;
+  (void)request;
+}
+static char *legacy_key_name(void *ctx, double key) {
+  (void)ctx;
+  (void)key;
+  return strdup("K");
+}
+static char *legacy_get_binding(void *ctx, double key) {
+  (void)ctx;
+  (void)key;
+  return strdup("");
+}
+static void legacy_set_binding(void *ctx, double key, const char *command) {
+  (void)ctx;
+  (void)key;
+  (void)command;
+}
+static bool legacy_get_overstrike(void *ctx) {
+  return ((legacy_host_log *)ctx)->overstrike;
+}
+static void legacy_set_overstrike(void *ctx, bool enabled) {
+  ((legacy_host_log *)ctx)->overstrike = enabled;
+}
+static void legacy_pause(void *ctx, bool paused) {
+  (void)paused;
+  ((legacy_host_log *)ctx)->pauses++;
+}
+static double legacy_feeder_count(void *ctx, double feeder) {
+  (void)ctx;
+  (void)feeder;
+  return 0;
+}
+static bool legacy_feeder_item(void *ctx, double feeder, double index,
+                               double column,
+                               qa_ui_runtime_feeder_item *out) {
+  (void)ctx;
+  (void)feeder;
+  (void)index;
+  (void)column;
+  (void)out;
+  return false;
+}
+static bool legacy_feeder_image(void *ctx, double feeder, double index,
+                                qa_picture_asset *out) {
+  (void)ctx;
+  (void)feeder;
+  (void)index;
+  (void)out;
+  return false;
+}
+static void legacy_feeder_select(void *ctx, double feeder, double index) {
+  (void)ctx;
+  (void)feeder;
+  (void)index;
+}
+static bool legacy_od_visible(void *ctx, double flags) {
+  (void)ctx;
+  (void)flags;
+  return true;
+}
+static double legacy_od_zero(void *ctx, double owner_draw) {
+  (void)ctx;
+  (void)owner_draw;
+  return 0;
+}
+static double legacy_od_width(void *ctx, double owner_draw, double scale) {
+  (void)ctx;
+  (void)owner_draw;
+  (void)scale;
+  return 0;
+}
+static qa_ui_owner_draw_key_result legacy_od_key(void *ctx, double owner_draw,
+                                                 double flags, double special,
+                                                 double key) {
+  (void)ctx;
+  (void)owner_draw;
+  (void)flags;
+  (void)key;
+  qa_ui_owner_draw_key_result result = {false, special};
+  return result;
+}
+static void legacy_od_paint(void *ctx,
+                            const qa_ui_owner_draw_paint_request *request) {
+  (void)ctx;
+  (void)request;
+}
+static void legacy_external(void *ctx, qa_ui_script_cursor *cursor,
+                            qa_ui_external_script_context context) {
+  legacy_host_log *log = ctx;
+  (void)context;
+  log->external++;
+  qa_ui_menu_script_token token;
+  if (qa_ui_script_cursor_next(cursor, &token)) {
+    snprintf(log->external_token, sizeof log->external_token, "%s",
+             token.text);
+    qa_ui_menu_script_token_destroy(&token);
+  }
+}
+static qa_vec4 legacy_team_color(void *ctx) {
+  (void)ctx;
+  qa_vec4 color = {1, 0, 0, 1};
+  return color;
+}
+static void legacy_restart(void *ctx, qa_command_invocation *command) {
+  (void)command;
+  ((legacy_host_log *)ctx)->restarts++;
+}
+
+static void legacy_stretch_count(void *ctx, qa_rect rect,
+                                 qa_text_texture_rect uv,
+                                 const qa_picture_asset *picture) {
+  (void)rect;
+  (void)uv;
+  (void)picture;
+  (*(int *)ctx)++;
+}
+static void legacy_set_color_count(void *ctx, const qa_vec4 *color) {
+  (void)ctx;
+  (void)color;
+}
+
+static qa_ui_menu_parse_host legacy_host(void) {
+  qa_ui_menu_parse_host host;
+  memset(&host, 0, sizeof host);
+  host.kind = QA_UI_PARSE_HOST_RESOLVED;
+  host.resolver.resolve_root = legacy_resolve_root;
+  host.resolver.resolve = legacy_resolve_include;
+  host.random = legacy_random;
+  return host;
+}
+
+static void test_legacy_menu_runtime(void) {
+  legacy_host_log log;
+  memset(&log, 0, sizeof log);
+  qa_ui_team_arena_memory *memory = qa_ui_team_arena_memory_create(
+      "qvm32", legacy_print, &log, QA_UI_TEAM_ARENA_MODULE_UI);
+  CHECK(memory != NULL);
+  qa_ui_menu_parse_host host = legacy_host();
+  qa_ui_menu_parse_options parse_options;
+  memset(&parse_options, 0, sizeof parse_options);
+  parse_options.has_memory = true;
+  parse_options.memory.kind = QA_UI_MENU_MEMORY_QVM32;
+  parse_options.memory.memory = memory;
+  const char *set_paths[] = {"ui/menus.txt"};
+  qa_ui_menu_load_plan plan = {QA_UI_LOAD_PLAN_UI, set_paths, 1, NULL};
+  qa_ui_menu_definitions definitions;
+  qa_ui_load_menu_definitions(&host, &plan, NULL, &parse_options,
+                              &definitions);
+  CHECK(definitions.diagnostic_count == 0);
+  CHECK(definitions.menu_count == 1);
+  CHECK(definitions.loaded_file_count == 2);
+  CHECK(definitions.registration_kind == QA_UI_REGISTRATION_DEFERRED);
+  CHECK(definitions.registration_event_count == 1);
+  CHECK(near(definitions.assets.fade_clamp, 0.75));
+  CHECK(near(definitions.assets.shadow_fade_clamp, 0.25));
+  CHECK(definitions.assets.cursor != NULL
+        && strcmp(definitions.assets.cursor->path, "ui/cursor.tga") == 0);
+  qa_ui_menu_definition *menu = definitions.menus[0];
+  CHECK(qa_ui_menu_item_count(menu) == 4);
+  char *menu_name = qa_ui_window_name(&menu->window);
+  CHECK(menu_name != NULL && strcmp(menu_name, "main") == 0);
+  free(menu_name);
+  qa_ui_item_definition *play = qa_ui_menu_item_at(menu, 0);
+  char *play_text = qa_ui_item_text(play);
+  CHECK(play_text != NULL && strcmp(play_text, "Play") == 0);
+  free(play_text);
+  qa_rect play_rect = qa_ui_window_rect(&play->window);
+  CHECK(near(play_rect.x, 100) && near(play_rect.y, 100));
+  CHECK((qa_ui_window_flags(&play->window) & QA_UI_WINDOW_VISIBLE) != 0);
+  qa_ui_item_definition *confirm = qa_ui_menu_item_at(menu, 1);
+  CHECK((qa_ui_window_flags(&confirm->window) & QA_UI_WINDOW_VISIBLE) == 0);
+  qa_ui_item_definition *volume = qa_ui_menu_item_at(menu, 2);
+  CHECK(qa_ui_item_behavior(volume) == QA_UI_BEHAVIOR_MULTI);
+  qa_ui_multi_definition multi;
+  CHECK(qa_ui_item_multi_data(volume, &multi));
+  CHECK(qa_ui_multi_count(&multi) == 2);
+  char *high = qa_ui_multi_label(&multi, 1);
+  CHECK(high != NULL && strcmp(high, "High") == 0);
+  free(high);
+  CHECK(near(qa_ui_multi_number_value(&multi, 1), 0.75));
+  CHECK_ABORTS((void)qa_ui_multi_label(&multi, 32));
+  CHECK_ABORTS((void)qa_ui_menu_item_at(menu, 96));
+
+  /* HUD plan parses the same set through COM text. */
+  qa_ui_team_arena_memory *hud_memory = qa_ui_team_arena_memory_create(
+      "qvm32", legacy_print, &log, QA_UI_TEAM_ARENA_MODULE_UI);
+  qa_ui_menu_parse_options hud_options = parse_options;
+  hud_options.memory.memory = hud_memory;
+  qa_ui_menu_load_plan hud_plan = qa_ui_default_hud_menu_plan();
+  qa_ui_menu_definitions hud_definitions;
+  qa_ui_load_menu_definitions(&host, &hud_plan, NULL, &hud_options,
+                              &hud_definitions);
+  CHECK(hud_definitions.menu_count == 1);
+  qa_ui_menu_definitions_destroy(&hud_definitions);
+  qa_ui_team_arena_memory_destroy(hud_memory);
+
+  /* Missing set file is a ScriptLanguageError abort. */
+  const char *missing_paths[] = {"ui/nope.txt"};
+  qa_ui_menu_load_plan missing = {QA_UI_LOAD_PLAN_UI, missing_paths, 1, NULL};
+  qa_ui_menu_definitions dropped;
+  CHECK_ABORTS(qa_ui_load_menu_definitions(&host, &missing, NULL,
+                                           &parse_options, &dropped));
+
+  /* Runtime over the parsed definitions. */
+  qa_identity_owner owner;
+  CHECK(qa_identity_owner_create(&owner, "legacy-ui"));
+  qa_seat_id seat = qa_identity_owner_seat(&owner, 1);
+  qa_command_context context;
+  memset(&context, 0, sizeof context);
+  context.session = owner.session;
+  context.origin.kind = QA_COMMAND_ORIGIN_LOCAL_SEAT;
+  context.origin.seat = seat;
+  context.origin.client = qa_identity_owner_client(&owner, 1, 0);
+  qa_cvar_registry_options cvar_options;
+  memset(&cvar_options, 0, sizeof cvar_options);
+  cvar_options.dialect = QA_COMMAND_DIALECT_Q3;
+  cvar_options.context = context;
+  qa_cvar_registry *cvars = qa_cvar_registry_create(&cvar_options);
+  qa_command_buffer_options buffer_options;
+  memset(&buffer_options, 0, sizeof buffer_options);
+  buffer_options.dialect = QA_COMMAND_DIALECT_Q3;
+  buffer_options.context = context;
+  buffer_options.cvars = cvars;
+  qa_command_buffer *commands = qa_command_buffer_create(&buffer_options);
+  qa_cvar_snapshot snapshot;
+  if (qa_cvar_registry_register(cvars, "s_volume", "0.25", 0, &snapshot))
+    qa_cvar_read_free(&snapshot);
+  if (qa_cvar_registry_register(cvars, "ui_opened", "0", 0, &snapshot))
+    qa_cvar_read_free(&snapshot);
+  CHECK(qa_command_buffer_register(commands, "map_restart", legacy_restart,
+                                   &log, NULL, QA_COMMAND_WORLD));
+
+  static qa_q3_registered_font fake_font;
+  memset(&fake_font, 0, sizeof fake_font);
+  fake_font.glyph_scale = 1;
+  fake_font.glyph_count = 256;
+  for (int i = 0; i < 256; i++) {
+    fake_font.glyphs[i].metrics.x_skip = 8;
+    fake_font.glyphs[i].metrics.height = 10;
+  }
+  qa_ui_runtime_options options;
+  memset(&options, 0, sizeof options);
+  options.definitions = definitions;
+  options.cvars = cvars;
+  options.commands = commands;
+  options.command_context = context;
+  options.resources.handles.kind = QA_UI_HANDLES_DIAGNOSTIC;
+  options.resources.ctx = &log;
+  options.resources.register_font = legacy_register_font;
+  options.resources.register_picture = legacy_register_picture;
+  options.resources.registered_picture = legacy_no_picture;
+  options.resources.register_sound = legacy_no_sound;
+  options.resources.registered_sound = legacy_no_sound;
+  options.resources.register_model = legacy_register_model;
+  options.resources.registered_model = legacy_no_model;
+  options.resources.prepare_cinematic = legacy_prepare_cinematic;
+  options.fonts.small = &fake_font;
+  options.fonts.normal = &fake_font;
+  options.fonts.big = &fake_font;
+  options.fonts.profile = QA_Q3_FONT_UI;
+  options.fonts.small_threshold = 0.25;
+  options.fonts.big_threshold = 0.4;
+  options.audio.ctx = &log;
+  options.audio.play_local = legacy_play_local;
+  options.audio.start_background = legacy_start_background;
+  options.audio.stop_background = legacy_stop_background;
+  options.cinematics.ctx = &log;
+  options.cinematics.play = legacy_cine_play;
+  options.cinematics.run = legacy_cine_run;
+  options.cinematics.draw = legacy_cine_draw;
+  options.cinematics.stop = legacy_cine_noop;
+  options.paint_model = legacy_paint_model;
+  options.context.kind = QA_UI_RUNTIME_CONTEXT_UI;
+  options.context.bindings.ctx = &log;
+  options.context.bindings.key_name = legacy_key_name;
+  options.context.bindings.get_binding = legacy_get_binding;
+  options.context.bindings.set_binding = legacy_set_binding;
+  options.context.bindings.get_overstrike = legacy_get_overstrike;
+  options.context.bindings.set_overstrike = legacy_set_overstrike;
+  options.context.pause = legacy_pause;
+  options.context.pause_ctx = &log;
+  options.feeder.ctx = &log;
+  options.feeder.count = legacy_feeder_count;
+  options.feeder.item = legacy_feeder_item;
+  options.feeder.image = legacy_feeder_image;
+  options.feeder.select = legacy_feeder_select;
+  options.owner_draw.ctx = &log;
+  options.owner_draw.visible = legacy_od_visible;
+  options.owner_draw.width = legacy_od_width;
+  options.owner_draw.value = legacy_od_zero;
+  options.owner_draw.handle_key = legacy_od_key;
+  options.owner_draw.paint = legacy_od_paint;
+  options.owner_draw.close_cinematic = legacy_cine_noop;
+  options.external_script.ctx = &log;
+  options.external_script.run = legacy_external;
+  options.get_team_color = legacy_team_color;
+  qa_ui_runtime *runtime = qa_ui_runtime_create(&options);
+  CHECK(runtime != NULL);
+  CHECK(qa_ui_runtime_activate(runtime, "main"));
+  char *opened = qa_cvar_registry_variable_string(cvars, "ui_opened");
+  CHECK(opened != NULL && strcmp(opened, "1") == 0);
+  free(opened);
+  qa_ui_runtime_snapshot snap = qa_ui_runtime_take_snapshot(runtime);
+  CHECK(snap.focused_menu != NULL && strcmp(snap.focused_menu, "main") == 0);
+  CHECK(snap.menu_count == 1 && snap.menus[0].item_count == 4);
+  CHECK(((int)snap.menus[0].items[0].flags & QA_UI_WINDOW_VISIBLE) != 0);
+  CHECK(((int)snap.menus[0].items[1].flags & QA_UI_WINDOW_VISIBLE) == 0);
+  qa_ui_runtime_snapshot_destroy(&snap);
+
+  /* Seat input: click play -> show confirm, hide play group. */
+  qa_legacy_ui_seat *input = qa_legacy_ui_seat_create(seat, runtime);
+  int stretches = 0;
+  qa_draw2d draw;
+  memset(&draw, 0, sizeof draw);
+  draw.commands.ctx = &stretches;
+  draw.commands.seat = seat;
+  draw.commands.target = rect(640, 0, 640, 480);
+  draw.commands.set_color = legacy_set_color_count;
+  draw.commands.stretch_pixels = legacy_stretch_count;
+  draw.space = QA_COORD_TEAM_UI_640;
+  qa_seat_input_event event;
+  memset(&event, 0, sizeof event);
+  event.seat = qa_identity_owner_seat(&owner, 0);
+  event.kind = "key";
+  event.code = 13;
+  event.down = true;
+  CHECK(!qa_legacy_ui_seat_input(input, &event, &draw)); /* other seat */
+  qa_ui_runtime_frame frame = {1000, 16, &draw};
+  qa_ui_runtime_run_frame(runtime, frame, 60);
+  /* click helper inline: motion + down + up through route/drain */
+  for (int click_index = 0; click_index < 2; click_index++) {
+    double cx = 110, cy = click_index == 0 ? 110 : 150;
+    memset(&event, 0, sizeof event);
+    event.seat = seat;
+    event.time_milliseconds = 1000;
+    event.kind = "mouse-motion";
+    event.position.x = cx + 640;
+    event.position.y = cy;
+    CHECK(qa_legacy_ui_seat_route(input, &event));
+    event.kind = "mouse-button";
+    event.button = 1;
+    event.down = true;
+    CHECK(qa_legacy_ui_seat_route(input, &event));
+    event.down = false;
+    CHECK(qa_legacy_ui_seat_route(input, &event));
+    qa_legacy_ui_seat_drain(input, &draw);
+    if (click_index == 0) {
+      snap = qa_ui_runtime_take_snapshot(runtime);
+      CHECK(((int)snap.menus[0].items[1].flags & QA_UI_WINDOW_VISIBLE) != 0);
+      CHECK(((int)snap.menus[0].items[0].flags & QA_UI_WINDOW_VISIBLE) == 0);
+      qa_ui_runtime_snapshot_destroy(&snap);
+      CHECK(qa_command_buffer_execute(commands) == 0);
+      CHECK(log.restarts == 0);
+    }
+  }
+  CHECK(qa_command_buffer_execute(commands) == 1);
+  CHECK(log.restarts == 1);
+  snap = qa_ui_runtime_take_snapshot(runtime);
+  CHECK(((int)snap.menus[0].flags & QA_UI_WINDOW_VISIBLE) == 0);
+  qa_ui_runtime_snapshot_destroy(&snap);
+
+  /* Multi cycles the cvar; unknown script commands go external. */
+  CHECK(qa_ui_runtime_activate(runtime, "main"));
+  qa_ui_runtime_set_display_cursor(runtime, 110, 190);
+  CHECK(qa_ui_runtime_pointer_move(runtime, 110, 190));
+  qa_ui_key_event mouse_down = {QA_UI_KEY_EVENT_KEY, QA_KEY_MOUSE1, true};
+  CHECK(qa_ui_runtime_handle_key(runtime, mouse_down, 110, 190));
+  CHECK(near(qa_cvar_registry_variable_value(cvars, "s_volume"), 0.75));
+  qa_ui_item_definition *ext = qa_ui_menu_item_at(menu, 3);
+  qa_ui_runtime_run_item_script(runtime, "main", "ext",
+                                qa_ui_item_action(ext));
+  CHECK(log.external == 1);
+  CHECK(strcmp(log.external_token, "42") == 0);
+
+  /* Error cases abort with the TS messages. */
+  qa_ui_key_event bad_key = {QA_UI_KEY_EVENT_KEY, 40000, true};
+  CHECK_ABORTS((void)qa_ui_runtime_handle_key(runtime, bad_key, 0, 0));
+  CHECK_ABORTS((void)qa_ui_runtime_pointer_move(runtime, NAN, 0));
+  CHECK_ABORTS(qa_ui_runtime_set_display_time(runtime, 2147483648.0));
+
+  qa_legacy_ui_seat_close(input);
+  memset(&event, 0, sizeof event);
+  event.seat = seat;
+  event.kind = "key";
+  event.code = 13;
+  event.down = true;
+  CHECK_ABORTS((void)qa_legacy_ui_seat_route(input, &event));
+  CHECK_ABORTS((void)qa_ui_runtime_take_snapshot(runtime));
+
+  qa_legacy_ui_seat_destroy(input);
+  qa_ui_runtime_destroy(runtime);
+  qa_command_buffer_destroy(commands);
+  qa_cvar_registry_destroy(cvars);
+  qa_ui_menu_definitions_destroy(&definitions);
+  qa_ui_team_arena_memory_destroy(memory);
+  qa_identity_owner_destroy(&owner);
+}
+
 int main(void) {
   test_layout();
   test_skin_and_accessibility();
@@ -1417,6 +2612,12 @@ int main(void) {
   test_ranking_view();
   test_server_menu();
   test_local_lobby_menu();
+  test_q2_classic_hud();
+  test_q2_rerelease_hud();
+  test_hud_index();
+  test_library_inventory_match_menus();
+  test_mods_saves_menus();
+  test_legacy_menu_runtime();
   if (failures > 0) {
     fprintf(stderr, "test_ui: %d of %d checks FAILED\n", failures, checks);
     return 1;

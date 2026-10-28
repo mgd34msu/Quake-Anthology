@@ -200,7 +200,10 @@ typedef struct qa_qvmx_bot_library {
   /* sources */
   double (*sources_load_source_handle)(void *ctx, const char *filename);
   bool (*sources_free_source_handle)(void *ctx, double handle);
-  bool (*sources_read_token)(void *ctx, double handle, qa_qvmy_script_token_record *out_token,
+  /* Borrowed raw token (TS readTokenHandleResult().token, a
+   * SourceTokenMemory owned by the source reader). */
+  bool (*sources_read_token)(void *ctx, double handle,
+                             qa_ui_source_token_memory **out_token,
                              bool *out_read);
   bool (*sources_source_file_and_line)(void *ctx, double handle, const char **out_filename,
                                        double *out_line);

@@ -3,7 +3,7 @@
 #define QA_CONTENT_Q3_PRESENTATION_CHARACTER_RESOURCES_H
 #include <stdbool.h>
 #include <stddef.h>
-#include "qa/content/q3/base/game/state.h" /* qa_q3_game_product (definitions.ts mirror) */
+#include "qa/content/q3/base/shared/definitions.h" /* qa_q3_base_product (definitions.ts) */
 /** CG_RegisterSounds character media, shared by cgame and mixed character playback. */
 typedef struct qa_q3_pres_character_sounds {
   const char *select_sound;
@@ -24,5 +24,5 @@ extern const qa_q3_pres_footstep_path qa_q3_footstep_paths[];
 extern const size_t qa_q3_footstep_path_count;
 /** CG_LoadClientInfo: missionpack changes the team default, never the FFA default.
  * Returns "sarge" | "james". */
-const char *qa_q3_custom_sound_fallback(qa_q3_game_product product, bool team_game);
+const char *qa_q3_custom_sound_fallback(qa_q3_base_product product, bool team_game);
 #endif

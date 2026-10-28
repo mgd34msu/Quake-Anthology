@@ -11,6 +11,6 @@ const qa_q3_pres_footstep_path qa_q3_footstep_paths[] = {
     {"energy", "energy"}, {"splash", "splash"}, {"metal", "clank"},
 };
 const size_t qa_q3_footstep_path_count = sizeof qa_q3_footstep_paths / sizeof qa_q3_footstep_paths[0];
-const char *qa_q3_custom_sound_fallback(qa_q3_game_product product, bool team_game) {
-  return product == QA_Q3_PRODUCT_MISSIONPACK && team_game ? "james" : "sarge";
+const char *qa_q3_custom_sound_fallback(qa_q3_base_product product, bool team_game) {
+  return product == QA_Q3_BASE_PRODUCT_MISSIONPACK && team_game ? "james" : "sarge";
 }

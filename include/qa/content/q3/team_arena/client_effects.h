@@ -15,7 +15,7 @@
 /* TS ClientEffectsContext. snapshot/extrapolate replace the TS
  * playerStateToEntityState* calls on the mirror player state. */
 typedef struct qa_q3_ta_client_effects_context {
-  qa_q3_combat_context *combat;
+  qa_q3_game_combat_context *combat;
   double intermission_time;
   bool smooth_clients;
   double fry_sound;
@@ -28,7 +28,7 @@ typedef struct qa_q3_ta_client_effects_context {
   void (*snapshot_extrapolate)(void *ctx, qa_q3_game_client *client, qa_q3_game_entity *entity, double time);
 } qa_q3_ta_client_effects_context;
 /* TS EventContext = Pick<ClientEffectsContext, "combat">. */
-typedef struct qa_q3_ta_event_context { qa_q3_combat_context *combat; } qa_q3_ta_event_context;
+typedef struct qa_q3_ta_event_context { qa_q3_game_combat_context *combat; } qa_q3_ta_event_context;
 
 void qa_q3_ta_damage_feedback(qa_q3_ta_event_context context, qa_q3_game_entity *player);
 void qa_q3_ta_world_effects(qa_q3_ta_client_effects_context *context, qa_q3_game_entity *entity);

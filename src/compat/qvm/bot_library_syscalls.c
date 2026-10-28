@@ -638,11 +638,11 @@ bool qa_qvm_bot_library_syscall(const qa_qvm_host_call *call, qa_qvm_bot_library
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_FREE_SOURCE:
       *out = library->sources_free_source_handle(lib, wint(&d, 1)) ? 1 : 0; return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_READ_TOKEN: {
-      qa_qvmy_script_token_record token; bool was_read = false;
+      qa_ui_source_token_memory *token = NULL; bool was_read = false;
       if (!library->sources_read_token(lib, wint(&d, 1), &token, &was_read)) { *out = 0; return true; }
       qa_qvm_writable_view view;
       qa_qvm_memory_view(guest, wint(&d, 2), QA_QVM_SCRIPT_TOKEN_BYTES, 0, &view);
-      qa_qvm_write_script_token(&view, &token); *out = was_read ? 1 : 0; return true;
+      qa_qvm_write_script_token_memory(&view, token); *out = was_read ? 1 : 0; return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_SOURCE_FILE_AND_LINE: {
       const char *filename = NULL; double line = 0;

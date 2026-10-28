@@ -130,6 +130,7 @@ static int excluded(const qa_q3_spawn_variables *vars, qa_q3_spawn_context *ctx,
   if (qa_q3_spawn_variables_int(vars, mp ? "notta" : "notq3a", "0").value != 0) { *out = mp ? QA_Q3_SPAWN_NOTTA : QA_Q3_SPAWN_NOTQ3A; return 1; }
   qa_q3_spawn_value_string gt = qa_q3_spawn_variables_string(vars, "gametype", "");
   if (gt.present && ctx->game_type >= 0 && ctx->game_type < 8) {
+    if (ctx->game_type != (int)ctx->game_type) qa_range_error("No source gametype name");
     static const char *names[8] = {"ffa", "tournament", "single", "team", "ctf", "oneflag", "obelisk", "harvester"};
     if (!strstr(gt.value, names[(int)ctx->game_type])) { *out = QA_Q3_SPAWN_GAMETYPE; return 1; }
   }

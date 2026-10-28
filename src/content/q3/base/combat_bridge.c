@@ -5,11 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* qa_q3_combat_context is also the landed policies.h policy-context
- * type name; rename it inside this TU only. */
-#define qa_q3_combat_context qa_q3_policy_combat_context
 #include "qa/world/gameplay/policies.h"
-#undef qa_q3_combat_context
 
 #include "qa/content/q3/base/shared/items.h"
 #include "qa/content/q3/foundation/arsenal.h"
@@ -84,7 +80,7 @@ static void context_invulnerability(void *ctx, qa_q3_game_entity *target, qa_vec
 void qa_q3_base_combat_bridge_init(qa_q3_base_combat_bridge *bridge, qa_q3_base_combat_bridge_host host) {
   memset(bridge, 0, sizeof *bridge);
   bridge->host = host;
-  qa_q3_combat_context *context = &bridge->context;
+  qa_q3_game_combat_context *context = &bridge->context;
   memset(context, 0, sizeof *context);
   context->product = host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_PRODUCT_MISSIONPACK : QA_Q3_PRODUCT_BASEQ3;
   context->entities = host.entities;
@@ -106,7 +102,7 @@ void qa_q3_base_combat_bridge_destroy(qa_q3_base_combat_bridge *bridge) {
   bridge->calls = NULL;
   bridge->call_count = bridge->call_capacity = 0;
 }
-qa_q3_combat_context *qa_q3_base_combat_bridge_context(qa_q3_base_combat_bridge *bridge) {
+qa_q3_game_combat_context *qa_q3_base_combat_bridge_context(qa_q3_base_combat_bridge *bridge) {
   bridge->context.time = bridge->host.time(bridge->host.ctx);
   bridge->context.intermission_queued = bridge->host.intermission_queued(bridge->host.ctx);
   bridge->context.game_type = bridge->host.game_type(bridge->host.ctx);
@@ -206,7 +202,7 @@ static bool same_team(qa_q3_base_combat_bridge *bridge, qa_q3_game_entity *first
       bridge->host.game_type(bridge->host.ctx) >= QA_Q3_BASE_GT_TEAM &&
       first->client->sess.session_team == second->client->sess.session_team;
 }
-static qa_q3_policy_combat_context policy_context(void *ctx, qa_damage_request request,
+static qa_q3_combat_context policy_context(void *ctx, qa_damage_request request,
     qa_combat_state target_state, const qa_combat_state *attacker_state) {
   (void)target_state; (void)attacker_state;
   qa_q3_base_combat_bridge *bridge = ctx;
@@ -227,7 +223,7 @@ static qa_q3_policy_combat_context policy_context(void *ctx, qa_damage_request r
   bool guard = owner_client != NULL && schema->product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
       qa_q3_base_item_at(QA_Q3_BASE_PRODUCT_MISSIONPACK,
           slot_get(&owner_client->ps.stats, schema->persistent_powerup))->tag == QA_Q3_PW_GUARD;
-  qa_q3_policy_combat_context out;
+  qa_q3_combat_context out;
   memset(&out, 0, sizeof out);
   out.player = target_client != NULL;
   out.attacker_player = owner_client != NULL;

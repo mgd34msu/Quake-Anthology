@@ -462,35 +462,38 @@ static void *get_typed(qa_ui_memory_allocation *allocation, int64_t offset,
   qa_ui_script_plain_error("%s", error);
 }
 
-void *qa_ui_memory_allocation_get_script(qa_ui_memory_allocation *allocation,
-                                         int64_t offset) {
+qa_ui_menu_script *qa_ui_memory_allocation_get_script(
+    qa_ui_memory_allocation *allocation, int64_t offset) {
   return get_typed(allocation, offset, PTR_SCRIPT,
                    "UI script read aliases a different typed pointer");
 }
 void qa_ui_memory_allocation_set_script(qa_ui_memory_allocation *allocation,
-                                        int64_t offset, void *value) {
+                                        int64_t offset,
+                                        qa_ui_menu_script *value) {
   set_pointer(allocation, offset, value != NULL, PTR_SCRIPT, value);
 }
-void *qa_ui_memory_allocation_get_item(qa_ui_memory_allocation *allocation,
-                                       int64_t offset) {
+qa_ui_item_definition *qa_ui_memory_allocation_get_item(
+    qa_ui_memory_allocation *allocation, int64_t offset) {
   return get_typed(allocation, offset, PTR_ITEM,
                    "UI item read aliases a different typed pointer");
 }
 void qa_ui_memory_allocation_set_item(qa_ui_memory_allocation *allocation,
-                                      int64_t offset, void *value) {
+                                      int64_t offset,
+                                      qa_ui_item_definition *value) {
   set_pointer(allocation, offset, value != NULL, PTR_ITEM, value);
 }
-void *qa_ui_memory_allocation_get_menu(qa_ui_memory_allocation *allocation,
-                                       int64_t offset) {
+qa_ui_menu_definition *qa_ui_memory_allocation_get_menu(
+    qa_ui_memory_allocation *allocation, int64_t offset) {
   return get_typed(allocation, offset, PTR_MENU,
                    "UI menu read aliases a different typed pointer");
 }
 void qa_ui_memory_allocation_set_menu(qa_ui_memory_allocation *allocation,
-                                      int64_t offset, void *value) {
+                                      int64_t offset,
+                                      qa_ui_menu_definition *value) {
   set_pointer(allocation, offset, value != NULL, PTR_MENU, value);
 }
 
-void *qa_ui_memory_allocation_get_resource(
+qa_ui_resource_reference *qa_ui_memory_allocation_get_resource(
     qa_ui_memory_allocation *allocation, int64_t offset) {
   check_word(allocation, offset);
   ptr_entry *pointer =
@@ -517,8 +520,8 @@ bool qa_ui_memory_allocation_get_resource_handle(
 }
 
 void qa_ui_memory_allocation_set_resource(
-    qa_ui_memory_allocation *allocation, int64_t offset, void *value,
-    bool has_handle, int32_t handle) {
+    qa_ui_memory_allocation *allocation, int64_t offset,
+    qa_ui_resource_reference *value, bool has_handle, int32_t handle) {
   qa_ui_memory_allocation_set_int32(allocation, offset,
                                     has_handle ? handle : 0);
   map_set(allocation->pointers, allocation->offset + offset, PTR_RESOURCE,

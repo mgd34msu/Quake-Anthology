@@ -208,6 +208,78 @@ static void test_prediction_abort(void) {
   qa_bot_move_state_store_shutdown(&store);
 }
 
+static const uint8_t *script_read_file(void *ctx, const char *path, size_t *out_len) {
+  (void)ctx;
+  const char *text = NULL;
+  if (strcmp(path, "root.bot") == 0) text = "#include \"child.inc\"\n#define KEEP 1\n\"hi\" 42\n";
+  if (strcmp(path, "child.inc") == 0) text = "\"kid\"\n";
+  if (strcmp(path, "botfiles/x.bot") == 0) text = "\"x\"\n";
+  if (text == NULL) return NULL;
+  *out_len = strlen(text);
+  return (const uint8_t *)text;
+}
+static int script_print_count = 0;
+static int script_last_severity = 0;
+static void script_print(void *ctx, int severity, const char *text) {
+  (void)ctx;
+  (void)text;
+  script_print_count++;
+  script_last_severity = severity;
+}
+static void script_noop_print(void *ctx, const char *text) {
+  (void)ctx;
+  (void)text;
+}
+
+/* bots/behavior/library/script-sources.ts over the real engine. */
+static void test_script_sources(void) {
+  qa_ui_script_global_defines *globals =
+      qa_ui_script_global_defines_create(NULL, NULL, NULL);
+  CHECK(globals != NULL);
+  qa_bot_script_sources sources;
+  qa_bot_script_sources_init(&sources);
+  sources.globals = globals;
+  sources.read_file = script_read_file;
+  sources.print = script_print;
+  sources.common_print = script_noop_print;
+  qa_bot_script_sources_set_base_folder(&sources, "a%%b");
+  CHECK(strcmp(sources.base_folder, "a%b") == 0);
+  CHECK_ABORTS(qa_bot_script_sources_set_base_folder(&sources, "a%d"));
+  int64_t handle = qa_bot_script_sources_load(&sources, "root.bot");
+  CHECK(handle == 1);
+  qa_ui_source_token_memory *raw = NULL;
+  bool read = false;
+  CHECK(qa_bot_script_sources_read_token_result(&sources, handle, &raw, &read) && read);
+  char text[QA_UI_SOURCE_TOKEN_STRING_BYTES];
+  qa_ui_source_token_string(raw, text);
+  CHECK(strcmp(text, "\"kidhi\"") == 0);
+  qa_ui_script_token_record record;
+  CHECK(qa_bot_script_sources_read_token(&sources, handle, &record));
+  CHECK(record.token->kind == QA_UI_SCRIPT_KIND_NUMBER && record.integer_value == 42);
+  qa_ui_script_token_record_release(&record);
+  CHECK(qa_bot_script_sources_read_token_result(&sources, handle, &raw, &read) && !read);
+  char filename[QA_BOT_MAX_SOURCE_PATH + 1];
+  int64_t line = 0;
+  CHECK(qa_bot_script_sources_file_and_line(&sources, handle, filename, &line));
+  CHECK(strcmp(filename, "root.bot") == 0 && line >= 1);
+  script_print_count = 0;
+  qa_bot_script_sources_check_open(&sources);
+  CHECK(script_print_count == 1 && script_last_severity == 3);
+  CHECK(qa_bot_script_sources_free(&sources, handle));
+  CHECK(!qa_bot_script_sources_free(&sources, handle));
+  CHECK(!qa_bot_script_sources_read_token_result(&sources, handle, &raw, &read));
+  CHECK(!qa_bot_script_sources_read_token_result(&sources, 0, &raw, &read));
+  CHECK(qa_bot_script_sources_load(&sources, "missing.bot") == 0);
+  qa_ui_script_source resolved;
+  CHECK(qa_bot_script_sources_resolve_root(&sources, "x.bot", &resolved));
+  CHECK(strcmp(sources.base_folder, "botfiles") == 0 && resolved.storage != NULL);
+  qa_ui_source_script_destroy(resolved.storage);
+  qa_bot_script_sources_dispose_resources(&sources);
+  CHECK_ABORTS(qa_bot_script_sources_load(&sources, "root.bot"));
+  qa_bot_script_sources_destroy(&sources);
+  qa_ui_script_global_defines_destroy(globals);
+}
+
 int main(void) {
   test_orders();
   test_libvars();
@@ -216,6 +288,7 @@ int main(void) {
   test_pure();
   test_observations_actions_assets();
   test_prediction_abort();
+  test_script_sources();
   if (failures == 0) {
     printf("bots-a: %d checks passed\n", checks);
     return 0;

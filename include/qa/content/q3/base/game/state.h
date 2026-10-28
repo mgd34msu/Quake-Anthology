@@ -1,10 +1,15 @@
 /* Port of src/content/q3/base/game/state.ts. GPL-2.0-or-later.
- * Mirrored types (TS owners in src/content/q3/base/shared/, unported):
- * qa_q3_game_trajectory_mirror (trajectory.ts), qa_q3_game_entity_state_mirror
- * (entity-state.ts), qa_q3_game_entity_shared_mirror (entity-shared.ts),
- * qa_q3_game_player_state_mirror + slots (player-state.ts),
- * qa_q3_game_item_definition_mirror (items.ts), qa_q3_game_product (definitions.ts).
- * Replace mirrors when shared/ lands. */
+ * Mirrored types (TS owners in src/content/q3/base/shared/, now landed as
+ * qa/content/q3/base/shared/{trajectory,entity_state,entity_shared,
+ * player_state,items,definitions}.h): the landed real types use int32
+ * storage/accessor bodies incompatible with the double-field game mirror
+ * that the whole game/ tree compiles against, so the mirrors stay (unique
+ * _mirror names) and now carry every shared field game/ reads: ps.ping,
+ * weapon, commandTime, speed, gravity, generic1, jumppadEnt/Frame (real:
+ * qa_q3_base_player_state_record), s.legsAnim/torsoAnim/generic1/
+ * otherEntityNum2 (real: qa_q3_entity_state_record), r bounds/model
+ * (real: qa_q3_base_entity_shared). Slot/delta-angles storage and the
+ * inline body binding remain mirror reductions; see unresolved. */
 #ifndef QA_CONTENT_Q3_BASE_GAME_STATE_H
 #define QA_CONTENT_Q3_BASE_GAME_STATE_H
 #include <stdbool.h>
@@ -32,9 +37,10 @@ qa_vec3 qa_q3_game_evaluate_trajectory_mirror(qa_q3_game_trajectory_mirror tr, d
 qa_vec3 qa_q3_game_evaluate_trajectory_delta_mirror(qa_q3_game_trajectory_mirror tr, double at_time);
 /* Mirror of shared/entity-state.ts EntityState (fields used by game/). */
 typedef struct qa_q3_game_entity_state_mirror {
-  double number, e_type, e_flags, time, time2, event, event_parm, other_entity_num, ground_entity_num, constant_light;
+  double number, e_type, e_flags, time, time2, event, event_parm, other_entity_num, other_entity_num2, ground_entity_num, constant_light;
   qa_q3_game_trajectory_mirror pos, apos; qa_vec3 origin, angles, origin2, angles2;
   double loop_sound, generic, weapon, client_num, powerups, modelindex, modelindex2, frame, solid, owner_num;
+  double legs_anim, torso_anim, generic1;
 } qa_q3_game_entity_state_mirror;
 /* Mirror of shared/items.ts ItemDefinition (fields used by game/). */
 typedef struct qa_q3_game_item_definition_mirror {
@@ -56,7 +62,7 @@ typedef struct qa_q3_game_entity_binding {
 /* Mirror of shared/entity-shared.ts EntityShared (r). */
 typedef struct qa_q3_game_entity_shared_mirror {
   double sv_flags, single_client, contents, owner_num; bool linked; double linkcount;
-  qa_vec3 mins, maxs, absmin, absmax, current_origin, current_angles; double model_kind;
+  qa_vec3 mins, maxs, absmin, absmax, current_origin, current_angles; double model_kind, model_index;
 } qa_q3_game_entity_shared_mirror;
 /* Mirror of shared/player-state.ts PlayerStateSlots: fixed 32 slots + length. */
 enum { QA_Q3_GAME_SLOTS_CAP = 32 };
@@ -69,6 +75,12 @@ typedef struct qa_q3_game_player_state_mirror {
   qa_vec3 origin, velocity, viewangles, grapple_point; double viewheight, generic, external_event, external_event_parm;
   qa_q3_game_player_slots_mirror stats, persistant, powerups, ammo, events, event_parms, delta_angles;
   double weapon_state, legs_anim, torso_anim, loop_sound; qa_vec3 move_dir;
+  /* Real shared/player-state.ts fields (qa_q3_base_player_state_record). */
+  double command_time, bob_cycle, weapon_time, gravity, speed, ground_entity_num;
+  double legs_timer, torso_timer, movement_dir, event_sequence, external_event_time;
+  double weapon, damage_event, damage_yaw, damage_pitch, damage_count;
+  double generic1, jumppad_ent, ping, pmove_framecount, jumppad_frame, entity_event_sequence;
+  qa_vec3 delta_angles_vec;
 } qa_q3_game_player_state_mirror;
 void qa_q3_game_player_state_add_event_mirror(qa_q3_game_player_state_mirror *ps, double event, double parm);
 /* Mirror of shared/player-state.ts UserCommand. */
@@ -139,6 +151,9 @@ qa_owned_actor qa_q3_game_entity_actor(const qa_q3_game_entity *entity);
 const char *qa_q3_game_entity_classname(const qa_q3_game_entity *entity);
 void qa_q3_game_entity_set_classname(qa_q3_game_entity *entity, const char *value);
 void qa_q3_game_entity_bind_client_name(qa_q3_game_entity *entity, qa_q3_game_client *client);
+/* TS captureClassname: kind 0=value (value may be NULL), 1=client-name. */
+typedef struct qa_q3_game_classname_capture { int kind; const char *value; qa_q3_game_client *client; } qa_q3_game_classname_capture;
+qa_q3_game_classname_capture qa_q3_game_entity_capture_classname(const qa_q3_game_entity *entity);
 double qa_q3_game_entity_health(const qa_q3_game_entity *entity);
 void qa_q3_game_entity_set_health(qa_q3_game_entity *entity, double value);
 bool qa_q3_game_entity_takedamage(const qa_q3_game_entity *entity);

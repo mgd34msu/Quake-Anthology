@@ -2,6 +2,7 @@
  * (tests/compat/qvm/entity-tokens.test.ts and qvm.test.ts bytecode
  * builders, plus record layouts from the TS sources).
  * GPL-2.0-or-later. */
+#define _POSIX_C_SOURCE 200809L
 #include <math.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -25,6 +26,8 @@
 #include "qa/compat/qvm/image.h"
 #include "qa/compat/qvm/interpreter.h"
 #include "qa/compat/qvm/memory.h"
+#include "qa/content/mounts.h"
+#include "qa/contracts/content.h"
 /* --- w6c-qvm-deep-01 additions --- */
 #include "qa/compat/qvm/game_combat.h"
 #include "qa/compat/qvm/game_data.h"
@@ -478,7 +481,7 @@ static void script_noop_print(void *ctx, const char *text) {
   (void)text;
 }
 static bool publish_called = false;
-static void fake_publish(void *ctx, qa_qvmx_script_reader *reader) {
+static void fake_publish(void *ctx, qa_ui_script_source_reader *reader) {
   (void)ctx;
   (void)reader;
   publish_called = true;
@@ -496,7 +499,7 @@ static void test_script_handles(void) {
   CHECK(qa_qvm_client_scripts_free(scripts, 1.5) == 0);
   CHECK(qa_qvm_client_scripts_free(scripts, -1) == 0);
   CHECK(qa_qvm_client_scripts_free(scripts, 64) == 0);
-  qa_qvmx_script_position position;
+  qa_qvm_script_position position;
   CHECK(!qa_qvm_client_scripts_position(scripts, NAN, &position));
   CHECK(!qa_qvm_client_scripts_position(scripts, 2.5, &position));
   publish_called = false;
@@ -504,6 +507,139 @@ static void test_script_handles(void) {
   CHECK(qa_qvm_client_scripts_read(scripts, 1.5, publish) == 0 && !publish_called);
   CHECK(qa_qvm_client_scripts_read(scripts, INFINITY, publish) == 0 && !publish_called);
   qa_qvm_client_scripts_destroy(scripts);
+}
+
+static char captured_tokens[16][128];
+static size_t captured_count = 0;
+static void capture_publish(void *ctx, qa_ui_script_source_reader *reader) {
+  (void)ctx;
+  if (captured_count >= 16) return;
+  char text[QA_UI_SOURCE_TOKEN_STRING_BYTES];
+  qa_ui_source_token_string(qa_ui_script_source_reader_raw_token(reader), text);
+  size_t length = strlen(text);
+  if (length > 127) length = 127;
+  memcpy(captured_tokens[captured_count], text, length);
+  captured_tokens[captured_count++][length] = '\0';
+}
+
+static void collect_tokens(qa_qvm_client_scripts *scripts, double handle,
+                           qa_qvm_script_publish publish) {
+  /* publish also runs on the final EOF read; drop that capture. */
+  while (qa_qvm_client_scripts_read(scripts, handle, publish) == 1) {
+  }
+  if (captured_count > 0) captured_count--;
+}
+
+static bool write_text(const char *root, const char *name, const char *text) {
+  char path[256];
+  snprintf(path, sizeof path, "%s/%s", root, name);
+  FILE *file = fopen(path, "w");
+  if (file == NULL) return false;
+  bool ok = fwrite(text, 1, strlen(text), file) == strlen(text);
+  fclose(file);
+  return ok;
+}
+
+/* tests/compat/qvm/client-script.test.ts fixture flow + checkpoint. */
+static void test_script_flow(void) {
+  char root_template[] = "/tmp/qvm-scripts-XXXXXX";
+  char *root = mkdtemp(root_template);
+  CHECK(root != NULL);
+  if (root == NULL) return;
+  CHECK(write_text(root, "root.menu",
+                   "#define TWICE(x) ((x)+(x))\n\"before\"\n#include \"nested.inc\"\n"
+                   "#define KEEP 1\n\"after\"\nVALUE TWICE(3)\n"));
+  CHECK(write_text(root, "nested.inc", "\"middle\"\n#include \"deep.inc\"\n"));
+  CHECK(write_text(root, "deep.inc", "\"deep\"\n"));
+  qa_content_mount mount;
+  memset(&mount, 0, sizeof mount);
+  mount.kind = QA_CONTENT_MOUNT_LOOSE;
+  mount.as.loose.identity =
+      qa_create_mount_identity("mount:parser:loose", "q3:classic:baseq3:installed", 1);
+  mount.as.loose.root_path = root;
+  qa_mount_id order[1] = {"mount:parser:loose"};
+  qa_resolved_mount_plan plan;
+  memset(&plan, 0, sizeof plan);
+  plan.id = "mount-plan:parser:1";
+  plan.mounts = &mount;
+  plan.mount_count = 1;
+  plan.default_order = order;
+  plan.default_order_count = 1;
+  qa_content_mounted *mounts = qa_open_mount_plan(&plan, NULL);
+  CHECK(mounts != NULL);
+  qa_ui_script_global_defines *globals =
+      qa_ui_script_global_defines_create(NULL, NULL, NULL);
+  qa_qvm_client_script_services services;
+  memset(&services, 0, sizeof services);
+  services.mounts = mounts;
+  services.globals = globals;
+  services.assert_current = script_noop_assert;
+  services.print = script_noop_print;
+  qa_qvm_client_scripts *scripts = qa_qvm_client_scripts_create(services);
+  CHECK(scripts != NULL);
+  CHECK(qa_qvm_client_scripts_add_define(scripts, "VALUE 7") == 1);
+  double handle = qa_qvm_client_scripts_load(scripts, "root.menu");
+  CHECK(handle == 1);
+  captured_count = 0;
+  qa_qvm_script_publish publish = {NULL, capture_publish};
+  collect_tokens(scripts, handle, publish);
+  const char *expected[11] = {"\"beforemiddledeepafter\"", "7", "(", "(", "3", ")",
+                              "+", "(", "3", ")", ")"};
+  CHECK(captured_count == 11);
+  for (size_t i = 0; i < 11 && i < captured_count; i++)
+    CHECK(strcmp(captured_tokens[i], expected[i]) == 0);
+  qa_qvm_script_position position;
+  CHECK(qa_qvm_client_scripts_position(scripts, handle, &position));
+  CHECK(strcmp(position.filename, "root.menu") == 0);
+  CHECK(position.line > 1);
+  CHECK(qa_qvm_client_scripts_free(scripts, handle) == 1);
+  CHECK(qa_qvm_client_scripts_free(scripts, handle) == 0);
+  publish_called = false;
+  qa_qvm_script_publish fake = {NULL, fake_publish};
+  CHECK(qa_qvm_client_scripts_read(scripts, handle, fake) == 0 && !publish_called);
+
+  /* Checkpoint keeps the original slot and macro lookahead. */
+  double discarded = qa_qvm_client_scripts_load(scripts, "root.menu");
+  double kept = qa_qvm_client_scripts_load(scripts, "root.menu");
+  CHECK(discarded == 1 && kept == 2);
+  CHECK(qa_qvm_client_scripts_free(scripts, discarded) == 1);
+  captured_count = 0;
+  CHECK(qa_qvm_client_scripts_read(scripts, kept, publish) == 1);
+  qa_save_value *checkpoint = qa_qvm_client_scripts_capture(scripts);
+  CHECK(checkpoint != NULL);
+  qa_ui_script_global_defines *restored_globals =
+      qa_ui_script_global_defines_create(NULL, NULL, NULL);
+  qa_qvm_client_script_services restored_services = services;
+  restored_services.globals = restored_globals;
+  qa_qvm_client_scripts *restored = qa_qvm_client_scripts_create(restored_services);
+  qa_qvm_client_scripts_restore(restored, checkpoint);
+  char left[16][128], right[16][128];
+  captured_count = 0;
+  collect_tokens(restored, kept, publish);
+  size_t left_count = captured_count;
+  memcpy(left, captured_tokens, sizeof left);
+  captured_count = 0;
+  collect_tokens(scripts, kept, publish);
+  memcpy(right, captured_tokens, sizeof right);
+  CHECK(left_count == captured_count && left_count == 10);
+  for (size_t i = 0; i < left_count && i < captured_count; i++)
+    CHECK(strcmp(left[i], right[i]) == 0);
+  if (left_count == 10) CHECK(strcmp(left[0], "7") == 0);
+  CHECK(qa_qvm_client_scripts_position(restored, kept, &position));
+  qa_save_value_free(checkpoint);
+  qa_qvm_client_scripts_destroy(restored);
+  qa_ui_script_global_defines_destroy(restored_globals);
+  qa_qvm_client_scripts_close_all(scripts);
+  qa_qvm_client_scripts_destroy(scripts);
+  qa_ui_script_global_defines_destroy(globals);
+  qa_content_mounted_destroy(mounts);
+  char path[256];
+  const char *names[3] = {"root.menu", "nested.inc", "deep.inc"};
+  for (int i = 0; i < 3; i++) {
+    snprintf(path, sizeof path, "%s/%s", root, names[i]);
+    remove(path);
+  }
+  rmdir(root);
 }
 
 static qa_qvmx_host_prediction fake_predict(void *ctx,
@@ -565,6 +701,7 @@ int main(void) {
   test_user_command_legacy();
   test_browser_ping();
   test_script_handles();
+  test_script_flow();
   test_movement_prediction_max();
   test_interpreter();
   printf("test_qvm_a: %d checks, %d failures\n", checks, failures);

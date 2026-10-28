@@ -62,7 +62,7 @@ typedef struct qa_q3_base_combat_bridge_save_state { double sequence; } qa_q3_ba
 
 typedef struct qa_q3_base_combat_bridge {
   qa_q3_base_combat_bridge_host host;
-  qa_q3_combat_context context;
+  qa_q3_game_combat_context context;
   qa_q3_damage_call *calls; size_t call_count, call_capacity;
   double sequence;
   qa_actor_id provenance_actors[16]; size_t provenance_index;
@@ -72,7 +72,7 @@ void qa_q3_base_combat_bridge_destroy(qa_q3_base_combat_bridge *bridge);
 qa_q3_base_combat_bridge_save_state qa_q3_base_combat_bridge_capture_save_state(qa_q3_base_combat_bridge *bridge);
 void qa_q3_base_combat_bridge_restore_save_state(qa_q3_base_combat_bridge *bridge, const qa_save_value *value);
 /* TS readonly context: refreshed from the host getters on each call. */
-qa_q3_combat_context *qa_q3_base_combat_bridge_context(qa_q3_base_combat_bridge *bridge);
+qa_q3_game_combat_context *qa_q3_base_combat_bridge_context(qa_q3_base_combat_bridge *bridge);
 /* TS currentCall: false is TS null. */
 bool qa_q3_base_combat_bridge_current_call(qa_q3_base_combat_bridge *bridge, qa_q3_damage_call *out);
 /* TS dispatch() stack halves. */

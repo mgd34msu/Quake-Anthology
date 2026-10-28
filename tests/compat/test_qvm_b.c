@@ -436,8 +436,14 @@ static void test_script_token(void) {
   qa_qvm_writable_view view;
   qa_qvm_writable_view_init(&view, bytes, sizeof bytes, 0, (int64_t)sizeof bytes, &writes);
   /* Type 1 (string) strips the surrounding double quotes in place. */
-  qa_qvmy_source_token_memory token = {"\"hello\"", 1, 7, 42, 1.5};
-  qa_qvm_write_script_token_memory(&view, &token);
+  qa_ui_source_token_memory *token = qa_ui_source_token_memory_create_local();
+  CHECK(token != NULL);
+  qa_ui_source_token_write_string(token, "\"hello\"", 7);
+  qa_ui_source_token_set_type(token, 1);
+  qa_ui_source_token_set_subtype(token, 7);
+  qa_ui_source_token_set_integer_value(token, 42);
+  qa_ui_source_token_set_float_value(token, 1.5);
+  qa_qvm_write_script_token_memory(&view, token);
   CHECK(memcmp(bytes + 16, "hello", 6) == 0);
   int32_t word = (int32_t)((uint32_t)bytes[4] | ((uint32_t)bytes[5] << 8) |
                             ((uint32_t)bytes[6] << 16) | ((uint32_t)bytes[7] << 24));
@@ -446,11 +452,25 @@ static void test_script_token(void) {
                    ((uint32_t)bytes[10] << 16) | ((uint32_t)bytes[11] << 24));
   CHECK(word == 42);
   /* An empty quoted string cannot be encoded. */
-  qa_qvmy_source_token_memory empty = {"\"", 1, 0, 0, 0};
-  CHECK_ABORTS(qa_qvm_write_script_token_memory(&view, &empty));
-  /* A fractional subtype aborts. */
-  qa_qvmy_source_token_memory bad = {"x", 4, 1.5, 0, 0};
-  CHECK_ABORTS(qa_qvm_write_script_token_memory(&view, &bad));
+  qa_ui_source_token_write_string(token, "\"", 1);
+  CHECK_ABORTS(qa_qvm_write_script_token_memory(&view, token));
+  qa_ui_source_token_memory_destroy(token);
+  /* The ScriptTokenRecord entry point maps the token kind. */
+  qa_ui_script_location location = {"test", 1, 1};
+  qa_ui_script_token *script_token = qa_ui_script_token_create(
+      QA_UI_SCRIPT_KIND_NAME, "abc", 3, &location, "", 0, 0);
+  CHECK(script_token != NULL);
+  qa_ui_script_token_record record = {script_token, 7, 42, 1.5};
+  memset(bytes, 0xcc, sizeof bytes);
+  qa_qvm_write_script_token(&view, &record);
+  word = (int32_t)((uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+                   ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24));
+  CHECK(word == 4);
+  CHECK(memcmp(bytes + 16, "abc", 4) == 0);
+  /* A subtype outside int32 aborts. */
+  record.subtype = 2147483648LL;
+  CHECK_ABORTS(qa_qvm_write_script_token(&view, &record));
+  qa_ui_script_token_release(script_token);
   qa_qvm_memory_writes_destroy(&writes);
 }
 

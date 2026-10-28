@@ -2350,10 +2350,18 @@ static void include_directive(preprocessor_engine *engine,
     free(include_path);
     engine_fail(engine, message);
   }
+  /* out->path is borrowed only for the resolve call and may alias
+   * `requested` (client resolvers pass request->requested_path back);
+   * copy it before freeing that buffer. */
+  char *included_path = copy_cstring(included.path);
+  if (included_path == NULL) oom_fail();
+  included.path = included_path;
   free(requested);
   free(include_path);
-  if (included.path[0] == '\0')
+  if (included.path[0] == '\0') {
+    free(included_path);
     engine_fail(engine, "include resolver returned an empty canonical path");
+  }
   source_frame *included_frame = create_frame(engine, &included);
   int64_t remaining = (int64_t)engine->live_frames + 1;
   for (int64_t id = qa_ui_source_record_script(engine->source); id != 0;) {
@@ -2382,10 +2390,12 @@ static void include_directive(preprocessor_engine *engine,
       engine->live_frames--;
       qa_ui_script_lexer_destroy(included_frame->lexer);
       free(included_frame);
+      free(included_path);
       return;
     }
     id = next_frame_id(frame);
   }
+  free(included_path);
   set_next_frame(included_frame, qa_ui_source_record_script(engine->source));
   qa_ui_source_record_set_script(engine->source,
                                  (uint32_t)included_frame->id);
