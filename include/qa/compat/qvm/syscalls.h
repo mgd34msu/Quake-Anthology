@@ -7,11 +7,11 @@
  *  - createQvmSystemCall's returned closure becomes an init'd
  *    qa_qvm_system_call struct passed to qa_qvm_system_call_invoke.
  * Mirrored types (parallel slice): qa_qvmy_syscall mirrors QvmSyscall
- * (TS owner src/compat/qvm/interpreter.ts); the import decoders mirror
- * decodeQvmGameImport/decodeQvmCgameImport/decodeQvmUiImport and
- * decodeLegacyQvmGameImport (TS owners src/compat/qvm/abi.ts and
- * src/compat/qvm/legacy-bot-abi.ts) as range checks over the exact
- * enum values, since every decoder returns its word unchanged.
+ * (TS owner src/compat/qvm/interpreter.ts; the landed qa_qvm_syscall
+ * carries that slice's own memory/view mirrors, so the two structs
+ * stay separate until the slices are unified). The import decoders
+ * are the landed qa_qvm_decode_* functions (qa/compat/qvm/abi.h and
+ * legacy_bot_abi.h).
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_SYSCALLS_H

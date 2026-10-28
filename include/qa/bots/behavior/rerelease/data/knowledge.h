@@ -36,6 +36,8 @@ bool qa_bot_knowledge_init(qa_bot_knowledge *k, qa_bot_data_files files, qa_bot_
 void qa_bot_knowledge_destroy(qa_bot_knowledge *k);
 void qa_bot_knowledge_replace_weapons(qa_bot_knowledge *k, qa_bot_weapon_rec *weapons, size_t count); /* borrows array */
 const qa_bot_skill_settings *qa_bot_knowledge_get_skill(const qa_bot_knowledge *k, const char *name);
+/* TS skillNames(): file order. Returns name or NULL out of range; count via out. */
+const char *qa_bot_knowledge_skill_name(const qa_bot_knowledge *k, size_t index, size_t *out_count);
 const qa_bot_item_rec *qa_bot_knowledge_get_item(const qa_bot_knowledge *k, const char *classname);
 const qa_monster_entry *qa_bot_knowledge_get_monster(const qa_bot_knowledge *k, const char *classname);
 const qa_bot_weapon_rec *qa_bot_knowledge_weapon_by_name(const qa_bot_knowledge *k, const char *name);

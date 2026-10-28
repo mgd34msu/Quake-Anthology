@@ -18,6 +18,32 @@ static char *dup_str(const char *s) {
   if (out != NULL) memcpy(out, s, n + 1);
   return out;
 }
+/* JS Number(text): trimmed, empty is 0, full parse or NaN. */
+static double js_number(const char *text) {
+  while (*text != '\0' && isspace((unsigned char)*text)) text++;
+  size_t n = strlen(text);
+  while (n > 0 && isspace((unsigned char)text[n - 1])) n--;
+  if (n == 0) return 0;
+  char *copy = (char *)malloc(n + 1);
+  if (copy == NULL) return NAN;
+  memcpy(copy, text, n);
+  copy[n] = '\0';
+  double value;
+  if (n > 2 && copy[0] == '0' && (copy[1] == 'b' || copy[1] == 'B' ||
+                                  copy[1] == 'o' || copy[1] == 'O')) {
+    int base = (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(copy + 2, &end, base);
+    value = end != copy + 2 && *end == '\0' ? (double)parsed : NAN;
+  } else {
+    char *end = NULL;
+    value = strtod(copy, &end);
+    if (end == copy || *end != '\0') value = NAN;
+  }
+  free(copy);
+  return value;
+}
+
 static char *dup_span(const char *s, size_t n) {
   char *out = (char *)malloc(n + 1);
   if (out != NULL) {
@@ -193,7 +219,7 @@ bool qa_q2_read_status(const qa_q2_connectionless_message *message,
   const char *max_text = qa_qw_info_get(&rules, "maxclients");
   if (hostname == NULL) hostname = "";
   if (mapname == NULL) mapname = "";
-  double max_clients = max_text != NULL ? strtod(max_text, NULL) : 0;
+  double max_clients = max_text != NULL ? js_number(max_text) : 0;
   out->name = dup_str(hostname);
   out->map = dup_str(mapname);
   if (out->name == NULL || out->map == NULL) {
@@ -427,7 +453,7 @@ bool qa_q2_connectionless_server_receive(qa_q2_connectionless_server *server,
     }
     result = true;
   } else if (strcmp(command, "info") == 0) {
-    double version = message.argument_count > 0 ? strtod(message.arguments[0], NULL) : 0.0 / 0.0;
+    double version = message.argument_count > 0 ? js_number(message.arguments[0]) : 0.0 / 0.0;
     /* TS Number(undefined) is NaN; missing arg compares unequal. */
     if (message.argument_count == 0) version = NAN;
     qa_q2_host_info info = host->info(host->ctx);
@@ -579,9 +605,9 @@ void qa_q2_handle_rcon(const qa_q2_connectionless_host *host,
     *w = '\0';
   } else {
     qa_legacy_parse_state cursor = {message->text, strlen(message->text != NULL ? message->text : ""), 0};
-    char *t1 = qa_parse_q2_token(&cursor, 0);
+    char *t1 = qa_parse_q2_token(&cursor, 128);
     free(t1);
-    char *t2 = qa_parse_q2_token(&cursor, 0);
+    char *t2 = qa_parse_q2_token(&cursor, 128);
     free(t2);
     const char *rest = message->text != NULL ? message->text + cursor.index : "";
     while (*rest != '\0' && isspace((unsigned char)*rest)) rest++;

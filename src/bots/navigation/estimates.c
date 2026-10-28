@@ -1,5 +1,6 @@
 /* See header. GPL-2.0-or-later. */
 #include "qa/bots/navigation/estimates.h"
+#include "qa/bots/navigation/estimate_aas.h"
 #include "qa/bots/navigation/nav.h"
 #include "qa/foundation/support.h"
 #include <float.h>
@@ -44,6 +45,12 @@ bool qa_navigation_estimates_init(qa_navigation_estimates *e, const qa_navigatio
                                   void *ctx, qa_nav_estimate_eligibility allowed) {
   memset(e, 0, sizeof *e);
   e->graph = graph; e->ctx = ctx; e->allowed = allowed;
+  if (graph->aas_asset) {
+    e->aas = malloc(sizeof *e->aas);
+    if (!e->aas || !qa_aas_navigation_estimates_init(e->aas, graph, graph->aas_asset, ctx, allowed)) {
+      free(e->aas); e->aas = NULL; qa_navigation_estimates_destroy(e); return false;
+    }
+  }
   size_t n = graph->node_count ? graph->node_count : 1;
   e->incoming = calloc(n, sizeof *e->incoming);
   e->incoming_counts = calloc(n, sizeof *e->incoming_counts);
@@ -70,12 +77,13 @@ static void free_caches(qa_navigation_estimates *e) {
 }
 void qa_navigation_estimates_destroy(qa_navigation_estimates *e) {
   if (!e) return;
+  if (e->aas) { qa_aas_navigation_estimates_destroy(e->aas); free(e->aas); e->aas = NULL; }
   if (e->incoming) for (size_t i = 0; i < (e->graph ? e->graph->node_count : 0); i++) free((void *)e->incoming[i]);
   free((void *)e->incoming); free(e->incoming_counts);
   free_caches(e); free(e->caches);
   memset(e, 0, sizeof *e);
 }
-void qa_navigation_estimates_invalidate(qa_navigation_estimates *e) { free_caches(e); }
+void qa_navigation_estimates_invalidate(qa_navigation_estimates *e) { if (e->aas) qa_aas_navigation_estimates_invalidate(e->aas); free_caches(e); }
 /* Returns cache entry index, or -1 on OOM. */
 static int64_t tails_entry(qa_navigation_estimates *e, int64_t goal, bool has_flags, int64_t flags) {
   int64_t key_flags = has_flags ? (int64_t)(int32_t)flags : 0; /* TS key uses flags|0 */
@@ -134,7 +142,7 @@ qa_navigation_estimate_result qa_navigation_estimates_estimate(qa_navigation_est
   if (query.has_origin && (!isfinite((float)query.origin.x) || !isfinite((float)query.origin.y)
                            || !isfinite((float)query.origin.z)))
     qa_range_error("Estimate origin must contain finite float32 coordinates");
-  /* AAS delegation (estimate-aas.ts) not yet ported; generic path below. */
+  if (e->aas) return qa_aas_navigation_estimates_estimate(e->aas, query);
   if (query.start_node == query.goal_node) { out.is_estimate = true; out.travel_time = 1; return out; }
   int64_t entry = tails_entry(e, query.goal_node, query.has_travel_flags, query.travel_flags);
   if (entry < 0) return out;

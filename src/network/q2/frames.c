@@ -356,14 +356,18 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
   qa_q2_wire_player_init(&frame.player);
   codec->read_frame_playerstate(codec, old != NULL ? &old->player : &empty_player,
                                 &frame.player);
-  qa_q2_split_player splits[8];
+  qa_q2_split_player *splits = NULL;
   size_t split_count = 0;
-  memset(splits, 0, sizeof splits);
   bool oom = false;
   if (kind_is(&wire->selected_protocol, "q2-kex") ||
       kind_is(&wire->selected_protocol, "q2-kex-demo")) {
     double total = qa_q2_kex_split_player_count(&wire->kex);
-    for (double index = 1; index < total && split_count < 8; index++) {
+    size_t split_capacity = total > 1 ? (size_t)(total - 1) : 0;
+    if (split_capacity > 0) {
+      splits = (qa_q2_split_player *)calloc(split_capacity, sizeof *splits);
+      if (splits == NULL) oom = true;
+    }
+    for (double index = 1; index < total && !oom; index++) {
       int32_t length = qa_q2_msg_read_byte(&wire->message);
       size_t len = length > 0 ? (size_t)length : 0;
       uint8_t *area = (uint8_t *)calloc(len > 0 ? len : 1, 1);
@@ -441,6 +445,7 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
   if (oom) {
     free(entities.items);
     for (size_t i = 0; i < split_count; i++) free(splits[i].area_bits);
+    free(splits);
     return NULL;
   }
   qa_q2_message_check_read(&wire->message);
@@ -455,6 +460,7 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
   if (frame.area_bits == NULL) {
     free(entities.items);
     for (size_t i = 0; i < split_count; i++) free(splits[i].area_bits);
+    free(splits);
     return NULL;
   }
   if (area_len > 0) memcpy(frame.area_bits, area_storage, area_len);
@@ -464,15 +470,10 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
   if (split_count > 0) {
     frame.has_split = true;
     frame.split_count = split_count;
-    frame.split_players =
-        (qa_q2_split_player *)calloc(split_count, sizeof(qa_q2_split_player));
-    if (frame.split_players == NULL) {
-      qa_q2_wire_frame_free(&frame);
-      for (size_t i = 0; i < split_count; i++) free(splits[i].area_bits);
-      return NULL;
-    }
-    for (size_t i = 0; i < split_count; i++) frame.split_players[i] = splits[i];
+    frame.split_players = splits;
+    splits = NULL;
   }
+  free(splits);
   if (!qa_q2_frame_history_accept(history, &frame)) {
     qa_q2_wire_frame_free(&frame);
     return NULL;

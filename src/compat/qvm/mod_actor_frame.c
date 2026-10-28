@@ -4,10 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/image.h"
 #include "qa/compat/qvm/operations.h"
 #include "qa/foundation/support.h"
 
-#define QVM_MAX_PRIVATE_ARGUMENT_WORDS 62
+#define QVM_MAX_PRIVATE_ARGUMENT_WORDS QA_QVM_MAX_PRIVATE_ARGUMENT_WORDS
 
 static const qa_qvmy_region_instruction *at(const qa_qvmy_region_instruction *instructions,
                                             size_t count, int64_t pc) {

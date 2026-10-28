@@ -5,7 +5,10 @@
  * rule); hostname/interfaces come from gethostname/getifaddrs.
  * ServerStatus is the landed qa_server_status. found/failed are
  * fn + ctx (failed gets owned message text
- * copied as a borrowed C string). GPL-2.0-or-later.
+ * copied as a borrowed C string). One divergence: a malformed
+ * multicast packet aborts with its TS message instead of being
+ * swallowed by the TS socket handler's catch (noted like the GTV
+ * broadcast port). GPL-2.0-or-later.
  */
 #ifndef QA_NETWORK_Q2_KEX_DISCOVERY_H
 #define QA_NETWORK_Q2_KEX_DISCOVERY_H

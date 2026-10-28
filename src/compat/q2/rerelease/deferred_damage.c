@@ -253,3 +253,209 @@ static void pain_entered(void *v) {
   qa_source_damage_result result = {blood, health <= 0 ? "death" : "pain"};
   qa_gameplay_authority_source_reaction(dengine(d)->combat, request, result);
 }
+static double pointer_slot(qa_compat_q2_rerelease_deferred_damage *d, qa_raw_entity_view view, double offset) {
+  qa_guest_address address;
+  if (!qa_compat_q2_mem_read_pointer(dmem(d), at_view(d, view, offset), &address))
+    qa_range_error("Native monster accumulation has a null edict pointer");
+  qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(dmod(d));
+  return table.from_pointer(table.ctx, address).slot;
+}
+qa_compat_q2_rerelease_deferred_damage *qa_compat_q2_rerelease_deferred_damage_create(
+    qa_compat_q2_rerelease_q2_guest_host *host, qa_compat_q2_rerelease_foreign_damage_services services,
+    void *ctx, bool (*current_request)(void *ctx, qa_actor_id actor, qa_damage_request *out),
+    bool (*intercepted)(void *ctx)) {
+  qa_compat_q2_rerelease_deferred_damage *d = calloc(1, sizeof *d);
+  if (!d) return NULL;
+  d->host = host; d->services = services; d->ctx = ctx;
+  d->current_request = current_request; d->intercepted = intercepted;
+  const qa_compat_q2_rerelease_q2_host_options *options = qa_compat_q2_rerelease_q2_guest_host_get_options(host);
+  if (!options->has_native_entries) qa_range_error("Missing declared native entries");
+  const qa_compat_q2_rerelease_primary_world_profile *profile = dprofile(d);
+  d->damage_signature = qa_compat_q2_native_combat_signature(&profile->calls.damage, QA_Q2CO_DAMAGE,
+                                                             qa_compat_q2_rerelease_abi, d->sig_storage[0]);
+  d->process_signature = qa_compat_q2_native_combat_signature(&profile->calls.process_pain, QA_Q2CO_DEFERRED,
+                                                              qa_compat_q2_rerelease_abi, d->sig_storage[1]);
+  qa_compat_q2_runner *runner = drunner(d);
+  d->remove_entry = runner->observe_entry(runner->ctx, options->native_entries.damage, d, damage_entered);
+  d->remove_pain = runner->observe_entry(runner->ctx, options->native_entries.process_pain, d, pain_entered);
+  return d;
+}
+void qa_compat_q2_rerelease_deferred_damage_release(qa_compat_q2_rerelease_deferred_damage *d, qa_owned_actor actor) {
+  for (size_t i = 0; i < d->tracked_count; i++) {
+    if (!qa_same_actor(d->tracked[i]->actor.id, actor.id)) continue;
+    tracked_t *entry = d->tracked[i];
+    memmove(&d->tracked[i], &d->tracked[i + 1], (d->tracked_count - i - 1) * sizeof *d->tracked);
+    d->tracked_count--;
+    qa_cleanup_stack_run_all(&entry->remove);
+    qa_cleanup_stack_destroy(&entry->remove);
+    free(entry);
+    return;
+  }
+}
+static void clear_calls(qa_compat_q2_rerelease_deferred_damage *d) {
+  for (size_t i = 0; i < d->call_count; i++) free(d->calls[i]);
+  d->call_count = 0;
+}
+void qa_compat_q2_rerelease_deferred_damage_clear(qa_compat_q2_rerelease_deferred_damage *d) {
+  while (d->tracked_count > 0) qa_compat_q2_rerelease_deferred_damage_release(d, d->tracked[0]->actor);
+  clear_calls(d);
+}
+void qa_compat_q2_rerelease_deferred_damage_close(qa_compat_q2_rerelease_deferred_damage *d) {
+  qa_compat_q2_runner *runner = drunner(d);
+  if (d->remove_pain) { runner->remove_entry(runner->ctx, d->remove_pain); d->remove_pain = 0; }
+  if (d->remove_entry) { runner->remove_entry(runner->ctx, d->remove_entry); d->remove_entry = 0; }
+  qa_compat_q2_rerelease_deferred_damage_clear(d);
+  clear_calls(d);
+}
+void qa_compat_q2_rerelease_deferred_damage_destroy(qa_compat_q2_rerelease_deferred_damage *d) {
+  if (!d) return;
+  qa_compat_q2_rerelease_deferred_damage_close(d);
+  free(d->tracked); free(d->calls); free(d);
+}
+qa_compat_q2_rerelease_saved_actor qa_compat_q2_rerelease_deferred_damage_save_actor(
+    qa_compat_q2_rerelease_deferred_damage *d, qa_actor_id actor) {
+  qa_actor_source_result source = qa_session_actor_registry_source_of(dengine(d)->actors, actor);
+  qa_compat_q2_memory *memory = dmem(d);
+  if (source.has_value && source.provider && memory->module.id && strcmp(source.provider, memory->module.id) == 0) {
+    qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(dmod(d));
+    qa_raw_entity_view view = table.at_slot(table.ctx, (double)source.slot);
+    qa_owned_actor current;
+    if (host_actor(d, view, &current) && qa_same_actor(current.id, actor)) {
+      qa_compat_q2_rerelease_source_edict *edict = xsource(d, view);
+      double generation = qa_compat_q2_rerelease_source_edict_generation(edict);
+      qa_compat_q2_rerelease_source_edict_destroy(edict);
+      qa_compat_q2_rerelease_saved_actor out; memset(&out, 0, sizeof out);
+      out.is_native = true; out.slot = (double)source.slot; out.generation = generation;
+      return out;
+    }
+  }
+  qa_compat_q2_rerelease_saved_actor out; memset(&out, 0, sizeof out);
+  out.is_native = false;
+  out.shared.slot = (double)actor.slot; out.shared.generation = (double)actor.generation;
+  return out;
+}
+qa_actor_id qa_compat_q2_rerelease_deferred_damage_restore_actor(qa_compat_q2_rerelease_deferred_damage *d,
+                                                                 qa_compat_q2_rerelease_saved_actor saved, const char *domain) {
+  if (!saved.is_native)
+    return qa_session_actor_registry_reference_saved(dengine(d)->actors, saved.shared, domain ? domain : "current");
+  qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(dmod(d));
+  qa_raw_entity_view view = table.at_slot(table.ctx, saved.slot);
+  qa_compat_q2_rerelease_source_edict *source = xsource(d, view);
+  double generation = qa_compat_q2_rerelease_source_edict_generation(source);
+  qa_compat_q2_rerelease_source_edict_destroy(source);
+  if (generation != saved.generation) qa_range_error("Saved native damage actor generation changed");
+  qa_owned_actor actor;
+  if (!host_actor(d, view, &actor)) qa_range_error("Saved native damage actor is not live");
+  return actor.id;
+}
+qa_compat_q2_rerelease_deferred_damage_save *qa_compat_q2_rerelease_deferred_damage_save_entries(
+    qa_compat_q2_rerelease_deferred_damage *d, size_t *out_count) {
+  qa_compat_q2_memory *memory = dmem(d);
+  const qa_compat_q2_rerelease_primary_world_profile *profile = dprofile(d);
+  qa_compat_q2_rerelease_deferred_damage_save *saved = NULL;
+  size_t count = 0, cap = 0;
+  for (size_t i = 0; i < d->tracked_count; i++) {
+    tracked_t *entry = d->tracked[i];
+    if (!entry->has_pending || !entry_valid(d, entry)) continue;
+    qa_damage_request request = entry->pending.request;
+    if (request.attack.attacker) request.attack.attacker = &entry->pending.attacker;
+    if (request.attack.inflictor) request.attack.inflictor = &entry->pending.inflictor;
+    if (count == cap) {
+      cap = cap ? cap * 2 : 4;
+      saved = realloc(saved, cap * sizeof *saved);
+      if (!saved) { *out_count = 0; return NULL; }
+    }
+    qa_compat_q2_rerelease_deferred_damage_save *out = &saved[count];
+    memset(out, 0, sizeof *out);
+    out->target = qa_compat_q2_rerelease_deferred_damage_save_actor(d, request.target);
+    out->attack = qa_q2_save_attack(request.attack);
+    const qa_actor_id *refs[3] = {request.attack.attacker, request.attack.inflictor, NULL};
+    qa_actor_id projectile;
+    if (request.attack.has_originating_projectile) { projectile = request.attack.originating_projectile; refs[2] = &projectile; }
+    size_t ref_count = 0;
+    for (size_t r = 0; r < 3; r++) if (refs[r]) ref_count++;
+    if (ref_count) {
+      out->references = malloc(ref_count * sizeof *out->references);
+      if (!out->references) { qa_compat_q2_rerelease_deferred_damage_free_saves(saved, count + 1); *out_count = 0; return NULL; }
+    }
+    for (size_t r = 0; r < 3; r++) {
+      if (!refs[r]) continue;
+      qa_compat_q2_rerelease_saved_reference *ref = &out->references[out->reference_count++];
+      ref->actor.slot = (double)refs[r]->slot; ref->actor.generation = (double)refs[r]->generation;
+      ref->reference = qa_compat_q2_rerelease_deferred_damage_save_actor(d, *refs[r]);
+    }
+    out->amount = request.amount; out->knockback = request.knockback;
+    out->direction = request.direction; out->point = request.point; out->normal = request.normal;
+    out->delivery = request.delivery;
+    out->blood = qa_compat_q2_mem_read_i32(memory, at_view(d, entry->view, profile->monster.blood));
+    out->save_knockback = qa_compat_q2_mem_read_i32(memory, at_view(d, entry->view, profile->monster.knockback));
+    out->save_point = monster_point(d, entry->view);
+    uint8_t mod[3];
+    memory->copy(memory->ctx, at_view(d, entry->view, profile->monster.mod), mod, 3);
+    out->mod[0] = mod[0]; out->mod[1] = mod[1]; out->mod[2] = mod[2]; out->mod_count = 3;
+    out->attacker_slot = pointer_slot(d, entry->view, profile->monster.attacker);
+    out->inflictor_slot = pointer_slot(d, entry->view, profile->monster.inflictor);
+    count++;
+  }
+  if (!saved) {
+    saved = malloc(sizeof *saved);
+    if (!saved) { *out_count = 0; return NULL; }
+  }
+  *out_count = count;
+  return saved;
+}
+void qa_compat_q2_rerelease_deferred_damage_free_saves(qa_compat_q2_rerelease_deferred_damage_save *saves, size_t count) {
+  if (!saves) return;
+  for (size_t i = 0; i < count; i++) free(saves[i].references);
+  free(saves);
+}
+typedef struct { qa_compat_q2_rerelease_deferred_damage *d; const qa_compat_q2_rerelease_deferred_damage_save *state; const char *domain; } restore_ref_ctx_t;
+static qa_actor_id restore_reference(void *v, qa_saved_actor_id actor) {
+  restore_ref_ctx_t *ctx = v;
+  for (size_t i = 0; i < ctx->state->reference_count; i++) {
+    const qa_compat_q2_rerelease_saved_reference *ref = &ctx->state->references[i];
+    if (ref->actor.slot == actor.slot && ref->actor.generation == actor.generation)
+      return qa_compat_q2_rerelease_deferred_damage_restore_actor(ctx->d, ref->reference, ctx->domain);
+  }
+  qa_range_error("Missing saved native damage reference");
+}
+void qa_compat_q2_rerelease_deferred_damage_restore(qa_compat_q2_rerelease_deferred_damage *d,
+                                                    const qa_compat_q2_rerelease_deferred_damage_save *saved, size_t count, const char *domain) {
+  const char *dom = domain ? domain : "current";
+  qa_compat_q2_memory *memory = dmem(d);
+  const qa_compat_q2_rerelease_primary_world_profile *profile = dprofile(d);
+  qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(dmod(d));
+  for (size_t i = 0; i < count; i++) {
+    const qa_compat_q2_rerelease_deferred_damage_save *state = &saved[i];
+    qa_actor_id target = qa_compat_q2_rerelease_deferred_damage_restore_actor(d, state->target, dom);
+    qa_actor_source_result source = qa_session_actor_registry_source_of(dengine(d)->actors, target);
+    if (!source.has_value) qa_range_error("Saved monster has no native source slot");
+    qa_raw_entity_view view = table.at_slot(table.ctx, (double)source.slot);
+    qa_compat_q2_mem_write_pointer(memory, at_view(d, view, profile->monster.attacker), true,
+                                   table.at_slot(table.ctx, state->attacker_slot).address);
+    qa_compat_q2_mem_write_pointer(memory, at_view(d, view, profile->monster.inflictor), true,
+                                   table.at_slot(table.ctx, state->inflictor_slot).address);
+    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.blood), (int32_t)state->blood);
+    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.knockback), (int32_t)state->save_knockback);
+    double components[3] = {state->save_point.x, state->save_point.y, state->save_point.z};
+    for (size_t c = 0; c < 3; c++)
+      qa_compat_q2_mem_write_f32(memory, at_view(d, view, profile->monster.point + (double)c * 4), components[c]);
+    if (state->mod_count != 3) qa_range_error("Invalid saved native monster mod_t");
+    uint8_t mod[3] = {(uint8_t)state->mod[0], (uint8_t)state->mod[1], (uint8_t)state->mod[2]};
+    memory->write(memory->ctx, at_view(d, view, profile->monster.mod), mod, 3);
+    qa_compat_q2_rerelease_deferred_damage_track(d, view);
+    tracked_t *entry = find_tracked(d, target);
+    if (!entry) qa_range_error("Saved pending damage target is not a monster");
+    qa_damage_request request; memset(&request, 0, sizeof request);
+    request.target = target; request.amount = state->amount; request.knockback = state->knockback;
+    request.direction = state->direction; request.point = state->point; request.normal = state->normal;
+    request.delivery = state->delivery;
+    restore_ref_ctx_t ctx = {d, state, dom};
+    request.attack = qa_q2_restore_attack(state->attack, restore_reference, &ctx,
+                                          &entry->pending.attacker, &entry->pending.inflictor);
+    entry->pending.request = qa_capture_request(request);
+    if (request.attack.attacker) entry->pending.request.attack.attacker = &entry->pending.attacker;
+    if (request.attack.inflictor) entry->pending.request.attack.inflictor = &entry->pending.inflictor;
+    entry->has_pending = true;
+  }
+}

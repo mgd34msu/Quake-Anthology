@@ -17,7 +17,7 @@ void qa_compat_qc_validate_objective_storage(const qa_compat_qc_program *p, qa_q
 }
 qa_compat_qc_objective_resolved qa_compat_qc_resolve_objective_storage(qa_compat_qc_machine *m, qa_qc_mod_objective_storage s, qa_compat_qc_objective_current cur) {
   if (cur.fn) cur.fn(cur.ctx, false, 0);
-  if (s.name) return (qa_compat_qc_objective_resolved){&m->globals, qa_compat_qc_machine_global_offset(m, s.name), false, 0};
+  if (!s.is_entity_field) return (qa_compat_qc_objective_resolved){&m->globals, qa_compat_qc_machine_global_offset(m, s.name), false, 0};
   int64_t ref = qa_compat_qc_words_int(&m->globals, qa_compat_qc_machine_global_offset(m, s.global));
   for (size_t i = 0; i < s.indirections.count; i++) {
     if (cur.fn) cur.fn(cur.ctx, true, ref);

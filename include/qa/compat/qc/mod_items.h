@@ -11,6 +11,7 @@
 #include "qa/contracts/gameplay.h"
 #include "qa/contracts/original_pickups.h"
 #include "qa/contracts/source_items.h"
+#include "qa/content/q1/quakec/weapon_stage.h"
 void qa_compat_qc_validate_items(qa_compat_qc_program *program, qa_mod_callback_declaration declaration);
 typedef struct qa_compat_qc_mod_items_operations {
   void *ctx;
@@ -42,6 +43,12 @@ typedef struct qa_compat_qc_mod_items {
   qa_compat_qc_mod_items_entry *entries; size_t entry_count, entry_capacity;
   int64_t *watched_words; size_t watched_word_count;
   bool has_weapons;
+  qa_q1qc_weapon_stage *weapon_stage; qa_q1qc_weapon_stage_binding stage_binding;
+  qa_q1qc_program qprogram; qa_q1qc_definition *qglobals, *qfields; qa_q1qc_function *qfunctions; qa_q1qc_statement *qstatements;
+  qa_q1qc_entity_memory qentities; qa_q1qc_machine qmachine;
+  qa_weapon_hud_icon *icon_storage; qa_source_item_action (*action_storage)[2];
+  struct qa_compat_qc_mod_items_state { struct qa_compat_qc_mod_items *items; qa_actor_id actor; qa_inventory_entry *buffer; size_t buffer_capacity; } **state_storage; size_t state_count, state_capacity;
+  struct qa_compat_qc_mod_items_weapon **weapon_storage; size_t weapon_count, weapon_capacity;
   struct qa_compat_qc_mod_items *self_ref;
 } qa_compat_qc_mod_items;
 bool qa_compat_qc_mod_items_init(qa_compat_qc_mod_items *items, const qa_mod_qc_items *definition, qa_provider_id provider, qa_compat_qc_mod_items_operations operations, qa_compat_qc_program *program);

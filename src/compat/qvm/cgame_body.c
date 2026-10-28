@@ -9,8 +9,6 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
-#define MAX_RANGES 64
-
 typedef struct body_range {
   int64_t start, end, entity, state;
   bool hidden;
@@ -19,7 +17,7 @@ typedef struct body_range {
 } body_range;
 
 typedef struct body_mesh_active {
-  body_range *range;
+  size_t range_index; /* TS range object identity, by stack slot */
   int32_t pointer;
   qa_qvm_body_part part;
   int32_t shader;
@@ -34,11 +32,11 @@ struct qa_qvm_body_submissions {
   bool has_capture;
   qa_qvm_body_capture capture;
   qa_qvm_body_calls *calls; /* per declaration */
-  body_range ranges[MAX_RANGES];
-  size_t range_count;
-  body_mesh_active meshes[MAX_RANGES];
-  size_t mesh_count;
-  size_t *removals;
+  body_range *ranges;
+  size_t range_count, range_capacity;
+  body_mesh_active *meshes;
+  size_t mesh_count, mesh_capacity;
+  struct { size_t id; void *ctx; } *removals;
   size_t removal_count, removal_capacity;
 };
 
@@ -109,6 +107,8 @@ void qa_qvm_body_submissions_destroy(qa_qvm_body_submissions *submissions) {
   for (size_t i = 0; i < submissions->declaration_count; i++)
     qa_qvm_body_calls_destroy(&submissions->calls[i]);
   free(submissions->calls);
+  free(submissions->ranges);
+  free(submissions->meshes);
   free(submissions->removals);
   free(submissions);
 }
@@ -121,21 +121,35 @@ bool qa_qvm_body_submissions_get_captures_player_meshes(
 }
 
 static void run_removals(qa_qvm_body_submissions *submissions) {
-  /* TS removals.runAll(): forward order. */
-  for (size_t i = 0; i < submissions->removal_count; i++)
-    qa_qvm_module_unbind(submissions->module, submissions->removals[i]);
+  /* TS removals.runAll(): forward order. Hook contexts die with
+   * their bindings. */
+  for (size_t i = 0; i < submissions->removal_count; i++) {
+    qa_qvm_module_unbind(submissions->module, submissions->removals[i].id);
+    free(submissions->removals[i].ctx);
+  }
   submissions->removal_count = 0;
 }
 
-static void push_removal(qa_qvm_body_submissions *submissions, size_t id) {
+static void push_removal(qa_qvm_body_submissions *submissions, size_t id, void *ctx) {
   if (submissions->removal_count == submissions->removal_capacity) {
     size_t capacity = submissions->removal_capacity == 0 ? 8 : submissions->removal_capacity * 2;
-    size_t *grown = realloc(submissions->removals, capacity * sizeof *grown);
+    void *grown = realloc(submissions->removals, capacity * sizeof *submissions->removals);
     if (grown == NULL) qa_range_error("out of memory");
     submissions->removals = grown;
     submissions->removal_capacity = capacity;
   }
-  submissions->removals[submissions->removal_count++] = id;
+  submissions->removals[submissions->removal_count].id = id;
+  submissions->removals[submissions->removal_count].ctx = ctx;
+  submissions->removal_count++;
+}
+
+static void *grow_stack(void *array, size_t *capacity, size_t count, size_t size) {
+  if (count < *capacity) return array;
+  size_t grown_capacity = *capacity == 0 ? 8 : *capacity * 2;
+  void *grown = realloc(array, grown_capacity * size);
+  if (grown == NULL) qa_range_error("out of memory");
+  *capacity = grown_capacity;
+  return grown;
 }
 
 static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
@@ -180,8 +194,10 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
         QA_QVM_REF_ENTITY_BYTES, 0);
     start = span.byte_offset;
   }
-  if (submissions->range_count >= MAX_RANGES) qa_range_error("out of memory");
-  body_range *range = &submissions->ranges[submissions->range_count];
+  submissions->ranges = grow_stack(submissions->ranges, &submissions->range_capacity,
+                                   submissions->range_count, sizeof *submissions->ranges);
+  size_t range_index = submissions->range_count;
+  body_range *range = &submissions->ranges[range_index];
   range->start = start;
   range->end = !declaration->reference_is_argument ? caller_stack : start + QA_QVM_REF_ENTITY_BYTES;
   range->entity = entity;
@@ -192,7 +208,7 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
   range->calls = submissions->calls[hook->declaration_index];
   submissions->range_count++;
   int32_t result = call->proceed_async(call->call_ctx);
-  if (submissions->range_count == 0 || &submissions->ranges[submissions->range_count - 1] != range)
+  if (submissions->range_count == 0 || submissions->range_count - 1 != range_index)
     qa_range_error("Cgame body submission scopes unwound out of order");
   submissions->range_count--;
   return result;
@@ -223,15 +239,17 @@ static int32_t mesh_hook(void *ctx, qa_qvmy_function_call *call) {
   int32_t pointer = call_word(call, (int64_t)mesh->entity_argument * 4);
   qa_qvm_writable_view shader_view;
   qa_qvm_memory_view(call->guest, pointer + (int64_t)mesh->shader_offset, 4, 0, &shader_view);
-  if (submissions->mesh_count >= MAX_RANGES) qa_range_error("out of memory");
-  body_mesh_active *active = &submissions->meshes[submissions->mesh_count];
-  active->range = range;
+  submissions->meshes = grow_stack(submissions->meshes, &submissions->mesh_capacity,
+                                   submissions->mesh_count, sizeof *submissions->meshes);
+  size_t active_index = submissions->mesh_count;
+  body_mesh_active *active = &submissions->meshes[active_index];
+  active->range_index = submissions->range_count - 1;
   active->pointer = pointer;
   active->part = part;
   active->shader = qa_qvm_writable_view_get_int32(&shader_view, 0, true);
   submissions->mesh_count++;
   int32_t result = call->proceed_async(call->call_ctx);
-  if (submissions->mesh_count == 0 || &submissions->meshes[submissions->mesh_count - 1] != active)
+  if (submissions->mesh_count == 0 || submissions->mesh_count - 1 != active_index)
     qa_range_error("Cgame body mesh scopes unwound out of order");
   submissions->mesh_count--;
   return result;
@@ -245,13 +263,14 @@ void qa_qvm_body_submissions_enable(qa_qvm_body_submissions *submissions, bool a
     return;
   }
   if (submissions->removal_count != 0) return;
-  double mesh_entries[64];
-  size_t mesh_entry_count = 0;
   for (size_t i = 0; i < submissions->declaration_count; i++) {
     const qa_qvm_body_submission *declaration = &submissions->declarations[i];
     const qa_qvm_instruction *instruction =
-        &submissions->image->instructions[(size_t)declaration->entry];
-    if (instruction->opcode != QA_QVM_OP_ENTER) {
+        is_integer(declaration->entry) && declaration->entry >= 0 &&
+                declaration->entry < (double)submissions->image->instruction_count
+            ? &submissions->image->instructions[(size_t)declaration->entry]
+            : NULL;
+    if (instruction == NULL || instruction->opcode != QA_QVM_OP_ENTER) {
       run_removals(submissions);
       qa_range_error("Cgame body entry changed");
     }
@@ -265,13 +284,14 @@ void qa_qvm_body_submissions_enable(qa_qvm_body_submissions *submissions, bool a
     reference.module = qa_qvm_module_get_profile(submissions->module)->module;
     reference.instruction_index = declaration->entry;
     push_removal(submissions,
-                 qa_qvm_module_bind_function(submissions->module, &reference, body_hook, hook));
+                 qa_qvm_module_bind_function(submissions->module, &reference, body_hook, hook),
+                 hook);
     if (declaration->has_mesh) {
       bool seen = false;
-      for (size_t j = 0; j < mesh_entry_count; j++)
-        seen = seen || mesh_entries[j] == declaration->mesh.entry;
+      for (size_t j = 0; j < i; j++)
+        seen = seen || (submissions->declarations[j].has_mesh &&
+                        submissions->declarations[j].mesh.entry == declaration->mesh.entry);
       if (!seen) {
-        mesh_entries[mesh_entry_count++] = declaration->mesh.entry;
         mesh_hook_ctx *mesh = malloc(sizeof *mesh);
         if (mesh == NULL) qa_range_error("out of memory");
         mesh->submissions = submissions;
@@ -282,7 +302,8 @@ void qa_qvm_body_submissions_enable(qa_qvm_body_submissions *submissions, bool a
         mesh_reference.module = qa_qvm_module_get_profile(submissions->module)->module;
         mesh_reference.instruction_index = declaration->mesh.entry;
         push_removal(submissions, qa_qvm_module_bind_function(submissions->module, &mesh_reference,
-                                                              mesh_hook, mesh));
+                                                              mesh_hook, mesh),
+                     mesh);
       }
     }
   }
@@ -308,7 +329,7 @@ bool qa_qvm_body_submissions_suppress(qa_qvm_body_submissions *submissions,
   body_mesh_active *part = submissions->mesh_count == 0
                                ? NULL
                                : &submissions->meshes[submissions->mesh_count - 1];
-  if (!range->hidden && part != NULL && part->range == range &&
+  if (!range->hidden && part != NULL && &submissions->ranges[part->range_index] == range &&
       part->pointer == qa_qvm_host_call_word(call, 1) && submissions->has_capture &&
       submissions->capture.selected(submissions->capture.ctx, (double)range->entity)) {
     qa_qvm_writable_view view;

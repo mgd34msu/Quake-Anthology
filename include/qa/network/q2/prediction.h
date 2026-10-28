@@ -57,8 +57,10 @@ typedef struct qa_q2_prediction_history {
   size_t state_size, command_size, ground_size;
   uint8_t *commands;
   bool *command_present;
+  int64_t *command_sequence; /* Sequence stored per slot (TS Map key). */
   qa_vec3 *origins;
   bool *origin_present;
+  int64_t *origin_sequence;
   uint8_t *last_ground;
   bool has_last_ground;
   qa_vec3 error;
@@ -103,6 +105,7 @@ typedef struct qa_q2_command_packet_history {
   size_t capacity;
   qa_q2_command_packet_entry *entries;
   bool *present;
+  int64_t *sequence; /* Packet sequence stored per slot (TS Map key). */
 } qa_q2_command_packet_history;
 
 /* False only on OOM. capacity 0 is TS default 64. */

@@ -26,7 +26,9 @@ static bool integer_word(double value) {
 
 typedef struct validate_state {
   const qa_qvm_mod_callback_declaration *declaration;
-  char (*keys)[80];
+  /* Occupied (record, offset) pairs; TS keys are full strings. */
+  const char **key_records;
+  double *key_offsets;
   const char **usages;
   size_t count;
   size_t capacity;
@@ -37,17 +39,16 @@ static void validate_field(void *ctx, const qa_qvm_item_field *field, const char
   const qa_qvm_mod_callback_declaration *declaration = state->declaration;
   const qa_qvm_mod_actor_record *record = NULL;
   for (size_t i = 0; i < declaration->actor_record_count; i++)
-    if (strcmp(declaration->actor_records[i].id, field->record) == 0) record = &declaration->actor_records[i];
+    if (strcmp(declaration->actor_records[i].id, field->record) == 0) { record = &declaration->actor_records[i]; break; } /* TS Array.find: first */
   bool in_clients = false;
   if (record != NULL && declaration->clients != NULL) {
     for (size_t i = 0; i < declaration->clients->records.count; i++)
       if (strcmp(declaration->clients->records.values[i], record->id) == 0) in_clients = true;
   }
-  char key[80];
-  snprintf(key, sizeof key, "%s:%lld", field->record, (long long)field->offset);
   const char *previous = NULL;
   for (size_t i = 0; i < state->count; i++)
-    if (strcmp(state->keys[i], key) == 0) previous = state->usages[i];
+    if (strcmp(state->key_records[i], field->record) == 0 && state->key_offsets[i] == field->offset)
+      previous = state->usages[i];
   if (record == NULL || !in_clients || !isfinite(field->offset) || field->offset != trunc(field->offset) ||
       field->offset < -9007199254740991.0 || field->offset > 9007199254740991.0 || field->offset < 0 ||
       (int64_t)field->offset % 4 != 0 || field->offset + 4 > record->stride ||
@@ -57,11 +58,14 @@ static void validate_field(void *ctx, const qa_qvm_item_field *field, const char
   if (strcmp(usage, "view") != 0) {
     if (state->count == state->capacity) {
       state->capacity = state->capacity == 0 ? 16 : state->capacity * 2;
-      state->keys = realloc(state->keys, state->capacity * sizeof *state->keys);
+      state->key_records = realloc(state->key_records, state->capacity * sizeof *state->key_records);
+      state->key_offsets = realloc(state->key_offsets, state->capacity * sizeof *state->key_offsets);
       state->usages = realloc(state->usages, state->capacity * sizeof *state->usages);
-      if (state->keys == NULL || state->usages == NULL) qa_range_error("QVM memory allocation failed");
+      if (state->key_records == NULL || state->key_offsets == NULL || state->usages == NULL)
+        qa_range_error("QVM memory allocation failed");
     }
-    memcpy(state->keys[state->count], key, sizeof key);
+    state->key_records[state->count] = field->record;
+    state->key_offsets[state->count] = field->offset;
     state->usages[state->count++] = usage;
   }
   for (size_t i = 0; i < record->field_count; i++) {
@@ -93,7 +97,7 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
     for (size_t j = i + 1; j < items->definition_count; j++)
       if (strcmp(items->definitions[i].item, items->definitions[j].item) == 0)
         qa_range_error("Duplicate QVM source item definition");
-  validate_state state = {declaration, NULL, NULL, 0, 0};
+  validate_state state = {declaration, NULL, NULL, NULL, 0, 0};
   qa_item_id *ids = xmalloc(items->definition_count * sizeof *ids);
   for (size_t i = 0; i < items->definition_count; i++) ids[i] = items->definitions[i].item;
   qa_qvmy_validate_item_storage(items->storage, items->storage_count, ids, items->definition_count,
@@ -202,7 +206,8 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
       if (!found) qa_range_error("QVM weapon ammo lacks its source storage");
     }
   }
-  free(state.keys);
+  free(state.key_records);
+  free(state.key_offsets);
   free(state.usages);
 }
 
@@ -224,8 +229,11 @@ typedef struct request {
 
 typedef struct item_entry {
   qa_owned_actor actor;
-  struct { const char *record; int64_t address; } addresses[16];
+  struct { const char *record; int64_t address; } *addresses; /* owned */
   size_t address_count;
+  size_t address_capacity;
+  void *observe_state; /* owned */
+  void *lease_state;   /* owned */
   qa_qvmy_item_lease lease;
   size_t watch_id;
   bool has_remove_weapon;
@@ -436,8 +444,9 @@ static bool lease_mutable_capacity(void *ctx, qa_item_id item) {
 typedef struct observe_state {
   qa_qvm_mod_items_runtime *items;
   qa_actor_id actor;
-  qa_source_item_store pending[64];
+  qa_source_item_store *pending; /* owned, grown on demand */
   size_t pending_count;
+  size_t pending_capacity;
   bool has_pending;
 } observe_state;
 
@@ -448,7 +457,8 @@ static void observe_publish(void *ctx, const qa_qvm_committed_write *event) {
   state->has_pending = true;
   for (size_t s = 0; s < items->definition->storage_count; s++) {
     const qa_qvm_item_storage *storage = &items->definition->storage[s];
-    int64_t addresses[80];
+    size_t address_capacity = 2 + (strcmp(storage->kind, "counter") == 0 ? storage->capacity.override_count : 0);
+    int64_t *addresses = xmalloc(address_capacity * sizeof *addresses);
     size_t address_count = 0;
     addresses[address_count++] = address_of(items, state->actor, &storage->field);
     if (strcmp(storage->kind, "counter") == 0 && strcmp(storage->capacity.kind, "field") == 0)
@@ -465,8 +475,11 @@ static void observe_publish(void *ctx, const qa_qvm_committed_write *event) {
           touched = true;
       }
     }
+    free(addresses);
     if (!touched) continue;
-    qa_inventory_entry before[64], after[64];
+    size_t entry_capacity = strcmp(storage->kind, "counter") == 0 ? 1 : storage->item_count;
+    qa_inventory_entry *before = xmalloc(entry_capacity * sizeof *before);
+    qa_inventory_entry *after = xmalloc(entry_capacity * sizeof *after);
     size_t before_count = read_storage(items, state->actor, storage, event, before);
     size_t after_count = read_storage(items, state->actor, storage, NULL, after);
     for (size_t i = 0; i < after_count; i++) {
@@ -488,13 +501,18 @@ static void observe_publish(void *ctx, const qa_qvm_committed_write *event) {
           }
           if (!allowed) qa_range_error("Original pickup changed an undeclared QVM source item");
         }
-        if (state->pending_count < 64) {
-          state->pending[state->pending_count].before = *previous;
-          state->pending[state->pending_count].after = after[i];
-          state->pending_count++;
+        if (state->pending_count == state->pending_capacity) {
+          state->pending_capacity = state->pending_capacity == 0 ? 8 : state->pending_capacity * 2;
+          state->pending = realloc(state->pending, state->pending_capacity * sizeof *state->pending);
+          if (state->pending == NULL) qa_range_error("QVM memory allocation failed");
         }
+        state->pending[state->pending_count].before = *previous;
+        state->pending[state->pending_count].after = after[i];
+        state->pending_count++;
       }
     }
+    free(before);
+    free(after);
   }
 }
 
@@ -791,7 +809,14 @@ void qa_qvm_mod_items_runtime_destroy(qa_qvm_mod_items_runtime *items) {
     free(items->weapons);
   }
   item_entry *entries = items->entries;
-  for (size_t i = 0; i < items->entry_count; i++) free(entries[i].current_request);
+  for (size_t i = 0; i < items->entry_count; i++) {
+    free(entries[i].current_request);
+    free(entries[i].addresses);
+    observe_state *observe = entries[i].observe_state;
+    if (observe != NULL) free(observe->pending);
+    free(observe);
+    free(entries[i].lease_state);
+  }
   free(items->entries);
   free(items->applied);
   free(items->admissions);
@@ -826,7 +851,12 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
       bool seen = false;
       for (size_t a = 0; a < entry->address_count; a++)
         if (strcmp(entry->addresses[a].record, fields_to_add[f]->record) == 0) seen = true;
-      if (!seen && entry->address_count < 16) {
+      if (!seen) {
+        if (entry->address_count == entry->address_capacity) {
+          entry->address_capacity = entry->address_capacity == 0 ? 8 : entry->address_capacity * 2;
+          entry->addresses = realloc(entry->addresses, entry->address_capacity * sizeof *entry->addresses);
+          if (entry->addresses == NULL) qa_range_error("QVM memory allocation failed");
+        }
         entry->addresses[entry->address_count].record = fields_to_add[f]->record;
         entry->addresses[entry->address_count].address =
             items->operations->pointer(items->operations->ctx, actor, fields_to_add[f]->record);
@@ -837,6 +867,7 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
   lease_state *lease = xmalloc(sizeof *lease);
   lease->items = items;
   lease->actor = actor;
+  entry->lease_state = lease;
   qa_qvmy_item_lease_binding binding;
   memset(&binding, 0, sizeof binding);
   binding.owner = items->provider;
@@ -849,7 +880,14 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
   binding.write = lease_write;
   binding.mutable_capacity = lease_mutable_capacity;
   entry->lease = items->services->bind_items(items->services->ctx, owner, &binding);
-  qa_qvm_write_range ranges[80];
+  size_t range_capacity = 0;
+  for (size_t s = 0; s < items->definition->storage_count; s++) {
+    const qa_qvm_item_storage *storage = &items->definition->storage[s];
+    range_capacity += 2;
+    if (strcmp(storage->kind, "counter") == 0 && strcmp(storage->capacity.kind, "source") == 0)
+      range_capacity += storage->capacity.override_count;
+  }
+  qa_qvm_write_range *ranges = xmalloc(range_capacity * sizeof *ranges);
   size_t range_count = 0;
   for (size_t s = 0; s < items->definition->storage_count; s++) {
     const qa_qvm_item_storage *storage = &items->definition->storage[s];
@@ -857,17 +895,21 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
     if (strcmp(storage->kind, "counter") == 0 && strcmp(storage->capacity.kind, "field") == 0)
       ranges[range_count++] = (qa_qvm_write_range){address_of(items, actor, &storage->capacity.field), 4};
     if (strcmp(storage->kind, "counter") == 0 && strcmp(storage->capacity.kind, "source") == 0) {
-      for (size_t o = 0; o < storage->capacity.override_count && range_count < 80; o++)
+      for (size_t o = 0; o < storage->capacity.override_count; o++)
         ranges[range_count++] = (qa_qvm_write_range){(int64_t)storage->capacity.overrides[o].address, 4};
     }
   }
   observe_state *observe = xmalloc(sizeof *observe);
+  entry->observe_state = observe;
   observe->items = items;
   observe->actor = actor;
+  observe->pending = NULL;
   observe->pending_count = 0;
+  observe->pending_capacity = 0;
   observe->has_pending = false;
   entry->watch_id = qa_qvm_memory_observe_writes(items->memory, ranges, range_count,
                                                   observe_publish, observe, observe_after, observe);
+  free(ranges);
   entry->current_request = NULL;
   items->entry_count++;
   if (items->weapons != NULL) {
@@ -1062,6 +1104,13 @@ void qa_qvm_mod_items_release(qa_qvm_mod_items_runtime *items, qa_actor_id actor
     qa_qvm_memory_writes_unobserve(&items->memory->writes, removed.watch_id);
     if (removed.has_remove_weapon) removed.remove_weapon.invoke(removed.remove_weapon.ctx);
     removed.lease.close(removed.lease.ctx);
+    free(removed.addresses);
+    {
+      observe_state *observe = removed.observe_state;
+      if (observe != NULL) free(observe->pending);
+      free(observe);
+    }
+    free(removed.lease_state);
     return;
   }
 }

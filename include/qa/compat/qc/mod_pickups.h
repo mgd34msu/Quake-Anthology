@@ -23,8 +23,9 @@ typedef struct qa_compat_qc_mod_pickups {
   qa_mod_host_services *services; qa_compat_qc_mod_pickups_operations operations;
   /* per-actor state */
   struct qa_compat_qc_mod_pickups_entry { qa_actor_id actor; qa_client_id client; void (*remove[8])(void *); void *remove_ctx[8]; size_t remove_count;
-    qa_original_pickup_rule *rules; size_t rule_count; } *entries;
+    qa_original_pickup_rule *rules; size_t rule_count; qa_original_pickup_rule *pickup_rules; } *entries;
   size_t entry_count, entry_capacity;
+  struct qa_compat_qc_mod_pickups_take **take_storage; size_t take_count, take_capacity;
   struct qa_compat_qc_mod_pickups *self_ref;
 } qa_compat_qc_mod_pickups;
 void qa_compat_qc_mod_pickups_init(qa_compat_qc_mod_pickups *p, qa_mod_callback_declaration declaration, qa_provider_id provider, qa_mod_host_services *services, qa_compat_qc_mod_pickups_operations operations);

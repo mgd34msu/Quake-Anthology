@@ -87,6 +87,7 @@ typedef struct qa_qvm_mod_protection_component {
   void *stages; /* opaque */
   size_t stage_count;
   size_t stage_capacity;
+  uint64_t stage_generation_counter;
 } qa_qvm_mod_protection_component;
 
 struct qa_qvm_mod_protection_runtime {

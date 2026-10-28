@@ -60,6 +60,9 @@ bool qa_kex_channel_send(qa_kex_channel *channel, double kind, const uint8_t *pa
                          size_t length, double mode, double now);
 bool qa_kex_channel_receive(qa_kex_channel *channel, const uint8_t *bytes, size_t length,
                             double now, qa_kex_message *out);
-void qa_kex_channel_tick(qa_kex_channel *channel, double now);
+/* False when the TS tick would throw 'KEX LAN peer timed out'
+ * (callers that catch tick errors remove the peer); other protocol
+ * errors still abort. */
+bool qa_kex_channel_tick(qa_kex_channel *channel, double now);
 
 #endif

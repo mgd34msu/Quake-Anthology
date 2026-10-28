@@ -391,15 +391,34 @@ static uint8_t *inflate_download(const uint8_t *bytes, size_t length, int flush,
   }
   stream.next_in = (Bytef *)bytes;
   stream.avail_in = (uInt)length;
-  stream.next_out = out;
-  stream.avail_out = (uInt)capacity;
-  int status = inflate(&stream, flush);
-  size_t produced = stream.total_out;
-  inflateEnd(&stream);
-  if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) {
-    free(out);
-    qa_q2_throw_error("Q2 download inflation failed");
+  size_t produced = 0;
+  for (;;) {
+    if (produced == capacity) {
+      size_t next = capacity * 2;
+      uint8_t *grown = (uint8_t *)realloc(out, next);
+      if (grown == NULL) {
+        inflateEnd(&stream);
+        free(out);
+        return NULL;
+      }
+      out = grown;
+      capacity = next;
+    }
+    stream.next_out = out + produced;
+    stream.avail_out = (uInt)(capacity - produced);
+    uLong before = stream.total_out;
+    int status = inflate(&stream, flush);
+    produced += (size_t)(stream.total_out - before);
+    if (status == Z_STREAM_END) break;
+    if (status != Z_OK && status != Z_BUF_ERROR) {
+      inflateEnd(&stream);
+      free(out);
+      qa_q2_throw_error("Q2 download inflation failed");
+    }
+    if (stream.avail_in == 0 && stream.avail_out != 0) break;
+    if (status == Z_BUF_ERROR && stream.avail_out != 0) break;
   }
+  inflateEnd(&stream);
   *out_length = produced;
   return out;
 }

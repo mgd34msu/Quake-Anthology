@@ -1,6 +1,7 @@
 /* Port of src/bots/navigation/train.ts. GPL-2.0-or-later. */
 #include "qa/bots/navigation/train.h"
 #include <math.h>
+#include <stdlib.h>
 
 static bool supports(const qa_navigation_entity_state *state, const qa_navigation_train_stop *stop,
                      qa_vec3 point, const qa_navigation_profile *profile) {
@@ -26,15 +27,23 @@ bool qa_navigation_find_train_ride(const qa_navigation_entity_state *state, cons
   const qa_navigation_train_stop *arrival = find_stop(state, edge->end, profile);
   if (!boarding || !arrival || boarding->id == arrival->id) return false;
   const qa_navigation_train_stop *current = boarding;
-  /* TS visited Set<number>; stops are few, repeat detection by bounded walk. */
-  for (size_t steps = 0; current && steps <= state->train_stop_count; steps++) {
-    if (current->id == arrival->id) { out->boarding = *boarding; out->arrival = *arrival; return true; }
-    if (current->wait < 0 || current->teleport) return false;
+  /* TS visited Set<number>. */
+  int64_t *visited = malloc((state->train_stop_count ? state->train_stop_count : 1) * sizeof *visited);
+  if (!visited) return false;
+  size_t visited_count = 0;
+  while (current) {
+    bool seen = false;
+    for (size_t i = 0; i < visited_count; i++) if (visited[i] == current->id) seen = true;
+    if (seen) break;
+    if (current->id == arrival->id) { out->boarding = *boarding; out->arrival = *arrival; free(visited); return true; }
+    if (current->wait < 0 || current->teleport) { free(visited); return false; }
+    visited[visited_count++] = current->id;
     const qa_navigation_train_stop *next = NULL;
     if (current->has_next)
       for (size_t i = 0; i < state->train_stop_count; i++)
         if (state->train_stops[i].id == current->next) { next = &state->train_stops[i]; break; }
     current = next;
   }
+  free(visited);
   return false;
 }

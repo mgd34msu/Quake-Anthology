@@ -16,10 +16,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "qa/bots/behavior/rerelease/checkpoint.h"
 #include "qa/bots/behavior/rerelease/chat_text.h"
 #include "qa/bots/behavior/rerelease/math.h"
+#include "qa/bots/behavior/rerelease/profile.h"
 #include "qa/bots/behavior/rerelease/rng.h"
+#include "qa/bots/navigation/aas_cluster.h"
+#include "qa/bots/navigation/aas_reachability.h"
+#include "qa/bots/navigation/aas_reachability_spatial.h"
 #include "qa/bots/navigation/aas_reachability_types.h"
+#include "qa/persistence/value.h"
 #include "qa/bots/navigation/entity_binding.h"
 #include "qa/bots/navigation/estimates.h"
 #include "qa/bots/navigation/helpers.h"
@@ -289,6 +295,210 @@ static void test_settings_and_nav(void) {
   CHECK_ABORTS({ qa_kex_navigation_asset a2; (void)qa_parse_kex_navigation(&a2, bad, sizeof bad, "<test>"); });
 }
 
+static void test_linked_reachability(void) {
+  qa_aas_linked_reachability link;
+  memset(&link, 0, sizeof link);
+  qa_aas_link_set_area(&link, -7);
+  qa_aas_link_set_face(&link, 300);
+  qa_aas_link_set_edge(&link, -2);
+  qa_aas_link_set_start(&link, v3(0.1, -2.5, 3));
+  qa_aas_link_set_end(&link, v3(4, 5, 6));
+  qa_aas_link_set_travel_type(&link, QA_TRAVEL_JUMP | QA_TRAVEL_NOTTEAM1);
+  CHECK(qa_aas_link_area(&link) == -7 && qa_aas_link_face(&link) == 300 && qa_aas_link_edge(&link) == -2);
+  qa_vec3 start = qa_aas_link_start(&link);
+  CHECK(start.x == (double)(float)0.1 && start.y == -2.5 && start.z == 3); /* f32 storage */
+  CHECK(link.bytes[0] == 0xf9 && link.bytes[3] == 0xff);                    /* LE i32 at 0 */
+  qa_aas_link_set_travel_time(&link, 70000.9);
+  CHECK(qa_aas_link_travel_time(&link) == 4464); /* trunc + u16 wrap */
+  qa_aas_link_set_travel_time(&link, -1);
+  CHECK(qa_aas_link_travel_time(&link) == 65535);
+  CHECK_ABORTS(qa_aas_link_set_travel_time(&link, 3e9));
+  link.next = &link;
+  qa_aas_link_clear(&link);
+  CHECK(qa_aas_link_area(&link) == 0 && link.next == NULL);
+}
+
+static void test_reachability_entities(void) {
+  qa_aas_reachability_entities entities;
+  const char *text = "{\n\"classname\" \"trigger_push\"\n\"count\" \"42x\"\n\"origin\" \"1.5 -2 3e1\"\n"
+                     "\"big\" \"9999999999\"\n}\n{\n\"classname\" \"worldspawn\"\n}\n";
+  CHECK(qa_aas_reachability_entities_init(&entities, text));
+  CHECK(qa_aas_reachability_entities_next(&entities, 0) == 1);
+  CHECK(qa_aas_reachability_entities_next(&entities, 1) == 2);
+  CHECK(qa_aas_reachability_entities_next(&entities, 2) == 0);
+  uint8_t buffer[16];
+  CHECK(qa_aas_reachability_entities_value(&entities, 1, "classname", buffer, sizeof buffer));
+  CHECK(!strcmp((const char *)buffer, "trigger_push"));
+  CHECK(!qa_aas_reachability_entities_value(&entities, 1, "missing", buffer, sizeof buffer));
+  CHECK(buffer[0] == 0);
+  int64_t iv;
+  CHECK(qa_aas_reachability_entities_int(&entities, 1, "count", &iv) && iv == 42);
+  CHECK(!qa_aas_reachability_entities_int(&entities, 1, "missing", &iv) && iv == 0);
+  qa_vec3 vec;
+  CHECK(qa_aas_reachability_entities_vector(&entities, 1, "origin", &vec));
+  CHECK(vec.x == 1.5 && vec.y == -2 && vec.z == 30);
+  CHECK_ABORTS((void)qa_aas_reachability_entities_int(&entities, 1, "big", &iv));
+  CHECK_ABORTS((void)qa_aas_reachability_entities_value(&entities, 1, "classname", buffer, 0));
+  qa_aas_reachability_entities_destroy(&entities);
+}
+
+static qa_bot_travel_prediction_result unused_predict(void *ctx, qa_bot_movement_prediction query) {
+  (void)ctx; (void)query;
+  qa_bot_travel_prediction_result result;
+  memset(&result, 0, sizeof result);
+  result.has_end_area = true;
+  return result;
+}
+static void test_build_reachability(void) {
+  qa_aas_asset asset;
+  memset(&asset, 0, sizeof asset);
+  qa_q3_world_geometry q3;
+  memset(&q3, 0, sizeof q3);
+  q3.entities = "";
+  qa_aas_reachability_options options;
+  memset(&options, 0, sizeof options);
+  options.asset = &asset;
+  options.geometry = (qa_decoded_world){QA_DECODED_WORLD_Q3, {.q3 = &q3}};
+  options.profile = profile();
+  options.prediction_client = 0;
+  options.predict_client_movement = unused_predict;
+  /* existing reachabilities are reused unless forced */
+  qa_aas_reach_rec dummy;
+  memset(&dummy, 0, sizeof dummy);
+  asset.reachability = &dummy;
+  asset.reachability_count = 1;
+  qa_aas_asset out;
+  bool reused = false;
+  CHECK(qa_build_aas_reachability(&out, &reused, options) && reused);
+  asset.reachability = NULL;
+  asset.reachability_count = 0;
+  options.prediction_client = -1;
+  CHECK_ABORTS((void)qa_build_aas_reachability(&out, &reused, options));
+  /* empty world builds just the sentinel record */
+  options.prediction_client = 0;
+  CHECK(qa_build_aas_reachability(&out, &reused, options) && !reused);
+  CHECK(out.reachability_count == 1);
+  CHECK(out.reachability[0].area == 0 && out.reachability[0].travel_type == 0 && out.reachability[0].travel_time == 0);
+  qa_aas_reachability_result_destroy(&out);
+}
+
+static void test_cluster_empty(void) {
+  qa_aas_asset asset;
+  memset(&asset, 0, sizeof asset);
+  qa_aas_area_rec area;
+  qa_aas_setting_rec setting;
+  memset(&area, 0, sizeof area);
+  memset(&setting, 0, sizeof setting);
+  qa_aas_lump lump = {0, 0};
+  asset.areas = &area; asset.area_count = 1;
+  asset.settings = &setting; asset.setting_count = 1;
+  asset.lumps = &lump; asset.lump_count = 1;
+  qa_aas_asset out;
+  CHECK(qa_cluster_aas(&out, &asset, NULL, NULL));
+  CHECK(out.lump_count == 0 && out.lumps == NULL);
+  CHECK(out.portal_count == 1 && out.cluster_count == 1 && out.portal_index_count == 0);
+  CHECK(out.settings != &setting); /* owned copy */
+  qa_aas_clustering_result_destroy(&out);
+}
+
+static const char *CHECKPOINT_JSON =
+  "{\"brain\":{\"version\":1,\"skill\":\"easy\",\"gameMode\":{\"gameType\":\"ffa\",\"weaponStay\":true},"
+  "\"memory\":{\"triggerWeapon\":0,\"triggerHeldSince\":-1,\"triggerReadyAt\":0,\"targetId\":-1,\"goalPoint\":null,"
+  "\"goalEntityId\":-1,\"stuckTrips\":2,\"goalIsLive\":true,\"unstickUntil\":0,\"pressUntil\":0,\"unstickSide\":1,"
+  "\"explicitGoalDone\":false,\"explicitGoalFailed\":false,\"wedgeOrigin\":null,\"wedgeSince\":-1,"
+  "\"lastSafeOrigin\":null,\"restPoint\":null,\"restUntil\":0,\"guardRefusals\":0,\"lastGuardRefused\":false,"
+  "\"gapJumps\":0,\"hazardFrames\":0,\"ownObjectiveHome\":null,\"enemyObjectiveHome\":null,\"objectiveRole\":\"\","
+  "\"touchGoal\":false,\"holdPosition\":false,\"gateShootAt\":null,\"gateFiredAt\":-1,\"coopRegrouping\":false,"
+  "\"coopRegroupAt\":0,\"coopRegroupUntil\":0,\"levelStarted\":true,\"checkSixUntil\":0,\"checkSixNextAt\":0,"
+  "\"roamPoint\":null,\"roamUntil\":0,\"spawnedOnce\":true,\"lastWeaponNumber\":3,\"deadSince\":-1,\"respawnWait\":0,"
+  "\"respawnPress\":false,\"aim\":{\"pitch\":1,\"yaw\":2,\"pitchVelocity\":0,\"yawVelocity\":0,\"modifierUntil\":0},"
+  "\"pathState\":{\"path\":null,\"index\":0,\"stuckOrigin\":{\"x\":1,\"y\":2,\"z\":3},\"stuckSince\":0,\"stuckCount\":0,"
+  "\"liftWaitSince\":-1,\"liftWaitZ\":0,\"jumpReadyAt\":0,\"plannedAt\":0},"
+  "\"awareness\":[{\"entity\":5,\"value\":{\"id\":5,\"sight\":0.5,\"weapon\":0.25,\"lastContact\":1,\"lastSeen\":2,"
+  "\"lastHeard\":3,\"lastKnownOrigin\":{\"x\":7,\"y\":8,\"z\":9}}}],"
+  "\"unreachableUntil\":[{\"entity\":7,\"time\":9}],\"objectiveHome\":[],\"saidThisLevel\":[\"hi\"],"
+  "\"explicitGoal\":null,\"lastCmd\":{\"forwardmove\":10,\"sidemove\":0,\"upmove\":0,\"buttons\":1,\"impulse\":0,"
+  "\"viewAngles\":{\"x\":0,\"y\":90,\"z\":0}}}},"
+  "\"version\":1,\"source\":\"q1-rerelease\",\"definition\":\"def\",\"rng\":12345,"
+  "\"pendingChats\":[{\"time\":4,\"event\":{\"locstring\":\"hello\",\"type\":\"greet\",\"delayMs\":250,\"teamOnly\":true}}]}";
+
+static void test_checkpoint_reader(void) {
+  const char *json = CHECKPOINT_JSON;
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)json, strlen(json), false);
+  CHECK(value != NULL);
+  qa_rerelease_behavior_checkpoint checkpoint;
+  CHECK(qa_read_rerelease_behavior(&checkpoint, value));
+  CHECK(checkpoint.version == 1 && checkpoint.source == QA_RERELEASE_Q1);
+  CHECK(checkpoint.definition && !strcmp(checkpoint.definition, "def"));
+  CHECK(checkpoint.rng == 12345);
+  CHECK(checkpoint.brain.skill && !strcmp(checkpoint.brain.skill, "easy"));
+  CHECK(checkpoint.brain.game_mode.weapon_stay && !checkpoint.brain.game_mode.has_has_teams);
+  CHECK(checkpoint.brain.memory.stuck_trips == 2 && checkpoint.brain.memory.goal_is_live);
+  CHECK(checkpoint.brain.memory.awareness_count == 1);
+  CHECK(checkpoint.brain.memory.awareness[0].entity == 5 && checkpoint.brain.memory.awareness[0].value.sight == 0.5);
+  CHECK(checkpoint.brain.memory.said_count == 1 && !strcmp(checkpoint.brain.memory.said_this_level[0], "hi"));
+  CHECK(checkpoint.brain.memory.last_cmd.buttons == 1 && checkpoint.brain.memory.last_cmd.view_angles.y == 90);
+  CHECK(checkpoint.brain.memory.unreachable_count == 1 && checkpoint.brain.memory.unreachable_until[0].time == 9);
+  CHECK(checkpoint.pending_count == 1 && checkpoint.pending_chats[0].team_only);
+  CHECK(!strcmp(checkpoint.pending_chats[0].locstring, "hello"));
+  qa_rerelease_behavior_checkpoint_destroy(&checkpoint);
+  qa_save_value_free(value);
+  qa_save_value *empty = qa_parse_json_value((const uint8_t *)"{}", 2, false);
+  CHECK(empty != NULL);
+  CHECK_ABORTS({ qa_rerelease_behavior_checkpoint bad; (void)qa_read_rerelease_behavior(&bad, empty); });
+  qa_save_value_free(empty);
+}
+
+static double cb_time(void *ctx) { (void)ctx; return 10; }
+static void cb_noop_think(void *ctx, const char *name, qa_rerelease_orders orders) { (void)ctx; (void)name; (void)orders; }
+static void cb_noop_post(void *ctx, const char *name, qa_bot_usercmd cmd) { (void)ctx; (void)name; (void)cmd; }
+static void cb_noop_chat(void *ctx, qa_bot_chat_event event) { (void)ctx; (void)event; }
+static void cb_noop_select(void *ctx, double weapon) { (void)ctx; (void)weapon; }
+static double cb_impulse(void *ctx, double weapon) { (void)ctx; return weapon; }
+static bool cb_near(void *ctx) { (void)ctx; return false; }
+
+static void test_profile_behavior(void) {
+  static qa_bot_skill_settings skill;
+  qa_bot_skill_settings_init(&skill);
+  skill.skill = "easy";
+  qa_bot_knowledge knowledge;
+  memset(&knowledge, 0, sizeof knowledge);
+  knowledge.settings_r.skills = &skill;
+  knowledge.settings_r.skill_count = 1;
+  qa_rerelease_profile_options options;
+  memset(&options, 0, sizeof options);
+  options.definition = "def";
+  options.source = QA_RERELEASE_Q1;
+  options.knowledge = &knowledge;
+  options.skill = "easy";
+  options.seed = 7;
+  options.game_mode.game_type = "single";
+  options.max_health = 100;
+  options.run_speed = 320;
+  options.walk_speed = 160;
+  options.callbacks = (qa_rerelease_callbacks){NULL, cb_time, cb_noop_think, cb_noop_post, cb_noop_chat,
+                                                cb_noop_select, cb_impulse, cb_near};
+  qa_rerelease_bot_behavior behavior;
+  CHECK(qa_rerelease_bot_behavior_init(&behavior, options));
+  CHECK(qa_rerelease_bot_behavior_goal_status(&behavior) == QA_BOT_GOAL_ERROR);
+  qa_rerelease_bot_behavior_request_move_to_point(&behavior, v3(10, 0, 0));
+  CHECK(qa_rerelease_bot_behavior_goal_status(&behavior) == QA_BOT_GOAL_IN_PROGRESS);
+  qa_rerelease_behavior_checkpoint checkpoint;
+  CHECK(qa_rerelease_bot_behavior_checkpoint_make(&behavior, &checkpoint));
+  CHECK(checkpoint.version == 1 && checkpoint.source == QA_RERELEASE_Q1);
+  CHECK(checkpoint.definition && !strcmp(checkpoint.definition, "def"));
+  CHECK(checkpoint.rng == qa_xorshift32_peek(&behavior.random));
+  qa_rerelease_bot_behavior_clear_explicit_goal(&behavior);
+  CHECK(qa_rerelease_bot_behavior_goal_status(&behavior) == QA_BOT_GOAL_ERROR);
+  CHECK(qa_rerelease_bot_behavior_restore(&behavior, &checkpoint));
+  CHECK(qa_rerelease_bot_behavior_goal_status(&behavior) == QA_BOT_GOAL_IN_PROGRESS);
+  checkpoint.source = QA_RERELEASE_Q2;
+  CHECK_ABORTS((void)qa_rerelease_bot_behavior_restore(&behavior, &checkpoint));
+  checkpoint.source = QA_RERELEASE_Q1;
+  qa_rerelease_behavior_checkpoint_destroy(&checkpoint);
+  qa_rerelease_bot_behavior_destroy(&behavior);
+}
+
 int main(void) {
   test_chat_text();
   test_rerelease_math();
@@ -298,6 +508,12 @@ int main(void) {
   test_train();
   test_estimates_generic();
   test_settings_and_nav();
+  test_linked_reachability();
+  test_reachability_entities();
+  test_build_reachability();
+  test_cluster_empty();
+  test_checkpoint_reader();
+  test_profile_behavior();
   if (failures) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);
     return 1;

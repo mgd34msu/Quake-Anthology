@@ -52,7 +52,7 @@ qa_q2_rerelease_player_state qa_compat_q2_read_rerelease_player_state(const qa_c
 void qa_compat_q2_write_rerelease_user_command(uint8_t *view, qa_q2_rerelease_user_command value) {
   view[0] = (uint8_t)value.milliseconds; view[1] = (uint8_t)value.buttons; wvec(view, 4, value.angles);
   qa_compat_q2_view_set_f32(view, 16, value.forward_move); qa_compat_q2_view_set_f32(view, 20, value.side_move);
-  view[24] = (uint8_t)value.server_frame; view[25] = (uint8_t)((uint32_t)value.server_frame >> 8);
+  view[24] = (uint8_t)((uint32_t)value.server_frame); view[25] = (uint8_t)((uint32_t)value.server_frame >> 8);
   view[26] = (uint8_t)((uint32_t)value.server_frame >> 16); view[27] = (uint8_t)((uint32_t)value.server_frame >> 24);
 }
 qa_q2_rerelease_user_command qa_compat_q2_read_rerelease_user_command(const uint8_t *view) {

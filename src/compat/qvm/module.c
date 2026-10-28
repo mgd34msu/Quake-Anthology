@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/abi.h"
 #include "qa/core/common_error.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
@@ -14,8 +15,8 @@ const qa_numeric_profile qa_qvm_numeric_profile = {
     {QA_ARITHMETIC_BINARY32, NULL, 0, QA_FLOATING_ROUNDING_NEAREST_EVEN, false, false},
     QA_FLOAT_TO_INT_QVM_INDEFINITE};
 
-/* Mirrored QvmUiExport.UI_GETAPIVERSION (TS abi.ts). */
-enum { UI_GETAPIVERSION = 0 };
+/* Landed QvmUiExport.UI_GETAPIVERSION (TS abi.ts). */
+enum { UI_GETAPIVERSION = QA_QVM_UI_EXPORT_UI_GETAPIVERSION };
 
 qa_q3_api_identity qa_qvm_api(qa_qvm_role role, qa_qvm_abi_profile profile) {
   bool modern = profile == NULL || strcmp(profile, "q3-modern") == 0;
@@ -447,6 +448,9 @@ static void run_source_callback(void *ctx) {
 int32_t qa_qvm_module_invoke_source_callback(qa_qvm_module *module, qa_qvmy_function_call *call,
                                              int32_t pointer, const int32_t *args, size_t arg_count) {
   live(module);
+  /* TS validates pointer/args are int32 words ("Invalid original QVM
+   * callback words"); the C signature carries int32_t, so the check
+   * holds by construction. */
   if (pointer >= 0) {
     return strcmp(call->execution, "synchronous") == 0
         ? call->invoke(call->call_ctx, args, arg_count, pointer, NULL)
@@ -455,7 +459,7 @@ int32_t qa_qvm_module_invoke_source_callback(qa_qvm_module *module, qa_qvmy_func
   size_t words_length = (arg_count + 1) * 4;
   uint8_t *words = malloc(words_length);
   if (words == NULL) qa_range_error("QVM memory allocation failed");
-  int32_t trap = -1 - pointer;
+  int32_t trap = (int32_t)(0xffffffffu - (uint32_t)pointer);
   memcpy(words, &trap, 4);
   for (size_t i = 0; i < arg_count; i++) memcpy(words + (i + 1) * 4, &args[i], 4);
   source_callback_job job = {module, call, words, words_length, 0};

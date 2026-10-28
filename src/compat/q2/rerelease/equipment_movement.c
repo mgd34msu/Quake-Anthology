@@ -7,6 +7,7 @@
 #include "qa/foundation/cleanup.h"
 
 static qa_compat_q2_rerelease_guest_module *active_module = NULL;
+static void *active_scope = NULL;
 static void set_vector(uint8_t *state, const char *name, qa_vec3 value) {
   size_t off = (size_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_pmove_layout, name);
   qa_compat_q2_view_set_f32(state, off, value.x); qa_compat_q2_view_set_f32(state, off + 4, value.y); qa_compat_q2_view_set_f32(state, off + 8, value.z);
@@ -25,7 +26,7 @@ void qa_compat_q2_prepare_rerelease_equipment_movement(qa_compat_q2_rerelease_gu
 typedef struct load_ctx { qa_compat_q2_rerelease_guest_module *module; void *scope; double multiplier, reg; } load_ctx_t;
 static void load_observe(void *vctx) {
   load_ctx_t *l = vctx;
-  if (active_module != l->module) return; /* scope identity is the module slot above */
+  if (active_module != l->module || active_scope != l->scope) return;
   const qa_compat_q2_rerelease_module_options *opts = qa_compat_q2_rerelease_guest_module_get_options(l->module);
   uint8_t *xmm = opts->runner->simd_xmm; size_t off = (size_t)l->reg * 16;
   if (!xmm || off + 4 > opts->runner->simd_xmm_len) return;
@@ -44,9 +45,12 @@ void qa_compat_q2_with_rerelease_equipment_movement(qa_compat_q2_rerelease_guest
   const qa_fixed_movement_pose *pose = equipment ? equipment->pose : NULL;
   double multiplier = equipment && equipment->has_speed_multiplier ? equipment->speed_multiplier : 1;
   qa_compat_q2_rerelease_guest_module *previous = active_module;
+  void *previous_scope = active_scope;
+  int scope_token = 0;
   qa_cleanup_stack removals; qa_cleanup_stack_init(&removals);
   load_ctx_t *loads = NULL; cleanup_ctx_t *cleanups = NULL;
   active_module = module;
+  active_scope = &scope_token;
   if (!isfinite(multiplier) || multiplier <= 0) qa_range_error("Equipment movement speed must be finite and positive");
   if (multiplier != 1) {
     const qa_compat_q2_rerelease_primary_world_profile *profile = qa_compat_q2_rerelease_guest_module_require_world_profile(module);
@@ -62,7 +66,7 @@ void qa_compat_q2_with_rerelease_equipment_movement(qa_compat_q2_rerelease_guest
     for (size_t i = 0; i < n; i++) {
       qa_guest_address next = qa_compat_q2_mem_offset(memory, image, (int64_t)profile->movement.speed_loads[i].next);
       memory->check(memory->ctx, next, 1, "execute");
-      loads[i] = (load_ctx_t){module, NULL, multiplier, profile->movement.speed_loads[i].reg};
+      loads[i] = (load_ctx_t){module, &scope_token, multiplier, profile->movement.speed_loads[i].reg};
       uint64_t handle = opts->runner->observe_entry(opts->runner->ctx, next, &loads[i], load_observe);
       cleanups[i] = (cleanup_ctx_t){opts->runner, handle};
       qa_cleanup_stack_add(&removals, remove_load, &cleanups[i]);
@@ -81,4 +85,5 @@ void qa_compat_q2_with_rerelease_equipment_movement(qa_compat_q2_rerelease_guest
   qa_cleanup_stack_destroy(&removals);
   free(loads); free(cleanups);
   active_module = previous;
+  active_scope = previous_scope;
 }

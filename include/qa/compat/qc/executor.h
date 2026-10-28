@@ -37,6 +37,7 @@ typedef struct qa_compat_qc_raw_table_state {
   qa_compat_qc_machine *machine; qa_module_identity module; qa_guest_layout layout;
   void *ctx; bool (*current_actor)(void *ctx, int64_t slot, qa_actor_id *out);
   char address_space_token; qa_raw_entity_view view_storage;
+  int64_t view_slot; void *view_pair[2];
 } qa_compat_qc_raw_table_state;
 qa_raw_entity_table qa_compat_qc_create_raw_entity_table(qa_compat_qc_machine *machine, qa_module_identity module, qa_guest_layout layout, void *ctx, bool (*current_actor)(void *ctx, int64_t slot, qa_actor_id *out), qa_compat_qc_raw_table_state *storage);
 #endif

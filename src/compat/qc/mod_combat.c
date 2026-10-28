@@ -115,14 +115,16 @@ void qa_compat_qc_mod_combat_destroy(C *c) {
   qa_q1_id1_damage_binding_destroy(c->damage);
   free(c->qglobals); free(c->qfields); free(c->qfunctions); free(c->qstatements);
   free(c->incoming); free(c->entered); free(c->outcomes); free(c->has_outcome);
+  for (size_t i = 0; i < c->bind_count; i++) free(c->bind_storage[i]);
+  free(c->bind_storage);
   memset(c, 0, sizeof *c);
 }
-typedef struct { C *c; qa_compat_qc_words *words; qa_owned_actor actor; const qa_q1_id1_program_binding *binding; } BindCtx;
-static BindCtx bind_storage[512]; static size_t bind_count;
+typedef struct qa_compat_qc_mod_combat_bind BindCtx;
 static BindCtx *bind_for(C *c, qa_owned_actor actor) {
-  for (size_t i = 0; i < bind_count; i++) if (bind_storage[i].c == c && qa_same_owned_actor(bind_storage[i].actor, actor)) return &bind_storage[i];
-  if (bind_count >= 512) qa_range_error("combat binding storage exhausted");
-  bind_storage[bind_count] = (BindCtx){c, NULL, actor, NULL}; return &bind_storage[bind_count++];
+  for (size_t i = 0; i < c->bind_count; i++) if (qa_same_owned_actor(c->bind_storage[i]->actor, actor)) return c->bind_storage[i];
+  if (c->bind_count == c->bind_capacity) { size_t cap = c->bind_capacity ? c->bind_capacity*2 : 8; c->bind_storage = realloc(c->bind_storage, cap*sizeof *c->bind_storage); if (!c->bind_storage) qa_range_error("combat allocation failed"); c->bind_capacity = cap; }
+  BindCtx *cell = malloc(sizeof *cell); if (!cell) qa_range_error("combat allocation failed");
+  *cell = (BindCtx){c, NULL, actor, NULL}; c->bind_storage[c->bind_count++] = cell; return cell;
 }
 static void write_armor_inner(BindCtx *b, qa_armor_state armor) {
   C *c = b->c;
@@ -212,19 +214,17 @@ static qa_damage_request request_of(void *ctx, qa_q1_id1_damage_call call) {
   qa_compat_qc_machine *machine = c->options.machine;
   const qa_compat_qc_definition *death_type = qa_compat_qc_program_field_named(c->options.program, "deathtype");
   const char *death_text = "";
-  char death_buf[256] = "";
   if (death_type) { qa_compat_qc_words *words = qa_compat_qc_entity_memory_from_reference(machine->entities, c->options.reference(c->options.ctx, &call.target));
-    snprintf(death_buf, sizeof death_buf, "%s", qa_compat_qc_strings_get(&machine->strings, qa_compat_qc_words_int(words, death_type->offset))); death_text = death_buf; }
+    snprintf(c->death_buffer, sizeof c->death_buffer, "%s", qa_compat_qc_strings_get(&machine->strings, qa_compat_qc_words_int(words, death_type->offset))); death_text = c->death_buffer; }
   qa_body_state_result body = qa_shared_body_table_read(c->options.services->bodies, call.target);
   qa_damage_request r; memset(&r, 0, sizeof r);
   r.target = call.target; r.amount = call.amount; r.knockback = 0; r.delivery = "direct";
   r.point = body.has_value ? body.value.origin : (qa_vec3){0,0,0};
   r.attack.sequence = sequence; r.attack.weapon_provider = wp; r.attack.combat_provider = cp; r.attack.inventory_provider = ip; r.attack.movement_provider = mp;
   r.attack.time = (qa_source_time){QA_SOURCE_TIME_SECONDS, qa_compat_qc_words_float(&machine->globals, qa_compat_qc_machine_global_offset(machine, "time"))};
-  static qa_actor_id atk, inf; atk = call.attacker; inf = call.inflictor;
-  r.attack.attacker = &atk; r.attack.inflictor = &inf; r.attack.weapon = NULL;
+  c->attack_attacker = call.attacker; c->attack_inflictor = call.inflictor;
+  r.attack.attacker = &c->attack_attacker; r.attack.inflictor = &c->attack_inflictor; r.attack.weapon = NULL;
   r.attack.cause.kind = QA_ATTACK_CAUSE_Q1; r.attack.cause.death_type = death_text;
-  (void)death_buf;
   return r;
 }
 typedef struct { C *c; qa_q1qc_function_execution execute; bool entered; qa_actor_id owner; qa_pain_reaction reaction; } ReactionCtx;
@@ -270,10 +270,9 @@ static void actor_reaction(C *c, qa_pain_reaction reaction, const char *field, c
   qa_mod_named_value globals[2] = {{"self", self_v}, {"time", time_v}};
   qa_mod_source_call call = {qa_compat_qc_program_function_at(c->options.program, index)->name, args, argc, globals, 2};
   qa_compat_qc_mod_input_entry inputs[4];
-  static qa_actor_id self_id, attacker_id;
-  self_id = reaction.self.id; if (reaction.attacker) attacker_id = *reaction.attacker;
-  inputs[0]=(qa_compat_qc_mod_input_entry){"self",{"actor",0,NULL,{0,0,0},&self_id}};
-  inputs[1]=(qa_compat_qc_mod_input_entry){"attacker",{"actor",0,NULL,{0,0,0},reaction.attacker?&attacker_id:NULL}};
+  c->reaction_self = reaction.self.id; if (reaction.attacker) c->attack_attacker = *reaction.attacker;
+  inputs[0]=(qa_compat_qc_mod_input_entry){"self",{"actor",0,NULL,{0,0,0},&c->reaction_self}};
+  inputs[1]=(qa_compat_qc_mod_input_entry){"attacker",{"actor",0,NULL,{0,0,0},reaction.attacker?&c->attack_attacker:NULL}};
   inputs[2]=(qa_compat_qc_mod_input_entry){"amount",{"float",reaction.damage,NULL,{0,0,0},NULL}};
   inputs[3]=(qa_compat_qc_mod_input_entry){"time",{"float",seconds_of(c),NULL,{0,0,0},NULL}};
   c->options.invoke(c->options.ctx, call, inputs, 4);

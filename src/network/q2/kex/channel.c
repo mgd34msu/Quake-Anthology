@@ -79,7 +79,8 @@ static uint8_t *inflate_all(const uint8_t *bytes, size_t length, size_t *out_len
   int status = inflate(&stream, Z_FINISH);
   size_t produced = stream.total_out;
   inflateEnd(&stream);
-  if (status != Z_STREAM_END && status != Z_OK) {
+  /* TS inflateSync throws unless the stream ends within the bound. */
+  if (status != Z_STREAM_END) {
     free(out);
     qa_q2_throw_error("KEX decompression failed");
   }
@@ -339,7 +340,7 @@ bool qa_kex_channel_receive(qa_kex_channel *channel, const uint8_t *bytes, size_
   return expand_message(kind, joined, joined_len, out);
 }
 
-void qa_kex_channel_tick(qa_kex_channel *channel, double now) {
+bool qa_kex_channel_tick(qa_kex_channel *channel, double now) {
   if (channel->acknowledgment != 0) {
     uint8_t ack_bytes[3];
     ack_bytes[0] = (channel->acknowledgment & 2) != 0 ? 1 : 0;
@@ -361,7 +362,7 @@ void qa_kex_channel_tick(qa_kex_channel *channel, double now) {
   }
   const qa_kex_pending_packet *first = pending_head(channel);
   if (first != NULL && now - channel->retry_at >= 500) {
-    if (++channel->retries >= 40) qa_q2_throw_error("KEX LAN peer timed out");
+    if (++channel->retries >= 40) return false; /* TS timeout throw */
     channel->retry_at = now;
     (void)channel->emit(channel->emit_ctx, first->bytes, first->bytes_length);
     first = pending_head(channel);
@@ -370,4 +371,5 @@ void qa_kex_channel_tick(qa_kex_channel *channel, double now) {
     (void)qa_kex_channel_send(channel, 129, NULL, 0, 3, now);
     channel->received_at = now;
   }
+  return true;
 }

@@ -8,6 +8,7 @@
 #include "qa/compat/qc/machine.h"
 #include "qa/compat/qc/source_call.h"
 #include "qa/content/q1/quakec/id1_damage.h"
+#include "qa/content/q1/quakec/id1_program.h"
 #include "qa/contracts/execution.h"
 #include "qa/world/session/mods.h"
 void qa_compat_qc_validate_mod_combat(qa_compat_qc_program *program, qa_mod_qc_combat declaration);
@@ -32,6 +33,8 @@ typedef struct qa_compat_qc_mod_combat {
   qa_q1qc_entity_memory qentities; qa_q1qc_machine qmachine; qa_q1qc_source qsource;
   qa_damage_request *incoming; bool *entered; qa_damage_outcome *outcomes; bool *has_outcome;
   size_t incoming_count, incoming_capacity;
+  char death_buffer[256]; qa_actor_id attack_attacker, attack_inflictor, reaction_self;
+  struct qa_compat_qc_mod_combat_bind { struct qa_compat_qc_mod_combat *c; qa_compat_qc_words *words; qa_owned_actor actor; const qa_q1_id1_program_binding *binding; } **bind_storage; size_t bind_count, bind_capacity;
   struct qa_compat_qc_mod_combat *self_ref;
 } qa_compat_qc_mod_combat;
 bool qa_compat_qc_mod_combat_init(qa_compat_qc_mod_combat *c, qa_compat_qc_mod_combat_options options);

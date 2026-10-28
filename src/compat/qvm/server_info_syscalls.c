@@ -5,14 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/abi.h"
 #include "qa/compat/qvm/legacy_presentation.h"
 #include "qa/core/common_error.h"
 
-/* Mirrored QvmGameImport values (TS abi.ts). */
+/* Landed QvmGameImport values (TS abi.ts). */
 enum {
-  G_SET_CONFIGSTRING = 18,
-  G_GET_CONFIGSTRING = 19,
-  G_GET_SERVERINFO = 22,
+  G_SET_CONFIGSTRING = QA_QVM_GAME_IMPORT_G_SET_CONFIGSTRING,
+  G_GET_CONFIGSTRING = QA_QVM_GAME_IMPORT_G_GET_CONFIGSTRING,
+  G_GET_SERVERINFO = QA_QVM_GAME_IMPORT_G_GET_SERVERINFO,
 };
 
 static void capacity(int32_t size, const char *operation) {

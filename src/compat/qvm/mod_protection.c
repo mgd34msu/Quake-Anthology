@@ -27,7 +27,9 @@ void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *decla
   size_t channel_count = 0;
   const char *ids[64];
   size_t id_count = 0;
-  char occupied[64][80];
+  /* Occupied (record, offset) pairs; TS keys are full strings. */
+  const char *occupied_records[64];
+  double occupied_offsets[64];
   size_t occupied_count = 0;
   for (size_t d = 0; d < declaration->protection_count; d++) {
     const qa_qvm_mod_protection *definition = &declaration->protection[d];
@@ -53,17 +55,18 @@ void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *decla
       const qa_qvm_mod_protection_scalar *field = storage[s];
       const qa_qvm_mod_actor_record *record = NULL;
       for (size_t r = 0; r < declaration->actor_record_count; r++)
-        if (strcmp(declaration->actor_records[r].id, field->record) == 0) record = &declaration->actor_records[r];
-      char key[80];
-      snprintf(key, sizeof key, "%s:%lld", field->record, (long long)field->offset);
+        if (strcmp(declaration->actor_records[r].id, field->record) == 0) { record = &declaration->actor_records[r]; break; } /* TS Array.find: first */
       bool seen_key = false;
-      for (size_t i = 0; i < occupied_count; i++) if (strcmp(occupied[i], key) == 0) seen_key = true;
+      for (size_t i = 0; i < occupied_count; i++)
+        if (strcmp(occupied_records[i], field->record) == 0 && occupied_offsets[i] == field->offset)
+          seen_key = true;
       if (record == NULL || !isfinite(field->offset) || field->offset != trunc(field->offset) ||
           field->offset < -9007199254740991.0 || field->offset > 9007199254740991.0 || field->offset < 0 ||
           (int64_t)field->offset % 4 != 0 || field->offset + 4 > record->stride || seen_key ||
           occupied_count >= 64)
         qa_range_error("Invalid QVM protection source storage");
-      memcpy(occupied[occupied_count++], key, sizeof key);
+      occupied_records[occupied_count] = field->record;
+      occupied_offsets[occupied_count++] = field->offset;
       for (size_t f = 0; f < record->field_count; f++) {
         const qa_qvm_mod_actor_field *value = &record->fields[f];
         double width;
@@ -112,6 +115,7 @@ typedef struct stage {
   qa_actor_id actor;
   size_t watch_id;
   bool stopped;
+  uint64_t generation; /* identity across stages-array realloc */
 } stage;
 
 static actor_entry *find_entry(qa_qvm_mod_protection_runtime *protection, qa_actor_id actor) {
@@ -439,9 +443,8 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   binding.channel = protection->definition->channel;
   binding.ctx = state;
   binding.absorb = binding_absorb;
-  const qa_original_pickup_rule *pickup_ptrs[64];
-  size_t pickup_count = 0;
-  qa_original_pickup_rule flat[64];
+  const qa_original_pickup_rule **pickup_ptrs = NULL;
+  qa_original_pickup_rule *flat = NULL;
   binding.read_regular = binding_read_regular;
   binding.validate_regular = binding_validate_regular;
   binding.write_regular = binding_write_regular;
@@ -449,10 +452,14 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   binding.validate_powered = binding_validate_powered;
   binding.write_powered = binding_write_powered;
   if (protection->operations->pickups != NULL) {
-    pickup_count = protection->operations->pickups(protection->operations->ctx, actor,
-        strcmp(protection->definition->channel, "regular") == 0 ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED,
-        pickup_ptrs, 64);
-    if (pickup_count > 64) pickup_count = 64;
+    qa_protection_channel channel = strcmp(protection->definition->channel, "regular") == 0
+        ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED;
+    size_t pickup_count = protection->operations->pickups(protection->operations->ctx, actor, channel, NULL, 0);
+    pickup_ptrs = malloc((pickup_count == 0 ? 1 : pickup_count) * sizeof *pickup_ptrs);
+    flat = malloc((pickup_count == 0 ? 1 : pickup_count) * sizeof *flat);
+    if (pickup_ptrs == NULL || flat == NULL) qa_range_error("QVM memory allocation failed");
+    pickup_count = protection->operations->pickups(protection->operations->ctx, actor, channel,
+                                                    pickup_ptrs, pickup_count);
     for (size_t i = 0; i < pickup_count; i++) flat[i] = *pickup_ptrs[i];
     binding.pickups = flat;
     binding.pickup_count = pickup_count;
@@ -460,6 +467,8 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   if (strcmp(protection->definition->channel, "regular") == 0) (void)regular_state(protection, actor);
   else (void)powered_state(protection, actor);
   protection->services->bind_reservation(protection->services->ctx, found->reservation, &binding);
+  free(pickup_ptrs);
+  free(flat);
   found->bound = true;
 }
 
@@ -479,7 +488,7 @@ void qa_qvm_mod_protection_sync(qa_qvm_mod_protection_runtime *protection) {
 typedef struct observe_state {
   qa_qvm_mod_protection_runtime *self;
   qa_actor_id actor;
-  stage *stage;
+  uint64_t stage_generation;
   qa_qvm_mod_protection_runtime *regular_channel;
   qa_qvm_mod_protection_runtime *powered_channel;
   bool has_regular;
@@ -517,10 +526,10 @@ static void observe_write(void *ctx, const qa_qvm_committed_write *event) {
   if (state->has_regular) state->before_regular = after_regular;
   if (state->has_powered) state->before_powered = after_powered;
   stage *stages = self->component->stages;
-  stage *current = NULL;
+  uint64_t current = 0;
   for (size_t i = 0; i < self->component->stage_count; i++)
-    if (qa_same_actor(stages[i].actor, actor)) current = &stages[i];
-  if (current != state->stage) return;
+    if (qa_same_actor(stages[i].actor, actor)) current = stages[i].generation;
+  if (current != state->stage_generation) return;
   qa_protection_store change;
   memset(&change, 0, sizeof change);
   if (regular_change) {
@@ -586,18 +595,23 @@ qa_armor_stage_result qa_qvm_mod_protection_observe(qa_qvm_mod_protection_runtim
   stage *created = &((stage *)component->stages)[component->stage_count++];
   created->actor = actor;
   created->stopped = false;
-  size_t stage_index = component->stage_count - 1;
-  state.stage = created;
+  created->generation = ++component->stage_generation_counter;
+  uint64_t generation = created->generation;
+  state.stage_generation = generation;
   created->watch_id = qa_qvm_memory_observe_writes(protection->memory, ranges, range_count,
                                                     observe_write, &state, NULL, NULL);
   qa_armor_stage_result result = execute(execute_ctx);
   if (find_entry(protection, actor) != NULL && protection->services->is_live(protection->services->ctx, actor))
     (void)require_entry(protection, actor);
-  qa_qvm_memory_writes_unobserve(&protection->memory->writes, created->watch_id);
+  /* Re-find by generation: nested observes may realloc the array. */
   stage *stages = component->stages;
-  memmove(&stages[stage_index], &stages[stage_index + 1],
-          (component->stage_count - stage_index - 1) * sizeof *stages);
-  component->stage_count--;
+  for (size_t i = 0; i < component->stage_count; i++) {
+    if (stages[i].generation != generation) continue;
+    qa_qvm_memory_writes_unobserve(&protection->memory->writes, stages[i].watch_id);
+    memmove(&stages[i], &stages[i + 1], (component->stage_count - i - 1) * sizeof *stages);
+    component->stage_count--;
+    break;
+  }
   return result;
 }
 

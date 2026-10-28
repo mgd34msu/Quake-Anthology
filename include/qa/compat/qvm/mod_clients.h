@@ -64,6 +64,7 @@ typedef struct qa_qvm_mod_client_bindings {
   qa_mod_client_application **applications; /* borrowed pointers */
   size_t application_count;
   size_t application_capacity;
+  uint64_t generation_counter; /* entry identity generations */
 } qa_qvm_mod_client_bindings;
 
 void qa_qvm_mod_client_bindings_init(qa_qvm_mod_client_bindings *bindings,

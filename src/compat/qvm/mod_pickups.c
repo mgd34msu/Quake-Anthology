@@ -77,8 +77,10 @@ void qa_qvm_validate_mod_pickups(const qa_qvm_mod_callback_declaration *declarat
       const qa_qvm_mod_pickup_context *field = &rule->context[c];
       const qa_qvm_mod_actor_record *record = NULL;
       for (size_t rec = 0; rec < declaration->actor_record_count; rec++) {
-        if (strcmp(declaration->actor_records[rec].id, field->record) == 0)
-          record = &declaration->actor_records[rec];
+        if (strcmp(declaration->actor_records[rec].id, field->record) == 0) {
+          record = &declaration->actor_records[rec]; /* TS Array.find: first */
+          break;
+        }
       }
       bool in_clients = false;
       if (record != NULL) {
@@ -327,25 +329,23 @@ void qa_qvm_mod_pickups_bind_actor(qa_qvm_mod_pickups *pickups, qa_actor_id acto
   if (!pickups->services->resolve_owned(pickups->services->ctx, actor, &owned))
     qa_range_error("QVM pickup recipient is retired");
   entry *created = actor_entry(pickups, actor);
-  const qa_original_pickup_rule *rules[64];
-  qa_original_pickup_rule flat[64];
+  qa_original_pickup_rule *flat = malloc(
+      (pickups->definition_count == 0 ? 1 : pickups->definition_count) * sizeof *flat);
+  if (flat == NULL) qa_range_error("QVM memory allocation failed");
   size_t count = 0;
   for (size_t i = 0; i < pickups->definition_count; i++) {
     bool inventory = false;
     for (size_t w = 0; w < created->rules[i].writes.count; w++)
       if (created->rules[i].writes.values[w].kind == QA_PICKUP_RESOURCE_INVENTORY) inventory = true;
-    if (inventory && count < 64) {
-      rules[count] = &created->rules[i];
-      flat[count] = created->rules[i];
-      count++;
-    }
+    if (inventory) flat[count++] = created->rules[i];
   }
-  (void)rules;
   if (count != 0) {
     created->delegate_id = pickups->services->bind_pickup(pickups->services->ctx, owned,
                                                           pickups->owner, flat, count);
     created->has_delegate = true;
+    free(flat);
   } else {
+    free(flat);
     created->has_delegate = true;
     created->delegate_id = 0;
   }

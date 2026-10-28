@@ -1,8 +1,8 @@
 /*
  * Port of src/compat/qvm/primary-presentation-profile.ts. The
- * compatibility declaration selection is mirrored from
- * src/compat/qvm/compatibility.ts (parallel slice) over the landed
- * mounts/JSON/save-value layers. The returned profile is the landed
+ * compatibility declaration selection is the landed
+ * qa_qvm_read_compatibility_declaration (compatibility.h). The
+ * returned profile is the landed
  * content struct; when *out_owned is true its status arrays are
  * malloc'd and released by qa_qvm_equipment_presentation_free.
  * False is TS null. Async flattened to synchronous.

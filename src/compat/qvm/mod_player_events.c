@@ -142,17 +142,18 @@ typedef struct cursor {
   size_t predictable_count;
 } cursor;
 
+typedef struct observe_state {
+  qa_qvm_mod_player_events *events;
+  qa_actor_id actor;
+} observe_state;
+
 typedef struct entry {
   cursor cursor;
   qa_actor_id actor;
   int64_t address;
   size_t watch_id;
+  observe_state *observe; /* owned, freed with the entry */
 } entry;
-
-typedef struct observe_state {
-  qa_qvm_mod_player_events *events;
-  qa_actor_id actor;
-} observe_state;
 
 static int64_t ordinal(qa_qvm_mod_player_events *events) {
   if (events->next_order >= 9007199254740991LL)
@@ -235,6 +236,8 @@ void qa_qvm_mod_player_events_init(qa_qvm_mod_player_events *events,
 }
 
 void qa_qvm_mod_player_events_destroy(qa_qvm_mod_player_events *events) {
+  entry *entries = events->entries;
+  for (size_t i = 0; i < events->entry_count; i++) free(entries[i].observe);
   free(events->entries);
   memset(events, 0, sizeof *events);
 }
@@ -278,6 +281,7 @@ void qa_qvm_mod_player_events_track(qa_qvm_mod_player_events *events, qa_actor_i
   observe_state *state = xmalloc(sizeof *state);
   state->events = events;
   state->actor = actor;
+  created->observe = state;
   qa_qvm_write_range range = {address + 108, 32};
   created->watch_id = qa_qvm_memory_observe_writes(events->operations.memory, &range, 1,
                                                    observe_write, state, NULL, NULL);
@@ -437,7 +441,10 @@ void qa_qvm_mod_player_events_restore(qa_qvm_mod_player_events *events,
     if (saved != NULL) {
       for (size_t j = 0; j < saved->client_count; j++) {
         qa_actor_id referenced = events->operations.reference_saved(events->operations.ctx, saved->clients[j].actor);
-        if (qa_same_actor(referenced, players[i].actor)) cursor = &saved->clients[j];
+        if (qa_same_actor(referenced, players[i].actor)) {
+          cursor = &saved->clients[j]; /* TS Array.find: first match */
+          break;
+        }
       }
       if (cursor == NULL) qa_range_error("Missing restored player event cursor");
     }
@@ -450,6 +457,7 @@ void qa_qvm_mod_player_events_release(qa_qvm_mod_player_events *events, qa_actor
   for (size_t i = 0; i < events->entry_count; i++) {
     if (!qa_same_actor(entries[i].actor, actor)) continue;
     qa_qvm_memory_writes_unobserve(&events->operations.memory->writes, entries[i].watch_id);
+    free(entries[i].observe);
     memmove(&entries[i], &entries[i + 1], (events->entry_count - i - 1) * sizeof *entries);
     events->entry_count--;
     return;
@@ -458,7 +466,10 @@ void qa_qvm_mod_player_events_release(qa_qvm_mod_player_events *events, qa_actor
 
 void qa_qvm_mod_player_events_close(qa_qvm_mod_player_events *events) {
   entry *entries = events->entries;
-  for (size_t i = 0; i < events->entry_count; i++)
+  for (size_t i = 0; i < events->entry_count; i++) {
     qa_qvm_memory_writes_unobserve(&events->operations.memory->writes, entries[i].watch_id);
+    free(entries[i].observe);
+    entries[i].observe = NULL;
+  }
   events->entry_count = 0;
 }

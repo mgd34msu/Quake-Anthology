@@ -61,6 +61,7 @@ static const qa_bot_weapon_rec *weapon_list(const qa_bot_knowledge *k, size_t *n
 void qa_bot_knowledge_replace_weapons(qa_bot_knowledge *k, qa_bot_weapon_rec *w, size_t n) { k->replaced = w; k->replaced_count = n; }
 const qa_bot_skill_settings *qa_bot_knowledge_get_skill(const qa_bot_knowledge *k, const char *name) { const qa_bot_skill_settings *r = NULL; for (size_t i = 0; i < k->settings_r.skill_count; i++) if (!strcmp(k->settings_r.skills[i].skill, name)) r = &k->settings_r.skills[i]; return r;
 }
+const char *qa_bot_knowledge_skill_name(const qa_bot_knowledge *k, size_t index, size_t *out_count) { if (out_count) *out_count = k->settings_r.skill_count; return index < k->settings_r.skill_count ? k->settings_r.skills[index].skill : NULL; }
 const qa_bot_item_rec *qa_bot_knowledge_get_item(const qa_bot_knowledge *k, const char *cn) { const qa_bot_item_rec *r = NULL; for (size_t i = 0; i < k->item_count; i++) if (!strcmp(k->items[i].entry->name, cn)) r = &k->items[i]; return r;
 }
 const qa_monster_entry *qa_bot_knowledge_get_monster(const qa_bot_knowledge *k, const char *cn) { const qa_monster_entry *r = NULL; for (size_t i = 0; i < k->monsters_r.entry_count; i++) if (!strcmp(k->monsters_r.entries[i].classname, cn)) r = &k->monsters_r.entries[i]; return r;

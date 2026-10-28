@@ -47,7 +47,7 @@ static qa_q1_client_visibility_scene visibility_of(void *ctx) {
   return scene;
 }
 typedef struct { const qa_compat_qc_routed_message *entries; size_t count; } ModCopyResolve;
-qa_actor_id qa_mod_messages_copy_resolve(void *ctx, qa_saved_actor_id saved) {
+static qa_actor_id copy_resolve(void *ctx, qa_saved_actor_id saved) {
   ModCopyResolve *cr = ctx;
   for (size_t i = 0; i < cr->count; i++) if (cr->entries[i].has_actor && cr->entries[i].actor.slot == (int64_t)saved.slot && cr->entries[i].actor.generation == (int64_t)saved.generation) return cr->entries[i].actor;
   qa_range_error("signon copy lost its source actor");
@@ -59,7 +59,7 @@ static void qw_route(void *ctx, const qa_compat_qc_routed_message *entries, size
     qa_save_value *tree = qa_compat_qc_broadcast_capture_entries(&m->messages, entries, count);
     ModCopyResolve cr = {entries, count};
     size_t copied_count = 0;
-    qa_compat_qc_routed_message *copied = qa_compat_qc_broadcast_restore_entries(&m->messages, tree, (qa_compat_qc_actor_resolver){&cr, qa_mod_messages_copy_resolve}, &copied_count);
+    qa_compat_qc_routed_message *copied = qa_compat_qc_broadcast_restore_entries(&m->messages, tree, (qa_compat_qc_actor_resolver){&cr, copy_resolve}, &copied_count);
     qa_save_value_free(tree);
     for (size_t i = 0; i < copied_count; i++) { if(m->signon_count==m->signon_capacity){ size_t c=m->signon_capacity?m->signon_capacity*2:8; m->signon=realloc(m->signon,c*sizeof *m->signon); if(!m->signon) qa_range_error("mod messages allocation failed"); m->signon_capacity=c; }
       m->signon[m->signon_count++] = copied[i]; }
@@ -253,6 +253,7 @@ void qa_compat_qc_mod_messages_restore(M *m, const qa_save_reader *reader, qa_co
 }
 void qa_compat_qc_mod_messages_close(M *m) {
   if (m->has_unsubscribe) { m->unsubscribe.invoke(m->unsubscribe.ctx); m->has_unsubscribe = false; }
+  for (size_t i = 0; i < m->signon_count; i++) qa_quakeworld_message_destroy(&m->signon[i].message);
   m->signon_count = 0; m->admitted_count = 0;
   if (m->actors) qa_session_actor_registry_off_release(m->actors, m->release_id);
 }

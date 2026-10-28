@@ -100,7 +100,7 @@ static bool live_fn(void *ctx) {
 bool qa_compat_qc_mod_client_bindings_frame(B *b, int64_t slot, qa_frame_context frame) {
   if (slot < 1 || slot > (int64_t)b->operations.declaration->maximum) return false;
   qa_compat_qc_mod_client_entry *entry = NULL;
-  for (size_t i = 0; i < b->entry_count; i++) if (b->entries[i].slot == slot) entry = &b->entries[i];
+  for (size_t i = 0; i < b->entry_count; i++) if (b->entries[i].slot == slot) { entry = &b->entries[i]; break; }
   if (!entry) return false;
   LiveCtx live = {b, entry};
   if (live_fn(&live) && b->operations.think) b->operations.think(b->operations.ctx, entry->actor, frame, &live, live_fn);

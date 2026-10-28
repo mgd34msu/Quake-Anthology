@@ -10,8 +10,8 @@ qa_bounds qa_compat_q2_rerelease_link_bounds(qa_body_state state, double solid) 
     double extent = fabs(min.x);
     const double vals[] = {min.y, min.z, max.x, max.y, max.z};
     for (int i = 0; i < 5; i++) extent = fmax(extent, fabs(vals[i]));
-    min = (qa_vec3){(float)-extent, (float)-extent, (float)-extent};
-    max = (qa_vec3){(float)extent, (float)extent, (float)extent};
+    min = (qa_vec3){-extent, -extent, -extent};
+    max = (qa_vec3){extent, extent, extent};
   }
   qa_bounds b;
   b.min = (qa_vec3){fr(fr(state.origin.x + min.x) - 1), fr(fr(state.origin.y + min.y) - 1), fr(fr(state.origin.z + min.z) - 1)};

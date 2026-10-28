@@ -108,7 +108,9 @@ void qa_qvmy_validate_item_storage(const qa_qvm_item_storage *storage, size_t st
 typedef struct private_field_state {
   const qa_save_reader *reader;
   const qa_qvmy_inventory_records *records;
-  char (*keys)[80];
+  /* Occupied (record, offset) pairs; TS keys are full strings. */
+  const char **key_records;
+  double *key_offsets;
   const char **usages;
   size_t count;
   size_t capacity;
@@ -118,22 +120,24 @@ static void private_field_check(void *ctx, const qa_qvm_item_field *field, const
   private_field_state *state = ctx;
   int64_t bytes = strcmp(field->record, "client") == 0 ? state->records->client_stride
                   : strcmp(field->record, "entity") == 0 ? state->records->entity_stride : 0;
-  char key[80];
-  snprintf(key, sizeof key, "%s:%lld", field->record, (long long)field->offset);
   const char *previous = NULL;
   for (size_t i = 0; i < state->count; i++)
-    if (strcmp(state->keys[i], key) == 0) previous = state->usages[i];
+    if (strcmp(state->key_records[i], field->record) == 0 && state->key_offsets[i] == field->offset)
+      previous = state->usages[i];
   if (!isfinite(field->offset) || field->offset != trunc(field->offset) || field->offset < 0 ||
       (int64_t)field->offset % 4 != 0 || field->offset + 4 > (double)bytes ||
       (previous != NULL && !(strcmp(previous, "capacity") == 0 && strcmp(usage, "capacity") == 0)))
     qa_save_reader_fail(state->reader, "private inventory field is outside or overlaps its source record");
   if (state->count == state->capacity) {
     state->capacity = state->capacity == 0 ? 8 : state->capacity * 2;
-    state->keys = realloc(state->keys, state->capacity * sizeof *state->keys);
+    state->key_records = realloc(state->key_records, state->capacity * sizeof *state->key_records);
+    state->key_offsets = realloc(state->key_offsets, state->capacity * sizeof *state->key_offsets);
     state->usages = realloc(state->usages, state->capacity * sizeof *state->usages);
-    if (state->keys == NULL || state->usages == NULL) qa_range_error("QVM memory allocation failed");
+    if (state->key_records == NULL || state->key_offsets == NULL || state->usages == NULL)
+      qa_range_error("QVM memory allocation failed");
   }
-  memcpy(state->keys[state->count], key, sizeof key);
+  state->key_records[state->count] = field->record;
+  state->key_offsets[state->count] = field->offset;
   state->usages[state->count++] = usage;
 }
 
@@ -212,11 +216,12 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       for (size_t j = 0; j < unique; j++) if (strcmp(items[j], items[i]) == 0) seen = true;
       if (!seen) items[unique++] = items[i];
     }
-    private_field_state state = {reader, records, NULL, NULL, 0, 0};
+    private_field_state state = {reader, records, NULL, NULL, NULL, 0, 0};
     qa_qvmy_validate_item_storage(out->storage, count, items, unique, artifact->instructions,
                                   artifact->instruction_count, (int64_t)artifact->initialized_data_length,
                                   artifact->bss_length, private_field_check, &state);
-    free(state.keys);
+    free(state.key_records);
+    free(state.key_offsets);
     free(state.usages);
     free(items);
     qa_save_reader_destroy(&storage_reader);

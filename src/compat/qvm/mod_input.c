@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "qa/core/binary/index.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
@@ -20,7 +19,7 @@ static void *xmalloc(size_t size) {
 
 qa_q3_wire_user_command qa_qvmy_read_user_command(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile) {
   if (view->length < QVM_USER_COMMAND_BYTES)
-    qa_binary_error("QVM usercmd_t", 0, "record requires %d bytes", QVM_USER_COMMAND_BYTES);
+    qa_range_error("QVM client record requires %d bytes", QVM_USER_COMMAND_BYTES);
   bool modern = profile == NULL || strcmp(profile, "q3-modern") == 0;
   int buttons_offset = modern ? 16 : 4;
   int angles = modern ? 4 : 8;
@@ -74,9 +73,9 @@ static int64_t resolve_address(const qa_qvm_mod_input_pointer *pointer, qa_qvmy_
     size_t offset = (size_t)(int64_t)pointer->index * 4;
     if (offset > call->words_length || call->words_length - offset < 4)
       qa_range_error("Offset is outside the bounds of the DataView");
-    int32_t value;
-    memcpy(&value, call->words + offset, 4);
-    address = value;
+    uint32_t bits = (uint32_t)call->words[offset] | ((uint32_t)call->words[offset + 1] << 8) |
+                    ((uint32_t)call->words[offset + 2] << 16) | ((uint32_t)call->words[offset + 3] << 24);
+    address = (int32_t)bits;
   } else {
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(call->guest, (int64_t)pointer->address, 4, &view);
@@ -84,7 +83,7 @@ static int64_t resolve_address(const qa_qvm_mod_input_pointer *pointer, qa_qvmy_
   }
   for (size_t i = 0; i < pointer->indirections.count; i++) {
     qa_qvm_writable_view view;
-    qa_qvm_memory_view(call->guest, (int32_t)(address + (int64_t)pointer->indirections.values[i]), 4, 0, &view);
+    qa_qvm_memory_view(call->guest, address + (int64_t)pointer->indirections.values[i], 4, 0, &view);
     address = qa_qvm_writable_view_get_int32(&view, 0, true);
   }
   return address + (int64_t)pointer->offset;
@@ -173,7 +172,7 @@ static void process_commands(qa_qvm_mod_input *input, capture *capture, command_
   for (size_t c = 0; c < count; c++) {
     command_capture *command = &commands[c];
     qa_qvm_writable_view view;
-    qa_qvm_memory_view(input->operations.module->memory, (int32_t)command->address, QVM_USER_COMMAND_BYTES, 0, &view);
+    qa_qvm_memory_view(input->operations.module->memory, command->address, QVM_USER_COMMAND_BYTES, 0, &view);
     qa_q3_wire_user_command before = command->before;
     qa_q3_wire_user_command after = qa_qvmy_read_user_command(&view, input->operations.abi_profile);
     command->before = after;
@@ -215,10 +214,19 @@ static void process_commands(qa_qvm_mod_input *input, capture *capture, command_
   }
 }
 
+static bool same_number(double a, double b) {
+  /* isDeepStrictEqual: NaN equals NaN, +0 differs from -0. */
+  if (a != a && b != b) return true;
+  uint64_t x, y;
+  memcpy(&x, &a, sizeof x);
+  memcpy(&y, &b, sizeof y);
+  return x == y;
+}
+
 static bool output_equal(qa_mod_client_input_output a, qa_mod_client_input_output b) {
-  return a.kind == b.kind && strcmp(a.input, b.input) == 0 && a.number_value == b.number_value &&
-         a.vector_value.x == b.vector_value.x && a.vector_value.y == b.vector_value.y &&
-         a.vector_value.z == b.vector_value.z;
+  return a.kind == b.kind && strcmp(a.input, b.input) == 0 && same_number(a.number_value, b.number_value) &&
+         same_number(a.vector_value.x, b.vector_value.x) && same_number(a.vector_value.y, b.vector_value.y) &&
+         same_number(a.vector_value.z, b.vector_value.z);
 }
 
 static void reconcile(qa_qvm_mod_input *input, capture *capture, bool publish) {
@@ -258,24 +266,23 @@ static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
   capture *capture = &captures[input->capture_count - 1];
   if (!capture_active(input, capture)) return proceed_call(call);
   qa_actor_id actor = capture->application->identity.actor;
-  const qa_qvm_mod_input_output *selected[64];
+  const qa_qvm_mod_input_output **selected = xmalloc(group->count * sizeof *selected);
   size_t selected_count = 0;
   for (size_t i = 0; i < group->count; i++) {
     const qa_qvm_mod_input_output *output = group->declarations[i];
     if (is_selected(capture, output) &&
         resolve_address(&output->actor_pointer, call) ==
-            input->operations.pointer(input->operations.ctx, actor, output->actor_record) &&
-        selected_count < 64)
+            input->operations.pointer(input->operations.ctx, actor, output->actor_record))
       selected[selected_count++] = output;
   }
-  command_capture local[16];
+  command_capture *local = xmalloc(selected_count * sizeof *local);
   size_t local_count = 0;
   size_t start = capture->command_count;
   for (size_t i = 0; i < selected_count; i++) {
-    if (strcmp(selected[i]->kind, "command") != 0 || local_count >= 16) continue;
+    if (strcmp(selected[i]->kind, "command") != 0) continue;
     int64_t address = resolve_address(&selected[i]->command, call);
     qa_qvm_writable_view view;
-    qa_qvm_memory_view(call->guest, (int32_t)address, QVM_USER_COMMAND_BYTES, 0, &view);
+    qa_qvm_memory_view(call->guest, address, QVM_USER_COMMAND_BYTES, 0, &view);
     local[local_count].output = selected[i];
     local[local_count].address = address;
     local[local_count].before = qa_qvmy_read_user_command(&view, input->operations.abi_profile);
@@ -310,6 +317,8 @@ static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
   }
   /* Remove this invocation's commands from the capture list. */
   capture->command_count = start;
+  free(selected);
+  free(local);
   return result;
 }
 
@@ -317,14 +326,18 @@ void qa_qvm_mod_input_init(qa_qvm_mod_input *input, const qa_qvm_mod_input_opera
                            const qa_qvm_mod_input_output *outputs, size_t output_count) {
   memset(input, 0, sizeof *input);
   input->operations = *operations;
-  double entries_seen[256];
+  double *entries_seen = xmalloc(output_count * sizeof *entries_seen);
   size_t entry_count = 0;
   for (size_t i = 0; i < output_count; i++) {
     const qa_qvm_mod_input_output *output = &outputs[i];
     const char *record_id = strcmp(output->kind, "field") == 0 ? output->record : output->actor_record;
     const qa_qvm_mod_actor_record *record = NULL;
-    for (size_t r = 0; r < operations->record_count; r++)
-      if (strcmp(operations->records[r].id, record_id) == 0) record = &operations->records[r];
+    for (size_t r = 0; r < operations->record_count; r++) {
+      if (strcmp(operations->records[r].id, record_id) == 0) {
+        record = &operations->records[r]; /* TS Array.find: first */
+        break;
+      }
+    }
     if (record == NULL) qa_range_error("QVM input output names an undeclared actor record");
     if (strcmp(output->kind, "field") == 0) {
       double size = strcmp(output->value_input, "view-angles") == 0 ? 12 : 4;
@@ -348,11 +361,14 @@ void qa_qvm_mod_input_init(qa_qvm_mod_input *input, const qa_qvm_mod_input_opera
     }
     bool seen = false;
     for (size_t e = 0; e < entry_count; e++) if (entries_seen[e] == output->entry) seen = true;
-    if (!seen && entry_count < 256) entries_seen[entry_count++] = output->entry;
+    if (!seen) entries_seen[entry_count++] = output->entry;
   }
   input->removal_ids = xmalloc(entry_count * sizeof *input->removal_ids);
+  input->groups = xmalloc(entry_count * sizeof *input->groups);
+  input->group_count = entry_count;
   for (size_t e = 0; e < entry_count; e++) {
     declaration_group *group = xmalloc(sizeof *group);
+    input->groups[e] = group;
     group->input = input;
     group->outputs = outputs;
     group->declarations = xmalloc(output_count * sizeof *group->declarations);
@@ -368,9 +384,18 @@ void qa_qvm_mod_input_init(qa_qvm_mod_input *input, const qa_qvm_mod_input_opera
     input->removal_ids[input->removal_count++] =
         qa_qvm_module_bind_invocation(operations->module, &reference, invoke_hook, group);
   }
+  free(entries_seen);
 }
 
 void qa_qvm_mod_input_destroy(qa_qvm_mod_input *input) {
+  if (input->groups != NULL) {
+    for (size_t i = 0; i < input->group_count; i++) {
+      declaration_group *group = input->groups[i];
+      free((void *)group->declarations);
+      free(group);
+    }
+    free(input->groups);
+  }
   free(input->removal_ids);
   free(input->applications);
   capture *captures = input->captures;

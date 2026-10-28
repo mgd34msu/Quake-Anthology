@@ -1,12 +1,39 @@
 /* Port of src/network/q2/mvd-profile.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/mvd_profile.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/message.h"
+
+/* JS Number(text): trimmed, empty is 0, full parse or NaN. */
+static double js_number(const char *text) {
+  while (*text != '\0' && isspace((unsigned char)*text)) text++;
+  size_t n = strlen(text);
+  while (n > 0 && isspace((unsigned char)text[n - 1])) n--;
+  if (n == 0) return 0;
+  char *copy = (char *)malloc(n + 1);
+  if (copy == NULL) return NAN;
+  memcpy(copy, text, n);
+  copy[n] = '\0';
+  double value;
+  if (n > 2 && copy[0] == '0' && (copy[1] == 'b' || copy[1] == 'B' ||
+                                  copy[1] == 'o' || copy[1] == 'O')) {
+    int base = (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(copy + 2, &end, base);
+    value = end != copy + 2 && *end == '\0' ? (double)parsed : NAN;
+  } else {
+    char *end = NULL;
+    value = strtod(copy, &end);
+    if (end == copy || *end != '\0') value = NAN;
+  }
+  free(copy);
+  return value;
+}
 
 void qa_q2_get_mvd_profile(double revision, double flags, qa_q2_mvd_profile *out) {
   if (!((revision >= 2009 && revision <= 2013) || revision == 3038)) {
@@ -144,9 +171,7 @@ bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
   out->config_strings = entries;
   out->config_string_count = count;
   const char *max_str = qa_q2_mvd_header_config_string(out, out->profile.max_clients_index);
-  double max_clients = max_str != NULL ? strtod(max_str, NULL) : NAN;
-  /* TS Number(undefined) is NaN; Number("") is 0. strtod("") is 0. */
-  if (max_str != NULL && max_str[0] == '\0') max_clients = 0;
+  double max_clients = max_str != NULL ? js_number(max_str) : NAN;
   if (max_clients != trunc(max_clients) || max_clients < 1 || max_clients > 256 ||
       dummy < -1 || dummy >= max_clients) {
     qa_q2_throw_error("Invalid MVD player limits");

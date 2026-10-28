@@ -144,25 +144,28 @@ void qa_qvm_validate_mod_presentation(const qa_qvmy_artifact *artifact, qa_modul
       qa_range_error("Source mesh shader field differs from the declared refEntity ABI");
     if (scene->snapshot_count == 0) qa_range_error("Source scene requires original snapshot processing");
   }
-  const qa_qvm_presentation_call *checks[64];
+  size_t check_capacity = base->initialize_count + base->refresh_count + base->frame_count +
+      (base->hud != NULL ? base->hud->frame_count : 0) +
+      (!declaration->is_scene ? declaration->as.player_events->project_count + 1
+                              : declaration->as.scene->snapshot_count);
+  const qa_qvm_presentation_call **checks = malloc((check_capacity == 0 ? 1 : check_capacity) * sizeof *checks);
+  bool *initializing_flags = malloc((check_capacity == 0 ? 1 : check_capacity) * sizeof *initializing_flags);
+  if (checks == NULL || initializing_flags == NULL) qa_range_error("QVM memory allocation failed");
   size_t check_count = 0;
-  bool initializing_flags[64];
-  for (size_t i = 0; i < base->initialize_count && check_count < 64; i++) { checks[check_count] = &base->initialize[i]; initializing_flags[check_count++] = true; }
-  for (size_t i = 0; i < base->refresh_count && check_count < 64; i++) { checks[check_count] = &base->refresh[i]; initializing_flags[check_count++] = true; }
-  for (size_t i = 0; i < base->frame_count && check_count < 64; i++) { checks[check_count] = &base->frame[i]; initializing_flags[check_count++] = true; }
+  for (size_t i = 0; i < base->initialize_count; i++) { checks[check_count] = &base->initialize[i]; initializing_flags[check_count++] = true; }
+  for (size_t i = 0; i < base->refresh_count; i++) { checks[check_count] = &base->refresh[i]; initializing_flags[check_count++] = true; }
+  for (size_t i = 0; i < base->frame_count; i++) { checks[check_count] = &base->frame[i]; initializing_flags[check_count++] = true; }
   if (base->hud != NULL)
-    for (size_t i = 0; i < base->hud->frame_count && check_count < 64; i++) { checks[check_count] = &base->hud->frame[i]; initializing_flags[check_count++] = true; }
+    for (size_t i = 0; i < base->hud->frame_count; i++) { checks[check_count] = &base->hud->frame[i]; initializing_flags[check_count++] = true; }
   if (!declaration->is_scene) {
-    for (size_t i = 0; i < declaration->as.player_events->project_count && check_count < 64; i++) {
+    for (size_t i = 0; i < declaration->as.player_events->project_count; i++) {
       checks[check_count] = &declaration->as.player_events->project[i];
       initializing_flags[check_count++] = false;
     }
-    if (check_count < 64) {
-      checks[check_count] = &declaration->as.player_events->event;
-      initializing_flags[check_count++] = false;
-    }
+    checks[check_count] = &declaration->as.player_events->event;
+    initializing_flags[check_count++] = false;
   } else {
-    for (size_t i = 0; i < declaration->as.scene->snapshot_count && check_count < 64; i++) {
+    for (size_t i = 0; i < declaration->as.scene->snapshot_count; i++) {
       checks[check_count] = &declaration->as.scene->snapshots[i];
       initializing_flags[check_count++] = true;
     }
@@ -198,6 +201,8 @@ void qa_qvm_validate_mod_presentation(const qa_qvmy_artifact *artifact, qa_modul
       }
     }
   }
+  free(checks);
+  free(initializing_flags);
 }
 
 typedef struct slot_actor {

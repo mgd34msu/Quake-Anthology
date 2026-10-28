@@ -27,15 +27,18 @@ bool qa_q2_prediction_history_init(qa_q2_prediction_history *history,
   history->ground_size = ground_size;
   history->commands = (uint8_t *)calloc(cap, command_size > 0 ? command_size : 1);
   history->command_present = (bool *)calloc(cap, sizeof(bool));
+  history->command_sequence = (int64_t *)calloc(cap, sizeof(int64_t));
   history->origins = (qa_vec3 *)calloc(cap, sizeof(qa_vec3));
   history->origin_present = (bool *)calloc(cap, sizeof(bool));
+  history->origin_sequence = (int64_t *)calloc(cap, sizeof(int64_t));
   history->last_ground = (uint8_t *)calloc(1, ground_size > 0 ? ground_size : 1);
   history->scratch_state = (uint8_t *)calloc(1, state_size > 0 ? state_size : 1);
   history->scratch_ground = (uint8_t *)calloc(1, ground_size > 0 ? ground_size : 1);
   history->scratch_state2 = (uint8_t *)calloc(1, state_size > 0 ? state_size : 1);
   history->scratch_ground2 = (uint8_t *)calloc(1, ground_size > 0 ? ground_size : 1);
   if (history->commands == NULL || history->command_present == NULL ||
-      history->origins == NULL || history->origin_present == NULL ||
+      history->command_sequence == NULL || history->origins == NULL ||
+      history->origin_present == NULL || history->origin_sequence == NULL ||
       history->last_ground == NULL || history->scratch_state == NULL ||
       history->scratch_ground == NULL || history->scratch_state2 == NULL ||
       history->scratch_ground2 == NULL) {
@@ -48,8 +51,10 @@ bool qa_q2_prediction_history_init(qa_q2_prediction_history *history,
 void qa_q2_prediction_history_destroy(qa_q2_prediction_history *history) {
   free(history->commands);
   free(history->command_present);
+  free(history->command_sequence);
   free(history->origins);
   free(history->origin_present);
+  free(history->origin_sequence);
   free(history->last_ground);
   free(history->scratch_state);
   free(history->scratch_ground);
@@ -58,16 +63,25 @@ void qa_q2_prediction_history_destroy(qa_q2_prediction_history *history) {
   memset(history, 0, sizeof *history);
 }
 
-/* TS eviction: drop keys <= sequence - capacity. Sequence keys are
- * recovered from slot occupancy by scanning the retained window. */
-static void evict_before(qa_q2_prediction_history *history, int64_t sequence,
-                         bool commands) {
-  (void)history;
-  (void)sequence;
-  (void)commands;
-  /* Ring slots alias by sequence mod capacity, so stale entries are
-   * overwritten exactly when the TS Map would have dropped them;
-   * presence is validated by callers through the same window. */
+/* TS eviction on remember/sent: drop keys <= sequence - capacity.
+ * Slots also carry their sequence, so an aliased slot never answers
+ * for a different (older or newer) sequence the TS Map lacks. */
+static bool command_at(const qa_q2_prediction_history *h, int64_t sequence) {
+  size_t slot = slot_of(sequence, h->capacity);
+  return h->command_present[slot] && h->command_sequence[slot] == sequence;
+}
+static bool origin_at(const qa_q2_prediction_history *h, int64_t sequence) {
+  size_t slot = slot_of(sequence, h->capacity);
+  return h->origin_present[slot] && h->origin_sequence[slot] == sequence;
+}
+static void evict_before(qa_q2_prediction_history *history, int64_t sequence) {
+  int64_t limit = sequence - (int64_t)history->capacity;
+  for (size_t i = 0; i < history->capacity; i++) {
+    if (history->command_present[i] && history->command_sequence[i] <= limit)
+      history->command_present[i] = false;
+    if (history->origin_present[i] && history->origin_sequence[i] <= limit)
+      history->origin_present[i] = false;
+  }
 }
 
 void qa_q2_prediction_history_remember(qa_q2_prediction_history *history,
@@ -78,13 +92,14 @@ void qa_q2_prediction_history_remember(qa_q2_prediction_history *history,
            history->command_size);
   }
   history->command_present[slot] = true;
-  evict_before(history, sequence, true);
+  history->command_sequence[slot] = sequence;
+  evict_before(history, sequence);
 }
 
 qa_vec3 qa_q2_prediction_history_acknowledge(qa_q2_prediction_history *history,
                                              int64_t sequence, qa_vec3 origin) {
   size_t slot = slot_of(sequence, history->capacity);
-  if (!history->origin_present[slot]) {
+  if (!origin_at(history, sequence)) {
     history->error = (qa_vec3){0, 0, 0};
     return history->error;
   }
@@ -99,6 +114,7 @@ qa_vec3 qa_q2_prediction_history_acknowledge(qa_q2_prediction_history *history,
   }
   history->origins[slot] = origin;
   history->origin_present[slot] = true;
+  history->origin_sequence[slot] = sequence;
   return history->error;
 }
 
@@ -131,7 +147,7 @@ void qa_q2_prediction_history_replay(qa_q2_prediction_history *history,
                              : current_sequence;
   for (int64_t sequence = acknowledged + 1; sequence <= last_command; sequence++) {
     size_t slot = slot_of(sequence, history->capacity);
-    if (!history->command_present[slot]) return;
+    if (!command_at(history, sequence)) return;
     const void *command = history->commands + slot * history->command_size;
     qa_q2_prediction_sample next;
     memset(&next, 0, sizeof next);
@@ -150,6 +166,7 @@ void qa_q2_prediction_history_replay(qa_q2_prediction_history *history,
     sample.ground = cur_ground;
     history->origins[slot] = sample.origin;
     history->origin_present[slot] = true;
+    history->origin_sequence[slot] = sequence;
   }
   if (history->profile == QA_Q2_PREDICTION_RERELEASE &&
       pending_command_or_null != NULL) {
@@ -171,6 +188,7 @@ void qa_q2_prediction_history_replay(qa_q2_prediction_history *history,
     size_t slot = slot_of(current_sequence + 1, history->capacity);
     history->origins[slot] = sample.origin;
     history->origin_present[slot] = true;
+    history->origin_sequence[slot] = current_sequence + 1;
   }
   int64_t previous_key = history->profile == QA_Q2_PREDICTION_CLASSIC
                              ? current_sequence - 2
@@ -178,7 +196,7 @@ void qa_q2_prediction_history_replay(qa_q2_prediction_history *history,
                                    ? current_sequence - 1
                                    : current_sequence;
   size_t prev_slot = slot_of(previous_key, history->capacity);
-  if (history->origin_present[prev_slot]) {
+  if (origin_at(history, previous_key)) {
     double delta = sample.origin.z - history->origins[prev_slot].z;
     if (history->profile == QA_Q2_PREDICTION_CLASSIC) {
       if (delta > 63.0 / 8.0 && delta < 20 && sample.on_ground) {
@@ -228,7 +246,9 @@ bool qa_q2_command_packet_history_init(qa_q2_command_packet_history *history,
   history->entries =
       (qa_q2_command_packet_entry *)calloc(cap, sizeof(qa_q2_command_packet_entry));
   history->present = (bool *)calloc(cap, sizeof(bool));
-  if (history->entries == NULL || history->present == NULL) {
+  history->sequence = (int64_t *)calloc(cap, sizeof(int64_t));
+  if (history->entries == NULL || history->present == NULL ||
+      history->sequence == NULL) {
     qa_q2_command_packet_history_destroy(history);
     return false;
   }
@@ -237,6 +257,7 @@ bool qa_q2_command_packet_history_init(qa_q2_command_packet_history *history,
 void qa_q2_command_packet_history_destroy(qa_q2_command_packet_history *history) {
   free(history->entries);
   free(history->present);
+  free(history->sequence);
   memset(history, 0, sizeof *history);
 }
 void qa_q2_command_packet_history_sent(qa_q2_command_packet_history *history,
@@ -246,12 +267,19 @@ void qa_q2_command_packet_history_sent(qa_q2_command_packet_history *history,
   history->entries[slot].command_number = command_number;
   history->entries[slot].sent_at = sent_at;
   history->present[slot] = true;
+  history->sequence[slot] = packet_sequence;
+  int64_t limit = packet_sequence - (int64_t)history->capacity;
+  for (size_t i = 0; i < history->capacity; i++) {
+    if (history->present[i] && history->sequence[i] <= limit)
+      history->present[i] = false;
+  }
 }
 bool qa_q2_command_packet_history_acknowledged(
     const qa_q2_command_packet_history *history, int64_t packet_sequence,
     qa_q2_command_packet_entry *out) {
   size_t slot = slot_of(packet_sequence, history->capacity);
-  if (!history->present[slot]) return false;
+  if (!history->present[slot] || history->sequence[slot] != packet_sequence)
+    return false;
   *out = history->entries[slot];
   return true;
 }

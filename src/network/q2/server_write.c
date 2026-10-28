@@ -240,7 +240,7 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
       if (s->attenuation != 1) flags |= 2;
       if (s->delay_seconds != 0) flags |= 16;
       int32_t channel = ((int32_t)s->entity << 3) | (int32_t)s->channel;
-      if (kex && (uint32_t)channel > 65535u) flags |= 64;
+      if (kex && channel > 65535) flags |= 64;
       qa_q2_msg_write_byte(&m, 9);
       qa_q2_msg_write_byte(&m, (double)flags);
       if (kex || (flags & 32) != 0) qa_q2_msg_write_short(&m, s->index);

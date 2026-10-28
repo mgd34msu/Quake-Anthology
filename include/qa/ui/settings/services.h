@@ -78,6 +78,7 @@ typedef struct qa_ui_native_language_settings {
   void (*failed)(void *ctx, const char *message);
   void *failed_ctx;
   qa_ui_setting_binding binding;
+  qa_ui_choice *choice_view; /* id/label view of available */
 } qa_ui_native_language_settings;
 /** available is copied (array); choice ctxs are borrowed. */
 bool qa_ui_native_language_settings_init(

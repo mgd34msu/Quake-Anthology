@@ -33,6 +33,8 @@ static qa_actor_id_result view_current_actor(void *ctx) {
 
 static qa_raw_entity_view at_slot(void *ctx, double slot_value) {
   qa_qvm_raw_entity_table_context *context = ctx;
+  if (slot_value < 0.0 || slot_value >= 9007199254740991.0)
+    qa_range_error("QVM entity slot exceeds table capacity");
   int64_t slot = (int64_t)slot_value;
   if (slot_value != (double)slot || slot < 0 || slot >= context->capacity)
     qa_range_error("QVM entity slot exceeds table capacity");

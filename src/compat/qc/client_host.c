@@ -1,6 +1,7 @@
 /* Port of src/compat/qc/client-host.ts. GPL-2.0-or-later. */
 #include "qa/compat/qc/client_host.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include "qa/world/gameplay/q1_aim.h"
 static qa_q1_visibility_client client_at(void *ctx, int64_t slot) {
@@ -76,11 +77,14 @@ static void b_aim(void *ctx, qa_compat_qc_machine *m) {
   qa_body_state_result body = qa_shared_body_table_read(w->options.bodies, actor.id);
   if (!body.has_value) { qa_compat_qc_machine_fail(m, "QC aim actor has no body"); }
   size_t count = 0; const qa_compat_qc_aim_target_ref *targets = s->targets(s->ctx, &count);
-  qa_actor_id ids[256]; size_t n = count < 256 ? count : 256;
-  for (size_t i = 0; i < n; i++) ids[i] = targets[i].actor;
+  qa_actor_id *ids = malloc((count ? count : 1) * sizeof *ids);
+  if (!ids) { qa_compat_qc_machine_fail(m, "aim target allocation failed"); }
+  for (size_t i = 0; i < count; i++) ids[i] = targets[i].actor;
   AimCtx c = {s, m, ref, actor.id, targets, count};
-  qa_q1_aim_targets at = {ids, n, &c, aim_body, aim_eligible, aim_trace};
-  qa_compat_qc_machine_return_vector(m, qa_aim_q1(body.value.origin, forward, s->aim_threshold(s->ctx), at));
+  qa_q1_aim_targets at = {ids, count, &c, aim_body, aim_eligible, aim_trace};
+  qa_vec3 result = qa_aim_q1(body.value.origin, forward, s->aim_threshold(s->ctx), at);
+  free(ids);
+  qa_compat_qc_machine_return_vector(m, result);
 }
 qa_compat_qc_builtin qa_compat_qc_create_aim_binding(qa_compat_qc_world_host *world, qa_compat_qc_aim_state *st) {
   st->world = world; return (qa_compat_qc_builtin){st, b_aim};

@@ -1,6 +1,7 @@
 /* Port of src/network/q2/client-messages.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/client_messages.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -73,6 +74,8 @@ static char *read_kex_control_string(qa_q2_sizebuf *m) {
       if ((d & 0xc0) != 0x80) { valid = false; break; }
       cp = (cp << 6) | (uint32_t)(d & 0x3f);
     }
+    if ((need == 1 && cp < 0x80) || (need == 2 && cp < 0x800) ||
+        (need == 3 && cp < 0x10000)) valid = false;
     if (cp >= 0xd800 && cp <= 0xdfff) valid = false;
     if (cp > 0x10ffff) valid = false;
     i += (size_t)need + 1;
@@ -332,8 +335,9 @@ uint8_t *qa_q2_encode_batch_move(qa_q2_wire_codec *wire, bool has_last_frame,
   }
   qa_q2_sizebuf m;
   if (!qa_q2_message_create(&m, 32768)) return NULL;
+  /* TS: (frames.length - 1) << 5, negative when there are no frames. */
   int32_t extra = kind_is(&wire->selected_protocol, "q2-q2pro")
-                      ? (int32_t)((frame_count > 0 ? frame_count - 1 : 0) << 5)
+                      ? (int32_t)(((int64_t)frame_count - 1) << 5)
                       : 0;
   qa_q2_msg_write_byte(&m, (double)((!has_last_frame ? 10 : 11) | extra));
   codec->write_batch_move(codec, &m, has_last_frame, last_frame, frames, frame_count);
@@ -393,7 +397,7 @@ void qa_q2_command_replay_init(qa_q2_command_replay *replay) {
 }
 
 static bool is_integer_number(double v) {
-  return v == (double)(int64_t)v;
+  return isfinite(v) && v == trunc(v);
 }
 
 void qa_q2_command_replay_execute(qa_q2_command_replay *replay,
@@ -452,10 +456,13 @@ void qa_q2_command_replay_execute(qa_q2_command_replay *replay,
 void qa_q2_rate_window_init(qa_q2_rate_window *window) {
   memset(window, 0, sizeof *window);
 }
-static size_t frame_slot(double server_frame) {
-  int64_t mod = (int64_t)server_frame % 10;
-  if (mod < 0) mod += 10;
-  return (size_t)mod;
+/* TS sizes[serverFrame % 10]: a negative or fractional index is not
+ * an element index, so the typed-array store is silently dropped. */
+static bool frame_slot(double server_frame, size_t *out) {
+  if (!isfinite(server_frame) || server_frame != trunc(server_frame) ||
+      server_frame < 0) return false;
+  *out = (size_t)((int64_t)server_frame % 10);
+  return true;
 }
 bool qa_q2_rate_window_drop(qa_q2_rate_window *window, double server_frame,
                             double bytes_per_second, bool loopback) {
@@ -464,12 +471,14 @@ bool qa_q2_rate_window_drop(qa_q2_rate_window *window, double server_frame,
   for (int i = 0; i < 10; i++) total += (double)window->sizes[i];
   if (total <= bytes_per_second) return false;
   window->suppressed++;
-  window->sizes[frame_slot(server_frame)] = 0;
+  size_t slot;
+  if (frame_slot(server_frame, &slot)) window->sizes[slot] = 0;
   return true;
 }
 void qa_q2_rate_window_sent(qa_q2_rate_window *window, double server_frame,
                             double bytes) {
-  window->sizes[frame_slot(server_frame)] = (uint32_t)bytes;
+  size_t slot;
+  if (frame_slot(server_frame, &slot)) window->sizes[slot] = (uint32_t)bytes;
 }
 double qa_q2_rate_window_take_suppressed(qa_q2_rate_window *window) {
   double value = window->suppressed;

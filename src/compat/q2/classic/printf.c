@@ -174,7 +174,7 @@ char *qa_compat_q2_classic_printf(const qa_compat_q2_memory *memory, const char 
     if ((double)tl < aw) {
       size_t want = (size_t)aw; char *nb = malloc(want + 1);
       if (left) { memcpy(nb, text, tl); memset(nb + tl, ' ', want - tl); nb[want] = 0; }
-      else if (fill == '0' && (text[0] == '+' || text[0] == '-' || text[0] == ' ')) { nb[0] = text[0]; memset(nb + 1, '0', want - tl); memcpy(nb + 1 + (want - tl), text + 1, tl); nb[want] = 0; }
+      else if (fill == '0' && (text[0] == '+' || text[0] == '-')) { nb[0] = text[0]; memset(nb + 1, '0', want - tl); memcpy(nb + 1 + (want - tl), text + 1, tl); nb[want] = 0; }
       else if (fill == '0' && tl >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) { nb[0] = '0'; nb[1] = text[1]; memset(nb + 2, '0', want - tl); memcpy(nb + 2 + (want - tl), text + 2, tl - 1); nb[want] = 0; }
       else { memset(nb, fill, want - tl); memcpy(nb + (want - tl), text, tl + 1); }
       free(text); text = nb;

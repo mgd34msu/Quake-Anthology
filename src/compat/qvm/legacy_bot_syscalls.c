@@ -4,13 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Mirrored QvmGameImport values (TS abi.ts). */
+#include "qa/compat/qvm/abi.h"
+
+/* Landed QvmGameImport values (TS abi.ts). */
 enum {
-  BOTLIB_USER_COMMAND = 211,
-  BOTLIB_EA_GET_INPUT = 422,
-  BOTLIB_AI_LOAD_CHARACTER = 500,
-  BOTLIB_AI_ENTER_CHAT = 516,
-  BOTLIB_AI_SET_CHAT_NAME = 524,
+  BOTLIB_USER_COMMAND = QA_QVM_GAME_IMPORT_BOTLIB_USER_COMMAND,
+  BOTLIB_EA_GET_INPUT = QA_QVM_GAME_IMPORT_BOTLIB_EA_GET_INPUT,
+  BOTLIB_AI_LOAD_CHARACTER = QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_CHARACTER,
+  BOTLIB_AI_ENTER_CHAT = QA_QVM_GAME_IMPORT_BOTLIB_AI_ENTER_CHAT,
+  BOTLIB_AI_SET_CHAT_NAME = QA_QVM_GAME_IMPORT_BOTLIB_AI_SET_CHAT_NAME,
 };
 
 /* Mirrored BotActionFlag values (TS bots/behavior/library/actions.ts). */

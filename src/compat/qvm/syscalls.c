@@ -3,6 +3,8 @@
 
 #include <string.h>
 
+#include "qa/compat/qvm/abi.h"
+#include "qa/compat/qvm/legacy_bot_abi.h"
 #include "qa/compat/qvm/math_syscalls.h"
 #include "qa/compat/qvm/memory_syscalls.h"
 #include "qa/compat/qvm/snap_vector_syscalls.h"
@@ -36,46 +38,34 @@ static bool modern(qa_qvm_abi_profile profile) {
   return profile == NULL || strcmp(profile, "q3-modern") == 0;
 }
 
-/* Mirrored decoders (TS abi.ts): every case returns the word itself. */
+/* Landed decoders (TS abi.ts / legacy-bot-abi.ts, qa/compat/qvm/abi.h
+ * and legacy_bot_abi.h); the enum values are the decoded words. */
 static bool decode_game(int32_t word, int32_t *out) {
-  bool ok = (word >= 0 && word <= 45) || (word >= 200 && word <= 211) ||
-            (word >= 300 && word <= 318) || (word >= 400 && word <= 423) ||
-            (word >= 500 && word <= 581);
-  if (ok) *out = word;
-  return ok;
+  qa_qvm_game_import decoded;
+  if (!qa_qvm_decode_game_import((double)word, &decoded)) return false;
+  *out = (int32_t)decoded;
+  return true;
 }
 
 static bool decode_cgame(int32_t word, int32_t *out) {
-  bool ok = (word >= 0 && word <= 89) || (word >= 100 && word <= 111);
-  if (ok) *out = word;
-  return ok;
+  qa_qvm_cgame_import decoded;
+  if (!qa_qvm_decode_cgame_import((double)word, &decoded)) return false;
+  *out = (int32_t)decoded;
+  return true;
 }
 
 static bool decode_ui(int32_t word, int32_t *out) {
-  bool ok = (word >= 0 && word <= 87) || (word >= 100 && word <= 108);
-  if (ok) *out = word;
-  return ok;
+  qa_qvm_ui_import decoded;
+  if (!qa_qvm_decode_ui_import((double)word, &decoded)) return false;
+  *out = (int32_t)decoded;
+  return true;
 }
 
-/* Mirrored decodeLegacyQvmGameImport (TS legacy-bot-abi.ts). */
 static bool decode_legacy_game(int32_t code, int32_t *out) {
-  if (code >= 0 && code <= 40) return decode_game(code, out);
-  static const int32_t remapped[][2] = {
-      {406, 404}, {407, 402}, {408, 416}, {409, 405}, {410, 406}, {411, 407},
-      {412, 408}, {413, 417}, {414, 418}, {415, 409}, {416, 410}, {417, 411},
-      {418, 412}, {419, 413}, {420, 414}, {421, 415}, {422, 419}, {423, 420},
-      {424, 421}, {425, 422}, {426, 423},
-  };
-  for (size_t i = 0; i < sizeof remapped / sizeof remapped[0]; i++) {
-    if (remapped[i][0] == code) {
-      *out = remapped[i][1];
-      return true;
-    }
-  }
-  bool identity = (code >= 200 && code <= 211) || (code >= 303 && code <= 318) ||
-                  (code >= 400 && code <= 401) || (code >= 500 && code <= 572);
-  if (identity) *out = code;
-  return identity;
+  qa_qvm_game_import decoded;
+  if (!qa_qvm_decode_legacy_game_import((double)code, &decoded)) return false;
+  *out = (int32_t)decoded;
+  return true;
 }
 
 noreturn void qa_qvm_reject_syscall(const qa_qvm_host_call *call) {

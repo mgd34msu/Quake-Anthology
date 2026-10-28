@@ -37,6 +37,8 @@ typedef struct qa_qvm_mod_input {
   qa_qvm_mod_input_operations operations;
   size_t *removal_ids;
   size_t removal_count;
+  void **groups; /* owned declaration groups, parallel to removal_ids */
+  size_t group_count;
   qa_mod_client_application **applications;
   size_t application_count;
   size_t application_capacity;

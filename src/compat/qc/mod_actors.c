@@ -57,6 +57,7 @@ static void slots_unlink(void *ctx, qa_owned_actor actor) { A *a = ctx; qa_share
 static void slots_exhausted(void *ctx, int64_t slot) { (void)ctx; (void)slot; qa_range_error("Gameplay mod source edicts exhausted"); }
 static void remove_fn(void *ctx, qa_compat_qc_machine *m) {
   A *a = ctx;
+  if (m->entities != a->options.machine->entities) { qa_compat_qc_machine_fail(m, "actor builtin belongs to another machine"); }
   int64_t slot = qa_compat_qc_entity_memory_slot(m->entities, qa_compat_qc_machine_arg_int(m, 0));
   qa_owned_actor at;
   if (!qa_source_actor_slots_at(a->slots, slot, &at)) { qa_compat_qc_machine_fail(m, "Mod remove requires its own actor; foreign source removal needs its owner continuation"); }
@@ -108,15 +109,16 @@ bool qa_compat_qc_mod_actors_init(A *a, qa_compat_qc_mod_actor_options o) {
 void qa_compat_qc_mod_actors_destroy(A *a) {
   if (a->scheduler) qa_frame_scheduler_destroy(a->scheduler);
   qa_source_actor_slots_destroy(a->slots);
-  free(a->owned_actors); free(a->owned_slots); memset(a, 0, sizeof *a);
+  free(a->owned_actors); free(a->owned_slots);
+  for (size_t i = 0; i < a->cb_count; i++) free(a->cb_storage[i]);
+  free(a->cb_storage); memset(a, 0, sizeof *a);
 }
-typedef struct { A *a; qa_owned_actor actor; int64_t slot; } CbCtx;
-static CbCtx cb_storage[1024];
-static size_t cb_count;
+typedef struct qa_compat_qc_mod_actor_cb CbCtx;
 static CbCtx *cb_for(A *a, qa_owned_actor actor, int64_t slot) {
-  for (size_t i = 0; i < cb_count; i++) if (cb_storage[i].a == a && owned_eq(cb_storage[i].actor, actor)) { cb_storage[i].slot = slot; return &cb_storage[i]; }
-  if (cb_count >= 1024) qa_range_error("mod actor callback storage exhausted");
-  cb_storage[cb_count] = (CbCtx){a, actor, slot}; return &cb_storage[cb_count++];
+  for (size_t i = 0; i < a->cb_count; i++) if (owned_eq(a->cb_storage[i]->actor, actor)) { a->cb_storage[i]->slot = slot; return a->cb_storage[i]; }
+  if (a->cb_count == a->cb_capacity) { size_t c = a->cb_capacity ? a->cb_capacity*2 : 8; a->cb_storage = realloc(a->cb_storage, c*sizeof *a->cb_storage); if (!a->cb_storage) qa_range_error("mod actor allocation failed"); a->cb_capacity = c; }
+  CbCtx *cell = malloc(sizeof *cell); if (!cell) qa_range_error("mod actor allocation failed");
+  *cell = (CbCtx){a, actor, slot}; a->cb_storage[a->cb_count++] = cell; return cell;
 }
 static void cb_touch(void *ctx, qa_touch_contact contact) { CbCtx *c = ctx; c->a->options.touch(c->a->options.ctx, c->actor, contact.other); }
 static void cb_use(void *ctx, qa_owned_actor actor, const qa_actor_id *other, const qa_actor_id *activator) { CbCtx *c = ctx; c->a->options.use(c->a->options.ctx, actor, other, activator); }

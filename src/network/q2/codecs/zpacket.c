@@ -97,7 +97,9 @@ uint8_t *qa_q2_read_zpacket_payload(qa_q2_sizebuf *msg, size_t *out_length) {
   const char *zmsg = stream.msg;
   inflateEnd(&stream);
   free(compressed);
-  if (status != Z_STREAM_END && status != Z_OK && status != Z_BUF_ERROR) {
+  /* TS inflateRawSync throws unless the stream ends within the
+   * maxOutputLength bound, so only Z_STREAM_END is success. */
+  if (status != Z_STREAM_END) {
     const char *m = zmsg != NULL ? zmsg : "zlib error";
     free(out);
     qa_q2_com_error_throw(QA_Q2_ERR_DROP, "zpacket: raw inflate failed: %s", m);

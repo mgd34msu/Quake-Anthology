@@ -42,9 +42,11 @@ void qa_compat_qc_write_source_value(qa_compat_qc_machine *m, qa_compat_qc_words
     qa_compat_qc_words_set_vector(w, off, v.vector_value);
   }
   else if (strcmp(v.kind,"string")==0) {
-    char name[512]; snprintf(name, sizeof name, "mod-value:%s", v.string_value);
-    int64_t cap = (int64_t)strlen(v.string_value) + 1; if (cap < 128) cap = 128;
+    size_t vn = strlen(v.string_value); char *name = malloc(vn + 11); if (!name) qa_range_error("source value allocation failed");
+    memcpy(name, "mod-value:", 10); memcpy(name + 10, v.string_value, vn + 1);
+    int64_t cap = (int64_t)vn + 1; if (cap < 128) cap = 128;
     qa_compat_qc_words_set_int(w, off, (double)qa_compat_qc_strings_set_engine(&m->strings, name, v.string_value, cap));
+    free(name);
   }
   else if (strcmp(v.kind,"actor")==0) qa_compat_qc_words_set_int(w, off, (double)ref.fn(ref.ctx, v.actor_value));
 }

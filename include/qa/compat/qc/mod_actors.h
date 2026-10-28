@@ -37,6 +37,7 @@ typedef struct qa_compat_qc_mod_actors {
   qa_frame_scheduler *scheduler;
   qa_scheduler_clock clock_entry;
   qa_owned_actor *owned_actors; int64_t *owned_slots; size_t owned_count, owned_capacity;
+  struct qa_compat_qc_mod_actor_cb { struct qa_compat_qc_mod_actors *a; qa_owned_actor actor; int64_t slot; } **cb_storage; size_t cb_count, cb_capacity;
   int64_t release_id; bool closed;
   struct qa_compat_qc_mod_actors *self_ref;
 } qa_compat_qc_mod_actors;

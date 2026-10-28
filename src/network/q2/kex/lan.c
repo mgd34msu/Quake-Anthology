@@ -549,9 +549,10 @@ static void mdns_found_noop(void *ctx, const qa_net_address *address) {
   (void)ctx;
   (void)address;
 }
+static void lan_drain(qa_kex_lan_transport *lan);
 static void on_readable(void *vctx) {
-  qa_kex_lan_transport *lan = (qa_kex_lan_transport *)vctx;
-  qa_kex_lan_poll(lan, &(qa_receive_event){0});
+  /* TS subscribeReadable(() => this.drain()): drain only, never pop. */
+  lan_drain((qa_kex_lan_transport *)vctx);
 }
 
 /* Drain without consuming a poll result; mirrors TS drain(). */
@@ -742,12 +743,15 @@ void qa_kex_lan_tick(qa_kex_lan_transport *lan, double now) {
       free(bytes);
     }
   }
-  for (size_t i = 0; i < lan->peer_count; i++) {
-    qa_net_address addr_copy;
-    if (qa_net_address_clone(&lan->peers[i].address, &addr_copy) == 0) continue;
-    qa_kex_lan_peer *peer = peer_find(lan, &addr_copy);
-    if (peer != NULL) qa_kex_channel_tick(peer->channel, now);
-    qa_net_address_destroy(&addr_copy);
+  /* TS catches tick errors per peer: remove it and queue an error. */
+  for (size_t i = 0; i < lan->peer_count;) {
+    qa_kex_lan_peer *peer = &lan->peers[i];
+    if (!qa_kex_channel_tick(peer->channel, now)) {
+      lan_remove(lan, peer);
+      qa_packet_queue_push_error(&lan->queue, "KEX LAN peer timed out");
+      continue; /* removal shifts the next peer into slot i */
+    }
+    i++;
   }
 }
 

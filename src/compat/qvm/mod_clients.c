@@ -14,7 +14,12 @@ typedef struct client_slot {
   bool admitted;
   bool has_client;
   qa_client_id client;
+  uint64_t generation; /* entry object identity, as in the TS Map */
 } client_slot;
+
+static uint64_t next_generation(qa_qvm_mod_client_bindings *bindings) {
+  return ++bindings->generation_counter;
+}
 
 static client_slot *find_entry(qa_qvm_mod_client_bindings *bindings, qa_actor_id actor) {
   client_slot *entries = bindings->entries;
@@ -37,6 +42,7 @@ static client_slot *require_entry(qa_qvm_mod_client_bindings *bindings, qa_actor
   if (!entry->has_client) {
     entry->has_client = true;
     entry->client = client;
+    entry->generation = next_generation(bindings); /* TS replaces the entry object */
   }
   return entry;
 }
@@ -96,10 +102,14 @@ bool qa_qvm_mod_client_bindings_slot(qa_qvm_mod_client_bindings *bindings, qa_ac
     *out = require_entry(bindings, actor)->slot;
     return true;
   }
-  int64_t reserved[128];
+  int64_t *reserved = NULL;
   size_t reserved_count = 0;
-  if (bindings->operations.reserved_slots != NULL)
-    reserved_count = bindings->operations.reserved_slots(bindings->operations.ctx, reserved, 128);
+  if (bindings->operations.reserved_slots != NULL) {
+    reserved_count = bindings->operations.reserved_slots(bindings->operations.ctx, NULL, 0);
+    reserved = malloc((reserved_count == 0 ? 1 : reserved_count) * sizeof *reserved);
+    if (reserved == NULL) qa_range_error("QVM memory allocation failed");
+    reserved_count = bindings->operations.reserved_slots(bindings->operations.ctx, reserved, reserved_count);
+  }
   int64_t slot = 0;
   for (;;) {
     bool used = false;
@@ -109,6 +119,7 @@ bool qa_qvm_mod_client_bindings_slot(qa_qvm_mod_client_bindings *bindings, qa_ac
     if (!used) break;
     slot++;
   }
+  free(reserved);
   if (slot >= (int64_t)bindings->operations.declaration->maximum)
     qa_range_error("QVM component source client capacity exceeded");
   if (bindings->entry_count == bindings->entry_capacity) {
@@ -122,6 +133,7 @@ bool qa_qvm_mod_client_bindings_slot(qa_qvm_mod_client_bindings *bindings, qa_ac
   created->admitted = false;
   created->has_client = true;
   created->client = client;
+  created->generation = next_generation(bindings);
   *out = slot;
   return true;
 }
@@ -265,14 +277,21 @@ void qa_qvm_mod_client_bindings_restore(qa_qvm_mod_client_bindings *bindings,
     created->actor = entries[i].actor;
     created->slot = entries[i].slot;
     created->admitted = entries[i].admitted;
+    created->generation = next_generation(bindings);
     created->has_client = services->for_actor(services->ctx, entries[i].actor, &created->client);
   }
 }
 
+typedef struct frame_client {
+  client_slot entry;
+  size_t index; /* TS sort is stable */
+} frame_client;
+
 static int compare_slot(const void *left, const void *right) {
-  int64_t a = ((const client_slot *)left)->slot;
-  int64_t b = ((const client_slot *)right)->slot;
-  return a < b ? -1 : a > b ? 1 : 0;
+  const frame_client *a = left;
+  const frame_client *b = right;
+  if (a->entry.slot != b->entry.slot) return a->entry.slot < b->entry.slot ? -1 : 1;
+  return a->index < b->index ? -1 : a->index > b->index ? 1 : 0;
 }
 
 void qa_qvm_mod_client_bindings_frame(qa_qvm_mod_client_bindings *bindings,
@@ -281,22 +300,25 @@ void qa_qvm_mod_client_bindings_frame(qa_qvm_mod_client_bindings *bindings,
   const qa_qvm_mod_source_call *calls = bindings->operations.declaration->frame;
   size_t call_count = bindings->operations.declaration->frame_count;
   if (call_count == 0) return;
-  client_slot *clients = malloc((bindings->entry_count == 0 ? 1 : bindings->entry_count) * sizeof *clients);
+  frame_client *clients = malloc((bindings->entry_count == 0 ? 1 : bindings->entry_count) * sizeof *clients);
   if (clients == NULL) qa_range_error("QVM memory allocation failed");
   size_t count = 0;
   client_slot *entries = bindings->entries;
   for (size_t i = 0; i < bindings->entry_count; i++) {
-    if (entries[i].admitted && qa_qvm_mod_client_bindings_live(bindings, entries[i].actor))
-      clients[count++] = *require_entry(bindings, entries[i].actor);
+    if (entries[i].admitted && qa_qvm_mod_client_bindings_live(bindings, entries[i].actor)) {
+      clients[count].entry = *require_entry(bindings, entries[i].actor);
+      clients[count].index = count;
+      count++;
+    }
   }
   qsort(clients, count, sizeof *clients, compare_slot);
   for (size_t i = 0; i < count; i++) {
     for (size_t c = 0; c < call_count; c++) {
-      client_slot *current = find_entry(bindings, clients[i].actor);
-      if (current == NULL || current->slot != clients[i].slot ||
-          !qa_qvm_mod_client_bindings_live(bindings, clients[i].actor))
+      client_slot *current = find_entry(bindings, clients[i].entry.actor);
+      if (current == NULL || current->generation != clients[i].entry.generation ||
+          !qa_qvm_mod_client_bindings_live(bindings, clients[i].entry.actor))
         break;
-      invoke(invoke_ctx, &calls[c], clients[i].actor);
+      invoke(invoke_ctx, &calls[c], clients[i].entry.actor);
     }
   }
   free(clients);

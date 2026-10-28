@@ -146,15 +146,17 @@ static size_t read_entries(I *items, qa_actor_id actor, const qa_compat_qc_entit
 static qa_compat_qc_mod_items_entry *find_entry(I *items, qa_actor_id actor) {
   for (size_t i=0;i<items->entry_count;i++) { if (actor_eq(items->entries[i].actor.id, actor)) return &items->entries[i]; } return NULL;
 }
-typedef struct { I *items; qa_actor_id actor; qa_inventory_entry buffer[64]; } StateCtx;
-static StateCtx state_storage[256]; static size_t state_count;
+typedef struct qa_compat_qc_mod_items_state StateCtx;
 static StateCtx *state_for(I *items, qa_actor_id actor) {
-  for (size_t i=0;i<state_count;i++) if (state_storage[i].items==items && actor_eq(state_storage[i].actor,actor)) return &state_storage[i];
-  if (state_count>=256) qa_range_error("item state storage exhausted");
-  state_storage[state_count]=(StateCtx){items,actor,{{0}}}; return &state_storage[state_count++];
+  for (size_t i=0;i<items->state_count;i++) if (actor_eq(items->state_storage[i]->actor,actor)) return items->state_storage[i];
+  if (items->state_count==items->state_capacity){ size_t c=items->state_capacity?items->state_capacity*2:8; items->state_storage=realloc(items->state_storage,c*sizeof *items->state_storage); if(!items->state_storage) qa_range_error("item allocation failed"); items->state_capacity=c; }
+  StateCtx *cell=calloc(1,sizeof *cell); if(!cell) qa_range_error("item allocation failed");
+  size_t total=0; for(size_t i=0;i<items->definition->storage_count;i++) total += strcmp(items->definition->storage[i].kind,"counter")==0?1:items->definition->storage[i].item_count;
+  cell->buffer=calloc(total?total:1,sizeof *cell->buffer); if(!cell->buffer) qa_range_error("item allocation failed"); cell->buffer_capacity=total;
+  cell->items=items; cell->actor=actor; items->state_storage[items->state_count++]=cell; return cell;
 }
 static const qa_inventory_entry *st_read(void *ctx, size_t *out_count) {
-  StateCtx *s = ctx; *out_count = read_entries(s->items, s->actor, NULL, s->items->definition->storage, s->items->definition->storage_count, s->buffer, 64); return s->buffer;
+  StateCtx *s = ctx; *out_count = read_entries(s->items, s->actor, NULL, s->items->definition->storage, s->items->definition->storage_count, s->buffer, s->buffer_capacity); return s->buffer;
 }
 static bool st_entry(void *ctx, qa_item_id item, qa_inventory_entry *out) {
   StateCtx *s = ctx; I *items = s->items;
@@ -233,20 +235,26 @@ static qa_item_id active_item(I *items, qa_actor_id actor) {
   if (value != 0) qa_range_error("Original QC selected an undeclared source weapon");
   return NULL;
 }
-typedef struct { I *items; qa_compat_qc_mod_items_entry *entry; qa_source_weapon_presentation_model model; } WeaponCtx;
-static WeaponCtx weapon_storage[256]; static size_t weapon_count;
-static WeaponCtx *weapon_for(I *items, qa_compat_qc_mod_items_entry *entry) {
-  for(size_t i=0;i<weapon_count;i++) if(weapon_storage[i].items==items && weapon_storage[i].entry==entry) return &weapon_storage[i];
-  if(weapon_count>=256) qa_range_error("weapon storage exhausted");
-  weapon_storage[weapon_count]=(WeaponCtx){items,entry,{0}}; return &weapon_storage[weapon_count++];
+struct qa_compat_qc_mod_items_weapon { I *items; qa_compat_qc_mod_items_entry entry; qa_source_weapon_presentation_model model; };
+typedef struct qa_compat_qc_mod_items_weapon WeaponCtx;
+static bool current_snapshot(I *items, WeaponCtx *w) {
+  qa_compat_qc_mod_items_entry *live = find_entry(items, w->entry.actor.id);
+  if (!live || live->lease.ctx != w->entry.lease.ctx) return false;
+  return current_of(items, live);
 }
-static bool wpn_current(void *ctx) { WeaponCtx *w=ctx; return current_of(w->items, w->entry); }
+static WeaponCtx *weapon_for(I *items, qa_compat_qc_mod_items_entry *entry) {
+  for(size_t i=0;i<items->weapon_count;i++){ WeaponCtx *w=items->weapon_storage[i]; if(actor_eq(w->entry.actor.id, entry->actor.id)){ w->entry=*entry; return w; } }
+  if (items->weapon_count==items->weapon_capacity){ size_t c=items->weapon_capacity?items->weapon_capacity*2:8; items->weapon_storage=realloc(items->weapon_storage,c*sizeof *items->weapon_storage); if(!items->weapon_storage) qa_range_error("item allocation failed"); items->weapon_capacity=c; }
+  WeaponCtx *cell=calloc(1,sizeof *cell); if(!cell) qa_range_error("item allocation failed");
+  cell->items=items; cell->entry=*entry; items->weapon_storage[items->weapon_count++]=cell; return cell;
+}
+static bool wpn_current(void *ctx) { WeaponCtx *w=ctx; return current_snapshot(w->items, w); }
 static qa_source_weapon_presentation wpn_read(void *ctx) {
   WeaponCtx *w=ctx; I *items=w->items;
-  if (!current_of(items, w->entry)) qa_range_error("QC source weapon presentation has expired");
+  if (!current_snapshot(items, w)) qa_range_error("QC source weapon presentation has expired");
   const qa_mod_qc_weapons *def = items->definition->weapons;
   if (!def) qa_range_error("QC source has no weapon presentation");
-  qa_compat_qc_words *words = words_of(items, w->entry->actor.id);
+  qa_compat_qc_words *words = words_of(items, w->entry.actor.id);
   qa_compat_qc_machine *m = items->operations.machine(items->operations.ctx);
   const char *path0 = qa_compat_qc_strings_get(&m->strings, qa_compat_qc_words_int(words, off_of(items, def->model_field)));
   char path[512]; snprintf(path,sizeof path,"%s",path0);
@@ -254,7 +262,7 @@ static qa_source_weapon_presentation wpn_read(void *ctx) {
   if (path[0] && !has) qa_range_error("Original QC weapon model was not prepared: %s", path);
   qa_source_weapon_presentation r; memset(&r,0,sizeof r);
   r.source.provider = items->provider; r.source.content = items->operations.media_content;
-  r.active = active_item(items, w->entry->actor.id);
+  r.active = active_item(items, w->entry.actor.id);
   if (has) { w->model.is_resolved=true; w->model.resource=asset; w->model.frame=qa_compat_qc_words_float(words, off_of(items, def->model_frame)); r.model=&w->model; }
   r.items = items->definitions; r.item_count = items->definition->definition_count;
   return r;
@@ -262,26 +270,67 @@ static qa_source_weapon_presentation wpn_read(void *ctx) {
 static bool wpn_accepts(void *ctx, qa_item_id item) {
   WeaponCtx *w=ctx; const qa_mod_qc_weapons *def=w->items->definition->weapons; if(!def) return false;
   bool listed=false; for(size_t i=0;i<def->selected_value_count;i++) if(strcmp(def->selected_values[i].item,item)==0) listed=true;
-  return current_of(w->items, w->entry) && listed && w->items->operations.inventory_count(w->items->operations.ctx, w->entry->actor.id, item) > 0;
+  return current_snapshot(w->items, w) && listed && w->items->operations.inventory_count(w->items->operations.ctx, w->entry.actor.id, item) > 0;
 }
 static bool wpn_select(void *ctx, qa_item_id item) {
   WeaponCtx *w=ctx; if(!wpn_accepts(ctx,item)) return false;
   const qa_mod_qc_weapons *def=w->items->definition->weapons;
   const qa_mod_qc_weapon_value *v=NULL; for(size_t i=0;i<def->select_value_count;i++) if(strcmp(def->select_values[i].item,item)==0) v=&def->select_values[i];
   if(!v) return false;
-  qa_compat_qc_words_set_float(words_of(w->items, w->entry->actor.id), off_of(w->items, def->select_field), v->value);
-  invoke_item(w->items, w->entry->actor.id, def->select_call);
-  qa_item_id active = active_item(w->items, w->entry->actor.id);
-  return current_of(w->items, w->entry) && active && strcmp(active,item)==0;
+  qa_compat_qc_words_set_float(words_of(w->items, w->entry.actor.id), off_of(w->items, def->select_field), v->value);
+  invoke_item(w->items, w->entry.actor.id, def->select_call);
+  qa_item_id active = active_item(w->items, w->entry.actor.id);
+  return current_snapshot(w->items, w) && active && strcmp(active,item)==0;
 }
-static void wpn_holster(void *ctx) { WeaponCtx *w=ctx; if(!current_of(w->items,w->entry)) qa_range_error("QC source weapon retired while holstering"); }
-static bool wpn_holstered(void *ctx) { WeaponCtx *w=ctx; (void)w; return current_of(w->items, w->entry); /* stage settled checked by provider stage binding */ }
+static void wpn_holster(void *ctx) { WeaponCtx *w=ctx; if(!current_snapshot(w->items, w)) qa_range_error("QC source weapon retired while holstering"); }
+static bool wpn_holstered(void *ctx) { WeaponCtx *w=ctx; return current_snapshot(w->items, w) && qa_q1qc_weapon_stage_settled(&w->items->stage_binding, w->entry.reference); }
 static bool wpn_resume(void *ctx, qa_item_id item) {
   WeaponCtx *w=ctx; const qa_mod_qc_weapons *def=w->items->definition->weapons;
-  if(!current_of(w->items,w->entry)) qa_range_error("QC source weapon retired while resuming");
+  if(!current_snapshot(w->items, w)) qa_range_error("QC source weapon retired while resuming");
   if (item) return wpn_select(ctx,item);
-  for(size_t i=0;i<def->resume_count;i++){ if(!current_of(w->items,w->entry)) qa_range_error("QC source weapon retired while resuming"); invoke_item(w->items,w->entry->actor.id,def->resume[i]); }
-  return current_of(w->items,w->entry);
+  for(size_t i=0;i<def->resume_count;i++){ if(!current_snapshot(w->items, w)) qa_range_error("QC source weapon retired while resuming"); invoke_item(w->items,w->entry.actor.id,def->resume[i]); }
+  return current_snapshot(w->items, w);
+}
+static bool build_instance_qview(I *items, qa_compat_qc_program *p) {
+  items->qglobals = calloc(p->global_count?p->global_count:1,sizeof *items->qglobals);
+  items->qfields = calloc(p->field_count?p->field_count:1,sizeof *items->qfields);
+  items->qfunctions = calloc(p->function_count?p->function_count:1,sizeof *items->qfunctions);
+  items->qstatements = calloc(p->statement_count?p->statement_count:1,sizeof *items->qstatements);
+  if(!items->qglobals||!items->qfields||!items->qfunctions||!items->qstatements) return false;
+  for (size_t i=0;i<p->global_count;i++) items->qglobals[i]=(qa_q1qc_definition){p->globals[i].type,p->globals[i].native_type,p->globals[i].save,p->globals[i].offset,p->globals[i].name};
+  for (size_t i=0;i<p->field_count;i++) items->qfields[i]=(qa_q1qc_definition){p->fields[i].type,p->fields[i].native_type,p->fields[i].save,p->fields[i].offset,p->fields[i].name};
+  for (size_t i=0;i<p->function_count;i++) items->qfunctions[i]=(qa_q1qc_function){p->functions[i].index,p->functions[i].first_statement,p->functions[i].parameter_start,p->functions[i].local_words,p->functions[i].name,p->functions[i].file,p->functions[i].parameter_sizes,p->functions[i].parameter_size_count,p->functions[i].named_builtin};
+  for (size_t i=0;i<p->statement_count;i++) items->qstatements[i]=(qa_q1qc_statement){(qa_q1qc_opcode)p->statements[i].opcode,p->statements[i].a,p->statements[i].b,p->statements[i].c};
+  items->qprogram = (qa_q1qc_program){p->source, p->api.kind==QA_QUAKEC_API_Q1_QUAKEWORLD?"q1-quakeworld":"q1-netquake", items->qstatements,p->statement_count,items->qglobals,p->global_count,items->qfields,p->field_count,items->qfunctions,p->function_count,p->strings,p->string_length,p->initial_globals,p->initial_globals_length,p->entity_field_words,p->checksum,p->digest};
+  return true;
+}
+static qa_q1qc_machine *items_machine_fn(void *ctx) {
+  I *items = ctx; qa_compat_qc_machine *m = items->operations.machine(items->operations.ctx);
+  qa_compat_qc_entity_memory *e = m->entities;
+  items->qentities = (qa_q1qc_entity_memory){e->layout.stride_bytes, e->layout.variables_offset_bytes, e->layout.field_words, e->capacity, e->count, e->bytes};
+  items->qmachine.ctx = items; items->qmachine.program = &items->qprogram;
+  items->qmachine.globals = (qa_q1qc_words){m->globals.bytes, m->globals.byte_length};
+  items->qmachine.entities = &items->qentities; items->qmachine.numeric = *m->numeric;
+  return &items->qmachine;
+}
+static void items_qm_fail(void *ctx, const char *message) { I *items = ctx; qa_compat_qc_machine_fail(items->operations.machine(items->operations.ctx), "%s", message); }
+static void items_qm_execute(void *ctx, int64_t fn, int64_t argc) { I *items = ctx; qa_compat_qc_machine_execute(items->operations.machine(items->operations.ctx), fn, argc); }
+static double items_qm_execute_region(void *ctx, qa_q1qc_inline_region region, int64_t argc) {
+  I *items = ctx;
+  qa_compat_qc_inline_region r = {region.function_index, region.entry, region.exit, region.replaceable, region.has_standalone, region.standalone_saved, region.standalone_scope};
+  return qa_compat_qc_machine_execute_region(items->operations.machine(items->operations.ctx), r, argc);
+}
+static const char *items_qm_strings_get(void *ctx, int64_t reference, char *buf, size_t size) {
+  I *items = ctx; const char *s = qa_compat_qc_strings_get(&items->operations.machine(items->operations.ctx)->strings, reference);
+  if (buf && size) { snprintf(buf, size, "%s", s); return buf; }
+  return s;
+}
+static int64_t items_qm_strings_set_engine(void *ctx, const char *name, const char *text, size_t capacity) {
+  I *items = ctx; return qa_compat_qc_strings_set_engine(&items->operations.machine(items->operations.ctx)->strings, name, text, (int64_t)capacity);
+}
+static bool items_stage_selected(void *ctx, int64_t reference) {
+  I *items = ctx; qa_actor_id actor = items->operations.actor(items->operations.ctx, reference);
+  return !items->operations.client_is_current(items->operations.ctx, actor) || (items->operations.weapon_selected && items->operations.weapon_selected(items->operations.ctx, actor));
 }
 bool qa_compat_qc_mod_items_init(I *items, const qa_mod_qc_items *definition, qa_provider_id provider, qa_compat_qc_mod_items_operations operations, qa_compat_qc_program *program) {
   memset(items,0,sizeof *items); items->definition=definition; items->provider=provider; items->operations=operations; items->self_ref=items;
@@ -295,8 +344,8 @@ bool qa_compat_qc_mod_items_init(I *items, const qa_mod_qc_items *definition, qa
     out.item=d->item; out.label=d->label; out.source.provider=provider; out.source.content=operations.media_content;
     out.is_weapon=d->is_weapon; out.weapon=d->weapon;
     out.has_icon=d->has_icon;
-    if (d->has_icon && d->icon) { static qa_weapon_hud_icon icon_storage[64]; static size_t icon_count; icon_storage[icon_count]=qa_resolve_item_icon(*d->icon, operations.media_content); out.icon=&icon_storage[icon_count++]; }
-    if (d->has_actions) { qa_source_item_action_calls calls = {(const void *)d->action_use, (const void *)d->action_drop}; static qa_source_item_action action_storage[128][2]; static size_t action_count; out.action_count=qa_source_item_action_names(calls, action_storage[action_count], 2); out.actions=action_storage[action_count]; action_count++; }
+    if (d->has_icon && d->icon) { if(!items->icon_storage) items->icon_storage=calloc(items->admission_count,sizeof *items->icon_storage); if(!items->icon_storage) return false; items->icon_storage[i]=qa_resolve_item_icon(*d->icon, operations.media_content); out.icon=&items->icon_storage[i]; }
+    if (d->has_actions) { qa_source_item_action_calls calls = {(const void *)d->action_use, (const void *)d->action_drop}; if(!items->action_storage) items->action_storage=calloc(items->admission_count,sizeof *items->action_storage); if(!items->action_storage) return false; out.action_count=qa_source_item_action_names(calls, items->action_storage[i], 2); out.actions=items->action_storage[i]; }
     items->definitions[i]=out;
     items->admissions[i]=(qa_source_item_admission){out, d->admission};
   }
@@ -316,9 +365,27 @@ bool qa_compat_qc_mod_items_init(I *items, const qa_mod_qc_items *definition, qa
       if(!dup){ if(items->watched_word_count==cap){ cap=cap?cap*2:8; items->watched_words=realloc(items->watched_words,cap*sizeof *items->watched_words); if(!items->watched_words) return false; } items->watched_words[items->watched_word_count++]=words_list[j]; } }
   }
   items->has_weapons = definition->weapons != NULL;
+  if (items->has_weapons) {
+    if (!operations.weapon_bind) qa_range_error("QC weapons require the destination weapon slot service");
+    if (!build_instance_qview(items, program)) return false;
+    items->qmachine.fail = items_qm_fail; items->qmachine.execute = items_qm_execute; items->qmachine.execute_region = items_qm_execute_region;
+    items->qmachine.strings_get = items_qm_strings_get; items->qmachine.strings_set_engine = items_qm_strings_set_engine;
+    items->weapon_stage = qa_q1qc_declared_weapon_stage(&items->qprogram, definition->weapons->stage);
+    items->stage_binding = (qa_q1qc_weapon_stage_binding){items->weapon_stage, items_machine_fn, items, items_stage_selected, items};
+  }
   return true;
 }
-void qa_compat_qc_mod_items_destroy(I *items) { free(items->admissions); free(items->definitions); free(items->entries); free(items->watched_words); memset(items,0,sizeof *items); }
+void qa_compat_qc_mod_items_destroy(I *items) {
+  qa_q1qc_weapon_stage_destroy(items->weapon_stage);
+  free(items->admissions); free(items->definitions); free(items->entries); free(items->watched_words);
+  free(items->qglobals); free(items->qfields); free(items->qfunctions); free(items->qstatements);
+  free(items->icon_storage); free(items->action_storage);
+  for (size_t i=0;i<items->state_count;i++){ free(items->state_storage[i]->buffer); free(items->state_storage[i]); }
+  free(items->state_storage);
+  for (size_t i=0;i<items->weapon_count;i++) free(items->weapon_storage[i]);
+  free(items->weapon_storage);
+  memset(items,0,sizeof *items);
+}
 void qa_compat_qc_mod_items_admit(I *items, qa_actor_id actor) {
   if (find_entry(items, actor)) return;
   qa_owned_actor owner;

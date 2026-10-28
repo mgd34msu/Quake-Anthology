@@ -150,9 +150,18 @@ static int32_t scalar_word(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_acto
   return qa_qvm_writable_view_get_int32(&view, 0, true);
 }
 
+/* JS ToInt32 for the bitwise mask operand. */
+static int32_t to_int32(double value) {
+  if (!isfinite(value)) return 0;
+  double wrapped = fmod(trunc(value), 4294967296.0);
+  if (wrapped >= 2147483648.0) wrapped -= 4294967296.0;
+  else if (wrapped < -2147483648.0) wrapped += 4294967296.0;
+  return (int32_t)wrapped;
+}
+
 static bool test_item(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_actor_id actor, const qa_qvm_item_test *test) {
   int32_t scalar = scalar_word(dispatcher, actor, &test->field);
-  int32_t value = test->has_mask ? scalar & (int32_t)(uint32_t)test->mask : scalar;
+  int32_t value = test->has_mask ? scalar & to_int32(test->mask) : scalar;
   return strcmp(test->comparison, "equals") == 0 ? (double)value == test->value : (double)value <= test->value;
 }
 

@@ -87,7 +87,7 @@ static void b_vlen(void *_ctx, qa_compat_qc_machine *m) { (void)_ctx; qa_compat_
 static void b_vectoyaw(void *_ctx, qa_compat_qc_machine *m) { (void)_ctx; qa_compat_qc_machine_return_float(m, yaw_of(qa_compat_qc_machine_arg_vector(m, 0))); }
 static void b_ftos(void *_ctx, qa_compat_qc_machine *m) { (void)_ctx;
   double v = qa_compat_qc_machine_arg_float(m, 0); char buf[64];
-  if (v == trunc(v)) snprintf(buf, sizeof buf, "%lld", (long long)trunc(v)); else format_float(v, buf);
+  if (v == trunc(v)) { if (fabs(v) < 1e21) snprintf(buf, sizeof buf, "%.0f", trunc(v)); else snprintf(buf, sizeof buf, "%g", trunc(v)); } else format_float(v, buf);
   qa_compat_qc_machine_return_int(m, (double)qa_compat_qc_strings_set_engine(&m->strings, "pr_string_temp", buf, -1));
 }
 static void b_vtos(void *_ctx, qa_compat_qc_machine *m) { (void)_ctx;

@@ -25,6 +25,7 @@ typedef struct qa_compat_qc_mod_protection {
   qa_q1qc_armor_stage **regions; size_t region_count;
   struct ProtEntry *entries; size_t entry_count, entry_capacity;
   struct ProtStage *stages; size_t stage_count, stage_capacity;
+  struct ProtBind **bind_storage; size_t bind_count, bind_capacity;
   struct qa_compat_qc_mod_protection *self_ref;
 } qa_compat_qc_mod_protection;
 void qa_compat_qc_mod_protection_init(qa_compat_qc_mod_protection *p, qa_mod_callback_declaration declaration, qa_provider_id provider, qa_mod_host_services *services, qa_compat_qc_mod_protection_operations operations);

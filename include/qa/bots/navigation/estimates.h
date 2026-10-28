@@ -1,7 +1,5 @@
 /* Port of src/bots/navigation/estimates.ts. Generic Dijkstra tails with
- * a 128-entry LRU cache. AAS graphs delegate to estimate-aas in TS; that
- * module is not yet ported, so AAS graphs currently take the generic
- * path (tracked as an unresolved cross-slice leftover).
+ * a 128-entry LRU cache; AAS graphs delegate to estimate_aas.
  * GPL-2.0-or-later. */
 #ifndef QA_BOTS_NAVIGATION_ESTIMATES_H
 #define QA_BOTS_NAVIGATION_ESTIMATES_H
@@ -15,7 +13,9 @@ typedef struct qa_nav_estimate_cache_entry {
   int64_t goal; bool has_flags; int64_t flags; /* has_flags: TS does flags|0 */
   qa_nav_estimate_tail *tails; /* per graph node index */
 } qa_nav_estimate_cache_entry;
+struct qa_aas_navigation_estimates;
 typedef struct qa_navigation_estimates {
+  struct qa_aas_navigation_estimates *aas; /* owned, NULL unless AAS graph */
   const qa_navigation_graph *graph; /* borrowed */
   void *ctx; qa_nav_estimate_eligibility allowed;
   const qa_navigation_edge ***incoming; size_t *incoming_counts; /* per node index */

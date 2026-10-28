@@ -122,7 +122,8 @@ void qa_qvm_symbols_value_to_symbol(qa_qvm_symbols *symbols, int32_t value, char
     return;
   }
   char buffer[1200];
-  int written = snprintf(buffer, sizeof buffer, "%s+%d", symbol.name, (int)(value - symbol.value));
+  int written = snprintf(buffer, sizeof buffer, "%s+%d", symbol.name,
+                         (int)(int32_t)((uint32_t)value - (uint32_t)symbol.value));
   size_t length = written < 0 ? 0 : (size_t)written;
   if (length >= 1024 && symbols->print != NULL) {
     char message[128];
@@ -228,6 +229,8 @@ void qa_qvm_symbols_load(qa_qvm_symbols *symbols, const qa_qvm_symbol_load_optio
     entry->data_length = 16 + name_length;
     if (value >= 0 && (size_t)value < symbols->instruction_pointer_count)
       value = symbols->instruction_pointers[value];
+    /* TS allocate returns a zeroed Uint8Array. */
+    memset(bytes, 0, 12);
     data_set_i32(bytes, 4, value);
     for (size_t i = 0; i < name_length; i++) bytes[12 + i] = (uint8_t)name_copy[i];
     count++;
@@ -243,12 +246,18 @@ void qa_qvm_symbols_load(qa_qvm_symbols *symbols, const qa_qvm_symbol_load_optio
   options->files->free_file(options->files->ctx, &file);
 }
 
+typedef struct sorted_entry {
+  record *entry;
+  size_t index; /* TS Array.prototype.sort is stable */
+} sorted_entry;
+
 static int compare_profile(const void *left, const void *right) {
-  const record *a = *(record *const *)left;
-  const record *b = *(record *const *)right;
-  int32_t av = data_i32(a->data, 8);
-  int32_t bv = data_i32(b->data, 8);
-  return av < bv ? -1 : av > bv ? 1 : 0;
+  const sorted_entry *a = left;
+  const sorted_entry *b = right;
+  int32_t av = data_i32(a->entry->data, 8);
+  int32_t bv = data_i32(b->entry->data, 8);
+  if (av != bv) return av < bv ? -1 : 1;
+  return a->index < b->index ? -1 : a->index > b->index ? 1 : 0;
 }
 
 void qa_qvm_symbols_print_profile(qa_qvm_symbols *symbols, qa_qvm_symbol_print_fn print,
@@ -258,11 +267,12 @@ void qa_qvm_symbols_print_profile(qa_qvm_symbols *symbols, qa_qvm_symbol_print_f
   record *records = symbols->records;
   size_t count = (size_t)symbols->parsed_count;
   if (count > symbols->record_count) count = symbols->record_count;
-  record **sorted = malloc((count == 0 ? 1 : count) * sizeof *sorted);
+  sorted_entry *sorted = malloc((count == 0 ? 1 : count) * sizeof *sorted);
   if (sorted == NULL) qa_range_error("QVM memory allocation failed");
   int64_t total = 0;
   for (size_t i = 0; i < count; i++) {
-    sorted[i] = &records[i];
+    sorted[i].entry = &records[i];
+    sorted[i].index = i;
     total += data_i32(records[i].data, 8);
   }
   qsort(sorted, count, sizeof *sorted, compare_profile);
@@ -273,7 +283,7 @@ void qa_qvm_symbols_print_profile(qa_qvm_symbols *symbols, qa_qvm_symbol_print_f
   }
   for (size_t i = 0; i < count; i++) {
     assert_live(symbols);
-    int32_t entry_count = data_i32(sorted[i]->data, 8);
+    int32_t entry_count = data_i32(sorted[i].entry->data, 8);
     char prefix[16];
     if (total == 0) memcpy(prefix, "    ", 5);
     else {
@@ -283,11 +293,11 @@ void qa_qvm_symbols_print_profile(qa_qvm_symbols *symbols, qa_qvm_symbol_print_f
     }
     if (print != NULL) {
       char line[1200];
-      snprintf(line, sizeof line, "%s%9d %s\n", prefix, (int)entry_count, sorted[i]->name);
+      snprintf(line, sizeof line, "%s%9d %s\n", prefix, (int)entry_count, sorted[i].entry->name);
       print(print_ctx, line);
     }
     assert_live(symbols);
-    data_set_i32(sorted[i]->data, 8, 0);
+    data_set_i32(sorted[i].entry->data, 8, 0);
   }
   if (print != NULL) {
     char line[64];

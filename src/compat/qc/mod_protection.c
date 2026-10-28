@@ -92,7 +92,9 @@ void qa_compat_qc_mod_protection_init(P *p, qa_mod_callback_declaration decl, qa
 void qa_compat_qc_mod_protection_destroy(P *p) {
   qa_compat_qc_mod_protection_close(p);
   qa_compat_qc_protection_regions_free(p->regions, p->region_count);
-  free(p->stages); free(p->entries); memset(p,0,sizeof *p);
+  free(p->stages); free(p->entries);
+  for(size_t i=0;i<p->bind_count;i++) free(p->bind_storage[i]);
+  free(p->bind_storage); memset(p,0,sizeof *p);
 }
 void qa_compat_qc_mod_protection_reserve(P *p, qa_actor_id actor) {
   if (find_entry(p, actor)) { require_entry(p, actor); return; }
@@ -177,12 +179,13 @@ static void rebase(P *p, qa_actor_id actor) {
   Projection state = projection_of(p, actor);
   for(size_t i=0;i<p->stage_count;i++) if(actor_eq(p->stages[i].actor,actor)) p->stages[i].before = state;
 }
-typedef struct { P *p; qa_actor_id actor; const qa_mod_qc_protection *definition; } BindCtx;
-static BindCtx bind_storage[256]; static size_t bind_count;
+struct ProtBind { P *p; qa_actor_id actor; const qa_mod_qc_protection *definition; };
+typedef struct ProtBind BindCtx;
 static BindCtx *bind_for(P *p, qa_actor_id actor, const qa_mod_qc_protection *def) {
-  for(size_t i=0;i<bind_count;i++) if(bind_storage[i].p==p&&actor_eq(bind_storage[i].actor,actor)&&bind_storage[i].definition==def) return &bind_storage[i];
-  if(bind_count>=256) qa_range_error("protection binding storage exhausted");
-  bind_storage[bind_count]=(BindCtx){p,actor,def}; return &bind_storage[bind_count++];
+  for(size_t i=0;i<p->bind_count;i++) if(actor_eq(p->bind_storage[i]->actor,actor)&&p->bind_storage[i]->definition==def) return p->bind_storage[i];
+  if(p->bind_count==p->bind_capacity){ size_t c=p->bind_capacity?p->bind_capacity*2:8; p->bind_storage=realloc(p->bind_storage,c*sizeof *p->bind_storage); if(!p->bind_storage) qa_range_error("protection allocation failed"); p->bind_capacity=c; }
+  BindCtx *cell=malloc(sizeof *cell); if(!cell) qa_range_error("protection allocation failed");
+  *cell=(BindCtx){p,actor,def}; p->bind_storage[p->bind_count++]=cell; return cell;
 }
 static qa_regular_armor_state b_read_regular(void *ctx){ BindCtx *b=ctx; return regular_read(b->p,b->actor,b->definition); }
 static qa_powered_protection_state b_read_powered(void *ctx){ BindCtx *b=ctx; return powered_read(b->p,b->actor,b->definition); }
@@ -240,14 +243,15 @@ static qa_armor_stage_result absorb_impl(P *p, qa_actor_id actor, const qa_mod_q
   inputs[9].value.kind="vector"; inputs[9].value.vector_value=input.normal;
   inputs[10].value.kind="float"; inputs[10].value.number_value=now_seconds;
   /* Inline watch: push stage, invoke, pop */
-  if (find_entry(p, actor)) {
+  bool pushed = find_entry(p, actor) != NULL;
+  if (pushed) {
     if (p->stage_count==p->stage_capacity){ size_t c=p->stage_capacity?p->stage_capacity*2:4; p->stages=realloc(p->stages,c*sizeof *p->stages); if(!p->stages) qa_range_error("protection allocation failed"); p->stage_capacity=c; }
     p->stages[p->stage_count++] = (struct ProtStage){actor, observer, projection_of(p, actor)};
   }
   const qa_q1qc_armor_stage *region = NULL;
   if (definition->absorb_is_region) for(size_t i=0;i<p->region_count;i++) if(p->regions[i]->region.entry==definition->absorb_stage.entry) region=p->regions[i];
   double saved = p->operations.invoke(p->operations.ctx, definition->absorb_call, inputs, 11, region);
-  if (p->stage_count) p->stage_count--;
+  if (pushed) p->stage_count--;
   if (qa_session_actor_registry_is_live(p->services->actors, actor) && find_entry(p, actor)) require_entry(p, actor);
   return (qa_armor_stage_result){saved};
 }

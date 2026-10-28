@@ -207,6 +207,8 @@ static bool utf8_check(const uint8_t *bytes, size_t length) {
       if ((d & 0xc0) != 0x80) return false;
       cp = (cp << 6) | (uint32_t)(d & 0x3f);
     }
+    if ((need == 1 && cp < 0x80) || (need == 2 && cp < 0x800) ||
+        (need == 3 && cp < 0x10000)) return false;
     if ((cp >= 0xd800 && cp <= 0xdfff) || cp > 0x10ffff) return false;
     i += (size_t)need + 1;
   }

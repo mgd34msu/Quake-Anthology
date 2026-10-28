@@ -10,12 +10,13 @@ typedef struct qa_compat_qc_mod_pickups_entry Entry;
 static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
 static bool client_eq(qa_client_id a, qa_client_id b){return qa_same_client(a, b);}
 static Entry *find_entry(P *p, qa_actor_id a){ for(size_t i=0;i<p->entry_count;i++){ if(actor_eq(p->entries[i].actor,a)) return &p->entries[i]; } return NULL; }
-typedef struct { P *p; qa_actor_id actor; const qa_mod_pickup_rule *definition; Entry *entry; } TakeCtx;
-static TakeCtx take_storage[512]; static size_t take_count;
-static TakeCtx *take_for(P *p, qa_actor_id actor, const qa_mod_pickup_rule *def, Entry *entry) {
-  for(size_t i=0;i<take_count;i++) if(take_storage[i].p==p&&actor_eq(take_storage[i].actor,actor)&&take_storage[i].definition==def){ take_storage[i].entry=entry; return &take_storage[i]; }
-  if(take_count>=512) qa_range_error("pickup storage exhausted");
-  take_storage[take_count]=(TakeCtx){p,actor,def,entry}; return &take_storage[take_count++];
+struct qa_compat_qc_mod_pickups_take { P *p; qa_actor_id actor; const qa_mod_pickup_rule *definition; };
+typedef struct qa_compat_qc_mod_pickups_take TakeCtx;
+static TakeCtx *take_for(P *p, qa_actor_id actor, const qa_mod_pickup_rule *def) {
+  for(size_t i=0;i<p->take_count;i++) if(actor_eq(p->take_storage[i]->actor,actor)&&p->take_storage[i]->definition==def) return p->take_storage[i];
+  if(p->take_count==p->take_capacity){ size_t c=p->take_capacity?p->take_capacity*2:8; p->take_storage=realloc(p->take_storage,c*sizeof *p->take_storage); if(!p->take_storage) qa_range_error("pickup allocation failed"); p->take_capacity=c; }
+  TakeCtx *cell=malloc(sizeof *cell); if(!cell) qa_range_error("pickup allocation failed");
+  *cell=(TakeCtx){p,actor,def}; p->take_storage[p->take_count++]=cell; return cell;
 }
 static bool current_of(P *p, qa_actor_id actor, Entry *entry) {
   qa_client_id client; qa_actor_id back;
@@ -75,7 +76,7 @@ static qa_original_pickup_rule *actor_rules(P *p, qa_actor_id actor, size_t *out
   if (!entry->rules) qa_range_error("pickup allocation failed");
   for (size_t i = 0; i < n; i++) {
     const qa_mod_pickup_rule *def = &p->declaration.pickups[i];
-    entry->rules[i] = (qa_original_pickup_rule){take_for(p, actor, def, entry), def->id, def->offered, def->offered_count, def->writes, take_fn};
+    entry->rules[i] = (qa_original_pickup_rule){take_for(p, actor, def), def->id, def->offered, def->offered_count, def->writes, take_fn};
   }
   *out_count = n; return entry->rules;
 }
@@ -83,13 +84,15 @@ void qa_compat_qc_mod_pickups_init(P *p, qa_mod_callback_declaration decl, qa_pr
   memset(p,0,sizeof *p); p->declaration=decl; p->provider=provider; p->services=services; p->operations=ops; p->self_ref=p;
 }
 void qa_compat_qc_mod_pickups_destroy(P *p) {
-  for (size_t i=0;i<p->entry_count;i++) free(p->entries[i].rules);
-  free(p->entries); memset(p,0,sizeof *p);
+  for (size_t i=0;i<p->entry_count;i++){ free(p->entries[i].rules); free(p->entries[i].pickup_rules); }
+  free(p->entries);
+  for (size_t i=0;i<p->take_count;i++) free(p->take_storage[i]);
+  free(p->take_storage); memset(p,0,sizeof *p);
 }
 void qa_compat_qc_mod_pickups_release(P *p, qa_actor_id actor) {
   Entry *entry = find_entry(p, actor); if (!entry) return;
   for (size_t i = 0; i < entry->remove_count; i++) entry->remove[i](entry->remove_ctx[i]);
-  free(entry->rules);
+  free(entry->rules); free(entry->pickup_rules);
   size_t idx = (size_t)(entry - p->entries);
   memmove(&p->entries[idx], &p->entries[idx+1], (p->entry_count-idx-1)*sizeof *p->entries); p->entry_count--;
 }
@@ -103,16 +106,16 @@ void qa_compat_qc_mod_pickups_admit(P *p, qa_actor_id actor) {
   size_t rule_count = 0; qa_original_pickup_rule *rules = actor_rules(p, actor, &rule_count);
   Entry *entry = find_entry(p, actor);
   entry->client = client;
-  const qa_original_pickup_rule *inventory_rules[64]; size_t in_n = 0;
-  qa_original_pickup_rule filtered[64];
+  size_t in_n = 0;
+  free(entry->pickup_rules); entry->pickup_rules = calloc(rule_count ? rule_count : 1, sizeof *entry->pickup_rules);
+  if (!entry->pickup_rules) qa_range_error("pickup allocation failed");
   for (size_t i = 0; i < rule_count; i++) {
     bool inv = false; for (size_t j = 0; j < rules[i].writes.count; j++) if (rules[i].writes.values[j].kind == QA_PICKUP_RESOURCE_INVENTORY) inv = true;
-    if (inv && in_n < 64) { filtered[in_n] = rules[i]; inventory_rules[in_n] = &filtered[in_n]; in_n++; }
+    if (inv) entry->pickup_rules[in_n++] = rules[i];
   }
-  (void)inventory_rules;
   if (in_n) {
     void (*remove)(void *) = NULL; void *remove_ctx = NULL;
-    p->operations.bind_pickup(p->operations.ctx, owner, filtered, in_n, &remove, &remove_ctx);
+    p->operations.bind_pickup(p->operations.ctx, owner, entry->pickup_rules, in_n, &remove, &remove_ctx);
     if (remove && entry->remove_count < 8) { entry->remove[entry->remove_count] = remove; entry->remove_ctx[entry->remove_count] = remove_ctx; entry->remove_count++; }
   }
 }

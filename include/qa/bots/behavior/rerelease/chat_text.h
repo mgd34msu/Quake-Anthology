@@ -3,5 +3,5 @@
 #define QA_BOTS_BEHAVIOR_RERELEASE_CHAT_TEXT_H
 #include "qa/bots/behavior/rerelease/rng.h"
 /* lookup returns NULL for TS null. Result: malloc'd string, caller frees (NULL on OOM). */
-char *qa_q1_bot_chat_text(const char *locstring, const char *(*lookup)(void *ctx, const char *key), void *lookup_ctx, qa_bot_random random);
+char *qa_q1_bot_chat_text(const char *locstring, const char *(*lookup)(void *ctx, const char *key), void *lookup_ctx, qa_bot_random_t random);
 #endif

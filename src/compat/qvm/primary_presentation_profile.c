@@ -7,7 +7,7 @@
 
 #include "qa/compat/qvm/operations.h"
 #include "qa/compat/qvm/render_record.h"
-#include "qa/content/mounts/paths.h"
+#include "qa/compat/qvm/compatibility.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/value.h"
 
@@ -29,112 +29,6 @@ static qa_save_reader item_at(const qa_save_reader *reader, size_t index) {
   return out;
 }
 
-
-static bool digest_valid(const char *digest) {
-  if (strncmp(digest, "sha256:", 7) != 0) return false;
-  const char *hex = digest + 7;
-  if (strlen(hex) != 64) return false;
-  for (int i = 0; i < 64; i++) {
-    char c = hex[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
-  }
-  return true;
-}
-
-static bool lower_equal(const char *a, const char *b) {
-  while (*a != '\0' && *b != '\0') {
-    char ca = *a >= 'A' && *a <= 'Z' ? (char)(*a + 32) : *a;
-    char cb = *b >= 'A' && *b <= 'Z' ? (char)(*b + 32) : *b;
-    if (ca != cb) return false;
-    a++;
-    b++;
-  }
-  return *a == *b;
-}
-
-/* Mirrored parseQvmCompatibilityDeclaration selection: returns the
- * selected equipmentPresentation reader (caller destroys) or false
- * when absent; *out_profile receives the selected ABI profile. */
-static bool select_equipment(const qa_save_value *value, const qa_qvmy_artifact *artifact,
-                             qa_save_reader *out_reader, const char **out_profile) {
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, "qvm-compatibility.json"))
-    qa_range_error("QVM memory allocation failed");
-  qa_save_reader version = field(&reader, "version");
-  (void)qa_save_reader_literal_number(&version, 1);
-  qa_save_reader_destroy(&version);
-  qa_save_reader modules = field(&reader, "modules");
-  size_t count = qa_save_reader_list_count(&modules);
-  char (*seen)[512] = xmalloc(count * sizeof *seen);
-  size_t seen_count = 0;
-  bool selected = false;
-  *out_profile = "q3-modern";
-  for (size_t i = 0; i < count; i++) {
-    qa_save_reader entry = item_at(&modules, i);
-    qa_save_reader role_reader = field(&entry, "role");
-    static const char *const roles[] = {"qagame", "cgame", "ui"};
-    const char *role = qa_save_reader_choice_string(&role_reader, roles, 3);
-    qa_save_reader_destroy(&role_reader);
-    qa_save_reader path_reader = field(&entry, "artifactPath");
-    const char *raw_path = qa_save_reader_string(&path_reader);
-    char *path = qa_normalize_resource_path(raw_path);
-    if (path == NULL) qa_range_error("QVM memory allocation failed");
-    qa_save_reader_destroy(&path_reader);
-    char key[512];
-    snprintf(key, sizeof key, "%s/", role);
-    size_t used = strlen(key);
-    for (const char *p = path; *p != '\0' && used + 1 < sizeof key; p++)
-      key[used++] = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
-    key[used] = '\0';
-    for (size_t j = 0; j < seen_count; j++) {
-      if (strcmp(seen[j], key) == 0)
-        qa_save_reader_fail(&entry, "duplicate module compatibility declaration");
-    }
-    memcpy(seen[seen_count++], key, sizeof key);
-    qa_save_reader digest_reader = field(&entry, "artifactDigest");
-    const char *digest = qa_save_reader_string(&digest_reader);
-    if (!digest_valid(digest))
-      qa_save_reader_fail(&entry, "expected exact sha256 artifact digest");
-    qa_save_reader_destroy(&digest_reader);
-    qa_save_reader profile_reader = field(&entry, "profile");
-    static const char *const profiles[] = {"q3-modern", "q3-1.16n-base"};
-    const char *profile = qa_save_reader_choice_string(&profile_reader, profiles, 2);
-    qa_save_reader_destroy(&profile_reader);
-    qa_save_reader primary = field(&entry, "primary");
-    qa_save_reader equipment = field(&entry, "equipmentPresentation");
-    if (!qa_save_reader_is_undefined(&primary) && strcmp(role, "qagame") != 0)
-      qa_save_reader_fail(&primary, "primary player interfaces belong to qagame");
-    if (!qa_save_reader_is_undefined(&equipment) && strcmp(role, "cgame") != 0)
-      qa_save_reader_fail(&equipment, "equipment presentation belongs to cgame");
-    bool matches = strcmp(role, "cgame") == 0 && lower_equal(path, artifact->module.artifact_path);
-    if (matches) {
-      qa_save_reader digest_check = field(&entry, "artifactDigest");
-      const char *entry_digest = qa_save_reader_string(&digest_check);
-      if (strcmp(entry_digest, artifact->module.digest) != 0)
-        qa_save_reader_fail(&entry, "compatibility declaration belongs to different artifact bytes");
-      qa_save_reader_destroy(&digest_check);
-      *out_profile = profile;
-      if (!qa_save_reader_is_undefined(&equipment)) {
-        if (selected) qa_save_reader_destroy(out_reader);
-        *out_reader = equipment;
-        selected = true;
-        equipment.value = NULL;
-        equipment.path = NULL;
-      } else if (selected) {
-        qa_save_reader_destroy(out_reader);
-        selected = false;
-      }
-    }
-    qa_save_reader_destroy(&primary);
-    qa_save_reader_destroy(&equipment);
-    qa_save_reader_destroy(&entry);
-    free(path);
-  }
-  free(seen);
-  qa_save_reader_destroy(&modules);
-  qa_save_reader_destroy(&reader);
-  return selected;
-}
 
 static const qa_qvmy_region_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
   if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
@@ -222,18 +116,14 @@ static int64_t int32_field(const qa_save_reader *reader, const char *name) {
 bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_content_mounted *mounts,
                                         qa_q3_equipment_qvm_presentation_profile *out, bool *out_owned) {
   *out_owned = false;
-  qa_content_opened_resource opened;
-  bool has_declaration = qa_content_mounted_open(mounts, "qvm-compatibility.json", NULL, NULL, &opened);
+  /* Landed readQvmCompatibilityDeclaration (compatibility.h). */
+  qa_qvm_compatibility_reading reading;
+  qa_qvm_module_path_digest module = {artifact->module.artifact_path, artifact->module.digest};
+  if (!qa_qvm_read_compatibility_declaration(mounts, module, "cgame", &reading))
+    qa_range_error("QVM memory allocation failed");
   qa_save_reader equipment_reader;
-  bool has_equipment = false;
-  const char *declared_profile = "q3-modern";
-  qa_save_value *tree = NULL;
-  if (has_declaration) {
-    tree = qa_parse_json_value(opened.bytes, opened.byte_length, false);
-    if (tree == NULL) qa_range_error("QVM memory allocation failed");
-    free(opened.bytes);
-    has_equipment = select_equipment(tree, artifact, &equipment_reader, &declared_profile);
-  }
+  bool has_equipment = reading.declaration.equipment_presentation != NULL;
+  const char *declared_profile = reading.declaration.profile;
   if (!has_equipment) {
     qa_q3_equipment_qvm_artifact equipment_artifact;
     memset(&equipment_artifact, 0, sizeof equipment_artifact);
@@ -241,9 +131,12 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
     equipment_artifact.role = artifact->role;
     equipment_artifact.abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
     bool found = qa_q3_equipment_presentation_profile(&equipment_artifact, out);
-    if (tree != NULL) qa_save_value_free(tree);
+    qa_qvm_compatibility_reading_destroy(&reading);
     return found;
   }
+  if (!qa_save_reader_init(&equipment_reader, (qa_save_value *)reading.declaration.equipment_presentation,
+                           "qvm-compatibility.json"))
+    qa_range_error("QVM memory allocation failed");
   const char *abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
   if (strcmp(artifact->role, "cgame") != 0 || strcmp(declared_profile, abi_profile) != 0)
     qa_save_reader_fail(&equipment_reader, "equipment presentation requires the declared cgame ABI");
@@ -356,7 +249,7 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
   if (repeated || entry_count == 0)
     qa_save_reader_fail(&equipment_reader, "equipment interfaces overlap original function ownership or omit status");
   qa_save_reader_destroy(&equipment_reader);
-  qa_save_value_free(tree);
+  qa_qvm_compatibility_reading_destroy(&reading);
   return true;
 }
 

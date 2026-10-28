@@ -877,10 +877,29 @@ static double decision(qa_qvm_interpreter *interp, invocation *frame, source_cal
 typedef struct region_host {
   host_ctx host; /* must stay first: invoke/cancel receive this pointer */
   source_region *region;
+  bool open;
 } region_host;
+
+/* TS current(): every region control operation checks expiry first. */
+static void region_check_current(region_host *r) {
+  if (!r->open || !r->host.function_scope->active || r->host.interp->active != r->host.frame ||
+      *r->host.frame->sp != r->region->stack)
+    qa_range_error("QVM region callback has expired");
+}
+static double region_invoke(void *ctx, const double *args, size_t arg_count, bool has_index,
+                            double instruction_index,
+                            const qa_qvm_read_only_evaluation *evaluation) {
+  region_check_current(ctx);
+  return host_invoke(ctx, args, arg_count, has_index, instruction_index, evaluation);
+}
+static _Noreturn void region_cancel(void *ctx, qa_qvm_cancellation_scope scope) {
+  region_check_current(ctx);
+  host_cancel(ctx, scope);
+}
 
 static double region_local_word(void *ctx, double offset) {
   region_host *r = ctx;
+  region_check_current(r);
   if (!is_safe_integer(offset) || offset < 8 || (int64_t)offset % 4 != 0 ||
       offset + 4 > (double)r->region->frame_size)
     qa_range_error("QVM region local is outside its original frame");
@@ -893,12 +912,12 @@ static double run_region(qa_qvm_interpreter *interp, invocation *frame, source_c
     qa_range_error("QVM region lost its original frame or operand boundary");
   int64_t previous_stack = interp->program_stack;
   interp->program_stack = region->stack - 4;
-  region_host rhost = {{interp, frame, owner}, region};
+  region_host rhost = {{interp, frame, owner}, region, true};
   qa_qvm_region_control control;
   memset(&control, 0, sizeof control);
   control.ctx = &rhost;
-  control.invoke = host_invoke;
-  control.cancel_function = host_cancel;
+  control.invoke = region_invoke;
+  control.cancel_function = region_cancel;
   control.local_word = region_local_word;
   double result = 0;
   if (complete_phase) {
@@ -910,6 +929,7 @@ static double run_region(qa_qvm_interpreter *interp, invocation *frame, source_c
       qa_range_error("QVM region requires one execution decision");
     result = strcmp(choice, "execute") == 0 ? 1 : 0;
   }
+  rhost.open = false;
   interp->program_stack = previous_stack;
   return result;
 }
@@ -1130,9 +1150,11 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
         if (has_evaluation && !evaluation_started &&
             pc - 5 == target_pc(interp, (double)instruction_index)) {
           evaluation_started = true;
-          for (size_t i = 0; i < evaluation.region.input_count; i++)
+          for (size_t i = 0; i < evaluation.region.input_count; i++) {
+            if (i >= evaluation.input_count) qa_range_error("Missing QVM region live-in");
             write_word(interp, sp + (int64_t)evaluation.region.inputs[i],
                        (int32_t)evaluation.inputs[i]);
+          }
           pc = target_pc(interp, evaluation.region.entry);
         }
         if (interp->debug) {

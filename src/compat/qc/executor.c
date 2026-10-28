@@ -142,9 +142,9 @@ static qa_raw_entity_view at_slot(qa_compat_qc_raw_table_state *s, int64_t slot)
   s->view_storage.public_layout = s->layout;
   s->view_storage.bytes.bytes = s->machine->entities->bytes + offset;
   s->view_storage.bytes.length = (size_t)s->machine->entities->layout.stride_bytes;
-  static int64_t slot_cell; slot_cell = slot;
-  static void *pair[2]; pair[0] = s; pair[1] = &slot_cell;
-  s->view_storage.ctx = pair; s->view_storage.current_actor = view_actor;
+  s->view_slot = slot;
+  s->view_pair[0] = s; s->view_pair[1] = &s->view_slot;
+  s->view_storage.ctx = s->view_pair; s->view_storage.current_actor = view_actor;
   return s->view_storage;
 }
 static qa_raw_entity_view t_at_slot(void *ctx, double slot) { return at_slot(ctx, (int64_t)slot); }

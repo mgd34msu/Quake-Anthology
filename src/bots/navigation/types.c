@@ -22,9 +22,14 @@ bool qa_travel_mode_from_name(const char *n, qa_travel_mode *o) {
 void qa_navigation_graph_destroy(qa_navigation_graph *g) {
   if (!g)
     return;
+  /* graph.c AAS edges own their raw [face,edge] pairs; other sources borrow. */
+  if (g->aas_asset)
+    for (size_t i = 0; i < g->edge_count; i++) free((void *)g->edges[i].entity.raw);
   free(g->nodes);
   free(g->edges);
+  for (size_t i = 0; i < g->cluster_count; i++) free((void *)g->clusters[i].nodes);
   free(g->clusters);
+  for (size_t i = 0; i < g->rejected_count; i++) free((void *)g->rejected[i].reason);
   free(g->rejected);
   memset(g, 0, sizeof *g);
 }
