@@ -257,3 +257,117 @@ void qa_compat_qc_mod_messages_close(M *m) {
   m->signon_count = 0; m->admitted_count = 0;
   if (m->actors) qa_session_actor_registry_off_release(m->actors, m->release_id);
 }
+
+/* Landed-owner adapter: qa_app_sim_quakec_local_messages behind the ops seam. */
+typedef qa_compat_qc_local_message_app_adapter AppAdapter;
+static void app_admit(void *ctx, qa_actor_id actor) {
+  qa_app_sim_quakec_local_messages_admit(((AppAdapter *)ctx)->state, actor);
+}
+static void app_retire(void *ctx, qa_actor_id actor) {
+  qa_app_sim_quakec_local_messages_retire(((AppAdapter *)ctx)->state, actor);
+}
+static void app_receive(void *ctx, const qa_netquake_message *messages, size_t count,
+                        const qa_actor_id *target, const qa_actor_id *actor) {
+  qa_app_sim_quakec_local_messages_receive(((AppAdapter *)ctx)->state, messages, count, target,
+                                           actor != NULL, actor);
+}
+static qa_compat_qc_local_capture app_capture(void *ctx) {
+  AppAdapter *a = ctx;
+  if (a->has_held) qa_app_sim_quakec_capture_free(&a->held);
+  a->held = qa_app_sim_quakec_local_messages_capture(a->state);
+  a->has_held = true;
+  qa_compat_qc_local_capture out;
+  memset(&out, 0, sizeof out);
+  out.baseline = a->held.baseline;
+  out.baseline_count = a->held.baseline_count;
+  out.client_count = a->held.client_count;
+  if (out.client_count > 0) {
+    out.clients = malloc(out.client_count * sizeof *out.clients);
+    if (out.clients == NULL) qa_range_error("mod messages allocation failed");
+    for (size_t i = 0; i < out.client_count; i++) {
+      out.clients[i].actor = a->held.clients[i].actor;
+      out.clients[i].messages = (qa_netquake_message *)a->held.clients[i].messages;
+      out.clients[i].message_count = a->held.clients[i].message_count;
+    }
+  }
+  return out;
+}
+static void app_capture_free(void *ctx, qa_compat_qc_local_capture capture) {
+  AppAdapter *a = ctx;
+  free(capture.clients);
+  if (a->has_held) { qa_app_sim_quakec_capture_free(&a->held); a->has_held = false; }
+}
+static qa_compat_qc_local_views app_capture_views(void *ctx) {
+  qa_app_sim_quakec_captured_views views =
+      qa_app_sim_quakec_local_messages_capture_views(((AppAdapter *)ctx)->state);
+  qa_compat_qc_local_views out;
+  memset(&out, 0, sizeof out);
+  out.has_baseline = views.has_baseline;
+  out.baseline = views.baseline;
+  out.client_count = views.client_count;
+  if (out.client_count > 0) {
+    out.clients = malloc(out.client_count * sizeof *out.clients);
+    if (out.clients == NULL) qa_range_error("mod messages allocation failed");
+    for (size_t i = 0; i < out.client_count; i++) {
+      out.clients[i].actor = views.clients[i].actor;
+      out.clients[i].target = views.clients[i].target;
+    }
+  }
+  free(views.clients);
+  return out;
+}
+static void app_views_free(void *ctx, qa_compat_qc_local_views views) {
+  (void)ctx;
+  free(views.clients);
+}
+static void app_restore(void *ctx, const qa_netquake_message *baseline, size_t baseline_count,
+                        const qa_compat_qc_local_client_messages *clients, size_t client_count) {
+  qa_app_sim_quakec_captured_client *converted = NULL;
+  if (client_count > 0) {
+    converted = malloc(client_count * sizeof *converted);
+    if (converted == NULL) qa_range_error("mod messages allocation failed");
+    for (size_t i = 0; i < client_count; i++) {
+      converted[i].actor = clients[i].actor;
+      converted[i].messages = clients[i].messages;
+      converted[i].message_count = clients[i].message_count;
+    }
+  }
+  qa_app_sim_quakec_local_messages_restore(((AppAdapter *)ctx)->state, baseline, baseline_count,
+                                           converted, client_count);
+  free(converted);
+}
+static void app_restore_views(void *ctx, const qa_actor_id *baseline,
+                              const qa_compat_qc_local_view *clients, size_t client_count) {
+  qa_app_sim_quakec_view_entry *converted = NULL;
+  if (client_count > 0) {
+    converted = malloc(client_count * sizeof *converted);
+    if (converted == NULL) qa_range_error("mod messages allocation failed");
+    for (size_t i = 0; i < client_count; i++) {
+      converted[i].actor = clients[i].actor;
+      converted[i].target = clients[i].target;
+    }
+  }
+  qa_app_sim_quakec_local_messages_restore_views(((AppAdapter *)ctx)->state, baseline, converted,
+                                                 client_count);
+  free(converted);
+}
+void qa_compat_qc_local_message_app_adapter_init(qa_compat_qc_local_message_app_adapter *adapter,
+                                                 qa_app_sim_quakec_local_messages *state) {
+  memset(adapter, 0, sizeof *adapter);
+  adapter->state = state;
+  adapter->ops.ctx = adapter;
+  adapter->ops.messages.ctx = adapter;
+  adapter->ops.messages.receive = app_receive;
+  adapter->ops.admit = app_admit;
+  adapter->ops.retire = app_retire;
+  adapter->ops.capture = app_capture;
+  adapter->ops.capture_free = app_capture_free;
+  adapter->ops.capture_views = app_capture_views;
+  adapter->ops.views_free = app_views_free;
+  adapter->ops.restore = app_restore;
+  adapter->ops.restore_views = app_restore_views;
+}
+void qa_compat_qc_local_message_app_adapter_destroy(qa_compat_qc_local_message_app_adapter *adapter) {
+  if (adapter->has_held) qa_app_sim_quakec_capture_free(&adapter->held);
+  adapter->has_held = false;
+}

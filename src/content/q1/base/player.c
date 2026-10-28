@@ -428,7 +428,7 @@ qa_q1_character_presentation qa_q1_character_actor_frame(qa_q1_character_actor *
   }
   return qa_q1_character_actor_presentation(character);
 }
-void qa_q1_character_actor_attack(qa_q1_character_actor *character, qa_q1_character_attack attack) {
+void qa_q1_character_actor_attack(qa_q1_character_actor *character, qa_q1_base_character_attack attack) {
   if (strcmp(character->life, "alive") != 0) return;
   qa_q1_character_source_pose pose;
   bool have_pose = get_pose(character, &pose);

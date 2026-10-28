@@ -27,7 +27,7 @@ static char *xstrdup(const char *text) {
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
 static bool streq_or_null(const char *a, const char *b) {
@@ -52,17 +52,17 @@ typedef struct lifecycle_entry {
   qa_elf_guest_image *image;
   qa_system_v_lifecycle_state state;
 } lifecycle_entry;
-typedef struct heap_entry { qa_guest_address address; size_t size; } heap_entry;
+typedef struct heap_entry { qa_guest_core_address address; size_t size; } heap_entry;
 typedef struct tls_block {
   qa_guest_module_identity module;
   uint64_t module_id;
-  qa_guest_address address;
+  qa_guest_core_address address;
   size_t byte_length;
 } tls_block;
 typedef struct destructor_entry {
-  qa_guest_address target;
-  bool has_argument; qa_guest_address argument;
-  bool has_dso; qa_guest_address dso;
+  qa_guest_core_address target;
+  bool has_argument; qa_guest_core_address argument;
+  bool has_dso; qa_guest_core_address dso;
   bool called;
 } destructor_entry;
 
@@ -88,7 +88,7 @@ static symbol_entry *find_symbol(qa_system_v_guest_runtime *rt, const char *key)
     if (strcmp(SYMBOLS(rt)[i]->key, key) == 0) return SYMBOLS(rt)[i];
   return NULL;
 }
-static qa_guest_address rt_allocate_ext(qa_system_v_guest_runtime *rt, size_t byte_length,
+static qa_guest_core_address rt_allocate_ext(qa_system_v_guest_runtime *rt, size_t byte_length,
                                         bool has_alignment, uint64_t alignment,
                                         bool has_permissions, qa_guest_permissions permissions,
                                         const char *label) {
@@ -124,7 +124,7 @@ void qa_system_v_guest_runtime_signature(qa_system_v_guest_runtime *runtime,
 }
 
 typedef struct wrap_state { symbol_entry *entry; } wrap_state;
-static qa_call_result wrap_invoke(void *ctx, const qa_guest_call_context *context,
+static qa_call_result wrap_invoke(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count) {
   wrap_state *state = ctx;
   state->entry->reached++;
@@ -159,7 +159,7 @@ static symbol_entry *add_function(qa_system_v_guest_runtime *rt, const char *lib
   entry->callback.signature = signature;
   entry->callback.ctx = wrap;
   entry->callback.invoke = wrap_invoke;
-  qa_guest_address address = qa_guest_callback_table_bind(rt->options.callbacks,
+  qa_guest_core_address address = qa_guest_callback_table_bind(rt->options.callbacks,
                                                           &entry->callback);
   entry->resolution.kind = QA_RESOLUTION_HOST;
   entry->resolution.address = address;
@@ -173,7 +173,7 @@ typedef struct unavailable_state {
   char *library, *name, *detail; /* owned */
   const char *version;           /* borrowed literal or NULL */
 } unavailable_state;
-static qa_call_result unavailable_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result unavailable_impl(void *ctx, const qa_guest_core_call_context *context,
                                        const qa_call_value *args, size_t count) {
   unavailable_state *state = ctx;
   (void)context; (void)args; (void)count;
@@ -201,7 +201,7 @@ static void host_service(void *ctx, const char *library, const char *name,
                        result_is_void, result, implementation, QA_SYSTEM_V_IMPLEMENTED);
 }
 static void host_data(void *ctx, const char *library, const char *name, const char *version,
-                      qa_guest_address address, size_t byte_length) {
+                      qa_guest_core_address address, size_t byte_length) {
   qa_system_v_guest_runtime *rt = ctx;
   qa_memory_check(rt->options.memory, address, byte_length, QA_ACCESS_READ);
   char *key = make_key(library, name, version);
@@ -222,7 +222,7 @@ static void host_data(void *ctx, const char *library, const char *name, const ch
   SYMBOLS(rt)[rt->symbol_count++] = entry;
 }
 static bool host_resolve_address(void *ctx, const char *library, const char *name,
-                                 const char *version, qa_guest_address *out) {
+                                 const char *version, qa_guest_core_address *out) {
   qa_system_v_guest_runtime *rt = ctx;
   char *key = make_key(library, name, version);
   symbol_entry *entry = find_symbol(rt, key);
@@ -231,7 +231,7 @@ static bool host_resolve_address(void *ctx, const char *library, const char *nam
   *out = entry->resolution.address;
   return true;
 }
-static qa_guest_address host_unavailable(void *ctx, const char *library, const char *name,
+static qa_guest_core_address host_unavailable(void *ctx, const char *library, const char *name,
                                          const qa_abi_storage *parameters,
                                          size_t parameter_count, bool result_is_void,
                                          qa_abi_storage result, const char *detail) {
@@ -243,11 +243,11 @@ static qa_guest_address host_unavailable(void *ctx, const char *library, const c
   return add_function(rt, library, name, NULL, parameters, parameter_count, result_is_void,
                       result, impl, QA_SYSTEM_V_UNSUPPORTED_FUNCTION)->resolution.address;
 }
-static qa_guest_address host_allocate(void *ctx, size_t size) {
+static qa_guest_core_address host_allocate(void *ctx, size_t size) {
   qa_system_v_guest_runtime *rt = ctx;
   if (size > 0x10000000) qa_range_error("System V guest allocation exceeds supported size");
   size_t actual = size < 1 ? 1 : size;
-  qa_guest_address address = rt_allocate_ext(rt, actual, true, 16, false, QA_PERM_READ_WRITE,
+  qa_guest_core_address address = rt_allocate_ext(rt, actual, true, 16, false, QA_PERM_READ_WRITE,
                                              "System V guest heap");
   for (size_t i = 0; i < rt->heap_count; i++)
     if (HEAP(rt)[i].address.byte_offset == address.byte_offset) {
@@ -260,7 +260,7 @@ static qa_guest_address host_allocate(void *ctx, size_t size) {
   rt->heap_count++;
   return address;
 }
-static void host_free(void *ctx, bool has_address, qa_guest_address address) {
+static void host_free(void *ctx, bool has_address, qa_guest_core_address address) {
   qa_system_v_guest_runtime *rt = ctx;
   if (!has_address) return;
   (void)qa_memory_offset(rt->options.memory, address, 0);
@@ -274,7 +274,7 @@ static void host_free(void *ctx, bool has_address, qa_guest_address address) {
   }
   plain_error("System V free of a non-live allocation");
 }
-static bool host_allocation_size(void *ctx, qa_guest_address address, size_t *out) {
+static bool host_allocation_size(void *ctx, qa_guest_core_address address, size_t *out) {
   qa_system_v_guest_runtime *rt = ctx;
   (void)qa_memory_offset(rt->options.memory, address, 0);
   for (size_t i = 0; i < rt->heap_count; i++)
@@ -284,8 +284,8 @@ static bool host_allocation_size(void *ctx, qa_guest_address address, size_t *ou
     }
   return false;
 }
-static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *context,
-                                  qa_guest_address target, const qa_abi_storage *parameters,
+static qa_call_result host_invoke(void *ctx, const qa_guest_core_call_context *context,
+                                  qa_guest_core_address target, const qa_abi_storage *parameters,
                                   size_t parameter_count, bool result_is_void,
                                   qa_abi_storage result, const qa_call_value *arguments,
                                   size_t argument_count) {
@@ -294,7 +294,7 @@ static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *contex
   qa_guest_call_signature signature;
   qa_system_v_guest_runtime_signature(rt, parameters, parameter_count, result_is_void, result,
                                       layouts, &signature);
-  qa_guest_call_context nested = *context;
+  qa_guest_core_call_context nested = *context;
   nested.callback_kind = QA_CALLBACK_REF_NATIVE_GUEST;
   nested.callback_module = context->module;
   nested.callback_address = target;
@@ -312,9 +312,9 @@ static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *contex
   free(layouts);
   return value;
 }
-static void host_register_destructor(void *ctx, qa_guest_address target, bool has_argument,
-                                     qa_guest_address argument, bool has_dso,
-                                     qa_guest_address dso) {
+static void host_register_destructor(void *ctx, qa_guest_core_address target, bool has_argument,
+                                     qa_guest_core_address argument, bool has_dso,
+                                     qa_guest_core_address dso) {
   qa_system_v_guest_runtime *rt = ctx;
   qa_memory_check(rt->options.memory, target, 1, QA_ACCESS_EXECUTE);
   grow(&rt->destructors, &rt->destructor_cap, rt->destructor_count, sizeof(destructor_entry));
@@ -324,8 +324,8 @@ static void host_register_destructor(void *ctx, qa_guest_address target, bool ha
   entry->has_dso = has_dso; entry->dso = dso;
   entry->called = false;
 }
-static void host_finalize_destructors(void *ctx, const qa_guest_call_context *context,
-                                      bool has_dso, qa_guest_address dso) {
+static void host_finalize_destructors(void *ctx, const qa_guest_core_call_context *context,
+                                      bool has_dso, qa_guest_core_address dso) {
   qa_system_v_guest_runtime *rt = ctx;
   for (;;) {
     destructor_entry *found = NULL;
@@ -346,7 +346,7 @@ static void host_finalize_destructors(void *ctx, const qa_guest_call_context *co
     qa_call_value_free(&result);
   }
 }
-static qa_guest_address host_tls_address(void *ctx, uint64_t module_id, int64_t offset) {
+static qa_guest_core_address host_tls_address(void *ctx, uint64_t module_id, int64_t offset) {
   return qa_system_v_guest_runtime_tls_address(ctx, module_id, offset);
 }
 
@@ -481,7 +481,7 @@ qa_guest_import_resolution qa_system_v_guest_runtime_resolve(
     char *label = xmalloc(label_len);
     (void)snprintf(label, label_len, "Unsupported System V data %s@%s", name,
                    version != NULL ? version : "");
-    qa_guest_address address = rt_allocate_ext(
+    qa_guest_core_address address = rt_allocate_ext(
         runtime, 4096, true, 4096, true, runtime->loading ? QA_PERM_READ : QA_PERM_NONE, label);
     symbol_entry *entry = xmalloc(sizeof *entry);
     memset(entry, 0, sizeof *entry);
@@ -590,7 +590,7 @@ void qa_system_v_guest_runtime_load(qa_system_v_guest_runtime *runtime,
     qa_range_error("System V static TLS alignment exceeds the thread allocation alignment");
   uint64_t next = (runtime->tls_used + size + alignment - 1) / alignment * alignment;
   if (next > 0x10000) qa_range_error("System V static TLS exceeds thread allocation");
-  qa_guest_address block = off(runtime->options.memory, runtime->thread_pointer, -(int64_t)next);
+  qa_guest_core_address block = off(runtime->options.memory, runtime->thread_pointer, -(int64_t)next);
   qa_elf_tls_bindings tls;
   memset(&tls, 0, sizeof tls);
   tls.current.module_id = module_id;
@@ -650,7 +650,7 @@ void qa_system_v_guest_runtime_load(qa_system_v_guest_runtime *runtime,
   IMAGES(runtime)[runtime->image_count].state = QA_SV_LOADED;
   runtime->image_count++;
 }
-qa_guest_address qa_system_v_guest_runtime_tls_address(qa_system_v_guest_runtime *runtime,
+qa_guest_core_address qa_system_v_guest_runtime_tls_address(qa_system_v_guest_runtime *runtime,
                                                        uint64_t module_id, int64_t offset) {
   tls_block *block = NULL;
   for (size_t i = 0; i < runtime->tls_count; i++)
@@ -658,12 +658,12 @@ qa_guest_address qa_system_v_guest_runtime_tls_address(qa_system_v_guest_runtime
   if (block == NULL || offset < 0 || (uint64_t)offset >= block->byte_length)
     qa_range_error("System V TLS index outside loaded module block");
   qa_mapped_guest_memory *m = runtime->options.memory;
-  qa_guest_address dtv = {0};
+  qa_guest_core_address dtv = {0};
   bool has_dtv = qa_gmem_read_pointer(m, off(m, runtime->thread_pointer, m->pointer_bytes), &dtv);
   if (!has_dtv ||
       module_id > qa_read_unsigned(m, off(m, dtv, -2 * m->pointer_bytes), m->pointer_bytes))
     plain_error("System V guest DTV has no requested module");
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   if (!qa_gmem_read_pointer(m, off(m, dtv, (int64_t)(module_id * (uint64_t)(2 * m->pointer_bytes))),
                             &address))
     plain_error("System V guest DTV module is unallocated");
@@ -675,7 +675,7 @@ static lifecycle_entry *find_lifecycle(qa_system_v_guest_runtime *rt, qa_elf_gue
   return NULL;
 }
 static void push_trace(qa_system_v_guest_runtime *rt, qa_elf_guest_image *image, bool finalize,
-                       qa_guest_address target) {
+                       qa_guest_core_address target) {
   if (rt->lifecycle_trace_count == rt->lifecycle_trace_cap) {
     rt->lifecycle_trace_cap = rt->lifecycle_trace_cap == 0 ? 8 : rt->lifecycle_trace_cap * 2;
     rt->lifecycle_trace = xrealloc(rt->lifecycle_trace,
@@ -687,7 +687,7 @@ static void push_trace(qa_system_v_guest_runtime *rt, qa_elf_guest_image *image,
   rt->lifecycle_trace_count++;
 }
 static void run_initializer(qa_system_v_guest_runtime *rt, qa_elf_guest_image *image,
-                            qa_guest_address target, const qa_guest_call_context *context) {
+                            qa_guest_core_address target, const qa_guest_core_call_context *context) {
   qa_abi_storage params[] = {QA_STORAGE_INT32, QA_STORAGE_POINTER, QA_STORAGE_POINTER};
   qa_call_value invoke_args[] = {
       qa_call_int32((int32_t)rt->options.argv_count),
@@ -745,16 +745,16 @@ void qa_system_v_guest_runtime_finalize(qa_system_v_guest_runtime *runtime,
   entry->state = QA_SV_FINALIZED;
 }
 
-static qa_guest_address make_strings(qa_system_v_guest_runtime *rt, const char *const *values,
+static qa_guest_core_address make_strings(qa_system_v_guest_runtime *rt, const char *const *values,
                                      size_t count) {
   qa_mapped_guest_memory *m = rt->options.memory;
-  qa_guest_address vector = rt_allocate_ext(rt, (count + 1) * (size_t)m->pointer_bytes, true, 16,
+  qa_guest_core_address vector = rt_allocate_ext(rt, (count + 1) * (size_t)m->pointer_bytes, true, 16,
                                             false, QA_PERM_READ_WRITE,
                                             "System V argument vector");
   for (size_t i = 0; i < count; i++) {
     size_t len = 0;
     uint8_t *bytes = qa_string_bytes(values[i], false, &len);
-    qa_guest_address address = rt_allocate_ext(rt, len, false, 0, false, QA_PERM_READ_WRITE,
+    qa_guest_core_address address = rt_allocate_ext(rt, len, false, 0, false, QA_PERM_READ_WRITE,
                                                "System V argument string");
     qa_memory_write(m, address, bytes, len);
     free(bytes);
@@ -793,14 +793,14 @@ void qa_system_v_guest_runtime_init(qa_system_v_guest_runtime *runtime,
   host->finalize_destructors = host_finalize_destructors;
   host->tls_address = host_tls_address;
   qa_elf_unique_symbols_init(&runtime->unique_symbols);
-  qa_guest_address tls_area = rt_allocate_ext(runtime, 0x11000, true, 4096, false,
+  qa_guest_core_address tls_area = rt_allocate_ext(runtime, 0x11000, true, 4096, false,
                                               QA_PERM_READ_WRITE,
                                               "System V static TLS and TCB");
   runtime->thread_pointer = off(m, tls_area, 0x10000);
   qa_gmem_write_pointer(m, runtime->thread_pointer, true, runtime->thread_pointer);
   qa_gmem_write_pointer(m, off(m, runtime->thread_pointer, 2 * m->pointer_bytes), true,
                         runtime->thread_pointer);
-  qa_guest_address dtv_allocation = rt_allocate_ext(
+  qa_guest_core_address dtv_allocation = rt_allocate_ext(
       runtime, (size_t)(1026 * 2 * m->pointer_bytes), true, 16, false, QA_PERM_READ_WRITE,
       "System V thread dynamic vector");
   runtime->dtv = off(m, dtv_allocation, 2 * m->pointer_bytes);

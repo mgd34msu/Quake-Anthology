@@ -17,10 +17,10 @@
 #include "qa/persistence/value.h"
 #include "qa/text/draw2d.h"
 /* TS ScreenCinematicRequest (campaign-cinematic.ts mirror subset). */
-typedef struct qa_app_screen_cinematic_request {
+typedef struct qa_app_q3_screen_cinematic_request {
   const char *name;
   bool loop, hold, silent;
-} qa_app_screen_cinematic_request;
+} qa_app_q3_screen_cinematic_request;
 /* TS SystemCinematicHandle. capture/publish NULL = TS optional absent. */
 typedef struct qa_app_system_cinematic_handle qa_app_system_cinematic_handle;
 struct qa_app_system_cinematic_handle {
@@ -35,7 +35,7 @@ struct qa_app_system_cinematic_handle {
 /* TS SystemCinematicHost. current: TS () => boolean liveness. */
 typedef struct qa_app_system_cinematic_host {
   void *ctx;
-  qa_app_system_cinematic_handle (*open)(void *ctx, qa_app_screen_cinematic_request request,
+  qa_app_system_cinematic_handle (*open)(void *ctx, qa_app_q3_screen_cinematic_request request,
                                          bool (*current)(void *cctx), void *current_ctx);
   qa_app_system_cinematic_handle (*restore)(void *ctx, const qa_save_value *value,
                                             bool (*current)(void *cctx), void *current_ctx); /* nullable fn */

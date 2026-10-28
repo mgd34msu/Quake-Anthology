@@ -168,7 +168,7 @@ bool qa_capture_shared_bodies(const qa_session_actor_registry *actors,
     qa_actor_id id = observations[i].id;
     qa_body_state body;
     bool has_body = bodies->read(bodies->ctx, id, &body);
-    qa_body_link_state links;
+    qa_persist_body_link_state links;
     bool has_links = bodies->link_state(bodies->ctx, id, &links);
     qa_body_attachment attachment;
     bool has_attachment = bodies->attachment(bodies->ctx, id, &attachment);
@@ -238,7 +238,7 @@ void qa_restore_shared_body_links(const qa_save_image *save,
                              "reconstructed source body has not been bound");
       continue;
     }
-    qa_body_link_state state;
+    qa_persist_body_link_state state;
     memset(&state, 0, sizeof state);
     state.link_count = entry->link_count;
     qa_actor_id ground;

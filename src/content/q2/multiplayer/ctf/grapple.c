@@ -164,7 +164,7 @@ bool qa_q2_ctf_grapple_module_fire_grapple_default(qa_q2_ctf_grapple *g, qa_q2_e
 }
 
 void qa_q2_ctf_grapple_module_player_frame(qa_q2_ctf_grapple *g, qa_q2_entity *player, qa_q2_game_services *game, const char *binding) {
-  qa_q2mp_weapons *weapons = g->context->hooks.weapons;
+  qa_q2mp_weapons_port *weapons = g->context->hooks.weapons;
   qa_q2mp_weapon_state *weapon = weapons->get_state(weapons->ctx, player->actor.id);
   if (weapon != NULL) {
     qa_q2mp_weapon_input input;
@@ -195,7 +195,7 @@ static bool grapple_pickup(void *ctx, qa_q2_entity *entity, qa_q2_game_services 
   return false;
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons) {
+static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
   (void)weapons;
   qa_q2_ctf_grapple_module_fire(ctx, context);
 }
@@ -203,7 +203,7 @@ static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_w
 struct frame_ctx {
   qa_q2_ctf_grapple *g;
   qa_q2mp_weapon_context *context;
-  qa_q2mp_weapons *weapons;
+  qa_q2mp_weapons_port *weapons;
 };
 static void step_reset(void *ctx) {
   struct frame_ctx *f = ctx;
@@ -224,7 +224,7 @@ static void step_generic(void *ctx) {
     f->weapons->generic_classic(f->weapons->ctx, f->context);
 }
 
-static void extension_think(void *ctx, qa_q2mp_weapon_context *original, qa_q2mp_weapons *weapons) {
+static void extension_think(void *ctx, qa_q2mp_weapon_context *original, qa_q2mp_weapons_port *weapons) {
   qa_q2_ctf_grapple *g = ctx;
   if (g->equipment == NULL) return;
   qa_q2mp_weapon_context context = *original;
@@ -247,7 +247,7 @@ static void extension_think(void *ctx, qa_q2mp_weapon_context *original, qa_q2mp
 }
 
 void qa_q2_ctf_grapple_module_register(qa_q2_ctf_grapple *g) {
-  qa_q2mp_weapons *weapons = g->context->hooks.weapons;
+  qa_q2mp_weapons_port *weapons = g->context->hooks.weapons;
   qa_q2_item_module *items = g->context->hooks.items;
   if (qa_q2_ctf_grapple_module_native_enabled(g)) {
     const qa_q2f_weapon_definition *definition =

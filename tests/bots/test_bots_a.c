@@ -120,6 +120,49 @@ static void test_memory(void) {
   qa_bot_memory_destroy(&mem);
 }
 
+/* BotMemory checkpoint/restore round-trip (memory.ts). */
+static void test_memory_checkpoint(void) {
+  qa_bot_memory mem, fresh, other;
+  qa_bot_memory_init(&mem);
+  qa_bot_memory_init(&fresh);
+  qa_bot_memory_init(&other);
+  qa_bot_memory_allocation a, b, gone, foreign;
+  CHECK(qa_bot_memory_allocate(&mem, 5, QA_BOT_MEMORY_HEAP, false, &a));
+  memcpy(a.bytes, "hello", 5);
+  CHECK(qa_bot_memory_allocate(&mem, 3, QA_BOT_MEMORY_HUNK, false, &b));
+  memcpy(b.bytes, "xyz", 3);
+  CHECK(qa_bot_memory_allocate(&mem, 4, QA_BOT_MEMORY_HEAP, true, &gone));
+  qa_bot_memory_free(&mem, &gone);
+  CHECK(qa_bot_memory_allocate(&other, 2, QA_BOT_MEMORY_HEAP, true, &foreign));
+  qa_bot_memory_capture capture;
+  CHECK(qa_bot_memory_checkpoint(&mem, &capture));
+  CHECK(capture.image != NULL && capture.count == 2);
+  CHECK(qa_bot_memory_capture_reference(&capture, &a) == 0);
+  CHECK(qa_bot_memory_capture_reference(&capture, &b) == 1);
+  CHECK_ABORTS(qa_bot_memory_capture_reference(&capture, &foreign));
+  CHECK_ABORTS(qa_bot_memory_capture_reference(&capture, &gone));
+  qa_bot_memory_restored restored;
+  qa_bot_memory_restore(&fresh, capture.image, &restored);
+  CHECK(restored.count == 2);
+  CHECK(qa_bot_memory_get_live_allocations(&fresh) == 2);
+  qa_bot_memory_allocation first = qa_bot_memory_restored_allocation(&restored, 0);
+  qa_bot_memory_allocation second = qa_bot_memory_restored_allocation(&restored, 1);
+  CHECK(first.length == 5 && memcmp(first.bytes, "hello", 5) == 0);
+  CHECK(second.length == 3 && memcmp(second.bytes, "xyz", 3) == 0);
+  CHECK_ABORTS(qa_bot_memory_restored_allocation(&restored, 2));
+  CHECK_ABORTS(qa_bot_memory_restored_allocation(&restored, -1));
+  qa_bot_memory_restored again;
+  CHECK_ABORTS(qa_bot_memory_restore(&fresh, capture.image, &again));
+  qa_bot_memory_capture disposed_capture;
+  CHECK_ABORTS(qa_bot_memory_dispose(&mem),
+               qa_bot_memory_checkpoint(&mem, &disposed_capture));
+  qa_bot_memory_restored_destroy(&restored);
+  qa_bot_memory_capture_destroy(&capture);
+  qa_bot_memory_destroy(&mem);
+  qa_bot_memory_destroy(&fresh);
+  qa_bot_memory_destroy(&other);
+}
+
 static void test_pure(void) {
   CHECK(qa_travel_flag_for_type(QA_TRAVEL_WALK) == QA_TFL_WALK);
   CHECK(qa_travel_flag_for_type(999) == QA_TFL_INVALID);
@@ -212,6 +255,7 @@ static const uint8_t *script_read_file(void *ctx, const char *path, size_t *out_
   (void)ctx;
   const char *text = NULL;
   if (strcmp(path, "root.bot") == 0) text = "#include \"child.inc\"\n#define KEEP 1\n\"hi\" 42\n";
+  if (strcmp(path, "bad.bot") == 0) text = "#include \"absent.inc\"\n\"x\"\n";
   if (strcmp(path, "child.inc") == 0) text = "\"kid\"\n";
   if (strcmp(path, "botfiles/x.bot") == 0) text = "\"x\"\n";
   if (text == NULL) return NULL;
@@ -270,6 +314,16 @@ static void test_script_sources(void) {
   CHECK(!qa_bot_script_sources_read_token_result(&sources, handle, &raw, &read));
   CHECK(!qa_bot_script_sources_read_token_result(&sources, 0, &raw, &read));
   CHECK(qa_bot_script_sources_load(&sources, "missing.bot") == 0);
+  /* Source failure: read_token_result returns read=false + raw token. */
+  int64_t bad = qa_bot_script_sources_load(&sources, "bad.bot");
+  CHECK(bad == 1);
+  script_print_count = 0;
+  raw = NULL;
+  read = true;
+  CHECK(qa_bot_script_sources_read_token_result(&sources, bad, &raw, &read) && !read);
+  CHECK(raw != NULL);
+  CHECK(script_print_count > 0 && script_last_severity == 3);
+  CHECK(qa_bot_script_sources_free(&sources, bad));
   qa_ui_script_source resolved;
   CHECK(qa_bot_script_sources_resolve_root(&sources, "x.bot", &resolved));
   CHECK(strcmp(sources.base_folder, "botfiles") == 0 && resolved.storage != NULL);
@@ -285,6 +339,7 @@ int main(void) {
   test_libvars();
   test_genetic();
   test_memory();
+  test_memory_checkpoint();
   test_pure();
   test_observations_actions_assets();
   test_prediction_abort();

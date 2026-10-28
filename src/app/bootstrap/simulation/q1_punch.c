@@ -2,9 +2,9 @@
 #include "qa/app/bootstrap/simulation/q1_punch.h"
 #include <stdlib.h>
 #include <string.h>
-/* qa_q1_drop_punch is declared in qa/content/q1/foundation/
- * entity_services.h but has no landed definition yet; the TS
- * dropQ1Punch logic is inlined here until that slice lands it. */
+/* TS dropQ1Punch lives in qa/content/q1/foundation/
+ * entity_services.h as qa_q1_drop_punch. */
+#include "qa/content/q1/foundation/entity_services.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
 #include "qa/persistence/shared.h"
@@ -64,22 +64,10 @@ void qa_app_sim_q1_player_punch_write(qa_app_sim_q1_player_punch *punch, qa_acto
     punch->keys[punch->count] = o.actor; punch->values[punch->count++] = angles;
   }
 }
-static qa_vec3 drop_punch(qa_vec3 angles, double elapsed, qa_numeric_operations *n) {
-  double magnitude = n->square_root(n->ctx, n->add(n->ctx, n->add(n->ctx,
-      n->multiply(n->ctx, angles.x, angles.x), n->multiply(n->ctx, angles.y, angles.y)),
-      n->multiply(n->ctx, angles.z, angles.z)));
-  double remaining = n->subtract(n->ctx, magnitude, n->multiply(n->ctx, 10, elapsed));
-  if (remaining < 0) remaining = 0;
-  if (magnitude == 0) return (qa_vec3){0, 0, 0};
-  double scale = n->divide(n->ctx, remaining, magnitude);
-  return (qa_vec3){n->store(n->ctx, n->multiply(n->ctx, angles.x, scale)),
-      n->store(n->ctx, n->multiply(n->ctx, angles.y, scale)),
-      n->store(n->ctx, n->multiply(n->ctx, angles.z, scale))};
-}
 qa_vec3 qa_app_sim_q1_player_punch_advance(qa_app_sim_q1_player_punch *punch, qa_actor_id actor, double elapsed, qa_numeric_operations numeric) {
   qa_vec3 current = qa_app_sim_q1_player_punch_read(punch, actor);
   if (current.x == 0 && current.y == 0 && current.z == 0) return current;
-  qa_vec3 next = drop_punch(current, elapsed, &numeric);
+  qa_vec3 next = qa_q1_drop_punch(current, elapsed, &numeric);
   qa_app_sim_q1_player_punch_write(punch, actor, next);
   return next;
 }

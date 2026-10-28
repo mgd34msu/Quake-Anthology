@@ -289,7 +289,7 @@ void qa_qvm_mod_player_events_track(qa_qvm_mod_player_events *events, qa_actor_i
 
 typedef struct pending {
   int64_t order;
-  qa_qvmy_source_player_event event;
+  qa_app_q3_source_player_event event;
   double slots[64];
 } pending;
 
@@ -325,7 +325,7 @@ void qa_qvm_mod_player_events_publish(qa_qvm_mod_player_events *events) {
     if (external || event_count != 0) {
       qa_vec3 origin = events->operations.origin(events->operations.ctx, current->actor);
       double time = events->operations.time(events->operations.ctx);
-      qa_qvmy_source_player_event base;
+      qa_app_q3_source_player_event base;
       memset(&base, 0, sizeof base);
       base.kind = "player-event";
       base.actor = current->actor;
@@ -345,10 +345,10 @@ void qa_qvm_mod_player_events_publish(qa_qvm_mod_player_events *events) {
         next->event.player_state.powerups.values = next->slots + 32;
         next->event.player_state.ammo.values = next->slots + 48;
         next->order = current->cursor.has_external_order ? current->cursor.external_order : ordinal(events);
-        next->event.event = (int32_t)ps.external_event;
-        next->event.parameter = (int32_t)ps.external_event_parameter;
-        next->event.sequence_kind = "external";
-        next->event.sequence_time = (int32_t)ps.external_event_time_milliseconds;
+        next->event.event = ps.external_event;
+        next->event.parameter = ps.external_event_parameter;
+        next->event.sequence_is_predictable = false;
+        next->event.sequence_time = ps.external_event_time_milliseconds;
       }
       for (int32_t step = event_count; step > 0; step--) {
         int32_t sequence = (int32_t)((uint32_t)(int32_t)ps.event_sequence - (uint32_t)step);
@@ -368,9 +368,9 @@ void qa_qvm_mod_player_events_publish(qa_qvm_mod_player_events *events) {
           int64_t known = 0;
           next->order = predictable_get(&current->cursor, sequence, &known) ? known : ordinal(events);
           next->event.event = event_value;
-          next->event.parameter = (int32_t)ps.event_parameters[slot];
-          next->event.sequence_kind = "predictable";
-          next->event.sequence = sequence;
+          next->event.parameter = ps.event_parameters[slot];
+          next->event.sequence_is_predictable = true;
+          next->event.sequence_number = sequence;
         }
       }
     }
@@ -382,6 +382,14 @@ void qa_qvm_mod_player_events_publish(qa_qvm_mod_player_events *events) {
     current->cursor.predictable_count = 0;
   }
   qsort(list, count, sizeof *list, compare_pending);
+  /* The player-state views point into each element's own slots, so
+   * rebind them after the realloc growth above and the qsort moves. */
+  for (size_t i = 0; i < count; i++) {
+    list[i].event.player_state.stats.values = list[i].slots;
+    list[i].event.player_state.persistent.values = list[i].slots + 16;
+    list[i].event.player_state.powerups.values = list[i].slots + 32;
+    list[i].event.player_state.ammo.values = list[i].slots + 48;
+  }
   for (size_t i = 0; i < count; i++) {
     bool tracked = false;
     entry *current_entries = events->entries;

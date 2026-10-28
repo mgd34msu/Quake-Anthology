@@ -60,9 +60,9 @@ static qa_guest_module_ref mod(const char *id) {
   qa_guest_module_ref m = {id, "authored-fixture", "digest", "1"};
   return m;
 }
-static qa_guest_address A(uint64_t v) { qa_guest_address a = {v}; return a; }
-static qa_guest_address at(qa_sparse_guest_memory *mem, uint64_t raw) {
-  qa_guest_address out;
+static qa_guest_core_address A(uint64_t v) { qa_guest_core_address a = {v}; return a; }
+static qa_guest_core_address at(qa_sparse_guest_memory *mem, uint64_t raw) {
+  qa_guest_core_address out;
   if (!qa_sparse_pointer(mem, raw, &out)) qa_range_error("test address must be nonnull");
   return out;
 }
@@ -73,7 +73,7 @@ static void mem_new(qa_sparse_guest_memory *mem, const char *id, int pointer_byt
   opts.pointer_bytes = pointer_bytes;
   qa_sparse_guest_memory_init(mem, &opts);
 }
-static qa_guest_address smap(qa_sparse_guest_memory *mem, uint64_t base, size_t len,
+static qa_guest_core_address smap(qa_sparse_guest_memory *mem, uint64_t base, size_t len,
                              qa_guest_permissions perm, const uint8_t *bytes, size_t blen) {
   qa_guest_map_options o;
   memset(&o, 0, sizeof o);
@@ -87,7 +87,7 @@ typedef struct test_ext {
   qa_sparse_guest_memory *mem;
   qa_guest_mapping buf[64];
 } test_ext;
-static qa_guest_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_permissions perm,
+static qa_guest_core_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_permissions perm,
                                 const char *label, const uint8_t *bytes, size_t blen) {
   test_ext *e = (test_ext *)ctx;
   qa_guest_map_options o;
@@ -95,7 +95,7 @@ static qa_guest_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_p
   o.base = base; o.byte_length = len; o.permissions = perm; o.label = label; o.bytes = bytes; o.bytes_length = blen;
   return qa_sparse_map(e->mem, &o);
 }
-static qa_guest_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, bool hp,
+static qa_guest_core_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, bool hp,
                                   qa_guest_permissions perm, const char *label) {
   test_ext *e = (test_ext *)ctx;
   qa_guest_allocation_options o;
@@ -103,8 +103,8 @@ static qa_guest_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, b
   o.byte_length = len; o.alignment = ha ? al : 0; o.permissions = perm; o.has_permissions = hp; o.label = label;
   return qa_sparse_allocate(e->mem, &o);
 }
-static void ext_unmap(void *ctx, qa_guest_address a, size_t len) { qa_sparse_unmap(((test_ext *)ctx)->mem, a, len); }
-static void ext_protect(void *ctx, qa_guest_address a, size_t len, qa_guest_permissions p) {
+static void ext_unmap(void *ctx, qa_guest_core_address a, size_t len) { qa_sparse_unmap(((test_ext *)ctx)->mem, a, len); }
+static void ext_protect(void *ctx, qa_guest_core_address a, size_t len, qa_guest_permissions p) {
   qa_sparse_protect(((test_ext *)ctx)->mem, a, len, p);
 }
 static const qa_guest_mapping *ext_mappings(void *ctx, size_t *count) {
@@ -113,13 +113,13 @@ static const qa_guest_mapping *ext_mappings(void *ctx, size_t *count) {
   if (*count > 64) *count = 64;
   return e->buf;
 }
-static void ext_move(void *ctx, qa_guest_address d, qa_guest_address s, size_t n) {
+static void ext_move(void *ctx, qa_guest_core_address d, qa_guest_core_address s, size_t n) {
   qa_sparse_move(((test_ext *)ctx)->mem, d, s, n);
 }
-static void ext_fill(void *ctx, qa_guest_address a, size_t n, int v) {
+static void ext_fill(void *ctx, qa_guest_core_address a, size_t n, int v) {
   qa_sparse_fill(((test_ext *)ctx)->mem, a, n, (uint32_t)v);
 }
-static int64_t ext_find_zero(void *ctx, qa_guest_address a, size_t m) {
+static int64_t ext_find_zero(void *ctx, qa_guest_core_address a, size_t m) {
   return qa_sparse_find_zero(((test_ext *)ctx)->mem, a, m);
 }
 static void make_ext(qa_mapped_memory_ext *ext, test_ext *storage, qa_sparse_guest_memory *mem) {
@@ -189,7 +189,7 @@ static void test_core_memory(void) {
   qa_sparse_guest_memory mem;
   mem_new(&mem, "test:guest", 8);
   uint8_t initial[2] = {9, 8};
-  qa_guest_address base = smap(&mem, 0xf123456789abc000ull, 64, QA_PERM_READ_WRITE, initial, 2);
+  qa_guest_core_address base = smap(&mem, 0xf123456789abc000ull, 64, QA_PERM_READ_WRITE, initial, 2);
   initial[0] = 255;
   CHECK(qa_sparse_read_u8(&mem, base) == 9);
   uint8_t *whole = qa_sparse_borrow(&mem, base, 64);
@@ -200,9 +200,9 @@ static void test_core_memory(void) {
   CHECK(fv == 1.0f);
   alias[2] = 0; alias[3] = 0x40; /* 2.0f */
   CHECK(qa_sparse_read_f32(&mem, qa_sparse_offset(&mem, base, 4)) == 2.0);
-  qa_guest_address dst = qa_sparse_offset(&mem, base, 24);
+  qa_guest_core_address dst = qa_sparse_offset(&mem, base, 24);
   qa_sparse_write_pointer(&mem, dst, true, qa_sparse_offset(&mem, base, 63));
-  qa_guest_address got;
+  qa_guest_core_address got;
   CHECK(qa_sparse_read_pointer(&mem, dst, &got) && got.byte_offset == 0xf123456789abc03full);
   qa_sparse_write_pointer(&mem, dst, false, A(0));
   CHECK(!qa_sparse_read_pointer(&mem, dst, &got));
@@ -211,7 +211,7 @@ static void test_core_memory(void) {
   size_t total = 0;
   for (size_t i = 0; i < n; i++) total += maps[i].byte_length;
   CHECK(total == 64);
-  qa_guest_address boundary = smap(&mem, 0x1ffffffffffffeull, 4, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address boundary = smap(&mem, 0x1ffffffffffffeull, 4, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_u32(&mem, boundary, 0x12345678);
   CHECK(qa_sparse_read_u8(&mem, qa_sparse_offset(&mem, boundary, 3)) == 0x12);
   CHECK_ABORTS((void)qa_sparse_read_u8(&mem, qa_sparse_offset(&mem, boundary, 4)));
@@ -219,8 +219,8 @@ static void test_core_memory(void) {
 
   /* Cross-mapping accesses + atomic reject. */
   mem_new(&mem, "test:guest", 4);
-  qa_guest_address start = smap(&mem, 0x1000, 3, QA_PERM_READ_WRITE, NULL, 0);
-  qa_guest_address tail = smap(&mem, 0x1003, 3, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address start = smap(&mem, 0x1000, 3, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address tail = smap(&mem, 0x1003, 3, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_u32(&mem, qa_sparse_offset(&mem, start, 1), 0x12345678);
   uint8_t six[6];
   qa_sparse_copy(&mem, start, six, 6);
@@ -242,25 +242,25 @@ static void test_core_memory(void) {
 
   /* Pointer creation vs wrapping; allocation reuse. */
   mem_new(&mem, "test:guest", 4);
-  qa_guest_address tmp;
+  qa_guest_core_address tmp;
   CHECK(!qa_sparse_pointer(&mem, 0, &tmp));
   CHECK_ABORTS((void)qa_sparse_pointer(&mem, 0x100000000ull, &tmp));
-  qa_guest_address last = smap(&mem, 0xffffffffull, 1, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address last = smap(&mem, 0xffffffffull, 1, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_u8(&mem, last, 7);
   CHECK(qa_sparse_read_u8(&mem, last) == 7);
   CHECK_ABORTS((void)qa_sparse_offset(&mem, last, 1));
   qa_guest_allocation_options ao;
   memset(&ao, 0, sizeof ao);
   ao.byte_length = 32; ao.alignment = 32;
-  qa_guest_address block = qa_sparse_allocate(&mem, &ao);
+  qa_guest_core_address block = qa_sparse_allocate(&mem, &ao);
   qa_sparse_unmap(&mem, block, 32);
   CHECK(qa_sparse_allocate(&mem, &ao).byte_offset == block.byte_offset);
   qa_sparse_guest_memory_destroy(&mem);
 
   /* Scalar encodings + cross-mapping fault atomicity + fetch sequence. */
   mem_new(&mem, "test:guest", 8);
-  qa_guest_address b0 = smap(&mem, 0x10000, 4, QA_PERM_READ_WRITE, NULL, 0);
-  qa_guest_address b1 = smap(&mem, 0x10004, 12, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address b0 = smap(&mem, 0x10000, 4, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address b1 = smap(&mem, 0x10004, 12, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_u8(&mem, b0, 257);
   CHECK(qa_sparse_read_u8(&mem, b0) == 1);
   qa_sparse_write_i16(&mem, b0, -32769);
@@ -285,8 +285,8 @@ static void test_core_memory(void) {
 
   mem_new(&mem, "test:guest", 8);
   static const uint8_t code3[3] = {1, 2, 3};
-  qa_guest_address cb = smap(&mem, 0x1000, 3, QA_PERM_READ_EXECUTE, code3, 3);
-  qa_guest_address ca = qa_sparse_map_alias(&mem, 0x2000, 3, QA_PERM_READ_WRITE, NULL, cb);
+  qa_guest_core_address cb = smap(&mem, 0x1000, 3, QA_PERM_READ_EXECUTE, code3, 3);
+  qa_guest_core_address ca = qa_sparse_map_alias(&mem, 0x2000, 3, QA_PERM_READ_WRITE, NULL, cb);
   qa_guest_fetch_sequence seq;
   qa_sparse_fetch_sequence_init(&seq, &mem, cb.byte_offset);
   CHECK(qa_guest_fetch_sequence_next(&seq) == 1);
@@ -304,7 +304,7 @@ static void test_core_memory(void) {
 /* Observer capture shared by alias/range cases. */
 typedef struct obs_log {
   qa_sparse_guest_memory *mem;
-  qa_guest_address base;
+  qa_guest_core_address base;
   int values[8];
   int count;
   qa_guest_written_range ranges[4][2];
@@ -329,8 +329,8 @@ static void test_core_observers_alias(void) {
   qa_guest_allocation_options ao;
   memset(&ao, 0, sizeof ao);
   ao.byte_length = 16;
-  qa_guest_address base = qa_sparse_allocate(&mem, &ao);
-  qa_guest_address alias = qa_sparse_map_alias(&mem, 0x200000, 16, QA_PERM_READ_WRITE, NULL, base);
+  qa_guest_core_address base = qa_sparse_allocate(&mem, &ao);
+  qa_guest_core_address alias = qa_sparse_map_alias(&mem, 0x200000, 16, QA_PERM_READ_WRITE, NULL, base);
   obs_log log;
   memset(&log, 0, sizeof log);
   log.mem = &mem; log.base = base;
@@ -344,9 +344,9 @@ static void test_core_observers_alias(void) {
   qa_sparse_guest_memory_destroy(&mem);
 
   mem_new(&mem, "test:guest", 8);
-  qa_guest_address first = smap(&mem, 0x10000, 8, QA_PERM_READ_WRITE, NULL, 0);
-  qa_guest_address second = smap(&mem, 0x10008, 8, QA_PERM_READ_WRITE, NULL, 0);
-  qa_guest_address al2 = qa_sparse_map_alias(&mem, 0x20000, 8, QA_PERM_READ_WRITE, NULL, second);
+  qa_guest_core_address first = smap(&mem, 0x10000, 8, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address second = smap(&mem, 0x10008, 8, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address al2 = qa_sparse_map_alias(&mem, 0x20000, 8, QA_PERM_READ_WRITE, NULL, second);
   memset(&log, 0, sizeof log);
   log.mem = &mem;
   qa_guest_write_observer_handle h2 =
@@ -368,13 +368,13 @@ static void test_core_observers_alias(void) {
   opts.module = mod("test:guest");
   opts.pointer_bytes = 8;
   qa_sparse_guest_memory_init_managed(&mem, &opts);
-  qa_guest_address v = smap(&mem, 0x1000, 12, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address v = smap(&mem, 0x1000, 12, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_f32(&mem, v, -0.0);
   qa_sparse_write_f32(&mem, qa_sparse_offset(&mem, v, 4), 1.5);
   qa_sparse_write_f32(&mem, qa_sparse_offset(&mem, v, 8), -2.25);
   qa_vec3 vec = qa_sparse_read_f32_vector(&mem, v);
   CHECK(signbit(vec.x) && vec.x == 0 && vec.y == 1.5f && vec.z == -2.25f);
-  qa_guest_address va = qa_sparse_map_alias(&mem, 0x2000, 4, QA_PERM_READ_WRITE, NULL,
+  qa_guest_core_address va = qa_sparse_map_alias(&mem, 0x2000, 4, QA_PERM_READ_WRITE, NULL,
                                             qa_sparse_offset(&mem, v, 8));
   float f42 = 42.5f;
   memcpy(qa_sparse_borrow(&mem, va, 4), &f42, 4);
@@ -389,29 +389,29 @@ static void test_core_observers_alias(void) {
 typedef struct cb_env {
   qa_sparse_guest_memory *mem;
   qa_guest_callback_table *table;
-  qa_guest_address state;
-  qa_guest_address nested_address;
-  qa_guest_call_context context;
+  qa_guest_core_address state;
+  qa_guest_core_address nested_address;
+  qa_guest_core_call_context context;
 } cb_env;
-static qa_call_result cb_nested(void *ctx, const qa_guest_call_context *c,
+static qa_call_result cb_nested(void *ctx, const qa_guest_core_call_context *c,
                                 const qa_call_value *a, size_t n) {
   cb_env *e = (cb_env *)ctx;
   (void)c; (void)a; (void)n;
   qa_sparse_write_u32(e->mem, e->state, qa_sparse_read_u32(e->mem, e->state) + 7);
   return qa_call_void();
 }
-static qa_call_result cb_outer(void *ctx, const qa_guest_call_context *c,
+static qa_call_result cb_outer(void *ctx, const qa_guest_core_call_context *c,
                                const qa_call_value *a, size_t n) {
   cb_env *e = (cb_env *)ctx;
   (void)a; (void)n;
   qa_sparse_write_u32(e->mem, e->state, 10);
-  qa_guest_call_context inner = e->context;
+  qa_guest_core_call_context inner = e->context;
   inner.parent = c;
   (void)qa_guest_callback_table_invoke(e->table, e->nested_address, &inner, NULL, 0);
   CHECK(qa_sparse_read_u32(e->mem, e->state) == 17);
   return qa_call_void();
 }
-static qa_call_result cb_noop(void *ctx, const qa_guest_call_context *c,
+static qa_call_result cb_noop(void *ctx, const qa_guest_core_call_context *c,
                               const qa_call_value *a, size_t n) {
   (void)ctx; (void)c; (void)a; (void)n;
   return qa_call_void();
@@ -450,7 +450,7 @@ static void test_core_callbacks(void) {
   env.context.callback_module = mod("test:guest");
   env.context.callback_address = env.nested_address;
   env.context.callback_abi = sig.abi;
-  qa_guest_address outer_address = qa_guest_callback_table_bind(&table, &outer);
+  qa_guest_core_address outer_address = qa_guest_callback_table_bind(&table, &outer);
   (void)qa_guest_callback_table_invoke(&table, outer_address, &env.context, NULL, 0);
   qa_guest_callback_table_unbind(&table, "test:nested");
   CHECK_ABORTS((void)qa_guest_callback_table_invoke(&table, env.nested_address, &env.context, NULL, 0));
@@ -470,7 +470,7 @@ static void test_core_callbacks(void) {
   qa_guest_callback_table rtable;
   qa_guest_callback_table_restore(&rtable, &rmem, saved, saved_count, cb_resolve, pair);
   CHECK(qa_guest_callback_table_resolve(&rtable, at(&rmem, env.nested_address.byte_offset)) == &r_nested);
-  qa_guest_address r_outer;
+  qa_guest_core_address r_outer;
   CHECK(qa_guest_callback_table_address(&rtable, "test:outer", &r_outer));
   CHECK_ABORTS((void)qa_guest_callback_table_resolve(&rtable, r_outer));
   free(saved);
@@ -486,7 +486,7 @@ typedef struct i386_machine {
   qa_sparse_guest_memory mem;
   qa_guest_processor_state state;
   qa_i386_cpu cpu;
-  qa_guest_address ret;
+  qa_guest_core_address ret;
 } i386_machine;
 static void i386_init(i386_machine *m, const uint8_t *code, size_t n) {
   mem_new(&m->mem, "test:i386", 4);
@@ -506,10 +506,10 @@ static uint64_t rr32(i386_machine *m, qa_guest_register r) {
 static void wr32(i386_machine *m, qa_guest_register r, uint64_t v) {
   qa_integer_register_file_write(&m->state.registers, r, 32, v, false);
 }
-static qa_guest_address ga32(i386_machine *m, uint64_t v) {
+static qa_guest_core_address ga32(i386_machine *m, uint64_t v) {
   return qa_x86_guest_address(&m->mem, v, QA_ACCESS_READ, 1);
 }
-static bool host5000(void *ctx, qa_guest_address a) { (void)ctx; return a.byte_offset == 0x5000; }
+static bool host5000(void *ctx, qa_guest_core_address a) { (void)ctx; return a.byte_offset == 0x5000; }
 
 static void test_x86_cpu(void) {
   i386_machine m;
@@ -710,7 +710,7 @@ static uint64_t xrr(x64_fix *f, qa_guest_register r, int w) {
 static void xwr(x64_fix *f, qa_guest_register r, uint64_t v) {
   qa_integer_register_file_write(&f->state.registers, r, 64, v, false);
 }
-static bool host60000(void *ctx, qa_guest_address a) { (void)ctx; return a.byte_offset == 0x60000; }
+static bool host60000(void *ctx, qa_guest_core_address a) { (void)ctx; return a.byte_offset == 0x60000; }
 
 static void test_x64_cpu(void) {
   x64_fix f;
@@ -913,7 +913,7 @@ static void test_x64_cpu(void) {
   /* Live operands / writable alias / remap (fresh-decode semantics). */
   static const uint8_t live[] = {0x8b, 0x43, 4, 0x83, 0xc0, 1, 0xc3};
   x64_init(&f, live, sizeof live, 0x10000);
-  qa_guest_address data = smap(&f.mem, 0x50000, 16, QA_PERM_READ_WRITE, NULL, 0);
+  qa_guest_core_address data = smap(&f.mem, 0x50000, 16, QA_PERM_READ_WRITE, NULL, 0);
   qa_sparse_write_u32(&f.mem, qa_sparse_offset(&f.mem, data, 4), 10);
   qa_sparse_write_u32(&f.mem, qa_sparse_offset(&f.mem, data, 8), 20);
   xwr(&f, QA_REG_RBX, data.byte_offset);
@@ -924,8 +924,8 @@ static void test_x64_cpu(void) {
   xwr(&f, QA_REG_RBX, data.byte_offset + 4);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 32) == 21);
-  qa_guest_address code = at(&f.mem, 0x10000);
-  qa_guest_address calias = qa_sparse_map_alias(&f.mem, 0x60000, 7, QA_PERM_READ_WRITE, NULL, code);
+  qa_guest_core_address code = at(&f.mem, 0x10000);
+  qa_guest_core_address calias = qa_sparse_map_alias(&f.mem, 0x60000, 7, QA_PERM_READ_WRITE, NULL, code);
   qa_sparse_borrow(&f.mem, calias, 7)[5] = 7;
   f.state.instruction_pointer = 0x10000;
   xwr(&f, QA_REG_RSP, 0x30000);
@@ -1312,10 +1312,10 @@ static qa_guest_import_resolution elf_resolve(void *ctx, const qa_guest_import *
   r.detail = "authored image has no external imports";
   return r;
 }
-static qa_guest_address elf_indirect(void *ctx, qa_guest_address resolver_address) {
+static qa_guest_core_address elf_indirect(void *ctx, qa_guest_core_address resolver_address) {
   elf_env *e = (elf_env *)ctx;
   CHECK(resolver_address.byte_offset == 0x20000000ull + 0x840);
-  qa_guest_address got;
+  qa_guest_core_address got;
   CHECK(qa_sparse_read_pointer(e->mem, at(e->mem, 0x20000000ull + 0x700), &got));
   CHECK(got.byte_offset == 0x20000000ull + 0x800);
   e->indirect_calls++;
@@ -1527,7 +1527,7 @@ static void pe_fixture(uint8_t *bytes, int width) {
 #undef PE_TEXT
 }
 typedef struct pe_bind_ctx {
-  qa_guest_address target;
+  qa_guest_core_address target;
   qa_guest_module_identity module;
   bool fail_ordinal;
 } pe_bind_ctx;
@@ -1575,7 +1575,7 @@ static void test_pe_one(int width) {
   CHECK(strcmp(image.image.abi.image, width == 4 ? "pe32" : "pe32+") == 0);
   CHECK(image.image.has_entry_point && image.image.entry_point.byte_offset == base + 0x1000);
   CHECK(image.image.initializer_count == 0 && image.image.finalizer_count == 0);
-  qa_guest_address got;
+  qa_guest_core_address got;
   CHECK(qa_sparse_read_pointer(&mem, qa_sparse_offset(&mem, image.image.base, 0x3010), &got) &&
         got.byte_offset == base + 0x1050);
   uint8_t zeros[0x200];
@@ -1631,14 +1631,14 @@ static void test_pe_one(int width) {
   pe_fixture(bytes, width);
   pe_map(&image, bytes, sizeof bytes, &mem, &ext, false, 0);
   static const uint8_t retb[1] = {0xc3};
-  qa_guest_address target = smap(&mem, 0x50000000, 16, QA_PERM_READ_EXECUTE, retb, 1);
+  qa_guest_core_address target = smap(&mem, 0x50000000, 16, QA_PERM_READ_EXECUTE, retb, 1);
   CHECK(image.image.import_count == 2);
   if (image.image.import_count == 2) {
     CHECK(!image.image.imports[0].symbol.is_ordinal &&
           strcmp(image.image.imports[0].symbol.name, "Target") == 0);
     CHECK(image.image.imports[1].symbol.is_ordinal && image.image.imports[1].symbol.ordinal == 7);
   }
-  qa_guest_address iat = qa_sparse_offset(&mem, image.image.base, 0x2160);
+  qa_guest_core_address iat = qa_sparse_offset(&mem, image.image.base, 0x2160);
   uint8_t orig[16];
   qa_sparse_copy(&mem, iat, orig, (size_t)width * 2);
   pe_bind_ctx bc = {target, mod("test:pe"), true};
@@ -1739,7 +1739,7 @@ static void test_pe_rest(void) {
   mem_new(&mem, "test:pe", 4);
   make_ext(&ext, &es, &mem);
   static const uint8_t seventeen[1] = {17};
-  qa_guest_address sentinel = smap(&mem, 0x10000, 8, QA_PERM_READ, seventeen, 1);
+  qa_guest_core_address sentinel = smap(&mem, 0x10000, 8, QA_PERM_READ, seventeen, 1);
   size_t prior = qa_sparse_mappings(&mem, NULL, 0);
   pe_fixture(bytes, 4);
   qa_pe_image bad;

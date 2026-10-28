@@ -39,10 +39,10 @@ typedef struct qa_q2_height_fog_settings {
   double density;
 } qa_q2_height_fog_settings;
 
-typedef struct qa_q2_fog_state {
+typedef struct qa_persist_q2_fog_state {
   qa_q2_fog_settings fog;
   qa_q2_height_fog_settings height_fog;
-} qa_q2_fog_state;
+} qa_persist_q2_fog_state;
 
 typedef struct qa_q2_pending_landmark {
   const char *name;
@@ -74,8 +74,8 @@ typedef struct qa_q2_rerelease_saved_player {
   double invisibility_fade_until;
   const char *coop_respawn_state;
   bool flashlight;
-  qa_q2_fog_state fog;
-  qa_q2_fog_state wanted_fog;
+  qa_persist_q2_fog_state fog;
+  qa_persist_q2_fog_state wanted_fog;
   double fog_transition;
   bool bob_skip;
   double impact_delta;
@@ -96,7 +96,7 @@ typedef struct qa_q2_rerelease_saved_player {
   double help_marker_until;
 } qa_q2_rerelease_saved_player;
 
-typedef struct qa_q2_rerelease_options {
+typedef struct qa_persist_q2_rerelease_options {
   bool coop_squad_respawn;
   bool coop_instanced_items;
   bool coop_lives;
@@ -108,7 +108,7 @@ typedef struct qa_q2_rerelease_options {
   double deathmatch_force_respawn_time;
   bool coop_player_collision;
   double auto_save_minimum_time;
-} qa_q2_rerelease_options;
+} qa_persist_q2_rerelease_options;
 
 typedef struct qa_q2_intermission_camera {
   qa_vec3 origin;
@@ -126,9 +126,9 @@ typedef struct qa_q2_squad_spawn {
   qa_vec3 angles;
 } qa_q2_squad_spawn;
 
-typedef struct qa_q2_rerelease_players_checkpoint {
+typedef struct qa_persist_q2_rerelease_players_checkpoint {
   double version;
-  qa_q2_rerelease_options options;
+  qa_persist_q2_rerelease_options options;
   double coop_restart_time;
   double intermission_flags;
   bool has_intermission_fade_until;
@@ -140,7 +140,7 @@ typedef struct qa_q2_rerelease_players_checkpoint {
   qa_q2_rerelease_player_entry *players; size_t players_count;
   qa_q2_squad_spawn *squad_spawns; size_t squad_spawns_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q2_rerelease_players_checkpoint;
+} qa_persist_q2_rerelease_players_checkpoint;
 
 typedef struct qa_q2_rerelease_sky {
   const char *name;
@@ -157,10 +157,10 @@ typedef struct qa_q2_rerelease_poi {
   qa_saved_actor_id dynamic;
 } qa_q2_rerelease_poi;
 
-typedef struct qa_q2_rerelease_goals {
+typedef struct qa_persist_q2_rerelease_goals {
   const char *goals;
   double goal_number;
-} qa_q2_rerelease_goals;
+} qa_persist_q2_rerelease_goals;
 
 typedef struct qa_q2_campaign_mission {
   const char *primary;
@@ -221,11 +221,11 @@ typedef struct qa_q2_q64_dummy_entry {
   qa_q2_q64_dummy_state state;
 } qa_q2_q64_dummy_entry;
 
-typedef struct qa_q2_rerelease_q64_checkpoint {
+typedef struct qa_persist_q2_rerelease_q64_checkpoint {
   qa_q2_q64_eye_entry *eyes; size_t eyes_count;
   qa_q2_q64_camera_entry *cameras; size_t cameras_count;
   qa_q2_q64_dummy_entry *dummies; size_t dummies_count;
-} qa_q2_rerelease_q64_checkpoint;
+} qa_persist_q2_rerelease_q64_checkpoint;
 
 typedef struct qa_q2_light_entry {
   qa_saved_actor_id actor;
@@ -256,33 +256,33 @@ typedef struct qa_q2_trigger_sound_time {
   double time;
 } qa_q2_trigger_sound_time;
 
-typedef struct qa_q2_rerelease_module_checkpoint {
+typedef struct qa_persist_q2_rerelease_module_checkpoint {
   double version;
-  qa_q2_fog_state world_fog;
+  qa_persist_q2_fog_state world_fog;
   const char *story;
   qa_q2_rerelease_sky sky;
   bool has_poi;
   qa_q2_rerelease_poi poi;
   double poi_stage;
   double last_auto_save;
-  qa_q2_rerelease_goals goals;
+  qa_persist_q2_rerelease_goals goals;
   qa_q2_campaign campaign;
-  qa_q2_rerelease_q64_checkpoint q64;
+  qa_persist_q2_rerelease_q64_checkpoint q64;
   qa_q2_light_entry *lights; size_t lights_count;
   qa_q2_health_bar_opt *health_bars; size_t health_bars_count;
   qa_q2_health_target_entry *health_targets; size_t health_targets_count;
   qa_q2_picked_up_by_entry *picked_up_by; size_t picked_up_by_count;
   qa_q2_trigger_sound_time *trigger_sound_times; size_t trigger_sound_times_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q2_rerelease_module_checkpoint;
+} qa_persist_q2_rerelease_module_checkpoint;
 
-qa_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader);
-qa_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_players_checkpoint *out);
-qa_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader);
-qa_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_module_checkpoint *out);
+qa_persist_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader);
+qa_persist_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_players_checkpoint *out);
+qa_persist_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader);
+qa_persist_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_module_checkpoint *out);
 
 #endif

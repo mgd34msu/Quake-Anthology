@@ -14,17 +14,17 @@ static void *xmalloc(size_t size) {
   return p;
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
-static bool read_ptr(const qa_mapped_guest_memory *m, qa_guest_address a, qa_guest_address *out) {
+static bool read_ptr(const qa_mapped_guest_memory *m, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_gmem_read_pointer(m, a, out);
 }
-static void write_ptr(const qa_mapped_guest_memory *m, qa_guest_address a, bool has,
-                      qa_guest_address v) {
+static void write_ptr(const qa_mapped_guest_memory *m, qa_guest_core_address a, bool has,
+                      qa_guest_core_address v) {
   qa_gmem_write_pointer(m, a, has, v);
 }
-static qa_guest_address field(qa_system_v_stdio *stdio, qa_guest_address file, int pointer_index) {
+static qa_guest_core_address field(qa_system_v_stdio *stdio, qa_guest_core_address file, int pointer_index) {
   return off(stdio->host->memory, file,
              (int64_t)pointer_index * stdio->host->memory->pointer_bytes);
 }
@@ -42,11 +42,11 @@ qa_system_v_file_layout qa_system_v_file_layout_for(int width) {
   return layout;
 }
 
-static qa_guest_address create_file(qa_system_v_stdio *stdio, int descriptor, bool has_chain,
-                                    qa_guest_address chain) {
+static qa_guest_core_address create_file(qa_system_v_stdio *stdio, int descriptor, bool has_chain,
+                                    qa_guest_core_address chain) {
   qa_system_v_service_host *host = stdio->host;
   qa_mapped_guest_memory *m = host->memory;
-  qa_guest_address file = qa_system_v_allocate(host, (size_t)stdio->layout.size + (size_t)m->pointer_bytes);
+  qa_guest_core_address file = qa_system_v_allocate(host, (size_t)stdio->layout.size + (size_t)m->pointer_bytes);
   uint32_t flags = 0xfbad0000u | 0x2080u | (descriptor == 0 ? 8u : 4u) | (descriptor == 2 ? 2u : 0u);
   qa_memory_write_u32(m, file, flags);
   write_ptr(m, field(stdio, file, 13), has_chain, chain);
@@ -61,32 +61,32 @@ static qa_guest_address create_file(qa_system_v_stdio *stdio, int descriptor, bo
             qa_system_v_allocate(host, m->pointer_bytes == 8 ? 312 : 180));
   return file;
 }
-static int descriptor_of(qa_system_v_stdio *stdio, qa_guest_address file) {
+static int descriptor_of(qa_system_v_stdio *stdio, qa_guest_core_address file) {
   qa_mapped_guest_memory *m = stdio->host->memory;
   if ((qa_memory_read_u32(m, file) & 0xffff0000u) != 0xfbad0000u)
     qa_range_error("Invalid guest FILE magic");
   return qa_gmem_read_i32(m, off(m, file, stdio->layout.descriptor));
 }
-static bool orient(qa_system_v_stdio *stdio, qa_guest_address file, bool wide) {
+static bool orient(qa_system_v_stdio *stdio, qa_guest_core_address file, bool wide) {
   qa_mapped_guest_memory *m = stdio->host->memory;
-  qa_guest_address mode = off(m, file, stdio->layout.mode);
+  qa_guest_core_address mode = off(m, file, stdio->layout.mode);
   int desired = wide ? 1 : -1;
   int current = qa_gmem_read_i32(m, mode);
   if (current == 0) qa_gmem_write_i32(m, mode, desired);
   return current == 0 || current == desired;
 }
-static int file_error(qa_system_v_stdio *stdio, qa_guest_address file, int errno_value) {
+static int file_error(qa_system_v_stdio *stdio, qa_guest_core_address file, int errno_value) {
   qa_system_v_errno_set(stdio->host, errno_value);
   qa_mapped_guest_memory *m = stdio->host->memory;
   qa_memory_write_u32(m, file, qa_memory_read_u32(m, file) | 0x20u);
   return -1;
 }
-static qa_guest_address output_buffer(qa_system_v_stdio *stdio, qa_guest_address file) {
+static qa_guest_core_address output_buffer(qa_system_v_stdio *stdio, qa_guest_core_address file) {
   qa_mapped_guest_memory *m = stdio->host->memory;
-  qa_guest_address existing = {0};
+  qa_guest_core_address existing = {0};
   if (read_ptr(m, field(stdio, file, 7), &existing)) return existing;
-  qa_guest_address start = qa_system_v_allocate(stdio->host, 8192);
-  qa_guest_address end = off(m, start, 8192);
+  qa_guest_core_address start = qa_system_v_allocate(stdio->host, 8192);
+  qa_guest_core_address end = off(m, start, 8192);
   const int starts[] = {4, 5, 7};
   const int ends[] = {6, 8};
   for (size_t i = 0; i < 3; i++) write_ptr(m, field(stdio, file, starts[i]), true, start);
@@ -96,12 +96,12 @@ static qa_guest_address output_buffer(qa_system_v_stdio *stdio, qa_guest_address
   return start;
 }
 
-int qa_system_v_stdio_flush(qa_system_v_stdio *stdio, qa_guest_address file,
-                            const qa_guest_call_context *context) {
+int qa_system_v_stdio_flush(qa_system_v_stdio *stdio, qa_guest_core_address file,
+                            const qa_guest_core_call_context *context) {
   (void)context;
   qa_mapped_guest_memory *m = stdio->host->memory;
   int descriptor = descriptor_of(stdio, file);
-  qa_guest_address base = {0}, next = {0};
+  qa_guest_core_address base = {0}, next = {0};
   bool has_base = read_ptr(m, field(stdio, file, 4), &base);
   bool has_next = read_ptr(m, field(stdio, file, 5), &next);
   if (descriptor == 0) return 0;
@@ -137,12 +137,12 @@ int qa_system_v_stdio_flush(qa_system_v_stdio *stdio, qa_guest_address file,
       : 0;
   return result == 0 ? 0 : file_error(stdio, file, 5);
 }
-static int put_byte(qa_system_v_stdio *stdio, qa_guest_address file, int value,
-                    const qa_guest_call_context *context) {
+static int put_byte(qa_system_v_stdio *stdio, qa_guest_core_address file, int value,
+                    const qa_guest_core_call_context *context) {
   qa_mapped_guest_memory *m = stdio->host->memory;
   if ((qa_memory_read_u32(m, file) & 8u) != 0) return file_error(stdio, file, 9);
   (void)output_buffer(stdio, file);
-  qa_guest_address next = {0}, end = {0};
+  qa_guest_core_address next = {0}, end = {0};
   bool has_next = read_ptr(m, field(stdio, file, 5), &next);
   bool has_end = read_ptr(m, field(stdio, file, 6), &end);
   if (!has_next || !has_end) plain_error("Missing FILE output buffer");
@@ -158,16 +158,16 @@ static int put_byte(qa_system_v_stdio *stdio, qa_guest_address file, int value,
   }
   return value;
 }
-int qa_system_v_stdio_put(qa_system_v_stdio *stdio, qa_guest_address file, int value, bool wide,
-                          const qa_guest_call_context *context) {
+int qa_system_v_stdio_put(qa_system_v_stdio *stdio, qa_guest_core_address file, int value, bool wide,
+                          const qa_guest_core_call_context *context) {
   (void)descriptor_of(stdio, file);
   if (!orient(stdio, file, wide)) return -1;
   if (wide && (value < 0 || value > 127)) return file_error(stdio, file, 84);
   return put_byte(stdio, file, value & 255, context) < 0 ? -1 : value;
 }
-size_t qa_system_v_stdio_write(qa_system_v_stdio *stdio, qa_guest_address file,
+size_t qa_system_v_stdio_write(qa_system_v_stdio *stdio, qa_guest_core_address file,
                                const uint8_t *bytes, size_t len,
-                               const qa_guest_call_context *context) {
+                               const qa_guest_core_call_context *context) {
   (void)descriptor_of(stdio, file);
   if (!orient(stdio, file, false)) return 0;
   size_t written = 0;
@@ -177,14 +177,14 @@ size_t qa_system_v_stdio_write(qa_system_v_stdio *stdio, qa_guest_address file,
   }
   return written;
 }
-int qa_system_v_stdio_get(qa_system_v_stdio *stdio, qa_guest_address file, bool wide,
-                          const qa_guest_call_context *context) {
+int qa_system_v_stdio_get(qa_system_v_stdio *stdio, qa_guest_core_address file, bool wide,
+                          const qa_guest_core_call_context *context) {
   (void)context;
   qa_mapped_guest_memory *m = stdio->host->memory;
   if (descriptor_of(stdio, file) != 0 || (qa_memory_read_u32(m, file) & 4u) != 0)
     return file_error(stdio, file, 9);
   if (!orient(stdio, file, wide)) return -1;
-  qa_guest_address next = {0}, end = {0};
+  qa_guest_core_address next = {0}, end = {0};
   bool has_next = read_ptr(m, field(stdio, file, 1), &next);
   bool has_end = read_ptr(m, field(stdio, file, 2), &end);
   if (!has_next || !has_end || next.byte_offset >= end.byte_offset) {
@@ -200,7 +200,7 @@ int qa_system_v_stdio_get(qa_system_v_stdio *stdio, qa_guest_address file, bool 
       qa_memory_write_u32(m, file, qa_memory_read_u32(m, file) | 0x10u);
       return -1;
     }
-    qa_guest_address buffer = {0};
+    qa_guest_core_address buffer = {0};
     if (!read_ptr(m, field(stdio, file, 7), &buffer))
       buffer = qa_system_v_allocate(stdio->host, 8192);
     qa_memory_write(m, buffer, bytes, length);
@@ -216,14 +216,14 @@ int qa_system_v_stdio_get(qa_system_v_stdio *stdio, qa_guest_address file, bool 
   if (wide && byte > 127) return file_error(stdio, file, 84);
   return byte;
 }
-int qa_system_v_stdio_unget(qa_system_v_stdio *stdio, qa_guest_address file, int value, bool wide) {
+int qa_system_v_stdio_unget(qa_system_v_stdio *stdio, qa_guest_core_address file, int value, bool wide) {
   if (value == -1 || (uint32_t)value == 0xffffffffu || !orient(stdio, file, wide)) return -1;
   qa_mapped_guest_memory *m = stdio->host->memory;
-  qa_guest_address next = {0}, base = {0};
+  qa_guest_core_address next = {0}, base = {0};
   bool has_next = read_ptr(m, field(stdio, file, 1), &next);
   bool has_base = read_ptr(m, field(stdio, file, 3), &base);
   if (!has_next || !has_base || next.byte_offset <= base.byte_offset) return -1;
-  qa_guest_address prior = off(m, next, -1);
+  qa_guest_core_address prior = off(m, next, -1);
   qa_memory_write_u8(m, prior, (uint8_t)(value & 255));
   write_ptr(m, field(stdio, file, 1), true, prior);
   qa_memory_write_u32(m, file, qa_memory_read_u32(m, file) & ~0x10u);
@@ -233,14 +233,14 @@ int qa_system_v_stdio_unget(qa_system_v_stdio *stdio, qa_guest_address file, int
 /* Service implementations. State is the SystemVStdio object. */
 typedef struct stdio_state { qa_system_v_stdio *stdio; int kind; char *name; } stdio_state;
 enum { S_FFLUSH, S_PUTC, S_GETC, S_UNGETC, S_FWRITE, S_FREAD, S_FWIDE, S_SYNC, S_OVERFLOW };
-static qa_call_result stdio_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result stdio_impl(void *ctx, const qa_guest_core_call_context *context,
                                  const qa_call_value *args, size_t count) {
   stdio_state *state = ctx;
   qa_system_v_stdio *stdio = state->stdio;
   qa_mapped_guest_memory *m = stdio->host->memory;
   switch (state->kind) {
     case S_FFLUSH: {
-      qa_guest_address file = {0};
+      qa_guest_core_address file = {0};
       if (qa_guest_pointer_argument(args, count, 0, &file))
         return qa_call_int32(qa_system_v_stdio_flush(stdio, file, context));
       int first = qa_system_v_stdio_flush(stdio, stdio->stdout_, context);
@@ -275,8 +275,8 @@ static qa_call_result stdio_impl(void *ctx, const qa_guest_call_context *context
       size_t size = qa_guest_count(args, count, 1);
       size_t total = size * qa_guest_count(args, count, 2);
       if (total == 0) return size_result(stdio, 0);
-      qa_guest_address destination = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address file = qa_guest_required_pointer(args, count, 3);
+      qa_guest_core_address destination = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address file = qa_guest_required_pointer(args, count, 3);
       size_t read_count = 0;
       for (; read_count < total; read_count++) {
         int value = qa_system_v_stdio_get(stdio, file, false, context);
@@ -286,8 +286,8 @@ static qa_call_result stdio_impl(void *ctx, const qa_guest_call_context *context
       return size_result(stdio, read_count / size);
     }
     case S_FWIDE: {
-      qa_guest_address file = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address slot = off(m, file, stdio->layout.mode);
+      qa_guest_core_address file = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address slot = off(m, file, stdio->layout.mode);
       if (qa_gmem_read_i32(m, slot) == 0) {
         int64_t value = qa_guest_integer(args, count, 1);
         qa_gmem_write_i32(m, slot, value > 0 ? 1 : value < 0 ? -1 : 0);
@@ -298,7 +298,7 @@ static qa_call_result stdio_impl(void *ctx, const qa_guest_call_context *context
       return qa_call_int32(qa_system_v_stdio_flush(
           stdio, qa_guest_required_pointer(args, count, 0), context));
     case S_OVERFLOW: {
-      qa_guest_address file = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address file = qa_guest_required_pointer(args, count, 0);
       int value = (int)qa_guest_integer(args, count, 1);
       return qa_call_int32(value == -1
           ? (qa_system_v_stdio_flush(stdio, file, context) == 0 ? 0 : -1)
@@ -323,15 +323,15 @@ void qa_system_v_stdio_init(qa_system_v_stdio *stdio, qa_system_v_service_host *
   qa_mapped_guest_memory *m = host->memory;
   stdio->host = host;
   stdio->layout = qa_system_v_file_layout_for(m->pointer_bytes);
-  qa_guest_address zero = {0};
+  qa_guest_core_address zero = {0};
   stdio->stdin_ = create_file(stdio, 0, false, zero);
   stdio->stdout_ = create_file(stdio, 1, true, stdio->stdin_);
   stdio->stderr_ = create_file(stdio, 2, true, stdio->stdout_);
   const char *version = m->pointer_bytes == 4 ? "GLIBC_2.0" : "GLIBC_2.2.5";
   const char *names[] = {"stdin", "stdout", "stderr"};
-  qa_guest_address values[] = {stdio->stdin_, stdio->stdout_, stdio->stderr_};
+  qa_guest_core_address values[] = {stdio->stdin_, stdio->stdout_, stdio->stderr_};
   for (size_t i = 0; i < 3; i++) {
-    qa_guest_address slot = qa_system_v_allocate(host, (size_t)m->pointer_bytes);
+    qa_guest_core_address slot = qa_system_v_allocate(host, (size_t)m->pointer_bytes);
     write_ptr(m, slot, true, values[i]);
     qa_system_v_data(host, "libc.so.6", names[i], version, slot, (size_t)m->pointer_bytes);
     char io_name[32];
@@ -356,7 +356,7 @@ void qa_system_v_stdio_init(qa_system_v_stdio *stdio, qa_system_v_service_host *
   reg(stdio, S_FREAD, "fread", versions, 2, write_params, 4, false, host->pointer_storage);
   const char *fwide_versions[] = {m->pointer_bytes == 4 ? "GLIBC_2.1" : version, NULL};
   reg(stdio, S_FWIDE, "fwide", fwide_versions, 2, fwide_params, 2, false, i32);
-  qa_guest_address table = qa_system_v_allocate(host, 21 * (size_t)m->pointer_bytes);
+  qa_guest_core_address table = qa_system_v_allocate(host, 21 * (size_t)m->pointer_bytes);
   qa_system_v_data(host, "libc.so.6", "_IO_file_jumps",
                    m->pointer_bytes == 4 ? "GLIBC_2.1" : version, table,
                    21 * (size_t)m->pointer_bytes);
@@ -369,7 +369,7 @@ void qa_system_v_stdio_init(qa_system_v_stdio *stdio, qa_system_v_service_host *
     (void)snprintf(name_buffer, sizeof name_buffer, "__guest_IO_file_%s", operations[index]);
     char *name = xmalloc(strlen(name_buffer) + 1);
     strcpy(name, name_buffer);
-    qa_guest_address address;
+    qa_guest_core_address address;
     if (strcmp(operations[index], "sync") == 0) {
       reg(stdio, S_SYNC, name, null_versions, 1, &ptr, 1, false, i32);
       if (!qa_system_v_resolve_address(host, "libc.so.6", name, NULL, &address))
@@ -385,12 +385,12 @@ void qa_system_v_stdio_init(qa_system_v_stdio *stdio, qa_system_v_service_host *
     }
     write_ptr(m, off(m, table, (int64_t)(index + 2) * m->pointer_bytes), true, address);
   }
-  qa_guest_address wide_table = qa_system_v_allocate(host, 21 * (size_t)m->pointer_bytes);
+  qa_guest_core_address wide_table = qa_system_v_allocate(host, 21 * (size_t)m->pointer_bytes);
   qa_system_v_data(host, "libc.so.6", "_IO_wfile_jumps",
                    m->pointer_bytes == 4 ? "GLIBC_2.1" : version, wide_table,
                    21 * (size_t)m->pointer_bytes);
   for (size_t index = 0; index < 19; index++) {
-    qa_guest_address address = {0};
+    qa_guest_core_address address = {0};
     bool has = false;
     if (strcmp(operations[index], "sync") == 0) {
       has = read_ptr(m, off(m, table, (int64_t)(index + 2) * m->pointer_bytes), &address);
@@ -407,7 +407,7 @@ void qa_system_v_stdio_init(qa_system_v_stdio *stdio, qa_system_v_service_host *
   }
   for (size_t i = 0; i < 3; i++) {
     write_ptr(m, off(m, values[i], stdio->layout.size), true, table);
-    qa_guest_address wide = {0};
+    qa_guest_core_address wide = {0};
     if (!read_ptr(m, off(m, values[i], stdio->layout.wide_data), &wide))
       plain_error("Missing wide FILE data");
     write_ptr(m, off(m, wide, m->pointer_bytes == 4 ? 176 : 304), true, wide_table);

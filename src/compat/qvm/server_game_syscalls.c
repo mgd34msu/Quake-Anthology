@@ -152,6 +152,19 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
         free(result);
         qa_range_error("Area entity owner exceeded output capacity");
       }
+      /* TS returns the full list for a negative maximum; the fill
+       * callback only wrote capacity entries, so re-query into a
+       * buffer sized to its full count. */
+      while (length > capacity) {
+        capacity = length;
+        int32_t *grown = realloc(result, capacity * sizeof *grown);
+        if (grown == NULL) {
+          free(result);
+          qa_range_error("QVM memory allocation failed");
+        }
+        result = grown;
+        length = spatial->area_entities(spatial->ctx, input, maximum, result, capacity);
+      }
       if (length > 0) {
         qa_qvm_writable_view output;
         qa_qvm_memory_view(call->guest, qa_qvm_host_call_word(call, 3), (int64_t)(length * 4), 0, &output);

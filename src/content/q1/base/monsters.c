@@ -52,7 +52,7 @@ static bool target_eligible(qa_q1_base_monster *monster, qa_actor_id actor) {
 }
 
 qa_q1_base_monster *qa_q1_base_monster_create(qa_q1b_game *game, qa_q1b_actor *entity,
-                                              const qa_q1_monster_species *spec,
+                                              const qa_q1_base_monster_species *spec,
                                               qa_q1_monster_services services,
                                               const qa_q1_base_monster_source *source) {
   qa_q1_base_monster *monster = malloc(sizeof *monster);
@@ -531,7 +531,7 @@ static void wizard_move(qa_q1_base_monster *monster, bool sliding) {
 bool qa_q1_base_monster_try_attack(qa_q1_base_monster *monster) {
   qa_q1b_game *game = monster->game;
   qa_q1b_actor *entity = monster->entity;
-  const qa_q1_monster_species *spec = monster->spec;
+  const qa_q1_base_monster_species *spec = monster->spec;
   qa_vec3 target;
   if (!qa_q1_base_monster_target(monster, &target) || !monster->state.enemy.has) return false;
   qa_actor_id enemy = monster->state.enemy.id;
@@ -750,7 +750,7 @@ void qa_q1_base_monster_count_kill(qa_q1_base_monster *monster) {
 void qa_q1_base_monster_die(qa_q1_base_monster *monster, qa_q1b_opt_actor attacker) {
   qa_q1b_game *game = monster->game;
   qa_q1b_actor *entity = monster->entity;
-  const qa_q1_monster_species *spec = monster->spec;
+  const qa_q1_base_monster_species *spec = monster->spec;
   if (monster->counted_death) return;
   monster->state.enemy = attacker;
   if (game->health(game, entity->actor.id) < -99) game->host->combat_set_health(game->host->ctx, entity->actor, -99);
@@ -813,7 +813,7 @@ void qa_q1_base_monster_die(qa_q1_base_monster *monster, qa_q1b_opt_actor attack
 void qa_q1_base_monster_spawn(qa_q1_base_monster *monster) {
   qa_q1b_game *game = monster->game;
   qa_q1b_actor *entity = monster->entity;
-  const qa_q1_monster_species *spec = monster->spec;
+  const qa_q1_base_monster_species *spec = monster->spec;
   if (!monster->has_source && game->uses_id1_precaches) {
     if (game->options.deathmatch != 0) { game->remove(game, entity); return; }
     qa_q1_precache_id1_monster(game, spec->species);
@@ -864,7 +864,7 @@ void qa_q1_base_monster_spawn(qa_q1_base_monster *monster) {
 void qa_q1_base_monster_start(qa_q1_base_monster *monster) {
   qa_q1b_game *game = monster->game;
   qa_q1b_actor *entity = monster->entity;
-  const qa_q1_monster_species *spec = monster->spec;
+  const qa_q1_base_monster_species *spec = monster->spec;
   if (strcmp(spec->movement, "walk") == 0) {
     qa_vec3 start = qa_add3(qa_q1_base_monster_origin(monster), V3(0, 0, 1));
     qa_q1b_trace_request request = {start, qa_add3(start, V3(0, 0, -256)),

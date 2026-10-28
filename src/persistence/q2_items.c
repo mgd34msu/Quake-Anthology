@@ -88,12 +88,12 @@ __attribute__((unused)) static bool merge_into(qa_save_value *object, qa_save_va
 
 static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_pickup_entry *out);
 static qa_save_value *build_q2_pickup_entry(const qa_q2_pickup_entry *in);
-static void read_q2_player_powerups(const qa_save_reader *reader, qa_q2_player_powerups *out);
-static qa_save_value *build_q2_player_powerups(const qa_q2_player_powerups *in);
+static void read_q2_player_powerups(const qa_save_reader *reader, qa_persist_q2_player_powerups *out);
+static qa_save_value *build_q2_player_powerups(const qa_persist_q2_player_powerups *in);
 static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_power_entry *out);
 static qa_save_value *build_q2_power_entry(const qa_q2_power_entry *in);
-static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_q2_items_checkpoint *out);
-static qa_save_value *build_q2_items_checkpoint(const qa_q2_items_checkpoint *in);
+static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_persist_q2_items_checkpoint *out);
+static qa_save_value *build_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *in);
 
 static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_pickup_entry *out) {
   memset(out, 0, sizeof *out);
@@ -129,7 +129,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_player_powerups(const qa_save_reader *reader, qa_q2_player_powerups *out) {
+static void read_q2_player_powerups(const qa_save_reader *reader, qa_persist_q2_player_powerups *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "quadUntil");
     (*out).quad_until = qa_save_reader_number(&f0);
@@ -156,7 +156,7 @@ static void read_q2_player_powerups(const qa_save_reader *reader, qa_q2_player_p
     (*out).invis_until = qa_save_reader_is_undefined(&f7) ? 0 : qa_save_reader_number(&f7);
     qa_save_reader_destroy(&f7); }
 }
-static qa_save_value *build_q2_player_powerups(const qa_q2_player_powerups *in) {
+static qa_save_value *build_q2_player_powerups(const qa_persist_q2_player_powerups *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "quadUntil", qa_save_value_number((*in).quad_until))) goto fail;
@@ -193,7 +193,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_q2_items_checkpoint *out) {
+static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_persist_q2_items_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "powerCubeCount");
     (*out).power_cube_count = qa_save_reader_number(&f0);
@@ -229,7 +229,7 @@ static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_q2_items_c
     }
     qa_save_reader_destroy(&f3); }
 }
-static qa_save_value *build_q2_items_checkpoint(const qa_q2_items_checkpoint *in) {
+static qa_save_value *build_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "powerCubeCount", qa_save_value_number((*in).power_cube_count))) goto fail;
@@ -260,19 +260,19 @@ fail:
 
 
 
-qa_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader) {
-  qa_q2_items_checkpoint out;
+qa_persist_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_items_checkpoint out;
   read_q2_items_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_q2_items_checkpoint(const qa_q2_items_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_items_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_q2_items_checkpoint *out) {
+bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_items_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;

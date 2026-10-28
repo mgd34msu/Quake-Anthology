@@ -32,7 +32,7 @@ typedef struct qa_elf_load_options {
   const qa_elf_tls_bindings *tls; /* NULL: absent */
   /* resolveIndirect / resolveSymbolSize share relocate's ctx fields. */
   void *resolve_ctx;
-  qa_guest_address (*resolve_indirect)(void *ctx, qa_guest_address resolver_address);
+  qa_guest_core_address (*resolve_indirect)(void *ctx, qa_guest_core_address resolver_address);
   bool (*resolve_symbol_size)(void *ctx, const qa_guest_import *import_,
                               const qa_guest_image *requesting, size_t *out);
   qa_elf_unique_symbols *unique_symbols; /* NULL: absent */
@@ -51,7 +51,7 @@ typedef struct qa_elf_guest_image {
   /* neededLibraries/soname borrow from elf. */
   bool has_executable_stack; /* false: TS null */
   bool executable_stack;
-  qa_guest_address *preinitializers;
+  qa_guest_core_address *preinitializers;
   size_t preinitializer_count;
   qa_elf_tls_export *tls_exports;
   size_t tls_export_count;

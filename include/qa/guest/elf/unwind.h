@@ -48,8 +48,8 @@ typedef enum qa_guest_unwind_format {
 const char *qa_guest_unwind_format_name(qa_guest_unwind_format format);
 
 typedef struct qa_guest_unwind_region {
-  qa_guest_address start;
-  qa_guest_address end;
+  qa_guest_core_address start;
+  qa_guest_core_address end;
   qa_guest_unwind_format format;
   uint8_t *metadata; /* owned */
   size_t metadata_len;

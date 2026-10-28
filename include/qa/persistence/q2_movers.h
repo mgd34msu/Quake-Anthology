@@ -42,25 +42,25 @@ typedef struct qa_q2_linear_motion_state {
   qa_q2_linear_curve curve;
 } qa_q2_linear_motion_state;
 
-typedef struct qa_q2_linear_motion_entry {
+typedef struct qa_persist_q2_linear_motion_entry {
   qa_saved_actor_id actor;
   qa_q2_linear_motion_state state;
-} qa_q2_linear_motion_entry;
+} qa_persist_q2_linear_motion_entry;
 
-typedef struct qa_q2_linear_motion_checkpoint {
-  qa_q2_linear_motion_entry *entries; size_t count;
-} qa_q2_linear_motion_checkpoint;
+typedef struct qa_persist_q2_linear_motion_checkpoint {
+  qa_persist_q2_linear_motion_entry *entries; size_t count;
+} qa_persist_q2_linear_motion_checkpoint;
 
-typedef struct qa_q2_angular_motion_entry {
+typedef struct qa_persist_q2_angular_motion_entry {
   qa_saved_actor_id actor;
   qa_vec3 destination;
   double speed;
   const char *done;
-} qa_q2_angular_motion_entry;
+} qa_persist_q2_angular_motion_entry;
 
-typedef struct qa_q2_angular_motion_checkpoint {
-  qa_q2_angular_motion_entry *entries; size_t count;
-} qa_q2_angular_motion_checkpoint;
+typedef struct qa_persist_q2_angular_motion_checkpoint {
+  qa_persist_q2_angular_motion_entry *entries; size_t count;
+} qa_persist_q2_angular_motion_checkpoint;
 
 typedef struct qa_q2_door_state {
   qa_vec3 start;
@@ -92,22 +92,22 @@ typedef struct qa_q2_train_entry {
   bool ship;
 } qa_q2_train_entry;
 
-typedef struct qa_q2_movers_checkpoint {
+typedef struct qa_persist_q2_movers_checkpoint {
   qa_q2_door_entry *doors; size_t doors_count;
   qa_q2_train_entry *trains; size_t trains_count;
-  qa_q2_linear_motion_checkpoint linear;
-  qa_q2_angular_motion_checkpoint angular;
+  qa_persist_q2_linear_motion_checkpoint linear;
+  qa_persist_q2_angular_motion_checkpoint angular;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q2_movers_checkpoint;
+} qa_persist_q2_movers_checkpoint;
 
-qa_q2_linear_motion_checkpoint qa_read_q2_linear_motion_checkpoint(const qa_save_reader *reader);
+qa_persist_q2_linear_motion_checkpoint qa_read_q2_linear_motion_checkpoint(const qa_save_reader *reader);
 /* Builds the checkpoint tree (C encoder helper); NULL on OOM. */
-qa_save_value *qa_q2_linear_motion_checkpoint_value(const qa_q2_linear_motion_checkpoint *checkpoint);
-qa_q2_angular_motion_checkpoint qa_read_q2_angular_motion_checkpoint(const qa_save_reader *reader);
+qa_save_value *qa_q2_linear_motion_checkpoint_value(const qa_persist_q2_linear_motion_checkpoint *checkpoint);
+qa_persist_q2_angular_motion_checkpoint qa_read_q2_angular_motion_checkpoint(const qa_save_reader *reader);
 /* Builds the checkpoint tree (C encoder helper); NULL on OOM. */
-qa_save_value *qa_q2_angular_motion_checkpoint_value(const qa_q2_angular_motion_checkpoint *checkpoint);
-qa_q2_movers_checkpoint qa_read_q2_movers_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_q2_movers_checkpoint(const qa_q2_movers_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_q2_movers_checkpoint(const uint8_t *bytes, size_t length, qa_q2_movers_checkpoint *out);
+qa_save_value *qa_q2_angular_motion_checkpoint_value(const qa_persist_q2_angular_motion_checkpoint *checkpoint);
+qa_persist_q2_movers_checkpoint qa_read_q2_movers_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_q2_movers_checkpoint(const qa_persist_q2_movers_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_q2_movers_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_movers_checkpoint *out);
 
 #endif

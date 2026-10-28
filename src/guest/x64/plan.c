@@ -46,11 +46,11 @@ static uint64_t canonical_address(uint64_t value) {
     qa_range_error("Noncanonical 48-bit virtual address 0x%llx", (unsigned long long)value);
   return value;
 }
-static qa_guest_address guest_address(qa_mapped_guest_memory *memory, uint64_t raw) {
+static qa_guest_core_address guest_address(qa_mapped_guest_memory *memory, uint64_t raw) {
   uint64_t value = canonical_address(raw);
   if (value == 0) qa_range_error("null guest address");
-  if (memory->pointer_bytes == 8) { qa_guest_address a = {value}; return a; }
-  qa_guest_address a;
+  if (memory->pointer_bytes == 8) { qa_guest_core_address a = {value}; return a; }
+  qa_guest_core_address a;
   if (!qa_memory_pointer(memory, value, &a)) qa_range_error("null guest address");
   return a;
 }
@@ -62,13 +62,13 @@ static uint64_t effective_operand_offset(const qa_guest_processor_state *state, 
     : qa_integer_register_file_read(&state->registers, operand->index, operand->address_bits, false) * operand->scale;
   return as_uint_n(operand->address_bits, base + index + (uint64_t)operand->displacement);
 }
-static qa_guest_address operand_address(qa_mapped_guest_memory *memory, const qa_guest_processor_state *state,
+static qa_guest_core_address operand_address(qa_mapped_guest_memory *memory, const qa_guest_processor_state *state,
                                         const qa_x64_operand *operand, uint64_t next_ip) {
   uint64_t segment_base = operand->segment == QA_X64_SEG_NONE ? 0
     : state->segments[operand->segment == QA_X64_SEG_FS ? QA_SEG_FS : QA_SEG_GS].base;
   return guest_address(memory, effective_operand_offset(state, operand, next_ip) + segment_base);
 }
-static uint64_t read_memory_width(qa_mapped_guest_memory *memory, qa_guest_address address, int width) {
+static uint64_t read_memory_width(qa_mapped_guest_memory *memory, qa_guest_core_address address, int width) {
   switch (width) {
     case 8: return qa_memory_read_u8(memory, address);
     case 16: return qa_memory_read_u16(memory, address);
@@ -76,7 +76,7 @@ static uint64_t read_memory_width(qa_mapped_guest_memory *memory, qa_guest_addre
     default: return qa_memory_read_u64(memory, address);
   }
 }
-static void write_memory_width(qa_mapped_guest_memory *memory, qa_guest_address address, int width, uint64_t value) {
+static void write_memory_width(qa_mapped_guest_memory *memory, qa_guest_core_address address, int width, uint64_t value) {
   uint64_t normalized = as_uint_n(width, value);
   switch (width) {
     case 8: qa_memory_write_u8(memory, address, (uint8_t)normalized); break;
@@ -263,7 +263,7 @@ qa_x64_flow qa_execute_x64_plan(const qa_x64_semantic_plan *plan, qa_mapped_gues
       qa_x64_lock(plan->lock, NULL, false, false);
       uint64_t value = source_value(memory, state, &op->source, plan->next_ip);
       uint64_t stack = qa_integer_register_file_read(&state->registers, QA_REG_RSP, 64, false) - (op->width == 64 ? 8u : 2u);
-      qa_guest_address address = guest_address(memory, stack);
+      qa_guest_core_address address = guest_address(memory, stack);
       if (op->width == 64) qa_memory_write_u64(memory, address, value);
       else qa_memory_write_u16(memory, address, (uint16_t)(value & 0xffffu));
       qa_integer_register_file_write(&state->registers, QA_REG_RSP, 64, stack, false);
@@ -272,7 +272,7 @@ qa_x64_flow qa_execute_x64_plan(const qa_x64_semantic_plan *plan, qa_mapped_gues
     case QA_X64_PLAN_POP: {
       qa_x64_lock(plan->lock, NULL, false, false);
       uint64_t stack = qa_integer_register_file_read(&state->registers, QA_REG_RSP, 64, false);
-      qa_guest_address address = guest_address(memory, stack);
+      qa_guest_core_address address = guest_address(memory, stack);
       uint64_t value = op->width == 64 ? qa_memory_read_u64(memory, address) : qa_memory_read_u16(memory, address);
       qa_integer_register_file_write(&state->registers, QA_REG_RSP, 64, stack + (op->width == 64 ? 8u : 2u), false);
       write_operand(memory, state, &op->destination, plan->next_ip, value);

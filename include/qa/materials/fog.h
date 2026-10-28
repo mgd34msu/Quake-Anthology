@@ -30,7 +30,7 @@ typedef struct qa_fog_volume {
 
 /* TS FogAdjustment/FogPass exact strings. */
 typedef const char *qa_fog_adjustment_kind;
-typedef const char *qa_fog_pass_kind;
+typedef const char *qa_fog_pass;
 
 qa_fog_volume qa_prepare_fog_volume(qa_fog_brush_map map, double index,
                                     qa_q3_material_fog parameters);
@@ -56,7 +56,7 @@ qa_fog_adjustment_kind qa_fog_adjustment(qa_mat_shader_stage stage,
 qa_vec4 qa_attenuate_fog_color(qa_vec4 color, const char *adjustment,
                                qa_vec2 coordinates);
 double qa_shader_sort(const qa_mat_shader_definition *shader);
-qa_fog_pass_kind qa_shader_fog_pass(const qa_mat_shader_definition *shader);
+qa_fog_pass qa_shader_fog_pass(const qa_mat_shader_definition *shader);
 /* pass must not be "none". */
 qa_render_state qa_fog_pass_state(const char *pass, const char *cull);
 

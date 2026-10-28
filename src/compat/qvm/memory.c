@@ -67,7 +67,9 @@ void qa_qvm_memory_write_bytes(qa_qvm_memory *memory, int64_t byte_offset,
   qa_qvm_memory_writes_range(&memory->writes, byte_offset, (int64_t)length);
   qa_qvm_write_capture *capture = qa_qvm_memory_writes_get_intercepts(&memory->writes)
       ? qa_qvm_memory_writes_before(&memory->writes, byte_offset, (int64_t)length) : NULL;
-  memcpy(memory->bytes + byte_offset, bytes, length);
+  /* memmove: TS Uint8Array.set copies as if through a snapshot when
+   * the source is a subarray of this same allocation. */
+  memmove(memory->bytes + byte_offset, bytes, length);
   qa_qvm_memory_writes_after(&memory->writes, capture);
 }
 
@@ -106,6 +108,11 @@ qa_qvm_memory_span qa_qvm_memory_get_span(const qa_qvm_memory *memory, int64_t w
   qa_qvm_memory_span pointer;
   if (!qa_qvm_memory_pointer(memory, word, &pointer))
     qa_range_error("QVM memory span requires a nonnull pointer");
+  /* A start inside [0, length] needs relative_offset within the same
+   * span of the masked offset; reject wild values before the addition
+   * can overflow (TS rejects them via its safe-integer check). */
+  if (relative_offset > (int64_t)memory->length || relative_offset < -(int64_t)memory->length)
+    qa_range_error("QVM memory span exceeds allocation or has an invalid length");
   int64_t start = pointer.byte_offset + relative_offset;
   if (length < 0 || start < 0 || start > (int64_t)memory->length || length > (int64_t)memory->length - start)
     qa_range_error("QVM memory span exceeds allocation or has an invalid length");

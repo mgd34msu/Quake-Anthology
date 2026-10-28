@@ -31,14 +31,14 @@ void qa_restore_abi_processor_state(qa_guest_processor_state *state, const qa_ab
 }
 
 typedef struct active_call {
-  qa_guest_call_context context;
+  qa_guest_core_call_context context;
   int64_t remaining;
   struct active_call *next; /* enclosing call */
 } active_call;
 
 typedef struct inline_region {
-  qa_guest_address entry;
-  qa_guest_address join;
+  qa_guest_core_address entry;
+  qa_guest_core_address join;
   void (*intercept)(void *ctx, qa_guest_inline_continuation *continuation);
   void *intercept_ctx;
   struct { active_call *call; uint64_t stack; } *executing;
@@ -56,7 +56,7 @@ struct qa_guest_call_runner {
   active_call *top;
   size_t depth;
   inline_region *regions;
-  const qa_guest_call_context *callback_context;
+  const qa_guest_core_call_context *callback_context;
   uint64_t instructions_executed;
   bool loading_suspended;
   double maximum_loading_slice_ms;
@@ -91,7 +91,7 @@ void qa_guest_call_runner_destroy(qa_guest_call_runner *runner) {
 }
 qa_guest_call_runner_options qa_guest_call_runner_options_of(const qa_guest_call_runner *runner) { return runner->options; }
 int64_t qa_guest_call_runner_depth(const qa_guest_call_runner *runner) { return (int64_t)runner->depth; }
-const qa_guest_call_context *qa_guest_call_runner_current_context(const qa_guest_call_runner *runner) {
+const qa_guest_core_call_context *qa_guest_call_runner_current_context(const qa_guest_call_runner *runner) {
   if (runner->callback_context != NULL) return runner->callback_context;
   return runner->top != NULL ? &runner->top->context : NULL;
 }
@@ -126,11 +126,11 @@ static inline_region *find_region(qa_guest_call_runner *runner, uint64_t entry) 
 }
 
 static void run_steps(qa_guest_call_runner *runner, active_call *active,
-                      qa_guest_address return_address, int64_t slice);
+                      qa_guest_core_address return_address, int64_t slice);
 static void intercept_region(qa_guest_call_runner *runner, inline_region *region, active_call *active);
 
 static void run_steps(qa_guest_call_runner *runner, active_call *active,
-                      qa_guest_address return_address, int64_t slice) {
+                      qa_guest_core_address return_address, int64_t slice) {
   qa_guest_cpu *cpu = runner->options.cpu;
   qa_guest_callback_table *callbacks = runner->options.callbacks;
   int64_t slice_remaining = slice;
@@ -185,7 +185,7 @@ static void run_steps(qa_guest_call_runner *runner, active_call *active,
       qa_range_error("Unknown guest callback at 0x%llx", (unsigned long long)stop.address.byte_offset);
     qa_x86_abi_adapter callback_adapter;
     qa_x86_abi_adapter_init(&callback_adapter, callback->signature.abi);
-    qa_guest_call_context callback_context = active->context;
+    qa_guest_core_call_context callback_context = active->context;
     callback_context.parent = &active->context;
     callback_context.callback_kind = QA_CALLBACK_REF_NATIVE_GUEST;
     callback_context.callback_module = cpu->module;
@@ -221,7 +221,7 @@ static void run_steps(qa_guest_call_runner *runner, active_call *active,
       frame->remaining -= 1;
       if (frame->remaining < 0) frame->remaining = 0;
     }
-    const qa_guest_call_context *previous = runner->callback_context;
+    const qa_guest_core_call_context *previous = runner->callback_context;
     runner->callback_context = &callback_context;
     qa_call_result result = qa_guest_callback_table_invoke(callbacks, stop.address, &callback_context,
                                               arguments_, argument_count);
@@ -237,7 +237,7 @@ static qa_call_result invoke_steps(qa_guest_call_runner *runner, const qa_guest_
                                    int64_t slice) {
   if (request->instruction_budget <= 0) qa_range_error("Guest instruction budget must be positive");
   qa_guest_cpu *cpu = runner->options.cpu;
-  qa_guest_address return_address = runner->options.return_address;
+  qa_guest_core_address return_address = runner->options.return_address;
   const qa_guest_module_identity *memory_module = &cpu->module;
   if (strcmp(request->context.module.id != NULL ? request->context.module.id : "",
              memory_module->id != NULL ? memory_module->id : "") != 0
@@ -337,7 +337,7 @@ static bool region_accepts(void *ctx) {
         && state->region->executing[i].stack == stack) return false;
   return true;
 }
-static qa_call_result inline_invoke(void *ctx, const qa_guest_call_context *context,
+static qa_call_result inline_invoke(void *ctx, const qa_guest_core_call_context *context,
                                     const qa_call_value *arguments, size_t argument_count) {
   (void)ctx; (void)context; (void)arguments; (void)argument_count;
   plain_error("Inline region cannot be invoked as an ABI callback");
@@ -345,7 +345,7 @@ static qa_call_result inline_invoke(void *ctx, const qa_guest_call_context *cont
 }
 
 qa_guest_inline_region_handle *qa_guest_call_runner_bind_inline_region(
-    qa_guest_call_runner *runner, qa_guest_address entry, qa_guest_address join,
+    qa_guest_call_runner *runner, qa_guest_core_address entry, qa_guest_core_address join,
     qa_guest_native_abi abi,
     void (*intercept)(void *ctx, qa_guest_inline_continuation *continuation), void *intercept_ctx,
     bool (*accepts)(void *ctx), void *accepts_ctx) {

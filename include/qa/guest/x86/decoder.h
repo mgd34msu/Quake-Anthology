@@ -36,7 +36,7 @@ typedef struct qa_x86_modrm {
   qa_x86_operand operand;
 } qa_x86_modrm;
 
-qa_guest_address qa_x86_guest_address(qa_sparse_guest_memory *memory, uint64_t raw,
+qa_guest_core_address qa_x86_guest_address(qa_sparse_guest_memory *memory, uint64_t raw,
                                       qa_guest_access access, size_t length);
 qa_x86_operand qa_x86_register_operand(int index, int width);
 
@@ -63,7 +63,7 @@ uint64_t qa_x86_decoder_immediate(qa_x86_decoder *decoder, int width); /* width:
 int64_t qa_x86_decoder_signed(qa_x86_decoder *decoder, int width);
 uint64_t qa_x86_decoder_register_value(qa_x86_decoder *decoder, int index, int width); /* 16|32 */
 qa_x86_modrm qa_x86_decoder_modrm(qa_x86_decoder *decoder, int width);
-qa_guest_address qa_x86_decoder_address(qa_x86_decoder *decoder, const qa_x86_operand *operand,
+qa_guest_core_address qa_x86_decoder_address(qa_x86_decoder *decoder, const qa_x86_operand *operand,
                                         size_t width_bytes, qa_guest_access access);
 uint64_t qa_x86_decoder_read(qa_x86_decoder *decoder, const qa_x86_operand *operand, int width);
 void qa_x86_decoder_check_write(qa_x86_decoder *decoder, const qa_x86_operand *operand, int width);

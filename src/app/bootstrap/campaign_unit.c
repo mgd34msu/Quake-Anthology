@@ -5,7 +5,26 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/persistence/provider_ownership.h"
+#include "qa/persistence/save_image.h"
 #include "qa/persistence/value.h"
+/* Real save-image codec, installed when the caller passes a NULL
+ * host codec (the TS CampaignUnit calls encode/decodeSaveImage
+ * directly). Decode keeps the parsed image in retained scratch,
+ * matching the header's borrowed-until-next-decode contract. */
+static bool real_encode(void *ctx, const qa_save_image *image,
+                        uint8_t **out_bytes, size_t *out_count) {
+  (void)ctx;
+  return qa_encode_save_image(image, out_bytes, out_count);
+}
+static const qa_save_image *real_decode(void *ctx, const uint8_t *bytes,
+                                        size_t count) {
+  static qa_save_image_result scratch;
+  (void)ctx;
+  qa_save_image_result_free(&scratch);
+  if (!qa_decode_save_image(bytes, count, &scratch))
+    qa_range_error("Out of memory");
+  return &scratch.image;
+}
 typedef struct { char *key; uint8_t *bytes; size_t length; } world_row;
 typedef struct { world_row *rows; size_t count, cap; } worlds_t;
 struct qa_app_campaign_unit {
@@ -86,15 +105,42 @@ static worlds_t worlds_copy(const worlds_t *source) {
   }
   return copy;
 }
-/* worldOnly: validate entries; encode the image as given (provider
- * filtering lives in the host codec envelope, as in landed save code). */
+/* worldOnly: validate entries (TS campaignEntries inside
+ * worldOnly). */
 static void validate_world_only(const qa_save_image *image) {
   const qa_provider_checkpoint *first;
   campaign_entries(image, &first);
 }
+/* TS worldOnly: shallow copy without the campaign-unit provider
+ * (filtered by schema). providers_out is malloc'd scratch the
+ * caller frees after encoding; entries stay borrowed. */
+static qa_save_image world_only_image(const qa_save_image *image,
+                                      qa_provider_checkpoint **providers_out) {
+  validate_world_only(image);
+  qa_save_image copy = *image;
+  qa_provider_checkpoint *providers =
+      malloc((image->provider_count ? image->provider_count : 1) *
+             sizeof *providers);
+  size_t count = 0;
+  for (size_t i = 0; i < image->provider_count; i++) {
+    const qa_provider_checkpoint *entry = &image->providers[i];
+    if (entry->schema && qa_campaign_unit_checkpoint.schema &&
+        strcmp(entry->schema, qa_campaign_unit_checkpoint.schema) == 0)
+      continue;
+    providers[count++] = *entry;
+  }
+  copy.providers = providers;
+  copy.provider_count = count;
+  *providers_out = providers;
+  return copy;
+}
 qa_app_campaign_unit *qa_app_campaign_unit_create(qa_app_campaign_codec codec) {
   qa_app_campaign_unit *unit = calloc(1, sizeof *unit);
   if (!unit) return NULL;
+  if (codec.encode == NULL && codec.decode == NULL) {
+    codec.encode = real_encode;
+    codec.decode = real_decode;
+  }
   unit->codec = codec;
   return unit;
 }
@@ -115,10 +161,12 @@ qa_app_campaign_unit_visit *qa_app_campaign_unit_stage(qa_app_campaign_unit *uni
   bool reset = new_unit || (unit->has_current && strcmp(unit->current_content, destination.content) != 0);
   worlds_t worlds = reset ? (worlds_t){0} : worlds_copy(&unit->worlds);
   if (!reset && departure) {
-    validate_world_only(departure);
+    qa_provider_checkpoint *filtered = NULL;
+    qa_save_image world = world_only_image(departure, &filtered);
     qa_app_resource_request from = location_of(departure);
     uint8_t *bytes = NULL; size_t length = 0;
-    unit->codec.encode(unit->codec.ctx, departure, &bytes, &length);
+    unit->codec.encode(unit->codec.ctx, &world, &bytes, &length);
+    free(filtered);
     worlds_set(&worlds, map_key(from.content, from.path), bytes, length);
   }
   char *dest_key = map_key(destination.content, destination.path);

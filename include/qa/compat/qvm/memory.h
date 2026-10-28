@@ -6,8 +6,8 @@
  *  - pointer()/span() return offset + length spans; a null pointer is
  *    reported by qa_qvm_memory_pointer returning false.
  *  - dataView()/view() fill a qa_qvm_writable_view out parameter.
- *  - readString writes a NUL-terminated byte string into a caller
- *    buffer (malloc'd when out is NULL; caller frees).
+ *  - readString returns a malloc'd NUL-terminated byte copy;
+ *    caller frees.
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MEMORY_H

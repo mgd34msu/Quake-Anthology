@@ -16,7 +16,7 @@
 #include "qa/text/mounted.h"
 typedef struct qa_app_menu_font_host {
   void *ctx;
-  qa_scene_image_registry images;
+  qa_mounted_scene_image_registry images;
   /* Adapter from landed mounts to text/mounted.ts's surface. */
   qa_mounted_content (*mounted_content)(void *ctx, qa_content_mounted *mounts);
   /* SceneTextureLoader.load via mountedImageReader; false = TS null.

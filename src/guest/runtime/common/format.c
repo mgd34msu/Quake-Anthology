@@ -351,7 +351,7 @@ static bool readonly_format(const qa_guest_format_request *request, size_t lengt
 }
 
 static void string_argument(bstr *out_text, const qa_guest_format_request *request,
-                            bool has_address, qa_guest_address address,
+                            bool has_address, qa_guest_core_address address,
                             bool wide, bool has_precision, int64_t precision) {
   bstr_init(out_text);
   if (!has_address) {
@@ -380,7 +380,7 @@ static void string_argument(bstr *out_text, const qa_guest_format_request *reque
   }
   for (int64_t index = 0; !has_precision || (int64_t)out_text->len < precision; index++) {
     if (index >= 1048576) qa_range_error("Guest printf string exceeds runtime string limit");
-    qa_guest_address at = qa_memory_offset(m, address, index * width);
+    qa_guest_core_address at = qa_memory_offset(m, address, index * width);
     uint32_t code = width == 4 ? qa_memory_read_u32(m, at) : width == 2 ? qa_memory_read_u16(m, at)
                                                                         : qa_memory_read_u8(m, at);
     if (code == 0) break;
@@ -567,7 +567,7 @@ static qa_guest_format_result format_run_body(const qa_guest_format_request *req
     } else if (code == 's' || code == 'S') {
       bool wide = strcmp(conv->length, "l") == 0 || strcmp(conv->length, "w") == 0
           || (code == 'S' && strcmp(conv->length, "h") != 0);
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       uint64_t raw = argument_integer(&value);
       bool has_address = qa_memory_pointer(request->memory, raw, &address);
       bstr_free(&body);
@@ -587,7 +587,7 @@ static qa_guest_format_result format_run_body(const qa_guest_format_request *req
       if (request->dialect == QA_FORMAT_WINDOWS) format_failure(22);
       if (request->fortify && !readonly_format(request, strlen(text)))
         qa_guest_format_fortify_failure("glibc %n in writable format storage");
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (!qa_memory_pointer(request->memory, argument_integer(&value), &address))
         qa_range_error("Null printf count pointer");
       qa_write_unsigned(request->memory, address, integer_bits(conv->length, request) / 8,

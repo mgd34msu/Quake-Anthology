@@ -12,7 +12,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
 #include "qa/render/scene/models/transform.h"
-typedef struct model_entry { char *key; const qa_app_model_asset *asset; bool resolved; } model_entry;
+typedef struct model_entry { char *key; const qa_app_q3_selected_model_asset *asset; bool resolved; } model_entry;
 typedef struct animation_entry { char *content; qa_q3_player_animation_config config; } animation_entry;
 struct qa_app_selected_q3_weapon_presenter {
   qa_q3_lerp_frame torso;
@@ -86,7 +86,7 @@ static const qa_q3_player_animation_config *animation_for(qa_app_selected_q3_wea
   presenter->animation_count++;
   return &entry->config;
 }
-static const qa_app_model_asset *model_for(qa_app_selected_q3_weapon_presenter *presenter,
+static const qa_app_q3_selected_model_asset *model_for(qa_app_selected_q3_weapon_presenter *presenter,
     qa_content_id content, const char *path) {
   size_t key_size = strlen(content) + strlen(path) + 2;
   char *key = malloc(key_size);
@@ -100,7 +100,7 @@ static const qa_app_model_asset *model_for(qa_app_selected_q3_weapon_presenter *
   }
   size_t length = 0;
   uint8_t *bytes = presenter->assets.open(presenter->assets.ctx, content, path, &length);
-  const qa_app_model_asset *asset = NULL;
+  const qa_app_q3_selected_model_asset *asset = NULL;
   if (bytes != NULL) {
     free(bytes);
     const char *error = NULL;
@@ -119,10 +119,10 @@ static const qa_app_model_asset *model_for(qa_app_selected_q3_weapon_presenter *
   presenter->model_count++;
   return asset;
 }
-static const qa_app_model_asset *required_model(qa_app_selected_q3_weapon_presenter *presenter,
+static const qa_app_q3_selected_model_asset *required_model(qa_app_selected_q3_weapon_presenter *presenter,
     qa_content_id content, const char *path) {
   const char *error = NULL;
-  const qa_app_model_asset *asset = presenter->assets.model(presenter->assets.ctx, content, path, &error);
+  const qa_app_q3_selected_model_asset *asset = presenter->assets.model(presenter->assets.ctx, content, path, &error);
   if (asset == NULL) qa_range_error("%s", error != NULL ? error : "Out of memory");
   return asset;
 }
@@ -136,7 +136,7 @@ static char *stem_path(const char *path, const char *suffix) {
   memcpy(out + stem, suffix, strlen(suffix) + 1);
   return out;
 }
-static qa_scene_entity part_entity(qa_app_q3_weapon_source source, const qa_app_model_asset *asset,
+static qa_scene_entity part_entity(qa_app_q3_weapon_source source, const qa_app_q3_selected_model_asset *asset,
     qa_vec3 origin, qa_vec3 angles, double flags_bits, bool world) {
   qa_scene_entity entity = {0};
   entity.actor = source.actor;
@@ -187,9 +187,9 @@ qa_app_q3_weapon_passes qa_app_selected_q3_weapon_presenter_world(qa_app_selecte
   qa_app_q3_weapon_view view = source.weapon;
   char *barrel_path = stem_path(source.path, "_barrel.md3");
   char *flash_path = stem_path(source.path, "_flash.md3");
-  const qa_app_model_asset *gun_asset = required_model(presenter, source.content, source.path);
-  const qa_app_model_asset *barrel_asset = model_for(presenter, source.content, barrel_path);
-  const qa_app_model_asset *flash_asset = model_for(presenter, source.content, flash_path);
+  const qa_app_q3_selected_model_asset *gun_asset = required_model(presenter, source.content, source.path);
+  const qa_app_q3_selected_model_asset *barrel_asset = model_for(presenter, source.content, barrel_path);
+  const qa_app_q3_selected_model_asset *flash_asset = model_for(presenter, source.content, flash_path);
   double flags = QA_Q3_PRES_RF_LIGHTING_ORIGIN | (personal_model ? QA_Q3_PRES_RF_THIRD_PERSON : 0);
   out.entities = calloc(3, sizeof *out.entities);
   out.attachments = calloc(1, sizeof *out.attachments);
@@ -261,16 +261,16 @@ qa_scene_entity qa_app_selected_q3_weapon_presenter_frame(qa_app_selected_q3_wea
   char *barrel_path = stem_path(source.path, "_barrel.md3");
   char *flash_path = stem_path(source.path, "_flash.md3");
   char *hand_path = stem_path(source.path, "_hand.md3");
-  const qa_app_model_asset *gun_asset = required_model(presenter, source.content, source.path);
-  const qa_app_model_asset *own_hand = model_for(presenter, source.content,
+  const qa_app_q3_selected_model_asset *gun_asset = required_model(presenter, source.content, source.path);
+  const qa_app_q3_selected_model_asset *own_hand = model_for(presenter, source.content,
       source.model_anchor != NULL ? source.model_anchor->path : hand_path);
-  const qa_app_model_asset *barrel_asset = source.model_anchor == NULL
+  const qa_app_q3_selected_model_asset *barrel_asset = source.model_anchor == NULL
       ? model_for(presenter, source.content, barrel_path) : NULL;
-  const qa_app_model_asset *flash_asset = source.model_anchor == NULL
+  const qa_app_q3_selected_model_asset *flash_asset = source.model_anchor == NULL
       ? model_for(presenter, source.content, flash_path) : NULL;
   const qa_q3_player_animation_config *animation = source.model_anchor == NULL
       ? animation_for(presenter, source.content) : NULL;
-  const qa_app_model_asset *hand_asset = own_hand != NULL ? own_hand
+  const qa_app_q3_selected_model_asset *hand_asset = own_hand != NULL ? own_hand
       : required_model(presenter, source.content, hand_fallback);
   free(barrel_path); free(flash_path); free(hand_path);
   if (animation != NULL) {
@@ -308,7 +308,7 @@ qa_scene_entity qa_app_selected_q3_weapon_presenter_frame(qa_app_selected_q3_wea
     qa_range_error("Selected Q3 hands model has no %s", tag_name);
   size_t entity_at = 0, attachment_at = 0;
   for (size_t i = 0; i < source.model_attachment_count; i++) {
-    const qa_app_model_asset *asset = required_model(presenter, source.content, source.model_attachments[i].path);
+    const qa_app_q3_selected_model_asset *asset = required_model(presenter, source.content, source.model_attachments[i].path);
     entity_scratch[entity_at] = part_entity(source, asset, zero3, zero3, flags, false);
     attachment_scratch[attachment_at].tag = source.model_attachments[i].tag;
     attachment_scratch[attachment_at].entity = &entity_scratch[entity_at];

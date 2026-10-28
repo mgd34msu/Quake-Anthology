@@ -63,7 +63,7 @@ static int checks = 0;
     }                                                                   \
   } while (0)
 
-static qa_guest_address A(uint64_t v) { qa_guest_address a = {v}; return a; }
+static qa_guest_core_address A(uint64_t v) { qa_guest_core_address a = {v}; return a; }
 static qa_guest_module_identity test_module = {"test:guest-runtime", "authored-runtime",
                                                "digest", "1"};
 static qa_guest_module_ref sparse_module = {"test:guest-runtime", "authored-runtime",
@@ -73,7 +73,7 @@ typedef struct test_ext {
   qa_sparse_guest_memory *mem;
   qa_guest_mapping buf[256];
 } test_ext;
-static qa_guest_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_permissions perm,
+static qa_guest_core_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_permissions perm,
                                 const char *label, const uint8_t *bytes, size_t blen) {
   test_ext *e = ctx;
   qa_guest_map_options o;
@@ -82,7 +82,7 @@ static qa_guest_address ext_map(void *ctx, uint64_t base, size_t len, qa_guest_p
   o.bytes = bytes; o.bytes_length = blen;
   return qa_sparse_map(e->mem, &o);
 }
-static qa_guest_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, bool hp,
+static qa_guest_core_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, bool hp,
                                   qa_guest_permissions perm, const char *label) {
   test_ext *e = ctx;
   qa_guest_allocation_options o;
@@ -91,10 +91,10 @@ static qa_guest_address ext_alloc(void *ctx, size_t len, bool ha, uint64_t al, b
   o.has_permissions = hp; o.label = label;
   return qa_sparse_allocate(e->mem, &o);
 }
-static void ext_unmap(void *ctx, qa_guest_address a, size_t len) {
+static void ext_unmap(void *ctx, qa_guest_core_address a, size_t len) {
   qa_sparse_unmap(((test_ext *)ctx)->mem, a, len);
 }
-static void ext_protect(void *ctx, qa_guest_address a, size_t len, qa_guest_permissions p) {
+static void ext_protect(void *ctx, qa_guest_core_address a, size_t len, qa_guest_permissions p) {
   qa_sparse_protect(((test_ext *)ctx)->mem, a, len, p);
 }
 static const qa_guest_mapping *ext_mappings(void *ctx, size_t *count) {
@@ -103,13 +103,13 @@ static const qa_guest_mapping *ext_mappings(void *ctx, size_t *count) {
   if (*count > 256) *count = 256;
   return e->buf;
 }
-static void ext_move(void *ctx, qa_guest_address d, qa_guest_address s, size_t n) {
+static void ext_move(void *ctx, qa_guest_core_address d, qa_guest_core_address s, size_t n) {
   qa_sparse_move(((test_ext *)ctx)->mem, d, s, n);
 }
-static void ext_fill(void *ctx, qa_guest_address a, size_t n, int v) {
+static void ext_fill(void *ctx, qa_guest_core_address a, size_t n, int v) {
   qa_sparse_fill(((test_ext *)ctx)->mem, a, n, (uint32_t)v);
 }
-static int64_t ext_find_zero(void *ctx, qa_guest_address a, size_t m) {
+static int64_t ext_find_zero(void *ctx, qa_guest_core_address a, size_t m) {
   return qa_sparse_find_zero(((test_ext *)ctx)->mem, a, m);
 }
 static void make_ext(qa_mapped_memory_ext *ext, test_ext *storage, qa_sparse_guest_memory *mem) {
@@ -133,19 +133,19 @@ typedef struct fixture {
   qa_guest_cpu cpu;
   _Alignas(16) uint8_t runner_storage[16384];
   qa_guest_call_runner *runner;
-  qa_guest_call_context context;
+  qa_guest_core_call_context context;
   int width;
 } fixture;
 
-static bool is_host_call(void *ctx, qa_guest_address address) {
+static bool is_host_call(void *ctx, qa_guest_core_address address) {
   return qa_guest_callback_table_resolve((qa_guest_callback_table *)ctx, address) != NULL;
 }
 static qa_guest_execution_stop run_x64(void *ctx, int64_t budget, bool has_return,
-                                       qa_guest_address return_address) {
+                                       qa_guest_core_address return_address) {
   return qa_x64_cpu_run((qa_x64_cpu *)ctx, budget, has_return, return_address);
 }
 static qa_guest_execution_stop run_x86(void *ctx, int64_t budget, bool has_return,
-                                       qa_guest_address return_address) {
+                                       qa_guest_core_address return_address) {
   return qa_i386_cpu_run((qa_i386_cpu *)ctx, budget, has_return, return_address);
 }
 static void smap(fixture *f, uint64_t base, size_t len, qa_guest_permissions perm,
@@ -194,18 +194,18 @@ static void fixture_init(fixture *f, int width) {
   f->context.module = test_module;
   f->context.callback_kind = QA_CALLBACK_REF_TYPESCRIPT;
 }
-static qa_guest_address guest_alloc(fixture *f, size_t len) {
+static qa_guest_core_address guest_alloc(fixture *f, size_t len) {
   return qa_gmem_allocate(&f->ext, len, false, 0, false, QA_PERM_READ_WRITE, "test");
 }
-static qa_guest_address guest_text(fixture *f, const char *value) {
+static qa_guest_core_address guest_text(fixture *f, const char *value) {
   size_t len = 0;
   uint8_t *bytes = qa_string_bytes(value, false, &len);
-  qa_guest_address address = guest_alloc(f, len);
+  qa_guest_core_address address = guest_alloc(f, len);
   qa_memory_write(&f->mem.base, address, bytes, len);
   free(bytes);
   return address;
 }
-static qa_call_result invoke_at(fixture *f, qa_guest_address address,
+static qa_call_result invoke_at(fixture *f, qa_guest_core_address address,
                                 const qa_call_value *args, size_t count) {
   const qa_guest_host_callback *callback =
       qa_guest_callback_table_resolve(&f->callbacks, address);
@@ -220,7 +220,7 @@ static qa_call_result invoke_at(fixture *f, qa_guest_address address,
   request.instruction_budget = 100000;
   return qa_guest_call_runner_invoke(f->runner, &request);
 }
-static qa_call_value ptr_arg(bool has, qa_guest_address a) { return qa_call_pointer(has, a); }
+static qa_call_value ptr_arg(bool has, qa_guest_core_address a) { return qa_call_pointer(has, a); }
 static qa_call_value size_arg(fixture *f, uint64_t value) {
   return f->width == 4 ? qa_call_uint32((uint32_t)value) : qa_call_uint64(value);
 }
@@ -311,8 +311,8 @@ static void test_format_buffer(void) {
   fixture f;
   fixture_init(&f, 8);
   qa_mapped_guest_memory *m = &f.mem.base;
-  qa_guest_address buffer = guest_alloc(&f, 256);
-  qa_guest_address args_addr = guest_alloc(&f, 64);
+  qa_guest_core_address buffer = guest_alloc(&f, 256);
+  qa_guest_core_address args_addr = guest_alloc(&f, 64);
   qa_gmem_write_i32(m, args_addr, -8);
   qa_gmem_write_i32(m, qa_memory_offset(m, args_addr, 8), 3);
   qa_gmem_write_i32(m, qa_memory_offset(m, args_addr, 16), -7);
@@ -349,8 +349,8 @@ static void test_format_buffer(void) {
 }
 
 /* ---------- scanWindowsBuffer direct (scan.test.ts subset) ---------- */
-static int scan_direct(fixture *f, qa_guest_address input, int64_t capacity,
-                       const char *format, qa_guest_address args_addr,
+static int scan_direct(fixture *f, qa_guest_core_address input, int64_t capacity,
+                       const char *format, qa_guest_core_address args_addr,
                        qa_guest_scan_catch *catch_out) {
   qa_scan_windows_buffer_options options;
   memset(&options, 0, sizeof options);
@@ -367,8 +367,8 @@ static void test_scan(void) {
   fixture f;
   fixture_init(&f, 8);
   qa_mapped_guest_memory *m = &f.mem.base;
-  qa_guest_address destinations = guest_alloc(&f, 32);
-  qa_guest_address args_addr = guest_alloc(&f, 24);
+  qa_guest_core_address destinations = guest_alloc(&f, 32);
+  qa_guest_core_address args_addr = guest_alloc(&f, 24);
   for (int i = 0; i < 3; i++)
     qa_gmem_write_pointer(m, qa_memory_offset(m, args_addr, i * 8), true,
                           qa_memory_offset(m, destinations, i * 8));
@@ -424,7 +424,7 @@ static size_t sv_in(void *ctx, size_t maximum, uint8_t *out) {
 static qa_call_result sv_call(fixture *f, qa_system_v_guest_runtime *rt, const char *library,
                               const char *name, const char *version, const qa_call_value *args,
                               size_t count) {
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   if (!qa_system_v_resolve_address(&rt->host, library, name, version, &address))
     qa_range_error("Missing System V test service %s", name);
   return invoke_at(f, address, args, count);
@@ -461,7 +461,7 @@ static void test_system_v_heap_guard_qsort(void) {
   qa_call_value malloc_args[] = {size_arg(f, 16)};
   qa_call_result allocated = sv_call(f, &s.rt, "libc.so.6", "malloc", NULL, malloc_args, 1);
   CHECK(allocated.kind == QA_CALL_POINTER && allocated.pointer_has);
-  qa_guest_address allocation = allocated.pointer;
+  qa_guest_core_address allocation = allocated.pointer;
   const uint8_t values[16] = {7, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 1, 0, 0, 0};
   qa_memory_write(m, allocation, values, 16);
   static const uint8_t code[] = {0x8b, 0x07, 0x2b, 0x06, 0xc3};
@@ -479,7 +479,7 @@ static void test_system_v_heap_guard_qsort(void) {
     if (strcmp(c.name, "qsort") == 0 && c.version == NULL) qsort_reached = c.reached == 1;
   }
   CHECK(qsort_reached);
-  qa_guest_address guard = qa_system_v_allocate(&s.rt.host, 8);
+  qa_guest_core_address guard = qa_system_v_allocate(&s.rt.host, 8);
   qa_call_value guard_args[] = {ptr_arg(true, guard)};
   CHECK(result_is_int(sv_call(f, &s.rt, "libstdc++.so.6", "__cxa_guard_acquire", NULL,
                               guard_args, 1), 1));
@@ -502,15 +502,15 @@ static void test_system_v_format_service(void) {
   sv_init(&s, 8);
   fixture *f = &s.f;
   qa_mapped_guest_memory *m = &f->mem.base;
-  qa_guest_address service_addr = {0};
+  qa_guest_core_address service_addr = {0};
   CHECK(qa_system_v_resolve_address(&s.rt.host, "libc.so.6", "__vsnprintf_chk", "GLIBC_2.3.4",
                                     &service_addr));
-  qa_guest_address buffer = guest_alloc(f, 256);
-  qa_guest_address registers = guest_alloc(f, 176);
-  qa_guest_address stack = guest_alloc(f, 64);
-  qa_guest_address descriptor = guest_alloc(f, 24);
-  qa_guest_address label = guest_text(f, "guest");
-  qa_guest_address count_addr = guest_alloc(f, 8);
+  qa_guest_core_address buffer = guest_alloc(f, 256);
+  qa_guest_core_address registers = guest_alloc(f, 176);
+  qa_guest_core_address stack = guest_alloc(f, 64);
+  qa_guest_core_address descriptor = guest_alloc(f, 24);
+  qa_guest_core_address label = guest_text(f, "guest");
+  qa_guest_core_address count_addr = guest_alloc(f, 8);
   qa_memory_write_u32(m, descriptor, 40);
   qa_memory_write_u32(m, qa_memory_offset(m, descriptor, 4), 160);
   qa_gmem_write_pointer(m, qa_memory_offset(m, descriptor, 8), true, stack);
@@ -521,7 +521,7 @@ static void test_system_v_format_service(void) {
   qa_memory_write_u64(m, qa_memory_offset(m, stack, 8), UINT64_MAX);
   qa_gmem_write_f64(m, qa_memory_offset(m, stack, 16), 1.25);
   qa_gmem_write_pointer(m, qa_memory_offset(m, stack, 24), true, count_addr);
-  qa_guest_address format = guest_text(f, "%+06d|%.0f|%.3s|%#llx|%.2f%n");
+  qa_guest_core_address format = guest_text(f, "%+06d|%.0f|%.3s|%#llx|%.2f%n");
   qa_call_value call_args[] = {ptr_arg(true, buffer), size_arg(f, 256),
                                qa_call_int32(0), size_arg(f, 256), ptr_arg(true, format),
                                ptr_arg(true, descriptor)};
@@ -534,18 +534,18 @@ static void test_system_v_format_service(void) {
   CHECK(qa_gmem_read_i32(m, count_addr) == (int)strlen(expected));
   CHECK(qa_memory_read_u32(m, descriptor) == 48);
   CHECK(qa_memory_read_u32(m, qa_memory_offset(m, descriptor, 4)) == 176);
-  qa_guest_address cursor = {0};
+  qa_guest_core_address cursor = {0};
   CHECK(qa_gmem_read_pointer(m, qa_memory_offset(m, descriptor, 8), &cursor) &&
         cursor.byte_offset == stack.byte_offset + 32);
   qa_system_v_guest_runtime_destroy(&s.rt);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
-static qa_call_result invoke_virtual(fixture *f, qa_guest_address object, int slot_index,
+static qa_call_result invoke_virtual(fixture *f, qa_guest_core_address object, int slot_index,
                                      const qa_call_value *extra, size_t extra_count) {
   qa_mapped_guest_memory *m = &f->mem.base;
-  qa_guest_address table = {0};
+  qa_guest_core_address table = {0};
   if (!qa_gmem_read_pointer(m, object, &table)) qa_range_error("Missing vtable");
-  qa_guest_address target = {0};
+  qa_guest_core_address target = {0};
   if (!qa_gmem_read_pointer(m, qa_memory_offset(m, table, (int64_t)slot_index * m->pointer_bytes),
                             &target))
     qa_range_error("Missing virtual method");
@@ -562,7 +562,7 @@ static void test_system_v_iostreams(void) {
   fixture *f = &s.f;
   qa_mapped_guest_memory *m = &f->mem.base;
   qa_system_v_iostreams *streams = s.rt.iostreams;
-  qa_guest_address object = qa_system_v_allocate(&s.rt.host, 1);
+  qa_guest_core_address object = qa_system_v_allocate(&s.rt.host, 1);
   qa_call_value object_arg[] = {ptr_arg(true, object)};
   (void)sv_call(f, &s.rt, "libstdc++.so.6", "_ZNSt8ios_base4InitC1Ev", "GLIBCXX_3.4",
                 object_arg, 1);
@@ -572,14 +572,14 @@ static void test_system_v_iostreams(void) {
   const qa_system_v_standard_stream *cerr_s = &streams->streams[2];
   const qa_system_v_standard_stream *clog_s = &streams->streams[3];
   const qa_system_v_standard_stream *wcerr_s = &streams->streams[6];
-  qa_guest_address tie = {0};
+  qa_guest_core_address tie = {0};
   CHECK(qa_gmem_read_pointer(m, qa_memory_offset(m, cin_s->ios, 216), &tie) &&
         tie.byte_offset == cout_s->address.byte_offset);
   CHECK(qa_gmem_read_pointer(m, qa_memory_offset(m, cerr_s->ios, 216), &tie) &&
         tie.byte_offset == cout_s->address.byte_offset);
   CHECK(qa_memory_read_u32(m, qa_memory_offset(m, cerr_s->ios, 24)) == 0x3002);
   CHECK(qa_memory_read_u32(m, qa_memory_offset(m, cout_s->ios, 24)) == 0x1002);
-  qa_guest_address cerr_buffer = {0}, clog_buffer = {0};
+  qa_guest_core_address cerr_buffer = {0}, clog_buffer = {0};
   CHECK(qa_gmem_read_pointer(m, qa_memory_offset(m, cerr_s->ios, 232), &cerr_buffer) &&
         qa_gmem_read_pointer(m, qa_memory_offset(m, clog_s->ios, 232), &clog_buffer) &&
         cerr_buffer.byte_offset == clog_buffer.byte_offset);
@@ -591,10 +591,10 @@ static void test_system_v_iostreams(void) {
   CHECK(result_is_int(invoke_virtual(f, streams->locale->ctype[1], 2, is_args, 2), 1));
   is_args[1] = qa_call_uint32(65);
   CHECK(result_is_int(invoke_virtual(f, streams->locale->ctype[1], 2, is_args, 2), 0));
-  qa_guest_address bytes = qa_system_v_allocate(&s.rt.host, 2);
+  qa_guest_core_address bytes = qa_system_v_allocate(&s.rt.host, 2);
   const uint8_t ab[2] = {65, 66};
   qa_memory_write(m, bytes, ab, 2);
-  qa_guest_address cout_buffer = {0};
+  qa_guest_core_address cout_buffer = {0};
   qa_gmem_read_pointer(m, qa_memory_offset(m, cout_s->ios, 232), &cout_buffer);
   qa_call_value xsputn_args[] = {ptr_arg(true, bytes), qa_call_int64(2)};
   (void)invoke_virtual(f, cout_buffer, 12, xsputn_args, 2);
@@ -604,7 +604,7 @@ static void test_system_v_iostreams(void) {
   qa_call_value flush_args[] = {ptr_arg(true, cout_s->address)};
   (void)sv_call(f, &s.rt, "libstdc++.so.6", "_ZNSo5flushEv", "GLIBCXX_3.4", flush_args, 1);
   CHECK(strcmp(s.out.text, "ABC") == 0);
-  qa_guest_address cin_buffer = {0};
+  qa_guest_core_address cin_buffer = {0};
   qa_gmem_read_pointer(m, qa_memory_offset(m, cin_s->ios, 232), &cin_buffer);
   CHECK(result_is_int(invoke_virtual(f, cin_buffer, 9, NULL, 0), 104));
   CHECK(result_is_int(invoke_virtual(f, cin_buffer, 10, NULL, 0), 104));
@@ -612,7 +612,7 @@ static void test_system_v_iostreams(void) {
   qa_call_value pback_arg[] = {qa_call_int32(-1)};
   CHECK(result_is_int(invoke_virtual(f, cin_buffer, 11, pback_arg, 1), 105));
   CHECK(result_is_int(invoke_virtual(f, cin_buffer, 10, NULL, 0), 105));
-  qa_guest_address wcerr_buffer = {0};
+  qa_guest_core_address wcerr_buffer = {0};
   qa_gmem_read_pointer(m, qa_memory_offset(m, wcerr_s->ios, 232), &wcerr_buffer);
   qa_call_value z_arg[] = {qa_call_uint32(90)};
   qa_call_result z = invoke_virtual(f, wcerr_buffer, 13, z_arg, 1);
@@ -631,13 +631,13 @@ static void test_system_v_iostreams(void) {
   qa_system_v_guest_runtime_destroy(&s.rt);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
-typedef struct destructor_probe { qa_sparse_guest_memory *mem; qa_guest_address counter; }
+typedef struct destructor_probe { qa_sparse_guest_memory *mem; qa_guest_core_address counter; }
     destructor_probe;
-static qa_call_result destructor_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result destructor_impl(void *ctx, const qa_guest_core_call_context *context,
                                       const qa_call_value *args, size_t count) {
   destructor_probe *probe = ctx;
   (void)context;
-  qa_guest_address value = qa_guest_required_pointer(args, count, 0);
+  qa_guest_core_address value = qa_guest_required_pointer(args, count, 0);
   qa_mapped_guest_memory *m = &probe->mem->base;
   qa_gmem_write_i32(m, probe->counter,
                     qa_gmem_read_i32(m, probe->counter) * 10 + qa_gmem_read_i32(m, value));
@@ -648,18 +648,18 @@ static void test_system_v_destructors(void) {
   sv_init(&s, 8);
   fixture *f = &s.f;
   qa_mapped_guest_memory *m = &f->mem.base;
-  qa_guest_address counter = qa_system_v_allocate(&s.rt.host, 4);
-  qa_guest_address other_dso = qa_system_v_allocate(&s.rt.host, 1);
+  qa_guest_core_address counter = qa_system_v_allocate(&s.rt.host, 4);
+  qa_guest_core_address other_dso = qa_system_v_allocate(&s.rt.host, 1);
   destructor_probe probe = {&f->mem, counter};
   qa_abi_storage params[] = {QA_STORAGE_POINTER};
   const char *versions[] = {NULL};
   qa_system_v_implementation impl = {&probe, destructor_impl};
   qa_system_v_service(&s.rt.host, "fixture.so", "destructor", versions, 1, params, 1, true,
                       QA_STORAGE_INT32, impl);
-  qa_guest_address target = {0};
+  qa_guest_core_address target = {0};
   CHECK(qa_system_v_resolve_address(&s.rt.host, "fixture.so", "destructor", NULL, &target));
   for (int digit = 1; digit <= 3; digit++) {
-    qa_guest_address argument = qa_system_v_allocate(&s.rt.host, 4);
+    qa_guest_core_address argument = qa_system_v_allocate(&s.rt.host, 4);
     qa_gmem_write_i32(m, argument, digit);
     qa_call_value atexit_args[] = {ptr_arg(true, target), ptr_arg(true, argument),
                                    ptr_arg(true, digit == 2 ? other_dso : counter)};
@@ -736,7 +736,7 @@ static void win_init(win_fixture *s, int width) {
 }
 static qa_call_result win_call(win_fixture *s, const char *library, const char *name,
                                const qa_call_value *args, size_t count) {
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   if (!qa_windows_resolve_address(&s->rt.host, library, name, &address))
     qa_range_error("Missing Windows test service %s", name);
   return invoke_at(&s->f, address, args, count);
@@ -757,23 +757,23 @@ static void test_windows_services(void) {
   qa_call_value decode_args[] = {encoded_null};
   CHECK(result_is_ptr(win_call(&s, "kernel32.dll", "DecodePointer", decode_args, 1), false, 0));
   qa_call_value heap_create_args[] = {qa_call_uint32(0), size_arg(f, 0), size_arg(f, 0)};
-  qa_guest_address heap = A(result_ptr_offset(
+  qa_guest_core_address heap = A(result_ptr_offset(
       win_call(&s, "kernel32.dll", "HeapCreate", heap_create_args, 3)));
   qa_call_value heap_alloc_args[] = {ptr_arg(true, heap), qa_call_uint32(8), size_arg(f, 16)};
-  qa_guest_address allocation = A(result_ptr_offset(
+  qa_guest_core_address allocation = A(result_ptr_offset(
       win_call(&s, "kernel32.dll", "HeapAlloc", heap_alloc_args, 3)));
   qa_memory_write_u32(m, allocation, 0x12345678);
   qa_call_value realloc_args[] = {ptr_arg(true, heap), qa_call_uint32(8),
                                   ptr_arg(true, allocation), size_arg(f, 40)};
-  qa_guest_address enlarged = A(result_ptr_offset(
+  qa_guest_core_address enlarged = A(result_ptr_offset(
       win_call(&s, "kernel32.dll", "HeapReAlloc", realloc_args, 4)));
   CHECK(qa_memory_read_u32(m, enlarged) == 0x12345678);
   qa_call_result tls_index = win_call(&s, "kernel32.dll", "TlsAlloc", NULL, 0);
   CHECK(tls_index.kind == QA_CALL_UINT32);
   qa_call_value tls_set_args[] = {tls_index, ptr_arg(true, enlarged)};
   CHECK(result_is_int(win_call(&s, "kernel32.dll", "TlsSetValue", tls_set_args, 2), 1));
-  qa_guest_address slot = qa_memory_offset(m, s.rt.teb, 0x1480 + (int64_t)tls_index.number * 8);
-  qa_guest_address stored = {0};
+  qa_guest_core_address slot = qa_memory_offset(m, s.rt.teb, 0x1480 + (int64_t)tls_index.number * 8);
+  qa_guest_core_address stored = {0};
   CHECK(qa_gmem_read_pointer(m, slot, &stored) &&
         stored.byte_offset == enlarged.byte_offset);
   qa_call_value tls_get_args[] = {tls_index};
@@ -783,14 +783,14 @@ static void test_windows_services(void) {
   CHECK(result_is_int(win_call(&s, "kernel32.dll", "TlsFree", tls_get_args, 1), 1));
   CHECK(result_is_ptr(win_call(&s, "kernel32.dll", "TlsGetValue", tls_get_args, 1), false, 0));
   CHECK(qa_windows_last_error_get(&s.rt.host) == 87);
-  qa_guest_address path = guest_text(f, "save.sav");
+  qa_guest_core_address path = guest_text(f, "save.sav");
   qa_call_value create_args[] = {ptr_arg(true, path), qa_call_uint32(0xc0000000),
                                  qa_call_uint32(0), ptr_arg(false, A(0)), qa_call_uint32(3),
                                  qa_call_uint32(0), ptr_arg(false, A(0))};
-  qa_guest_address handle = A(result_ptr_offset(
+  qa_guest_core_address handle = A(result_ptr_offset(
       win_call(&s, "kernel32.dll", "CreateFileA", create_args, 7)));
-  qa_guest_address buffer = guest_alloc(f, 8);
-  qa_guest_address transferred = guest_alloc(f, 4);
+  qa_guest_core_address buffer = guest_alloc(f, 8);
+  qa_guest_core_address transferred = guest_alloc(f, 4);
   qa_call_value read_args[] = {ptr_arg(true, handle), ptr_arg(true, buffer),
                                qa_call_uint32(2), ptr_arg(true, transferred),
                                ptr_arg(false, A(0))};
@@ -820,7 +820,7 @@ static void test_windows_crt(void) {
   win_init(&s, 8);
   fixture *f = &s.f;
   qa_mapped_guest_memory *m = &f->mem.base;
-  qa_guest_address buffer = guest_alloc(f, 32);
+  qa_guest_core_address buffer = guest_alloc(f, 32);
   const uint8_t initial[6] = {1, 2, 3, 4, 5, 6};
   qa_memory_write(m, buffer, initial, 6);
   qa_call_value move_args[] = {ptr_arg(true, qa_memory_offset(m, buffer, 1)),
@@ -838,19 +838,19 @@ static void test_windows_crt(void) {
   CHECK(qa_gmem_read_f64(m, buffer) == -2.0);
   qa_call_value dsign_args[] = {qa_call_float64(-0.0)};
   CHECK(result_is_int(win_call(&s, "ucrtbase.dll", "_dsign", dsign_args, 1), -32768));
-  qa_guest_address ticks_addr = {0};
+  qa_guest_core_address ticks_addr = {0};
   CHECK(qa_windows_resolve_address(&s.rt.host, "msvcp140.dll", "_Xtime_get_ticks",
                                    &ticks_addr));
   qa_call_result ticks = invoke_at(f, ticks_addr, NULL, 0);
   CHECK(ticks.kind == QA_CALL_INT64 && ticks.int64_value == 17000000001230000LL);
-  qa_guest_address text_addr = guest_alloc(f, 32);
-  qa_guest_address end_addr = guest_alloc(f, 8);
+  qa_guest_core_address text_addr = guest_alloc(f, 32);
+  qa_guest_core_address end_addr = guest_alloc(f, 8);
   qa_memory_write(m, text_addr, (const uint8_t *)"-0x10!\0", 7);
   qa_call_value strtoul_args[] = {ptr_arg(true, text_addr), ptr_arg(true, end_addr),
                                   qa_call_int32(0)};
   qa_call_result parsed = win_call(&s, "ucrtbase.dll", "strtoul", strtoul_args, 3);
   CHECK(parsed.kind == QA_CALL_UINT32 && (uint32_t)parsed.number == 0xfffffff0u);
-  qa_guest_address end_value = {0};
+  qa_guest_core_address end_value = {0};
   CHECK(qa_gmem_read_pointer(m, end_addr, &end_value) &&
         end_value.byte_offset == text_addr.byte_offset + 5);
   qa_memory_write(m, text_addr, (const uint8_t *)"4294967296x\0", 12);
@@ -863,7 +863,7 @@ static void test_windows_crt(void) {
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 typedef struct compare_probe { qa_sparse_guest_memory *mem; int comparisons; } compare_probe;
-static qa_call_result compare_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result compare_impl(void *ctx, const qa_guest_core_call_context *context,
                                    const qa_call_value *args, size_t count) {
   compare_probe *probe = ctx;
   (void)context;
@@ -882,10 +882,10 @@ static void test_windows_qsort_and_libraries(void) {
   qa_windows_import_implementation impl = {&probe, compare_impl};
   qa_windows_service(&s.rt.host, "ucrtbase.dll", "test-sort-compare", params, 2, false,
                      QA_STORAGE_INT32, impl);
-  qa_guest_address comparator = {0};
+  qa_guest_core_address comparator = {0};
   CHECK(qa_windows_resolve_address(&s.rt.host, "ucrtbase.dll", "test-sort-compare",
                                    &comparator));
-  qa_guest_address buffer = guest_alloc(f, 32);
+  qa_guest_core_address buffer = guest_alloc(f, 32);
   const int values[5] = {9, -3, 9, 0, 2};
   for (int i = 0; i < 5; i++) qa_gmem_write_i32(m, qa_memory_offset(m, buffer, i * 4), values[i]);
   qa_call_value qsort_args[] = {ptr_arg(true, buffer), qa_call_uint64(5), qa_call_uint64(4),
@@ -896,21 +896,21 @@ static void test_windows_qsort_and_libraries(void) {
     CHECK(qa_gmem_read_i32(m, qa_memory_offset(m, buffer, i * 4)) == expected[i]);
   CHECK(probe.comparisons > 0);
   /* Dynamic library references and critical sections (services.test.ts). */
-  qa_guest_address wide_name = guest_alloc(f, 64);
+  qa_guest_core_address wide_name = guest_alloc(f, 64);
   const char *kernel32 = "kernel32.dll";
   for (size_t i = 0; i <= strlen(kernel32); i++)
     qa_memory_write_u16(m, qa_memory_offset(m, wide_name, (int64_t)i * 2),
                         (uint8_t)kernel32[i]);
   qa_call_value load_args[] = {ptr_arg(true, wide_name), ptr_arg(false, A(0)),
                                qa_call_uint32(0x800)};
-  qa_guest_address library = A(result_ptr_offset(
+  qa_guest_core_address library = A(result_ptr_offset(
       win_call(&s, "kernel32.dll", "LoadLibraryExW", load_args, 3)));
   qa_call_value handle_args[] = {ptr_arg(true, wide_name)};
   CHECK(result_is_ptr(win_call(&s, "kernel32.dll", "GetModuleHandleW", handle_args, 1),
                       true, library.byte_offset));
-  qa_guest_address proc_name = guest_text(f, "GetLastError");
+  qa_guest_core_address proc_name = guest_text(f, "GetLastError");
   qa_call_value proc_args[] = {ptr_arg(true, library), ptr_arg(true, proc_name)};
-  qa_guest_address get_last_error = {0};
+  qa_guest_core_address get_last_error = {0};
   CHECK(qa_windows_resolve_address(&s.rt.host, "kernel32.dll", "GetLastError",
                                    &get_last_error));
   CHECK(result_is_ptr(win_call(&s, "kernel32.dll", "GetProcAddress", proc_args, 2), true,
@@ -918,7 +918,7 @@ static void test_windows_qsort_and_libraries(void) {
   qa_call_value free_lib_args[] = {ptr_arg(true, library)};
   CHECK(result_is_int(win_call(&s, "kernel32.dll", "FreeLibrary", free_lib_args, 1), 1));
   CHECK(result_is_int(win_call(&s, "kernel32.dll", "FreeLibrary", free_lib_args, 1), 0));
-  qa_guest_address lock = guest_alloc(f, 40);
+  qa_guest_core_address lock = guest_alloc(f, 40);
   qa_call_value spin_args[] = {ptr_arg(true, lock), qa_call_uint32(4000)};
   CHECK(result_is_int(win_call(&s, "kernel32.dll",
                                "InitializeCriticalSectionAndSpinCount", spin_args, 2), 1));
@@ -938,11 +938,11 @@ static void test_windows_ucrt_format(void) {
   win_init(&s, 8);
   fixture *f = &s.f;
   qa_mapped_guest_memory *m = &f->mem.base;
-  qa_guest_address service_addr = {0};
+  qa_guest_core_address service_addr = {0};
   CHECK(qa_windows_resolve_address(&s.rt.host, "api-ms-win-crt-stdio-l1-1-0.dll",
                                    "__stdio_common_vsprintf", &service_addr));
-  qa_guest_address buffer = guest_alloc(f, 64);
-  qa_guest_address args_addr = guest_alloc(f, 32);
+  qa_guest_core_address buffer = guest_alloc(f, 64);
+  qa_guest_core_address args_addr = guest_alloc(f, 32);
   qa_gmem_write_i32(m, args_addr, 17);
   qa_gmem_write_f64(m, qa_memory_offset(m, args_addr, 8), 16);
   qa_call_value call_args[] = {qa_call_uint64(0x26), ptr_arg(true, buffer),
@@ -952,7 +952,7 @@ static void test_windows_ucrt_format(void) {
   char *text = qa_read_string(m, &f->ext, buffer, 1048576);
   CHECK(strcmp(text, "16") == 0);
   free(text);
-  qa_guest_address literal = guest_text(f, "abcde");
+  qa_guest_core_address literal = guest_text(f, "abcde");
   uint8_t fill[64];
   memset(fill, 0x7f, sizeof fill);
   qa_memory_write(m, buffer, fill, sizeof fill);

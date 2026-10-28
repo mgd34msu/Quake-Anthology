@@ -457,10 +457,7 @@ void qa_app_seat_source_hud_prepare(qa_app_seat_source_hud *h, qa_app_weapon_hud
       /* Image sizes come through the weapon-hud host; 32x32 default kept otherwise. */
       (void)w; (void)hh;
     }
-    qa_app_weapon_hud_provider provider = icons ? (qa_app_weapon_hud_provider){0} : (qa_app_weapon_hud_provider){0};
-    (void)provider;
-    /* Palette tint: provider access goes through weapon-hud host in the
-     * caller; tint stays white until the assets slice lands. */
+    /* Palette tint stays white (TS provider palette access). */
   }
   if (h->has_damage_picture && h->damage_image == NULL) {
     qa_weapon_hud_icon icon; memset(&icon, 0, sizeof icon);

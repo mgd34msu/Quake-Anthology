@@ -34,14 +34,14 @@ static void set_or_register(qa_cvar_registry *cvars, const char *name, const cha
 }
 static char *num(double v) { char *r = qa_input_js_number(v); if (!r) qa_range_error("Out of memory"); return r; }
 qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, const qa_app_options *options,
-                                               qa_app_startup_source_selection selection, qa_command_dialect dialect,
+                                               qa_app_application_source_selection selection, qa_command_dialect dialect,
                                                qa_command_context context, double max_clients,
                                                qa_command_print_fn print, void *print_ctx) {
   qa_cvar_registry_options opts; memset(&opts, 0, sizeof opts);
   opts.dialect = dialect; opts.context = context; opts.print = print; opts.print_ctx = print_ctx;
   qa_cvar_registry *cvars = qa_cvar_registry_create(&opts);
   if (cvars == NULL) return NULL;
-  if (is_q2(dialect)) qa_register_q2_server_cvars(cvars, selection.match_provider);
+  if (is_q2(dialect)) qa_register_q2_server_cvars(cvars, selection.match.provider);
   else if (dialect == QA_COMMAND_DIALECT_Q3) {
     if (options->has_q3_product) {
       cvar_set_(cvars, "com_prereleaseDemo", qa_q3_prerelease_demo(options->q3_product.policy) ? "1" : "0", true);
@@ -50,7 +50,7 @@ qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, 
     }
     if (host.register_q3_product_policy) host.register_q3_product_policy(host.ctx, cvars);
     cvar_register_(cvars, "fs_restrict", "0", QA_CVAR_FLAG_INIT);
-    bool missionpack = selection.source_content && strstr(selection.source_content, "missionpack") != NULL;
+    bool missionpack = selection.source.content && strstr(selection.source.content, "missionpack") != NULL;
     size_t count = 0;
     const qa_q3_base_cvar_definition *defs = qa_q3_base_game_cvar_definitions(missionpack ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3, &count);
     for (size_t i = 0; i < count; i++) cvar_register_(cvars, defs[i].name, defs[i].value, defs[i].flags);
@@ -67,7 +67,7 @@ qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, 
   set_or_register(cvars, "skill", skill); free(skill);
   set_or_register(cvars, "deathmatch", strcmp(options->mode, "deathmatch") == 0 ? "1" : "0");
   set_or_register(cvars, "coop", strcmp(options->mode, "coop") == 0 ? "1" : "0");
-  bool ctf = selection.match_provider && strcmp(selection.match_provider, "q3:ctf") == 0;
+  bool ctf = selection.match.provider && strcmp(selection.match.provider, "q3:ctf") == 0;
   set_or_register(cvars, "g_gametype",
                   (ctf || (selection.rules && strcmp(selection.rules, "ctf") == 0 && dialect == QA_COMMAND_DIALECT_Q3))
                       ? "4" : strcmp(options->mode, "singleplayer") == 0 ? "2" : "0");

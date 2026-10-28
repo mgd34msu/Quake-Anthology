@@ -14,12 +14,12 @@ typedef struct qa_compat_q3_native_syscall_binding {
   const char *name;
   const qa_abi_storage *parameters; size_t parameter_count;
   void *ctx;
-  double (*invoke)(void *ctx, const qa_guest_call_context *context,
+  double (*invoke)(void *ctx, const qa_guest_core_call_context *context,
     const qa_call_value *arguments, size_t argument_count);
 } qa_compat_q3_native_syscall_binding;
 
 typedef struct qa_compat_q3_native_syscalls {
-  qa_guest_address address;
+  qa_guest_core_address address;
   qa_compat_q3_native_syscall_binding *services; size_t service_count; /* owned copy */
   qa_guest_host_callback callback;
   char *callback_id; /* owned */

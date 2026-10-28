@@ -340,10 +340,10 @@ static bool is_hex_guid(const char *text, bool case_insensitive) {
   return true;
 }
 
-static qa_controller_selection parse_controller(const qa_save_value *value) {
+static qa_settings_controller_selection parse_controller(const qa_save_value *value) {
   const qa_save_value *input = settings_record(value);
   const qa_save_value *kind = field(input, "kind");
-  qa_controller_selection selection;
+  qa_settings_controller_selection selection;
   memset(&selection, 0, sizeof selection);
   const char *name =
       (kind != NULL && kind->kind == QA_SAVE_STRING) ? kind->text : NULL;
@@ -775,7 +775,7 @@ static bool add_binding_target(text_buffer *b, const qa_input_binding_target *ta
   }
   return add_close(b, pretty, depth, "}");
 }
-static bool add_controller(text_buffer *b, const qa_controller_selection *selection,
+static bool add_controller(text_buffer *b, const qa_settings_controller_selection *selection,
                            bool pretty, int depth) {
   if (!text_add(b, "{")) return false;
   if (!add_key(b, "kind", pretty, depth, true)) return false;

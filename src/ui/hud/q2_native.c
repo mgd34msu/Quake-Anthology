@@ -69,16 +69,7 @@ bool qa_native_q2_is_rerelease(qa_q2_protocol_identity protocol) {
 
 qa_ui_hud_q2_app_layout qa_ui_hud_q2_application_layout_for(
     qa_q2_protocol_identity protocol) {
-  qa_ui_hud_q2_app_layout layout;
-  if (qa_native_q2_is_rerelease(protocol)) {
-    layout = (qa_ui_hud_q2_app_layout){ 62, 8254, 10302, 10814, 11326, 11582,
-                                        8192, 2048, 512, 12448, 61, 60, 59,
-                                        12103 };
-  } else {
-    layout = (qa_ui_hud_q2_app_layout){ 32, 288, 544, 800, 1056, 1312, 256,
-                                        256, 256, 2080, 31, 30, 29, -1 };
-  }
-  return layout;
+  return qa_app_q2_application_layout(protocol);
 }
 
 static const char *config_get(const qa_native_q2_hud_frame *frame,

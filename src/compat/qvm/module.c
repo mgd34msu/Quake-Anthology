@@ -1,6 +1,7 @@
 /* See include/qa/compat/qvm/module.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/module.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -532,10 +533,10 @@ qa_guest_call_result qa_qvm_module_invoke(qa_qvm_module *module, const qa_guest_
   for (size_t i = 0; i < argument_count; i++) {
     const qa_guest_call_value *value = &arguments[i];
     switch (value->kind) {
-      case QA_GUEST_VALUE_INT32: words[i] = (int32_t)value->number_value; break;
+      case QA_GUEST_VALUE_INT32: words[i] = qa_int32(value->number_value); break;
       case QA_GUEST_VALUE_UINT32: {
-        if (value->number_value != (double)(int64_t)value->number_value || value->number_value < 0 ||
-            value->number_value > 4294967295.0) {
+        if (!isfinite(value->number_value) || trunc(value->number_value) != value->number_value ||
+            value->number_value < 0 || value->number_value > 4294967295.0) {
           free(words);
           qa_range_error("Invalid QVM unsigned word");
         }

@@ -11,78 +11,78 @@
 static const char *const library = "msvcp140.dll";
 
 static void plain_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address at(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t o) {
+static qa_guest_core_address at(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t o) {
   return qa_memory_offset(m, a, o);
 }
-static void write_ptr(const qa_mapped_guest_memory *m, qa_guest_address a, bool has,
-                      qa_guest_address v) {
+static void write_ptr(const qa_mapped_guest_memory *m, qa_guest_core_address a, bool has,
+                      qa_guest_core_address v) {
   qa_gmem_write_pointer(m, a, has, v);
 }
-static bool read_ptr(const qa_mapped_guest_memory *m, qa_guest_address a, qa_guest_address *out) {
+static bool read_ptr(const qa_mapped_guest_memory *m, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_gmem_read_pointer(m, a, out);
 }
 
-qa_guest_address qa_msvc_locale_allocate(qa_msvc_locale *locale, size_t size) {
-  qa_guest_address result = {0};
+qa_guest_core_address qa_msvc_locale_allocate(qa_msvc_locale *locale, size_t size) {
+  qa_guest_core_address result = {0};
   if (!qa_windows_allocate(locale->host, size, 0, &result))
     qa_range_error("MSVC allocation failed");
   return result;
 }
-void qa_msvc_locale_incref(qa_msvc_locale *locale, qa_guest_address facet) {
+void qa_msvc_locale_incref(qa_msvc_locale *locale, qa_guest_core_address facet) {
   qa_mapped_guest_memory *memory = locale->host->memory;
-  qa_guest_address slot = at(memory, facet, 8);
+  qa_guest_core_address slot = at(memory, facet, 8);
   qa_memory_write_u32(memory, slot, qa_memory_read_u32(memory, slot) + 1);
 }
-bool qa_msvc_locale_decref(qa_msvc_locale *locale, qa_guest_address facet, qa_guest_address *out) {
+bool qa_msvc_locale_decref(qa_msvc_locale *locale, qa_guest_core_address facet, qa_guest_core_address *out) {
   qa_mapped_guest_memory *memory = locale->host->memory;
-  qa_guest_address slot = at(memory, facet, 8);
+  qa_guest_core_address slot = at(memory, facet, 8);
   uint32_t refs = qa_memory_read_u32(memory, slot);
   if (refs == 0) plain_error("MSVC facet reference underflow");
   qa_memory_write_u32(memory, slot, refs - 1);
   if (refs == 1) { *out = facet; return true; }
   return false;
 }
-qa_guest_address qa_msvc_locale_create(qa_msvc_locale *locale) {
-  qa_guest_address result = qa_msvc_locale_allocate(locale, 8);
+qa_guest_core_address qa_msvc_locale_create(qa_msvc_locale *locale) {
+  qa_guest_core_address result = qa_msvc_locale_allocate(locale, 8);
   qa_msvc_locale_incref(locale, locale->global);
   write_ptr(locale->host->memory, result, true, locale->global);
   return result;
 }
-void qa_msvc_locale_destroy(qa_msvc_locale *locale, const qa_guest_call_context *context,
-                            bool has_locale, qa_guest_address locale_address) {
+void qa_msvc_locale_destroy(qa_msvc_locale *locale, const qa_guest_core_call_context *context,
+                            bool has_locale, qa_guest_core_address locale_address) {
   (void)context;
   if (!has_locale) return;
-  qa_guest_address facet = {0};
+  qa_guest_core_address facet = {0};
   if (!read_ptr(locale->host->memory, locale_address, &facet))
     plain_error("Missing locale implementation");
   /* The process C locale has the same reference protocol as guest-created facets. */
   if (facet.byte_offset != locale->global.byte_offset)
     qa_unsupported_windows_import(library, "locale destructor",
                                   "non-C locale implementation destructor is not implemented");
-  qa_guest_address decref_result = {0};
+  qa_guest_core_address decref_result = {0};
   if (qa_msvc_locale_decref(locale, facet, &decref_result))
     plain_error("MSVC process locale lost its owner references");
   if (!qa_windows_free(locale->host, true, locale_address, 0))
     plain_error("Invalid MSVC locale allocation");
 }
-void qa_msvc_locale_lock(qa_msvc_locale *locale, qa_guest_address object, int kind) {
+void qa_msvc_locale_lock(qa_msvc_locale *locale, qa_guest_core_address object, int kind) {
   qa_mapped_guest_memory *memory = locale->host->memory;
   qa_gmem_write_i32(memory, object, kind);
   if (kind < 0 || kind >= 8) return; /* _Lockit deliberately ignores out-of-range categories. */
-  qa_guest_address slot = at(memory, locale->locks, (int64_t)kind * 8);
+  qa_guest_core_address slot = at(memory, locale->locks, (int64_t)kind * 8);
   uint32_t owner = qa_memory_read_u32(memory, slot);
-  qa_guest_address depth_slot = at(memory, slot, 4);
+  qa_guest_core_address depth_slot = at(memory, slot, 4);
   if (owner != 0 && owner != (uint32_t)locale->host->thread_id)
     plain_error("MSVC lock contention requires thread scheduling");
   qa_memory_write_u32(memory, slot, (uint32_t)locale->host->thread_id);
   qa_memory_write_u32(memory, depth_slot, qa_memory_read_u32(memory, depth_slot) + 1);
 }
-void qa_msvc_locale_unlock(qa_msvc_locale *locale, qa_guest_address object) {
+void qa_msvc_locale_unlock(qa_msvc_locale *locale, qa_guest_core_address object) {
   qa_mapped_guest_memory *memory = locale->host->memory;
   int32_t kind = qa_gmem_read_i32(memory, object);
   if (kind < 0 || kind >= 8) return;
-  qa_guest_address slot = at(memory, locale->locks, (int64_t)kind * 8);
-  qa_guest_address depth_slot = at(memory, slot, 4);
+  qa_guest_core_address slot = at(memory, locale->locks, (int64_t)kind * 8);
+  qa_guest_core_address depth_slot = at(memory, slot, 4);
   uint32_t depth = qa_memory_read_u32(memory, depth_slot);
   if (qa_memory_read_u32(memory, slot) != (uint32_t)locale->host->thread_id || depth == 0)
     plain_error("Unowned MSVC lock release");
@@ -93,26 +93,26 @@ void qa_msvc_locale_unlock(qa_msvc_locale *locale, qa_guest_address object) {
 typedef struct locale_state {
   qa_msvc_locale *locale;
   int kind;
-  qa_guest_address word_address; /* _Gettrue/_Getfalse */
+  qa_guest_core_address word_address; /* _Gettrue/_Getfalse */
 } locale_state;
 enum {
   MS_INCREF, MS_DECREF, MS_FACET_DTOR, MS_FACET_DELETE, MS_FACET_CTOR, MS_INIT, MS_GETGLOBAL,
   MS_LOCKIT_CTOR, MS_LOCKIT_DTOR, MS_LOCINFO_CTOR, MS_LOCINFO_DTOR, MS_GETWORD, MS_GETLCONV,
   MS_GETCVT
 };
-static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result locale_impl(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count) {
   locale_state *state = ctx;
   qa_msvc_locale *locale = state->locale;
   qa_windows_service_host *host = locale->host;
   qa_mapped_guest_memory *memory = host->memory;
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   switch (state->kind) {
     case MS_INCREF:
       qa_msvc_locale_incref(locale, qa_guest_required_pointer(args, count, 0));
       return qa_call_void();
     case MS_DECREF: {
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       bool has = qa_msvc_locale_decref(locale, qa_guest_required_pointer(args, count, 0), &out);
       return qa_call_pointer(has, out);
     }
@@ -120,7 +120,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       write_ptr(memory, qa_guest_required_pointer(args, count, 0), true, locale->facet_vtable);
       return qa_call_void();
     case MS_FACET_DELETE: {
-      qa_guest_address facet = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address facet = qa_guest_required_pointer(args, count, 0);
       if (facet.byte_offset == locale->global.byte_offset)
         qa_unsupported_windows_import(
             library, "locale deletion",
@@ -132,7 +132,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, facet);
     }
     case MS_FACET_CTOR: {
-      qa_guest_address facet = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address facet = qa_guest_required_pointer(args, count, 0);
       write_ptr(memory, facet, true, locale->facet_vtable);
       qa_memory_write_u32(memory, at(memory, facet, 8),
                           (uint32_t)qa_guest_integer_u64(args, count, 1));
@@ -144,7 +144,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, locale->global);
     case MS_GETGLOBAL: return qa_call_pointer(true, locale->global);
     case MS_LOCKIT_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       qa_msvc_locale_lock(locale, object, (int)qa_guest_integer(args, count, 1));
       return qa_call_pointer(true, object);
     }
@@ -152,8 +152,8 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       qa_msvc_locale_unlock(locale, qa_guest_required_pointer(args, count, 0));
       return qa_call_void();
     case MS_LOCINFO_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address supplied = {0};
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address supplied = {0};
       bool has_supplied = qa_guest_pointer_argument(args, count, 1, &supplied);
       char *requested = NULL;
       if (has_supplied)
@@ -175,7 +175,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       for (size_t i = 0; i < 2; i++) {
         size_t len = 0;
         uint8_t *bytes = qa_string_bytes("C", entries[i].wide, &len);
-        qa_guest_address address = qa_msvc_locale_allocate(locale, len);
+        qa_guest_core_address address = qa_msvc_locale_allocate(locale, len);
         qa_memory_write(memory, address, bytes, len);
         free(bytes);
         write_ptr(memory, at(memory, object, entries[i].offset), true, address);
@@ -183,10 +183,10 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, object);
     }
     case MS_LOCINFO_DTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       for (int64_t offset = 8; offset <= 88; offset += 16) {
-        qa_guest_address slot = at(memory, object, offset);
-        qa_guest_address allocation = {0};
+        qa_guest_core_address slot = at(memory, object, offset);
+        qa_guest_core_address allocation = {0};
         bool has = read_ptr(memory, slot, &allocation);
         if (!qa_windows_free(host, has, allocation, 0))
           plain_error("Invalid _Locinfo yarn allocation");
@@ -197,7 +197,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
     }
     case MS_GETWORD: return qa_call_pointer(true, state->word_address);
     case MS_GETLCONV: {
-      qa_guest_address target = {0};
+      qa_guest_core_address target = {0};
       if (!qa_windows_resolve_address(host, "ucrtbase.dll", "localeconv", &target))
         plain_error("CRT localeconv missing");
       return qa_windows_invoke(host, context, target, NULL, 0, false, QA_STORAGE_POINTER,
@@ -205,7 +205,7 @@ static qa_call_result locale_impl(void *ctx, const qa_guest_call_context *contex
     }
     case MS_GETCVT: {
       /* _Cvtvec is returned through the member-function hidden result pointer in RDX. */
-      qa_guest_address result = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address result = qa_guest_required_pointer(args, count, 1);
       uint8_t zeros[44] = {0};
       qa_memory_write(memory, result, zeros, sizeof zeros);
       qa_memory_write_u32(memory, at(memory, result, 4), 1);
@@ -247,7 +247,7 @@ void qa_msvc_locale_init(qa_msvc_locale *locale, qa_windows_service_host *host) 
   const char *methods[] = {"runtime:facet-delete", "?_Incref@facet@locale@std@@UEAAXXZ",
                            "?_Decref@facet@locale@std@@UEAAPEAV_Facet_base@3@XZ"};
   for (size_t i = 0; i < 3; i++) {
-    qa_guest_address address = {0};
+    qa_guest_core_address address = {0};
     if (!qa_windows_resolve_address(host, library, methods[i], &address))
       plain_error("Missing MSVC facet method");
     write_ptr(memory, at(memory, locale->facet_vtable, (int64_t)i * 8), true, address);
@@ -258,7 +258,7 @@ void qa_msvc_locale_init(qa_msvc_locale *locale, qa_windows_service_host *host) 
   write_ptr(memory, locale->global, true, locale->facet_vtable);
   qa_memory_write_u32(memory, at(memory, locale->global, 8), 2);
   qa_memory_write_u32(memory, at(memory, locale->global, 32), 63);
-  qa_guest_address name = qa_gmem_allocate(host->memory_ext, 2, false, 0, false,
+  qa_guest_core_address name = qa_gmem_allocate(host->memory_ext, 2, false, 0, false,
                                            QA_PERM_READ_WRITE, "MSVC locale name");
   size_t name_len = 0;
   uint8_t *name_bytes = qa_string_bytes("C", false, &name_len);
@@ -282,7 +282,7 @@ void qa_msvc_locale_init(qa_msvc_locale *locale, qa_windows_service_host *host) 
     uint8_t *bytes = qa_string_bytes(words[i], false, &len);
     char label[32];
     (void)snprintf(label, sizeof label, "MSVC %s name", words[i]);
-    qa_guest_address address = qa_gmem_allocate(host->memory_ext, len, false, 0, false,
+    qa_guest_core_address address = qa_gmem_allocate(host->memory_ext, len, false, 0, false,
                                                 QA_PERM_READ_WRITE, label);
     qa_memory_write(memory, address, bytes, len);
     free(bytes);

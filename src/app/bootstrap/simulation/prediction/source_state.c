@@ -130,7 +130,7 @@ qa_app_movement_prediction_snapshot qa_app_read_prediction_source_state(qa_app_m
     runtime.use_item_held = (((long long)ps->pm_flags) & QA_Q3_FLAG_USE_ITEM_HELD) != 0;
     runtime.event_sequence = ps->event_sequence;
     runtime.fractional_milliseconds = source.has_q3_arsenal ? source.q3_arsenal.fractional_milliseconds : 0;
-    runtime.external_slot = source.has_q3_arsenal ? source.q3_arsenal.external_slot : QA_Q3_SLOT_ACTIVE;
+    runtime.external_slot = source.has_q3_arsenal ? source.q3_arsenal.external_slot : QA_Q3_WEAPON_SLOT_ACTIVE;
     runtime.has_requested_weapon = source.has_q3_arsenal && source.q3_arsenal.has_requested_weapon;
     runtime.requested_weapon = source.has_q3_arsenal ? source.q3_arsenal.requested_weapon : 0;
     source.q3_arsenal = runtime; source.has_q3_arsenal = true;

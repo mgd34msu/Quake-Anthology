@@ -217,7 +217,7 @@ typedef struct qa_q2_monster_reaction {
 typedef struct qa_q2_monster_damage_checkpoint {
   qa_q2_monster_reaction reaction;
   bool has_attack;
-  qa_q2_attack_checkpoint attack;
+  qa_persist_q2_attack_checkpoint attack;
 } qa_q2_monster_damage_checkpoint;
 
 typedef struct qa_q2_monster_actor {

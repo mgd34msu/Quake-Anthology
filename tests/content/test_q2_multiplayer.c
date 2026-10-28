@@ -89,7 +89,7 @@ struct fixture {
   int destination_count;
   double deathmatch_flags;
   /* fake weapons mirror */
-  qa_q2mp_weapons weapons;
+  qa_q2mp_weapons_port weapons;
   qa_q2mp_weapon_state weapon_states[MAX_PLAYERS];
   qa_q2mp_source_rules source_rules;
   bool has_source_rules;

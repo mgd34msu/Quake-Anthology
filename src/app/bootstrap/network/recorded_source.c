@@ -20,7 +20,7 @@ char *qa_app_demo_timing_text(qa_app_demo_timing timing) {
   return text;
 }
 struct qa_app_recorded_source {
-  qa_app_demo_resource resource;
+  qa_app_recorded_demo_resource resource;
   qa_app_recorded_playback playback;
   bool timedemo; qa_cvar_registry *cvars;
   void (*complete)(void *, const char *, const qa_app_demo_timing *); void *complete_ctx;
@@ -30,7 +30,7 @@ struct qa_app_recorded_source {
   bool has_benchmark_start; double benchmark_start, benchmark_frames;
   bool has_result_timing; qa_app_demo_timing result_timing;
 };
-qa_app_recorded_source *qa_app_recorded_source_create(qa_app_demo_resource resource,
+qa_app_recorded_source *qa_app_recorded_source_create(qa_app_recorded_demo_resource resource,
     qa_app_recorded_family remote_family, qa_app_recorded_playback playback,
     bool timedemo, qa_cvar_registry *cvars,
     void (*complete)(void *ctx, const char *reason, const qa_app_demo_timing *timing),
@@ -45,7 +45,7 @@ qa_app_recorded_source *qa_app_recorded_source_create(qa_app_demo_resource resou
   return s;
 }
 void qa_app_recorded_source_destroy(qa_app_recorded_source *source) { free(source); }
-const qa_app_demo_resource *qa_app_recorded_source_resource(const qa_app_recorded_source *source) {
+const qa_app_recorded_demo_resource *qa_app_recorded_source_resource(const qa_app_recorded_source *source) {
   return &source->resource;
 }
 void qa_app_recorded_source_select_player(qa_app_recorded_source *source, double clientnum) {

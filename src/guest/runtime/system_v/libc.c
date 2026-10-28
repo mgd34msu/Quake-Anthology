@@ -22,7 +22,7 @@ static char *xstrdup(const char *text) {
 }
 static void type_error(const char *message) { qa_range_error("%s", message); }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
 static double floating(const qa_call_value *args, size_t count, size_t index) {
@@ -54,14 +54,14 @@ typedef struct libc_state {
   int kind;
   char *name; /* owned loop-variant name */
   bool flag;  /* checked / wide-storage variant */
-  qa_guest_address token_slot;
+  qa_guest_core_address token_slot;
 } libc_state;
 enum {
   L_ERRNO_LOCATION, L_TLS_GET_ADDR, L_MALLOC, L_CALLOC, L_FREE, L_REALLOC, L_MEMCOPY, L_MEMSET,
   L_MEMCMP, L_STRLEN, L_STRCMP, L_STRCPY, L_STRNCPY, L_STRCHR, L_STRSTR, L_STRTOK, L_STRTOL,
   L_TIME, L_QSORT, L_MATH1, L_ATAN2, L_SINCOS, L_ISNANF, L_STACK_CHK
 };
-static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result libc_impl(void *ctx, const qa_guest_core_call_context *context,
                                 const qa_call_value *args, size_t count);
 static void reg(libc_state *proto, int kind, const char *library, const char *name,
                 const char *const *versions, size_t version_count,
@@ -76,11 +76,11 @@ static void reg(libc_state *proto, int kind, const char *library, const char *na
                       parameter_count, result_is_void, result, impl);
 }
 
-static char *read_str(libc_state *state, qa_guest_address address) {
+static char *read_str(libc_state *state, qa_guest_core_address address) {
   return qa_read_string(state->host->memory, state->host->memory_ext, address, 1048576);
 }
 
-static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result libc_impl(void *ctx, const qa_guest_core_call_context *context,
                                 const qa_call_value *args, size_t count) {
   libc_state *state = ctx;
   qa_system_v_service_host *host = state->host;
@@ -88,7 +88,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
   switch (state->kind) {
     case L_ERRNO_LOCATION: return qa_call_pointer(true, host->errno_address);
     case L_TLS_GET_ADDR: {
-      qa_guest_address index = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address index = qa_guest_required_pointer(args, count, 0);
       return qa_call_pointer(true, host->tls_address(host->ctx, qa_memory_read_u64(m, index),
                                                      (int64_t)qa_memory_read_u64(m, off(m, index, 8))));
     }
@@ -102,32 +102,32 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       if (a > 0 && b > 0 && !too_big && a * b > 0x10000000) too_big = true;
       if (too_big) {
         qa_system_v_errno_set(host, 12);
-        qa_guest_address none = {0};
+        qa_guest_core_address none = {0};
         return qa_call_pointer(false, none);
       }
       /* A negative total reaches allocate() and RangeErrors there, as in TS. */
       return qa_call_pointer(true, qa_system_v_allocate(host, (size_t)(a * b)));
     }
     case L_FREE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       qa_system_v_free(host, has, address);
       return qa_call_void();
     }
     case L_REALLOC: {
-      qa_guest_address old = {0};
+      qa_guest_core_address old = {0};
       bool has_old = qa_guest_pointer_argument(args, count, 0, &old);
       size_t size = qa_guest_count(args, count, 1);
       if (size == 0 && has_old) {
         qa_system_v_free(host, true, old);
-        qa_guest_address none = {0};
+        qa_guest_core_address none = {0};
         return qa_call_pointer(false, none);
       }
       size_t old_size = 0;
       bool has_size = true;
       if (has_old) has_size = qa_system_v_allocation_size(host, old, &old_size);
       if (!has_size) plain_error("System V realloc of non-live allocation");
-      qa_guest_address next = qa_system_v_allocate(host, size);
+      qa_guest_core_address next = qa_system_v_allocate(host, size);
       if (has_old) {
         qa_move_bytes(m, host->memory_ext, next, old, size < old_size ? size : old_size);
         qa_system_v_free(host, true, old);
@@ -135,7 +135,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_pointer(true, next);
     }
     case L_MEMCOPY: {
-      qa_guest_address destination = {0}, source = {0};
+      qa_guest_core_address destination = {0}, source = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
       bool has_source = qa_guest_pointer_argument(args, count, 1, &source);
       size_t length = qa_guest_count(args, count, 2);
@@ -149,7 +149,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_pointer(has_destination, destination);
     }
     case L_MEMSET: {
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
       size_t length = qa_guest_count(args, count, 2);
       if (length != 0) {
@@ -185,7 +185,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       bool checked = strncmp(state->name, "__", 2) == 0;
       bool concatenate = strstr(state->name, "strcat") != NULL;
       bool end = strstr(state->name, "stpcpy") != NULL;
-      qa_guest_address destination = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address destination = qa_guest_required_pointer(args, count, 0);
       char *text = read_str(state, qa_guest_required_pointer(args, count, 1));
       size_t prefix = concatenate ? qa_string_length(m, host->memory_ext, destination, 1048576) : 0;
       if (checked && (int64_t)(prefix + strlen(text) + 1) > qa_guest_integer(args, count, 2))
@@ -194,17 +194,17 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       uint8_t *bytes = qa_string_bytes(text, false, &len);
       qa_memory_write(m, off(m, destination, (int64_t)prefix), bytes, len);
       free(bytes);
-      qa_guest_address result = end ? off(m, destination, (int64_t)strlen(text)) : destination;
+      qa_guest_core_address result = end ? off(m, destination, (int64_t)strlen(text)) : destination;
       free(text);
       return qa_call_pointer(true, result);
     }
     case L_STRNCPY: {
       size_t length = qa_guest_count(args, count, 2);
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
       if (length == 0) return qa_call_pointer(has_destination, destination);
       if (!has_destination) type_error("Nonnull strncpy destination required");
-      qa_guest_address source = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 1);
       uint8_t *bytes = xmalloc(length);
       memset(bytes, 0, length);
       for (size_t i = 0; i < length; i++) {
@@ -217,7 +217,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_pointer(true, destination);
     }
     case L_STRCHR: {
-      qa_guest_address source = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 0);
       char *text = read_str(state, source);
       size_t length = strlen(text);
       uint8_t needle = (uint8_t)(qa_guest_integer_u64(args, count, 1) & 255u);
@@ -231,12 +231,12 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
           if ((uint8_t)text[i] == needle) { index = (int64_t)i; break; }
       }
       free(text);
-      qa_guest_address none = {0};
+      qa_guest_core_address none = {0};
       return index < 0 ? qa_call_pointer(false, none)
                        : qa_call_pointer(true, off(m, source, index));
     }
     case L_STRSTR: {
-      qa_guest_address source = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 0);
       char *text = read_str(state, source);
       char *needle = read_str(state, qa_guest_required_pointer(args, count, 1));
       int64_t index = -1;
@@ -248,16 +248,16 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
           if (strchr(needle, text[i]) != NULL) { index = (int64_t)i; break; }
       }
       free(text); free(needle);
-      qa_guest_address none = {0};
+      qa_guest_core_address none = {0};
       return index < 0 ? qa_call_pointer(false, none)
                        : qa_call_pointer(true, off(m, source, index));
     }
     case L_STRTOK: {
-      qa_guest_address source = {0};
+      qa_guest_core_address source = {0};
       bool has_source = qa_guest_pointer_argument(args, count, 0, &source);
       if (!has_source) has_source = qa_gmem_read_pointer(m, state->token_slot, &source);
       char *delimiters = read_str(state, qa_guest_required_pointer(args, count, 1));
-      qa_guest_address none = {0};
+      qa_guest_core_address none = {0};
       if (!has_source) { free(delimiters); return qa_call_pointer(false, none); }
       char *text = read_str(state, source);
       size_t length = strlen(text), start = 0;
@@ -279,8 +279,8 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_pointer(true, off(m, source, (int64_t)start));
     }
     case L_STRTOL: {
-      qa_guest_address source = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address end_pointer = {0};
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address end_pointer = {0};
       bool has_end = qa_guest_pointer_argument(args, count, 1, &end_pointer);
       char *text = read_str(state, source);
       size_t length = strlen(text);
@@ -342,7 +342,7 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
             "no deterministic clock capability supplied");
       int64_t value = 0;
       (void)host->capabilities.now_seconds(host->capabilities.ctx, &value);
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       if (qa_guest_pointer_argument(args, count, 0, &destination)) {
         if (m->pointer_bytes == 4) qa_gmem_write_i32(m, destination, (int32_t)value);
         else qa_gmem_write_i64(m, destination, value);
@@ -350,11 +350,11 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return signed_size_value(host, value);
     }
     case L_QSORT: {
-      qa_guest_address base = {0};
+      qa_guest_core_address base = {0};
       bool has_base = qa_guest_pointer_argument(args, count, 0, &base);
       size_t length = qa_guest_count(args, count, 1);
       size_t size = qa_guest_count(args, count, 2);
-      qa_guest_address comparator = qa_guest_required_pointer(args, count, 3);
+      qa_guest_core_address comparator = qa_guest_required_pointer(args, count, 3);
       if (length < 2 || size == 0) return qa_call_void();
       if (!has_base || length * size > 0x10000000)
         qa_range_error("qsort range outside supported guest memory");
@@ -462,8 +462,8 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_float64(atan2(floating(args, count, 0), floating(args, count, 1)));
     case L_SINCOS: {
       double input = floating(args, count, 0);
-      qa_guest_address sine = qa_guest_required_pointer(args, count, 1);
-      qa_guest_address cosine = qa_guest_required_pointer(args, count, 2);
+      qa_guest_core_address sine = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address cosine = qa_guest_required_pointer(args, count, 2);
       if (state->flag) {
         qa_gmem_write_f32(m, sine, sin(input));
         qa_gmem_write_f32(m, cosine, cos(input));

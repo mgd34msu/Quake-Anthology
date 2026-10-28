@@ -10,7 +10,7 @@
 #include "qa/guest/runtime/system_v/contracts.h"
 #include "qa/guest/runtime/windows/contracts.h"
 
-void qa_install_windows_format(qa_windows_service_host *host, qa_guest_address errno_address);
+void qa_install_windows_format(qa_windows_service_host *host, qa_guest_core_address errno_address);
 void qa_install_system_v_format(qa_system_v_service_host *host);
 
 #endif

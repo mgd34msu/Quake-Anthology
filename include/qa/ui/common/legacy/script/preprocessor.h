@@ -14,7 +14,9 @@
  *    getters); NULL selects the current local time.
  *  - Uncaught ScriptLanguageError aborts (see lexer.h); the
  *    engine's internal catches (expect/readLine paths) ride the
- *    shared setjmp channel.
+ *    shared setjmp channel. qa_ui_script_source_reader_catch
+ *    exports that channel for one read so callers can take the TS
+ *    `catch { if (isSourceFailure) return false }` path.
  * Copyright (C) 1999-2005 Id Software, Inc. GPL-2.0-or-later.
  */
 #ifndef QA_UI_COMMON_LEGACY_SCRIPT_PREPROCESSOR_H
@@ -210,6 +212,16 @@ bool qa_ui_script_source_reader_read_line_into(
 bool qa_ui_script_source_reader_is_source_failure(
     const qa_ui_script_source_reader *reader,
     const qa_ui_script_diagnostic *candidate);
+/** TS `try { run() } catch (error) { if (!isSourceFailure(error))
+ * throw error; }` around one reader operation (a next/nextAsync
+ * read). True when run completed; false when a source failure was
+ * caught (its pending diagnostic is cleared and the async-read
+ * state is reset, as the TS finally does). A caught failure that
+ * is not a source failure is rethrown (aborts when uncaught). */
+typedef void (*qa_ui_script_source_reader_run_fn)(void *ctx);
+bool qa_ui_script_source_reader_catch(
+    qa_ui_script_source_reader *reader,
+    qa_ui_script_source_reader_run_fn run, void *run_ctx);
 /* TS position: filename copied into the buffer. */
 void qa_ui_script_source_reader_position(qa_ui_script_source_reader *reader,
                                          char *filename, size_t capacity,

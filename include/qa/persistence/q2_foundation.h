@@ -41,7 +41,7 @@ typedef struct qa_q2_attack_cause {
   const char *hazard; /* environment */
 } qa_q2_attack_cause;
 
-typedef struct qa_q2_attack_checkpoint {
+typedef struct qa_persist_q2_attack_checkpoint {
   double sequence;
   qa_source_time time;
   bool has_attacker;
@@ -57,7 +57,7 @@ typedef struct qa_q2_attack_checkpoint {
   const char *inventory_provider;
   const char *movement_provider;
   qa_q2_attack_cause cause;
-} qa_q2_attack_checkpoint;
+} qa_persist_q2_attack_checkpoint;
 
 typedef struct qa_q2_spawn_value {
   const char *key;
@@ -168,7 +168,7 @@ typedef struct qa_q2_entity_callbacks {
   const char *blocked;
 } qa_q2_entity_callbacks;
 
-typedef struct qa_q2_entity_checkpoint {
+typedef struct qa_persist_q2_entity_checkpoint {
   qa_saved_actor_id actor;
   bool has_source_slot;
   double source_slot;
@@ -176,14 +176,14 @@ typedef struct qa_q2_entity_checkpoint {
   qa_q2_entity_values values;
   qa_q2_entity_links links;
   bool has_last_attack;
-  qa_q2_attack_checkpoint last_attack;
+  qa_persist_q2_attack_checkpoint last_attack;
   qa_q2_entity_callbacks callbacks;
-} qa_q2_entity_checkpoint;
+} qa_persist_q2_entity_checkpoint;
 
-typedef struct qa_q2_freed_slot {
+typedef struct qa_persist_q2_freed_slot {
   double slot;
   double time;
-} qa_q2_freed_slot;
+} qa_persist_q2_freed_slot;
 
 typedef struct qa_q2_foundation_counters {
   double total_secrets;
@@ -195,21 +195,21 @@ typedef struct qa_q2_foundation_counters {
   double server_flags;
 } qa_q2_foundation_counters;
 
-typedef struct qa_q2_foundation_checkpoint {
+typedef struct qa_persist_q2_foundation_checkpoint {
   double version;
   double next_source_slot;
   double sequence;
-  qa_q2_freed_slot *freed_slots; size_t freed_slots_count;
+  qa_persist_q2_freed_slot *freed_slots; size_t freed_slots_count;
   qa_q2_foundation_counters counters;
-  qa_q2_entity_checkpoint *entities; size_t entities_count;
+  qa_persist_q2_entity_checkpoint *entities; size_t entities_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q2_foundation_checkpoint;
+} qa_persist_q2_foundation_checkpoint;
 
-qa_q2_attack_checkpoint qa_read_q2_attack_checkpoint(const qa_save_reader *reader);
+qa_persist_q2_attack_checkpoint qa_read_q2_attack_checkpoint(const qa_save_reader *reader);
 /* Builds the checkpoint tree (C encoder helper); NULL on OOM. */
-qa_save_value *qa_q2_attack_checkpoint_value(const qa_q2_attack_checkpoint *checkpoint);
-qa_q2_foundation_checkpoint qa_read_q2_foundation_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_q2_foundation_checkpoint(const qa_q2_foundation_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_q2_foundation_checkpoint(const uint8_t *bytes, size_t length, qa_q2_foundation_checkpoint *out);
+qa_save_value *qa_q2_attack_checkpoint_value(const qa_persist_q2_attack_checkpoint *checkpoint);
+qa_persist_q2_foundation_checkpoint qa_read_q2_foundation_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_q2_foundation_checkpoint(const qa_persist_q2_foundation_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_q2_foundation_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_foundation_checkpoint *out);
 
 #endif

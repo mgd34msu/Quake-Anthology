@@ -5,6 +5,7 @@
 
 #include "qa/compat/qvm/legacy_presentation.h"
 #include "qa/core/binary/index.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
 static bool is_modern(qa_qvm_abi_profile profile) {
@@ -42,9 +43,13 @@ static void read_slots(const qa_qvm_writable_view *view, int64_t offset, double 
   for (int i = 0; i < 16; i++) out[i] = (double)get_i32(view, offset + i * 4);
 }
 
+/* TS DataView.setInt32 applies a JS ToInt32 wrap to the double. */
+static void set_word(qa_qvm_writable_view *view, int64_t offset, double value) {
+  qa_qvm_writable_view_set_int32(view, offset, qa_int32(value), true);
+}
+
 static void write_slots(qa_qvm_writable_view *view, int64_t offset, const double *slots, size_t count) {
-  for (size_t i = 0; i < count; i++)
-    qa_qvm_writable_view_set_int32(view, offset + (int64_t)(4 * i), (int32_t)slots[i], true);
+  for (size_t i = 0; i < count; i++) set_word(view, offset + (int64_t)(4 * i), slots[i]);
 }
 
 void qa_qvm_read_source_player_state(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile, qa_q3_player_state *out) {
@@ -135,57 +140,57 @@ void qa_qvm_write_source_player_state(qa_qvm_writable_view *view, const qa_q3_pl
   check_record(view, profile);
   check_slots(state);
   bool modern = is_modern(profile);
-  qa_qvm_writable_view_set_int32(view, 0, (int32_t)state->command_time_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 4, (int32_t)state->movement_type, true);
-  qa_qvm_writable_view_set_int32(view, 8, (int32_t)state->bob_cycle, true);
-  qa_qvm_writable_view_set_int32(view, 12, (int32_t)state->movement_flags, true);
-  qa_qvm_writable_view_set_int32(view, 16, (int32_t)state->movement_time_milliseconds, true);
+  set_word(view, 0, state->command_time_milliseconds);
+  set_word(view, 4, state->movement_type);
+  set_word(view, 8, state->bob_cycle);
+  set_word(view, 12, state->movement_flags);
+  set_word(view, 16, state->movement_time_milliseconds);
   write_vector(view, 20, state->origin);
   write_vector(view, 32, state->velocity);
-  qa_qvm_writable_view_set_int32(view, 44, (int32_t)state->weapon_time_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 48, (int32_t)state->gravity, true);
-  qa_qvm_writable_view_set_int32(view, 52, (int32_t)state->speed, true);
-  qa_qvm_writable_view_set_int32(view, 56, (int32_t)state->delta_angle_words.values[0], true);
-  qa_qvm_writable_view_set_int32(view, 60, (int32_t)state->delta_angle_words.values[1], true);
-  qa_qvm_writable_view_set_int32(view, 64, (int32_t)state->delta_angle_words.values[2], true);
-  qa_qvm_writable_view_set_int32(view, 68, (int32_t)state->ground_entity_number, true);
-  qa_qvm_writable_view_set_int32(view, 72, (int32_t)state->legs_timer_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 76, (int32_t)state->legs_animation, true);
-  qa_qvm_writable_view_set_int32(view, 80, (int32_t)state->torso_timer_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 84, (int32_t)state->torso_animation, true);
-  qa_qvm_writable_view_set_int32(view, 88, (int32_t)state->movement_direction, true);
+  set_word(view, 44, state->weapon_time_milliseconds);
+  set_word(view, 48, state->gravity);
+  set_word(view, 52, state->speed);
+  set_word(view, 56, state->delta_angle_words.values[0]);
+  set_word(view, 60, state->delta_angle_words.values[1]);
+  set_word(view, 64, state->delta_angle_words.values[2]);
+  set_word(view, 68, state->ground_entity_number);
+  set_word(view, 72, state->legs_timer_milliseconds);
+  set_word(view, 76, state->legs_animation);
+  set_word(view, 80, state->torso_timer_milliseconds);
+  set_word(view, 84, state->torso_animation);
+  set_word(view, 88, state->movement_direction);
   write_vector(view, 92, state->grapple_point);
-  qa_qvm_writable_view_set_int32(view, 104, (int32_t)state->flags, true);
-  qa_qvm_writable_view_set_int32(view, 108, (int32_t)state->event_sequence, true);
+  set_word(view, 104, state->flags);
+  set_word(view, 108, state->event_sequence);
   write_slots(view, 112, state->events, 2);
   write_slots(view, 120, state->event_parameters, 2);
-  qa_qvm_writable_view_set_int32(view, 128, (int32_t)state->external_event, true);
-  qa_qvm_writable_view_set_int32(view, 132, (int32_t)state->external_event_parameter, true);
-  qa_qvm_writable_view_set_int32(view, 136, (int32_t)state->external_event_time_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 140, (int32_t)state->client_number, true);
-  qa_qvm_writable_view_set_int32(view, 144, (int32_t)state->weapon, true);
-  qa_qvm_writable_view_set_int32(view, 148, (int32_t)state->weapon_state, true);
+  set_word(view, 128, state->external_event);
+  set_word(view, 132, state->external_event_parameter);
+  set_word(view, 136, state->external_event_time_milliseconds);
+  set_word(view, 140, state->client_number);
+  set_word(view, 144, state->weapon);
+  set_word(view, 148, state->weapon_state);
   write_vector(view, 152, state->view_angles);
-  qa_qvm_writable_view_set_int32(view, 164, (int32_t)state->view_height, true);
-  qa_qvm_writable_view_set_int32(view, 168, (int32_t)state->damage_event, true);
-  qa_qvm_writable_view_set_int32(view, 172, (int32_t)state->damage_yaw, true);
-  qa_qvm_writable_view_set_int32(view, 176, (int32_t)state->damage_pitch, true);
-  qa_qvm_writable_view_set_int32(view, 180, (int32_t)state->damage_count, true);
+  set_word(view, 164, state->view_height);
+  set_word(view, 168, state->damage_event);
+  set_word(view, 172, state->damage_yaw);
+  set_word(view, 176, state->damage_pitch);
+  set_word(view, 180, state->damage_count);
   write_slots(view, 184, state->stats.values, state->stats.count);
   write_slots(view, 248, state->persistent.values, state->persistent.count);
   write_slots(view, 312, state->powerups.values, state->powerups.count);
   write_slots(view, 376, state->ammo.values, state->ammo.count);
   if (!modern) {
-    qa_qvm_writable_view_set_int32(view, 440, (int32_t)state->ping_milliseconds, true);
+    set_word(view, 440, state->ping_milliseconds);
     return;
   }
-  qa_qvm_writable_view_set_int32(view, 440, (int32_t)state->generic1, true);
-  qa_qvm_writable_view_set_int32(view, 444, (int32_t)state->loop_sound, true);
-  qa_qvm_writable_view_set_int32(view, 448, (int32_t)state->jump_pad_entity, true);
-  qa_qvm_writable_view_set_int32(view, 452, (int32_t)state->ping_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 456, (int32_t)state->movement_frame_count, true);
-  qa_qvm_writable_view_set_int32(view, 460, (int32_t)state->jump_pad_frame, true);
-  qa_qvm_writable_view_set_int32(view, 464, (int32_t)state->entity_event_sequence, true);
+  set_word(view, 440, state->generic1);
+  set_word(view, 444, state->loop_sound);
+  set_word(view, 448, state->jump_pad_entity);
+  set_word(view, 452, state->ping_milliseconds);
+  set_word(view, 456, state->movement_frame_count);
+  set_word(view, 460, state->jump_pad_frame);
+  set_word(view, 464, state->entity_event_sequence);
 }
 
 void qa_qvm_write_player_state(qa_qvm_writable_view *view, const qa_q3_player_state *state,

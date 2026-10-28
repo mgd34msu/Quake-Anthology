@@ -3582,6 +3582,36 @@ bool qa_ui_script_source_reader_is_source_failure(
   return false;
 }
 
+bool qa_ui_script_source_reader_catch(qa_ui_script_source_reader *reader,
+                                      qa_ui_script_source_reader_run_fn run,
+                                      void *run_ctx) {
+  preprocessor_engine *engine = reader->engine;
+  qa_ui_script_catch catch_block;
+  catch_block.prev = engine->env.top;
+  engine->env.top = &catch_block;
+  if (setjmp(catch_block.buf) == 0) {
+    run(run_ctx);
+    engine->env.top = catch_block.prev;
+    return true;
+  }
+  engine->env.top = catch_block.prev;
+  /* The longjmp skipped nextRecordAsync's finally. */
+  engine->reading_async = false;
+  engine->async_validate = NULL;
+  engine->async_validate_ctx = NULL;
+  if (!qa_ui_script_source_reader_is_source_failure(
+          reader, engine->env.pending_identity)) {
+    qa_ui_script_diagnostic pending = engine->env.pending;
+    const qa_ui_script_diagnostic *identity = engine->env.pending_identity;
+    engine->env.has_pending = false;
+    engine->env.pending_identity = NULL;
+    memset(&engine->env.pending, 0, sizeof engine->env.pending);
+    qa_ui_script_fail_throw(&engine->env, &pending, identity);
+  }
+  qa_ui_script_fail_env_clear_pending(&engine->env);
+  return false;
+}
+
 void qa_ui_script_source_reader_position(qa_ui_script_source_reader *reader,
                                          char *filename, size_t capacity,
                                          int64_t *out_line) {

@@ -140,8 +140,11 @@ typedef struct qa_qvm_mod_combat_fields {
   const qa_qvm_mod_combat_client *client; /* nullable */
 } qa_qvm_mod_combat_fields;
 
-/* Role sets per call are fixed in TS; the C form keeps the generic
- * role->index pairs of qa_qvm_combat_call. */
+/* Role sets per call are fixed in TS (damage: QvmDamageRole;
+ * touch: "target"|"other"|"trace"; use: "target"|"other"|
+ * "activator"; pain: "target"|"attacker"|"amount"; die:
+ * "target"|"inflictor"|"attacker"|"amount"|"method"); the C form
+ * keeps the generic role->index pairs of qa_qvm_combat_call. */
 typedef struct qa_qvm_mod_combat_calls {
   qa_qvm_combat_call damage, touch, use, pain, die;
 } qa_qvm_mod_combat_calls;

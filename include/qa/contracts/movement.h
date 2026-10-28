@@ -58,7 +58,13 @@ typedef struct qa_qw_movement_state {
   qa_trace_hit ground;
 } qa_qw_movement_state;
 
-/* TS Q3MovementState extends Pick<Q3PlayerState, ...> with kind "q3". */
+/* TS Q3MovementState extends Pick<Q3PlayerState,
+ * "commandTimeMilliseconds" | "movementType" | "bobCycle" |
+ * "movementFlags" | "movementTimeMilliseconds" | "origin" |
+ * "velocity" | "gravity" | "speed" | "deltaAngleWords" |
+ * "movementDirection" | "grapplePoint" | "flags" | "viewAngles" |
+ * "viewHeight"> with kind "q3"; the picked fields are inlined
+ * below in that order, before ground. */
 typedef struct qa_q3_movement_state {
   double command_time_milliseconds, movement_type, bob_cycle;
   double movement_flags, movement_time_milliseconds;

@@ -111,7 +111,8 @@ typedef struct qa_native_mod_client_input_field {
 } qa_native_mod_client_input_field;
 
 /* TS NativeModInputOutput: {kind:"field",record,offset} |
- * {kind:"handler",entry,arguments,inputs}. */
+ * {kind:"handler",entry,arguments,inputs}; handler inputs exclude
+ * "view-angles" (Exclude<ModClientInput, "view-angles">). */
 typedef struct qa_native_mod_input_output {
   const char *kind;
   const char *record;

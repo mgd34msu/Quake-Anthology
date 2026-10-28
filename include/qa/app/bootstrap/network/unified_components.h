@@ -42,7 +42,7 @@ typedef struct qa_app_unified_component_state {
   double game_state_revision;
   bool has_game_state; qa_q3_source_game_state_record game_state; /* owned when set */
   double command_base;
-  qa_qvm_scene_command *commands; size_t command_count; /* owned */
+  qa_qvm_cp_scene_command *commands; size_t command_count; /* owned */
 } qa_app_unified_component_state;
 typedef struct qa_app_unified_component_frame_scene {
   double revision; qa_qvmy_source_snapshot snapshot;

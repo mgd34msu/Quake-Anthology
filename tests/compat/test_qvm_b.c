@@ -25,6 +25,8 @@
 #include "qa/compat/qvm/regions.h"
 #include "qa/compat/qvm/registry.h"
 #include "qa/compat/qvm/script_record.h"
+#include "qa/compat/qvm/abi.h"
+#include "qa/compat/qvm/server_game_syscalls.h"
 #include "qa/compat/qvm/snap_vector_syscalls.h"
 #include "qa/compat/qvm/symbols.h"
 #include "qa/compat/qvm/syscalls.h"
@@ -124,6 +126,25 @@ static void test_legacy_client_abi(void) {
   CHECK_ABORTS((void)qa_qvm_legacy_client_command(unmapped, 2, "q3-1.16n-base", &ignored));
   const char *bad[] = {"cs", "x"};
   CHECK_ABORTS((void)qa_qvm_legacy_client_command(bad, 2, "q3-1.16n-base", &ignored));
+  /* w8-qvmb-00: TS Number() trims whitespace and accepts radix forms. */
+  const char *spaced[] = {"cs", " 21 "};
+  out = qa_qvm_legacy_client_command(spaced, 2, "q3-1.16n-base", &count);
+  CHECK(strcmp(out[1], "13") == 0);
+  qa_qvm_legacy_client_command_free(out, count);
+  const char *hex[] = {"cs", "0x15"};
+  out = qa_qvm_legacy_client_command(hex, 2, "q3-1.16n-base", &count);
+  CHECK(strcmp(out[1], "13") == 0);
+  qa_qvm_legacy_client_command_free(out, count);
+  const char *blank[] = {"cs", " "};
+  out = qa_qvm_legacy_client_command(blank, 2, "q3-1.16n-base", &count);
+  CHECK(strcmp(out[1], " ") == 0);
+  qa_qvm_legacy_client_command_free(out, count);
+  const char *huge[] = {"cs", "1e30"};
+  out = qa_qvm_legacy_client_command(huge, 2, "q3-1.16n-base", &count);
+  CHECK(strcmp(out[1], "1e30") == 0);
+  qa_qvm_legacy_client_command_free(out, count);
+  const char *signed_hex[] = {"cs", "+0x15"};
+  CHECK_ABORTS((void)qa_qvm_legacy_client_command(signed_hex, 2, "q3-1.16n-base", &ignored));
 }
 
 static void test_legacy_presentation(void) {
@@ -540,6 +561,55 @@ static void test_memory_observe(void) {
   qa_qvm_memory_destroy(&memory);
 }
 
+/* w8-qvmb-00: a publish callback may unsubscribe another watch; the
+ * removed watch must be skipped (TS checks watch.active per delivery)
+ * without disturbing the captures of the write in flight. */
+typedef struct w8_watch_pair {
+  qa_qvm_memory *memory;
+  size_t other;
+  int first_published;
+  int second_published;
+} w8_watch_pair;
+
+static void w8_unsubscribing_publish(void *ctx, const qa_qvm_committed_write *event) {
+  (void)event;
+  w8_watch_pair *pair = ctx;
+  pair->first_published++;
+  qa_qvm_memory_writes_unobserve(&pair->memory->writes, pair->other);
+}
+
+static void w8_second_publish(void *ctx, const qa_qvm_committed_write *event) {
+  (void)event;
+  ((w8_watch_pair *)ctx)->second_published++;
+}
+
+static void test_memory_observe_unobserve_in_publish(void) {
+  uint8_t bytes[1024];
+  memset(bytes, 0, sizeof bytes);
+  qa_qvm_memory memory;
+  qa_qvm_memory_init(&memory, bytes, sizeof bytes, NULL, NULL);
+  qa_qvm_write_range range = {16, 8};
+  w8_watch_pair pair = {&memory, 0, 0, 0};
+  size_t first = qa_qvm_memory_observe_writes(&memory, &range, 1, w8_unsubscribing_publish, &pair, NULL, NULL);
+  pair.other = qa_qvm_memory_observe_writes(&memory, &range, 1, w8_second_publish, &pair, NULL, NULL);
+  /* The unsubscribing watch is delivered first and removes the
+   * second, whose delivery for this same write must be skipped. */
+  qa_qvm_memory_fill_bytes(&memory, 20, 2, 0x5a);
+  CHECK(pair.first_published == 1 && pair.second_published == 0);
+  qa_qvm_memory_fill_bytes(&memory, 20, 2, 0x33);
+  CHECK(pair.first_published == 2 && pair.second_published == 0);
+  qa_qvm_memory_writes_unobserve(&memory.writes, first);
+  qa_qvm_memory_destroy(&memory);
+  /* Overlapping same-allocation writeBytes copies as if snapshotted. */
+  qa_qvm_memory_init(&memory, bytes, sizeof bytes, NULL, NULL);
+  memcpy(bytes + 64, "abcdefgh", 8);
+  qa_qvm_memory_write_bytes(&memory, 66, bytes + 64, 6);
+  CHECK(memcmp(bytes + 64, "ababcdef", 8) == 0);
+  /* A wild relative offset aborts instead of overflowing the start. */
+  CHECK_ABORTS((void)qa_qvm_memory_get_span(&memory, 64, 4, INT64_MAX));
+  qa_qvm_memory_destroy(&memory);
+}
+
 static void test_player_state_roundtrip(void) {
   uint8_t bytes[1024];
   memset(bytes, 0, sizeof bytes);
@@ -573,8 +643,93 @@ static void test_player_state_roundtrip(void) {
   /* Legacy layout writes ping at 440 and reports generic1 as zero. */
   CHECK(back.ping_milliseconds == 42 && back.generic1 == 0);
   CHECK(back_slots[16 + 7] == 23);
+  /* w8-qvmb-00: DataView.setInt32 wraps out-of-range doubles. */
+  state.command_time_milliseconds = 4294967297.0;
+  qa_qvm_write_source_player_state(&view, &state, "q3-1.16n-base");
+  qa_qvm_read_source_player_state(&view, "q3-1.16n-base", &back);
+  CHECK(back.command_time_milliseconds == 1);
   qa_qvm_memory_writes_destroy(&writes);
 }
+
+/* --- w8-qvmb-01: G_ENTITIES_IN_BOX (TS server-game.test.ts) --- */
+static size_t w8_area_entities(void *ctx, qa_bounds bounds, int32_t maximum, int32_t *out, size_t capacity) {
+  (void)ctx;
+  (void)bounds;
+  /* TS owner double: maximum 0 yields [], anything else [7, 9]. */
+  if (maximum == 0) return 0;
+  if (capacity > 0) out[0] = 7;
+  if (capacity > 1) out[1] = 9;
+  return 2;
+}
+
+static void test_server_game_entities_in_box(void) {
+  uint8_t bytes[4096];
+  memset(bytes, 0, sizeof bytes);
+  put_f32(bytes, 128, 1.0f);
+  put_f32(bytes, 140, 4.0f);
+  qa_qvm_memory memory;
+  qa_qvm_memory_init(&memory, bytes, sizeof bytes, NULL, NULL);
+  qa_qvm_server_spatial_operations spatial;
+  memset(&spatial, 0, sizeof spatial);
+  spatial.area_entities = w8_area_entities;
+  qa_qvm_server_game_services services;
+  memset(&services, 0, sizeof services);
+  services.spatial = &spatial;
+
+  uint8_t words[32];
+  qa_qvm_host_call call;
+  memset(&call, 0, sizeof call);
+  call.kind = "engine";
+  call.role = "qagame";
+  call.code = QA_QVM_GAME_IMPORT_G_ENTITIES_IN_BOX;
+  call.guest = &memory;
+  call.base.words = words;
+  call.base.words_length = sizeof words;
+  call.base.guest = &memory;
+  int32_t out = -1;
+  const int32_t maxima[] = {2, 2048, -1, INT32_MIN};
+  for (size_t i = 0; i < sizeof maxima / sizeof maxima[0]; i++) {
+    memset(words, 0, sizeof words);
+    put_i32(words, 4, 128);
+    put_i32(words, 8, 140);
+    put_i32(words, 12, 512);
+    put_i32(words, 16, maxima[i]);
+    put_i32(bytes, 512, 0);
+    put_i32(bytes, 516, 0);
+    CHECK(qa_qvm_server_game_syscall(&call, &services, &out) && out == 2);
+    int32_t first, second;
+    memcpy(&first, bytes + 512, 4);
+    memcpy(&second, bytes + 516, 4);
+    CHECK(first == 7 && second == 9);
+  }
+  /* maximum 0: empty result, no output view is taken. */
+  memset(words, 0, sizeof words);
+  put_i32(words, 4, 128);
+  put_i32(words, 8, 140);
+  put_i32(words, 12, 0);
+  put_i32(words, 16, 0);
+  CHECK(qa_qvm_server_game_syscall(&call, &services, &out) && out == 0);
+  /* Owner returning more than a nonnegative maximum aborts. */
+  uint8_t fork_words[32];
+  memset(fork_words, 0, sizeof fork_words);
+  put_i32(fork_words, 4, 128);
+  put_i32(fork_words, 8, 140);
+  put_i32(fork_words, 12, 512);
+  put_i32(fork_words, 16, 1);
+  qa_qvm_host_call fork_call = call;
+  fork_call.base.words = fork_words;
+  qa_qvm_memory forked;
+  fork_call.guest = &forked;
+  fork_call.base.guest = &forked;
+  CHECK_ABORTS(qa_qvm_memory_init(&forked, bytes, sizeof bytes, NULL, NULL);
+               (void)qa_qvm_server_game_syscall(&fork_call, &services, &out));
+  /* Another role or kind is not this trap owner. */
+  qa_qvm_host_call other = call;
+  other.role = "cgame";
+  CHECK(!qa_qvm_server_game_syscall(&other, &services, &out));
+  qa_qvm_memory_destroy(&memory);
+}
+/* --- end w8-qvmb-01 --- */
 
 static void test_reject_syscall(void) {
   qa_qvm_host_call call;
@@ -596,7 +751,9 @@ int main(void) {
   test_script_token();
   test_regions_and_registry();
   test_memory_observe();
+  test_memory_observe_unobserve_in_publish(); /* w8-qvmb-00 */
   test_player_state_roundtrip();
+  test_server_game_entities_in_box(); /* w8-qvmb-01 */
   test_reject_syscall();
   if (failures != 0) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);

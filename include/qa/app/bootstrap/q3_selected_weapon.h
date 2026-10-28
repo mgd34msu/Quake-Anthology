@@ -13,10 +13,10 @@
 #include "qa/contracts/math.h"
 #include "qa/contracts/scene.h"
 /* TS ModelAsset (assets.ts). */
-typedef struct qa_app_model_asset {
+typedef struct qa_app_q3_selected_model_asset {
   qa_resolved_resource_reference resource;
   qa_decoded_model model;
-} qa_app_model_asset;
+} qa_app_q3_selected_model_asset;
 /* TS SimulationPresentation fields read here. */
 typedef struct qa_app_q3_weapon_view {
   double time_milliseconds;
@@ -54,7 +54,7 @@ typedef struct qa_app_q3_weapon_character { qa_vec3 origin; double powerups; } q
 typedef struct qa_app_q3_weapon_assets {
   void *ctx;
   /* assets.model: aborts/fails via *error_out (NULL return = error). */
-  const qa_app_model_asset *(*model)(void *ctx, qa_content_id content, const char *path, const char **error_out);
+  const qa_app_q3_selected_model_asset *(*model)(void *ctx, qa_content_id content, const char *path, const char **error_out);
   /* mounts.open: malloc'd bytes or NULL. */
   uint8_t *(*open)(void *ctx, qa_content_id content, const char *path, size_t *out_length);
   void (*print)(void *ctx, const char *message);

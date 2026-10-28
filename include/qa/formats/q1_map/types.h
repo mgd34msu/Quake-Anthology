@@ -41,7 +41,12 @@ typedef struct qa_q1_mip_offset_row {
   double values[4];
 } qa_q1_mip_offset_row;
 
-/* TS Q1Lump. `name` is one of the 15 Q1LumpName literals; data owned. */
+/* TS Q1Lump. `name` is one of the 15 Q1LumpName literals, in TS
+ * order: "entities", "planes", "textures", "vertices",
+ * "visibility", "nodes", "textureInfo", "faces", "lighting",
+ * "clipnodes", "leaves", "leafFaces", "edges", "surfaceEdges",
+ * "models" (the string table lives in formats/q1_map/index.c);
+ * data owned. */
 typedef struct qa_q1_lump {
   const char *name;
   double offset;

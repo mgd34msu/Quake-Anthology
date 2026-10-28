@@ -134,7 +134,7 @@ static qa_q3_source_game_state_record read_state(const qa_save_reader *reader) {
   qa_save_reader_destroy(&data_reader);
   return out;
 }
-static qa_save_value *write_commands(const qa_qvm_scene_command *commands, size_t count) {
+static qa_save_value *write_commands(const qa_qvm_cp_scene_command *commands, size_t count) {
   qa_save_value *list = qa_save_value_array();
   if (!list) qa_range_error("out of memory");
   for (size_t i = 0; i < count; i++) {
@@ -149,9 +149,9 @@ static qa_save_value *write_commands(const qa_qvm_scene_command *commands, size_
   }
   return list;
 }
-static size_t read_commands(const qa_save_reader *reader, qa_qvm_scene_command **out) {
+static size_t read_commands(const qa_save_reader *reader, qa_qvm_cp_scene_command **out) {
   size_t count = qa_save_reader_list_count(reader);
-  qa_qvm_scene_command *commands = xmalloc(count * sizeof *commands);
+  qa_qvm_cp_scene_command *commands = xmalloc(count * sizeof *commands);
   for (size_t i = 0; i < count; i++) {
     qa_save_reader row;
     if (!qa_save_reader_item(reader, i, &row)) qa_range_error("out of memory");
@@ -183,7 +183,7 @@ static size_t read_commands(const qa_save_reader *reader, qa_qvm_scene_command *
   *out = commands;
   return count;
 }
-static void commands_free(qa_qvm_scene_command *commands, size_t count) {
+static void commands_free(qa_qvm_cp_scene_command *commands, size_t count) {
   for (size_t i = 0; i < count; i++) {
     for (size_t j = 0; j < commands[i].argument_count; j++)
       free((void *)commands[i].arguments[j]);

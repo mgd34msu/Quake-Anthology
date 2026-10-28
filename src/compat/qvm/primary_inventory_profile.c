@@ -231,9 +231,6 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     return;
   }
   qa_save_reader_destroy(&storage_reader);
-  qa_save_reader ammo_reader = field(reader, "ammoOffset");
-  int64_t declared_ammo_offset = (int64_t)qa_save_reader_integer_min(&ammo_reader, 0);
-  qa_save_reader_destroy(&ammo_reader);
   qa_save_reader capacity = field(reader, "capacity");
   qa_save_reader kind_reader = field(&capacity, "kind");
   static const char *const kinds[] = {"constant", "global", "region", "counter"};
@@ -319,7 +316,10 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     qa_save_reader_destroy(&arguments_reader);
     if (argument_count > 62)
       qa_save_reader_fail(&capacity, "counter arguments exceed the private source invocation");
-    out->ammo_offset = declared_ammo_offset;
+    /* TS reads ammoOffset here, inside the counter branch only. */
+    qa_save_reader ammo_reader = field(reader, "ammoOffset");
+    out->ammo_offset = (int64_t)qa_save_reader_integer_min(&ammo_reader, 0);
+    qa_save_reader_destroy(&ammo_reader);
   } else {
     qa_save_reader function_reader = field(&capacity, "function");
     out->capacity_function = (int64_t)qa_save_reader_integer_min(&function_reader, 0);

@@ -22,11 +22,11 @@ typedef struct qa_guest_scan_catch {
 typedef struct qa_scan_windows_buffer_options {
   qa_mapped_guest_memory *memory;
   qa_mapped_memory_ext *memory_ext;
-  qa_guest_address input;
+  qa_guest_core_address input;
   int64_t capacity;
-  qa_guest_address format;
+  qa_guest_core_address format;
   bool has_arguments;
-  qa_guest_address arguments;
+  qa_guest_core_address arguments;
 } qa_scan_windows_buffer_options;
 
 int qa_scan_windows_buffer(const qa_scan_windows_buffer_options *options, qa_guest_scan_catch *catch_);

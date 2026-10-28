@@ -63,8 +63,8 @@ static bool shared_native(qa_shared_grapple_control *shared) {
          strcmp(shared->selection.mechanic, "q2-lmctf") == 0 && shared->native_slot(shared->ctx, "q2-lmctf");
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons);
-static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons);
+static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
+static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
 
 qa_lmctf_grapple *qa_lmctf_grapple_module_create(qa_lmctf_context *context, qa_shared_grapple_control *shared) {
   qa_lmctf_grapple *g = calloc(1, sizeof *g);
@@ -148,13 +148,13 @@ qa_lmctf_grapple *qa_lmctf_grapple_module_create(qa_lmctf_context *context, qa_s
   return g;
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons) {
+static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
   (void)weapons;
   qa_lmctf_grapple *g = ctx;
   qa_lmctf_grapple_module_fire(g, context->actor, context->game);
 }
 
-struct step_ctx { qa_lmctf_grapple *g; qa_q2mp_weapon_context *context; qa_q2mp_weapons *weapons; };
+struct step_ctx { qa_lmctf_grapple *g; qa_q2mp_weapon_context *context; qa_q2mp_weapons_port *weapons; };
 static void step_abort(void *ctx) {
   struct step_ctx *s = ctx;
   qa_lmctf_grapple_module_abort(s->g, s->context->actor, s->context->game);
@@ -163,7 +163,7 @@ static void step_generic(void *ctx) {
   struct step_ctx *s = ctx;
   s->weapons->generic_classic(s->weapons->ctx, s->context);
 }
-static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons) {
+static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
   qa_lmctf_grapple *g = ctx;
   qa_q2mp_weapon_state *state = context->state;
   qa_grapple_weapon_input input = {0};

@@ -1,9 +1,11 @@
 /* Port of src/app/bootstrap/simulation/q3/guest-artifact.ts.
  * Async becomes synchronous. Compatibility/primary-profile/item-layout
  * reads are host seams: landed compat/qvm headers expose divergent
- * artifact types (qa_resolved_qvm_artifact vs qa_qvmy_artifact), so
- * the resolved artifact + primary profile travel as opaque owned
- * handles from the wiring layer. GPL-2.0-or-later. */
+ * artifact types (qa_resolved_qvm_artifact vs qa_qvmy_artifact),
+ * reconciled by the lossless qa_qvm_artifact_bridge
+ * (compat/qvm/artifacts.h) where a qa_qvmy_artifact view is needed;
+ * the resolved artifact + primary profile still travel as opaque
+ * owned handles from the wiring layer. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_ARTIFACT_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_ARTIFACT_H
 #include <stdint.h>

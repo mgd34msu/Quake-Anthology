@@ -18,7 +18,7 @@ qa_app_sim_player_view qa_app_sim_rerelease_guest_player_view(qa_q2_rerelease_pl
   return out;
 }
 qa_app_sim_player_ui qa_app_sim_rerelease_guest_player_ui(qa_q2_rerelease_player_state state,
-    const qa_app_sim_configstring *configstrings, size_t configstring_count, qa_provider_reference source,
+    const qa_app_sim_rerelease_guest_configstring *configstrings, size_t configstring_count, qa_provider_reference source,
     const qa_q2w_definition *definitions, size_t definition_count,
     const qa_weapon_hud_status *(*weapon_status)(void *ctx, const qa_q2w_definition *definition, double ammo, qa_provider_reference source), void *weapon_status_ctx) {
   if (definitions == NULL) { definitions = qa_q2w_base_weapons; definition_count = qa_q2w_base_weapon_count; }

@@ -1,17 +1,10 @@
 /* See include/qa/compat/qvm/mod_provider.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/mod_provider.h"
 
-/* mod_presentation_checkpoint.h and world/session/mod_presentations.h
- * both landed qa_qvm_scene_command / qa_qvm_mod_scene_publication
- * with different shapes (owned checkpoint form vs borrowed view
- * form). The provider needs both; rename the checkpoint form in
- * this translation unit only. */
-#define qa_qvm_scene_command qa_qvm_cp_scene_command
-#define qa_qvm_mod_scene_publication qa_qvm_cp_scene_publication
+/* Checkpoint forms are qa_qvm_cp_* in mod_presentation_checkpoint.h;
+ * borrowed view forms are qa_qvm_* in mod_presentations.h. */
 #include "qa/compat/qvm/mod_presentation_checkpoint.h"
-#undef qa_qvm_scene_command
-#undef qa_qvm_mod_scene_publication
-typedef qa_qvm_cp_scene_publication CpScene;
+typedef qa_qvm_cp_mod_scene_publication CpScene;
 
 #include <math.h>
 #include <stdio.h>
@@ -1044,10 +1037,12 @@ static Frame *frames(P *p) { return p->frames; }
 static Frame *top_frame(P *p) {
   return p->frame_count == 0 ? NULL : &frames(p)[p->frame_count - 1];
 }
-static PickupScope *pickup_scopes(P *p) { return p->pickup_scopes; }
+/* Pickup scopes are heap objects on a pointer stack: executions and
+ * write observers hold scope pointers across nested pickup observes. */
+static PickupScope **pickup_scopes(P *p) { return (PickupScope **)p->pickup_scopes; }
 static PickupScope *pickup_scope(P *p) {
   if (p->pickup_scope_count == 0) return NULL;
-  PickupScope *scope = &pickup_scopes(p)[p->pickup_scope_count - 1];
+  PickupScope *scope = pickup_scopes(p)[p->pickup_scope_count - 1];
   return scope->frame == top_frame(p) ? scope : NULL;
 }
 static WeaponInput *weapon_inputs(P *p) { return p->weapon_inputs; }
@@ -1530,15 +1525,16 @@ static void observe_after(void *ctx, const qa_qvm_committed_write *event) {
 }
 static qa_original_pickup_decision observe_pickup(
     P *p, qa_actor_id actor, const qa_original_pickup_execution *execution,
-    qa_qvm_pickup_execute_fn execute, void *execute_ctx) {
+    qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx) {
   if (p->pickup_scope_count == p->pickup_scope_capacity) {
     p->pickup_scope_capacity = p->pickup_scope_capacity == 0 ? 8 : p->pickup_scope_capacity * 2;
-    p->pickup_scopes = xrealloc(p->pickup_scopes, p->pickup_scope_capacity * sizeof(PickupScope));
+    p->pickup_scopes = xrealloc(p->pickup_scopes, p->pickup_scope_capacity * sizeof(PickupScope *));
   }
-  PickupScope *scope = &pickup_scopes(p)[p->pickup_scope_count];
+  PickupScope *scope = xrealloc(NULL, sizeof *scope);
   scope->actor = actor;
   scope->execution = *execution;
   scope->frame = NULL;
+  pickup_scopes(p)[p->pickup_scope_count] = scope;
   size_t range_count = 0, range_capacity = 0;
   qa_qvm_write_range *ranges = NULL;
   for (size_t i = 0; i < p->projection_count; i++) {
@@ -1565,6 +1561,7 @@ static qa_original_pickup_decision observe_pickup(
   qa_original_pickup_decision result = execute(execute_ctx);
   qa_qvm_memory_writes_unobserve(&mem(p)->writes, watch);
   p->pickup_scope_count--;
+  free(scope);
   return result;
 }
 
@@ -1704,7 +1701,7 @@ static Execution *begin_call(P *p, const qa_qvm_mod_source_call *call,
   p->frame_count++;
   execution->frame = frame;
   PickupScope *pickup = p->pickup_scope_count == 0 ? NULL
-                                                    : &pickup_scopes(p)[p->pickup_scope_count - 1];
+                                                    : pickup_scopes(p)[p->pickup_scope_count - 1];
   if (pickup != NULL && pickup->frame == NULL) pickup->frame = frame;
   execution->pickup = pickup;
   WeaponInput *weapon = p->weapon_input_count == 0 ? NULL
@@ -1777,7 +1774,7 @@ static int32_t invoke_adapter(P *p, const qa_qvm_mod_source_call *call,
 static qa_original_pickup_decision pickup_context(
     P *p, const qa_qvm_mod_pickup *definition, const qa_original_pickup_offer *offer,
     const qa_qvm_pickup_input *inputs, size_t input_count,
-    qa_qvm_pickup_execute_fn execute, void *execute_ctx) {
+    qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx) {
   current(p);
   qa_actor_id world;
   bool has_world = p->services->engine != NULL && p->services->engine->world != NULL &&
@@ -3409,7 +3406,7 @@ static bool pickups_eligible(void *ctx, qa_actor_id actor) {
 }
 static qa_original_pickup_decision pickups_context(
     void *ctx, const qa_qvm_mod_pickup *definition, const qa_original_pickup_offer *offer,
-    const qa_qvm_pickup_input *inputs, size_t input_count, qa_qvm_pickup_execute_fn execute,
+    const qa_qvm_pickup_input *inputs, size_t input_count, qa_qvm_mod_pickup_execute_fn execute,
     void *execute_ctx) {
   return pickup_context(ctx, definition, offer, inputs, input_count, execute, execute_ctx);
 }
@@ -3417,7 +3414,7 @@ typedef struct {
   P *provider;
   qa_actor_id actor;
   const qa_original_pickup_execution *execution;
-  qa_qvm_pickup_execute_fn execute;
+  qa_qvm_mod_pickup_execute_fn execute;
   void *execute_ctx;
 } PickupObserve;
 static qa_armor_stage_result pickup_observe_execute(void *ctx) {
@@ -3430,7 +3427,7 @@ static qa_armor_stage_result pickup_observe_execute(void *ctx) {
 }
 static qa_original_pickup_decision pickups_observe(
     void *ctx, qa_actor_id actor, const qa_original_pickup_execution *execution,
-    qa_qvm_pickup_execute_fn execute, void *execute_ctx) {
+    qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx) {
   P *p = ctx;
   PickupObserve observe = {p, actor, execution, execute, execute_ctx};
   if (p->protection_count == 0)
@@ -4760,6 +4757,7 @@ void qa_qvm_mod_provider_destroy(qa_qvm_mod_provider *p) {
     free(frames(p)[i].pending);
   }
   free(p->frames);
+  for (size_t i = 0; i < p->pickup_scope_count; i++) free(pickup_scopes(p)[i]);
   free(p->pickup_scopes);
   free(p->weapon_inputs);
   free(p->projections);

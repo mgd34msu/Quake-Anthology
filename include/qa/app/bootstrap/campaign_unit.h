@@ -1,6 +1,7 @@
-/* Port of src/app/bootstrap/campaign-unit.ts. encodeSaveImage /
- * decodeSaveImage are not landed (see persistence/save_image.h
- * BLOCKED note), so they are host codecs; the unit state machine,
+/* Port of src/app/bootstrap/campaign-unit.ts. The codec is a host
+ * seam kept for tests; a codec with NULL encode/decode installs
+ * the real save-image codec (persistence/save_image.h), as the TS
+ * calls encode/decodeSaveImage directly. The unit state machine,
  * entry validation and error strings are kept here.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_CAMPAIGN_UNIT_H

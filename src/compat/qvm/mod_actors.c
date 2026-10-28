@@ -165,7 +165,7 @@ static bool valid_team_name(const char *team) {
   if (team == NULL) return false;
   const char *colon = strchr(team, ':');
   if (colon == NULL || colon == team || colon[1] == '\0') return false;
-  return strchr(colon + 1, '\n') == NULL;
+  return strchr(colon + 1, '\n') == NULL && strchr(colon + 1, '\r') == NULL;
 }
 
 void qa_qvm_validate_mod_actors(const qa_qvmy_artifact *artifact,

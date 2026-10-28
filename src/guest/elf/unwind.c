@@ -37,8 +37,8 @@ static size_t elf_file_offset(const qa_elf_inspection *elf, uint64_t address, si
   return 0;
 }
 /* relocate.ts elfAddress(). */
-static qa_guest_address elf_address(qa_mapped_guest_memory *memory, uint64_t value) {
-  qa_guest_address pointer;
+static qa_guest_core_address elf_address(qa_mapped_guest_memory *memory, uint64_t value) {
+  qa_guest_core_address pointer;
   if (!qa_memory_pointer(memory, value, &pointer)) elf_error("required address is null");
   return pointer;
 }

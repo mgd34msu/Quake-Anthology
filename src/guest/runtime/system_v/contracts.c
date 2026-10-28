@@ -24,31 +24,31 @@ void qa_system_v_service(qa_system_v_service_host *host, const char *library, co
                 result_is_void, result, implementation);
 }
 void qa_system_v_data(qa_system_v_service_host *host, const char *library, const char *name,
-                      const char *version, qa_guest_address address, size_t byte_length) {
+                      const char *version, qa_guest_core_address address, size_t byte_length) {
   host->data(host->ctx, library, name, version, address, byte_length);
 }
 bool qa_system_v_resolve_address(qa_system_v_service_host *host, const char *library,
-                                 const char *name, const char *version, qa_guest_address *out) {
+                                 const char *name, const char *version, qa_guest_core_address *out) {
   return host->resolve_address(host->ctx, library, name, version, out);
 }
-qa_guest_address qa_system_v_unavailable(qa_system_v_service_host *host, const char *library,
+qa_guest_core_address qa_system_v_unavailable(qa_system_v_service_host *host, const char *library,
                                          const char *name, const qa_abi_storage *parameters,
                                          size_t parameter_count, bool result_is_void,
                                          qa_abi_storage result, const char *detail) {
   return host->unavailable(host->ctx, library, name, parameters, parameter_count,
                            result_is_void, result, detail);
 }
-qa_guest_address qa_system_v_allocate(qa_system_v_service_host *host, size_t size) {
+qa_guest_core_address qa_system_v_allocate(qa_system_v_service_host *host, size_t size) {
   return host->allocate(host->ctx, size);
 }
-void qa_system_v_free(qa_system_v_service_host *host, bool has_address, qa_guest_address address) {
+void qa_system_v_free(qa_system_v_service_host *host, bool has_address, qa_guest_core_address address) {
   host->free(host->ctx, has_address, address);
 }
-bool qa_system_v_allocation_size(qa_system_v_service_host *host, qa_guest_address address, size_t *out) {
+bool qa_system_v_allocation_size(qa_system_v_service_host *host, qa_guest_core_address address, size_t *out) {
   return host->allocation_size(host->ctx, address, out);
 }
-qa_call_result qa_system_v_invoke(qa_system_v_service_host *host, const qa_guest_call_context *context,
-                                  qa_guest_address target, const qa_abi_storage *parameters,
+qa_call_result qa_system_v_invoke(qa_system_v_service_host *host, const qa_guest_core_call_context *context,
+                                  qa_guest_core_address target, const qa_abi_storage *parameters,
                                   size_t parameter_count, bool result_is_void, qa_abi_storage result,
                                   const qa_call_value *arguments, size_t argument_count) {
   return host->invoke(host->ctx, context, target, parameters, parameter_count,

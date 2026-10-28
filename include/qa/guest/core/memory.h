@@ -82,58 +82,58 @@ void qa_sparse_guest_memory_destroy(qa_sparse_guest_memory *mem);
 bool qa_sparse_guest_memory_managed(const qa_sparse_guest_memory *mem);
 bool qa_sparse_has_write_observers(const qa_sparse_guest_memory *mem);
 
-bool qa_sparse_pointer(qa_sparse_guest_memory *mem, uint64_t raw_value, qa_guest_address *out);
-qa_guest_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_address address, int64_t displacement);
-qa_guest_address qa_sparse_map(qa_sparse_guest_memory *mem, const qa_guest_map_options *options);
-qa_guest_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_allocation_options *options);
-qa_guest_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t base, size_t byte_length,
-                                     qa_guest_permissions permissions, const char *label, qa_guest_address source);
-void qa_sparse_unmap(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length);
-void qa_sparse_protect(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, qa_guest_permissions permissions);
+bool qa_sparse_pointer(qa_sparse_guest_memory *mem, uint64_t raw_value, qa_guest_core_address *out);
+qa_guest_core_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_core_address address, int64_t displacement);
+qa_guest_core_address qa_sparse_map(qa_sparse_guest_memory *mem, const qa_guest_map_options *options);
+qa_guest_core_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_allocation_options *options);
+qa_guest_core_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t base, size_t byte_length,
+                                     qa_guest_permissions permissions, const char *label, qa_guest_core_address source);
+void qa_sparse_unmap(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length);
+void qa_sparse_protect(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, qa_guest_permissions permissions);
 /* Returns the mapping count; writes up to `capacity` entries. */
 size_t qa_sparse_mappings(const qa_sparse_guest_memory *mem, qa_guest_mapping *out, size_t capacity);
-void qa_sparse_check(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, qa_guest_access access);
+void qa_sparse_check(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, qa_guest_access access);
 /* Live host view (TS DataView); marks the backing exposed. */
-uint8_t *qa_sparse_borrow(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length);
-void qa_sparse_copy(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t byte_length);
-void qa_sparse_copy_into(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest,
+uint8_t *qa_sparse_borrow(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length);
+void qa_sparse_copy(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length);
+void qa_sparse_copy_into(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest,
                          size_t dest_length, size_t dest_offset, size_t byte_length);
-int64_t qa_sparse_find_zero(qa_sparse_guest_memory *mem, qa_guest_address address, size_t maximum);
-void qa_sparse_fetch(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t byte_length);
+int64_t qa_sparse_find_zero(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t maximum);
+void qa_sparse_fetch(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length);
 uint8_t qa_sparse_fetch_byte(qa_sparse_guest_memory *mem, uint64_t byte_offset);
-void qa_sparse_write(qa_sparse_guest_memory *mem, qa_guest_address address, const uint8_t *bytes, size_t byte_length);
-void qa_sparse_move(qa_sparse_guest_memory *mem, qa_guest_address destination, qa_guest_address source, size_t byte_length);
-void qa_sparse_fill(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, uint32_t value);
-qa_guest_write_observer_handle qa_sparse_observe_writes(qa_sparse_guest_memory *mem, qa_guest_address address,
+void qa_sparse_write(qa_sparse_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t byte_length);
+void qa_sparse_move(qa_sparse_guest_memory *mem, qa_guest_core_address destination, qa_guest_core_address source, size_t byte_length);
+void qa_sparse_fill(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, uint32_t value);
+qa_guest_write_observer_handle qa_sparse_observe_writes(qa_sparse_guest_memory *mem, qa_guest_core_address address,
                                                         size_t byte_length, qa_guest_write_observer_fn notify, void *ctx);
 void qa_sparse_unobserve_writes(qa_sparse_guest_memory *mem, qa_guest_write_observer_handle handle);
 
 /* Scalars (all little-endian; float reads widen to double as JS numbers do). */
-uint8_t qa_sparse_read_u8(qa_sparse_guest_memory *mem, qa_guest_address address);
-int8_t qa_sparse_read_i8(qa_sparse_guest_memory *mem, qa_guest_address address);
-uint16_t qa_sparse_read_u16(qa_sparse_guest_memory *mem, qa_guest_address address);
-int16_t qa_sparse_read_i16(qa_sparse_guest_memory *mem, qa_guest_address address);
-uint32_t qa_sparse_read_u32(qa_sparse_guest_memory *mem, qa_guest_address address);
-int32_t qa_sparse_read_i32(qa_sparse_guest_memory *mem, qa_guest_address address);
-uint64_t qa_sparse_read_u64(qa_sparse_guest_memory *mem, qa_guest_address address);
-int64_t qa_sparse_read_i64(qa_sparse_guest_memory *mem, qa_guest_address address);
-void qa_sparse_read_u64_words(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t *low, uint32_t *high);
-double qa_sparse_read_f32(qa_sparse_guest_memory *mem, qa_guest_address address);
-qa_vec3 qa_sparse_read_f32_vector(qa_sparse_guest_memory *mem, qa_guest_address address);
-double qa_sparse_read_f64(qa_sparse_guest_memory *mem, qa_guest_address address);
-bool qa_sparse_read_pointer(qa_sparse_guest_memory *mem, qa_guest_address address, qa_guest_address *out);
-void qa_sparse_write_u8(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t value);
-void qa_sparse_write_i8(qa_sparse_guest_memory *mem, qa_guest_address address, int32_t value);
-void qa_sparse_write_u16(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t value);
-void qa_sparse_write_i16(qa_sparse_guest_memory *mem, qa_guest_address address, int32_t value);
-void qa_sparse_write_u32(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t value);
-void qa_sparse_write_i32(qa_sparse_guest_memory *mem, qa_guest_address address, int32_t value);
-void qa_sparse_write_u64(qa_sparse_guest_memory *mem, qa_guest_address address, uint64_t value);
-void qa_sparse_write_i64(qa_sparse_guest_memory *mem, qa_guest_address address, int64_t value);
-void qa_sparse_write_u64_words(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t low, uint32_t high);
-void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_address address, double value);
-void qa_sparse_write_f64(qa_sparse_guest_memory *mem, qa_guest_address address, double value);
-void qa_sparse_write_pointer(qa_sparse_guest_memory *mem, qa_guest_address address, bool has_value, qa_guest_address value);
+uint8_t qa_sparse_read_u8(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+int8_t qa_sparse_read_i8(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+uint16_t qa_sparse_read_u16(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+int16_t qa_sparse_read_i16(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+uint32_t qa_sparse_read_u32(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+int32_t qa_sparse_read_i32(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+uint64_t qa_sparse_read_u64(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+int64_t qa_sparse_read_i64(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+void qa_sparse_read_u64_words(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t *low, uint32_t *high);
+double qa_sparse_read_f32(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+qa_vec3 qa_sparse_read_f32_vector(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+double qa_sparse_read_f64(qa_sparse_guest_memory *mem, qa_guest_core_address address);
+bool qa_sparse_read_pointer(qa_sparse_guest_memory *mem, qa_guest_core_address address, qa_guest_core_address *out);
+void qa_sparse_write_u8(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t value);
+void qa_sparse_write_i8(qa_sparse_guest_memory *mem, qa_guest_core_address address, int32_t value);
+void qa_sparse_write_u16(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t value);
+void qa_sparse_write_i16(qa_sparse_guest_memory *mem, qa_guest_core_address address, int32_t value);
+void qa_sparse_write_u32(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t value);
+void qa_sparse_write_i32(qa_sparse_guest_memory *mem, qa_guest_core_address address, int32_t value);
+void qa_sparse_write_u64(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint64_t value);
+void qa_sparse_write_i64(qa_sparse_guest_memory *mem, qa_guest_core_address address, int64_t value);
+void qa_sparse_write_u64_words(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t low, uint32_t high);
+void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value);
+void qa_sparse_write_f64(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value);
+void qa_sparse_write_pointer(qa_sparse_guest_memory *mem, qa_guest_core_address address, bool has_value, qa_guest_core_address value);
 
 /* TS fetchSequence closure. */
 typedef struct qa_guest_fetch_sequence {

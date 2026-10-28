@@ -10,9 +10,9 @@
 typedef struct qa_app_sim_hand_grenade_control { qa_saved_actor_id actor; bool held; bool pressed; bool released; } qa_app_sim_hand_grenade_control;
 typedef struct qa_app_sim_hand_grenade_runtime_checkpoint {
   double version;
-  qa_hand_grenades_checkpoint controller;
+  qa_persist_hand_grenades_checkpoint controller;
   qa_app_sim_hand_grenade_control *controls; size_t control_count; /* owned */
-  qa_q2_foundation_checkpoint entities;
+  qa_persist_q2_foundation_checkpoint entities;
   qa_random_state random;
 } qa_app_sim_hand_grenade_runtime_checkpoint;
 void qa_app_sim_hand_grenade_runtime_checkpoint_destroy(qa_app_sim_hand_grenade_runtime_checkpoint *c);

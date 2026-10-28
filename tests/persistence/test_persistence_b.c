@@ -418,14 +418,14 @@ static void test_movers_items(void) {
   door.master = actor(1, 0);
   door.state.phase = "bottom";
   door.state.distance = 64;
-  qa_q2_movers_checkpoint movers;
+  qa_persist_q2_movers_checkpoint movers;
   memset(&movers, 0, sizeof movers);
   movers.doors = &door;
   movers.doors_count = 1;
   size_t length = 0;
   uint8_t *bytes = qa_encode_q2_movers_checkpoint(&movers, &length);
   CHECK(bytes != NULL);
-  qa_q2_movers_checkpoint decoded;
+  qa_persist_q2_movers_checkpoint decoded;
   CHECK(qa_decode_q2_movers_checkpoint(bytes, length, &decoded));
   CHECK(decoded.doors_count == 1);
   CHECK(decoded.doors[0].actor.slot == 1);
@@ -439,14 +439,14 @@ static void test_movers_items(void) {
   pickup.actor = actor(2, 1);
   pickup.classname = "item_health";
   pickup.retained = true;
-  qa_q2_items_checkpoint items;
+  qa_persist_q2_items_checkpoint items;
   memset(&items, 0, sizeof items);
   items.power_cube_count = 3;
   items.pickups = &pickup;
   items.pickups_count = 1;
   bytes = qa_encode_q2_items_checkpoint(&items, &length);
   CHECK(bytes != NULL);
-  qa_q2_items_checkpoint items_decoded;
+  qa_persist_q2_items_checkpoint items_decoded;
   CHECK(qa_decode_q2_items_checkpoint(bytes, length, &items_decoded));
   CHECK(items_decoded.power_cube_count == 3);
   CHECK(strcmp(items_decoded.pickups[0].classname, "item_health") == 0);
@@ -463,7 +463,7 @@ static void test_hand_grenades_and_weapons(void) {
   entry.state.config.capacity = 50;
   entry.state.action.kind = QA_HAND_ACTION_COOKING;
   entry.state.action.expires_at = 12.5;
-  qa_hand_grenades_checkpoint checkpoint;
+  qa_persist_hand_grenades_checkpoint checkpoint;
   memset(&checkpoint, 0, sizeof checkpoint);
   checkpoint.version = 1;
   checkpoint.edition = "classic";
@@ -472,7 +472,7 @@ static void test_hand_grenades_and_weapons(void) {
   size_t length = 0;
   uint8_t *bytes = qa_encode_hand_grenades_checkpoint(&checkpoint, &length);
   CHECK(bytes != NULL);
-  qa_hand_grenades_checkpoint decoded;
+  qa_persist_hand_grenades_checkpoint decoded;
   CHECK(qa_decode_hand_grenades_checkpoint(bytes, length, &decoded));
   CHECK(decoded.actors[0].state.action.kind == QA_HAND_ACTION_COOKING);
   CHECK(decoded.actors[0].state.action.expires_at == 12.5);
@@ -483,7 +483,7 @@ static void test_hand_grenades_and_weapons(void) {
   entry.state.config.initial_ammo = 51;
   bytes = qa_encode_hand_grenades_checkpoint(&checkpoint, &length);
   CHECK_ABORTS({
-    qa_hand_grenades_checkpoint bad;
+    qa_persist_hand_grenades_checkpoint bad;
     qa_decode_hand_grenades_checkpoint(bytes, length, &bad);
   });
   free(bytes);
@@ -526,7 +526,7 @@ static void test_hand_grenades_and_weapons(void) {
   free(bytes);
 }
 static void test_foundation_monsters(void) {
-  qa_q2_entity_checkpoint entity;
+  qa_persist_q2_entity_checkpoint entity;
   memset(&entity, 0, sizeof entity);
   entity.actor = actor(3, 0);
   entity.spawn.classname = "monster_soldier";
@@ -536,7 +536,7 @@ static void test_foundation_monsters(void) {
   entity.values.solid = "box";
   entity.values.motion = "step";
   entity.values.alpha = 1;
-  qa_q2_foundation_checkpoint foundation;
+  qa_persist_q2_foundation_checkpoint foundation;
   memset(&foundation, 0, sizeof foundation);
   foundation.version = 1;
   foundation.counters.total_monsters = 4;
@@ -545,7 +545,7 @@ static void test_foundation_monsters(void) {
   size_t length = 0;
   uint8_t *bytes = qa_encode_q2_foundation_checkpoint(&foundation, &length);
   CHECK(bytes != NULL);
-  qa_q2_foundation_checkpoint decoded;
+  qa_persist_q2_foundation_checkpoint decoded;
   CHECK(qa_decode_q2_foundation_checkpoint(bytes, length, &decoded));
   CHECK(decoded.counters.total_monsters == 4);
   CHECK(strcmp(decoded.entities[0].values.solid, "box") == 0);
@@ -630,7 +630,7 @@ static void test_players_missionpacks_rerelease(void) {
   qa_save_value_free(pack_decoded.root);
   free(bytes);
 
-  qa_q2_rerelease_module_checkpoint module;
+  qa_persist_q2_rerelease_module_checkpoint module;
   memset(&module, 0, sizeof module);
   module.version = 1;
   module.story = "story";
@@ -644,7 +644,7 @@ static void test_players_missionpacks_rerelease(void) {
   module.health_bars_count = 2;
   bytes = qa_encode_q2_rerelease_module_checkpoint(&module, &length);
   CHECK(bytes != NULL);
-  qa_q2_rerelease_module_checkpoint module_decoded;
+  qa_persist_q2_rerelease_module_checkpoint module_decoded;
   CHECK(qa_decode_q2_rerelease_module_checkpoint(bytes, length,
                                                  &module_decoded));
   CHECK(strcmp(module_decoded.sky.name, "space1") == 0);

@@ -1,8 +1,6 @@
 /* Port of src/app/bootstrap/network/remote-q3.ts.
  * GPL-2.0-or-later. */
-#define QA_Q3_SLOT_ACTIVE QA_Q3_WEAPON_SLOT_ACTIVE_TMP
 #include "qa/movement/q3/weapon.h"
-#undef QA_Q3_SLOT_ACTIVE
 #include "qa/app/bootstrap/network/remote_q3.h"
 #include <math.h>
 #include <stdio.h>

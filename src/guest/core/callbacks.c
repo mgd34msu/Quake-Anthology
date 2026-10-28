@@ -11,7 +11,7 @@ struct qa_guest_callback_entry {
   uint64_t handle; /* bindEntry removal handle; 0 for bind() entries */
   qa_callback_id id;
   qa_guest_call_signature signature;
-  qa_guest_address address;
+  qa_guest_core_address address;
   const qa_guest_host_callback *callback; /* NULL = unbound */
   bool (*accepts)(void *ctx);
   void *accepts_ctx;
@@ -139,7 +139,7 @@ void qa_guest_callback_table_destroy(qa_guest_callback_table *table) {
   memset(table, 0, sizeof *table);
 }
 
-qa_guest_entry_handle qa_guest_callback_table_bind_entry(qa_guest_callback_table *table, qa_guest_address address,
+qa_guest_entry_handle qa_guest_callback_table_bind_entry(qa_guest_callback_table *table, qa_guest_core_address address,
                                                          const qa_guest_host_callback *callback,
                                                          bool (*accepts)(void *ctx), void *accepts_ctx) {
   qa_sparse_check(table->memory, address, 1, QA_ACCESS_EXECUTE);
@@ -169,7 +169,7 @@ void qa_guest_callback_table_unbind_entry(qa_guest_callback_table *table, qa_gue
     }
   }
 }
-qa_guest_entry_handle qa_guest_callback_table_observe_entry(qa_guest_callback_table *table, qa_guest_address address,
+qa_guest_entry_handle qa_guest_callback_table_observe_entry(qa_guest_callback_table *table, qa_guest_core_address address,
                                                             void (*before)(void *ctx), void *ctx) {
   qa_sparse_check(table->memory, address, 1, QA_ACCESS_EXECUTE);
   observer_bucket *bucket = bucket_of(table, address.byte_offset, true);
@@ -199,7 +199,7 @@ void qa_guest_callback_table_unobserve_entry(qa_guest_callback_table *table, qa_
     }
   }
 }
-bool qa_guest_callback_table_enter(qa_guest_callback_table *table, qa_guest_address address) {
+bool qa_guest_callback_table_enter(qa_guest_callback_table *table, qa_guest_core_address address) {
   observer_bucket *bucket = bucket_of(table, address.byte_offset, false);
   bool has_observers = bucket_has_observers(bucket);
   /* Ordinary instructions are checked by the CPU fetch, not the table.
@@ -222,7 +222,7 @@ bool qa_guest_callback_table_enter(qa_guest_callback_table *table, qa_guest_addr
   return qa_guest_callback_table_resolve(table, address) != NULL;
 }
 
-qa_guest_address qa_guest_callback_table_bind(qa_guest_callback_table *table, const qa_guest_host_callback *callback) {
+qa_guest_core_address qa_guest_callback_table_bind(qa_guest_callback_table *table, const qa_guest_host_callback *callback) {
   if (callback->signature.abi.pointer_bytes != table->memory->base.pointer_bytes)
     qa_range_error("Callback ABI differs from its guest address space");
   qa_guest_callback_entry *previous = by_id(table, callback->id);
@@ -248,7 +248,7 @@ qa_guest_address qa_guest_callback_table_bind(qa_guest_callback_table *table, co
   options.permissions = QA_PERM_READ_WRITE;
   options.has_permissions = true;
   options.label = label_copy;
-  qa_guest_address address = qa_sparse_allocate(table->memory, &options);
+  qa_guest_core_address address = qa_sparse_allocate(table->memory, &options);
   free(label_copy); /* sparse map duplicated the label */
   uint8_t traps[16];
   memset(traps, 0xcc, sizeof traps);
@@ -272,7 +272,7 @@ void qa_guest_callback_table_unbind(qa_guest_callback_table *table, qa_callback_
     changed_entries(table);
   }
 }
-bool qa_guest_callback_table_address(const qa_guest_callback_table *table, qa_callback_id id, qa_guest_address *out) {
+bool qa_guest_callback_table_address(const qa_guest_callback_table *table, qa_callback_id id, qa_guest_core_address *out) {
   qa_guest_callback_entry *entry = by_id((qa_guest_callback_table *)table, id);
   if (entry == NULL) return false;
   *out = entry->address;
@@ -283,7 +283,7 @@ bool qa_guest_callback_table_has_bound_trap(const qa_guest_callback_table *table
   qa_guest_callback_entry *entry = by_address(mutable_table, byte_offset);
   return entry != NULL && entry->callback != NULL && by_id(mutable_table, entry->id) == entry;
 }
-const qa_guest_host_callback *qa_guest_callback_table_resolve(qa_guest_callback_table *table, qa_guest_address address) {
+const qa_guest_host_callback *qa_guest_callback_table_resolve(qa_guest_callback_table *table, qa_guest_core_address address) {
   qa_sparse_check(table->memory, address, 1, QA_ACCESS_EXECUTE);
   qa_guest_callback_entry *entry = by_address(table, address.byte_offset);
   if (entry == NULL) return NULL;
@@ -292,8 +292,8 @@ const qa_guest_host_callback *qa_guest_callback_table_resolve(qa_guest_callback_
     qa_range_error("Guest callback %s at 0x%llx is unbound", entry->id, (unsigned long long)entry->address.byte_offset);
   return entry->callback;
 }
-qa_call_result qa_guest_callback_table_invoke(qa_guest_callback_table *table, qa_guest_address address,
-                                                    const qa_guest_call_context *context,
+qa_call_result qa_guest_callback_table_invoke(qa_guest_callback_table *table, qa_guest_core_address address,
+                                                    const qa_guest_core_call_context *context,
                                                     const qa_call_value *arguments, size_t argument_count) {
   const qa_guest_host_callback *callback = qa_guest_callback_table_resolve(table, address);
   if (callback == NULL)
@@ -327,7 +327,7 @@ void qa_guest_callback_table_restore(qa_guest_callback_table *table, qa_sparse_g
     const qa_saved_host_callback_address *record = &saved[i];
     if (by_id(table, record->id) != NULL || by_address(table, record->byte_offset) != NULL)
       qa_range_error("Duplicate restored guest callback identity or address");
-    qa_guest_address address;
+    qa_guest_core_address address;
     if (!qa_sparse_pointer(memory, record->byte_offset, &address))
       qa_range_error("Guest callback cannot have a null address");
     qa_sparse_check(memory, address, 16, QA_ACCESS_EXECUTE);

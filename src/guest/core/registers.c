@@ -155,64 +155,64 @@ void qa_create_managed_guest_processor_state(qa_guest_processor_state *out,
 bool qa_managed_guest_processor(const qa_guest_processor_state *state) { return state->managed; }
 
 /* --- MappedGuestMemory helpers with TS-equivalent fallbacks --- */
-void qa_memory_copy(const qa_mapped_guest_memory *mem, qa_guest_address a, uint8_t *dest, size_t len) { mem->copy(mem->ctx, a, dest, len); }
-void qa_memory_write(const qa_mapped_guest_memory *mem, qa_guest_address a, const uint8_t *b, size_t len) { mem->write(mem->ctx, a, b, len); }
-void qa_memory_copy_into(const qa_mapped_guest_memory *mem, qa_guest_address a, uint8_t *dest, size_t off, size_t len) {
+void qa_memory_copy(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint8_t *dest, size_t len) { mem->copy(mem->ctx, a, dest, len); }
+void qa_memory_write(const qa_mapped_guest_memory *mem, qa_guest_core_address a, const uint8_t *b, size_t len) { mem->write(mem->ctx, a, b, len); }
+void qa_memory_copy_into(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint8_t *dest, size_t off, size_t len) {
   if (mem->copy_into != NULL) { mem->copy_into(mem->ctx, a, dest, off, len); return; }
   mem->copy(mem->ctx, a, dest + off, len);
 }
-uint8_t qa_memory_read_u8(const qa_mapped_guest_memory *mem, qa_guest_address a) {
+uint8_t qa_memory_read_u8(const qa_mapped_guest_memory *mem, qa_guest_core_address a) {
   if (mem->read_u8 != NULL) return mem->read_u8(mem->ctx, a);
   uint8_t b = 0; mem->copy(mem->ctx, a, &b, 1); return b;
 }
-uint16_t qa_memory_read_u16(const qa_mapped_guest_memory *mem, qa_guest_address a) {
+uint16_t qa_memory_read_u16(const qa_mapped_guest_memory *mem, qa_guest_core_address a) {
   if (mem->read_u16 != NULL) return mem->read_u16(mem->ctx, a);
   uint8_t b[2]; mem->copy(mem->ctx, a, b, 2); return (uint16_t)load_le(b, 2);
 }
-uint32_t qa_memory_read_u32(const qa_mapped_guest_memory *mem, qa_guest_address a) {
+uint32_t qa_memory_read_u32(const qa_mapped_guest_memory *mem, qa_guest_core_address a) {
   if (mem->read_u32 != NULL) return mem->read_u32(mem->ctx, a);
   uint8_t b[4]; mem->copy(mem->ctx, a, b, 4); return (uint32_t)load_le(b, 4);
 }
-uint64_t qa_memory_read_u64(const qa_mapped_guest_memory *mem, qa_guest_address a) {
+uint64_t qa_memory_read_u64(const qa_mapped_guest_memory *mem, qa_guest_core_address a) {
   if (mem->read_u64 != NULL) return mem->read_u64(mem->ctx, a);
   uint8_t b[8]; mem->copy(mem->ctx, a, b, 8); return load_le(b, 8);
 }
-void qa_memory_write_u8(const qa_mapped_guest_memory *mem, qa_guest_address a, uint8_t v) {
+void qa_memory_write_u8(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint8_t v) {
   if (mem->write_u8 != NULL) { mem->write_u8(mem->ctx, a, v); return; }
   mem->write(mem->ctx, a, &v, 1);
 }
-void qa_memory_write_u16(const qa_mapped_guest_memory *mem, qa_guest_address a, uint16_t v) {
+void qa_memory_write_u16(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint16_t v) {
   if (mem->write_u16 != NULL) { mem->write_u16(mem->ctx, a, v); return; }
   uint8_t b[2]; store_le(b, v, 2); mem->write(mem->ctx, a, b, 2);
 }
-void qa_memory_write_u32(const qa_mapped_guest_memory *mem, qa_guest_address a, uint32_t v) {
+void qa_memory_write_u32(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint32_t v) {
   if (mem->write_u32 != NULL) { mem->write_u32(mem->ctx, a, v); return; }
   uint8_t b[4]; store_le(b, v, 4); mem->write(mem->ctx, a, b, 4);
 }
-void qa_memory_write_u64(const qa_mapped_guest_memory *mem, qa_guest_address a, uint64_t v) {
+void qa_memory_write_u64(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint64_t v) {
   if (mem->write_u64 != NULL) { mem->write_u64(mem->ctx, a, v); return; }
   uint8_t b[8]; store_le(b, v, 8); mem->write(mem->ctx, a, b, 8);
 }
-bool qa_memory_pointer(const qa_mapped_guest_memory *mem, uint64_t raw, qa_guest_address *out) {
+bool qa_memory_pointer(const qa_mapped_guest_memory *mem, uint64_t raw, qa_guest_core_address *out) {
   if (mem->pointer != NULL) return mem->pointer(mem->ctx, raw, out);
   if (raw == 0) return false; /* TS null representation */
   out->byte_offset = raw;
   return true;
 }
-qa_guest_address qa_memory_offset(const qa_mapped_guest_memory *mem, qa_guest_address a, int64_t d) {
+qa_guest_core_address qa_memory_offset(const qa_mapped_guest_memory *mem, qa_guest_core_address a, int64_t d) {
   if (mem->offset != NULL) return mem->offset(mem->ctx, a, d);
-  qa_guest_address r = {(uint64_t)((int64_t)a.byte_offset + d)};
+  qa_guest_core_address r = {(uint64_t)((int64_t)a.byte_offset + d)};
   return r;
 }
-void qa_memory_check(const qa_mapped_guest_memory *mem, qa_guest_address a, size_t len, qa_guest_access access) {
+void qa_memory_check(const qa_mapped_guest_memory *mem, qa_guest_core_address a, size_t len, qa_guest_access access) {
   if (mem->check != NULL) mem->check(mem->ctx, a, len, access);
 }
-void qa_memory_read_u64_words(const qa_mapped_guest_memory *mem, qa_guest_address a, uint32_t *low, uint32_t *high) {
+void qa_memory_read_u64_words(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint32_t *low, uint32_t *high) {
   if (mem->read_u64_words != NULL) { mem->read_u64_words(mem->ctx, a, low, high); return; }
   uint64_t v = qa_memory_read_u64(mem, a);
   *low = (uint32_t)v; *high = (uint32_t)(v >> 32);
 }
-void qa_memory_write_u64_words(const qa_mapped_guest_memory *mem, qa_guest_address a, uint32_t low, uint32_t high) {
+void qa_memory_write_u64_words(const qa_mapped_guest_memory *mem, qa_guest_core_address a, uint32_t low, uint32_t high) {
   if (mem->write_u64_words != NULL) { mem->write_u64_words(mem->ctx, a, low, high); return; }
   qa_memory_write_u64(mem, a, ((uint64_t)high << 32) | (uint64_t)low);
 }

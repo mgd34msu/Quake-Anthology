@@ -8,6 +8,7 @@
 #include "qa/compat/qvm/memory.h"
 #include "qa/compat/qvm/player_record.h"
 #include "qa/core/binary/index.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
 #include "qa/persistence/shared.h"
@@ -167,8 +168,8 @@ void qa_qvm_read_presentation_game_state(const qa_save_reader *reader, qa_q3_sou
   for (size_t i = 0; i < offset_count; i++) {
     qa_save_reader item = item_at(&offsets, i);
     double value = qa_save_reader_integer_min(&item, 0);
-    if (value > 2147483647.0) qa_save_reader_fail(&item, "expected a source int32");
-    values[i] = (int32_t)value;
+    /* TS Int32Array.from applies a ToInt32 wrap, no range failure. */
+    values[i] = qa_int32(value);
     qa_save_reader_destroy(&item);
   }
   qa_save_reader_destroy(&offsets);
@@ -478,7 +479,7 @@ static qa_save_value *saved_actor_value(qa_actor_id actor) {
   return value;
 }
 
-qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_mod_scene_publication *scene,
+qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_cp_mod_scene_publication *scene,
                                                     qa_qvm_abi_profile profile) {
   qa_save_value *result = make_object();
   set_number(result, "revision", (double)scene->revision);
@@ -553,7 +554,7 @@ qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_mod_scene_publi
 
 void qa_qvm_read_mod_scene_publication(const qa_save_reader *reader, qa_qvm_abi_profile profile,
                                        qa_qvm_resolve_saved_actor_fn resolve, void *resolve_ctx,
-                                       qa_qvm_mod_scene_publication *out) {
+                                       qa_qvm_cp_mod_scene_publication *out) {
   memset(out, 0, sizeof *out);
   struct { const char *name; int64_t *slot; } scalars[] = {
       {"revision", &out->revision}, {"serverTime", &out->server_time},
@@ -665,7 +666,7 @@ void qa_qvm_read_mod_scene_publication(const qa_save_reader *reader, qa_qvm_abi_
   qa_save_reader_destroy(&commands);
 }
 
-void qa_qvm_mod_scene_publication_free(qa_qvm_mod_scene_publication *scene) {
+void qa_qvm_mod_scene_publication_free(qa_qvm_cp_mod_scene_publication *scene) {
   qa_q3_source_game_state_record_destroy(&scene->game_state);
   free(scene->clients);
   free(scene->entities);

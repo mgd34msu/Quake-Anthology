@@ -138,6 +138,7 @@ typedef struct qa_q1_host {
   const char *(*classname)(void *ctx, qa_actor_id actor);
   void (*powerup)(void *ctx, qa_owned_actor actor, qa_q1_powerup powerup, double expires_seconds);
   /* Optional */
+  const qa_weapon_behavior_projectile_port *weapon_behavior; /* TS weaponBehavior? */
   void (*weapon_impact)(void *ctx, qa_actor_id owner, qa_vec3 origin);
   double (*weapon_volume)(void *ctx, qa_actor_id actor);
   qa_q1_monster_target_result (*monster_target)(void *ctx, qa_actor_id actor);

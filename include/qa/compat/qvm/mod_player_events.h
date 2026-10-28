@@ -1,7 +1,8 @@
 /*
- * Port of src/compat/qvm/mod-player-events.ts. Mirrored type (TS
- * owner src/app/bootstrap/simulation/q3/types.ts, unlanded):
- * qa_qvmy_source_player_event mirrors Q3SourcePlayerEvent. Checkpoint
+ * Port of src/compat/qvm/mod-player-events.ts. Q3SourcePlayerEvent
+ * is the landed qa_app_q3_source_player_event (TS owner
+ * src/app/bootstrap/simulation/q3/types.ts); the old mirror name
+ * qa_qvmy_source_player_event remains as a typedef alias. Checkpoint
  * clients/predictable lists are malloc'd arrays freed by
  * qa_qvm_player_events_checkpoint_free (the read function's result)
  * or owned by the events object (checkpoint method result storage
@@ -15,6 +16,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/app/bootstrap/simulation/q3/types.h"
 #include "qa/compat/qvm/memory.h"
 #include "qa/contracts/execution.h"
 #include "qa/contracts/identity.h"
@@ -51,21 +53,10 @@ typedef struct qa_qvm_player_events_checkpoint {
 bool qa_qvm_read_player_events(const qa_save_reader *reader, qa_qvm_player_events_checkpoint *out);
 void qa_qvm_player_events_checkpoint_free(qa_qvm_player_events_checkpoint *checkpoint);
 
-/* Mirrored Q3SourcePlayerEvent. sequence kind keeps TS strings. */
-typedef struct qa_qvmy_source_player_event {
-  const char *kind; /* "player-event" */
-  qa_actor_id actor;
-  qa_module_identity source_module;
-  qa_qvm_abi_profile source_abi_profile;
-  qa_q3_player_state player_state;
-  qa_vec3 origin;
-  double time;
-  int32_t event;
-  int32_t parameter;
-  const char *sequence_kind; /* "external" | "predictable" */
-  int32_t sequence_time;     /* external */
-  int32_t sequence;          /* predictable */
-} qa_qvmy_source_player_event;
+/* TS Q3SourcePlayerEvent: landed owner type. sequence_is_predictable
+ * selects sequence_number (predictable) vs sequence_time (external);
+ * event/parameter are TS numbers (double). */
+typedef qa_app_q3_source_player_event qa_qvmy_source_player_event;
 
 typedef struct qa_qvm_mod_player_events_operations {
   qa_qvm_memory *memory;
@@ -76,7 +67,7 @@ typedef struct qa_qvm_mod_player_events_operations {
   bool (*live)(void *ctx, qa_actor_id actor);
   qa_vec3 (*origin)(void *ctx, qa_actor_id actor);
   double (*time)(void *ctx);
-  void (*emit)(void *ctx, const qa_qvmy_source_player_event *event);
+  void (*emit)(void *ctx, const qa_app_q3_source_player_event *event);
 } qa_qvm_mod_player_events_operations;
 
 typedef struct qa_qvm_mod_player_events {

@@ -4,7 +4,7 @@
  * inventories against copied/prebound/source-reconstructed storage.
  * Mirrored types (no C home yet; the world module owns them and its
  * port reconciles the names):
- *  - qa_shared_body_table / qa_body_link_state mirror SharedBodyTable
+ *  - qa_shared_body_table / qa_persist_body_link_state mirror SharedBodyTable
  *    and BodyLinkState from src/world/actors/body.ts.
  *  - qa_gameplay_authority mirrors GameplayAuthority from
  *    src/world/gameplay/authority.ts.
@@ -37,12 +37,12 @@
 /* Mirrored BodyLinkState (world/actors/body.ts): the linked member
  * carries only the fields persistence reads (state/absoluteBounds);
  * the live LinkedBody's actor/linkCount are the table's own. */
-typedef struct qa_body_link_state {
+typedef struct qa_persist_body_link_state {
   double link_count;
   bool has_linked;
   qa_body_state state;
   qa_bounds absolute_bounds;
-} qa_body_link_state;
+} qa_persist_body_link_state;
 
 /* Mirrored SharedBodyTable (world/actors/body.ts). read/link_state/
  * attachment return false for the TS null; returned states borrow
@@ -51,10 +51,10 @@ typedef struct qa_body_link_state {
 typedef struct qa_shared_body_table {
   void *ctx;
   bool (*read)(void *ctx, qa_actor_id actor, qa_body_state *out);
-  bool (*link_state)(void *ctx, qa_actor_id actor, qa_body_link_state *out);
+  bool (*link_state)(void *ctx, qa_actor_id actor, qa_persist_body_link_state *out);
   bool (*attachment)(void *ctx, qa_actor_id actor, qa_body_attachment *out);
   void (*restore_link_state)(void *ctx, qa_owned_actor actor,
-                             qa_body_link_state state);
+                             qa_persist_body_link_state state);
   void (*create)(void *ctx, qa_owned_actor actor, qa_body_state state);
   void (*attach)(void *ctx, qa_owned_actor actor, qa_body_attachment attachment);
 } qa_shared_body_table;

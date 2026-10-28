@@ -24,10 +24,25 @@ typedef struct captured_range {
 } captured_range;
 
 typedef struct capture_entry {
-  watch *watch;
+  /* Snapshot the watch identity and callbacks, not a pointer into the
+   * watches array: unobserve memmoves it and observe may realloc it
+   * between before() and after() (or from a publish callback), while
+   * the TS capture holds the Watch object itself. */
+  size_t watch_id;
+  qa_qvm_publish_fn publish;
+  void *publish_ctx;
+  qa_qvm_publish_fn after_publication;
+  void *after_ctx;
   captured_range *ranges;
   size_t range_count;
 } capture_entry;
+
+static bool watch_active(const qa_qvm_memory_writes *writes, size_t watch_id) {
+  const watch *watches = writes->watches;
+  for (size_t i = 0; i < writes->watch_count; i++)
+    if (watches[i].id == watch_id) return watches[i].active;
+  return false;
+}
 
 struct qa_qvm_write_capture {
   capture_entry *entries;
@@ -176,7 +191,11 @@ qa_qvm_write_capture *qa_qvm_memory_writes_before(qa_qvm_memory_writes *writes,
       }
       captures->entries = realloc(captures->entries, (captures->entry_count + 1) * sizeof *captures->entries);
       if (captures->entries == NULL) qa_range_error("QVM memory allocation failed");
-      captures->entries[captures->entry_count].watch = &watches[w];
+      captures->entries[captures->entry_count].watch_id = watches[w].id;
+      captures->entries[captures->entry_count].publish = watches[w].publish;
+      captures->entries[captures->entry_count].publish_ctx = watches[w].publish_ctx;
+      captures->entries[captures->entry_count].after_publication = watches[w].after_publication;
+      captures->entries[captures->entry_count].after_ctx = watches[w].after_ctx;
       captures->entries[captures->entry_count].ranges = ranges;
       captures->entries[captures->entry_count].range_count = count;
       captures->entry_count++;
@@ -223,15 +242,15 @@ void qa_qvm_memory_writes_after(qa_qvm_memory_writes *writes, qa_qvm_write_captu
   }
   writes->publishing = true;
   for (size_t e = 0; e < captures->entry_count; e++) {
-    watch *entry_watch = captures->entries[e].watch;
-    if (entry_watch->active && entry_watch->publish != NULL)
-      entry_watch->publish(entry_watch->publish_ctx, &events[e]);
+    capture_entry *entry = &captures->entries[e];
+    if (watch_active(writes, entry->watch_id) && entry->publish != NULL)
+      entry->publish(entry->publish_ctx, &events[e]);
   }
   writes->publishing = false;
   for (size_t e = 0; e < captures->entry_count; e++) {
-    watch *entry_watch = captures->entries[e].watch;
-    if (entry_watch->active && !writes->closed && entry_watch->after_publication != NULL) {
-      after_job job = {entry_watch->after_publication, entry_watch->after_ctx, &events[e]};
+    capture_entry *entry = &captures->entries[e];
+    if (watch_active(writes, entry->watch_id) && !writes->closed && entry->after_publication != NULL) {
+      after_job job = {entry->after_publication, entry->after_ctx, &events[e]};
       if (writes->effect != NULL) writes->effect(writes->effect_ctx, run_after, &job);
       else run_after(&job);
     }

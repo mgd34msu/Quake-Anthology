@@ -11,37 +11,37 @@ void qa_windows_service(qa_windows_service_host *host, const char *library, cons
                         qa_windows_import_implementation implementation) {
   host->service(host->ctx, library, name, parameters, parameter_count, result_is_void, result, implementation);
 }
-bool qa_windows_allocate(qa_windows_service_host *host, size_t size, uint64_t heap, qa_guest_address *out) {
+bool qa_windows_allocate(qa_windows_service_host *host, size_t size, uint64_t heap, qa_guest_core_address *out) {
   return host->allocate(host->ctx, size, heap, out);
 }
-bool qa_windows_free(qa_windows_service_host *host, bool has_address, qa_guest_address address, uint64_t heap) {
+bool qa_windows_free(qa_windows_service_host *host, bool has_address, qa_guest_core_address address, uint64_t heap) {
   return host->free(host->ctx, has_address, address, heap);
 }
-bool qa_windows_allocation_size(qa_windows_service_host *host, qa_guest_address address, uint64_t heap, size_t *out) {
+bool qa_windows_allocation_size(qa_windows_service_host *host, qa_guest_core_address address, uint64_t heap, size_t *out) {
   return host->allocation_size(host->ctx, address, heap, out);
 }
 void qa_windows_destroy_heap(qa_windows_service_host *host, uint64_t heap) { host->destroy_heap(host->ctx, heap); }
-qa_call_result qa_windows_invoke(qa_windows_service_host *host, const qa_guest_call_context *context,
-                                 qa_guest_address target, const qa_abi_storage *parameters,
+qa_call_result qa_windows_invoke(qa_windows_service_host *host, const qa_guest_core_call_context *context,
+                                 qa_guest_core_address target, const qa_abi_storage *parameters,
                                  size_t parameter_count, bool result_is_void, qa_abi_storage result,
                                  const qa_call_value *arguments, size_t argument_count, bool system) {
   return host->invoke(host->ctx, context, target, parameters, parameter_count,
                       result_is_void, result, arguments, argument_count, system);
 }
 bool qa_windows_resolve_address(qa_windows_service_host *host, const char *library, const char *name,
-                                qa_guest_address *out) {
+                                qa_guest_core_address *out) {
   return host->resolve_address(host->ctx, library, name, out);
 }
-bool qa_windows_library_handle(qa_windows_service_host *host, const char *library, qa_guest_address *out) {
+bool qa_windows_library_handle(qa_windows_service_host *host, const char *library, qa_guest_core_address *out) {
   return host->library_handle(host->ctx, library, out);
 }
-bool qa_windows_load_library(qa_windows_service_host *host, const char *library, qa_guest_address *out) {
+bool qa_windows_load_library(qa_windows_service_host *host, const char *library, qa_guest_core_address *out) {
   return host->load_library(host->ctx, library, out);
 }
-bool qa_windows_free_library(qa_windows_service_host *host, qa_guest_address handle) {
+bool qa_windows_free_library(qa_windows_service_host *host, qa_guest_core_address handle) {
   return host->free_library(host->ctx, handle);
 }
-const char *qa_windows_library_name(qa_windows_service_host *host, qa_guest_address handle) {
+const char *qa_windows_library_name(qa_windows_service_host *host, qa_guest_core_address handle) {
   return host->library_name(host->ctx, handle);
 }
 const qa_pe_image *const *qa_windows_images(qa_windows_service_host *host, size_t *count) {

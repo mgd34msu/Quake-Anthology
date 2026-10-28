@@ -11,7 +11,7 @@
 #include "qa/persistence/value.h"
 
 typedef struct qa_compat_q2_saved_native_deferred_damage {
-  qa_saved_actor_id target; qa_q2_attack_checkpoint attack;
+  qa_saved_actor_id target; qa_persist_q2_attack_checkpoint attack;
   double amount, knockback_req; qa_vec3 point_req, direction, normal; const char *delivery;
   double blood, knockback; qa_vec3 point; double mod[3]; bool has_attacker, has_inflictor; double attacker_slot, inflictor_slot;
 } qa_compat_q2_saved_native_deferred_damage;

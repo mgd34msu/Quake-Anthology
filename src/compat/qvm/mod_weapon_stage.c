@@ -237,7 +237,11 @@ static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
     if (!has_actor || !qa_same_actor(actor, current->actor) ||
         !dispatcher->operations.live(dispatcher->operations.ctx, actor))
       qa_range_error("QVM weapon evaluation lost its original source actor");
-    return call->evaluate_region(call->call_ctx, &current->region, current->inputs, current->input_count);
+    /* Copy out: nested evaluations may realloc the stack array. */
+    qa_qvm_region_evaluation region = current->region;
+    const int64_t *inputs = current->inputs;
+    size_t input_count = current->input_count;
+    return call->evaluate_region(call->call_ctx, &region, inputs, input_count);
   }
   if (!has_actor) return proceed_call(call);
   qa_qvmy_cancellation_scope cancellation =
@@ -415,13 +419,16 @@ static int32_t input_hook(void *ctx, qa_qvmy_function_call *call) {
   input->entered = true;
   input->has_cancellation = true;
   input->cancellation = call->cancellation_scope(call->call_ctx);
-  if (!stage->operations.live(stage->operations.ctx, input->actor)) {
-    call->cancel_function(call->call_ctx, input->cancellation);
+  /* Copy out: nested applies may realloc the inputs array. */
+  qa_actor_id actor = input->actor;
+  qa_qvmy_cancellation_scope cancellation = input->cancellation;
+  if (!stage->operations.live(stage->operations.ctx, actor)) {
+    call->cancel_function(call->call_ctx, cancellation);
     qa_range_error("QVM cancellation requires the current source invocation");
   }
   int32_t result = proceed_call(call);
-  if (!stage->operations.live(stage->operations.ctx, input->actor)) {
-    call->cancel_function(call->call_ctx, input->cancellation);
+  if (!stage->operations.live(stage->operations.ctx, actor)) {
+    call->cancel_function(call->call_ctx, cancellation);
     qa_range_error("QVM cancellation requires the current source invocation");
   }
   return result;

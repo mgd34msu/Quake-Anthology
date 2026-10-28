@@ -34,7 +34,7 @@ static void mounted_release(void *ctx, qa_renderer_image image) {
 
 void qa_create_mounted_text_fonts(qa_mounted_text_fonts *mounted,
                                   qa_mounted_content content,
-                                  qa_scene_image_registry images,
+                                  qa_mounted_scene_image_registry images,
                                   qa_text_font_registry *out) {
   mounted->content = content;
   mounted->images = images;

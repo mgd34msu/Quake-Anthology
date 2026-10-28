@@ -21,7 +21,7 @@ static void mode_print(qa_lmctf_weapons *w, qa_owned_actor self, qa_q2_game_serv
   qa_lmctf_print(g, &self.id, "%s", qa_lmctf_player(w->context, self.id)->plasma_mode ? "bounce plasma\n" : "spread plasma\n");
 }
 
-static void weapon_think(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons *weapons) {
+static void weapon_think(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons_port *weapons) {
   qa_lmctf_weapons *w = ctx;
   w->context->plasma_quad = current->input.quad_until > current->now;
   qa_q2mp_weapon_state *state = current->state;
@@ -33,7 +33,7 @@ static void weapon_think(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_wea
   if (activating && strcmp(state->animation.phase, "ready") == 0) mode_print(w, current->actor, current->game);
 }
 
-static void weapon_fire(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons *weapons) {
+static void weapon_fire(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons_port *weapons) {
   qa_lmctf_weapons *w = ctx;
   qa_owned_actor self = current->actor;
   qa_q2_game_services *g = current->game;

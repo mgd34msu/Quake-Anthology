@@ -311,7 +311,7 @@ static void create_system(qa_app_application_q3_cinematics *c, int index,
 }
 typedef struct system_open_ctx {
   qa_app_application_q3_cinematics *c;
-  qa_app_screen_cinematic_request request;
+  qa_app_q3_screen_cinematic_request request;
   const qa_save_value *checkpoint;
   bool restore;
 } system_open_ctx;

@@ -26,7 +26,7 @@ void qa_format_argument_free(qa_format_argument *argument) {
 }
 
 void qa_format_arguments_init(qa_format_arguments *args, qa_mapped_guest_memory *memory,
-                              qa_format_dialect dialect, bool has_address, qa_guest_address address) {
+                              qa_format_dialect dialect, bool has_address, qa_guest_core_address address) {
   memset(args, 0, sizeof *args);
   args->memory = memory;
   args->dialect = dialect;
@@ -53,7 +53,7 @@ qa_format_argument qa_format_arguments_next(qa_format_arguments *args, qa_format
   int size = extended ? (m->pointer_bytes == 8 ? 16 : 12)
       : (floating || type == QA_FORMAT_ARG_INT64) ? 8
       : type == QA_FORMAT_ARG_POINTER ? m->pointer_bytes : 4;
-  qa_guest_address address;
+  qa_guest_core_address address;
   if (args->has_descriptor && !extended && (floating ? args->fp < 176 : args->gp < 48)) {
     if (!args->has_registers) type_error("va_list register save area is null");
     address = qa_memory_offset(m, args->registers, floating ? (int64_t)args->fp : (int64_t)args->gp);

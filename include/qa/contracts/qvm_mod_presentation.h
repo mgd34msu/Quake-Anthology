@@ -23,8 +23,10 @@ typedef struct qa_qvm_presentation_program {
 typedef const char *qa_qvm_body_part;
 
 /* TS QvmPresentationArgument: {kind:"int32"|"float32"|"address",
- * value:number} | {kind:"source", value:"player-state"|...
- * (exact source strings)}. */
+ * value:number} | {kind:"source", value:"player-state"|
+ * "entity-state"|"centity"|"origin"|"snapshot"|"client-number"|
+ * "time"|"event"|"parameter"|"snapshot-number"|
+ * "server-command-sequence"} (exact source strings). */
 typedef struct qa_qvm_presentation_argument {
   const char *kind;
   double number_value;

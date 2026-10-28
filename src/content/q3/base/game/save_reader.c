@@ -28,8 +28,8 @@ static char *nullable_str(const qa_save_reader *r, const char *name) {
   if (qa_save_reader_is_null(&f)) { qa_save_reader_destroy(&f); return NULL; }
   char *v = dupstr(qa_save_reader_string(&f)); qa_save_reader_destroy(&f); return v;
 }
-static qa_q3_entity_state read_entity(const qa_save_reader *r) {
-  qa_q3_entity_state s; memset(&s, 0, sizeof s); qa_save_reader f;
+static qa_q3_game_save_entity_state read_entity(const qa_save_reader *r) {
+  qa_q3_game_save_entity_state s; memset(&s, 0, sizeof s); qa_save_reader f;
   qa_save_reader_field(r, "values", &f); s.values = qa_q3_read_entity_values(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(r, "network", &f); s.network = qa_q3_read_network_values(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(r, "pos", &f); s.pos = read_traj(&f); qa_save_reader_destroy(&f);
@@ -53,8 +53,8 @@ static double *read_numbers(const qa_save_reader *r, size_t *out) {
   for (size_t i = 0; i < n; i++) { qa_save_reader it; qa_save_reader_item(r, i, &it); d[i] = qa_save_reader_number(&it); qa_save_reader_destroy(&it); }
   *out = n; return d;
 }
-static qa_q3_client_state read_client(const qa_save_reader *r) {
-  qa_q3_client_state s; memset(&s, 0, sizeof s); qa_save_reader f;
+static qa_q3_game_save_client_state read_client(const qa_save_reader *r) {
+  qa_q3_game_save_client_state s; memset(&s, 0, sizeof s); qa_save_reader f;
   qa_save_reader_field(r, "values", &f); s.values = qa_q3_read_client_values(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(r, "player", &f); s.player = qa_q3_read_player_values(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(r, "persistant", &f); s.persistant = qa_q3_read_persistant_values(&f); qa_save_reader_destroy(&f);

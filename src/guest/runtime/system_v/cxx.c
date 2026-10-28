@@ -31,38 +31,38 @@ static void reg(qa_system_v_service_host *host, const char *library, const char 
                 const char *const *versions, size_t version_count,
                 const qa_abi_storage *parameters, size_t parameter_count, bool result_is_void,
                 qa_abi_storage result,
-                qa_call_result (*invoke)(void *, const qa_guest_call_context *,
+                qa_call_result (*invoke)(void *, const qa_guest_core_call_context *,
                                          const qa_call_value *, size_t)) {
   qa_system_v_implementation impl = {new_state(host), invoke};
   qa_system_v_service(host, library, name, versions, version_count, parameters, parameter_count,
                       result_is_void, result, impl);
 }
 
-static qa_call_result cxa_atexit_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result cxa_atexit_impl(void *ctx, const qa_guest_core_call_context *context,
                                       const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_system_v_service_host *host = state->host;
-  qa_guest_address argument = {0}, dso = {0};
+  qa_guest_core_address argument = {0}, dso = {0};
   bool has_argument = qa_guest_pointer_argument(args, count, 1, &argument);
   bool has_dso = qa_guest_pointer_argument(args, count, 2, &dso);
   host->register_destructor(host->ctx, qa_guest_required_pointer(args, count, 0),
                             has_argument, argument, has_dso, dso);
   return qa_call_int32(0);
 }
-static qa_call_result cxa_finalize_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result cxa_finalize_impl(void *ctx, const qa_guest_core_call_context *context,
                                         const qa_call_value *args, size_t count) {
   cxx_state *state = ctx;
   qa_system_v_service_host *host = state->host;
-  qa_guest_address dso = {0};
+  qa_guest_core_address dso = {0};
   bool has_dso = qa_guest_pointer_argument(args, count, 0, &dso);
   host->finalize_destructors(host->ctx, context, has_dso, dso);
   return qa_call_void();
 }
-static qa_call_result guard_acquire_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result guard_acquire_impl(void *ctx, const qa_guest_core_call_context *context,
                                          const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_mapped_guest_memory *m = state->host->memory;
-  qa_guest_address guard = qa_guest_required_pointer(args, count, 0);
+  qa_guest_core_address guard = qa_guest_required_pointer(args, count, 0);
   if (qa_memory_read_u8(m, guard) != 0) return qa_call_int32(0);
   if (qa_memory_read_u8(m, qa_memory_offset(m, guard, 1)) != 0)
     qa_unsupported_system_v_service("libstdc++.so.6", "__cxa_guard_acquire", "CXXABI_1.3",
@@ -70,31 +70,31 @@ static qa_call_result guard_acquire_impl(void *ctx, const qa_guest_call_context 
   qa_memory_write_u8(m, qa_memory_offset(m, guard, 1), 1);
   return qa_call_int32(1);
 }
-static qa_call_result guard_release_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result guard_release_impl(void *ctx, const qa_guest_core_call_context *context,
                                          const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_mapped_guest_memory *m = state->host->memory;
-  qa_guest_address guard = qa_guest_required_pointer(args, count, 0);
+  qa_guest_core_address guard = qa_guest_required_pointer(args, count, 0);
   qa_memory_write_u8(m, guard, 1);
   qa_memory_write_u8(m, qa_memory_offset(m, guard, 1), 0);
   return qa_call_void();
 }
-static qa_call_result guard_abort_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result guard_abort_impl(void *ctx, const qa_guest_core_call_context *context,
                                        const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_mapped_guest_memory *m = state->host->memory;
   qa_memory_write_u8(m, qa_memory_offset(m, qa_guest_required_pointer(args, count, 0), 1), 0);
   return qa_call_void();
 }
-static qa_call_result operator_new_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result operator_new_impl(void *ctx, const qa_guest_core_call_context *context,
                                         const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   return qa_call_pointer(true, qa_system_v_allocate(state->host, qa_guest_count(args, count, 0)));
 }
-static qa_call_result operator_delete_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result operator_delete_impl(void *ctx, const qa_guest_core_call_context *context,
                                            const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   bool has = qa_guest_pointer_argument(args, count, 0, &address);
   qa_system_v_free(state->host, has, address);
   return qa_call_void();
@@ -102,16 +102,16 @@ static qa_call_result operator_delete_impl(void *ctx, const qa_guest_call_contex
 static size_t exception_header(const qa_system_v_service_host *host) {
   return host->memory->pointer_bytes == 4 ? 96 : 128;
 }
-static qa_call_result allocate_exception_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result allocate_exception_impl(void *ctx, const qa_guest_core_call_context *context,
                                               const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_system_v_service_host *host = state->host;
-  qa_guest_address allocation = qa_system_v_allocate(
+  qa_guest_core_address allocation = qa_system_v_allocate(
       host, qa_guest_count(args, count, 0) + exception_header(host));
   return qa_call_pointer(true, qa_memory_offset(host->memory, allocation,
                                                 (int64_t)exception_header(host)));
 }
-static qa_call_result free_exception_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result free_exception_impl(void *ctx, const qa_guest_core_call_context *context,
                                           const qa_call_value *args, size_t count) {
   cxx_state *state = ctx; (void)context;
   qa_system_v_service_host *host = state->host;

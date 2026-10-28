@@ -169,7 +169,7 @@ static void insert_mapping(qa_sparse_guest_memory *mem, qa_sparse_mapping *mappi
 
 /* TS #chunks: full checked walk. has_access=false mirrors access null.
  * Returns a malloc'd chunk array (caller frees); count via out. */
-static chunk *chunks_of(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length,
+static chunk *chunks_of(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length,
                         bool has_access, qa_guest_access access, size_t *out_count) {
   range_check(mem, address.byte_offset, byte_length,
               has_access ? fault_access_of(access) : QA_FAULT_ACCESS_MAP);
@@ -295,7 +295,7 @@ static void copy_chunks_into(const chunk *chunks, size_t count, uint8_t *dest) {
 
 /* TS #contiguous: absolute backing offset of a live view, or fault. */
 static size_t contiguous_offset(qa_sparse_guest_memory *mem, const chunk *chunks, size_t count,
-                                qa_guest_address address, size_t byte_length, qa_sparse_backing **out_backing) {
+                                qa_guest_core_address address, size_t byte_length, qa_sparse_backing **out_backing) {
   if (count == 0) { *out_backing = NULL; return 0; }
   qa_sparse_backing *backing = chunks[0].mapping->backing;
   size_t start = chunks[0].mapping->backing_offset + chunks[0].offset;
@@ -389,13 +389,13 @@ static void replace_range(qa_sparse_guest_memory *mem, uint64_t base, size_t byt
   free(next);
 }
 
-static void read_bytes(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t byte_length) {
+static void read_bytes(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_READ, &count);
   copy_chunks_into(chunks, count, dest);
   free(chunks);
 }
-static void write_bytes(qa_sparse_guest_memory *mem, qa_guest_address address, const uint8_t *bytes, size_t byte_length) {
+static void write_bytes(qa_sparse_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t byte_length) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_WRITE, &count);
   /* Source may alias guest backing: snapshot when it overlaps a dest chunk. */
@@ -416,18 +416,18 @@ static void write_bytes(qa_sparse_guest_memory *mem, qa_guest_address address, c
   free(chunks);
 }
 
-static qa_guest_address make_address(uint64_t byte_offset) {
-  qa_guest_address a = {byte_offset};
+static qa_guest_core_address make_address(uint64_t byte_offset) {
+  qa_guest_core_address a = {byte_offset};
   return a;
 }
 
-bool qa_sparse_pointer(qa_sparse_guest_memory *mem, uint64_t raw_value, qa_guest_address *out) {
+bool qa_sparse_pointer(qa_sparse_guest_memory *mem, uint64_t raw_value, qa_guest_core_address *out) {
   if (raw_value == 0) return false;
   range_check(mem, raw_value, 0, QA_FAULT_ACCESS_READ);
   *out = make_address(raw_value);
   return true;
 }
-qa_guest_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_address address, int64_t displacement) {
+qa_guest_core_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_core_address address, int64_t displacement) {
   range_check(mem, address.byte_offset, 0, QA_FAULT_ACCESS_READ);
   uint64_t result = address.byte_offset + (uint64_t)displacement;
   /* Negative TS results fault as address-overflow in #range. */
@@ -441,7 +441,7 @@ qa_guest_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_address 
   return make_address(result);
 }
 
-qa_guest_address qa_sparse_map(qa_sparse_guest_memory *mem, const qa_guest_map_options *options) {
+qa_guest_core_address qa_sparse_map(qa_sparse_guest_memory *mem, const qa_guest_map_options *options) {
   available(mem, options->base, options->byte_length);
   if (options->bytes != NULL && options->bytes_length > options->byte_length)
     qa_range_error("Initial guest bytes exceed the mapping length");
@@ -465,7 +465,7 @@ static uint64_t align_up_checked(qa_sparse_guest_memory *mem, uint64_t value, ui
   return result;
 }
 
-qa_guest_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_allocation_options *options) {
+qa_guest_core_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_allocation_options *options) {
   uint64_t alignment = options->alignment == 0 ? 16 : options->alignment;
   if (alignment == 0 || (alignment & (alignment - 1u)) != 0)
     qa_range_error("Guest allocation alignment must be a positive power of two");
@@ -497,7 +497,7 @@ qa_guest_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_
   map_options.byte_length = options->byte_length;
   map_options.permissions = options->has_permissions ? options->permissions : QA_PERM_READ_WRITE;
   map_options.label = options->label != NULL ? options->label : "allocation";
-  qa_guest_address result = qa_sparse_map(mem, &map_options);
+  qa_guest_core_address result = qa_sparse_map(mem, &map_options);
   bool found = false;
   for (size_t i = 0; i < mem->hint_count; i++) {
     if (mem->hints[i].alignment == alignment) {
@@ -520,8 +520,8 @@ qa_guest_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_
   return result;
 }
 
-qa_guest_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t base, size_t byte_length,
-                                     qa_guest_permissions permissions, const char *label, qa_guest_address source) {
+qa_guest_core_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t base, size_t byte_length,
+                                     qa_guest_permissions permissions, const char *label, qa_guest_core_address source) {
   available(mem, base, byte_length);
   size_t count = 0;
   chunk *chunks = chunks_of(mem, source, byte_length, false, QA_ACCESS_READ, &count);
@@ -532,13 +532,13 @@ qa_guest_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t base,
   return make_address(base);
 }
 
-void qa_sparse_unmap(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length) {
+void qa_sparse_unmap(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, false, QA_ACCESS_READ, &count);
   free(chunks);
   replace_range(mem, address.byte_offset, byte_length, NULL);
 }
-void qa_sparse_protect(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, qa_guest_permissions permissions) {
+void qa_sparse_protect(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, qa_guest_permissions permissions) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, false, QA_ACCESS_READ, &count);
   free(chunks);
@@ -554,12 +554,12 @@ size_t qa_sparse_mappings(const qa_sparse_guest_memory *mem, qa_guest_mapping *o
   }
   return mem->mapping_count;
 }
-void qa_sparse_check(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, qa_guest_access access) {
+void qa_sparse_check(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, qa_guest_access access) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, access, &count);
   free(chunks);
 }
-uint8_t *qa_sparse_borrow(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length) {
+uint8_t *qa_sparse_borrow(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_WRITE, &count);
   qa_sparse_backing *backing = NULL;
@@ -568,10 +568,10 @@ uint8_t *qa_sparse_borrow(qa_sparse_guest_memory *mem, qa_guest_address address,
   free(chunks);
   return backing == NULL ? &mem->dummy : backing->bytes + start;
 }
-void qa_sparse_copy(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t byte_length) {
+void qa_sparse_copy(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length) {
   read_bytes(mem, address, dest, byte_length);
 }
-void qa_sparse_copy_into(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest,
+void qa_sparse_copy_into(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest,
                          size_t dest_length, size_t dest_offset, size_t byte_length) {
   if (dest_offset > (size_t)QA_MAX_SAFE_INTEGER || byte_length > (size_t)QA_MAX_SAFE_INTEGER ||
       dest_offset + byte_length < dest_offset || dest_offset + byte_length > dest_length)
@@ -595,9 +595,9 @@ void qa_sparse_copy_into(qa_sparse_guest_memory *mem, qa_guest_address address, 
   }
   free(chunks);
 }
-int64_t qa_sparse_find_zero(qa_sparse_guest_memory *mem, qa_guest_address address, size_t maximum) {
+int64_t qa_sparse_find_zero(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t maximum) {
   size_t consumed = 0;
-  qa_guest_address cursor = address;
+  qa_guest_core_address cursor = address;
   while (consumed < maximum) {
     /* one checked byte at a time through the chunk walk, then scan the
      * remainder of that mapping directly (TS #singleMapping fast path) */
@@ -617,7 +617,7 @@ int64_t qa_sparse_find_zero(qa_sparse_guest_memory *mem, qa_guest_address addres
   }
   return -1;
 }
-void qa_sparse_fetch(qa_sparse_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t byte_length) {
+void qa_sparse_fetch(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_EXECUTE, &count);
   copy_chunks_into(chunks, count, dest);
@@ -637,16 +637,16 @@ uint8_t qa_sparse_fetch_byte(qa_sparse_guest_memory *mem, uint64_t byte_offset) 
   }
   return mapping->backing->bytes[mapping->backing_offset + (size_t)(byte_offset - mapping->base)];
 }
-void qa_sparse_write(qa_sparse_guest_memory *mem, qa_guest_address address, const uint8_t *bytes, size_t byte_length) {
+void qa_sparse_write(qa_sparse_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t byte_length) {
   write_bytes(mem, address, bytes, byte_length);
 }
-void qa_sparse_move(qa_sparse_guest_memory *mem, qa_guest_address destination, qa_guest_address source, size_t byte_length) {
+void qa_sparse_move(qa_sparse_guest_memory *mem, qa_guest_core_address destination, qa_guest_core_address source, size_t byte_length) {
   uint8_t *snapshot = (uint8_t *)xmalloc(byte_length);
   read_bytes(mem, source, snapshot, byte_length);
   write_bytes(mem, destination, snapshot, byte_length);
   free(snapshot);
 }
-void qa_sparse_fill(qa_sparse_guest_memory *mem, qa_guest_address address, size_t byte_length, uint32_t value) {
+void qa_sparse_fill(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, uint32_t value) {
   uint8_t byte = (uint8_t)(value & 255u);
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_WRITE, &count);
@@ -659,7 +659,7 @@ void qa_sparse_fill(qa_sparse_guest_memory *mem, qa_guest_address address, size_
   notify_write(mem, chunks, count);
   free(chunks);
 }
-qa_guest_write_observer_handle qa_sparse_observe_writes(qa_sparse_guest_memory *mem, qa_guest_address address,
+qa_guest_write_observer_handle qa_sparse_observe_writes(qa_sparse_guest_memory *mem, qa_guest_core_address address,
                                                         size_t byte_length, qa_guest_write_observer_fn notify, void *ctx) {
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_READ, &count);
@@ -699,7 +699,7 @@ bool qa_sparse_has_write_observers(const qa_sparse_guest_memory *mem) {
 }
 
 #define READ_SCALAR(name, type, n)                                                     \
-  type name(qa_sparse_guest_memory *mem, qa_guest_address address) {                   \
+  type name(qa_sparse_guest_memory *mem, qa_guest_core_address address) {                   \
     uint8_t bytes[n];                                                                  \
     read_bytes(mem, address, bytes, n);                                                \
     return (type)load_le(bytes, n);                                                    \
@@ -714,14 +714,14 @@ READ_SCALAR(qa_sparse_read_u64, uint64_t, 8)
 READ_SCALAR(qa_sparse_read_i64, int64_t, 8)
 #undef READ_SCALAR
 
-void qa_sparse_read_u64_words(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t *low, uint32_t *high) {
+void qa_sparse_read_u64_words(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t *low, uint32_t *high) {
   uint8_t bytes[8];
   read_bytes(mem, address, bytes, 8);
   uint32_t lo = (uint32_t)load_le(bytes, 4), hi = (uint32_t)load_le(bytes + 4, 4);
   *low = lo;
   *high = hi;
 }
-double qa_sparse_read_f32(qa_sparse_guest_memory *mem, qa_guest_address address) {
+double qa_sparse_read_f32(qa_sparse_guest_memory *mem, qa_guest_core_address address) {
   uint8_t bytes[4];
   read_bytes(mem, address, bytes, 4);
   float value;
@@ -729,7 +729,7 @@ double qa_sparse_read_f32(qa_sparse_guest_memory *mem, qa_guest_address address)
   memcpy(&value, &bits, 4);
   return (double)value;
 }
-qa_vec3 qa_sparse_read_f32_vector(qa_sparse_guest_memory *mem, qa_guest_address address) {
+qa_vec3 qa_sparse_read_f32_vector(qa_sparse_guest_memory *mem, qa_guest_core_address address) {
   uint8_t bytes[12];
   read_bytes(mem, address, bytes, 12);
   qa_vec3 result;
@@ -743,7 +743,7 @@ qa_vec3 qa_sparse_read_f32_vector(qa_sparse_guest_memory *mem, qa_guest_address 
   result.z = (double)components[2];
   return result;
 }
-double qa_sparse_read_f64(qa_sparse_guest_memory *mem, qa_guest_address address) {
+double qa_sparse_read_f64(qa_sparse_guest_memory *mem, qa_guest_core_address address) {
   uint8_t bytes[8];
   read_bytes(mem, address, bytes, 8);
   double value;
@@ -751,12 +751,12 @@ double qa_sparse_read_f64(qa_sparse_guest_memory *mem, qa_guest_address address)
   memcpy(&value, &bits, 8);
   return value;
 }
-bool qa_sparse_read_pointer(qa_sparse_guest_memory *mem, qa_guest_address address, qa_guest_address *out) {
+bool qa_sparse_read_pointer(qa_sparse_guest_memory *mem, qa_guest_core_address address, qa_guest_core_address *out) {
   return qa_sparse_pointer(mem, mem->base.pointer_bytes == 4 ? qa_sparse_read_u32(mem, address)
                                                              : qa_sparse_read_u64(mem, address), out);
 }
 #define WRITE_SCALAR(name, type, n)                                                    \
-  void name(qa_sparse_guest_memory *mem, qa_guest_address address, type value) {       \
+  void name(qa_sparse_guest_memory *mem, qa_guest_core_address address, type value) {       \
     uint8_t bytes[n];                                                                  \
     store_le(bytes, (uint64_t)value, n);                                               \
     write_bytes(mem, address, bytes, n);                                               \
@@ -771,13 +771,13 @@ WRITE_SCALAR(qa_sparse_write_u64, uint64_t, 8)
 WRITE_SCALAR(qa_sparse_write_i64, int64_t, 8)
 #undef WRITE_SCALAR
 
-void qa_sparse_write_u64_words(qa_sparse_guest_memory *mem, qa_guest_address address, uint32_t low, uint32_t high) {
+void qa_sparse_write_u64_words(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint32_t low, uint32_t high) {
   uint8_t bytes[8];
   store_le(bytes, low, 4);
   store_le(bytes + 4, high, 4);
   write_bytes(mem, address, bytes, 8);
 }
-void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_address address, double value) {
+void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value) {
   float narrowed = (float)value;
   uint32_t bits;
   memcpy(&bits, &narrowed, 4);
@@ -785,14 +785,14 @@ void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_address address, 
   store_le(bytes, bits, 4);
   write_bytes(mem, address, bytes, 4);
 }
-void qa_sparse_write_f64(qa_sparse_guest_memory *mem, qa_guest_address address, double value) {
+void qa_sparse_write_f64(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value) {
   uint64_t bits;
   memcpy(&bits, &value, 8);
   uint8_t bytes[8];
   store_le(bytes, bits, 8);
   write_bytes(mem, address, bytes, 8);
 }
-void qa_sparse_write_pointer(qa_sparse_guest_memory *mem, qa_guest_address address, bool has_value, qa_guest_address value) {
+void qa_sparse_write_pointer(qa_sparse_guest_memory *mem, qa_guest_core_address address, bool has_value, qa_guest_core_address value) {
   if (has_value) range_check(mem, value.byte_offset, 0, QA_FAULT_ACCESS_WRITE);
   uint64_t raw = has_value ? value.byte_offset : 0;
   if (mem->base.pointer_bytes == 4) qa_sparse_write_u32(mem, address, (uint32_t)raw);
@@ -995,39 +995,39 @@ bool qa_sparse_guest_memory_restore(qa_sparse_guest_memory *out, const qa_guest_
 }
 
 /* --- registers.h vtable wiring --- */
-static void vt_copy(void *ctx, qa_guest_address a, uint8_t *dest, size_t len) {
+static void vt_copy(void *ctx, qa_guest_core_address a, uint8_t *dest, size_t len) {
   qa_sparse_copy((qa_sparse_guest_memory *)ctx, a, dest, len);
 }
-static void vt_write(void *ctx, qa_guest_address a, const uint8_t *bytes, size_t len) {
+static void vt_write(void *ctx, qa_guest_core_address a, const uint8_t *bytes, size_t len) {
   qa_sparse_write((qa_sparse_guest_memory *)ctx, a, bytes, len);
 }
-static void vt_copy_into(void *ctx, qa_guest_address a, uint8_t *dest, size_t off, size_t len) {
+static void vt_copy_into(void *ctx, qa_guest_core_address a, uint8_t *dest, size_t off, size_t len) {
   /* The vtable carries no destination length; only the written range is
    * known, so the TS destination-storage RangeError can only check the
    * safe-integer bounds here (qa_sparse_copy_into checks fully). */
   qa_sparse_copy_into((qa_sparse_guest_memory *)ctx, a, dest, off + len, off, len);
 }
-static uint8_t vt_read_u8(void *ctx, qa_guest_address a) { return qa_sparse_read_u8((qa_sparse_guest_memory *)ctx, a); }
-static uint16_t vt_read_u16(void *ctx, qa_guest_address a) { return qa_sparse_read_u16((qa_sparse_guest_memory *)ctx, a); }
-static uint32_t vt_read_u32(void *ctx, qa_guest_address a) { return qa_sparse_read_u32((qa_sparse_guest_memory *)ctx, a); }
-static uint64_t vt_read_u64(void *ctx, qa_guest_address a) { return qa_sparse_read_u64((qa_sparse_guest_memory *)ctx, a); }
-static void vt_write_u8(void *ctx, qa_guest_address a, uint8_t v) { qa_sparse_write_u8((qa_sparse_guest_memory *)ctx, a, v); }
-static void vt_write_u16(void *ctx, qa_guest_address a, uint16_t v) { qa_sparse_write_u16((qa_sparse_guest_memory *)ctx, a, v); }
-static void vt_write_u32(void *ctx, qa_guest_address a, uint32_t v) { qa_sparse_write_u32((qa_sparse_guest_memory *)ctx, a, v); }
-static void vt_write_u64(void *ctx, qa_guest_address a, uint64_t v) { qa_sparse_write_u64((qa_sparse_guest_memory *)ctx, a, v); }
-static bool vt_pointer(void *ctx, uint64_t raw, qa_guest_address *out) {
+static uint8_t vt_read_u8(void *ctx, qa_guest_core_address a) { return qa_sparse_read_u8((qa_sparse_guest_memory *)ctx, a); }
+static uint16_t vt_read_u16(void *ctx, qa_guest_core_address a) { return qa_sparse_read_u16((qa_sparse_guest_memory *)ctx, a); }
+static uint32_t vt_read_u32(void *ctx, qa_guest_core_address a) { return qa_sparse_read_u32((qa_sparse_guest_memory *)ctx, a); }
+static uint64_t vt_read_u64(void *ctx, qa_guest_core_address a) { return qa_sparse_read_u64((qa_sparse_guest_memory *)ctx, a); }
+static void vt_write_u8(void *ctx, qa_guest_core_address a, uint8_t v) { qa_sparse_write_u8((qa_sparse_guest_memory *)ctx, a, v); }
+static void vt_write_u16(void *ctx, qa_guest_core_address a, uint16_t v) { qa_sparse_write_u16((qa_sparse_guest_memory *)ctx, a, v); }
+static void vt_write_u32(void *ctx, qa_guest_core_address a, uint32_t v) { qa_sparse_write_u32((qa_sparse_guest_memory *)ctx, a, v); }
+static void vt_write_u64(void *ctx, qa_guest_core_address a, uint64_t v) { qa_sparse_write_u64((qa_sparse_guest_memory *)ctx, a, v); }
+static bool vt_pointer(void *ctx, uint64_t raw, qa_guest_core_address *out) {
   return qa_sparse_pointer((qa_sparse_guest_memory *)ctx, raw, out);
 }
-static qa_guest_address vt_offset(void *ctx, qa_guest_address a, int64_t d) {
+static qa_guest_core_address vt_offset(void *ctx, qa_guest_core_address a, int64_t d) {
   return qa_sparse_offset((qa_sparse_guest_memory *)ctx, a, d);
 }
-static void vt_check(void *ctx, qa_guest_address a, size_t len, qa_guest_access access) {
+static void vt_check(void *ctx, qa_guest_core_address a, size_t len, qa_guest_access access) {
   qa_sparse_check((qa_sparse_guest_memory *)ctx, a, len, access);
 }
-static void vt_read_words(void *ctx, qa_guest_address a, uint32_t *low, uint32_t *high) {
+static void vt_read_words(void *ctx, qa_guest_core_address a, uint32_t *low, uint32_t *high) {
   qa_sparse_read_u64_words((qa_sparse_guest_memory *)ctx, a, low, high);
 }
-static void vt_write_words(void *ctx, qa_guest_address a, uint32_t low, uint32_t high) {
+static void vt_write_words(void *ctx, qa_guest_core_address a, uint32_t low, uint32_t high) {
   qa_sparse_write_u64_words((qa_sparse_guest_memory *)ctx, a, low, high);
 }
 

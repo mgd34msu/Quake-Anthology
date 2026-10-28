@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/rerelease_presentation/fog.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
@@ -27,7 +28,7 @@ typedef struct qa_app_rerelease_event {
   bool has_recipient; qa_actor_id recipient;
   qa_actor_id actor, item, target;
   bool visible;
-  const void *fog_value; double fog_transition_milliseconds;
+  qa_q2_fog_state fog_value; double fog_transition_milliseconds;
   const char *text, *name;
   const char *const *args; size_t arg_count;
   double sky_rotation; bool sky_auto_rotate; qa_vec3 sky_axis;
@@ -43,10 +44,6 @@ typedef struct qa_app_rerelease_print {
 } qa_app_rerelease_print;
 typedef struct qa_app_rerelease_host {
   void *ctx;
-  /* RereleaseFog mirror (fog.ts): one host fog per seat index. */
-  void (*fog_reset)(void *ctx, size_t seat_index);
-  void (*fog_receive)(void *ctx, size_t seat_index, const void *value, double transition_ms, double seconds);
-  bool (*fog_current)(void *ctx, size_t seat_index, double seconds, qa_q2_fog_operation *out);
   /* NativeLanguageSettings catalog mirror. */
   const void *(*catalog)(void *ctx, qa_seat_id seat, const char *language, qa_content_id content);
   void (*catalogs_clear)(void *ctx, qa_seat_id seat);

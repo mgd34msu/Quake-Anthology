@@ -248,6 +248,17 @@ bool qa_bot_script_sources_free(qa_bot_script_sources *s, int64_t handle) {
   return true;
 }
 
+typedef struct read_next_ctx {
+  qa_ui_script_source_reader *source;
+  qa_ui_script_token_record record;
+  bool read;
+} read_next_ctx;
+
+static void run_read_next(void *ctx) {
+  read_next_ctx *next = ctx;
+  next->read = qa_ui_script_source_reader_next(next->source, &next->record);
+}
+
 bool qa_bot_script_sources_read_token_result(qa_bot_script_sources *s, int64_t handle,
                                              qa_ui_source_token_memory **out_token,
                                              bool *out_read) {
@@ -255,11 +266,11 @@ bool qa_bot_script_sources_read_token_result(qa_bot_script_sources *s, int64_t h
   if (handle < 1 || handle >= QA_BOT_MAX_SOURCE_FILES) return false;
   qa_ui_script_source_reader *source = s->handles[handle];
   if (source == NULL) return false;
-  /* A TS source failure returns {read:false, token}; the C engine
-   * aborts uncaught failures instead. */
-  qa_ui_script_token_record record;
-  bool read = qa_ui_script_source_reader_next(source, &record);
-  if (read) qa_ui_script_token_record_release(&record);
+  /* A TS source failure returns {read:false, token: rawToken}. */
+  read_next_ctx next = {source, {0}, false};
+  bool completed = qa_ui_script_source_reader_catch(source, run_read_next, &next);
+  bool read = completed && next.read;
+  if (read) qa_ui_script_token_record_release(&next.record);
   *out_token = qa_ui_script_source_reader_raw_token(source);
   *out_read = read;
   return true;

@@ -57,7 +57,7 @@ typedef struct qa_lmctf_event {
 typedef struct qa_lmctf_hooks {
   void *ctx;
   qa_q2_item_module *items;
-  qa_q2mp_weapons *weapons;
+  qa_q2mp_weapons_port *weapons;
   qa_q2mp_player_state *(*player)(void *ctx, qa_actor_id actor);
   void (*set_skin)(void *ctx, qa_actor_id actor, const char *skin);
   void (*spawn_player)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game);

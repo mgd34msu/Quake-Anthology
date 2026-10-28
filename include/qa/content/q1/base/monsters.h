@@ -37,7 +37,7 @@ typedef struct qa_q1_monster_services {
 struct qa_q1_base_monster {
   qa_q1b_game *game;
   qa_q1b_actor *entity;
-  const qa_q1_monster_species *spec;
+  const qa_q1_base_monster_species *spec;
   qa_q1_monster_services services;
   bool has_source;
   qa_q1_base_monster_source source;
@@ -55,7 +55,7 @@ struct qa_q1_base_monster {
 
 /* source NULL = TS undefined. */
 qa_q1_base_monster *qa_q1_base_monster_create(qa_q1b_game *game, qa_q1b_actor *entity,
-                                              const qa_q1_monster_species *spec,
+                                              const qa_q1_base_monster_species *spec,
                                               qa_q1_monster_services services,
                                               const qa_q1_base_monster_source *source);
 void qa_q1_base_monster_destroy(qa_q1_base_monster *monster);

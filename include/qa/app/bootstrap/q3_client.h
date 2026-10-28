@@ -7,6 +7,7 @@
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/q3_client/source.h"
 #include "qa/contracts/common.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
@@ -44,7 +45,7 @@ typedef struct qa_app_q3_client_options {
   qa_cvar_registry *cvars;          /* cvarOwner at construction */
   qa_cvar_registry *time_cvars;     /* NULL = TS undefined */
   qa_seat_id seat;
-  const qa_app_q3_client_source *local_source; /* NULL = remote */
+  qa_app_application_q3_source *local_source; /* NULL = remote (TS localSource) */
   const char *input_kind;           /* movement input kind */
 } qa_app_q3_client_options;
 /* C-only host aggregate for ApplicationQ3Client (no TS host type in

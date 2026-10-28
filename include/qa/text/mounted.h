@@ -45,25 +45,25 @@ typedef struct qa_mounted_content {
 } qa_mounted_content;
 
 /* The SceneImageRegistry surface mounted.ts uses. */
-typedef struct qa_scene_image_registry {
+typedef struct qa_mounted_scene_image_registry {
   void *ctx;
   qa_renderer_image (*register_image)(void *ctx, const char *name,
                                       const qa_render_image *content,
                                       qa_texture_sampling sampling);
   void (*release)(void *ctx, qa_renderer_image image);
-} qa_scene_image_registry;
+} qa_mounted_scene_image_registry;
 
 /* Backing storage for the services qa_create_mounted_text_fonts
  * builds; keep alive while the registry is in use. */
 typedef struct qa_mounted_text_fonts {
   qa_mounted_content content;
-  qa_scene_image_registry images;
+  qa_mounted_scene_image_registry images;
 } qa_mounted_text_fonts;
 
 /* TS createMountedTextFonts. */
 void qa_create_mounted_text_fonts(qa_mounted_text_fonts *mounted,
                                   qa_mounted_content content,
-                                  qa_scene_image_registry images,
+                                  qa_mounted_scene_image_registry images,
                                   qa_text_font_registry *out);
 
 typedef struct qa_mounted_file_entry {

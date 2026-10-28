@@ -1,0 +1,97 @@
+/* Port of src/content/q1/foundation/precache-world.ts. GPL-2.0-or-later. */
+#include "qa/content/q1/foundation/precache_world.h"
+
+#include "qa/content/q1/foundation/entity_services.h"
+
+/* Runtime worldspawn declarations, in source order. */
+void qa_q1_precache_world(qa_q1_services *game) {
+  (void)qa_q1_services_precache_sound(game, "weapons/r_exp3.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/rocket1i.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/sgun1.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/guncock.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/ric1.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/ric2.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/ric3.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/spike2.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/tink1.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/grenade.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/bounce.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/shotgn2.wav");
+  (void)qa_q1_services_precache_sound(game, "demon/dland2.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/h2ohit1.wav");
+  (void)qa_q1_services_precache_sound(game, "items/itembk2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/plyrjmp8.wav");
+  (void)qa_q1_services_precache_sound(game, "player/land.wav");
+  (void)qa_q1_services_precache_sound(game, "player/land2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/drown1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/drown2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/gasp1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/gasp2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/h2odeath.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/talk.wav");
+  (void)qa_q1_services_precache_sound(game, "player/teledth1.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/r_tele1.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/r_tele2.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/r_tele3.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/r_tele4.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/r_tele5.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/lock4.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/pkup.wav");
+  (void)qa_q1_services_precache_sound(game, "items/armor1.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/lhit.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/lstart.wav");
+  (void)qa_q1_services_precache_sound(game, "items/damage3.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/power.wav");
+  (void)qa_q1_services_precache_sound(game, "player/gib.wav");
+  (void)qa_q1_services_precache_sound(game, "player/udeath.wav");
+  (void)qa_q1_services_precache_sound(game, "player/tornoff2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain3.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain4.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain5.wav");
+  (void)qa_q1_services_precache_sound(game, "player/pain6.wav");
+  (void)qa_q1_services_precache_sound(game, "player/death1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/death2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/death3.wav");
+  (void)qa_q1_services_precache_sound(game, "player/death4.wav");
+  (void)qa_q1_services_precache_sound(game, "player/death5.wav");
+  (void)qa_q1_services_precache_sound(game, "weapons/ax1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/axhit1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/axhit2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/h2ojump.wav");
+  (void)qa_q1_services_precache_sound(game, "player/slimbrn2.wav");
+  (void)qa_q1_services_precache_sound(game, "player/inh2o.wav");
+  (void)qa_q1_services_precache_sound(game, "player/inlava.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/outwater.wav");
+  (void)qa_q1_services_precache_sound(game, "player/lburn1.wav");
+  (void)qa_q1_services_precache_sound(game, "player/lburn2.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/water1.wav");
+  (void)qa_q1_services_precache_sound(game, "misc/water2.wav");
+  (void)qa_q1_services_precache_model(game, "progs/player.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/eyes.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/h_player.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/gib1.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/gib2.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/gib3.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/s_bubble.spr");
+  (void)qa_q1_services_precache_model(game, "progs/s_explod.spr");
+  (void)qa_q1_services_precache_model(game, "progs/v_axe.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_shot.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_nail.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_rock.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_shot2.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_nail2.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_rock2.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/bolt.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/bolt2.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/bolt3.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/lavaball.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/missile.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/grenade.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/spike.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/s_spike.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/backpack.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/zom_gib.mdl");
+  (void)qa_q1_services_precache_model(game, "progs/v_light.mdl");
+}

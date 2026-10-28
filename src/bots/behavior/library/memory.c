@@ -130,3 +130,167 @@ void qa_bot_memory_dump_memory(qa_bot_memory *m) {
     if (r->live && r->kind == QA_BOT_MEMORY_HEAP)
       release_rec(m, r);
 }
+
+/* Records are prepended; the TS live Map iterates allocation order. */
+bool qa_bot_memory_checkpoint(qa_bot_memory *m, qa_bot_memory_capture *out) {
+  memset(out, 0, sizeof *out);
+  if (m->disposed) qa_range_error("Cannot checkpoint disposed bot memory");
+  out->allocations =
+      calloc(m->live_count == 0 ? 1 : m->live_count, sizeof *out->allocations);
+  if (out->allocations == NULL) return false;
+  out->count = m->live_count;
+  size_t slot = m->live_count;
+  for (rec *r = m->records; r; r = r->next) {
+    if (!r->live) continue;
+    qa_bot_memory_allocation *a = &out->allocations[--slot];
+    a->bytes = r->backing + 4;
+    a->length = r->size;
+    a->record = r;
+  }
+  qa_save_value *image = qa_save_value_object();
+  qa_save_value *allocations = qa_save_value_array();
+  qa_save_value *version = qa_save_value_number(1);
+  if (image == NULL || allocations == NULL || version == NULL ||
+      !qa_save_value_set(image, "version", version)) {
+    qa_save_value_free(image);
+    qa_save_value_free(allocations);
+    qa_save_value_free(version);
+    qa_bot_memory_capture_destroy(out);
+    return false;
+  }
+  for (size_t i = 0; i < out->count; i++) {
+    rec *r = out->allocations[i].record;
+    qa_save_value *row = qa_save_value_object();
+    qa_save_value *kind =
+        qa_save_value_string(r->kind == QA_BOT_MEMORY_HEAP ? "heap" : "hunk");
+    qa_save_value *bytes =
+        qa_save_value_bytes(out->allocations[i].bytes, out->allocations[i].length);
+    /* qa_bot_memory_allocate takes no provenance, so it saves as null. */
+    qa_save_value *provenance = qa_save_value_null();
+    if (row == NULL || kind == NULL || bytes == NULL || provenance == NULL ||
+        !qa_save_value_set(row, "kind", kind) ||
+        !qa_save_value_set(row, "bytes", bytes) ||
+        !qa_save_value_set(row, "provenance", provenance) ||
+        !qa_save_value_push(allocations, row)) {
+      qa_save_value_free(row);
+      qa_save_value_free(kind);
+      qa_save_value_free(bytes);
+      qa_save_value_free(provenance);
+      qa_save_value_free(allocations);
+      qa_save_value_free(image);
+      qa_bot_memory_capture_destroy(out);
+      return false;
+    }
+  }
+  if (!qa_save_value_set(image, "allocations", allocations)) {
+    qa_save_value_free(allocations);
+    qa_save_value_free(image);
+    qa_bot_memory_capture_destroy(out);
+    return false;
+  }
+  out->image = image;
+  return true;
+}
+
+void qa_bot_memory_capture_destroy(qa_bot_memory_capture *capture) {
+  qa_save_value_free(capture->image);
+  free(capture->allocations);
+  memset(capture, 0, sizeof *capture);
+}
+
+int64_t qa_bot_memory_capture_reference(qa_bot_memory_capture *capture,
+                                        qa_bot_memory_allocation *allocation) {
+  for (size_t i = 0; i < capture->count; i++) {
+    qa_bot_memory_allocation *a = &capture->allocations[i];
+    bool same = allocation != NULL && allocation->record != NULL
+                    ? allocation->record == a->record
+                    : allocation != NULL && allocation->bytes == a->bytes;
+    if (same) return (int64_t)i;
+  }
+  qa_range_error("Bot checkpoint references an unowned or freed allocation");
+}
+
+static void field_of(const qa_save_reader *reader, const char *name,
+                     qa_save_reader *out) {
+  if (!qa_save_reader_field(reader, name, out)) qa_range_error("out of memory");
+}
+
+void qa_bot_memory_restore(qa_bot_memory *m, const qa_save_value *value,
+                           qa_bot_memory_restored *out) {
+  memset(out, 0, sizeof *out);
+  qa_save_reader reader, allocations_reader;
+  if (!qa_save_reader_init(&reader, value, "bot.memory"))
+    qa_range_error("out of memory");
+  qa_save_reader version_reader;
+  field_of(&reader, "version", &version_reader);
+  qa_save_reader_literal_number(&version_reader, 1);
+  qa_save_reader_destroy(&version_reader);
+  field_of(&reader, "allocations", &allocations_reader);
+  size_t count = qa_save_reader_list_count(&allocations_reader);
+  const char **kinds = calloc(count == 0 ? 1 : count, sizeof *kinds);
+  const uint8_t **bytes = calloc(count == 0 ? 1 : count, sizeof *bytes);
+  size_t *lengths = calloc(count == 0 ? 1 : count, sizeof *lengths);
+  if (kinds == NULL || bytes == NULL || lengths == NULL)
+    qa_range_error("out of memory");
+  static const char *const kind_choices[] = {"heap", "hunk"};
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader item, field;
+    if (!qa_save_reader_item(&allocations_reader, i, &item))
+      qa_range_error("out of memory");
+    field_of(&item, "kind", &field);
+    kinds[i] = qa_save_reader_choice_string(&field, kind_choices, 2);
+    qa_save_reader_destroy(&field);
+    field_of(&item, "bytes", &field);
+    bytes[i] = qa_save_reader_bytes(&field, &lengths[i]);
+    qa_save_reader_destroy(&field);
+    field_of(&item, "provenance", &field);
+    if (!qa_save_reader_is_null(&field)) {
+      /* Provenance is validated as in TS; qa_bot_memory_allocate
+       * takes no provenance, so the values are then dropped. */
+      qa_save_reader sub;
+      field_of(&field, "file", &sub);
+      qa_save_reader_string(&sub);
+      qa_save_reader_destroy(&sub);
+      field_of(&field, "line", &sub);
+      qa_save_reader_integer_min(&sub, 0);
+      qa_save_reader_destroy(&sub);
+      field_of(&field, "label", &sub);
+      qa_save_reader_string(&sub);
+      qa_save_reader_destroy(&sub);
+    }
+    qa_save_reader_destroy(&field);
+    qa_save_reader_destroy(&item);
+  }
+  qa_save_reader_destroy(&allocations_reader);
+  qa_save_reader_destroy(&reader);
+  if (m->disposed || m->live_count != 0)
+    qa_range_error("Bot memory restore requires a fresh owner and supported image");
+  for (size_t i = 0; i < count; i++)
+    if (lengths[i] > 2147483647u - 4u) qa_range_error("Invalid saved bot allocation");
+  out->allocations = calloc(count == 0 ? 1 : count, sizeof *out->allocations);
+  if (out->allocations == NULL) qa_range_error("out of memory");
+  out->count = count;
+  for (size_t i = 0; i < count; i++) {
+    qa_bot_memory_kind kind =
+        strcmp(kinds[i], "heap") == 0 ? QA_BOT_MEMORY_HEAP : QA_BOT_MEMORY_HUNK;
+    if (!qa_bot_memory_allocate(m, (int64_t)lengths[i], kind, false,
+                                &out->allocations[i]))
+      qa_range_error("out of memory");
+    memcpy(out->allocations[i].bytes, bytes[i], lengths[i]);
+  }
+  free(kinds);
+  free(bytes);
+  free(lengths);
+}
+
+void qa_bot_memory_restored_destroy(qa_bot_memory_restored *restored) {
+  free(restored->allocations);
+  memset(restored, 0, sizeof *restored);
+}
+
+qa_bot_memory_allocation qa_bot_memory_restored_allocation(
+    qa_bot_memory_restored *restored, int64_t reference) {
+  if (reference < 0 || (uint64_t)reference >= restored->count)
+    qa_range_error("Saved bot allocation reference is invalid");
+  return restored->allocations[reference];
+}

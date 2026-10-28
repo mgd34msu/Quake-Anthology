@@ -72,7 +72,9 @@ struct qa_q1_services {
   struct { qa_actor_id actor; bool has; } *inventory_owners; size_t inventory_owner_count, inventory_owner_capacity;
 };
 
-/* False only on OOM. Registers SUB_Remove/SUB_Null/DelayThink + module callbacks. */
+/* False only on OOM. Registers SUB_Remove/SUB_Null/DelayThink +
+ * mover/spawn/pickup/monster module callbacks (weapon callbacks
+ * join with the weapons.ts fire paths). */
 bool qa_q1_services_init(qa_q1_services *game, qa_q1_host host, qa_q1_options options);
 void qa_q1_services_free(qa_q1_services *game);
 qa_provider_id qa_q1_services_provider(const qa_q1_services *game);

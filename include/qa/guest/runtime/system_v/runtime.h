@@ -26,7 +26,7 @@ const char *qa_system_v_lifecycle_state_name(qa_system_v_lifecycle_state state);
 typedef struct qa_system_v_lifecycle_trace_entry {
   qa_guest_module_identity image;
   bool finalize; /* false: initialize */
-  qa_guest_address target;
+  qa_guest_core_address target;
 } qa_system_v_lifecycle_trace_entry;
 
 typedef struct qa_system_v_load_options {
@@ -41,13 +41,13 @@ struct qa_system_v_guest_runtime {
   qa_system_v_runtime_options options; /* borrowed pointers, as TS options */
   qa_system_v_service_host host;
   qa_elf_unique_symbols unique_symbols;
-  qa_guest_address thread_pointer;
-  qa_guest_address empty_string_representation;
+  qa_guest_core_address thread_pointer;
+  qa_guest_core_address empty_string_representation;
   qa_system_v_iostreams *iostreams; /* owned */
   /* private state (runtime.c layout companions are opaque pointers) */
-  qa_guest_address errno_address_;
-  qa_guest_address dtv;
-  qa_guest_address argv_address, envp_address;
+  qa_guest_core_address errno_address_;
+  qa_guest_core_address dtv;
+  qa_guest_core_address argv_address, envp_address;
   void *symbols; size_t symbol_count, symbol_cap;
   void *images; size_t image_count, image_cap;
   void *heap; size_t heap_count, heap_cap;
@@ -90,7 +90,7 @@ bool qa_system_v_guest_runtime_resolve_symbol_size(qa_system_v_guest_runtime *ru
 void qa_system_v_guest_runtime_load(qa_system_v_guest_runtime *runtime,
                                     const qa_system_v_load_options *options,
                                     qa_elf_guest_image *out_image);
-qa_guest_address qa_system_v_guest_runtime_tls_address(qa_system_v_guest_runtime *runtime,
+qa_guest_core_address qa_system_v_guest_runtime_tls_address(qa_system_v_guest_runtime *runtime,
                                                        uint64_t module_id, int64_t offset);
 void qa_system_v_guest_runtime_initialize(qa_system_v_guest_runtime *runtime, qa_elf_guest_image *image,
                                           const qa_system_v_initialize_options *options);

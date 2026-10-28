@@ -10,14 +10,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct qa_q3_client_session {
+typedef struct qa_persist_q3_client_session {
   int32_t team, spectator_time, spectator_state, spectator_client;
   int32_t wins, losses, team_leader;
-} qa_q3_client_session;
+} qa_persist_q3_client_session;
 
-qa_q3_client_session qa_decode_q3_client_session(const char *value, size_t length);
+qa_persist_q3_client_session qa_decode_q3_client_session(const char *value, size_t length);
 /* Malloc'd "a b c ..." text; NULL only on OOM. */
-char *qa_encode_q3_client_session(qa_q3_client_session session);
+char *qa_encode_q3_client_session(qa_persist_q3_client_session session);
 
 typedef struct qa_q3_session_cvars {
   void *ctx;
@@ -27,7 +27,7 @@ typedef struct qa_q3_session_cvars {
 
 typedef struct qa_q3_session_save_client {
   int64_t slot;
-  qa_q3_client_session session;
+  qa_persist_q3_client_session session;
 } qa_q3_session_save_client;
 typedef struct qa_q3_session_save {
   int32_t game_type;

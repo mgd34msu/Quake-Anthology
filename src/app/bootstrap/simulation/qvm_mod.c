@@ -9,6 +9,7 @@ typedef struct prepared_ctx {
   qa_module_identity modules[1];
   char *instance_provider;
   qa_resolved_qvm_artifact artifact;
+  qa_qvm_artifact_bridge bridge; /* lossless qa_qvmy_artifact view */
   bool has_presentation_artifact;
   qa_resolved_qvm_artifact presentation_artifact;
 } prepared_ctx;
@@ -19,6 +20,8 @@ static void validate_state(void *ctx, qa_mod_private_checkpoint state) {
     qa_range_error("Missing QVM gameplay mod checkpoint");
   if (p->options.validate_checkpoint)
     p->options.validate_checkpoint(p->options.host_ctx, &p->artifact, &p->options.declaration, &state.guests[0]);
+  else
+    qa_qvm_validate_mod_checkpoint(&p->bridge.view, &p->options.declaration, &state.guests[0]);
 }
 static qa_mod_runtime initialize_mod(void *ctx, qa_mod_initialization *context) {
   prepared_ctx *p = ctx;
@@ -40,7 +43,9 @@ qa_prepared_mod qa_app_sim_prepare_qvm_mod(qa_app_sim_prepare_qvm_mod_options op
   resolve.abi_profile = options.declaration.abi_profile;
   if (!qa_qvm_resolve_artifact(resolve, &p->artifact)) qa_range_error("Out of memory");
   if (p->artifact.is_typescript) qa_range_error("Gameplay mod callbacks require their authored QVM executable");
+  if (!qa_qvm_artifact_bridge_init(&p->bridge, &p->artifact)) qa_range_error("Out of memory");
   if (options.validate) options.validate(options.host_ctx, &p->artifact, &options.declaration);
+  else qa_qvm_validate_mod(&p->bridge.view, &options.declaration);
   qa_prepared_mod out; memset(&out, 0, sizeof out);
   out.ctx = p;
   out.description = options.description;
@@ -89,6 +94,7 @@ qa_prepared_mod qa_app_sim_prepare_mounted_qvm_mod(qa_app_sim_prepare_qvm_mod_op
 void qa_app_sim_prepared_qvm_mod_free(qa_prepared_mod *prepared) {
   prepared_ctx *p = prepared->ctx;
   if (!p) return;
+  qa_qvm_artifact_bridge_destroy(&p->bridge);
   qa_resolved_qvm_artifact_destroy(&p->artifact);
   if (p->has_presentation_artifact) qa_resolved_qvm_artifact_destroy(&p->presentation_artifact);
   free(p->instance_provider);

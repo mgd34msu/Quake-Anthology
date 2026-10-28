@@ -133,7 +133,7 @@ bool qa_managed_guest_processor(const qa_guest_processor_state *state);
  * used by floating-point/raw-sse.ts. Optional ops may be NULL; the
  * qa_memory_* helpers fall back to copy/write/read_u64/write_u64.
  */
-typedef struct qa_guest_address { uint64_t byte_offset; } qa_guest_address;
+typedef struct qa_guest_core_address { uint64_t byte_offset; } qa_guest_core_address;
 
 typedef enum qa_guest_access { QA_ACCESS_READ = 0, QA_ACCESS_WRITE = 1, QA_ACCESS_EXECUTE = 2 } qa_guest_access;
 
@@ -141,40 +141,40 @@ typedef struct qa_mapped_guest_memory {
   void *ctx;
   int pointer_bytes; /* 4 | 8 */
   bool managed_sparse;
-  void (*copy)(void *ctx, qa_guest_address address, uint8_t *dest, size_t len);
-  void (*write)(void *ctx, qa_guest_address address, const uint8_t *bytes, size_t len);
-  void (*copy_into)(void *ctx, qa_guest_address address, uint8_t *dest, size_t dest_offset, size_t len);
-  uint8_t (*read_u8)(void *ctx, qa_guest_address address);
-  uint16_t (*read_u16)(void *ctx, qa_guest_address address);
-  uint32_t (*read_u32)(void *ctx, qa_guest_address address);
-  uint64_t (*read_u64)(void *ctx, qa_guest_address address);
-  void (*write_u8)(void *ctx, qa_guest_address address, uint8_t value);
-  void (*write_u16)(void *ctx, qa_guest_address address, uint16_t value);
-  void (*write_u32)(void *ctx, qa_guest_address address, uint32_t value);
-  void (*write_u64)(void *ctx, qa_guest_address address, uint64_t value);
-  bool (*pointer)(void *ctx, uint64_t raw, qa_guest_address *out); /* false = TS null */
-  qa_guest_address (*offset)(void *ctx, qa_guest_address address, int64_t displacement);
-  void (*check)(void *ctx, qa_guest_address address, size_t len, qa_guest_access access);
-  void (*read_u64_words)(void *ctx, qa_guest_address address, uint32_t *low, uint32_t *high);
-  void (*write_u64_words)(void *ctx, qa_guest_address address, uint32_t low, uint32_t high);
+  void (*copy)(void *ctx, qa_guest_core_address address, uint8_t *dest, size_t len);
+  void (*write)(void *ctx, qa_guest_core_address address, const uint8_t *bytes, size_t len);
+  void (*copy_into)(void *ctx, qa_guest_core_address address, uint8_t *dest, size_t dest_offset, size_t len);
+  uint8_t (*read_u8)(void *ctx, qa_guest_core_address address);
+  uint16_t (*read_u16)(void *ctx, qa_guest_core_address address);
+  uint32_t (*read_u32)(void *ctx, qa_guest_core_address address);
+  uint64_t (*read_u64)(void *ctx, qa_guest_core_address address);
+  void (*write_u8)(void *ctx, qa_guest_core_address address, uint8_t value);
+  void (*write_u16)(void *ctx, qa_guest_core_address address, uint16_t value);
+  void (*write_u32)(void *ctx, qa_guest_core_address address, uint32_t value);
+  void (*write_u64)(void *ctx, qa_guest_core_address address, uint64_t value);
+  bool (*pointer)(void *ctx, uint64_t raw, qa_guest_core_address *out); /* false = TS null */
+  qa_guest_core_address (*offset)(void *ctx, qa_guest_core_address address, int64_t displacement);
+  void (*check)(void *ctx, qa_guest_core_address address, size_t len, qa_guest_access access);
+  void (*read_u64_words)(void *ctx, qa_guest_core_address address, uint32_t *low, uint32_t *high);
+  void (*write_u64_words)(void *ctx, qa_guest_core_address address, uint32_t low, uint32_t high);
 } qa_mapped_guest_memory;
 
-void qa_memory_copy(const qa_mapped_guest_memory *mem, qa_guest_address address, uint8_t *dest, size_t len);
-void qa_memory_write(const qa_mapped_guest_memory *mem, qa_guest_address address, const uint8_t *bytes, size_t len);
-void qa_memory_copy_into(const qa_mapped_guest_memory *mem, qa_guest_address address, uint8_t *dest,
+void qa_memory_copy(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t len);
+void qa_memory_write(const qa_mapped_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t len);
+void qa_memory_copy_into(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint8_t *dest,
                          size_t dest_offset, size_t len);
-uint8_t qa_memory_read_u8(const qa_mapped_guest_memory *mem, qa_guest_address address);
-uint16_t qa_memory_read_u16(const qa_mapped_guest_memory *mem, qa_guest_address address);
-uint32_t qa_memory_read_u32(const qa_mapped_guest_memory *mem, qa_guest_address address);
-uint64_t qa_memory_read_u64(const qa_mapped_guest_memory *mem, qa_guest_address address);
-void qa_memory_write_u8(const qa_mapped_guest_memory *mem, qa_guest_address address, uint8_t value);
-void qa_memory_write_u16(const qa_mapped_guest_memory *mem, qa_guest_address address, uint16_t value);
-void qa_memory_write_u32(const qa_mapped_guest_memory *mem, qa_guest_address address, uint32_t value);
-void qa_memory_write_u64(const qa_mapped_guest_memory *mem, qa_guest_address address, uint64_t value);
-bool qa_memory_pointer(const qa_mapped_guest_memory *mem, uint64_t raw, qa_guest_address *out);
-qa_guest_address qa_memory_offset(const qa_mapped_guest_memory *mem, qa_guest_address address, int64_t displacement);
-void qa_memory_check(const qa_mapped_guest_memory *mem, qa_guest_address address, size_t len, qa_guest_access access);
-void qa_memory_read_u64_words(const qa_mapped_guest_memory *mem, qa_guest_address address, uint32_t *low, uint32_t *high);
-void qa_memory_write_u64_words(const qa_mapped_guest_memory *mem, qa_guest_address address, uint32_t low, uint32_t high);
+uint8_t qa_memory_read_u8(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+uint16_t qa_memory_read_u16(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+uint32_t qa_memory_read_u32(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+uint64_t qa_memory_read_u64(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+void qa_memory_write_u8(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint8_t value);
+void qa_memory_write_u16(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint16_t value);
+void qa_memory_write_u32(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint32_t value);
+void qa_memory_write_u64(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint64_t value);
+bool qa_memory_pointer(const qa_mapped_guest_memory *mem, uint64_t raw, qa_guest_core_address *out);
+qa_guest_core_address qa_memory_offset(const qa_mapped_guest_memory *mem, qa_guest_core_address address, int64_t displacement);
+void qa_memory_check(const qa_mapped_guest_memory *mem, qa_guest_core_address address, size_t len, qa_guest_access access);
+void qa_memory_read_u64_words(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint32_t *low, uint32_t *high);
+void qa_memory_write_u64_words(const qa_mapped_guest_memory *mem, qa_guest_core_address address, uint32_t low, uint32_t high);
 
 #endif

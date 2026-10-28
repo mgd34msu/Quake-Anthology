@@ -11,7 +11,7 @@
 
 typedef struct qa_pe_resolved_export {
   const qa_pe_image *image;
-  qa_guest_address address;
+  qa_guest_core_address address;
 } qa_pe_resolved_export;
 
 typedef const qa_pe_image *(*qa_pe_library_lookup)(void *ctx, const char *library,

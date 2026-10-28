@@ -352,7 +352,9 @@ typedef struct qa_q3_ui_exports {
 /* TS ArsenalAmmoWarning = "none" | "low" | "empty". */
 typedef const char *qa_arsenal_ammo_warning;
 
-/* WeaponHudStatus.ammo: {kind:"unmetered"} | {kind:"finite",...}. */
+/* WeaponHudStatus.ammo: {kind:"unmetered"} |
+ * {kind:"finite", item, count, hasAmmoToStart, low} (the finite
+ * fields are flattened below, gated by ammo_is_finite). */
 typedef struct qa_weapon_hud_status {
   qa_provider_reference source;
   qa_item_id item;

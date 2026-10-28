@@ -47,18 +47,18 @@ typedef struct qa_command_buffer qa_command_buffer;
 
 /* TS ControllerSelection (src/platform/controller.ts). guid is the 32
  * hex digits (device/serial); serial is an owned copy (serial kind). */
-typedef enum qa_controller_selection_kind {
+typedef enum qa_settings_controller_selection_kind {
   QA_CONTROLLER_AUTOMATIC,
   QA_CONTROLLER_NONE,
   QA_CONTROLLER_DEVICE,
   QA_CONTROLLER_SERIAL
-} qa_controller_selection_kind;
-typedef struct qa_controller_selection {
-  qa_controller_selection_kind kind;
+} qa_settings_controller_selection_kind;
+typedef struct qa_settings_controller_selection {
+  qa_settings_controller_selection_kind kind;
   char guid[33];   /* device/serial */
   double ordinal;  /* device */
   char *serial;    /* serial, owned */
-} qa_controller_selection;
+} qa_settings_controller_selection;
 
 /* TS SeatSettings. Binding action/axis/direction strings point at
  * vocabulary literals; command texts and history strings are owned. */
@@ -74,7 +74,7 @@ typedef struct qa_seat_settings {
   size_t history_count;
   bool rumble;
   double rumble_strength; /* parser always resolves (default 1) */
-  qa_controller_selection controller;
+  qa_settings_controller_selection controller;
 } qa_seat_settings;
 void qa_parse_seat_settings(const qa_save_value *value, qa_seat_settings *out);
 void qa_seat_settings_free(qa_seat_settings *settings);

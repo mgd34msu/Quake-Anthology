@@ -32,7 +32,7 @@
 #include "qa/persistence/value.h"
 
 /* Mirrored TS Q1EntitySourceState (checkpoint.ts). */
-typedef struct qa_q1_entity_source_state {
+typedef struct qa_persist_q1_entity_source_state {
   const char *model;
   double frame, skin, effects;
   const char *solid;    /* none|trigger|bbox|slidebox|bsp|corpse */
@@ -58,10 +58,10 @@ typedef struct qa_q1_entity_source_state {
   double water_type; /* 0 | -1 | -2 | -3 | -4 | -5 | -6 */
   double movement_flags, ideal_yaw, yaw_speed;
   const char *attack_state; /* straight|melee|missile|dodging */
-} qa_q1_entity_source_state;
+} qa_persist_q1_entity_source_state;
 
 /* Mirrored TS Q1SavedCallbacks (checkpoint.ts); each nullable. */
-typedef struct qa_q1_saved_callbacks {
+typedef struct qa_persist_q1_saved_callbacks {
   const char *think;
   const char *use;
   const char *touch;
@@ -69,21 +69,21 @@ typedef struct qa_q1_saved_callbacks {
   const char *die;
   const char *blocked;
   const char *path_end;
-} qa_q1_saved_callbacks;
+} qa_persist_q1_saved_callbacks;
 
-typedef struct qa_q1_saved_field {
+typedef struct qa_persist_q1_saved_field {
   const char *key;
   const char *value;
-} qa_q1_saved_field;
-typedef struct qa_q1_saved_reference {
+} qa_persist_q1_saved_field;
+typedef struct qa_persist_q1_saved_reference {
   const char *key;
   bool has_actor;
   qa_saved_actor_id actor;
-} qa_q1_saved_reference;
+} qa_persist_q1_saved_reference;
 
 /* Mirrored TS Q1Monster with saved-actor enemy fields (entity.ts +
  * checkpoint.ts). */
-typedef struct qa_q1_saved_monster {
+typedef struct qa_persist_q1_saved_monster {
   const char *species; /* Q1_MONSTER_SPECIES spelling */
   const char *mode;    /* stand|walk|run|attack|leap|pain|death */
   double frame_index;
@@ -97,7 +97,7 @@ typedef struct qa_q1_saved_monster {
   const char *path;
   double pause_until, attack_finished, pain_finished, search_until;
   bool death_drop, refired;
-} qa_q1_saved_monster;
+} qa_persist_q1_saved_monster;
 
 typedef struct qa_q1_saved_move {
   qa_vec3 destination;
@@ -105,7 +105,7 @@ typedef struct qa_q1_saved_move {
 } qa_q1_saved_move;
 
 /* Mirrored TS Q1SavedEntity (checkpoint.ts). */
-typedef struct qa_q1_saved_entity {
+typedef struct qa_persist_q1_saved_entity {
   qa_saved_actor_id actor;
   qa_provider_id actor_provider;
   bool has_source_slot;
@@ -113,10 +113,10 @@ typedef struct qa_q1_saved_entity {
   const char *classname;
   bool has_source_ordinal;
   double source_ordinal;
-  qa_q1_entity_source_state state;
-  qa_q1_saved_field *fields; /* owned array */
+  qa_persist_q1_entity_source_state state;
+  qa_persist_q1_saved_field *fields; /* owned array */
   size_t field_count;
-  qa_q1_saved_reference *references; /* owned array */
+  qa_persist_q1_saved_reference *references; /* owned array */
   size_t reference_count;
   bool has_owner;
   qa_saved_actor_id owner;
@@ -125,15 +125,15 @@ typedef struct qa_q1_saved_entity {
   qa_saved_actor_id *door_group; /* owned array */
   size_t door_group_count;
   bool has_monster;
-  qa_q1_saved_monster monster;
+  qa_persist_q1_saved_monster monster;
   bool has_move;
   qa_q1_saved_move move;
-  qa_q1_saved_callbacks callbacks;
-} qa_q1_saved_entity;
+  qa_persist_q1_saved_callbacks callbacks;
+} qa_persist_q1_saved_entity;
 
 /* Mirrored TS Q1SavedPlayer.state (checkpoint.ts): Q1PlayerState
  * without actor/powerups; alpha/scale default to 0 when absent. */
-typedef struct qa_q1_saved_player_state {
+typedef struct qa_persist_q1_saved_player_state {
   double alpha, scale;
   const char *weapon; /* Q1Weapon spelling */
   bool primary_holstered, attack_held, jump_held;
@@ -146,7 +146,7 @@ typedef struct qa_q1_saved_player_state {
   qa_vec3 view_angles;
   double water_level, air_finished, drown_damage, drown_at, hazard_at;
   const char *auto_switch; /* always|new|never */
-} qa_q1_saved_player_state;
+} qa_persist_q1_saved_player_state;
 
 typedef struct qa_q1_saved_powerup {
   const char *kind; /* Q1_POWERUP_IDS spelling */
@@ -154,27 +154,27 @@ typedef struct qa_q1_saved_powerup {
 } qa_q1_saved_powerup;
 
 /* Mirrored TS Q1SavedPlayer (checkpoint.ts). */
-typedef struct qa_q1_saved_player {
+typedef struct qa_persist_q1_saved_player {
   qa_saved_actor_id actor;
   qa_provider_id actor_provider;
-  qa_q1_saved_player_state state;
+  qa_persist_q1_saved_player_state state;
   qa_q1_saved_powerup *powerups; /* owned array */
   size_t powerup_count;
-} qa_q1_saved_player;
+} qa_persist_q1_saved_player;
 
 /* Mirrored TS Q1PrecacheTables (types.ts). */
-typedef struct qa_q1_precache_tables {
+typedef struct qa_persist_q1_precache_tables {
   const char *phase; /* loading|frozen */
   const char **models; /* owned array of borrowed strings */
   size_t model_count;
   const char **sounds; /* owned array of borrowed strings */
   size_t sound_count;
-} qa_q1_precache_tables;
+} qa_persist_q1_precache_tables;
 
 /* Mirrored TS Q1Basis (types.ts). */
-typedef struct qa_q1_basis {
+typedef struct qa_persist_q1_basis {
   qa_vec3 forward, right, up;
-} qa_q1_basis;
+} qa_persist_q1_basis;
 
 typedef struct qa_q1_intermission {
   const char *map;
@@ -189,18 +189,18 @@ typedef struct qa_q1_checkpoint_extension {
 } qa_q1_checkpoint_extension;
 
 /* Mirrored TS Q1FoundationCheckpoint (checkpoint.ts). */
-typedef struct qa_q1_foundation_checkpoint {
+typedef struct qa_persist_q1_foundation_checkpoint {
   qa_provider_id provider;
   const char *format; /* literal "q1-foundation" */
   double version;     /* literal 5 */
-  qa_q1_precache_tables precaches;
+  qa_persist_q1_precache_tables precaches;
   const char *edition; /* classic|rerelease */
   double time, frame_seconds, force_retouch;
   double sequence, next_dynamic_slot;
   double total_secrets, found_secrets, total_monsters, killed_monsters;
   double world_type;
   const char *map_name;
-  qa_q1_basis basis;
+  qa_persist_q1_basis basis;
   bool has_world;
   qa_saved_actor_id world;
   bool has_sight_entity;
@@ -208,23 +208,23 @@ typedef struct qa_q1_foundation_checkpoint {
   double sight_time;
   bool has_intermission;
   qa_q1_intermission intermission;
-  qa_q1_saved_entity *entities; /* owned array */
+  qa_persist_q1_saved_entity *entities; /* owned array */
   size_t entity_count;
-  qa_q1_saved_player *players; /* owned array */
+  qa_persist_q1_saved_player *players; /* owned array */
   size_t player_count;
   qa_q1_checkpoint_extension *extensions; /* owned array */
   size_t extension_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q1_foundation_checkpoint;
+} qa_persist_q1_foundation_checkpoint;
 
-qa_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
+qa_persist_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
     const qa_save_reader *reader);
 /* Malloc'd envelope bytes; *out_length set. NULL only on OOM. */
 uint8_t *qa_encode_q1_foundation_checkpoint(
-    const qa_q1_foundation_checkpoint *checkpoint, size_t *out_length);
+    const qa_persist_q1_foundation_checkpoint *checkpoint, size_t *out_length);
 /* False only on OOM; malformed input aborts as the TS throws. */
 bool qa_decode_q1_foundation_checkpoint(const uint8_t *bytes, size_t length,
-                                        qa_q1_foundation_checkpoint *out);
-void qa_q1_foundation_checkpoint_free(qa_q1_foundation_checkpoint *checkpoint);
+                                        qa_persist_q1_foundation_checkpoint *out);
+void qa_q1_foundation_checkpoint_free(qa_persist_q1_foundation_checkpoint *checkpoint);
 
 #endif

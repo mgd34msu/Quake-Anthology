@@ -278,7 +278,40 @@ static void test_aborts(void) {
   CHECK_ABORTS(qa_q3_check_download_name("../evil.pk3"));
 }
 
+static void test_address_bridge(void) {
+  qa_q3_address v4; memset(&v4, 0, sizeof v4);
+  v4.kind = QA_Q3_ADDR_IPV4; v4.host[0] = 192; v4.host[1] = 168; v4.host[2] = 0; v4.host[3] = 7;
+  v4.port = 27960;
+  qa_net_address net; memset(&net, 0, sizeof net);
+  CHECK(qa_q3_address_to_net(&v4, &net));
+  CHECK(net.kind == QA_NET_IPV4 && net.ipv4[0] == 192 && net.ipv4[3] == 7 && net.port == 27960);
+  char *key = qa_q3_mirror_address_key(&v4, true);
+  CHECK(key && strcmp(key, "192.168.0.7:27960") == 0);
+  qa_q3_address back; memset(&back, 0, sizeof back);
+  CHECK(qa_q3_address_from_net(&net, &back));
+  CHECK(qa_q3_mirror_same_address(&v4, &back, true));
+  back.port = 1;
+  CHECK(!qa_q3_mirror_same_address(&v4, &back, true));
+  CHECK(qa_q3_mirror_same_address(&v4, &back, false));
+  free(key);
+  qa_net_address_destroy(&net);
+  qa_q3_mirror_address_destroy(&back);
+  /* Loopback id roundtrips through the owner host string. */
+  qa_net_address loop; memset(&loop, 0, sizeof loop);
+  CHECK(qa_net_make_loopback(&loop, "seat-2") == 1);
+  qa_q3_address q3loop; memset(&q3loop, 0, sizeof q3loop);
+  CHECK(qa_q3_address_from_net(&loop, &q3loop));
+  CHECK(q3loop.kind == QA_Q3_ADDR_LOOPBACK && q3loop.loopback_id &&
+        strcmp(q3loop.loopback_id, "seat-2") == 0);
+  char *lkey = qa_q3_mirror_address_key(&q3loop, true);
+  CHECK(lkey && strcmp(lkey, "loopback:seat-2") == 0);
+  free(lkey);
+  qa_q3_mirror_address_destroy(&q3loop);
+  qa_net_address_destroy(&loop);
+}
+
 int main(void) {
+  test_address_bridge();
   test_message_fixture();
   test_netchan_fragments();
   test_huffman_and_hash();

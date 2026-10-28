@@ -34,7 +34,7 @@ qa_call_value qa_call_int64(int64_t value) { qa_call_value v = value_new(QA_CALL
 qa_call_value qa_call_uint64(uint64_t value) { qa_call_value v = value_new(QA_CALL_UINT64); v.uint64_value = value; return v; }
 qa_call_value qa_call_float32(double value) { qa_call_value v = value_new(QA_CALL_FLOAT32); v.number = (double)(float)value; return v; }
 qa_call_value qa_call_float64(double value) { qa_call_value v = value_new(QA_CALL_FLOAT64); v.number = value; return v; }
-qa_call_value qa_call_pointer(bool has, qa_guest_address value) {
+qa_call_value qa_call_pointer(bool has, qa_guest_core_address value) {
   qa_call_value v = value_new(QA_CALL_POINTER); v.pointer_has = has; v.pointer = value; return v;
 }
 qa_call_value qa_call_aggregate(qa_abi_layout layout, const uint8_t *bytes, size_t len) {
@@ -77,23 +77,23 @@ bool qa_guest_permissions_has_execute(qa_guest_permissions p) {
   return p == QA_PERM_READ_EXECUTE || p == QA_PERM_READ_WRITE_EXECUTE || p == QA_PERM_EXECUTE;
 }
 
-qa_guest_address qa_gmem_map(const qa_mapped_memory_ext *ext, uint64_t base, size_t byte_length,
+qa_guest_core_address qa_gmem_map(const qa_mapped_memory_ext *ext, uint64_t base, size_t byte_length,
                              qa_guest_permissions permissions, const char *label,
                              const uint8_t *bytes, size_t bytes_len) {
   if (ext == NULL || ext->map == NULL) qa_range_error("Mapped guest memory has no map operation");
   return ext->map(ext->ctx, base, byte_length, permissions, label, bytes, bytes_len);
 }
-qa_guest_address qa_gmem_allocate(const qa_mapped_memory_ext *ext, size_t byte_length,
+qa_guest_core_address qa_gmem_allocate(const qa_mapped_memory_ext *ext, size_t byte_length,
                                   bool has_alignment, uint64_t alignment,
                                   bool has_permissions, qa_guest_permissions permissions, const char *label) {
   if (ext == NULL || ext->allocate == NULL) qa_range_error("Mapped guest memory has no allocate operation");
   return ext->allocate(ext->ctx, byte_length, has_alignment, alignment, has_permissions, permissions, label);
 }
-void qa_gmem_unmap(const qa_mapped_memory_ext *ext, qa_guest_address address, size_t byte_length) {
+void qa_gmem_unmap(const qa_mapped_memory_ext *ext, qa_guest_core_address address, size_t byte_length) {
   if (ext == NULL || ext->unmap == NULL) qa_range_error("Mapped guest memory has no unmap operation");
   ext->unmap(ext->ctx, address, byte_length);
 }
-void qa_gmem_protect(const qa_mapped_memory_ext *ext, qa_guest_address address, size_t byte_length,
+void qa_gmem_protect(const qa_mapped_memory_ext *ext, qa_guest_core_address address, size_t byte_length,
                      qa_guest_permissions permissions) {
   if (ext == NULL || ext->protect == NULL) qa_range_error("Mapped guest memory has no protect operation");
   ext->protect(ext->ctx, address, byte_length, permissions);
@@ -103,33 +103,33 @@ const qa_guest_mapping *qa_gmem_mappings(const qa_mapped_memory_ext *ext, size_t
   return ext->mappings(ext->ctx, count);
 }
 
-int8_t qa_gmem_read_i8(const qa_mapped_guest_memory *m, qa_guest_address a) { return (int8_t)qa_memory_read_u8(m, a); }
-int16_t qa_gmem_read_i16(const qa_mapped_guest_memory *m, qa_guest_address a) { return (int16_t)qa_memory_read_u16(m, a); }
-int32_t qa_gmem_read_i32(const qa_mapped_guest_memory *m, qa_guest_address a) { return (int32_t)qa_memory_read_u32(m, a); }
-int64_t qa_gmem_read_i64(const qa_mapped_guest_memory *m, qa_guest_address a) { return (int64_t)qa_memory_read_u64(m, a); }
-double qa_gmem_read_f32(const qa_mapped_guest_memory *m, qa_guest_address a) {
+int8_t qa_gmem_read_i8(const qa_mapped_guest_memory *m, qa_guest_core_address a) { return (int8_t)qa_memory_read_u8(m, a); }
+int16_t qa_gmem_read_i16(const qa_mapped_guest_memory *m, qa_guest_core_address a) { return (int16_t)qa_memory_read_u16(m, a); }
+int32_t qa_gmem_read_i32(const qa_mapped_guest_memory *m, qa_guest_core_address a) { return (int32_t)qa_memory_read_u32(m, a); }
+int64_t qa_gmem_read_i64(const qa_mapped_guest_memory *m, qa_guest_core_address a) { return (int64_t)qa_memory_read_u64(m, a); }
+double qa_gmem_read_f32(const qa_mapped_guest_memory *m, qa_guest_core_address a) {
   uint32_t bits = qa_memory_read_u32(m, a); float f; memcpy(&f, &bits, 4); return (double)f;
 }
-double qa_gmem_read_f64(const qa_mapped_guest_memory *m, qa_guest_address a) {
+double qa_gmem_read_f64(const qa_mapped_guest_memory *m, qa_guest_core_address a) {
   uint64_t bits = qa_memory_read_u64(m, a); double d; memcpy(&d, &bits, 8); return d;
 }
-uint64_t qa_gmem_read_pointer_raw(const qa_mapped_guest_memory *m, qa_guest_address a) {
+uint64_t qa_gmem_read_pointer_raw(const qa_mapped_guest_memory *m, qa_guest_core_address a) {
   return m->pointer_bytes == 4 ? qa_memory_read_u32(m, a) : qa_memory_read_u64(m, a);
 }
-bool qa_gmem_read_pointer(const qa_mapped_guest_memory *m, qa_guest_address a, qa_guest_address *out) {
+bool qa_gmem_read_pointer(const qa_mapped_guest_memory *m, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_memory_pointer(m, qa_gmem_read_pointer_raw(m, a), out);
 }
-void qa_gmem_write_i8(const qa_mapped_guest_memory *m, qa_guest_address a, int8_t v) { qa_memory_write_u8(m, a, (uint8_t)v); }
-void qa_gmem_write_i16(const qa_mapped_guest_memory *m, qa_guest_address a, int16_t v) { qa_memory_write_u16(m, a, (uint16_t)v); }
-void qa_gmem_write_i32(const qa_mapped_guest_memory *m, qa_guest_address a, int32_t v) { qa_memory_write_u32(m, a, (uint32_t)v); }
-void qa_gmem_write_i64(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t v) { qa_memory_write_u64(m, a, (uint64_t)v); }
-void qa_gmem_write_f32(const qa_mapped_guest_memory *m, qa_guest_address a, double v) {
+void qa_gmem_write_i8(const qa_mapped_guest_memory *m, qa_guest_core_address a, int8_t v) { qa_memory_write_u8(m, a, (uint8_t)v); }
+void qa_gmem_write_i16(const qa_mapped_guest_memory *m, qa_guest_core_address a, int16_t v) { qa_memory_write_u16(m, a, (uint16_t)v); }
+void qa_gmem_write_i32(const qa_mapped_guest_memory *m, qa_guest_core_address a, int32_t v) { qa_memory_write_u32(m, a, (uint32_t)v); }
+void qa_gmem_write_i64(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t v) { qa_memory_write_u64(m, a, (uint64_t)v); }
+void qa_gmem_write_f32(const qa_mapped_guest_memory *m, qa_guest_core_address a, double v) {
   float f = (float)v; uint32_t bits; memcpy(&bits, &f, 4); qa_memory_write_u32(m, a, bits);
 }
-void qa_gmem_write_f64(const qa_mapped_guest_memory *m, qa_guest_address a, double v) {
+void qa_gmem_write_f64(const qa_mapped_guest_memory *m, qa_guest_core_address a, double v) {
   uint64_t bits; memcpy(&bits, &v, 8); qa_memory_write_u64(m, a, bits);
 }
-void qa_gmem_write_pointer(const qa_mapped_guest_memory *m, qa_guest_address a, bool has, qa_guest_address v) {
+void qa_gmem_write_pointer(const qa_mapped_guest_memory *m, qa_guest_core_address a, bool has, qa_guest_core_address v) {
   uint64_t raw = has ? v.byte_offset : 0;
   if (has) (void)qa_memory_offset(m, v, 0);
   if (m->pointer_bytes == 4) qa_memory_write_u32(m, a, (uint32_t)raw); else qa_memory_write_u64(m, a, raw);
@@ -271,7 +271,7 @@ qa_call_value qa_decode_value(const qa_abi_value_layout *layout, const uint8_t *
     case QA_STORAGE_FLOAT32: { float f; memcpy(&f, bytes, 4); return qa_call_float32((double)f); }
     case QA_STORAGE_FLOAT64: { double d; memcpy(&d, bytes, 8); return qa_call_float64(d); }
     case QA_STORAGE_POINTER: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_memory_pointer(memory, load_le(bytes, memory->pointer_bytes), &address);
       return qa_call_pointer(has, address);
     }

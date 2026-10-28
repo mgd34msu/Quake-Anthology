@@ -19,12 +19,12 @@
 #include "qa/contracts/session.h"
 #include "qa/persistence/value.h"
 
-typedef struct qa_hand_grenade_loadout {
+typedef struct qa_persist_hand_grenade_loadout {
   bool enabled;
   double initial_ammo;
   double capacity;
   bool infinite_ammo;
-} qa_hand_grenade_loadout;
+} qa_persist_hand_grenade_loadout;
 
 typedef enum qa_hand_action_kind {
   QA_HAND_ACTION_IDLE, QA_HAND_ACTION_DISARMED, QA_HAND_ACTION_PREPARING,
@@ -40,7 +40,7 @@ typedef struct qa_hand_action {
 } qa_hand_action;
 
 typedef struct qa_hand_grenade_state {
-  qa_hand_grenade_loadout config;
+  qa_persist_hand_grenade_loadout config;
   qa_hand_action action;
 } qa_hand_grenade_state;
 
@@ -49,15 +49,15 @@ typedef struct qa_hand_grenades_actor {
   qa_hand_grenade_state state;
 } qa_hand_grenades_actor;
 
-typedef struct qa_hand_grenades_checkpoint {
+typedef struct qa_persist_hand_grenades_checkpoint {
   double version;
   const char *edition;
   qa_hand_grenades_actor *actors; size_t actors_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_hand_grenades_checkpoint;
+} qa_persist_hand_grenades_checkpoint;
 
-qa_hand_grenades_checkpoint qa_read_hand_grenades_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_hand_grenades_checkpoint(const qa_hand_grenades_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_hand_grenades_checkpoint *out);
+qa_persist_hand_grenades_checkpoint qa_read_hand_grenades_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_hand_grenades_checkpoint(const qa_persist_hand_grenades_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_persist_hand_grenades_checkpoint *out);
 
 #endif

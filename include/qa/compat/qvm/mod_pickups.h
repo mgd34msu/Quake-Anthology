@@ -39,7 +39,7 @@ typedef struct qa_qvmy_pickup_services {
   void (*unbind_pickup)(void *ctx, size_t id);
 } qa_qvmy_pickup_services;
 
-typedef qa_original_pickup_decision (*qa_qvm_pickup_execute_fn)(void *ctx);
+typedef qa_original_pickup_decision (*qa_qvm_mod_pickup_execute_fn)(void *ctx);
 
 typedef struct qa_qvm_mod_pickup_operations {
   void *ctx;
@@ -48,10 +48,10 @@ typedef struct qa_qvm_mod_pickup_operations {
   qa_original_pickup_decision (*context)(void *ctx, const qa_qvm_mod_pickup *definition,
                                          const qa_original_pickup_offer *offer,
                                          const qa_qvm_pickup_input *inputs, size_t input_count,
-                                         qa_qvm_pickup_execute_fn execute, void *execute_ctx);
+                                         qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx);
   qa_original_pickup_decision (*observe)(void *ctx, qa_actor_id actor,
                                          const qa_original_pickup_execution *observer,
-                                         qa_qvm_pickup_execute_fn execute, void *execute_ctx);
+                                         qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx);
   int32_t (*invoke)(void *ctx, const qa_qvm_mod_source_call *call,
                     const qa_qvm_pickup_input *inputs, size_t input_count);
 } qa_qvm_mod_pickup_operations;

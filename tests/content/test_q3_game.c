@@ -42,6 +42,12 @@
 #include "qa/network/q3/state/product.h"
 #include "qa/app/bootstrap/q3_client.h"
 #include "qa/app/bootstrap/network/q3_client.h"
+#include "qa/content/q3/base/shared/definitions.h"
+#include "qa/content/q3/base/shared/player_state.h"
+#include "qa/core/q3_product_policy.h"
+#include "qa/movement/q3/weapon.h"
+#include "qa/network/q3/admission.h"
+#include "qa/persistence/q3.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -363,6 +369,22 @@ static void test_name_collisions(void) {
   memset(&network_host, 0, sizeof network_host);
   CHECK(bootstrap_host.ctx == NULL && network_host.ctx == NULL);
   CHECK(sizeof bootstrap_host != sizeof network_host || sizeof bootstrap_host > 0);
+  /* Base-shared owners coexist with the game mirrors/network owners. */
+  CHECK((int)QA_Q3_BASE_PRODUCT_MISSIONPACK == (int)QA_Q3_PRODUCT_MISSIONPACK);
+  CHECK((int)QA_Q3_BASE_ENTITYNUM_WORLD == (int)QA_Q3_GAME_ENTITYNUM_WORLD);
+  CHECK((int)QA_Q3_BASE_ENTITYNUM_NONE == QA_Q3_ENTITYNUM_NONE);
+  /* Product-policy kinds share the QA_Q3_PRODUCT_ prefix only. */
+  CHECK(QA_Q3_PRODUCT_RETAIL != QA_Q3_PRODUCT_PRERELEASE_DEMO);
+  /* Weapon external slot vs admission slot phase: same TS word
+   * "active", distinct enumerators and ordinals. */
+  CHECK((int)QA_Q3_WEAPON_SLOT_ACTIVE == 0 && (int)QA_Q3_SLOT_ACTIVE == 4);
+  CHECK((int)QA_Q3_WEAPON_SLOT_HOLSTERED == 3 && (int)QA_Q3_SLOT_FREE == 0);
+  /* Persistence session mirror (int32) vs game session (double). */
+  qa_persist_q3_client_session persist_session;
+  qa_q3_client_session game_session;
+  memset(&persist_session, 0, sizeof persist_session);
+  memset(&game_session, 0, sizeof game_session);
+  CHECK(sizeof persist_session != sizeof game_session);
 }
 
 int main(void) {

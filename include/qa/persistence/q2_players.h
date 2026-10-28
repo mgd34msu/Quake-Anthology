@@ -186,7 +186,7 @@ typedef struct qa_q2_character_checkpoint {
   qa_q2_player_state_checkpoint state;
   qa_q2_player_rules rules;
   bool has_last_attack;
-  qa_q2_attack_checkpoint last_attack;
+  qa_persist_q2_attack_checkpoint last_attack;
   qa_q2_character_entity entity;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
 } qa_q2_character_checkpoint;

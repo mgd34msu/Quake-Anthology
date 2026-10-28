@@ -6,10 +6,10 @@
 static char *dupstr(const char *v) { if (!v) return NULL; size_t n = strlen(v); char *d = malloc(n + 1); if (d) memcpy(d, v, n + 1); return d; }
 void qa_q3_graph_state_destroy(qa_q3_graph_state *s) {
   free(s->ownership);
-  for (size_t i = 0; i < s->entity_count; i++) { qa_q3_entity_state *e = &s->entities[i]; qa_q3_entity_values_destroy(&e->values);
+  for (size_t i = 0; i < s->entity_count; i++) { qa_q3_game_save_entity_state *e = &s->entities[i]; qa_q3_entity_values_destroy(&e->values);
     free(e->classname); free(e->think); free(e->reached); free(e->blocked); free(e->touch); free(e->use); free(e->pain); free(e->die); }
   free(s->entities);
-  for (size_t i = 0; i < s->client_count; i++) { qa_q3_client_state *c = &s->clients[i]; qa_q3_persistant_values_destroy(&c->persistant);
+  for (size_t i = 0; i < s->client_count; i++) { qa_q3_game_save_client_state *c = &s->clients[i]; qa_q3_persistant_values_destroy(&c->persistant);
     free(c->events); free(c->event_parms); free(c->persistant_slots); free(c->powerups); free(c->ammo_times); }
   free(s->clients); memset(s, 0, sizeof *s);
 }
@@ -26,7 +26,7 @@ qa_q3_graph_state qa_q3_capture_graph(qa_q3_entity_pool *pool) {
   s.client_count = QA_Q3_MAX_CLIENTS; s.clients = calloc(s.client_count, sizeof *s.clients);
   if (!s.entities || !s.ownership || !s.clients) qa_range_error("out of memory");
   for (size_t i = 0; i < s.entity_count; i++) {
-    qa_q3_game_entity *e = qa_q3_entity_pool_get(pool, (double)i); qa_q3_entity_state *st = &s.entities[i];
+    qa_q3_game_entity *e = qa_q3_entity_pool_get(pool, (double)i); qa_q3_game_save_entity_state *st = &s.entities[i];
     s.ownership[i].active = e && qa_q3_game_entity_inuse(e);
     if (!e) continue;
     st->values = qa_q3_capture_entity_values(e); st->network = qa_q3_capture_network_values(&e->s);
@@ -41,7 +41,7 @@ qa_q3_graph_state qa_q3_capture_graph(qa_q3_entity_pool *pool) {
     st->use = dupstr(qa_q3_callback_family_capture(&pool->callbacks.use, e->use));
   }
   for (size_t i = 0; i < s.client_count; i++) {
-    qa_q3_game_client *c = pool->clients[i]; qa_q3_client_state *st = &s.clients[i]; if (!c) continue;
+    qa_q3_game_client *c = pool->clients[i]; qa_q3_game_save_client_state *st = &s.clients[i]; if (!c) continue;
     st->values = qa_q3_capture_client_values(c); st->player = qa_q3_capture_player_values(&c->ps);
     st->persistant = qa_q3_capture_persistant_values(&c->pers); st->command = c->pers.cmd;
     st->team = qa_q3_capture_team_values(&c->pers.team_state); st->session = qa_q3_capture_session_values(&c->sess);
@@ -55,7 +55,7 @@ qa_q3_graph_state qa_q3_capture_graph(qa_q3_entity_pool *pool) {
 void qa_q3_restore_graph(qa_q3_entity_pool *pool, qa_q3_graph_state *state) {
   qa_q3_pool_counts counts = {state->num_entities, state->max_clients}; qa_q3_entity_pool_restore_counts(pool, counts);
   for (size_t i = 0; i < state->entity_count; i++) {
-    qa_q3_game_entity *e = qa_q3_entity_pool_get(pool, (double)i); if (!e) continue; qa_q3_entity_state *st = &state->entities[i];
+    qa_q3_game_entity *e = qa_q3_entity_pool_get(pool, (double)i); if (!e) continue; qa_q3_game_save_entity_state *st = &state->entities[i];
     qa_q3_restore_entity_values(e, &st->values); qa_q3_restore_network_values(&e->s, st->network);
     e->s.pos = st->pos; e->s.apos = st->apos; qa_q3_game_entity_restore_next_think(e, st->nextthink);
     e->think = qa_q3_callback_family_resolve(&pool->callbacks.think, st->think);
@@ -63,7 +63,7 @@ void qa_q3_restore_graph(qa_q3_entity_pool *pool, qa_q3_graph_state *state) {
     e->use = qa_q3_callback_family_resolve(&pool->callbacks.use, st->use);
   }
   for (size_t i = 0; i < state->client_count; i++) {
-    qa_q3_game_client *c = pool->clients[i]; if (!c) continue; qa_q3_client_state *st = &state->clients[i];
+    qa_q3_game_client *c = pool->clients[i]; if (!c) continue; qa_q3_game_save_client_state *st = &state->clients[i];
     qa_q3_restore_client_values(c, st->values); qa_q3_restore_player_values(&c->ps, st->player);
     qa_q3_restore_persistant_values(&c->pers, &st->persistant); qa_q3_restore_team_values(&c->pers.team_state, st->team);
     qa_q3_restore_session_values(&c->sess, st->session);

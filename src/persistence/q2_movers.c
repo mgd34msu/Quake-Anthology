@@ -90,22 +90,22 @@ static void read_q2_linear_curve(const qa_save_reader *reader, qa_q2_linear_curv
 static qa_save_value *build_q2_linear_curve(const qa_q2_linear_curve *in);
 static void read_q2_linear_motion_state(const qa_save_reader *reader, qa_q2_linear_motion_state *out);
 static qa_save_value *build_q2_linear_motion_state(const qa_q2_linear_motion_state *in);
-static void read_q2_linear_motion_entry(const qa_save_reader *reader, qa_q2_linear_motion_entry *out);
-static qa_save_value *build_q2_linear_motion_entry(const qa_q2_linear_motion_entry *in);
-static void read_q2_linear_motion_checkpoint(const qa_save_reader *reader, qa_q2_linear_motion_checkpoint *out);
-static qa_save_value *build_q2_linear_motion_checkpoint(const qa_q2_linear_motion_checkpoint *in);
-static void read_q2_angular_motion_entry(const qa_save_reader *reader, qa_q2_angular_motion_entry *out);
-static qa_save_value *build_q2_angular_motion_entry(const qa_q2_angular_motion_entry *in);
-static void read_q2_angular_motion_checkpoint(const qa_save_reader *reader, qa_q2_angular_motion_checkpoint *out);
-static qa_save_value *build_q2_angular_motion_checkpoint(const qa_q2_angular_motion_checkpoint *in);
+static void read_q2_linear_motion_entry(const qa_save_reader *reader, qa_persist_q2_linear_motion_entry *out);
+static qa_save_value *build_q2_linear_motion_entry(const qa_persist_q2_linear_motion_entry *in);
+static void read_q2_linear_motion_checkpoint(const qa_save_reader *reader, qa_persist_q2_linear_motion_checkpoint *out);
+static qa_save_value *build_q2_linear_motion_checkpoint(const qa_persist_q2_linear_motion_checkpoint *in);
+static void read_q2_angular_motion_entry(const qa_save_reader *reader, qa_persist_q2_angular_motion_entry *out);
+static qa_save_value *build_q2_angular_motion_entry(const qa_persist_q2_angular_motion_entry *in);
+static void read_q2_angular_motion_checkpoint(const qa_save_reader *reader, qa_persist_q2_angular_motion_checkpoint *out);
+static qa_save_value *build_q2_angular_motion_checkpoint(const qa_persist_q2_angular_motion_checkpoint *in);
 static void read_q2_door_state(const qa_save_reader *reader, qa_q2_door_state *out);
 static qa_save_value *build_q2_door_state(const qa_q2_door_state *in);
 static void read_q2_door_entry(const qa_save_reader *reader, qa_q2_door_entry *out);
 static qa_save_value *build_q2_door_entry(const qa_q2_door_entry *in);
 static void read_q2_train_entry(const qa_save_reader *reader, qa_q2_train_entry *out);
 static qa_save_value *build_q2_train_entry(const qa_q2_train_entry *in);
-static void read_q2_movers_checkpoint(const qa_save_reader *reader, qa_q2_movers_checkpoint *out);
-static qa_save_value *build_q2_movers_checkpoint(const qa_q2_movers_checkpoint *in);
+static void read_q2_movers_checkpoint(const qa_save_reader *reader, qa_persist_q2_movers_checkpoint *out);
+static qa_save_value *build_q2_movers_checkpoint(const qa_persist_q2_movers_checkpoint *in);
 
 static void read_q2_linear_curve(const qa_save_reader *reader, qa_q2_linear_curve *out) {
   memset(out, 0, sizeof *out);
@@ -201,7 +201,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_linear_motion_entry(const qa_save_reader *reader, qa_q2_linear_motion_entry *out) {
+static void read_q2_linear_motion_entry(const qa_save_reader *reader, qa_persist_q2_linear_motion_entry *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "actor");
     (*out).actor = read_actor(&f0);
@@ -210,7 +210,7 @@ static void read_q2_linear_motion_entry(const qa_save_reader *reader, qa_q2_line
     read_q2_linear_motion_state(&f1, &(*out).state);
     qa_save_reader_destroy(&f1); }
 }
-static qa_save_value *build_q2_linear_motion_entry(const qa_q2_linear_motion_entry *in) {
+static qa_save_value *build_q2_linear_motion_entry(const qa_persist_q2_linear_motion_entry *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
@@ -221,10 +221,10 @@ fail:
   return NULL;
 }
 
-static void read_q2_linear_motion_checkpoint(const qa_save_reader *reader, qa_q2_linear_motion_checkpoint *out) {
+static void read_q2_linear_motion_checkpoint(const qa_save_reader *reader, qa_persist_q2_linear_motion_checkpoint *out) {
   memset(out, 0, sizeof *out);
   out->count = qa_save_reader_list_count(reader);
-  out->entries = (qa_q2_linear_motion_entry *)calloc(out->count != 0 ? out->count : 1, sizeof(qa_q2_linear_motion_entry));
+  out->entries = (qa_persist_q2_linear_motion_entry *)calloc(out->count != 0 ? out->count : 1, sizeof(qa_persist_q2_linear_motion_entry));
   if (out->entries == NULL) qa_save_reader_fail(reader, "out of memory");
   for (size_t i5 = 0; i5 < out->count; i5++) {
     qa_save_reader it6 = item(reader, i5);
@@ -232,7 +232,7 @@ static void read_q2_linear_motion_checkpoint(const qa_save_reader *reader, qa_q2
     qa_save_reader_destroy(&it6);
   }
 }
-static qa_save_value *build_q2_linear_motion_checkpoint(const qa_q2_linear_motion_checkpoint *in) {
+static qa_save_value *build_q2_linear_motion_checkpoint(const qa_persist_q2_linear_motion_checkpoint *in) {
   qa_save_value *obj = NULL; (void)obj;
   { qa_save_value *arr7 = qa_save_value_array();
     if (arr7 == NULL) goto fail;
@@ -243,7 +243,7 @@ static qa_save_value *build_q2_linear_motion_checkpoint(const qa_q2_linear_motio
 fail: return NULL;
 }
 
-static void read_q2_angular_motion_entry(const qa_save_reader *reader, qa_q2_angular_motion_entry *out) {
+static void read_q2_angular_motion_entry(const qa_save_reader *reader, qa_persist_q2_angular_motion_entry *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "actor");
     (*out).actor = read_actor(&f0);
@@ -258,7 +258,7 @@ static void read_q2_angular_motion_entry(const qa_save_reader *reader, qa_q2_ang
     (*out).done = qa_save_reader_string(&f3);
     qa_save_reader_destroy(&f3); }
 }
-static qa_save_value *build_q2_angular_motion_entry(const qa_q2_angular_motion_entry *in) {
+static qa_save_value *build_q2_angular_motion_entry(const qa_persist_q2_angular_motion_entry *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
@@ -271,10 +271,10 @@ fail:
   return NULL;
 }
 
-static void read_q2_angular_motion_checkpoint(const qa_save_reader *reader, qa_q2_angular_motion_checkpoint *out) {
+static void read_q2_angular_motion_checkpoint(const qa_save_reader *reader, qa_persist_q2_angular_motion_checkpoint *out) {
   memset(out, 0, sizeof *out);
   out->count = qa_save_reader_list_count(reader);
-  out->entries = (qa_q2_angular_motion_entry *)calloc(out->count != 0 ? out->count : 1, sizeof(qa_q2_angular_motion_entry));
+  out->entries = (qa_persist_q2_angular_motion_entry *)calloc(out->count != 0 ? out->count : 1, sizeof(qa_persist_q2_angular_motion_entry));
   if (out->entries == NULL) qa_save_reader_fail(reader, "out of memory");
   for (size_t i9 = 0; i9 < out->count; i9++) {
     qa_save_reader it10 = item(reader, i9);
@@ -282,7 +282,7 @@ static void read_q2_angular_motion_checkpoint(const qa_save_reader *reader, qa_q
     qa_save_reader_destroy(&it10);
   }
 }
-static qa_save_value *build_q2_angular_motion_checkpoint(const qa_q2_angular_motion_checkpoint *in) {
+static qa_save_value *build_q2_angular_motion_checkpoint(const qa_persist_q2_angular_motion_checkpoint *in) {
   qa_save_value *obj = NULL; (void)obj;
   { qa_save_value *arr11 = qa_save_value_array();
     if (arr11 == NULL) goto fail;
@@ -424,7 +424,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_movers_checkpoint(const qa_save_reader *reader, qa_q2_movers_checkpoint *out) {
+static void read_q2_movers_checkpoint(const qa_save_reader *reader, qa_persist_q2_movers_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "doors");
     (*out).doors_count = qa_save_reader_list_count(&f0);
@@ -453,7 +453,7 @@ static void read_q2_movers_checkpoint(const qa_save_reader *reader, qa_q2_movers
     read_q2_angular_motion_checkpoint(&f3, &(*out).angular);
     qa_save_reader_destroy(&f3); }
 }
-static qa_save_value *build_q2_movers_checkpoint(const qa_q2_movers_checkpoint *in) {
+static qa_save_value *build_q2_movers_checkpoint(const qa_persist_q2_movers_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   { qa_save_value *arr22 = qa_save_value_array();
@@ -479,41 +479,41 @@ fail:
 
 
 
-qa_q2_linear_motion_checkpoint qa_read_q2_linear_motion_checkpoint(const qa_save_reader *reader) {
-  qa_q2_linear_motion_checkpoint out;
+qa_persist_q2_linear_motion_checkpoint qa_read_q2_linear_motion_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_linear_motion_checkpoint out;
   read_q2_linear_motion_checkpoint(reader, &out);
   return out;
 }
-qa_save_value *qa_q2_linear_motion_checkpoint_value(const qa_q2_linear_motion_checkpoint *checkpoint) {
+qa_save_value *qa_q2_linear_motion_checkpoint_value(const qa_persist_q2_linear_motion_checkpoint *checkpoint) {
   return build_q2_linear_motion_checkpoint(checkpoint);
 }
 
 
-qa_q2_angular_motion_checkpoint qa_read_q2_angular_motion_checkpoint(const qa_save_reader *reader) {
-  qa_q2_angular_motion_checkpoint out;
+qa_persist_q2_angular_motion_checkpoint qa_read_q2_angular_motion_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_angular_motion_checkpoint out;
   read_q2_angular_motion_checkpoint(reader, &out);
   return out;
 }
-qa_save_value *qa_q2_angular_motion_checkpoint_value(const qa_q2_angular_motion_checkpoint *checkpoint) {
+qa_save_value *qa_q2_angular_motion_checkpoint_value(const qa_persist_q2_angular_motion_checkpoint *checkpoint) {
   return build_q2_angular_motion_checkpoint(checkpoint);
 }
 
 
 
 
-qa_q2_movers_checkpoint qa_read_q2_movers_checkpoint(const qa_save_reader *reader) {
-  qa_q2_movers_checkpoint out;
+qa_persist_q2_movers_checkpoint qa_read_q2_movers_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_movers_checkpoint out;
   read_q2_movers_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_q2_movers_checkpoint(const qa_q2_movers_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_movers_checkpoint(const qa_persist_q2_movers_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_movers_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_movers_checkpoint(const uint8_t *bytes, size_t length, qa_q2_movers_checkpoint *out) {
+bool qa_decode_q2_movers_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_movers_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;

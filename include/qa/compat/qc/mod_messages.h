@@ -1,11 +1,16 @@
 /* Port of src/compat/qc/mod-messages.ts. GPL-2.0-or-later.
- * QuakeCLocalMessages (TS owner src/app/bootstrap/simulation/
- * quakec-local-messages.ts) is mirrored as operations fn+ctx.
- * Engine presentation host assembly is an operations call. */
+ * QuakeCLocalMessages is the landed qa_app_sim_quakec_local_messages
+ * (TS owner src/app/bootstrap/simulation/quakec-local-messages.ts).
+ * qa_compat_qc_local_message_ops stays the compat-side fn+ctx seam;
+ * qa_compat_qc_local_message_app_adapter binds it to the landed
+ * owner object (capture/views convert between the identical TS
+ * capture shapes). Engine presentation host assembly is an
+ * operations call. */
 #ifndef QA_COMPAT_QC_MOD_MESSAGES_H
 #define QA_COMPAT_QC_MOD_MESSAGES_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/simulation/quakec_local_messages.h"
 #include "qa/compat/qc/quakeworld_presentation.h"
 #include "qa/world/actors/registry.h"
 #include "qa/world/session/mod_clients.h"
@@ -64,4 +69,16 @@ void qa_compat_qc_mod_messages_start(qa_compat_qc_mod_messages *m);
 qa_save_value *qa_compat_qc_mod_messages_capture(qa_compat_qc_mod_messages *m);
 void qa_compat_qc_mod_messages_restore(qa_compat_qc_mod_messages *m, const qa_save_reader *reader, qa_compat_qc_actor_resolver resolve);
 void qa_compat_qc_mod_messages_close(qa_compat_qc_mod_messages *m);
+/* Adapter binding the ops seam to the landed owner object. Holds
+ * the in-flight app capture backing each compat capture view.
+ * Pass adapter->ops to qa_compat_qc_mod_messages_init. */
+typedef struct qa_compat_qc_local_message_app_adapter {
+  qa_app_sim_quakec_local_messages *state; /* borrowed */
+  qa_app_sim_quakec_capture held;
+  bool has_held;
+  qa_compat_qc_local_message_ops ops;
+} qa_compat_qc_local_message_app_adapter;
+void qa_compat_qc_local_message_app_adapter_init(qa_compat_qc_local_message_app_adapter *adapter,
+                                                 qa_app_sim_quakec_local_messages *state);
+void qa_compat_qc_local_message_app_adapter_destroy(qa_compat_qc_local_message_app_adapter *adapter);
 #endif

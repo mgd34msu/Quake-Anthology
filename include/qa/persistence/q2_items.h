@@ -28,7 +28,7 @@ typedef struct qa_q2_pickup_entry {
   double expires_at;
 } qa_q2_pickup_entry;
 
-typedef struct qa_q2_player_powerups {
+typedef struct qa_persist_q2_player_powerups {
   double quad_until;
   double invulnerability_until;
   double breather_until;
@@ -37,23 +37,23 @@ typedef struct qa_q2_player_powerups {
   double regen_until;
   double flight_until;
   double invis_until;
-} qa_q2_player_powerups;
+} qa_persist_q2_player_powerups;
 
 typedef struct qa_q2_power_entry {
   qa_saved_actor_id actor;
-  qa_q2_player_powerups state;
+  qa_persist_q2_player_powerups state;
 } qa_q2_power_entry;
 
-typedef struct qa_q2_items_checkpoint {
+typedef struct qa_persist_q2_items_checkpoint {
   double power_cube_count;
   qa_q2_pickup_entry *pickups; size_t pickups_count;
   qa_q2_power_entry *powers; size_t powers_count;
   qa_saved_actor_id *power_armor_bindings; size_t power_armor_bindings_count;
   qa_save_value *root; /* owned when decoded; NULL from qa_read_* */
-} qa_q2_items_checkpoint;
+} qa_persist_q2_items_checkpoint;
 
-qa_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader);
-uint8_t *qa_encode_q2_items_checkpoint(const qa_q2_items_checkpoint *checkpoint, size_t *out_length);
-bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_q2_items_checkpoint *out);
+qa_persist_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader);
+uint8_t *qa_encode_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *checkpoint, size_t *out_length);
+bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_items_checkpoint *out);
 
 #endif

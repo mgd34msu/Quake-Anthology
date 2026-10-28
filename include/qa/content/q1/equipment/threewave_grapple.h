@@ -38,7 +38,9 @@ typedef struct qa_q1_threewave_grapple {
 /* Registers ctf:hook_* callbacks + state extension. False only on OOM. */
 bool qa_q1_threewave_grapple_init(qa_q1_threewave_grapple *grapple, qa_q1_services *game, qa_q1_threewave_host host);
 void qa_q1_threewave_grapple_free(qa_q1_threewave_grapple *grapple);
-qa_q1_threewave_state *qa_q1_threewave_state(qa_q1_threewave_grapple *grapple, qa_actor_id actor);
+/* TS ThreewaveGrapple.state(); suffixed because the state type
+ * carries the qa_q1_threewave_state name. */
+qa_q1_threewave_state *qa_q1_threewave_state_for(qa_q1_threewave_grapple *grapple, qa_actor_id actor);
 bool qa_q1_threewave_pulling(qa_q1_threewave_grapple *grapple, qa_actor_id actor);
 qa_q1_actor *qa_q1_threewave_hook(qa_q1_threewave_grapple *grapple, qa_actor_id actor);
 void qa_q1_threewave_release(qa_q1_threewave_grapple *grapple, qa_actor_id actor);

@@ -1,12 +1,17 @@
 /* Port of src/network/q3/admission.ts. GPL-2.0-or-later.
- * TS-owner mirror: network/common/endpoint.ts (Ipv4Address/IpxAddress/
- * LoopbackAddress) is not in this slice; qa_q3_mirror_* types mirror it
- * until that module lands. Async bindings become synchronous (PORTING). */
+ * The endpoint owner has landed (qa/network/common/endpoint.h,
+ * qa_net_address). At this slice's boundaries use
+ * qa_q3_address_to_net / qa_q3_address_from_net (lossless field
+ * copies); qa_q3_mirror_address_key / qa_q3_mirror_same_address
+ * delegate to qa_net_address_key / qa_net_same_address. The
+ * internal qa_q3_address value type remains until its external
+ * consumers migrate. Async bindings become synchronous (PORTING). */
 #ifndef QA_NETWORK_Q3_ADMISSION_H
 #define QA_NETWORK_Q3_ADMISSION_H
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/network/common/endpoint.h"
 #include "qa/network/q3/connectionless.h"
 #include "qa/network/q3/message.h"
 typedef enum qa_q3_mirror_address_kind { QA_Q3_ADDR_IPV4, QA_Q3_ADDR_IPV6, QA_Q3_ADDR_IPX, QA_Q3_ADDR_LOOPBACK } qa_q3_mirror_address_kind;
@@ -29,6 +34,11 @@ bool qa_q3_mirror_address_copy(qa_q3_mirror_address *dst, const qa_q3_mirror_add
 void qa_q3_mirror_address_destroy(qa_q3_mirror_address *a);
 /* Mirror of endpoint.ts sameAddress. */
 bool qa_q3_mirror_same_address(const qa_q3_mirror_address *a, const qa_q3_mirror_address *b, bool include_port);
+/* Boundary conversions to the landed endpoint owner type. Field
+ * copies (ipx network narrows to uint32 exactly as endpoint stores
+ * it); string fields are copied, caller destroys out. False on OOM. */
+bool qa_q3_address_to_net(const qa_q3_address *in, qa_net_address *out);
+bool qa_q3_address_from_net(const qa_net_address *in, qa_q3_address *out);
 bool qa_q3_is_lan_address(const qa_q3_address *address);
 /* q3InfoValue: returns malloc'd value or "" (NULL only on OOM). */
 char *qa_q3_info_value(const char *info, const char *key);

@@ -27,14 +27,14 @@ noreturn void qa_compat_q3_native_service_unavailable(int64_t slot, const char *
 noreturn void qa_compat_q3_native_game_error(const char *message) { qa_range_error("%s", message); }
 
 typedef struct { I *imports; int64_t slot; char *name; } UnboundCtx;
-static qa_call_result unbound_invoke(void *ctx, const qa_guest_call_context *context, const qa_call_value *args, size_t count);
+static qa_call_result unbound_invoke(void *ctx, const qa_guest_core_call_context *context, const qa_call_value *args, size_t count);
 static char *dup_text(const char *s) { size_t n = strlen(s) + 1; char *r = malloc(n); if (r) memcpy(r, s, n); return r; }
-static qa_call_result slot_invoke(void *ctx, const qa_guest_call_context *context, const qa_call_value *args, size_t count) {
+static qa_call_result slot_invoke(void *ctx, const qa_guest_core_call_context *context, const qa_call_value *args, size_t count) {
   Slot *slot = ctx;
   slot->reached++;
   return slot->service(slot->service_ctx, context, args, count);
 }
-qa_guest_address qa_compat_q3_quakelive_game_imports_bind(I *imports, int64_t slot_index, const char *name,
+qa_guest_core_address qa_compat_q3_quakelive_game_imports_bind(I *imports, int64_t slot_index, const char *name,
   const qa_abi_storage *parameters, size_t parameter_count, bool has_result, qa_abi_storage result,
   void *ctx, qa_compat_q3_native_service invoke, bool implemented) {
   if (slot_index < 0 || slot_index >= 206) qa_range_error("Quake Live import slot outside table");
@@ -69,7 +69,7 @@ qa_guest_address qa_compat_q3_quakelive_game_imports_bind(I *imports, int64_t sl
   qa_guest_call_signature signature = qa_compat_q3_native_signature(imports->abi, parameters, parameter_count,
     has_result, result, false, slot->layouts, &slot->result_layout);
   slot->callback = (qa_guest_host_callback){slot->id, signature, slot, slot_invoke};
-  qa_guest_address target = qa_guest_callback_table_bind(imports->callbacks, &slot->callback);
+  qa_guest_core_address target = qa_guest_callback_table_bind(imports->callbacks, &slot->callback);
   qa_sparse_write_pointer(imports->memory,
     qa_sparse_offset(imports->memory, imports->address, slot_index * imports->abi.pointer_bytes), true, target);
   return target;
@@ -81,7 +81,7 @@ size_t qa_compat_q3_quakelive_game_imports_coverage(const I *imports, qa_compat_
   }
   return 206;
 }
-void qa_compat_q3_quakelive_game_imports_write_string(I *imports, qa_guest_address address, const char *value, int64_t capacity) {
+void qa_compat_q3_quakelive_game_imports_write_string(I *imports, qa_guest_core_address address, const char *value, int64_t capacity) {
   if (capacity < 1) qa_range_error("Native string output requires positive source capacity");
   qa_sparse_check(imports->memory, address, (size_t)capacity, QA_ACCESS_WRITE);
   uint8_t *bytes = calloc((size_t)capacity, 1);
@@ -92,7 +92,7 @@ void qa_compat_q3_quakelive_game_imports_write_string(I *imports, qa_guest_addre
   qa_sparse_write(imports->memory, address, bytes, (size_t)capacity);
   free(bytes);
 }
-static void update_cvar(I *imports, qa_guest_address address) {
+static void update_cvar(I *imports, qa_guest_core_address address) {
   qa_sparse_guest_memory *m = imports->memory;
   double modification_count = 0, numeric_value = 0, integer_value = 0;
   char *value = NULL;
@@ -108,7 +108,7 @@ static void update_cvar(I *imports, qa_guest_address address) {
   free(value);
 }
 static char *arg_text(I *imports, const qa_call_value *args, size_t count, size_t index) {
-  qa_guest_address address = qa_guest_required_pointer(args, count, index);
+  qa_guest_core_address address = qa_guest_required_pointer(args, count, index);
   int64_t length = qa_sparse_find_zero(imports->memory, address, 1048576);
   if (length < 0) qa_range_error("Guest string exceeds checked maximum");
   char *text = malloc((size_t)length + 1);
@@ -117,44 +117,44 @@ static char *arg_text(I *imports, const qa_call_value *args, size_t count, size_
   text[length] = 0;
   return text;
 }
-static qa_call_result unbound_invoke(void *ctx, const qa_guest_call_context *context, const qa_call_value *args, size_t count) {
+static qa_call_result unbound_invoke(void *ctx, const qa_guest_core_call_context *context, const qa_call_value *args, size_t count) {
   (void)context; (void)args; (void)count;
   UnboundCtx *u = ctx;
   qa_compat_q3_native_service_unavailable(u->slot, u->name);
 }
 #define HOST(slot_name) ((I *)ctx)
-static qa_call_result svc_send_console_command(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_send_console_command(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
   imports->host.append_console_command(imports->host.ctx, t); free(t); return qa_call_void();
 }
-static qa_call_result svc_printf(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_printf(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
   imports->host.print(imports->host.ctx, t); free(t); return qa_call_void();
 }
-static qa_call_result svc_cvar_variable_value(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_cvar_variable_value(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
   double value = (double)(float)imports->host.cvar_variable_value(imports->host.ctx, t); free(t);
   return qa_call_float32(value);
 }
-static qa_call_result svc_cvar_update(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_cvar_update(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); update_cvar(imports, qa_guest_required_pointer(args, n, 0)); return qa_call_void();
 }
-static qa_call_result svc_cvar_variable_string_buffer(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_cvar_variable_string_buffer(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
   char *value = imports->host.cvar_variable_string(imports->host.ctx, t); free(t);
   qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1),
     value ? value : "", (int64_t)qa_guest_integer(args, n, 2));
   free(value); return qa_call_void();
 }
-static qa_call_result svc_cvar_set(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_cvar_set(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
   char *name = arg_text(imports, args, n, 0), *value = arg_text(imports, args, n, 1);
   imports->host.cvar_set(imports->host.ctx, name, value, true);
   free(name); free(value); return qa_call_void();
 }
-static qa_call_result svc_cvar_register(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_cvar_register(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
-  qa_guest_address address; bool has = qa_guest_pointer_argument(args, n, 0, &address);
+  qa_guest_core_address address; bool has = qa_guest_pointer_argument(args, n, 0, &address);
   char *name = arg_text(imports, args, n, 1), *fallback = arg_text(imports, args, n, 2);
   int64_t handle = imports->host.cvar_bind_vm(imports->host.ctx, name, fallback, (double)qa_guest_integer(args, n, 3));
   free(name); free(fallback);
@@ -165,7 +165,7 @@ static qa_call_result svc_cvar_register(void *ctx, const qa_guest_call_context *
   }
   return qa_call_void();
 }
-static qa_call_result svc_argv(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_argv(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
   size_t count = 0; const char *const *argv = imports->host.command_arguments(imports->host.ctx, &count);
   int64_t index = qa_guest_integer(args, n, 0);
@@ -173,36 +173,36 @@ static qa_call_result svc_argv(void *ctx, const qa_guest_call_context *c, const 
   qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1), value, (int64_t)qa_guest_integer(args, n, 2));
   return qa_call_void();
 }
-static qa_call_result svc_argc(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_argc(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; (void)args; (void)n; I *imports = HOST(0);
   size_t count = 0; (void)imports->host.command_arguments(imports->host.ctx, &count);
   return qa_call_int32((int32_t)count);
 }
-static qa_call_result svc_drop_client(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_drop_client(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
   imports->host.drop_client(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
 }
-static qa_call_result svc_send_server_command(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_send_server_command(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
   imports->host.send_server_command(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
 }
-static qa_call_result svc_set_configstring(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_set_configstring(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
   imports->host.configstring_set(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
 }
-static qa_call_result svc_get_configstring(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_get_configstring(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
   qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1),
     imports->host.configstring_get(imports->host.ctx, (double)qa_guest_integer(args, n, 0)), (int64_t)qa_guest_integer(args, n, 2));
   return qa_call_void();
 }
-static qa_call_result svc_get_userinfo(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_get_userinfo(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
   qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1),
     imports->host.get_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0)), (int64_t)qa_guest_integer(args, n, 2));
   return qa_call_void();
 }
-static qa_call_result svc_set_userinfo(void *ctx, const qa_guest_call_context *c, const qa_call_value *args, size_t n) {
+static qa_call_result svc_set_userinfo(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
   imports->host.set_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
 }

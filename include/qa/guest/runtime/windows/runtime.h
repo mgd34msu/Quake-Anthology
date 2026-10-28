@@ -18,7 +18,7 @@ typedef struct qa_windows_guest_runtime qa_windows_guest_runtime;
 struct qa_windows_guest_runtime {
   qa_windows_runtime_options options; /* borrowed pointers, as TS options */
   qa_windows_service_host host;
-  qa_guest_address teb, peb, static_tls;
+  qa_guest_core_address teb, peb, static_tls;
   /* private state (runtime.c layout companions are opaque pointers) */
   void *imports; size_t import_count, import_cap;
   void *data; size_t data_count, data_cap;
@@ -32,7 +32,7 @@ struct qa_windows_guest_runtime {
   void *tls_blocks; size_t tls_block_count, tls_block_cap;
   uint64_t *cfg_targets; size_t cfg_target_count, cfg_target_cap;
   bool has_cfg_check, has_cfg_dispatch;
-  qa_guest_address cfg_check, cfg_dispatch;
+  qa_guest_core_address cfg_check, cfg_dispatch;
   qa_guest_call_runner *runner_or_null;
   int64_t budget;
 };
@@ -53,7 +53,7 @@ void qa_windows_guest_runtime_signature(qa_windows_guest_runtime *runtime, const
                                         bool result_is_void, qa_abi_storage result,
                                         qa_abi_value_layout *layouts_out,
                                         qa_guest_call_signature *out);
-qa_guest_address qa_windows_guest_runtime_register_data(qa_windows_guest_runtime *runtime,
+qa_guest_core_address qa_windows_guest_runtime_register_data(qa_windows_guest_runtime *runtime,
                                                         const char *library, const char *name,
                                                         const uint8_t *bytes, size_t len);
 qa_guest_import_resolver qa_windows_guest_runtime_resolver(qa_windows_guest_runtime *runtime);
@@ -66,17 +66,17 @@ void qa_windows_guest_runtime_initialize(qa_windows_guest_runtime *runtime, qa_p
 void qa_windows_guest_runtime_detach(qa_windows_guest_runtime *runtime, qa_pe_image *image,
                                      const qa_windows_initialize_options *options);
 bool qa_windows_guest_runtime_resolve_address(qa_windows_guest_runtime *runtime, const char *library,
-                                              const char *name, qa_guest_address *out);
+                                              const char *name, qa_guest_core_address *out);
 bool qa_windows_guest_runtime_library_handle(qa_windows_guest_runtime *runtime, const char *library,
-                                             qa_guest_address *out);
+                                             qa_guest_core_address *out);
 bool qa_windows_guest_runtime_load_library(qa_windows_guest_runtime *runtime, const char *library,
-                                           qa_guest_address *out);
-bool qa_windows_guest_runtime_free_library(qa_windows_guest_runtime *runtime, qa_guest_address handle);
+                                           qa_guest_core_address *out);
+bool qa_windows_guest_runtime_free_library(qa_windows_guest_runtime *runtime, qa_guest_core_address handle);
 bool qa_windows_guest_runtime_allocate(qa_windows_guest_runtime *runtime, size_t size, uint64_t heap,
-                                       qa_guest_address *out);
+                                       qa_guest_core_address *out);
 bool qa_windows_guest_runtime_free(qa_windows_guest_runtime *runtime, bool has_address,
-                                   qa_guest_address address, uint64_t heap);
+                                   qa_guest_core_address address, uint64_t heap);
 bool qa_windows_guest_runtime_allocation_size(qa_windows_guest_runtime *runtime,
-                                              qa_guest_address address, uint64_t heap, size_t *out);
+                                              qa_guest_core_address address, uint64_t heap, size_t *out);
 
 #endif

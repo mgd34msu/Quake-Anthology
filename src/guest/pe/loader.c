@@ -147,16 +147,16 @@ void qa_map_pe_image(qa_pe_image *out, const qa_map_pe_image_options *options) {
   qa_guest_export *exports = NULL; size_t export_count = 0;
   qa_pe_read_exports(&reader, &out->strings, &exports, &export_count);
   bool has_tls = false, has_tls_index = false;
-  qa_guest_tls_template tls; qa_guest_address tls_index = {0};
+  qa_guest_tls_template tls; qa_guest_core_address tls_index = {0};
   qa_pe_read_tls(&reader, &has_tls, &tls, &has_tls_index, &tls_index);
   qa_pe_unwind_record *unwind_records = NULL; size_t unwind_record_count = 0;
   qa_pe_read_unwind(&reader, &unwind_records, &unwind_record_count);
   qa_pe_load_configuration load_config;
   bool has_load_config = qa_pe_read_load_configuration(&reader, &load_config);
   bool has_entry = pe->entry_point_rva != 0;
-  qa_guest_address entry_point = has_entry ? qa_pe_image_reader_executable(&reader, pe->entry_point_rva)
-                                           : (qa_guest_address){0};
-  qa_guest_address address = qa_pe_image_reader_address(&reader, 0, 1);
+  qa_guest_core_address entry_point = has_entry ? qa_pe_image_reader_executable(&reader, pe->entry_point_rva)
+                                           : (qa_guest_core_address){0};
+  qa_guest_core_address address = qa_pe_image_reader_address(&reader, 0, 1);
   const char *module_id = module.id != NULL ? module.id : "";
   uint32_t header_mapped = (uint32_t)(((uint64_t)pe->header_size + pe->section_alignment - 1)
                                       / pe->section_alignment * pe->section_alignment);
@@ -232,7 +232,7 @@ void qa_bind_pe_imports(const qa_pe_image *image, qa_mapped_guest_memory *memory
     qa_pe_error(QA_PE_STAGE_IMPORTS, "image belongs to another guest address space");
   size_t count = image->image.import_count;
   qa_guest_import_resolution *resolutions = xcalloc(count, sizeof(qa_guest_import_resolution));
-  typedef struct write_entry { qa_guest_address slot; uint8_t *bytes; } write_entry;
+  typedef struct write_entry { qa_guest_core_address slot; uint8_t *bytes; } write_entry;
   write_entry *writes = xcalloc(count, sizeof(write_entry));
   size_t live_count = 0;
   const qa_guest_mapping *live = qa_gmem_mappings(memory_ext, &live_count);
@@ -242,7 +242,7 @@ void qa_bind_pe_imports(const qa_pe_image *image, qa_mapped_guest_memory *memory
     if (resolution.kind == QA_RESOLUTION_UNRESOLVED)
       qa_pe_error(QA_PE_STAGE_IMPORTS, "%s: %s", import_->library,
                   resolution.detail != NULL ? resolution.detail : "");
-    qa_guest_address address = resolution.address;
+    qa_guest_core_address address = resolution.address;
     uint64_t limit = memory->pointer_bytes == 4 ? 0x100000000ULL : UINT64_MAX;
     bool mapped = false;
     for (size_t j = 0; live != NULL && j < live_count; j++)
@@ -271,7 +271,7 @@ void qa_bind_pe_imports(const qa_pe_image *image, qa_mapped_guest_memory *memory
     if (overlaps) regions[region_count++] = &live[i];
   }
   for (size_t i = 0; i < region_count; i++) {
-    qa_guest_address address = {0};
+    qa_guest_core_address address = {0};
     if (!qa_memory_pointer(memory, regions[i]->base, &address))
       qa_pe_error(QA_PE_STAGE_IMPORTS, "null IAT region");
     qa_gmem_protect(memory_ext, address, regions[i]->byte_length,
@@ -281,7 +281,7 @@ void qa_bind_pe_imports(const qa_pe_image *image, qa_mapped_guest_memory *memory
   for (size_t i = 0; i < count; i++)
     qa_memory_write(memory, writes[i].slot, writes[i].bytes, (size_t)memory->pointer_bytes);
   for (size_t i = 0; i < region_count; i++) {
-    qa_guest_address address = {0};
+    qa_guest_core_address address = {0};
     if (!qa_memory_pointer(memory, regions[i]->base, &address))
       qa_pe_error(QA_PE_STAGE_IMPORTS, "null IAT protection address");
     qa_gmem_protect(memory_ext, address, regions[i]->byte_length, regions[i]->permissions);

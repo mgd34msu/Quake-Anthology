@@ -93,7 +93,8 @@ void qa_qvm_validate_mod_pickups(const qa_qvm_mod_callback_declaration *declarat
           occupied = true;
       }
       if (record == NULL || in_clients || occupied || !isfinite(field->offset) ||
-          field->offset != trunc(field->offset) || field->offset < 0 ||
+          field->offset != trunc(field->offset) || field->offset > 9007199254740991.0 ||
+          field->offset < 0 ||
           (int64_t)field->offset % 4 != 0 || field->offset + 4 > record->stride)
         qa_range_error("Invalid QVM pickup source context");
       for (size_t f = 0; f < record->field_count; f++) {

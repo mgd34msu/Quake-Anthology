@@ -95,11 +95,11 @@ typedef struct qa_qvm_scene_actor {
   bool owned;
 } qa_qvm_scene_actor;
 
-typedef struct qa_qvm_scene_command {
+typedef struct qa_qvm_cp_scene_command {
   int64_t sequence;
   const char *const *arguments; /* borrowed from the save tree on read */
   size_t argument_count;
-} qa_qvm_scene_command;
+} qa_qvm_cp_scene_command;
 
 typedef struct qa_qvm_scene_context {
   int64_t revision;
@@ -108,7 +108,7 @@ typedef struct qa_qvm_scene_context {
   qa_qvmy_source_snapshot snapshot;
   qa_qvm_scene_actor *actors; /* owned */
   size_t actor_count;
-  qa_qvm_scene_command *commands; /* owned */
+  qa_qvm_cp_scene_command *commands; /* owned */
   size_t command_count;
   struct qa_qvm_scene_context *baseline; /* owned, nullable */
 } qa_qvm_scene_context;
@@ -146,7 +146,7 @@ typedef struct qa_qvm_mod_scene_command {
   const char *text; /* borrowed from the save tree on read */
 } qa_qvm_mod_scene_command;
 
-typedef struct qa_qvm_mod_scene_publication {
+typedef struct qa_qvm_cp_mod_scene_publication {
   int64_t revision;
   int64_t server_time;
   qa_q3_source_game_state_record game_state;
@@ -157,13 +157,13 @@ typedef struct qa_qvm_mod_scene_publication {
   size_t entity_count;
   qa_qvm_mod_scene_command *commands; /* owned */
   size_t command_count;
-} qa_qvm_mod_scene_publication;
+} qa_qvm_cp_mod_scene_publication;
 
-qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_mod_scene_publication *scene,
+qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_cp_mod_scene_publication *scene,
                                                     qa_qvm_abi_profile profile);
 void qa_qvm_read_mod_scene_publication(const qa_save_reader *reader, qa_qvm_abi_profile profile,
                                        qa_qvm_resolve_saved_actor_fn resolve, void *resolve_ctx,
-                                       qa_qvm_mod_scene_publication *out);
-void qa_qvm_mod_scene_publication_free(qa_qvm_mod_scene_publication *scene);
+                                       qa_qvm_cp_mod_scene_publication *out);
+void qa_qvm_mod_scene_publication_free(qa_qvm_cp_mod_scene_publication *scene);
 
 #endif

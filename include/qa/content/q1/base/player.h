@@ -9,10 +9,10 @@
 #include "qa/content/q1/base/foundation_types.h"
 
 /* TS Q1CharacterAttack mirror subset (owner foundation/types.ts). */
-typedef struct qa_q1_character_attack {
+typedef struct qa_q1_base_character_attack {
   const char *kind; /* "axe"|"shotgun"|"rocket"|"nail"|"lightning" */
   int variant; /* axe 0..3 */
-} qa_q1_character_attack;
+} qa_q1_base_character_attack;
 
 /* TS Q1CharacterInput. water_type is "empty"|"water"|"slime"|"lava". */
 typedef struct qa_q1_character_input {
@@ -62,7 +62,7 @@ qa_vec3 qa_q1_character_actor_view_offset(const qa_q1_character_actor *character
 qa_q1_character_presentation qa_q1_character_actor_presentation(qa_q1_character_actor *character);
 qa_q1_character_presentation qa_q1_character_actor_frame(qa_q1_character_actor *character,
                                                          double seconds, qa_q1_character_input input);
-void qa_q1_character_actor_attack(qa_q1_character_actor *character, qa_q1_character_attack attack);
+void qa_q1_character_actor_attack(qa_q1_character_actor *character, qa_q1_base_character_attack attack);
 void qa_q1_character_actor_pain(qa_q1_character_actor *character, qa_q1b_opt_actor attacker,
                                 double damage, bool axe_hit);
 void qa_q1_character_actor_die(qa_q1_character_actor *character, qa_q1b_opt_actor attacker);

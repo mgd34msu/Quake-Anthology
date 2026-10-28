@@ -205,8 +205,8 @@ static qa_save_value *build_attack_cause_value(const qa_q2_attack_cause *in) {
   return obj;
 }
 
-static void read_q2_attack_checkpoint(const qa_save_reader *reader, qa_q2_attack_checkpoint *out);
-static qa_save_value *build_q2_attack_checkpoint(const qa_q2_attack_checkpoint *in);
+static void read_q2_attack_checkpoint(const qa_save_reader *reader, qa_persist_q2_attack_checkpoint *out);
+static qa_save_value *build_q2_attack_checkpoint(const qa_persist_q2_attack_checkpoint *in);
 static void read_q2_spawn_value(const qa_save_reader *reader, qa_q2_spawn_value *out);
 static qa_save_value *build_q2_spawn_value(const qa_q2_spawn_value *in);
 static void read_q2_entity_spawn(const qa_save_reader *reader, qa_q2_entity_spawn *out);
@@ -217,16 +217,16 @@ static void read_q2_entity_links(const qa_save_reader *reader, qa_q2_entity_link
 static qa_save_value *build_q2_entity_links(const qa_q2_entity_links *in);
 static void read_q2_entity_callbacks(const qa_save_reader *reader, qa_q2_entity_callbacks *out);
 static qa_save_value *build_q2_entity_callbacks(const qa_q2_entity_callbacks *in);
-static void read_q2_entity_checkpoint(const qa_save_reader *reader, qa_q2_entity_checkpoint *out);
-static qa_save_value *build_q2_entity_checkpoint(const qa_q2_entity_checkpoint *in);
-static void read_q2_freed_slot(const qa_save_reader *reader, qa_q2_freed_slot *out);
-static qa_save_value *build_q2_freed_slot(const qa_q2_freed_slot *in);
+static void read_q2_entity_checkpoint(const qa_save_reader *reader, qa_persist_q2_entity_checkpoint *out);
+static qa_save_value *build_q2_entity_checkpoint(const qa_persist_q2_entity_checkpoint *in);
+static void read_q2_freed_slot(const qa_save_reader *reader, qa_persist_q2_freed_slot *out);
+static qa_save_value *build_q2_freed_slot(const qa_persist_q2_freed_slot *in);
 static void read_q2_foundation_counters(const qa_save_reader *reader, qa_q2_foundation_counters *out);
 static qa_save_value *build_q2_foundation_counters(const qa_q2_foundation_counters *in);
-static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_q2_foundation_checkpoint *out);
-static qa_save_value *build_q2_foundation_checkpoint(const qa_q2_foundation_checkpoint *in);
+static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_persist_q2_foundation_checkpoint *out);
+static qa_save_value *build_q2_foundation_checkpoint(const qa_persist_q2_foundation_checkpoint *in);
 
-static void read_q2_attack_checkpoint(const qa_save_reader *reader, qa_q2_attack_checkpoint *out) {
+static void read_q2_attack_checkpoint(const qa_save_reader *reader, qa_persist_q2_attack_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "sequence");
     (*out).sequence = qa_save_reader_integer_min(&f0, 0);
@@ -275,7 +275,7 @@ static void read_q2_attack_checkpoint(const qa_save_reader *reader, qa_q2_attack
     (*out).cause = read_attack_cause_value(&f11);
     qa_save_reader_destroy(&f11); }
 }
-static qa_save_value *build_q2_attack_checkpoint(const qa_q2_attack_checkpoint *in) {
+static qa_save_value *build_q2_attack_checkpoint(const qa_persist_q2_attack_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "sequence", qa_save_value_number((*in).sequence))) goto fail;
@@ -744,7 +744,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_entity_checkpoint(const qa_save_reader *reader, qa_q2_entity_checkpoint *out) {
+static void read_q2_entity_checkpoint(const qa_save_reader *reader, qa_persist_q2_entity_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "actor");
     (*out).actor = read_actor(&f0);
@@ -775,7 +775,7 @@ static void read_q2_entity_checkpoint(const qa_save_reader *reader, qa_q2_entity
   if (out->values.health_target == NULL) { out->values.health_target = ""; for (size_t i = 0; i < out->spawn.values_count; i++) if (strcmp(out->spawn.values[i].key, "healthtarget") == 0) { out->values.health_target = out->spawn.values[i].value; break; } }
   if (out->values.item_target == NULL) { out->values.item_target = ""; for (size_t i = 0; i < out->spawn.values_count; i++) if (strcmp(out->spawn.values[i].key, "itemtarget") == 0) { out->values.item_target = out->spawn.values[i].value; break; } }
 }
-static qa_save_value *build_q2_entity_checkpoint(const qa_q2_entity_checkpoint *in) {
+static qa_save_value *build_q2_entity_checkpoint(const qa_persist_q2_entity_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
@@ -791,7 +791,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_freed_slot(const qa_save_reader *reader, qa_q2_freed_slot *out) {
+static void read_q2_freed_slot(const qa_save_reader *reader, qa_persist_q2_freed_slot *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "slot");
     (*out).slot = qa_save_reader_integer_min(&f0, 0);
@@ -800,7 +800,7 @@ static void read_q2_freed_slot(const qa_save_reader *reader, qa_q2_freed_slot *o
     (*out).time = qa_save_reader_number(&f1);
     qa_save_reader_destroy(&f1); }
 }
-static qa_save_value *build_q2_freed_slot(const qa_q2_freed_slot *in) {
+static qa_save_value *build_q2_freed_slot(const qa_persist_q2_freed_slot *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "slot", qa_save_value_number((*in).slot))) goto fail;
@@ -851,7 +851,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_q2_foundation_checkpoint *out) {
+static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_persist_q2_foundation_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "version");
     (*out).version = qa_save_reader_literal_number(&f0, 1);
@@ -864,7 +864,7 @@ static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_q2_fo
     qa_save_reader_destroy(&f2); }
   { qa_save_reader f3 = field(reader, "freedSlots");
     (*out).freed_slots_count = qa_save_reader_list_count(&f3);
-    (*out).freed_slots = (qa_q2_freed_slot *)calloc((*out).freed_slots_count != 0 ? (*out).freed_slots_count : 1, sizeof(qa_q2_freed_slot));
+    (*out).freed_slots = (qa_persist_q2_freed_slot *)calloc((*out).freed_slots_count != 0 ? (*out).freed_slots_count : 1, sizeof(qa_persist_q2_freed_slot));
     if ((*out).freed_slots == NULL) qa_save_reader_fail(&f3, "out of memory");
     for (size_t i19 = 0; i19 < (*out).freed_slots_count; i19++) {
       qa_save_reader it20 = item(&f3, i19);
@@ -877,7 +877,7 @@ static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_q2_fo
     qa_save_reader_destroy(&f4); }
   { qa_save_reader f5 = field(reader, "entities");
     (*out).entities_count = qa_save_reader_list_count(&f5);
-    (*out).entities = (qa_q2_entity_checkpoint *)calloc((*out).entities_count != 0 ? (*out).entities_count : 1, sizeof(qa_q2_entity_checkpoint));
+    (*out).entities = (qa_persist_q2_entity_checkpoint *)calloc((*out).entities_count != 0 ? (*out).entities_count : 1, sizeof(qa_persist_q2_entity_checkpoint));
     if ((*out).entities == NULL) qa_save_reader_fail(&f5, "out of memory");
     for (size_t i21 = 0; i21 < (*out).entities_count; i21++) {
       qa_save_reader it22 = item(&f5, i21);
@@ -886,7 +886,7 @@ static void read_q2_foundation_checkpoint(const qa_save_reader *reader, qa_q2_fo
     }
     qa_save_reader_destroy(&f5); }
 }
-static qa_save_value *build_q2_foundation_checkpoint(const qa_q2_foundation_checkpoint *in) {
+static qa_save_value *build_q2_foundation_checkpoint(const qa_persist_q2_foundation_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
@@ -911,12 +911,12 @@ fail:
   return NULL;
 }
 
-qa_q2_attack_checkpoint qa_read_q2_attack_checkpoint(const qa_save_reader *reader) {
-  qa_q2_attack_checkpoint out;
+qa_persist_q2_attack_checkpoint qa_read_q2_attack_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_attack_checkpoint out;
   read_q2_attack_checkpoint(reader, &out);
   return out;
 }
-qa_save_value *qa_q2_attack_checkpoint_value(const qa_q2_attack_checkpoint *checkpoint) {
+qa_save_value *qa_q2_attack_checkpoint_value(const qa_persist_q2_attack_checkpoint *checkpoint) {
   return build_q2_attack_checkpoint(checkpoint);
 }
 
@@ -928,19 +928,19 @@ qa_save_value *qa_q2_attack_checkpoint_value(const qa_q2_attack_checkpoint *chec
 
 
 
-qa_q2_foundation_checkpoint qa_read_q2_foundation_checkpoint(const qa_save_reader *reader) {
-  qa_q2_foundation_checkpoint out;
+qa_persist_q2_foundation_checkpoint qa_read_q2_foundation_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_foundation_checkpoint out;
   read_q2_foundation_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_q2_foundation_checkpoint(const qa_q2_foundation_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_foundation_checkpoint(const qa_persist_q2_foundation_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_foundation_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_foundation_checkpoint(const uint8_t *bytes, size_t length, qa_q2_foundation_checkpoint *out) {
+bool qa_decode_q2_foundation_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_foundation_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;

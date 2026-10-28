@@ -3,7 +3,7 @@
  * resolution. Closures/callbacks become function pointers + ctx; the
  * GNU-unique Map and the mutable imports array become small owned lists.
  * TS bigint addresses are uint64_t with wrap arithmetic. The TS address-
- * space identity check has no C counterpart (qa_guest_address carries no
+ * space identity check has no C counterpart (qa_guest_core_address carries no
  * space token). ElfError aborts via qa_range_error. GPL-2.0-or-later.
  */
 #ifndef QA_GUEST_ELF_RELOCATE_H
@@ -33,13 +33,13 @@ typedef struct qa_elf_tls_bindings {
 } qa_elf_tls_bindings;
 
 typedef struct qa_elf_unique_symbols {
-  struct { char *name; qa_guest_address address; } *entries; /* names owned */
+  struct { char *name; qa_guest_core_address address; } *entries; /* names owned */
   size_t count, cap;
 } qa_elf_unique_symbols;
 void qa_elf_unique_symbols_init(qa_elf_unique_symbols *map);
 void qa_elf_unique_symbols_free(qa_elf_unique_symbols *map);
-bool qa_elf_unique_symbols_get(const qa_elf_unique_symbols *map, const char *name, qa_guest_address *out);
-void qa_elf_unique_symbols_set(qa_elf_unique_symbols *map, const char *name, qa_guest_address address);
+bool qa_elf_unique_symbols_get(const qa_elf_unique_symbols *map, const char *name, qa_guest_core_address *out);
+void qa_elf_unique_symbols_set(qa_elf_unique_symbols *map, const char *name, qa_guest_core_address address);
 bool qa_elf_unique_symbols_has(const qa_elf_unique_symbols *map, const char *name);
 void qa_elf_unique_symbols_delete(qa_elf_unique_symbols *map, const char *name);
 
@@ -56,20 +56,20 @@ typedef struct qa_elf_relocation_context {
   qa_guest_import_resolver resolver;
   const qa_elf_tls_bindings *tls; /* NULL: TS null */
   void *resolve_ctx;
-  qa_guest_address (*resolve_indirect)(void *ctx, qa_guest_address resolver_address); /* NULL: TS null */
+  qa_guest_core_address (*resolve_indirect)(void *ctx, qa_guest_core_address resolver_address); /* NULL: TS null */
   bool (*resolve_symbol_size)(void *ctx, const qa_guest_import *import_,
                               const qa_guest_image *requesting, size_t *out); /* NULL: TS null */
   qa_elf_unique_symbols *unique_symbols; /* NULL: TS null */
   qa_elf_import_list *imports;
 } qa_elf_relocation_context;
 
-qa_guest_address qa_elf_address(qa_mapped_guest_memory *memory, uint64_t value);
-qa_guest_import qa_elf_symbol_import(const qa_elf_symbol *symbol, qa_guest_address slot);
+qa_guest_core_address qa_elf_address(qa_mapped_guest_memory *memory, uint64_t value);
+qa_guest_import qa_elf_symbol_import(const qa_elf_symbol *symbol, qa_guest_core_address slot);
 void qa_relocate_elf(qa_elf_relocation_context *context);
 uint64_t qa_elf_defined_symbol_address(uint64_t load_bias, qa_mapped_guest_memory *memory,
-                                       qa_guest_address (*resolve_indirect)(void *ctx, qa_guest_address),
+                                       qa_guest_core_address (*resolve_indirect)(void *ctx, qa_guest_core_address),
                                        void *resolve_ctx, const qa_elf_symbol *symbol);
 uint64_t qa_elf_resolve_symbol(qa_elf_relocation_context *context, const qa_elf_symbol *symbol,
-                               qa_guest_address slot, bool copy);
+                               qa_guest_core_address slot, bool copy);
 
 #endif

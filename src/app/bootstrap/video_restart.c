@@ -68,9 +68,8 @@ void qa_app_video_restart_register(qa_app_video_restart *v, qa_command_buffer *c
 }
 bool qa_app_video_restart_drain(qa_app_video_restart *v) {
   if (v->running) qa_range_error("Video restart is already preparing");
-  qa_app_video_capture_mirror capture; memset(&capture, 0, sizeof capture);
-  bool has_capture = v->host.capture && v->host.capture(v->host.ctx, &capture);
-  if (v->closed || !v->has_request || (has_capture && capture.pending_readback(capture.ctx))) return false;
+  qa_app_capture *capture = v->host.capture ? v->host.capture(v->host.ctx) : NULL;
+  if (v->closed || !v->has_request || (capture && qa_app_capture_pending_readback(capture))) return false;
   char kind[8]; snprintf(kind, sizeof kind, "%s", v->kind);
   bool has_source = v->has_source; qa_command_context source = v->source;
   bool render_worker = v->render_worker;
@@ -82,7 +81,7 @@ bool qa_app_video_restart_drain(qa_app_video_restart *v) {
   qa_sdl_window *previous_window = qa_app_native_renderer_window(v->renderer);
   bool input_published = false;
   const char *error = NULL;
-  if (has_capture) error = capture.drain(capture.ctx);
+  if (capture) qa_app_capture_drain(capture);
   if (error == NULL) {
     surface = qa_app_native_renderer_prepare_restart(v->renderer, kind, true, render_worker);
     if (surface == NULL) error = "Out of memory";

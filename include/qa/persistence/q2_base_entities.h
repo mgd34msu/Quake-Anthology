@@ -50,7 +50,7 @@ typedef struct qa_q2_secret_entry {
 typedef struct qa_q2_base_movers {
   qa_q2_platform_entry *platforms; size_t platforms_count;
   qa_q2_secret_entry *secrets; size_t secrets_count;
-  qa_q2_linear_motion_checkpoint linear;
+  qa_persist_q2_linear_motion_checkpoint linear;
 } qa_q2_base_movers;
 
 typedef struct qa_q2_scenery_animation {

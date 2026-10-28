@@ -157,16 +157,16 @@ static qa_save_value *build_hand_action_value(const qa_hand_action *in) {
   return obj;
 }
 
-static void read_hand_grenade_loadout(const qa_save_reader *reader, qa_hand_grenade_loadout *out);
-static qa_save_value *build_hand_grenade_loadout(const qa_hand_grenade_loadout *in);
+static void read_hand_grenade_loadout(const qa_save_reader *reader, qa_persist_hand_grenade_loadout *out);
+static qa_save_value *build_hand_grenade_loadout(const qa_persist_hand_grenade_loadout *in);
 static void read_hand_grenade_state(const qa_save_reader *reader, qa_hand_grenade_state *out);
 static qa_save_value *build_hand_grenade_state(const qa_hand_grenade_state *in);
 static void read_hand_grenades_actor(const qa_save_reader *reader, qa_hand_grenades_actor *out);
 static qa_save_value *build_hand_grenades_actor(const qa_hand_grenades_actor *in);
-static void read_hand_grenades_checkpoint(const qa_save_reader *reader, qa_hand_grenades_checkpoint *out);
-static qa_save_value *build_hand_grenades_checkpoint(const qa_hand_grenades_checkpoint *in);
+static void read_hand_grenades_checkpoint(const qa_save_reader *reader, qa_persist_hand_grenades_checkpoint *out);
+static qa_save_value *build_hand_grenades_checkpoint(const qa_persist_hand_grenades_checkpoint *in);
 
-static void read_hand_grenade_loadout(const qa_save_reader *reader, qa_hand_grenade_loadout *out) {
+static void read_hand_grenade_loadout(const qa_save_reader *reader, qa_persist_hand_grenade_loadout *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "enabled");
     (*out).enabled = qa_save_reader_boolean(&f0);
@@ -182,7 +182,7 @@ static void read_hand_grenade_loadout(const qa_save_reader *reader, qa_hand_gren
     qa_save_reader_destroy(&f3); }
   if (out->initial_ammo > out->capacity) qa_save_reader_fail(reader, "initial hand grenade allowance exceeds capacity");
 }
-static qa_save_value *build_hand_grenade_loadout(const qa_hand_grenade_loadout *in) {
+static qa_save_value *build_hand_grenade_loadout(const qa_persist_hand_grenade_loadout *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "enabled", qa_save_value_boolean((*in).enabled))) goto fail;
@@ -235,7 +235,7 @@ fail:
   return NULL;
 }
 
-static void read_hand_grenades_checkpoint(const qa_save_reader *reader, qa_hand_grenades_checkpoint *out) {
+static void read_hand_grenades_checkpoint(const qa_save_reader *reader, qa_persist_hand_grenades_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "version");
     (*out).version = qa_save_reader_literal_number(&f0, 1);
@@ -255,7 +255,7 @@ static void read_hand_grenades_checkpoint(const qa_save_reader *reader, qa_hand_
     }
     qa_save_reader_destroy(&f2); }
 }
-static qa_save_value *build_hand_grenades_checkpoint(const qa_hand_grenades_checkpoint *in) {
+static qa_save_value *build_hand_grenades_checkpoint(const qa_persist_hand_grenades_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
@@ -275,19 +275,19 @@ fail:
 
 
 
-qa_hand_grenades_checkpoint qa_read_hand_grenades_checkpoint(const qa_save_reader *reader) {
-  qa_hand_grenades_checkpoint out;
+qa_persist_hand_grenades_checkpoint qa_read_hand_grenades_checkpoint(const qa_save_reader *reader) {
+  qa_persist_hand_grenades_checkpoint out;
   read_hand_grenades_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_hand_grenades_checkpoint(const qa_hand_grenades_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_hand_grenades_checkpoint(const qa_persist_hand_grenades_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_hand_grenades_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_hand_grenades_checkpoint *out) {
+bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_persist_hand_grenades_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;

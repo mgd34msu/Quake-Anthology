@@ -180,7 +180,7 @@ double qa_shader_sort(const qa_mat_shader_definition *shader) {
   return is_blended(first.stage.blend) ? (first.stage.depth_write ? 5 : 9) : 3;
 }
 
-qa_fog_pass_kind qa_shader_fog_pass(const qa_mat_shader_definition *shader) {
+qa_fog_pass qa_shader_fog_pass(const qa_mat_shader_definition *shader) {
   if (qa_shader_sort(shader) <= 3) return "equal";
   if (shader != NULL) {
     for (size_t i = 0; i < shader->surface_parms.count; i++)

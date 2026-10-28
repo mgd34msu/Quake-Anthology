@@ -30,7 +30,7 @@ static const char *const CLASSNAMES_10[] = {"monster_zombie"};
 static const char *const GIBS_10[] = {"gib1", "gib2", "gib3"};
 static const char *const CLASSNAMES_11[] = {"monster_boss"};
 static const char *const CLASSNAMES_12[] = {"monster_oldone"};
-const qa_q1_monster_species QA_Q1_BASE_SPECIES[] = {
+const qa_q1_base_monster_species QA_Q1_BASE_SPECIES[] = {
   {.species = "knight", .kill_string = "$qc_ks_knight", .classnames = CLASSNAMES_0, .classname_count = 1, .model = "knight", .head = "h_knight", .health = 75, .gib_health = -40, .gibs = GIBS_0, 3, .bounds = {{-16, -16, -24}, {16, 16, 40}}, .stand = "knight_stand1", .walk = "knight_walk1", .run = "knight_run1", .sight = "knight/ksight.wav", .missile = NULL, .melee = true, .movement = "walk"},
   {.species = "enforcer", .kill_string = "$qc_ks_enforcer", .classnames = CLASSNAMES_1, .classname_count = 1, .model = "enforcer", .head = "h_mega", .health = 80, .gib_health = -35, .gibs = GIBS_1, 3, .bounds = {{-16, -16, -24}, {16, 16, 40}}, .stand = "enf_stand1", .walk = "enf_walk1", .run = "enf_run1", .sight = "enforcer/sight1.wav", .missile = "enf_atk1", .melee = false, .movement = "walk"},
   {.species = "demon", .kill_string = "$qc_ks_fiend", .classnames = CLASSNAMES_2, .classname_count = 1, .model = "demon", .head = "h_demon", .health = 300, .gib_health = -80, .gibs = GIBS_2, 3, .bounds = {{-32, -32, -24}, {32, 32, 64}}, .stand = "demon1_stand1", .walk = "demon1_walk1", .run = "demon1_run1", .sight = "demon/sight2.wav", .missile = "demon1_jump1", .melee = true, .movement = "walk"},

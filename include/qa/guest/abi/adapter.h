@@ -24,17 +24,17 @@ typedef struct qa_guest_exception {
   int vector; /* processor */
   bool has_error_code;
   int64_t error_code;
-  qa_guest_address instruction; /* processor; windows address; cxx object */
+  qa_guest_core_address instruction; /* processor; windows address; cxx object */
   const char *detail; /* processor/memory */
   qa_guest_access access; /* memory */
-  qa_guest_address address; /* memory */
+  qa_guest_core_address address; /* memory */
   int64_t byte_length; /* memory */
   uint32_t code; /* windows */
   uint32_t flags; /* windows */
   const uint64_t *arguments; /* windows */
   size_t argument_count;
   bool has_type_info, has_destructor; /* cxx */
-  qa_guest_address type_info, destructor;
+  qa_guest_core_address type_info, destructor;
   qa_guest_native_abi abi; /* cxx */
 } qa_guest_exception;
 
@@ -47,9 +47,9 @@ const char *qa_guest_execution_stop_kind_name(qa_guest_execution_stop_kind kind)
 typedef struct qa_guest_execution_stop {
   qa_guest_execution_stop_kind kind;
   int64_t instructions;
-  qa_guest_address address; /* return/host-call/halt */
+  qa_guest_core_address address; /* return/host-call/halt */
   qa_guest_exception exception; /* exception */
-  qa_guest_address instruction_address; /* unsupported */
+  qa_guest_core_address instruction_address; /* unsupported */
   const uint8_t *instruction_bytes;
   size_t instruction_bytes_len;
   const char *mnemonic; /* unsupported */
@@ -64,17 +64,17 @@ typedef struct qa_guest_cpu {
   qa_guest_module_identity module; /* memory.module in TS */
   void *run_ctx;
   qa_guest_execution_stop (*run)(void *ctx, int64_t instruction_budget,
-                                 bool has_return_address, qa_guest_address return_address);
+                                 bool has_return_address, qa_guest_core_address return_address);
 } qa_guest_cpu;
 
 typedef struct qa_x86_abi_adapter { qa_guest_native_abi abi; } qa_x86_abi_adapter;
 
-qa_guest_address qa_guest_pointer(const qa_mapped_guest_memory *memory, uint64_t raw);
+qa_guest_core_address qa_guest_pointer(const qa_mapped_guest_memory *memory, uint64_t raw);
 void qa_x86_abi_adapter_init(qa_x86_abi_adapter *adapter, qa_guest_native_abi abi);
-void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa_guest_address target,
+void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa_guest_core_address target,
                               const qa_guest_call_signature *signature,
                               const qa_call_value *arguments, size_t argument_count,
-                              qa_guest_address return_address);
+                              qa_guest_core_address return_address);
 /* Results are malloc'd arrays of call values; free each value then the array.
  * Returns false only on OOM. */
 bool qa_x86_abi_adapter_arguments(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu,

@@ -17,7 +17,7 @@
 typedef struct qa_i386_cpu {
   qa_guest_processor_state *state;
   qa_sparse_guest_memory *memory;
-  bool (*host_call)(void *ctx, qa_guest_address address);
+  bool (*host_call)(void *ctx, qa_guest_core_address address);
   void *host_call_ctx;
   void (*numeric)(void *ctx, qa_numeric_result *out, qa_numeric_context *context);
   void *numeric_ctx;
@@ -28,9 +28,9 @@ typedef struct qa_i386_cpu {
 
 /* Aborts with the TS RangeError when state/memory widths mismatch. */
 void qa_i386_cpu_init(qa_i386_cpu *cpu, qa_guest_processor_state *state, qa_sparse_guest_memory *memory,
-                      bool (*host_call)(void *ctx, qa_guest_address address), void *host_call_ctx,
+                      bool (*host_call)(void *ctx, qa_guest_core_address address), void *host_call_ctx,
                       void (*numeric)(void *ctx, qa_numeric_result *out, qa_numeric_context *context), void *numeric_ctx);
 qa_guest_execution_stop qa_i386_cpu_run(qa_i386_cpu *cpu, int64_t instruction_budget,
-                                        bool has_return_address, qa_guest_address return_address);
+                                        bool has_return_address, qa_guest_core_address return_address);
 
 #endif

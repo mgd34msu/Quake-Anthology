@@ -30,13 +30,13 @@ typedef struct qa_app_q3_source_client_row {
   const qa_q3_base_player_state_record *state;
 } qa_app_q3_source_client_row;
 typedef struct qa_app_q3_source_configstring { double index; const char *value; } qa_app_q3_source_configstring;
-typedef struct qa_app_q3_source_presentation_state {
+typedef struct qa_app_q3_source_presentation_state_mirror {
   qa_q3_base_product product;
   double time;
   const qa_app_q3_source_entity_row *entities; size_t entity_count;
   const qa_app_q3_source_client_row *clients; size_t client_count;
   const qa_app_q3_source_configstring *configstrings; size_t configstring_count;
-} qa_app_q3_source_presentation_state;
+} qa_app_q3_source_presentation_state_mirror;
 /* TS SimulationPresentationEvent subset read by receiveEvents:
  * kind "q3-source" with a "server-command" payload. */
 typedef struct qa_app_q3_source_presentation_event {
@@ -53,14 +53,14 @@ typedef struct qa_app_q3_source_callbacks {
   /* select(player, source): fills *out (caller-destroyed visible set
    * storage is callback-owned until the next call). */
   void (*select)(void *ctx, const qa_q3_player_state_record *player,
-                 const qa_app_q3_source_presentation_state *source, qa_q3_visible_entities *out);
+                 const qa_app_q3_source_presentation_state_mirror *source, qa_q3_visible_entities *out);
   bool (*source_actor)(void *ctx, double number, qa_actor_id *out); /* false = null */
   /* predictionCommand?: NULL = TS undefined. */
   qa_q3_base_user_command (*prediction_command)(void *ctx, qa_actor_command command, double source_time_ms);
   void (*level_shot)(void *ctx); /* NULL = TS undefined */
 } qa_app_q3_source_callbacks;
 qa_app_application_q3_source *qa_app_application_q3_source_create(
-    qa_actor_id current_actor, const qa_app_q3_source_presentation_state *initial,
+    qa_actor_id current_actor, const qa_app_q3_source_presentation_state_mirror *initial,
     qa_app_q3_source_callbacks callbacks);
 void qa_app_application_q3_source_destroy(qa_app_application_q3_source *source);
 const char *qa_app_application_q3_source_mode(const qa_app_application_q3_source *source); /* "live" */
@@ -71,11 +71,11 @@ qa_q3_pres_client_command_history *qa_app_application_q3_source_commands(qa_app_
 void qa_app_application_q3_source_assert_can_restart_round(qa_app_application_q3_source *source);
 /* bit: TS 0 | 4. */
 void qa_app_application_q3_source_begin_round_restart(qa_app_application_q3_source *source, double bit,
-    const qa_app_q3_source_presentation_state *state);
+    const qa_app_q3_source_presentation_state_mirror *state);
 void qa_app_application_q3_source_validate_round_actor(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state *state);
+    const qa_app_q3_source_presentation_state_mirror *state);
 void qa_app_application_q3_source_rebind_round(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state *state);
+    const qa_app_q3_source_presentation_state_mirror *state);
 /* SnapshotSource surface. */
 void qa_app_application_q3_source_current(const qa_app_application_q3_source *source,
                                           double *out_number, double *out_server_time);
@@ -92,7 +92,7 @@ bool qa_app_application_q3_source_sound_actor(qa_app_application_q3_source *sour
 void qa_app_application_q3_source_receive_events(qa_app_application_q3_source *source,
     const qa_app_q3_source_presentation_event *events, size_t event_count);
 void qa_app_application_q3_source_receive(qa_app_application_q3_source *source,
-    const qa_app_q3_source_presentation_state *state,
+    const qa_app_q3_source_presentation_state_mirror *state,
     const qa_app_q3_source_presentation_event *events, size_t event_count,
     const qa_actor_command *commands, size_t command_count);
 #endif

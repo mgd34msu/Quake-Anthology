@@ -271,7 +271,7 @@ static void lock_none(qa_x64_integer_kernel *kernel, bool lock, bool permitted) 
   qa_x64_lock(lock, NULL, false, permitted);
 }
 
-static void read_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_address address, int width) {
+static void read_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_core_address address, int width) {
   if (width == 64) {
     qa_sparse_read_u64_words(kernel->memory, address, &kernel->memory_low, &kernel->memory_high);
     kernel->low = kernel->memory_low;
@@ -283,7 +283,7 @@ static void read_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_address a
     kernel->high = 0;
   }
 }
-static void write_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_address address, int width) {
+static void write_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_core_address address, int width) {
   if (width == 64) qa_sparse_write_u64_words(kernel->memory, address, kernel->low, kernel->high);
   else if (width == 32) qa_sparse_write_u32(kernel->memory, address, kernel->low);
   else if (width == 16) qa_sparse_write_u16(kernel->memory, address, kernel->low);
@@ -292,7 +292,7 @@ static void write_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_address 
 static void read_source(qa_x64_integer_kernel *kernel, const qa_x64_kernel_source *value, uint64_t next_ip);
 static void read_operand_kernel(qa_x64_integer_kernel *kernel, const qa_x64_kernel_operand *value, uint64_t next_ip) {
   if (value->is_memory) {
-    qa_guest_address address = qa_x64_operand_address(kernel->memory, kernel->state, &value->source, next_ip, QA_ACCESS_READ);
+    qa_guest_core_address address = qa_x64_operand_address(kernel->memory, kernel->state, &value->source, next_ip, QA_ACCESS_READ);
     read_memory_kernel(kernel, address, value->width);
     return;
   }
@@ -311,7 +311,7 @@ static void read_source(qa_x64_integer_kernel *kernel, const qa_x64_kernel_sourc
 }
 static void write_operand_kernel(qa_x64_integer_kernel *kernel, const qa_x64_kernel_operand *destination, uint64_t next_ip) {
   if (destination->is_memory) {
-    qa_guest_address address = qa_x64_operand_address(kernel->memory, kernel->state, &destination->source, next_ip, QA_ACCESS_WRITE);
+    qa_guest_core_address address = qa_x64_operand_address(kernel->memory, kernel->state, &destination->source, next_ip, QA_ACCESS_WRITE);
     write_memory_kernel(kernel, address, destination->width);
     return;
   }
@@ -533,7 +533,7 @@ qa_x64_flow qa_x64_integer_kernel_execute(qa_x64_integer_kernel *kernel, const q
       qa_x64_lock(original->lock, op->destination.is_memory ? &op->destination.source : NULL,
                   op->destination.is_memory, true);
       bool has_address = op->destination.is_memory;
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (has_address) {
         address = qa_x64_operand_address(kernel->memory, kernel->state, &op->destination.source, original->next_ip, QA_ACCESS_WRITE);
         qa_sparse_check(kernel->memory, address, (size_t)(op->destination.width / 8), QA_ACCESS_WRITE);
@@ -564,7 +564,7 @@ qa_x64_flow qa_x64_integer_kernel_execute(qa_x64_integer_kernel *kernel, const q
       qa_x64_lock(original->lock, op->destination.is_memory ? &op->destination.source : NULL,
                   op->destination.is_memory, writes);
       bool has_address = op->destination.is_memory;
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (has_address) {
         address = qa_x64_operand_address(kernel->memory, kernel->state, &op->destination.source, original->next_ip,
                                          writes ? QA_ACCESS_WRITE : QA_ACCESS_READ);

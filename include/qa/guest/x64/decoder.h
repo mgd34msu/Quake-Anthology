@@ -61,11 +61,11 @@ typedef struct qa_x64_decoded_instruction {
 bool qa_x64_decoded_unchanged(qa_x64_decoded_instruction *decoded);
 
 uint64_t qa_x64_canonical_address(qa_guest_throw *throw_ctx, uint64_t value);
-qa_guest_address qa_x64_guest_address(qa_sparse_guest_memory *memory, uint64_t raw, qa_guest_access access);
-uint64_t qa_x64_read_memory(qa_sparse_guest_memory *memory, qa_guest_address address, int width);
-void qa_x64_write_memory(qa_sparse_guest_memory *memory, qa_guest_address address, int width, uint64_t value);
+qa_guest_core_address qa_x64_guest_address(qa_sparse_guest_memory *memory, uint64_t raw, qa_guest_access access);
+uint64_t qa_x64_read_memory(qa_sparse_guest_memory *memory, qa_guest_core_address address, int width);
+void qa_x64_write_memory(qa_sparse_guest_memory *memory, qa_guest_core_address address, int width, uint64_t value);
 uint64_t qa_x64_effective_operand_offset(const qa_guest_processor_state *state, const qa_x64_operand *operand, uint64_t next_ip);
-qa_guest_address qa_x64_operand_address(qa_sparse_guest_memory *memory, const qa_guest_processor_state *state,
+qa_guest_core_address qa_x64_operand_address(qa_sparse_guest_memory *memory, const qa_guest_processor_state *state,
                                         const qa_x64_operand *operand, uint64_t next_ip, qa_guest_access access);
 uint64_t qa_x64_read_operand(qa_sparse_guest_memory *memory, const qa_guest_processor_state *state,
                              const qa_x64_operand *operand, uint64_t next_ip);
@@ -124,7 +124,7 @@ qa_x64_operand qa_x64_cursor_register(qa_x64_decode_cursor *cursor, int index, i
 qa_x64_modrm qa_x64_cursor_decode_modrm(qa_x64_decode_cursor *cursor, int width);
 uint64_t qa_x64_cursor_effective_offset(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand,
                                         bool has_next_ip, uint64_t next_ip);
-qa_guest_address qa_x64_cursor_address(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand, qa_guest_access access);
+qa_guest_core_address qa_x64_cursor_address(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand, qa_guest_access access);
 uint64_t qa_x64_cursor_read(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand);
 void qa_x64_cursor_write(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand, uint64_t value);
 void qa_x64_cursor_writable(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand);

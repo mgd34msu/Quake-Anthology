@@ -12,6 +12,7 @@ typedef struct name_entry { double slot; char *name; } name_entry;
 typedef struct seat_state {
   qa_app_rerelease_seat binding;
   char *language;
+  qa_app_rerelease_fog fog;
   bool fog_received;
   char *story;
   bool has_story_source; char *story_content; char *story_text;
@@ -73,6 +74,7 @@ char *qa_app_q2_player_name_tokens(const char *text, const double *slots, const 
 static seat_state make_seat(qa_app_rerelease_seat binding) {
   seat_state s; memset(&s, 0, sizeof s);
   s.binding = binding;
+  qa_app_rerelease_fog_init(&s.fog);
   s.language = xdup(binding.language ? binding.language : "english");
   s.story = xdup("");
   return s;
@@ -95,7 +97,6 @@ qa_app_rerelease_presentation *qa_app_rerelease_presentation_create(qa_app_rerel
   p->seat_count = seat_count;
   for (size_t i = 0; i < seat_count; i++) {
     p->seats[i] = make_seat(seats[i]);
-    host.fog_reset(host.ctx, i);
   }
   return p;
 }
@@ -160,7 +161,6 @@ void qa_app_rerelease_publish_seats(qa_app_rerelease_presentation *p, const qa_a
     if (found >= 0) { next[i] = p->seats[found]; retained[found] = true; }
     else {
       next[i] = make_seat(seats[i]);
-      p->host.fog_reset(p->host.ctx, i);
     }
   }
   for (size_t j = 0; j < p->seat_count; j++) if (!retained[j]) free_seat(&p->seats[j]);
@@ -204,7 +204,7 @@ void qa_app_rerelease_receive(qa_app_rerelease_presentation *p, const qa_app_rer
         seat_state *seat = &p->seats[i];
         if (!qa_same_actor(seat->binding.actor, source.actor)) continue;
         if (source.has_recipient && !qa_same_actor(source.recipient, seat->binding.actor)) continue;
-        p->host.fog_receive(p->host.ctx, i, source.fog_value, source.fog_transition_milliseconds, source.seconds);
+        qa_app_rerelease_fog_receive(&seat->fog, source.fog_value, source.fog_transition_milliseconds, source.seconds);
         seat->fog_received = true;
       }
     } else if (strcmp(source.event_kind, "story") == 0 || strcmp(source.event_kind, "localized-print") == 0 || strcmp(source.event_kind, "sky") == 0) {
@@ -424,9 +424,9 @@ bool qa_app_rerelease_story_active(qa_app_rerelease_presentation *p, qa_actor_id
 }
 qa_app_rerelease_view qa_app_rerelease_view_of(qa_app_rerelease_presentation *p, qa_actor_id actor, double seconds) {
   qa_app_rerelease_view view; memset(&view, 0, sizeof view);
-  seat_state *seat = NULL; size_t at = 0;
-  for (size_t i = 0; i < p->seat_count; i++) if (qa_same_actor(p->seats[i].binding.actor, actor)) { seat = &p->seats[i]; at = i; }
-  if (seat != NULL && seat->fog_received) view.has_fog = p->host.fog_current(p->host.ctx, at, seconds, &view.fog);
+  seat_state *seat = NULL;
+  for (size_t i = 0; i < p->seat_count; i++) if (qa_same_actor(p->seats[i].binding.actor, actor)) { seat = &p->seats[i]; }
+  if (seat != NULL && seat->fog_received) { view.has_fog = true; view.fog.fog = qa_app_rerelease_fog_current(&seat->fog, seconds); }
   view.sky = (seat != NULL && seat->has_sky) ? &seat->sky_view : p->has_sky ? &p->sky_view : NULL;
   return view;
 }

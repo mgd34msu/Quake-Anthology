@@ -32,20 +32,20 @@ static qa_format_rounding to_format_rounding(qa_fp_rounding mode) {
 
 typedef struct windows_format_state {
   qa_windows_service_host *host;
-  qa_guest_address errno_address;
+  qa_guest_core_address errno_address;
   char *library; /* owned */
 } windows_format_state;
 
-static qa_call_result vsscanf_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result vsscanf_impl(void *ctx, const qa_guest_core_call_context *context,
                                    const qa_call_value *args, size_t count) {
   windows_format_state *state = ctx;
   (void)context;
-  qa_guest_address ignored = {0};
+  qa_guest_core_address ignored = {0};
   bool has_locale = qa_guest_pointer_argument(args, count, 4, &ignored);
   if (has_locale || (qa_guest_integer_u64(args, count, 0) & ~2ULL) != 0)
     qa_unsupported_windows_import(state->library, "__stdio_common_vsscanf",
                                   "scanf locale or options are not implemented");
-  qa_guest_address arguments = {0};
+  qa_guest_core_address arguments = {0};
   bool has_arguments = qa_guest_pointer_argument(args, count, 5, &arguments);
   qa_scan_windows_buffer_options options;
   options.memory = state->host->memory;
@@ -62,13 +62,13 @@ static qa_call_result vsscanf_impl(void *ctx, const qa_guest_call_context *conte
   return qa_call_int32(result);
 }
 
-static qa_call_result vsprintf_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result vsprintf_impl(void *ctx, const qa_guest_core_call_context *context,
                                     const qa_call_value *args, size_t count) {
   windows_format_state *state = ctx;
   (void)context;
   qa_windows_service_host *host = state->host;
   uint64_t options = qa_guest_integer_u64(args, count, 0);
-  qa_guest_address ignored = {0};
+  qa_guest_core_address ignored = {0};
   if (qa_guest_pointer_argument(args, count, 4, &ignored))
     qa_unsupported_windows_import(state->library, "__stdio_common_vsprintf",
                                   "explicit printf locale is not the installed C locale");
@@ -96,7 +96,7 @@ static qa_call_result vsprintf_impl(void *ctx, const qa_guest_call_context *cont
   return qa_call_int32(result.result);
 }
 
-void qa_install_windows_format(qa_windows_service_host *host, qa_guest_address errno_address) {
+void qa_install_windows_format(qa_windows_service_host *host, qa_guest_core_address errno_address) {
   static const char *const libraries[] = {"api-ms-win-crt-stdio-l1-1-0.dll", "ucrtbase.dll", "msvcrt.dll"};
   qa_abi_storage parameters[] = {QA_STORAGE_UINT64, QA_STORAGE_POINTER, QA_STORAGE_POINTER,
                                  QA_STORAGE_POINTER, QA_STORAGE_POINTER, QA_STORAGE_POINTER};
@@ -122,7 +122,7 @@ typedef struct system_v_format_state {
   bool checked;
 } system_v_format_state;
 
-static qa_call_result vsnprintf_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result vsnprintf_impl(void *ctx, const qa_guest_core_call_context *context,
                                      const qa_call_value *args, size_t count) {
   system_v_format_state *state = ctx;
   (void)context;

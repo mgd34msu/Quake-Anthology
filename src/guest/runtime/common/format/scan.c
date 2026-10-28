@@ -319,7 +319,7 @@ static int scan_run(const qa_scan_windows_buffer_options *options) {
     if (!dir->suppressed) {
       qa_format_argument argument = qa_format_arguments_next(&args, QA_FORMAT_ARG_POINTER);
       if (argument.is_float) type_error("scanf destination must be a pointer");
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       if (!qa_memory_pointer(memory, argument.integer, &destination))
         type_error("scanf destination is null");
       if (dir->code == 'f') {

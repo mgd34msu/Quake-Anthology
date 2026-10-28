@@ -480,6 +480,15 @@ static void script_noop_print(void *ctx, const char *text) {
   (void)ctx;
   (void)text;
 }
+static char printed_text[8192];
+static void script_capture_print(void *ctx, const char *text) {
+  (void)ctx;
+  size_t used = strlen(printed_text);
+  size_t length = strlen(text);
+  if (used + length >= sizeof printed_text) length = sizeof printed_text - used - 1;
+  memcpy(printed_text + used, text, length);
+  printed_text[used + length] = '\0';
+}
 static bool publish_called = false;
 static void fake_publish(void *ctx, qa_ui_script_source_reader *reader) {
   (void)ctx;
@@ -551,6 +560,7 @@ static void test_script_flow(void) {
                    "#define KEEP 1\n\"after\"\nVALUE TWICE(3)\n"));
   CHECK(write_text(root, "nested.inc", "\"middle\"\n#include \"deep.inc\"\n"));
   CHECK(write_text(root, "deep.inc", "\"deep\"\n"));
+  CHECK(write_text(root, "error.menu", "#include \"absent.inc\"\n"));
   qa_content_mount mount;
   memset(&mount, 0, sizeof mount);
   mount.kind = QA_CONTENT_MOUNT_LOOSE;
@@ -574,7 +584,7 @@ static void test_script_flow(void) {
   services.mounts = mounts;
   services.globals = globals;
   services.assert_current = script_noop_assert;
-  services.print = script_noop_print;
+  services.print = script_capture_print;
   qa_qvm_client_scripts *scripts = qa_qvm_client_scripts_create(services);
   CHECK(scripts != NULL);
   CHECK(qa_qvm_client_scripts_add_define(scripts, "VALUE 7") == 1);
@@ -629,13 +639,45 @@ static void test_script_flow(void) {
   qa_save_value_free(checkpoint);
   qa_qvm_client_scripts_destroy(restored);
   qa_ui_script_global_defines_destroy(restored_globals);
+
+  /* Mounted include failure: read returns 0, the partial token is
+   * published, and the source error is reported. */
+  printed_text[0] = '\0';
+  double bad = qa_qvm_client_scripts_load(scripts, "error.menu");
+  CHECK(bad == 1);
+  captured_count = 0;
+  CHECK(qa_qvm_client_scripts_read(scripts, bad, publish) == 0);
+  CHECK(captured_count == 1);
+  CHECK(strstr(printed_text, "absent.inc") != NULL &&
+        strstr(printed_text, "not found") != NULL);
   qa_qvm_client_scripts_close_all(scripts);
   qa_qvm_client_scripts_destroy(scripts);
+  /* Module teardown leaves the shared defines intact. */
+  qa_ui_script_source other;
+  memset(&other, 0, sizeof other);
+  other.path = "other";
+  other.text = (const uint8_t *)"VALUE";
+  other.text_length = 5;
+  qa_ui_script_preprocessor_options other_options;
+  memset(&other_options, 0, sizeof other_options);
+  other_options.globals = globals;
+  qa_ui_script_source_reader *other_reader =
+      qa_ui_script_source_reader_open(&other, NULL, NULL, &other_options);
+  CHECK(other_reader != NULL);
+  qa_ui_script_token_record other_record;
+  bool other_read = qa_ui_script_source_reader_next(other_reader, &other_record);
+  CHECK(other_read);
+  char other_text[QA_UI_SOURCE_TOKEN_STRING_BYTES];
+  qa_ui_source_token_string(qa_ui_script_source_reader_raw_token(other_reader),
+                            other_text);
+  CHECK(strcmp(other_text, "7") == 0);
+  if (other_read) qa_ui_script_token_record_release(&other_record);
+  qa_ui_script_source_reader_destroy(other_reader);
   qa_ui_script_global_defines_destroy(globals);
   qa_content_mounted_destroy(mounts);
   char path[256];
-  const char *names[3] = {"root.menu", "nested.inc", "deep.inc"};
-  for (int i = 0; i < 3; i++) {
+  const char *names[4] = {"root.menu", "nested.inc", "deep.inc", "error.menu"};
+  for (int i = 0; i < 4; i++) {
     snprintf(path, sizeof path, "%s/%s", root, names[i]);
     remove(path);
   }

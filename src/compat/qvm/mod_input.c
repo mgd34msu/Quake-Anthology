@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/client_state_record.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
@@ -17,28 +18,21 @@ static void *xmalloc(size_t size) {
   return result;
 }
 
+/* Delegates to the landed owner (TS client-state-record.ts
+ * readQvmUserCommand in qa/compat/qvm/client_state_record.h). */
 qa_q3_wire_user_command qa_qvmy_read_user_command(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile) {
-  if (view->length < QVM_USER_COMMAND_BYTES)
-    qa_range_error("QVM client record requires %d bytes", QVM_USER_COMMAND_BYTES);
-  bool modern = profile == NULL || strcmp(profile, "q3-modern") == 0;
-  int buttons_offset = modern ? 16 : 4;
-  int angles = modern ? 4 : 8;
-  int weapon = modern ? 20 : 5;
-  int forward = modern ? 21 : 20;
-  int right = modern ? 22 : 21;
-  int up = modern ? 23 : 22;
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  qa_qvmx_wire_user_command read = qa_qvm_read_user_command(raw, profile);
   qa_q3_wire_user_command result;
-  result.server_time = qa_qvm_writable_view_get_int32(view, 0, true);
-  int32_t buttons = modern ? qa_qvm_writable_view_get_int32(view, buttons_offset, true)
-                           : qa_qvm_writable_view_get_uint8(view, buttons_offset);
-  result.buttons = modern ? buttons : (buttons & 31) | ((buttons & 128) == 0 ? 0 : 2048);
-  result.angles[0] = qa_qvm_writable_view_get_int32(view, angles, true);
-  result.angles[1] = qa_qvm_writable_view_get_int32(view, angles + 4, true);
-  result.angles[2] = qa_qvm_writable_view_get_int32(view, angles + 8, true);
-  result.weapon = qa_qvm_writable_view_get_uint8(view, weapon);
-  result.forwardmove = qa_qvm_writable_view_get_int8(view, forward);
-  result.rightmove = qa_qvm_writable_view_get_int8(view, right);
-  result.upmove = qa_qvm_writable_view_get_int8(view, up);
+  result.server_time = (int32_t)read.server_time;
+  result.angles[0] = (int32_t)read.angles[0];
+  result.angles[1] = (int32_t)read.angles[1];
+  result.angles[2] = (int32_t)read.angles[2];
+  result.forwardmove = (int32_t)read.forwardmove;
+  result.rightmove = (int32_t)read.rightmove;
+  result.upmove = (int32_t)read.upmove;
+  result.buttons = (int32_t)read.buttons;
+  result.weapon = (int32_t)read.weapon;
   return result;
 }
 
@@ -61,6 +55,11 @@ static void validate_pointer(qa_qvm_mod_input *input, const qa_qvm_mod_input_poi
         pointer->index > 9007199254740991.0 || pointer->index >= QVM_MAX_PRIVATE_ARGUMENT_WORDS)
       qa_range_error("Invalid QVM input pointer argument");
   } else {
+    /* TS dataView(address, 4) rejects non-safe-integer addresses via
+     * writes.range; check before the int64 cast truncates them. */
+    if (!isfinite(pointer->address) || pointer->address != trunc(pointer->address) ||
+        pointer->address < 0 || pointer->address > 9007199254740991.0)
+      qa_range_error("QVM raw memory range exceeds allocation");
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(input->operations.module->memory, (int64_t)pointer->address, 4, &view);
     (void)view;
@@ -117,9 +116,22 @@ typedef struct capture {
   size_t consumed_capacity;
 } capture;
 
+/* Captures are heap objects on a pointer stack: invoke/open/output
+ * hold capture pointers across guest execution that may push nested
+ * captures, and the TS captures are stable object references. */
+static capture **capture_stack(qa_qvm_mod_input *input) { return (capture **)input->captures; }
+
+static void free_capture(capture *value) {
+  free(value->changes);
+  free(value->fields);
+  free(value->commands);
+  free(value->consumed);
+  free(value);
+}
+
 static bool capture_active(qa_qvm_mod_input *input, capture *value) {
-  capture *captures = input->captures;
-  return input->capture_count != 0 && &captures[input->capture_count - 1] == value &&
+  capture **captures = capture_stack(input);
+  return input->capture_count != 0 && captures[input->capture_count - 1] == value &&
          input->application_count != 0 &&
          input->applications[input->application_count - 1] == value->application &&
          input->operations.live(input->operations.ctx, value->application->identity.actor);
@@ -261,9 +273,9 @@ static bool is_selected(const capture *capture, const qa_qvm_mod_input_output *o
 static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
   declaration_group *group = ctx;
   qa_qvm_mod_input *input = group->input;
-  capture *captures = input->captures;
+  capture **captures = capture_stack(input);
   if (input->capture_count == 0) return proceed_call(call);
-  capture *capture = &captures[input->capture_count - 1];
+  capture *capture = captures[input->capture_count - 1];
   if (!capture_active(input, capture)) return proceed_call(call);
   qa_actor_id actor = capture->application->identity.actor;
   const qa_qvm_mod_input_output **selected = xmalloc(group->count * sizeof *selected);
@@ -398,13 +410,8 @@ void qa_qvm_mod_input_destroy(qa_qvm_mod_input *input) {
   }
   free(input->removal_ids);
   free(input->applications);
-  capture *captures = input->captures;
-  for (size_t i = 0; i < input->capture_count; i++) {
-    free(captures[i].changes);
-    free(captures[i].fields);
-    free(captures[i].commands);
-    free(captures[i].consumed);
-  }
+  capture **captures = capture_stack(input);
+  for (size_t i = 0; i < input->capture_count; i++) free_capture(captures[i]);
   free(input->captures);
   memset(input, 0, sizeof *input);
 }
@@ -437,8 +444,8 @@ void qa_qvm_mod_input_open(qa_qvm_mod_input *input, qa_mod_client_application *a
                            qa_qvm_input_remove_fn *out_remove, void **out_remove_ctx) {
   capture *suspended = NULL;
   if (input->capture_count != 0) {
-    capture *captures = input->captures;
-    suspended = &captures[input->capture_count - 1];
+    capture **captures = capture_stack(input);
+    suspended = captures[input->capture_count - 1];
     if (capture_active(input, suspended)) reconcile(input, suspended, true);
   }
   if (input->application_count == input->application_capacity) {
@@ -458,17 +465,18 @@ void qa_qvm_mod_input_open(qa_qvm_mod_input *input, qa_mod_client_application *a
 qa_mod_client_input_output *qa_qvm_mod_input_run_output(qa_qvm_mod_input *input,
                                                     const qa_qvm_mod_input_output *outputs, size_t output_count,
                                                     qa_mod_client_application *application,
-                                                    qa_qvm_input_run_fn run, void *run_ctx, size_t *out_count) {
+                                                    qa_qvm_mod_input_run_fn run, void *run_ctx, size_t *out_count) {
   if (input->application_count == 0 || input->applications[input->application_count - 1] != application)
     qa_range_error("QVM input output requires its live application");
   qa_actor_id actor = application->identity.actor;
   if (input->capture_count == input->capture_capacity) {
     input->capture_capacity = input->capture_capacity == 0 ? 4 : input->capture_capacity * 2;
-    input->captures = realloc(input->captures, input->capture_capacity * sizeof(capture));
+    input->captures = realloc(input->captures, input->capture_capacity * sizeof(capture *));
     if (input->captures == NULL) qa_range_error("QVM memory allocation failed");
   }
-  capture *created = &((capture *)input->captures)[input->capture_count++];
+  capture *created = xmalloc(sizeof *created);
   memset(created, 0, sizeof *created);
+  capture_stack(input)[input->capture_count++] = created;
   created->application = application;
   created->selected = outputs;
   created->selected_count = output_count;
@@ -493,11 +501,8 @@ qa_mod_client_input_output *qa_qvm_mod_input_run_output(qa_qvm_mod_input *input,
     memcpy(result + created->change_count, created->consumed, created->consumed_count * sizeof *result);
     *out_count = total;
   }
-  free(created->changes);
-  free(created->fields);
-  free(created->commands);
-  free(created->consumed);
   input->capture_count--;
+  free_capture(created);
   return result;
 }
 
@@ -506,12 +511,7 @@ void qa_qvm_mod_input_close(qa_qvm_mod_input *input) {
     qa_qvm_module_unbind(input->operations.module, input->removal_ids[i]);
   input->removal_count = 0;
   input->application_count = 0;
-  capture *captures = input->captures;
-  for (size_t i = 0; i < input->capture_count; i++) {
-    free(captures[i].changes);
-    free(captures[i].fields);
-    free(captures[i].commands);
-    free(captures[i].consumed);
-  }
+  capture **captures = capture_stack(input);
+  for (size_t i = 0; i < input->capture_count; i++) free_capture(captures[i]);
   input->capture_count = 0;
 }

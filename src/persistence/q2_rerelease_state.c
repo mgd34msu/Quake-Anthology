@@ -90,28 +90,28 @@ static void read_q2_fog(const qa_save_reader *reader, qa_q2_fog_settings *out);
 static qa_save_value *build_q2_fog(const qa_q2_fog_settings *in);
 static void read_q2_height_fog(const qa_save_reader *reader, qa_q2_height_fog_settings *out);
 static qa_save_value *build_q2_height_fog(const qa_q2_height_fog_settings *in);
-static void read_q2_fog_state(const qa_save_reader *reader, qa_q2_fog_state *out);
-static qa_save_value *build_q2_fog_state(const qa_q2_fog_state *in);
+static void read_q2_fog_state(const qa_save_reader *reader, qa_persist_q2_fog_state *out);
+static qa_save_value *build_q2_fog_state(const qa_persist_q2_fog_state *in);
 static void read_q2_pending_landmark(const qa_save_reader *reader, qa_q2_pending_landmark *out);
 static qa_save_value *build_q2_pending_landmark(const qa_q2_pending_landmark *in);
 static void read_q2_rerelease_player_state(const qa_save_reader *reader, qa_q2_rerelease_saved_player *out);
 static qa_save_value *build_q2_rerelease_player_state(const qa_q2_rerelease_saved_player *in);
-static void read_q2_rerelease_options(const qa_save_reader *reader, qa_q2_rerelease_options *out);
-static qa_save_value *build_q2_rerelease_options(const qa_q2_rerelease_options *in);
+static void read_q2_rerelease_options(const qa_save_reader *reader, qa_persist_q2_rerelease_options *out);
+static qa_save_value *build_q2_rerelease_options(const qa_persist_q2_rerelease_options *in);
 static void read_q2_intermission_camera(const qa_save_reader *reader, qa_q2_intermission_camera *out);
 static qa_save_value *build_q2_intermission_camera(const qa_q2_intermission_camera *in);
 static void read_q2_rerelease_player_entry(const qa_save_reader *reader, qa_q2_rerelease_player_entry *out);
 static qa_save_value *build_q2_rerelease_player_entry(const qa_q2_rerelease_player_entry *in);
 static void read_q2_squad_spawn(const qa_save_reader *reader, qa_q2_squad_spawn *out);
 static qa_save_value *build_q2_squad_spawn(const qa_q2_squad_spawn *in);
-static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_players_checkpoint *out);
-static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_q2_rerelease_players_checkpoint *in);
+static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_players_checkpoint *out);
+static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *in);
 static void read_q2_rerelease_sky(const qa_save_reader *reader, qa_q2_rerelease_sky *out);
 static qa_save_value *build_q2_rerelease_sky(const qa_q2_rerelease_sky *in);
 static void read_q2_rerelease_poi(const qa_save_reader *reader, qa_q2_rerelease_poi *out);
 static qa_save_value *build_q2_rerelease_poi(const qa_q2_rerelease_poi *in);
-static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_q2_rerelease_goals *out);
-static qa_save_value *build_q2_rerelease_goals(const qa_q2_rerelease_goals *in);
+static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_persist_q2_rerelease_goals *out);
+static qa_save_value *build_q2_rerelease_goals(const qa_persist_q2_rerelease_goals *in);
 static void read_q2_campaign_mission(const qa_save_reader *reader, qa_q2_campaign_mission *out);
 static qa_save_value *build_q2_campaign_mission(const qa_q2_campaign_mission *in);
 static void read_q2_campaign_level(const qa_save_reader *reader, qa_q2_campaign_level *out);
@@ -130,8 +130,8 @@ static void read_q2_q64_dummy_state(const qa_save_reader *reader, qa_q2_q64_dumm
 static qa_save_value *build_q2_q64_dummy_state(const qa_q2_q64_dummy_state *in);
 static void read_q2_q64_dummy_entry(const qa_save_reader *reader, qa_q2_q64_dummy_entry *out);
 static qa_save_value *build_q2_q64_dummy_entry(const qa_q2_q64_dummy_entry *in);
-static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_q64_checkpoint *out);
-static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_q2_rerelease_q64_checkpoint *in);
+static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_q64_checkpoint *out);
+static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_persist_q2_rerelease_q64_checkpoint *in);
 static void read_q2_light_entry(const qa_save_reader *reader, qa_q2_light_entry *out);
 static qa_save_value *build_q2_light_entry(const qa_q2_light_entry *in);
 static void read_q2_health_bar(const qa_save_reader *reader, qa_q2_health_bar *out);
@@ -142,8 +142,8 @@ static void read_q2_picked_up_by_entry(const qa_save_reader *reader, qa_q2_picke
 static qa_save_value *build_q2_picked_up_by_entry(const qa_q2_picked_up_by_entry *in);
 static void read_q2_trigger_sound_time(const qa_save_reader *reader, qa_q2_trigger_sound_time *out);
 static qa_save_value *build_q2_trigger_sound_time(const qa_q2_trigger_sound_time *in);
-static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_module_checkpoint *out);
-static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_q2_rerelease_module_checkpoint *in);
+static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_module_checkpoint *out);
+static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *in);
 
 static void read_q2_fog(const qa_save_reader *reader, qa_q2_fog_settings *out) {
   memset(out, 0, sizeof *out);
@@ -205,7 +205,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_fog_state(const qa_save_reader *reader, qa_q2_fog_state *out) {
+static void read_q2_fog_state(const qa_save_reader *reader, qa_persist_q2_fog_state *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "fog");
     read_q2_fog(&f0, &(*out).fog);
@@ -214,7 +214,7 @@ static void read_q2_fog_state(const qa_save_reader *reader, qa_q2_fog_state *out
     read_q2_height_fog(&f1, &(*out).height_fog);
     qa_save_reader_destroy(&f1); }
 }
-static qa_save_value *build_q2_fog_state(const qa_q2_fog_state *in) {
+static qa_save_value *build_q2_fog_state(const qa_persist_q2_fog_state *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "fog", build_q2_fog(&(*in).fog))) goto fail;
@@ -445,7 +445,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_rerelease_options(const qa_save_reader *reader, qa_q2_rerelease_options *out) {
+static void read_q2_rerelease_options(const qa_save_reader *reader, qa_persist_q2_rerelease_options *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "coopSquadRespawn");
     (*out).coop_squad_respawn = qa_save_reader_boolean(&f0);
@@ -481,7 +481,7 @@ static void read_q2_rerelease_options(const qa_save_reader *reader, qa_q2_rerele
     (*out).auto_save_minimum_time = qa_save_reader_number(&f10);
     qa_save_reader_destroy(&f10); }
 }
-static qa_save_value *build_q2_rerelease_options(const qa_q2_rerelease_options *in) {
+static qa_save_value *build_q2_rerelease_options(const qa_persist_q2_rerelease_options *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "coopSquadRespawn", qa_save_value_boolean((*in).coop_squad_respawn))) goto fail;
@@ -565,7 +565,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_players_checkpoint *out) {
+static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_players_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "version");
     (*out).version = qa_save_reader_literal_number(&f0, 1);
@@ -616,7 +616,7 @@ static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, q
     }
     qa_save_reader_destroy(&f9); }
 }
-static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_q2_rerelease_players_checkpoint *in) {
+static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
@@ -703,7 +703,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_q2_rerelease_goals *out) {
+static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_persist_q2_rerelease_goals *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "goals");
     if (qa_save_reader_is_null(&f0)) (*out).goals = NULL; else {
@@ -714,7 +714,7 @@ static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_q2_rereleas
     (*out).goal_number = qa_save_reader_number(&f1);
     qa_save_reader_destroy(&f1); }
 }
-static qa_save_value *build_q2_rerelease_goals(const qa_q2_rerelease_goals *in) {
+static qa_save_value *build_q2_rerelease_goals(const qa_persist_q2_rerelease_goals *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "goals", (*in).goals != NULL ? str_value((*in).goals) : qa_save_value_null())) goto fail;
@@ -985,7 +985,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_q64_checkpoint *out) {
+static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_q64_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "eyes");
     (*out).eyes_count = qa_save_reader_list_count(&f0);
@@ -1018,7 +1018,7 @@ static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_q2
     }
     qa_save_reader_destroy(&f2); }
 }
-static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_q2_rerelease_q64_checkpoint *in) {
+static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_persist_q2_rerelease_q64_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   { qa_save_value *arr30 = qa_save_value_array();
@@ -1163,7 +1163,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_q2_rerelease_module_checkpoint *out) {
+static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_module_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "version");
     (*out).version = qa_save_reader_literal_number(&f0, 1);
@@ -1250,7 +1250,7 @@ static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa
     }
     qa_save_reader_destroy(&f14); }
 }
-static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_q2_rerelease_module_checkpoint *in) {
+static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
@@ -1301,8 +1301,8 @@ fail:
 
 
 
-qa_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader) {
-  qa_q2_fog_state out;
+qa_persist_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader) {
+  qa_persist_q2_fog_state out;
   read_q2_fog_state(reader, &out);
   return out;
 }
@@ -1313,19 +1313,19 @@ qa_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader) {
 
 
 
-qa_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader) {
-  qa_q2_rerelease_players_checkpoint out;
+qa_persist_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_rerelease_players_checkpoint out;
   read_q2_rerelease_players_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_rerelease_players_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_players_checkpoint *out) {
+bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_players_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;
@@ -1348,8 +1348,8 @@ bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t leng
 
 
 
-qa_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader) {
-  qa_q2_rerelease_q64_checkpoint out;
+qa_persist_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_rerelease_q64_checkpoint out;
   read_q2_rerelease_q64_checkpoint(reader, &out);
   return out;
 }
@@ -1359,19 +1359,19 @@ qa_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save
 
 
 
-qa_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader) {
-  qa_q2_rerelease_module_checkpoint out;
+qa_persist_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader) {
+  qa_persist_q2_rerelease_module_checkpoint out;
   read_q2_rerelease_module_checkpoint(reader, &out);
   return out;
 }
-uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_rerelease_module_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_module_checkpoint *out) {
+bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_module_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;

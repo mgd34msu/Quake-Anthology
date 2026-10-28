@@ -169,7 +169,7 @@ const char *qa_q1_creatures_next_hell_knight_melee(qa_q1_creatures *creatures) {
   return "hknight_watk1";
 }
 
-typedef struct species_spawn { qa_q1_creatures *creatures; const qa_q1_monster_species *spec; } species_spawn;
+typedef struct species_spawn { qa_q1_creatures *creatures; const qa_q1_base_monster_species *spec; } species_spawn;
 static void spawn_species(void *ctx, qa_q1b_game *game, qa_q1b_actor *entity) {
   (void)game;
   species_spawn *spawn = ctx;
@@ -181,7 +181,7 @@ static void spawn_species(void *ctx, qa_q1b_game *game, qa_q1b_actor *entity) {
   qa_q1_base_monster_spawn(monster);
 }
 void qa_q1_creatures_register_species(qa_q1_creatures *creatures,
-                                      const qa_q1_monster_species *species, size_t count) {
+                                      const qa_q1_base_monster_species *species, size_t count) {
   for (size_t s = 0; s < count; s++) {
     for (size_t c = 0; c < species[s].classname_count; c++) {
       species_spawn *spawn = malloc(sizeof *spawn);
@@ -493,7 +493,7 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
     qa_save_reader_destroy(&actor_reader);
     qa_q1b_actor *entity = game->entity(game, qa_q1b_some_actor(owner.id));
     if (entity == NULL) qa_save_reader_fail(&entry, "missing source monster entity");
-    const qa_q1_monster_species *spec = NULL;
+    const qa_q1_base_monster_species *spec = NULL;
     for (size_t s = 0; s < QA_Q1_BASE_SPECIES_COUNT && spec == NULL; s++)
       for (size_t c = 0; c < QA_Q1_BASE_SPECIES[s].classname_count; c++)
         if (strcmp(QA_Q1_BASE_SPECIES[s].classnames[c], entity->classname) == 0) { spec = &QA_Q1_BASE_SPECIES[s]; break; }

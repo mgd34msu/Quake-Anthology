@@ -117,7 +117,7 @@ static const char *f_weapon(const qa_save_reader *r, const char *name) {
   return value;
 }
 
-static qa_q1_entity_source_state read_source_state(
+static qa_persist_q1_entity_source_state read_source_state(
     const qa_save_reader *reader) {
   static const char *const solids[] = {"none", "trigger", "bbox",
                                        "slidebox", "bsp", "corpse"};
@@ -130,7 +130,7 @@ static qa_q1_entity_source_state read_source_state(
   static const char *const attack_states[] = {"straight", "melee", "missile",
                                               "dodging"};
   static const double water_types[] = {0, -1, -2, -3, -4, -5, -6};
-  qa_q1_entity_source_state state;
+  qa_persist_q1_entity_source_state state;
   memset(&state, 0, sizeof state);
   state.model = f_string(reader, "model");
   state.frame = f_number(reader, "frame");
@@ -190,10 +190,10 @@ static qa_q1_entity_source_state read_source_state(
   return state;
 }
 
-static qa_q1_saved_monster read_monster(const qa_save_reader *reader) {
+static qa_persist_q1_saved_monster read_monster(const qa_save_reader *reader) {
   static const char *const modes[] = {"stand", "walk", "run", "attack",
                                       "leap", "pain", "death"};
-  qa_q1_saved_monster monster;
+  qa_persist_q1_saved_monster monster;
   memset(&monster, 0, sizeof monster);
   monster.species =
       f_choice(reader, "species", monster_species, MONSTER_SPECIES_COUNT);
@@ -234,8 +234,8 @@ static const char *callback_name(const qa_save_reader *callbacks,
   return value;
 }
 
-static qa_q1_saved_entity read_entity(const qa_save_reader *reader) {
-  qa_q1_saved_entity entity;
+static qa_persist_q1_saved_entity read_entity(const qa_save_reader *reader) {
+  qa_persist_q1_saved_entity entity;
   memset(&entity, 0, sizeof entity);
   /* TS entity() binds the callbacks reader before the literal, but
    * only reads through it in literal order below. */
@@ -332,15 +332,15 @@ static qa_q1_saved_entity read_entity(const qa_save_reader *reader) {
   return entity;
 }
 
-static qa_q1_saved_player read_player(const qa_save_reader *reader) {
+static qa_persist_q1_saved_player read_player(const qa_save_reader *reader) {
   static const char *const auto_switches[] = {"always", "new", "never"};
-  qa_q1_saved_player player;
+  qa_persist_q1_saved_player player;
   memset(&player, 0, sizeof player);
   player.actor = f_actor(reader, "actor");
   player.actor_provider = f_namespaced(reader, "actorProvider");
   {
     qa_save_reader state = field(reader, "state");
-    qa_q1_saved_player_state *out = &player.state;
+    qa_persist_q1_saved_player_state *out = &player.state;
     {
       qa_save_reader alpha = field(&state, "alpha");
       out->alpha =
@@ -407,11 +407,11 @@ static const char **read_string_list(const qa_save_reader *reader,
   return values;
 }
 
-qa_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
+qa_persist_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
     const qa_save_reader *reader) {
   static const char *const phases[] = {"loading", "frozen"};
   static const char *const editions[] = {"classic", "rerelease"};
-  qa_q1_foundation_checkpoint checkpoint;
+  qa_persist_q1_foundation_checkpoint checkpoint;
   memset(&checkpoint, 0, sizeof checkpoint);
   checkpoint.provider = f_namespaced(reader, "provider");
   {
@@ -588,7 +588,7 @@ static qa_save_value *nullable_actor(bool present, qa_saved_actor_id actor) {
     if (ok) ok = set_own(obj, key, child); \
   } while (0)
 
-static qa_save_value *build_source_state(const qa_q1_entity_source_state *in) {
+static qa_save_value *build_source_state(const qa_persist_q1_entity_source_state *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
@@ -642,7 +642,7 @@ static qa_save_value *build_source_state(const qa_q1_entity_source_state *in) {
   return obj;
 }
 
-static qa_save_value *build_monster(const qa_q1_saved_monster *in) {
+static qa_save_value *build_monster(const qa_persist_q1_saved_monster *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
@@ -676,7 +676,7 @@ static qa_save_value *build_monster(const qa_q1_saved_monster *in) {
   return obj;
 }
 
-static qa_save_value *build_entity(const qa_q1_saved_entity *in) {
+static qa_save_value *build_entity(const qa_persist_q1_saved_entity *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
@@ -780,14 +780,14 @@ static qa_save_value *build_entity(const qa_q1_saved_entity *in) {
   return obj;
 }
 
-static qa_save_value *build_player(const qa_q1_saved_player *in) {
+static qa_save_value *build_player(const qa_persist_q1_saved_player *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
   SET(obj, "actor", actor_value(in->actor));
   SET(obj, "actorProvider", str_value(in->actor_provider));
   if (ok) {
-    const qa_q1_saved_player_state *s = &in->state;
+    const qa_persist_q1_saved_player_state *s = &in->state;
     qa_save_value *state = qa_save_value_object();
     bool built = state != NULL;
     /* Q1PlayerState declaration order (see header comment). */
@@ -887,7 +887,7 @@ static qa_save_value *build_string_list(const char *const *values, size_t count)
 }
 
 static qa_save_value *build_checkpoint(
-    const qa_q1_foundation_checkpoint *in) {
+    const qa_persist_q1_foundation_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
@@ -997,7 +997,7 @@ static qa_save_value *build_checkpoint(
 #undef SET
 
 uint8_t *qa_encode_q1_foundation_checkpoint(
-    const qa_q1_foundation_checkpoint *checkpoint, size_t *out_length) {
+    const qa_persist_q1_foundation_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
@@ -1006,7 +1006,7 @@ uint8_t *qa_encode_q1_foundation_checkpoint(
 }
 
 bool qa_decode_q1_foundation_checkpoint(const uint8_t *bytes, size_t length,
-                                        qa_q1_foundation_checkpoint *out) {
+                                        qa_persist_q1_foundation_checkpoint *out) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;
@@ -1020,12 +1020,12 @@ bool qa_decode_q1_foundation_checkpoint(const uint8_t *bytes, size_t length,
   return true;
 }
 
-void qa_q1_foundation_checkpoint_free(qa_q1_foundation_checkpoint *checkpoint) {
+void qa_q1_foundation_checkpoint_free(qa_persist_q1_foundation_checkpoint *checkpoint) {
   if (checkpoint == NULL) return;
   free(checkpoint->precaches.models);
   free(checkpoint->precaches.sounds);
   for (size_t i = 0; i < checkpoint->entity_count; i++) {
-    qa_q1_saved_entity *entity = &checkpoint->entities[i];
+    qa_persist_q1_saved_entity *entity = &checkpoint->entities[i];
     free(entity->fields);
     free(entity->references);
     free(entity->door_group);

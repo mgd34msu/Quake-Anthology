@@ -67,13 +67,13 @@ typedef struct qa_windows_import_coverage {
 } qa_windows_import_coverage;
 
 typedef struct qa_windows_initialize_options {
-  qa_guest_call_context context;
+  qa_guest_core_call_context context;
   int64_t instruction_budget;
 } qa_windows_initialize_options;
 
 typedef struct qa_windows_import_implementation {
   void *ctx;
-  qa_call_result (*invoke)(void *ctx, const qa_guest_call_context *context,
+  qa_call_result (*invoke)(void *ctx, const qa_guest_core_call_context *context,
                            const qa_call_value *arguments, size_t argument_count);
 } qa_windows_import_implementation;
 
@@ -84,7 +84,7 @@ typedef struct qa_windows_service_host {
   qa_windows_capabilities capabilities;
   qa_abi_storage pointer_storage; /* uint32|uint64 */
   qa_guest_call_runner *runner;
-  qa_guest_address teb;
+  qa_guest_core_address teb;
   int64_t process_id;
   int64_t thread_id;
   const qa_pe_image *const *(*images)(void *ctx, size_t *count);
@@ -96,19 +96,19 @@ typedef struct qa_windows_service_host {
                   const qa_abi_storage *parameters, size_t parameter_count,
                   bool result_is_void, qa_abi_storage result,
                   qa_windows_import_implementation implementation);
-  bool (*allocate)(void *ctx, size_t size, uint64_t heap, qa_guest_address *out);
-  bool (*free)(void *ctx, bool has_address, qa_guest_address address, uint64_t heap);
-  bool (*allocation_size)(void *ctx, qa_guest_address address, uint64_t heap, size_t *out);
+  bool (*allocate)(void *ctx, size_t size, uint64_t heap, qa_guest_core_address *out);
+  bool (*free)(void *ctx, bool has_address, qa_guest_core_address address, uint64_t heap);
+  bool (*allocation_size)(void *ctx, qa_guest_core_address address, uint64_t heap, size_t *out);
   void (*destroy_heap)(void *ctx, uint64_t heap);
-  qa_call_result (*invoke)(void *ctx, const qa_guest_call_context *context, qa_guest_address target,
+  qa_call_result (*invoke)(void *ctx, const qa_guest_core_call_context *context, qa_guest_core_address target,
                            const qa_abi_storage *parameters, size_t parameter_count,
                            bool result_is_void, qa_abi_storage result,
                            const qa_call_value *arguments, size_t argument_count, bool system);
-  bool (*resolve_address)(void *ctx, const char *library, const char *name, qa_guest_address *out);
-  bool (*library_handle)(void *ctx, const char *library, qa_guest_address *out);
-  bool (*load_library)(void *ctx, const char *library, qa_guest_address *out);
-  bool (*free_library)(void *ctx, qa_guest_address handle);
-  const char *(*library_name)(void *ctx, qa_guest_address handle);
+  bool (*resolve_address)(void *ctx, const char *library, const char *name, qa_guest_core_address *out);
+  bool (*library_handle)(void *ctx, const char *library, qa_guest_core_address *out);
+  bool (*load_library)(void *ctx, const char *library, qa_guest_core_address *out);
+  bool (*free_library)(void *ctx, qa_guest_core_address handle);
+  const char *(*library_name)(void *ctx, qa_guest_core_address handle);
 } qa_windows_service_host;
 
 /* Convenience wrappers mirroring host.method(...) call sites. */
@@ -118,20 +118,20 @@ void qa_windows_service(qa_windows_service_host *host, const char *library, cons
                         const qa_abi_storage *parameters, size_t parameter_count,
                         bool result_is_void, qa_abi_storage result,
                         qa_windows_import_implementation implementation);
-bool qa_windows_allocate(qa_windows_service_host *host, size_t size, uint64_t heap, qa_guest_address *out);
-bool qa_windows_free(qa_windows_service_host *host, bool has_address, qa_guest_address address, uint64_t heap);
-bool qa_windows_allocation_size(qa_windows_service_host *host, qa_guest_address address, uint64_t heap, size_t *out);
+bool qa_windows_allocate(qa_windows_service_host *host, size_t size, uint64_t heap, qa_guest_core_address *out);
+bool qa_windows_free(qa_windows_service_host *host, bool has_address, qa_guest_core_address address, uint64_t heap);
+bool qa_windows_allocation_size(qa_windows_service_host *host, qa_guest_core_address address, uint64_t heap, size_t *out);
 void qa_windows_destroy_heap(qa_windows_service_host *host, uint64_t heap);
-qa_call_result qa_windows_invoke(qa_windows_service_host *host, const qa_guest_call_context *context,
-                                 qa_guest_address target, const qa_abi_storage *parameters,
+qa_call_result qa_windows_invoke(qa_windows_service_host *host, const qa_guest_core_call_context *context,
+                                 qa_guest_core_address target, const qa_abi_storage *parameters,
                                  size_t parameter_count, bool result_is_void, qa_abi_storage result,
                                  const qa_call_value *arguments, size_t argument_count, bool system);
 bool qa_windows_resolve_address(qa_windows_service_host *host, const char *library, const char *name,
-                                qa_guest_address *out);
-bool qa_windows_library_handle(qa_windows_service_host *host, const char *library, qa_guest_address *out);
-bool qa_windows_load_library(qa_windows_service_host *host, const char *library, qa_guest_address *out);
-bool qa_windows_free_library(qa_windows_service_host *host, qa_guest_address handle);
-const char *qa_windows_library_name(qa_windows_service_host *host, qa_guest_address handle);
+                                qa_guest_core_address *out);
+bool qa_windows_library_handle(qa_windows_service_host *host, const char *library, qa_guest_core_address *out);
+bool qa_windows_load_library(qa_windows_service_host *host, const char *library, qa_guest_core_address *out);
+bool qa_windows_free_library(qa_windows_service_host *host, qa_guest_core_address handle);
+const char *qa_windows_library_name(qa_windows_service_host *host, qa_guest_core_address handle);
 const qa_pe_image *const *qa_windows_images(qa_windows_service_host *host, size_t *count);
 
 /* TS throw new UnsupportedWindowsImport(library, symbol, context, detail?). */

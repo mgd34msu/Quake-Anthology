@@ -201,7 +201,7 @@ void qa_pe_read_exports(const qa_pe_image_reader *image, qa_pe_owned_strings *po
 }
 
 void qa_pe_read_tls(const qa_pe_image_reader *image, bool *has_tls, qa_guest_tls_template *tls,
-                    bool *has_index, qa_guest_address *index_out) {
+                    bool *has_index, qa_guest_core_address *index_out) {
   qa_pe_image_reader reader = qa_pe_image_reader_for_stage(image, QA_PE_STAGE_TLS);
   *has_tls = false; *has_index = false;
   memset(tls, 0, sizeof *tls);
@@ -222,7 +222,7 @@ void qa_pe_read_tls(const qa_pe_image_reader *image, bool *has_tls, qa_guest_tls
   uint8_t *initialized;
   if (start == 0 && end == 0) initialized = xmalloc(0);
   else initialized = qa_pe_image_reader_copy(&reader, qa_pe_image_reader_rva(&reader, start, size), size);
-  qa_guest_address *callbacks = NULL; size_t callback_count = 0, cap = 0;
+  qa_guest_core_address *callbacks = NULL; size_t callback_count = 0, cap = 0;
   if (callback_array != 0) {
     uint32_t array = qa_pe_image_reader_rva(&reader, callback_array, (size_t)width);
     for (uint32_t at = array;; at += (uint32_t)width) {
@@ -325,7 +325,7 @@ bool qa_pe_read_load_configuration(const qa_pe_image_reader *image, qa_pe_load_c
   out->address = qa_pe_image_reader_address(&reader, table.rva, size);
   out->bytes = qa_pe_image_reader_copy(&reader, table.rva, size);
   out->bytes_len = size;
-  struct { uint32_t offset4, offset8; bool *has; qa_guest_address *slot; } fields[3] = {
+  struct { uint32_t offset4, offset8; bool *has; qa_guest_core_address *slot; } fields[3] = {
       {60, 88, &out->has_security_cookie, &out->security_cookie_address},
       {72, 112, &out->has_guard_check, &out->guard_check_slot},
       {76, 120, &out->has_guard_dispatch, &out->guard_dispatch_slot}};

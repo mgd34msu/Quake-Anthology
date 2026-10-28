@@ -20,13 +20,13 @@ static char *xstrdup(const char *text) {
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address slot(qa_system_v_classic_locale *locale, qa_guest_address a, int64_t o) {
+static qa_guest_core_address slot(qa_system_v_classic_locale *locale, qa_guest_core_address a, int64_t o) {
   return qa_cxx_abi_slot(locale->abi, a, o);
 }
-static void write_ptr(qa_system_v_classic_locale *locale, qa_guest_address a, qa_guest_address v) {
+static void write_ptr(qa_system_v_classic_locale *locale, qa_guest_core_address a, qa_guest_core_address v) {
   qa_gmem_write_pointer(locale->abi->host->memory, a, true, v);
 }
-static bool read_ptr(qa_system_v_classic_locale *locale, qa_guest_address a, qa_guest_address *out) {
+static bool read_ptr(qa_system_v_classic_locale *locale, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_gmem_read_pointer(locale->abi->host->memory, a, out);
 }
 
@@ -45,29 +45,29 @@ static int mask(int value) {
 
 typedef struct ctype_loc_state {
   qa_system_v_service_host *host;
-  qa_guest_address slot_address;
+  qa_guest_core_address slot_address;
 } ctype_loc_state;
-static qa_call_result ctype_loc_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result ctype_loc_impl(void *ctx, const qa_guest_core_call_context *context,
                                      const qa_call_value *args, size_t count) {
   ctype_loc_state *state = ctx; (void)context; (void)args; (void)count;
   return qa_call_pointer(true, state->slot_address);
 }
 
-static qa_guest_address facet(qa_system_v_classic_locale *locale, const char *name, size_t size,
-                              const qa_guest_address *methods, size_t method_count) {
+static qa_guest_core_address facet(qa_system_v_classic_locale *locale, const char *name, size_t size,
+                              const qa_guest_core_address *methods, size_t method_count) {
   qa_cxx_abi_data *abi = locale->abi;
   qa_mapped_guest_memory *m = abi->host->memory;
   int p = m->pointer_bytes;
-  qa_guest_address address = qa_system_v_allocate(abi->host, size);
+  qa_guest_core_address address = qa_system_v_allocate(abi->host, size);
   qa_cxx_rtti_base base = {locale->facet_base, 0, 2};
-  qa_guest_address type = qa_cxx_abi_type(abi, name, &base, 1);
+  qa_guest_core_address type = qa_cxx_abi_type(abi, name, &base, 1);
   char *destructor_name = xmalloc(strlen(name) + 32);
   (void)snprintf(destructor_name, strlen(name) + 32, "__guest_%s_destructor", name);
-  qa_guest_address destructor = qa_cxx_abi_unsupported(abi, destructor_name);
+  qa_guest_core_address destructor = qa_cxx_abi_unsupported(abi, destructor_name);
   char *deleting_name = xmalloc(strlen(name) + 40);
   (void)snprintf(deleting_name, strlen(name) + 40, "__guest_%s_deleting_destructor", name);
-  qa_guest_address deleting = qa_cxx_abi_unsupported(abi, deleting_name);
-  qa_guest_address *entries = xmalloc((method_count + 2) * sizeof *entries);
+  qa_guest_core_address deleting = qa_cxx_abi_unsupported(abi, deleting_name);
+  qa_guest_core_address *entries = xmalloc((method_count + 2) * sizeof *entries);
   entries[0] = destructor; entries[1] = deleting;
   for (size_t i = 0; i < method_count; i++) entries[i + 2] = methods[i];
   write_ptr(locale, address, qa_cxx_abi_vtable(abi, name, type, entries, method_count + 2));
@@ -75,10 +75,10 @@ static qa_guest_address facet(qa_system_v_classic_locale *locale, const char *na
   qa_gmem_write_i32(m, slot(locale, address, p), 1);
   return address;
 }
-static qa_guest_address text_value(qa_system_v_classic_locale *locale, const char *value, bool wide) {
+static qa_guest_core_address text_value(qa_system_v_classic_locale *locale, const char *value, bool wide) {
   if (!wide) return qa_cxx_abi_bytes(locale->abi, value);
   qa_mapped_guest_memory *m = locale->abi->host->memory;
-  qa_guest_address address = qa_system_v_allocate(locale->abi->host, (strlen(value) + 1) * 4);
+  qa_guest_core_address address = qa_system_v_allocate(locale->abi->host, (strlen(value) + 1) * 4);
   for (size_t i = 0; i < strlen(value); i++)
     qa_memory_write_u32(m, slot(locale, address, (int64_t)i * 4), (uint8_t)value[i]);
   return address;
@@ -86,13 +86,13 @@ static qa_guest_address text_value(qa_system_v_classic_locale *locale, const cha
 
 typedef struct cache_writer {
   qa_system_v_classic_locale *locale;
-  qa_guest_address result;
+  qa_guest_core_address result;
   int64_t cursor;
   int p, width;
   bool wide;
 } cache_writer;
 static void cache_align(cache_writer *w, int64_t n) { w->cursor = (w->cursor + n - 1) / n * n; }
-static void cache_ptr(cache_writer *w, qa_guest_address value) {
+static void cache_ptr(cache_writer *w, qa_guest_core_address value) {
   cache_align(w, w->p);
   write_ptr(w->locale, slot(w->locale, w->result, w->cursor), value);
   w->cursor += w->p;
@@ -109,7 +109,7 @@ static void cache_char(cache_writer *w, int value) {
                     w->width, (uint64_t)value);
   w->cursor += w->width;
 }
-static qa_guest_address cache(qa_system_v_classic_locale *locale, const char *name, bool wide,
+static qa_guest_core_address cache(qa_system_v_classic_locale *locale, const char *name, bool wide,
                               int kind) { /* 0 number, 1 money, 2 time */
   qa_cxx_abi_data *abi = locale->abi;
   qa_mapped_guest_memory *m = abi->host->memory;
@@ -173,28 +173,28 @@ typedef struct ctype_state {
   int operation; /* 0 is, 1 toupper, 2 toupper_range, 3 tolower, 4 tolower_range,
                     5 widen, 6 widen_range, 7 narrow */
 } ctype_state;
-static uint32_t ctype_read(ctype_state *state, qa_guest_address address) {
+static uint32_t ctype_read(ctype_state *state, qa_guest_core_address address) {
   qa_mapped_guest_memory *m = state->locale->abi->host->memory;
   return state->wide ? qa_memory_read_u32(m, address) : qa_memory_read_u8(m, address);
 }
-static void ctype_write(ctype_state *state, qa_guest_address address, uint32_t value) {
+static void ctype_write(ctype_state *state, qa_guest_core_address address, uint32_t value) {
   qa_mapped_guest_memory *m = state->locale->abi->host->memory;
   if (state->wide) qa_memory_write_u32(m, address, value);
   else qa_memory_write_u8(m, address, (uint8_t)value);
 }
-static int ctype_convert(ctype_state *state, qa_guest_address object, int c) {
+static int ctype_convert(ctype_state *state, qa_guest_core_address object, int c) {
   bool toupper = state->operation == 1 || state->operation == 2;
   if (state->wide)
     return toupper ? (c >= 97 && c <= 122 ? c - 32 : c) : (c >= 65 && c <= 90 ? c + 32 : c);
   qa_mapped_guest_memory *m = state->locale->abi->host->memory;
-  qa_guest_address table = {0};
+  qa_guest_core_address table = {0};
   if (!read_ptr(state->locale, slot(state->locale, object, (toupper ? 4 : 5) * m->pointer_bytes),
                 &table))
     type_error("Missing guest ctype conversion table");
   int32_t value = qa_gmem_read_i32(m, slot(state->locale, table, (c & 255) * 4));
   return (int8_t)value;
 }
-static uint32_t ctype_widen_value(ctype_state *state, qa_guest_address object, int value) {
+static uint32_t ctype_widen_value(ctype_state *state, qa_guest_core_address object, int value) {
   if (!state->wide) return (uint32_t)(int8_t)value;
   qa_mapped_guest_memory *m = state->locale->abi->host->memory;
   int64_t widen = ((3 * m->pointer_bytes + 129) + 3) / 4 * 4;
@@ -203,7 +203,7 @@ static uint32_t ctype_widen_value(ctype_state *state, qa_guest_address object, i
 static qa_call_result char_result(ctype_state *state, int value) {
   return state->wide ? qa_call_uint32((uint32_t)value) : qa_call_int32(value);
 }
-static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result ctype_impl(void *ctx, const qa_guest_core_call_context *context,
                                  const qa_call_value *args, size_t count) {
   ctype_state *state = ctx; (void)context;
   qa_system_v_classic_locale *locale = state->locale;
@@ -211,7 +211,7 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
   int width = state->wide ? 4 : 1;
   switch (state->operation) {
     case 0: { /* wide is */
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       uint32_t requested = (uint32_t)qa_guest_integer(args, count, 1);
       uint32_t value = (uint32_t)qa_guest_integer(args, count, 2);
       int64_t widen = ((3 * m->pointer_bytes + 129) + 3) / 4 * 4;
@@ -219,7 +219,7 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
       for (int bit = 0; bit < 12; bit++) {
         if ((qa_memory_read_u16(m, slot(locale, object, widen + 1024 + bit * 2)) & requested) == 0)
           continue;
-        qa_guest_address table = {0};
+        qa_guest_core_address table = {0};
         if (!read_ptr(locale, slot(locale, object, masks + (int64_t)bit * m->pointer_bytes),
                       &table))
           continue;
@@ -244,8 +244,8 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
       return char_result(state, value);
     }
     case 2: case 4: {
-      qa_guest_address current = qa_guest_required_pointer(args, count, 1);
-      qa_guest_address end = qa_guest_required_pointer(args, count, 2);
+      qa_guest_core_address current = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address end = qa_guest_required_pointer(args, count, 2);
       while (current.byte_offset < end.byte_offset) {
         ctype_write(state, current,
                     (uint32_t)ctype_convert(state, qa_guest_required_pointer(args, count, 0),
@@ -261,9 +261,9 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
       return char_result(state, (int)value);
     }
     case 6: {
-      qa_guest_address source = qa_guest_required_pointer(args, count, 1);
-      qa_guest_address target = qa_guest_required_pointer(args, count, 3);
-      qa_guest_address end = qa_guest_required_pointer(args, count, 2);
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address target = qa_guest_required_pointer(args, count, 3);
+      qa_guest_core_address end = qa_guest_required_pointer(args, count, 2);
       while (source.byte_offset < end.byte_offset) {
         ctype_write(state, target,
                     ctype_widen_value(state, qa_guest_required_pointer(args, count, 0),
@@ -274,7 +274,7 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
       return qa_call_pointer(true, end);
     }
     case 7: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       int input = (int)qa_guest_integer(args, count, 1);
       int64_t narrow = 3 * m->pointer_bytes;
       int value = state->wide && input < 128 &&
@@ -287,7 +287,7 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_call_context *context
   }
   return qa_call_void();
 }
-static qa_guest_address ctype_function(qa_system_v_classic_locale *locale, const char *name,
+static qa_guest_core_address ctype_function(qa_system_v_classic_locale *locale, const char *name,
                                        const qa_abi_storage *parameters, size_t parameter_count,
                                        bool result_is_void, qa_abi_storage result, bool wide,
                                        int operation) {
@@ -298,7 +298,7 @@ static qa_guest_address ctype_function(qa_system_v_classic_locale *locale, const
                              result, impl, NULL);
 }
 static size_t ctype_methods(qa_system_v_classic_locale *locale, bool wide,
-                            qa_guest_address *out, size_t capacity) {
+                            qa_guest_core_address *out, size_t capacity) {
   (void)capacity;
   qa_cxx_abi_data *abi = locale->abi;
   qa_abi_storage type = wide ? QA_STORAGE_UINT32 : QA_STORAGE_INT32;
@@ -344,11 +344,11 @@ static size_t ctype_methods(qa_system_v_classic_locale *locale, bool wide,
   return count;
 }
 
-typedef struct built_facets { qa_guest_address ctype, num_get, num_put; } built_facets;
+typedef struct built_facets { qa_guest_core_address ctype, num_get, num_put; } built_facets;
 static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wide,
-                                     qa_guest_address facets, qa_guest_address caches,
-                                     qa_guest_address classification, qa_guest_address lower,
-                                     qa_guest_address upper) {
+                                     qa_guest_core_address facets, qa_guest_core_address caches,
+                                     qa_guest_core_address classification, qa_guest_core_address lower,
+                                     qa_guest_core_address upper) {
   qa_cxx_abi_data *abi = locale->abi;
   qa_system_v_service_host *host = abi->host;
   qa_mapped_guest_memory *m = host->memory;
@@ -370,9 +370,9 @@ static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wi
   (void)snprintf(names[11], 160, "St8time_getI%cSt19istreambuf_iteratorI%cSt11char_traitsI%cEEE", ch, ch, ch);
   (void)snprintf(names[12], 160, "St8time_putI%cSt19ostreambuf_iteratorI%cSt11char_traitsI%cEEE", ch, ch, ch);
   (void)snprintf(names[13], 160, "St8messagesI%cE", ch);
-  qa_guest_address built[14];
+  qa_guest_core_address built[14];
   for (int index = 0; index < 14; index++) {
-    qa_guest_address methods[16];
+    qa_guest_core_address methods[16];
     size_t method_count;
     if (index == 0) {
       method_count = ctype_methods(locale, wide, methods, 16);
@@ -391,14 +391,14 @@ static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wi
         : index == 13 ? (size_t)(4 * p)
         : (index == 1 || index == 2 || index == 5 || index == 6 || index == 7)
             ? (size_t)(3 * p) : (size_t)(2 * p);
-    qa_guest_address facet_address = facet(locale, names[index], size, methods, method_count);
+    qa_guest_core_address facet_address = facet(locale, names[index], size, methods, method_count);
     int id = (wide ? 14 : 0) + index;
     built[index] = facet_address;
     write_ptr(locale, slot(locale, facets, (int64_t)id * p), facet_address);
     qa_gmem_write_i32(m, slot(locale, facet_address, p), 2);
     char *id_symbol = xmalloc(strlen(names[index]) + 8);
     (void)snprintf(id_symbol, strlen(names[index]) + 8, "_ZN%s2idE", names[index]);
-    qa_guest_address id_address = qa_cxx_abi_define_data(abi, id_symbol, (size_t)p, NULL);
+    qa_guest_core_address id_address = qa_cxx_abi_define_data(abi, id_symbol, (size_t)p, NULL);
     free(id_symbol);
     qa_write_unsigned(m, id_address, p, (uint64_t)(id + 1));
     if (index == 0) {
@@ -423,7 +423,7 @@ static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wi
                               (uint16_t)flag);
           /* GCC 4.8 _M_convert_to_wmask does not map the C library's blank bit. */
           if (bit == 8) continue;
-          qa_guest_address table = qa_system_v_allocate(host, 56);
+          qa_guest_core_address table = qa_system_v_allocate(host, 56);
           const uint32_t header[] = {7, 1, 5, 3, 0, 24};
           for (size_t h = 0; h < 6; h++)
             qa_memory_write_u32(m, slot(locale, table, (int64_t)h * 4), header[h]);
@@ -445,7 +445,7 @@ static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wi
       else
         (void)snprintf(cache_name, sizeof cache_name, "St18__moneypunct_cacheI%cLb%dEE", ch,
                        index == 7 ? 1 : 0);
-      qa_guest_address cache_address = cache(locale, cache_name, wide,
+      qa_guest_core_address cache_address = cache(locale, cache_name, wide,
                                              index == 2 ? 0 : index == 10 ? 2 : 1);
       write_ptr(locale, slot(locale, facet_address, 2 * p), cache_address);
       write_ptr(locale, slot(locale, caches, (int64_t)id * p), cache_address);
@@ -471,10 +471,10 @@ void qa_system_v_classic_locale_init(qa_system_v_classic_locale *locale, qa_cxx_
   int p = m->pointer_bytes;
   locale->facet_base = qa_cxx_abi_type(abi, "NSt6locale5facetE", NULL, 0);
   locale->c_locale = qa_system_v_allocate(host, (size_t)(29 * p));
-  qa_guest_address tables = qa_system_v_allocate(host, 384 * 10);
-  qa_guest_address classification = slot(locale, tables, 128 * 2);
-  qa_guest_address lower = slot(locale, tables, 384 * 2 + 128 * 4);
-  qa_guest_address upper = slot(locale, tables, 384 * 6 + 128 * 4);
+  qa_guest_core_address tables = qa_system_v_allocate(host, 384 * 10);
+  qa_guest_core_address classification = slot(locale, tables, 128 * 2);
+  qa_guest_core_address lower = slot(locale, tables, 384 * 2 + 128 * 4);
+  qa_guest_core_address upper = slot(locale, tables, 384 * 6 + 128 * 4);
   for (int c = -128; c < 256; c++) {
     int byte = c < 0 && c != -1 ? c + 256 : c;
     qa_memory_write_u16(m, slot(locale, classification, c * 2), (uint16_t)mask(byte));
@@ -484,13 +484,13 @@ void qa_system_v_classic_locale_init(qa_system_v_classic_locale *locale, qa_cxx_
   write_ptr(locale, slot(locale, locale->c_locale, 13 * p), classification);
   write_ptr(locale, slot(locale, locale->c_locale, 14 * p), lower);
   write_ptr(locale, slot(locale, locale->c_locale, 15 * p), upper);
-  qa_guest_address c_name = qa_cxx_abi_bytes(abi, "C");
+  qa_guest_core_address c_name = qa_cxx_abi_bytes(abi, "C");
   for (int i = 0; i < 13; i++)
     write_ptr(locale, slot(locale, locale->c_locale, (16 + i) * p), c_name);
   const char *loc_names[] = {"__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc"};
-  qa_guest_address loc_tables[] = {classification, lower, upper};
+  qa_guest_core_address loc_tables[] = {classification, lower, upper};
   for (size_t i = 0; i < 3; i++) {
-    qa_guest_address slot_address = qa_system_v_allocate(host, (size_t)p);
+    qa_guest_core_address slot_address = qa_system_v_allocate(host, (size_t)p);
     write_ptr(locale, slot_address, loc_tables[i]);
     ctype_loc_state *state = xmalloc(sizeof *state);
     state->host = host; state->slot_address = slot_address;
@@ -499,9 +499,9 @@ void qa_system_v_classic_locale_init(qa_system_v_classic_locale *locale, qa_cxx_
     qa_system_v_service(host, "libc.so.6", loc_names[i], versions, 2, NULL, 0, false,
                         QA_STORAGE_POINTER, impl);
   }
-  qa_guest_address facets = qa_system_v_allocate(host, (size_t)(28 * p));
-  qa_guest_address caches = qa_system_v_allocate(host, (size_t)(28 * p));
-  qa_guest_address names = qa_system_v_allocate(host, (size_t)(12 * p));
+  qa_guest_core_address facets = qa_system_v_allocate(host, (size_t)(28 * p));
+  qa_guest_core_address caches = qa_system_v_allocate(host, (size_t)(28 * p));
+  qa_guest_core_address names = qa_system_v_allocate(host, (size_t)(12 * p));
   write_ptr(locale, names, c_name);
   locale->implementation = qa_system_v_allocate(host, (size_t)(5 * p));
   qa_gmem_write_i32(m, locale->implementation, 2);
@@ -515,13 +515,13 @@ void qa_system_v_classic_locale_init(qa_system_v_classic_locale *locale, qa_cxx_
   locale->num_put[0] = narrow.num_put; locale->num_put[1] = wide.num_put;
   locale->num_get[0] = narrow.num_get; locale->num_get[1] = wide.num_get;
 }
-qa_guest_address qa_system_v_classic_locale_retain(qa_system_v_classic_locale *locale) {
+qa_guest_core_address qa_system_v_classic_locale_retain(qa_system_v_classic_locale *locale) {
   qa_mapped_guest_memory *m = locale->abi->host->memory;
   qa_gmem_write_i32(m, locale->implementation, qa_gmem_read_i32(m, locale->implementation) + 1);
   return locale->implementation;
 }
 void qa_system_v_classic_locale_release(qa_system_v_classic_locale *locale,
-                                        qa_guest_address implementation) {
+                                        qa_guest_core_address implementation) {
   qa_mapped_guest_memory *m = locale->abi->host->memory;
   int32_t value = qa_gmem_read_i32(m, implementation);
   if (value <= 2 && implementation.byte_offset == locale->implementation.byte_offset)

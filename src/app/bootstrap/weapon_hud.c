@@ -47,20 +47,22 @@ static char *icon_key(qa_weapon_hud_icon icon) {
   return xdup(buf);
 }
 static qa_resource_id load_icon_into(qa_app_weapon_hud_assets *a, qa_weapon_hud_icon icon, const char *key,
-                                     qa_app_weapon_hud_provider provider_override, bool has_override,
+                                     qa_app_provider_scene_assets provider_override, bool has_override,
                                      pic_entry **pictures, size_t *picture_count, size_t *picture_cap,
                                      aspect_entry **aspects, size_t *aspect_count, size_t *aspect_cap) {
   char id_buf[4200];
   snprintf(id_buf, sizeof id_buf, "resource:weapon-hud:%s", key);
   qa_content_id content = icon.kind == QA_WEAPON_HUD_ICON_SHADER ? icon.content : icon.resource.content;
-  qa_app_weapon_hud_provider provider = has_override ? provider_override : a->host.provider(a->host.ctx, content);
+  qa_app_provider_scene_assets provider = has_override ? provider_override
+      : qa_app_application_assets_provider(a->host.assets, content);
   if (icon.kind == QA_WEAPON_HUD_ICON_SHADER) {
-    put_picture(pictures, picture_count, picture_cap, id_buf, provider.register_shader_picture(provider.ctx, icon.name));
-  } else if (strcmp(provider.family, "q1") == 0) {
+    put_picture(pictures, picture_count, picture_cap, id_buf,
+                a->host.register_shader_picture(a->host.ctx, provider.shaders, icon.name));
+  } else if (provider.family == QA_GAME_FAMILY_Q1) {
     uint8_t *bytes = NULL; size_t length = 0;
     qa_resolved_resource_reference reference; memset(&reference, 0, sizeof reference);
-    bool opened = provider.open(provider.ctx, icon.resource.path, &bytes, &length, &reference);
-    if (!opened || !provider.has_palette) { free(bytes); qa_range_error("Weapon HUD picture missing: %s", key); }
+    bool opened = a->host.open(a->host.ctx, provider.mounts, icon.resource.path, &bytes, &length, &reference);
+    if (!opened || provider.palette == NULL) { free(bytes); qa_range_error("Weapon HUD picture missing: %s", key); }
     qa_indexed_image picture; memset(&picture, 0, sizeof picture);
     if (icon.kind == QA_WEAPON_HUD_ICON_WAD_PICTURE) {
       qa_wad_archive wad; memset(&wad, 0, sizeof wad);
@@ -74,7 +76,7 @@ static qa_resource_id load_icon_into(qa_app_weapon_hud_assets *a, qa_weapon_hud_
     } else if (!qa_decode_qpic(bytes, length, key, &picture)) qa_range_error("Weapon HUD picture missing: %s", key);
     qa_image_level level = {(double)picture.width, (double)picture.height, {picture.indices, picture.indices_length}};
     qa_palette_transparency transparency = {"index", 255};
-    qa_render_image indexed = qa_indexed_render_image_make(&level, 1, provider.palette, transparency, NULL, NULL);
+    qa_render_image indexed = qa_indexed_render_image_make(&level, 1, *(const qa_palette *)provider.palette, transparency, NULL, NULL);
     qa_renderer_image image = a->host.register_image(a->host.ctx, key, indexed, reference);
     qa_picture_asset asset; memset(&asset, 0, sizeof asset);
     asset.kind = QA_PICTURE_IMAGE;
@@ -85,7 +87,7 @@ static qa_resource_id load_icon_into(qa_app_weapon_hud_assets *a, qa_weapon_hud_
   } else {
     qa_renderer_image texture; memset(&texture, 0, sizeof texture);
     double width = 0, height = 0;
-    if (!provider.load_texture(provider.ctx, icon.resource.path, &texture, &width, &height))
+    if (!a->host.load_texture(a->host.ctx, provider.textures, icon.resource.path, &texture, &width, &height))
       qa_range_error("Weapon HUD image missing: %s", key);
     qa_picture_asset asset; memset(&asset, 0, sizeof asset);
     asset.kind = QA_PICTURE_IMAGE;
@@ -140,7 +142,7 @@ qa_app_weapon_hud_refresh *qa_app_weapon_hud_assets_prepare_image_refresh(qa_app
   refresh->assets = a;
   for (size_t i = 0; i < a->texture_icon_count; i++) {
     qa_weapon_hud_icon icon = a->texture_icons[i].icon;
-    qa_app_weapon_hud_provider provider = a->host.provider(a->host.ctx, icon.resource.content);
+    qa_app_provider_scene_assets provider = qa_app_application_assets_provider(a->host.assets, icon.resource.content);
     load_icon_into(a, icon, a->texture_icons[i].key, provider, true,
                    &refresh->pictures, &refresh->picture_count, &refresh->picture_cap,
                    &refresh->aspects, &refresh->aspect_count, &refresh->aspect_cap);
@@ -178,7 +180,7 @@ qa_resource_id qa_app_weapon_hud_assets_load(qa_app_weapon_hud_assets *a, qa_wea
   char *key = icon_key(icon);
   for (size_t i = 0; i < a->loaded_count; i++)
     if (strcmp(a->loaded[i].key, key) == 0) { qa_resource_id id = a->loaded[i].id; free(key); return id; }
-  qa_app_weapon_hud_provider unused; memset(&unused, 0, sizeof unused);
+  qa_app_provider_scene_assets unused; memset(&unused, 0, sizeof unused);
   qa_resource_id id = load_icon_into(a, icon, key, unused, false,
                                      &a->pictures, &a->picture_count, &a->picture_cap,
                                      &a->aspects, &a->aspect_count, &a->aspect_cap);

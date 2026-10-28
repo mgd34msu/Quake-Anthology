@@ -279,7 +279,7 @@ static void restore_environment(qa_guest_x87_state *s, const uint8_t *bytes, int
   if ((s->status_word & ~s->control_word & 63u) != 0) s->status_word |= 0x8080u;
   else s->status_word &= ~0x8080u;
 }
-static void mem_copy(qa_numeric_context *ctx, qa_guest_address address, uint8_t *dest, size_t len) {
+static void mem_copy(qa_numeric_context *ctx, qa_guest_core_address address, uint8_t *dest, size_t len) {
   qa_memory_copy(ctx->memory, address, dest, len);
 }
 static void execute_inner(qa_numeric_context *ctx) {
@@ -309,7 +309,7 @@ static void execute_inner(qa_numeric_context *ctx) {
     state->instruction_selector = ctx->state->segments[QA_SEG_CS].selector;
   }
   if (ins->operand.kind == QA_OPERAND_MEMORY) {
-    qa_guest_address address = ins->operand.address;
+    qa_guest_core_address address = ins->operand.address;
     uint8_t bytes[108];
     if ((opcode == 0xd9 || opcode == 0xdd) && (group == 4 || group == 6)) {
       size_t size = ins->operand_bits == 16 ? 14 : 28;

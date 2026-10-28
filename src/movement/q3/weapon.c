@@ -75,21 +75,21 @@ void qa_q3_run_weapon_step(qa_q3_source_weapon_state *state, qa_q3_move_command 
   if (qa_q3_step_holdable(ps, flag(command.buttons, QA_Q3_BUTTON_USE_HOLDABLE), holdable_event, &w)) return;
   if (ps->weapon_time > 0) ps->weapon_time -= options->msec;
   qa_q3_external_weapon_slot *external = options->external_phase;
-  if (external != NULL && *external == QA_Q3_SLOT_HOLSTERED) return;
-  if (external != NULL && *external == QA_Q3_SLOT_DROPPING) {
-    if (ps->weapon_time <= 0) *external = QA_Q3_SLOT_HOLSTERED;
+  if (external != NULL && *external == QA_Q3_WEAPON_SLOT_HOLSTERED) return;
+  if (external != NULL && *external == QA_Q3_WEAPON_SLOT_DROPPING) {
+    if (ps->weapon_time <= 0) *external = QA_Q3_WEAPON_SLOT_HOLSTERED;
     return;
   }
-  if (external != NULL && *external == QA_Q3_SLOT_RESUME_REQUESTED) {
+  if (external != NULL && *external == QA_Q3_WEAPON_SLOT_RESUME_REQUESTED) {
     if (ps->weapon_time > 0) return;
-    finish_weapon_change(&w); *external = QA_Q3_SLOT_ACTIVE; return;
+    finish_weapon_change(&w); *external = QA_Q3_WEAPON_SLOT_ACTIVE; return;
   }
-  if (external != NULL && *external == QA_Q3_SLOT_HOLSTER_REQUESTED && ps->weapon_time <= 0 &&
+  if (external != NULL && *external == QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED && ps->weapon_time <= 0 &&
       (ps->weapon_state == QA_Q3_WEAPON_READY || ps->weapon_state == QA_Q3_WEAPON_FIRING)) {
     double requested = command.weapon;
     bool native_switch = requested != ps->weapon && requested > QA_Q3_WP_NONE &&
         requested < (missionpack(&w) ? 14 : 11) && (qa_int32(ps->owned_weapons) & (1 << qa_int32(requested))) != 0;
-    if (!native_switch) { begin_drop(&w); *external = QA_Q3_SLOT_DROPPING; return; }
+    if (!native_switch) { begin_drop(&w); *external = QA_Q3_WEAPON_SLOT_DROPPING; return; }
   }
   if (ps->weapon_time <= 0 || ps->weapon_state != QA_Q3_WEAPON_FIRING) {
     if (ps->weapon != command.weapon) begin_weapon_change(&w, command.weapon);

@@ -95,6 +95,9 @@ typedef struct qa_qvm_mod_items_runtime {
   void *entries;                            /* opaque */
   size_t entry_count;
   size_t entry_capacity;
+  void *retired_entries; /* opaque; released entries kept for capability identity until destroy */
+  size_t retired_entry_count;
+  size_t retired_entry_capacity;
   int64_t next_request;
   qa_mod_client_application **applied;
   size_t applied_count;

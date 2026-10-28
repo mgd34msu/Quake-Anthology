@@ -36,14 +36,14 @@ qa_q3_arsenal_runtime_state qa_q3_request_weapon(qa_q3_arsenal_runtime_state r, 
   r.has_requested_weapon=true; r.requested_weapon=weapon; return r;
 }
 qa_q3_arsenal_runtime_state qa_q3_request_weapon_holster(qa_q3_arsenal_runtime_state r){
-  if(r.external_slot==QA_Q3_SLOT_RESUME_REQUESTED){ r.external_slot=QA_Q3_SLOT_HOLSTERED; return r; }
-  if(r.external_slot==QA_Q3_SLOT_ACTIVE) r.external_slot=QA_Q3_SLOT_HOLSTER_REQUESTED;
+  if(r.external_slot==QA_Q3_WEAPON_SLOT_RESUME_REQUESTED){ r.external_slot=QA_Q3_WEAPON_SLOT_HOLSTERED; return r; }
+  if(r.external_slot==QA_Q3_WEAPON_SLOT_ACTIVE) r.external_slot=QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED;
   return r;
 }
 qa_q3_arsenal_runtime_state qa_q3_request_weapon_resume(qa_q3_arsenal_runtime_state r){
-  if(r.external_slot==QA_Q3_SLOT_ACTIVE||r.external_slot==QA_Q3_SLOT_RESUME_REQUESTED) return r;
-  if(r.external_slot!=QA_Q3_SLOT_HOLSTERED) qa_range_error("Q3 primary must finish its source drop before resuming");
-  r.external_slot=QA_Q3_SLOT_RESUME_REQUESTED; return r;
+  if(r.external_slot==QA_Q3_WEAPON_SLOT_ACTIVE||r.external_slot==QA_Q3_WEAPON_SLOT_RESUME_REQUESTED) return r;
+  if(r.external_slot!=QA_Q3_WEAPON_SLOT_HOLSTERED) qa_range_error("Q3 primary must finish its source drop before resuming");
+  r.external_slot=QA_Q3_WEAPON_SLOT_RESUME_REQUESTED; return r;
 }
 
 typedef struct step_ctx {
@@ -210,7 +210,7 @@ void qa_q3_arsenal_step_destroy(qa_q3_arsenal_step *s){
 }
 qa_q3_arsenal_runtime_state qa_q3_spawn_arsenal_runtime(const char *product, double max_health, double event_sequence){
   qa_q3_arsenal_runtime_state r={0}; r.product=product; r.max_health=max_health; r.respawned=true;
-  r.event_sequence=event_sequence; r.external_slot=QA_Q3_SLOT_ACTIVE; return r;
+  r.event_sequence=event_sequence; r.external_slot=QA_Q3_WEAPON_SLOT_ACTIVE; return r;
 }
 qa_arsenal_state qa_q3_spawn_loadout(qa_provider_id provider, const char *product, bool team_deathmatch){
   qa_inventory_entry *ammo=xrealloc(NULL,32*sizeof *ammo); size_t n=0;

@@ -380,8 +380,8 @@ qa_app_sim_native_q3_runtime qa_app_sim_native_q3_runtime_reader(qa_save_image i
     f = fld(&s, "eventSequence"); st->event_sequence = qa_save_reader_integer(&f); qa_save_reader_destroy(&f);
     f = fld(&s, "fractionalMilliseconds"); st->fractional_milliseconds = qa_save_reader_finite(&f); qa_save_reader_destroy(&f);
     f = fld(&s, "externalSlot"); const char *slot = qa_save_reader_choice_string(&f, slots, 5); qa_save_reader_destroy(&f);
-    st->external_slot = is(slot, "active") ? QA_Q3_SLOT_ACTIVE : is(slot, "holster-requested") ? QA_Q3_SLOT_HOLSTER_REQUESTED
-        : is(slot, "dropping") ? QA_Q3_SLOT_DROPPING : is(slot, "holstered") ? QA_Q3_SLOT_HOLSTERED : QA_Q3_SLOT_RESUME_REQUESTED;
+    st->external_slot = is(slot, "active") ? QA_Q3_WEAPON_SLOT_ACTIVE : is(slot, "holster-requested") ? QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED
+        : is(slot, "dropping") ? QA_Q3_WEAPON_SLOT_DROPPING : is(slot, "holstered") ? QA_Q3_WEAPON_SLOT_HOLSTERED : QA_Q3_WEAPON_SLOT_RESUME_REQUESTED;
     f = fld(&s, "requestedWeapon");
     if (!qa_save_reader_is_null(&f)) { out.arsenals[i].has_requested_weapon = true; out.arsenals[i].requested_weapon = qa_save_reader_integer(&f); st->has_requested_weapon = true; st->requested_weapon = out.arsenals[i].requested_weapon; }
     qa_save_reader_destroy(&f);

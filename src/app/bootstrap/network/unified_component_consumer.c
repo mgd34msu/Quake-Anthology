@@ -1,13 +1,7 @@
 /* Port of src/app/bootstrap/network/unified-component-consumer.ts.
  * GPL-2.0-or-later. */
-/* Checkpoint vs session qa_qvm_scene_command collision: rename the
- * checkpoint form in this TU (landed mod_provider.c precedent). */
-#define qa_qvm_scene_command qa_qvm_cp_scene_command
-#define qa_qvm_mod_scene_publication qa_qvm_cp_scene_publication
 #include "qa/app/bootstrap/network/unified_component_consumer.h"
 #include "qa/compat/qvm/mod_presentation.h"
-#undef qa_qvm_scene_command
-#undef qa_qvm_mod_scene_publication
 #include <stdlib.h>
 #include <string.h>
 #include "qa/world/session/mod_presentations.h"

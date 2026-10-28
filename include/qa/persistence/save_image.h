@@ -4,14 +4,19 @@
  * structs borrow strings from the checkpoint tree; pointer fields
  * (ground actor) are single malloc'd allocations the caller frees.
  *
- * BLOCKED: qa_parse_save_image / qa_encode_save_image /
- * qa_decode_save_image / file read+write are not yet ported. Parse
- * and decode need qa_read_recipe (see recipe.h: persistence/mods.h
- * still declares no qa_read_gameplay_mod); readModSession exists
- * (qa_read_mod_session in mods.h). Encode additionally needs
- * checkpoint-value writers for the recipe and its nested content
- * types, which do not exist yet. The exported readers and the
- * source actor checkpoint helpers below are complete: capture
+ * qa_parse_save_image borrows the caller's checkpoint tree (the
+ * result's root stays NULL); qa_decode_save_image /
+ * qa_read_save_image own the decoded tree in root. Release either
+ * with qa_save_image_result_free, which frees the list arrays and
+ * single allocations made by save_image.c itself plus an owned
+ * root; recipe/mods interiors follow their readers' convention
+ * (caller frees their list arrays and built identity strings).
+ * Encode builds the checkpoint tree from the struct (TS
+ * encodeCheckpointValue serializes the plain object); two nested
+ * writers do not exist yet and abort with a C-only
+ * SaveFormatError when present, per the saved_game.h precedent:
+ * a recipe gameplay mod's declaration, and a q3-qvm grapple
+ * profile. The source actor checkpoint helpers below: capture
  * returns false only on OOM and owns its bytes (caller frees
  * bytes.bytes); read results borrow provider strings from `root`
  * (release with qa_source_actors_result_free).
@@ -22,6 +27,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "qa/contracts/gameplay.h"
 #include "qa/contracts/identity.h"
@@ -37,6 +43,27 @@ qa_saved_body_attachment qa_read_saved_body_attachment(
 qa_regular_armor_state qa_read_regular_armor(const qa_save_reader *reader);
 qa_armor_state qa_read_armor(const qa_save_reader *reader);
 qa_inventory_entry qa_read_inventory_entry(const qa_save_reader *reader);
+
+/* Parsed image plus the checkpoint tree its strings borrow from
+ * (owned by decode/read, NULL for a caller-supplied parse tree). */
+typedef struct qa_save_image_result {
+  qa_save_image image;
+  qa_save_value *root; /* owned or NULL */
+} qa_save_image_result;
+/* TS parseSaveImage. False only on OOM; malformed input aborts as
+ * the TS SaveFormatError throws. */
+bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out);
+/* TS encodeSaveImage. Malloc'd bytes in *out_bytes; false only on OOM. */
+bool qa_encode_save_image(const qa_save_image *image, uint8_t **out_bytes,
+                          size_t *out_length);
+/* TS decodeSaveImage. False only on OOM. */
+bool qa_decode_save_image(const uint8_t *bytes, size_t length,
+                          qa_save_image_result *out);
+/* TS readSaveImage / writeSaveImage (synchronous). False on I/O
+ * failure or OOM; write commits by rename of a completed sibling. */
+bool qa_read_save_image(const char *path, qa_save_image_result *out);
+bool qa_write_save_image(const char *path, const qa_save_image *image);
+void qa_save_image_result_free(qa_save_image_result *result);
 
 /* TS sourceActorsCheckpoint: the "world:source-slots" provider
  * checkpoint over a SourceActorCheckpoint list. */

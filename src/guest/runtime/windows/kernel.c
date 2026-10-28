@@ -24,7 +24,7 @@ static void *xrealloc(void *p, size_t size) {
   return next;
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
 static double now_milliseconds(qa_windows_service_host *host) {
@@ -37,11 +37,11 @@ static double now_milliseconds(qa_windows_service_host *host) {
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
 }
 
-typedef struct reservation { qa_guest_address address; size_t size; } reservation;
+typedef struct reservation { qa_guest_core_address address; size_t size; } reservation;
 typedef struct fls_slot {
   bool used;
-  bool has_callback; qa_guest_address callback;
-  bool has_value; qa_guest_address value;
+  bool has_callback; qa_guest_core_address callback;
+  bool has_value; qa_guest_core_address value;
 } fls_slot;
 typedef struct file_handle {
   uint64_t key;
@@ -49,21 +49,21 @@ typedef struct file_handle {
   qa_windows_file *file;
   size_t offset;
 } file_handle;
-typedef struct std_handle { int64_t id; qa_guest_address address; } std_handle;
+typedef struct std_handle { int64_t id; qa_guest_core_address address; } std_handle;
 
 typedef struct kernel_ctx {
   qa_windows_service_host *host;
-  qa_guest_address command_line, command_line_w, environment_a, environment_w;
-  bool has_invalid; qa_guest_address invalid;
+  qa_guest_core_address command_line, command_line_w, environment_a, environment_w;
+  bool has_invalid; qa_guest_core_address invalid;
   uint64_t pointer_secret;
-  qa_guest_address process_heap;
+  qa_guest_core_address process_heap;
   uint64_t *heaps; size_t heap_count, heap_cap;
   reservation *reservations; size_t reservation_count, reservation_cap;
   bool tls_used[1088];
-  qa_guest_address dynamic_tls;
+  qa_guest_core_address dynamic_tls;
   fls_slot fls[128];
   uint64_t *locks; size_t lock_count, lock_cap;
-  bool has_exception_filter; qa_guest_address exception_filter;
+  bool has_exception_filter; qa_guest_core_address exception_filter;
   file_handle *handles; size_t handle_count, handle_cap;
   std_handle *standards; size_t standard_count, standard_cap;
 } kernel_ctx;
@@ -92,16 +92,16 @@ static bool u64_set_delete(uint64_t *set, size_t *count, uint64_t value) {
   return false;
 }
 
-static qa_guest_address stored_string(kernel_ctx *k, const char *value, bool wide) {
+static qa_guest_core_address stored_string(kernel_ctx *k, const char *value, bool wide) {
   size_t len = 0;
   uint8_t *bytes = qa_string_bytes(value, wide, &len);
-  qa_guest_address address = qa_allocate_native_memory(k->host->memory_ext, len,
+  qa_guest_core_address address = qa_allocate_native_memory(k->host->memory_ext, len,
                                                        "Windows process string");
   qa_memory_write(k->host->memory, address, bytes, len);
   free(bytes);
   return address;
 }
-static qa_guest_address stored_environment(kernel_ctx *k, bool wide) {
+static qa_guest_core_address stored_environment(kernel_ctx *k, bool wide) {
   /* TS: entries joined by NUL plus a trailing NUL, then stringBytes adds
    * its own terminator unit. */
   size_t units = 1; /* trailing join NUL */
@@ -123,19 +123,19 @@ static qa_guest_address stored_environment(kernel_ctx *k, bool wide) {
   size_t len = 0;
   uint8_t *bytes = qa_string_bytes_wide(codes, at, wide, &len);
   free(codes);
-  qa_guest_address address = qa_allocate_native_memory(k->host->memory_ext, len,
+  qa_guest_core_address address = qa_allocate_native_memory(k->host->memory_ext, len,
                                                        "Windows process string");
   qa_memory_write(k->host->memory, address, bytes, len);
   free(bytes);
   return address;
 }
-static char *read_narrow(kernel_ctx *k, qa_guest_address address) {
+static char *read_narrow(kernel_ctx *k, qa_guest_core_address address) {
   return qa_read_string(k->host->memory, k->host->memory_ext, address, 1048576);
 }
 /* Wide guest strings become narrow byte strings of low bytes where TS
  * readString(wide) feeds a narrow consumer (library names); units above
  * 255 truncate like charCodeAt consumers in those paths. */
-static char *read_maybe_wide(kernel_ctx *k, qa_guest_address address, bool wide) {
+static char *read_maybe_wide(kernel_ctx *k, qa_guest_core_address address, bool wide) {
   if (!wide) return read_narrow(k, address);
   size_t len = 0;
   uint16_t *units = qa_read_string_wide(k->host->memory, address, 1048576, &len);
@@ -169,7 +169,7 @@ enum {
   K_WRITE_FILE, K_CLOSE_HANDLE, K_FLUSH_FILE_BUFFERS, K_SET_FILE_POINTER, K_SET_END_OF_FILE,
   K_MULTIBYTE_TO_WIDE, K_WIDE_TO_MULTIBYTE, K_GET_STRING_TYPE, K_LCMAP
 };
-static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count);
 static void reg(kernel_ctx *k, int kind, int number, const char *name,
                 const qa_abi_storage *parameters, size_t parameter_count, bool result_is_void,
@@ -184,18 +184,18 @@ static void reg(kernel_ctx *k, int kind, int number, const char *name,
 }
 static qa_call_result u32_result(uint32_t value) { return qa_call_uint32(value); }
 static qa_call_result bool_result(bool value) { return qa_call_int32(value ? 1 : 0); }
-static file_handle *handle_at(kernel_ctx *k, bool has, qa_guest_address address) {
+static file_handle *handle_at(kernel_ctx *k, bool has, qa_guest_core_address address) {
   if (!has) return NULL;
   for (size_t i = 0; i < k->handle_count; i++)
     if (k->handles[i].key == address.byte_offset) return &k->handles[i];
   return NULL;
 }
-static bool standard_get(kernel_ctx *k, int64_t id, qa_guest_address *out) {
+static bool standard_get(kernel_ctx *k, int64_t id, qa_guest_core_address *out) {
   for (size_t i = 0; i < k->standard_count; i++)
     if (k->standards[i].id == id) { *out = k->standards[i].address; return true; }
   return false;
 }
-static void standard_set(kernel_ctx *k, int64_t id, qa_guest_address address) {
+static void standard_set(kernel_ctx *k, int64_t id, qa_guest_core_address address) {
   for (size_t i = 0; i < k->standard_count; i++)
     if (k->standards[i].id == id) { k->standards[i].address = address; return; }
   grow((void **)&k->standards, &k->standard_cap, k->standard_count, sizeof(std_handle));
@@ -203,14 +203,14 @@ static void standard_set(kernel_ctx *k, int64_t id, qa_guest_address address) {
   k->standards[k->standard_count].address = address;
   k->standard_count++;
 }
-static qa_guest_address tls_slot(kernel_ctx *k, int index) {
+static qa_guest_core_address tls_slot(kernel_ctx *k, int index) {
   qa_mapped_guest_memory *memory = k->host->memory;
   int width = memory->pointer_bytes;
   return index < 64
       ? off(memory, k->host->teb, (width == 4 ? 0xe10 : 0x1480) + (int64_t)index * width)
       : off(memory, k->dynamic_tls, (int64_t)(index - 64) * width);
 }
-static void initialize_lock(kernel_ctx *k, qa_guest_address address, uint64_t spin) {
+static void initialize_lock(kernel_ctx *k, qa_guest_core_address address, uint64_t spin) {
   qa_mapped_guest_memory *memory = k->host->memory;
   int width = memory->pointer_bytes;
   uint8_t zeros[40] = {0};
@@ -232,7 +232,7 @@ static uint16_t cp1252_decode(uint8_t byte) {
 }
 /* Input() from kernel.ts installLocale: units of the guest string,
  * including the terminator unit when length is -1. Malloc'd. */
-static uint16_t *input_units(kernel_ctx *k, qa_guest_address address, int64_t length, bool wide,
+static uint16_t *input_units(kernel_ctx *k, qa_guest_core_address address, int64_t length, bool wide,
                              size_t *out_len) {
   qa_mapped_guest_memory *memory = k->host->memory;
   if (length == -1) {
@@ -333,21 +333,21 @@ static bool js_space_u16(uint16_t c) {
          c == 0x205f || c == 0x3000 || c == 0xfeff;
 }
 
-static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count) {
   kernel_state *state = ctx;
   kernel_ctx *k = state->k;
   qa_windows_service_host *host = k->host;
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   bool wide = state->number != 0;
   switch (state->kind) {
     case K_ENCODE: {
-      qa_guest_address value = {0};
+      qa_guest_core_address value = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &value);
       uint64_t raw = (has ? value.byte_offset : 0) ^ k->pointer_secret;
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       bool has_out = qa_memory_pointer(memory, raw, &out);
       return qa_call_pointer(has_out, out);
     }
@@ -374,7 +374,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
-      qa_guest_address address = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 1);
       uint8_t zeros[20] = {0};
       qa_memory_write(memory, address, zeros, sizeof zeros);
       qa_write_unsigned(memory, address, 4, cp == 65001 ? 4 : 1);
@@ -385,8 +385,8 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, wide ? k->environment_w : k->environment_a);
     case K_FREE_ENV_STRINGS: return bool_result(true);
     case K_GET_MODULE_HANDLE: {
-      qa_guest_address name = {0};
-      qa_guest_address handle = {0};
+      qa_guest_core_address name = {0};
+      qa_guest_core_address handle = {0};
       bool has_handle;
       if (!qa_guest_pointer_argument(args, count, 0, &name)) {
         size_t image_count = 0;
@@ -403,13 +403,13 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
     }
     case K_LOAD_LIBRARY: {
       char *text = read_maybe_wide(k, qa_guest_required_pointer(args, count, 0), wide);
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       bool has = qa_windows_load_library(host, text, &handle);
       free(text);
       return qa_call_pointer(has, handle);
     }
     case K_LOAD_LIBRARY_EX: {
-      qa_guest_address name = {0}, reserved = {0};
+      qa_guest_core_address name = {0}, reserved = {0};
       bool has_name = qa_guest_pointer_argument(args, count, 0, &name);
       bool has_reserved = qa_guest_pointer_argument(args, count, 1, &reserved);
       uint32_t flags = (uint32_t)qa_guest_integer_u64(args, count, 2);
@@ -433,13 +433,13 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         qa_windows_last_error_set(host, 87);
         return qa_call_pointer(false, none);
       }
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       bool has = qa_windows_load_library(host, library_text, &handle);
       free(library_text);
       return qa_call_pointer(has, handle);
     }
     case K_FREE_LIBRARY: {
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       if (!qa_guest_pointer_argument(args, count, 0, &handle)) {
         qa_windows_last_error_set(host, 6);
         return bool_result(false);
@@ -447,7 +447,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return bool_result(qa_windows_free_library(host, handle));
     }
     case K_GET_PROC_ADDRESS: {
-      qa_guest_address handle = {0}, name = {0};
+      qa_guest_core_address handle = {0}, name = {0};
       bool has_handle = qa_guest_pointer_argument(args, count, 0, &handle);
       bool has_name = qa_guest_pointer_argument(args, count, 1, &name);
       if (!has_handle || !has_name) {
@@ -455,7 +455,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         return qa_call_pointer(false, none);
       }
       const char *library_name = qa_windows_library_name(host, handle);
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has_address = false;
       if (library_name != NULL) {
         if (name.byte_offset <= 65535) {
@@ -472,7 +472,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(has_address, address);
     }
     case K_DISABLE_THREAD_CALLS: {
-      qa_guest_address base = {0};
+      qa_guest_core_address base = {0};
       bool has_base = qa_guest_pointer_argument(args, count, 0, &base);
       size_t image_count = 0;
       const qa_pe_image *const *images = qa_windows_images(host, &image_count);
@@ -487,7 +487,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return bool_result(true);
     }
     case K_GET_MODULE_FILE_NAME: {
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       bool has_handle = qa_guest_pointer_argument(args, count, 0, &handle);
       const char *owned_name = NULL;
       const char *name_text = "quake-typescript.exe";
@@ -509,7 +509,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       size_t unit = wide ? 2 : 1;
       size_t length = bytes_len / unit - 1;
       size_t copied = length < size - 1 ? length : size - 1;
-      qa_guest_address destination = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address destination = qa_guest_required_pointer(args, count, 1);
       qa_memory_write(memory, destination, bytes, copied * unit);
       free(bytes);
       qa_write_unsigned(memory, off(memory, destination, (int64_t)(copied * unit)),
@@ -521,32 +521,32 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return u32_result((uint32_t)length);
     }
     case K_HEAP_CREATE: {
-      qa_guest_address address = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
+      qa_guest_core_address address = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
                                                   QA_PERM_READ_WRITE, "Windows heap handle");
       u64_set_add(&k->heaps, &k->heap_count, &k->heap_cap, address.byte_offset);
       return qa_call_pointer(true, address);
     }
     case K_HEAP_ALLOC: {
-      qa_guest_address heap = {0};
+      qa_guest_core_address heap = {0};
       if (!qa_guest_pointer_argument(args, count, 0, &heap) ||
           !u64_set_has(k->heaps, k->heap_count, heap.byte_offset)) {
         qa_windows_last_error_set(host, 6);
         return qa_call_pointer(false, none);
       }
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       bool has = qa_windows_allocate(host, qa_guest_count(args, count, 2), heap.byte_offset,
                                      &out);
       return qa_call_pointer(has, out);
     }
     case K_HEAP_FREE: {
-      qa_guest_address heap = {0}, address = {0};
+      qa_guest_core_address heap = {0}, address = {0};
       bool has_heap = qa_guest_pointer_argument(args, count, 0, &heap);
       bool has_address = qa_guest_pointer_argument(args, count, 2, &address);
       return bool_result(qa_windows_free(host, has_address, address,
                                          has_heap ? heap.byte_offset : 0));
     }
     case K_HEAP_REALLOC: {
-      qa_guest_address heap = {0}, old = {0};
+      qa_guest_core_address heap = {0}, old = {0};
       bool has_heap = qa_guest_pointer_argument(args, count, 0, &heap);
       bool has_old = qa_guest_pointer_argument(args, count, 2, &old);
       size_t size = qa_guest_count(args, count, 3);
@@ -562,7 +562,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       }
       if (size <= previous) return qa_call_pointer(true, old);
       if ((flags & 16u) != 0) return qa_call_pointer(false, none);
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_windows_allocate(host, size, heap.byte_offset, &address);
       if (has) {
         uint8_t *bytes = xmalloc(previous);
@@ -574,7 +574,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(has, address);
     }
     case K_HEAP_DESTROY: {
-      qa_guest_address heap = {0};
+      qa_guest_core_address heap = {0};
       if (!qa_guest_pointer_argument(args, count, 0, &heap) ||
           heap.byte_offset == k->process_heap.byte_offset ||
           !u64_set_delete(k->heaps, &k->heap_count, heap.byte_offset))
@@ -584,7 +584,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return bool_result(true);
     }
     case K_VIRTUAL_ALLOC: {
-      qa_guest_address requested = {0};
+      qa_guest_core_address requested = {0};
       bool has_requested = qa_guest_pointer_argument(args, count, 0, &requested);
       size_t size = qa_guest_count(args, count, 1);
       uint32_t flags = (uint32_t)qa_guest_integer_u64(args, count, 2);
@@ -599,7 +599,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
           : protection == 4 ? QA_PERM_READ_WRITE
           : protection == 0x10 ? QA_PERM_EXECUTE
           : protection == 0x20 ? QA_PERM_READ_EXECUTE : QA_PERM_READ_WRITE_EXECUTE;
-      qa_guest_address address = requested;
+      qa_guest_core_address address = requested;
       size_t bytes = (size + 4095) / 4096 * 4096;
       if ((flags & 0x2000u) != 0 || !has_requested) {
         if (!has_requested) {
@@ -638,7 +638,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, address);
     }
     case K_VIRTUAL_FREE: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       size_t size = qa_guest_count(args, count, 1);
       uint32_t flags = (uint32_t)qa_guest_integer_u64(args, count, 2);
       if (flags == 0x8000u && size == 0) {
@@ -696,7 +696,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         return qa_call_pointer(false, none);
       }
       qa_windows_last_error_set(host, 0);
-      qa_guest_address value = {0};
+      qa_guest_core_address value = {0};
       bool has = qa_read_pointer(memory, tls_slot(k, (int)index), &value);
       return qa_call_pointer(has, value);
     }
@@ -706,7 +706,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
-      qa_guest_address value = {0};
+      qa_guest_core_address value = {0};
       bool has = qa_guest_pointer_argument(args, count, 1, &value);
       qa_write_pointer(memory, tls_slot(k, (int)index), has, value);
       return bool_result(true);
@@ -775,10 +775,10 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
                       qa_guest_integer_u64(args, count, 1));
       return bool_result(true);
     case K_SET_SPIN: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       if (!u64_set_has(k->locks, k->lock_count, address.byte_offset))
         plain_error("Uninitialized guest critical section");
-      qa_guest_address at = off(memory, address, width == 4 ? 20 : 32);
+      qa_guest_core_address at = off(memory, address, width == 4 ? 20 : 32);
       uint64_t previous = qa_read_unsigned(memory, at, width);
       qa_write_unsigned(memory, at, width, qa_guest_integer_u64(args, count, 1) & 0x7fffffffu);
       return u32_result((uint32_t)previous);
@@ -788,7 +788,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
                            qa_guest_required_pointer(args, count, 0).byte_offset);
       return qa_call_void();
     case K_ENTER_CS: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       if (!u64_set_has(k->locks, k->lock_count, address.byte_offset))
         plain_error("Uninitialized guest critical section");
       uint64_t depth = qa_read_unsigned(memory, off(memory, address, width + 4), 4);
@@ -804,7 +804,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_void();
     }
     case K_LEAVE_CS: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       uint64_t depth = qa_read_unsigned(memory, off(memory, address, width + 4), 4);
       if (!u64_set_has(k->locks, k->lock_count, address.byte_offset) || depth == 0 ||
           qa_read_unsigned(memory, off(memory, address, width + 8), width) !=
@@ -816,14 +816,14 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_void();
     }
     case K_INTERLOCKED: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       int64_t change = state->number;
       uint32_t value = (uint32_t)(qa_read_unsigned(memory, address, 4) + (uint64_t)change);
       qa_write_unsigned(memory, address, 4, value);
       return qa_call_int32((int32_t)value);
     }
     case K_ACQUIRE_SRW: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       if (qa_read_unsigned(memory, address, width) != 0)
         qa_unsupported_windows_import(
             "kernel32.dll", "AcquireSRWLockExclusive",
@@ -832,7 +832,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_void();
     }
     case K_RELEASE_SRW: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       if (qa_read_unsigned(memory, address, width) == 0)
         plain_error("Unowned guest SRW lock");
       qa_write_unsigned(memory, address, width, 0);
@@ -845,11 +845,11 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_void();
     }
     case K_FLUSH_SLIST: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       if (address.byte_offset % (uint64_t)(width == 4 ? 8 : 16) != 0)
         qa_range_error("Unaligned Windows SLIST_HEADER");
       if (width == 4) {
-        qa_guest_address next = {0};
+        qa_guest_core_address next = {0};
         if (!qa_read_pointer(memory, address, &next)) return qa_call_pointer(false, none);
         uint64_t sequence = qa_read_unsigned(memory, off(memory, address, 6), 2);
         uint8_t zeros[8] = {0};
@@ -858,9 +858,9 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         return qa_call_pointer(true, next);
       }
       uint64_t lower = qa_read_unsigned(memory, address, 8);
-      qa_guest_address upper_at = off(memory, address, 8);
+      qa_guest_core_address upper_at = off(memory, address, 8);
       uint64_t upper = qa_read_unsigned(memory, upper_at, 8);
-      qa_guest_address next = {0};
+      qa_guest_core_address next = {0};
       if (!qa_memory_pointer(memory, upper & ~15ULL, &next))
         return qa_call_pointer(false, none);
       qa_write_unsigned(memory, address, 8, (lower & ~65535ULL) + 65536);
@@ -911,14 +911,14 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       int fields[] = {tm_value.tm_year + 1900, tm_value.tm_mon + 1, tm_value.tm_wday,
                       tm_value.tm_mday, tm_value.tm_hour, tm_value.tm_min, tm_value.tm_sec,
                       millis};
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       for (size_t i = 0; i < 8; i++)
         qa_write_unsigned(memory, off(memory, address, (int64_t)i * 2), 2,
                           (uint64_t)(uint16_t)fields[i]);
       return qa_call_void();
     }
     case K_GET_TIMEZONE: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       uint8_t zeros[172] = {0};
       qa_memory_write(memory, address, zeros, sizeof zeros);
       time_t t = (time_t)(now_milliseconds(host) / 1000.0);
@@ -930,7 +930,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return u32_result(0);
     }
     case K_SET_UNHANDLED_FILTER: {
-      qa_guest_address previous = k->exception_filter;
+      qa_guest_core_address previous = k->exception_filter;
       bool has_previous = k->has_exception_filter;
       k->has_exception_filter = qa_guest_pointer_argument(args, count, 0,
                                                           &k->exception_filter);
@@ -959,33 +959,33 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
                     (int64_t)(found->pe.directories[3].rva + (uint32_t)index * 12)));
     }
     case K_GET_STD_HANDLE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (!standard_get(k, qa_guest_integer(args, count, 0), &address))
         return qa_call_pointer(k->has_invalid, k->invalid);
       return qa_call_pointer(true, address);
     }
     case K_SET_STD_HANDLE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (!qa_guest_pointer_argument(args, count, 1, &address)) return bool_result(false);
       standard_set(k, qa_guest_integer(args, count, 0), address);
       return bool_result(true);
     }
     case K_SET_HANDLE_COUNT: return u32_result((uint32_t)qa_guest_integer_u64(args, count, 0));
     case K_GET_FILE_TYPE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       file_handle *entry = handle_at(k, has, address);
       return u32_result(entry == NULL ? 0 : entry->stream_kind != 0 ? 2 : 1);
     }
     case K_GET_STARTUP_INFO: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       int size = width == 4 ? 68 : 104;
       uint8_t zeros[104] = {0};
       qa_memory_write(memory, address, zeros, (size_t)size);
       qa_write_unsigned(memory, address, 4, (uint64_t)size);
       const int64_t ids[] = {-10, -11, -12};
       for (size_t i = 0; i < 3; i++) {
-        qa_guest_address standard = {0};
+        qa_guest_core_address standard = {0};
         bool has = standard_get(k, ids[i], &standard);
         qa_write_pointer(
             memory,
@@ -1009,7 +1009,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
         qa_windows_last_error_set(host, 2);
         return qa_call_pointer(k->has_invalid, k->invalid);
       }
-      qa_guest_address address = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
+      qa_guest_core_address address = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
                                                   QA_PERM_READ_WRITE,
                                                   "Windows file handle");
       grow((void **)&k->handles, &k->handle_cap, k->handle_count, sizeof(file_handle));
@@ -1021,14 +1021,14 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, address);
     }
     case K_READ_FILE: {
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       bool has_handle = qa_guest_pointer_argument(args, count, 0, &handle);
       file_handle *entry = handle_at(k, has_handle, handle);
       if (entry == NULL) {
         qa_windows_last_error_set(host, 6);
         return bool_result(false);
       }
-      qa_guest_address overlapped = {0};
+      qa_guest_core_address overlapped = {0};
       if (qa_guest_pointer_argument(args, count, 4, &overlapped))
         qa_unsupported_windows_import("kernel32.dll", "ReadFile",
                                       "overlapped I/O is not implemented");
@@ -1049,20 +1049,20 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       qa_memory_write(memory, qa_guest_required_pointer(args, count, 1), bytes, read_count);
       free(bytes);
       entry->offset += read_count;
-      qa_guest_address read_out = {0};
+      qa_guest_core_address read_out = {0};
       if (qa_guest_pointer_argument(args, count, 3, &read_out))
         qa_write_unsigned(memory, read_out, 4, read_count);
       return bool_result(true);
     }
     case K_WRITE_FILE: {
-      qa_guest_address handle = {0};
+      qa_guest_core_address handle = {0};
       bool has_handle = qa_guest_pointer_argument(args, count, 0, &handle);
       file_handle *entry = handle_at(k, has_handle, handle);
       if (entry == NULL) {
         qa_windows_last_error_set(host, 6);
         return bool_result(false);
       }
-      qa_guest_address overlapped = {0};
+      qa_guest_core_address overlapped = {0};
       if (qa_guest_pointer_argument(args, count, 4, &overlapped))
         qa_unsupported_windows_import("kernel32.dll", "WriteFile",
                                       "overlapped I/O is not implemented");
@@ -1089,13 +1089,13 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       }
       free(bytes);
       entry->offset += written;
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       if (qa_guest_pointer_argument(args, count, 3, &out))
         qa_write_unsigned(memory, out, 4, written);
       return bool_result(true);
     }
     case K_CLOSE_HANDLE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       file_handle *entry = handle_at(k, has, address);
       if (entry == NULL || !has) {
@@ -1111,7 +1111,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return bool_result(true);
     }
     case K_FLUSH_FILE_BUFFERS: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       file_handle *entry = handle_at(k, has, address);
       if (entry == NULL) return bool_result(false);
@@ -1120,14 +1120,14 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return bool_result(true);
     }
     case K_SET_FILE_POINTER: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       file_handle *entry = handle_at(k, has, address);
       if (entry == NULL || entry->stream_kind != 0) {
         qa_windows_last_error_set(host, 6);
         return u32_result(0xffffffffu);
       }
-      qa_guest_address high = {0};
+      qa_guest_core_address high = {0};
       bool has_high = qa_guest_pointer_argument(args, count, 2, &high);
       int64_t low = qa_guest_integer(args, count, 1);
       int64_t distance = !has_high ? low
@@ -1148,7 +1148,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       return u32_result((uint32_t)position);
     }
     case K_SET_END_OF_FILE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       file_handle *entry = handle_at(k, has, address);
       if (entry == NULL || entry->stream_kind != 0) return bool_result(false);
@@ -1179,7 +1179,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       }
       free(source_bytes);
       int64_t capacity = qa_guest_integer(args, count, 5);
-      qa_guest_address output = {0};
+      qa_guest_core_address output = {0};
       bool has_output = qa_guest_pointer_argument(args, count, 4, &output);
       if (capacity != 0) {
         if (!has_output || capacity < (int64_t)text_len) {
@@ -1223,7 +1223,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       }
       free(source);
       int64_t capacity = qa_guest_integer(args, count, 5);
-      qa_guest_address output = {0}, used = {0};
+      qa_guest_core_address output = {0}, used = {0};
       bool has_output = qa_guest_pointer_argument(args, count, 4, &output);
       if (qa_guest_pointer_argument(args, count, 7, &used))
         qa_write_unsigned(memory, used, 4, used_default ? 1 : 0);
@@ -1247,7 +1247,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       uint16_t *source = input_units(
           k, qa_guest_required_pointer(args, count, (size_t)(shift + 1)),
           qa_guest_integer(args, count, (size_t)(shift + 2)), wide, &source_len);
-      qa_guest_address output = qa_guest_required_pointer(args, count, (size_t)(shift + 3));
+      qa_guest_core_address output = qa_guest_required_pointer(args, count, (size_t)(shift + 3));
       for (size_t i = 0; i < source_len; i++) {
         uint16_t c = source[i];
         bool is_upper = c >= 'A' && c <= 'Z', is_lower = c >= 'a' && c <= 'z';
@@ -1295,7 +1295,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_call_context *contex
       }
       free(source);
       int64_t capacity = qa_guest_integer(args, count, 5);
-      qa_guest_address output = {0};
+      qa_guest_core_address output = {0};
       bool has_output = qa_guest_pointer_argument(args, count, 4, &output);
       if (capacity != 0) {
         if (!has_output || capacity < (int64_t)mapped_len) {
@@ -1448,7 +1448,7 @@ void qa_install_kernel(qa_windows_service_host *host) {
     const struct { int64_t id; int kind; const char *name; } std_streams[] = {
         {-10, 1, "stdin"}, {-11, 2, "stdout"}, {-12, 3, "stderr"}};
     for (size_t i = 0; i < 3; i++) {
-      qa_guest_address address = stored_string(k, std_streams[i].name, false);
+      qa_guest_core_address address = stored_string(k, std_streams[i].name, false);
       standard_set(k, std_streams[i].id, address);
       grow((void **)&k->handles, &k->handle_cap, k->handle_count, sizeof(file_handle));
       k->handles[k->handle_count].key = address.byte_offset;

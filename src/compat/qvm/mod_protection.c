@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
 static size_t definition_fields(const qa_qvm_mod_protection *definition, const qa_qvm_mod_protection_scalar *out[2]) {
@@ -92,7 +93,7 @@ void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *decla
         for (size_t j = 0; j < i; j++) if (selection->values[j].value == entry_value) seen_value = true;
         if (!isfinite(entry_value) || seen_value ||
             (selection->has_mask && (entry_value != trunc(entry_value) ||
-                ((int32_t)entry_value & (int32_t)selection->mask) != (int32_t)entry_value)))
+                (qa_int32(entry_value) & qa_int32(selection->mask)) != qa_int32(entry_value))))
           qa_range_error("Invalid QVM protection selection");
       }
       if (selection->value_count == 0) qa_range_error("Empty QVM protection selection");
@@ -168,7 +169,8 @@ static const qa_qvm_mod_protection_selection_value *selected(
     qa_qvm_mod_protection_runtime *protection, qa_actor_id actor,
     const qa_qvm_mod_protection_selection *selection) {
   double source = scalar(protection, actor, &selection->field);
-  double value = !selection->has_mask ? source : (double)((int32_t)trunc(source) & (int32_t)selection->mask);
+  /* TS Math.trunc(source) & mask applies a JS ToInt32 wrap. */
+  double value = !selection->has_mask ? source : (double)(qa_int32(source) & qa_int32(selection->mask));
   for (size_t i = 0; i < selection->value_count; i++)
     if (selection->values[i].value == value) return &selection->values[i];
   qa_range_error("QVM protection source selection is undeclared");
@@ -451,6 +453,9 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   binding.read_powered = binding_read_powered;
   binding.validate_powered = binding_validate_powered;
   binding.write_powered = binding_write_powered;
+  /* TS reads the current state before evaluating pickups for bind. */
+  if (strcmp(protection->definition->channel, "regular") == 0) (void)regular_state(protection, actor);
+  else (void)powered_state(protection, actor);
   if (protection->operations->pickups != NULL) {
     qa_protection_channel channel = strcmp(protection->definition->channel, "regular") == 0
         ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED;
@@ -464,11 +469,11 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
     binding.pickups = flat;
     binding.pickup_count = pickup_count;
   }
-  if (strcmp(protection->definition->channel, "regular") == 0) (void)regular_state(protection, actor);
-  else (void)powered_state(protection, actor);
   protection->services->bind_reservation(protection->services->ctx, found->reservation, &binding);
   free(pickup_ptrs);
   free(flat);
+  /* Re-find: bind_reservation may reenter and realloc the entries. */
+  found = require_entry(protection, actor);
   found->bound = true;
 }
 
@@ -480,9 +485,14 @@ void qa_qvm_mod_protection_activate(qa_qvm_mod_protection_runtime *protection) {
 
 void qa_qvm_mod_protection_sync(qa_qvm_mod_protection_runtime *protection) {
   if (!protection->active) return;
-  actor_entry *entries = protection->entries;
+  /* Snapshot actors: bind_actor callbacks may reserve/release entries. */
   size_t count = protection->entry_count;
-  for (size_t i = 0; i < count; i++) qa_qvm_mod_protection_bind_actor(protection, entries[i].actor);
+  qa_actor_id *actors = malloc((count == 0 ? 1 : count) * sizeof *actors);
+  if (actors == NULL) qa_range_error("QVM memory allocation failed");
+  actor_entry *entries = protection->entries;
+  for (size_t i = 0; i < count; i++) actors[i] = entries[i].actor;
+  for (size_t i = 0; i < count; i++) qa_qvm_mod_protection_bind_actor(protection, actors[i]);
+  free(actors);
 }
 
 typedef struct observe_state {

@@ -21,8 +21,8 @@ const char *qa_guest_execution_stop_kind_name(qa_guest_execution_stop_kind kind)
   return "";
 }
 
-qa_guest_address qa_guest_pointer(const qa_mapped_guest_memory *memory, uint64_t raw) {
-  qa_guest_address address = {0};
+qa_guest_core_address qa_guest_pointer(const qa_mapped_guest_memory *memory, uint64_t raw) {
+  qa_guest_core_address address = {0};
   if (!qa_memory_pointer(memory, raw, &address)) qa_range_error("ABI address cannot be null");
   return address;
 }
@@ -71,7 +71,7 @@ static uint8_t *read_locations(qa_guest_cpu *cpu, const qa_abi_location *locatio
       }
       memcpy(output + location->offset, cpu->state->simd.xmm + start, (size_t)location->bytes);
     } else {
-      qa_guest_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
+      qa_guest_core_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
       qa_memory_copy_into(cpu->memory, address, output, (size_t)location->offset, (size_t)location->bytes);
     }
   }
@@ -94,7 +94,7 @@ static void write_locations(qa_guest_cpu *cpu, const qa_abi_location *locations,
         qa_range_error("ABI XMM register is unavailable");
       memcpy(cpu->state->simd.xmm + start, part, (size_t)location->bytes);
     } else {
-      qa_guest_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
+      qa_guest_core_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
       qa_memory_write(cpu->memory, address, part, (size_t)location->bytes);
     }
   }
@@ -110,7 +110,7 @@ static bool read_scalar(qa_guest_cpu *cpu, const qa_abi_value_layout *layout,
     if (location->bytes != (layout->storage == QA_STORAGE_FLOAT32 ? 4 : 8)) return false;
     double value;
     if (location->kind == QA_LOCATION_STACK) {
-      qa_guest_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
+      qa_guest_core_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
       value = layout->storage == QA_STORAGE_FLOAT32 ? qa_gmem_read_f32(cpu->memory, address)
                                                     : qa_gmem_read_f64(cpu->memory, address);
     } else if (location->kind == QA_LOCATION_SSE) {
@@ -130,7 +130,7 @@ static bool read_scalar(qa_guest_cpu *cpu, const qa_abi_value_layout *layout,
   if (location->kind == QA_LOCATION_INTEGER)
     raw = qa_integer_register_file_read(&cpu->state->registers, location->reg, register_width(cpu), false);
   else {
-    qa_guest_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
+    qa_guest_core_address address = qa_guest_pointer(cpu->memory, stack_pointer(cpu) + (uint64_t)location->stack_offset);
     raw = location->bytes == 8 ? qa_memory_read_u64(cpu->memory, address)
         : location->bytes == 4 ? qa_memory_read_u32(cpu->memory, address)
         : location->bytes == 2 ? qa_memory_read_u16(cpu->memory, address)
@@ -146,7 +146,7 @@ static bool read_scalar(qa_guest_cpu *cpu, const qa_abi_value_layout *layout,
     case QA_STORAGE_INT64: *out = qa_call_int64((int64_t)raw); return true;
     case QA_STORAGE_UINT64: *out = qa_call_uint64(raw); return true;
     case QA_STORAGE_POINTER: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_memory_pointer(cpu->memory, mask_bits(raw, cpu->memory->pointer_bytes * 8), &address);
       *out = qa_call_pointer(has, address);
       return true;
@@ -196,7 +196,7 @@ static qa_call_value read_argument(qa_guest_cpu *cpu, const qa_abi_argument *arg
   return result;
 }
 
-static qa_guest_address return_buffer(qa_guest_cpu *cpu, const qa_abi_call_plan *plan) {
+static qa_guest_core_address return_buffer(qa_guest_cpu *cpu, const qa_abi_call_plan *plan) {
   if (plan->result.kind != QA_ABI_RESULT_MEMORY) type_error("Call does not return an aggregate in memory");
   qa_call_value pointer = read_argument(cpu, &plan->result.pointer);
   if (pointer.kind != QA_CALL_POINTER || !pointer.pointer_has)
@@ -212,10 +212,10 @@ static void check(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, const qa_guest
     type_error("ABI, signature, processor, and memory architecture disagree");
 }
 
-void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa_guest_address target,
+void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa_guest_core_address target,
                               const qa_guest_call_signature *signature,
                               const qa_call_value *arguments_, size_t argument_count,
-                              qa_guest_address return_address) {
+                              qa_guest_core_address return_address) {
   check(adapter, cpu, signature);
   qa_memory_check(cpu->memory, target, 1, QA_ACCESS_EXECUTE);
   qa_memory_check(cpu->memory, return_address, 1, QA_ACCESS_EXECUTE);
@@ -238,7 +238,7 @@ void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa
   /* Encode first, exactly like TS (before any stack mutation). */
   typedef struct encoded { bool is_bigint; uint64_t raw; uint8_t *bytes; size_t len; } encoded;
   encoded *enc = (encoded *)calloc(argument_count == 0 ? 1 : argument_count, sizeof(encoded));
-  qa_guest_address *indirect = (qa_guest_address *)calloc(plan.argument_count == 0 ? 1 : plan.argument_count, sizeof(qa_guest_address));
+  qa_guest_core_address *indirect = (qa_guest_core_address *)calloc(plan.argument_count == 0 ? 1 : plan.argument_count, sizeof(qa_guest_core_address));
   bool *has_indirect = (bool *)calloc(plan.argument_count == 0 ? 1 : plan.argument_count, sizeof(bool));
   if (enc == NULL || indirect == NULL || has_indirect == NULL) qa_range_error("Argument allocation missing");
   for (size_t i = 0; i < argument_count; i++) {
@@ -260,7 +260,7 @@ void qa_x86_abi_adapter_enter(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu, qa
   uint64_t caller_stack = stack_pointer(cpu);
   uint64_t temporary_top = caller_stack;
   bool has_output = false;
-  qa_guest_address output = {0};
+  qa_guest_core_address output = {0};
   if (plan.result.kind == QA_ABI_RESULT_MEMORY) {
     int64_t size = qa_value_bytes(&plan.result.layout, word);
     int64_t alignment = qa_value_alignment(&plan.result.layout, word);
@@ -394,7 +394,7 @@ qa_call_result qa_x86_abi_adapter_return_value(qa_x86_abi_adapter *adapter, qa_g
       break;
     }
     case QA_ABI_RESULT_MEMORY: {
-      qa_guest_address address = qa_guest_pointer(cpu->memory,
+      qa_guest_core_address address = qa_guest_pointer(cpu->memory,
           qa_integer_register_file_read(&cpu->state->registers, QA_REG_RAX, register_width(cpu), false));
       size_t size = (size_t)qa_value_bytes(&plan.result.layout, adapter->abi.pointer_bytes);
       uint8_t *bytes = (uint8_t *)malloc(size == 0 ? 1 : size);
@@ -427,7 +427,7 @@ void qa_x86_abi_adapter_leave(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu,
   if (!qa_plan_guest_call(&plan, signature, NULL, 0)) qa_range_error("ABI argument allocation failed");
   int word = adapter->abi.pointer_bytes;
   uint64_t entry_stack = stack_pointer(cpu);
-  qa_guest_address stack_address = qa_guest_pointer(cpu->memory, entry_stack);
+  qa_guest_core_address stack_address = qa_guest_pointer(cpu->memory, entry_stack);
   uint64_t address = word == 8 ? qa_memory_read_u64(cpu->memory, stack_address)
                                : qa_memory_read_u32(cpu->memory, stack_address);
   if (address == 0) { qa_abi_call_plan_free(&plan); qa_range_error("Guest return address is null"); }
@@ -457,7 +457,7 @@ void qa_x86_abi_adapter_leave(qa_x86_abi_adapter *adapter, qa_guest_cpu *cpu,
         if (plan.result.kind == QA_ABI_RESULT_REGISTERS)
           write_locations(cpu, plan.result.locations, plan.result.location_count, bytes, len);
         else {
-          qa_guest_address destination = return_buffer(cpu, &plan);
+          qa_guest_core_address destination = return_buffer(cpu, &plan);
           qa_memory_write(cpu->memory, destination, bytes, len);
           qa_integer_register_file_write(&cpu->state->registers, QA_REG_RAX, register_width(cpu),
                                          destination.byte_offset, false);

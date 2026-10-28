@@ -36,30 +36,30 @@ static void type_error(const char *message) { qa_range_error("%s", message); }
 typedef struct streams_ctx {
   qa_windows_service_host *host;
   qa_msvc_locale *locale; /* owned */
-  qa_guest_address ios_table, ostream_table, iostream_table, buffer_table;
-  qa_guest_address ostream_vb, iostream_vb;
+  qa_guest_core_address ios_table, ostream_table, iostream_table, buffer_table;
+  qa_guest_core_address ostream_vb, iostream_vb;
 } streams_ctx;
 
-static qa_guest_address at(streams_ctx *s, qa_guest_address a, int64_t o) {
+static qa_guest_core_address at(streams_ctx *s, qa_guest_core_address a, int64_t o) {
   return qa_memory_offset(s->host->memory, a, o);
 }
-static qa_guest_address ref(streams_ctx *s, qa_guest_address a) {
-  qa_guest_address out = {0};
+static qa_guest_core_address ref(streams_ctx *s, qa_guest_core_address a) {
+  qa_guest_core_address out = {0};
   if (!qa_gmem_read_pointer(s->host->memory, a, &out)) plain_error("Missing MSVC object pointer");
   return out;
 }
-static bool read_ptr(streams_ctx *s, qa_guest_address a, qa_guest_address *out) {
+static bool read_ptr(streams_ctx *s, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_gmem_read_pointer(s->host->memory, a, out);
 }
-static void write_ptr(streams_ctx *s, qa_guest_address a, bool has, qa_guest_address v) {
+static void write_ptr(streams_ctx *s, qa_guest_core_address a, bool has, qa_guest_core_address v) {
   qa_gmem_write_pointer(s->host->memory, a, has, v);
 }
-static qa_call_result virtual_call(streams_ctx *s, const qa_guest_call_context *context,
-                                   qa_guest_address object, int slot_index,
+static qa_call_result virtual_call(streams_ctx *s, const qa_guest_core_call_context *context,
+                                   qa_guest_core_address object, int slot_index,
                                    const qa_abi_storage *parameters, size_t parameter_count,
                                    bool result_is_void, qa_abi_storage result,
                                    const qa_call_value *extra, size_t extra_count) {
-  qa_guest_address target = ref(s, at(s, ref(s, object), (int64_t)slot_index * 8));
+  qa_guest_core_address target = ref(s, at(s, ref(s, object), (int64_t)slot_index * 8));
   qa_abi_storage *all_params = xmalloc((parameter_count + 1) * sizeof *all_params);
   all_params[0] = QA_STORAGE_POINTER;
   for (size_t i = 0; i < parameter_count; i++) all_params[i + 1] = parameters[i];
@@ -78,13 +78,13 @@ static int64_t result_integer(qa_call_result result) {
     type_error("MSVC integer result required");
   return qa_call_value_bigint_i64(&result);
 }
-static qa_guest_address make_table(streams_ctx *s, const char *const *names, size_t count,
+static qa_guest_core_address make_table(streams_ctx *s, const char *const *names, size_t count,
                                    const char *label) {
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address result = qa_gmem_allocate(s->host->memory_ext, count * 8, false, 0, false,
+  qa_guest_core_address result = qa_gmem_allocate(s->host->memory_ext, count * 8, false, 0, false,
                                              QA_PERM_READ_WRITE, label);
   for (size_t i = 0; i < count; i++) {
-    qa_guest_address target = {0};
+    qa_guest_core_address target = {0};
     if (!qa_windows_resolve_address(s->host, library, names[i], &target))
       qa_range_error("Missing MSVC method %s", names[i]);
     write_ptr(s, at(s, result, (int64_t)i * 8), true, target);
@@ -93,14 +93,14 @@ static qa_guest_address make_table(streams_ctx *s, const char *const *names, siz
   (void)memory;
   return result;
 }
-static qa_guest_address virtual_ios(streams_ctx *s, qa_guest_address object) {
+static qa_guest_core_address virtual_ios(streams_ctx *s, qa_guest_core_address object) {
   return at(s, object, qa_gmem_read_i32(s->host->memory, at(s, ref(s, object), 4)));
 }
-static void stream_setstate(streams_ctx *s, const qa_guest_call_context *context,
-                     qa_guest_address object, int state) {
+static void stream_setstate(streams_ctx *s, const qa_guest_core_call_context *context,
+                     qa_guest_core_address object, int state) {
   (void)context;
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address buffer = {0};
+  qa_guest_core_address buffer = {0};
   bool has_buffer = read_ptr(s, at(s, object, 72), &buffer);
   int value = (qa_gmem_read_i32(memory, at(s, object, 16)) | state | (has_buffer ? 0 : 4)) & 0x17;
   qa_gmem_write_i32(memory, at(s, object, 16), value);
@@ -108,15 +108,15 @@ static void stream_setstate(streams_ctx *s, const qa_guest_call_context *context
     qa_unsupported_windows_import(library, "ios_base::failure",
                                   "stream exception requires guest C++ exception dispatch");
 }
-static void basic_dtor(streams_ctx *s, const qa_guest_call_context *context,
-                       qa_guest_address object) {
+static void basic_dtor(streams_ctx *s, const qa_guest_core_call_context *context,
+                       qa_guest_core_address object) {
   qa_mapped_guest_memory *memory = s->host->memory;
   write_ptr(s, object, true, s->ios_table);
   if (qa_memory_read_u64(memory, at(s, object, 8)) != 0)
     qa_unsupported_windows_import(library, "ios_base destructor",
                                   "standard stream ownership is not implemented");
   /* _Callfns(erase_event), then destroy the sparse iword/pword and event lists. */
-  qa_guest_address call = {0};
+  qa_guest_core_address call = {0};
   bool has_call = read_ptr(s, at(s, object, 56), &call);
   while (has_call) {
     qa_abi_storage params[] = {QA_STORAGE_INT32, QA_STORAGE_POINTER, QA_STORAGE_INT32};
@@ -130,33 +130,33 @@ static void basic_dtor(streams_ctx *s, const qa_guest_call_context *context,
   }
   const int offsets[] = {48, 56};
   for (size_t i = 0; i < 2; i++) {
-    qa_guest_address node = {0};
+    qa_guest_core_address node = {0};
     bool has_node = read_ptr(s, at(s, object, offsets[i]), &node);
     while (has_node) {
-      qa_guest_address next = {0};
+      qa_guest_core_address next = {0};
       bool has_next = read_ptr(s, node, &next);
       if (!qa_windows_free(s->host, true, node, 0))
         plain_error("Invalid ios_base list allocation");
       node = next; has_node = has_next;
     }
-    qa_guest_address none = {0};
+    qa_guest_core_address none = {0};
     write_ptr(s, at(s, object, offsets[i]), false, none);
   }
-  qa_guest_address locale_address = {0};
+  qa_guest_core_address locale_address = {0};
   bool has_locale = read_ptr(s, at(s, object, 64), &locale_address);
   qa_msvc_locale_destroy(s->locale, context, has_locale, locale_address);
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   write_ptr(s, at(s, object, 64), false, none);
 }
-static void construct_ios(streams_ctx *s, qa_guest_address object) {
+static void construct_ios(streams_ctx *s, qa_guest_core_address object) {
   uint8_t zeros[96] = {0};
   qa_memory_write(s->host->memory, object, zeros, sizeof zeros);
   write_ptr(s, object, true, s->ios_table);
 }
-static void initialize_ios(streams_ctx *s, qa_guest_address object, bool has_buffer,
-                           qa_guest_address buffer) {
+static void initialize_ios(streams_ctx *s, qa_guest_core_address object, bool has_buffer,
+                           qa_guest_core_address buffer) {
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   qa_memory_write_u64(memory, at(s, object, 8), 0);
   qa_gmem_write_i32(memory, at(s, object, 16), has_buffer ? 0 : 4);
   qa_gmem_write_i32(memory, at(s, object, 20), 0);
@@ -170,35 +170,35 @@ static void initialize_ios(streams_ctx *s, qa_guest_address object, bool has_buf
   write_ptr(s, at(s, object, 80), false, none);
   qa_memory_write_u8(memory, at(s, object, 88), 32);
 }
-static void buffer_dtor(streams_ctx *s, const qa_guest_call_context *context,
-                        qa_guest_address object) {
+static void buffer_dtor(streams_ctx *s, const qa_guest_core_call_context *context,
+                        qa_guest_core_address object) {
   write_ptr(s, object, true, s->buffer_table);
-  qa_guest_address locale_address = {0};
+  qa_guest_core_address locale_address = {0};
   bool has_locale = read_ptr(s, at(s, object, 96), &locale_address);
   qa_msvc_locale_destroy(s->locale, context, has_locale, locale_address);
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   write_ptr(s, at(s, object, 96), false, none);
 }
-static bool field_ptr(streams_ctx *s, qa_guest_address object, int offset,
-                      qa_guest_address *out) {
+static bool field_ptr(streams_ctx *s, qa_guest_core_address object, int offset,
+                      qa_guest_core_address *out) {
   return read_ptr(s, ref(s, at(s, object, offset)), out);
 }
-static int available(streams_ctx *s, qa_guest_address object, bool input) {
-  qa_guest_address value = {0};
+static int available(streams_ctx *s, qa_guest_core_address object, bool input) {
+  qa_guest_core_address value = {0};
   if (!field_ptr(s, object, input ? 56 : 64, &value)) return 0;
   return qa_gmem_read_i32(s->host->memory, ref(s, at(s, object, input ? 80 : 88)));
 }
-static qa_guest_address bump(streams_ctx *s, qa_guest_address object, int amount, bool input) {
+static qa_guest_core_address bump(streams_ctx *s, qa_guest_core_address object, int amount, bool input) {
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address next_slot = ref(s, at(s, object, input ? 56 : 64));
-  qa_guest_address next = ref(s, next_slot);
-  qa_guest_address count_slot = ref(s, at(s, object, input ? 80 : 88));
+  qa_guest_core_address next_slot = ref(s, at(s, object, input ? 56 : 64));
+  qa_guest_core_address next = ref(s, next_slot);
+  qa_guest_core_address count_slot = ref(s, at(s, object, input ? 80 : 88));
   write_ptr(s, next_slot, true, at(s, next, amount));
   qa_gmem_write_i32(memory, count_slot, qa_gmem_read_i32(memory, count_slot) - amount);
   return next;
 }
-static int get_char(streams_ctx *s, const qa_guest_call_context *context,
-                    qa_guest_address object, bool consume) {
+static int get_char(streams_ctx *s, const qa_guest_core_call_context *context,
+                    qa_guest_core_address object, bool consume) {
   if (available(s, object, true) > 0)
     return qa_memory_read_u8(s->host->memory,
                              consume ? bump(s, object, 1, true)
@@ -206,8 +206,8 @@ static int get_char(streams_ctx *s, const qa_guest_call_context *context,
   return (int)result_integer(virtual_call(s, context, object, consume ? 7 : 6, NULL, 0, false,
                                           QA_STORAGE_INT32, NULL, 0));
 }
-static int put_char(streams_ctx *s, const qa_guest_call_context *context,
-                    qa_guest_address object, int character) {
+static int put_char(streams_ctx *s, const qa_guest_core_call_context *context,
+                    qa_guest_core_address object, int character) {
   if (available(s, object, false) > 0) {
     qa_memory_write_u8(s->host->memory, bump(s, object, 1, false), (uint8_t)(character & 255));
     return character & 255;
@@ -217,33 +217,33 @@ static int put_char(streams_ctx *s, const qa_guest_call_context *context,
   return (int)result_integer(virtual_call(s, context, object, 3, params, 1, false,
                                           QA_STORAGE_INT32, extra, 1));
 }
-static void flush_stream(streams_ctx *s, const qa_guest_call_context *context,
-                         qa_guest_address object);
-static void suffix(streams_ctx *s, const qa_guest_call_context *context,
-                   qa_guest_address object) {
+static void flush_stream(streams_ctx *s, const qa_guest_core_call_context *context,
+                         qa_guest_core_address object);
+static void suffix(streams_ctx *s, const qa_guest_core_call_context *context,
+                   qa_guest_core_address object) {
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address base = virtual_ios(s, object);
+  qa_guest_core_address base = virtual_ios(s, object);
   if (qa_gmem_read_i32(memory, at(s, base, 16)) != 0 ||
       (qa_gmem_read_i32(memory, at(s, base, 24)) & 2) == 0)
     return;
-  qa_guest_address buffer = {0};
+  qa_guest_core_address buffer = {0};
   if (read_ptr(s, at(s, base, 72), &buffer) &&
       result_integer(virtual_call(s, context, buffer, 13, NULL, 0, false, QA_STORAGE_INT32,
                                   NULL, 0)) == -1)
     stream_setstate(s, context, base, 4);
 }
-static void flush_stream(streams_ctx *s, const qa_guest_call_context *context,
-                         qa_guest_address object) {
+static void flush_stream(streams_ctx *s, const qa_guest_core_call_context *context,
+                         qa_guest_core_address object) {
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address base = virtual_ios(s, object);
-  qa_guest_address buffer = {0};
+  qa_guest_core_address base = virtual_ios(s, object);
+  qa_guest_core_address buffer = {0};
   if (!read_ptr(s, at(s, base, 72), &buffer)) return;
   qa_call_result lock_result = virtual_call(s, context, buffer, 1, NULL, 0, true,
                                             QA_STORAGE_INT32, NULL, 0);
   qa_call_value_free(&lock_result);
   /* TS try/finally: the unlock also runs on throw; in C a throw aborts. */
   if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0) {
-    qa_guest_address tied = {0};
+    qa_guest_core_address tied = {0};
     if (read_ptr(s, at(s, base, 80), &tied) && tied.byte_offset != object.byte_offset)
       flush_stream(s, context, tied);
     if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0 &&
@@ -269,18 +269,18 @@ enum {
   ST_SETBUF, ST_FIELD, ST_EGPTR, ST_UFLOW, ST_SPUTC, ST_XS, ST_SPUTN, ST_SEEK, ST_BUFFER_CTOR,
   ST_FLUSH, ST_OSFX, ST_UNCAUGHT, ST_TELLP, ST_INSERT_INT, ST_INSERT_BUFFER
 };
-static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result stream_impl(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count) {
   stream_state *state = ctx;
   streams_ctx *s = state->s;
   qa_mapped_guest_memory *memory = s->host->memory;
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   switch (state->kind) {
     case ST_BASIC_DTOR:
       basic_dtor(s, context, qa_guest_required_pointer(args, count, 0));
       return qa_call_void();
     case ST_BASIC_DELETE: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       basic_dtor(s, context, object);
       if ((qa_guest_integer_u64(args, count, 1) & 1u) != 0 &&
           !qa_windows_free(s->host, true, object, 0))
@@ -288,12 +288,12 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, object);
     }
     case ST_IOS_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       construct_ios(s, object);
       return qa_call_pointer(true, object);
     }
     case ST_RDBUF: {
-      qa_guest_address buffer = {0};
+      qa_guest_core_address buffer = {0};
       bool has = read_ptr(s, at(s, qa_guest_required_pointer(args, count, 0), 72), &buffer);
       return qa_call_pointer(has, buffer);
     }
@@ -306,7 +306,7 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
           qa_gmem_read_i32(memory, at(s, qa_guest_required_pointer(args, count, 0), 16)) == 0
               ? 1 : 0);
     case ST_OSTREAM_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       if (qa_guest_integer(args, count, 2) != 0)
         qa_unsupported_windows_import(library, "basic_ostream constructor",
                                       "standard stream registration is not implemented");
@@ -314,28 +314,28 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
         write_ptr(s, object, true, s->ostream_vb);
         construct_ios(s, at(s, object, 16));
       }
-      qa_guest_address base = virtual_ios(s, object);
+      qa_guest_core_address base = virtual_ios(s, object);
       write_ptr(s, base, true, s->ostream_table);
       qa_gmem_write_i32(memory, at(s, base, -4),
                         (int)(base.byte_offset - object.byte_offset) - 16);
-      qa_guest_address buffer = {0};
+      qa_guest_core_address buffer = {0};
       bool has_buffer = qa_guest_pointer_argument(args, count, 1, &buffer);
       initialize_ios(s, base, has_buffer, buffer);
       return qa_call_pointer(true, object);
     }
     case ST_IOSTREAM_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       if (qa_guest_integer(args, count, 2) != 0) {
         write_ptr(s, object, true, s->iostream_vb);
         write_ptr(s, at(s, object, 16), true, at(s, s->iostream_vb, 8));
         construct_ios(s, at(s, object, 32));
       }
       qa_memory_write_u64(memory, at(s, object, 8), 0);
-      qa_guest_address base = virtual_ios(s, object);
+      qa_guest_core_address base = virtual_ios(s, object);
       write_ptr(s, base, true, s->iostream_table);
       qa_gmem_write_i32(memory, at(s, base, -4),
                         (int)(base.byte_offset - object.byte_offset) - 32);
-      qa_guest_address buffer = {0};
+      qa_guest_core_address buffer = {0};
       bool has_buffer = qa_guest_pointer_argument(args, count, 1, &buffer);
       initialize_ios(s, base, has_buffer, buffer);
       return qa_call_pointer(true, object);
@@ -343,16 +343,16 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
     case ST_OSTREAM_DTOR: {
       /* MSVC base destructors receive this adjusted to the vfptr's static
        * offset, without the dynamic virtual-base displacement. */
-      qa_guest_address object = at(s, qa_guest_required_pointer(args, count, 0), -16);
-      qa_guest_address base = virtual_ios(s, object);
+      qa_guest_core_address object = at(s, qa_guest_required_pointer(args, count, 0), -16);
+      qa_guest_core_address base = virtual_ios(s, object);
       write_ptr(s, base, true, s->ostream_table);
       qa_gmem_write_i32(memory, at(s, base, -4),
                         (int)(base.byte_offset - object.byte_offset) - 16);
       return qa_call_void();
     }
     case ST_IOSTREAM_DTOR: {
-      qa_guest_address object = at(s, qa_guest_required_pointer(args, count, 0), -32);
-      qa_guest_address base = virtual_ios(s, object);
+      qa_guest_core_address object = at(s, qa_guest_required_pointer(args, count, 0), -32);
+      qa_guest_core_address base = virtual_ios(s, object);
       write_ptr(s, base, true, s->iostream_table);
       qa_gmem_write_i32(memory, at(s, base, -4),
                         (int)(base.byte_offset - object.byte_offset) - 32);
@@ -368,7 +368,7 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
       buffer_dtor(s, context, qa_guest_required_pointer(args, count, 0));
       return qa_call_void();
     case ST_BUFFER_DELETE: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       buffer_dtor(s, context, object);
       if ((qa_guest_integer_u64(args, count, 1) & 1u) != 0 &&
           !qa_windows_free(s->host, true, object, 0))
@@ -381,20 +381,20 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
     case ST_SYNC: return qa_call_int32(0);
     case ST_SETBUF: return qa_call_pointer(true, qa_guest_required_pointer(args, count, 0));
     case ST_FIELD: {
-      qa_guest_address value = {0};
+      qa_guest_core_address value = {0};
       bool has = field_ptr(s, qa_guest_required_pointer(args, count, 0), state->number, &value);
       return qa_call_pointer(has, value);
     }
     case ST_EGPTR: {
       bool input = state->number != 0;
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address next = {0};
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address next = {0};
       if (!field_ptr(s, object, input ? 56 : 64, &next)) return qa_call_pointer(false, none);
       return qa_call_pointer(
           true, at(s, next, qa_gmem_read_i32(memory, ref(s, at(s, object, input ? 80 : 88)))));
     }
     case ST_UFLOW: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       if (result_integer(virtual_call(s, context, object, 6, NULL, 0, false,
                                       QA_STORAGE_INT32, NULL, 0)) == -1)
         return qa_call_int32(-1);
@@ -405,8 +405,8 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
                                     (int)qa_guest_integer(args, count, 1)));
     case ST_XS: {
       bool input = state->number != 0;
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address data = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address data = qa_guest_required_pointer(args, count, 1);
       int64_t requested = qa_guest_integer(args, count, 2);
       if (requested <= 0) return qa_call_int64(0);
       if (requested > 0x10000000) qa_range_error("MSVC stream transfer exceeds limit");
@@ -417,7 +417,7 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
         size_t amount = avail > 0 && (size_t)avail < length - copied ? (size_t)avail
                         : avail > 0 ? length - copied : 0;
         if (amount > 0) {
-          qa_guest_address buffer = bump(s, object, (int)amount, input);
+          qa_guest_core_address buffer = bump(s, object, (int)amount, input);
           uint8_t *bytes = xmalloc(amount);
           if (input) {
             qa_memory_copy(memory, buffer, bytes, amount);
@@ -449,14 +449,14 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
                           false, QA_STORAGE_INT64, extra, 2);
     }
     case ST_SEEK: {
-      qa_guest_address result = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address result = qa_guest_required_pointer(args, count, 1);
       uint8_t zeros[24] = {0};
       qa_memory_write(memory, result, zeros, sizeof zeros);
       qa_gmem_write_i64(memory, at(s, result, 8), -1);
       return qa_call_pointer(true, result);
     }
     case ST_BUFFER_CTOR: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       uint8_t zeros[104] = {0};
       qa_memory_write(memory, object, zeros, sizeof zeros);
       write_ptr(s, object, true, s->buffer_table);
@@ -468,7 +468,7 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, object);
     }
     case ST_FLUSH: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
       flush_stream(s, context, object);
       return qa_call_pointer(true, object);
     }
@@ -477,8 +477,8 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_void();
     case ST_UNCAUGHT: return qa_call_uint32(0);
     case ST_TELLP: {
-      qa_guest_address base = virtual_ios(s, qa_guest_required_pointer(args, count, 0));
-      qa_guest_address result = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address base = virtual_ios(s, qa_guest_required_pointer(args, count, 0));
+      qa_guest_core_address result = qa_guest_required_pointer(args, count, 1);
       if ((qa_gmem_read_i32(memory, at(s, base, 16)) & 6) != 0) {
         uint8_t zeros[24] = {0};
         qa_memory_write(memory, result, zeros, sizeof zeros);
@@ -494,9 +494,9 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
     }
     case ST_INSERT_INT: {
       int bits = state->number;
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address base = virtual_ios(s, object);
-      qa_guest_address buffer = {0};
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address base = virtual_ios(s, object);
+      qa_guest_core_address buffer = {0};
       bool has_buffer = read_ptr(s, at(s, base, 72), &buffer);
       if (has_buffer) {
         qa_call_result r = virtual_call(s, context, buffer, 1, NULL, 0, true,
@@ -504,11 +504,11 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
         qa_call_value_free(&r);
       }
       if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0 && has_buffer) {
-        qa_guest_address tied = {0};
+        qa_guest_core_address tied = {0};
         if (read_ptr(s, at(s, base, 80), &tied) && tied.byte_offset != object.byte_offset)
           flush_stream(s, context, tied);
         if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0) {
-          qa_guest_address implementation = ref(s, ref(s, at(s, base, 64)));
+          qa_guest_core_address implementation = ref(s, ref(s, at(s, base, 64)));
           if (implementation.byte_offset != s->locale->global.byte_offset ||
               qa_memory_read_u64(memory, at(s, implementation, 24)) != 0)
             qa_unsupported_windows_import(
@@ -587,9 +587,9 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
       return qa_call_pointer(true, object);
     }
     case ST_INSERT_BUFFER: {
-      qa_guest_address object = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address base = virtual_ios(s, object);
-      qa_guest_address target = {0}, source = {0};
+      qa_guest_core_address object = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address base = virtual_ios(s, object);
+      qa_guest_core_address target = {0}, source = {0};
       bool has_target = read_ptr(s, at(s, base, 72), &target);
       bool has_source = qa_guest_pointer_argument(args, count, 1, &source);
       bool copied = false;
@@ -600,7 +600,7 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_call_context *contex
         qa_call_value_free(&r);
       }
       if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0 && has_target && has_source) {
-        qa_guest_address tied = {0};
+        qa_guest_core_address tied = {0};
         if (read_ptr(s, at(s, base, 80), &tied) && tied.byte_offset != object.byte_offset)
           flush_stream(s, context, tied);
         if (qa_gmem_read_i32(memory, at(s, base, 16)) == 0)

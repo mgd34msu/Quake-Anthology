@@ -41,10 +41,10 @@ static scan_result scan_integer(const char *buffer, size_t length, size_t start)
   }
 }
 
-qa_q3_client_session qa_decode_q3_client_session(const char *value, size_t length) {
+qa_persist_q3_client_session qa_decode_q3_client_session(const char *value, size_t length) {
   size_t buffer_length = source_buffer(value, length);
   size_t offset = 0;
-  qa_q3_client_session session;
+  qa_persist_q3_client_session session;
   int32_t fields[7];
   for (int i = 0; i < 7; i++) {
     scan_result result = scan_integer(value, buffer_length, offset);
@@ -60,7 +60,7 @@ qa_q3_client_session qa_decode_q3_client_session(const char *value, size_t lengt
   session.team_leader = fields[6];
   return session;
 }
-char *qa_encode_q3_client_session(qa_q3_client_session session) {
+char *qa_encode_q3_client_session(qa_persist_q3_client_session session) {
   char buffer[128];
   int written = snprintf(buffer, sizeof buffer, "%d %d %d %d %d %d %d",
                          session.team, session.spectator_time, session.spectator_state,

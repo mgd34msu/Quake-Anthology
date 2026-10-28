@@ -53,13 +53,13 @@ typedef struct qa_system_v_import_coverage {
 } qa_system_v_import_coverage;
 
 typedef struct qa_system_v_initialize_options {
-  qa_guest_call_context context;
+  qa_guest_core_call_context context;
   int64_t instruction_budget;
 } qa_system_v_initialize_options;
 
 typedef struct qa_system_v_implementation {
   void *ctx;
-  qa_call_result (*invoke)(void *ctx, const qa_guest_call_context *context,
+  qa_call_result (*invoke)(void *ctx, const qa_guest_core_call_context *context,
                            const qa_call_value *arguments, size_t argument_count);
 } qa_system_v_implementation;
 
@@ -71,9 +71,9 @@ typedef struct qa_system_v_service_host {
   qa_abi_storage pointer_storage;        /* uint32|uint64 */
   qa_abi_storage signed_pointer_storage; /* int32|int64 */
   qa_guest_call_runner *runner;          /* valid after attach */
-  qa_guest_address empty_string_representation;
-  qa_guest_address thread_pointer;
-  qa_guest_address errno_address;
+  qa_guest_core_address empty_string_representation;
+  qa_guest_core_address thread_pointer;
+  qa_guest_core_address errno_address;
   int (*get_errno)(void *ctx);
   void (*set_errno)(void *ctx, int value);
   /* versions entries may be NULL (TS null version). */
@@ -82,25 +82,25 @@ typedef struct qa_system_v_service_host {
                   const qa_abi_storage *parameters, size_t parameter_count,
                   bool result_is_void, qa_abi_storage result, qa_system_v_implementation implementation);
   void (*data)(void *ctx, const char *library, const char *name, const char *version,
-               qa_guest_address address, size_t byte_length);
+               qa_guest_core_address address, size_t byte_length);
   bool (*resolve_address)(void *ctx, const char *library, const char *name, const char *version,
-                          qa_guest_address *out);
-  qa_guest_address (*unavailable)(void *ctx, const char *library, const char *name,
+                          qa_guest_core_address *out);
+  qa_guest_core_address (*unavailable)(void *ctx, const char *library, const char *name,
                                   const qa_abi_storage *parameters, size_t parameter_count,
                                   bool result_is_void, qa_abi_storage result, const char *detail);
-  qa_guest_address (*allocate)(void *ctx, size_t size);
-  void (*free)(void *ctx, bool has_address, qa_guest_address address);
-  bool (*allocation_size)(void *ctx, qa_guest_address address, size_t *out);
-  qa_call_result (*invoke)(void *ctx, const qa_guest_call_context *context, qa_guest_address target,
+  qa_guest_core_address (*allocate)(void *ctx, size_t size);
+  void (*free)(void *ctx, bool has_address, qa_guest_core_address address);
+  bool (*allocation_size)(void *ctx, qa_guest_core_address address, size_t *out);
+  qa_call_result (*invoke)(void *ctx, const qa_guest_core_call_context *context, qa_guest_core_address target,
                            const qa_abi_storage *parameters, size_t parameter_count,
                            bool result_is_void, qa_abi_storage result,
                            const qa_call_value *arguments, size_t argument_count);
-  void (*register_destructor)(void *ctx, qa_guest_address target,
-                              bool has_argument, qa_guest_address argument,
-                              bool has_dso, qa_guest_address dso);
-  void (*finalize_destructors)(void *ctx, const qa_guest_call_context *context,
-                               bool has_dso, qa_guest_address dso);
-  qa_guest_address (*tls_address)(void *ctx, uint64_t module_id, int64_t offset);
+  void (*register_destructor)(void *ctx, qa_guest_core_address target,
+                              bool has_argument, qa_guest_core_address argument,
+                              bool has_dso, qa_guest_core_address dso);
+  void (*finalize_destructors)(void *ctx, const qa_guest_core_call_context *context,
+                               bool has_dso, qa_guest_core_address dso);
+  qa_guest_core_address (*tls_address)(void *ctx, uint64_t module_id, int64_t offset);
 } qa_system_v_service_host;
 
 /* Convenience wrappers mirroring host.method(...) call sites. */
@@ -112,18 +112,18 @@ void qa_system_v_service(qa_system_v_service_host *host, const char *library, co
                          bool result_is_void, qa_abi_storage result,
                          qa_system_v_implementation implementation);
 void qa_system_v_data(qa_system_v_service_host *host, const char *library, const char *name,
-                      const char *version, qa_guest_address address, size_t byte_length);
+                      const char *version, qa_guest_core_address address, size_t byte_length);
 bool qa_system_v_resolve_address(qa_system_v_service_host *host, const char *library,
-                                 const char *name, const char *version, qa_guest_address *out);
-qa_guest_address qa_system_v_unavailable(qa_system_v_service_host *host, const char *library,
+                                 const char *name, const char *version, qa_guest_core_address *out);
+qa_guest_core_address qa_system_v_unavailable(qa_system_v_service_host *host, const char *library,
                                          const char *name, const qa_abi_storage *parameters,
                                          size_t parameter_count, bool result_is_void,
                                          qa_abi_storage result, const char *detail);
-qa_guest_address qa_system_v_allocate(qa_system_v_service_host *host, size_t size);
-void qa_system_v_free(qa_system_v_service_host *host, bool has_address, qa_guest_address address);
-bool qa_system_v_allocation_size(qa_system_v_service_host *host, qa_guest_address address, size_t *out);
-qa_call_result qa_system_v_invoke(qa_system_v_service_host *host, const qa_guest_call_context *context,
-                                  qa_guest_address target, const qa_abi_storage *parameters,
+qa_guest_core_address qa_system_v_allocate(qa_system_v_service_host *host, size_t size);
+void qa_system_v_free(qa_system_v_service_host *host, bool has_address, qa_guest_core_address address);
+bool qa_system_v_allocation_size(qa_system_v_service_host *host, qa_guest_core_address address, size_t *out);
+qa_call_result qa_system_v_invoke(qa_system_v_service_host *host, const qa_guest_core_call_context *context,
+                                  qa_guest_core_address target, const qa_abi_storage *parameters,
                                   size_t parameter_count, bool result_is_void, qa_abi_storage result,
                                   const qa_call_value *arguments, size_t argument_count);
 

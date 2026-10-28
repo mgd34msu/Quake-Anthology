@@ -25,7 +25,7 @@ static char *xstrdup(const char *text) {
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
 static double now_milliseconds(qa_windows_service_host *host) {
@@ -40,10 +40,10 @@ static double now_milliseconds(qa_windows_service_host *host) {
 
 typedef struct crt_ctx {
   qa_windows_service_host *host;
-  qa_guest_address onexit;
-  qa_guest_address errno_address;
-  qa_guest_address time_buffer;
-  qa_guest_address locale;
+  qa_guest_core_address onexit;
+  qa_guest_core_address errno_address;
+  qa_guest_core_address time_buffer;
+  qa_guest_core_address locale;
 } crt_ctx;
 typedef struct crt_state {
   crt_ctx *crt;
@@ -57,7 +57,7 @@ enum {
   C_QSORT, C_MATH1, C_MATH2, C_POW, C_NEXTAFTERF, C_MODF, C_DCLASS, C_ERRNO, C_STRTOUL,
   C_ATOI, C_TIME64, C_LOCALTIME64, C_LOCALECONV
 };
-static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count);
 static void service(crt_ctx *crt, int kind, const char *family, const char *name,
                     const qa_abi_storage *parameters, size_t parameter_count,
@@ -80,23 +80,23 @@ static double real(const qa_call_value *args, size_t count, size_t index) {
     type_error("CRT floating argument required");
   return value->number;
 }
-static char *read_str(crt_ctx *crt, qa_guest_address address) {
+static char *read_str(crt_ctx *crt, qa_guest_core_address address) {
   return qa_read_string(crt->host->memory, crt->host->memory_ext, address, 1048576);
 }
 
-static qa_call_result register_exit(crt_ctx *crt, qa_guest_address table,
-                                    qa_guest_address callback) {
+static qa_call_result register_exit(crt_ctx *crt, qa_guest_core_address table,
+                                    qa_guest_core_address callback) {
   qa_windows_service_host *host = crt->host;
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
-  qa_guest_address begin = {0}, end = {0}, capacity = {0};
+  qa_guest_core_address begin = {0}, end = {0}, capacity = {0};
   bool has_begin = qa_read_pointer(memory, table, &begin);
   bool has_end = qa_read_pointer(memory, off(memory, table, width), &end);
   bool has_capacity = qa_read_pointer(memory, off(memory, table, width * 2), &capacity);
   if (!has_begin || !has_end || !has_capacity || end.byte_offset == capacity.byte_offset) {
     size_t existing = !has_begin || !has_end ? 0 : (size_t)(end.byte_offset - begin.byte_offset);
     size_t next_size = (size_t)(32 * width) > existing * 2 ? (size_t)(32 * width) : existing * 2;
-    qa_guest_address next = {0};
+    qa_guest_core_address next = {0};
     if (!qa_windows_allocate(host, next_size, 0, &next)) return qa_call_int32(-1);
     if (has_begin) {
       qa_move_bytes(memory, host->memory_ext, next, begin, existing);
@@ -112,21 +112,21 @@ static qa_call_result register_exit(crt_ctx *crt, qa_guest_address table,
   qa_write_pointer(memory, off(memory, table, width), true, off(memory, end, width));
   return qa_call_int32(0);
 }
-static qa_call_result execute_exit(crt_ctx *crt, const qa_guest_call_context *context,
-                                   qa_guest_address table) {
+static qa_call_result execute_exit(crt_ctx *crt, const qa_guest_core_call_context *context,
+                                   qa_guest_core_address table) {
   qa_windows_service_host *host = crt->host;
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
-  qa_guest_address begin = {0}, end = {0};
+  qa_guest_core_address begin = {0}, end = {0};
   bool has_begin = qa_read_pointer(memory, table, &begin);
   bool has_end = qa_read_pointer(memory, off(memory, table, width), &end);
   if (has_begin && has_end) {
     for (uint64_t at = end.byte_offset - (uint64_t)width; ; at -= (uint64_t)width) {
-      qa_guest_address slot = {0};
+      qa_guest_core_address slot = {0};
       if (!qa_memory_pointer(memory, at, &slot)) plain_error("Null onexit slot");
-      qa_guest_address callback = {0};
+      qa_guest_core_address callback = {0};
       bool has_callback = qa_read_pointer(memory, slot, &callback);
-      qa_guest_address none = {0};
+      qa_guest_core_address none = {0};
       qa_write_pointer(memory, slot, false, none);
       if (has_callback) {
         qa_call_result result = qa_windows_invoke(host, context, callback, NULL, 0, true,
@@ -144,11 +144,11 @@ static qa_call_result execute_exit(crt_ctx *crt, const qa_guest_call_context *co
 
 typedef struct qsort_ctx {
   crt_ctx *crt;
-  const qa_guest_call_context *context;
-  qa_guest_address base, comparator;
+  const qa_guest_core_call_context *context;
+  qa_guest_core_address base, comparator;
   size_t size;
 } qsort_ctx;
-static qa_guest_address qsort_at(qsort_ctx *q, size_t index) {
+static qa_guest_core_address qsort_at(qsort_ctx *q, size_t index) {
   return off(q->crt->host->memory, q->base, (int64_t)(index * q->size));
 }
 static int qsort_compare(qsort_ctx *q, size_t left, size_t right) {
@@ -184,19 +184,19 @@ static void qsort_sift(qsort_ctx *q, size_t start, size_t end) {
 static bool js_space(uint8_t c) {
   return c == ' ' || (c >= 9 && c <= 13) || c == 0xa0;
 }
-static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count) {
   crt_state *state = ctx;
   crt_ctx *crt = state->crt;
   qa_windows_service_host *host = crt->host;
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   switch (state->kind) {
     case C_XTIME:
       return qa_call_int64((int64_t)trunc(now_milliseconds(host)) * 10000);
     case C_MALLOC: {
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       bool has = qa_windows_allocate(host, qa_guest_count(args, count, 0), 0, &out);
       return qa_call_pointer(has, out);
     }
@@ -205,12 +205,12 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
       int64_t b = qa_guest_integer(args, count, 1);
       bool too_big = a > 0 && b > 0 && (a > 0x10000000 / b || a * b > 0x10000000);
       if (too_big) return qa_call_pointer(false, none);
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       bool has = qa_windows_allocate(host, (size_t)(a * b), 0, &out);
       return qa_call_pointer(has, out);
     }
     case C_FREE: {
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       bool has = qa_guest_pointer_argument(args, count, 0, &address);
       if (!qa_windows_free(host, has, address, 0))
         plain_error("CRT free of invalid guest allocation");
@@ -219,7 +219,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
     case C_ZERO: return qa_call_int32(0);
     case C_MEMCOPY: {
       size_t size = qa_guest_count(args, count, 2);
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
       if (size > 0)
         qa_move_bytes(memory, host->memory_ext, qa_guest_required_pointer(args, count, 0),
@@ -228,7 +228,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
     }
     case C_MEMSET: {
       size_t size = qa_guest_count(args, count, 2);
-      qa_guest_address destination = {0};
+      qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
       if (size > 0)
         qa_fill_bytes(memory, host->memory_ext, qa_guest_required_pointer(args, count, 0), size,
@@ -250,7 +250,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
     case C_MEMCHR: {
       size_t size = qa_guest_count(args, count, 2);
       if (size == 0) return qa_call_pointer(false, none);
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       uint8_t *bytes = xmalloc(size);
       qa_memory_copy(memory, address, bytes, size);
       uint8_t needle = (uint8_t)(qa_guest_integer(args, count, 1) & 255);
@@ -268,8 +268,8 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
                                                         : qa_call_uint32((uint32_t)value);
     }
     case C_STRCMP: {
-      qa_guest_address left = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address right = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address left = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address right = qa_guest_required_pointer(args, count, 1);
       size_t maximum = strcmp(state->name, "strcmp") == 0 ? 1048576
                                                            : qa_guest_count(args, count, 2);
       for (size_t i = 0; i < maximum; i++) {
@@ -281,7 +281,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_int32(0);
     }
     case C_STRCHR: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       char *text = read_str(crt, address);
       size_t length = strlen(text);
       uint8_t needle = (uint8_t)(qa_guest_integer(args, count, 1) & 255);
@@ -293,7 +293,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
                        : qa_call_pointer(true, off(memory, address, index));
     }
     case C_STRSTR: {
-      qa_guest_address address = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       char *text = read_str(crt, address);
       char *needle = read_str(crt, qa_guest_required_pointer(args, count, 1));
       const char *found = strstr(text, needle);
@@ -328,16 +328,16 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
       return qa_call_void();
     case C_INITTERM: {
       bool is_e = strcmp(state->name, "_initterm_e") == 0;
-      qa_guest_address begin = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address end = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address begin = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address end = qa_guest_required_pointer(args, count, 1);
       if (end.byte_offset < begin.byte_offset ||
           (end.byte_offset - begin.byte_offset) % (uint64_t)width != 0 ||
           end.byte_offset - begin.byte_offset > 1048576)
         plain_error("Invalid CRT initializer range");
       for (uint64_t at = begin.byte_offset; at < end.byte_offset; at += (uint64_t)width) {
-        qa_guest_address slot = {0};
+        qa_guest_core_address slot = {0};
         if (!qa_memory_pointer(memory, at, &slot)) plain_error("Null CRT initializer slot");
-        qa_guest_address callback = {0};
+        qa_guest_core_address callback = {0};
         if (!qa_read_pointer(memory, slot, &callback)) continue;
         qa_call_result result = qa_windows_invoke(host, context, callback, NULL, 0, !is_e,
                                                   QA_STORAGE_INT32, NULL, 0, false);
@@ -429,8 +429,8 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
     }
     case C_ERRNO: return qa_call_pointer(true, crt->errno_address);
     case C_STRTOUL: {
-      qa_guest_address source = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address end = {0};
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address end = {0};
       bool has_end = qa_guest_pointer_argument(args, count, 1, &end);
       char *text = read_str(crt, source);
       size_t length = strlen(text);
@@ -521,7 +521,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_call_context *context,
     }
     case C_TIME64: {
       int64_t time_value = (int64_t)floor(now_milliseconds(host) / 1000.0);
-      qa_guest_address out = {0};
+      qa_guest_core_address out = {0};
       if (qa_guest_pointer_argument(args, count, 0, &out))
         qa_write_unsigned(memory, out, 8, (uint64_t)time_value);
       return qa_call_int64(time_value);
@@ -646,9 +646,9 @@ void qa_install_crt(qa_windows_service_host *host) {
   service(crt, C_LOCALTIME64, "time", "_localtime64", &ptr, 1, false, ptr);
   crt->locale = qa_gmem_allocate(host->memory_ext, (size_t)(width * 10 + 16), false, 0, false,
                                  QA_PERM_READ_WRITE, "CRT C locale lconv");
-  qa_guest_address empty = qa_gmem_allocate(host->memory_ext, 1, false, 0, false,
+  qa_guest_core_address empty = qa_gmem_allocate(host->memory_ext, 1, false, 0, false,
                                             QA_PERM_READ_WRITE, NULL);
-  qa_guest_address decimal = qa_gmem_allocate(host->memory_ext, 2, false, 0, false,
+  qa_guest_core_address decimal = qa_gmem_allocate(host->memory_ext, 2, false, 0, false,
                                               QA_PERM_READ_WRITE, NULL);
   size_t decimal_len = 0;
   uint8_t *decimal_bytes = qa_string_bytes(".", false, &decimal_len);

@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/app/bootstrap/audio/output_settings.h"
+#include "qa/app/bootstrap/audio/playlist.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
 typedef struct queued {
@@ -11,10 +13,11 @@ typedef struct queued {
   char **args; size_t arg_count;
   void (*print)(void *ctx, const char *text); void *print_ctx;
 } queued;
-typedef struct candidate { const char *family; const char *const *names; size_t name_count; } candidate;
+typedef struct candidate { qa_content_mounted *mounts; qa_app_music_source source; qa_sound_bank *bank; const char *const *names; size_t name_count; } candidate;
 struct qa_app_startup_audio {
   qa_app_startup_audio_host host;
   qa_unified_audio *engine;
+  qa_app_application_music *music;
   qa_cvar_registry *output_cvars;
   const char *family;
   qa_seat_id seat;
@@ -30,7 +33,7 @@ static char *xdup(const char *s) { char *r = qa_input_dup(s); if (!r) qa_range_e
 static void select_menu_track(qa_app_startup_audio *a, const char *value) {
   if (a->closed || (a->menu_track != NULL && strcmp(a->menu_track, value) == 0)) return;
   free(a->menu_track); a->menu_track = xdup(value);
-  a->host.music_stop_playback(a->host.ctx, "source");
+  qa_app_application_music_stop_playback(a->music, "source");
   if (strcmp(value, "0") == 0) return;
   for (size_t ci = 0; ci < a->candidate_count; ci++) {
     bool numeric = value[0] != '\0';
@@ -69,9 +72,13 @@ static void select_menu_track(qa_app_startup_audio *a, const char *value) {
         path_list[path_count++] = paths[1];
       }
       for (size_t pi = 0; pi < path_count; pi++) {
-        if (!a->host.candidate_resolve(a->host.ctx, (int)ci, path_list[pi])) continue;
+        const qa_resolved_resource_reference *resolved = NULL;
+        if (!qa_content_mounted_resolve(a->candidates[ci].mounts, path_list[pi], &resolved)) continue;
         if (a->closed || a->menu_track == NULL || strcmp(a->menu_track, value) != 0) return;
-        a->host.music_play_file(a->host.ctx, a->candidates[ci].family, path_list[pi], (int)ci);
+        char *cue = qa_app_music_file_cue(path_list[pi]);
+        qa_app_application_music_play(a->music, a->candidates[ci].source, a->candidates[ci].bank, cue,
+                                      (qa_app_open_music_track){NULL, NULL}, NULL);
+        free(cue);
         return;
       }
     }
@@ -90,6 +97,8 @@ qa_app_startup_audio *qa_app_startup_audio_open(qa_app_startup_audio_host host, 
   a->seat = options.seat;
   a->print = options.print; a->print_ctx = options.print_ctx;
   a->engine = host.create_engine(host.ctx, &options.preferences);
+  a->music = qa_app_application_music_create(a->engine, options.print, options.print_ctx,
+                                             QA_MUSIC_VOLUME_IMMEDIATE, options.controls, NULL, NULL);
   qa_app_startup_audio_set_volumes(a, options.preferences.has_effects_volume ? options.preferences.effects_volume : 0.7,
                                    options.preferences.has_music_volume ? options.preferences.music_volume : 0.25);
   host.engine_set_listeners(host.ctx, a->engine, options.seat);
@@ -98,7 +107,7 @@ qa_app_startup_audio *qa_app_startup_audio_open(qa_app_startup_audio_host host, 
     const void *sound = host.bank_register(host.ctx, options.family, events[i]);
     if (sound != NULL) { a->sounds[a->sound_count].event = events[i]; a->sounds[a->sound_count].sound = sound; a->sound_count++; }
   }
-  host.music_select(host.ctx, options.family);
+  qa_app_application_music_select(a->music, options.source, options.bank, (qa_app_open_music_track){NULL, NULL});
   static const char *const fallback_q1[] = {"music/track02", "music/02"};
   static const char *const fallback_q2[] = {"music/02", "music/track02"};
   static const char *const fallback_q3[] = {"music/sonic5"};
@@ -106,17 +115,17 @@ qa_app_startup_audio *qa_app_startup_audio_open(qa_app_startup_audio_host host, 
   const char *const *fallback = fallback_q3; size_t fallback_count = 1;
   if (strcmp(options.family, "q1") == 0) { fallback = fallback_q1; fallback_count = 2; }
   else if (strcmp(options.family, "q2") == 0) { fallback = fallback_q2; fallback_count = 2; }
-  a->candidates[a->candidate_count++] = (candidate){options.family, fallback, fallback_count};
+  a->candidates[a->candidate_count++] = (candidate){options.mounts, options.source, options.bank, fallback, fallback_count};
   if (options.has_theme) {
     memmove(&a->candidates[1], &a->candidates[0], sizeof(candidate));
-    a->candidates[0] = (candidate){options.theme_family, theme_names, 1};
+    a->candidates[0] = (candidate){options.theme_mounts, options.theme_source, options.theme_bank, theme_names, 1};
     a->candidate_count++;
   }
   /* tracks: sorted unique union over candidates. */
   size_t cap = 0;
   for (size_t ci = 0; ci < a->candidate_count; ci++) {
     size_t count = 0;
-    char **list = host.mounted_music_tracks(host.ctx, (int)ci, &count);
+    char **list = qa_app_mounted_music_tracks(a->candidates[ci].mounts, &count);
     for (size_t i = 0; i < count; i++) {
       bool dup = false;
       for (size_t j = 0; j < a->track_count; j++) if (strcmp(a->tracks[j], list[i]) == 0) dup = true;
@@ -137,6 +146,7 @@ qa_app_startup_audio *qa_app_startup_audio_open(qa_app_startup_audio_host host, 
 void qa_app_startup_audio_destroy(qa_app_startup_audio *a) {
   if (!a) return;
   qa_app_startup_audio_close(a);
+  qa_app_application_music_destroy(a->music);
   for (size_t i = 0; i < a->track_count; i++) free(a->tracks[i]);
   free(a->tracks); free(a->menu_track);
   a->host.destroy_engine(a->host.ctx, a->engine);
@@ -149,23 +159,23 @@ qa_audio_output_format qa_app_startup_audio_output_format(qa_app_startup_audio *
 void qa_app_startup_audio_bind_output_cvars(qa_app_startup_audio *a, qa_cvar_registry *cvars) { a->output_cvars = cvars; }
 void qa_app_startup_audio_select_output_format(qa_app_startup_audio *a, qa_audio_output_format format) {
   a->host.engine_select_output(a->host.ctx, a->engine, a->host.engine_selected_output(a->host.ctx, a->engine), format, false);
-  if (a->output_cvars != NULL) a->host.write_output_cvars(a->host.ctx, a->output_cvars, qa_app_startup_audio_output_format(a));
+  if (a->output_cvars != NULL) qa_app_write_audio_output_cvars(a->output_cvars, qa_app_startup_audio_output_format(a));
 }
 void qa_app_startup_audio_restart_output(qa_app_startup_audio *a) {
   qa_audio_output_format format = a->output_cvars == NULL ? qa_app_startup_audio_output_format(a)
-                                                           : a->host.read_output_cvars(a->host.ctx, a->output_cvars);
+                                                           : qa_app_read_audio_output_cvars(a->output_cvars);
   a->host.engine_select_output(a->host.ctx, a->engine, a->host.engine_selected_output(a->host.ctx, a->engine), format, true);
 }
 const char *const *qa_app_startup_audio_music_tracks(qa_app_startup_audio *a, size_t *out_count) {
   *out_count = a->track_count;
   return (const char *const *)a->tracks;
 }
-qa_app_music_preferences qa_app_startup_audio_music_preferences(qa_app_startup_audio *a) {
+qa_app_audio_music_preferences qa_app_startup_audio_music_preferences(qa_app_startup_audio *a) {
   if (a->output_cvars == NULL) {
-    qa_app_music_preferences prefs = {false, a->menu_track ? a->menu_track : "auto"};
+    qa_app_audio_music_preferences prefs = {false, xdup(a->menu_track ? a->menu_track : "auto")};
     return prefs;
   }
-  return a->host.read_music_settings(a->host.ctx, a->output_cvars);
+  return qa_app_read_music_settings(a->output_cvars);
 }
 void qa_app_startup_audio_open_output(qa_app_startup_audio *a, const char *device_name, void (*print)(void *ctx, const char *text), void *print_ctx) {
   bool failed = false; const char *error = NULL;
@@ -179,7 +189,7 @@ void qa_app_startup_audio_open_output(qa_app_startup_audio *a, const char *devic
   if (failed) qa_range_error("%s", error ? error : "Audio output unavailable");
 }
 void qa_app_startup_audio_cd_command(qa_app_startup_audio *a, const char *const *args, size_t count, void (*print)(void *ctx, const char *text), void *print_ctx) {
-  if (!a->closed) a->host.music_cd_command(a->host.ctx, args, count, print, print_ctx);
+  if (!a->closed) qa_app_application_music_cd_command(a->music, args, count, print, print_ctx);
 }
 static void queue_command(qa_app_startup_audio *a, const char *name, const char *const *args, size_t count, void (*print)(void *ctx, const char *text), void *print_ctx) {
   if (a->closed) return;
@@ -200,13 +210,17 @@ void qa_app_startup_audio_queue_music_command(qa_app_startup_audio *a, const cha
   queue_command(a, "music", args, count, print, print_ctx);
 }
 void qa_app_startup_audio_flush_commands(qa_app_startup_audio *a) {
-  if (a->output_cvars != NULL) select_menu_track(a, a->host.read_music_settings(a->host.ctx, a->output_cvars).menu_track);
+  if (a->output_cvars != NULL) {
+    qa_app_audio_music_preferences prefs = qa_app_read_music_settings(a->output_cvars);
+    select_menu_track(a, prefs.menu_track);
+    free(prefs.menu_track);
+  }
   while (!a->closed && a->command_count > 0) {
     queued command = a->commands[a->command_head];
     a->command_head = (a->command_head + 1) % 1024;
     a->command_count--;
     if (strcmp(command.name, "cd") == 0) qa_app_startup_audio_cd_command(a, (const char *const *)command.args, command.arg_count, command.print, command.print_ctx);
-    else a->host.music_music_command(a->host.ctx, (const char *const *)command.args, command.arg_count, command.print, command.print_ctx);
+    else qa_app_application_music_music_command(a->music, (const char *const *)command.args, command.arg_count, command.print, command.print_ctx);
     for (size_t i = 0; i < command.arg_count; i++) free(command.args[i]);
     free(command.args);
   }
@@ -214,7 +228,7 @@ void qa_app_startup_audio_flush_commands(qa_app_startup_audio *a) {
 void qa_app_startup_audio_set_volumes(qa_app_startup_audio *a, double effects, double music) {
   if (a->closed) return;
   a->host.engine_set_effects_volume(a->host.ctx, a->engine, effects);
-  a->host.music_set_volume(a->host.ctx, music);
+  qa_app_application_music_set_volume(a->music, music);
 }
 void qa_app_startup_audio_sound(qa_app_startup_audio *a, const char *event) {
   if (a->closed) return;
@@ -236,7 +250,7 @@ void qa_app_startup_audio_close(qa_app_startup_audio *a) {
     for (size_t i = 0; i < command.arg_count; i++) free(command.args[i]);
     free(command.args);
   }
-  a->host.music_stop(a->host.ctx);
+  qa_app_application_music_stop(a->music);
   a->host.engine_close(a->host.ctx, a->engine);
   a->host.bank_clear(a->host.ctx);
   a->sound_count = 0;

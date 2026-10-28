@@ -58,14 +58,14 @@ static int checks = 0;
 
 /* Flat test memory: 64 KiB at guest offset 0. */
 static uint8_t g_mem_bytes[0x10000];
-static void mem_bounds(qa_guest_address a, size_t len) {
+static void mem_bounds(qa_guest_core_address a, size_t len) {
   if (a.byte_offset > sizeof g_mem_bytes || len > sizeof g_mem_bytes - (size_t)a.byte_offset)
     qa_range_error("test memory out of bounds");
 }
-static void mem_copy_fn(void *ctx, qa_guest_address a, uint8_t *dest, size_t len) {
+static void mem_copy_fn(void *ctx, qa_guest_core_address a, uint8_t *dest, size_t len) {
   (void)ctx; mem_bounds(a, len); memcpy(dest, g_mem_bytes + a.byte_offset, len);
 }
-static void mem_write_fn(void *ctx, qa_guest_address a, const uint8_t *bytes, size_t len) {
+static void mem_write_fn(void *ctx, qa_guest_core_address a, const uint8_t *bytes, size_t len) {
   (void)ctx; mem_bounds(a, len); memcpy(g_mem_bytes + a.byte_offset, bytes, len);
 }
 static qa_mapped_guest_memory make_memory(int pointer_bytes) {
@@ -77,12 +77,12 @@ static qa_mapped_guest_memory make_memory(int pointer_bytes) {
   memory.write = mem_write_fn;
   return memory;
 }
-static qa_guest_address addr_at(uint64_t offset) { qa_guest_address a = {offset}; return a; }
+static qa_guest_core_address addr_at(uint64_t offset) { qa_guest_core_address a = {offset}; return a; }
 
 typedef struct fixture {
   qa_guest_processor_state state;
   qa_mapped_guest_memory memory;
-  qa_guest_address address; /* 0x2000 */
+  qa_guest_core_address address; /* 0x2000 */
 } fixture;
 static void fixture_init(fixture *f) {
   memset(g_mem_bytes, 0, sizeof g_mem_bytes);
@@ -438,7 +438,7 @@ static void test_sse_execution(void) {
   /* MOVUPS unaligned ok; MOVAPS faults first */
   {
     fixture f; fixture_init(&f);
-    qa_guest_address unaligned = addr_at(0x2001);
+    qa_guest_core_address unaligned = addr_at(0x2001);
     uint8_t fill[16]; memset(fill, 0xab, 16);
     qa_memory_write(&f.memory, unaligned, fill, 16);
     qa_numeric_instruction ins; memset(&ins, 0, sizeof ins);

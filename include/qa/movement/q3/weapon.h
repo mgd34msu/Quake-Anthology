@@ -8,8 +8,8 @@
 double qa_q3_weapon_delay(double milliseconds, double persistent, bool haste);
 
 /* TS Q3ExternalWeaponSlot exact strings in comments. */
-typedef enum qa_q3_external_weapon_slot { QA_Q3_SLOT_ACTIVE, QA_Q3_SLOT_HOLSTER_REQUESTED,
-  QA_Q3_SLOT_DROPPING, QA_Q3_SLOT_HOLSTERED, QA_Q3_SLOT_RESUME_REQUESTED } qa_q3_external_weapon_slot;
+typedef enum qa_q3_external_weapon_slot { QA_Q3_WEAPON_SLOT_ACTIVE, QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED,
+  QA_Q3_WEAPON_SLOT_DROPPING, QA_Q3_WEAPON_SLOT_HOLSTERED, QA_Q3_WEAPON_SLOT_RESUME_REQUESTED } qa_q3_external_weapon_slot;
 
 typedef struct qa_q3_source_weapon_state {
   void *ammo_ctx;

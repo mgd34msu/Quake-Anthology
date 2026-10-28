@@ -221,7 +221,7 @@ static qa_x64_flow execute_plan(qa_x64_cpu *cpu, const qa_x64_semantic_plan *pla
       lock_check(cpu, plan->lock, NULL, false, false);
       uint64_t value = source_value(cpu, &op->source, plan->next_ip);
       uint64_t stack = reg_read(cpu, QA_REG_RSP, 64, false) - (op->width == 64 ? 8ull : 2ull);
-      qa_guest_address address = qa_x64_guest_address(memory, stack, QA_ACCESS_WRITE);
+      qa_guest_core_address address = qa_x64_guest_address(memory, stack, QA_ACCESS_WRITE);
       if (op->width == 64) qa_sparse_write_u64(memory, address, value);
       else qa_sparse_write_u16(memory, address, (uint32_t)(value & 0xffffull));
       reg_write(cpu, QA_REG_RSP, 64, stack, false);
@@ -230,7 +230,7 @@ static qa_x64_flow execute_plan(qa_x64_cpu *cpu, const qa_x64_semantic_plan *pla
     case QA_X64_PLAN_POP: {
       lock_check(cpu, plan->lock, NULL, false, false);
       uint64_t stack = reg_read(cpu, QA_REG_RSP, 64, false);
-      qa_guest_address address = qa_x64_guest_address(memory, stack, QA_ACCESS_READ);
+      qa_guest_core_address address = qa_x64_guest_address(memory, stack, QA_ACCESS_READ);
       uint64_t value = op->width == 64 ? qa_sparse_read_u64(memory, address) : qa_sparse_read_u16(memory, address);
       reg_write(cpu, QA_REG_RSP, 64, stack + (op->width == 64 ? 8ull : 2ull), false);
       qa_x64_write_operand(memory, state, &op->destination, plan->next_ip, value);
@@ -695,7 +695,7 @@ static qa_x64_flow do_extended(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor) {
       uint64_t sum = qa_x86_alu(QA_ALU_ADD, decoded.rm.width, destination,
                                 qa_x64_cursor_read(cursor, &decoded.reg), &cpu->state->flags);
       bool is_memory = decoded.rm.kind == QA_X64_OPERAND_MEMORY;
-      qa_guest_address address = {0};
+      qa_guest_core_address address = {0};
       if (is_memory) address = qa_x64_cursor_address(cursor, &decoded.rm, QA_ACCESS_WRITE);
       qa_x64_cursor_write(cursor, &decoded.reg, destination);
       if (!is_memory) qa_x64_cursor_write(cursor, &decoded.rm, sum);
@@ -932,7 +932,7 @@ static qa_x64_flow execute_tail(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor, i
       uint64_t raw = qa_x64_cursor_read_unsigned(cursor, qa_x64_cursor_address_bits(cursor) / 8);
       uint64_t segment_base = cursor->segment == QA_X64_SEG_NONE ? 0
           : cpu->state->segments[cursor->segment == QA_X64_SEG_FS ? QA_SEG_FS : QA_SEG_GS].base;
-      qa_guest_address address = qa_x64_guest_address(cpu->memory, raw + segment_base,
+      qa_guest_core_address address = qa_x64_guest_address(cpu->memory, raw + segment_base,
                                                       op < 0xa2 ? QA_ACCESS_READ : QA_ACCESS_WRITE);
       if (op < 0xa2) reg_write(cpu, QA_REG_RAX, bits, qa_x64_read_memory(cpu->memory, address, bits), false);
       else qa_x64_write_memory(cpu->memory, address, bits, reg_read(cpu, QA_REG_RAX, bits, false));
@@ -1038,7 +1038,7 @@ static qa_x64_flow execute_tail(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor, i
 }
 
 void qa_x64_cpu_init(qa_x64_cpu *cpu, qa_guest_processor_state *state, qa_sparse_guest_memory *memory,
-                     bool (*is_host_call)(void *ctx, qa_guest_address address), void *is_host_call_ctx,
+                     bool (*is_host_call)(void *ctx, qa_guest_core_address address), void *is_host_call_ctx,
                      qa_guest_callback_table *callbacks) {
   if (state->architecture != QA_GUEST_X86_64 || memory->base.pointer_bytes != 8)
     qa_range_error("X64Cpu requires x86-64 processor state and 64-bit guest memory");
@@ -1069,13 +1069,13 @@ static qa_guest_execution_stop make_stop(qa_guest_execution_stop_kind kind, int6
   stop.instructions = instructions;
   return stop;
 }
-static qa_guest_address evidence_address(uint64_t byte_offset) {
-  qa_guest_address address = {byte_offset};
+static qa_guest_core_address evidence_address(uint64_t byte_offset) {
+  qa_guest_core_address address = {byte_offset};
   return address;
 }
 
 qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budget,
-                                       bool has_return_address, qa_guest_address return_address) {
+                                       bool has_return_address, qa_guest_core_address return_address) {
   if (instruction_budget < 0 || instruction_budget > QA_MAX_SAFE_INTEGER)
     qa_range_error("Instruction budget must be a nonnegative safe integer");
   x64_run_state state;
@@ -1100,7 +1100,7 @@ qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budg
     rs->has_cursor = false;
     if (setjmp(buf) == 0) {
       (void)qa_x64_canonical_address(tc, rs->start);
-      qa_guest_address address = evidence_address(rs->start);
+      qa_guest_core_address address = evidence_address(rs->start);
       bool host = cpu->callbacks != NULL
                       ? qa_guest_callback_table_enter(cpu->callbacks, address)
                       : cpu->is_host_call != NULL && cpu->is_host_call(cpu->is_host_call_ctx, address);
@@ -1137,7 +1137,7 @@ qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budg
       qa_integer_register_file_restore(&cpu->state->registers, rs->registers, sizeof rs->registers);
       qa_processor_flags_set_value(&cpu->state->flags, rs->flags);
       cpu->state->instruction_pointer = rs->start;
-      qa_guest_address address = evidence_address(rs->start);
+      qa_guest_core_address address = evidence_address(rs->start);
       if (tc->kind == QA_GUEST_THROW_MEMORY) {
         rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions);
         rs->stop.exception.kind = QA_EXCEPTION_MEMORY;

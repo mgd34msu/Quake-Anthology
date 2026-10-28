@@ -302,7 +302,7 @@ static void do_cmpxchg8(qa_i386_cpu *cpu, qa_x86_decoder *d) {
   qa_x86_modrm decoded = qa_x86_decoder_modrm(d, 32);
   if (decoded.group != 1 || !decoded.operand.is_memory)
     unsupported(cpu, "Only memory CMPXCHG8B is supported in 0F C7 group");
-  qa_guest_address address = qa_x86_decoder_address(d, &decoded.operand, 8, QA_ACCESS_READ);
+  qa_guest_core_address address = qa_x86_decoder_address(d, &decoded.operand, 8, QA_ACCESS_READ);
   uint64_t value = qa_sparse_read_u64(cpu->memory, address);
   qa_sparse_check(cpu->memory, address, 8, QA_ACCESS_WRITE);
   uint64_t expected = (reg_read(cpu, QA_REG_RDX, 32, false) << 32) | reg_read(cpu, QA_REG_RAX, 32, false);
@@ -796,7 +796,7 @@ static bool execute_tail(qa_i386_cpu *cpu, qa_x86_decoder *d, int op, int width)
 }
 
 void qa_i386_cpu_init(qa_i386_cpu *cpu, qa_guest_processor_state *state, qa_sparse_guest_memory *memory,
-                      bool (*host_call)(void *ctx, qa_guest_address address), void *host_call_ctx,
+                      bool (*host_call)(void *ctx, qa_guest_core_address address), void *host_call_ctx,
                       void (*numeric)(void *ctx, qa_numeric_result *out, qa_numeric_context *context), void *numeric_ctx) {
   if (state->architecture != QA_GUEST_I386 || memory->base.pointer_bytes != 4)
     qa_range_error("I386Cpu requires i386 state and a 32-bit guest address space");
@@ -815,7 +815,7 @@ typedef struct run_state {
   uint64_t flags;
   qa_x86_decoder decoder;
   bool has_decoder;
-  qa_guest_address address;
+  qa_guest_core_address address;
   qa_guest_execution_stop stop;
   bool have_stop;
 } run_state;
@@ -829,7 +829,7 @@ static qa_guest_execution_stop make_stop(qa_guest_execution_stop_kind kind, int6
 }
 
 qa_guest_execution_stop qa_i386_cpu_run(qa_i386_cpu *cpu, int64_t instruction_budget,
-                                        bool has_return_address, qa_guest_address return_address) {
+                                        bool has_return_address, qa_guest_core_address return_address) {
   if (instruction_budget < 0 || instruction_budget > QA_MAX_SAFE_INTEGER)
     qa_range_error("Instruction budget must be a nonnegative safe integer");
   /* TS also checks the return address's addressSpace; C addresses

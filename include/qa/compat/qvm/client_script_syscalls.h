@@ -3,14 +3,12 @@
  * script engine (ui/common/legacy/script): services.globals is the
  * real ScriptGlobalDefines, readers are real ScriptSourceReaders,
  * and the TS-owned BotMemory is a private qa_bot_memory behind a
- * qa_ui_script_memory adapter. qa_bot_memory has no checkpoint/
- * restore C API yet, so BotMemory.checkpoint/restore (TS owner
- * bots/behavior/library/memory.ts) are implemented locally in the
- * .c over tracked allocations, with the TS save format and error
- * strings. Async include/load/read flows are synchronous in C.
- * Uncaught engine source failures abort (the engine exports no
- * catch for ScriptSourceReader), so the TS read() partial-false
- * path for source failures is unreachable. GPL-2.0-or-later.
+ * qa_ui_script_memory adapter. Checkpoint/restore use
+ * qa_bot_memory_checkpoint/restore (TS owner
+ * bots/behavior/library/memory.ts). Async include/load/read flows
+ * are synchronous in C. read() catches engine source failures via
+ * qa_ui_script_source_reader_catch, returns 0 and still publishes
+ * the raw token, as the TS partial-false path. GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_CLIENT_SCRIPT_SYSCALLS_H
 #define QA_COMPAT_QVM_CLIENT_SCRIPT_SYSCALLS_H

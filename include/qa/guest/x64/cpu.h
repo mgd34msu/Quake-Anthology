@@ -21,7 +21,7 @@
 typedef struct qa_x64_cpu {
   qa_guest_processor_state *state;
   qa_sparse_guest_memory *memory;
-  bool (*is_host_call)(void *ctx, qa_guest_address address);
+  bool (*is_host_call)(void *ctx, qa_guest_core_address address);
   void *is_host_call_ctx;
   qa_guest_callback_table *callbacks; /* nullable */
   /* Borrowed storage behind the last stop's detail/bytes/mnemonic pointers. */
@@ -33,9 +33,9 @@ typedef struct qa_x64_cpu {
 /* callbacks NULL and is_host_call NULL: no host stops. Aborts with
  * the TS RangeErrors on mismatched state/memory/callback ownership. */
 void qa_x64_cpu_init(qa_x64_cpu *cpu, qa_guest_processor_state *state, qa_sparse_guest_memory *memory,
-                     bool (*is_host_call)(void *ctx, qa_guest_address address), void *is_host_call_ctx,
+                     bool (*is_host_call)(void *ctx, qa_guest_core_address address), void *is_host_call_ctx,
                      qa_guest_callback_table *callbacks);
 qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budget,
-                                       bool has_return_address, qa_guest_address return_address);
+                                       bool has_return_address, qa_guest_core_address return_address);
 
 #endif

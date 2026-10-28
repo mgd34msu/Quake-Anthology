@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "qa/app/bootstrap/simulation/types.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
 #include "qa/contracts/mods.h"
@@ -23,28 +24,8 @@ typedef struct qa_mod_client_presentation_admission {
   bool view;
 } qa_mod_client_presentation_admission;
 
-/* Mirrored PlayerView (TS owner src/app/bootstrap/simulation/
- * types.ts, unported). Optional members carry has_* flags. */
-typedef struct qa_session_player_view {
-  bool has_client_view_offset_delta;
-  qa_vec3 client_view_offset_delta;
-  bool has_blend;
-  qa_vec4 blend;
-  bool has_damage_blend;
-  qa_vec4 damage_blend;
-  qa_vec3 origin;
-  qa_vec3 angles;
-  double view_height;
-  bool has_kick_angles;
-  qa_vec3 kick_angles;
-  bool has_field_of_view;
-  double field_of_view;
-  bool foreign_character_death;
-  bool has_pitch_drift;
-  bool pitch_drift_grounded;
-  double pitch_drift_ideal_pitch;
-  bool pitch_drift_disabled;
-} qa_session_player_view;
+/* TS PlayerView: real owner type (simulation/types.h). */
+typedef qa_app_sim_player_view qa_session_player_view;
 
 /* Mirrored NativeQ2HudFrame (TS owner src/ui/hud/q2-native.ts,
  * unported). Configstrings stay an opaque borrowed map. */

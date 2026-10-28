@@ -36,7 +36,7 @@ uint64_t qa_x64_canonical_address(qa_guest_throw *throw_ctx, uint64_t value) {
   return value;
 }
 
-qa_guest_address qa_x64_guest_address(qa_sparse_guest_memory *memory, uint64_t raw, qa_guest_access access) {
+qa_guest_core_address qa_x64_guest_address(qa_sparse_guest_memory *memory, uint64_t raw, qa_guest_access access) {
   uint64_t value = qa_x64_canonical_address(memory->throw_ctx, raw);
   qa_guest_fault_access fa = access == QA_ACCESS_READ ? QA_FAULT_ACCESS_READ
                              : access == QA_ACCESS_WRITE ? QA_FAULT_ACCESS_WRITE : QA_FAULT_ACCESS_EXECUTE;
@@ -44,17 +44,17 @@ qa_guest_address qa_x64_guest_address(qa_sparse_guest_memory *memory, uint64_t r
     qa_guest_throw_memory(memory->throw_ctx, QA_FAULT_NULL_ADDRESS, &memory->module, value, 1, fa,
                           "null guest address");
   if (memory->base.pointer_bytes == 8) {
-    qa_guest_address address = {value};
+    qa_guest_core_address address = {value};
     return address;
   }
-  qa_guest_address address;
+  qa_guest_core_address address;
   if (!qa_sparse_pointer(memory, value, &address))
     qa_guest_throw_memory(memory->throw_ctx, QA_FAULT_NULL_ADDRESS, &memory->module, value, 1, fa,
                           "null guest address");
   return address;
 }
 
-uint64_t qa_x64_read_memory(qa_sparse_guest_memory *memory, qa_guest_address address, int width) {
+uint64_t qa_x64_read_memory(qa_sparse_guest_memory *memory, qa_guest_core_address address, int width) {
   switch (width) {
     case 8: return qa_sparse_read_u8(memory, address);
     case 16: return qa_sparse_read_u16(memory, address);
@@ -62,7 +62,7 @@ uint64_t qa_x64_read_memory(qa_sparse_guest_memory *memory, qa_guest_address add
     default: return qa_sparse_read_u64(memory, address);
   }
 }
-void qa_x64_write_memory(qa_sparse_guest_memory *memory, qa_guest_address address, int width, uint64_t value) {
+void qa_x64_write_memory(qa_sparse_guest_memory *memory, qa_guest_core_address address, int width, uint64_t value) {
   uint64_t normalized = as_uint_n(width, value);
   switch (width) {
     case 8: qa_sparse_write_u8(memory, address, (uint32_t)normalized); break;
@@ -81,7 +81,7 @@ uint64_t qa_x64_effective_operand_offset(const qa_guest_processor_state *state, 
                          operand->scale;
   return as_uint_n(operand->address_bits, base + index + (uint64_t)operand->displacement);
 }
-qa_guest_address qa_x64_operand_address(qa_sparse_guest_memory *memory, const qa_guest_processor_state *state,
+qa_guest_core_address qa_x64_operand_address(qa_sparse_guest_memory *memory, const qa_guest_processor_state *state,
                                         const qa_x64_operand *operand, uint64_t next_ip, qa_guest_access access) {
   uint64_t segment_base = operand->segment == QA_X64_SEG_NONE ? 0
                           : state->segments[operand->segment == QA_X64_SEG_FS ? QA_SEG_FS : QA_SEG_GS].base;
@@ -367,7 +367,7 @@ uint64_t qa_x64_cursor_effective_offset(qa_x64_decode_cursor *cursor, const qa_x
   return qa_x64_effective_operand_offset(cursor->state, operand,
                                          operand->rip_relative ? (has_next_ip ? next_ip : qa_x64_cursor_next_ip(cursor)) : 0);
 }
-qa_guest_address qa_x64_cursor_address(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand, qa_guest_access access) {
+qa_guest_core_address qa_x64_cursor_address(qa_x64_decode_cursor *cursor, const qa_x64_operand *operand, qa_guest_access access) {
   return qa_x64_operand_address(cursor->memory, cursor->state, operand,
                                 operand->rip_relative ? qa_x64_cursor_next_ip(cursor) : 0, access);
 }

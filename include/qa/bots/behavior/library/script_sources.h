@@ -9,8 +9,9 @@
  * and must be set before load/capture, as must the callbacks the TS
  * constructor requires (assets read, print, commonPrint). The
  * struct address must stay stable while handles are open (engine
- * resolver/report ctx). Uncaught engine source failures abort, so
- * the TS readTokenHandleResult partial-false path is unreachable.
+ * resolver/report ctx). read_token_result catches engine source
+ * failures via qa_ui_script_source_reader_catch and returns
+ * read=false with the raw token, as TS readTokenHandleResult.
  * GPL-2.0-or-later.
  */
 #ifndef QA_BOTS_BEHAVIOR_LIBRARY_SCRIPT_SOURCES_H

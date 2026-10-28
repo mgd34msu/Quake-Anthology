@@ -33,16 +33,16 @@ typedef struct qa_format_arguments {
   qa_mapped_guest_memory *memory;
   qa_format_dialect dialect;
   bool has_cursor;
-  qa_guest_address cursor;
+  qa_guest_core_address cursor;
   unsigned gp, fp;
   bool has_registers;
-  qa_guest_address registers;
+  qa_guest_core_address registers;
   bool has_descriptor;
-  qa_guest_address descriptor;
+  qa_guest_core_address descriptor;
 } qa_format_arguments;
 
 void qa_format_arguments_init(qa_format_arguments *args, qa_mapped_guest_memory *memory,
-                              qa_format_dialect dialect, bool has_address, qa_guest_address address);
+                              qa_format_dialect dialect, bool has_address, qa_guest_core_address address);
 qa_format_argument qa_format_arguments_next(qa_format_arguments *args, qa_format_argument_type type);
 
 #endif

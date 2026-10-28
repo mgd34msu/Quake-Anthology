@@ -33,9 +33,9 @@ static int64_t as_int_n(int width, uint64_t v) {
   return (int64_t)v;
 }
 
-qa_guest_address qa_x86_guest_address(qa_sparse_guest_memory *memory, uint64_t raw,
+qa_guest_core_address qa_x86_guest_address(qa_sparse_guest_memory *memory, uint64_t raw,
                                       qa_guest_access access, size_t length) {
-  qa_guest_address result;
+  qa_guest_core_address result;
   if (!qa_sparse_pointer(memory, raw, &result)) {
     qa_guest_fault_access fa = access == QA_ACCESS_READ ? QA_FAULT_ACCESS_READ
                                : access == QA_ACCESS_WRITE ? QA_FAULT_ACCESS_WRITE : QA_FAULT_ACCESS_EXECUTE;
@@ -183,7 +183,7 @@ qa_x86_modrm qa_x86_decoder_modrm(qa_x86_decoder *decoder, int width) {
   return result;
 }
 
-qa_guest_address qa_x86_decoder_address(qa_x86_decoder *decoder, const qa_x86_operand *operand,
+qa_guest_core_address qa_x86_decoder_address(qa_x86_decoder *decoder, const qa_x86_operand *operand,
                                         size_t width_bytes, qa_guest_access access) {
   const qa_guest_segment *segment = &decoder->state->segments[operand->segment];
   if (operand->offset + (uint64_t)width_bytes - 1u > segment->limit)
@@ -195,7 +195,7 @@ qa_guest_address qa_x86_decoder_address(qa_x86_decoder *decoder, const qa_x86_op
 uint64_t qa_x86_decoder_read(qa_x86_decoder *decoder, const qa_x86_operand *operand, int width) {
   if (!operand->is_memory)
     return qa_integer_register_file_read(&decoder->state->registers, operand->reg, width, operand->high_byte);
-  qa_guest_address address = qa_x86_decoder_address(decoder, operand, (size_t)(width / 8), QA_ACCESS_READ);
+  qa_guest_core_address address = qa_x86_decoder_address(decoder, operand, (size_t)(width / 8), QA_ACCESS_READ);
   switch (width) {
     case 8: return qa_sparse_read_u8(decoder->memory, address);
     case 16: return qa_sparse_read_u16(decoder->memory, address);
@@ -212,7 +212,7 @@ void qa_x86_decoder_write(qa_x86_decoder *decoder, const qa_x86_operand *operand
     qa_integer_register_file_write(&decoder->state->registers, operand->reg, width, value, operand->high_byte);
     return;
   }
-  qa_guest_address address = qa_x86_decoder_address(decoder, operand, (size_t)(width / 8), QA_ACCESS_WRITE);
+  qa_guest_core_address address = qa_x86_decoder_address(decoder, operand, (size_t)(width / 8), QA_ACCESS_WRITE);
   uint64_t normalized = as_uint_n(width, value);
   switch (width) {
     case 8: qa_sparse_write_u8(decoder->memory, address, (uint32_t)normalized); break;

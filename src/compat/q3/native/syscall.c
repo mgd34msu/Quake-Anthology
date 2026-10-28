@@ -13,7 +13,7 @@ static const qa_compat_q3_native_syscall_binding *service_of(S *syscalls, const 
     if (syscalls->services[i].code == code) return &syscalls->services[i];
   qa_range_error("Unbound Q3 native syscall %lld", (long long)code);
 }
-static qa_call_result syscall_invoke(void *ctx, const qa_guest_call_context *context, const qa_call_value *args, size_t count) {
+static qa_call_result syscall_invoke(void *ctx, const qa_guest_core_call_context *context, const qa_call_value *args, size_t count) {
   S *syscalls = ctx;
   const qa_compat_q3_native_syscall_binding *service = service_of(syscalls, args, count);
   double value = service->invoke(service->ctx, context, count ? args + 1 : args, count ? count - 1 : 0);

@@ -33,11 +33,11 @@ void qa_capture_abi_processor_state(qa_abi_processor_snapshot *out, qa_guest_pro
 void qa_restore_abi_processor_state(qa_guest_processor_state *state, const qa_abi_processor_snapshot *snapshot);
 
 typedef struct qa_guest_call_request {
-  qa_guest_address target;
+  qa_guest_core_address target;
   qa_guest_call_signature signature;
   const qa_call_value *arguments;
   size_t argument_count;
-  qa_guest_call_context context;
+  qa_guest_core_call_context context;
   int64_t instruction_budget;
 } qa_guest_call_request;
 
@@ -47,11 +47,11 @@ typedef struct qa_guest_call_runner qa_guest_call_runner;
 typedef struct qa_guest_call_runner_options {
   qa_guest_cpu *cpu;
   qa_guest_callback_table *callbacks;
-  qa_guest_address return_address;
+  qa_guest_core_address return_address;
   void *variadic_ctx;
   bool (*variadic_layouts)(void *ctx, const qa_guest_host_callback *callback,
                            const qa_call_value *fixed_arguments, size_t fixed_count,
-                           const qa_guest_call_context *context,
+                           const qa_guest_core_call_context *context,
                            qa_abi_value_layout **out, size_t *out_count);
 } qa_guest_call_runner_options;
 
@@ -69,7 +69,7 @@ bool qa_guest_call_runner_init(qa_guest_call_runner *runner, qa_guest_call_runne
 void qa_guest_call_runner_destroy(qa_guest_call_runner *runner);
 qa_guest_call_runner_options qa_guest_call_runner_options_of(const qa_guest_call_runner *runner);
 int64_t qa_guest_call_runner_depth(const qa_guest_call_runner *runner);
-const qa_guest_call_context *qa_guest_call_runner_current_context(const qa_guest_call_runner *runner);
+const qa_guest_core_call_context *qa_guest_call_runner_current_context(const qa_guest_call_runner *runner);
 double qa_guest_call_runner_maximum_loading_slice_ms(const qa_guest_call_runner *runner);
 uint64_t qa_guest_call_runner_instructions_executed(const qa_guest_call_runner *runner);
 const qa_guest_execution_stop *qa_guest_call_runner_last_stop(const qa_guest_call_runner *runner);
@@ -81,7 +81,7 @@ qa_call_result qa_guest_call_runner_invoke_loading(qa_guest_call_runner *runner,
                                                    void (*next_frame)(void *ctx), void *next_frame_ctx);
 /* accepts may be NULL (always true). Returned handle: unbind then free. */
 qa_guest_inline_region_handle *qa_guest_call_runner_bind_inline_region(
-    qa_guest_call_runner *runner, qa_guest_address entry, qa_guest_address join,
+    qa_guest_call_runner *runner, qa_guest_core_address entry, qa_guest_core_address join,
     qa_guest_native_abi abi,
     void (*intercept)(void *ctx, qa_guest_inline_continuation *continuation), void *intercept_ctx,
     bool (*accepts)(void *ctx), void *accepts_ctx);

@@ -124,13 +124,13 @@ static void test_arsenal(void) {
   r = qa_q3_request_weapon(r, 5);
   CHECK(r.has_requested_weapon && r.requested_weapon == 5);
   r = qa_q3_request_weapon_holster(r);
-  CHECK(r.external_slot == QA_Q3_SLOT_HOLSTER_REQUESTED);
+  CHECK(r.external_slot == QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED);
   CHECK_ABORTS((void)qa_q3_request_weapon_resume(r));
-  r.external_slot = QA_Q3_SLOT_HOLSTERED;
+  r.external_slot = QA_Q3_WEAPON_SLOT_HOLSTERED;
   r = qa_q3_request_weapon_resume(r);
-  CHECK(r.external_slot == QA_Q3_SLOT_RESUME_REQUESTED);
+  CHECK(r.external_slot == QA_Q3_WEAPON_SLOT_RESUME_REQUESTED);
   r = qa_q3_request_weapon_holster(r);
-  CHECK(r.external_slot == QA_Q3_SLOT_HOLSTERED);
+  CHECK(r.external_slot == QA_Q3_WEAPON_SLOT_HOLSTERED);
   qa_animation_state spawn_anim = qa_q3_spawn_animation();
   CHECK(spawn_anim.legs == QA_Q3_ANIM_LEGS_IDLE && spawn_anim.torso == QA_Q3_ANIM_TORSO_STAND);
 }

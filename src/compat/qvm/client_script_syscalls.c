@@ -1,7 +1,7 @@
-/* Port of src/compat/qvm/client-script-syscalls.ts. See the header
- * for the local BotMemory checkpoint/restore (TS owner
- * bots/behavior/library/memory.ts; qa_bot_memory has no such C API)
- * and the uncaught-source-failure note. GPL-2.0-or-later. */
+/* Port of src/compat/qvm/client-script-syscalls.ts. BotMemory
+ * checkpoint/restore is qa_bot_memory_checkpoint/restore (TS owner
+ * bots/behavior/library/memory.ts); read() catches source failures
+ * via qa_ui_script_source_reader_catch. GPL-2.0-or-later. */
 #include "qa/compat/qvm/client_script_syscalls.h"
 
 #include <math.h>
@@ -91,153 +91,23 @@ static void mem_dispose(qa_qvm_client_scripts *scripts) {
   for (size_t i = 0; i < scripts->entry_count; i++) scripts->entries[i].live = false;
 }
 
-static int64_t mem_reference(void *ctx, qa_ui_script_allocation *allocation) {
-  qa_qvm_client_scripts *scripts = ctx;
-  int64_t index = 0;
-  for (size_t i = 0; i < scripts->entry_count; i++) {
-    if (!scripts->entries[i].live) continue;
-    if (scripts->entries[i].bytes == allocation->bytes) return index;
-    index++;
-  }
-  qa_range_error("Bot checkpoint references an unowned or freed allocation");
+/* BotMemory checkpoint/restore (qa_bot_memory) behind the
+ * ScriptMemory capture/restore fn+ctx shapes. */
+static int64_t capture_reference(void *ctx, qa_ui_script_allocation *allocation) {
+  qa_bot_memory_allocation bot = {allocation->bytes, allocation->length,
+                                   allocation->record};
+  return qa_bot_memory_capture_reference(ctx, &bot);
 }
 
-/* BotMemory.checkpoint(): owned image; NULL only on OOM. */
-static qa_save_value *mem_checkpoint(qa_qvm_client_scripts *scripts) {
-  if (scripts->bot_memory.disposed)
-    qa_range_error("Cannot checkpoint disposed bot memory");
-  qa_save_value *image = qa_save_value_object();
-  qa_save_value *allocations = qa_save_value_array();
-  qa_save_value *version = qa_save_value_number(1);
-  if (image == NULL || allocations == NULL || version == NULL ||
-      !qa_save_value_set(image, "version", version)) {
-    qa_save_value_free(image);
-    qa_save_value_free(allocations);
-    qa_save_value_free(version);
-    return NULL;
-  }
-  for (size_t i = 0; i < scripts->entry_count; i++) {
-    mem_entry *entry = &scripts->entries[i];
-    if (!entry->live) continue;
-    qa_save_value *row = qa_save_value_object();
-    qa_save_value *kind = qa_save_value_string("heap");
-    qa_save_value *bytes = qa_save_value_bytes(entry->bytes, entry->length);
-    qa_save_value *provenance = qa_save_value_null();
-    if (row == NULL || kind == NULL || bytes == NULL || provenance == NULL ||
-        !qa_save_value_set(row, "kind", kind) ||
-        !qa_save_value_set(row, "bytes", bytes) ||
-        !qa_save_value_set(row, "provenance", provenance) ||
-        !qa_save_value_push(allocations, row)) {
-      qa_save_value_free(row);
-      qa_save_value_free(kind);
-      qa_save_value_free(bytes);
-      qa_save_value_free(provenance);
-      qa_save_value_free(allocations);
-      qa_save_value_free(image);
-      return NULL;
-    }
-  }
-  if (!qa_save_value_set(image, "allocations", allocations)) {
-    qa_save_value_free(allocations);
-    qa_save_value_free(image);
-    return NULL;
-  }
-  return image;
-}
-
-typedef struct mem_restored {
-  qa_ui_script_allocation *allocations;
-  size_t count;
-} mem_restored;
-
-static qa_ui_script_allocation mem_restored_allocation(void *ctx, int64_t id) {
-  mem_restored *restored = ctx;
-  if (id < 0 || (uint64_t)id >= restored->count)
-    qa_range_error("Saved bot allocation reference is invalid");
-  return restored->allocations[id];
+static qa_ui_script_allocation restored_allocation(void *ctx, int64_t id) {
+  qa_bot_memory_allocation bot = qa_bot_memory_restored_allocation(ctx, id);
+  qa_ui_script_allocation out = {bot.bytes, bot.length, bot.record};
+  return out;
 }
 
 static void reader_field(const qa_save_reader *reader, const char *name,
                          qa_save_reader *out) {
   if (!qa_save_reader_field(reader, name, out)) qa_range_error("out of memory");
-}
-
-/* BotMemory.restore(): fills *restored (caller frees its array). */
-static qa_ui_script_memory_restore mem_restore(qa_qvm_client_scripts *scripts,
-                                               const qa_save_value *value,
-                                               mem_restored *restored) {
-  qa_save_reader reader, allocations_reader;
-  if (!qa_save_reader_init(&reader, value, "bot.memory"))
-    qa_range_error("out of memory");
-  qa_save_reader version_reader;
-  reader_field(&reader, "version", &version_reader);
-  qa_save_reader_literal_number(&version_reader, 1);
-  qa_save_reader_destroy(&version_reader);
-  reader_field(&reader, "allocations", &allocations_reader);
-  size_t count = qa_save_reader_list_count(&allocations_reader);
-  const char **kinds = calloc(count == 0 ? 1 : count, sizeof *kinds);
-  const uint8_t **bytes = calloc(count == 0 ? 1 : count, sizeof *bytes);
-  size_t *lengths = calloc(count == 0 ? 1 : count, sizeof *lengths);
-  if (kinds == NULL || bytes == NULL || lengths == NULL)
-    qa_range_error("out of memory");
-  static const char *const kind_choices[] = {"heap", "hunk"};
-  for (size_t i = 0; i < count; i++) {
-    qa_save_reader item, field;
-    if (!qa_save_reader_item(&allocations_reader, i, &item))
-      qa_range_error("out of memory");
-    reader_field(&item, "kind", &field);
-    kinds[i] = qa_save_reader_choice_string(&field, kind_choices, 2);
-    qa_save_reader_destroy(&field);
-    reader_field(&item, "bytes", &field);
-    bytes[i] = qa_save_reader_bytes(&field, &lengths[i]);
-    qa_save_reader_destroy(&field);
-    reader_field(&item, "provenance", &field);
-    if (!qa_save_reader_is_null(&field)) {
-      /* Provenance is validated as in TS; qa_bot_memory_allocate
-       * takes no provenance, so the values are then dropped. */
-      qa_save_reader sub;
-      reader_field(&field, "file", &sub);
-      qa_save_reader_string(&sub);
-      qa_save_reader_destroy(&sub);
-      reader_field(&field, "line", &sub);
-      qa_save_reader_integer_min(&sub, 0);
-      qa_save_reader_destroy(&sub);
-      reader_field(&field, "label", &sub);
-      qa_save_reader_string(&sub);
-      qa_save_reader_destroy(&sub);
-    }
-    qa_save_reader_destroy(&field);
-    qa_save_reader_destroy(&item);
-  }
-  qa_save_reader_destroy(&allocations_reader);
-  qa_save_reader_destroy(&reader);
-  if (scripts->bot_memory.disposed ||
-      qa_bot_memory_get_live_allocations(&scripts->bot_memory) != 0)
-    qa_range_error("Bot memory restore requires a fresh owner and supported image");
-  for (size_t i = 0; i < count; i++)
-    if (lengths[i] > 2147483647u - 4u)
-      qa_range_error("Invalid saved bot allocation");
-  restored->allocations = calloc(count == 0 ? 1 : count, sizeof *restored->allocations);
-  if (restored->allocations == NULL) qa_range_error("out of memory");
-  restored->count = count;
-  for (size_t i = 0; i < count; i++) {
-    qa_bot_memory_allocation bot;
-    qa_bot_memory_kind kind =
-        strcmp(kinds[i], "heap") == 0 ? QA_BOT_MEMORY_HEAP : QA_BOT_MEMORY_HUNK;
-    if (!qa_bot_memory_allocate(&scripts->bot_memory, (int64_t)lengths[i], kind,
-                                false, &bot) ||
-        !track(scripts, bot))
-      qa_range_error("out of memory");
-    memcpy(bot.bytes, bytes[i], lengths[i]);
-    restored->allocations[i].bytes = bot.bytes;
-    restored->allocations[i].length = bot.length;
-    restored->allocations[i].record = bot.record;
-  }
-  free(kinds);
-  free(bytes);
-  free(lengths);
-  qa_ui_script_memory_restore restore = {restored, mem_restored_allocation};
-  return restore;
 }
 
 /* ---- QvmClientScripts ---- */
@@ -385,8 +255,11 @@ qa_save_value *qa_qvm_client_scripts_capture(qa_qvm_client_scripts *scripts) {
   for (int i = 0; i < 64; i++) any_pending = any_pending || scripts->pending[i];
   if (scripts->operations != 0 || any_pending)
     qa_range_error("Cannot checkpoint an active client script operation");
-  qa_save_value *image = mem_checkpoint(scripts);
-  qa_ui_script_memory_capture capture = {scripts, mem_reference};
+  qa_bot_memory_capture bot_capture;
+  if (!qa_bot_memory_checkpoint(&scripts->bot_memory, &bot_capture)) return NULL;
+  qa_save_value *image = bot_capture.image;
+  bot_capture.image = NULL;
+  qa_ui_script_memory_capture capture = {&bot_capture, capture_reference};
   qa_save_value *globals =
       qa_ui_script_global_defines_capture_owned_save_state(scripts->services.globals);
   qa_save_value *readers = qa_save_value_array();
@@ -396,6 +269,7 @@ qa_save_value *qa_qvm_client_scripts_capture(qa_qvm_client_scripts *scripts) {
     qa_save_value_free(globals);
     qa_save_value_free(readers);
     qa_save_value_free(object);
+    qa_bot_memory_capture_destroy(&bot_capture);
     return NULL;
   }
   for (int handle = 0; handle < 64; handle++) {
@@ -415,6 +289,7 @@ qa_save_value *qa_qvm_client_scripts_capture(qa_qvm_client_scripts *scripts) {
       qa_save_value_free(globals);
       qa_save_value_free(image);
       qa_save_value_free(object);
+      qa_bot_memory_capture_destroy(&bot_capture);
       return NULL;
     }
   }
@@ -425,8 +300,10 @@ qa_save_value *qa_qvm_client_scripts_capture(qa_qvm_client_scripts *scripts) {
     qa_save_value_free(image);
     qa_save_value_free(globals);
     qa_save_value_free(readers);
+    qa_bot_memory_capture_destroy(&bot_capture);
     return NULL;
   }
+  qa_bot_memory_capture_destroy(&bot_capture);
   return object;
 }
 
@@ -442,10 +319,12 @@ void qa_qvm_client_scripts_restore(qa_qvm_client_scripts *scripts, const qa_save
   qa_save_reader reader, memory_reader, globals_reader, readers_reader;
   if (!qa_save_reader_init(&reader, value, "client-scripts")) qa_range_error("out of memory");
   reader_field(&reader, "memory", &memory_reader);
-  mem_restored restored;
-  memset(&restored, 0, sizeof restored);
-  qa_ui_script_memory_restore restore = mem_restore(scripts, memory_reader.value, &restored);
+  qa_bot_memory_restored restored;
+  qa_bot_memory_restore(&scripts->bot_memory, memory_reader.value, &restored);
   qa_save_reader_destroy(&memory_reader);
+  for (size_t i = 0; i < restored.count; i++)
+    if (!track(scripts, restored.allocations[i])) qa_range_error("out of memory");
+  qa_ui_script_memory_restore restore = {&restored, restored_allocation};
   reader_field(&reader, "globals", &globals_reader);
   qa_ui_script_global_defines_restore_owned_save_state(scripts->services.globals,
                                                        globals_reader.value);
@@ -473,7 +352,7 @@ void qa_qvm_client_scripts_restore(qa_qvm_client_scripts *scripts, const qa_save
   }
   qa_save_reader_destroy(&readers_reader);
   qa_save_reader_destroy(&reader);
-  free(restored.allocations);
+  qa_bot_memory_restored_destroy(&restored);
 }
 
 void qa_qvm_client_scripts_close_all(qa_qvm_client_scripts *scripts) {
@@ -544,25 +423,38 @@ double qa_qvm_client_scripts_free(qa_qvm_client_scripts *scripts, double handle)
 
 static void validate_current(void *ctx) { qa_qvm_client_scripts_assert_current(ctx); }
 
+typedef struct read_next_ctx {
+  qa_qvm_client_scripts *scripts;
+  qa_ui_script_source_reader *reader;
+  qa_ui_script_token_record record;
+  bool read;
+} read_next_ctx;
+
+static void run_read_next(void *ctx) {
+  read_next_ctx *next = ctx;
+  next->read = qa_ui_script_source_reader_next_async(
+      next->reader, validate_current, next->scripts, &next->record);
+}
+
 double qa_qvm_client_scripts_read(qa_qvm_client_scripts *scripts, double handle,
                                   qa_qvm_script_publish publish) {
   qa_qvm_client_scripts_assert_current(scripts);
   if (!occupied_handle(scripts, handle)) return 0;
   qa_ui_script_source_reader *reader = scripts->readers[(size_t)handle];
   scripts->operations++;
-  /* A TS source failure is caught here (read=false, partial token
-   * published); the C engine aborts uncaught failures instead. */
-  qa_ui_script_token_record record;
-  bool read =
-      qa_ui_script_source_reader_next_async(reader, validate_current, scripts, &record);
+  /* A TS source failure is caught here: read=false, and the partial
+   * token is still published below. */
+  read_next_ctx next = {scripts, reader, {0}, false};
+  bool completed_read = qa_ui_script_source_reader_catch(reader, run_read_next, &next);
+  bool read = completed_read && next.read;
   qa_qvm_client_scripts_assert_current(scripts);
   if (!scripts->occupied[(size_t)handle] || scripts->readers[(size_t)handle] != reader) {
-    if (read) qa_ui_script_token_record_release(&record);
+    if (read) qa_ui_script_token_record_release(&next.record);
     completed(scripts);
     qa_range_error("QVM source handle was freed during token read");
   }
   publish.call(publish.ctx, reader);
-  if (read) qa_ui_script_token_record_release(&record);
+  if (read) qa_ui_script_token_record_release(&next.record);
   completed(scripts);
   return read ? 1 : 0;
 }

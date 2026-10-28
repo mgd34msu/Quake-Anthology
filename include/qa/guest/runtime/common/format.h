@@ -25,11 +25,11 @@ typedef struct qa_guest_format_request {
   qa_mapped_memory_ext *memory_ext;
   qa_format_dialect dialect;
   bool has_format;
-  qa_guest_address format;
+  qa_guest_core_address format;
   bool has_arguments;
-  qa_guest_address arguments;
+  qa_guest_core_address arguments;
   bool has_buffer;
-  qa_guest_address buffer;
+  qa_guest_core_address buffer;
   int64_t capacity;
   qa_guest_format_termination termination;
   bool continue_count;

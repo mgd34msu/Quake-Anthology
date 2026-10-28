@@ -6,7 +6,7 @@
  * Q2WeaponContext surface (TS owner:
  * src/content/q2/foundation/weapons/player.ts + types.ts). The
  * landed qa_q2w_weapons operates on the qa_q2f_game mirror stack;
- * composition must adapt it to qa_q2mp_weapons. Plain TS Errors abort
+ * composition must adapt it to qa_q2mp_weapons_port. Plain TS Errors abort
  * via qa_q2f_error. GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_Q2_MULTIPLAYER_CTF_TYPES_H
@@ -48,7 +48,7 @@ typedef struct qa_q2mp_weapon_state {
   qa_vec3 kick_origin, kick_angles;
   double kick_time, kick_until, kick_duration;
 } qa_q2mp_weapon_state;
-typedef struct qa_q2mp_weapons qa_q2mp_weapons;
+typedef struct qa_q2mp_weapons_port qa_q2mp_weapons_port;
 typedef struct qa_q2mp_weapon_context {
   qa_owned_actor actor; /* TS self (actor + view_height) */
   double view_height;
@@ -62,8 +62,8 @@ typedef struct qa_q2mp_weapon_context {
 typedef struct qa_q2mp_weapon_extension {
   const qa_q2f_weapon_definition *definition;
   void *ctx;
-  void (*fire)(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons);
-  void (*think)(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons *weapons);
+  void (*fire)(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
+  void (*think)(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
   const char *selection_requested; /* NULL = none */
   bool (*selection_choose)(void *ctx, qa_owned_actor self, double view_height, qa_q2_game_services *game, qa_q2mp_weapon_state *state);
 } qa_q2mp_weapon_extension;
@@ -75,7 +75,7 @@ typedef struct qa_q2mp_source_rules {
   void (*haste_sound)(void *ctx, qa_q2mp_weapon_context *context);
   void (*post_native_think)(void *ctx, qa_q2mp_weapon_context *context, void *repeat_ctx, void (*repeat)(void *repeat_ctx));
 } qa_q2mp_source_rules;
-struct qa_q2mp_weapons {
+struct qa_q2mp_weapons_port {
   void *ctx;
   qa_q2mp_weapon_state *(*get_state)(void *ctx, qa_actor_id actor); /* NULL = undefined */
   bool (*get_input)(void *ctx, qa_actor_id actor, qa_q2mp_weapon_input *out);
@@ -198,7 +198,7 @@ void qa_q2_ctf_match_state_set_election(qa_q2_ctf_match_state *state, qa_q2_ctf_
 typedef struct qa_q2_ctf_hooks {
   void *ctx;
   qa_q2_item_module *items;
-  qa_q2mp_weapons *weapons;
+  qa_q2mp_weapons_port *weapons;
   qa_q2mp_player_state *(*player)(void *ctx, qa_actor_id actor); /* NULL = TS null */
   void (*set_skin)(void *ctx, qa_actor_id actor, const char *skin);
   void (*spawn_player)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game);

@@ -27,6 +27,7 @@
 #include "qa/app/bootstrap/weapon_behavior_tool_options.h"
 #include "qa/app/bootstrap/weapon_behavior_selection.h"
 #include "qa/app/bootstrap/weapon_view.h"
+#include "qa/content/q2/rerelease/types.h"
 #include "qa/contracts/common.h"
 #include "qa/core/cvars/index.h"
 
@@ -265,7 +266,30 @@ static void test_pump(void) {
   qa_app_remote_seat_pump_destroy(pump);
 }
 
+static void test_rerelease_fog(void) {
+  /* Fog rides the real RereleaseFog (fog.h), no host fog callbacks. */
+  qa_app_rerelease_host host; memset(&host, 0, sizeof host);
+  qa_actor_id actor; memset(&actor, 0, sizeof actor); actor.slot = 1;
+  qa_app_rerelease_seat seat; memset(&seat, 0, sizeof seat);
+  seat.actor = actor;
+  qa_app_rerelease_presentation *p =
+      qa_app_rerelease_presentation_create(host, &seat, 1, NULL);
+  CHECK(p != NULL);
+  qa_q2_fog_state on = qa_q2_create_fog();
+  on.fog.density = 0.6; on.fog.color = (qa_vec3){0.2, 0.3, 0.4}; on.fog.sky_factor = 1;
+  qa_app_rerelease_event event; memset(&event, 0, sizeof event);
+  event.kind = "q2-rerelease"; event.event_kind = "fog";
+  event.actor = actor; event.fog_value = on; event.seconds = 2;
+  qa_app_rerelease_receive(p, &event, 1);
+  qa_app_rerelease_view view = qa_app_rerelease_view_of(p, actor, 2);
+  CHECK(view.has_fog);
+  CHECK(fabs(view.fog.fog.density - 0.6) < 1e-6);
+  CHECK(fabs(view.fog.fog.color.x - 0.2) < 1e-6);
+  qa_app_rerelease_presentation_destroy(p);
+}
+
 int main(void) {
+  test_rerelease_fog();
   test_save_requests();
   test_startup_commands();
   test_team_arena_demo();

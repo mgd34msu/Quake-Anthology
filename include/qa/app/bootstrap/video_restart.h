@@ -7,6 +7,7 @@
 #define QA_APP_BOOTSTRAP_VIDEO_RESTART_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/capture.h"
 #include "qa/app/bootstrap/renderer.h"
 #include "qa/contracts/common.h"
 #include "qa/contracts/identity.h"
@@ -18,15 +19,9 @@ typedef struct qa_app_prepared_video_presentation {
   void (*validate_publication)(void *ctx);
   const char *(*restart)(void *ctx); /* error or NULL */
 } qa_app_prepared_video_presentation;
-/* TS ApplicationCapture fields read here (capture.ts mirror). */
-typedef struct qa_app_video_capture_mirror {
-  void *ctx;
-  bool (*pending_readback)(void *ctx);
-  const char *(*drain)(void *ctx);
-} qa_app_video_capture_mirror;
 typedef struct qa_app_video_restart_host {
   void *ctx;
-  bool (*capture)(void *ctx, qa_app_video_capture_mirror *out); /* false = TS null */
+  qa_app_capture *(*capture)(void *ctx); /* NULL = TS null */
   bool (*render_worker)(void *ctx, bool *out);                  /* false = absent */
   bool (*prepare)(void *ctx, qa_app_prepared_video_presentation *out); /* false = TS null */
   void (*publish_window)(void *ctx, qa_sdl_window *window);

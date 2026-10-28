@@ -417,7 +417,7 @@ static void test_q2_typescript_and_q3(void) {
   free(game2.clients);
   CHECK_ABORTS(qa_decode_q2_typescript_game("{\"stamp\":\"nope\",\"clients\":[]}", &game));
 
-  qa_q3_client_session session = qa_decode_q3_client_session("1 2 3 4 5 6 7", 13);
+  qa_persist_q3_client_session session = qa_decode_q3_client_session("1 2 3 4 5 6 7", 13);
   CHECK(session.team == 1 && session.spectator_time == 2 && session.wins == 5 &&
         session.team_leader == 7);
   char *encoded = qa_encode_q3_client_session(session);

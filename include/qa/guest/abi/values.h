@@ -2,7 +2,7 @@
  * Port of src/guest/abi/values.ts: ABI value layouts and little-endian
  * encode/decode. Also hosts the shared guest call/module/image shapes from
  * src/contracts/execution.ts and src/guest/core/contracts.ts that the guest
- * modules consume, built on qa_guest_address/qa_mapped_guest_memory from
+ * modules consume, built on qa_guest_core_address/qa_mapped_guest_memory from
  * core/registers.h (the contracts/execution.h spellings of GuestAddress
  * differ and must not be mixed into guest code). TS `number` layout fields
  * become int64_t; the Number.isSafeInteger checks collapse to range checks.
@@ -61,7 +61,7 @@ typedef struct qa_call_value {
   int64_t int64_value;
   uint64_t uint64_value;
   bool pointer_has; /* false: TS null */
-  qa_guest_address pointer;
+  qa_guest_core_address pointer;
   qa_abi_layout layout; /* aggregate */
   uint8_t *bytes;       /* aggregate, owned */
   size_t bytes_len;
@@ -75,7 +75,7 @@ qa_call_value qa_call_int64(int64_t value);
 qa_call_value qa_call_uint64(uint64_t value);
 qa_call_value qa_call_float32(double value); /* stored frounded, like TS callers */
 qa_call_value qa_call_float64(double value);
-qa_call_value qa_call_pointer(bool has, qa_guest_address value);
+qa_call_value qa_call_pointer(bool has, qa_guest_core_address value);
 /* Copies bytes. Returns void-kind value with bytes NULL on OOM. */
 qa_call_value qa_call_aggregate(qa_abi_layout layout, const uint8_t *bytes, size_t len);
 void qa_call_value_free(qa_call_value *value);
@@ -112,14 +112,14 @@ typedef enum qa_guest_callback_ref_kind {
   QA_CALLBACK_REF_NONE = 0, QA_CALLBACK_REF_TYPESCRIPT, QA_CALLBACK_REF_QUAKEC,
   QA_CALLBACK_REF_QVM, QA_CALLBACK_REF_NATIVE_GUEST
 } qa_guest_callback_ref_kind;
-typedef struct qa_guest_call_context qa_guest_call_context;
-struct qa_guest_call_context {
+typedef struct qa_guest_core_call_context qa_guest_core_call_context;
+struct qa_guest_core_call_context {
   qa_guest_module_identity module;
   qa_guest_callback_ref_kind callback_kind;
   qa_guest_module_identity callback_module;
-  qa_guest_address callback_address;
+  qa_guest_core_address callback_address;
   qa_guest_native_abi callback_abi;
-  const qa_guest_call_context *parent;
+  const qa_guest_core_call_context *parent;
   const void *self_view; /* TS RawEntityView, opaque to guest modules */
   const void *other;
 };
@@ -144,47 +144,47 @@ typedef struct qa_guest_mapping {
 /* --- MappedGuestMemory operations beyond core/registers.h --- */
 typedef struct qa_mapped_memory_ext {
   void *ctx;
-  qa_guest_address (*map)(void *ctx, uint64_t base, size_t byte_length, qa_guest_permissions permissions,
+  qa_guest_core_address (*map)(void *ctx, uint64_t base, size_t byte_length, qa_guest_permissions permissions,
                           const char *label, const uint8_t *bytes, size_t bytes_len);
-  qa_guest_address (*allocate)(void *ctx, size_t byte_length, bool has_alignment, uint64_t alignment,
+  qa_guest_core_address (*allocate)(void *ctx, size_t byte_length, bool has_alignment, uint64_t alignment,
                                bool has_permissions, qa_guest_permissions permissions, const char *label);
-  void (*unmap)(void *ctx, qa_guest_address address, size_t byte_length);
-  void (*protect)(void *ctx, qa_guest_address address, size_t byte_length, qa_guest_permissions permissions);
+  void (*unmap)(void *ctx, qa_guest_core_address address, size_t byte_length);
+  void (*protect)(void *ctx, qa_guest_core_address address, size_t byte_length, qa_guest_permissions permissions);
   const qa_guest_mapping *(*mappings)(void *ctx, size_t *count);
   /* SparseGuestMemory extras; NULL selects the generic copy/write path. */
-  void (*move)(void *ctx, qa_guest_address destination, qa_guest_address source, size_t byte_length);
-  void (*fill)(void *ctx, qa_guest_address address, size_t byte_length, int value);
-  int64_t (*find_zero)(void *ctx, qa_guest_address address, size_t maximum); /* -1: none */
+  void (*move)(void *ctx, qa_guest_core_address destination, qa_guest_core_address source, size_t byte_length);
+  void (*fill)(void *ctx, qa_guest_core_address address, size_t byte_length, int value);
+  int64_t (*find_zero)(void *ctx, qa_guest_core_address address, size_t maximum); /* -1: none */
 } qa_mapped_memory_ext;
 
-qa_guest_address qa_gmem_map(const qa_mapped_memory_ext *ext, uint64_t base, size_t byte_length,
+qa_guest_core_address qa_gmem_map(const qa_mapped_memory_ext *ext, uint64_t base, size_t byte_length,
                              qa_guest_permissions permissions, const char *label,
                              const uint8_t *bytes, size_t bytes_len);
-qa_guest_address qa_gmem_allocate(const qa_mapped_memory_ext *ext, size_t byte_length,
+qa_guest_core_address qa_gmem_allocate(const qa_mapped_memory_ext *ext, size_t byte_length,
                                   bool has_alignment, uint64_t alignment,
                                   bool has_permissions, qa_guest_permissions permissions, const char *label);
-void qa_gmem_unmap(const qa_mapped_memory_ext *ext, qa_guest_address address, size_t byte_length);
-void qa_gmem_protect(const qa_mapped_memory_ext *ext, qa_guest_address address, size_t byte_length,
+void qa_gmem_unmap(const qa_mapped_memory_ext *ext, qa_guest_core_address address, size_t byte_length);
+void qa_gmem_protect(const qa_mapped_memory_ext *ext, qa_guest_core_address address, size_t byte_length,
                      qa_guest_permissions permissions);
 const qa_guest_mapping *qa_gmem_mappings(const qa_mapped_memory_ext *ext, size_t *count);
 
 /* Typed accessors over qa_mapped_guest_memory (MappedGuestMemory methods). */
-int8_t qa_gmem_read_i8(const qa_mapped_guest_memory *mem, qa_guest_address address);
-int16_t qa_gmem_read_i16(const qa_mapped_guest_memory *mem, qa_guest_address address);
-int32_t qa_gmem_read_i32(const qa_mapped_guest_memory *mem, qa_guest_address address);
-int64_t qa_gmem_read_i64(const qa_mapped_guest_memory *mem, qa_guest_address address);
-double qa_gmem_read_f32(const qa_mapped_guest_memory *mem, qa_guest_address address);
-double qa_gmem_read_f64(const qa_mapped_guest_memory *mem, qa_guest_address address);
-bool qa_gmem_read_pointer(const qa_mapped_guest_memory *mem, qa_guest_address address, qa_guest_address *out);
-uint64_t qa_gmem_read_pointer_raw(const qa_mapped_guest_memory *mem, qa_guest_address address);
-void qa_gmem_write_i8(const qa_mapped_guest_memory *mem, qa_guest_address address, int8_t value);
-void qa_gmem_write_i16(const qa_mapped_guest_memory *mem, qa_guest_address address, int16_t value);
-void qa_gmem_write_i32(const qa_mapped_guest_memory *mem, qa_guest_address address, int32_t value);
-void qa_gmem_write_i64(const qa_mapped_guest_memory *mem, qa_guest_address address, int64_t value);
-void qa_gmem_write_f32(const qa_mapped_guest_memory *mem, qa_guest_address address, double value);
-void qa_gmem_write_f64(const qa_mapped_guest_memory *mem, qa_guest_address address, double value);
-void qa_gmem_write_pointer(const qa_mapped_guest_memory *mem, qa_guest_address address,
-                           bool has, qa_guest_address value);
+int8_t qa_gmem_read_i8(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+int16_t qa_gmem_read_i16(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+int32_t qa_gmem_read_i32(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+int64_t qa_gmem_read_i64(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+double qa_gmem_read_f32(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+double qa_gmem_read_f64(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+bool qa_gmem_read_pointer(const qa_mapped_guest_memory *mem, qa_guest_core_address address, qa_guest_core_address *out);
+uint64_t qa_gmem_read_pointer_raw(const qa_mapped_guest_memory *mem, qa_guest_core_address address);
+void qa_gmem_write_i8(const qa_mapped_guest_memory *mem, qa_guest_core_address address, int8_t value);
+void qa_gmem_write_i16(const qa_mapped_guest_memory *mem, qa_guest_core_address address, int16_t value);
+void qa_gmem_write_i32(const qa_mapped_guest_memory *mem, qa_guest_core_address address, int32_t value);
+void qa_gmem_write_i64(const qa_mapped_guest_memory *mem, qa_guest_core_address address, int64_t value);
+void qa_gmem_write_f32(const qa_mapped_guest_memory *mem, qa_guest_core_address address, double value);
+void qa_gmem_write_f64(const qa_mapped_guest_memory *mem, qa_guest_core_address address, double value);
+void qa_gmem_write_pointer(const qa_mapped_guest_memory *mem, qa_guest_core_address address,
+                           bool has, qa_guest_core_address value);
 
 /* --- GuestSymbolName / GuestImport / GuestExport / GuestImage --- */
 typedef struct qa_guest_symbol_name {
@@ -197,14 +197,14 @@ typedef struct qa_guest_symbol_name {
 typedef struct qa_guest_import {
   const char *library;
   qa_guest_symbol_name symbol;
-  qa_guest_address slot;
+  qa_guest_core_address slot;
   bool weak;
 } qa_guest_import;
 
 typedef struct qa_guest_export {
   qa_guest_symbol_name symbol;
   bool is_forward;
-  qa_guest_address address; /* address target */
+  qa_guest_core_address address; /* address target */
   const char *forward_library;
   qa_guest_symbol_name forward_symbol;
 } qa_guest_export;
@@ -215,18 +215,18 @@ typedef struct qa_guest_tls_template {
   size_t initialized_len;
   size_t zero_fill_bytes;
   uint64_t alignment;
-  qa_guest_address *callbacks;
+  qa_guest_core_address *callbacks;
   size_t callback_count;
 } qa_guest_tls_template;
 
 typedef struct qa_guest_image {
   qa_guest_module_identity module;
   qa_guest_native_abi abi;
-  qa_guest_address base;
+  qa_guest_core_address base;
   uint64_t preferred_base;
   uint64_t byte_length;
   bool has_entry_point;
-  qa_guest_address entry_point;
+  qa_guest_core_address entry_point;
   qa_guest_mapping *mappings;
   size_t mapping_count;
   qa_guest_import *imports;
@@ -235,9 +235,9 @@ typedef struct qa_guest_image {
   size_t export_count;
   bool has_tls;
   qa_guest_tls_template tls;
-  qa_guest_address *initializers;
+  qa_guest_core_address *initializers;
   size_t initializer_count;
-  qa_guest_address *finalizers;
+  qa_guest_core_address *finalizers;
   size_t finalizer_count;
   qa_guest_unwind_region *unwind;
   size_t unwind_count;
@@ -251,7 +251,7 @@ typedef struct qa_guest_host_callback {
   const char *id;
   qa_guest_call_signature signature;
   void *ctx;
-  qa_call_result (*invoke)(void *ctx, const qa_guest_call_context *context,
+  qa_call_result (*invoke)(void *ctx, const qa_guest_core_call_context *context,
                            const qa_call_value *arguments, size_t argument_count);
 } qa_guest_host_callback;
 
@@ -260,7 +260,7 @@ typedef enum qa_guest_import_resolution_kind {
 } qa_guest_import_resolution_kind;
 typedef struct qa_guest_import_resolution {
   qa_guest_import_resolution_kind kind;
-  qa_guest_address address; /* guest/host */
+  qa_guest_core_address address; /* guest/host */
   qa_guest_module_identity module; /* guest */
   const qa_guest_host_callback *callback; /* host */
   qa_guest_import import_; /* unresolved */

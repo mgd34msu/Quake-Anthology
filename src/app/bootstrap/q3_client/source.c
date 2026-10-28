@@ -75,7 +75,7 @@ static void push_command(qa_app_application_q3_source *s, const char *const *arg
     }
   }
 }
-static void apply_configstrings(qa_app_application_q3_source *s, const qa_app_q3_source_presentation_state *state) {
+static void apply_configstrings(qa_app_application_q3_source *s, const qa_app_q3_source_presentation_state_mirror *state) {
   char *fresh[1024];
   for (size_t i = 0; i < 1024; i++) fresh[i] = xstrdup("");
   for (size_t i = 0; i < state->configstring_count; i++) {
@@ -149,7 +149,7 @@ static void transport_player(const qa_q3_base_player_state_record *source, qa_q3
   }
 }
 qa_app_application_q3_source *qa_app_application_q3_source_create(
-    qa_actor_id current_actor, const qa_app_q3_source_presentation_state *initial,
+    qa_actor_id current_actor, const qa_app_q3_source_presentation_state_mirror *initial,
     qa_app_q3_source_callbacks callbacks) {
   qa_app_application_q3_source *s = calloc(1, sizeof *s);
   if (s == NULL) qa_range_error("Out of memory");
@@ -195,7 +195,7 @@ void qa_app_application_q3_source_assert_can_restart_round(qa_app_application_q3
   if (source->has_pending_round_time) qa_range_error("Local Q3 round restart is already pending");
 }
 void qa_app_application_q3_source_begin_round_restart(qa_app_application_q3_source *source, double bit,
-    const qa_app_q3_source_presentation_state *state) {
+    const qa_app_q3_source_presentation_state_mirror *state) {
   qa_app_application_q3_source_assert_can_restart_round(source);
   if (bit == source->snapshot_server_bit || state->product != source->product || state->time < source->time)
     qa_range_error("Invalid local Q3 restart epoch");
@@ -208,7 +208,7 @@ void qa_app_application_q3_source_begin_round_restart(qa_app_application_q3_sour
   source->actor_count = 0;
 }
 void qa_app_application_q3_source_validate_round_actor(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state *state) {
+    const qa_app_q3_source_presentation_state_mirror *state) {
   bool listed = false;
   for (size_t i = 0; i < state->client_count; i++)
     if (state->clients[i].slot == source->client_number && qa_same_actor(state->clients[i].actor, actor)) listed = true;
@@ -219,7 +219,7 @@ void qa_app_application_q3_source_validate_round_actor(qa_app_application_q3_sou
     qa_range_error("Invalid local Q3 round actor binding");
 }
 void qa_app_application_q3_source_rebind_round(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state *state) {
+    const qa_app_q3_source_presentation_state_mirror *state) {
   qa_app_application_q3_source_validate_round_actor(source, actor, state);
   source->current_actor = actor;
   source->has_pending_round_time = false;
@@ -290,7 +290,7 @@ void qa_app_application_q3_source_receive_events(qa_app_application_q3_source *s
   }
 }
 void qa_app_application_q3_source_receive(qa_app_application_q3_source *source,
-    const qa_app_q3_source_presentation_state *state,
+    const qa_app_q3_source_presentation_state_mirror *state,
     const qa_app_q3_source_presentation_event *events, size_t event_count,
     const qa_actor_command *commands, size_t command_count) {
   if (source->has_pending_round_time)

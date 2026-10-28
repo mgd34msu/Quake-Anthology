@@ -8,11 +8,8 @@
  *    kind is an enum (TS kind strings in comments).
  *  - Plain TS Errors and RangeErrors abort via qa_range_error with
  *    the identical message.
- *  - Mirrors (TS owners not yet ported, removed when they land):
- *    qa_ui_hud_q2_app_layout mirrors Q2ApplicationLayout /
- *    q2ApplicationLayout (src/app/bootstrap/network/q2-layout.ts);
- *    qa_native_q2_inventory_readout mirrors NativeInventoryReadout
- *    (src/compat/q2/native-primary-inventory.ts).
+ *  - Q2ApplicationLayout and NativeInventoryReadout use their real
+ *    owner types (q2_layout.h / native_primary_inventory.h).
  *  - NativeQ2HudEnvironment is defined in q2_rerelease_layout.h
  *    (its TS owner) and only forward-declared here.
  * GPL-2.0-or-later.
@@ -23,6 +20,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "qa/app/bootstrap/network/q2_layout.h"
+#include "qa/compat/q2/native_primary_inventory.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/gameplay.h"
 #include "qa/contracts/math.h"
@@ -97,18 +96,10 @@ char *qa_native_q2_hud_ops_own(qa_native_q2_hud_operations *out, char *text);
 char *qa_native_q2_hud_ops_dup(qa_native_q2_hud_operations *out,
                                const char *text);
 
-/* Mirror: TS NativeInventoryReadout items row / readout
- * (src/compat/q2/native-primary-inventory.ts). */
-typedef struct qa_native_q2_inventory_item {
-  qa_item_id item;
-  const char *label;
-  double count;
-} qa_native_q2_inventory_item;
-typedef struct qa_native_q2_inventory_readout {
-  const qa_native_q2_inventory_item *items;
-  size_t item_count;
-  qa_item_id selected; /* nullable */
-} qa_native_q2_inventory_readout;
+/* TS NativeInventoryReadout row/readout: real owner types from
+ * compat/q2/native_primary_inventory.h. */
+typedef qa_compat_q2_native_inventory_row qa_native_q2_inventory_item;
+typedef qa_compat_q2_native_inventory_readout qa_native_q2_inventory_readout;
 
 /** TS NativeQ2HudArsenal. has_ flags mark TS undefined fields;
  * ammo has_count=false / has_icon=false are TS null. */
@@ -129,13 +120,9 @@ typedef struct qa_native_q2_hud_arsenal {
   double ammo_icon_aspect;
 } qa_native_q2_hud_arsenal;
 
-/* Mirror: TS Q2ApplicationLayout (src/app/bootstrap/network/
- * q2-layout.ts). n64_physics -1 is TS null. */
-typedef struct qa_ui_hud_q2_app_layout {
-  double models, sounds, images, lights, items, player_skins;
-  double max_models, max_sounds, max_images, max_config_strings;
-  double map_checksum, max_clients, air_accelerate, n64_physics;
-} qa_ui_hud_q2_app_layout;
+/* TS Q2ApplicationLayout: real owner type from
+ * app/bootstrap/network/q2_layout.h (has_n64_physics false = TS null). */
+typedef qa_app_q2_layout qa_ui_hud_q2_app_layout;
 qa_ui_hud_q2_app_layout qa_ui_hud_q2_application_layout_for(
     qa_q2_protocol_identity protocol);
 

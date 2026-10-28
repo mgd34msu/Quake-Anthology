@@ -82,9 +82,9 @@ void qa_pe_image_reader_range(const qa_pe_image_reader *reader, uint32_t rva, si
   if (at != finish)
     qa_pe_error(reader->stage, "RVA 0x%x crosses an unmapped image gap", rva);
 }
-qa_guest_address qa_pe_image_reader_address(const qa_pe_image_reader *reader, uint32_t rva, size_t size) {
+qa_guest_core_address qa_pe_image_reader_address(const qa_pe_image_reader *reader, uint32_t rva, size_t size) {
   qa_pe_image_reader_range(reader, rva, size);
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   if (!qa_memory_pointer(reader->memory, reader->base + rva, &address))
     qa_pe_error(reader->stage, "null image address");
   return address;
@@ -96,7 +96,7 @@ uint32_t qa_pe_image_reader_rva(const qa_pe_image_reader *reader, uint64_t va, s
   qa_pe_image_reader_range(reader, rva, size);
   return rva;
 }
-qa_guest_address qa_pe_image_reader_executable(const qa_pe_image_reader *reader, uint32_t rva) {
+qa_guest_core_address qa_pe_image_reader_executable(const qa_pe_image_reader *reader, uint32_t rva) {
   const qa_pe_section *found = NULL;
   for (size_t i = 0; i < reader->pe->section_count; i++) {
     const qa_pe_section *section = &reader->pe->sections[i];

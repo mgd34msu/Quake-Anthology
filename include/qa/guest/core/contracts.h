@@ -77,9 +77,9 @@ void qa_guest_memory_snapshot_free(qa_guest_memory_snapshot *snapshot);
 /* TS ReadonlyMap<ModuleIdentity, GuestAddress> -> parallel arrays. */
 typedef struct qa_guest_thread_tls {
   uint64_t thread_id;
-  qa_guest_address thread_pointer;
+  qa_guest_core_address thread_pointer;
   const qa_guest_module_ref *modules;
-  const qa_guest_address *addresses;
+  const qa_guest_core_address *addresses;
   size_t module_count;
 } qa_guest_thread_tls;
 

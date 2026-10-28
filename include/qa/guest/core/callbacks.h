@@ -16,13 +16,13 @@
 #include "qa/guest/core/contracts.h"
 #include "qa/guest/core/memory.h"
 
-typedef enum qa_guest_callback_binding { QA_CALLBACK_BOUND = 0, QA_CALLBACK_UNBOUND } qa_guest_callback_binding;
+typedef enum qa_guest_callback_binding_state { QA_CALLBACK_BOUND = 0, QA_CALLBACK_UNBOUND } qa_guest_callback_binding_state;
 
 typedef struct qa_saved_host_callback_address {
   qa_callback_id id;
   uint64_t byte_offset;
   qa_guest_call_signature signature;
-  qa_guest_callback_binding binding;
+  qa_guest_callback_binding_state binding;
 } qa_saved_host_callback_address;
 
 typedef struct qa_guest_callback_entry qa_guest_callback_entry; /* opaque handle target */
@@ -46,21 +46,21 @@ uint64_t qa_guest_callback_table_entry_revision(const qa_guest_callback_table *t
 bool qa_guest_callback_table_instruction_unhooked(const qa_guest_callback_table *table, uint64_t byte_offset);
 
 /* accepts: NULL for plain bind() entries. Returns a removal handle. */
-qa_guest_entry_handle qa_guest_callback_table_bind_entry(qa_guest_callback_table *table, qa_guest_address address,
+qa_guest_entry_handle qa_guest_callback_table_bind_entry(qa_guest_callback_table *table, qa_guest_core_address address,
                                                          const qa_guest_host_callback *callback,
                                                          bool (*accepts)(void *ctx), void *accepts_ctx);
 void qa_guest_callback_table_unbind_entry(qa_guest_callback_table *table, qa_guest_entry_handle handle);
-qa_guest_entry_handle qa_guest_callback_table_observe_entry(qa_guest_callback_table *table, qa_guest_address address,
+qa_guest_entry_handle qa_guest_callback_table_observe_entry(qa_guest_callback_table *table, qa_guest_core_address address,
                                                             void (*before)(void *ctx), void *ctx);
 void qa_guest_callback_table_unobserve_entry(qa_guest_callback_table *table, qa_guest_entry_handle handle);
-bool qa_guest_callback_table_enter(qa_guest_callback_table *table, qa_guest_address address);
-qa_guest_address qa_guest_callback_table_bind(qa_guest_callback_table *table, const qa_guest_host_callback *callback);
+bool qa_guest_callback_table_enter(qa_guest_callback_table *table, qa_guest_core_address address);
+qa_guest_core_address qa_guest_callback_table_bind(qa_guest_callback_table *table, const qa_guest_host_callback *callback);
 void qa_guest_callback_table_unbind(qa_guest_callback_table *table, qa_callback_id id);
-bool qa_guest_callback_table_address(const qa_guest_callback_table *table, qa_callback_id id, qa_guest_address *out);
+bool qa_guest_callback_table_address(const qa_guest_callback_table *table, qa_callback_id id, qa_guest_core_address *out);
 bool qa_guest_callback_table_has_bound_trap(const qa_guest_callback_table *table, uint64_t byte_offset);
-const qa_guest_host_callback *qa_guest_callback_table_resolve(qa_guest_callback_table *table, qa_guest_address address);
-qa_call_result qa_guest_callback_table_invoke(qa_guest_callback_table *table, qa_guest_address address,
-                                                    const qa_guest_call_context *context,
+const qa_guest_host_callback *qa_guest_callback_table_resolve(qa_guest_callback_table *table, qa_guest_core_address address);
+qa_call_result qa_guest_callback_table_invoke(qa_guest_callback_table *table, qa_guest_core_address address,
+                                                    const qa_guest_core_call_context *context,
                                                     const qa_call_value *arguments, size_t argument_count);
 /* Malloc'd array; caller frees the array only. Order is bind order
  * (TS Map insertion order over #byId). */

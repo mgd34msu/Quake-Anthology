@@ -25,36 +25,57 @@ bool qa_q3_mirror_address_copy(qa_q3_mirror_address *dst, const qa_q3_mirror_add
   return true;
 }
 void qa_q3_mirror_address_destroy(qa_q3_mirror_address *a) { free(a->loopback_id); free(a->ipv6_host); a->loopback_id = NULL; a->ipv6_host = NULL; }
-char *qa_q3_mirror_address_key(const qa_q3_mirror_address *a, bool include_port) {
-  char buf[512];
+/* Borrowed-string view of a mirror address as the landed owner
+ * type; read-only use (key/same) only, never destroyed. */
+static qa_net_address net_view(const qa_q3_mirror_address *a) {
+  qa_net_address out;
+  memset(&out, 0, sizeof out);
   switch (a->kind) {
-    case QA_Q3_ADDR_LOOPBACK: snprintf(buf, sizeof buf, "loopback:%s", a->loopback_id ? a->loopback_id : ""); break;
-    case QA_Q3_ADDR_IPV4:
-      if (include_port) snprintf(buf, sizeof buf, "%u.%u.%u.%u:%lld", a->host[0], a->host[1], a->host[2], a->host[3], (long long)a->port);
-      else snprintf(buf, sizeof buf, "%u.%u.%u.%u", a->host[0], a->host[1], a->host[2], a->host[3]);
-      break;
-    case QA_Q3_ADDR_IPV6:
-      if (include_port) snprintf(buf, sizeof buf, "[%s]:%lld", a->ipv6_host ? a->ipv6_host : "", (long long)a->port);
-      else snprintf(buf, sizeof buf, "[%s]", a->ipv6_host ? a->ipv6_host : "");
-      break;
-    case QA_Q3_ADDR_IPX: {
-      char node[13]; for (int i = 0; i < 6; i++) snprintf(node + i * 2, 3, "%02x", a->node[i]);
-      if (include_port) snprintf(buf, sizeof buf, "ipx:%08llx:%s:%lld", (unsigned long long)(uint32_t)a->network, node, (long long)a->port);
-      else snprintf(buf, sizeof buf, "ipx:%08llx:%s", (unsigned long long)(uint32_t)a->network, node);
-      break;
-    }
+    case QA_Q3_ADDR_IPV4: out.kind = QA_NET_IPV4; memcpy(out.ipv4, a->host, 4); break;
+    case QA_Q3_ADDR_IPV6: out.kind = QA_NET_IPV6; out.host = a->ipv6_host; break;
+    case QA_Q3_ADDR_IPX:
+      out.kind = QA_NET_IPX; out.network = (uint32_t)a->network; memcpy(out.node, a->node, 6); break;
+    case QA_Q3_ADDR_LOOPBACK: out.kind = QA_NET_LOOPBACK; out.host = a->loopback_id; break;
   }
-  return xstrdup(buf);
+  out.port = a->port;
+  return out;
+}
+bool qa_q3_address_to_net(const qa_q3_address *in, qa_net_address *out) {
+  *out = net_view(in);
+  const char *text = in->kind == QA_Q3_ADDR_IPV6 ? in->ipv6_host
+                     : in->kind == QA_Q3_ADDR_LOOPBACK ? in->loopback_id : NULL;
+  out->host = NULL;
+  if (text != NULL) {
+    out->host = xstrdup(text);
+    if (out->host == NULL) return false;
+  }
+  return true;
+}
+bool qa_q3_address_from_net(const qa_net_address *in, qa_q3_address *out) {
+  memset(out, 0, sizeof *out);
+  switch (in->kind) {
+    case QA_NET_IPV4: out->kind = QA_Q3_ADDR_IPV4; memcpy(out->host, in->ipv4, 4); break;
+    case QA_NET_IPV6:
+      out->kind = QA_Q3_ADDR_IPV6;
+      if (in->host != NULL) { out->ipv6_host = xstrdup(in->host); if (out->ipv6_host == NULL) return false; }
+      break;
+    case QA_NET_IPX:
+      out->kind = QA_Q3_ADDR_IPX; out->network = (int64_t)in->network; memcpy(out->node, in->node, 6); break;
+    case QA_NET_LOOPBACK:
+      out->kind = QA_Q3_ADDR_LOOPBACK;
+      if (in->host != NULL) { out->loopback_id = xstrdup(in->host); if (out->loopback_id == NULL) return false; }
+      break;
+  }
+  out->port = in->port;
+  return true;
+}
+char *qa_q3_mirror_address_key(const qa_q3_mirror_address *a, bool include_port) {
+  qa_net_address view = net_view(a);
+  return qa_net_address_key(&view, include_port);
 }
 bool qa_q3_mirror_same_address(const qa_q3_mirror_address *a, const qa_q3_mirror_address *b, bool include_port) {
-  if (a->kind != b->kind) return false;
-  switch (a->kind) {
-    case QA_Q3_ADDR_LOOPBACK: return strcmp(a->loopback_id ? a->loopback_id : "", b->loopback_id ? b->loopback_id : "") == 0;
-    case QA_Q3_ADDR_IPV4: return memcmp(a->host, b->host, 4) == 0 && (!include_port || a->port == b->port);
-    case QA_Q3_ADDR_IPV6: return strcmp(a->ipv6_host ? a->ipv6_host : "", b->ipv6_host ? b->ipv6_host : "") == 0 && (!include_port || a->port == b->port);
-    case QA_Q3_ADDR_IPX: return a->network == b->network && memcmp(a->node, b->node, 6) == 0 && (!include_port || a->port == b->port);
-  }
-  return false;
+  qa_net_address va = net_view(a), vb = net_view(b);
+  return qa_net_same_address(&va, &vb, include_port);
 }
 static void address_text(const qa_q3_address *a, char *buf, size_t n) {
   switch (a->kind) {

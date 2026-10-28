@@ -38,11 +38,11 @@ typedef struct qa_pe_unwind_record {
 void qa_pe_unwind_records_free(qa_pe_unwind_record *records, size_t count);
 
 typedef struct qa_pe_load_configuration {
-  qa_guest_address address;
+  qa_guest_core_address address;
   uint8_t *bytes; /* owned */
   size_t bytes_len;
   bool has_security_cookie, has_guard_check, has_guard_dispatch;
-  qa_guest_address security_cookie_address, guard_check_slot, guard_dispatch_slot;
+  qa_guest_core_address security_cookie_address, guard_check_slot, guard_dispatch_slot;
   uint32_t guard_flags;
 } qa_pe_load_configuration;
 
@@ -50,7 +50,7 @@ typedef struct qa_pe_image {
   qa_guest_image image;
   qa_pe_file pe; /* owned */
   bool has_tls_index;
-  qa_guest_address tls_index_address;
+  qa_guest_core_address tls_index_address;
   bool has_load_configuration;
   qa_pe_load_configuration load_configuration;
   qa_pe_unwind_record *unwind_records; /* owned */
@@ -77,9 +77,9 @@ void qa_pe_image_reader_init(qa_pe_image_reader *reader, uint8_t *bytes, size_t 
                              qa_pe_stage stage);
 qa_pe_image_reader qa_pe_image_reader_for_stage(const qa_pe_image_reader *reader, qa_pe_stage stage);
 void qa_pe_image_reader_range(const qa_pe_image_reader *reader, uint32_t rva, size_t size);
-qa_guest_address qa_pe_image_reader_address(const qa_pe_image_reader *reader, uint32_t rva, size_t size);
+qa_guest_core_address qa_pe_image_reader_address(const qa_pe_image_reader *reader, uint32_t rva, size_t size);
 uint32_t qa_pe_image_reader_rva(const qa_pe_image_reader *reader, uint64_t va, size_t size);
-qa_guest_address qa_pe_image_reader_executable(const qa_pe_image_reader *reader, uint32_t rva);
+qa_guest_core_address qa_pe_image_reader_executable(const qa_pe_image_reader *reader, uint32_t rva);
 uint16_t qa_pe_image_reader_u16(const qa_pe_image_reader *reader, uint32_t rva);
 uint32_t qa_pe_image_reader_u32(const qa_pe_image_reader *reader, uint32_t rva);
 uint64_t qa_pe_image_reader_pointer(const qa_pe_image_reader *reader, uint32_t rva);

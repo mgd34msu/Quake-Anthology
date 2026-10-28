@@ -33,15 +33,15 @@ size_t qa_guest_count(const qa_call_value *args, size_t count, size_t index) {
     qa_range_error("Guest byte count exceeds runtime allocation limit");
   return (size_t)value;
 }
-bool qa_guest_pointer_argument(const qa_call_value *args, size_t count, size_t index, qa_guest_address *out) {
+bool qa_guest_pointer_argument(const qa_call_value *args, size_t count, size_t index, qa_guest_core_address *out) {
   const qa_call_value *value = qa_guest_argument(args, count, index);
   if (value->kind != QA_CALL_POINTER) type_error("Guest pointer required");
   if (!value->pointer_has) return false;
   *out = value->pointer;
   return true;
 }
-qa_guest_address qa_guest_required_pointer(const qa_call_value *args, size_t count, size_t index) {
-  qa_guest_address address = {0};
+qa_guest_core_address qa_guest_required_pointer(const qa_call_value *args, size_t count, size_t index) {
+  qa_guest_core_address address = {0};
   if (!qa_guest_pointer_argument(args, count, index, &address))
     type_error("Nonnull guest pointer required");
   return address;
@@ -49,7 +49,7 @@ qa_guest_address qa_guest_required_pointer(const qa_call_value *args, size_t cou
 
 static bool managed_sparse(const qa_mapped_guest_memory *memory) { return memory->managed_sparse; }
 
-uint64_t qa_read_unsigned(const qa_mapped_guest_memory *memory, qa_guest_address address, int width) {
+uint64_t qa_read_unsigned(const qa_mapped_guest_memory *memory, qa_guest_core_address address, int width) {
   if (managed_sparse(memory)) {
     switch (width) {
       case 1: return qa_memory_read_u8(memory, address);
@@ -67,7 +67,7 @@ uint64_t qa_read_unsigned(const qa_mapped_guest_memory *memory, qa_guest_address
   if (bytes != stack_bytes) free(bytes);
   return value;
 }
-void qa_write_unsigned(const qa_mapped_guest_memory *memory, qa_guest_address address, int width, uint64_t value) {
+void qa_write_unsigned(const qa_mapped_guest_memory *memory, qa_guest_core_address address, int width, uint64_t value) {
   if (managed_sparse(memory)) {
     switch (width) {
       case 1: qa_memory_write_u8(memory, address, (uint8_t)value); return;
@@ -83,16 +83,16 @@ void qa_write_unsigned(const qa_mapped_guest_memory *memory, qa_guest_address ad
   qa_memory_write(memory, address, bytes, (size_t)width);
   if (bytes != stack_bytes) free(bytes);
 }
-bool qa_read_pointer(const qa_mapped_guest_memory *memory, qa_guest_address address, qa_guest_address *out) {
+bool qa_read_pointer(const qa_mapped_guest_memory *memory, qa_guest_core_address address, qa_guest_core_address *out) {
   return qa_memory_pointer(memory, qa_read_unsigned(memory, address, memory->pointer_bytes), out);
 }
-void qa_write_pointer(const qa_mapped_guest_memory *memory, qa_guest_address address,
-                      bool has, qa_guest_address value) {
+void qa_write_pointer(const qa_mapped_guest_memory *memory, qa_guest_core_address address,
+                      bool has, qa_guest_core_address value) {
   if (has) (void)qa_memory_offset(memory, value, 0);
   qa_write_unsigned(memory, address, memory->pointer_bytes, has ? value.byte_offset : 0);
 }
 void qa_move_bytes(const qa_mapped_guest_memory *memory, const qa_mapped_memory_ext *ext,
-                   qa_guest_address destination, qa_guest_address source, size_t byte_length) {
+                   qa_guest_core_address destination, qa_guest_core_address source, size_t byte_length) {
   if (managed_sparse(memory) && ext != NULL && ext->move != NULL) {
     ext->move(ext->ctx, destination, source, byte_length);
     return;
@@ -103,7 +103,7 @@ void qa_move_bytes(const qa_mapped_guest_memory *memory, const qa_mapped_memory_
   free(bytes);
 }
 void qa_fill_bytes(const qa_mapped_guest_memory *memory, const qa_mapped_memory_ext *ext,
-                   qa_guest_address address, size_t byte_length, int value) {
+                   qa_guest_core_address address, size_t byte_length, int value) {
   if (managed_sparse(memory) && ext != NULL && ext->fill != NULL) {
     ext->fill(ext->ctx, address, byte_length, value);
     return;
@@ -114,7 +114,7 @@ void qa_fill_bytes(const qa_mapped_guest_memory *memory, const qa_mapped_memory_
   free(bytes);
 }
 char *qa_read_string(const qa_mapped_guest_memory *memory, const qa_mapped_memory_ext *ext,
-                     qa_guest_address address, size_t maximum) {
+                     qa_guest_core_address address, size_t maximum) {
   if (managed_sparse(memory)) {
     size_t length = qa_string_length(memory, ext, address, maximum);
     char *text = xmalloc(length + 1);
@@ -135,7 +135,7 @@ char *qa_read_string(const qa_mapped_guest_memory *memory, const qa_mapped_memor
   return NULL;
 }
 size_t qa_string_length(const qa_mapped_guest_memory *memory, const qa_mapped_memory_ext *ext,
-                        qa_guest_address address, size_t maximum) {
+                        qa_guest_core_address address, size_t maximum) {
   if (managed_sparse(memory) && ext != NULL && ext->find_zero != NULL) {
     int64_t length = ext->find_zero(ext->ctx, address, maximum);
     if (length < 0) qa_range_error("Guest string exceeds checked maximum");
@@ -152,7 +152,7 @@ size_t qa_string_length(const qa_mapped_guest_memory *memory, const qa_mapped_me
   free(text);
   return length;
 }
-uint16_t *qa_read_string_wide(const qa_mapped_guest_memory *memory, qa_guest_address address,
+uint16_t *qa_read_string_wide(const qa_mapped_guest_memory *memory, qa_guest_core_address address,
                               size_t maximum, size_t *out_length) {
   uint16_t *text = xmalloc((maximum + 1) * sizeof(uint16_t));
   size_t length = 0;
@@ -198,7 +198,7 @@ size_t qa_native_allocation_bytes(size_t logical_bytes) {
   size_t rounded = (logical_bytes + 4095) / 4096 * 4096;
   return rounded < 4096 ? 4096 : rounded;
 }
-qa_guest_address qa_allocate_native_memory(const qa_mapped_memory_ext *ext, size_t logical_bytes,
+qa_guest_core_address qa_allocate_native_memory(const qa_mapped_memory_ext *ext, size_t logical_bytes,
                                            const char *label) {
   return qa_gmem_allocate(ext, qa_native_allocation_bytes(logical_bytes), true, 4096,
                           false, QA_PERM_READ_WRITE, label);

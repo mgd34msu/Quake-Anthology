@@ -471,7 +471,7 @@ typedef struct fake_actor {
   bool has_body;
   qa_body_state body;
   qa_actor_id ground_storage;
-  qa_body_link_state links;
+  qa_persist_body_link_state links;
   qa_actor_id linked_ground_storage;
   bool has_attachment;
   qa_body_attachment attachment;
@@ -541,7 +541,7 @@ static bool fake_body_read(void *ctx, qa_actor_id id, qa_body_state *out) {
   *out = actor->body;
   return true;
 }
-static bool fake_link_state(void *ctx, qa_actor_id id, qa_body_link_state *out) {
+static bool fake_link_state(void *ctx, qa_actor_id id, qa_persist_body_link_state *out) {
   fake_actor *actor = fake_find((fake_world *)ctx, id);
   if (actor == NULL || !actor->has_body) return false;
   *out = actor->links;
@@ -553,7 +553,7 @@ static bool fake_attachment(void *ctx, qa_actor_id id, qa_body_attachment *out) 
   *out = actor->attachment;
   return true;
 }
-static void fake_restore_links(void *ctx, qa_owned_actor owned, qa_body_link_state state) {
+static void fake_restore_links(void *ctx, qa_owned_actor owned, qa_persist_body_link_state state) {
   fake_actor *actor = fake_find((fake_world *)ctx, owned.id);
   if (actor == NULL) abort();
   actor->links = state;

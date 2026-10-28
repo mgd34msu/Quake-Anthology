@@ -20,13 +20,13 @@ static char *xstrdup(const char *text) {
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address slot(qa_system_v_iostreams *s, qa_guest_address a, int64_t o) {
+static qa_guest_core_address slot(qa_system_v_iostreams *s, qa_guest_core_address a, int64_t o) {
   return qa_cxx_abi_slot(&s->abi, a, o);
 }
-static void write_ptr(qa_system_v_iostreams *s, qa_guest_address a, bool has, qa_guest_address v) {
+static void write_ptr(qa_system_v_iostreams *s, qa_guest_core_address a, bool has, qa_guest_core_address v) {
   qa_gmem_write_pointer(s->host->memory, a, has, v);
 }
-static bool read_ptr(qa_system_v_iostreams *s, qa_guest_address a, qa_guest_address *out) {
+static bool read_ptr(qa_system_v_iostreams *s, qa_guest_core_address a, qa_guest_core_address *out) {
   return qa_gmem_read_pointer(s->host->memory, a, out);
 }
 
@@ -43,18 +43,18 @@ qa_system_v_ios_layout qa_system_v_ios_layout_for(int pointer_bytes, bool wide) 
 }
 
 static void initialize(qa_system_v_iostreams *streams);
-static qa_guest_address make_buffer(qa_system_v_iostreams *streams, qa_guest_address file,
+static qa_guest_core_address make_buffer(qa_system_v_iostreams *streams, qa_guest_core_address file,
                                     bool wide, qa_system_v_classic_locale *locale);
 static void construct(qa_system_v_iostreams *streams, const qa_system_v_standard_stream *stream,
-                      qa_guest_address buffer, qa_system_v_classic_locale *locale);
-static qa_guest_address ios_of(qa_system_v_iostreams *streams, qa_guest_address stream);
+                      qa_guest_core_address buffer, qa_system_v_classic_locale *locale);
+static qa_guest_core_address ios_of(qa_system_v_iostreams *streams, qa_guest_core_address stream);
 
 typedef struct ios_state {
   qa_system_v_iostreams *streams;
   int operation; /* 0 init-ctor, 1 init-dtor, 2 clear, 3 flush */
   bool wide;
 } ios_state;
-static qa_call_result ios_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result ios_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count) {
   ios_state *state = ctx;
   qa_system_v_iostreams *streams = state->streams;
@@ -76,7 +76,7 @@ static qa_call_result ios_impl(void *ctx, const qa_guest_call_context *context,
                                   state->wide, (int)qa_guest_integer(args, count, 1), context);
       return qa_call_void();
     case 3: {
-      qa_guest_address stream = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address stream = qa_guest_required_pointer(args, count, 0);
       qa_system_v_iostreams_flush(streams, stream, state->wide, context);
       return qa_call_pointer(true, stream);
     }
@@ -84,7 +84,7 @@ static qa_call_result ios_impl(void *ctx, const qa_guest_call_context *context,
   }
   return qa_call_void();
 }
-static qa_guest_address abi_function(qa_system_v_iostreams *streams, const char *name,
+static qa_guest_core_address abi_function(qa_system_v_iostreams *streams, const char *name,
                                      const qa_abi_storage *parameters, size_t parameter_count,
                                      bool result_is_void, qa_abi_storage result, int operation,
                                      bool wide) {
@@ -117,7 +117,7 @@ void qa_system_v_iostreams_init(qa_system_v_iostreams *streams, qa_system_v_serv
     int prefix = (input ? 2 : 1) * p;
     char *data_name = xmalloc(strlen(names[i]) + 8);
     (void)snprintf(data_name, strlen(names[i]) + 8, "_ZSt%zu%s", strlen(names[i]), names[i]);
-    qa_guest_address address = qa_cxx_abi_define_data(
+    qa_guest_core_address address = qa_cxx_abi_define_data(
         &streams->abi, data_name,
         (size_t)prefix + (size_t)qa_system_v_ios_layout_for(p, wide).size, NULL);
     free(data_name);
@@ -164,9 +164,9 @@ static void initialize(qa_system_v_iostreams *streams) {
   if (locale == NULL) plain_error("Classic locale was not constructed");
   for (int w = 0; w < 2; w++) {
     bool wide = w == 1;
-    qa_guest_address input_buffer = make_buffer(streams, streams->stdio.stdin_, wide, locale);
-    qa_guest_address output_buffer = make_buffer(streams, streams->stdio.stdout_, wide, locale);
-    qa_guest_address error_buffer = make_buffer(streams, streams->stdio.stderr_, wide, locale);
+    qa_guest_core_address input_buffer = make_buffer(streams, streams->stdio.stdin_, wide, locale);
+    qa_guest_core_address output_buffer = make_buffer(streams, streams->stdio.stdout_, wide, locale);
+    qa_guest_core_address error_buffer = make_buffer(streams, streams->stdio.stderr_, wide, locale);
     for (size_t i = 0; i < streams->stream_count; i++) {
       const qa_system_v_standard_stream *stream = &streams->streams[i];
       if (stream->wide != wide) continue;
@@ -195,19 +195,19 @@ static void initialize(qa_system_v_iostreams *streams) {
 }
 
 static void construct(qa_system_v_iostreams *streams, const qa_system_v_standard_stream *stream,
-                      qa_guest_address buffer, qa_system_v_classic_locale *locale) {
+                      qa_guest_core_address buffer, qa_system_v_classic_locale *locale) {
   qa_cxx_abi_data *abi = &streams->abi;
   qa_mapped_guest_memory *m = streams->host->memory;
   int p = m->pointer_bytes;
   qa_system_v_ios_layout layout = qa_system_v_ios_layout_for(p, stream->wide);
-  qa_guest_address ios = stream->ios;
+  qa_guest_core_address ios = stream->ios;
   char c = stream->wide ? 'w' : 'c';
-  qa_guest_address ios_base = qa_cxx_abi_type(abi, "St8ios_base", NULL, 0);
+  qa_guest_core_address ios_base = qa_cxx_abi_type(abi, "St8ios_base", NULL, 0);
   char basic_ios_name[80];
   (void)snprintf(basic_ios_name, sizeof basic_ios_name, "St9basic_iosI%cSt11char_traitsI%cEE",
                  c, c);
   qa_cxx_rtti_base basic_base = {ios_base, 0, 2};
-  qa_guest_address basic_ios = qa_cxx_abi_type(abi, xstrdup(basic_ios_name), &basic_base, 1);
+  qa_guest_core_address basic_ios = qa_cxx_abi_type(abi, xstrdup(basic_ios_name), &basic_base, 1);
   char name_buffer[96];
   const char *name;
   if (stream->wide) {
@@ -218,12 +218,12 @@ static void construct(qa_system_v_iostreams *streams, const qa_system_v_standard
     name = stream->input ? "Si" : "So";
   }
   qa_cxx_rtti_base type_base = {basic_ios, -3 * p, 3};
-  qa_guest_address type = qa_cxx_abi_type(abi, name, &type_base, 1);
+  qa_guest_core_address type = qa_cxx_abi_type(abi, name, &type_base, 1);
   int prefix = (stream->input ? 2 : 1) * p;
   /* Primary address point: virtual-base offset, offset-to-top, RTTI, then two destructors. */
   char *table_name = xmalloc(strlen(name) + 8);
   (void)snprintf(table_name, strlen(name) + 8, "_ZTV%s", name);
-  qa_guest_address table = {0};
+  qa_guest_core_address table = {0};
   bool has_table = qa_system_v_resolve_address(streams->host, "libstdc++.so.6", table_name,
                                                "GLIBCXX_3.4", &table);
   if (!has_table) {
@@ -275,9 +275,9 @@ typedef struct buf_state {
   int operation; /* 0 imbue, 1 setbuf, 2 sync, 3 showmanyc, 4 xsgetn, 5 underflow,
                     6 uflow, 7 pbackfail, 8 xsputn, 9 overflow */
 } buf_state;
-static qa_guest_address stream_file(qa_system_v_iostreams *streams, qa_guest_address buffer) {
+static qa_guest_core_address stream_file(qa_system_v_iostreams *streams, qa_guest_core_address buffer) {
   qa_mapped_guest_memory *m = streams->host->memory;
-  qa_guest_address file = {0};
+  qa_guest_core_address file = {0};
   if (!read_ptr(streams, slot(streams, buffer, 8 * m->pointer_bytes), &file))
     plain_error("Missing synchronized FILE");
   return file;
@@ -289,7 +289,7 @@ static qa_call_result signed_result(qa_system_v_iostreams *streams, size_t value
   return streams->host->memory->pointer_bytes == 4 ? qa_call_int32((int32_t)value)
                                                     : qa_call_int64((int64_t)value);
 }
-static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result buf_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count) {
   buf_state *state = ctx;
   qa_system_v_iostreams *streams = state->streams;
@@ -305,8 +305,8 @@ static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
           context));
     case 3: return signed_result(streams, 0);
     case 4: {
-      qa_guest_address buffer = qa_guest_required_pointer(args, count, 0);
-      qa_guest_address destination = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address buffer = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address destination = qa_guest_required_pointer(args, count, 1);
       int64_t requested = qa_guest_integer(args, count, 2);
       size_t read_count = 0;
       int last = -1;
@@ -327,19 +327,19 @@ static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
       return signed_result(streams, read_count);
     }
     case 5: {
-      qa_guest_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
+      qa_guest_core_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
       int value = qa_system_v_stdio_get(&streams->stdio, file, wide, context);
       return buf_result(state, qa_system_v_stdio_unget(&streams->stdio, file, value, wide));
     }
     case 6: {
-      qa_guest_address buffer = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address buffer = qa_guest_required_pointer(args, count, 0);
       int value = qa_system_v_stdio_get(&streams->stdio, stream_file(streams, buffer), wide,
                                          context);
       qa_memory_write_u32(m, slot(streams, buffer, 9 * p), (uint32_t)value);
       return buf_result(state, value);
     }
     case 7: {
-      qa_guest_address buffer = qa_guest_required_pointer(args, count, 0);
+      qa_guest_core_address buffer = qa_guest_required_pointer(args, count, 0);
       int64_t supplied = qa_guest_integer(args, count, 1);
       int value = supplied == -1 || supplied == 0xffffffffLL
           ? qa_gmem_read_i32(m, slot(streams, buffer, 9 * p)) : (int)supplied;
@@ -349,8 +349,8 @@ static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
       return buf_result(state, returned);
     }
     case 8: {
-      qa_guest_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
-      qa_guest_address source = qa_guest_required_pointer(args, count, 1);
+      qa_guest_core_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
+      qa_guest_core_address source = qa_guest_required_pointer(args, count, 1);
       int64_t requested = qa_guest_integer(args, count, 2);
       size_t written = 0;
       for (; (int64_t)written < requested; written++) {
@@ -361,7 +361,7 @@ static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
       return signed_result(streams, written);
     }
     case 9: {
-      qa_guest_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
+      qa_guest_core_address file = stream_file(streams, qa_guest_required_pointer(args, count, 0));
       int64_t value = qa_guest_integer(args, count, 1);
       return buf_result(state, value == -1 || value == 0xffffffffLL
           ? (qa_system_v_stdio_flush(&streams->stdio, file, context) == 0 ? 0 : -1)
@@ -371,7 +371,7 @@ static qa_call_result buf_impl(void *ctx, const qa_guest_call_context *context,
   }
   return qa_call_void();
 }
-static qa_guest_address buf_function(qa_system_v_iostreams *streams, const char *name,
+static qa_guest_core_address buf_function(qa_system_v_iostreams *streams, const char *name,
                                      const qa_abi_storage *parameters, size_t parameter_count,
                                      bool result_is_void, qa_abi_storage result, bool wide,
                                      int operation) {
@@ -382,7 +382,7 @@ static qa_guest_address buf_function(qa_system_v_iostreams *streams, const char 
                              result, impl, NULL);
 }
 
-static qa_guest_address make_buffer(qa_system_v_iostreams *streams, qa_guest_address file,
+static qa_guest_core_address make_buffer(qa_system_v_iostreams *streams, qa_guest_core_address file,
                                     bool wide, qa_system_v_classic_locale *locale) {
   qa_cxx_abi_data *abi = &streams->abi;
   qa_mapped_guest_memory *m = streams->host->memory;
@@ -392,22 +392,22 @@ static qa_guest_address make_buffer(qa_system_v_iostreams *streams, qa_guest_add
   (void)snprintf(name_buffer, sizeof name_buffer,
                  "N9__gnu_cxx18stdio_sync_filebufI%cSt11char_traitsI%cEEE", c, c);
   char *name = xstrdup(name_buffer);
-  qa_guest_address address = qa_system_v_allocate(streams->host, (size_t)(10 * p));
+  qa_guest_core_address address = qa_system_v_allocate(streams->host, (size_t)(10 * p));
   char base_name[80];
   (void)snprintf(base_name, sizeof base_name, "St15basic_streambufI%cSt11char_traitsI%cEE", c, c);
-  qa_guest_address base_type = qa_cxx_abi_type(abi, xstrdup(base_name), NULL, 0);
+  qa_guest_core_address base_type = qa_cxx_abi_type(abi, xstrdup(base_name), NULL, 0);
   qa_cxx_rtti_base base = {base_type, 0, 2};
-  qa_guest_address type = qa_cxx_abi_type(abi, name, &base, 1);
+  qa_guest_core_address type = qa_cxx_abi_type(abi, name, &base, 1);
   char *table_name = xmalloc(strlen(name) + 8);
   (void)snprintf(table_name, strlen(name) + 8, "_ZTV%s", name);
-  qa_guest_address table = {0};
+  qa_guest_core_address table = {0};
   bool has_table = qa_system_v_resolve_address(streams->host, "libstdc++.so.6", table_name,
                                                "GLIBCXX_3.4", &table);
   if (!has_table) {
     qa_abi_storage signed_storage = streams->host->signed_pointer_storage;
     qa_abi_storage character = wide ? QA_STORAGE_UINT32 : QA_STORAGE_INT32;
     qa_abi_storage ptr = QA_STORAGE_POINTER;
-    qa_guest_address entries[14];
+    qa_guest_core_address entries[14];
     char *fn = xmalloc(strlen(name) + 40);
     (void)snprintf(fn, strlen(name) + 40, "__guest_%s_destructor", name);
     entries[0] = qa_cxx_abi_unsupported(abi, fn);
@@ -470,42 +470,42 @@ static qa_guest_address make_buffer(qa_system_v_iostreams *streams, qa_guest_add
   return address;
 }
 
-static qa_guest_address ios_of(qa_system_v_iostreams *streams, qa_guest_address stream) {
+static qa_guest_core_address ios_of(qa_system_v_iostreams *streams, qa_guest_core_address stream) {
   qa_mapped_guest_memory *m = streams->host->memory;
-  qa_guest_address vptr = {0};
+  qa_guest_core_address vptr = {0};
   if (!read_ptr(streams, stream, &vptr)) type_error("Unconstructed guest stream");
   int64_t offset = m->pointer_bytes == 4
       ? qa_gmem_read_i32(m, slot(streams, vptr, -3 * m->pointer_bytes))
       : qa_gmem_read_i64(m, slot(streams, vptr, -3 * m->pointer_bytes));
   return qa_memory_offset(m, stream, offset);
 }
-void qa_system_v_iostreams_clear(qa_system_v_iostreams *streams, qa_guest_address ios, bool wide,
-                                 int state, const qa_guest_call_context *context) {
+void qa_system_v_iostreams_clear(qa_system_v_iostreams *streams, qa_guest_core_address ios, bool wide,
+                                 int state, const qa_guest_core_call_context *context) {
   (void)context;
   qa_mapped_guest_memory *m = streams->host->memory;
   qa_system_v_ios_layout layout = qa_system_v_ios_layout_for(m->pointer_bytes, wide);
-  qa_guest_address buffer = {0};
+  qa_guest_core_address buffer = {0};
   if (!read_ptr(streams, slot(streams, ios, layout.buffer), &buffer)) state |= 1;
   qa_memory_write_u32(m, slot(streams, ios, layout.state), (uint32_t)state);
   if (((uint32_t)state & qa_memory_read_u32(m, slot(streams, ios, layout.exceptions))) != 0)
     qa_unsupported_system_v_service("libstdc++.so.6", "__throw_ios_failure", "GLIBCXX_3.4",
                                     "guest iostream exception propagation is not implemented");
 }
-void qa_system_v_iostreams_flush(qa_system_v_iostreams *streams, qa_guest_address stream,
-                                 bool wide, const qa_guest_call_context *context) {
+void qa_system_v_iostreams_flush(qa_system_v_iostreams *streams, qa_guest_core_address stream,
+                                 bool wide, const qa_guest_core_call_context *context) {
   qa_mapped_guest_memory *m = streams->host->memory;
   int p = m->pointer_bytes;
   qa_system_v_ios_layout layout = qa_system_v_ios_layout_for(p, wide);
-  qa_guest_address ios = ios_of(streams, stream);
+  qa_guest_core_address ios = ios_of(streams, stream);
   if (qa_memory_read_u32(m, slot(streams, ios, layout.state)) != 0) return;
-  qa_guest_address tied = {0};
+  qa_guest_core_address tied = {0};
   if (read_ptr(streams, slot(streams, ios, layout.tie), &tied))
     qa_system_v_iostreams_flush(streams, tied, wide, context);
-  qa_guest_address buffer = {0};
+  qa_guest_core_address buffer = {0};
   if (!read_ptr(streams, slot(streams, ios, layout.buffer), &buffer)) return;
-  qa_guest_address vptr = {0};
+  qa_guest_core_address vptr = {0};
   if (!read_ptr(streams, buffer, &vptr)) plain_error("Stream buffer has no vtable");
-  qa_guest_address sync = {0};
+  qa_guest_core_address sync = {0};
   if (!read_ptr(streams, slot(streams, vptr, 6 * p), &sync))
     plain_error("Stream buffer has no sync method");
   for (int round = 0; round < 2; round++) {

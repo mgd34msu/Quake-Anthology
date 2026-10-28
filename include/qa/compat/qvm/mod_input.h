@@ -1,8 +1,8 @@
 /*
- * Port of src/compat/qvm/mod-input.ts. The user-command reader is
- * mirrored from src/compat/qvm/client-state-record.ts (parallel
- * slice). Applications/captures are pointer stacks; output() results
- * are malloc'd (caller frees).
+ * Port of src/compat/qvm/mod-input.ts. The user-command reader
+ * delegates to its landed owner in client_state_record.h (TS
+ * client-state-record.ts). Applications/captures are pointer stacks;
+ * output() results are malloc'd (caller frees).
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MOD_INPUT_H
@@ -30,7 +30,7 @@ typedef struct qa_qvm_mod_input_operations {
   void (*player_state)(void *ctx, qa_actor_id actor, qa_q3_player_state *out);
 } qa_qvm_mod_input_operations;
 
-typedef void (*qa_qvm_input_run_fn)(void *ctx);
+typedef void (*qa_qvm_mod_input_run_fn)(void *ctx);
 typedef void (*qa_qvm_input_remove_fn)(void *ctx);
 
 typedef struct qa_qvm_mod_input {
@@ -56,7 +56,7 @@ void qa_qvm_mod_input_open(qa_qvm_mod_input *input, qa_mod_client_application *a
 qa_mod_client_input_output *qa_qvm_mod_input_run_output(qa_qvm_mod_input *input,
                                                     const qa_qvm_mod_input_output *outputs, size_t output_count,
                                                     qa_mod_client_application *application,
-                                                    qa_qvm_input_run_fn run, void *run_ctx, size_t *out_count);
+                                                    qa_qvm_mod_input_run_fn run, void *run_ctx, size_t *out_count);
 void qa_qvm_mod_input_close(qa_qvm_mod_input *input);
 
 #endif

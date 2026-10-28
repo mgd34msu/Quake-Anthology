@@ -73,3 +73,40 @@ void qa_resolved_qvm_artifact_destroy(qa_resolved_qvm_artifact *artifact) {
   if (artifact == NULL) return;
   if (!artifact->is_typescript) qa_qvm_image_destroy(&artifact->image);
 }
+
+bool qa_qvm_artifact_bridge_init(qa_qvm_artifact_bridge *bridge,
+                                 const qa_resolved_qvm_artifact *artifact) {
+  memset(bridge, 0, sizeof *bridge);
+  if (artifact->is_typescript) return false;
+  const qa_qvm_image *image = &artifact->image;
+  if (image->instruction_count > 0) {
+    bridge->instructions = malloc(image->instruction_count * sizeof *bridge->instructions);
+    if (bridge->instructions == NULL) return false;
+    for (size_t i = 0; i < image->instruction_count; i++) {
+      bridge->instructions[i].opcode = (int32_t)image->instructions[i].opcode;
+      bridge->instructions[i].operand_width = image->instructions[i].operand_width;
+      bridge->instructions[i].operand = image->instructions[i].operand;
+      bridge->instructions[i].byte_offset = image->instructions[i].byte_offset;
+    }
+  }
+  bridge->view.module = artifact->module;
+  bridge->view.role = artifact->role;
+  bridge->view.has_abi_profile = artifact->has_abi_profile;
+  bridge->view.abi_profile = artifact->abi_profile;
+  bridge->view.instructions = bridge->instructions;
+  bridge->view.instruction_count = image->instruction_count;
+  bridge->view.initialized_data = image->initialized_data;
+  bridge->view.initialized_data_length = image->initialized_length;
+  bridge->view.data_length = image->data_length;
+  bridge->view.literal_length = image->literal_length;
+  bridge->view.bss_length = image->bss_length;
+  bridge->view.allocated_data_length = image->allocated_data_length;
+  return true;
+}
+
+void qa_qvm_artifact_bridge_destroy(qa_qvm_artifact_bridge *bridge) {
+  if (bridge == NULL) return;
+  free(bridge->instructions);
+  bridge->instructions = NULL;
+  memset(&bridge->view, 0, sizeof bridge->view);
+}

@@ -228,7 +228,7 @@ typedef struct scene_actor_entry {
 } scene_actor_entry;
 
 typedef struct body_mesh_ref {
-  qa_qvm_body_mesh *mesh;
+  size_t part_index; /* index, not pointer: parts may realloc */
   int64_t site;
 } body_mesh_ref;
 
@@ -248,7 +248,7 @@ typedef struct mesh_scope {
   player_scope *player;
   int64_t pointer;
   int32_t shader;
-  qa_qvm_body_mesh *output;
+  size_t output_index; /* into player->parts; resolved at use */
   bool active;
   struct mesh_scope *previous;
 } mesh_scope;
@@ -977,14 +977,15 @@ static bool scene_syscall(qa_qvm_mod_presentation *presentation, const qa_qvm_ho
         qa_qvm_source_ref_entity_record source;
         qa_qvm_read_ref_entity(&view, &source);
         if (strcmp(source.kind, "model") != 0) return false;
-        if (source.custom_shader == mesh->shader) mesh->output->base = true;
+        qa_qvm_body_mesh *output = &mesh->player->parts[mesh->output_index];
+        if (source.custom_shader == mesh->shader) output->base = true;
         else {
-          if (mesh->output->pass_count == mesh->output->pass_capacity) {
-            mesh->output->pass_capacity = mesh->output->pass_capacity == 0 ? 4 : mesh->output->pass_capacity * 2;
-            mesh->output->passes = realloc(mesh->output->passes, mesh->output->pass_capacity * sizeof *mesh->output->passes);
-            if (mesh->output->passes == NULL) qa_range_error("QVM memory allocation failed");
+          if (output->pass_count == output->pass_capacity) {
+            output->pass_capacity = output->pass_capacity == 0 ? 4 : output->pass_capacity * 2;
+            output->passes = realloc(output->passes, output->pass_capacity * sizeof *output->passes);
+            if (output->passes == NULL) qa_range_error("QVM memory allocation failed");
           }
-          mesh->output->passes[mesh->output->pass_count++] = source;
+          output->passes[output->pass_count++] = source;
         }
         *out = 0;
         return true;
@@ -1162,7 +1163,7 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
         for (size_t i = 0; i < state->call_count; i++) {
           memset(&player->parts[i], 0, sizeof player->parts[i]);
           player->parts[i].part = state->call_parts[i];
-          player->pending[i].mesh = &player->parts[i];
+          player->pending[i].part_index = i;
           player->pending[i].site = (int64_t)state->call_sites[i];
         }
         player->part_count = state->call_count;
@@ -1196,41 +1197,44 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
   int32_t pointer = call_word(call, declaration->body.mesh.entity_argument);
   int32_t entity_state = call_word(call, declaration->body.mesh.state_argument);
   const char *part = NULL;
-  qa_qvm_body_mesh *output = NULL;
+  bool has_output = false;
+  size_t output_index = 0;
   if (player != NULL && entity_state == player->state && call->has_caller_instruction) {
     for (size_t i = 0; i < state->call_count; i++)
       if ((int64_t)state->call_sites[i] == call->caller_instruction) part = state->call_parts[i];
     if (part != NULL) {
       for (size_t i = 0; i < player->pending_count; i++) {
         if (player->pending[i].site == call->caller_instruction) {
-          output = player->pending[i].mesh;
+          output_index = player->pending[i].part_index;
+          has_output = true;
           memmove(&player->pending[i], &player->pending[i + 1],
                   (player->pending_count - i - 1) * sizeof *player->pending);
           player->pending_count--;
           break;
         }
       }
-      if (output == NULL) {
+      if (!has_output) {
         if (player->part_count == player->part_capacity) {
           player->part_capacity = player->part_capacity == 0 ? 4 : player->part_capacity * 2;
           player->parts = realloc(player->parts, player->part_capacity * sizeof *player->parts);
           if (player->parts == NULL) qa_range_error("QVM memory allocation failed");
         }
-        output = &player->parts[player->part_count++];
-        memset(output, 0, sizeof *output);
-        output->part = part;
+        output_index = player->part_count++;
+        has_output = true;
+        memset(&player->parts[output_index], 0, sizeof player->parts[output_index]);
+        player->parts[output_index].part = part;
       }
     }
   }
   mesh_scope *mesh = NULL;
-  if (player != NULL && output != NULL) {
+  if (player != NULL && has_output) {
     mesh = xmalloc(sizeof *mesh);
     mesh->player = player;
     mesh->pointer = pointer;
     qa_qvm_writable_view shader_view;
     qa_qvm_memory_view(call->guest, pointer + (int32_t)declaration->body.mesh.shader_offset, 4, 0, &shader_view);
     mesh->shader = qa_qvm_writable_view_get_int32(&shader_view, 0, true);
-    mesh->output = output;
+    mesh->output_index = output_index;
     mesh->active = true;
     mesh->previous = previous;
   }

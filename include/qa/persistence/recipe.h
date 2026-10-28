@@ -9,17 +9,15 @@
  * provenance, which is a single malloc'd allocation the caller
  * frees. List fields are malloc'd arrays the caller frees.
  *
- * BLOCKED: qa_read_recipe is not yet ported. It needs
- * readGameplayMod (src/persistence/mods.ts): persistence/mods.h
- * exists but declares no qa_read_gameplay_mod yet, although its
- * blocker, qa_read_gameplay_mod_declaration from
- * src/content/mods/declaration.ts, has landed
- * (include/qa/content/mods/declaration.h). The weapon-behavior
- * reader's readSavedNativeWeaponDeclaration now exists as
- * qa_read_saved_native_weapon_declaration (native_weapon.h), which
- * takes an injected qa_native_weapon_profiles table a future
- * qa_read_recipe signature must thread through. The exported
- * readers below have no such dependency and are complete.
+ * qa_read_recipe's weapon-behavior branch calls
+ * qa_read_saved_native_weapon_declaration (native_weapon.h) with a
+ * profiles table recipe.c builds from the landed compat readers
+ * (qa/compat/q2/rerelease), mirroring TS recipe.ts's direct import
+ * of native-weapon.ts. List/pointer fields follow the ownership
+ * note at the top of this header; recipe.mods elements are single
+ * malloc'd qa_resolved_gameplay_mod allocations (the contract type
+ * is an array of pointers), as are each weapon behavior's
+ * definition, QVM layout, and native declaration.
  * GPL-2.0-or-later.
  */
 #ifndef QA_PERSISTENCE_RECIPE_H
@@ -33,5 +31,6 @@ qa_provider_reference qa_read_provider(const qa_save_reader *reader);
 qa_resolved_resource_reference qa_read_resource(const qa_save_reader *reader);
 qa_character_selection qa_read_character(const qa_save_reader *reader);
 qa_equipment_selection qa_read_equipment(const qa_save_reader *reader);
+qa_executable_recipe qa_read_recipe(const qa_save_reader *reader);
 
 #endif

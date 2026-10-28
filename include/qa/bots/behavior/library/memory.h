@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "qa/persistence/value.h"
 typedef enum qa_bot_memory_kind { QA_BOT_MEMORY_HEAP, QA_BOT_MEMORY_HUNK } qa_bot_memory_kind;
 typedef struct qa_bot_memory_allocation {
   uint8_t *bytes;
@@ -45,4 +47,32 @@ void qa_bot_memory_print_used_memory_size(qa_bot_memory *m);
 void qa_bot_memory_print_memory_labels(qa_bot_memory *m);
 int64_t qa_bot_memory_memory_byte_size(qa_bot_memory *m, qa_bot_memory_allocation *a);
 void qa_bot_memory_dump_memory(qa_bot_memory *m);
+/** TS BotMemoryCapture: owned save image plus the live allocations
+ * snapshot (allocation order) taken at checkpoint time. */
+typedef struct qa_bot_memory_capture {
+  qa_save_value *image; /* owned; caller may take it and NULL the field */
+  qa_bot_memory_allocation *allocations;
+  size_t count;
+} qa_bot_memory_capture;
+/* TS BotMemory.checkpoint(). False only on OOM. Aborts when disposed. */
+bool qa_bot_memory_checkpoint(qa_bot_memory *m, qa_bot_memory_capture *out);
+/* Frees the image (if still owned) and the snapshot array only. */
+void qa_bot_memory_capture_destroy(qa_bot_memory_capture *capture);
+/* TS BotMemoryCapture.reference(); aborts for unowned allocations. */
+int64_t qa_bot_memory_capture_reference(qa_bot_memory_capture *capture,
+                                        qa_bot_memory_allocation *allocation);
+/** TS BotMemoryRestore: allocations created by a restore, in image order. */
+typedef struct qa_bot_memory_restored {
+  qa_bot_memory_allocation *allocations;
+  size_t count;
+} qa_bot_memory_restored;
+/* TS BotMemory.restore(): requires a fresh owner; aborts with the TS
+ * error strings on an invalid image or OOM. */
+void qa_bot_memory_restore(qa_bot_memory *m, const qa_save_value *value,
+                           qa_bot_memory_restored *out);
+/* Frees the array only; the allocations stay owned by the bot memory. */
+void qa_bot_memory_restored_destroy(qa_bot_memory_restored *restored);
+/* TS BotMemoryRestore.allocation(); aborts on an invalid reference. */
+qa_bot_memory_allocation qa_bot_memory_restored_allocation(
+    qa_bot_memory_restored *restored, int64_t reference);
 #endif

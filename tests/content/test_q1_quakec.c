@@ -791,6 +791,266 @@ static void test_entity_services(void) {
   CHECK(target.aimed_damage && !target.push && !target.player);
 }
 
+/* --- foundation entity-services: attach/select/punch family --- */
+static int emitted_events = 0;
+static char last_transition_map[64] = "";
+static void capture_emit(void *ctx, qa_q1_event event) {
+  (void)ctx;
+  (void)event;
+  emitted_events++;
+}
+static void capture_transition(void *ctx, const char *map,
+                               const qa_actor_id *cause) {
+  (void)ctx;
+  (void)cause;
+  snprintf(last_transition_map, sizeof last_transition_map, "%s", map);
+}
+static int think_calls = 0;
+static void think_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  (void)game;
+  (void)entity;
+  think_calls++;
+}
+static bool near(double a, double b) { return fabs(a - b) < 1e-6; }
+static void test_entity_services_family(void) {
+  CHECK(qa_q1_ammo_item("axe") == NULL);
+  CHECK(strcmp(qa_q1_ammo_item("supershotgun"), "q1:ammo/shells") == 0);
+  CHECK(strcmp(qa_q1_ammo_item("rogue:plasma"), "rogue:ammo/plasma") == 0);
+  CHECK(qa_q1_ammo_item("ctf:grapple") == NULL);
+
+  qa_vec3 punch = qa_q1_drop_punch((qa_vec3){3, 4, 0}, 0.1, &numeric);
+  CHECK(near(punch.x, 2.4) && near(punch.y, 3.2) && punch.z == 0);
+  punch = qa_q1_drop_punch((qa_vec3){3, 4, 0}, 10, &numeric);
+  CHECK(punch.x == 0 && punch.y == 0 && punch.z == 0);
+  punch = qa_q1_drop_punch((qa_vec3){0, 0, 0}, 0.1, &numeric);
+  CHECK(punch.x == 0 && punch.y == 0 && punch.z == 0);
+
+  qa_q1_services game;
+  memset(&game, 0, sizeof game);
+  game.host.emit = capture_emit;
+  game.host.transition = capture_transition;
+  qa_q1_services_set_time(&game, 1.5);
+  CHECK(game.time == 1.5);
+  CHECK(strcmp(qa_q1_services_provider(&game), "q1:official") == 0);
+
+  qa_owned_actor owned;
+  memset(&owned, 0, sizeof owned);
+  owned.id = make_actor(1, 1);
+  owned.owner = "q1:official";
+  qa_q1_actor *entity = qa_q1_attach_existing(&game, owned, "player", NULL, NULL);
+  CHECK(entity != NULL && game.entity_count == 1);
+  CHECK_ABORTS((void)qa_q1_attach_existing(&game, owned, "player", NULL, NULL));
+  entity->health = 80;
+  CHECK(qa_q1_live(&game, entity));
+  CHECK(qa_q1_health(&game, owned.id) == 80);
+  qa_q1_set_health(&game, owned, 55);
+  CHECK(entity->health == 55);
+  qa_q1_set_origin(&game, entity, (qa_vec3){10, 20, 30});
+  CHECK(entity->body.origin.x == 10 && entity->body.origin.z == 30);
+  qa_q1_body patch;
+  memset(&patch, 0, sizeof patch);
+  patch.velocity = (qa_vec3){1, 0, 0};
+  qa_q1_set_body_patch(&game, entity, &patch, false, false, true, false, false);
+  CHECK(entity->body.velocity.x == 1 && entity->body.origin.x == 10);
+
+  qa_q1_player_state *player =
+      qa_q1_attach_player(&game, owned, "shotgun", true, NULL);
+  CHECK(player != NULL && player->max_health == 100);
+  CHECK(player->air_finished == game.time + 12);
+  CHECK(qa_q1_attach_player(&game, owned, "axe", false, NULL) == player);
+  /* Fallback inventory: TS initializeWeaponInventory counts. */
+  CHECK(qa_q1_inventory_count(&game, owned.id, "q1:ammo/shells") == 25);
+  CHECK(qa_q1_inventory_count(&game, owned.id, "q1:weapon/shotgun") == 1);
+  CHECK(qa_q1_inventory_count(&game, owned.id, "q1:weapon/nailgun") == 0);
+  CHECK(qa_q1_inventory_give(&game, owned, "q1:ammo/shells", 1000) == 75);
+  CHECK(qa_q1_inventory_count(&game, owned.id, "q1:ammo/shells") == 100);
+  CHECK(qa_q1_inventory_consume(&game, owned, "q1:ammo/shells", 30));
+  CHECK(!qa_q1_inventory_consume(&game, owned, "q1:ammo/shells", 1000));
+
+  /* Selection: no nailgun until its item is owned. */
+  CHECK(!qa_q1_weapon_available(&game, player, "nailgun", "best"));
+  CHECK(!qa_q1_select_weapon(&game, owned, "nailgun"));
+  qa_q1_inventory_give(&game, owned, "q1:weapon/nailgun", 1);
+  qa_q1_inventory_give(&game, owned, "q1:ammo/nails", 10);
+  CHECK(qa_q1_weapon_available(&game, player, "nailgun", "best"));
+  CHECK(qa_q1_select_weapon(&game, owned, "nailgun"));
+  CHECK(strcmp(player->weapon, "nailgun") == 0);
+  CHECK(strcmp(qa_q1_services_weapon_model(&game, "nailgun", player),
+               "progs/v_nail.mdl") == 0);
+  CHECK(strcmp(qa_q1_choose_best(&game, owned), "nailgun") == 0);
+  /* Registered replacement for a base weapon resolves model/ammo. */
+  static const qa_q1_weapon_definition replacement = {
+      .id = "nailgun", .ammo = "q1:ammo/cells", .model = "progs/v_custom.mdl"};
+  qa_q1_replace_weapon(&game, &replacement);
+  CHECK(strcmp(qa_q1_services_weapon_model(&game, "nailgun", NULL),
+               "progs/v_custom.mdl") == 0);
+  CHECK(strcmp(qa_q1_services_weapon_ammo(&game, "nailgun"), "q1:ammo/cells") == 0);
+  static const qa_q1_weapon_definition foreign = {.id = "hipnotic:laser"};
+  qa_q1_register_weapon(&game, &foreign);
+  CHECK_ABORTS(qa_q1_register_weapon(&game, &foreign));
+  static const qa_q1_weapon_definition base_dup = {.id = "axe"};
+  CHECK_ABORTS(qa_q1_register_weapon(&game, &base_dup));
+
+  /* Scheduling: fround'ed deadline, one-shot dispatch. */
+  qa_q1_bound_action action = {"test_think", NULL, think_action};
+  qa_q1_schedule_at(&game, entity, 2.25, action);
+  CHECK(entity->next_think == (float)2.25);
+  qa_q1_run_think(&game, entity);
+  CHECK(think_calls == 1 && entity->next_think == -1);
+  qa_q1_run_think(&game, entity);
+  CHECK(think_calls == 1);
+  qa_q1_schedule(&game, entity, 0.5, action);
+  qa_q1_cancel(&game, entity);
+  CHECK(entity->next_think == -1 && entity->think.fn == NULL);
+
+  /* Powerups, punch, monster target, sound, find, presentations. */
+  qa_q1_give_powerup(&game, player, "quad", 30);
+  CHECK(qa_q1_powerup_expires(&game, owned.id, "quad") == (float)(game.time + 30));
+  qa_q1_weapon_punch(&game, player, -2);
+  CHECK(player->punch_angles.x == -2);
+  qa_vec3 advanced;
+  CHECK(qa_q1_advance_punch(&game, owned.id, 0.05, &numeric, &advanced));
+  CHECK(near(advanced.x, -1.5));
+  CHECK(!qa_q1_advance_punch(&game, make_actor(99, 1), 0.05, &numeric, &advanced));
+  qa_q1_monster_target_result seen = qa_q1_monster_target(&game, owned.id);
+  CHECK(seen.has_value && seen.value.view_height == 22 && !seen.value.invisible);
+  int before = emitted_events;
+  qa_q1_sound_defaults(&game, owned.id, "weapons/guncock.wav");
+  qa_q1_message(&game, &owned.id, "hello", true, NULL, 0);
+  qa_q1_effect(&game, "explosion", entity->body.origin, NULL, 1);
+  CHECK(emitted_events == before + 3);
+  CHECK_ABORTS(qa_q1_sound_defaults(&game, make_actor(99, 1), "x.wav"));
+  entity->targetname = "door1";
+  qa_q1_actor *found[2] = {NULL, NULL};
+  CHECK(qa_q1_find(&game, "door1", found, 2) == 1 && found[0] == entity);
+  CHECK(qa_q1_find(&game, "", found, 2) == 0);
+  qa_q1_presentation presentations[2];
+  CHECK(qa_q1_presentations(&game, presentations, 2) == 1);
+  CHECK(strcmp(presentations[0].classname, "player") == 0);
+
+  /* Intermission against an info_player_start spot. */
+  qa_owned_actor spot_owned = owned;
+  spot_owned.id = make_actor(2, 1);
+  qa_q1_actor *spot =
+      qa_q1_attach_existing(&game, spot_owned, "info_player_start", NULL, NULL);
+  CHECK(spot != NULL);
+  qa_q1_begin_intermission(&game, "e1m2", NULL);
+  CHECK(game.has_intermission);
+  CHECK(!qa_q1_request_intermission_exit(&game, game.time, true));
+  CHECK(qa_q1_request_intermission_exit(
+      &game, game.intermission_exit_after, true));
+  CHECK(strcmp(last_transition_map, "q1:e1m2") == 0);
+  CHECK(!game.has_intermission);
+
+  /* Removal: released actors leave the maps (TS onRelease). */
+  qa_q1_remove(&game, spot);
+  CHECK(game.entity_count == 1);
+  qa_q1_remove(&game, entity);
+  CHECK(game.entity_count == 0 && game.player_count == 0);
+  CHECK(qa_q1_get_entity(&game, &owned.id) == NULL);
+}
+
+static qa_q1_trace trace_open(void *ctx, qa_q1_trace_request request) {
+  (void)ctx;
+  qa_q1_trace trace;
+  memset(&trace, 0, sizeof trace);
+  trace.fraction = 1;
+  trace.end = request.end;
+  return trace;
+}
+static int use_calls = 0;
+static void use_count(void *ctx, qa_q1_services *game, qa_q1_actor *entity,
+                      const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx;
+  (void)game;
+  (void)entity;
+  (void)other;
+  (void)activator;
+  use_calls++;
+}
+static void test_entity_services_runtime(void) {
+  qa_q1_services game;
+  qa_q1_host host;
+  memset(&host, 0, sizeof host);
+  host.emit = capture_emit;
+  host.transition = capture_transition;
+  host.trace = trace_open;
+  qa_q1_options options;
+  memset(&options, 0, sizeof options);
+  options.has_max_clients = true;
+  options.max_clients = 4;
+  CHECK(qa_q1_services_init(&game, host, options));
+  CHECK(game.named != NULL && game.precaches != NULL);
+  CHECK(game.base_team_health && game.sight_time == -1);
+  CHECK(game.next_dynamic_slot == 5);
+  CHECK(strcmp(qa_q1_services_precache_sound(&game, "misc/test.wav"),
+               "misc/test.wav") == 0);
+
+  qa_q1_actor *gib = qa_q1_create(&game, "gib", NULL, NULL);
+  CHECK(gib->actor.id.slot == 5 && game.next_dynamic_slot == 6);
+  double world_ordinal = 0, third = 30;
+  qa_q1_actor *world = qa_q1_create(&game, "worldspawn", NULL, &world_ordinal);
+  CHECK(world->actor.id.slot == 0);
+  qa_q1_actor *sourced = qa_q1_create(&game, "func_door", NULL, &third);
+  CHECK(sourced->actor.id.slot == 34);
+
+  /* calcMove: travel time, velocity, SUB_CalcMoveDone think. */
+  qa_q1_bound_action done = {"door_hit_top", NULL, think_action};
+  CHECK_ABORTS(qa_q1_calc_move(&game, sourced, (qa_vec3){100, 0, 0}, 0, done));
+  qa_q1_calc_move(&game, sourced, (qa_vec3){100, 0, 0}, 50, done);
+  CHECK(sourced->has_move && sourced->body.velocity.x == 50);
+  CHECK(sourced->next_think == 2);
+  CHECK(sourced->think.name != NULL &&
+        strcmp(sourced->think.name, "SUB_CalcMoveDone") == 0);
+
+  /* useTargets: bound use dispatch + killtarget removal. */
+  qa_q1_actor *lever = qa_q1_create(&game, "func_button", NULL, NULL);
+  qa_q1_actor *door = qa_q1_create(&game, "func_door", NULL, NULL);
+  qa_q1_actor *victim = qa_q1_create(&game, "monster_army", NULL, NULL);
+  free(lever->target);
+  lever->target = strdup("t1");
+  free(lever->killtarget);
+  lever->killtarget = strdup("k1");
+  free(door->targetname);
+  door->targetname = strdup("t1");
+  free(victim->targetname);
+  victim->targetname = strdup("k1");
+  door->use = (qa_q1_bound_use){"count_use", NULL, use_count};
+  qa_q1_callback_handlers use_handlers;
+  memset(&use_handlers, 0, sizeof use_handlers);
+  use_handlers.use = use_count;
+  qa_q1_callback_registry_register(game.named, "count_use", use_handlers);
+  size_t before_count = game.entity_count;
+  qa_q1_use_targets(&game, lever, NULL);
+  CHECK(use_calls == 1);
+  CHECK(!victim->live && game.entity_count == before_count - 1);
+
+  /* Damage fallback (no combat authority): direct health adjust. */
+  door->health = 100;
+  door->damageable = true;
+  CHECK(qa_q1_damage(&game, door->actor.id, gib->actor.id, NULL, 30, NULL,
+                     "direct", "") == 30);
+  CHECK(door->health == 70);
+  qa_q1_set_origin(&game, gib, (qa_vec3){0, 0, 0});
+  qa_q1_set_origin(&game, door, (qa_vec3){10, 0, 0});
+  qa_q1_radius_damage(&game, gib->actor.id, NULL, 100, NULL, NULL, "");
+  CHECK(door->health == 70 - 95);
+
+  /* Clone: source state, fields, body, and named think rebind. */
+  qa_q1_actor_field_set(door, "message", "open");
+  door->think =
+      qa_q1_callback_registry_action(game.named, door, "SUB_Remove");
+  door->next_think = 9;
+  qa_q1_actor *clone = qa_q1_clone_entity(&game, door);
+  CHECK(clone != door && strcmp(clone->classname, "func_door") == 0);
+  CHECK(strcmp(qa_q1_actor_text(clone, "message"), "open") == 0);
+  CHECK(clone->body.origin.x == 10 && clone->health == door->health);
+  CHECK(clone->think.name != NULL &&
+        strcmp(clone->think.name, "SUB_Remove") == 0);
+  qa_q1_services_free(&game);
+}
+
 int main(void) {
   test_damage_call();
   test_armor_points();
@@ -804,6 +1064,8 @@ int main(void) {
   test_environment();
   test_id1_damage_binding();
   test_entity_services();
+  test_entity_services_family();
+  test_entity_services_runtime();
   if (failures == 0) printf("ok: %d checks\n", checks);
   return failures == 0 ? 0 : 1;
 }

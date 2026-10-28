@@ -16,9 +16,9 @@ char *qa_app_demo_timing_text(qa_app_demo_timing timing);
 typedef enum qa_app_recorded_family {
   QA_APP_REC_Q1, QA_APP_REC_QW, QA_APP_REC_Q2, QA_APP_REC_Q3
 } qa_app_recorded_family;
-typedef struct qa_app_demo_resource {
+typedef struct qa_app_recorded_demo_resource {
   qa_app_recorded_family kind; const uint8_t *bytes; size_t length; const char *path;
-} qa_app_demo_resource;
+} qa_app_recorded_demo_resource;
 /* Q1/QW advance result: phase "loading"|"active"|"ended". */
 typedef struct qa_app_recorded_q1_result {
   const char *phase; const char *reason; /* ended: Q1DemoEnd text */
@@ -51,13 +51,13 @@ typedef struct qa_app_recorded_playback {
 typedef struct qa_app_recorded_source qa_app_recorded_source;
 /* complete receives the DemoCompletion text and timing (NULL when
  * TS null). Family mismatch aborts with the TS message. */
-qa_app_recorded_source *qa_app_recorded_source_create(qa_app_demo_resource resource,
+qa_app_recorded_source *qa_app_recorded_source_create(qa_app_recorded_demo_resource resource,
     qa_app_recorded_family remote_family, qa_app_recorded_playback playback,
     bool timedemo, qa_cvar_registry *cvars,
     void (*complete)(void *ctx, const char *reason, const qa_app_demo_timing *timing),
     void *complete_ctx);
 void qa_app_recorded_source_destroy(qa_app_recorded_source *source);
-const qa_app_demo_resource *qa_app_recorded_source_resource(const qa_app_recorded_source *source);
+const qa_app_recorded_demo_resource *qa_app_recorded_source_resource(const qa_app_recorded_source *source);
 void qa_app_recorded_source_select_player(qa_app_recorded_source *source, double clientnum);
 const char *qa_app_recorded_source_phase(const qa_app_recorded_source *source);
 bool qa_app_recorded_source_timing(const qa_app_recorded_source *source, qa_app_demo_timing *out);

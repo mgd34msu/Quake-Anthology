@@ -84,8 +84,8 @@ static void validate_dynamic_policy(const qa_elf_inspection_full *elf) {
     elf_error("unsupported DT_FLAGS_1 0x%llx", (unsigned long long)flags1);
 }
 
-typedef struct addr_list { qa_guest_address *items; size_t count, cap; } addr_list;
-static void addr_push(addr_list *list, qa_guest_address address) {
+typedef struct addr_list { qa_guest_core_address *items; size_t count, cap; } addr_list;
+static void addr_push(addr_list *list, qa_guest_core_address address) {
   if (list->count == list->cap) {
     list->cap = list->cap == 0 ? 8 : list->cap * 2;
     list->items = xrealloc(list->items, list->cap * sizeof *list->items);
@@ -95,7 +95,7 @@ static void addr_push(addr_list *list, qa_guest_address address) {
 
 static void pointer_array(const qa_elf_inspection_full *elf, qa_mapped_guest_memory *memory,
                           uint64_t load_bias, uint64_t address_tag, uint64_t size_tag,
-                          qa_guest_address **out, size_t *out_count) {
+                          qa_guest_core_address **out, size_t *out_count) {
   *out = NULL; *out_count = 0;
   uint64_t address = 0, size = 0;
   bool has_address = qa_elf_dynamic_value(elf, address_tag, &address);
@@ -133,7 +133,7 @@ static qa_guest_symbol_name export_symbol_name(const qa_elf_symbol *symbol) {
   name.version = symbol->has_version ? symbol->version.name : NULL;
   return name;
 }
-static void append_export(export_list *list, const qa_elf_symbol *symbol, qa_guest_address address) {
+static void append_export(export_list *list, const qa_elf_symbol *symbol, qa_guest_core_address address) {
   qa_guest_export entry; memset(&entry, 0, sizeof entry);
   entry.symbol = export_symbol_name(symbol);
   entry.address = address;
@@ -361,7 +361,7 @@ bool qa_load_elf(qa_elf_guest_image *out, const qa_elf_load_options *options) {
   }
   image.imports = imports.items; image.import_count = imports.count;
 
-  qa_guest_address *preinitializers = NULL; size_t preinitializer_count = 0;
+  qa_guest_core_address *preinitializers = NULL; size_t preinitializer_count = 0;
   pointer_array(elf, memory, load_bias, 32, 33, &preinitializers, &preinitializer_count);
   uint64_t flags1 = 0;
   if (!qa_elf_dynamic_value(elf, 0x6ffffffbULL, &flags1)) flags1 = 0;
@@ -371,18 +371,18 @@ bool qa_load_elf(qa_elf_guest_image *out, const qa_elf_load_options *options) {
   uint64_t init = 0, fini = 0;
   bool has_init = qa_elf_dynamic_value(elf, 12, &init);
   bool has_fini = qa_elf_dynamic_value(elf, 13, &fini);
-  qa_guest_address *init_array = NULL; size_t init_array_count = 0;
+  qa_guest_core_address *init_array = NULL; size_t init_array_count = 0;
   pointer_array(elf, memory, load_bias, 25, 27, &init_array, &init_array_count);
   size_t initializer_count = (has_init && init != 0 ? 1 : 0) + init_array_count;
-  qa_guest_address *initializers = xcalloc(initializer_count, sizeof(qa_guest_address));
+  qa_guest_core_address *initializers = xcalloc(initializer_count, sizeof(qa_guest_core_address));
   size_t at = 0;
   if (has_init && init != 0) initializers[at++] = qa_elf_address(memory, load_bias + init);
   for (size_t i = 0; i < init_array_count; i++) initializers[at++] = init_array[i];
   free(init_array);
-  qa_guest_address *fini_array = NULL; size_t fini_array_count = 0;
+  qa_guest_core_address *fini_array = NULL; size_t fini_array_count = 0;
   pointer_array(elf, memory, load_bias, 26, 28, &fini_array, &fini_array_count);
   size_t finalizer_count = fini_array_count + (has_fini && fini != 0 ? 1 : 0);
-  qa_guest_address *finalizers = xcalloc(finalizer_count, sizeof(qa_guest_address));
+  qa_guest_core_address *finalizers = xcalloc(finalizer_count, sizeof(qa_guest_core_address));
   at = 0;
   for (size_t i = fini_array_count; i-- > 0;) finalizers[at++] = fini_array[i];
   free(fini_array);

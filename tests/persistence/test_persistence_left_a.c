@@ -759,7 +759,7 @@ static void test_q1_foundation(void) {
   static const char *models[] = {"", "progs/player.mdl"};
   static const char *sounds[] = {"misc/null.wav"};
   static const uint8_t extension_bytes[] = {1, 2, 3};
-  qa_q1_foundation_checkpoint in;
+  qa_persist_q1_foundation_checkpoint in;
   memset(&in, 0, sizeof in);
   in.provider = "q1:foundation";
   in.format = "q1-foundation";
@@ -790,7 +790,7 @@ static void test_q1_foundation(void) {
   in.has_intermission = true;
   in.intermission.map = "e1m2";
   in.intermission.exit_after = 20;
-  qa_q1_saved_entity entity;
+  qa_persist_q1_saved_entity entity;
   memset(&entity, 0, sizeof entity);
   entity.actor = (qa_saved_actor_id){3, 2};
   entity.actor_provider = "q1:foundation";
@@ -814,10 +814,10 @@ static void test_q1_foundation(void) {
       (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
   entity.state.water_type = -3;
   entity.state.attack_state = "straight";
-  qa_q1_saved_field fields[] = {{"targetname", "t1"}};
+  qa_persist_q1_saved_field fields[] = {{"targetname", "t1"}};
   entity.fields = fields;
   entity.field_count = 1;
-  qa_q1_saved_reference references[] = {
+  qa_persist_q1_saved_reference references[] = {
       {"enemy", true, (qa_saved_actor_id){1, 0}}};
   entity.references = references;
   entity.reference_count = 1;
@@ -844,7 +844,7 @@ static void test_q1_foundation(void) {
   entity.callbacks.die = "army_die";
   in.entities = &entity;
   in.entity_count = 1;
-  qa_q1_saved_player player;
+  qa_persist_q1_saved_player player;
   memset(&player, 0, sizeof player);
   player.actor = (qa_saved_actor_id){1, 0};
   player.actor_provider = "q1:foundation";
@@ -867,7 +867,7 @@ static void test_q1_foundation(void) {
   size_t length = 0;
   uint8_t *bytes = qa_encode_q1_foundation_checkpoint(&in, &length);
   CHECK(bytes != NULL);
-  qa_q1_foundation_checkpoint out;
+  qa_persist_q1_foundation_checkpoint out;
   CHECK(qa_decode_q1_foundation_checkpoint(bytes, length, &out));
   CHECK(str_eq(out.provider, "q1:foundation"));
   CHECK(str_eq(out.format, "q1-foundation") && out.version == 5);
@@ -880,7 +880,7 @@ static void test_q1_foundation(void) {
   CHECK(!out.has_sight_entity);
   CHECK(out.has_intermission && str_eq(out.intermission.map, "e1m2"));
   CHECK(out.entity_count == 1);
-  const qa_q1_saved_entity *read_entity = &out.entities[0];
+  const qa_persist_q1_saved_entity *read_entity = &out.entities[0];
   CHECK(read_entity->actor.slot == 3 && read_entity->actor.generation == 2);
   CHECK(read_entity->has_source_slot && read_entity->source_slot == 3);
   CHECK(read_entity->has_source_ordinal && read_entity->source_ordinal == 11);
@@ -921,7 +921,7 @@ static void test_q1_foundation(void) {
   char *version = strstr(text, "\"version\":5");
   CHECK(version != NULL);
   version[10] = '6';
-  qa_q1_foundation_checkpoint bad;
+  qa_persist_q1_foundation_checkpoint bad;
   CHECK_ABORTS(qa_decode_q1_foundation_checkpoint((const uint8_t *)text,
                                                   length, &bad));
   free(text);

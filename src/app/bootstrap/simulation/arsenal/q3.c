@@ -200,7 +200,7 @@ static void handoff_holster(void *v) {
 }
 static bool handoff_holstered(void *v) {
   handoff_ctx *ctx = (handoff_ctx *)v;
-  return require_player(ctx->arsenal, ctx->actor)->runtime.external_slot == QA_Q3_SLOT_HOLSTERED;
+  return require_player(ctx->arsenal, ctx->actor)->runtime.external_slot == QA_Q3_WEAPON_SLOT_HOLSTERED;
 }
 static bool handoff_resume(void *v, qa_item_id item) {
   handoff_ctx *ctx = (handoff_ctx *)v;
@@ -523,10 +523,10 @@ qa_app_q3_selected_arsenal_checkpoint qa_app_read_q3_selected_arsenal_checkpoint
   if (!qa_save_reader_is_undefined(&r)) {
     const char *slots[5] = {"active", "holster-requested", "dropping", "holstered", "resume-requested"};
     const char *slot = qa_save_reader_choice_string(&r, slots, 5);
-    checkpoint.runtime.external_slot = strcmp(slot, "holster-requested") == 0 ? QA_Q3_SLOT_HOLSTER_REQUESTED
-        : strcmp(slot, "dropping") == 0 ? QA_Q3_SLOT_DROPPING
-        : strcmp(slot, "holstered") == 0 ? QA_Q3_SLOT_HOLSTERED
-        : strcmp(slot, "resume-requested") == 0 ? QA_Q3_SLOT_RESUME_REQUESTED : QA_Q3_SLOT_ACTIVE;
+    checkpoint.runtime.external_slot = strcmp(slot, "holster-requested") == 0 ? QA_Q3_WEAPON_SLOT_HOLSTER_REQUESTED
+        : strcmp(slot, "dropping") == 0 ? QA_Q3_WEAPON_SLOT_DROPPING
+        : strcmp(slot, "holstered") == 0 ? QA_Q3_WEAPON_SLOT_HOLSTERED
+        : strcmp(slot, "resume-requested") == 0 ? QA_Q3_WEAPON_SLOT_RESUME_REQUESTED : QA_Q3_WEAPON_SLOT_ACTIVE;
   }
   qa_save_reader_destroy(&r);
   r = field(&runtime, "requestedWeapon");

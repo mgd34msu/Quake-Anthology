@@ -22,7 +22,7 @@ qa_q1b_game *qa_q1_creatures_game(qa_q1_creatures *creatures);
 /* This object as TS MonsterServices for BaseMonster construction. */
 qa_q1_monster_services qa_q1_creatures_as_services(qa_q1_creatures *creatures);
 void qa_q1_creatures_register_species(qa_q1_creatures *creatures,
-                                      const qa_q1_monster_species *species, size_t count);
+                                      const qa_q1_base_monster_species *species, size_t count);
 bool qa_q1_creatures_count_monster_kill(qa_q1_creatures *creatures, qa_q1_base_monster *monster);
 void qa_q1_creatures_finale(qa_q1_creatures *creatures, qa_q1_base_monster *monster);
 void qa_q1_creatures_finish_finale(qa_q1_creatures *creatures, qa_q1_base_monster *monster);

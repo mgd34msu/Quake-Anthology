@@ -1,10 +1,10 @@
-/* Port of src/persistence/mods.ts (see mods.h for the blocked
- * readGameplayMod). GPL-2.0-or-later. */
+/* Port of src/persistence/mods.ts. GPL-2.0-or-later. */
 #include "qa/persistence/mods.h"
 
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/mods/declaration.h"
 #include "qa/persistence/execution.h"
 #include "qa/persistence/recipe.h"
 #include "qa/persistence/shared.h"
@@ -80,6 +80,61 @@ static qa_provider_checkpoint_ref read_provider_ref(const qa_save_reader *reader
   ref.version = qa_save_reader_integer_min(&version, 0);
   qa_save_reader_destroy(&version);
   return ref;
+}
+
+/* TS dependency: readModSelection(`${product}/${id}`). The joined
+ * key is scratch; the returned selection owns its strings. */
+static qa_mod_selection read_dependency(const qa_save_reader *reader) {
+  const char *product = field_string(reader, "product");
+  const char *id = field_string(reader, "id");
+  size_t length = strlen(product) + 1 + strlen(id) + 1;
+  char *joined = xmalloc(reader, length);
+  size_t product_length = strlen(product);
+  memcpy(joined, product, product_length);
+  joined[product_length] = '/';
+  memcpy(joined + product_length + 1, id, strlen(id) + 1);
+  qa_mod_selection selection;
+  if (!qa_read_mod_selection(joined, &selection))
+    qa_save_reader_fail(reader, "out of memory");
+  free(joined);
+  return selection;
+}
+static qa_mod_selection *read_dependencies(const qa_save_reader *reader,
+                                           const char *name, size_t *out_count) {
+  qa_save_reader list = field(reader, name);
+  size_t count = qa_save_reader_list_count(&list);
+  qa_mod_selection *values =
+      count > 0 ? (qa_mod_selection *)xmalloc(&list, count * sizeof *values) : NULL;
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader entry = item(&list, i);
+    values[i] = read_dependency(&entry);
+    qa_save_reader_destroy(&entry);
+  }
+  qa_save_reader_destroy(&list);
+  *out_count = count;
+  return values;
+}
+
+qa_resolved_gameplay_mod qa_read_gameplay_mod(const qa_save_reader *reader) {
+  qa_resolved_gameplay_mod mod;
+  memset(&mod, 0, sizeof mod);
+  qa_save_reader selection = field(reader, "selection");
+  mod.selection = read_selection(&selection);
+  qa_save_reader_destroy(&selection);
+  qa_save_reader source = field(reader, "source");
+  mod.source = qa_read_provider(&source);
+  qa_save_reader_destroy(&source);
+  mod.title = field_string(reader, "title");
+  mod.source_title = field_string(reader, "sourceTitle");
+  mod.requires = read_dependencies(reader, "requires", &mod.requires_count);
+  mod.conflicts = read_dependencies(reader, "conflicts", &mod.conflicts_count);
+  qa_save_reader declaration = field(reader, "declaration");
+  mod.declaration = qa_read_gameplay_mod_declaration(&declaration);
+  qa_save_reader_destroy(&declaration);
+  qa_save_reader digest = field(reader, "declarationDigest");
+  mod.declaration_digest = qa_read_digest(&digest);
+  qa_save_reader_destroy(&digest);
+  return mod;
 }
 
 qa_mod_identity qa_read_mod_identity(const qa_save_reader *reader) {

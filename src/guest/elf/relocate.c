@@ -40,7 +40,7 @@ static size_t unique_index(const qa_elf_unique_symbols *map, const char *name, b
   *found = false;
   return 0;
 }
-bool qa_elf_unique_symbols_get(const qa_elf_unique_symbols *map, const char *name, qa_guest_address *out) {
+bool qa_elf_unique_symbols_get(const qa_elf_unique_symbols *map, const char *name, qa_guest_core_address *out) {
   bool found = false;
   size_t index = unique_index(map, name, &found);
   if (!found) return false;
@@ -52,7 +52,7 @@ bool qa_elf_unique_symbols_has(const qa_elf_unique_symbols *map, const char *nam
   (void)unique_index(map, name, &found);
   return found;
 }
-void qa_elf_unique_symbols_set(qa_elf_unique_symbols *map, const char *name, qa_guest_address address) {
+void qa_elf_unique_symbols_set(qa_elf_unique_symbols *map, const char *name, qa_guest_core_address address) {
   bool found = false;
   size_t index = unique_index(map, name, &found);
   if (found) { map->entries[index].address = address; return; }
@@ -82,12 +82,12 @@ static void import_push(qa_elf_import_list *list, qa_guest_import import_) {
   list->items[list->count++] = import_;
 }
 
-qa_guest_address qa_elf_address(qa_mapped_guest_memory *memory, uint64_t value) {
-  qa_guest_address pointer = {0};
+qa_guest_core_address qa_elf_address(qa_mapped_guest_memory *memory, uint64_t value) {
+  qa_guest_core_address pointer = {0};
   if (!qa_memory_pointer(memory, value, &pointer)) elf_error("required address is null");
   return pointer;
 }
-qa_guest_import qa_elf_symbol_import(const qa_elf_symbol *symbol, qa_guest_address slot) {
+qa_guest_import qa_elf_symbol_import(const qa_elf_symbol *symbol, qa_guest_core_address slot) {
   qa_guest_import import_; memset(&import_, 0, sizeof import_);
   import_.library = symbol->has_version ? symbol->version.library : "";
   import_.symbol.is_ordinal = false;
@@ -105,7 +105,7 @@ static bool symbolic_binding(const qa_elf_inspection_full *elf) {
 }
 
 static size_t external_symbol_size(qa_elf_relocation_context *context,
-                                   const qa_elf_symbol *symbol, qa_guest_address slot) {
+                                   const qa_elf_symbol *symbol, qa_guest_core_address slot) {
   size_t size = 0;
   qa_guest_import import_ = qa_elf_symbol_import(symbol, slot);
   bool found = context->resolve_symbol_size != NULL
@@ -124,7 +124,7 @@ static uint64_t got_address(qa_elf_relocation_context *context) {
 }
 
 uint64_t qa_elf_defined_symbol_address(uint64_t load_bias, qa_mapped_guest_memory *memory,
-                                       qa_guest_address (*resolve_indirect)(void *ctx, qa_guest_address),
+                                       qa_guest_core_address (*resolve_indirect)(void *ctx, qa_guest_core_address),
                                        void *resolve_ctx, const qa_elf_symbol *symbol) {
   if (symbol->section == 0xfff2) elf_error("unallocated COMMON symbol %s", symbol->name);
   if (symbol->section >= 0xff00 && symbol->section != 0xfff1)
@@ -133,13 +133,13 @@ uint64_t qa_elf_defined_symbol_address(uint64_t load_bias, qa_mapped_guest_memor
   uint64_t raw = symbol->section == 0xfff1 ? symbol->value : load_bias + symbol->value;
   if (symbol->type != 10) return raw;
   if (resolve_indirect == NULL) elf_error("GNU IFUNC %s requires guest resolver execution", symbol->name);
-  qa_guest_address resolved = resolve_indirect(resolve_ctx, qa_elf_address(memory, raw));
+  qa_guest_core_address resolved = resolve_indirect(resolve_ctx, qa_elf_address(memory, raw));
   qa_memory_check(memory, resolved, 1, QA_ACCESS_EXECUTE);
   return resolved.byte_offset;
 }
 
 uint64_t qa_elf_resolve_symbol(qa_elf_relocation_context *context, const qa_elf_symbol *symbol,
-                               qa_guest_address slot, bool copy) {
+                               qa_guest_core_address slot, bool copy) {
   if (symbol->index == 0) return 0;
   if (symbol->binding != 0 && symbol->binding != 1 && symbol->binding != 2 && symbol->binding != 10)
     elf_error("unsupported symbol binding %d for %s", symbol->binding, symbol->name);
@@ -147,7 +147,7 @@ uint64_t qa_elf_resolve_symbol(qa_elf_relocation_context *context, const qa_elf_
   bool unique = symbol->binding == 10;
   if (unique && context->unique_symbols == NULL)
     elf_error("GNU unique symbols require a process-wide symbol registry");
-  qa_guest_address existing = {0};
+  qa_guest_core_address existing = {0};
   bool has_existing = unique && qa_elf_unique_symbols_get(context->unique_symbols, symbol->name, &existing);
   if (has_existing) {
     qa_memory_check(context->memory, existing, 1, QA_ACCESS_READ);
@@ -226,7 +226,7 @@ static void apply(qa_elf_relocation_context *context, const qa_elf_relocation *r
   }
   if (!in_image)
     elf_error("relocation target 0x%llx lies outside this image", (unsigned long long)relocation->address);
-  qa_guest_address slot = qa_elf_address(memory, load_bias + relocation->address);
+  qa_guest_core_address slot = qa_elf_address(memory, load_bias + relocation->address);
   uint8_t *bytes = (uint8_t *)xrealloc(NULL, byte_length);
   qa_memory_copy(memory, slot, bytes, byte_length);
   int64_t addend = type == 5 ? 0
@@ -243,7 +243,7 @@ static void apply(qa_elf_relocation_context *context, const qa_elf_relocation *r
   } else if ((int)type == (wide ? 37 : 42)) {
     if (relocation->symbol_index != 0 || context->resolve_indirect == NULL)
       elf_error("IRELATIVE requires explicit guest resolver execution");
-    qa_guest_address address = context->resolve_indirect(context->resolve_ctx,
+    qa_guest_core_address address = context->resolve_indirect(context->resolve_ctx,
         qa_elf_address(memory, load_bias + (uint64_t)addend));
     qa_memory_check(memory, address, 1, QA_ACCESS_EXECUTE);
     result = (int64_t)address.byte_offset;

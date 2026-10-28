@@ -1,8 +1,7 @@
 /*
  * Port of src/compat/qvm/mod-clients.ts. The q3CommandForControls /
- * relativeQ3SourceCommand helpers (TS owner
- * src/app/bootstrap/simulation/q3-commands.ts, unlanded) are mirrored
- * as static functions in the .c file. Application identity in TS is
+ * relativeQ3SourceCommand helpers call the landed owner
+ * (qa/app/bootstrap/simulation/q3_commands.h). Application identity in TS is
  * object identity; the C applications list compares pointers.
  * GPL-2.0-or-later.
  */

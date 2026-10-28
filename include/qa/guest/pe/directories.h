@@ -18,7 +18,7 @@ void qa_pe_read_exports(const qa_pe_image_reader *image, qa_pe_owned_strings *po
                         qa_guest_export **out, size_t *out_count);
 /* tls.initialized/callbacks are malloc'd when has_tls. */
 void qa_pe_read_tls(const qa_pe_image_reader *image, bool *has_tls, qa_guest_tls_template *tls,
-                    bool *has_index, qa_guest_address *index);
+                    bool *has_index, qa_guest_core_address *index);
 void qa_pe_read_unwind(const qa_pe_image_reader *image, qa_pe_unwind_record **out, size_t *out_count);
 bool qa_pe_read_load_configuration(const qa_pe_image_reader *image, qa_pe_load_configuration *out);
 

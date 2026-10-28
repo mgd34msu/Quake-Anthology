@@ -9,6 +9,7 @@
 #include "qa/compat/qvm/operations.h"
 #include "qa/compat/qvm/primary_inventory_profile.h"
 #include "qa/content/item_icon.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
 
@@ -254,6 +255,10 @@ static int64_t address_of(qa_qvm_mod_items_runtime *items, qa_actor_id actor, co
 static int32_t scalar_with_previous(qa_qvm_mod_items_runtime *items, int64_t address,
                                     const qa_qvm_committed_write *previous) {
   if (previous == NULL) return read_word_at(items->memory, address);
+  /* TS slices 4 bytes and builds a 4-byte DataView, which throws
+   * outside the allocation; validate before the raw copy. */
+  qa_qvm_writable_view extent;
+  qa_qvm_memory_data_view(items->memory, address, 4, &extent);
   uint8_t bytes[4];
   memcpy(bytes, items->memory->bytes + address, 4);
   for (size_t r = 0; r < previous->range_count; r++) {
@@ -322,10 +327,17 @@ static const qa_qvm_item_storage *storage_for(qa_qvm_mod_items_runtime *items, q
   return NULL;
 }
 
+/* Entries are heap objects on a pointer array: weapon binding and
+ * request capabilities capture entry pointers (TS Entry objects)
+ * across later admits (realloc) and releases (memmove). */
+static item_entry **entry_stack(qa_qvm_mod_items_runtime *items) {
+  return (item_entry **)items->entries;
+}
+
 static item_entry *find_entry(qa_qvm_mod_items_runtime *items, qa_actor_id actor) {
-  item_entry *entries = items->entries;
+  item_entry **entries = entry_stack(items);
   for (size_t i = 0; i < items->entry_count; i++)
-    if (qa_same_actor(entries[i].actor.id, actor)) return &entries[i];
+    if (qa_same_actor(entries[i]->actor.id, actor)) return entries[i];
   return NULL;
 }
 
@@ -808,16 +820,25 @@ void qa_qvm_mod_items_runtime_destroy(qa_qvm_mod_items_runtime *items) {
     qa_qvm_mod_weapon_stage_destroy(items->weapons);
     free(items->weapons);
   }
-  item_entry *entries = items->entries;
+  item_entry **entries = entry_stack(items);
   for (size_t i = 0; i < items->entry_count; i++) {
-    free(entries[i].current_request);
-    free(entries[i].addresses);
-    observe_state *observe = entries[i].observe_state;
+    free(entries[i]->current_request);
+    free(entries[i]->addresses);
+    observe_state *observe = entries[i]->observe_state;
     if (observe != NULL) free(observe->pending);
     free(observe);
-    free(entries[i].lease_state);
+    free(entries[i]->lease_state);
+    free(entries[i]);
   }
   free(items->entries);
+  {
+    item_entry **retired = items->retired_entries;
+    for (size_t i = 0; i < items->retired_entry_count; i++) {
+      free(retired[i]->current_request);
+      free(retired[i]);
+    }
+    free(items->retired_entries);
+  }
   free(items->applied);
   free(items->admissions);
   free(items->admission_actions);
@@ -831,12 +852,7 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
   if (!items->services->resolve_owned(items->services->ctx, actor, &owner) ||
       !items->operations->live(items->operations->ctx, actor))
     qa_range_error("QVM source items require the current admitted client");
-  if (items->entry_count == items->entry_capacity) {
-    items->entry_capacity = items->entry_capacity == 0 ? 8 : items->entry_capacity * 2;
-    items->entries = realloc(items->entries, items->entry_capacity * sizeof(item_entry));
-    if (items->entries == NULL) qa_range_error("QVM memory allocation failed");
-  }
-  item_entry *entry = &((item_entry *)items->entries)[items->entry_count];
+  item_entry *entry = xmalloc(sizeof *entry);
   memset(entry, 0, sizeof *entry);
   entry->actor = owner;
   for (size_t s = 0; s < items->definition->storage_count; s++) {
@@ -911,7 +927,12 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
                                                   observe_publish, observe, observe_after, observe);
   free(ranges);
   entry->current_request = NULL;
-  items->entry_count++;
+  if (items->entry_count == items->entry_capacity) {
+    items->entry_capacity = items->entry_capacity == 0 ? 8 : items->entry_capacity * 2;
+    items->entries = realloc(items->entries, items->entry_capacity * sizeof(item_entry *));
+    if (items->entries == NULL) qa_range_error("QVM memory allocation failed");
+  }
+  entry_stack(items)[items->entry_count++] = entry;
   if (items->weapons != NULL) {
     qa_source_weapon_unbind remove;
     if (!items->services->has_weapons(items->services->ctx) ||
@@ -974,7 +995,7 @@ int32_t qa_qvm_mod_items_apply(qa_qvm_mod_items_runtime *items, qa_mod_client_ap
   qa_qvm_writable_view view;
   qa_qvm_memory_data_view(items->memory,
       address_of(items, entry->actor.id, &items->definition->weapons->input.clock), 4, &view);
-  qa_qvm_writable_view_set_int32(&view, 0, (int32_t)trunc(end) - (int32_t)trunc(elapsed), true);
+  qa_qvm_writable_view_set_int32(&view, 0, qa_int32(trunc(end) - trunc(elapsed)), true);
   return qa_qvm_mod_weapon_stage_apply(items->weapons, entry->actor.id, run, run_ctx);
 }
 
@@ -999,19 +1020,19 @@ qa_save_value *qa_qvm_mod_items_checkpoint(qa_qvm_mod_items_runtime *items) {
   set_child(result, "version", qa_save_value_number(1));
   set_child(result, "nextRequest", qa_save_value_number((double)items->next_request));
   qa_save_value *requests = make_array();
-  item_entry *entries = items->entries;
+  item_entry **entries = entry_stack(items);
   for (size_t i = 0; i < items->entry_count; i++) {
-    if (entries[i].current_request == NULL) continue;
+    if (entries[i]->current_request == NULL) continue;
     qa_save_value *row = make_object();
-    qa_saved_actor_id saved = qa_saved_actor_id_of(entries[i].actor.id);
+    qa_saved_actor_id saved = qa_saved_actor_id_of(entries[i]->actor.id);
     qa_save_value *actor = make_object();
     set_child(actor, "slot", qa_save_value_number(saved.slot));
     set_child(actor, "generation", qa_save_value_number(saved.generation));
     set_child(row, "actor", actor);
-    set_child(row, "id", qa_save_value_number((double)entries[i].current_request->id));
-    if (entries[i].current_request->item == NULL) set_child(row, "item", qa_save_value_null());
-    else set_child(row, "item", qa_save_value_string(entries[i].current_request->item));
-    set_child(row, "status", qa_save_value_string(entries[i].current_request->status));
+    set_child(row, "id", qa_save_value_number((double)entries[i]->current_request->id));
+    if (entries[i]->current_request->item == NULL) set_child(row, "item", qa_save_value_null());
+    else set_child(row, "item", qa_save_value_string(entries[i]->current_request->item));
+    set_child(row, "status", qa_save_value_string(entries[i]->current_request->status));
     if (!qa_save_value_push(requests, row)) qa_range_error("QVM memory allocation failed");
   }
   set_child(result, "requests", requests);
@@ -1041,9 +1062,9 @@ void qa_qvm_mod_items_restore(qa_qvm_mod_items_runtime *items, const qa_save_val
   qa_save_reader_destroy(&next);
   qa_save_reader requests = rfield(&reader, "requests");
   size_t count = qa_save_reader_list_count(&requests);
-  int64_t ids[256];
+  int64_t *ids = xmalloc(count * sizeof *ids);
   size_t id_count = 0;
-  qa_actor_id actors[256];
+  qa_actor_id *actors = xmalloc(count * sizeof *actors);
   size_t actor_count = 0;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader row = ritem(&requests, i);
@@ -1070,7 +1091,7 @@ void qa_qvm_mod_items_restore(qa_qvm_mod_items_runtime *items, const qa_save_val
     bool found = false;
     if (item != NULL) (void)selection_value(items, item, &found);
     if (entry == NULL || !entry_current(items, entry) || id > items->next_request || duplicate ||
-        (item != NULL && !found) || id_count >= 256 || actor_count >= 256)
+        (item != NULL && !found))
       qa_range_error("Saved QVM weapon request is not its current admitted owner");
     ids[id_count++] = id;
     actors[actor_count++] = actor;
@@ -1081,36 +1102,52 @@ void qa_qvm_mod_items_restore(qa_qvm_mod_items_runtime *items, const qa_save_val
     entry->current_request->status = status;
     entry->current_request->attempted = false;
   }
+  free(ids);
+  free(actors);
   qa_save_reader_destroy(&requests);
   qa_save_reader_destroy(&reader);
 }
 
 void qa_qvm_mod_items_clear(qa_qvm_mod_items_runtime *items) {
   while (items->entry_count != 0) {
-    item_entry *entries = items->entries;
-    qa_actor_id actor = entries[0].actor.id;
+    item_entry **entries = entry_stack(items);
+    qa_actor_id actor = entries[0]->actor.id;
     qa_qvm_mod_items_release(items, actor);
   }
 }
 
 void qa_qvm_mod_items_release(qa_qvm_mod_items_runtime *items, qa_actor_id actor) {
-  item_entry *entries = items->entries;
+  item_entry **entries = entry_stack(items);
   for (size_t i = 0; i < items->entry_count; i++) {
-    if (!qa_same_actor(entries[i].actor.id, actor)) continue;
-    item_entry removed = entries[i];
+    if (!qa_same_actor(entries[i]->actor.id, actor)) continue;
+    item_entry *removed = entries[i];
     memmove(&entries[i], &entries[i + 1], (items->entry_count - i - 1) * sizeof *entries);
     items->entry_count--;
-    free(removed.current_request);
-    qa_qvm_memory_writes_unobserve(&items->memory->writes, removed.watch_id);
-    if (removed.has_remove_weapon) removed.remove_weapon.invoke(removed.remove_weapon.ctx);
-    removed.lease.close(removed.lease.ctx);
-    free(removed.addresses);
+    qa_qvm_memory_writes_unobserve(&items->memory->writes, removed->watch_id);
+    if (removed->has_remove_weapon) removed->remove_weapon.invoke(removed->remove_weapon.ctx);
+    removed->lease.close(removed->lease.ctx);
+    free(removed->addresses);
+    removed->addresses = NULL;
+    removed->address_count = 0;
     {
-      observe_state *observe = removed.observe_state;
+      observe_state *observe = removed->observe_state;
       if (observe != NULL) free(observe->pending);
       free(observe);
+      removed->observe_state = NULL;
     }
-    free(removed.lease_state);
+    free(removed->lease_state);
+    removed->lease_state = NULL;
+    /* Keep the entry and its request allocated until destroy: weapon
+     * capabilities captured them and compare identity after release
+     * (the TS objects stay alive through the capability closures). */
+    if (items->retired_entry_count == items->retired_entry_capacity) {
+      items->retired_entry_capacity =
+          items->retired_entry_capacity == 0 ? 8 : items->retired_entry_capacity * 2;
+      items->retired_entries =
+          realloc(items->retired_entries, items->retired_entry_capacity * sizeof(item_entry *));
+      if (items->retired_entries == NULL) qa_range_error("QVM memory allocation failed");
+    }
+    ((item_entry **)items->retired_entries)[items->retired_entry_count++] = removed;
     return;
   }
 }

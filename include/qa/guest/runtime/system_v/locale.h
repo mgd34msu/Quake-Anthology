@@ -10,17 +10,17 @@
 
 typedef struct qa_system_v_classic_locale {
   qa_cxx_abi_data *abi;
-  qa_guest_address implementation;
-  qa_guest_address c_locale;
-  qa_guest_address ctype[2];   /* narrow, wide */
-  qa_guest_address num_put[2];
-  qa_guest_address num_get[2];
-  qa_guest_address facet_base;
+  qa_guest_core_address implementation;
+  qa_guest_core_address c_locale;
+  qa_guest_core_address ctype[2];   /* narrow, wide */
+  qa_guest_core_address num_put[2];
+  qa_guest_core_address num_get[2];
+  qa_guest_core_address facet_base;
 } qa_system_v_classic_locale;
 
 void qa_system_v_classic_locale_init(qa_system_v_classic_locale *locale, qa_cxx_abi_data *abi);
-qa_guest_address qa_system_v_classic_locale_retain(qa_system_v_classic_locale *locale);
+qa_guest_core_address qa_system_v_classic_locale_retain(qa_system_v_classic_locale *locale);
 void qa_system_v_classic_locale_release(qa_system_v_classic_locale *locale,
-                                        qa_guest_address implementation);
+                                        qa_guest_core_address implementation);
 
 #endif

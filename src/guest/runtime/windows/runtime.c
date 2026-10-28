@@ -30,7 +30,7 @@ static char *xstrdup(const char *text) {
 }
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
-static qa_guest_address off(const qa_mapped_guest_memory *m, qa_guest_address a, int64_t d) {
+static qa_guest_core_address off(const qa_mapped_guest_memory *m, qa_guest_core_address a, int64_t d) {
   return qa_memory_offset(m, a, d);
 }
 static void grow(void **array, size_t *cap, size_t count, size_t element) {
@@ -57,19 +57,19 @@ typedef struct import_entry {
   qa_guest_host_callback callback;
   char *callback_id;             /* owned */
   qa_abi_value_layout *layouts;  /* owned */
-  qa_guest_address address;
+  qa_guest_core_address address;
   bool supported;
   int64_t reached, failed;
   char *last_failure; /* owned, NULL = TS null */
   qa_windows_import_implementation implementation;
 } import_entry;
-typedef struct data_entry { char *library, *name; qa_guest_address address; } data_entry;
+typedef struct data_entry { char *library, *name; qa_guest_core_address address; } data_entry;
 typedef struct requested_entry { char *library, *name; } requested_entry;
-typedef struct library_entry { char *library; qa_guest_address address; } library_entry;
+typedef struct library_entry { char *library; qa_guest_core_address address; } library_entry;
 typedef struct library_ref { uint64_t key; int64_t count; } library_ref;
-typedef struct heap_allocation { qa_guest_address address; size_t size; uint64_t heap; }
+typedef struct heap_allocation { qa_guest_core_address address; size_t size; uint64_t heap; }
     heap_allocation;
-typedef struct tls_block_entry { qa_pe_image *image; qa_guest_address address; }
+typedef struct tls_block_entry { qa_pe_image *image; qa_guest_core_address address; }
     tls_block_entry;
 
 #define IMPORTS(rt) ((import_entry **)(rt)->imports)
@@ -91,7 +91,7 @@ static import_entry *import_entry_of(qa_windows_guest_runtime *rt, const char *l
   return NULL;
 }
 static bool data_address_of(qa_windows_guest_runtime *rt, const char *library, const char *name,
-                            qa_guest_address *out) {
+                            qa_guest_core_address *out) {
   for (size_t i = 0; i < rt->data_count; i++)
     if (strcmp(DATA(rt)[i].library, library) == 0 && strcmp(DATA(rt)[i].name, name) == 0) {
       *out = DATA(rt)[i].address;
@@ -121,7 +121,7 @@ static void ensure_library_handle(qa_windows_guest_runtime *rt, const char *norm
     if (strcmp(LIBRARIES(rt)[i].library, normalized) == 0) return;
   char *label = xmalloc(strlen(normalized) + 32);
   (void)snprintf(label, strlen(normalized) + 32, "Windows library handle %s", normalized);
-  qa_guest_address address = qa_gmem_allocate(rt->options.memory_ext, 16, false, 0, false,
+  qa_guest_core_address address = qa_gmem_allocate(rt->options.memory_ext, 16, false, 0, false,
                                               QA_PERM_READ_WRITE, label);
   free(label);
   grow(&rt->libraries, &rt->library_cap, rt->library_count, sizeof(library_entry));
@@ -161,7 +161,7 @@ void qa_windows_guest_runtime_signature(qa_windows_guest_runtime *runtime, const
 }
 
 typedef struct wrap_state { import_entry *entry; } wrap_state;
-static qa_call_result wrap_invoke(void *ctx, const qa_guest_call_context *context,
+static qa_call_result wrap_invoke(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count) {
   wrap_state *state = ctx;
   state->entry->reached++;
@@ -204,7 +204,7 @@ static import_entry *register_import(qa_windows_guest_runtime *rt, const char *l
 }
 
 typedef struct unsupported_state { char *library, *name; } unsupported_state;
-static qa_call_result unsupported_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result unsupported_impl(void *ctx, const qa_guest_core_call_context *context,
                                        const qa_call_value *args, size_t count) {
   unsupported_state *state = ctx;
   (void)context; (void)args; (void)count;
@@ -245,13 +245,13 @@ static void host_service(void *ctx, const char *library, const char *name,
   (void)register_import(rt, library, name, signature, implementation, true);
   free(layouts);
 }
-static bool host_allocate(void *ctx, size_t size, uint64_t heap, qa_guest_address *out) {
+static bool host_allocate(void *ctx, size_t size, uint64_t heap, qa_guest_core_address *out) {
   return qa_windows_guest_runtime_allocate(ctx, size, heap, out);
 }
-static bool host_free(void *ctx, bool has_address, qa_guest_address address, uint64_t heap) {
+static bool host_free(void *ctx, bool has_address, qa_guest_core_address address, uint64_t heap) {
   return qa_windows_guest_runtime_free(ctx, has_address, address, heap);
 }
-static bool host_allocation_size(void *ctx, qa_guest_address address, uint64_t heap,
+static bool host_allocation_size(void *ctx, qa_guest_core_address address, uint64_t heap,
                                  size_t *out) {
   return qa_windows_guest_runtime_allocation_size(ctx, address, heap, out);
 }
@@ -260,14 +260,14 @@ static void host_destroy_heap(void *ctx, uint64_t heap) {
   /* Collect first: free() removes entries while iterating (TS iterates a
    * live Map view with the same net effect). */
   size_t count = 0;
-  qa_guest_address *list = xmalloc(rt->allocation_count * sizeof *list);
+  qa_guest_core_address *list = xmalloc(rt->allocation_count * sizeof *list);
   for (size_t i = 0; i < rt->allocation_count; i++)
     if (ALLOCATIONS(rt)[i].heap == heap) list[count++] = ALLOCATIONS(rt)[i].address;
   for (size_t i = 0; i < count; i++) (void)qa_windows_guest_runtime_free(rt, true, list[i], heap);
   free(list);
 }
-static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *context,
-                                  qa_guest_address target, const qa_abi_storage *parameters,
+static qa_call_result host_invoke(void *ctx, const qa_guest_core_call_context *context,
+                                  qa_guest_core_address target, const qa_abi_storage *parameters,
                                   size_t parameter_count, bool result_is_void,
                                   qa_abi_storage result, const qa_call_value *arguments,
                                   size_t argument_count, bool system) {
@@ -277,7 +277,7 @@ static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *contex
   qa_guest_call_signature signature;
   qa_windows_guest_runtime_signature(rt, library, parameters, parameter_count, result_is_void,
                                      result, layouts, &signature);
-  qa_guest_call_context nested = *context;
+  qa_guest_core_call_context nested = *context;
   nested.callback_kind = QA_CALLBACK_REF_NATIVE_GUEST;
   nested.callback_module = context->module;
   nested.callback_address = target;
@@ -296,19 +296,19 @@ static qa_call_result host_invoke(void *ctx, const qa_guest_call_context *contex
   return value;
 }
 static bool host_resolve_address(void *ctx, const char *library, const char *name,
-                                 qa_guest_address *out) {
+                                 qa_guest_core_address *out) {
   return qa_windows_guest_runtime_resolve_address(ctx, library, name, out);
 }
-static bool host_library_handle(void *ctx, const char *library, qa_guest_address *out) {
+static bool host_library_handle(void *ctx, const char *library, qa_guest_core_address *out) {
   return qa_windows_guest_runtime_library_handle(ctx, library, out);
 }
-static bool host_load_library(void *ctx, const char *library, qa_guest_address *out) {
+static bool host_load_library(void *ctx, const char *library, qa_guest_core_address *out) {
   return qa_windows_guest_runtime_load_library(ctx, library, out);
 }
-static bool host_free_library(void *ctx, qa_guest_address handle) {
+static bool host_free_library(void *ctx, qa_guest_core_address handle) {
   return qa_windows_guest_runtime_free_library(ctx, handle);
 }
-static const char *host_library_name(void *ctx, qa_guest_address handle) {
+static const char *host_library_name(void *ctx, qa_guest_core_address handle) {
   qa_windows_guest_runtime *rt = ctx;
   for (size_t i = 0; i < rt->library_count; i++)
     if (LIBRARIES(rt)[i].address.byte_offset == handle.byte_offset)
@@ -388,17 +388,17 @@ void qa_windows_guest_runtime_attach_runner(qa_windows_guest_runtime *runtime,
   if (m->pointer_bytes == 4) state->segments[QA_SEG_FS].base = runtime->teb.byte_offset;
   else state->segments[QA_SEG_GS].base = runtime->teb.byte_offset;
 }
-qa_guest_address qa_windows_guest_runtime_register_data(qa_windows_guest_runtime *runtime,
+qa_guest_core_address qa_windows_guest_runtime_register_data(qa_windows_guest_runtime *runtime,
                                                         const char *library, const char *name,
                                                         const uint8_t *bytes, size_t len) {
   char *normalized = canonical(library);
-  qa_guest_address existing = {0};
+  qa_guest_core_address existing = {0};
   if (data_address_of(runtime, normalized, name, &existing) ||
       import_entry_of(runtime, normalized, name) != NULL)
     qa_range_error("Duplicate Windows data export %s!%s", normalized, name);
   char *label = xmalloc(strlen(normalized) + strlen(name) + 2);
   (void)snprintf(label, strlen(normalized) + strlen(name) + 2, "%s!%s", normalized, name);
-  qa_guest_address address = qa_gmem_allocate(runtime->options.memory_ext, len, true, 16,
+  qa_guest_core_address address = qa_gmem_allocate(runtime->options.memory_ext, len, true, 16,
                                               false, QA_PERM_READ_WRITE, label);
   free(label);
   qa_memory_write(runtime->options.memory, address, bytes, len);
@@ -453,7 +453,7 @@ qa_guest_import_resolution qa_windows_guest_runtime_resolve(
   }
   qa_guest_import_resolution resolution;
   memset(&resolution, 0, sizeof resolution);
-  qa_guest_address data = {0};
+  qa_guest_core_address data = {0};
   if (data_address_of(runtime, library, name, &data)) {
     resolution.kind = QA_RESOLUTION_GUEST;
     resolution.address = data;
@@ -502,7 +502,7 @@ qa_guest_import_resolver qa_windows_guest_runtime_resolver(qa_windows_guest_runt
 }
 bool qa_windows_guest_runtime_resolve_address(qa_windows_guest_runtime *runtime,
                                               const char *library, const char *name,
-                                              qa_guest_address *out) {
+                                              qa_guest_core_address *out) {
   char *current_library = xstrdup(library);
   char *current_name = xstrdup(name);
   requested_entry *seen = NULL;
@@ -567,7 +567,7 @@ bool qa_windows_guest_runtime_resolve_address(qa_windows_guest_runtime *runtime,
   return found;
 }
 bool qa_windows_guest_runtime_library_handle(qa_windows_guest_runtime *runtime,
-                                             const char *library, qa_guest_address *out) {
+                                             const char *library, qa_guest_core_address *out) {
   char *normalized = canonical(library);
   const qa_pe_image *image = find_image_by_library(runtime, normalized);
   if (image != NULL) {
@@ -593,7 +593,7 @@ bool qa_windows_guest_runtime_library_handle(qa_windows_guest_runtime *runtime,
   return result;
 }
 bool qa_windows_guest_runtime_load_library(qa_windows_guest_runtime *runtime,
-                                           const char *library, qa_guest_address *out) {
+                                           const char *library, qa_guest_core_address *out) {
   if (!qa_windows_guest_runtime_library_handle(runtime, library, out)) {
     host_set_last_error(runtime, 126);
     return false;
@@ -611,7 +611,7 @@ bool qa_windows_guest_runtime_load_library(qa_windows_guest_runtime *runtime,
   return true;
 }
 bool qa_windows_guest_runtime_free_library(qa_windows_guest_runtime *runtime,
-                                           qa_guest_address handle) {
+                                           qa_guest_core_address handle) {
   for (size_t i = 0; i < runtime->library_reference_count; i++) {
     if (REFS(runtime)[i].key != handle.byte_offset) continue;
     if (REFS(runtime)[i].count == 1) {
@@ -626,7 +626,7 @@ bool qa_windows_guest_runtime_free_library(qa_windows_guest_runtime *runtime,
   return false;
 }
 bool qa_windows_guest_runtime_allocate(qa_windows_guest_runtime *runtime, size_t size,
-                                       uint64_t heap, qa_guest_address *out) {
+                                       uint64_t heap, qa_guest_core_address *out) {
   if (size > 0x10000000) {
     host_set_last_error(runtime, 8);
     return false;
@@ -641,7 +641,7 @@ bool qa_windows_guest_runtime_allocate(qa_windows_guest_runtime *runtime, size_t
   return true;
 }
 bool qa_windows_guest_runtime_free(qa_windows_guest_runtime *runtime, bool has_address,
-                                   qa_guest_address address, uint64_t heap) {
+                                   qa_guest_core_address address, uint64_t heap) {
   if (!has_address) return true;
   for (size_t i = 0; i < runtime->allocation_count; i++) {
     if (ALLOCATIONS(runtime)[i].address.byte_offset != address.byte_offset) continue;
@@ -658,7 +658,7 @@ bool qa_windows_guest_runtime_free(qa_windows_guest_runtime *runtime, bool has_a
   return false;
 }
 bool qa_windows_guest_runtime_allocation_size(qa_windows_guest_runtime *runtime,
-                                              qa_guest_address address, uint64_t heap,
+                                              qa_guest_core_address address, uint64_t heap,
                                               size_t *out) {
   for (size_t i = 0; i < runtime->allocation_count; i++)
     if (ALLOCATIONS(runtime)[i].address.byte_offset == address.byte_offset &&
@@ -671,13 +671,13 @@ bool qa_windows_guest_runtime_allocation_size(qa_windows_guest_runtime *runtime,
 
 typedef struct cfg_state { qa_windows_guest_runtime *rt; int kind; } cfg_state;
 static void validate_cfg(qa_windows_guest_runtime *rt, uint64_t target,
-                         const qa_guest_call_context *context) {
+                         const qa_guest_core_call_context *context) {
   (void)context;
   bool valid = false;
   for (size_t i = 0; i < rt->cfg_target_count; i++)
     if (rt->cfg_targets[i] == target) valid = true;
   if (qa_guest_callback_table_has_bound_trap(rt->options.callbacks, target)) valid = true;
-  qa_guest_address address = {0};
+  qa_guest_core_address address = {0};
   bool has_address = qa_memory_pointer(rt->options.memory, target, &address);
   if (!valid || !has_address) {
     char detail[64];
@@ -687,7 +687,7 @@ static void validate_cfg(qa_windows_guest_runtime *rt, uint64_t target,
   }
   qa_memory_check(rt->options.memory, address, 1, QA_ACCESS_EXECUTE);
 }
-static qa_call_result cfg_impl(void *ctx, const qa_guest_call_context *context,
+static qa_call_result cfg_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count) {
   cfg_state *state = ctx;
   qa_windows_guest_runtime *rt = state->rt;
@@ -727,7 +727,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
   uint32_t extra = config->guard_flags >> 28;
   uint32_t stride = extra + 4;
   if (count > image->image.byte_length / stride) plain_error("Invalid CFG target count");
-  qa_guest_address base = {0};
+  qa_guest_core_address base = {0};
   bool has_base = qa_memory_pointer(m, table, &base);
   if (count != 0 && !has_base) plain_error("Null CFG target table");
   if (has_base) {
@@ -748,7 +748,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
       previous = rva;
       if ((flags & 1) != 0 || ((flags & 2) != 0 && (config->guard_flags & 0x8000) != 0))
         continue;
-      qa_guest_address address = off(m, image->image.base, rva);
+      qa_guest_core_address address = off(m, image->image.base, rva);
       qa_memory_check(m, address, 1, QA_ACCESS_EXECUTE);
       bool present = false;
       for (size_t t = 0; t < rt->cfg_target_count; t++)
@@ -776,7 +776,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
       qa_abi_storage ptr = QA_STORAGE_POINTER;
       qa_windows_service(&rt->host, "quake-runtime.dll", "guard-dispatch-check", &ptr, 1,
                          true, QA_STORAGE_INT32, dispatch_impl);
-      qa_guest_address check = {0};
+      qa_guest_core_address check = {0};
       if (!qa_windows_guest_runtime_resolve_address(rt, "quake-runtime.dll",
                                                     "guard-dispatch-check", &check))
         plain_error("CFG checker binding missing");
@@ -785,7 +785,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
                         0xff, 0xd0, 0x48, 0x83, 0xc4, 0x20, 0x41, 0x59, 0x41, 0x58, 0x5a,
                         0x59, 0x58, 0xff, 0xe0};
       for (int i = 0; i < 8; i++) code[16 + i] = (uint8_t)(check.byte_offset >> (i * 8));
-      qa_guest_address address = qa_gmem_allocate(rt->options.memory_ext, sizeof code, true,
+      qa_guest_core_address address = qa_gmem_allocate(rt->options.memory_ext, sizeof code, true,
                                                   16, false, QA_PERM_READ_WRITE,
                                                   "Guest CFG dispatch instructions");
       qa_memory_write(m, address, code, sizeof code);
@@ -802,13 +802,13 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
           rt, "quake-runtime.dll", "guard-dispatch-check", &rt->cfg_dispatch);
     }
   }
-  struct { bool has; qa_guest_address slot; bool has_value; qa_guest_address value; } patches[] = {
+  struct { bool has; qa_guest_core_address slot; bool has_value; qa_guest_core_address value; } patches[] = {
       {config->has_guard_check, config->guard_check_slot, rt->has_cfg_check, rt->cfg_check},
       {config->has_guard_dispatch, config->guard_dispatch_slot, rt->has_cfg_dispatch,
        rt->cfg_dispatch}};
   for (size_t i = 0; i < 2; i++) {
     if (!patches[i].has || !patches[i].has_value) continue;
-    qa_guest_address slot = patches[i].slot;
+    qa_guest_core_address slot = patches[i].slot;
     size_t mapping_count = 0;
     const qa_guest_mapping *mappings = qa_gmem_mappings(rt->options.memory_ext,
                                                         &mapping_count);
@@ -848,7 +848,7 @@ void qa_windows_guest_runtime_prepare_image(qa_windows_guest_runtime *runtime,
     char *label = xmalloc(strlen(image->image.module.id) + 8);
     (void)snprintf(label, strlen(image->image.module.id) + 8, "%s: TLS",
                    image->image.module.id);
-    qa_guest_address block = qa_gmem_allocate(
+    qa_guest_core_address block = qa_gmem_allocate(
         runtime->options.memory_ext, byte_length, true,
         image->image.tls.alignment < 16 ? 16 : image->image.tls.alignment, false,
         QA_PERM_READ_WRITE, label);
@@ -872,17 +872,17 @@ void qa_windows_guest_runtime_prepare_image(qa_windows_guest_runtime *runtime,
   image_list_add(&runtime->prepared, &runtime->prepared_count, &runtime->prepared_cap, image);
 }
 static qa_call_result notification(qa_windows_guest_runtime *rt, qa_pe_image *image,
-                                   qa_guest_address target, uint32_t reason,
+                                   qa_guest_core_address target, uint32_t reason,
                                    const qa_windows_initialize_options *options, bool is_void) {
   qa_abi_storage storages[] = {QA_STORAGE_POINTER, QA_STORAGE_UINT32, QA_STORAGE_POINTER};
   qa_abi_value_layout *layouts = xmalloc(3 * sizeof *layouts);
   qa_guest_call_signature signature;
   qa_windows_guest_runtime_signature(rt, "kernel32.dll", storages, 3, is_void,
                                      QA_STORAGE_INT32, layouts, &signature);
-  qa_guest_address none = {0};
+  qa_guest_core_address none = {0};
   qa_call_value invoke_args[] = {qa_call_pointer(true, image->image.base),
                                  qa_call_uint32(reason), qa_call_pointer(false, none)};
-  qa_guest_call_context context = options->context;
+  qa_guest_core_call_context context = options->context;
   context.callback_kind = QA_CALLBACK_REF_NATIVE_GUEST;
   context.callback_module = options->context.module;
   context.callback_address = target;

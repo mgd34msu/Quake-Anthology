@@ -150,7 +150,7 @@ void qa_fp_square_root(qa_binary_result *out, const qa_binary_value *value, qa_b
 typedef enum qa_numeric_operand_kind { QA_OPERAND_MEMORY = 0, QA_OPERAND_REGISTER } qa_numeric_operand_kind;
 typedef struct qa_numeric_operand {
   qa_numeric_operand_kind kind;
-  qa_guest_address address; /* memory */
+  qa_guest_core_address address; /* memory */
   int index;                /* register */
 } qa_numeric_operand;
 
