@@ -875,6 +875,311 @@ static void test_core_media_sounds(void) {
   qa_q3_pres_client_game_state_destroy(&state);
 }
 
+/* ---- pres-draw: audio, scene, marks, draw tools, weapons ---- */
+
+typedef struct draw_probe {
+  qa_play_sound plays[4];
+  qa_loop_sound loops[2];
+  int play_count, loop_count, update_count, stop_count, warnings;
+  const qa_sound_asset *fake_asset;
+  qa_pcm_sound fake_pcm;
+} draw_probe;
+static bool probe_no_actor(void *ctx, double number, qa_actor_id *out) {
+  (void)ctx; (void)number; (void)out;
+  return false;
+}
+static double probe_frame(void *ctx) { (void)ctx; return 1; }
+static void probe_play(void *ctx, qa_play_sound sound) {
+  draw_probe *probe = ctx;
+  probe->plays[probe->play_count++] = sound;
+}
+static void probe_loop(void *ctx, qa_loop_sound sound) {
+  draw_probe *probe = ctx;
+  probe->loops[probe->loop_count++] = sound;
+}
+static void probe_update(void *ctx, qa_actor_id actor, qa_vec3 position) {
+  (void)actor; (void)position;
+  ((draw_probe *)ctx)->update_count++;
+}
+static void probe_stop(void *ctx, qa_seat_id seat, qa_actor_id actor) {
+  (void)seat; (void)actor;
+  ((draw_probe *)ctx)->stop_count++;
+}
+static const qa_sound_asset *probe_load(void *ctx, const char *path, bool compressed) {
+  (void)path; (void)compressed;
+  return ((draw_probe *)ctx)->fake_asset;
+}
+
+static void test_draw_stack_audio(void) {
+  /* audio-stale-actor.test.ts: released actors are silently ignored. */
+  draw_probe probe;
+  memset(&probe, 0, sizeof probe);
+  qa_sound_asset asset;
+  memset(&asset, 0, sizeof asset);
+  asset.resource = "resource:q3-audio-stale";
+  asset.name = "sound/test.wav";
+  probe.fake_asset = &asset;
+  qa_q3_pres_presentation_sound_bank *bank =
+      qa_q3_pres_presentation_sound_bank_create(NULL, NULL, probe_load, &probe);
+  CHECK(bank != NULL);
+  qa_pcm_sound *pcm = NULL;
+  CHECK(qa_q3_pres_presentation_sound_bank_sound(bank, "sound/test.wav", false, &pcm));
+  CHECK(pcm == &asset.pcm);
+  CHECK(qa_q3_pres_presentation_sound_bank_index_for_sound(bank, pcm) == 1);
+  qa_pcm_sound *none = (qa_pcm_sound *)1;
+  CHECK(qa_q3_pres_presentation_sound_bank_register_sound(bank, "", false, &none) && none == NULL);
+  none = (qa_pcm_sound *)1;
+  CHECK(qa_q3_pres_presentation_sound_bank_register_sound(bank, "*sexed", false, &none) && none == NULL);
+  CHECK(qa_q3_pres_presentation_sound_bank_sound_at_index(bank, 0) == NULL);
+  CHECK(qa_q3_pres_presentation_sound_bank_sound_at_index(bank, 1) == pcm);
+  CHECK_ABORTS((void)qa_q3_pres_presentation_sound_bank_sound_at_index(bank, 2));
+  CHECK_ABORTS({ qa_pcm_sound *o; (void)qa_q3_pres_presentation_sound_bank_register_sound(bank, NULL, false, &o); });
+  qa_q3_pres_presentation_audio audio;
+  qa_q3_pres_audio_target target;
+  memset(&target, 0, sizeof target);
+  target.sounds = bank;
+  target.ctx = &probe;
+  target.actor = probe_no_actor;
+  target.frame_number = probe_frame;
+  target.play = probe_play;
+  target.loop = probe_loop;
+  target.update_actor = probe_update;
+  target.stop_loop = probe_stop;
+  qa_q3_pres_presentation_audio_init(&audio, target);
+  qa_vec3 origin = {1, 2, 3};
+  qa_q3_pres_presentation_audio_update_sound_position(&audio, 64, origin);
+  CHECK(probe.update_count == 0);
+  qa_q3_pres_presentation_audio_stop_looping_sound(&audio, 64);
+  CHECK(probe.stop_count == 0);
+  qa_q3_pres_presentation_audio_add_loop_sound(&audio, 64, origin, origin, pcm, true);
+  CHECK(probe.loop_count == 0);
+  qa_q3_pres_presentation_audio_start_sound(&audio, NULL, 64, 0, pcm);
+  CHECK(probe.play_count == 0);
+  qa_q3_pres_presentation_audio_start_sound(&audio, &origin, 64, 0, pcm);
+  CHECK(probe.play_count == 1 && !probe.plays[0].has_actor);
+  CHECK(probe.plays[0].origin.kind == QA_SOUND_ORIGIN_FIXED && probe.plays[0].origin.position.x == 1);
+  probe.play_count = 0;
+  qa_start_sound_options entity_options;
+  memset(&entity_options, 0, sizeof entity_options);
+  entity_options.entity = 64;
+  entity_options.origin.kind = QA_VOICE_ORIGIN_ENTITY;
+  entity_options.origin.entity = 64;
+  entity_options.volume = 127;
+  qa_q3_pres_presentation_audio_start_source_sound(&audio, pcm, entity_options);
+  CHECK(probe.play_count == 0);
+  entity_options.origin.kind = QA_VOICE_ORIGIN_FIXED;
+  entity_options.origin.position = origin;
+  qa_q3_pres_presentation_audio_start_source_sound(&audio, pcm, entity_options);
+  CHECK(probe.play_count == 1 && !probe.plays[0].has_actor);
+  CHECK(fabs(probe.plays[0].volume - 1) < 1e-9);
+  qa_q3_pres_presentation_sound_bank_destroy(bank);
+}
+
+static double mark_clock;
+static double probe_mark_clock(void *ctx) { (void)ctx; return mark_clock; }
+static bool probe_mark_enabled(void *ctx) { (void)ctx; return true; }
+static const qa_q3_pres_scene_shader *probe_no_shader(void *ctx) { (void)ctx; return NULL; }
+
+static void test_draw_stack_marks(void) {
+  /* presentation.test.ts marks projection and fade over lifetime. */
+  static const qa_vec3 positions[4] = {{-32, -32, 0}, {32, -32, 0}, {-32, 32, 0}, {32, 32, 0}};
+  static const double indices[6] = {0, 2, 1, 1, 2, 3};
+  qa_q3_pres_mark_surface surface;
+  memset(&surface, 0, sizeof surface);
+  surface.kind = QA_Q3_PRES_MARK_FACE;
+  surface.content_flags = 1;
+  surface.plane = (qa_plane){{0, 0, 1}, 0};
+  surface.vertices = positions;
+  surface.vertex_count = 4;
+  surface.indices = indices;
+  surface.index_count = 6;
+  qa_q3_pres_mark_leaf leaf = {0, 1};
+  double leaf_surfaces[1] = {0};
+  qa_q3_pres_mark_geometry geometry;
+  memset(&geometry, 0, sizeof geometry);
+  geometry.leaves = &leaf;
+  geometry.leaf_count = 1;
+  geometry.leaf_surfaces = leaf_surfaces;
+  geometry.leaf_surface_count = 1;
+  geometry.surface_count = 1;
+  geometry.surfaces = &surface;
+  geometry.surfaces_count = 1;
+  qa_q3_pres_bsp_mark_projector projector;
+  qa_q3_pres_bsp_mark_projector_init(&projector, geometry);
+  mark_clock = 100;
+  qa_q3_pres_impact_mark_options options = {NULL, probe_mark_clock, probe_mark_enabled, probe_no_shader};
+  qa_q3_pres_impact_mark_system *marks = qa_q3_pres_impact_mark_system_create(&projector, options);
+  CHECK(marks != NULL);
+  qa_q3_pres_scene_shader shader = {"gfx/damage/bullet_mrk"};
+  qa_q3_pres_impact_mark_request request = {&shader, {0, 0, 1}, {0, 0, 1}, 0, {1, 1, 1, 1}, true, 8, false};
+  qa_q3_pres_ref_poly *polys = NULL;
+  size_t poly_count = 99;
+  CHECK(qa_q3_pres_impact_mark_system_impact_mark(marks, request, &polys, &poly_count));
+  CHECK(poly_count == 0);
+  CHECK(qa_q3_pres_impact_mark_system_active_mark_count(marks) == 2);
+  CHECK(qa_q3_pres_impact_mark_system_add_marks(marks, &polys, &poly_count));
+  CHECK(poly_count == 2);
+  bool flat = true;
+  for (size_t i = 0; i < poly_count; i++)
+    for (size_t v = 0; v < polys[i].vertex_count; v++)
+      if (polys[i].vertices[v].position.z != 0) flat = false;
+  CHECK(flat);
+  for (size_t i = 0; i < poly_count; i++) qa_q3_pres_ref_poly_destroy(&polys[i]);
+  free(polys);
+  mark_clock = 9600;
+  CHECK(qa_q3_pres_impact_mark_system_add_marks(marks, &polys, &poly_count));
+  CHECK(poly_count >= 1 && polys[0].vertex_count >= 1 && polys[0].vertices[0].color.w == 127);
+  for (size_t i = 0; i < poly_count; i++) qa_q3_pres_ref_poly_destroy(&polys[i]);
+  free(polys);
+  mark_clock = 10101;
+  CHECK(qa_q3_pres_impact_mark_system_add_marks(marks, &polys, &poly_count));
+  CHECK(poly_count == 0 && qa_q3_pres_impact_mark_system_active_mark_count(marks) == 0);
+  qa_q3_pres_impact_mark_system_destroy(marks);
+  CHECK_ABORTS({
+    qa_q3_pres_bsp_mark_projector p;
+    qa_q3_pres_bsp_mark_projector_init(&p, geometry);
+    qa_q3_pres_impact_mark_system *m = qa_q3_pres_impact_mark_system_create(&p, options);
+    qa_q3_pres_impact_mark_request bad = request;
+    bad.radius = 0;
+    qa_q3_pres_ref_poly *o = NULL; size_t c = 0;
+    (void)qa_q3_pres_impact_mark_system_impact_mark(m, bad, &o, &c);
+  });
+}
+
+typedef struct scene_probe { int warnings; qa_q3_pres_presented_scene scenes[3]; int published; } scene_probe;
+static const qa_q3_pres_fog_selection *probe_fogs(void *ctx, size_t *count) {
+  (void)ctx; *count = 0; return NULL;
+}
+static void probe_scene_print(void *ctx, const char *text) {
+  (void)text;
+  ((scene_probe *)ctx)->warnings++;
+}
+static const qa_actor_id *probe_scene_actor(void *ctx, const qa_q3_pres_ref_model_entity *entity) {
+  (void)ctx; (void)entity; return NULL;
+}
+static void probe_publish(void *ctx, qa_q3_pres_presented_scene *scene) {
+  scene_probe *probe = ctx;
+  probe->scenes[probe->published++] = *scene;
+}
+
+static void test_draw_stack_scene(void) {
+  scene_probe probe;
+  memset(&probe, 0, sizeof probe);
+  qa_q3_pres_scene_target target;
+  memset(&target, 0, sizeof target);
+  target.viewport = (qa_rect){640, 0, 640, 480};
+  target.near_clip = 4;
+  target.far_clip = 4096;
+  target.ctx = &probe;
+  target.fog_selections = probe_fogs;
+  target.print = probe_scene_print;
+  target.actor = probe_scene_actor;
+  target.publish = probe_publish;
+  qa_q3_pres_scene_recorder *scene = qa_q3_pres_scene_recorder_create(target);
+  CHECK(scene != NULL);
+  qa_q3_pres_scene_model loaded = qa_q3_pres_default_model;
+  loaded.kind = QA_Q3_PRES_SCENE_MODEL_LOADED;
+  loaded.path = "models/test.md3";
+  qa_q3_pres_ref_model_entity parent = qa_q3_pres_create_model_entity(loaded);
+  parent.origin = (qa_vec3){10, 20, 30};
+  parent.shading.shader_rgba = (qa_vec4){255, 128, 0, 255};
+  qa_q3_pres_admitted_ref_entity admitted;
+  admitted.is_poly_record = false;
+  admitted.entity = qa_q3_pres_ref_entity_from_model(parent);
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  admitted.entity = qa_q3_pres_ref_entity_from_portal(qa_q3_pres_create_portal_entity());
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  admitted.entity = qa_q3_pres_ref_entity_from_beam(qa_q3_pres_create_beam_entity());
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  admitted.entity = qa_q3_pres_ref_entity_from_model(qa_q3_pres_create_model_entity_default());
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  qa_q3_pres_ref_sprite_entity sprite = qa_q3_pres_create_sprite_entity();
+  sprite.radius = 8;
+  admitted.entity = qa_q3_pres_ref_entity_from_sprite(sprite);
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  admitted.entity = qa_q3_pres_ref_entity_from_model(parent);
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  qa_q3_pres_ref_poly_vertex vertex = {{1, 2, 3}, {0, 0}, {255, 255, 255, 255}};
+  qa_q3_pres_ref_poly null_poly = {NULL, &vertex, 1};
+  qa_q3_pres_scene_recorder_add_poly(scene, &null_poly);
+  qa_q3_pres_scene_shader mark_shader = {"gfx/damage/bullet_mrk"};
+  qa_q3_pres_ref_poly good_poly = {&mark_shader, &vertex, 1};
+  qa_q3_pres_scene_recorder_add_poly(scene, &good_poly);
+  CHECK(probe.warnings == 1);
+  parent.origin = (qa_vec3){0, 0, 0};
+  qa_q3_pres_refdef refdef = qa_q3_pres_create_refdef();
+  refdef.width = 640; refdef.height = 480; refdef.fov_x = 90; refdef.fov_y = 73.7398;
+  qa_q3_pres_scene_recorder_render_scene(scene, &refdef);
+  qa_q3_pres_scene_recorder_render_scene(scene, &refdef);
+  qa_q3_pres_scene_recorder_clear_scene(scene);
+  admitted.entity = qa_q3_pres_ref_entity_from_sprite(sprite);
+  qa_q3_pres_scene_recorder_add_ref_entity(scene, &admitted);
+  qa_q3_pres_scene_recorder_render_scene(scene, &refdef);
+  CHECK(probe.published == 3);
+  qa_q3_pres_presented_scene *first = &probe.scenes[0];
+  CHECK(first->content.admission.id.origin == QA_Q3_PRES_SCENE_ORIGIN_NATIVE);
+  CHECK(!qa_q3_pres_scene_admission_id_equals(first->content.admission.id, probe.scenes[1].content.admission.id));
+  CHECK(first->content.admission.entity_count == 6 && first->content.admission.polygon_count == 1);
+  CHECK(first->content.model_count == 2 && first->content.models[0].entity_index == 0 &&
+        first->content.models[1].entity_index == 5);
+  CHECK(first->content.portal_count == 1 && first->content.portals[0].entity_index == 1);
+  CHECK(first->content.special_count == 2);
+  CHECK(first->content.effect_count == 2);
+  CHECK(first->content.models[0].entity.transform.origin.x == 10);
+  CHECK(fabs(first->content.models[0].entity.color.y - 128.0 / 255) < 1e-9);
+  CHECK(first->camera.viewport.x == 640);
+  CHECK(probe.scenes[2].content.admission.entity_count == 1);
+  for (int i = 0; i < 3; i++) qa_q3_pres_presented_scene_destroy(&probe.scenes[i]);
+  qa_q3_pres_scene_recorder_destroy(scene);
+}
+
+static void test_draw_stack_tools_and_weapons(void) {
+  CHECK(qa_q3_pres_draw_strlen("abc") == 3);
+  CHECK(qa_q3_pres_draw_strlen("^1a") == 1);
+  CHECK(qa_q3_pres_draw_strlen("a^^b") == 2);
+  qa_vec4 color;
+  CHECK(!qa_q3_pres_fade_color(1000, 0, 500, &color));
+  CHECK(qa_q3_pres_fade_color(1400, 1000, 500, &color) && fabs(color.w - 0.5) < 1e-6);
+  CHECK(qa_q3_pres_team_color(QA_Q3_BASE_TEAM_RED).x == 1);
+  qa_vec4 health = qa_q3_pres_get_color_for_health(100, 0);
+  CHECK(health.x == 1 && health.y == 1 && health.z == 1);
+  CHECK(qa_q3_pres_get_color_for_health(0, 50).x == 0);
+  CHECK(qa_q3_pres_proportional_size_scale(0x10) == 0.75);
+  /* Weapon selection cycles owned+stocked weapons, skipping gauntlet. */
+  qa_q3_pres_client_game_state state;
+  CHECK(qa_q3_pres_client_game_state_init(&state, QA_Q3_BASE_PRODUCT_BASEQ3, 0, 0));
+  qa_q3_wire_snapshot input;
+  memset(&input, 0, sizeof input);
+  qa_q3_player_state_record_init(&input.player_state, QA_Q3_PRODUCT_BASEQ3, 0, 0, 0);
+  input.area_mask_len = 32;
+  qa_q3_pres_retail_snapshot snap;
+  CHECK(qa_q3_pres_retail_snapshot_from_wire(&snap, &input));
+  /* Own machinegun(2)+shotgun(3); ammo only for shotgun. */
+  qa_q3_base_player_state_slots_set(&snap.player_state.stats, 2, (1 << 2) | (1 << 3));
+  qa_q3_base_player_state_slots_set(&snap.player_state.ammo, 3, 10);
+  state.snap = &snap;
+  state.weapon_select = 2;
+  qa_q3_pres_client_weapon_selection selection;
+  qa_q3_pres_client_weapon_selection_init(&selection, &state, NULL, NULL);
+  qa_q3_pres_client_weapon_selection_next_weapon(&selection);
+  CHECK(state.weapon_select == 3);
+  /* Frame audio: buffered sounds play one per 750ms window. */
+  draw_probe audio_probe;
+  memset(&audio_probe, 0, sizeof audio_probe);
+  state.time = 1000;
+  qa_q3_pres_client_frame_audio frame_audio;
+  qa_q3_pres_client_frame_audio_host frame_host;
+  memset(&frame_host, 0, sizeof frame_host);
+  qa_q3_pres_client_frame_audio_init(&frame_audio, &state, NULL, frame_host);
+  qa_pcm_sound buffered;
+  memset(&buffered, 0, sizeof buffered);
+  qa_q3_pres_client_frame_audio_add_buffered_sound(&frame_audio, &buffered);
+  CHECK(state.sound_buffer_in == 1 && state.sound_buffer[0] == &buffered);
+  state.snap = NULL;
+  qa_q3_pres_retail_snapshot_destroy(&snap);
+  qa_q3_pres_client_game_state_destroy(&state);
+}
+
 int main(void) {
   test_character_resources();
   test_refdef();
@@ -888,6 +1193,10 @@ int main(void) {
   test_core_snapshots();
   test_core_resources();
   test_core_media_sounds();
+  test_draw_stack_audio();
+  test_draw_stack_marks();
+  test_draw_stack_scene();
+  test_draw_stack_tools_and_weapons();
   printf("q3-presentation: %d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;
 }

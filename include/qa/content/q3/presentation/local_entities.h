@@ -1,9 +1,8 @@
 /* Port of src/content/q3/presentation/local-entities.ts. GPL-2.0-or-later.
  * Local effect pool and frame processing from id Software
- * code/cgame/cg_localents.c. Mirrored types (TS owners unported):
- * ImpactMarkSystem/ImpactMarkRequest (marks.ts) and ClientEffects /
- * SmokePuffOptions (effects.ts) as the *_mirror structs below; replace
- * when those modules land. */
+ * code/cgame/cg_localents.c. ImpactMarkSystem/ImpactMarkRequest
+ * (marks.ts) and ClientEffects/SmokePuffOptions (effects.ts) are the
+ * landed marks.h/effects.h types; the *_mirror names alias them. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_LOCAL_ENTITIES_H
 #define QA_CONTENT_Q3_PRESENTATION_LOCAL_ENTITIES_H
 #include <stdbool.h>
@@ -14,6 +13,8 @@
 #include "qa/content/q3/base/shared/definitions.h"
 #include "qa/content/q3/base/shared/trajectory.h"
 #include "qa/content/q3/presentation/collision_host.h"
+#include "qa/content/q3/presentation/effects.h"
+#include "qa/content/q3/presentation/marks.h"
 #include "qa/content/q3/presentation/movement_host.h"
 #include "qa/content/q3/presentation/ref_entity.h"
 #include "qa/content/q3/presentation/scene_host.h"
@@ -59,39 +60,15 @@ typedef struct qa_q3_pres_mission_local_entity_media {
   qa_q3_pres_scene_model kamikaze_shock_wave;
   qa_pcm_sound *kamikaze_explode_sound, *kamikaze_implode_sound; /* borrowed, nullable */
 } qa_q3_pres_mission_local_entity_media;
-/* Mirror: TS ImpactMarkRequest / Pick<ImpactMarkSystem,"impactMark">
- * (marks.ts, unported). Returned polys are caller-owned: destroy each
- * with qa_q3_pres_ref_poly_destroy, then free the array. */
-typedef struct qa_q3_pres_impact_mark_request_mirror {
-  const qa_q3_pres_scene_shader *shader; /* nullable */
-  qa_vec3 origin, direction;
-  double orientation;
-  qa_vec4 color;
-  bool alpha_fade;
-  double radius;
-  bool temporary;
-} qa_q3_pres_impact_mark_request_mirror;
-typedef struct qa_q3_pres_impact_mark_system_mirror {
-  void *ctx;
-  /* False only on OOM. */
-  bool (*impact_mark)(void *ctx, qa_q3_pres_impact_mark_request_mirror request,
-                      qa_q3_pres_ref_poly **out_polys, size_t *out_count);
-} qa_q3_pres_impact_mark_system_mirror;
-typedef struct qa_q3_pres_local_entity_pool qa_q3_pres_local_entity_pool;
-/* Mirror: TS SmokePuffOptions / ClientEffects (effects.ts, unported). */
-typedef struct qa_q3_pres_smoke_puff_options_mirror {
-  qa_vec3 origin, velocity;
-  double radius;
-  qa_vec4 color;
-  double duration, start_time, fade_in_time, flags;
-  const qa_q3_pres_scene_shader *shader; /* nullable */
-} qa_q3_pres_smoke_puff_options_mirror;
-typedef struct qa_q3_pres_client_effects_mirror {
-  qa_q3_pres_local_entity_pool *pool;
-  void *ctx;
-  qa_q3_pres_local_entity *(*smoke_puff)(void *ctx, qa_q3_pres_smoke_puff_options_mirror options);
-  void (*gib_player)(void *ctx, qa_vec3 origin);
-} qa_q3_pres_client_effects_mirror;
+/* TS ImpactMarkRequest / Pick<ImpactMarkSystem,"impactMark">
+ * (marks.ts): the landed marks.h types. Returned polys are
+ * caller-owned: destroy each with qa_q3_pres_ref_poly_destroy, then
+ * free the array. */
+typedef qa_q3_pres_impact_mark_request qa_q3_pres_impact_mark_request_mirror;
+typedef qa_q3_pres_impact_mark_system_view qa_q3_pres_impact_mark_system_mirror;
+/* TS SmokePuffOptions / ClientEffects (effects.ts): landed types. */
+typedef qa_q3_pres_smoke_puff_options qa_q3_pres_smoke_puff_options_mirror;
+typedef qa_q3_pres_client_effects_view qa_q3_pres_client_effects_mirror;
 /* TS LocalEntityHost: mission_media non-NULL only for missionpack, and
  * media then points at mission_media->base. */
 typedef struct qa_q3_pres_local_entity_host {

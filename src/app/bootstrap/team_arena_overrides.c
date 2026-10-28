@@ -203,10 +203,6 @@ qa_app_team_arena_overrides qa_app_release_team_arena_overrides(const qa_app_tea
   *out_is_new = true;
   return released;
 }
-void qa_app_cvar_archive_entries_free(qa_cvar_archive_entry *entries, size_t count) {
-  for (size_t i = 0; i < count; i++) { free(entries[i].name); free(entries[i].value); }
-  free(entries);
-}
 qa_cvar_archive_entry *qa_app_team_arena_archive_entries(qa_cvar_registry *registry, const qa_app_team_arena_overrides *state, bool has_seat, double seat, size_t *out_count) {
   size_t count = 0;
   qa_cvar_archive_entry *entries = qa_cvar_registry_archive_entries(registry, NULL, NULL, &count);

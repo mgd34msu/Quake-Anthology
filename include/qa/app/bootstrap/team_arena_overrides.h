@@ -4,6 +4,7 @@
 #define QA_APP_BOOTSTRAP_TEAM_ARENA_OVERRIDES_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/cvar_archives.h" /* qa_app_cvar_archive_entries_free */
 #include "qa/contracts/session.h"
 #include "qa/core/cvars/index.h"
 #include "qa/persistence/value.h"
@@ -30,5 +31,4 @@ qa_app_team_arena_overrides qa_app_release_team_arena_overrides(const qa_app_tea
                                                                 const qa_app_override_registry *seats, size_t count, bool *out_is_new);
 /* seat < 0 = TS undefined. Entries are landed archive entries (owned). */
 qa_cvar_archive_entry *qa_app_team_arena_archive_entries(qa_cvar_registry *registry, const qa_app_team_arena_overrides *state, bool has_seat, double seat, size_t *out_count);
-void qa_app_cvar_archive_entries_free(qa_cvar_archive_entry *entries, size_t count);
 #endif

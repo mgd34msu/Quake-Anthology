@@ -3,9 +3,8 @@
  * registrations are synchronous; register_* return false only on OOM.
  * Mirrored types (TS owners unported): ClientWeaponMediaRegistry +
  * RegisteredWeaponEffects + WeaponPresentationMedia (weapons.ts) and
- * EffectMedia/MissionEffectMedia (effects.ts) as the *_mirror structs
- * below; the weapon registry is supplied by the caller instead of
- * constructed here. ParticleMedia/ParticleAnimations are the landed
+ * EffectMedia/MissionEffectMedia (effects.ts) are the landed
+ * effects.h types; the weapon registry is supplied by the caller. ParticleMedia/ParticleAnimations are the landed
  * render/scene/particles types; SceneShader and qa_particle_shader are
  * layout-identical single-pointer records, so particle views cast. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_MEDIA_H
@@ -208,58 +207,14 @@ typedef struct qa_q3_pres_registered_client_graphics {
   qa_q3_pres_world_scene world;
   qa_particle_animations particle_animations;
 } qa_q3_pres_registered_client_graphics;
-/* Mirror: TS RegisteredWeaponEffects fields read by media.ts
- * (weapons.ts, unported); fn pointers preserve the TS live getters. */
-typedef struct qa_q3_pres_registered_weapon_effects_mirror {
-  void *ctx;
-  const qa_q3_pres_scene_shader *(*lightning_shader)(void *ctx);
-  const qa_q3_pres_scene_shader *(*rocket_explosion_shader)(void *ctx);
-} qa_q3_pres_registered_weapon_effects_mirror;
-/* Mirror: TS ClientWeaponMediaRegistry surface used here (weapons.ts,
- * unported). Items/weapons are borrowed spans. */
-typedef struct qa_q3_pres_client_weapon_media_registry_mirror {
-  const qa_q3_pres_packet_item_visual *items; size_t item_count;
-  const qa_q3_pres_packet_weapon_info *weapons; size_t weapon_count;
-  qa_q3_pres_registered_weapon_effects_mirror effects;
-  void *ctx;
-  bool (*register_item_visuals)(void *ctx, double number); /* false only OOM */
-} qa_q3_pres_client_weapon_media_registry_mirror;
-/* Mirror: TS MissionEffectMedia / EffectMedia (effects.ts, unported). */
-typedef struct qa_q3_pres_mission_effect_media_mirror {
-  const qa_q3_pres_scene_shader *lightning_shader; /* nullable */
-  qa_q3_pres_scene_model kamikaze_effect_model, dish_flash_model;
-  const qa_q3_pres_scene_shader *rocket_explosion_shader; /* nullable */
-  qa_pcm_sound *obelisk_hit_sounds[3]; /* borrowed, nullable */
-  qa_q3_pres_scene_model invulnerability_impact_model;
-  qa_pcm_sound *invulnerability_impact_sounds[3]; /* borrowed, nullable */
-  qa_q3_pres_scene_model invulnerability_juiced_model;
-  qa_pcm_sound *invulnerability_juiced_sound; /* borrowed, nullable */
-} qa_q3_pres_mission_effect_media_mirror;
-typedef struct qa_q3_pres_effect_media_mirror {
-  const qa_q3_pres_scene_shader *water_bubble_shader, *smoke_puff_rage_pro_shader, *blood_explosion_shader;
-  qa_q3_pres_scene_model teleport_effect_model;
-  qa_q3_pres_scene_model gib_skull, gib_brain, gib_abdomen, gib_arm, gib_chest, gib_fist, gib_foot;
-  qa_q3_pres_scene_model gib_forearm, gib_intestine, gib_leg, smoke2;
-  qa_q3_base_product product; /* TS variant.product */
-  const qa_q3_pres_scene_shader *teleport_effect_shader; /* baseq3 variant */
-  qa_q3_pres_mission_effect_media_mirror mission; /* missionpack variant */
-} qa_q3_pres_effect_media_mirror;
-/* Mirror: TS WeaponPresentationMedia (weapons.ts, unported). */
-typedef struct qa_q3_pres_weapon_presentation_media_mirror {
-  struct {
-    qa_q3_pres_scene_model machinegun_brass, shotgun_brass, dish_flash, ring_flash, bullet_flash;
-  } models;
-  struct {
-    const qa_q3_pres_scene_shader *smoke_puff, *nail_puff, *shotgun_smoke_puff, *invis, *battle_weapon;
-    const qa_q3_pres_scene_shader *quad_weapon, *select, *noammo, *hole_mark, *burn_mark, *energy_mark;
-    const qa_q3_pres_scene_shader *bullet_mark, *tracer;
-  } shaders; /* nullable fields */
-  struct {
-    qa_pcm_sound *quad, *nail_hit_flesh, *nail_hit_metal, *nail_hit, *prox_explosion, *rocket_explosion;
-    qa_pcm_sound *plasma_explosion, *chaingun_hit_flesh, *chaingun_hit_metal, *chaingun_hit;
-    qa_pcm_sound *ricochet1, *ricochet2, *ricochet3, *tracer;
-  } sounds; /* borrowed, nullable fields */
-} qa_q3_pres_weapon_presentation_media_mirror;
+/* TS RegisteredWeaponEffects / ClientWeaponMediaRegistry /
+ * EffectMedia / WeaponPresentationMedia (weapons.ts / effects.ts):
+ * the landed weapons.h/effects.h types and views. */
+typedef qa_q3_pres_registered_weapon_effects_view qa_q3_pres_registered_weapon_effects_mirror;
+typedef qa_q3_pres_client_weapon_media_registry_view qa_q3_pres_client_weapon_media_registry_mirror;
+typedef qa_q3_pres_mission_effect_media qa_q3_pres_mission_effect_media_mirror;
+typedef qa_q3_pres_effect_media qa_q3_pres_effect_media_mirror;
+typedef qa_q3_pres_weapon_presentation_media qa_q3_pres_weapon_presentation_media_mirror;
 /* TS ClientMedia. inline_models is an owned growing array seeded with
  * the default-model world entry. */
 typedef struct qa_q3_pres_client_media {

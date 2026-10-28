@@ -5,7 +5,7 @@
  * reentrant host callbacks that bump a request/lifecycle still abandon
  * the stale load exactly where TS check() would throw.
  * Mirrored types (TS owners unported): the effects/marks picks reuse
- * local_entities.h's *_mirror structs (effects.ts / marks.ts). */
+ * local_entities.h's landed effects/marks types (effects.ts / marks.ts). */
 #ifndef QA_CONTENT_Q3_PRESENTATION_PLAYERS_H
 #define QA_CONTENT_Q3_PRESENTATION_PLAYERS_H
 #include <stdbool.h>
@@ -76,11 +76,8 @@ typedef struct qa_q3_pres_player_presentation_settings {
   double shadows;
   bool enable_breath, enable_dust, debug_position, debug_animation;
 } qa_q3_pres_player_presentation_settings;
-/* TS Pick<ClientEffects,"smokePuff"> (effects.ts mirror, no pool). */
-typedef struct qa_q3_pres_player_effects_mirror {
-  void *ctx;
-  qa_q3_pres_local_entity *(*smoke_puff)(void *ctx, qa_q3_pres_smoke_puff_options_mirror options);
-} qa_q3_pres_player_effects_mirror;
+/* TS Pick<ClientEffects,"smokePuff"> (effects.ts): landed view. */
+typedef qa_q3_pres_effects_smoke_view qa_q3_pres_player_effects_mirror;
 typedef struct qa_q3_pres_client_info_store qa_q3_pres_client_info_store;
 /* TS PlayerPresentationHost: mission_media non-NULL only for
  * missionpack. clients is Pick<ClientInfoStore,"clientInfo">.

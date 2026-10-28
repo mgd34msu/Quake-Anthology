@@ -1,9 +1,8 @@
 /* Port of src/content/q3/presentation/resources.ts. GPL-2.0-or-later.
  * TS async registrations are synchronous here; register_* return false
  * only on OOM. SceneShader identity is the address of the registry's
- * per-picture shader record. Mirrored type (TS owner
- * src/content/q3/presentation/scene.ts, unported): Q3SceneRecorder as
- * qa_q3_pres_scene_recorder_mirror; replace when scene.ts lands. */
+ * per-picture shader record. The scene recorder is the landed
+ * scene.h view (qa_q3_pres_scene_recorder_mirror is its alias). */
 #ifndef QA_CONTENT_Q3_PRESENTATION_RESOURCES_H
 #define QA_CONTENT_Q3_PRESENTATION_RESOURCES_H
 #include <stdbool.h>
@@ -12,6 +11,7 @@
 #include "qa/audio/wav.h"
 #include "qa/content/q3/presentation/ref_entity.h"
 #include "qa/content/q3/presentation/refdef.h"
+#include "qa/content/q3/presentation/scene.h"
 #include "qa/content/q3/presentation/scene_host.h"
 #include "qa/contracts/math.h"
 #include "qa/contracts/scene.h"
@@ -52,15 +52,8 @@ typedef struct qa_q3_pres_resource_world {
   void *ctx;
   qa_source_cluster_pvs (*cluster_pvs)(void *ctx, double cluster);
 } qa_q3_pres_resource_world;
-/* Mirror: TS Q3SceneRecorder (scene.ts, unported) — methods used here. */
-typedef struct qa_q3_pres_scene_recorder_mirror {
-  void *ctx;
-  void (*clear_scene)(void *ctx);
-  void (*add_ref_entity)(void *ctx, const qa_q3_pres_admitted_ref_entity *entity);
-  void (*add_poly)(void *ctx, const qa_q3_pres_ref_poly *poly);
-  void (*add_light)(void *ctx, qa_q3_pres_dynamic_light light);
-  void (*render_scene)(void *ctx, const qa_q3_pres_refdef *refdef);
-} qa_q3_pres_scene_recorder_mirror;
+/* TS Q3SceneRecorder (scene.ts): the landed recorder view. */
+typedef qa_q3_pres_scene_recorder_view qa_q3_pres_scene_recorder_mirror;
 /* TS Q3ResourceHost. model false only on OOM; skin/shader *out NULL is
  * TS null (shader picture is host-owned). world false only on OOM. */
 typedef struct qa_q3_pres_resource_host {

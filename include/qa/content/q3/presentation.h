@@ -1,7 +1,5 @@
 /* Umbrella for src/content/q3/presentation/index.ts. GPL-2.0-or-later.
- * Only ported modules are included; the remaining index.ts exports
- * (client, frame, audio, scene, marks, weapons, effects, draw, hud)
- * join as their modules land. */
+ * All presentation modules are ported and included below. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_H
 #define QA_CONTENT_Q3_PRESENTATION_H
 #include "qa/content/q3/presentation/cgame_body_profile.h"
@@ -27,4 +25,24 @@
 #include "qa/content/q3/presentation/server_commands.h"
 #include "qa/content/q3/presentation/snapshots.h"
 #include "qa/content/q3/presentation/state.h"
+#include "qa/content/q3/presentation/audio.h"
+#include "qa/content/q3/presentation/draw_tools.h"
+#include "qa/content/q3/presentation/draw_icons.h"
+#include "qa/content/q3/presentation/draw_status.h"
+#include "qa/content/q3/presentation/effects.h"
+#include "qa/content/q3/presentation/frame_audio.h"
+#include "qa/content/q3/presentation/hud_corners.h"
+#include "qa/content/q3/presentation/mark_projector.h"
+#include "qa/content/q3/presentation/marks.h"
+#include "qa/content/q3/presentation/scene.h"
+#include "qa/content/q3/presentation/scoreboard.h"
+#include "qa/content/q3/presentation/ui_adapters.h"
+#include "qa/content/q3/presentation/view.h"
+#include "qa/content/q3/presentation/weapons.h"
+#include "qa/content/q3/presentation/mission_owner_draw.h"
+#include "qa/content/q3/presentation/mission_hud.h"
+#include "qa/content/q3/presentation/console.h"
+#include "qa/content/q3/presentation/hud.h"
+#include "qa/content/q3/presentation/frame.h"
+#include "qa/content/q3/presentation/client.h"
 #endif

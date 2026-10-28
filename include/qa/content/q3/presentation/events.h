@@ -3,7 +3,7 @@
  * presentEvent/prepareWeapon/voiceChatLocal are synchronous host calls.
  * Mirrored types (TS owners unported): ClientWeaponRuntime pick +
  * ImpactSound/BulletHit (weapons.ts) and ClientEffects picks
- * (effects.ts) as the *_mirror structs below; replace when they land. */
+ * (effects.ts) are the landed weapons.h/effects.h types. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_EVENTS_H
 #define QA_CONTENT_Q3_PRESENTATION_EVENTS_H
 #include <stdbool.h>
@@ -14,6 +14,7 @@
 #include "qa/content/q3/foundation/animation_config.h"
 #include "qa/content/q3/presentation/client_info.h"
 #include "qa/content/q3/presentation/local_entities.h"
+#include "qa/content/q3/presentation/weapons.h"
 #include "qa/content/q3/presentation/ref_entity.h"
 #include "qa/content/q3/presentation/state.h"
 #include "qa/contracts/math.h"
@@ -83,46 +84,16 @@ typedef struct qa_q3_pres_client_event_options {
   bool debug_events, footsteps, autoswitch, demo_playback, no_predict, synchronous_clients;
   bool single_player_active, camera_orbit;
 } qa_q3_pres_client_event_options;
-/* Mirror: TS ImpactSound / BulletHit (weapons.ts, unported). */
-typedef enum qa_q3_pres_impact_sound_mirror {
-  QA_Q3_PRES_IMPACT_DEFAULT = 0, QA_Q3_PRES_IMPACT_METAL = 1, QA_Q3_PRES_IMPACT_FLESH = 2
-} qa_q3_pres_impact_sound_mirror;
-typedef struct qa_q3_pres_bullet_hit_mirror {
-  bool is_wall; /* TS kind: "wall" | "flesh" */
-  qa_vec3 normal;   /* wall */
-  double entity_num; /* flesh */
-} qa_q3_pres_bullet_hit_mirror;
-/* Mirror: TS Pick<ClientWeaponRuntime, ...> (weapons.ts, unported). */
-typedef struct qa_q3_pres_client_weapon_runtime_mirror {
-  void *ctx;
-  void (*out_of_ammo_change)(void *ctx);
-  void (*fire_weapon)(void *ctx, qa_q3_pres_client_entity *entity);
-  void (*missile_hit_player)(void *ctx, double weapon, qa_vec3 origin, qa_vec3 direction, double entity_num);
-  void (*missile_hit_wall)(void *ctx, double weapon, double client_num, qa_vec3 origin, qa_vec3 direction,
-                           qa_q3_pres_impact_sound_mirror sound_type);
-  void (*rail_trail)(void *ctx, double client_num, qa_vec3 start, qa_vec3 end);
-  void (*bullet)(void *ctx, qa_vec3 end, double source, qa_q3_pres_bullet_hit_mirror hit);
-  void (*shotgun_fire)(void *ctx, qa_q3_base_entity_state *state);
-} qa_q3_pres_client_weapon_runtime_mirror;
-/* Mirror: TS Pick<ClientEffects, "smokePuff"|"spawnEffect"|"gibPlayer"|
- * "scorePlum"> (effects.ts, unported). */
-typedef struct qa_q3_pres_event_effects_mirror {
-  void *ctx;
-  qa_q3_pres_local_entity *(*smoke_puff)(void *ctx, qa_q3_pres_smoke_puff_options_mirror options);
-  qa_q3_pres_local_entity *(*spawn_effect)(void *ctx, qa_vec3 origin);
-  void (*gib_player)(void *ctx, qa_vec3 origin);
-  void (*score_plum)(void *ctx, double client, qa_vec3 origin, double score);
-} qa_q3_pres_event_effects_mirror;
-/* Mirror: TS mission Pick<ClientEffects, ...> (effects.ts, unported). */
-typedef struct qa_q3_pres_mission_effects_mirror {
-  void *ctx;
-  qa_q3_pres_local_entity *(*kamikaze_effect)(void *ctx, qa_vec3 origin);
-  void (*obelisk_explode)(void *ctx, qa_vec3 origin);
-  void (*obelisk_pain)(void *ctx, qa_vec3 origin);
-  qa_q3_pres_local_entity *(*invulnerability_impact)(void *ctx, qa_vec3 origin, qa_vec3 angles);
-  qa_q3_pres_local_entity *(*invulnerability_juiced)(void *ctx, qa_vec3 origin);
-  qa_q3_pres_local_entity *(*lightning_bolt_beam)(void *ctx, qa_vec3 start, qa_vec3 end);
-} qa_q3_pres_mission_effects_mirror;
+/* TS ImpactSound / BulletHit / weapon+effects picks (weapons.ts /
+ * effects.ts): the landed weapons.h/effects.h types. */
+typedef qa_q3_pres_impact_sound qa_q3_pres_impact_sound_mirror;
+#define QA_Q3_PRES_IMPACT_DEFAULT QA_Q3_PRES_IMPACT_SOUND_DEFAULT
+#define QA_Q3_PRES_IMPACT_METAL QA_Q3_PRES_IMPACT_SOUND_METAL
+#define QA_Q3_PRES_IMPACT_FLESH QA_Q3_PRES_IMPACT_SOUND_FLESH
+typedef qa_q3_pres_bullet_hit qa_q3_pres_bullet_hit_mirror;
+typedef qa_q3_pres_client_weapon_runtime_view qa_q3_pres_client_weapon_runtime_mirror;
+typedef qa_q3_pres_event_effects_view qa_q3_pres_event_effects_mirror;
+typedef qa_q3_pres_mission_effects_view qa_q3_pres_mission_effects_mirror;
 /* TS presentEvent source closure. */
 typedef void (*qa_q3_pres_event_source_fn)(void *ctx);
 /* TS ClientEventHost: mission fields are read only for missionpack.
