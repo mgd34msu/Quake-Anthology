@@ -71,6 +71,13 @@ struct bind_state {
   brow pending_row;
   qa_input_binding_target pending_previous;
   brow capture_row;
+  /* Stable snapshots of capture/pending rows: factory rebuilds
+   * pool-clear row/action storage while a capture is outstanding. */
+  qa_ui_binding_action capture_action, pending_action;
+  char capture_id[560], capture_label[1040];
+  char capture_action_text[1040], capture_target_text[1040];
+  char pending_id[560], pending_label[1040];
+  char pending_action_text[1040], pending_target_text[1040];
   /* Rebuilt available actions (source + customs). */
   qa_ui_binding_action *available;
   size_t available_count, available_capacity;
@@ -130,7 +137,9 @@ static const qa_ui_binding_action *available_actions(bind_state *s,
       s->get_source != NULL ? s->get_source(s->source_ctx, &source_count)
                             : s->source;
   if (s->get_source == NULL) source_count = s->source_count;
-  size_t wanted = source_count + 32;
+  size_t early_bindings = 0;
+  (void)qa_seat_input_bindings(s->input, &early_bindings);
+  size_t wanted = source_count + early_bindings + 1;
   if (s->available_capacity < wanted) {
     qa_ui_binding_action *next =
         realloc(s->available, wanted * sizeof *next);
@@ -209,6 +218,31 @@ static void assign_row(bind_state *s, const brow *row,
   snprintf(selected, sizeof selected, "%s:%s", row->action->id, key);
   set_selected(s, selected);
 }
+static void snapshot_row(const brow *row, qa_ui_binding_action *action,
+                         char *id, size_t id_size, char *label,
+                         size_t label_size, char *action_text,
+                         size_t action_text_size, char *target_text,
+                         size_t target_text_size, brow *out) {
+  *action = *row->action;
+  snprintf(id, id_size, "%s", row->action->id);
+  snprintf(label, label_size, "%s", row->action->label);
+  const char *at = row->action->target.is_action
+                       ? row->action->target.action
+                       : row->action->target.text;
+  snprintf(action_text, action_text_size, "%s", at != NULL ? at : "");
+  action->id = id;
+  action->label = label;
+  if (action->target.is_action) action->target.action = action_text;
+  else action->target.text = action_text;
+  const char *tt = row->target.is_action ? row->target.action
+                                         : row->target.text;
+  snprintf(target_text, target_text_size, "%s", tt != NULL ? tt : "");
+  *out = *row;
+  out->id = NULL;
+  out->action = action;
+  if (out->target.is_action) out->target.action = target_text;
+  else out->target.text = target_text;
+}
 static void capture_accept(void *v, qa_physical_input physical) {
   bind_state *s = v;
   const qa_input_binding_target *previous =
@@ -219,7 +253,11 @@ static void capture_accept(void *v, qa_physical_input physical) {
   } else {
     s->has_pending = true;
     s->pending_physical = physical;
-    s->pending_row = s->capture_row;
+    snapshot_row(&s->capture_row, &s->pending_action, s->pending_id,
+                 sizeof s->pending_id, s->pending_label,
+                 sizeof s->pending_label, s->pending_action_text,
+                 sizeof s->pending_action_text, s->pending_target_text,
+                 sizeof s->pending_target_text, &s->pending_row);
     s->pending_previous = *previous;
     qa_native_ui_controller_open_menu(s->controller,
                                       "menu:bindings:conflict");
@@ -227,8 +265,11 @@ static void capture_accept(void *v, qa_physical_input physical) {
 }
 static void capture_cancel(void *v) { (void)v; }
 static void start_capture(bind_state *s, const brow *row) {
-  s->capture_row = *row;
-  s->capture_row.id = NULL;
+  snapshot_row(row, &s->capture_action, s->capture_id,
+               sizeof s->capture_id, s->capture_label,
+               sizeof s->capture_label, s->capture_action_text,
+               sizeof s->capture_action_text, s->capture_target_text,
+               sizeof s->capture_target_text, &s->capture_row);
   qa_native_ui_controller_capture_binding(s->controller, capture_accept,
                                           capture_cancel, s);
 }

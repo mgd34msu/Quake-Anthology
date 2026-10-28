@@ -7,15 +7,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
-/* qa/settings/server/profile.h pulls qa/settings/config.h, whose
- * mirror qa_stick_curve/qa_gamepad_tuning/qa_mouse_tuning collide
- * with qa/input/gamepad.h + qa/input/mouse.h (via
- * qa/ui/settings/index.h). Declared here with the exact landed
- * signatures until that cross-slice mirror is reconciled. */
-qa_server_setting_status qa_read_server_setting(
-    const qa_bound_server_setting *binding);
-qa_server_setting_status qa_write_server_setting(
-    const qa_bound_server_setting *binding, const char *value);
+#include "qa/settings/server/profile.h"
 #include "qa/settings/server/rotation.h"
 #include "qa/ui/common/layout.h"
 

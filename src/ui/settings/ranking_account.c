@@ -203,8 +203,8 @@ static size_t wrap_line(const char *text, size_t max, char *out) {
   for (size_t i = 1; i <= max && i < length; i++)
     if (qa_input_js_space((unsigned char)text[i])) best = i + 1;
   size_t take;
-  if (best > 0) take = best;
-  else if (length <= max) take = length;
+  if (length <= max) take = length;
+  else if (best > 0) take = best;
   else take = max;
   memcpy(out, text, take);
   out[take] = '\0';

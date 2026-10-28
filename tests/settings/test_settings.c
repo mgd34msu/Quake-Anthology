@@ -130,9 +130,12 @@ static void test_seat_parse(void) {
   CHECK(strcmp(settings.bindings[1].target.text, "say hi") == 0);
   CHECK(!settings.has_always_run);
   CHECK(settings.rumble_strength == 1); /* parse resolves the default */
-  CHECK(settings.gamepad.move.radial);
-  CHECK(!settings.gamepad.look.radial);
+  CHECK(settings.gamepad.move.kind == QA_STICK_CURVE_RADIAL);
+  CHECK(settings.gamepad.move.outer_threshold == 0.02);
+  CHECK(settings.gamepad.look.kind == QA_STICK_CURVE_AXIAL);
+  CHECK(settings.gamepad.gyro.yaw_axis_z == false); /* "y" */
   CHECK(settings.mouse.look_spring == false);
+  CHECK(settings.mouse.free_look == true);
   CHECK(settings.history_count == 1);
   CHECK(strcmp(settings.history[0], "map q3dm1") == 0);
   CHECK(settings.controller.kind == QA_CONTROLLER_AUTOMATIC);
@@ -171,7 +174,7 @@ static void test_gyro_parse(void) {
   qa_save_value_free(value);
   CHECK(profile.identity_is_device);
   CHECK(strcmp(profile.serial, "pad-A") == 0);
-  CHECK(strcmp(profile.tuning.yaw_axis, "z") == 0);
+  CHECK(profile.tuning.yaw_axis_z == true); /* "z" */
   CHECK(profile.tuning.yaw_sensitivity == 2.5);
   qa_gyro_profile_free(&profile);
   CHECK_ABORTS(value = json("{\"version\":1,\"identity\":{\"kind\":\"device\","
@@ -218,6 +221,11 @@ static void test_store_round_trips(void) {
   CHECK(qa_config_store_load_seat(&store, "seat-2.json", &loaded));
   CHECK(loaded.binding_count == 2);
   CHECK(loaded.rumble_strength == 1);
+  /* Unified input representations survive the JSON round-trip. */
+  CHECK(loaded.gamepad.move.kind == QA_STICK_CURVE_RADIAL);
+  CHECK(loaded.gamepad.look.kind == QA_STICK_CURVE_AXIAL);
+  CHECK(loaded.gamepad.gyro.yaw_axis_z == false);
+  CHECK(loaded.mouse.free_look == true);
   CHECK(strcmp(loaded.history[0], "map q3dm1") == 0);
   qa_seat_settings_free(&loaded);
   /* Always-run false and true both survive (config.test.ts). */
@@ -244,6 +252,7 @@ static void test_store_round_trips(void) {
   CHECK(qa_config_store_load_gyro(&store, "controllers/seat-1/pad-A.json",
                                   &loaded_gyro));
   CHECK(loaded_gyro.tuning.yaw_sensitivity == 2.5);
+  CHECK(loaded_gyro.tuning.yaw_axis_z == false); /* saved "y" */
   qa_gyro_profile_free(&loaded_gyro);
   CHECK(!qa_config_store_load_gyro(&store, "controllers/seat-2/pad-A.json",
                                    &loaded_gyro));

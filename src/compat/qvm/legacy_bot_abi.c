@@ -5,6 +5,9 @@
 
 bool qa_qvm_decode_legacy_game_import(double code, qa_qvm_game_import *out) {
   if (code >= 0 && code <= 40) return qa_qvm_decode_game_import(code, out);
+  /* TS Map.get matches nothing for NaN or out-of-int-range codes; keep
+   * the (int) cast below in range. */
+  if (!(code >= -2147483648.0 && code <= 2147483647.0)) return false;
   qa_qvm_game_import value;
   switch ((int)code) {
     case 200: value = QA_QVM_GAME_IMPORT_BOTLIB_SETUP; break;

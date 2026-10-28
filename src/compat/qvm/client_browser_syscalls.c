@@ -28,6 +28,14 @@ static void clear_byte(qa_qvm_memory *memory, int32_t pointer) {
   qa_qvm_writable_view_set_uint8(&view, 0, 0);
 }
 
+/* Trap 48's TS callback: a null address clears one byte, never a
+ * writeString of null (getPing passes null only through the callback). */
+static void write_ping_address(void *ctx, const char *text) {
+  write_ctx *write = ctx;
+  if (text == NULL) clear_byte(write->memory, write->pointer);
+  else qa_qvm_memory_write_string(write->memory, write->pointer, text, write->capacity);
+}
+
 typedef struct name_ctx {
   qa_qvm_memory *memory;
   int32_t word;
@@ -93,12 +101,8 @@ bool qa_qvm_client_browser_syscall(const qa_qvm_host_call *call, qa_qvmx_browser
       int32_t capacity = qa_qvm_host_call_word(call, 3);
       int32_t time_pointer = qa_qvm_host_call_word(call, 4);
       write_ctx write = {memory, destination, capacity};
-      /* get_ping's write handles the null address in the adapter:
-       * the mirror returns the address and the dispatcher writes it
-       * here exactly as the TS callback does. */
-      qa_qvm_browser_write writer = {&write, write_string};
+      qa_qvm_browser_write writer = {&write, write_ping_address};
       qa_qvmx_browser_ping ping = browser.get_ping(browser.ctx, index, capacity, writer);
-      if (ping.address == NULL) clear_byte(memory, destination);
       qa_qvm_writable_view view;
       qa_qvm_memory_view(memory, time_pointer, 4, 0, &view);
       qa_qvm_writable_view_set_int32(&view, 0, qa_int32(ping.time), true);

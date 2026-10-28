@@ -268,6 +268,7 @@ static void device_write(void *v, const char *value) {
     if (strcmp(key, value) == 0) {
       device = &devices[i];
       device_target = target;
+      break; /* TS devices().find(): first match wins. */
     }
   }
   qa_controller_selection target;

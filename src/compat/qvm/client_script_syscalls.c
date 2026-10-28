@@ -1,6 +1,7 @@
 /* Port of src/compat/qvm/client-script-syscalls.ts. GPL-2.0-or-later. */
 #include "qa/compat/qvm/client_script_syscalls.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -293,9 +294,15 @@ double qa_qvm_client_scripts_load(qa_qvm_client_scripts *scripts, const char *fi
   return handle;
 }
 
+/* TS readers is a Map<number, ...>: fractional/NaN handles miss. */
+static bool occupied_handle(const qa_qvm_client_scripts *scripts, double handle) {
+  return handle >= 0 && handle < 64 && handle == trunc(handle) &&
+         scripts->occupied[(size_t)handle];
+}
+
 double qa_qvm_client_scripts_free(qa_qvm_client_scripts *scripts, double handle) {
   qa_qvm_client_scripts_assert_current(scripts);
-  if (handle < 0 || handle >= 64 || !scripts->occupied[(size_t)handle]) return 0;
+  if (!occupied_handle(scripts, handle)) return 0;
   scripts->readers[(size_t)handle].dispose(scripts->readers[(size_t)handle].ctx);
   scripts->occupied[(size_t)handle] = false;
   return 1;
@@ -306,13 +313,15 @@ static void validate_current(void *ctx) { qa_qvm_client_scripts_assert_current(c
 double qa_qvm_client_scripts_read(qa_qvm_client_scripts *scripts, double handle,
                                   qa_qvm_script_publish publish) {
   qa_qvm_client_scripts_assert_current(scripts);
-  if (handle < 0 || handle >= 64 || !scripts->occupied[(size_t)handle]) return 0;
+  if (!occupied_handle(scripts, handle)) return 0;
   qa_qvmx_script_reader *reader = &scripts->readers[(size_t)handle];
+  void *reader_ctx = reader->ctx;
   scripts->operations++;
   int next = reader->next(reader->ctx, validate_current, scripts);
   bool read = next > 0;
   qa_qvm_client_scripts_assert_current(scripts);
-  if (!scripts->occupied[(size_t)handle] || &scripts->readers[(size_t)handle] != reader) {
+  /* TS compares reader identity; the slot address alone cannot change. */
+  if (!scripts->occupied[(size_t)handle] || scripts->readers[(size_t)handle].ctx != reader_ctx) {
     completed(scripts);
     qa_range_error("QVM source handle was freed during token read");
   }
@@ -324,7 +333,7 @@ double qa_qvm_client_scripts_read(qa_qvm_client_scripts *scripts, double handle,
 bool qa_qvm_client_scripts_position(qa_qvm_client_scripts *scripts, double handle,
                                     qa_qvmx_script_position *out) {
   qa_qvm_client_scripts_assert_current(scripts);
-  if (handle < 0 || handle >= 64 || !scripts->occupied[(size_t)handle]) return false;
+  if (!occupied_handle(scripts, handle)) return false;
   qa_qvmx_script_reader *reader = &scripts->readers[(size_t)handle];
   return reader->get_position(reader->ctx, out);
 }

@@ -23,6 +23,14 @@ typedef struct qa_stick_curve {
   double exponent;
 } qa_stick_curve;
 
+/** TS GamepadTuning["gyro"]. */
+typedef struct qa_gyro_tuning {
+  bool enabled;
+  double yaw_sensitivity;
+  double pitch_sensitivity;
+  bool yaw_axis_z; /* TS yawAxis "z"; false is "y" */
+} qa_gyro_tuning;
+
 /** TS GamepadTuning. */
 typedef struct qa_gamepad_tuning {
   qa_stick_curve move;
@@ -34,12 +42,7 @@ typedef struct qa_gamepad_tuning {
   double forward_sensitivity;
   double side_sensitivity;
   double trigger_threshold;
-  struct {
-    bool enabled;
-    double yaw_sensitivity;
-    double pitch_sensitivity;
-    bool yaw_axis_z; /* TS yawAxis "z"; false is "y" */
-  } gyro;
+  qa_gyro_tuning gyro;
 } qa_gamepad_tuning;
 
 extern const qa_gamepad_tuning qa_default_gamepad_tuning;

@@ -8,6 +8,13 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
+/* JS Math.max(0, value): NaN propagates, unlike fmax. */
+static double max_zero(double value) {
+  if (value > 0) return value;
+  if (value <= 0) return 0;
+  return value;
+}
+
 qa_qvm_aas_movement_prediction qa_qvm_bot_movement_prediction(
     qa_qvmx_bot_navigation *navigation, qa_qvmx_bot_movement_prediction_query query,
     qa_qvm_entity_number_fn entity_number) {
@@ -16,7 +23,7 @@ qa_qvm_aas_movement_prediction qa_qvm_bot_movement_prediction(
   qa_qvmx_host_prediction result = navigation->predict_client_movement(navigation->ctx, query);
   qa_qvm_aas_movement_prediction prediction;
   memset(&prediction, 0, sizeof prediction);
-  if (result.has_trace && result.stop_event != 0 && ((int64_t)result.stop_event & (4 | 8 | 16)) == 0) {
+  if (result.has_trace && result.stop_event != 0 && (qa_int32(result.stop_event) & (4 | 8 | 16)) == 0) {
     const qa_qvmx_host_prediction_trace *collision = &result.trace;
     size_t plane_count = 0;
     qa_qvmx_aas_plane *planes = navigation->aas_planes(navigation->ctx, &plane_count);
@@ -56,7 +63,7 @@ qa_qvm_aas_movement_prediction qa_qvm_bot_movement_prediction(
                         : result.bounds.max.z - result.bounds.min.z <= crouched.max.z - crouched.min.z
                             ? 4
                             : 2;
-  double max_frames = query.max_frames > 0 ? query.max_frames : 0;
+  double max_frames = max_zero(query.max_frames);
   prediction.success = result.stop_event != 0 || result.frames >= max_frames;
   prediction.end = result.end;
   prediction.end_area = result.has_end_area
@@ -64,14 +71,12 @@ qa_qvm_aas_movement_prediction qa_qvm_bot_movement_prediction(
                             : navigation->point_area(navigation->ctx, result.end);
   prediction.velocity = result.velocity;
   prediction.stop_event = result.stop_event;
-  prediction.end_contents = ((int64_t)result.stop_event & (4 | 8 | 16)) != 0
+  prediction.end_contents = (qa_int32(result.stop_event) & (4 | 8 | 16)) != 0
                                 ? navigation->point_contents(navigation->ctx, result.end)
                                 : 0;
-  prediction.time = result.stop_event == 0
-                        ? result.seconds
-                        : (result.seconds - frame_time > 0 ? result.seconds - frame_time : 0);
-  prediction.frames =
-      result.stop_event == 0 ? result.frames : (result.frames - 1 > 0 ? result.frames - 1 : 0);
+  prediction.time =
+      result.stop_event == 0 ? result.seconds : max_zero(result.seconds - frame_time);
+  prediction.frames = result.stop_event == 0 ? result.frames : max_zero(result.frames - 1);
   return prediction;
 }
 
@@ -161,7 +166,7 @@ bool qa_qvm_bot_navigation_syscall(const qa_qvm_host_call *call,
       }
       bool enabled = false;
       bool found = navigation->area_enabled(navigation->ctx, node.id, &enabled);
-      *out = (found ? enabled : !(node.is_aas && ((int64_t)node.flags & 8) != 0)) ? 1 : 0;
+      *out = (found ? enabled : !(node.is_aas && (qa_int32(node.flags) & 8) != 0)) ? 1 : 0;
       return true;
     }
     case 301: {
@@ -459,8 +464,9 @@ bool qa_qvm_bot_navigation_syscall(const qa_qvm_host_call *call,
         double area = navigation->point_area(navigation->ctx, point_at(&d, 1, &p1));
         double node_id = area - 1;
         double index = -1;
+        /* TS findIndex returns the first match. */
         for (size_t i = 0; i < count; i++)
-          if (reachable[i] == node_id) index = (double)i;
+          if (reachable[i] == node_id) { index = (double)i; break; }
         free(reachable);
         *out = area == 0 ? 0 : qa_int32(index > 0 ? index : 0);
         return true;

@@ -6,15 +6,14 @@
  *    persistence checkpoint tree, built by qa_parse_json_value for
  *    JSON.parse sites). A NULL tree or a QA_SAVE_NULL node is the TS
  *    null the loaders admit as "absent".
- *  - GamepadTuning/StickCurve (src/input/gamepad.ts), MouseTuning
- *    (src/input/mouse.ts) and ControllerSelection
- *    (src/platform/controller.ts) belong to modules not yet ported;
- *    their field shapes are mirrored here because SeatSettings,
- *    GlobalInputTuning and GyroProfile are defined by this file.
- *    validateGamepadTuning's checks are reproduced at the parse
- *    site, since they are observable through parseSeatSettings.
- *    When input/platform land, these mirrors should be replaced by
- *    the owning headers.
+ *  - GamepadTuning/StickCurve and MouseTuning come from their TS
+ *    owners qa/input/gamepad.h and qa/input/mouse.h (included
+ *    below); qa_validate_gamepad_tuning runs at the parse site.
+ *    Curve kind and gyro yawAxis convert at the JSON boundary in
+ *    config.c (radial/axial, "y"/"z" <-> yaw_axis_z). ControllerSelection
+ *    (src/platform/controller.ts) is still mirrored below: the
+ *    platform header's borrowed serial differs from the owned copy
+ *    SeatSettings persists.
  *  - Bun.file/node:fs/promises become synchronous stdio calls.
  *    Loader/save results that were Promise<T | null> become a bool
  *    (false is the TS null/absent) plus an out struct; saves return
@@ -40,56 +39,11 @@
 #include "qa/contracts/common.h"
 #include "qa/contracts/ui.h"
 #include "qa/core/cvars/index.h"
+#include "qa/input/gamepad.h"
+#include "qa/input/mouse.h"
 #include "qa/persistence/value.h"
 
 typedef struct qa_command_buffer qa_command_buffer;
-
-/* TS StickCurve (src/input/gamepad.ts): "radial" carries
- * outerThreshold, "axial" does not. */
-typedef struct qa_stick_curve {
-  bool radial;
-  double deadzone;
-  double exponent;
-  double outer_threshold; /* radial */
-} qa_stick_curve;
-
-/* TS GamepadTuning["gyro"]. yaw_axis is "y" or "z" (borrowed). */
-typedef struct qa_gyro_tuning {
-  bool enabled;
-  const char *yaw_axis;
-  double yaw_sensitivity;
-  double pitch_sensitivity;
-} qa_gyro_tuning;
-
-/* TS GamepadTuning (src/input/gamepad.ts). */
-typedef struct qa_gamepad_tuning {
-  qa_stick_curve move;
-  qa_stick_curve look;
-  bool swap_sticks;
-  double yaw_degrees_per_second;
-  double pitch_degrees_per_second;
-  bool invert_pitch;
-  double forward_sensitivity;
-  double side_sensitivity;
-  double trigger_threshold;
-  qa_gyro_tuning gyro;
-} qa_gamepad_tuning;
-
-/* TS MouseTuning (src/input/mouse.ts). look_spring/look_strafe are
- * optional in TS; the parser always resolves them (absent is false). */
-typedef struct qa_mouse_tuning {
-  double sensitivity;
-  double acceleration;
-  bool filter;
-  double yaw;
-  double pitch;
-  double side;
-  double forward;
-  bool look_spring;
-  bool look_strafe;
-  bool free_look;
-  bool invert_pitch;
-} qa_mouse_tuning;
 
 /* TS ControllerSelection (src/platform/controller.ts). guid is the 32
  * hex digits (device/serial); serial is an owned copy (serial kind). */

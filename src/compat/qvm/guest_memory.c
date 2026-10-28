@@ -35,7 +35,8 @@ static size_t checked(qa_qvm_guest_memory *guest, qa_guest_address address, doub
   if (address.address_space != (const void *)guest)
     qa_range_error("QVM pointer belongs to another module instance");
   if (!is_safe_integer(byte_length) || byte_length < 0 || address.byte_offset < 0 ||
-      address.byte_offset + (int64_t)byte_length > (int64_t)guest->memory->length)
+      address.byte_offset > (int64_t)guest->memory->length ||
+      (int64_t)byte_length > (int64_t)guest->memory->length - address.byte_offset)
     qa_range_error("QVM address range exceeds allocation");
   return (size_t)address.byte_offset;
 }
@@ -56,6 +57,10 @@ qa_guest_address_result qa_qvm_guest_memory_pointer(qa_qvm_guest_memory *guest, 
 qa_guest_address qa_qvm_guest_memory_offset(qa_qvm_guest_memory *guest, qa_guest_address address,
                                             int64_t displacement) {
   (void)checked(guest, address, 0);
+  /* TS adds bigints; an overflowing sum is still outside the allocation. */
+  if ((displacement > 0 && address.byte_offset > INT64_MAX - displacement) ||
+      (displacement < 0 && address.byte_offset < INT64_MIN - displacement))
+    qa_range_error("QVM address exceeds allocation");
   return make_address(guest, address.byte_offset + displacement);
 }
 

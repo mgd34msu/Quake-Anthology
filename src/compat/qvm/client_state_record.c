@@ -122,18 +122,19 @@ void qa_qvmx_write_player_state(qa_qvmx_view view, const qa_q3_player_state *sta
     persistent[7] = state->persistent.values[6];
     persistent[11] = state->persistent.values[13];
   }
-  /* qvmPowerups validation (legacy-presentation.ts mirror). */
-  if (!modern(profile)) {
-    for (size_t i = 9; i < state->powerups.count; i++)
-      if (state->powerups.values[i] != 0)
-        qa_range_error("Legacy ball or private powerup has no modern presentation mapping");
-  }
   qa_q3_player_state translated = *state;
   qa_double_view persistent_view = {persistent, 16};
   translated.persistent = persistent_view;
   translated.events[0] = qa_qvmx_event(state->events[0], profile, true);
   translated.events[1] = qa_qvmx_event(state->events[1], profile, true);
   translated.external_event = qa_qvmx_event(state->external_event, profile, true);
+  /* qvmPowerups validation runs after the event mappings, as in the
+   * TS object literal passed to writeSourceQvmPlayerState. */
+  if (!modern(profile)) {
+    for (size_t i = 9; i < state->powerups.count; i++)
+      if (state->powerups.values[i] != 0)
+        qa_range_error("Legacy ball or private powerup has no modern presentation mapping");
+  }
   qa_qvmx_write_source_player_state(view, &translated, profile);
 }
 

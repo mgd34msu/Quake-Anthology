@@ -411,6 +411,10 @@ void qa_qvm_files_close(qa_qvm_files *files, double slot) {
 
 double qa_qvm_files_seek(qa_qvm_files *files, double slot, double offset, double origin) {
   file_handle *handle = get_handle(files, slot);
+  /* TS switch(origin) matches exactly: a fractional origin is the
+   * default fatal case (the pk3 branch ignores origin, as in TS). */
+  if (!is_integer(origin) && (handle->is_write || !handle->is_pk3_archive))
+    qa_common_error(QA_COMMON_ERROR_FATAL, "Bad origin in FS_Seek\n");
   if (handle->is_write) {
     switch ((int64_t)origin) {
       case 0: return qa_writable_binary_file_seek(&handle->file, (int64_t)offset, QA_WRITABLE_SEEK_CURRENT);

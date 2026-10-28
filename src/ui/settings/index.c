@@ -389,7 +389,7 @@ struct menus_state {
   qa_ui_settings_reset reset;
   int *handles;
   size_t handle_count, handle_capacity;
-  page_desc *pages;
+  page_desc **pages; /* individually allocated: factory ctxs */
   size_t page_count, page_capacity;
   /* Rebuild pool (one factory result at a time). */
   qa_ui_control *controls;
@@ -686,14 +686,14 @@ static void menus_register(menus_state *m, const char *id,
 static page_desc *menus_page(menus_state *m) {
   if (m->page_count == m->page_capacity) {
     size_t cap = m->page_capacity == 0 ? 8 : m->page_capacity * 2;
-    page_desc *next = realloc(m->pages, cap * sizeof *next);
+    page_desc **next = realloc(m->pages, cap * sizeof *next);
     if (next == NULL) oom();
     m->pages = next;
     m->page_capacity = cap;
   }
-  page_desc *page = &m->pages[m->page_count++];
-  memset(page, 0, sizeof *page);
+  page_desc *page = xcalloc(1, sizeof *page);
   page->menus = m;
+  m->pages[m->page_count++] = page;
   return page;
 }
 static char *slug_of(const char *group) {
@@ -850,13 +850,14 @@ void qa_ui_settings_menus_dispose(qa_ui_settings_menus *menus) {
   if (m->llm_dispose != NULL && m->llm_menus != NULL)
     m->llm_dispose(m->llm_menus);
   for (size_t i = 0; i < m->page_count; i++) {
-    free(m->pages[i].id);
-    free(m->pages[i].title);
-    free((void *)m->pages[i].selected);
-    free(m->pages[i].category_id);
-    for (size_t g = 0; g < m->pages[i].group_count; g++)
-      free(m->pages[i].groups[g]);
-    free(m->pages[i].groups);
+    free(m->pages[i]->id);
+    free(m->pages[i]->title);
+    free((void *)m->pages[i]->selected);
+    free(m->pages[i]->category_id);
+    for (size_t g = 0; g < m->pages[i]->group_count; g++)
+      free(m->pages[i]->groups[g]);
+    free(m->pages[i]->groups);
+    free(m->pages[i]);
   }
   pool_clear(m);
   free((void *)m->scroll_ids);
@@ -1488,9 +1489,21 @@ static void format_write(void *v, const char *value) {
   if (f->field == 0) next.sample_rate = (int64_t)number;
   else if (f->field == 1) next.sample_bits = (int64_t)number;
   else next.channels = (int64_t)number;
+  /* TS audioOutputFormat throws inside the try: report, not abort
+   * (qa_audio_output_format_validated aborts, so pre-check here). */
+  const char *error = NULL;
+  if (next.sample_rate < 8000 || next.sample_rate > 192000
+      || (next.channels != 1 && next.channels != 2)
+      || (next.sample_bits != 8 && next.sample_bits != 16)) {
+    s->output.report(
+        s->output.ctx,
+        "Audio format selection failed: Audio output requires "
+        "8000\xe2\x80\x93" "192000 Hz, 1 or 2 channels, and 8 or 16 bits");
+    return;
+  }
   qa_audio_output_format validated = qa_audio_output_format_validated(
       next.sample_rate, next.channels, next.sample_bits);
-  const char *error = s->output.format_select(s->output.ctx, validated);
+  error = s->output.format_select(s->output.ctx, validated);
   if (error != NULL) {
     char buffer[1024];
     snprintf(buffer, sizeof buffer, "Audio format selection failed: %s",

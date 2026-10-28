@@ -4,7 +4,9 @@
 #include <stddef.h>
 
 bool qa_qvm_decode_game_import(double word, qa_qvm_game_import *out) {
-  /* TS switch(word) matches exactly; non-integer words match nothing. */
+  /* TS switch(word) matches exactly; non-integer words match nothing.
+   * Cast only after the range guard: (int64_t)word is UB for NaN/huge. */
+  if (!(word >= -9223372036854775808.0 && word < 9223372036854775808.0)) return false;
   switch ((int64_t)word) {
     case QA_QVM_GAME_IMPORT_G_PRINT:
     case QA_QVM_GAME_IMPORT_G_ERROR:
@@ -197,7 +199,9 @@ bool qa_qvm_decode_game_import(double word, qa_qvm_game_import *out) {
 }
 
 bool qa_qvm_decode_cgame_import(double word, qa_qvm_cgame_import *out) {
-  /* TS switch(word) matches exactly; non-integer words match nothing. */
+  /* TS switch(word) matches exactly; non-integer words match nothing.
+   * Cast only after the range guard: (int64_t)word is UB for NaN/huge. */
+  if (!(word >= -9223372036854775808.0 && word < 9223372036854775808.0)) return false;
   switch ((int64_t)word) {
     case QA_QVM_CGAME_IMPORT_CG_PRINT:
     case QA_QVM_CGAME_IMPORT_CG_ERROR:
@@ -309,7 +313,9 @@ bool qa_qvm_decode_cgame_import(double word, qa_qvm_cgame_import *out) {
 }
 
 bool qa_qvm_decode_ui_import(double word, qa_qvm_ui_import *out) {
-  /* TS switch(word) matches exactly; non-integer words match nothing. */
+  /* TS switch(word) matches exactly; non-integer words match nothing.
+   * Cast only after the range guard: (int64_t)word is UB for NaN/huge. */
+  if (!(word >= -9223372036854775808.0 && word < 9223372036854775808.0)) return false;
   switch ((int64_t)word) {
     case QA_QVM_UI_IMPORT_UI_ERROR:
     case QA_QVM_UI_IMPORT_UI_PRINT:

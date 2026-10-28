@@ -182,48 +182,23 @@ static qa_stick_curve parse_curve(const qa_save_value *value) {
   curve.exponent = exponent;
   if (kind != NULL && kind->kind == QA_SAVE_STRING && kind->text != NULL &&
       strcmp(kind->text, "radial") == 0) {
-    curve.radial = true;
+    curve.kind = QA_STICK_CURVE_RADIAL;
     curve.outer_threshold = settings_number(field(input, "outerThreshold"));
     return curve;
   }
   if (kind != NULL && kind->kind == QA_SAVE_STRING && kind->text != NULL &&
       strcmp(kind->text, "axial") == 0) {
-    curve.radial = false;
+    curve.kind = QA_STICK_CURVE_AXIAL;
     return curve;
   }
   qa_error("Unknown stick curve");
 }
 
-/* src/input/gamepad.ts validateGamepadTuning, reproduced at its only
- * settings call site (RangeErrors keep their exact messages). */
-static void validate_gamepad_tuning(const qa_gamepad_tuning *tuning) {
-  const qa_stick_curve *curves[2] = {&tuning->move, &tuning->look};
-  for (int i = 0; i < 2; i++) {
-    const qa_stick_curve *curve = curves[i];
-    if (!isfinite(curve->deadzone) || curve->deadzone < 0 || curve->deadzone >= 1 ||
-        !isfinite(curve->exponent) || curve->exponent <= 0 ||
-        (curve->radial && (!isfinite(curve->outer_threshold) ||
-                           curve->outer_threshold < 0 ||
-                           curve->deadzone + curve->outer_threshold >= 1)))
-      qa_range_error("Invalid gamepad deadzone or response curve");
-  }
-  const double sensitivities[] = {tuning->yaw_degrees_per_second,
-                                  tuning->pitch_degrees_per_second,
-                                  tuning->forward_sensitivity,
-                                  tuning->side_sensitivity,
-                                  tuning->gyro.yaw_sensitivity,
-                                  tuning->gyro.pitch_sensitivity};
-  for (size_t i = 0; i < sizeof sensitivities / sizeof *sensitivities; i++)
-    if (!isfinite(sensitivities[i])) qa_range_error("Invalid gamepad sensitivity");
-  if (!isfinite(tuning->trigger_threshold) || tuning->trigger_threshold < 0 ||
-      tuning->trigger_threshold > 1)
-    qa_range_error("Invalid trigger threshold");
-}
-
-static const char *parse_yaw_axis(const qa_save_value *value) {
+/* TS yawAxis "y" | "z" -> qa_gyro_tuning yaw_axis_z. */
+static bool parse_yaw_axis_z(const qa_save_value *value) {
   if (value != NULL && value->kind == QA_SAVE_STRING && value->text != NULL) {
-    if (strcmp(value->text, "y") == 0) return "y";
-    if (strcmp(value->text, "z") == 0) return "z";
+    if (strcmp(value->text, "y") == 0) return false;
+    if (strcmp(value->text, "z") == 0) return true;
   }
   qa_error("Unknown gyro yaw axis");
 }
@@ -231,7 +206,7 @@ static const char *parse_yaw_axis(const qa_save_value *value) {
 static qa_gamepad_tuning parse_gamepad(const qa_save_value *value) {
   const qa_save_value *input = settings_record(value);
   const qa_save_value *gyro = settings_record(field(input, "gyro"));
-  const char *yaw_axis = parse_yaw_axis(field(gyro, "yawAxis"));
+  bool yaw_axis_z = parse_yaw_axis_z(field(gyro, "yawAxis"));
   qa_gamepad_tuning tuning;
   memset(&tuning, 0, sizeof tuning);
   tuning.move = parse_curve(field(input, "move"));
@@ -245,10 +220,10 @@ static qa_gamepad_tuning parse_gamepad(const qa_save_value *value) {
   tuning.side_sensitivity = settings_number(field(input, "sideSensitivity"));
   tuning.trigger_threshold = settings_number(field(input, "triggerThreshold"));
   tuning.gyro.enabled = settings_boolean(field(gyro, "enabled"));
-  tuning.gyro.yaw_axis = yaw_axis;
+  tuning.gyro.yaw_axis_z = yaw_axis_z;
   tuning.gyro.yaw_sensitivity = settings_number(field(gyro, "yawSensitivity"));
   tuning.gyro.pitch_sensitivity = settings_number(field(gyro, "pitchSensitivity"));
-  validate_gamepad_tuning(&tuning);
+  qa_validate_gamepad_tuning(&tuning);
   return tuning;
 }
 
@@ -490,7 +465,7 @@ void qa_parse_gyro_profile(const qa_save_value *value, qa_gyro_profile *out) {
   } else {
     qa_error("Unknown gyro profile identity");
   }
-  out->tuning.yaw_axis = parse_yaw_axis(field(tuning, "yawAxis"));
+  out->tuning.yaw_axis_z = parse_yaw_axis_z(field(tuning, "yawAxis"));
   out->tuning.enabled = settings_boolean(field(tuning, "enabled"));
   out->tuning.yaw_sensitivity = settings_number(field(tuning, "yawSensitivity"));
   out->tuning.pitch_sensitivity = settings_number(field(tuning, "pitchSensitivity"));
@@ -674,12 +649,13 @@ static bool add_curve(text_buffer *b, const qa_stick_curve *curve, bool pretty,
                       int depth) {
   if (!text_add(b, "{")) return false;
   if (!add_key(b, "kind", pretty, depth, true)) return false;
-  if (!text_add_json_string(b, curve->radial ? "radial" : "axial")) return false;
+  bool radial = curve->kind == QA_STICK_CURVE_RADIAL;
+  if (!text_add_json_string(b, radial ? "radial" : "axial")) return false;
   if (!add_key(b, "deadzone", pretty, depth, false)) return false;
   if (!text_add_number(b, curve->deadzone)) return false;
   if (!add_key(b, "exponent", pretty, depth, false)) return false;
   if (!text_add_number(b, curve->exponent)) return false;
-  if (curve->radial) {
+  if (radial) {
     if (!add_key(b, "outerThreshold", pretty, depth, false)) return false;
     if (!text_add_number(b, curve->outer_threshold)) return false;
   }
@@ -691,7 +667,7 @@ static bool add_gyro(text_buffer *b, const qa_gyro_tuning *gyro, bool pretty,
   if (!add_key(b, "enabled", pretty, depth, true)) return false;
   if (!add_bool(b, gyro->enabled)) return false;
   if (!add_key(b, "yawAxis", pretty, depth, false)) return false;
-  if (!text_add_json_string(b, gyro->yaw_axis)) return false;
+  if (!text_add_json_string(b, gyro->yaw_axis_z ? "z" : "y")) return false;
   if (!add_key(b, "yawSensitivity", pretty, depth, false)) return false;
   if (!text_add_number(b, gyro->yaw_sensitivity)) return false;
   if (!add_key(b, "pitchSensitivity", pretty, depth, false)) return false;
@@ -1013,9 +989,8 @@ bool qa_config_store_save_gyro(const qa_config_store *store, const char *name,
         strlen(serial) > 256)
       qa_error("Invalid gyro device identity");
   }
-  if (strcmp(profile->tuning.yaw_axis, "y") != 0 &&
-      strcmp(profile->tuning.yaw_axis, "z") != 0)
-    qa_error("Unknown gyro yaw axis");
+  /* yaw_axis_z is a bool: the TS "Unknown gyro yaw axis" case is
+   * unrepresentable here. */
   if (!isfinite(profile->tuning.yaw_sensitivity) ||
       !isfinite(profile->tuning.pitch_sensitivity))
     qa_error("Expected a finite settings number");

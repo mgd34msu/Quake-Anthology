@@ -16,11 +16,19 @@
 
 #include "qa/compat/qvm/abi.h"
 #include "qa/compat/qvm/bot_navigation_records.h"
+#include "qa/compat/qvm/bot_navigation_syscalls.h"
+#include "qa/compat/qvm/client_browser_syscalls.h"
+#include "qa/compat/qvm/client_script_syscalls.h"
+#include "qa/compat/qvm/client_state_record.h"
 #include "qa/compat/qvm/entity_record.h"
 #include "qa/compat/qvm/entity_tokens.h"
 #include "qa/compat/qvm/image.h"
 #include "qa/compat/qvm/interpreter.h"
 #include "qa/compat/qvm/memory.h"
+/* --- w6c-qvm-deep-01 additions --- */
+#include "qa/compat/qvm/game_combat.h"
+#include "qa/compat/qvm/game_data.h"
+#include "qa/compat/qvm/legacy_bot_abi.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -84,6 +92,23 @@ static void test_abi(void) {
   qa_qvm_ui_import ui;
   CHECK(qa_qvm_decode_ui_import(0, &ui));
   CHECK(!qa_qvm_decode_ui_import(-3, &ui));
+  /* TS switch(word) matches nothing for NaN, infinities, huge or
+   * fractional words, and the enum gaps (46..199 game, 90..99 cgame/ui). */
+  CHECK(!qa_qvm_decode_game_import(NAN, &game));
+  CHECK(!qa_qvm_decode_game_import(INFINITY, &game));
+  CHECK(!qa_qvm_decode_game_import(-INFINITY, &game));
+  CHECK(!qa_qvm_decode_game_import(1e300, &game));
+  CHECK(!qa_qvm_decode_game_import(-0.5, &game));
+  CHECK(!qa_qvm_decode_game_import(45.9, &game));
+  CHECK(!qa_qvm_decode_game_import(46, &game));
+  CHECK(qa_qvm_decode_game_import(581, &game) &&
+        game == QA_QVM_GAME_IMPORT_BOTLIB_PC_SOURCE_FILE_AND_LINE);
+  CHECK(!qa_qvm_decode_game_import(582, &game));
+  CHECK(!qa_qvm_decode_cgame_import(NAN, &cgame));
+  CHECK(!qa_qvm_decode_cgame_import(90, &cgame));
+  CHECK(qa_qvm_decode_cgame_import(111, &cgame) && cgame == QA_QVM_CGAME_IMPORT_CG_ACOS);
+  CHECK(!qa_qvm_decode_ui_import(88, &ui));
+  CHECK(!qa_qvm_decode_ui_import(-1e300, &ui));
 }
 
 static void test_entity_tokens(void) {
@@ -288,12 +313,259 @@ static void test_interpreter(void) {
   CHECK_ABORTS(qa_qvm_image broken; (void)qa_qvm_parse(bad, sizeof bad, "bad.qvm", &broken));
 }
 
+/* --- w6c-qvm-deep-01: legacy-bot-abi, entity-record legacy profile,
+ * game-data bounds, game-combat validators, image branch target --- */
+static void test_w6c_qvm_deep_01(void) {
+  qa_qvm_game_import decoded;
+  CHECK(qa_qvm_decode_legacy_game_import(200, &decoded) &&
+        decoded == QA_QVM_GAME_IMPORT_BOTLIB_SETUP);
+  CHECK(qa_qvm_decode_legacy_game_import(572, &decoded) &&
+        decoded == QA_QVM_GAME_IMPORT_BOTLIB_AI_PREDICT_VISIBLE_POSITION);
+  CHECK(qa_qvm_decode_legacy_game_import(0, &decoded) &&
+        decoded == QA_QVM_GAME_IMPORT_G_PRINT);
+  CHECK(!qa_qvm_decode_legacy_game_import(41, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(212, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(402, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(200.5, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(NAN, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(1e20, &decoded));
+  CHECK(!qa_qvm_decode_legacy_game_import(-200, &decoded));
+
+  CHECK(qa_qvm_entity_state_bytes_for("q3-1.16n-base") == 204);
+  uint8_t legacy_bytes[204] = {0};
+  qa_qvmx_view legacy_view = {legacy_bytes, sizeof legacy_bytes};
+  qa_qvm_entity_state legacy = qa_qvm_borrow_entity_state(legacy_view, "q3-1.16n-base");
+  qa_qvm_entity_state_set_generic1(&legacy, 0);
+  CHECK(qa_qvm_entity_state_get_generic1(&legacy) == 0);
+  qa_qvm_entity_state_destroy(&legacy);
+  CHECK_ABORTS(qa_qvm_entity_state bad =
+                   qa_qvm_borrow_entity_state(legacy_view, "q3-1.16n-base");
+               qa_qvm_entity_state_set_generic1(&bad, 1));
+
+  qa_qvm_game_data data;
+  qa_qvm_game_data_init(&data, NULL, NULL);
+  CHECK(qa_qvm_game_data_get_num_clients(&data) == 64);
+  qa_qvm_game_data_set_client_count(&data, 1);
+  CHECK(qa_qvm_game_data_get_num_clients(&data) == 1);
+  CHECK_ABORTS(qa_qvm_game_data_set_client_count(&data, 0));
+  CHECK_ABORTS(qa_qvm_game_data_set_client_count(&data, 65));
+  CHECK_ABORTS(qa_qvm_game_data_set_client_count(&data, 1.5));
+
+  const double positions[] = {0, 2, 1};
+  qa_qvm_validate_combat_positions(positions, 3, 3);
+  const double duplicate[] = {0, 0};
+  CHECK_ABORTS(qa_qvm_validate_combat_positions(duplicate, 2, 2));
+  CHECK_ABORTS(qa_qvm_validate_combat_positions(positions, 3, 63));
+  CHECK_ABORTS(qa_qvm_validate_combat_positions(positions, 3, 2));
+  qa_qvm_damage_flags masks = {1, 2, 4, 8, 16};
+  CHECK(qa_qvm_canonical_damage_flags(masks, 1 | 4 | 16) == (1 | 4 | 16));
+  CHECK(qa_qvm_canonical_damage_flags(masks, 0) == 0);
+  qa_qvm_damage_flags shifted = {16, 8, 4, 2, 1};
+  CHECK(qa_qvm_canonical_damage_flags(shifted, 16) == 1);
+  CHECK(qa_qvm_canonical_damage_flags(shifted, 1) == 16);
+
+  const operation branch_ops[] = {{QA_QVM_OP_ENTER, true, 8},
+                                  {QA_QVM_OP_CONST, true, 1},
+                                  {QA_QVM_OP_EQ, true, 99},
+                                  {QA_QVM_OP_LEAVE, true, 8}};
+  uint8_t branch_source[256];
+  size_t branch_length =
+      build_qvm(branch_source, branch_ops, sizeof branch_ops / sizeof branch_ops[0], NULL, 0);
+  CHECK_ABORTS(qa_qvm_image broken;
+               (void)qa_qvm_parse(branch_source, branch_length, "branch.qvm", &broken));
+}
+
+/* TS client-state.test.ts "updating a legacy borrowed command
+ * preserves private buttons and padding". */
+static void test_user_command_legacy(void) {
+  uint8_t bytes[24];
+  memset(bytes, 0x6b, sizeof bytes);
+  qa_qvmx_view view = {bytes, sizeof bytes};
+  qa_qvmx_wire_user_command command;
+  memset(&command, 0, sizeof command);
+  command.server_time = 300;
+  command.angles[0] = 21;
+  command.angles[1] = -34;
+  command.angles[2] = 55;
+  command.buttons = 2053;
+  command.weapon = 7;
+  command.forwardmove = -90;
+  command.rightmove = 31;
+  command.upmove = 22;
+  qa_qvm_write_user_command(view, &command, "q3-1.16n-base", NULL);
+  CHECK(bytes[4] == 133);
+  bytes[4] = 229;
+  qa_qvmx_wire_user_command original = qa_qvm_read_user_command(view, "q3-1.16n-base");
+  original.buttons = (double)((int32_t)original.buttons & ~1);
+  original.forwardmove = 0;
+  qa_qvm_write_user_command(view, &original, "q3-1.16n-base", "update");
+  qa_qvmx_wire_user_command back = qa_qvm_read_user_command(view, "q3-1.16n-base");
+  CHECK(back.buttons == 2052 && back.forwardmove == 0 && back.server_time == 300);
+  CHECK(back.weapon == 7 && back.rightmove == 31 && back.upmove == 22 && back.angles[1] == -34);
+  CHECK(bytes[4] == 228);
+  CHECK(bytes[6] == 0x6b && bytes[7] == 0x6b && bytes[23] == 0x6b);
+  qa_qvm_write_user_command(view, &command, "q3-1.16n-base", NULL);
+  CHECK(bytes[4] == 133);
+  uint8_t small[23] = {0};
+  qa_qvmx_view short_view = {small, sizeof small};
+  CHECK_ABORTS(qa_qvm_write_user_command(short_view, &command, "q3-modern", NULL));
+  CHECK_ABORTS((void)qa_qvm_read_user_command(short_view, "q3-modern"));
+}
+
+static qa_qvmx_browser_ping ping_null_slot(void *ctx, double index, double size,
+                                           qa_qvm_browser_write write) {
+  (void)ctx;
+  (void)index;
+  (void)size;
+  write.call(write.ctx, NULL); /* TS getPing passes null only to the callback */
+  qa_qvmx_browser_ping ping = {"", 7};
+  return ping;
+}
+static qa_qvmx_browser_ping ping_address_slot(void *ctx, double index, double size,
+                                              qa_qvm_browser_write write) {
+  (void)ctx;
+  (void)index;
+  (void)size;
+  write.call(write.ctx, "1.2.3.4");
+  qa_qvmx_browser_ping ping = {"1.2.3.4", 42};
+  return ping;
+}
+
+/* UI trap 48: the null-address callback clears exactly one byte. */
+static void test_browser_ping(void) {
+  uint8_t *bytes = calloc(4096, 1);
+  qa_qvm_memory guest;
+  qa_qvm_memory_init(&guest, bytes, 4096, NULL, NULL);
+  uint8_t words[20] = {0};
+  put_i32(words, 0, 48);
+  put_i32(words, 4, 0);
+  put_i32(words, 8, 128);
+  put_i32(words, 12, 32);
+  put_i32(words, 16, 256);
+  qa_qvm_host_call call;
+  memset(&call, 0, sizeof call);
+  call.base.words = words;
+  call.base.words_length = sizeof words;
+  call.base.memory = bytes;
+  call.base.memory_length = 4096;
+  call.base.guest = &guest;
+  call.guest = &guest;
+  call.kind = "engine";
+  call.role = "ui";
+  call.code = 48;
+  qa_qvmx_browser_view browser;
+  memset(&browser, 0, sizeof browser);
+  browser.get_ping = ping_null_slot;
+  memset(bytes + 128, 0xcc, 32);
+  qa_qvm_host_result out = -1;
+  CHECK(qa_qvm_client_browser_syscall(&call, browser, &out));
+  CHECK(out == 0);
+  CHECK(bytes[128] == 0 && bytes[129] == 0xcc);
+  CHECK(get_i32(bytes, 256) == 7);
+  browser.get_ping = ping_address_slot;
+  CHECK(qa_qvm_client_browser_syscall(&call, browser, &out));
+  char *read = qa_qvm_memory_read_string(&guest, 128);
+  CHECK(strcmp(read, "1.2.3.4") == 0);
+  free(read);
+  CHECK(get_i32(bytes, 256) == 42);
+  qa_qvm_memory_destroy(&guest);
+  free(bytes);
+}
+
+static void script_noop_assert(void *ctx) { (void)ctx; }
+static void script_noop_print(void *ctx, const char *text) {
+  (void)ctx;
+  (void)text;
+}
+static bool publish_called = false;
+static void fake_publish(void *ctx, qa_qvmx_script_reader *reader) {
+  (void)ctx;
+  (void)reader;
+  publish_called = true;
+}
+
+/* TS readers Map: fractional/NaN handles miss instead of truncating. */
+static void test_script_handles(void) {
+  qa_qvm_client_script_services services;
+  memset(&services, 0, sizeof services);
+  services.assert_current = script_noop_assert;
+  services.print = script_noop_print;
+  qa_qvm_client_scripts *scripts = qa_qvm_client_scripts_create(services);
+  CHECK(scripts != NULL);
+  CHECK(qa_qvm_client_scripts_free(scripts, NAN) == 0);
+  CHECK(qa_qvm_client_scripts_free(scripts, 1.5) == 0);
+  CHECK(qa_qvm_client_scripts_free(scripts, -1) == 0);
+  CHECK(qa_qvm_client_scripts_free(scripts, 64) == 0);
+  qa_qvmx_script_position position;
+  CHECK(!qa_qvm_client_scripts_position(scripts, NAN, &position));
+  CHECK(!qa_qvm_client_scripts_position(scripts, 2.5, &position));
+  publish_called = false;
+  qa_qvm_script_publish publish = {NULL, fake_publish};
+  CHECK(qa_qvm_client_scripts_read(scripts, 1.5, publish) == 0 && !publish_called);
+  CHECK(qa_qvm_client_scripts_read(scripts, INFINITY, publish) == 0 && !publish_called);
+  qa_qvm_client_scripts_destroy(scripts);
+}
+
+static qa_qvmx_host_prediction fake_predict(void *ctx,
+                                            qa_qvmx_bot_movement_prediction_query query) {
+  (void)query;
+  return *(const qa_qvmx_host_prediction *)ctx;
+}
+static qa_bounds fake_presence_bounds(void *ctx, double presence) {
+  (void)ctx;
+  (void)presence;
+  qa_bounds bounds = {{0, 0, 0}, {0, 0, 10}};
+  return bounds;
+}
+static double fake_entity_number(void *ctx, qa_actor_id actor) {
+  (void)ctx;
+  (void)actor;
+  return 0;
+}
+
+/* Math.max(0, NaN) is NaN in TS, so success/time propagate it. */
+static void test_movement_prediction_max(void) {
+  qa_qvmx_host_prediction result;
+  memset(&result, 0, sizeof result);
+  result.stop_event = 0;
+  result.frames = 10;
+  result.seconds = 1.5;
+  result.has_end_area = true;
+  result.end_area = 3;
+  qa_qvmx_bot_navigation navigation;
+  memset(&navigation, 0, sizeof navigation);
+  navigation.ctx = &result;
+  navigation.predict_client_movement = fake_predict;
+  navigation.presence_bounds = fake_presence_bounds;
+  qa_qvmx_bot_movement_prediction_query query;
+  memset(&query, 0, sizeof query);
+  query.frame_time = 0.05;
+  query.max_frames = NAN;
+  query.presence = 2;
+  qa_qvm_entity_number_fn entity_number = {NULL, fake_entity_number};
+  qa_qvm_aas_movement_prediction prediction =
+      qa_qvm_bot_movement_prediction(&navigation, query, entity_number);
+  CHECK(!prediction.success);
+  CHECK(prediction.time == 1.5 && prediction.frames == 10 && prediction.end_area == 3);
+  result.stop_event = 1;
+  result.seconds = NAN;
+  prediction = qa_qvm_bot_movement_prediction(&navigation, query, entity_number);
+  CHECK(prediction.success);
+  CHECK(isnan(prediction.time));
+  CHECK(prediction.frames == 9);
+}
+
 int main(void) {
   test_abi();
+  test_w6c_qvm_deep_01();
   test_entity_tokens();
   test_entity_token_syscall();
   test_entity_record();
   test_bot_goal();
+  test_user_command_legacy();
+  test_browser_ping();
+  test_script_handles();
+  test_movement_prediction_max();
   test_interpreter();
   printf("test_qvm_a: %d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

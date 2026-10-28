@@ -33,8 +33,9 @@ struct llm_state {
   lctx ctxs[20];
   qa_ui_choice effort_choices[40];
   char model_label[640];
-  char *owned[24];
+  char *owned[48];
   size_t owned_count;
+  char *signin_selected_model; /* factory-time snapshot for L_SIGNIN */
   char title[64];
 };
 
@@ -194,19 +195,18 @@ static void on_activate(void *v, qa_seat_id seat) {
       run(s, &args, SUCCESS_SIGNIN);
       if (!was_busy && gen == s->generation && !s->busy
           && strcmp(s->status, "Working...") == 0) {
-        /* success closure (status untouched by run for this kind) */
-        qa_llm_settings_snapshot snap;
-        qa_llm_settings_read(s->service, &snap);
-        const char *selected = provider_model(&snap, snap.provider);
+        /* Success closure: TS reads the factory-time selected model. */
+        const char *selected = s->signin_selected_model != NULL
+                                   ? s->signin_selected_model
+                                   : "";
         set_owned(&s->key, "");
         const char *draft = s->model != NULL ? s->model : selected;
-        if (blank_trim(draft != NULL ? draft : ""))
+        if (blank_trim(draft))
           set_status(s, "Signed in. Select a model, then save settings.");
         else if (s->model != NULL)
           set_status(s, "Signed in. Save settings to use this model.");
         else
           set_status(s, "Signed in.");
-        qa_llm_settings_snapshot_free(&snap);
         refresh_models(s);
       }
       break;
@@ -339,7 +339,7 @@ static void clear_owned(llm_state *s) {
   s->owned_count = 0;
 }
 static char *own(llm_state *s, const char *text) {
-  if (s->owned_count >= 24) qa_range_error("Out of memory");
+  if (s->owned_count >= 48) qa_range_error("Out of memory");
   char *copy = qa_input_dup(text);
   if (copy == NULL) qa_range_error("Out of memory");
   s->owned[s->owned_count++] = copy;
@@ -394,7 +394,7 @@ static size_t wrap54(const char *text, char *out) {
   size_t best = 0;
   for (size_t i = 1; i <= 54 && i < length; i++)
     if (qa_input_js_space((unsigned char)text[i])) best = i + 1;
-  size_t take = best > 0 ? best : length <= 54 ? length : 54;
+  size_t take = length <= 54 ? length : best > 0 ? best : 54;
   memcpy(out, text, take);
   out[take] = '\0';
   return take;
@@ -494,6 +494,7 @@ static qa_ui_menu factory(void *v) {
   effort.select_choice = on_select;
   controls[at++] = effort;
   if (provider == QA_LLM_PROVIDER_SUBSCRIPTION) {
+    set_owned(&s->signin_selected_model, selected_model);
     controls[at] = button(s, at, "ui:llm:signin", "Sign in with ChatGPT", 4,
                           L_SIGNIN, !s->busy && !pending);
     at++;
@@ -655,6 +656,7 @@ static void llm_dispose(qa_ui_settings_menus *menus) {
   free(s->base_url);
   free(s->status);
   free(s->effort);
+  free(s->signin_selected_model);
   free(s);
   menus->state = NULL;
 }
