@@ -189,7 +189,7 @@ static qa_q3_game_entity *spawn_model_on_pad(qa_q3_ta_arena_runtime *r, qa_q3_ga
   body->physics_bounce = 0;
   body->s.event = 0;
   body->s.pos.type = QA_Q3_TR_STATIONARY;
-  qa_actor_id world_actor = qa_q3_game_entity_actor(qa_q3_entity_pool_at(pool_of(r), QA_Q3_ENTITYNUM_WORLD)).id;
+  qa_actor_id world_actor = qa_q3_game_entity_actor(qa_q3_entity_pool_at(pool_of(r), QA_Q3_GAME_ENTITYNUM_WORLD)).id;
   qa_q3_write_ground(body, &world_actor, pool_of(r));
   /* TS legsAnim/torsoAnim stores: no mirror fields. */
   if (body->s.weapon == QA_Q3_WP_NONE) body->s.weapon = QA_Q3_WP_MACHINEGUN;

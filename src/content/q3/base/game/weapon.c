@@ -26,7 +26,7 @@ static void owned(RT *r, qa_q3_game_entity *e) {
 }
 double qa_q3_weapon_damage_factor(qa_q3_game_client *client, double quad_factor, qa_q3_game_product product) {
   double factor = qa_q3_game_slots_get_mirror(&client->ps.powerups, QA_Q3_PW_QUAD) != 0 ? (float)quad_factor : 1;
-  if (product == QA_Q3_PRODUCT_MISSIONPACK && client->persistant_powerup && client->persistant_powerup->item && (int)client->persistant_powerup->item->tag == QA_Q3_PW_DOUBLER)
+  if (product == QA_Q3_GAME_PRODUCT_MISSIONPACK && client->persistant_powerup && client->persistant_powerup->item && (int)client->persistant_powerup->item->tag == QA_Q3_PW_DOUBLER)
     factor = (float)(factor * 2);
   return factor;
 }
@@ -47,7 +47,7 @@ qa_q3_sphere_intersections qa_q3_ray_sphere_intersections(qa_vec3 origin, double
 }
 qa_q3_weapon_invuln_impact qa_q3_invulnerability_effect(qa_q3_entity_pool *pool, qa_q3_game_entity *target, qa_vec3 direction, qa_vec3 point) {
   qa_q3_weapon_invuln_impact miss = {QA_Q3_WEAPON_INVULN_MISS, {0, 0, 0}, {0, 0, 0}};
-  if (pool->options.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Invulnerability effects require missionpack");
+  if (pool->options.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Invulnerability effects require missionpack");
   if (!target->client) return miss;
   qa_q3_missile_direction backwards = {-direction.x, -direction.y, -direction.z};
   qa_q3_sphere_intersections hits = qa_q3_ray_sphere_intersections(target->client->ps.origin, 42, point, &backwards);
@@ -186,7 +186,7 @@ static qa_q3_contact_host contact_host(adapter *ad) {
   h.product = ad->runtime->host.combat->product; h.ctx = ad;
   h.trace = ad_trace; h.target = ad_target; h.emit = ad_contact_emit; h.damage = ad_damage_method;
   h.credit_accuracy_hit = ad_credit_contact;
-  h.invulnerability_impact = h.product == QA_Q3_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
+  h.invulnerability_impact = h.product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
   return h;
 }
 static void bullet(RT *r, qa_q3_game_entity *e, Attack *a, double spread, double amount) {
@@ -195,7 +195,7 @@ static void bullet(RT *r, qa_q3_game_entity *e, Attack *a, double spread, double
   h.product = r->host.combat->product; h.random = qa_q3_game_random_pick_from(r->host.random); h.ctx = &ad;
   h.trace = ad_trace; h.target = ad_target; h.emit = ad_bullet_emit; h.damage = ad_damage_method;
   h.credit_accuracy_hit = ad_credit_bullet;
-  h.invulnerability_impact = h.product == QA_Q3_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
+  h.invulnerability_impact = h.product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
   qa_q3_bullet_fire(h, ad.attacker, a, spread, amount);
 }
 static void shotgun(RT *r, qa_q3_game_entity *e, Attack *a) {
@@ -203,7 +203,7 @@ static void shotgun(RT *r, qa_q3_game_entity *e, Attack *a) {
   qa_q3_shotgun_host h; memset(&h, 0, sizeof h);
   h.product = r->host.combat->product; h.ctx = &ad; h.random = r->host.random;
   h.trace = ad_trace; h.target = ad_target; h.damage = ad_damage_method; h.credit_accuracy_hit = ad_credit_contact;
-  h.invulnerability_impact = h.product == QA_Q3_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
+  h.invulnerability_impact = h.product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
   h.begin = ad_sg_begin; h.publish = ad_sg_publish; h.alive = ad_alive;
   qa_q3_shotgun_fire(h, ad.attacker, a);
 }
@@ -212,7 +212,7 @@ static void railgun(RT *r, qa_q3_game_entity *e, Attack *a) {
   qa_q3_rail_host h; memset(&h, 0, sizeof h);
   h.product = r->host.combat->product; h.ctx = &ad;
   h.trace = ad_trace; h.target = ad_target; h.damage = ad_damage_method;
-  h.invulnerability_impact = h.product == QA_Q3_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
+  h.invulnerability_impact = h.product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? ad_invuln : NULL;
   h.alive = ad_alive; h.unlink = ad_unlink; h.restore = ad_restore; h.trail = ad_trail;
   double hits = qa_q3_rail_fire(h, ad.attacker, a);
   if (!ad_alive(&ad)) return;
@@ -239,7 +239,7 @@ void qa_q3_weapon_fire(RT *r, qa_q3_game_entity *e) {
   double quad = quad_of(r, e);
   qa_q3_ranking_reports_fire_weapon(&combat->entities->rankings, e->slot, e->s.weapon);
   if ((int)e->s.weapon != QA_Q3_WP_GRAPPLING_HOOK && (int)e->s.weapon != QA_Q3_WP_GAUNTLET)
-    c->accuracy_shots = qa_int32(c->accuracy_shots + (combat->product == QA_Q3_PRODUCT_MISSIONPACK && (int)e->s.weapon == QA_Q3_WP_NAILGUN ? 15 : 1));
+    c->accuracy_shots = qa_int32(c->accuracy_shots + (combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && (int)e->s.weapon == QA_Q3_WP_NAILGUN ? 15 : 1));
   Attack a = attack_of(e, quad);
   switch ((int)e->s.weapon) {
     case QA_Q3_WP_GAUNTLET: return;
@@ -255,20 +255,20 @@ void qa_q3_weapon_fire(RT *r, qa_q3_game_entity *e) {
       if (!c->fire_held && !c->hook) (void)r->host.fire_grapple(r->host.ctx, e, a.muzzle, dir_of(a.forward));
       c->fire_held = true; return;
     case QA_Q3_WP_NAILGUN:
-      if (combat->product == QA_Q3_PRODUCT_MISSIONPACK)
+      if (combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK)
         for (int i = 0; i < 15; i++) multiply(&a, r->host.fire_nail(r->host.ctx, e, a.muzzle, dir_of(a.forward), a.right, a.up));
       return;
     case QA_Q3_WP_PROX_LAUNCHER:
-      if (combat->product == QA_Q3_PRODUCT_MISSIONPACK) { raise_fwd(&a); multiply(&a, r->host.fire_prox(r->host.ctx, e, a.muzzle, dir_of(a.forward))); }
+      if (combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK) { raise_fwd(&a); multiply(&a, r->host.fire_prox(r->host.ctx, e, a.muzzle, dir_of(a.forward))); }
       return;
-    case QA_Q3_WP_CHAINGUN: if (combat->product == QA_Q3_PRODUCT_MISSIONPACK) bullet(r, e, &a, 600, 7); return;
+    case QA_Q3_WP_CHAINGUN: if (combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK) bullet(r, e, &a, 600, 7); return;
     case QA_Q3_WP_NONE: return;
     default: return;
   }
 }
 qa_q3_game_entity *qa_q3_weapon_start_kamikaze(RT *r, qa_q3_game_entity *e) {
   owned(r, e); qa_q3_game_combat_context *combat = r->host.combat; qa_q3_entity_pool *pool = combat->entities;
-  if (combat->product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze requires missionpack");
+  if (combat->product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze requires missionpack");
   qa_q3_game_entity *ex = qa_q3_entity_pool_spawn(pool);
   ex->s.e_type = 13 + QA_Q3_EV_KAMIKAZE; /* ET_EVENTS + EV_KAMIKAZE */ ex->event_time = combat->time;
   qa_q3_game_entity *source = e->client ? e : e->activator;

@@ -119,7 +119,7 @@ void qa_q3_personal_portal_bind_save_callbacks(RT *r) {
   qa_q3_callback_family_intern(&c->think, "q3.base.game.personal-portal.dropPortalSource.think", mkcb(&en, r));
 }
 void qa_q3_personal_portal_runtime_init(RT *r, qa_q3_personal_portal_host host) {
-  if (host.combat->entities->options.product != QA_Q3_PRODUCT_MISSIONPACK)
+  if (host.combat->entities->options.product != QA_Q3_GAME_PRODUCT_MISSIONPACK)
     qa_range_error("Personal portals require a missionpack entity pool");
   if (!host.spatial_is_world) qa_range_error("Personal portal combat and collision worlds must match");
   r->host = host; r->portal_sequence = 0; qa_q3_personal_portal_bind_save_callbacks(r);

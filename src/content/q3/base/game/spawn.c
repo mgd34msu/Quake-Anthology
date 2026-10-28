@@ -126,7 +126,7 @@ static int excluded(const qa_q3_spawn_variables *vars, qa_q3_spawn_context *ctx,
   if (ctx->game_type == 2 && qa_q3_spawn_variables_int(vars, "notsingle", "0").value != 0) { *out = QA_Q3_SPAWN_NOTSINGLE; return 1; }
   int team = ctx->game_type >= 3;
   if (qa_q3_spawn_variables_int(vars, team ? "notteam" : "notfree", "0").value != 0) { *out = team ? QA_Q3_SPAWN_NOTTEAM : QA_Q3_SPAWN_NOTFREE; return 1; }
-  int mp = ctx->product == QA_Q3_PRODUCT_MISSIONPACK;
+  int mp = ctx->product == QA_Q3_GAME_PRODUCT_MISSIONPACK;
   if (qa_q3_spawn_variables_int(vars, mp ? "notta" : "notq3a", "0").value != 0) { *out = mp ? QA_Q3_SPAWN_NOTTA : QA_Q3_SPAWN_NOTQ3A; return 1; }
   qa_q3_spawn_value_string gt = qa_q3_spawn_variables_string(vars, "gametype", "");
   if (gt.present && ctx->game_type >= 0 && ctx->game_type < 8) {
@@ -166,8 +166,8 @@ void qa_q3_spawn_world(const qa_q3_spawn_variables *vars, qa_q3_worldspawn_conte
   ctx->set_cvar(ctx->ctx, "g_gravity", qa_q3_spawn_variables_string(vars, "gravity", "800").value);
   ctx->set_cvar(ctx->ctx, "g_enableDust", qa_q3_spawn_variables_string(vars, "enableDust", "0").value);
   ctx->set_cvar(ctx->ctx, "g_enableBreath", qa_q3_spawn_variables_string(vars, "enableBreath", "0").value);
-  qa_q3_game_entity *world = qa_q3_entity_pool_at(ctx->pool, QA_Q3_ENTITYNUM_WORLD);
-  world->s.number = QA_Q3_ENTITYNUM_WORLD; qa_q3_game_entity_set_classname(world, "worldspawn");
+  qa_q3_game_entity *world = qa_q3_entity_pool_at(ctx->pool, QA_Q3_GAME_ENTITYNUM_WORLD);
+  world->s.number = QA_Q3_GAME_ENTITYNUM_WORLD; qa_q3_game_entity_set_classname(world, "worldspawn");
   ctx->set_configstring(ctx->ctx, 5, "");
   if (ctx->restarted != 0) { ctx->set_cvar(ctx->ctx, "g_restarted", "0"); ctx->warmup_time = 0; }
   else if (ctx->do_warmup != 0) { ctx->warmup_time = -1; ctx->set_configstring(ctx->ctx, 5, "-1"); ctx->log(ctx->ctx, "Warmup:\n"); }

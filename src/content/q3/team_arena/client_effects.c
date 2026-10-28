@@ -20,7 +20,7 @@ static qa_q3_game_client *client_of(qa_q3_game_entity *entity) {
 static double s32(double v) { return (int32_t)v; }
 static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
 static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
-static qa_q3_base_product base_product(qa_q3_game_product p) { return p == QA_Q3_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3; }
+static qa_q3_base_product base_product(qa_q3_game_product p) { return p == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3; }
 
 void qa_q3_ta_damage_feedback(qa_q3_ta_event_context context, qa_q3_game_entity *player) {
   qa_q3_game_client *client = client_of(player);
@@ -88,7 +88,7 @@ void qa_q3_ta_world_effects(qa_q3_ta_client_effects_context *context, qa_q3_game
 
 void qa_q3_ta_set_client_sound(qa_q3_ta_client_effects_context *context, qa_q3_game_entity *entity) {
   client_of(entity)->ps.loop_sound =
-      (context->combat->product == QA_Q3_PRODUCT_MISSIONPACK && ((int32_t)entity->s.e_flags & EF_TICKING) != 0)
+      (context->combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && ((int32_t)entity->s.e_flags & EF_TICKING) != 0)
           ? context->sound_index(context->ctx, "sound/weapons/proxmine/wstbtick.wav")
           : (entity->waterlevel != 0 && ((int32_t)entity->watertype & (CONTENTS_LAVA | CONTENTS_SLIME)) != 0
                 ? context->fry_sound : 0);
@@ -146,10 +146,10 @@ void qa_q3_ta_client_timer_actions(qa_q3_ta_event_context context, qa_q3_game_en
   while (client->time_residual >= 1000) {
     client->time_residual -= 1000;
     double maximum = slot_get(&ps->stats, schema->max_health);
-    double max_health = (ps->product == QA_Q3_PRODUCT_MISSIONPACK && persistent_tag(client) == QA_Q3_PW_GUARD)
+    double max_health = (ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && persistent_tag(client) == QA_Q3_PW_GUARD)
         ? trunc(maximum / 2) : (slot_get(&ps->powerups, QA_Q3_PW_REGEN) != 0 ? maximum : 0);
     double health = qa_q3_game_entity_health(entity);
-    if ((ps->product == QA_Q3_PRODUCT_BASEQ3 && slot_get(&ps->powerups, QA_Q3_PW_REGEN) != 0) || max_health != 0) {
+    if ((ps->product == QA_Q3_GAME_PRODUCT_BASEQ3 && slot_get(&ps->powerups, QA_Q3_PW_REGEN) != 0) || max_health != 0) {
       if (health < max_health) {
         health = s32(health + 15);
         double cap = (double)(float)((double)(float)max_health * (double)(float)1.1);
@@ -169,7 +169,7 @@ void qa_q3_ta_client_timer_actions(qa_q3_ta_event_context context, qa_q3_game_en
     if (ownership->ordinary_decay && slot_get(&ps->stats, schema->armor) > maximum)
       slot_set(&ps->stats, schema->armor, slot_get(&ps->stats, schema->armor) - 1);
   }
-  if (ps->product == QA_Q3_PRODUCT_MISSIONPACK && persistent_tag(client) == QA_Q3_PW_AMMOREGEN) {
+  if (ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && persistent_tag(client) == QA_Q3_PW_AMMOREGEN) {
     if (!ownership->has_ammo) {
       for (int i = 0; i < AMMO_RULE_COUNT; i++) {
         const qa_q3_ta_ammo_regeneration_rule *rule = &ammo_regeneration[i];
@@ -217,7 +217,7 @@ void qa_q3_ta_update_client_powerups(qa_q3_ta_event_context context, qa_q3_game_
   double time = context.combat->time;
   for (size_t index = 0; index < client->ps.powerups.length; index++)
     if (slot_get(&client->ps.powerups, (double)index) < time) slot_set(&client->ps.powerups, (double)index, 0);
-  if (context.combat->product == QA_Q3_PRODUCT_MISSIONPACK) {
+  if (context.combat->product == QA_Q3_GAME_PRODUCT_MISSIONPACK) {
     double tag = persistent_tag(client);
     static const double persistent[] = {QA_Q3_PW_GUARD, QA_Q3_PW_SCOUT, QA_Q3_PW_DOUBLER, QA_Q3_PW_AMMOREGEN};
     for (int i = 0; i < 4; i++)

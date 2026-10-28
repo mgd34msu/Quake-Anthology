@@ -125,7 +125,7 @@ static void reset_player_state(qa_q3_game_player_state_mirror *ps) {
 static void reset_client(qa_q3_game_client *client, qa_q3_base_product product) {
   qa_q3_game_client_destroy(client);
   qa_q3_game_client_init(client, product == QA_Q3_BASE_PRODUCT_MISSIONPACK
-      ? QA_Q3_PRODUCT_MISSIONPACK : QA_Q3_PRODUCT_BASEQ3);
+      ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3);
 }
 static char *info_value(const char *userinfo, const char *key) {
   return qa_q3_ta_client_info_value(userinfo, key);

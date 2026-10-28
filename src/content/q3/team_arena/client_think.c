@@ -38,7 +38,7 @@ static qa_q3_base_user_command to_command(qa_q3_game_user_command_mirror src) {
 }
 /* clientSpeedMultiplier on mirror slots (same rule as client-effects). */
 static double mirror_speed_multiplier(qa_q3_game_player_state_mirror *ps) {
-  qa_q3_base_product product = ps->product == QA_Q3_PRODUCT_MISSIONPACK
+  qa_q3_base_product product = ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK
       ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
   const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(product);
   if (product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
@@ -161,7 +161,7 @@ void qa_q3_ta_client_think_runtime_client_think_real(qa_q3_ta_client_think_runti
       : ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0 ? (MASK_PLAYERSOLID | CONTENTS_BOTCLIP) : MASK_PLAYERSOLID;
   client->old_origin = ps->origin;
   qa_q3_base_user_command movement_command = to_command(*command);
-  if (ps->product == QA_Q3_PRODUCT_MISSIONPACK && frame.intermission_queued != 0 && settings.single_player) {
+  if (ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && frame.intermission_queued != 0 && settings.single_player) {
     double elapsed = s32(frame.time - frame.intermission_queued);
     if (elapsed >= 1000) {
       movement_command.buttons = 0;
@@ -235,7 +235,7 @@ static bool stuck_in_other_client(qa_q3_entity_pool *pool, qa_q3_base_server_wor
 }
 void qa_q3_ta_expand_invulnerability(qa_q3_entity_pool *pool, qa_q3_base_server_world *world, qa_q3_game_entity *entity) {
   qa_q3_game_player_state_mirror *ps = &client_for(entity)->ps;
-  if (ps->product == QA_Q3_PRODUCT_MISSIONPACK && slot_get(&ps->powerups, QA_Q3_PW_INVULNERABILITY) != 0 &&
+  if (ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && slot_get(&ps->powerups, QA_Q3_PW_INVULNERABILITY) != 0 &&
       ((int32_t)ps->pm_flags & QA_Q3_FLAG_INVULEXPAND) == 0) {
     qa_vec3 old_mins = entity->r.mins, old_maxs = entity->r.maxs;
     entity->r.mins = qa_math_vec3(-42, -42, -42);

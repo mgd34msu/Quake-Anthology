@@ -47,7 +47,10 @@ typedef struct qa_app_q3_client_options {
   const qa_app_q3_client_source *local_source; /* NULL = remote */
   const char *input_kind;           /* movement input kind */
 } qa_app_q3_client_options;
-typedef struct qa_app_q3_client_host {
+/* C-only host aggregate for ApplicationQ3Client (no TS host type in
+ * q3-client.ts); qa_app_q3_client_host is the distinct TS
+ * Q3ApplicationClientHost in network/q3_client.h. */
+typedef struct qa_app_q3_bootstrap_client_host {
   void *ctx;
   qa_app_q3_client_options options;
   qa_app_q3_client_game game;
@@ -56,11 +59,11 @@ typedef struct qa_app_q3_client_host {
   const char *(*frame)(void *ctx);
   const char *(*close)(void *ctx);
   const char *(*server_setting)(void *ctx, double index);
-} qa_app_q3_client_host;
+} qa_app_q3_bootstrap_client_host;
 typedef struct qa_app_application_q3_client qa_app_application_q3_client;
 /* Aborts with the TS Error text for foreign movement / missing
  * local snapshot source. initialize runs synchronously. */
-qa_app_application_q3_client *qa_app_application_q3_client_create(qa_app_q3_client_host host);
+qa_app_application_q3_client *qa_app_application_q3_client_create(qa_app_q3_bootstrap_client_host host);
 qa_cvar_registry *qa_app_application_q3_client_cvars(const qa_app_application_q3_client *client);
 qa_cvar_registry *qa_app_application_q3_client_time_cvars(const qa_app_application_q3_client *client);
 /* Aborts when the owner identity changed (TS Error). */

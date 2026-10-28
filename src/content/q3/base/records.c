@@ -147,7 +147,7 @@ bool qa_q3_base_entity_records_init(qa_q3_base_entity_records *records,
     qa_q3_game_entity_init(&record->entity, slot, binding);
   }
   qa_q3_game_product game_product = product == QA_Q3_BASE_PRODUCT_MISSIONPACK
-      ? QA_Q3_PRODUCT_MISSIONPACK : QA_Q3_PRODUCT_BASEQ3;
+      ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3;
   for (int slot = 0; slot < QA_Q3_MAX_CLIENTS; slot++) {
     qa_q3_game_client_init(&records->clients[slot], game_product);
     records->binding_ctx[slot].records = records;

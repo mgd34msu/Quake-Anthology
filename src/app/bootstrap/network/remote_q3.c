@@ -8,9 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define qa_app_q3_client_host qa_app_q3_bootstrap_client_host
 #include "qa/app/bootstrap/q3_client.h"
-#undef qa_app_q3_client_host
 #include "qa/app/bootstrap/simulation/players.h"
 #include "qa/app/bootstrap/simulation/prediction/presentation.h"
 #include "qa/app/bootstrap/simulation/q3/guest_player.h"

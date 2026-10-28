@@ -6,26 +6,26 @@
 #include "qa/foundation/support.h"
 enum { MOD_JUICED = 27, ET_MOVER = 4 };
 bool qa_q3_invulnerability_blocks(qa_q3_game_combat_context *c, qa_q3_game_entity *target, const qa_vec3 *dir, const qa_vec3 *point, double mod) {
-  if (c->product != QA_Q3_PRODUCT_MISSIONPACK || !target->client || mod == MOD_JUICED || target->client->invulnerability_time <= c->time) return false;
+  if (c->product != QA_Q3_GAME_PRODUCT_MISSIONPACK || !target->client || mod == MOD_JUICED || target->client->invulnerability_time <= c->time) return false;
   if (dir && point && c->invulnerability_effect) c->invulnerability_effect(c->ctx, target, *dir, *point);
   return true;
 }
 double qa_q3_check_armor(qa_q3_game_entity *target, double damage, double flags) {
   if (damage == 0 || !target->client || ((int)flags & QA_Q3_DAMAGE_NO_ARMOR) != 0) return 0;
   qa_q3_game_player_state_mirror *ps = &target->client->ps;
-  size_t slot = ps->product == QA_Q3_PRODUCT_BASEQ3 ? 3 : 4;
+  size_t slot = ps->product == QA_Q3_GAME_PRODUCT_BASEQ3 ? 3 : 4;
   double scaled = (float)((float)damage * (float)0.66), rounded = ceil(scaled);
   double armor = qa_q3_game_slots_get_mirror(&ps->stats, slot);
   double save = rounded >= armor ? armor : rounded; if (save == 0) return 0;
   qa_q3_game_slots_set_mirror(&ps->stats, slot, armor - save); return save;
 }
-qa_q3_admit_result qa_q3_admit_target_damage(double intermission, qa_q3_game_entity *target, const qa_q3_use_participant *source, const qa_q3_use_participant *owner) {
-  if (!qa_q3_game_entity_takedamage(target) || intermission != 0) return QA_Q3_ADMIT_HANDLED;
-  if (target->s.e_type != ET_MOVER) return QA_Q3_ADMIT_CONTINUE;
+qa_q3_game_admit_result qa_q3_admit_target_damage(double intermission, qa_q3_game_entity *target, const qa_q3_use_participant *source, const qa_q3_use_participant *owner) {
+  if (!qa_q3_game_entity_takedamage(target) || intermission != 0) return QA_Q3_GAME_ADMIT_HANDLED;
+  if (target->s.e_type != ET_MOVER) return QA_Q3_GAME_ADMIT_CONTINUE;
   if (target->use.fn && target->mover_state == QA_Q3_MOVER_POS1) {
     qa_q3_entity_use_fn fn; memcpy(&fn, &target->use.fn, sizeof fn); fn(target->use.ctx, target, source, owner);
   }
-  return QA_Q3_ADMIT_HANDLED;
+  return QA_Q3_GAME_ADMIT_HANDLED;
 }
 void qa_q3_combat_damage(qa_q3_game_combat_context *c, qa_q3_damage_participant target, const qa_q3_damage_participant *inflictor,
     const qa_q3_use_participant *attacker, qa_q3_damage_direction *direction, const qa_vec3 *point, double amount, double flags, double mod) {
@@ -44,10 +44,10 @@ void qa_q3_combat_damage(qa_q3_game_combat_context *c, qa_q3_damage_participant 
   qa_q3_game_entity *e = target.entity;
   if (!qa_q3_game_entity_takedamage(e)) return;
   if (qa_q3_invulnerability_blocks(c, e, direction, point, mod)) return;
-  qa_q3_use_participant src = inflictor ? *inflictor : qa_q3_participant_entity(qa_q3_entity_pool_at(c->entities, QA_Q3_ENTITYNUM_WORLD));
-  qa_q3_use_participant own = attacker ? *attacker : qa_q3_participant_entity(qa_q3_entity_pool_at(c->entities, QA_Q3_ENTITYNUM_WORLD));
-  if (qa_q3_admit_target_damage(c->intermission_queued, e, &src, &own) == QA_Q3_ADMIT_HANDLED) return;
-  if (c->product == QA_Q3_PRODUCT_MISSIONPACK && c->game_type == 6 && c->check_obelisk_attack && c->check_obelisk_attack(c->ctx, e, own)) return;
+  qa_q3_use_participant src = inflictor ? *inflictor : qa_q3_participant_entity(qa_q3_entity_pool_at(c->entities, QA_Q3_GAME_ENTITYNUM_WORLD));
+  qa_q3_use_participant own = attacker ? *attacker : qa_q3_participant_entity(qa_q3_entity_pool_at(c->entities, QA_Q3_GAME_ENTITYNUM_WORLD));
+  if (qa_q3_admit_target_damage(c->intermission_queued, e, &src, &own) == QA_Q3_GAME_ADMIT_HANDLED) return;
+  if (c->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && c->game_type == 6 && c->check_obelisk_attack && c->check_obelisk_attack(c->ctx, e, own)) return;
   if (e->client && e->client->noclip) return;
   qa_vec3 impulse = direction ? *direction : (qa_vec3){0, 0, 0};
   if (!direction) flags = (int)flags | QA_Q3_DAMAGE_NO_KNOCKBACK;

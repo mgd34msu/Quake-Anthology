@@ -24,14 +24,14 @@ static pickup_input get_input(qa_q3_game_entity *item_entity, qa_q3_game_entity 
 }
 /* statSchema mirror: base weapons2 armor3 health0 holdable1 max6; missionpack weapons3 armor4 health0 holdable1 max7 pers2 */
 static size_t stat_idx(qa_q3_game_product p, int which) {
-  if (p == QA_Q3_PRODUCT_BASEQ3) { const size_t t[5] = {0, 1, 2, 3, 6}; return t[which]; }
+  if (p == QA_Q3_GAME_PRODUCT_BASEQ3) { const size_t t[5] = {0, 1, 2, 3, 6}; return t[which]; }
   const size_t t[5] = {0, 1, 3, 4, 7}; return t[which];
 }
 static bool has_guard(qa_q3_game_client *c) {
-  if (c->ps.product == QA_Q3_PRODUCT_BASEQ3) return false;
+  if (c->ps.product == QA_Q3_GAME_PRODUCT_BASEQ3) return false;
   double idx = qa_q3_game_slots_get_mirror(&c->ps.stats, 2);
-  const qa_q3_game_item_definition_mirror *list = lists[QA_Q3_PRODUCT_MISSIONPACK];
-  if (!list || idx < 0 || idx >= (double)list_counts[QA_Q3_PRODUCT_MISSIONPACK]) return false;
+  const qa_q3_game_item_definition_mirror *list = lists[QA_Q3_GAME_PRODUCT_MISSIONPACK];
+  if (!list || idx < 0 || idx >= (double)list_counts[QA_Q3_GAME_PRODUCT_MISSIONPACK]) return false;
   return list[(size_t)idx].tag == 11;
 }
 static void add_ammo_to(qa_q3_game_client *c, double weapon, double count) {
@@ -97,7 +97,7 @@ static double pickup_holdable_from(qa_q3_game_client *c, const qa_q3_game_item_d
 double qa_q3_pickup_holdable(qa_q3_game_entity *ie, qa_q3_game_entity *other) { pickup_input in = get_input(ie, other); return pickup_holdable_from(in.client, in.item, in.item_index); }
 static double source_handicap(const char *raw) { double p = qa_game_atof(raw); return p <= 0 || p > 100 ? 100 : p; }
 static double pickup_persistent_from(qa_q3_game_entity *ie, qa_q3_game_client *c, const qa_q3_game_item_definition_mirror *item, double idx, const char *raw, qa_q3_game_entity *other) {
-  if (c->ps.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Persistent powerups require missionpack player state");
+  if (c->ps.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Persistent powerups require missionpack player state");
   if (item->type != IT_PERSISTANT_POWERUP) qa_range_error("Pickup_PersistantPowerup requires a persistent powerup item");
   qa_q3_game_slots_set_mirror(&c->ps.stats, 2, idx); c->persistant_powerup = ie;
   double handicap = source_handicap(raw), player_max = trunc(handicap);

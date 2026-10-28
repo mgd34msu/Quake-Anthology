@@ -32,8 +32,8 @@ typedef struct qa_q3_game_combat_context {
 bool qa_q3_invulnerability_blocks(qa_q3_game_combat_context *context, qa_q3_game_entity *target,
     const qa_vec3 *direction, const qa_vec3 *point, double method_of_death);
 double qa_q3_check_armor(qa_q3_game_entity *target, double damage, double flags);
-typedef enum qa_q3_admit_result { QA_Q3_ADMIT_CONTINUE, QA_Q3_ADMIT_HANDLED } qa_q3_admit_result;
-qa_q3_admit_result qa_q3_admit_target_damage(double intermission_queued, qa_q3_game_entity *target,
+typedef enum qa_q3_game_admit_result { QA_Q3_GAME_ADMIT_CONTINUE, QA_Q3_GAME_ADMIT_HANDLED } qa_q3_game_admit_result;
+qa_q3_game_admit_result qa_q3_admit_target_damage(double intermission_queued, qa_q3_game_entity *target,
     const qa_q3_use_participant *source, const qa_q3_use_participant *owner);
 void qa_q3_combat_damage(qa_q3_game_combat_context *context, qa_q3_damage_participant target,
     const qa_q3_damage_participant *inflictor, const qa_q3_use_participant *attacker,

@@ -27,7 +27,7 @@ static const char *mod_name(RT *r, double mod) {
   int i = (int)mod;
   if (mod != i || i < 0) return "<bad obituary>";
   if (i < 23) return COMMON_MOD_NAMES[i];
-  if (r->host.product == QA_Q3_PRODUCT_MISSIONPACK) { if (i < 28) return MP_MOD_NAMES[i - 23]; if (i == 28) return "MOD_GRAPPLE"; }
+  if (r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK) { if (i < 28) return MP_MOD_NAMES[i - 23]; if (i == 28) return "MOD_GRAPPLE"; }
   else if (i == 23) return "MOD_GRAPPLE";
   return "<bad obituary>";
 }
@@ -38,7 +38,7 @@ static qa_q3_game_client *client_of(qa_q3_game_entity *e) {
 static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
 static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
 static const qa_q3_base_stat_schema *schema(RT *r) {
-  return qa_q3_base_stat_schema_for(r->host.product == QA_Q3_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
+  return qa_q3_base_stat_schema_for(r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
 }
 void qa_q3_return_persistent_powerup(qa_q3_game_entity *powerup, qa_q3_server_world_mirror world) {
   powerup->r.sv_flags = (int)powerup->r.sv_flags & ~1;
@@ -97,7 +97,7 @@ void qa_q3_death_toss_client_items(RT *r, qa_q3_game_entity *e) {
   }
 }
 void qa_q3_death_toss_client_cubes(RT *r, qa_q3_game_entity *e) {
-  if (r->host.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("TossClientCubes requires missionpack");
+  if (r->host.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("TossClientCubes requires missionpack");
   qa_q3_game_client *client = client_of(e); double time = r->host.frame(r->host.ctx).time;
   client->ps.generic1 = 0;
   if (!qa_q3_entity_pool_entities_free(r->host.pool)) return;
@@ -114,7 +114,7 @@ void qa_q3_death_toss_client_cubes(RT *r, qa_q3_game_entity *e) {
 }
 static void return_cb(void *ctx, qa_q3_game_entity *p) { RT *r = ctx; qa_q3_return_persistent_powerup(p, r->host.world); }
 void qa_q3_death_toss_client_persistant_powerups(RT *r, qa_q3_game_entity *e) {
-  if (r->host.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Persistent powerup tossing requires missionpack");
+  if (r->host.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Persistent powerup tossing requires missionpack");
   qa_q3_toss_client_persistent_powerup(e, return_cb, r);
 }
 static bool part_origin(const qa_q3_damage_participant *p, qa_q3_game_entity *self, qa_vec3 *out) {
@@ -150,7 +150,7 @@ void qa_q3_death_body_die(RT *r, qa_q3_game_entity *self) {
   qa_q3_death_gib_entity(r, self, 0);
 }
 static void kamikaze_timer(RT *r, qa_q3_game_entity *self) {
-  if (r->host.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze death timer requires missionpack");
+  if (r->host.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze death timer requires missionpack");
   qa_q3_game_entity *timer = qa_q3_entity_pool_spawn(r->host.pool);
   qa_q3_game_entity_set_classname(timer, "kamikaze timer");
   timer->s.pos.base = self->s.pos.base; timer->r.sv_flags = (int)timer->r.sv_flags | 1;
@@ -198,17 +198,17 @@ void qa_q3_death_player_die(RT *r, qa_q3_game_entity *self, const qa_q3_damage_p
   if ((int)client->ps.pm_type == QA_Q3_PM_DEAD || frame.intermission_time != 0) return;
   check_almost_capture(r, self, attacker); check_almost_scored(r, self, attacker);
   if (client->hook) r->host.hook_free(r->host.ctx, client->hook);
-  if (r->host.product == QA_Q3_PRODUCT_MISSIONPACK && (((int)client->ps.e_flags & 0x2) != 0) && self->activator) {
+  if (r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && (((int)client->ps.e_flags & 0x2) != 0) && self->activator) {
     client->ps.e_flags = (int)client->ps.e_flags & ~0x2;
     self->activator->think = qa_q3_callback_family_resolve(&r->host.pool->callbacks.think, "q3.base.game.death.playerDie.think");
     qa_q3_game_entity_set_nextthink(self->activator, frame.time);
   }
   client->ps.pm_type = QA_Q3_PM_DEAD;
   qa_q3_game_entity *atk_e = attacker ? attacker->entity : NULL;
-  double killer = atk_e ? atk_e->s.number : QA_Q3_ENTITYNUM_WORLD;
+  double killer = atk_e ? atk_e->s.number : QA_Q3_GAME_ENTITYNUM_WORLD;
   const char *killer_name = !attacker ? "<world>" : (atk_e && atk_e->client) ? (atk_e->client->pers.netname ? atk_e->client->pers.netname : "") : "<non-client>";
-  if (killer < 0 || killer >= QA_Q3_MAX_CLIENTS) { killer = QA_Q3_ENTITYNUM_WORLD; killer_name = "<world>"; }
-  double rank_mod = (r->host.product == QA_Q3_PRODUCT_MISSIONPACK && mod >= 23) ? (mod == 28 ? 23 : 0) : mod;
+  if (killer < 0 || killer >= QA_Q3_MAX_CLIENTS) { killer = QA_Q3_GAME_ENTITYNUM_WORLD; killer_name = "<world>"; }
+  double rank_mod = (r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && mod >= 23) ? (mod == 28 ? 23 : 0) : mod;
   qa_q3_ranking_reports_player_die(&r->host.pool->rankings, self->slot, killer, rank_mod);
   qa_q3_game_format_arg args[6] = {qa_q3_game_format_number(killer), qa_q3_game_format_number(self->s.number),
     qa_q3_game_format_number(mod), qa_q3_game_format_string(killer_name),
@@ -245,7 +245,7 @@ void qa_q3_death_player_die(RT *r, qa_q3_game_entity *self, const qa_q3_damage_p
   double contents = r->host.point_contents(r->host.ctx, self->r.current_origin, -1);
   if ((((int32_t)contents & (int32_t)CONTENTS_NODROP_V) == 0)) qa_q3_death_toss_client_items(r, self);
   else { carried_flag flag = carried(self); if (flag.has) r->host.return_flag(r->host.ctx, flag.team); }
-  if (r->host.product == QA_Q3_PRODUCT_MISSIONPACK) {
+  if (r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK) {
     qa_q3_death_toss_client_persistant_powerups(r, self);
     if ((int)frame.game_type == QA_Q3_BASE_GT_HARVESTER) qa_q3_death_toss_client_cubes(r, self);
   }
@@ -285,7 +285,7 @@ void qa_q3_death_player_die(RT *r, qa_q3_game_entity *self, const qa_q3_damage_p
     client->ps.torso_anim = (((int)client->ps.torso_anim & 128) ^ 128) | (int)nx.animation;
     qa_q3_entity_pool_add_event(r->host.pool, self, nx.event, killer);
     self->die = qa_q3_callback_family_resolve(&r->host.pool->callbacks.die, "q3.death.body");
-    if (r->host.product == QA_Q3_PRODUCT_MISSIONPACK && (((int)self->s.e_flags & 0x200) != 0)) kamikaze_timer(r, self);
+    if (r->host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && (((int)self->s.e_flags & 0x200) != 0)) kamikaze_timer(r, self);
   }
   r->host.world.link(r->host.world.ctx, self);
 }
@@ -293,7 +293,7 @@ static void cb_free(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; qa_q3_entity
 static void cb_free_player(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; qa_q3_entity_pool_free(r->host.pool, s); }
 static void cb_kamikaze(void *ctx, qa_q3_game_entity *s) {
   RT *r = ctx;
-  if (r->host.product != QA_Q3_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze callback requires missionpack");
+  if (r->host.product != QA_Q3_GAME_PRODUCT_MISSIONPACK) qa_range_error("Kamikaze callback requires missionpack");
   r->host.start_kamikaze(r->host.ctx, s); qa_q3_entity_pool_free(r->host.pool, s);
 }
 static void cb_body_die(void *ctx, qa_q3_game_entity *s, qa_q3_damage_inflictor i, qa_q3_damage_participant a, double d, double m) {

@@ -64,7 +64,7 @@ void qa_q3_run_item(qa_q3_game_entity *entity, qa_q3_run_item_context context) {
 }
 static bool is_special_team_drop(qa_q3_game_product product, double game_type, const qa_q3_game_item_definition_mirror *item) {
   if (item->type != 8) return false;
-  return game_type == 4 || (product == QA_Q3_PRODUCT_MISSIONPACK && game_type == 5);
+  return game_type == 4 || (product == QA_Q3_GAME_PRODUCT_MISSIONPACK && game_type == 5);
 }
 static void launch_think(void *ctx, qa_q3_game_entity *self) { qa_q3_entity_pool_free((qa_q3_entity_pool *)ctx, self); }
 void qa_q3_bind_launch_save_callbacks(qa_q3_launch_item_context context) {

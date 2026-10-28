@@ -8,7 +8,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
-const char *qa_q3_game_product_name(qa_q3_game_product p) { return p == QA_Q3_PRODUCT_BASEQ3 ? "baseq3" : "missionpack"; }
+const char *qa_q3_game_product_name(qa_q3_game_product p) { return p == QA_Q3_GAME_PRODUCT_BASEQ3 ? "baseq3" : "missionpack"; }
 static float f32(double v) { return (float)v; }
 static double seconds(double ms) { return f32(f32(ms) * f32(0.001)); }
 static double periodic_radians(qa_q3_game_trajectory_mirror tr, double at) {
@@ -64,7 +64,7 @@ void qa_q3_game_client_init(qa_q3_game_client *c, qa_q3_game_product product) {
   slots_init(&c->ps.stats, 16); slots_init(&c->ps.persistant, 16); slots_init(&c->ps.powerups, 16);
   slots_init(&c->ps.ammo, 16); slots_init(&c->ps.events, 2); slots_init(&c->ps.event_parms, 2); slots_init(&c->ps.delta_angles, 3);
   qa_q3_client_persistant_init(&c->pers); qa_q3_client_session_init(&c->sess);
-  slots_init(&c->ammo_times, product == QA_Q3_PRODUCT_BASEQ3 ? 11 : 14);
+  slots_init(&c->ammo_times, product == QA_Q3_GAME_PRODUCT_BASEQ3 ? 11 : 14);
 }
 void qa_q3_game_client_destroy(qa_q3_game_client *c) { qa_q3_client_persistant_destroy(&c->pers); free(c->areabits); c->areabits = NULL; }
 qa_q3_damage_participant qa_q3_participant_entity(qa_q3_game_entity *e) { qa_q3_damage_participant p; memset(&p, 0, sizeof p); p.entity = e; return p; }

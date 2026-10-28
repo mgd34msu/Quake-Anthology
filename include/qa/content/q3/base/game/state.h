@@ -19,8 +19,13 @@
 #include "qa/contracts/math.h"
 #include "qa/contracts/world.h"
 enum { QA_Q3_MAX_CLIENTS = 64, QA_Q3_MAX_GENTITIES = 1024 };
-enum { QA_Q3_ENTITYNUM_WORLD = 1022, QA_Q3_ENTITYNUM_NONE = 1023 };
-typedef enum qa_q3_game_product { QA_Q3_PRODUCT_BASEQ3, QA_Q3_PRODUCT_MISSIONPACK } qa_q3_game_product;
+/* Mirror names carry GAME_: the real content owners are
+ * shared/player-state.ts ENTITYNUM_* (QA_Q3_BASE_ENTITYNUM_*) and
+ * shared/definitions.ts Product (QA_Q3_BASE_PRODUCT_*), while
+ * QA_Q3_ENTITYNUM_NONE / QA_Q3_PRODUCT_* belong to the distinct
+ * network/q3/state/{player,product}.ts owners. */
+enum { QA_Q3_GAME_ENTITYNUM_WORLD = 1022, QA_Q3_GAME_ENTITYNUM_NONE = 1023 };
+typedef enum qa_q3_game_product { QA_Q3_GAME_PRODUCT_BASEQ3, QA_Q3_GAME_PRODUCT_MISSIONPACK } qa_q3_game_product;
 const char *qa_q3_game_product_name(qa_q3_game_product product);
 typedef enum qa_q3_connection_state { QA_Q3_CONN_DISCONNECTED = 0, QA_Q3_CONN_CONNECTING = 1, QA_Q3_CONN_CONNECTED = 2 } qa_q3_connection_state;
 typedef enum qa_q3_spectator_state { QA_Q3_SPEC_NOT = 0, QA_Q3_SPEC_FREE = 1, QA_Q3_SPEC_FOLLOW = 2, QA_Q3_SPEC_SCOREBOARD = 3 } qa_q3_spectator_state;

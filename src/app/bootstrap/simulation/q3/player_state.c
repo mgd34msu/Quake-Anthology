@@ -17,7 +17,7 @@ static double source_number(qa_trace_hit hit, qa_q3_base_entity_records *records
   return native ? native->slot : 1023;
 }
 static qa_q3_base_product product_of(qa_q3_game_product product) {
-  return product == QA_Q3_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
+  return product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
 }
 static double slot_get(qa_q3_game_player_slots_mirror *slots, double index) {
   return qa_q3_game_slots_get_mirror(slots, (size_t)index);
@@ -77,7 +77,7 @@ qa_movement_environment qa_app_read_q3_movement_environment(qa_q3_game_entity *e
   environment.flight = slot_get(&ps->powerups, QA_Q3_PW_FLIGHT) != 0;
   environment.haste = slot_get(&ps->powerups, QA_Q3_PW_HASTE) != 0;
   environment.invulnerable = base.invulnerable
-      || (ps->product == QA_Q3_PRODUCT_MISSIONPACK && slot_get(&ps->powerups, QA_Q3_PW_INVULNERABILITY) != 0);
+      || (ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK && slot_get(&ps->powerups, QA_Q3_PW_INVULNERABILITY) != 0);
   return environment;
 }
 qa_q3_arsenal_runtime_state qa_app_read_q3_arsenal_runtime(qa_q3_game_entity *entity, qa_q3_arsenal_runtime_state previous) {

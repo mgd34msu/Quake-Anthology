@@ -131,7 +131,7 @@ typedef struct qa_session_mod_engine_services {
                                       size_t *out_count);
   void (*message)(void *ctx, qa_network_event event,
                   const qa_actor_id *actor);
-  const void *presentation_map;    /* QuakeCLocalMessageHost picks */
+  const char *presentation_map;    /* TS QuakeCLocalMessageHost.map: string */
   const void *presentation_camera;
   const qa_actor_id *(*presentation_players)(void *ctx, size_t *out_count);
   qa_session_mod_engine_events events;

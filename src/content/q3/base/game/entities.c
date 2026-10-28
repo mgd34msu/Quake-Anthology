@@ -15,7 +15,7 @@ static double check_time(double time) {
   return time;
 }
 void qa_q3_init_game_entity(qa_q3_game_entity *e) {
-  qa_q3_game_entity_set_classname(e, "noclass"); e->s.number = e->slot; e->r.owner_num = QA_Q3_ENTITYNUM_NONE;
+  qa_q3_game_entity_set_classname(e, "noclass"); e->s.number = e->slot; e->r.owner_num = QA_Q3_GAME_ENTITYNUM_NONE;
 }
 void qa_q3_set_origin(qa_q3_game_entity *e, qa_vec3 origin) {
   qa_q3_game_trajectory_mirror pos = {QA_Q3_TR_STATIONARY, 0, 0, origin, {0, 0, 0}};
@@ -44,7 +44,7 @@ qa_q3_game_entity *qa_q3_entity_pool_activate_client(qa_q3_entity_pool *pool, do
 }
 void qa_q3_entity_pool_deactivate_client(qa_q3_entity_pool *pool, double slot) { pool->options.records.deactivate_client(pool->options.records.ctx, slot); }
 void qa_q3_entity_pool_restore_counts(qa_q3_entity_pool *pool, qa_q3_pool_counts s) {
-  if (s.num_entities != trunc(s.num_entities) || s.num_entities < QA_Q3_MAX_CLIENTS || s.num_entities > QA_Q3_ENTITYNUM_WORLD
+  if (s.num_entities != trunc(s.num_entities) || s.num_entities < QA_Q3_MAX_CLIENTS || s.num_entities > QA_Q3_GAME_ENTITYNUM_WORLD
       || s.max_clients != trunc(s.max_clients) || s.max_clients < 1 || s.max_clients > QA_Q3_MAX_CLIENTS)
     qa_range_error("Invalid restored Q3 pool counts");
   pool->num_entities = s.num_entities; pool->max_clients = s.max_clients;
@@ -81,7 +81,7 @@ qa_q3_game_entity *qa_q3_entity_pool_spawn(qa_q3_entity_pool *pool) {
     if (e->freetime > qa_int32(pool->options.map_start_time + 2000) && qa_int32(now - e->freetime) < 1000) continue;
     return initialize_slot(pool, i);
   }
-  if (pool->num_entities == QA_Q3_ENTITYNUM_WORLD) {
+  if (pool->num_entities == QA_Q3_GAME_ENTITYNUM_WORLD) {
     for (int i = 0; i < QA_Q3_MAX_GENTITIES; i++) {
       qa_q3_game_format_arg a[2] = {qa_q3_game_format_number(i), qa_q3_game_format_string(qa_q3_game_entity_classname(qa_q3_entity_pool_at(pool, i)))};
       if (!qa_q3_game_entity_classname(qa_q3_entity_pool_at(pool, i))) a[1] = qa_q3_game_format_null();

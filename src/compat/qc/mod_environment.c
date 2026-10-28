@@ -98,7 +98,7 @@ void qa_compat_qc_mod_environment_initialize_globals(E *e, qa_compat_qc_machine 
   qa_source_time now = e->services->time(e->services->ctx);
   if (time_d && strcmp(time_d->type,"float")==0) qa_compat_qc_words_set_float(&m->globals, time_d->offset, now.kind==QA_SOURCE_TIME_SECONDS?now.value:now.value/1000);
   const qa_compat_qc_definition *mapname = qa_compat_qc_program_global_named(m->program, "mapname");
-  const char *map = e->services->engine ? (const char *)e->services->engine->presentation_map : NULL;
+  const char *map = e->services->engine ? e->services->engine->presentation_map : NULL;
   if (mapname && strcmp(mapname->type,"string")==0 && map) {
     char *clean = strdup(map);
     const char *start = strncmp(clean, "maps/", 5)==0 ? clean+5 : clean;

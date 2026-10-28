@@ -388,9 +388,9 @@ static const char *empty_team(void *ctx, const char *key) { (void)ctx; (void)key
 /* Port of tests/gameplay/q3/modes/session.test.ts case 1. */
 static void test_session_manager(void) {
   qa_q3_game_client red, blue, joining;
-  qa_q3_game_client_init(&red, QA_Q3_PRODUCT_MISSIONPACK);
-  qa_q3_game_client_init(&blue, QA_Q3_PRODUCT_MISSIONPACK);
-  qa_q3_game_client_init(&joining, QA_Q3_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&red, QA_Q3_GAME_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&blue, QA_Q3_GAME_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&joining, QA_Q3_GAME_PRODUCT_MISSIONPACK);
   red.pers.connected = blue.pers.connected = QA_Q3_CONN_CONNECTED;
   red.sess.session_team = QA_Q3_BASE_TEAM_RED;
   blue.sess.session_team = QA_Q3_BASE_TEAM_BLUE;
@@ -427,7 +427,7 @@ static void test_session_manager(void) {
   CHECK_ABORTS(qa_q3_ta_game_session_manager_read_client(&manager, 7));
   /* Duel admission (TS case 2). */
   qa_q3_game_client duel;
-  qa_q3_game_client_init(&duel, QA_Q3_PRODUCT_BASEQ3);
+  qa_q3_game_client_init(&duel, QA_Q3_GAME_PRODUCT_BASEQ3);
   qa_q3_game_player_slots_mirror scores2;
   slots_init4(&scores2, 4);
   qa_q3_game_client *duel_clients[] = {&duel};
@@ -469,7 +469,7 @@ static void test_admission_pure(void) {
   value = qa_q3_ta_clean_client_name("a    b");
   CHECK(strcmp(value, "a   b") == 0); free(value);
   qa_q3_game_client client;
-  qa_q3_game_client_init(&client, QA_Q3_PRODUCT_BASEQ3);
+  qa_q3_game_client_init(&client, QA_Q3_GAME_PRODUCT_BASEQ3);
   free(client.pers.netname);
   client.pers.netname = strdup("Fox");
   client.pers.max_health = 100;
@@ -564,7 +564,7 @@ static void make_fake_pool(double max_clients) {
     qa_q3_game_entity_init(&fake_entities[slot], slot, binding);
   }
   for (int slot = 0; slot < QA_Q3_MAX_CLIENTS; slot++)
-    qa_q3_game_client_init(&fake_clients[slot], QA_Q3_PRODUCT_BASEQ3);
+    qa_q3_game_client_init(&fake_clients[slot], QA_Q3_GAME_PRODUCT_BASEQ3);
   qa_q3_entity_pool_options options;
   memset(&options, 0, sizeof options);
   options.records.ctx = NULL;
@@ -574,7 +574,7 @@ static void make_fake_pool(double max_clients) {
   options.records.activate = fake_activate;
   options.records.release = fake_release;
   options.records.deactivate_client = fake_deactivate;
-  options.product = QA_Q3_PRODUCT_BASEQ3;
+  options.product = QA_Q3_GAME_PRODUCT_BASEQ3;
   options.max_clients = max_clients;
   options.map_start_time = 0;
   options.ctx = NULL;

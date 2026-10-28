@@ -6,7 +6,7 @@
 #include "qa/foundation/support.h"
 typedef struct pose_entry { qa_actor_id actor; qa_vec3 origin, angles; } pose_entry;
 struct qa_app_application_q3_client {
-  qa_app_q3_client_host host;
+  qa_app_q3_bootstrap_client_host host;
   qa_cvar_registry *cvar_owner;
   bool closed, initialized;
   double event_count;
@@ -17,7 +17,7 @@ struct qa_app_application_q3_client {
   qa_app_q3_local_round round;
 };
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
-qa_app_application_q3_client *qa_app_application_q3_client_create(qa_app_q3_client_host host) {
+qa_app_application_q3_client *qa_app_application_q3_client_create(qa_app_q3_bootstrap_client_host host) {
   if (!is(host.options.input_kind, "q3") && host.options.input_kind != NULL)
     qa_range_error("Foreign movement requires prediction command binding");
   qa_app_application_q3_client *client = calloc(1, sizeof *client);

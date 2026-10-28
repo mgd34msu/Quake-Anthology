@@ -137,7 +137,7 @@ static void print_fmt_to(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *en
   free(t);
 }
 static qa_q3_base_product base_product(qa_q3_game_product p) {
-  return p == QA_Q3_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
+  return p == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
 }
 
 void qa_q3_ta_game_command_runtime_init(qa_q3_ta_game_command_runtime *r, qa_q3_ta_game_command_host host) {

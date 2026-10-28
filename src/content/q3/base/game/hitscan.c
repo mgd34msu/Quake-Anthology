@@ -30,7 +30,7 @@ void qa_q3_bullet_fire(qa_q3_bullet_host host, qa_actor_id shooter, qa_q3_bullet
     qa_q3_bullet_event ev = {point, trace_normal(trace), has_actor, actor, flesh}; host.emit(host.ctx, ev);
     if (flesh && target.accuracy_eligible) host.credit_accuracy_hit(host.ctx);
     if (has_actor && has_t && target.damageable) {
-      if (host.product == QA_Q3_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, point);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           qa_vec3 incoming = qa_sub3(impact.impact_point, attack->muzzle);
@@ -58,7 +58,7 @@ void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bu
   bool has_pass = true; qa_actor_id pass = shooter;
   for (int count = 0; count < 10; count++) {
     qa_q3_actor_trace_result_mirror trace = host.trace(host.ctx, attack->muzzle, qa_add3(attack->muzzle, qa_scale3(attack->forward, 768)), has_pass ? &pass : NULL);
-    if (host.product == QA_Q3_PRODUCT_MISSIONPACK && count != 0) {
+    if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && count != 0) {
       qa_q3_contact_event ev = {QA_Q3_CONTACT_LIGHTNING_REFLECTION, {0,0,0}, {0,0,0}, attack->muzzle, qa_q3_snap_vector(trace.end), pass}; host.emit(host.ctx, ev);
     }
     if (trace.hit_kind == 0) return;
@@ -66,7 +66,7 @@ void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bu
     bool has_actor = trace.hit_kind == 1; qa_actor_id actor = trace.hit_actor;
     qa_q3_bullet_target target; bool has_t = has_actor && host.target(host.ctx, actor, &target);
     if (has_actor && has_t && target.damageable) {
-      if (host.product == QA_Q3_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           qa_vec3 end = reflected_end(attack->muzzle, impact.impact_point, impact.bounce_direction);
@@ -95,7 +95,7 @@ static bool shotgun_pellet(qa_q3_shotgun_host host, qa_actor_id shooter, qa_q3_b
     if (trace.hit_kind != 1) return false;
     qa_actor_id actor = trace.hit_actor; qa_q3_bullet_target target;
     if (!host.target(host.ctx, actor, &target) || !target.damageable) return false;
-    if (host.product == QA_Q3_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+    if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
       qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
       if (impact.kind == QA_Q3_INVULN_HIT) { end = reflected_end(start, impact.impact_point, impact.bounce_direction); start = impact.impact_point; has_pass = false; }
       else { start = trace.end; has_pass = true; pass = actor; }
@@ -131,7 +131,7 @@ double qa_q3_rail_fire(qa_q3_rail_host host, qa_actor_id shooter, qa_q3_bullet_a
     if (trace.hit_kind != 1) break;
     qa_actor_id actor = trace.hit_actor; qa_q3_bullet_target target; bool has_t = host.target(host.ctx, actor, &target);
     if (has_t && target.damageable) {
-      if (host.product == QA_Q3_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           end = reflected_end(attack->muzzle, impact.impact_point, impact.bounce_direction);

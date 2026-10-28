@@ -82,7 +82,7 @@ void qa_q3_base_combat_bridge_init(qa_q3_base_combat_bridge *bridge, qa_q3_base_
   bridge->host = host;
   qa_q3_game_combat_context *context = &bridge->context;
   memset(context, 0, sizeof *context);
-  context->product = host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_PRODUCT_MISSIONPACK : QA_Q3_PRODUCT_BASEQ3;
+  context->product = host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3;
   context->entities = host.entities;
   context->spatial.ctx = bridge;
   context->spatial.trace_actor = spatial_trace;

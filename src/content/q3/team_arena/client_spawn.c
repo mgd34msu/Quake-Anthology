@@ -243,7 +243,7 @@ qa_q3_game_entity *qa_q3_ta_client_spawn_runtime_copy_to_body_queue(qa_q3_ta_cli
   body->s = entity->s;
   qa_q3_write_ground(body, entity->binding.body.has_ground ? &entity->binding.body.ground : NULL, r->host.pool);
   body->s.e_flags = EF_DEAD;
-  if (client->ps.product == QA_Q3_PRODUCT_MISSIONPACK && ((int32_t)entity->s.e_flags & EF_KAMIKAZE) != 0) {
+  if (client->ps.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && ((int32_t)entity->s.e_flags & EF_KAMIKAZE) != 0) {
     body->s.e_flags = (double)((int32_t)body->s.e_flags | EF_KAMIKAZE);
     for (int index = 0; index < QA_Q3_MAX_GENTITIES; index++) {
       qa_q3_game_entity *timer = qa_q3_entity_pool_at(r->host.pool, index);
@@ -305,7 +305,7 @@ static void fresh_client(qa_q3_game_client *client) {
   slots_reset(&client->ps.powerups, 16); slots_reset(&client->ps.ammo, 16);
   slots_reset(&client->ps.events, 2); slots_reset(&client->ps.event_parms, 2);
   slots_reset(&client->ps.delta_angles, 3);
-  slots_reset(&client->ammo_times, product == QA_Q3_PRODUCT_BASEQ3 ? 11 : 14);
+  slots_reset(&client->ammo_times, product == QA_Q3_GAME_PRODUCT_BASEQ3 ? 11 : 14);
   /* restored below to mirror the TS statement order */
   memcpy(client->ps.persistant.values, persistant, sizeof persistant);
   client->ps.persistant.length = persistant_length;
@@ -354,7 +354,7 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
   client->pers.max_health = qa_game_atoi(r->host.handicap(r->host.ctx, entity->slot));
   if (client->pers.max_health < 1 || client->pers.max_health > 100) client->pers.max_health = 100;
   const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(
-      ps->product == QA_Q3_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
+      ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
   slot_set(&ps->stats, schema->max_health, client->pers.max_health);
   ps->e_flags = flags;
   qa_q3_write_ground(entity, NULL, r->host.pool);

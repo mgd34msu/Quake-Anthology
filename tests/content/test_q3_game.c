@@ -36,6 +36,12 @@
 #include "qa/content/q3/base/game/save_callbacks.h"
 #include "qa/content/q3/base/game/spawn.h"
 #include "qa/content/q3/base/game/state.h"
+/* Co-inclusion guards: the game mirror names (QA_Q3_GAME_*) must coexist
+ * in one TU with the distinct network owners and bootstrap hosts. */
+#include "qa/network/q3/state/player.h"
+#include "qa/network/q3/state/product.h"
+#include "qa/app/bootstrap/q3_client.h"
+#include "qa/app/bootstrap/network/q3_client.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -128,7 +134,7 @@ static void test_memory(void) {
 static void test_check_armor(void) {
   qa_q3_game_entity e; qa_q3_game_entity_binding binding; memset(&binding, 0, sizeof binding);
   qa_q3_game_entity_init(&e, 0, binding);
-  qa_q3_game_client client; qa_q3_game_client_init(&client, QA_Q3_PRODUCT_BASEQ3);
+  qa_q3_game_client client; qa_q3_game_client_init(&client, QA_Q3_GAME_PRODUCT_BASEQ3);
   e.client = &client;
   qa_q3_game_slots_set_mirror(&client.ps.stats, 3, 100);
   double save = qa_q3_check_armor(&e, 100, 0);
@@ -219,11 +225,11 @@ static void fake_warn(void *ctx, const char *m) { (void)ctx; (void)m; }
 static qa_q3_entity_pool fake_pool;
 static void fake_pool_setup(void) {
   static bool done; if (done) return; done = true;
-  for (int i = 0; i < 64; i++) qa_q3_game_client_init(&fake_clients[i], QA_Q3_PRODUCT_BASEQ3);
+  for (int i = 0; i < 64; i++) qa_q3_game_client_init(&fake_clients[i], QA_Q3_GAME_PRODUCT_BASEQ3);
   qa_q3_entity_pool_options o; memset(&o, 0, sizeof o);
   o.records.get = fake_get; o.records.activate = fake_activate; o.records.client = fake_client;
   o.records.release = fake_release; o.records.deactivate_client = fake_noop_client;
-  o.product = QA_Q3_PRODUCT_BASEQ3; o.max_clients = 8; o.time = fake_time1000; o.print = print_noop;
+  o.product = QA_Q3_GAME_PRODUCT_BASEQ3; o.max_clients = 8; o.time = fake_time1000; o.print = print_noop;
   o.link = fake_link; o.unlink = fake_unlink;
   qa_q3_entity_pool_init(&fake_pool, o);
 }
@@ -288,10 +294,10 @@ static void fake_calc_ranks(void *ctx) { (void)ctx; fake_ranks++; }
 static void test_completed_runtime(void) {
   fake_pool_setup();
   /* Weapon helpers. */
-  qa_q3_game_client wc; qa_q3_game_client_init(&wc, QA_Q3_PRODUCT_BASEQ3);
-  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_PRODUCT_BASEQ3) == 1);
+  qa_q3_game_client wc; qa_q3_game_client_init(&wc, QA_Q3_GAME_PRODUCT_BASEQ3);
+  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_GAME_PRODUCT_BASEQ3) == 1);
   qa_q3_game_slots_set_mirror(&wc.ps.powerups, 1, 5000);
-  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_PRODUCT_BASEQ3) == 3);
+  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_GAME_PRODUCT_BASEQ3) == 3);
   qa_q3_missile_direction dir = {2, 0, 0};
   qa_q3_sphere_intersections hits = qa_q3_ray_sphere_intersections(v3(0, 0, 0), 10, v3(0, 0, 0), &dir);
   CHECK(hits.count == 2 && dir.x == 1);
@@ -299,7 +305,7 @@ static void test_completed_runtime(void) {
   /* Death: persistent powerup toss + addScore. */
   qa_q3_game_entity victim; qa_q3_game_entity_binding vb; memset(&vb, 0, sizeof vb);
   qa_q3_game_entity_init(&victim, 3, vb);
-  qa_q3_game_client vc; qa_q3_game_client_init(&vc, QA_Q3_PRODUCT_MISSIONPACK);
+  qa_q3_game_client vc; qa_q3_game_client_init(&vc, QA_Q3_GAME_PRODUCT_MISSIONPACK);
   qa_q3_game_entity power; qa_q3_game_entity_init(&power, 4, vb);
   vc.persistant_powerup = &power; victim.client = &vc;
   qa_q3_game_slots_set_mirror(&vc.ps.stats, 2, 7);
@@ -309,7 +315,7 @@ static void test_completed_runtime(void) {
   static qa_q3_game_player_slots_mirror team_scores; team_scores.length = 4;
   static qa_q3_death_animation_sequence seq; qa_q3_death_animation_sequence_init(&seq);
   qa_q3_death_runtime dr; qa_q3_death_host dh; memset(&dh, 0, sizeof dh);
-  dh.product = QA_Q3_PRODUCT_BASEQ3; dh.pool = &fake_pool; dh.team_scores = &team_scores;
+  dh.product = QA_Q3_GAME_PRODUCT_BASEQ3; dh.pool = &fake_pool; dh.team_scores = &team_scores;
   dh.death_animations = &seq; dh.frame = fake_frame; dh.calculate_ranks = fake_calc_ranks;
   qa_q3_death_runtime_init(&dr, dh);
   qa_q3_game_entity *scorer = qa_q3_entity_pool_at(&fake_pool, 0);
@@ -322,7 +328,7 @@ static void test_completed_runtime(void) {
   CHECK(qa_q3_personal_portal_capture_sequence(&pr) == 42);
   CHECK_ABORTS(qa_q3_personal_portal_restore_sequence(&pr, 3e9));
   /* State: new shared fields, event ring, classname capture. */
-  qa_q3_game_client sc; qa_q3_game_client_init(&sc, QA_Q3_PRODUCT_BASEQ3);
+  qa_q3_game_client sc; qa_q3_game_client_init(&sc, QA_Q3_GAME_PRODUCT_BASEQ3);
   CHECK(sc.ps.ping == 0 && sc.ps.generic1 == 0 && sc.ps.weapon == 0);
   qa_q3_game_player_state_add_event_mirror(&sc.ps, 9, 4);
   CHECK(sc.ps.event_sequence == 1 && qa_q3_game_slots_get_mirror(&sc.ps.events, 0) == 9);
@@ -336,7 +342,31 @@ static void test_completed_runtime(void) {
   qa_q3_combat_context policy_ctx; memset(&policy_ctx, 0, sizeof policy_ctx); policy_ctx.player = true;
   CHECK(game_ctx.entities == &fake_pool && policy_ctx.player);
 }
+static void test_name_collisions(void) {
+  /* qa_q3_game_product mirrors shared/definitions.ts Product;
+   * qa_q3_product is network/q3/state/product.ts Product. Same
+   * ordinals/names, distinct C types and enumerators. */
+  CHECK((int)QA_Q3_GAME_PRODUCT_BASEQ3 == (int)QA_Q3_PRODUCT_BASEQ3);
+  CHECK((int)QA_Q3_GAME_PRODUCT_MISSIONPACK == (int)QA_Q3_PRODUCT_MISSIONPACK);
+  CHECK(strcmp(qa_q3_game_product_name(QA_Q3_GAME_PRODUCT_BASEQ3),
+      qa_q3_product_name(QA_Q3_PRODUCT_BASEQ3)) == 0);
+  CHECK(strcmp(qa_q3_game_product_name(QA_Q3_GAME_PRODUCT_MISSIONPACK), "missionpack") == 0);
+  qa_q3_product parsed = QA_Q3_PRODUCT_BASEQ3;
+  CHECK(qa_q3_product_parse("missionpack", &parsed) && parsed == QA_Q3_PRODUCT_MISSIONPACK);
+  /* Game ENTITYNUM mirror vs network/q3/state/player.ts owner. */
+  CHECK(QA_Q3_GAME_ENTITYNUM_WORLD == 1022);
+  CHECK(QA_Q3_GAME_ENTITYNUM_NONE == QA_Q3_ENTITYNUM_NONE && QA_Q3_ENTITYNUM_NONE == 1023);
+  /* Bootstrap ApplicationQ3Client host vs network Q3ApplicationClientHost. */
+  qa_app_q3_bootstrap_client_host bootstrap_host;
+  qa_app_q3_client_host network_host;
+  memset(&bootstrap_host, 0, sizeof bootstrap_host);
+  memset(&network_host, 0, sizeof network_host);
+  CHECK(bootstrap_host.ctx == NULL && network_host.ctx == NULL);
+  CHECK(sizeof bootstrap_host != sizeof network_host || sizeof bootstrap_host > 0);
+}
+
 int main(void) {
+  test_name_collisions();
   test_grapple(); test_ballistics(); test_format(); test_memory();
   test_check_armor(); test_pickup_quantity(); test_rankings(); test_callbacks(); test_spawn();
   test_completed_spawns(); test_completed_runtime();
