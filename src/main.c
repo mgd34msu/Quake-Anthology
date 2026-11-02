@@ -648,6 +648,7 @@ typedef struct composition {
   qa_app_startup_menu *menu;     /* StartupMenu */
   qa_app_local_accounts *accounts; /* localClientAccount registry */
   qa_online_account lobby_account; /* borrows registry id/name */
+  qa_local_lobby_service *lobby_service; /* TS new LocalLobbyService() */
   qa_app_application_local_lobby lobby;
   bool lobby_open;
   bool quit_requested;
@@ -694,11 +695,7 @@ static const char composition_missing_game[] =
     "the Application.open world/session/simulation composition "
     "(src/app/bootstrap/application.ts) over the loaded content "
     "has no concrete C host";
-static const char composition_missing_lobby[] =
-    "Local lobby composition is not yet wired: LocalLobbyService "
-    "(src/network/services/online.ts) has no allocator or size in "
-    "qa/network/services/online.h, so ApplicationLocalLobby "
-    "(src/app/bootstrap/local-lobby.ts) cannot be given a service";
+
 
 /* TS createStartupSelection: discoverInstalledContent over options. */
 static void composition_discover(composition *comp) {
@@ -1081,6 +1078,8 @@ static void composition_close(composition *comp) {
     (void)qa_app_application_local_lobby_close(&comp->lobby);
     qa_app_application_local_lobby_destroy(&comp->lobby);
   }
+  qa_local_lobby_service_free(comp->lobby_service);
+  comp->lobby_service = NULL;
   if (comp->accounts != NULL) {
     qa_app_local_accounts_destroy(comp->accounts);
     comp->accounts = NULL;
@@ -1621,11 +1620,15 @@ static const char *comp_phase_lobby(void *ctx) {
   transitions.join = comp_lobby_join;
   transitions.leave = comp_lobby_leave;
   transitions.completed = comp_lobby_completed;
-  qa_app_application_local_lobby_init(&comp->lobby, NULL, &comp->lobby_account,
-                                      transitions);
+  /* host.localLobbies ?? new LocalLobbyService() */
+  comp->lobby_service = qa_local_lobby_service_new();
+  if (comp->lobby_service == NULL) {
+    composition_set_error(comp, "Out of memory");
+    return NULL;
+  }
+  qa_app_application_local_lobby_init(&comp->lobby, comp->lobby_service,
+                                      &comp->lobby_account, transitions);
   comp->lobby_open = true;
-  /* host.localLobbies ?? new LocalLobbyService(): no allocator. */
-  composition_set_error(comp, "%s", composition_missing_lobby);
   return NULL;
 }
 static const char *comp_pump_frame(void *ctx) {

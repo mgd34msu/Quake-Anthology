@@ -45,6 +45,10 @@ typedef struct qa_lobby {
 typedef struct qa_local_lobby_service qa_local_lobby_service;
 void qa_local_lobby_service_init(qa_local_lobby_service *s);
 void qa_local_lobby_service_destroy(qa_local_lobby_service *s);
+/* Heap form for composition roots (TS new LocalLobbyService());
+ * free releases the service after destroy. NULL only on OOM. */
+qa_local_lobby_service *qa_local_lobby_service_new(void);
+void qa_local_lobby_service_free(qa_local_lobby_service *s);
 const qa_lobby *qa_local_lobby_service_create(qa_local_lobby_service *s, const qa_online_account *owner,
                                               const char *name, double capacity,
                                               const qa_composition_identity *composition, double seats);

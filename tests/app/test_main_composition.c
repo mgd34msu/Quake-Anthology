@@ -77,8 +77,8 @@ int main(void) {
   CHECK(menu_phase.menu == NULL && menu_phase.ui == NULL &&
         menu_phase.saves == NULL && !menu_phase.identity_open);
 
-  /* Lobby phase builds the account registry + lobby, then stops
-   * at the named LocalLobbyService allocator gap. */
+  /* Lobby phase builds the account registry + lobby over a real
+   * LocalLobbyService (qa_local_lobby_service_new). */
   composition lobby_comp = {0};
   lobby_comp.random_state = 0x9e3779b9u;
   CHECK(qa_identity_owner_create(&lobby_comp.identity, "test"));
@@ -88,13 +88,12 @@ int main(void) {
   CHECK(lobby_comp.lobby_account.id != NULL &&
         strncmp(lobby_comp.lobby_account.id, "account:", 8) == 0);
   CHECK(lobby_comp.lobby_open);
-  CHECK(lobby_comp.error != NULL &&
-        strstr(lobby_comp.error, "online.h") != NULL &&
-        strstr(lobby_comp.error, "local-lobby.ts") != NULL);
-  free(lobby_comp.error);
-  lobby_comp.error = NULL;
+  CHECK(lobby_comp.error == NULL);
+  CHECK(lobby_comp.lobby_service != NULL &&
+        qa_local_lobby_service_count(lobby_comp.lobby_service) == 0);
   composition_close(&lobby_comp);
   CHECK(lobby_comp.accounts == NULL && !lobby_comp.lobby_open);
+  CHECK(lobby_comp.lobby_service == NULL);
 
   /* Catalog selection over a borrowed two-product catalog. */
   qa_catalog_discovered_product products[2] = {0};

@@ -403,6 +403,16 @@ qa_authorization_provider qa_local_authorization_as_provider(qa_local_authorizat
 /* --- Lobbies --- */
 struct qa_local_lobby_service { qa_lobby *lobbies; size_t count, capacity; };
 void qa_local_lobby_service_init(qa_local_lobby_service *s) { memset(s, 0, sizeof *s); }
+qa_local_lobby_service *qa_local_lobby_service_new(void) {
+  qa_local_lobby_service *s = malloc(sizeof *s);
+  if (s != NULL) qa_local_lobby_service_init(s);
+  return s;
+}
+void qa_local_lobby_service_free(qa_local_lobby_service *s) {
+  if (s == NULL) return;
+  qa_local_lobby_service_destroy(s);
+  free(s);
+}
 static void lobby_free_members(qa_lobby *l) {
   for (size_t i = 0; i < l->member_count; i++) qa_online_account_destroy(&l->members[i].account);
   free(l->members);
