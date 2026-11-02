@@ -3,8 +3,9 @@
  * with the landed contract type qa_qvm_mod_items (the declaration),
  * so the runtime class is qa_qvm_mod_items_runtime. Storage
  * read/write/capacity mirror src/compat/qvm/item-storage.ts
- * (parallel slice). Mirrored services surface (TS owner
- * src/world/session/mods.ts): qa_qvmy_item_services.
+ * (parallel slice). Services are the landed qa_mod_host_services
+ * (TS owner src/world/session/mods.ts; mods.h); the lease binding
+ * is the landed qa_inventory_item_binding (inventory.h).
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MOD_ITEMS_H
@@ -25,7 +26,9 @@
 #include "qa/contracts/source_items.h"
 #include "qa/contracts/world.h"
 #include "qa/persistence/value.h"
+#include "qa/world/gameplay/inventory.h"
 #include "qa/world/session/mod_clients.h"
+#include "qa/world/session/mods.h"
 
 void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_callback_declaration *declaration,
                                const qa_qvm_instruction *instructions, size_t instruction_count,
@@ -34,32 +37,9 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
 /* Admissions are the landed qa_source_item_admission and leases
  * the landed qa_source_item_lease (contracts/source_items.h). */
 
-/* Lease bundle mirrored onto SourceItemLease call sites. */
-typedef struct qa_qvmy_item_lease_binding {
-  qa_provider_id owner;
-  const qa_source_item_admission *items;
-  size_t item_count;
-  void *ctx;
-  void (*invoke)(void *ctx, qa_item_id item, qa_source_item_action action);
-  size_t (*read)(void *ctx, qa_inventory_entry *out, size_t capacity);
-  bool (*entry)(void *ctx, qa_item_id item, qa_inventory_entry *out);
-  void (*write)(void *ctx, qa_inventory_entry entry);
-  bool (*mutable_capacity)(void *ctx, qa_item_id item);
-} qa_qvmy_item_lease_binding;
-
-typedef struct qa_qvmy_item_services {
-  void *ctx;
-  bool (*resolve_owned)(void *ctx, qa_actor_id actor, qa_owned_actor *out);
-  qa_actor_id (*reference_saved)(void *ctx, qa_saved_actor_id saved);
-  qa_source_item_lease (*bind_items)(void *ctx, qa_owned_actor owner, const qa_qvmy_item_lease_binding *binding);
-  double (*inventory_count)(void *ctx, qa_actor_id actor, qa_item_id item);
-  bool (*has_weapons)(void *ctx);
-  bool (*weapon_selected)(void *ctx, qa_actor_id actor, qa_provider_id provider);
-  bool (*weapon_bind)(void *ctx, qa_owned_actor owner, qa_source_weapon_binding binding,
-                      qa_source_weapon_unbind *out);
-  bool (*body_read)(void *ctx, qa_actor_id actor, qa_body_snapshot *out);
-  bool (*player_view)(void *ctx, qa_actor_id actor, qa_mod_client_player_view *out);
-} qa_qvmy_item_services;
+/* Lease bundles are the landed qa_inventory_item_binding
+ * (world/gameplay/inventory.h): owner/items, an
+ * qa_inventory_state_binding state and an invoke fn + ctx. */
 
 typedef struct qa_qvm_mod_item_operations {
   void *ctx;
@@ -73,8 +53,8 @@ typedef struct qa_qvm_mod_item_operations {
 typedef struct qa_qvm_mod_items_runtime {
   const qa_qvm_mod_items *definition;
   qa_qvm_memory *memory;
-  const qa_qvmy_artifact *image;
-  const qa_qvmy_item_services *services;
+  const qa_resolved_qvm_artifact *image;
+  qa_mod_host_services *services;
   qa_provider_id provider;
   qa_content_id content;
   const qa_qvm_mod_item_operations *operations;
@@ -96,8 +76,8 @@ typedef struct qa_qvm_mod_items_runtime {
 } qa_qvm_mod_items_runtime;
 
 void qa_qvm_mod_items_runtime_init(qa_qvm_mod_items_runtime *items, const qa_qvm_mod_items *definition,
-                                   qa_qvm_module *module, const qa_qvmy_artifact *image,
-                                   const qa_qvmy_item_services *services, qa_provider_id provider,
+                                   qa_qvm_module *module, const qa_resolved_qvm_artifact *image,
+                                   qa_mod_host_services *services, qa_provider_id provider,
                                    qa_content_id content, const qa_qvm_mod_item_operations *operations);
 void qa_qvm_mod_items_runtime_destroy(qa_qvm_mod_items_runtime *items);
 void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor);

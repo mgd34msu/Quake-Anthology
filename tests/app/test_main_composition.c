@@ -49,12 +49,11 @@ int main(void) {
   free(comp.error);
   comp.error = NULL;
 
-  /* Run entry stops at the named Application game gap. */
-  (void)comp_phase_menu_or_game(&comp, true);
-  CHECK(comp.error != NULL && strstr(comp.error, "application.ts") != NULL &&
-        strstr(comp.error, "world/session/simulation") != NULL);
+  /* Later phases keep the first error (run entry is exercised
+   * over the borrowed catalog below). */
+  composition_set_error(&comp, "%s", composition_missing_game);
   (void)comp_phase_lobby(&comp); /* skipped: first error kept */
-  CHECK(strstr(comp.error, "online.h") == NULL);
+  CHECK(comp.error != NULL && strstr(comp.error, "simulation/runtime.ts") != NULL);
   free(comp.error);
   comp.error = NULL;
 
@@ -73,6 +72,20 @@ int main(void) {
   CHECK(menu_phase.menu != NULL);
   CHECK(menu_phase.ui != NULL);
   CHECK(menu_phase.saves != NULL);
+  /* Concrete StartupMenu: the controller is the menu's own, the
+   * main menu opens, and saves report through the real list. */
+  CHECK(menu_phase.ui ==
+        qa_app_startup_menu_controller(menu_phase.menu));
+  CHECK(qa_app_startup_menu_open(menu_phase.menu));
+  CHECK(!qa_app_startup_menu_is_busy(menu_phase.menu));
+  CHECK(comp_menu_saves(&menu_phase) ==
+        qa_app_startup_saves_list(menu_phase.saves));
+  comp_menu_play(&menu_phase);
+  CHECK(menu_phase.pending_game);
+  menu_phase.pending_game = false;
+  comp_menu_quit(&menu_phase);
+  CHECK(menu_phase.quit_requested);
+  menu_phase.quit_requested = false;
   composition_close(&menu_phase);
   CHECK(menu_phase.menu == NULL && menu_phase.ui == NULL &&
         menu_phase.saves == NULL && !menu_phase.identity_open);
@@ -91,6 +104,28 @@ int main(void) {
   CHECK(lobby_comp.error == NULL);
   CHECK(lobby_comp.lobby_service != NULL &&
         qa_local_lobby_service_count(lobby_comp.lobby_service) == 0);
+  /* Lobby transitions: TS lobbyJoinOptions guards in order, then
+   * the named RemoteApplication gap; host requires a selection. */
+  qa_lobby join_lobby = {0};
+  qa_net_address endpoint = {0};
+  qa_wire_selection wire = {0};
+  CHECK(strcmp(comp_lobby_host(&lobby_comp, &join_lobby, &endpoint, &wire),
+               "Select a game before starting the lobby") == 0);
+  join_lobby.has_endpoint = true;
+  join_lobby.endpoint.kind = QA_NET_LOOPBACK;
+  CHECK(strcmp(comp_lobby_join(&lobby_comp, &join_lobby),
+               "This lobby endpoint requires an in-process transport") == 0);
+  join_lobby.has_endpoint = false;
+  CHECK(strcmp(comp_lobby_join(&lobby_comp, &join_lobby),
+               "The local client is not a member of this lobby") == 0);
+  qa_lobby_member self_member = {0};
+  self_member.account.id = lobby_comp.lobby_account.id;
+  join_lobby.members = &self_member;
+  join_lobby.member_count = 1;
+  const char *join_error = comp_lobby_join(&lobby_comp, &join_lobby);
+  CHECK(join_error != NULL && strstr(join_error, "RemoteApplication") != NULL &&
+        strstr(join_error, "remote_application.h") != NULL);
+  CHECK(comp_lobby_leave(&lobby_comp, &join_lobby) == NULL);
   composition_close(&lobby_comp);
   CHECK(lobby_comp.accounts == NULL && !lobby_comp.lobby_open);
   CHECK(lobby_comp.lobby_service == NULL);
@@ -161,6 +196,92 @@ int main(void) {
         strcmp(selection.source.provider, "q1:official") == 0);
   composition_close(&config_comp);
   CHECK(config_comp.configuration == NULL);
+
+  /* Dedicated/game Application host: owned-path bundles present,
+   * session-driven simulation shim, legacy step only as the
+   * error-surfacing fallback (never a fake advance). */
+  composition host_comp = {0};
+  host_comp.options = &options;
+  qa_app_application_host app_host = composition_dedicated_host(&host_comp);
+  CHECK(app_host.has_content);
+  CHECK(app_host.content.product == composition_content_product);
+  CHECK(app_host.content.require_product == composition_content_require);
+  CHECK(app_host.content.open_loaded == composition_open_loaded);
+  CHECK(app_host.content.prepare_mods == composition_prepare_mods);
+  CHECK(app_host.content.prepare_grapple == composition_prepare_grapple);
+  CHECK(app_host.content.prepare_weapon_behaviors ==
+        composition_prepare_weapon_behaviors);
+  CHECK(app_host.has_simulation);
+  CHECK(app_host.simulation.step == composition_sim_step);
+  CHECK(app_host.simulation.checkpoint == composition_sim_checkpoint);
+  CHECK(app_host.simulation.close == composition_sim_close);
+  CHECK(app_host.open == dedicated_open);
+  CHECK(app_host.close == dedicated_close);
+  CHECK(!host_comp.concrete_built);
+  const void *step_output = (const void *)1;
+  CHECK(dedicated_step(&host_comp, NULL, 16, &step_output) ==
+        composition_missing_game);
+  CHECK(step_output == NULL);
+  composition_set_error(&host_comp, "kept");
+  CHECK(dedicated_step(&host_comp, NULL, 16, &step_output) == host_comp.error);
+  free(host_comp.error);
+  host_comp.error = NULL;
+  /* Nested-game host must not close composition services. */
+  qa_app_application_host game_host =
+      composition_application_host(&host_comp, false);
+  CHECK(game_host.close == composition_game_close);
+  CHECK(game_host.close(game_host.ctx, NULL) == NULL);
+
+  /* Options clone: deep copies the owned strings/arrays so the
+   * nested Application can destroy its set independently. */
+  qa_app_options owned = {0};
+  owned.product = dup_text("q1-classic-id1");
+  owned.map = dup_text("maps/e1m1.bsp");
+  owned.corpus_root = dup_text("/corpus");
+  owned.startup_commands = calloc(1, sizeof *owned.startup_commands);
+  owned.startup_commands[0] = dup_text("quit");
+  owned.startup_command_count = 1;
+  owned.mods = calloc(1, sizeof *owned.mods);
+  owned.mods[0].product = dup_text("q1-mod");
+  owned.mods[0].id = dup_text("mod:1");
+  owned.mod_count = 1;
+  qa_app_options cloned;
+  CHECK(composition_clone_options(&owned, &cloned));
+  CHECK(cloned.product != owned.product &&
+        strcmp(cloned.product, owned.product) == 0);
+  CHECK(cloned.map != owned.map && strcmp(cloned.map, owned.map) == 0);
+  CHECK(cloned.startup_commands[0] != owned.startup_commands[0] &&
+        strcmp(cloned.startup_commands[0], "quit") == 0);
+  CHECK(cloned.mods[0].product != owned.mods[0].product &&
+        strcmp(cloned.mods[0].id, "mod:1") == 0);
+  qa_app_options_destroy(&cloned);
+  CHECK(strcmp(owned.product, "q1-classic-id1") == 0); /* original intact */
+  qa_app_options_destroy(&owned);
+
+  /* Run entry over the borrowed catalog: qa_app_open_application
+   * composes content + EngineSession + simulation for real, and
+   * the missing required product stops it at the named catalog
+   * error without building (or faking) the concrete world. */
+  options.product = (char *)"q1-classic-id1";
+  composition run_comp = {0};
+  run_comp.options = &options;
+  run_comp.catalog = catalog;
+  run_comp.catalog_open = true; /* borrowed: discover skipped, no close */
+  (void)comp_phase_menu_or_game(&run_comp, true);
+  CHECK(run_comp.game != NULL);
+  CHECK(run_comp.error != NULL &&
+        strstr(run_comp.error, "requires:") != NULL);
+  CHECK(!run_comp.concrete_built);
+  CHECK(run_comp.game == NULL ||
+        qa_app_application_content(run_comp.game) != NULL);
+  CHECK(run_comp.game == NULL ||
+        qa_app_application_session(run_comp.game) != NULL);
+  CHECK(run_comp.game == NULL ||
+        qa_app_application_simulation(run_comp.game) != NULL);
+  composition_close_game(&run_comp);
+  CHECK(run_comp.game == NULL);
+  free(run_comp.error);
+  run_comp.error = NULL;
 
   qa_content_catalog_destroy(&catalog); /* borrowed: frees nothing owned */
 

@@ -3,7 +3,7 @@
  * collides with the landed contract type qa_qvm_mod_actor_frame (the
  * declaration), so the runtime class is qa_qvm_mod_actor_frame_runtime.
  * The image is the mirrored instruction list plus data extents from
- * qa_qvmy_artifact fields passed explicitly.
+ * qa_resolved_qvm_artifact fields passed explicitly.
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MOD_ACTOR_FRAME_H

@@ -30,12 +30,12 @@ static qa_save_reader item_at(const qa_save_reader *reader, size_t index) {
 }
 
 
-static const qa_qvm_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
-  if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
-  return &artifact->instructions[index];
+static const qa_qvm_instruction *insn(const qa_resolved_qvm_artifact *artifact, int64_t index) {
+  if (index < 0 || (uint64_t)index >= artifact->image.instruction_count) return NULL;
+  return &artifact->image.instructions[index];
 }
 
-static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *reader) {
+static int64_t read_entry(const qa_resolved_qvm_artifact *artifact, qa_save_reader *reader) {
   int64_t pc = (int64_t)qa_save_reader_integer_min(reader, 0);
   const qa_qvm_instruction *instruction = insn(artifact, pc);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
@@ -43,14 +43,14 @@ static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *read
   return pc;
 }
 
-static int64_t entry_field(const qa_qvmy_artifact *artifact, const qa_save_reader *reader, const char *name) {
+static int64_t entry_field(const qa_resolved_qvm_artifact *artifact, const qa_save_reader *reader, const char *name) {
   qa_save_reader at = field(reader, name);
   int64_t value = read_entry(artifact, &at);
   qa_save_reader_destroy(&at);
   return value;
 }
 
-static int64_t read_decision(const qa_qvmy_artifact *artifact, qa_save_reader *reader, int64_t owner) {
+static int64_t read_decision(const qa_resolved_qvm_artifact *artifact, qa_save_reader *reader, int64_t owner) {
   int64_t pc = (int64_t)qa_save_reader_integer_min(reader, 0);
   const qa_qvm_instruction *instruction = insn(artifact, pc);
   int64_t function_entry = pc;
@@ -65,7 +65,7 @@ static int64_t read_decision(const qa_qvmy_artifact *artifact, qa_save_reader *r
   return pc;
 }
 
-static int64_t decision_field(const qa_qvmy_artifact *artifact, const qa_save_reader *reader,
+static int64_t decision_field(const qa_resolved_qvm_artifact *artifact, const qa_save_reader *reader,
                               const char *name, int64_t owner) {
   qa_save_reader at = field(reader, name);
   int64_t value = read_decision(artifact, &at, owner);
@@ -113,7 +113,7 @@ static int64_t int32_field(const qa_save_reader *reader, const char *name) {
   return value;
 }
 
-bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_content_mounted *mounts,
+bool qa_qvm_read_equipment_presentation(const qa_resolved_qvm_artifact *artifact, qa_content_mounted *mounts,
                                         qa_q3_equipment_qvm_presentation_profile *out, bool *out_owned) {
   *out_owned = false;
   /* Landed readQvmCompatibilityDeclaration (compatibility.h). */
@@ -171,7 +171,7 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
   out->view_taken = view_taken;
   out->warning_entry = (double)entry_field(artifact, &warning, "entry");
   out->warning_state = (double)word_field(&warning, "state",
-      artifact->data_length + artifact->literal_length + artifact->bss_length);
+      artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length);
   out->warning_none = (double)int32_field(&states, "none");
   out->warning_low = (double)int32_field(&states, "low");
   out->warning_empty = (double)int32_field(&states, "empty");
@@ -182,7 +182,7 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
   out->held_parent_argument = (double)argument_field(&held, "parentArgument");
   out->held_state_argument = (double)argument_field(&held, "stateArgument");
   out->held_entity_argument = (double)argument_field(&held, "entityArgument");
-  out->held_entity_number_offset = (double)word_field(&held, "entityNumberOffset", artifact->allocated_data_length);
+  out->held_entity_number_offset = (double)word_field(&held, "entityNumberOffset", artifact->image.allocated_data_length);
   qa_save_reader_destroy(&held);
   qa_save_reader entries_reader = field(&status, "entries");
   size_t entry_count = qa_save_reader_list_count(&entries_reader);
@@ -225,7 +225,7 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
         qa_save_reader join_reader = field(&region_reader, "join");
         int64_t region_join = (int64_t)qa_save_reader_integer_min(&join_reader, 0);
         qa_save_reader_destroy(&join_reader);
-        qa_qvm_qualify_region(artifact->instructions, artifact->instruction_count, owner, region_start, region_join);
+        qa_qvm_qualify_region(artifact->image.instructions, artifact->image.instruction_count, owner, region_start, region_join);
         ammo[a].entry = (double)region_start;
         ammo[a].join = (double)region_join;
         qa_save_reader_destroy(&region_reader);

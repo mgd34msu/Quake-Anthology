@@ -718,6 +718,103 @@ static void test_simulation_events(void) {
   qa_app_sim_simulation_events_destroy(events);
   phys_teardown(&f);
 }
+/* Scripted multi-frame pipeline: TS step() boundary plan drives
+ * ordered actor turns -> physics.step + commitAttachments per turn,
+ * events drained at frame end. Q2-classic runs one interval ahead,
+ * so frame 1 (100ms) executes two map boundaries (100, 200). */
+static void test_frame_pipeline(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor first = phys_actor(&f, "test:first", (qa_vec3){0, 0, 0}, "fly-missile", unit_bounds());
+  qa_owned_actor second = phys_actor(&f, "test:second", (qa_vec3){0, 10, 0}, "fly-missile", unit_bounds());
+  phys_set_motion(&f, first, "fly-missile", (qa_vec3){100, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  phys_set_motion(&f, second, "fly-missile", (qa_vec3){50, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  events_env env; memset(&env, 0, sizeof env);
+  env.player = first.id; env.client.slot = 1; env.sequence = 9;
+  qa_app_sim_simulation_events_options options; memset(&options, 0, sizeof options);
+  options.ctx = &env;
+  options.bodies = qa_app_sim_shared_physics_bodies(f.physics);
+  options.now = events_now; options.client_for = events_client_for;
+  options.source_slot = events_source_slot; options.resource_for = events_resource_for;
+  options.emit_super = events_emit_super;
+  qa_app_sim_simulation_events *events = qa_app_sim_simulation_events_create(options);
+  qa_clock_profile profile; memset(&profile, 0, sizeof profile); profile.kind = QA_CLOCK_Q2_CLASSIC;
+  double time_seconds = 0, scheduling = 0;
+  const size_t expected_events[3] = {4, 2, 2};
+  const double expected_x[3] = {20, 30, 40};
+  for (int frame = 0; frame < 3; frame++) {
+    scheduling += 100;
+    qa_app_sim_frame_plan_input in; memset(&in, 0, sizeof in);
+    in.profile = profile; in.elapsed_milliseconds = 100;
+    in.time_seconds = time_seconds; in.source_scheduling_milliseconds = scheduling;
+    qa_app_sim_frame_plan plan = qa_app_sim_frame_plan_compute(in);
+    CHECK(plan.map_run && plan.has_fixed && plan.fixed_milliseconds == 100);
+    CHECK(plan.elapsed_seconds == 0.1);
+    if (frame == 0) {
+      CHECK(plan.boundary_count == 2);
+      CHECK(plan.boundaries[0].milliseconds == 100 && plan.boundaries[0].map);
+      CHECK(plan.boundaries[1].milliseconds == 200 && plan.boundaries[1].map);
+    } else CHECK(plan.boundary_count == 1 && plan.boundaries[0].map);
+    for (size_t b = 0; b < plan.boundary_count; b++) {
+      if (!plan.boundaries[b].map) continue;
+      qa_app_sim_ordered_actor_turns *turns = qa_app_sim_ordered_actor_turns_create(f.actors, position_of, NULL);
+      qa_app_sim_actor_visited visited = {0};
+      qa_owned_actor actor; double last_slot = -1;
+      while (qa_app_sim_ordered_actor_turns_next(turns, &visited, &actor)) {
+        CHECK((double)actor.id.slot > last_slot); last_slot = (double)actor.id.slot;
+        (void)qa_app_sim_shared_physics_step(f.physics, actor, plan.elapsed_seconds);
+        qa_app_sim_shared_physics_commit_attachments(f.physics);
+        if (qa_same_actor(actor.id, first.id) || qa_same_actor(actor.id, second.id)) {
+          qa_network_event print; memset(&print, 0, sizeof print);
+          print.kind = QA_NETWORK_EVENT_PRINT; print.level = 2;
+          print.text = qa_same_actor(actor.id, first.id) ? "first" : "second";
+          qa_app_sim_simulation_events_message(events, print, false, actor.id, false, 0);
+        }
+      }
+      free(visited.actors);
+      qa_app_sim_ordered_actor_turns_destroy(turns);
+      time_seconds += plan.elapsed_seconds;
+    }
+    qa_app_sim_frame_plan_free(&plan);
+    size_t count = 0;
+    const qa_simulation_event *taken = qa_app_sim_simulation_events_take(events, &count);
+    CHECK(count == expected_events[frame]);
+    for (size_t i = 0; i < count; i++) {
+      CHECK(strcmp(taken[i].payload.event.text, i % 2 == 0 ? "first" : "second") == 0);
+      if (i > 0) CHECK(taken[i].sequence == taken[i - 1].sequence + 1);
+    }
+    CHECK(phys_read(&f, first.id).origin.x == expected_x[frame]);
+    CHECK(phys_read(&f, second.id).origin.x == expected_x[frame] / 2);
+    CHECK(phys_read(&f, second.id).origin.y == 10);
+  }
+  CHECK(qa_app_sim_simulation_events_next_sequence(events) == 8);
+  /* Zero-elapsed frame: no map run, single non-map boundary at map start. */
+  qa_app_sim_frame_plan_input idle; memset(&idle, 0, sizeof idle);
+  idle.profile = profile; idle.elapsed_milliseconds = 0;
+  idle.time_seconds = time_seconds; idle.source_scheduling_milliseconds = scheduling;
+  qa_app_sim_frame_plan idle_plan = qa_app_sim_frame_plan_compute(idle);
+  CHECK(!idle_plan.map_run && idle_plan.boundary_count == 1 && !idle_plan.boundaries[0].map);
+  CHECK(idle_plan.boundaries[0].milliseconds == 400);
+  qa_app_sim_frame_plan_free(&idle_plan);
+  /* Numeric Q1 sound channels pass through (TS typeof number branch). */
+  qa_q1_event sound; memset(&sound, 0, sizeof sound);
+  sound.kind = "sound"; sound.has_actor = true; sound.actor = first.id;
+  sound.path = "misc/beep.wav"; sound.volume = 1; sound.attenuation = 1;
+  qa_app_sim_source_event_input source; memset(&source, 0, sizeof source);
+  source.kind = "q1"; source.q1 = &sound;
+  qa_presentation_owner owner; memset(&owner, 0, sizeof owner);
+  const char *channels[3] = {"6", "-1", "body"};
+  const double expected_channel[3] = {6, -1, 4};
+  for (int i = 0; i < 3; i++) {
+    sound.sound_channel = channels[i];
+    (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q1:base", source,
+        false, (qa_source_time){0, 0}, false, first.id);
+    size_t count = 0;
+    const qa_simulation_event *taken = qa_app_sim_simulation_events_take(events, &count);
+    CHECK(count == 1 && taken[0].payload.channel == expected_channel[i]);
+  }
+  qa_app_sim_simulation_events_destroy(events);
+  phys_teardown(&f);
+}
 static void test_gravity_validation(void) {
   phys_fixture f; phys_setup(&f);
   qa_app_sim_shared_physics_set_world_gravity(f.physics, 400);
@@ -753,6 +850,7 @@ int main(void) {
   test_physics_validation();
   test_runtime_guards();
   test_simulation_events();
+  test_frame_pipeline();
   if (failures == 0) printf("test_sim_c: %d checks passed\n", checks);
   else fprintf(stderr, "test_sim_c: %d/%d checks failed\n", failures, checks);
   return failures == 0 ? 0 : 1;

@@ -62,12 +62,12 @@ static int64_t aligned_field(const qa_save_reader *reader, const char *name, int
   return value;
 }
 
-static const qa_qvm_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
-  if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
-  return &artifact->instructions[index];
+static const qa_qvm_instruction *insn(const qa_resolved_qvm_artifact *artifact, int64_t index) {
+  if (index < 0 || (uint64_t)index >= artifact->image.instruction_count) return NULL;
+  return &artifact->image.instructions[index];
 }
 
-static int64_t read_entry(qa_save_reader *reader, const qa_qvmy_artifact *artifact) {
+static int64_t read_entry(qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact) {
   int64_t value = (int64_t)qa_save_reader_integer_min(reader, 0);
   const qa_qvm_instruction *instruction = insn(artifact, value);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
@@ -75,7 +75,7 @@ static int64_t read_entry(qa_save_reader *reader, const qa_qvmy_artifact *artifa
   return value;
 }
 
-static int64_t entry_field(const qa_save_reader *reader, const char *name, const qa_qvmy_artifact *artifact) {
+static int64_t entry_field(const qa_save_reader *reader, const char *name, const qa_resolved_qvm_artifact *artifact) {
   qa_save_reader at = field(reader, name);
   int64_t value = read_entry(&at, artifact);
   qa_save_reader_destroy(&at);
@@ -89,28 +89,30 @@ typedef struct layout {
   int64_t client_stride;
 } layout;
 
-static layout read_layout(const qa_save_reader *reader, const qa_qvmy_artifact *artifact) {
+static layout read_layout(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact) {
   if (strcmp(artifact->role, "qagame") != 0)
     qa_save_reader_fail(reader, "primary player services require a qagame ABI");
   layout result;
   result.module = artifact->module;
   result.abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
   result.entity_stride = integer_field(reader, "entityStride", qa_qvm_shared_entity_bytes(result.abi_profile),
-                                       (double)artifact->allocated_data_length);
+                                       (double)artifact->image.allocated_data_length);
   result.client_stride = integer_field(reader, "clientStride", qa_qvm_player_state_bytes(result.abi_profile),
-                                       (double)artifact->allocated_data_length);
+                                       (double)artifact->image.allocated_data_length);
   if (result.entity_stride % 4 != 0 || result.client_stride % 4 != 0)
     qa_save_reader_fail(reader, "source record strides must be aligned");
   return result;
 }
 
-static qa_qvm_primary_region read_region(const qa_save_reader *reader) {
-  qa_qvm_primary_region result = {integer_field(reader, "entry", 0, 9007199254740991.0),
+typedef struct primary_region { int64_t entry, join; } primary_region;
+
+static primary_region read_region(const qa_save_reader *reader) {
+  primary_region result = {integer_field(reader, "entry", 0, 9007199254740991.0),
                                    integer_field(reader, "join", 0, 9007199254740991.0)};
   return result;
 }
 
-static void read_evaluation(const qa_save_reader *reader, qa_qvm_region_evaluation *out, int64_t **out_inputs) {
+static void read_evaluation(const qa_save_reader *reader, qa_qvm_region_evaluation *out) {
   out->entry = integer_field(reader, "entry", 0, 9007199254740991.0);
   out->join = integer_field(reader, "join", 0, 9007199254740991.0);
   qa_save_reader inputs_reader = field(reader, "inputs");
@@ -124,7 +126,6 @@ static void read_evaluation(const qa_save_reader *reader, qa_qvm_region_evaluati
   qa_save_reader_destroy(&inputs_reader);
   out->inputs = inputs;
   out->input_count = count;
-  *out_inputs = inputs;
   qa_save_reader result_reader = field(reader, "result");
   if (qa_save_reader_is_null(&result_reader)) {
     out->has_result = false;
@@ -168,39 +169,39 @@ static qa_qvm_mod_input_pointer read_source_pointer(const qa_save_reader *reader
   return result;
 }
 
-void qa_qvm_read_primary_input(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                               qa_qvmy_input_definition *out) {
+void qa_qvm_read_primary_input(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact,
+                               qa_qvm_input_definition *out) {
   memset(out, 0, sizeof *out);
   layout common = read_layout(reader, artifact);
   out->module = common.module;
-  out->abi_profile = common.abi_profile;
-  out->entity_stride = common.entity_stride;
-  out->client_stride = common.client_stride;
+  out->entity_stride = (double)common.entity_stride;
+  out->client_stride = (double)common.client_stride;
   qa_save_reader modes = field(reader, "movementModes");
   if (!qa_save_reader_is_undefined(&modes)) {
     out->has_movement_modes = true;
-    out->mode_normal = any_integer_field(&modes, "normal");
-    out->mode_noclip = any_integer_field(&modes, "noclip");
-    out->mode_freeze = any_integer_field(&modes, "freeze");
+    out->movement_mode_normal = (double)any_integer_field(&modes, "normal");
+    out->movement_mode_noclip = (double)any_integer_field(&modes, "noclip");
+    out->movement_mode_freeze = (double)any_integer_field(&modes, "freeze");
   }
   qa_save_reader_destroy(&modes);
-  out->client_pointer = aligned_field(reader, "clientPointer", common.entity_stride, 4);
+  out->client_pointer = (double)aligned_field(reader, "clientPointer", common.entity_stride, 4);
   qa_save_reader intermission = field(reader, "intermission");
   size_t count = qa_save_reader_list_count(&intermission);
-  out->intermission = xmalloc(count * sizeof *out->intermission);
+  double *intermission_values = xmalloc(count * sizeof *intermission_values);
+  out->intermission = intermission_values;
   out->intermission_count = count;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader value = item_at(&intermission, i);
-    out->intermission[i] = (int64_t)qa_save_reader_integer(&value);
+    intermission_values[i] = qa_save_reader_integer(&value);
     qa_save_reader_destroy(&value);
   }
   qa_save_reader_destroy(&intermission);
   qa_save_reader entries = field(reader, "entries");
-  out->entry_client_think = entry_field(&entries, "clientThink", artifact);
-  out->entry_run_client = entry_field(&entries, "runClient", artifact);
-  out->entry_client_spawn = entry_field(&entries, "clientSpawn", artifact);
-  out->entry_move = entry_field(&entries, "move", artifact);
-  out->entry_slice = entry_field(&entries, "slice", artifact);
+  out->entry_client_think = (double)entry_field(&entries, "clientThink", artifact);
+  out->entry_run_client = (double)entry_field(&entries, "runClient", artifact);
+  out->entry_client_spawn = (double)entry_field(&entries, "clientSpawn", artifact);
+  out->entry_move = (double)entry_field(&entries, "move", artifact);
+  out->entry_slice = (double)entry_field(&entries, "slice", artifact);
   qa_save_reader_destroy(&entries);
 }
 
@@ -247,30 +248,31 @@ static qa_qvm_item_test *read_tests(const qa_save_reader *reader, int64_t client
   return tests;
 }
 
-void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
+void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact,
                                  const qa_qvm_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
-                                 qa_qvmy_primary_weapon_profile *out) {
+                                 qa_qvm_primary_weapon_profile *out) {
   memset(out, 0, sizeof *out);
   layout common = read_layout(reader, artifact);
   out->module = common.module;
   out->abi_profile = common.abi_profile;
-  out->entity_stride = common.entity_stride;
-  out->client_stride = common.client_stride;
-  int64_t data_bytes = artifact->data_length + artifact->literal_length + artifact->bss_length;
+  out->entity_stride = (double)common.entity_stride;
+  out->client_stride = (double)common.client_stride;
+  int64_t data_bytes = artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length;
   qa_save_reader contexts_reader = field(reader, "equipmentContexts");
   size_t context_count = qa_save_reader_list_count(&contexts_reader);
-  out->equipment_contexts = xmalloc(context_count * sizeof *out->equipment_contexts);
+  qa_source_equipment_context *contexts = xmalloc(context_count * sizeof *contexts);
+  out->equipment_contexts = contexts;
   out->equipment_context_count = context_count;
   for (size_t i = 0; i < context_count; i++) {
     qa_save_reader value = item_at(&contexts_reader, i);
     qa_save_reader provider = field(&value, "provider");
-    out->equipment_contexts[i].provider = qa_namespaced(&provider);
+    contexts[i].provider = qa_namespaced(&provider);
     qa_save_reader_destroy(&provider);
     qa_save_reader item_reader = field(&value, "item");
     if (qa_save_reader_is_null(&item_reader)) {
-      out->equipment_contexts[i].item = NULL;
+      contexts[i].item = NULL;
     } else {
-      out->equipment_contexts[i].item = qa_namespaced(&item_reader);
+      contexts[i].item = qa_namespaced(&item_reader);
     }
     qa_save_reader_destroy(&item_reader);
     qa_save_reader_destroy(&value);
@@ -278,7 +280,7 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
   qa_save_reader_destroy(&contexts_reader);
   for (size_t i = 0; i < context_count; i++)
     for (size_t j = i + 1; j < context_count; j++)
-      if (strcmp(out->equipment_contexts[i].provider, out->equipment_contexts[j].provider) == 0) {
+      if (strcmp(contexts[i].provider, out->equipment_contexts[j].provider) == 0) {
         qa_save_reader duplicate = field(reader, "equipmentContexts");
         qa_save_reader_fail(&duplicate, "duplicate equipment source context");
       }
@@ -288,59 +290,61 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
     out->match = qa_read_source_primary_match(&match_reader, (double)common.client_stride);
   }
   qa_save_reader_destroy(&match_reader);
-  out->client_pointer = aligned_field(reader, "clientPointer", common.entity_stride, 4);
-  out->max_health = aligned_field(reader, "maxHealth", common.client_stride, 4);
-  out->persistent_max_health = aligned_field(reader, "persistentMaxHealth", common.client_stride, 4);
+  out->client_pointer = (double)aligned_field(reader, "clientPointer", common.entity_stride, 4);
+  out->max_health = (double)aligned_field(reader, "maxHealth", common.client_stride, 4);
+  out->persistent_max_health = (double)aligned_field(reader, "persistentMaxHealth", common.client_stride, 4);
   qa_save_reader stage = field(reader, "stage");
   qa_save_reader dispatcher = field(&stage, "dispatcher");
-  out->dispatcher_entry = entry_field(&dispatcher, "entry", artifact);
+  out->stage.dispatcher.entry = (double)entry_field(&dispatcher, "entry", artifact);
   qa_save_reader actor_reader = field(&dispatcher, "actor");
   qa_save_reader actor_record = field(&actor_reader, "record");
-  out->dispatcher_actor.record = qa_save_reader_literal_string(&actor_record, "client");
+  out->stage.dispatcher.actor.record = qa_save_reader_literal_string(&actor_record, "client");
   qa_save_reader_destroy(&actor_record);
   qa_save_reader pointer_reader = field(&actor_reader, "pointer");
-  out->dispatcher_actor.pointer = read_source_pointer(&pointer_reader, data_bytes);
+  out->stage.dispatcher.actor.pointer = read_source_pointer(&pointer_reader, data_bytes);
   qa_save_reader_destroy(&pointer_reader);
   qa_save_reader_destroy(&actor_reader);
   qa_save_reader_destroy(&dispatcher);
   qa_save_reader predicates_reader = field(&stage, "predicates");
   size_t predicate_count = qa_save_reader_list_count(&predicates_reader);
-  out->predicates = xmalloc(predicate_count * sizeof *out->predicates);
-  out->predicate_count = predicate_count;
+  qa_qvm_weapon_predicate *predicates = xmalloc(predicate_count * sizeof *predicates);
+  out->stage.predicates = predicates;
+  out->stage.predicate_count = predicate_count;
   for (size_t i = 0; i < predicate_count; i++) {
     qa_save_reader value = item_at(&predicates_reader, i);
-    out->predicates[i].instruction = (double)integer_field(&value, "instruction", 0, 9007199254740991.0);
+    predicates[i].instruction = (double)integer_field(&value, "instruction", 0, 9007199254740991.0);
     qa_save_reader unselected = field(&value, "unselected");
-    out->predicates[i].unselected = qa_save_reader_boolean(&unselected);
+    predicates[i].unselected = qa_save_reader_boolean(&unselected);
     qa_save_reader_destroy(&unselected);
     qa_save_reader_destroy(&value);
   }
   qa_save_reader_destroy(&predicates_reader);
   qa_save_reader settled_reader = field(&stage, "settled");
-  out->settled = read_tests(&settled_reader, common.client_stride, &out->settled_count);
+  out->stage.settled = read_tests(&settled_reader, common.client_stride, &out->stage.settled_count);
   qa_save_reader_destroy(&settled_reader);
   qa_save_reader selection = field(&stage, "selection");
   qa_save_reader selection_field = field(&selection, "field");
-  out->selection_field = read_client_field(&selection_field, common.client_stride);
+  out->stage.selection.field = read_client_field(&selection_field, common.client_stride);
   qa_save_reader_destroy(&selection_field);
   qa_save_reader values_reader = field(&selection, "values");
   size_t value_count = qa_save_reader_list_count(&values_reader);
-  out->selection_values = xmalloc(value_count * sizeof *out->selection_values);
-  out->selection_value_count = value_count;
+  qa_qvm_weapon_selection_value *selection_values = xmalloc(value_count * sizeof *selection_values);
+  out->stage.selection.values = selection_values;
+  out->stage.selection.value_count = value_count;
   for (size_t i = 0; i < value_count; i++) {
     qa_save_reader value = item_at(&values_reader, i);
-    out->selection_values[i].value = (double)integer_field(&value, "value", 1, 2147483647.0);
+    selection_values[i].value = (double)integer_field(&value, "value", 1, 2147483647.0);
     qa_save_reader item_reader = field(&value, "item");
-    out->selection_values[i].item = qa_namespaced(&item_reader);
+    selection_values[i].item = qa_namespaced(&item_reader);
     qa_save_reader_destroy(&item_reader);
     qa_save_reader_destroy(&value);
   }
   qa_save_reader_destroy(&values_reader);
   qa_save_reader request = field(&stage, "request");
-  out->request_entry = entry_field(&request, "entry", artifact);
-  out->request_argument = integer_field(&request, "argument", 0, 61);
+  out->stage.request.entry = (double)entry_field(&request, "entry", artifact);
+  out->stage.request.argument = (double)integer_field(&request, "argument", 0, 61);
   qa_save_reader accepted_reader = field(&request, "accepted");
-  out->request_accepted = read_tests(&accepted_reader, common.client_stride, &out->request_accepted_count);
+  out->stage.request.accepted = read_tests(&accepted_reader, common.client_stride, &out->stage.request.accepted_count);
   qa_save_reader_destroy(&accepted_reader);
   qa_save_reader_destroy(&request);
   qa_save_reader_destroy(&selection);
@@ -348,110 +352,119 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
   qa_save_reader movement = field(reader, "equipmentMovement");
   qa_save_reader body_trace = field(&movement, "bodyTrace");
   if (!qa_save_reader_is_undefined(&body_trace)) {
-    out->has_body_trace = true;
-    out->body_trace_callback = aligned_field(&body_trace, "callback", artifact->allocated_data_length, 4);
-    out->body_trace_mask = aligned_field(&body_trace, "mask", artifact->allocated_data_length, 4);
+    out->equipment_movement.has_body_trace = true;
+    out->equipment_movement.body_trace_callback = (double)aligned_field(&body_trace, "callback", artifact->image.allocated_data_length, 4);
+    out->equipment_movement.body_trace_mask = (double)aligned_field(&body_trace, "mask", artifact->image.allocated_data_length, 4);
   }
   qa_save_reader_destroy(&body_trace);
-  out->move_entry = entry_field(&movement, "move", artifact);
-  out->slice_entry = entry_field(&movement, "slice", artifact);
-  out->duck_entry = entry_field(&movement, "duck", artifact);
-  out->movement_global = aligned_field(&movement, "movementGlobal", data_bytes, 4);
+  out->equipment_movement.move = (double)entry_field(&movement, "move", artifact);
+  out->equipment_movement.slice = (double)entry_field(&movement, "slice", artifact);
+  out->equipment_movement.duck = (double)entry_field(&movement, "duck", artifact);
+  out->equipment_movement.movement_global = (double)aligned_field(&movement, "movementGlobal", data_bytes, 4);
   qa_save_reader locomotion = field(&movement, "locomotion");
-  out->locomotion = read_region(&locomotion);
+  primary_region locomotion_region = read_region(&locomotion);
+  out->equipment_movement.locomotion_entry = (double)locomotion_region.entry;
+  out->equipment_movement.locomotion_join = (double)locomotion_region.join;
   qa_save_reader_destroy(&locomotion);
-  out->mins_offset = aligned_field(&movement, "mins", artifact->allocated_data_length, 12);
-  out->maxs_offset = aligned_field(&movement, "maxs", artifact->allocated_data_length, 12);
+  out->equipment_movement.mins = (double)aligned_field(&movement, "mins", artifact->image.allocated_data_length, 12);
+  out->equipment_movement.maxs = (double)aligned_field(&movement, "maxs", artifact->image.allocated_data_length, 12);
   qa_save_reader_destroy(&movement);
   qa_save_reader availability = field(reader, "availability");
-  out->availability_movement_type = aligned_field(&availability, "movementType", common.client_stride, 4);
+  out->availability.movement_type = (double)aligned_field(&availability, "movementType", common.client_stride, 4);
   qa_save_reader excluded_reader = field(&availability, "excluded");
   size_t excluded_count = qa_save_reader_list_count(&excluded_reader);
-  out->availability_excluded = xmalloc(excluded_count * sizeof *out->availability_excluded);
-  out->availability_excluded_count = excluded_count;
+  double *excluded = xmalloc(excluded_count * sizeof *excluded);
+  out->availability.excluded = excluded;
+  out->availability.excluded_count = excluded_count;
   for (size_t i = 0; i < excluded_count; i++) {
     qa_save_reader value = item_at(&excluded_reader, i);
-    out->availability_excluded[i] = (int64_t)qa_save_reader_integer(&value);
+    excluded[i] = qa_save_reader_integer(&value);
     qa_save_reader_destroy(&value);
   }
   qa_save_reader_destroy(&excluded_reader);
-  out->availability_health = aligned_field(&availability, "health", common.client_stride, 4);
-  out->availability_team = aligned_field(&availability, "team", common.client_stride, 4);
-  out->availability_spectator_team = any_integer_field(&availability, "spectatorTeam");
-  out->availability_flags = aligned_field(&availability, "flags", common.client_stride, 4);
-  out->availability_respawn_flag = integer_field(&availability, "respawnFlag", 1, 2147483647.0);
+  out->availability.health = (double)aligned_field(&availability, "health", common.client_stride, 4);
+  out->availability.team = (double)aligned_field(&availability, "team", common.client_stride, 4);
+  out->availability.spectator_team = (double)any_integer_field(&availability, "spectatorTeam");
+  out->availability.flags = (double)aligned_field(&availability, "flags", common.client_stride, 4);
+  out->availability.respawn_flag = (double)integer_field(&availability, "respawnFlag", 1, 2147483647.0);
   qa_save_reader_destroy(&availability);
   qa_save_reader powers = field(reader, "powerups");
-  out->powerup_quad = aligned_field(&powers, "quad", common.client_stride, 4);
-  out->powerup_haste = aligned_field(&powers, "haste", common.client_stride, 4);
-  out->powerup_flight = aligned_field(&powers, "flight", common.client_stride, 4);
+  out->powerups.quad = (double)aligned_field(&powers, "quad", common.client_stride, 4);
+  out->powerups.haste = (double)aligned_field(&powers, "haste", common.client_stride, 4);
+  out->powerups.flight = (double)aligned_field(&powers, "flight", common.client_stride, 4);
   qa_save_reader_destroy(&powers);
   qa_save_reader torso = field(reader, "torsoAnimation");
-  out->torso_entry = entry_field(&torso, "entry", artifact);
-  out->torso_attack = integer_field(&torso, "attack", 0, 9007199254740991.0);
-  out->torso_melee = integer_field(&torso, "melee", 0, 9007199254740991.0);
+  out->torso_animation.entry = (double)entry_field(&torso, "entry", artifact);
+  out->torso_animation.attack = (double)integer_field(&torso, "attack", 0, 9007199254740991.0);
+  out->torso_animation.melee = (double)integer_field(&torso, "melee", 0, 9007199254740991.0);
   qa_save_reader_destroy(&torso);
   qa_save_reader water = field(reader, "waterLevel");
-  out->water_entity_offset = aligned_field(&water, "entityOffset", common.entity_stride, 4);
-  out->water_movement_offset = aligned_field(&water, "movementOffset", artifact->allocated_data_length, 4);
+  out->water_level.entity_offset = (double)aligned_field(&water, "entityOffset", common.entity_stride, 4);
+  out->water_level.movement_offset = (double)aligned_field(&water, "movementOffset", artifact->image.allocated_data_length, 4);
   qa_save_reader_destroy(&water);
   qa_save_reader damage = field(reader, "damageFactor");
-  out->damage_entry = entry_field(&damage, "entry", artifact);
-  out->damage_result = aligned_field(&damage, "result", data_bytes, 4);
+  out->damage_factor.entry = (double)entry_field(&damage, "entry", artifact);
+  out->damage_factor.result = (double)aligned_field(&damage, "result", data_bytes, 4);
   qa_save_reader stop = field(&damage, "stop");
-  out->damage_stop = read_region(&stop);
+  primary_region damage_stop = read_region(&stop);
+  out->damage_factor.stop.entry = (double)damage_stop.entry;
+  out->damage_factor.stop.join = (double)damage_stop.join;
   qa_save_reader_destroy(&stop);
   qa_save_reader_destroy(&damage);
   qa_save_reader delay_reader = field(reader, "delay");
-  read_evaluation(&delay_reader, &out->delay, &out->delay_inputs);
+  read_evaluation(&delay_reader, &out->delay);
   qa_save_reader_destroy(&delay_reader);
   qa_save_reader delay = field(reader, "delayPlayer");
-  out->delay_movement_global = aligned_field(&delay, "movementGlobal", data_bytes, 4);
-  out->delay_player_offset = aligned_field(&delay, "playerOffset", artifact->allocated_data_length, 4);
+  out->delay_player.movement_global = (double)aligned_field(&delay, "movementGlobal", data_bytes, 4);
+  out->delay_player.player_offset = (double)aligned_field(&delay, "playerOffset", artifact->image.allocated_data_length, 4);
   qa_save_reader_destroy(&delay);
   qa_save_reader teleport = field(reader, "teleport");
-  out->teleport_entry = entry_field(&teleport, "entry", artifact);
+  out->teleport.entry = (double)entry_field(&teleport, "entry", artifact);
   qa_save_reader teleport_region = field(&teleport, "region");
-  read_evaluation(&teleport_region, &out->teleport_region, &out->teleport_region_inputs);
+  read_evaluation(&teleport_region, &out->teleport.region);
   qa_save_reader_destroy(&teleport_region);
   qa_save_reader teleport_objectives = field(&teleport, "objectives");
-  read_evaluation(&teleport_objectives, &out->teleport_objectives, &out->teleport_objectives_inputs);
+  read_evaluation(&teleport_objectives, &out->teleport.objectives);
   qa_save_reader_destroy(&teleport_objectives);
-  out->teleport_spawn = entry_field(&teleport, "spawn", artifact);
-  out->teleport_view = entry_field(&teleport, "view", artifact);
+  out->teleport.spawn = (double)entry_field(&teleport, "spawn", artifact);
+  out->teleport.view = (double)entry_field(&teleport, "view", artifact);
   qa_save_reader_destroy(&teleport);
   qa_save_reader drop = field(reader, "drop");
-  out->drop_entry = entry_field(&drop, "entry", artifact);
-  out->drop_argument = integer_field(&drop, "argument", 0, 61);
-  out->drop_weapon = aligned_field(&drop, "weapon", common.entity_stride, 4);
+  out->drop.entry = (double)entry_field(&drop, "entry", artifact);
+  out->drop.argument = (double)integer_field(&drop, "argument", 0, 61);
+  out->drop.weapon = (double)aligned_field(&drop, "weapon", common.entity_stride, 4);
   qa_save_reader ammo = field(&drop, "ammo");
   if (ammo.value != NULL && ammo.value->kind == QA_SAVE_STRING && strcmp(ammo.value->text, "inventory") == 0) {
     (void)qa_save_reader_literal_string(&ammo, "inventory");
-    out->drop_ammo_inventory = true;
+    out->drop.ammo_is_inventory = true;
   } else {
-    out->drop_ammo_offset = aligned(&ammo, common.client_stride, 64);
+    out->drop.ammo = (double)aligned(&ammo, common.client_stride, 64);
   }
   qa_save_reader_destroy(&ammo);
   qa_save_reader drop_region = field(&drop, "region");
-  out->drop_region = read_region(&drop_region);
+  primary_region drop_stop = read_region(&drop_region);
+  out->drop.region.entry = (double)drop_stop.entry;
+  out->drop.region.join = (double)drop_stop.join;
   qa_save_reader_destroy(&drop_region);
   qa_save_reader_destroy(&drop);
   qa_save_reader give = field(reader, "give");
-  out->give_entry = entry_field(&give, "entry", artifact);
-  out->give_argument = integer_field(&give, "argument", 0, 61);
-  out->give_weapons = integer_field(&give, "weapons", 0, 9007199254740991.0);
-  out->give_ammo = integer_field(&give, "ammo", 0, 9007199254740991.0);
+  out->give.entry = (double)entry_field(&give, "entry", artifact);
+  out->give.argument = (double)integer_field(&give, "argument", 0, 61);
+  out->give.weapons = (double)integer_field(&give, "weapons", 0, 9007199254740991.0);
+  out->give.ammo = (double)integer_field(&give, "ammo", 0, 9007199254740991.0);
   qa_save_reader named = field(&give, "named");
-  out->give_named_region = read_region(&named);
-  out->give_named_name = integer_field(&named, "name", 0, 9007199254740991.0);
-  out->give_named_item = integer_field(&named, "item", 0, 9007199254740991.0);
+  primary_region named_region = read_region(&named);
+  out->give.named.entry = (double)named_region.entry;
+  out->give.named.join = (double)named_region.join;
+  out->give.named.name = (double)integer_field(&named, "name", 0, 9007199254740991.0);
+  out->give.named.item = (double)integer_field(&named, "item", 0, 9007199254740991.0);
   qa_save_reader_destroy(&named);
   qa_save_reader_destroy(&give);
   bool repeated = false;
   for (size_t i = 0; i < value_count; i++)
     for (size_t j = i + 1; j < value_count; j++)
-      if (out->selection_values[i].value == out->selection_values[j].value ||
-          strcmp(out->selection_values[i].item, out->selection_values[j].item) == 0)
+      if (selection_values[i].value == selection_values[j].value ||
+          strcmp(selection_values[i].item, selection_values[j].item) == 0)
         repeated = true;
   if (repeated) {
     qa_save_reader at = field(reader, "stage");
@@ -464,8 +477,8 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
       for (size_t i = 0; i < value_count; i++) {
         bool found = false;
         for (size_t j = 0; j < catalog_count; j++)
-          if (catalog[j].weapon == (int64_t)out->selection_values[i].value &&
-              strcmp(catalog[j].item, out->selection_values[i].item) == 0)
+          if (catalog[j].weapon == (int64_t)selection_values[i].value &&
+              strcmp(catalog[j].item, selection_values[i].item) == 0)
             found = true;
         if (!found) differs = true;
       }
@@ -476,53 +489,38 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
       qa_save_reader_fail(&at_selection, "weapon selection differs from the original item catalog");
     }
   }
-  if (!out->drop_ammo_inventory) {
+  if (!out->drop.ammo_is_inventory) {
     for (size_t i = 0; i < value_count; i++) {
-      if (out->drop_ammo_offset + (int64_t)out->selection_values[i].value * 4 + 4 > common.client_stride) {
+      if ((int64_t)out->drop.ammo + (int64_t)selection_values[i].value * 4 + 4 > common.client_stride) {
         qa_save_reader at = field(reader, "drop");
         qa_save_reader_fail(&at, "original drop ammo indexing exceeds its declared client record");
       }
     }
   }
-  qa_qvm_weapon_stage stage_view;
-  memset(&stage_view, 0, sizeof stage_view);
-  stage_view.dispatcher.entry = (double)out->dispatcher_entry;
-  stage_view.dispatcher.actor = out->dispatcher_actor;
-  stage_view.predicates = out->predicates;
-  stage_view.predicate_count = out->predicate_count;
-  stage_view.settled = out->settled;
-  stage_view.settled_count = out->settled_count;
-  stage_view.selection.field = out->selection_field;
-  stage_view.selection.values = out->selection_values;
-  stage_view.selection.value_count = out->selection_value_count;
-  stage_view.request.entry = (double)out->request_entry;
-  stage_view.request.argument = (double)out->request_argument;
-  stage_view.request.accepted = out->request_accepted;
-  stage_view.request.accepted_count = out->request_accepted_count;
-  qa_qvm_validate_weapon_dispatcher(&stage_view, artifact->instructions, artifact->instruction_count);
-  qa_qvm_qualify_region(artifact->instructions, artifact->instruction_count, out->slice_entry,
-                        out->locomotion.entry, out->locomotion.join);
-  qa_qvm_qualify_region(artifact->instructions, artifact->instruction_count, out->damage_entry,
-                        out->damage_stop.entry, out->damage_stop.join);
-  qa_qvm_qualify_region_evaluation(artifact->instructions, artifact->instruction_count,
-                                    out->dispatcher_entry, &out->delay, "source");
-  qa_qvm_qualify_region_evaluation(artifact->instructions, artifact->instruction_count,
-                                    out->teleport_entry, &out->teleport_region, "source");
-  qa_qvm_qualify_region_evaluation(artifact->instructions, artifact->instruction_count,
-                                    out->teleport_entry, &out->teleport_objectives, "source");
-  qa_qvm_qualify_region(artifact->instructions, artifact->instruction_count, out->give_entry,
-                        out->give_named_region.entry, out->give_named_region.join);
-  qa_qvm_qualify_region(artifact->instructions, artifact->instruction_count, out->drop_entry,
-                        out->drop_region.entry, out->drop_region.join);
-  if (out->delay.input_count != 1 || !out->delay.has_result || out->teleport_region.input_count != 0 ||
-      out->teleport_objectives.input_count != 0)
+  qa_qvm_validate_weapon_dispatcher(&out->stage, artifact->image.instructions, artifact->image.instruction_count);
+  qa_qvm_qualify_region(artifact->image.instructions, artifact->image.instruction_count, (int64_t)out->equipment_movement.slice,
+                        (int64_t)out->equipment_movement.locomotion_entry, (int64_t)out->equipment_movement.locomotion_join);
+  qa_qvm_qualify_region(artifact->image.instructions, artifact->image.instruction_count, (int64_t)out->damage_factor.entry,
+                        (int64_t)out->damage_factor.stop.entry, (int64_t)out->damage_factor.stop.join);
+  qa_qvm_qualify_region_evaluation(artifact->image.instructions, artifact->image.instruction_count,
+                                    (int64_t)out->stage.dispatcher.entry, &out->delay, "source");
+  qa_qvm_qualify_region_evaluation(artifact->image.instructions, artifact->image.instruction_count,
+                                    (int64_t)out->teleport.entry, &out->teleport.region, "source");
+  qa_qvm_qualify_region_evaluation(artifact->image.instructions, artifact->image.instruction_count,
+                                    (int64_t)out->teleport.entry, &out->teleport.objectives, "source");
+  qa_qvm_qualify_region(artifact->image.instructions, artifact->image.instruction_count, (int64_t)out->give.entry,
+                        (int64_t)out->give.named.entry, (int64_t)out->give.named.join);
+  qa_qvm_qualify_region(artifact->image.instructions, artifact->image.instruction_count, (int64_t)out->drop.entry,
+                        (int64_t)out->drop.region.entry, (int64_t)out->drop.region.join);
+  if (out->delay.input_count != 1 || !out->delay.has_result || out->teleport.region.input_count != 0 ||
+      out->teleport.objectives.input_count != 0)
     qa_save_reader_fail(reader, "source effect region inputs differ from the primary player ABI");
-  const qa_qvm_instruction *give_entry = insn(artifact, out->give_entry);
+  const qa_qvm_instruction *give_entry = insn(artifact, (int64_t)out->give.entry);
   if (give_entry == NULL || give_entry->opcode != QA_QVMY_OP_ENTER) {
     qa_save_reader at = field(reader, "give");
     qa_save_reader_fail(&at, "give entry disappeared");
   }
-  int64_t named_offsets[] = {out->give_named_name, out->give_named_item};
+  int64_t named_offsets[] = {(int64_t)out->give.named.name, (int64_t)out->give.named.item};
   for (int i = 0; i < 2; i++) {
     if (named_offsets[i] < 8 || named_offsets[i] % 4 != 0 || named_offsets[i] + 4 > give_entry->operand) {
       qa_save_reader at = field(reader, "give");
@@ -530,13 +528,14 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
       qa_save_reader_fail(&at_named, "named grant local exceeds its original function frame");
     }
   }
-  int64_t entries[] = {out->dispatcher_entry, out->request_entry, out->duck_entry, out->give_entry,
-                       out->drop_entry, out->damage_entry, out->teleport_entry};
+  int64_t entries[] = {(int64_t)out->stage.dispatcher.entry, (int64_t)out->stage.request.entry,
+                       (int64_t)out->equipment_movement.duck, (int64_t)out->give.entry, (int64_t)out->drop.entry,
+                       (int64_t)out->damage_factor.entry, (int64_t)out->teleport.entry};
   for (int i = 0; i < 7; i++)
     for (int j = i + 1; j < 7; j++)
       if (entries[i] == entries[j])
         qa_save_reader_fail(reader, "primary weapon interfaces overlap original function ownership");
-  int64_t completions[] = {out->give_weapons, out->give_ammo};
+  int64_t completions[] = {(int64_t)out->give.weapons, (int64_t)out->give.ammo};
   for (int i = 0; i < 2; i++) {
     int64_t pc = completions[i];
     const qa_qvm_instruction *instruction = insn(artifact, pc);
@@ -546,8 +545,8 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
       if (candidate != NULL && candidate->opcode == QA_QVMY_OP_ENTER) break;
       owner--;
     }
-    if (owner != out->give_entry || instruction == NULL || instruction->opcode < QA_QVMY_OP_EQ ||
-        instruction->opcode > QA_QVMY_OP_GEF || pc <= out->give_entry) {
+    if (owner != (int64_t)out->give.entry || instruction == NULL || instruction->opcode < QA_QVMY_OP_EQ ||
+        instruction->opcode > QA_QVMY_OP_GEF || pc <= (int64_t)out->give.entry) {
       qa_save_reader at = field(reader, "give");
       qa_save_reader_fail(&at, "give completion is not an original decision");
     }
@@ -647,41 +646,45 @@ static double read_fraction(qa_save_reader *reader) {
   return result;
 }
 
-void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                qa_qvmy_primary_combat_profile *out) {
+void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact,
+                                qa_qvm_primary_combat_profile *out) {
   memset(out, 0, sizeof *out);
   layout common = read_layout(reader, artifact);
-  out->module = common.module;
-  out->abi_profile = common.abi_profile;
-  out->entity_stride = common.entity_stride;
-  out->client_stride = common.client_stride;
-  int64_t data_bytes = artifact->data_length + artifact->literal_length + artifact->bss_length;
+  out->base.module = common.module;
+  out->base.abi_profile = common.abi_profile;
+  out->base.entity_stride = (double)common.entity_stride;
+  out->base.client_stride = (double)common.client_stride;
+  int64_t data_bytes = artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length;
   qa_save_reader damage_call = field(reader, "damageCall");
   qa_save_reader damage_roles = field(&damage_call, "roles");
   const char *damage_names[] = {"target", "inflictor", "attacker", "direction", "point", "amount", "flags", "method"};
   int64_t damage_positions[8];
+  qa_qvm_combat_role_index *damage_role_values = xmalloc(8 * sizeof *damage_role_values);
+  out->base.damage_call.roles = damage_role_values;
+  out->base.damage_call.role_count = 8;
   for (int i = 0; i < 8; i++) {
-    out->damage_roles[i].role = damage_names[i];
-    out->damage_roles[i].index = (double)integer_field(&damage_roles, damage_names[i], 0, 61);
-    damage_positions[i] = (int64_t)out->damage_roles[i].index;
+    damage_role_values[i].role = damage_names[i];
+    damage_role_values[i].index = (double)integer_field(&damage_roles, damage_names[i], 0, 61);
+    damage_positions[i] = (int64_t)damage_role_values[i].index;
   }
   qa_save_reader_destroy(&damage_roles);
   qa_save_reader damage_extras = field(&damage_call, "extras");
-  out->damage_extras = read_extras(&damage_extras, &out->damage_extra_count);
+  out->base.damage_call.extras = read_extras(&damage_extras, &out->base.damage_call.extra_count);
   qa_save_reader_destroy(&damage_extras);
   qa_save_reader state = field(reader, "state");
-  out->state_health_stat = integer_field(&state, "healthStat", 0, 15);
+  out->state.health_stat = (double)integer_field(&state, "healthStat", 0, 15);
   qa_save_reader team = field(&state, "team");
-  out->team_persistent_stat = integer_field(&team, "persistentStat", 0, 15);
+  out->state.team.persistent_stat = (double)integer_field(&team, "persistentStat", 0, 15);
   qa_save_reader team_values = field(&team, "values");
   size_t team_count = qa_save_reader_list_count(&team_values);
-  out->team_values = xmalloc(team_count * sizeof *out->team_values);
-  out->team_value_count = team_count;
+  qa_qvm_combat_team *team_entries = xmalloc(team_count * sizeof *team_entries);
+  out->state.team.values = team_entries;
+  out->state.team.value_count = team_count;
   for (size_t i = 0; i < team_count; i++) {
     qa_save_reader value = item_at(&team_values, i);
-    out->team_values[i].value = integer_field(&value, "value", -2147483648.0, 2147483647.0);
+    team_entries[i].value = (double)integer_field(&value, "value", -2147483648.0, 2147483647.0);
     qa_save_reader team_name = field(&value, "team");
-    out->team_values[i].team = qa_namespaced(&team_name);
+    team_entries[i].team = qa_namespaced(&team_name);
     qa_save_reader_destroy(&team_name);
     qa_save_reader_destroy(&value);
   }
@@ -691,13 +694,13 @@ void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_arti
   qa_save_reader *flag_readers[3];
   qa_save_reader flag_storage[3];
   const char *flag_names[] = {"notarget", "invulnerable", "noKnockback"};
-  int64_t *flag_slots[] = {&out->flag_notarget, &out->flag_invulnerable, &out->flag_no_knockback};
+  double *flag_slots[] = {&out->state.flags.notarget, &out->state.flags.invulnerable, &out->state.flags.no_knockback};
   for (int i = 0; i < 3; i++) {
     flag_storage[i] = field(&flags, flag_names[i]);
     flag_readers[i] = &flag_storage[i];
     int64_t mask = integer(flag_readers[i], 1, 4294967295.0);
     if ((mask & (mask - 1)) != 0) qa_save_reader_fail(flag_readers[i], "expected an individual source flag");
-    *flag_slots[i] = mask;
+    *flag_slots[i] = (double)mask;
     qa_save_reader_destroy(flag_readers[i]);
   }
   qa_save_reader_destroy(&flags);
@@ -707,19 +710,19 @@ void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_arti
   const char *mass_kind_name = qa_save_reader_choice_string(&mass_kind, mass_kinds, 2);
   qa_save_reader_destroy(&mass_kind);
   if (strcmp(mass_kind_name, "constant") == 0) {
-    out->mass_is_constant = true;
+    out->state.mass.is_constant = true;
     qa_save_reader value = field(&mass, "value");
-    out->mass_value = qa_save_reader_finite(&value);
+    out->state.mass.value = qa_save_reader_finite(&value);
     qa_save_reader_destroy(&value);
   } else {
     qa_save_reader offset = field(&mass, "offset");
-    out->mass_offset = aligned(&offset, common.entity_stride, 4);
-    if (out->mass_offset < qa_qvm_shared_entity_bytes(common.abi_profile))
+    out->state.mass.offset = (double)aligned(&offset, common.entity_stride, 4);
+    if (out->state.mass.offset < (double)qa_qvm_shared_entity_bytes(common.abi_profile))
       qa_save_reader_fail(&offset, "private field overlaps the public entity ABI");
     qa_save_reader_destroy(&offset);
     qa_save_reader storage = field(&mass, "storage");
     static const char *const storages[] = {"int32", "float32"};
-    out->mass_storage = qa_save_reader_choice_string(&storage, storages, 2);
+    out->state.mass.storage = qa_save_reader_choice_string(&storage, storages, 2);
     qa_save_reader_destroy(&storage);
   }
   qa_save_reader_destroy(&mass);
@@ -738,118 +741,123 @@ void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_arti
   qa_save_reader_destroy(&damage_flags);
   qa_save_reader fields = field(reader, "fields");
   const char *field_names[] = {"inuse", "health", "takedamage", "parent", "client"};
-  int64_t *field_slots[] = {&out->field_inuse, &out->field_health, &out->field_takedamage,
-                            &out->field_parent, &out->field_client};
+  double *field_slots[] = {&out->base.field_inuse, &out->base.field_health, &out->base.field_takedamage,
+                           &out->base.field_parent, &out->field_client};
   for (int i = 0; i < 5; i++) {
     qa_save_reader at = field(&fields, field_names[i]);
     int64_t offset = aligned(&at, common.entity_stride, 4);
     if (offset < qa_qvm_shared_entity_bytes(common.abi_profile))
       qa_save_reader_fail(&at, "private field overlaps the public entity ABI");
-    *field_slots[i] = offset;
+    *field_slots[i] = (double)offset;
     qa_save_reader_destroy(&at);
   }
   qa_save_reader_destroy(&fields);
   qa_save_reader callbacks = field(reader, "callbacks");
-  out->callback_allocate = entry_field(&callbacks, "allocate", artifact);
-  out->callback_free = entry_field(&callbacks, "free", artifact);
-  out->callback_damage = entry_field(&callbacks, "damage", artifact);
+  out->base.callback_allocate = (double)entry_field(&callbacks, "allocate", artifact);
+  out->base.callback_free = (double)entry_field(&callbacks, "free", artifact);
+  out->base.callback_damage = (double)entry_field(&callbacks, "damage", artifact);
   qa_save_reader_destroy(&callbacks);
   qa_save_reader reactions = field(reader, "reactions");
   const char *reaction_names[] = {"flags", "pain", "die"};
-  int64_t *reaction_slots[] = {&out->reaction_flags, &out->reaction_pain, &out->reaction_die};
+  double *reaction_slots[] = {&out->reactions.flags, &out->reactions.pain, &out->reactions.die};
   for (int i = 0; i < 3; i++) {
     qa_save_reader at = field(&reactions, reaction_names[i]);
     int64_t offset = aligned(&at, common.entity_stride, 4);
     if (offset < qa_qvm_shared_entity_bytes(common.abi_profile))
       qa_save_reader_fail(&at, "private field overlaps the public entity ABI");
-    *reaction_slots[i] = offset;
+    *reaction_slots[i] = (double)offset;
     qa_save_reader_destroy(&at);
   }
   qa_save_reader pain_call = field(&reactions, "painCall");
-  out->pain_call = read_reaction_call(&pain_call);
+  out->reactions.pain_call = read_reaction_call(&pain_call);
   qa_save_reader_destroy(&pain_call);
   qa_save_reader die_call = field(&reactions, "dieCall");
-  out->die_call = read_reaction_call(&die_call);
+  out->reactions.die_call = read_reaction_call(&die_call);
   qa_save_reader_destroy(&die_call);
   qa_save_reader_destroy(&reactions);
-  out->grapple_damage_method = integer_field(reader, "grappleDamageMethod", 0, 9007199254740991.0);
+  out->grapple_damage_method = (double)integer_field(reader, "grappleDamageMethod", 0, 9007199254740991.0);
   qa_save_reader armor = field(reader, "armor");
-  out->armor_check_armor = entry_field(&armor, "checkArmor", artifact);
+  out->armor.check_armor = (double)entry_field(&armor, "checkArmor", artifact);
   qa_save_reader armor_call = field(&armor, "call");
   qa_save_reader armor_roles = field(&armor_call, "roles");
   const char *armor_names[] = {"target", "amount", "flags"};
   int64_t armor_positions[3];
+  qa_qvm_combat_role_index *armor_role_values = xmalloc(3 * sizeof *armor_role_values);
+  out->armor.call.roles = armor_role_values;
+  out->armor.call.role_count = 3;
   for (int i = 0; i < 3; i++) {
-    out->armor_roles[i].role = armor_names[i];
-    out->armor_roles[i].index = (double)integer_field(&armor_roles, armor_names[i], 0, 61);
-    armor_positions[i] = (int64_t)out->armor_roles[i].index;
+    armor_role_values[i].role = armor_names[i];
+    armor_role_values[i].index = (double)integer_field(&armor_roles, armor_names[i], 0, 61);
+    armor_positions[i] = (int64_t)armor_role_values[i].index;
   }
   qa_save_reader_destroy(&armor_roles);
   qa_save_reader armor_extras = field(&armor_call, "extras");
-  out->armor_extras = read_extras(&armor_extras, &out->armor_extra_count);
+  out->armor.call.extras = read_extras(&armor_extras, &out->armor.call.extra_count);
   qa_save_reader_destroy(&armor_extras);
-  out->armor_points_stat = integer_field(&armor, "pointsStat", 0, 15);
+  out->armor.points_stat = (double)integer_field(&armor, "pointsStat", 0, 15);
   qa_save_reader protection = field(&armor, "protection");
-  out->armor_protection = read_fraction(&protection);
+  out->armor.protection = read_fraction(&protection);
   qa_save_reader_destroy(&protection);
   qa_save_reader tiers = field(&armor, "tiers");
   if (!qa_save_reader_is_null(&tiers)) {
-    out->has_tiers = true;
-    out->tier_stat = integer_field(&tiers, "stat", 0, 15);
+    out->armor.has_tiers = true;
+    out->armor.tiers.stat = (double)integer_field(&tiers, "stat", 0, 15);
     qa_save_reader when_any = field(&tiers, "whenAny");
     size_t when_count = qa_save_reader_list_count(&when_any);
-    out->tier_when = xmalloc(when_count * sizeof *out->tier_when);
-    out->tier_when_count = when_count;
+    qa_qvm_armor_tier_test *when_entries = xmalloc(when_count * sizeof *when_entries);
+    out->armor.tiers.when_any = when_entries;
+    out->armor.tiers.when_any_count = when_count;
     for (size_t i = 0; i < when_count; i++) {
       qa_save_reader value = item_at(&when_any, i);
-      out->tier_when[i].offset = aligned_field(&value, "offset", data_bytes, 4);
+      when_entries[i].offset = (double)aligned_field(&value, "offset", data_bytes, 4);
       qa_save_reader comparison = field(&value, "comparison");
       static const char *const comparisons[] = {"equal", "not-equal"};
-      out->tier_when[i].comparison = qa_save_reader_choice_string(&comparison, comparisons, 2);
+      when_entries[i].comparison = qa_save_reader_choice_string(&comparison, comparisons, 2);
       qa_save_reader_destroy(&comparison);
-      out->tier_when[i].value = integer_field(&value, "value", -2147483648.0, 2147483647.0);
+      when_entries[i].value = (double)integer_field(&value, "value", -2147483648.0, 2147483647.0);
       qa_save_reader_destroy(&value);
     }
     qa_save_reader_destroy(&when_any);
     qa_save_reader tier_values = field(&tiers, "values");
     size_t tier_count = qa_save_reader_list_count(&tier_values);
-    out->tier_values = xmalloc(tier_count * sizeof *out->tier_values);
-    out->tier_value_count = tier_count;
+    qa_qvm_armor_tier_value *tier_entries = xmalloc(tier_count * sizeof *tier_entries);
+    out->armor.tiers.values = tier_entries;
+    out->armor.tiers.value_count = tier_count;
     for (size_t i = 0; i < tier_count; i++) {
       qa_save_reader value = item_at(&tier_values, i);
-      out->tier_values[i].tier = integer_field(&value, "tier", -2147483648.0, 2147483647.0);
+      tier_entries[i].tier = (double)integer_field(&value, "tier", -2147483648.0, 2147483647.0);
       qa_save_reader tier_protection = field(&value, "protection");
-      out->tier_values[i].protection = read_fraction(&tier_protection);
+      tier_entries[i].protection = read_fraction(&tier_protection);
       qa_save_reader_destroy(&tier_protection);
       qa_save_reader_destroy(&value);
     }
     qa_save_reader_destroy(&tier_values);
     qa_save_reader fallback = field(&tiers, "fallback");
-    out->tier_fallback = read_fraction(&fallback);
+    out->armor.tiers.fallback = read_fraction(&fallback);
     qa_save_reader_destroy(&fallback);
   }
   const char *error = NULL;
-  if (!validate_combat_call(damage_positions, 8, out->damage_extras, out->damage_extra_count, data_bytes, &error))
+  if (!validate_combat_call(damage_positions, 8, out->base.damage_call.extras, out->base.damage_call.extra_count, data_bytes, &error))
     qa_save_reader_fail(&damage_call, "%s", error);
-  if (!validate_combat_call(armor_positions, 3, out->armor_extras, out->armor_extra_count, data_bytes, &error))
+  if (!validate_combat_call(armor_positions, 3, out->armor.call.extras, out->armor.call.extra_count, data_bytes, &error))
     qa_save_reader_fail(&armor_call, "%s", error);
   qa_save_reader_destroy(&tiers);
   qa_save_reader_destroy(&armor_call);
   qa_save_reader_destroy(&armor);
   qa_save_reader_destroy(&damage_call);
-  if (out->mass_is_constant && out->mass_value < 0) {
+  if (out->state.mass.is_constant && out->state.mass.value < 0) {
     qa_save_reader at = field(reader, "state");
     qa_save_reader at_mass = field(&at, "mass");
     qa_save_reader_fail(&at_mass, "source mass must be nonnegative");
   }
   for (size_t i = 0; i < team_count; i++)
     for (size_t j = i + 1; j < team_count; j++)
-      if (out->team_values[i].value == out->team_values[j].value) {
+      if (out->state.team.values[i].value == out->state.team.values[j].value) {
         qa_save_reader at = field(reader, "state");
         qa_save_reader at_team = field(&at, "team");
         qa_save_reader_fail(&at_team, "source team values must be unique");
       }
-  int64_t state_flags[] = {out->flag_notarget, out->flag_invulnerable, out->flag_no_knockback};
+  double state_flags[] = {out->state.flags.notarget, out->state.flags.invulnerable, out->state.flags.no_knockback};
   for (int i = 0; i < 3; i++)
     for (int j = i + 1; j < 3; j++)
       if (state_flags[i] == state_flags[j]) qa_save_reader_fail(reader, "source combat flags overlap");
@@ -858,13 +866,13 @@ void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_arti
   for (int i = 0; i < 5; i++)
     for (int j = i + 1; j < 5; j++)
       if (damage_flag_values[i] == damage_flag_values[j]) qa_save_reader_fail(reader, "source combat flags overlap");
-  if (out->has_tiers) {
+  if (out->armor.has_tiers) {
     bool repeated_tier = false;
-    for (size_t i = 0; i < out->tier_value_count; i++)
-      for (size_t j = i + 1; j < out->tier_value_count; j++)
-        if (out->tier_values[i].tier == out->tier_values[j].tier) repeated_tier = true;
-    if (out->tier_stat == out->armor_points_stat || out->tier_when_count == 0 ||
-        out->tier_value_count == 0 || repeated_tier) {
+    for (size_t i = 0; i < out->armor.tiers.value_count; i++)
+      for (size_t j = i + 1; j < out->armor.tiers.value_count; j++)
+        if (out->armor.tiers.values[i].tier == out->armor.tiers.values[j].tier) repeated_tier = true;
+    if (out->armor.tiers.stat == out->armor.points_stat || out->armor.tiers.when_any_count == 0 ||
+        out->armor.tiers.value_count == 0 || repeated_tier) {
       qa_save_reader at = field(reader, "armor");
       qa_save_reader at_tiers = field(&at, "tiers");
       qa_save_reader_fail(&at_tiers, "armor tier declaration is empty or ambiguous");
@@ -872,30 +880,32 @@ void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_arti
   }
 }
 
-void qa_qvmy_input_definition_free(qa_qvmy_input_definition *definition) {
-  free(definition->intermission);
+void qa_qvm_input_definition_free(qa_qvm_input_definition *definition) {
+  free((void *)definition->intermission);
   memset(definition, 0, sizeof *definition);
 }
 
-void qa_qvmy_primary_weapon_profile_free(qa_qvmy_primary_weapon_profile *profile) {
-  free(profile->predicates);
-  free(profile->settled);
-  free(profile->selection_values);
-  free(profile->request_accepted);
-  free(profile->availability_excluded);
-  free(profile->equipment_contexts);
-  free(profile->delay_inputs);
-  free(profile->teleport_region_inputs);
-  free(profile->teleport_objectives_inputs);
-  free((void *)profile->dispatcher_actor.pointer.indirections.values);
+void qa_qvm_primary_weapon_profile_free(qa_qvm_primary_weapon_profile *profile) {
+  free((void *)profile->stage.predicates);
+  free((void *)profile->stage.settled);
+  free((void *)profile->stage.selection.values);
+  free((void *)profile->stage.request.accepted);
+  free((void *)profile->availability.excluded);
+  free((void *)profile->equipment_contexts);
+  free((void *)profile->delay.inputs);
+  free((void *)profile->teleport.region.inputs);
+  free((void *)profile->teleport.objectives.inputs);
+  free((void *)profile->stage.dispatcher.actor.pointer.indirections.values);
   memset(profile, 0, sizeof *profile);
 }
 
-void qa_qvmy_primary_combat_profile_free(qa_qvmy_primary_combat_profile *profile) {
-  free(profile->damage_extras);
-  free(profile->team_values);
-  free(profile->armor_extras);
-  free(profile->tier_when);
-  free(profile->tier_values);
+void qa_qvm_primary_combat_profile_free(qa_qvm_primary_combat_profile *profile) {
+  free((void *)profile->base.damage_call.roles);
+  free((void *)profile->base.damage_call.extras);
+  free((void *)profile->state.team.values);
+  free((void *)profile->armor.call.roles);
+  free((void *)profile->armor.call.extras);
+  free((void *)profile->armor.tiers.when_any);
+  free((void *)profile->armor.tiers.values);
   memset(profile, 0, sizeof *profile);
 }

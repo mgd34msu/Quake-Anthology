@@ -1,11 +1,8 @@
-/* Port of src/app/bootstrap/simulation/qvm-mod.ts. The landed
- * resolved-artifact and mod-provider artifact shapes
- * (qa_resolved_qvm_artifact vs qa_qvmy_artifact) are reconciled by
- * the lossless qa_qvm_artifact_bridge (compat/qvm/artifacts.h):
- * with validate/validate_checkpoint NULL, preparation runs
- * qa_qvm_validate_mod / qa_qvm_validate_mod_checkpoint over the
- * bridged view. Provider construction stays caller-supplied.
- * GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/simulation/qvm-mod.ts. Preparation
+ * resolves the landed qa_resolved_qvm_artifact and, with
+ * validate/validate_checkpoint NULL, runs qa_qvm_validate_mod /
+ * qa_qvm_validate_mod_checkpoint over it directly. Provider
+ * construction stays caller-supplied. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_QVM_MOD_H
 #define QA_APP_BOOTSTRAP_SIMULATION_QVM_MOD_H
 #include <stdbool.h>

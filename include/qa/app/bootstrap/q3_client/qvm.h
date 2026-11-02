@@ -44,8 +44,8 @@ typedef struct qa_app_qvm_held_weapon {
 } qa_app_qvm_held_weapon;
 /* TS QvmPresentationArtifacts. */
 typedef struct qa_app_qvm_presentation_artifacts {
-  qa_qvmy_artifact ui;
-  qa_qvmy_artifact cgame;
+  qa_resolved_qvm_artifact ui;
+  qa_resolved_qvm_artifact cgame;
 } qa_app_qvm_presentation_artifacts;
 /* TS session surface read here (Q3PresentationSession mirror). */
 typedef struct qa_app_qvm_session {
@@ -73,11 +73,11 @@ typedef struct qa_app_qvm_client_host {
   bool (*body_suppress)(void *ctx, const qa_qvm_host_call *call);
   /* module(role) artifact resolution when options.artifacts absent:
    * fills the artifact for vm/<role>.qvm (aborts on TS errors). */
-  qa_qvmy_artifact (*load_artifact)(void *ctx, const char *role);
+  qa_resolved_qvm_artifact (*load_artifact)(void *ctx, const char *role);
   /* Equipment/body profile installation; returns whether an
    * equipment profile exists, and installs observers that call
    * the notify callbacks on the client. NULL = no profiles. */
-  bool (*install_profiles)(void *ctx, qa_app_application_qvm_client *client, const qa_qvmy_artifact *cgame);
+  bool (*install_profiles)(void *ctx, qa_app_application_qvm_client *client, const qa_resolved_qvm_artifact *cgame);
   void (*release_profiles)(void *ctx);
   bool (*body_captures_meshes)(void *ctx);
   void (*body_enable)(void *ctx, bool enabled);

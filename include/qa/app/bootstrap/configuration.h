@@ -9,10 +9,14 @@
 #include <stddef.h>
 #include "qa/app/bootstrap/config_scripts.h"
 #include "qa/app/bootstrap/content.h"
+#include "qa/app/bootstrap/image_settings.h"
 #include "qa/app/bootstrap/options.h"
+#include "qa/app/bootstrap/prepared_startup.h"
 #include "qa/app/bootstrap/q3_product.h"
+#include "qa/app/bootstrap/startup_source.h"
 #include "qa/content/catalog/index.h"
 #include "qa/contracts/time.h"
+#include "qa/world/session/session.h"
 /* TS ConfigurationCommandRequest. seat_index -1 mirrors TS null. */
 typedef struct qa_app_configuration_command_request {
   const char *target; /* "application" */
@@ -105,4 +109,46 @@ qa_app_configuration_command_request qa_app_configuration_make_request(const cha
 qa_app_configuration_content *qa_app_open_initial_configuration_content_for_catalog(qa_app_content_host content_host,
     const qa_content_catalog *catalog, qa_app_options *options, const qa_executable_recipe *recipe, bool has_recipe,
     const qa_app_q3_product_host *q3_host);
+/* TS configurationScriptReader: fills a scoped reader over scripts,
+ * the catalog product/base loose roots and the console seat root. */
+void qa_app_configuration_script_reader(const qa_content_catalog *catalog,
+    const qa_app_application_configuration_selection *selection, const qa_app_options *options,
+    qa_app_console_script_files *scripts, qa_app_prepared_scoped_read_fn *out_read, void **out_ctx);
+/* TS prepareInitialConfiguration. The ConsoleScriptFiles owner is
+ * caller-built over the content mounts (config-scripts.ts construction
+ * sites own the mount adapters) and borrowed here. The result owns
+ * the created registries, seat profiles/archives and requests;
+ * release with qa_app_prepared_initial_destroy. EngineSession seats
+ * stay session-owned. */
+typedef struct qa_app_prepare_initial_args {
+  const qa_content_catalog *catalog;
+  qa_app_configuration_content *content;
+  qa_engine_session *session;
+  const qa_identity_owner *identity;
+  const qa_config_store *settings;
+  qa_app_console_script_files *scripts;
+  qa_app_startup_source_host source_host;
+  qa_app_image_settings_host image_host;
+  qa_command_print_fn print; void *print_ctx;
+  const qa_cvar_archive_entry *source_archive; size_t source_archive_count;
+  double default_capacity;
+  void (*next_frame)(void *ctx); void *next_frame_ctx;
+  void (*on_prepared)(void *ctx, qa_app_prepared_startup *prepared); void *on_prepared_ctx;
+} qa_app_prepare_initial_args;
+typedef struct qa_app_prepared_initial qa_app_prepared_initial;
+qa_app_prepared_initial *qa_app_prepare_initial_configuration(qa_app_options *options,
+    const qa_app_prepare_initial_args *args);
+qa_app_prepared_startup *qa_app_prepared_initial_startup(qa_app_prepared_initial *initial);
+/* TS image (NULL mirrors the TS null ApplicationImageSettings). */
+qa_app_image_settings *qa_app_prepared_initial_image(qa_app_prepared_initial *initial);
+/* Resolved options: shallow TS object copy; do not destroy strings. */
+const qa_app_options *qa_app_prepared_initial_options(const qa_app_prepared_initial *initial);
+double qa_app_prepared_initial_max_clients(const qa_app_prepared_initial *initial);
+/* Borrowed request rows (owned by the result). */
+const qa_app_configuration_command_request *qa_app_prepared_initial_requests(
+    const qa_app_prepared_initial *initial, size_t *out_count);
+qa_app_console_script_files *qa_app_prepared_initial_scripts(qa_app_prepared_initial *initial);
+/* TS localSeats map lookup; NULL when the client has no local seat. */
+qa_session_seat *qa_app_prepared_initial_local_seat(qa_app_prepared_initial *initial, qa_client_id client);
+void qa_app_prepared_initial_destroy(qa_app_prepared_initial *initial);
 #endif

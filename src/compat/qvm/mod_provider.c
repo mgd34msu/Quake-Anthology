@@ -118,7 +118,7 @@ static const qa_qvm_mod_actor_record *record_named(
   return NULL;
 }
 static bool abi_eq(const char *a, const char *b) { return text_eq(a, b); }
-static const char *artifact_abi(const qa_qvmy_artifact *artifact) {
+static const char *artifact_abi(const qa_resolved_qvm_artifact *artifact) {
   return artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
 }
 static const char *presentation_runtime(const qa_qvm_mod_callback_declaration *d) {
@@ -128,7 +128,7 @@ static const char *presentation_runtime(const qa_qvm_mod_callback_declaration *d
 
 /* ---- validateQvmMod ---- */
 typedef struct {
-  const qa_qvmy_artifact *artifact;
+  const qa_resolved_qvm_artifact *artifact;
   const qa_qvm_mod_callback_declaration *declaration;
   int64_t source_end;
 } Validate;
@@ -183,9 +183,9 @@ static void check_value(const Validate *v, const qa_qvm_mod_value *value,
       (text_eq(value->kind, "int32") || text_eq(value->kind, "float32")))
     (void)scalar_of(inner->number_value, value->kind);
 }
-static bool is_enter(const qa_qvmy_artifact *artifact, double entry) {
-  if (!is_int(entry) || entry < 0 || entry >= (double)artifact->instruction_count) return false;
-  return artifact->instructions[(size_t)entry].opcode == QA_QVM_OP_ENTER;
+static bool is_enter(const qa_resolved_qvm_artifact *artifact, double entry) {
+  if (!is_int(entry) || entry < 0 || entry >= (double)artifact->image.instruction_count) return false;
+  return artifact->image.instructions[(size_t)entry].opcode == QA_QVM_OP_ENTER;
 }
 static void check_call(const Validate *v, const qa_qvm_mod_source_call *call,
                        const char *const *available, size_t available_count) {
@@ -244,7 +244,7 @@ static void output_field(OutputCtx *c, const void *field_opaque, int64_t length)
 static void out_scalar_check(void *ctx, const void *field) { output_field(ctx, field, 4); }
 static void out_vector_check(void *ctx, const void *field) { output_field(ctx, field, 12); }
 
-void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
+void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
                          const qa_qvm_mod_callback_declaration *declaration) {
   if (!text_eq(artifact->module.digest, declaration->program.digest) ||
       !text_eq(artifact->module.artifact_path, declaration->program.path) ||
@@ -259,7 +259,7 @@ void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
     qa_qvm_entity_tokens_destroy(&tokens);
   }
   Validate v = {artifact, declaration,
-                artifact->data_length + artifact->literal_length + artifact->bss_length};
+                artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length};
   const qa_qvm_mod_clients *clients = declaration->clients;
   /* Canonical shared-store keys. */
   const char **canonical = NULL;
@@ -391,10 +391,10 @@ void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
     int64_t *stores = xrealloc(NULL, (store_count == 0 ? 1 : store_count) * sizeof *stores);
     qa_qvm_actor_store *out = xrealloc(NULL, (store_count == 0 ? 1 : store_count) * sizeof *out);
     for (size_t i = 0; i < store_count; i++) stores[i] = (int64_t)lifecycle->initial_stores.values[i];
-    qa_qvm_actor_bootstrap(stores, store_count, artifact->instructions,
-                           artifact->instruction_count,
-                           (int64_t)artifact->initialized_data_length, artifact->data_length,
-                           artifact->bss_length, declaration->actor_records,
+    qa_qvm_actor_bootstrap(stores, store_count, artifact->image.instructions,
+                           artifact->image.instruction_count,
+                           (int64_t)artifact->image.initialized_length, artifact->image.data_length,
+                           artifact->image.bss_length, declaration->actor_records,
                            declaration->actor_record_count, out);
     free(stores);
     free(out);
@@ -404,10 +404,10 @@ void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
         declaration->entity_record == NULL ? NULL : record_named(declaration, declaration->entity_record);
     if (record == NULL || lifecycle->update != NULL)
       qa_range_error("QVM actor frame requires exclusive original lifecycle ownership");
-    qa_qvm_validate_mod_actor_frame(lifecycle->frame, artifact->instructions,
-                                    artifact->instruction_count,
-                                    (int64_t)artifact->initialized_data_length,
-                                    artifact->bss_length, record, (int64_t)lifecycle->inuse);
+    qa_qvm_validate_mod_actor_frame(lifecycle->frame, artifact->image.instructions,
+                                    artifact->image.instruction_count,
+                                    (int64_t)artifact->image.initialized_length,
+                                    artifact->image.bss_length, record, (int64_t)lifecycle->inuse);
     static const char *const avail[] = {"time", "elapsed"};
     check_call(&v, &lifecycle->frame->call, avail, 2);
   }
@@ -507,9 +507,9 @@ void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
   qa_qvm_validate_mod_actors(artifact, declaration);
   qa_qvm_validate_mod_protection(declaration);
   if (declaration->items != NULL)
-    qa_qvm_validate_mod_items(declaration->items, declaration, artifact->instructions,
-                              artifact->instruction_count,
-                              (int64_t)artifact->initialized_data_length, artifact->bss_length);
+    qa_qvm_validate_mod_items(declaration->items, declaration, artifact->image.instructions,
+                              artifact->image.instruction_count,
+                              (int64_t)artifact->image.initialized_length, artifact->image.bss_length);
   {
     static const char *const avail[] = {"self", "attacker", "inflictor", "amount", "knockback",
                                         "damage-flags", "regular-protection-scale", "point",
@@ -794,7 +794,7 @@ static void host_image(const qa_guest_checkpoint *checkpoint,
   qa_save_reader_destroy(&reader);
 }
 
-void qa_qvm_validate_mod_checkpoint(const qa_qvmy_artifact *artifact,
+void qa_qvm_validate_mod_checkpoint(const qa_resolved_qvm_artifact *artifact,
                                     const qa_qvm_mod_callback_declaration *declaration,
                                     const qa_guest_checkpoint *checkpoint) {
   const qa_module_identity *module = &artifact->module;
@@ -804,7 +804,7 @@ void qa_qvm_validate_mod_checkpoint(const qa_qvmy_artifact *artifact,
       !text_eq(checkpoint->module.digest, module->digest) ||
       !text_eq(checkpoint->module.artifact_path, module->artifact_path) ||
       !text_eq(checkpoint->module.revision, module->revision) ||
-      (int64_t)checkpoint->data.length != artifact->allocated_data_length ||
+      (int64_t)checkpoint->data.length != artifact->image.allocated_data_length ||
       checkpoint->q3_api.kind != api.kind || checkpoint->q3_api.version != api.version ||
       !abi_eq(checkpoint_abi, declaration->abi_profile) ||
       checkpoint->instruction_index != 0 || checkpoint->operand_stack.count != 0 ||
@@ -862,15 +862,6 @@ typedef struct {
   const qa_qvm_mod_actor_field *team;
   const qa_qvm_mod_actor_field *score;
 } MatchCell;
-typedef struct {
-  bool used;
-  qa_protection_reservation reservation;
-} ReservationCell;
-typedef struct {
-  bool used;
-  qa_owned_actor actor;
-  int64_t id;
-} PickupBindingCell;
 typedef struct {
   int64_t sequence;
   bool has_recipient;
@@ -1220,7 +1211,7 @@ static void finish_retired(P *p) {
 static int64_t objective_address_of(P *p, const qa_qvm_mod_objective_address *address);
 static void objective_current(void *ctx) { current(ctx); }
 static int64_t objective_address_of(P *p, const qa_qvm_mod_objective_address *address) {
-  int64_t end = p->artifact->data_length + p->artifact->literal_length + p->artifact->bss_length;
+  int64_t end = p->artifact->image.data_length + p->artifact->image.literal_length + p->artifact->image.bss_length;
   return qa_qvm_resolve_objective_address(mem(p), end, address, objective_current, p);
 }
 static qa_source_match_field match_field_of(const qa_qvm_mod_actor_field *field) {
@@ -2893,10 +2884,10 @@ void qa_qvm_mod_provider_initialize(qa_qvm_mod_provider *p) {
     qa_qvm_actor_store *out = xrealloc(NULL, store_count * sizeof *out);
     for (size_t i = 0; i < store_count; i++)
       stores[i] = (int64_t)p->declaration->source_actors->initial_stores.values[i];
-    qa_qvm_actor_bootstrap(stores, store_count, p->artifact->instructions,
-                           p->artifact->instruction_count,
-                           (int64_t)p->artifact->initialized_data_length, p->artifact->data_length,
-                           p->artifact->bss_length, p->declaration->actor_records,
+    qa_qvm_actor_bootstrap(stores, store_count, p->artifact->image.instructions,
+                           p->artifact->image.instruction_count,
+                           (int64_t)p->artifact->image.initialized_length, p->artifact->image.data_length,
+                           p->artifact->image.bss_length, p->declaration->actor_records,
                            p->declaration->actor_record_count, out);
     for (size_t i = 0; i < store_count; i++) write_word(p, out[i].address, (int32_t)out[i].value);
     free(stores);
@@ -3543,204 +3534,6 @@ static bool actor_frame_owned(void *ctx, int32_t pointer) {
 }
 
 /* Mirrored subsystem services built from ModHostServices. */
-static size_t service_clients(void *ctx, qa_actor_id *out, size_t capacity) {
-  P *p = ctx;
-  size_t count = 0;
-  const qa_mod_client_identity *identities =
-      p->services->clients->clients(p->services->clients->ctx, &count);
-  for (size_t i = 0; i < count && i < capacity; i++) out[i] = identities[i].actor;
-  return count;
-}
-static bool service_for_actor(void *ctx, qa_actor_id actor, qa_client_id *out) {
-  P *p = ctx;
-  return p->services->clients->for_actor(p->services->clients->ctx, actor, out);
-}
-static bool service_actor(void *ctx, qa_client_id client, qa_actor_id *out) {
-  P *p = ctx;
-  return p->services->clients->actor(p->services->clients->ctx, client, out);
-}
-static bool service_resolve_owned(void *ctx, qa_actor_id actor, qa_owned_actor *out) {
-  return resolve_owned(ctx, actor, out);
-}
-static bool service_is_live(void *ctx, qa_actor_id actor) { return is_live(ctx, actor); }
-static qa_source_time service_time(void *ctx) {
-  P *p = ctx;
-  return p->services->time(p->services->ctx);
-}
-static qa_protection_binding protection_binding_of(const qa_protection_binding *binding,
-                                                   qa_protection_channel channel,
-                                                   const qa_item_id **items_out,
-                                                   size_t *item_count_out) {
-  qa_protection_binding result = *binding;
-  result.channel = channel;
-  result.inventory_items = NULL;
-  result.inventory_item_count = 0;
-  *items_out = NULL;
-  *item_count_out = 0;
-  (void)items_out;
-  return result;
-}
-static size_t service_reserve_protection(void *ctx, qa_owned_actor owned,
-                                         qa_protection_channel channel,
-                                         const qa_protection_binding *claim_binding) {
-  P *p = ctx;
-  const qa_item_id *items;
-  size_t item_count;
-  qa_protection_binding binding = protection_binding_of(claim_binding, channel, &items, &item_count);
-  qa_protection_reservation reservation = qa_gameplay_authority_reserve_protection(
-      p->services->combat, owned, channel, binding.claim);
-  ReservationCell *cells = p->reservations;
-  for (size_t i = 0; i < p->reservation_count; i++)
-    if (!cells[i].used) {
-      cells[i].used = true;
-      cells[i].reservation = reservation;
-      return i;
-    }
-  if (p->reservation_count == p->reservation_capacity) {
-    p->reservation_capacity = p->reservation_capacity == 0 ? 8 : p->reservation_capacity * 2;
-    p->reservations = xrealloc(p->reservations, p->reservation_capacity * sizeof(ReservationCell));
-    cells = p->reservations;
-  }
-  size_t id = p->reservation_count++;
-  cells[id].used = true;
-  cells[id].reservation = reservation;
-  return id;
-}
-static void service_bind_reservation(void *ctx, size_t id,
-                                     const qa_protection_binding *binding) {
-  P *p = ctx;
-  ReservationCell *cells = p->reservations;
-  qa_protection_reservation *reservation = &cells[id].reservation;
-  const qa_item_id *items;
-  size_t item_count;
-  qa_protection_binding converted =
-      protection_binding_of(binding, reservation->channel, &items, &item_count);
-  converted.inventory_items = items;
-  converted.inventory_item_count = item_count;
-  (void)reservation->bind(reservation->ctx, converted);
-}
-static void service_close_reservation(void *ctx, size_t id) {
-  P *p = ctx;
-  ReservationCell *cells = p->reservations;
-  cells[id].reservation.close(cells[id].reservation.ctx);
-  cells[id].used = false;
-}
-static size_t service_bind_pickup(void *ctx, qa_owned_actor owned, qa_provider_id owner,
-                                  const qa_original_pickup_rule *rules, size_t rule_count) {
-  P *p = ctx;
-  qa_inventory_pickup_binding binding = {owner, rules, rule_count};
-  int64_t id = qa_shared_inventory_table_bind_pickup(p->services->inventory, owned, binding);
-  PickupBindingCell *cells = p->pickup_bindings;
-  for (size_t i = 0; i < p->pickup_binding_count; i++)
-    if (!cells[i].used) {
-      cells[i].used = true;
-      cells[i].actor = owned;
-      cells[i].id = id;
-      return i;
-    }
-  if (p->pickup_binding_count == p->pickup_binding_capacity) {
-    p->pickup_binding_capacity = p->pickup_binding_capacity == 0 ? 8 : p->pickup_binding_capacity * 2;
-    p->pickup_bindings = xrealloc(p->pickup_bindings, p->pickup_binding_capacity * sizeof(PickupBindingCell));
-    cells = p->pickup_bindings;
-  }
-  size_t index = p->pickup_binding_count++;
-  cells[index].used = true;
-  cells[index].actor = owned;
-  cells[index].id = id;
-  return index;
-}
-static void service_unbind_pickup(void *ctx, size_t id) {
-  P *p = ctx;
-  PickupBindingCell *cells = p->pickup_bindings;
-  qa_shared_inventory_table_unbind_pickup(p->services->inventory, cells[id].actor, cells[id].id);
-  cells[id].used = false;
-}
-static qa_actor_id service_reference_saved(void *ctx, qa_saved_actor_id saved) {
-  return reference_saved(ctx, saved);
-}
-typedef struct {
-  const qa_qvmy_item_lease_binding *binding;
-  qa_inventory_entry *entries;
-  size_t capacity;
-} ItemStateCell;
-static const qa_inventory_entry *item_state_read(void *ctx, size_t *out_count) {
-  ItemStateCell *cell = ctx;
-  size_t count = cell->binding->read(cell->binding->ctx, NULL, 0);
-  if (count > cell->capacity) {
-    cell->entries = xrealloc(cell->entries, count * sizeof *cell->entries);
-    cell->capacity = count;
-  }
-  *out_count = cell->binding->read(cell->binding->ctx, cell->entries, cell->capacity);
-  return cell->entries;
-}
-static bool item_state_entry(void *ctx, qa_item_id item, qa_inventory_entry *out) {
-  ItemStateCell *cell = ctx;
-  return cell->binding->entry(cell->binding->ctx, item, out);
-}
-static void item_state_write(void *ctx, qa_inventory_entry entry) {
-  ItemStateCell *cell = ctx;
-  cell->binding->write(cell->binding->ctx, entry);
-}
-static bool item_state_capacity(void *ctx, qa_item_id item) {
-  ItemStateCell *cell = ctx;
-  return cell->binding->mutable_capacity(cell->binding->ctx, item);
-}
-static qa_source_item_lease service_bind_items(void *ctx, qa_owned_actor owner,
-                                             const qa_qvmy_item_lease_binding *binding) {
-  P *p = ctx;
-  ItemStateCell *cell = xrealloc(NULL, sizeof *cell);
-  memset(cell, 0, sizeof *cell);
-  cell->binding = binding;
-  qa_inventory_item_binding converted;
-  memset(&converted, 0, sizeof converted);
-  converted.owner = binding->owner;
-  converted.items = (const qa_source_item_admission *)binding->items;
-  converted.item_count = binding->item_count;
-  converted.state.ctx = cell;
-  converted.state.read = item_state_read;
-  converted.state.entry = item_state_entry;
-  converted.state.write = item_state_write;
-  converted.state.mutable_capacity = item_state_capacity;
-  converted.invoke_ctx = binding->ctx;
-  converted.invoke = binding->invoke;
-  qa_source_item_lease lease =
-      qa_shared_inventory_table_bind_items(p->services->inventory, owner, converted);
-  qa_source_item_lease result = {lease.ctx, lease.current, lease.stored, lease.close};
-  return result;
-}
-static double service_inventory_count(void *ctx, qa_actor_id actor, qa_item_id item) {
-  return qa_shared_inventory_table_count(((P *)ctx)->services->inventory, actor, item);
-}
-static bool service_has_weapons(void *ctx) { return ((P *)ctx)->services->weapons != NULL; }
-static bool service_weapon_selected(void *ctx, qa_actor_id actor, qa_provider_id provider) {
-  P *p = ctx;
-  return p->services->weapons->selected(p->services->weapons->ctx, actor, provider);
-}
-static bool service_weapon_bind(void *ctx, qa_owned_actor owner, qa_source_weapon_binding binding,
-                                qa_source_weapon_unbind *out) {
-  P *p = ctx;
-  if (p->services->weapons == NULL) return false;
-  *out = p->services->weapons->bind(p->services->weapons->ctx, owner, binding);
-  return true;
-}
-static bool service_body_read(void *ctx, qa_actor_id actor, qa_body_snapshot *out) {
-  P *p = ctx;
-  qa_body_state_result body = qa_shared_body_table_read(p->services->bodies, actor);
-  if (!body.has_value) return false;
-  out->actor = actor;
-  out->body = body.value;
-  return true;
-}
-static bool service_player_view(void *ctx, qa_actor_id actor, qa_mod_client_player_view *out) {
-  P *p = ctx;
-  qa_client_id client;
-  if (p->services->clients == NULL || p->services->clients->player_view == NULL ||
-      !p->services->clients->for_actor(p->services->clients->ctx, actor, &client))
-    return false;
-  *out = p->services->clients->player_view(p->services->clients->ctx, client);
-  return true;
-}
-
 /* ---- host checkpoint encoding ---- */
 static qa_save_value *save_object(void) {
   qa_save_value *value = qa_save_value_object();
@@ -4466,7 +4259,7 @@ static void on_actor_release(void *ctx, qa_owned_actor actor) {
 }
 
 /* ---- constructor ---- */
-bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *artifact,
+bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_artifact *artifact,
                               const qa_qvm_mod_callback_declaration *declaration,
                               qa_mod_host_services *services,
                               qa_qvm_mod_provider_current_fn assert_current,
@@ -4508,7 +4301,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
         has_claim ? outputs_claim : NULL, p, outputs_scalar, outputs_vector, p);
     if (p->client_outputs == NULL) return false;
   }
-  int64_t source_end = artifact->data_length + artifact->literal_length + artifact->bss_length;
+  int64_t source_end = artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length;
   p->scratch_start = (source_end + 15) / 16 * 16;
   p->scratch = p->scratch_start;
   p->cvars = new_cvars(p);
@@ -4563,34 +4356,6 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
     qa_qvm_mod_player_events_init(&p->player_events, &operations);
     p->has_player_events = true;
   }
-  p->protection_services.ctx = p;
-  p->protection_services.has_clients = services->clients != NULL;
-  p->protection_services.clients = service_clients;
-  p->protection_services.for_actor = service_for_actor;
-  p->protection_services.actor = service_actor;
-  p->protection_services.resolve_owned = service_resolve_owned;
-  p->protection_services.is_live = service_is_live;
-  p->protection_services.reserve_protection = service_reserve_protection;
-  p->protection_services.bind_reservation = service_bind_reservation;
-  p->protection_services.close_reservation = service_close_reservation;
-  p->protection_services.time = service_time;
-  p->pickup_services.ctx = p;
-  p->pickup_services.has_clients = services->clients != NULL;
-  p->pickup_services.clients = service_clients;
-  p->pickup_services.resolve_owned = service_resolve_owned;
-  p->pickup_services.is_live = service_is_live;
-  p->pickup_services.bind_pickup = service_bind_pickup;
-  p->pickup_services.unbind_pickup = service_unbind_pickup;
-  p->item_services.ctx = p;
-  p->item_services.resolve_owned = service_resolve_owned;
-  p->item_services.reference_saved = service_reference_saved;
-  p->item_services.bind_items = service_bind_items;
-  p->item_services.inventory_count = service_inventory_count;
-  p->item_services.has_weapons = service_has_weapons;
-  p->item_services.weapon_selected = service_weapon_selected;
-  p->item_services.weapon_bind = service_weapon_bind;
-  p->item_services.body_read = service_body_read;
-  p->item_services.player_view = service_player_view;
   {
     qa_qvm_mod_protection_operations operations = {p, protection_current, protection_eligible,
                                                    protection_pointer, protection_invoke,
@@ -4605,7 +4370,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
     memset(&p->protection_component, 0, sizeof p->protection_component);
     qa_qvm_mod_protection_create(&p->protection_component, p->protection_storage,
                                  p->protection_channels, declaration->protection,
-                                 p->protection_count, mem(p), &p->protection_services,
+                                 p->protection_count, mem(p), services,
                                  artifact->module.id, &operations);
     /* Runtimes borrow the operations pointer; keep an owned copy. */
     qa_qvm_mod_protection_operations *owned_operations =
@@ -4623,7 +4388,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
     operations->observe = pickups_observe;
     operations->invoke = pickups_invoke;
     qa_qvm_mod_pickups_init(&p->pickups, declaration->pickups, declaration->pickup_count,
-                            &p->pickup_services, artifact->module.id, operations);
+                            services, artifact->module.id, operations);
   }
   if (declaration->items != NULL) {
     qa_qvm_mod_item_operations *operations = xrealloc(NULL, sizeof *operations);
@@ -4634,7 +4399,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
     operations->ground = items_ground;
     operations->pickup = items_pickup;
     qa_qvm_mod_items_runtime_init(&p->items, declaration->items, &p->module, artifact,
-                                  &p->item_services, artifact->module.id, content, operations);
+                                  services, artifact->module.id, content, operations);
     p->has_items = true;
   }
   if ((declaration->source_actors != NULL && declaration->source_actors->callbacks != NULL) ||
@@ -4703,8 +4468,8 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_qvmy_artifact *ar
   }
   if (declaration->source_actors != NULL && declaration->source_actors->frame != NULL) {
     qa_qvm_mod_actor_frame_runtime_init(&p->actor_frame, declaration->source_actors->frame,
-                                        &p->module, artifact->instructions,
-                                        artifact->instruction_count, actor_frame_owned, p);
+                                        &p->module, artifact->image.instructions,
+                                        artifact->image.instruction_count, actor_frame_owned, p);
     p->has_actor_frame = true;
   }
   remember_defaults(p);

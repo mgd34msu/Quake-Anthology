@@ -61,8 +61,8 @@ static qa_qvm_instruction instructions[] = {
     {.opcode = QA_QVM_OP_ENTER, .operand_width = 4, .operand = 0},
 };
 
-static qa_qvmy_artifact make_artifact(void) {
-  qa_qvmy_artifact artifact;
+static qa_resolved_qvm_artifact make_artifact(void) {
+  qa_resolved_qvm_artifact artifact;
   memset(&artifact, 0, sizeof artifact);
   artifact.module.id = "q3:test:game";
   artifact.module.artifact_path = "vm/qagame.qvm";
@@ -71,12 +71,12 @@ static qa_qvmy_artifact make_artifact(void) {
   artifact.role = "qagame";
   artifact.has_abi_profile = true;
   artifact.abi_profile = "q3-modern";
-  artifact.instructions = instructions;
-  artifact.instruction_count = 3;
-  artifact.data_length = 4096;
-  artifact.literal_length = 0;
-  artifact.bss_length = 4096;
-  artifact.allocated_data_length = 8192;
+  artifact.image.instructions = instructions;
+  artifact.image.instruction_count = 3;
+  artifact.image.data_length = 4096;
+  artifact.image.literal_length = 0;
+  artifact.image.bss_length = 4096;
+  artifact.image.allocated_data_length = 8192;
   return artifact;
 }
 
@@ -114,7 +114,7 @@ static qa_qvm_mod_callback_declaration make_declaration(void) {
 }
 
 static void test_validate_basics(void) {
-  qa_qvmy_artifact artifact = make_artifact();
+  qa_resolved_qvm_artifact artifact = make_artifact();
   qa_qvm_mod_callback_declaration declaration = make_declaration();
   qa_qvm_validate_mod(&artifact, &declaration);
 
@@ -209,7 +209,7 @@ static qa_save_value *host_tree(void) {
   return root;
 }
 
-static qa_guest_checkpoint make_checkpoint(const qa_qvmy_artifact *artifact,
+static qa_guest_checkpoint make_checkpoint(const qa_resolved_qvm_artifact *artifact,
                                            uint8_t **out_bytes, size_t *out_length,
                                            uint8_t *data) {
   qa_save_value *tree = host_tree();
@@ -221,8 +221,8 @@ static qa_guest_checkpoint make_checkpoint(const qa_qvmy_artifact *artifact,
   checkpoint.module = artifact->module;
   checkpoint.q3_api = qa_qvm_api("qagame", "q3-modern");
   checkpoint.data.bytes = data;
-  checkpoint.data.length = (size_t)artifact->allocated_data_length;
-  checkpoint.program_stack = (double)artifact->allocated_data_length;
+  checkpoint.data.length = (size_t)artifact->image.allocated_data_length;
+  checkpoint.program_stack = (double)artifact->image.allocated_data_length;
   checkpoint.host_state.module = artifact->module;
   checkpoint.host_state.format = "qvm:mod-host-v1";
   checkpoint.host_state.bytes.bytes = *out_bytes;
@@ -231,7 +231,7 @@ static qa_guest_checkpoint make_checkpoint(const qa_qvmy_artifact *artifact,
 }
 
 static void test_validate_checkpoint(void) {
-  qa_qvmy_artifact artifact = make_artifact();
+  qa_resolved_qvm_artifact artifact = make_artifact();
   qa_qvm_mod_callback_declaration declaration = make_declaration();
   uint8_t *data = calloc(1, 8192);
   uint8_t *bytes = NULL;

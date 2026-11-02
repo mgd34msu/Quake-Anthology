@@ -8,9 +8,9 @@
  *  - Async entry points are synchronous (docs/PORTING.md); the
  *    deferred-UI-validation constructor token becomes init_deferred.
  *  - Hook/observer/resolver removals are id + unbind functions.
- * Mirrored types (parallel slice): qa_qvmy_artifact mirrors
- * ResolvedQvmArtifact bytecode + QvmImage extents (TS owners
- * src/compat/qvm/artifacts.ts, image.ts); qa_qvmy_interpreter_runtime
+ * Mirrored types (parallel slice): the artifact is the landed
+ * qa_resolved_qvm_artifact (TS owners src/compat/qvm/artifacts.ts,
+ * image.ts; artifacts.h); qa_qvmy_interpreter_runtime
  * and qa_qvmy_function_call mirror QvmInterpreter/QvmFunctionCall and
  * friends (TS owner src/compat/qvm/interpreter.ts);
  * The allocation profile is the landed qa_qvm_allocation_profile
@@ -25,6 +25,7 @@
 #include <stdint.h>
 
 #include "qa/compat/qvm/allocation.h"
+#include "qa/compat/qvm/artifacts.h"
 #include "qa/compat/qvm/regions.h"
 #include "qa/compat/qvm/registry.h"
 #include "qa/compat/qvm/syscalls.h"
@@ -35,21 +36,8 @@ extern const qa_numeric_profile qa_qvm_numeric_profile;
 
 qa_q3_api_identity qa_qvm_api(qa_qvm_role role, qa_qvm_abi_profile profile);
 
-/* Mirrored resolved bytecode artifact + image extents. */
-typedef struct qa_qvmy_artifact {
-  qa_module_identity module;
-  qa_qvm_role role;
-  bool has_abi_profile;
-  qa_qvm_abi_profile abi_profile;
-  const qa_qvm_instruction *instructions;
-  size_t instruction_count;
-  const uint8_t *initialized_data;
-  size_t initialized_data_length;
-  int64_t data_length;
-  int64_t literal_length;
-  int64_t bss_length;
-  int64_t allocated_data_length;
-} qa_qvmy_artifact;
+/* TS ResolvedQvmArtifact is the landed qa_resolved_qvm_artifact
+ * (artifacts.h); image extents ride its owned qa_qvm_image. */
 
 /* TS QvmEvaluationStack / QvmReadOnlyEvaluation are the landed
  * qa_qvm_evaluation_stack / qa_qvm_read_only_evaluation
@@ -147,7 +135,7 @@ typedef struct qa_qvm_host_state {
 
 /* TS QvmModuleOptions plus the caller-supplied runtime (see header). */
 typedef struct qa_qvm_module_options {
-  const qa_qvmy_artifact *artifact;
+  const qa_resolved_qvm_artifact *artifact;
   qa_qvm_host_fn host;
   void *host_ctx;
   const qa_qvm_allocation_profile *allocation; /* TS QvmAllocationProfile */

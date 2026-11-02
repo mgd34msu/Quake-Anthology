@@ -6,6 +6,16 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/world/actors/registry.h"
+#include "qa/world/gameplay/inventory.h"
+
+/* ModHostServices.clients.clients() projected to actor ids. */
+static size_t client_actors(qa_mod_host_services *services, qa_actor_id *out, size_t capacity) {
+  size_t count = 0;
+  const qa_mod_client_identity *identities = services->clients->clients(services->clients->ctx, &count);
+  for (size_t i = 0; i < count && i < capacity; i++) out[i] = identities[i].actor;
+  return count;
+}
 
 void qa_qvm_validate_mod_pickups(const qa_qvm_mod_callback_declaration *declaration) {
   for (size_t r = 0; r < declaration->pickup_count; r++) {
@@ -132,7 +142,9 @@ typedef struct entry {
   qa_actor_id actor;
   qa_original_pickup_rule *rules; /* owned, definition_count */
   bool has_delegate;
-  size_t delegate_id;
+  bool has_binding;
+  qa_owned_actor owned;
+  int64_t delegate_id;
 } entry;
 
 typedef struct take_job {
@@ -162,6 +174,7 @@ static entry *actor_entry(qa_qvm_mod_pickups *pickups, qa_actor_id actor) {
   entry *created = &((entry *)pickups->entries)[pickups->entry_count++];
   created->actor = actor;
   created->has_delegate = false;
+  created->has_binding = false;
   created->delegate_id = 0;
   created->rules = malloc((pickups->definition_count == 0 ? 1 : pickups->definition_count) * sizeof *created->rules);
   if (created->rules == NULL) qa_range_error("QVM memory allocation failed");
@@ -196,9 +209,9 @@ static bool take_current(qa_qvm_mod_pickups *pickups, qa_actor_id actor,
                          const qa_original_pickup_offer *offer,
                          const qa_original_pickup_execution *observer) {
   return observer->current(observer->current_ctx) && pickups->active &&
-         pickups->services->is_live(pickups->services->ctx, actor) &&
+         qa_session_actor_registry_is_live(pickups->services->actors, actor) &&
          pickups->operations->eligible(pickups->operations->ctx, actor) &&
-         pickups->services->is_live(pickups->services->ctx, offer->pickup);
+         qa_session_actor_registry_is_live(pickups->services->actors, offer->pickup);
 }
 
 static qa_original_pickup_decision run_observe(void *ctx) {
@@ -263,7 +276,7 @@ static qa_original_pickup_decision take_rule(void *ctx, qa_original_pickup_offer
 }
 
 void qa_qvm_mod_pickups_init(qa_qvm_mod_pickups *pickups, const qa_qvm_mod_pickup *definitions,
-                             size_t definition_count, const qa_qvmy_pickup_services *services,
+                             size_t definition_count, qa_mod_host_services *services,
                              qa_provider_id owner, const qa_qvm_mod_pickup_operations *operations) {
   memset(pickups, 0, sizeof *pickups);
   pickups->definitions = definitions;
@@ -307,15 +320,15 @@ size_t qa_qvm_mod_pickups_protection(qa_qvm_mod_pickups *pickups, qa_actor_id ac
 void qa_qvm_mod_pickups_activate(qa_qvm_mod_pickups *pickups) {
   pickups->operations->current(pickups->operations->ctx);
   pickups->active = true;
-  if (!pickups->services->has_clients) return;
+  if (pickups->services->clients == NULL) return;
   size_t capacity = 64;
   qa_actor_id *clients = malloc(capacity * sizeof *clients);
   if (clients == NULL) qa_range_error("QVM memory allocation failed");
-  size_t count = pickups->services->clients(pickups->services->ctx, clients, capacity);
+  size_t count = client_actors(pickups->services, clients, capacity);
   if (count > capacity) {
     clients = realloc(clients, count * sizeof *clients);
     if (clients == NULL) qa_range_error("QVM memory allocation failed");
-    count = pickups->services->clients(pickups->services->ctx, clients, count);
+    count = client_actors(pickups->services, clients, count);
   }
   for (size_t i = 0; i < count; i++) qa_qvm_mod_pickups_bind_actor(pickups, clients[i]);
   free(clients);
@@ -327,7 +340,7 @@ void qa_qvm_mod_pickups_bind_actor(qa_qvm_mod_pickups *pickups, qa_actor_id acto
       (existing != NULL && existing->has_delegate))
     return;
   qa_owned_actor owned;
-  if (!pickups->services->resolve_owned(pickups->services->ctx, actor, &owned))
+  if (!qa_session_actor_registry_resolve_owned(pickups->services->actors, actor, &owned))
     qa_range_error("QVM pickup recipient is retired");
   entry *created = actor_entry(pickups, actor);
   qa_original_pickup_rule *flat = malloc(
@@ -341,8 +354,10 @@ void qa_qvm_mod_pickups_bind_actor(qa_qvm_mod_pickups *pickups, qa_actor_id acto
     if (inventory) flat[count++] = created->rules[i];
   }
   if (count != 0) {
-    created->delegate_id = pickups->services->bind_pickup(pickups->services->ctx, owned,
-                                                          pickups->owner, flat, count);
+    qa_inventory_pickup_binding binding = {pickups->owner, flat, count};
+    created->delegate_id = qa_shared_inventory_table_bind_pickup(pickups->services->inventory, owned, binding);
+    created->owned = owned;
+    created->has_binding = true;
     created->has_delegate = true;
     free(flat);
   } else {
@@ -361,13 +376,14 @@ void qa_qvm_mod_pickups_release(qa_qvm_mod_pickups *pickups, qa_actor_id actor) 
   entry *entries = pickups->entries;
   for (size_t i = 0; i < pickups->entry_count; i++) {
     if (!qa_same_actor(entries[i].actor, actor)) continue;
-    bool has_delegate = entries[i].has_delegate && entries[i].delegate_id != 0;
-    size_t delegate_id = entries[i].delegate_id;
+    bool has_binding = entries[i].has_binding;
+    qa_owned_actor owned = entries[i].owned;
+    int64_t delegate_id = entries[i].delegate_id;
     for (size_t r = 0; r < pickups->definition_count; r++) free(entries[i].rules[r].ctx);
     free(entries[i].rules);
     memmove(&entries[i], &entries[i + 1], (pickups->entry_count - i - 1) * sizeof *entries);
     pickups->entry_count--;
-    if (has_delegate) pickups->services->unbind_pickup(pickups->services->ctx, delegate_id);
+    if (has_binding) qa_shared_inventory_table_unbind_pickup(pickups->services->inventory, owned, delegate_id);
     return;
   }
 }

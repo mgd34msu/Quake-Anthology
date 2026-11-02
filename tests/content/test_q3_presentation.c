@@ -201,7 +201,7 @@ static void test_model_access(void) {
 }
 
 static void test_cgame_body_profile(void) {
-  qa_qvmy_artifact artifact;
+  qa_resolved_qvm_artifact artifact;
   memset(&artifact, 0, sizeof artifact);
   artifact.role = "game";
   artifact.module.artifact_path = "vm/cgame.qvm";

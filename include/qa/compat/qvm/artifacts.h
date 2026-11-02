@@ -1,17 +1,11 @@
 /*
  * Port of src/compat/qvm/artifacts.ts. QvmRole/QvmHost are the
  * landed qa_qvm_role / qa_qvm_host_fn (syscalls.h).
- * Artifact bridge: TS has ONE ResolvedQvmArtifact; the C compat
- * slices split it into qa_resolved_qvm_artifact (owner: this file,
- * holds the owned qa_qvm_image) and qa_qvmy_artifact (module.h:
- * the same bytecode artifact flattened to borrowed image extents).
- * qa_qvm_artifact_bridge is the lossless bytecode view of the
- * former in the latter shape: every extent field maps 1:1 and
- * instructions are the shared qa_qvm_instruction type, data
- * borrows the resolved image, and the copied instruction array
- * is bridge-owned.
- * The "typescript" kind has no image and cannot bridge (TS
- * qvm-mod.ts rejects it before validateQvmMod).
+ * TS has ONE ResolvedQvmArtifact: qa_resolved_qvm_artifact
+ * (owner: this file, holds the owned qa_qvm_image). All compat
+ * consumers take it directly; image extents ride ->image.
+ * The "typescript" kind has no image (TS qvm-mod.ts rejects it
+ * before validateQvmMod).
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_ARTIFACTS_H
@@ -23,7 +17,6 @@
 
 #include "qa/compat/qvm/image.h"
 #include "qa/compat/qvm/interpreter.h"
-#include "qa/compat/qvm/module.h"
 #include "qa/compat/qvm/syscalls.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/execution.h"
@@ -82,17 +75,5 @@ typedef struct qa_qvm_resolve_artifact_options {
 bool qa_qvm_resolve_artifact(qa_qvm_resolve_artifact_options options,
                              qa_resolved_qvm_artifact *out);
 void qa_resolved_qvm_artifact_destroy(qa_resolved_qvm_artifact *artifact);
-
-/* Lossless bytecode bridge (see header note). The view borrows the
- * resolved artifact's image data; keep the resolved artifact alive
- * while the bridge is in use. */
-typedef struct qa_qvm_artifact_bridge {
-  qa_qvm_instruction *instructions; /* owned conversion */
-  qa_qvmy_artifact view;
-} qa_qvm_artifact_bridge;
-/* False for the typescript kind or on OOM. */
-bool qa_qvm_artifact_bridge_init(qa_qvm_artifact_bridge *bridge,
-                                 const qa_resolved_qvm_artifact *artifact);
-void qa_qvm_artifact_bridge_destroy(qa_qvm_artifact_bridge *bridge);
 
 #endif

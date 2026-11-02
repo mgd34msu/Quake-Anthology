@@ -13,6 +13,8 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
+#include "qa/world/actors/registry.h"
+#include "qa/world/gameplay/inventory.h"
 
 #define QVM_MAX_PRIVATE_ARGUMENT_WORDS 62
 
@@ -227,7 +229,7 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
 
 /* Mirrored item-storage access (TS item-storage.ts). */
 static int32_t capacity_constant(const qa_qvm_mod_items_runtime *items, double instruction) {
-  const qa_qvm_instruction *value = insn(items->image->instructions, items->image->instruction_count,
+  const qa_qvm_instruction *value = insn(items->image->image.instructions, items->image->image.instruction_count,
                                                  (int64_t)instruction);
   if (value == NULL || value->opcode != QA_QVMY_OP_CONST || value->operand < 0)
     qa_range_error("QVM item capacity is not its declared original constant");
@@ -357,7 +359,7 @@ static item_entry *find_entry(qa_qvm_mod_items_runtime *items, qa_actor_id actor
 static bool entry_current(qa_qvm_mod_items_runtime *items, item_entry *entry) {
   if (find_entry(items, entry->actor.id) != entry) return false;
   qa_owned_actor resolved;
-  if (!items->services->resolve_owned(items->services->ctx, entry->actor.id, &resolved)) return false;
+  if (!qa_session_actor_registry_resolve_owned(items->services->actors, entry->actor.id, &resolved)) return false;
   /* TS resolveOwned(...) !== entry.actor is object identity; the landed
    * qa_owned_actor identity is id + token + owner (qa_q1b_owned_equal). */
   if (!qa_same_actor(resolved.id, entry->actor.id) || resolved.token != entry->actor.token ||
@@ -410,7 +412,15 @@ static void write_storage(qa_qvm_mod_items_runtime *items, qa_actor_id actor, qa
 typedef struct lease_state {
   qa_qvm_mod_items_runtime *items;
   qa_actor_id actor;
+  qa_inventory_entry *entries; /* owned read() scratch */
+  size_t entry_capacity;
 } lease_state;
+
+static void lease_state_free(lease_state *state) {
+  if (state == NULL) return;
+  free(state->entries);
+  free(state);
+}
 
 static void lease_invoke(void *ctx, qa_item_id item, qa_source_item_action action) {
   lease_state *state = ctx;
@@ -426,18 +436,23 @@ static void lease_invoke(void *ctx, qa_item_id item, qa_source_item_action actio
   (void)state->items->operations->invoke(state->items->operations->ctx, state->actor, call);
 }
 
-static size_t lease_read(void *ctx, qa_inventory_entry *out, size_t capacity) {
+static const qa_inventory_entry *lease_read(void *ctx, size_t *out_count) {
   lease_state *state = ctx;
   size_t count = 0;
   for (size_t i = 0; i < state->items->definition->storage_count; i++) {
     qa_inventory_entry buffer[64];
     size_t read = read_storage(state->items, state->actor, &state->items->definition->storage[i], NULL, buffer);
-    for (size_t j = 0; j < read; j++) {
-      if (count < capacity) out[count] = buffer[j];
-      count++;
+    if (count + read > state->entry_capacity) {
+      size_t capacity = state->entry_capacity == 0 ? 64 : state->entry_capacity;
+      while (capacity < count + read) capacity *= 2;
+      state->entries = realloc(state->entries, capacity * sizeof *state->entries);
+      if (state->entries == NULL) qa_range_error("QVM memory allocation failed");
+      state->entry_capacity = capacity;
     }
+    for (size_t j = 0; j < read; j++) state->entries[count++] = buffer[j];
   }
-  return count;
+  *out_count = count;
+  return state->entries;
 }
 
 static bool lease_entry(void *ctx, qa_item_id item, qa_inventory_entry *out) {
@@ -600,7 +615,7 @@ static bool binding_accepts(qa_qvm_mod_items_runtime *items, item_entry *entry, 
   bool found = false;
   (void)selection_value(items, item, &found);
   return entry_current(items, entry) && found &&
-         items->services->inventory_count(items->services->ctx, entry->actor.id, item) > 0;
+         qa_shared_inventory_table_count(items->services->inventory, entry->actor.id, item) > 0;
 }
 
 static qa_source_weapon_request binding_request(qa_qvm_mod_items_runtime *items, item_entry *entry, qa_item_id item) {
@@ -720,7 +735,7 @@ static bool weapon_live(void *ctx, qa_actor_id actor) {
 }
 static bool weapon_selected(void *ctx, qa_actor_id actor) {
   qa_qvm_mod_items_runtime *items = ((weapon_operations_state *)ctx)->items;
-  return items->services->weapon_selected(items->services->ctx, actor, items->provider);
+  return items->services->weapons->selected(items->services->weapons->ctx, actor, items->provider);
 }
 static int32_t weapon_invoke(void *ctx, qa_actor_id actor, const qa_qvm_mod_source_call *call) {
   qa_qvm_mod_items_runtime *items = ((weapon_operations_state *)ctx)->items;
@@ -760,8 +775,17 @@ static qa_qvm_posture weapon_posture(void *ctx, qa_actor_id actor) {
   qa_qvm_mod_items_runtime *items = ((weapon_operations_state *)ctx)->items;
   qa_body_snapshot body;
   qa_mod_client_player_view view;
-  if (!items->services->body_read(items->services->ctx, actor, &body) ||
-      !items->services->player_view(items->services->ctx, actor, &view))
+  qa_body_state_result read = qa_shared_body_table_read(items->services->bodies, actor);
+  qa_client_id client;
+  bool has_view = read.has_value && items->services->clients != NULL &&
+                  items->services->clients->player_view != NULL &&
+                  items->services->clients->for_actor(items->services->clients->ctx, actor, &client);
+  if (has_view) {
+    body.actor = actor;
+    body.body = read.value;
+    view = items->services->clients->player_view(items->services->clients->ctx, client);
+  }
+  if (!has_view)
     qa_range_error("QVM weapon input requires the actual authoritative posture");
   qa_qvm_posture result = {body.body.bounds, (int32_t)view.view_offset.z,
                            items->operations->ground(items->operations->ctx, actor)};
@@ -769,8 +793,8 @@ static qa_qvm_posture weapon_posture(void *ctx, qa_actor_id actor) {
 }
 
 void qa_qvm_mod_items_runtime_init(qa_qvm_mod_items_runtime *items, const qa_qvm_mod_items *definition,
-                                   qa_qvm_module *module, const qa_qvmy_artifact *image,
-                                   const qa_qvmy_item_services *services, qa_provider_id provider,
+                                   qa_qvm_module *module, const qa_resolved_qvm_artifact *image,
+                                   qa_mod_host_services *services, qa_provider_id provider,
                                    qa_content_id content, const qa_qvm_mod_item_operations *operations) {
   memset(items, 0, sizeof *items);
   items->definition = definition;
@@ -840,7 +864,7 @@ void qa_qvm_mod_items_runtime_destroy(qa_qvm_mod_items_runtime *items) {
     observe_state *observe = entries[i]->observe_state;
     if (observe != NULL) free(observe->pending);
     free(observe);
-    free(entries[i]->lease_state);
+    lease_state_free(entries[i]->lease_state);
     free(entries[i]);
   }
   free(items->entries);
@@ -862,7 +886,7 @@ void qa_qvm_mod_items_runtime_destroy(qa_qvm_mod_items_runtime *items) {
 void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) {
   if (find_entry(items, actor) != NULL) return;
   qa_owned_actor owner;
-  if (!items->services->resolve_owned(items->services->ctx, actor, &owner) ||
+  if (!qa_session_actor_registry_resolve_owned(items->services->actors, actor, &owner) ||
       !items->operations->live(items->operations->ctx, actor))
     qa_range_error("QVM source items require the current admitted client");
   item_entry *entry = xmalloc(sizeof *entry);
@@ -897,18 +921,19 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
   lease->items = items;
   lease->actor = actor;
   entry->lease_state = lease;
-  qa_qvmy_item_lease_binding binding;
+  qa_inventory_item_binding binding;
   memset(&binding, 0, sizeof binding);
   binding.owner = items->provider;
   binding.items = items->admissions;
   binding.item_count = items->admission_count;
-  binding.ctx = lease;
+  binding.state.ctx = lease;
+  binding.state.read = lease_read;
+  binding.state.entry = lease_entry;
+  binding.state.write = lease_write;
+  binding.state.mutable_capacity = lease_mutable_capacity;
+  binding.invoke_ctx = lease;
   binding.invoke = lease_invoke;
-  binding.read = lease_read;
-  binding.entry = lease_entry;
-  binding.write = lease_write;
-  binding.mutable_capacity = lease_mutable_capacity;
-  entry->lease = items->services->bind_items(items->services->ctx, owner, &binding);
+  entry->lease = qa_shared_inventory_table_bind_items(items->services->inventory, owner, binding);
   size_t range_capacity = 0;
   for (size_t s = 0; s < items->definition->storage_count; s++) {
     const qa_qvm_item_storage *storage = &items->definition->storage[s];
@@ -948,11 +973,11 @@ void qa_qvm_mod_items_admit(qa_qvm_mod_items_runtime *items, qa_actor_id actor) 
   entry_stack(items)[items->entry_count++] = entry;
   if (items->weapons != NULL) {
     qa_source_weapon_unbind remove;
-    if (!items->services->has_weapons(items->services->ctx) ||
-        !items->services->weapon_bind(items->services->ctx, owner, make_binding(items, entry), &remove)) {
+    if (items->services->weapons == NULL) {
       qa_qvm_mod_items_release(items, actor);
       qa_range_error("QVM source weapon service is unavailable");
     }
+    remove = items->services->weapons->bind(items->services->weapons->ctx, owner, make_binding(items, entry));
     entry->has_remove_weapon = true;
     entry->remove_weapon = remove;
   }
@@ -1084,7 +1109,9 @@ void qa_qvm_mod_items_restore(qa_qvm_mod_items_runtime *items, const qa_save_val
     qa_save_reader actor_reader = rfield(&row, "actor");
     qa_saved_actor_id saved = qa_read_saved_actor(&actor_reader);
     qa_save_reader_destroy(&actor_reader);
-    qa_actor_id actor = items->services->reference_saved(items->services->ctx, saved);
+    qa_actor_id actor = items->services->reference_saved != NULL
+        ? items->services->reference_saved(items->services->ctx, saved)
+        : qa_session_actor_registry_reference_saved(items->services->actors, saved, "current");
     qa_save_reader id_reader = rfield(&row, "id");
     int64_t id = (int64_t)qa_save_reader_integer_min(&id_reader, 1);
     qa_save_reader_destroy(&id_reader);
@@ -1148,7 +1175,7 @@ void qa_qvm_mod_items_release(qa_qvm_mod_items_runtime *items, qa_actor_id actor
       free(observe);
       removed->observe_state = NULL;
     }
-    free(removed->lease_state);
+    lease_state_free(removed->lease_state);
     removed->lease_state = NULL;
     /* Keep the entry and its request allocated until destroy: weapon
      * capabilities captured them and compare identity after release

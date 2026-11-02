@@ -2,9 +2,10 @@
  * Port of src/compat/qvm/mod-protection.ts. The TS class name
  * collides with the landed contract type qa_qvm_mod_protection (the
  * definition), so the runtime class is qa_qvm_mod_protection_runtime.
- * Mirrored surface (TS owner src/world/session/mods.ts):
- * qa_qvmy_protection_services carries the clients/actors/combat
- * members used; reservations are fn + ctx bundles. Bind payloads
+ * Services are the landed qa_mod_host_services (TS owner
+ * src/world/session/mods.ts; mods.h): this module calls its
+ * clients/actors/combat members directly; reservations are the
+ * landed qa_protection_reservation fn + ctx bundles. Bind payloads
  * are the landed qa_protection_binding (TS owner
  * src/world/gameplay/authority.ts, authority.h). create() fills a
  * shared component of channels.
@@ -24,6 +25,7 @@
 #include "qa/contracts/qvm_mod_callbacks.h"
 #include "qa/contracts/time.h"
 #include "qa/world/gameplay/authority.h"
+#include "qa/world/session/mods.h"
 
 void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *declaration);
 
@@ -39,21 +41,6 @@ typedef qa_armor_stage_result (*qa_qvm_protection_absorb_fn)(void *ctx, qa_armor
 typedef qa_armor_stage_result (*qa_qvm_protection_execute_fn)(void *ctx);
 
 /* Bind payloads are qa_protection_binding (authority.h). */
-
-typedef struct qa_qvmy_protection_services {
-  void *ctx;
-  bool has_clients;
-  size_t (*clients)(void *ctx, qa_actor_id *out, size_t capacity);
-  bool (*for_actor)(void *ctx, qa_actor_id actor, qa_client_id *out);
-  bool (*actor)(void *ctx, qa_client_id client, qa_actor_id *out);
-  bool (*resolve_owned)(void *ctx, qa_actor_id actor, qa_owned_actor *out);
-  bool (*is_live)(void *ctx, qa_actor_id actor);
-  size_t (*reserve_protection)(void *ctx, qa_owned_actor owned, qa_protection_channel channel,
-                               const qa_protection_binding *claim);
-  void (*bind_reservation)(void *ctx, size_t reservation, const qa_protection_binding *binding);
-  void (*close_reservation)(void *ctx, size_t reservation);
-  qa_source_time (*time)(void *ctx);
-} qa_qvmy_protection_services;
 
 typedef struct qa_qvm_mod_protection_operations {
   void *ctx;
@@ -79,7 +66,7 @@ typedef struct qa_qvm_mod_protection_component {
 struct qa_qvm_mod_protection_runtime {
   const qa_qvm_mod_protection *definition;
   qa_qvm_memory *memory;
-  const qa_qvmy_protection_services *services;
+  qa_mod_host_services *services;
   qa_provider_id owner;
   const qa_qvm_mod_protection_operations *operations;
   qa_qvm_mod_protection_component *component;
@@ -94,7 +81,7 @@ void qa_qvm_mod_protection_create(qa_qvm_mod_protection_component *component,
                                   qa_qvm_mod_protection_runtime *storage,
                                   qa_qvm_mod_protection_runtime **channels,
                                   const qa_qvm_mod_protection *definitions, size_t definition_count,
-                                  qa_qvm_memory *memory, const qa_qvmy_protection_services *services,
+                                  qa_qvm_memory *memory, qa_mod_host_services *services,
                                   qa_provider_id owner, const qa_qvm_mod_protection_operations *operations);
 void qa_qvm_mod_protection_component_destroy(qa_qvm_mod_protection_component *component);
 void qa_qvm_mod_protection_runtime_destroy(qa_qvm_mod_protection_runtime *protection);

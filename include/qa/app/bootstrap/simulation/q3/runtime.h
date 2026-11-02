@@ -8,7 +8,9 @@
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_RUNTIME_H
 #include "qa/app/bootstrap/simulation/q3/presentation.h"
 #include "qa/app/bootstrap/simulation/q3/types.h"
+#include "qa/content/q3/base/game/item_lifecycle.h"
 #include "qa/content/q3/base/game/state.h"
+#include "qa/content/q3/team_arena/commands.h"
 #include "qa/contracts/time.h"
 #include "qa/persistence/value.h"
 
@@ -163,4 +165,87 @@ void qa_app_q3_source_runtime_player_weapon(qa_app_q3_source_runtime *runtime, q
 void qa_app_q3_source_runtime_before_reaction(qa_app_q3_source_runtime *runtime, qa_owned_actor actor,
     qa_damage_decision decision);
 void qa_app_q3_source_runtime_adjust_area_portal_state(qa_app_q3_source_runtime *runtime, double slot, bool open);
+
+/* ---- Bootstrap construction (TS runtime.ts itemLifecycle 160-169,
+ * bindItemSaveCallbacks 173, createCommands 439-452, load spawnItem
+ * 553-554). All services borrowed; every service fn gets services.ctx. --- */
+typedef struct qa_app_q3_item_lifecycle_services {
+  void *ctx;
+  /* world: ServerWorld & Pick<ActorSpatialQueries,"traceActor"> */
+  qa_q3_base_server_trace_result (*trace)(void *ctx, qa_q3_base_server_trace_query query);
+  qa_q3_base_actor_trace_result (*trace_actor)(void *ctx, qa_q3_base_actor_trace_query query);
+  /* (item, player) => team.pickupTeam / useTargets(targets(), ...) */
+  double (*team_pickup)(void *ctx, qa_q3_game_entity *item, qa_q3_game_entity *player);
+  void (*use_targets)(void *ctx, qa_q3_game_entity *item, qa_q3_game_entity *activator);
+  double (*sound_index)(void *ctx, const char *path); /* config.soundIndex */
+  double (*rand_value)(void *ctx);                   /* random.rand */
+  double (*random)(void *ctx);                       /* random.random */
+  void (*log)(void *ctx, const char *message);       /* engine.log */
+  void (*warn)(void *ctx, const char *message);      /* engine.print */
+  char *(*get_userinfo)(void *ctx, double client);   /* malloc'd; engine.getUserinfo */
+  /* host.previewPickup/admitPickup (types.h opaque): NULL = TS undefined,
+   * yielding {kind:"native"}. When set, descriptor points to
+   * qa_q3_source_pickup_descriptor and out to the matching preview or
+   * admission struct; returning false also yields native. */
+  bool (*preview_pickup)(void *ctx, const void *descriptor, void *out_preview);
+  bool (*admit_pickup)(void *ctx, const void *descriptor, void *out_admission);
+  bool has_original_pickups; /* ...(host.originalPickups === undefined ? {} : ...) */
+  qa_original_pickup_admission original_pickups;
+  /* settings.integer; refreshes gameType/g_weaponrespawn/
+   * g_weaponTeamRespawn (TS getters). NULL leaves zeroed fields. */
+  double (*settings_integer)(void *ctx, const char *name);
+} qa_app_q3_item_lifecycle_services;
+
+/* Owns the filled context plus the registry's registered table.
+ * context.ctx points at this host: storage must not move after init. */
+typedef struct qa_app_q3_item_lifecycle_host {
+  qa_q3_item_lifecycle_context context;
+  qa_app_q3_item_lifecycle_services services;
+  char *handicap; /* owned scratch for handicapForClient */
+} qa_app_q3_item_lifecycle_host;
+/* items/item_count are the itemList(product) mirror rows for
+ * ItemRegistry(product). Registers q3.item.touch/q3.item.respawn pool
+ * callbacks and calls qa_q3_bind_item_save_callbacks. */
+void qa_app_q3_item_lifecycle_host_init(qa_app_q3_item_lifecycle_host *host,
+    qa_q3_entity_pool *entities, qa_q3_game_product product,
+    const qa_q3_game_item_definition_mirror *items, size_t item_count,
+    qa_app_q3_item_lifecycle_services services);
+void qa_app_q3_item_lifecycle_host_destroy(qa_app_q3_item_lifecycle_host *host);
+/* Refreshes the settings-derived fields, then returns the context. */
+qa_q3_item_lifecycle_context qa_app_q3_item_lifecycle_host_context(qa_app_q3_item_lifecycle_host *host);
+
+/* TS load() spawnItem closure: spawnItem(entity, item, variables,
+ * () => gameAtoi(engineCvar(`disable_${item.className}`)) !== 0,
+ * itemLifecycle); engineCvar is host.cvars.variableString. */
+typedef struct qa_app_q3_spawn_item_host {
+  qa_app_q3_item_lifecycle_host *items; /* borrowed */
+  qa_cvar_registry *cvars;              /* borrowed */
+} qa_app_q3_spawn_item_host;
+/* Sets spawn->ctx/spawn->spawn_item so spawn.c reaches qa_q3_spawn_item. */
+void qa_app_q3_wire_spawn_item(qa_q3_spawn_context *spawn, qa_app_q3_spawn_item_host *host);
+
+/* TS createCommands host object. grant/give are host.grantSelectedArsenal/
+ * host.giveSelectedItem (NULL = TS ?. ?? false); player_die is
+ * death.playerDie. items is the constructed itemLifecycle above. */
+typedef struct qa_app_q3_game_command_host_parts {
+  qa_q3_entity_pool *pool;
+  qa_q3_ta_match_state *state;
+  qa_q3_game_player_slots_mirror *team_scores;
+  const qa_q3_ta_command_settings *settings;
+  qa_q3_ta_game_command_imports imports;
+  qa_q3_ta_team_runtime *team;
+  qa_q3_ta_client_spawn_runtime *spawn;
+  qa_q3_ta_client_admission_runtime *admission;
+  qa_q3_ta_match_runtime *match;
+  qa_app_q3_item_lifecycle_host *items;
+  qa_q3_teleport_context teleport; /* { combat, world } */
+  void *ctx;
+  bool (*grant_selected_arsenal)(void *ctx, qa_actor_id actor, const char *category);
+  bool (*give_selected_item)(void *ctx, qa_actor_id actor, const char *const *args, size_t arg_count);
+  void (*player_die)(void *ctx, qa_q3_game_entity *self, qa_q3_damage_inflictor inflictor,
+      qa_q3_damage_participant attacker, double damage, double method_of_death);
+} qa_app_q3_game_command_host_parts;
+/* The result's spawn_item field stays NULL: TS GameCommandHost has none
+ * (commands.ts calls spawnItem directly through host.items). */
+qa_q3_ta_game_command_host qa_app_q3_build_game_command_host(qa_app_q3_game_command_host_parts parts);
 #endif

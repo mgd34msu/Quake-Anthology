@@ -1,9 +1,13 @@
 /* Port of src/app/bootstrap/content.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/content.h"
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include "qa/content/mounts/paths.h"
 #include "qa/app/bootstrap/q3_product.h"
 #include "qa/compat/qvm/compatibility.h"
 #include "qa/content/archive.h"
@@ -92,13 +96,28 @@ struct qa_app_loaded_content {
   qa_resolved_resource_reference *sidecar_refs; size_t sidecar_ref_count;
   qa_resolved_resource_reference *owned_resources;
   qa_launch_string_list native_strings;
+  void *q3_backing; /* concrete Q3 host backing (restricted catalog) */
+  qa_content_catalog *effective_catalog; /* after Q3 preparation */
+  bool has_q3_value; qa_q3_application_product q3_value;
 };
 struct qa_app_configuration_content {
   qa_app_content_host host;
   const void *catalog, *mounts, *q3_product;
   qa_app_application_configuration_selection selection;
   bool closed;
+  /* Native (concrete) storage; NULL/0 on the host path. */
+  qa_content_catalog *native_catalog; bool owns_catalog;
+  qa_content_mounted *native_mounts;
+  qa_app_remote_content_mounts *remote_mounts; /* owned wrapper source */
+  qa_app_configuration_content *close_delegate;
+  qa_prepare_launch_result *launch_prepare; qa_resolved_mount_plan launch_plan;
+  qa_app_application_preset_result *preset_result;
+  qa_catalog_mount_list mount_list; qa_mount_id *mount_order; char *plan_id;
+  const qa_provider_timing *timing_list; size_t timing_count;
+  bool has_q3_value; qa_q3_application_product q3_value;
+  void *q3_backing;
 };
+static void q3_native_backing_free(void *backing);
 static void phase(const char *error) { if (error) qa_range_error("%s", error); }
 qa_app_loaded_content *qa_app_load_application_content(qa_app_content_host host, qa_app_options options,
                                                        const qa_executable_recipe *restored_recipe, bool has_recipe) {
@@ -132,6 +151,7 @@ void qa_app_loaded_content_destroy(qa_app_loaded_content *content) {
   if (content->launch_result) { qa_resolve_launch_result_free(content->launch_result); free(content->launch_result); }
   if (content->preset_result) { qa_app_application_preset_result_free(content->preset_result); free(content->preset_result); }
   if (content->owns_catalog && content->native_catalog) { qa_content_catalog_destroy(content->native_catalog); free(content->native_catalog); }
+  q3_native_backing_free(content->q3_backing);
   qa_app_options_destroy(&content->options);
   free(content);
 }
@@ -201,6 +221,14 @@ qa_app_configuration_content *qa_app_open_remote_application_content(qa_app_cont
 void qa_app_configuration_content_destroy(qa_app_configuration_content *c) {
   if (!c) return;
   qa_app_configuration_content_close(c);
+  if (c->native_mounts) qa_content_mounted_destroy(c->native_mounts);
+  if (c->remote_mounts) qa_app_remote_content_mounts_destroy(c->remote_mounts);
+  if (c->launch_prepare) { qa_prepare_launch_result_free(c->launch_prepare); free(c->launch_prepare); }
+  if (c->preset_result) { qa_app_application_preset_result_free(c->preset_result); free(c->preset_result); }
+  qa_content_catalog_mount_list_free(&c->mount_list);
+  free(c->mount_order); free(c->plan_id);
+  q3_native_backing_free(c->q3_backing);
+  if (c->owns_catalog && c->native_catalog) { qa_content_catalog_destroy(c->native_catalog); free(c->native_catalog); }
   free(c);
 }
 qa_app_application_configuration_selection qa_app_configuration_content_selection(const qa_app_configuration_content *c) { return c->selection; }
@@ -214,7 +242,22 @@ bool qa_app_configuration_content_q3_product(const qa_app_configuration_content 
   return c->q3_product != NULL;
 }
 void qa_app_configuration_content_set_q3_product(qa_app_configuration_content *c, const void *p) { c->q3_product = p; }
-void qa_app_configuration_content_close(qa_app_configuration_content *c) { if (c) c->closed = true; }
+void qa_app_configuration_content_close(qa_app_configuration_content *c) {
+  if (!c || c->closed) return;
+  c->closed = true;
+  if (c->native_mounts) qa_content_mounted_close(c->native_mounts);
+  if (c->remote_mounts) qa_app_remote_content_mounts_close(c->remote_mounts);
+  if (c->close_delegate) qa_app_configuration_content_close(c->close_delegate);
+}
+const qa_provider_timing *qa_app_configuration_content_timing(const qa_app_configuration_content *c, size_t *out_count) {
+  *out_count = c->timing_count;
+  return c->timing_list;
+}
+bool qa_app_configuration_content_q3_value(const qa_app_configuration_content *c, qa_q3_application_product *out) {
+  if (!c->has_q3_value) return false;
+  *out = c->q3_value;
+  return true;
+}
 qa_launch_preset qa_app_application_preset(qa_app_content_host host, const qa_app_options *options) {
   qa_launch_preset out = {0};
   phase(host.preset(host.ctx, options, false, &out));
@@ -700,15 +743,129 @@ static char *hex_of(const char *text) {
   return out;
 }
 static bool mount_id_equal(qa_mount_id a, qa_mount_id b) { return a && b && strcmp(a, b) == 0; }
+/* mountsFor + openMountPlan over one product with default order. The
+ * mount list/order/plan strings are retained by the caller. */
+static qa_content_mounted *open_product_mounts(qa_content_catalog *catalog, qa_content_id content,
+    const char *plan_name_space, const char *plan_revision, bool demo,
+    qa_catalog_mount_list *list_out, qa_mount_id **order_out, char **plan_id_out) {
+  memset(list_out, 0, sizeof *list_out); *order_out = NULL; *plan_id_out = NULL;
+  if (!qa_content_catalog_mounts_for(catalog, content, list_out)) return NULL;
+  qa_mount_id *order = calloc(list_out->count ? list_out->count : 1, sizeof *order);
+  char *plan_id = qa_create_mount_plan_id(plan_name_space, plan_revision);
+  if (!order || !plan_id) { free(order); free(plan_id); qa_content_catalog_mount_list_free(list_out); return NULL; }
+  for (size_t i = 0; i < list_out->count; i++)
+    order[i] = list_out->mounts[i].kind == QA_CONTENT_MOUNT_ARCHIVE ? list_out->mounts[i].as.archive.identity.id : list_out->mounts[i].as.loose.identity.id;
+  qa_resolved_mount_plan plan = {plan_id, list_out->mounts, list_out->count, order, list_out->count, NULL, 0};
+  qa_open_mount_options options; memset(&options, 0, sizeof options); options.q3_restriction_demo = demo;
+  qa_content_mounted *opened = qa_open_mount_plan(&plan, &options);
+  if (!opened) { free(order); free(plan_id); qa_content_catalog_mount_list_free(list_out); return NULL; }
+  *order_out = order; *plan_id_out = plan_id;
+  return opened;
+}
+/* Concrete qa_app_q3_product_host (TS q3-product.ts inline work):
+ * productid.txt read through an identification mount plan, and the
+ * demo-restricted catalog rebuilt from q3-demota media, verified by
+ * opening it under the demo restriction. Owns its restricted
+ * catalog; the input catalog stays borrowed. */
+typedef struct q3_native_backing {
+  qa_content_catalog *catalog_in;
+  uint8_t *product_id_bytes; size_t product_id_length; bool product_id_read;
+  qa_content_mounted *id_mounts; qa_catalog_mount_list id_list; qa_mount_id *id_order; char *id_plan;
+  qa_content_catalog *restricted; qa_catalog_discovered_product *restricted_products;
+  qa_catalog_mount_list verify_list; qa_mount_id *verify_order; char *verify_plan;
+} q3_native_backing;
+static void q3_native_backing_free(void *value) {
+  q3_native_backing *backing = value;
+  if (!backing) return;
+  free(backing->product_id_bytes);
+  if (backing->id_mounts) qa_content_mounted_destroy(backing->id_mounts);
+  qa_content_catalog_mount_list_free(&backing->id_list);
+  free(backing->id_order); free(backing->id_plan);
+  qa_content_catalog_mount_list_free(&backing->verify_list);
+  free(backing->verify_order); free(backing->verify_plan);
+  if (backing->restricted) { qa_content_catalog_destroy(backing->restricted); free(backing->restricted); }
+  free(backing->restricted_products);
+  free(backing);
+}
+static const uint8_t *q3_host_product_id_bytes(void *ctx, const qa_catalog_discovered_product *selected, size_t *out_length) {
+  q3_native_backing *backing = ctx;
+  if (backing->product_id_read) {
+    if (!backing->product_id_bytes) return NULL;
+    *out_length = backing->product_id_length;
+    return backing->product_id_bytes;
+  }
+  backing->product_id_read = true;
+  char *hex = hex_of(selected->id);
+  backing->id_mounts = open_product_mounts(backing->catalog_in, selected->id,
+      "q3-product-identification", hex ? hex : "", false, &backing->id_list, &backing->id_order, &backing->id_plan);
+  free(hex);
+  if (!backing->id_mounts) qa_range_error("Out of memory");
+  qa_content_opened_resource opened = {0};
+  if (!qa_content_mounted_open(backing->id_mounts, "productid.txt", NULL, NULL, &opened)) return NULL;
+  backing->product_id_bytes = opened.bytes; backing->product_id_length = opened.byte_length;
+  *out_length = opened.byte_length;
+  return opened.bytes;
+}
+static const char *q3_host_restrict_catalog(void *ctx, const qa_content_catalog *catalog,
+    const qa_catalog_discovered_product *selected, const qa_content_catalog **out_catalog) {
+  q3_native_backing *backing = ctx;
+  const qa_catalog_discovered_product *media = qa_content_catalog_require(catalog, "q3-demota");
+  backing->restricted_products = calloc(catalog->product_count ? catalog->product_count : 1, sizeof *backing->restricted_products);
+  backing->restricted = calloc(1, sizeof *backing->restricted);
+  if (!backing->restricted_products || !backing->restricted) return "Out of memory";
+  for (size_t i = 0; i < catalog->product_count; i++) {
+    backing->restricted_products[i] = catalog->products[i];
+    if (catalog->products[i].expectation.family != QA_GAME_FAMILY_Q3) continue;
+    backing->restricted_products[i].expectation.base_product = NULL;
+    backing->restricted_products[i].availability = media->availability;
+    backing->restricted_products[i].archives = media->archives;
+    backing->restricted_products[i].archive_count = media->archive_count;
+    backing->restricted_products[i].loose_root = media->loose_root;
+    backing->restricted_products[i].user_content = media->user_content;
+    backing->restricted_products[i].maps = media->maps;
+    backing->restricted_products[i].map_count = media->map_count;
+  }
+  qa_content_catalog_init(backing->restricted, catalog->corpus_root, backing->restricted_products,
+      catalog->product_count, catalog->root_archives, catalog->root_archive_count, catalog->generation,
+      catalog->user_content_root, NULL, 0);
+  char *hex = hex_of(selected->id);
+  qa_content_mounted *verified = open_product_mounts(backing->restricted, selected->id,
+      "q3-restricted-product", hex ? hex : "", true, &backing->verify_list, &backing->verify_order, &backing->verify_plan);
+  free(hex);
+  if (!verified) return "Out of memory";
+  qa_content_mounted_close(verified);
+  qa_content_mounted_destroy(verified);
+  *out_catalog = backing->restricted;
+  return NULL;
+}
+/* TS prepareQ3ApplicationProduct with the concrete host above.
+ * *backing_out is allocated only when the selected product is Q3. */
+static qa_app_prepared_q3_product prepare_q3_native(qa_content_catalog *catalog, const char *content,
+    const qa_app_options *options, void **backing_out) {
+  *backing_out = NULL;
+  const qa_catalog_discovered_product *selected = qa_content_catalog_product(catalog, content);
+  if (selected->expectation.family != QA_GAME_FAMILY_Q3) {
+    qa_app_prepared_q3_product out = {catalog, false, {{0, 0}, {QA_Q3_MOUNT_NONE, NULL, 0}}};
+    return out;
+  }
+  q3_native_backing *backing = calloc(1, sizeof *backing);
+  if (!backing) qa_range_error("Out of memory");
+  backing->catalog_in = catalog;
+  qa_app_q3_product_host host = {backing, q3_host_product_id_bytes, q3_host_restrict_catalog};
+  qa_app_prepared_q3_product out = qa_app_prepare_q3_application_product(catalog, content, options, &host);
+  *backing_out = backing;
+  return out;
+}
 static qa_content_mounted *native_for_content(qa_app_loaded_content *c, qa_content_id content_id) {
   if (c->closed) qa_range_error("Application content is closed");
   for (size_t i = 0; i < c->scoped_count; i++)
     if (strcmp(c->scoped[i].content, content_id) == 0) return c->scoped[i].mounts;
+  qa_content_catalog *catalog = c->effective_catalog ? c->effective_catalog : c->native_catalog;
   qa_catalog_mount_list primary = {0}, rules = {0};
-  if (!qa_content_catalog_mounts_for(c->native_catalog, content_id, &primary)) qa_range_error("Out of memory");
+  if (!qa_content_catalog_mounts_for(catalog, content_id, &primary)) qa_range_error("Out of memory");
   bool want_rules = c->has_recipe && strcmp(content_id, c->recipe.map.entities.content) == 0 &&
       strcmp(c->recipe.match.content, content_id) != 0;
-  if (want_rules && !qa_content_catalog_mounts_for(c->native_catalog, c->recipe.match.content, &rules)) {
+  if (want_rules && !qa_content_catalog_mounts_for(catalog, c->recipe.match.content, &rules)) {
     qa_content_catalog_mount_list_free(&primary); qa_range_error("Out of memory");
   }
   size_t total = primary.count + rules.count;
@@ -738,6 +895,7 @@ static qa_content_mounted *native_for_content(qa_app_loaded_content *c, qa_conte
     }
     mount_options.has_pure = true; mount_options.pure = c->pure;
   }
+  mount_options.q3_restriction_demo = c->has_q3_value && c->q3_value.restriction.kind == QA_Q3_MOUNT_DEMO;
   char *hex = hex_of(content_id);
   char *plan_id = hex ? qa_create_mount_plan_id("provider", hex) : NULL;
   free(hex);
@@ -913,24 +1071,26 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
   } else {
     loaded->native_catalog = catalog;
   }
-  /* prepareQ3ApplicationProduct: the non-Q3 and unrestricted-Q3 cases
-   * are concrete here; demo-restricted catalog construction needs the
-   * q3-product slice's restrict_catalog host (fail closed, no stub). */
+  /* prepareQ3ApplicationProduct over the concrete Q3 host above:
+   * unrestricted and demo-restricted products both resolve here. */
   const char *q3_content = has_recipe && restored_recipe ? restored_recipe->map.entities.content : options.product;
-  const qa_catalog_discovered_product *q3_selected = qa_content_catalog_product(catalog, q3_content);
+  qa_app_prepared_q3_product q3_prepared = prepare_q3_native(catalog, q3_content, &loaded->options, &loaded->q3_backing);
+  catalog = (qa_content_catalog *)q3_prepared.catalog;
+  loaded->effective_catalog = catalog;
   const qa_q3_application_product *q3_product = NULL;
-  if (q3_selected->expectation.family == QA_GAME_FAMILY_Q3) {
-    if (!options.has_q3_product || options.q3_product.restriction.kind != QA_Q3_MOUNT_NONE) {
-      qa_app_loaded_content_destroy(loaded);
-      return NULL;
-    }
-    q3_product = &loaded->options.q3_product;
-    loaded->has_q3_policy = true; loaded->q3_policy = options.q3_product.policy;
+  bool q3_demo = false;
+  if (q3_prepared.has_q3_product) {
+    loaded->has_q3_value = true; loaded->q3_value = q3_prepared.q3_product;
+    q3_product = &loaded->q3_value;
+    loaded->has_q3_policy = true; loaded->q3_policy = q3_prepared.q3_product.policy;
+    loaded->options.has_q3_product = true; loaded->options.q3_product = q3_prepared.q3_product;
+    q3_demo = q3_prepared.q3_product.restriction.kind == QA_Q3_MOUNT_DEMO;
   }
   loaded->native_q3_product = q3_product;
   loaded->catalog = catalog;
   qa_open_mount_options mount_options; memset(&mount_options, 0, sizeof mount_options);
   if (pure) { mount_options.has_pure = true; mount_options.pure = *pure; }
+  mount_options.q3_restriction_demo = q3_demo;
   if (presentation_source != NULL) {
     qa_game_family wanted = presentation_source->family == QA_APP_DEMO_QW ? QA_GAME_FAMILY_Q1
         : presentation_source->family == QA_APP_DEMO_Q1 ? QA_GAME_FAMILY_Q1
@@ -1039,7 +1199,7 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
   const char *bsp_family = qa_classify_bsp(bytes, byte_length, map);
   if (bsp_family == NULL) { free(bytes); qa_app_loaded_content_destroy(loaded); return NULL; }
   if (strcmp(bsp_family, "q1") == 0) {
-    qa_content_mounted *map_content = open_map_content(catalog, &recipe, false);
+    qa_content_mounted *map_content = open_map_content(catalog, &recipe, q3_demo);
     qa_content_opened_resource entities = {0}, lit = {0};
     char *ent_path = replace_bsp_suffix(map, ".ent"), *lit_path = replace_bsp_suffix(map, ".lit");
     bool has_ent = map_content && qa_content_mounted_open(map_content, ent_path, NULL, NULL, &entities);
@@ -1057,7 +1217,7 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     if (map_content) qa_content_mounted_destroy(map_content);
     loaded->world = world; loaded->world_family = 1; loaded->world_kind = "q1-bsp";
   } else if (strcmp(bsp_family, "q2") == 0) {
-    qa_content_mounted *map_content = open_map_content(catalog, &recipe, false);
+    qa_content_mounted *map_content = open_map_content(catalog, &recipe, q3_demo);
     qa_q2_bsp *raw = calloc(1, sizeof *raw);
     if (!raw) qa_range_error("Out of memory");
     qa_read_q2_bsp(bytes, byte_length, map, raw);
@@ -1183,4 +1343,289 @@ void qa_app_options_for_recipe_free(qa_app_options *options) {
   free(options->product); free(options->map); free(options->map_product);
   free(options->movement_product); free(options->character_model);
   options->product = options->map = options->map_product = options->movement_product = options->character_model = NULL;
+}
+/* --- Concrete remote/configuration forms (TS lines 41-313). --- */
+static void assert_current_or_abort(qa_app_assert_current_fn assert_current, void *ctx) {
+  if (!assert_current) return;
+  const char *error = assert_current(ctx);
+  if (error) qa_range_error("%s", error);
+}
+static char *lower_dup(const char *text) {
+  char *copy = xstrdup(text);
+  if (copy) for (size_t i = 0; copy[i]; i++) copy[i] = (char)tolower((unsigned char)copy[i]);
+  return copy;
+}
+/* node:path dirname/basename/join over '/'-separated paths. */
+static char *node_dirname_dup(const char *path) {
+  const char *slash = strrchr(path, '/');
+  if (!slash) return xstrdup(".");
+  if (slash == path) return xstrdup("/");
+  size_t length = (size_t)(slash - path);
+  char *out = malloc(length + 1);
+  if (out) { memcpy(out, path, length); out[length] = '\0'; }
+  return out;
+}
+static const char *node_basename(const char *path) {
+  const char *slash = strrchr(path, '/');
+  return slash ? slash + 1 : path;
+}
+static char *join_path(const char *base, const char *leaf) {
+  size_t base_length = strlen(base);
+  bool slash = base_length > 0 && base[base_length - 1] != '/';
+  char *out = malloc(base_length + (slash ? 1 : 0) + strlen(leaf) + 1);
+  if (out) sprintf(out, slash ? "%s/%s" : "%s%s", base, leaf);
+  return out;
+}
+/* TS mkdir(path, {recursive: true}). */
+static void mkdir_recursive(const char *path) {
+  char *copy = xstrdup(path);
+  if (!copy) qa_range_error("Out of memory");
+  for (char *p = copy + 1; *p; p++) {
+    if (*p != '/') continue;
+    *p = '\0';
+    if (mkdir(copy, 0777) != 0 && errno != EEXIST) { free(copy); qa_range_error("Cannot create directory %s", path); }
+    *p = '/';
+  }
+  if (mkdir(copy, 0777) != 0 && errno != EEXIST) { free(copy); qa_range_error("Cannot create directory %s", path); }
+  free(copy);
+}
+static char *find_or_join(const char *root, const char *leaf) {
+  char *found = NULL;
+  if (qa_find_content_path(root, leaf, QA_CONTENT_PATH_CASE_INSENSITIVE, &found)) return found;
+  return join_path(root, leaf);
+}
+typedef struct remote_backing {
+  qa_content_catalog *discovered; /* owned */
+  void *q3_backing;
+  qa_catalog_mount_list mount_list; qa_mount_id *mount_order; char *plan_id;
+} remote_backing;
+void qa_app_remote_content_mounts_close(qa_app_remote_content_mounts *mounts) {
+  if (mounts && mounts->mounts) qa_content_mounted_close(mounts->mounts);
+}
+void qa_app_remote_content_mounts_destroy(qa_app_remote_content_mounts *mounts) {
+  if (!mounts) return;
+  if (mounts->mounts) qa_content_mounted_destroy(mounts->mounts);
+  remote_backing *backing = mounts->backing;
+  if (backing) {
+    qa_content_catalog_mount_list_free(&backing->mount_list);
+    free(backing->mount_order); free(backing->plan_id);
+    q3_native_backing_free(backing->q3_backing);
+    if (backing->discovered) { qa_content_catalog_destroy(backing->discovered); free(backing->discovered); }
+    free(backing);
+  }
+  qa_remote_content_selection_free(&mounts->selection);
+  free(mounts->write_root); free(mounts->base_write_root);
+  free(mounts);
+}
+qa_app_remote_content_mounts *qa_app_open_remote_content_native(const qa_app_options *roots,
+    const qa_remote_content_selection *requested, qa_app_assert_current_fn assert_current,
+    void *assert_ctx, int64_t generation) {
+  assert_current_or_abort(assert_current, assert_ctx);
+  qa_remote_content_selection selection = {0};
+  if (!qa_remote_content_selection_make(requested->base, requested->directory, &selection)) return NULL;
+  const qa_catalog_product_expectation *base = find_expected(selection.base);
+  if (!base) {
+    char *base_id = xstrdup(selection.base);
+    qa_remote_content_selection_free(&selection);
+    qa_range_error("Missing remote base product %s", base_id ? base_id : "");
+  }
+  qa_app_remote_content_mounts *out = calloc(1, sizeof *out);
+  remote_backing *backing = calloc(1, sizeof *backing);
+  if (!out || !backing) { free(out); free(backing); qa_remote_content_selection_free(&selection); return NULL; }
+  out->selection = selection; out->backing = backing;
+  char *default_root = roots->user_content_root ? NULL : qa_default_user_content_root();
+  const char *user_root = roots->user_content_root ? roots->user_content_root : default_root;
+  char *parent = node_dirname_dup(base->content_directory);
+  const char *leaf = node_basename(base->content_directory);
+  if (!user_root || !parent) { free(parent); free(default_root); qa_app_remote_content_mounts_destroy(out); return NULL; }
+  char *family_root = NULL;
+  if (!qa_find_content_path(user_root, parent, QA_CONTENT_PATH_CASE_INSENSITIVE, &family_root))
+    family_root = qa_user_product_directory(user_root, parent);
+  free(parent);
+  if (!family_root) { free(default_root); qa_app_remote_content_mounts_destroy(out); return NULL; }
+  assert_current_or_abort(assert_current, assert_ctx);
+  out->base_write_root = find_or_join(family_root, leaf);
+  assert_current_or_abort(assert_current, assert_ctx);
+  char *lower_leaf = lower_dup(leaf);
+  bool same_leaf = lower_leaf && strcmp(selection.directory, lower_leaf) == 0;
+  free(lower_leaf);
+  out->write_root = same_leaf && out->base_write_root ? xstrdup(out->base_write_root)
+      : find_or_join(family_root, selection.directory);
+  free(family_root);
+  if (!out->base_write_root || !out->write_root) { free(default_root); qa_app_remote_content_mounts_destroy(out); return NULL; }
+  assert_current_or_abort(assert_current, assert_ctx);
+  mkdir_recursive(out->write_root); assert_current_or_abort(assert_current, assert_ctx);
+  mkdir_recursive(out->base_write_root); assert_current_or_abort(assert_current, assert_ctx);
+  backing->discovered = calloc(1, sizeof *backing->discovered);
+  if (!backing->discovered) { free(default_root); qa_app_remote_content_mounts_destroy(out); return NULL; }
+  qa_discover_content_options discover; memset(&discover, 0, sizeof discover);
+  discover.corpus_root = roots->corpus_root; discover.user_content_root = user_root;
+  discover.discover_mods = false; discover.remote_content = &selection;
+  discover.has_generation = true; discover.generation = (double)generation;
+  discover.inspector = qa_app_default_archive_inspector();
+  bool discovered = qa_discover_installed_content(&discover, backing->discovered);
+  free(default_root);
+  if (!discovered) { qa_app_remote_content_mounts_destroy(out); return NULL; }
+  assert_current_or_abort(assert_current, assert_ctx);
+  qa_content_catalog *catalog = backing->discovered;
+  qa_content_catalog_require(catalog, selection.base);
+  char *remote_product = qa_remote_content_product(&selection, NULL, 0);
+  if (!remote_product) { qa_app_remote_content_mounts_destroy(out); return NULL; }
+  const qa_catalog_discovered_product *product = qa_content_catalog_require(catalog, remote_product);
+  const char *owner_root = product->user_content ? product->user_content->root : product->loose_root;
+  if (!owner_root || strcmp(owner_root, out->write_root) != 0) {
+    free(remote_product);
+    qa_range_error("Remote download directory does not match its content owner");
+  }
+  qa_app_prepared_q3_product policy = prepare_q3_native(catalog, product->id, roots, &backing->q3_backing);
+  assert_current_or_abort(assert_current, assert_ctx);
+  catalog = (qa_content_catalog *)policy.catalog;
+  product = qa_content_catalog_require(catalog, remote_product);
+  free(remote_product);
+  bool demo = policy.has_q3_product && policy.q3_product.restriction.kind == QA_Q3_MOUNT_DEMO;
+  char generation_text[32]; snprintf(generation_text, sizeof generation_text, "%lld", (long long)generation);
+  out->mounts = open_product_mounts(catalog, product->id, "remote-server", generation_text, demo,
+      &backing->mount_list, &backing->mount_order, &backing->plan_id);
+  if (!out->mounts) { qa_app_remote_content_mounts_destroy(out); return NULL; }
+  assert_current_or_abort(assert_current, assert_ctx);
+  out->catalog = catalog; out->product = product;
+  out->has_q3_product = policy.has_q3_product; out->q3_product = policy.q3_product;
+  return out;
+}
+static void configuration_set_timing(qa_app_configuration_content *content, const qa_provider_timing *timing, size_t timing_count) {
+  content->timing_list = timing; content->timing_count = timing_count;
+  memset(&content->selection.timing, 0, sizeof content->selection.timing);
+  for (size_t i = 0; i < timing_count; i++) {
+    if (i == 0) content->selection.timing = timing[i];
+    if (timing[i].provider && content->selection.movement.provider &&
+        strcmp(timing[i].provider, content->selection.movement.provider) == 0) {
+      content->selection.timing = timing[i];
+      break;
+    }
+  }
+}
+static void configuration_set_q3(qa_app_configuration_content *content, bool has_q3, qa_q3_application_product q3) {
+  content->has_q3_value = has_q3;
+  if (has_q3) { content->q3_value = q3; content->q3_product = &content->q3_value; }
+}
+qa_app_configuration_content *qa_app_open_remote_application_content_native(const qa_app_options *options) {
+  qa_remote_content_selection fallback = {0};
+  const qa_remote_content_selection *selection = NULL;
+  if (options->has_remote_content) selection = &options->remote_content;
+  else if (network_is(options, "qw-client")) {
+    if (!qa_remote_content_selection_make("q1-quakeworld", "qw", &fallback)) return NULL;
+    selection = &fallback;
+  } else if (network_is(options, "q3-client")) {
+    if (!qa_remote_content_selection_make("q3-baseq3", "baseq3", &fallback)) return NULL;
+    selection = &fallback;
+  } else if (network_is(options, "q2-client")) {
+    if (!qa_remote_content_selection_make("q2-classic-baseq2", "baseq2", &fallback)) return NULL;
+    selection = &fallback;
+  }
+  if (selection) {
+    qa_app_remote_content_mounts *remote = qa_app_open_remote_content_native(options, selection, NULL, NULL, 0);
+    qa_remote_content_selection_free(&fallback);
+    if (!remote) return NULL;
+    qa_app_configuration_content *content = calloc(1, sizeof *content);
+    if (!content) { qa_app_remote_content_mounts_destroy(remote); return NULL; }
+    content->remote_mounts = remote;
+    content->catalog = remote->catalog; content->mounts = remote->mounts;
+    configuration_set_q3(content, remote->has_q3_product, remote->q3_product);
+    if (!remote->has_q3_product) content->q3_product = NULL;
+    return content;
+  }
+  qa_app_configuration_content *content = calloc(1, sizeof *content);
+  if (!content) return NULL;
+  content->native_catalog = calloc(1, sizeof *content->native_catalog);
+  if (!content->native_catalog) { qa_app_configuration_content_destroy(content); return NULL; }
+  content->owns_catalog = true;
+  char *default_root = options->user_content_root ? NULL : qa_default_user_content_root();
+  qa_discover_content_options discover; memset(&discover, 0, sizeof discover);
+  discover.corpus_root = options->corpus_root;
+  discover.user_content_root = options->user_content_root ? options->user_content_root : default_root;
+  discover.discover_mods = false;
+  discover.inspector = qa_app_default_archive_inspector();
+  bool discovered = discover.user_content_root && qa_discover_installed_content(&discover, content->native_catalog);
+  free(default_root);
+  if (!discovered) { qa_app_configuration_content_destroy(content); return NULL; }
+  qa_app_prepared_q3_product policy = prepare_q3_native(content->native_catalog, options->product, options, &content->q3_backing);
+  qa_content_catalog *catalog = (qa_content_catalog *)policy.catalog;
+  const qa_catalog_discovered_product *product = qa_content_catalog_require(catalog, options->product);
+  bool demo = policy.has_q3_product && policy.q3_product.restriction.kind == QA_Q3_MOUNT_DEMO;
+  content->native_mounts = open_product_mounts(catalog, product->id, "remote-connection", options->product, demo,
+      &content->mount_list, &content->mount_order, &content->plan_id);
+  if (!content->native_mounts) { qa_app_configuration_content_destroy(content); return NULL; }
+  content->catalog = catalog; content->mounts = content->native_mounts;
+  configuration_set_q3(content, policy.has_q3_product, policy.q3_product);
+  return content;
+}
+qa_app_configuration_content *qa_app_remote_configuration_content_native(const qa_app_options *options,
+    qa_app_configuration_content *mounted) {
+  qa_app_options adjusted = *options;
+  if (network_is(options, "qw-client")) adjusted.product = (char *)"q1-quakeworld";
+  qa_content_catalog *catalog = (qa_content_catalog *)mounted->catalog;
+  qa_app_configuration_content *content = calloc(1, sizeof *content);
+  if (!content) return NULL;
+  content->preset_result = calloc(1, sizeof *content->preset_result);
+  if (!content->preset_result) { qa_app_configuration_content_destroy(content); return NULL; }
+  if (!qa_app_application_configuration_preset_for_catalog(catalog, &adjusted, NULL, content->preset_result)) {
+    qa_app_configuration_content_destroy(content); return NULL;
+  }
+  const qa_launch_preset *preset = &content->preset_result->preset;
+  content->catalog = mounted->catalog; content->mounts = mounted->mounts;
+  content->close_delegate = mounted;
+  configuration_set_q3(content, mounted->has_q3_value, mounted->q3_value);
+  if (!mounted->has_q3_value && mounted->q3_product) content->q3_product = mounted->q3_product;
+  content->selection.source = preset->map.entities;
+  content->selection.engine_behavior = preset->engine_behavior;
+  content->selection.match = preset->match;
+  content->selection.combat = preset->combat;
+  content->selection.movement = preset->movement;
+  configuration_set_timing(content, preset->timing, preset->timing_count);
+  return content;
+}
+qa_app_configuration_content *qa_app_open_application_configuration_content_native(
+    qa_content_catalog *catalog_in, qa_app_configuration_request_native request,
+    const qa_q3_application_product *q3_product) {
+  bool is_recipe = request.kind && strcmp(request.kind, "recipe") == 0;
+  const char *content_id = is_recipe ? request.recipe->map.entities.content : request.preset->map.entities.content;
+  qa_app_options q3_options = {0};
+  if (q3_product) { q3_options.has_q3_product = true; q3_options.q3_product = *q3_product; }
+  qa_app_configuration_content *content = calloc(1, sizeof *content);
+  if (!content) return NULL;
+  qa_app_prepared_q3_product product = prepare_q3_native(catalog_in, content_id, &q3_options, &content->q3_backing);
+  qa_content_catalog *catalog = (qa_content_catalog *)product.catalog;
+  bool demo = product.has_q3_product && product.q3_product.restriction.kind == QA_Q3_MOUNT_DEMO;
+  qa_open_mount_options mount_options; memset(&mount_options, 0, sizeof mount_options);
+  mount_options.q3_restriction_demo = demo;
+  if (is_recipe) {
+    const qa_executable_recipe *recipe = request.recipe;
+    content->selection.source = recipe->map.entities;
+    content->selection.engine_behavior = recipe->engine_behavior;
+    content->selection.match = recipe->match;
+    content->selection.combat = recipe->combat;
+    content->selection.movement = recipe->movement;
+    configuration_set_timing(content, recipe->timing, recipe->timing_count);
+    content->native_mounts = qa_open_mount_plan(&recipe->mounts, &mount_options);
+  } else {
+    content->launch_prepare = calloc(1, sizeof *content->launch_prepare);
+    if (!content->launch_prepare) { qa_app_configuration_content_destroy(content); return NULL; }
+    qa_resolve_launch_options launch; memset(&launch, 0, sizeof launch);
+    launch.choice = request.choice; launch.preset = request.preset; launch.catalog = catalog;
+    if (!qa_prepare_launch_mount_plan(&launch, content->launch_prepare, &content->launch_plan)) {
+      qa_app_configuration_content_destroy(content); return NULL;
+    }
+    const qa_launch_preset *selected = &content->launch_prepare->selected.base;
+    content->selection.source = selected->map.entities;
+    content->selection.engine_behavior = selected->engine_behavior;
+    content->selection.match = selected->match;
+    content->selection.combat = selected->combat;
+    content->selection.movement = selected->movement;
+    configuration_set_timing(content, selected->timing, selected->timing_count);
+    content->native_mounts = qa_open_mount_plan(&content->launch_plan, &mount_options);
+  }
+  if (!content->native_mounts) { qa_app_configuration_content_destroy(content); return NULL; }
+  content->catalog = catalog; content->mounts = content->native_mounts;
+  configuration_set_q3(content, product.has_q3_product, product.q3_product);
+  return content;
 }

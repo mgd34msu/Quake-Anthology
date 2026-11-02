@@ -378,10 +378,10 @@ static void test_mod_actors_validate(void) {
 
   /* Combat with a zero flag mask aborts (entry must first be OP_ENTER). */
   qa_qvm_instruction instructions[1] = {{.opcode = QA_QVM_OP_ENTER, .operand_width = 0, .operand = 0}};
-  qa_qvmy_artifact artifact;
+  qa_resolved_qvm_artifact artifact;
   memset(&artifact, 0, sizeof artifact);
-  artifact.instructions = instructions;
-  artifact.instruction_count = 1;
+  artifact.image.instructions = instructions;
+  artifact.image.instruction_count = 1;
   qa_qvm_mod_combat combat;
   memset(&combat, 0, sizeof combat);
   combat.abi = "q3-g-damage";
@@ -740,6 +740,7 @@ static void test_server_game_entities_in_box(void) {
 #include "qa/compat/qvm/interpreter.h"
 #include "qa/content/q3/base/game/item_lifecycle.h"
 #include "qa/content/q3/team_arena/commands.h"
+#include "qa/app/bootstrap/simulation/q3/runtime.h"
 
 static void test_qvmx_views(void) {
   uint8_t bytes[8] = {0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0};
@@ -959,6 +960,21 @@ static const char *il_get_cvar(void *ctx, const char *name) {
 }
 static const char *il_get_userinfo(void *ctx, double n) { (void)ctx; (void)n; return ""; }
 static void il_set_userinfo(void *ctx, double n, const char *t) { (void)ctx; (void)n; (void)t; }
+/* q3-bootstrap-hosts: services for the constructed itemLifecycle host. */
+static char *il_userinfo_owned(void *ctx, double n) {
+  (void)ctx; (void)n;
+  const char *text = "\\handicap\\85";
+  char *copy = malloc(strlen(text) + 1);
+  if (copy) memcpy(copy, text, strlen(text) + 1);
+  return copy;
+}
+static double il_settings_integer(void *ctx, const char *name) {
+  (void)ctx;
+  if (strcmp(name, "g_weaponrespawn") == 0) return 5;
+  if (strcmp(name, "g_weaponTeamRespawn") == 0) return 30;
+  return 0;
+}
+static double il_debug_alloc(void *ctx) { (void)ctx; return 0; }
 
 static void test_item_lifecycle_tail(void) {
   il_setup();
@@ -1055,22 +1071,50 @@ static void test_item_lifecycle_tail(void) {
   health_item->item = &il_items[5];
   CHECK(!qa_q3_observe_q3_supply(health_item, recipient, observed, &out));
 
-  /* TA give: real spawnItem+finish+touch through host.items. */
+  /* TA give through the CONSTRUCTED hosts (q3-bootstrap-hosts):
+   * qa_app_q3_item_lifecycle_host_init fills host.items (entities/
+   * product/registry/host fns incl. preview_pickup), and
+   * qa_app_q3_build_game_command_host assembles the TA command host. */
+  static qa_app_q3_item_lifecycle_host built_items;
+  qa_app_q3_item_lifecycle_services services; memset(&services, 0, sizeof services);
+  services.trace = il_trace; services.trace_actor = il_trace_actor;
+  services.team_pickup = il_team_pickup; services.use_targets = il_use_targets;
+  services.sound_index = il_sound; services.rand_value = il_rand; services.random = il_random;
+  services.log = il_log; services.warn = il_warn;
+  services.get_userinfo = il_userinfo_owned;
+  services.settings_integer = il_settings_integer;
+  qa_app_q3_item_lifecycle_host_init(&built_items, &il_pool, QA_Q3_GAME_PRODUCT_BASEQ3,
+      il_items, 29, services);
+  qa_q3_item_lifecycle_context built = qa_app_q3_item_lifecycle_host_context(&built_items);
+  CHECK(built.entities == &il_pool && built.product == QA_Q3_GAME_PRODUCT_BASEQ3);
+  CHECK(built.registry.items == il_items && built.registry.count == 29);
+  CHECK(built.game_type == 0 && built.weapon_respawn_seconds == 5
+      && built.team_weapon_respawn_seconds == 30);
+  CHECK(built.has_callbacks && built.touch_callback.fn != NULL && built.respawn_callback.fn != NULL);
+  CHECK(strcmp(built.handicap_for_client(built.ctx, 0), "85") == 0);
+  qa_q3_source_pickup_descriptor descriptor; memset(&descriptor, 0, sizeof descriptor);
+  CHECK(built.preview_pickup(built.ctx, descriptor).kind == QA_Q3_SOURCE_PREVIEW_NATIVE);
+  CHECK(built.admit_pickup(built.ctx, descriptor).kind == QA_Q3_SOURCE_PICKUP_NATIVE);
+
+  /* TA give: real spawnItem+finish+touch through constructed host.items. */
   static qa_q3_ta_match_state give_state;
   static qa_q3_game_player_slots_mirror give_scores;
   static const qa_q3_ta_command_settings give_settings = {0, true, false, 0, false, false};
   memset(&give_state, 0, sizeof give_state);
   memset(&give_scores, 0, sizeof give_scores); give_scores.length = 4;
-  qa_q3_ta_game_command_host give_host; memset(&give_host, 0, sizeof give_host);
-  give_host.pool = &il_pool; give_host.state = &give_state; give_host.team_scores = &give_scores;
-  give_host.settings = &give_settings; give_host.items = il_context;
-  give_host.imports.send_server_command = il_send;
-  give_host.imports.set_configstring = il_set_cs27;
-  give_host.imports.append_console_command = il_append;
-  give_host.imports.get_cvar = il_get_cvar;
-  give_host.imports.get_userinfo = il_get_userinfo;
-  give_host.imports.set_userinfo = il_set_userinfo;
-  give_host.imports.log = il_print; give_host.imports.print = il_print;
+  qa_app_q3_game_command_host_parts parts; memset(&parts, 0, sizeof parts);
+  parts.pool = &il_pool; parts.state = &give_state; parts.team_scores = &give_scores;
+  parts.settings = &give_settings; parts.items = &built_items;
+  parts.imports.send_server_command = il_send;
+  parts.imports.set_configstring = il_set_cs27;
+  parts.imports.append_console_command = il_append;
+  parts.imports.get_cvar = il_get_cvar;
+  parts.imports.get_userinfo = il_get_userinfo;
+  parts.imports.set_userinfo = il_set_userinfo;
+  parts.imports.log = il_print; parts.imports.print = il_print;
+  qa_q3_ta_game_command_host give_host = qa_app_q3_build_game_command_host(parts);
+  CHECK(give_host.spawn_item == NULL); /* TS GameCommandHost has no spawnItem */
+  CHECK(give_host.items.entities == &il_pool && give_host.items.registry.items == il_items);
   qa_q3_ta_game_command_runtime give_runtime;
   qa_q3_ta_game_command_runtime_init(&give_runtime, give_host);
   qa_q3_game_entity *giver = qa_q3_entity_pool_activate_client(&il_pool, 3);
@@ -1089,6 +1133,43 @@ static void test_item_lifecycle_tail(void) {
   il_cvar_disabled = true;
   CHECK_ABORTS(qa_q3_ta_game_command_runtime_dispatch(&give_runtime, 3, give_argv, 3));
   il_cvar_disabled = false;
+
+  /* spawn.c hook: qa_app_q3_wire_spawn_item routes G_CallSpawn item
+   * dispatch to qa_q3_spawn_item with the disable_<classname> closure. */
+  qa_cvar_registry_options cvar_options; memset(&cvar_options, 0, sizeof cvar_options);
+  cvar_options.dialect = QA_COMMAND_DIALECT_Q3;
+  qa_cvar_registry *spawn_cvars = qa_cvar_registry_create(&cvar_options);
+  CHECK(spawn_cvars != NULL);
+  qa_cvar_snapshot snapshot; memset(&snapshot, 0, sizeof snapshot);
+  if (qa_cvar_registry_set(spawn_cvars, "disable_ammo_bullets", "1", true, &snapshot))
+    qa_cvar_read_free(&snapshot);
+  static qa_q3_game_memory spawn_memory;
+  qa_q3_game_memory_init(&spawn_memory, NULL, il_debug_alloc, il_print);
+  qa_q3_game_memory_initialize(&spawn_memory);
+  qa_q3_spawn_context spawn_context; memset(&spawn_context, 0, sizeof spawn_context);
+  spawn_context.pool = &il_pool; spawn_context.memory = &spawn_memory;
+  spawn_context.product = QA_Q3_GAME_PRODUCT_BASEQ3; spawn_context.game_type = 0;
+  spawn_context.items = il_items; spawn_context.item_count = 29;
+  spawn_context.warn = il_warn;
+  qa_app_q3_spawn_item_host spawn_host = {&built_items, spawn_cvars};
+  qa_app_q3_wire_spawn_item(&spawn_context, &spawn_host);
+  CHECK(spawn_context.spawn_item != NULL && spawn_context.ctx == (void *)&spawn_host);
+  qa_q3_spawn_pair ammo_pairs[1] = {{"classname", "ammo_bullets"}};
+  qa_q3_spawn_variables ammo_vars; qa_q3_spawn_variables_init(&ammo_vars, ammo_pairs, 1);
+  qa_q3_spawn_outcome ammo_outcome = qa_q3_spawn_entity(&ammo_vars, &spawn_context);
+  CHECK(ammo_outcome.kind == QA_Q3_SPAWN_DISPATCHED && ammo_outcome.route == QA_Q3_ROUTE_ITEM);
+  CHECK(ammo_outcome.entity != NULL && ammo_outcome.entity->item == NULL); /* disabled */
+  CHECK(qa_q3_item_registry_is_registered(&built_items.context.registry, &il_items[19]));
+  qa_q3_spawn_variables_destroy(&ammo_vars);
+  qa_q3_spawn_pair health_pairs[2] = {{"classname", "item_health"}, {"wait", "7"}};
+  qa_q3_spawn_variables health_vars; qa_q3_spawn_variables_init(&health_vars, health_pairs, 2);
+  qa_q3_spawn_outcome health_outcome = qa_q3_spawn_entity(&health_vars, &spawn_context);
+  CHECK(health_outcome.kind == QA_Q3_SPAWN_DISPATCHED && health_outcome.route == QA_Q3_ROUTE_ITEM);
+  CHECK(health_outcome.entity != NULL && health_outcome.entity->item == &il_items[5]);
+  CHECK(health_outcome.entity->wait == 7 && health_outcome.entity->nextthink == 1200);
+  qa_q3_spawn_variables_destroy(&health_vars);
+  qa_cvar_registry_destroy(spawn_cvars);
+  qa_app_q3_item_lifecycle_host_destroy(&built_items);
 }
 /* --- end undef-qvm-q3-items --- */
 
@@ -1375,6 +1456,91 @@ static void test_qvmy_retire_2(void) {
 }
 /* ----- end mirrors-qvm-q3 ----- */
 
+/* qvmy-retire-3: switched APIs over landed owner types. */
+#include "qa/compat/qvm/primary_inventory_profile.h"
+#include "qa/compat/qvm/primary_pickup_profile.h"
+
+typedef struct retire3_call_state {
+  int branch_calls;
+  size_t branch_count;
+  int64_t first_index;
+  bool first_decision;
+  int32_t proceed_result;
+  int proceed_calls;
+  int proceed_async_calls;
+} retire3_call_state;
+
+static void retire3_branches(void *ctx, const qa_qvmy_branch_binding *bindings, size_t count) {
+  retire3_call_state *state = ctx;
+  state->branch_calls++;
+  state->branch_count = count;
+  if (count != 0) {
+    state->first_index = bindings[0].instruction_index;
+    state->first_decision = bindings[0].decide(bindings[0].ctx, false, NULL, NULL);
+  }
+}
+
+static int32_t retire3_proceed(void *ctx) {
+  retire3_call_state *state = ctx;
+  state->proceed_calls++;
+  return state->proceed_result;
+}
+
+static int32_t retire3_proceed_async(void *ctx) {
+  retire3_call_state *state = ctx;
+  state->proceed_async_calls++;
+  return state->proceed_result;
+}
+
+static void test_qvmy_retire_3(void) {
+  /* Owner inventory union: constant capacity closure. */
+  qa_qvm_inventory_profile inventory;
+  qa_module_identity module = {"q3:test:game", "vm/qagame.qvm", "sha256:test", "1"};
+  qa_qvm_primary_inventory_profile_constant(module, "q3-modern", 8, 64, 200, &inventory);
+  CHECK(inventory.private_profile == NULL);
+  CHECK(inventory.public_profile != NULL);
+  CHECK(inventory.public_profile->weapons_offset == 8);
+  CHECK(inventory.public_profile->ammo_offset == 64);
+  qa_qvm_capacity_context context;
+  memset(&context, 0, sizeof context);
+  double capacity = inventory.public_profile->capacity(inventory.public_profile->ctx, NULL, 3, context);
+  CHECK(capacity == 200);
+  qa_qvm_primary_inventory_profile_free(&inventory);
+  CHECK(inventory.public_profile == NULL && inventory.private_profile == NULL);
+
+  /* Owner pickup grant eligible over qa_qvm_pickup_eligibility:
+   * binds the captured branches, then proceeds (sync and async). */
+  qa_qvm_pickup_branch branches[] = {{42, true}, {43, false}};
+  qa_qvm_pickup_branches captured = {branches, 2};
+  retire3_call_state state;
+  memset(&state, 0, sizeof state);
+  state.proceed_result = 7;
+  qa_qvmy_function_call call;
+  memset(&call, 0, sizeof call);
+  call.execution = "synchronous";
+  call.call_ctx = &state;
+  call.branches = retire3_branches;
+  call.proceed = retire3_proceed;
+  call.proceed_async = retire3_proceed_async;
+  qa_qvm_pickup_eligibility eligibility;
+  memset(&eligibility, 0, sizeof eligibility);
+  eligibility.call = &call;
+  CHECK(qa_qvm_primary_pickup_grant_eligible(&captured, eligibility));
+  CHECK(state.branch_calls == 1 && state.branch_count == 2);
+  CHECK(state.first_index == 42 && state.first_decision);
+  CHECK(state.proceed_calls == 1 && state.proceed_async_calls == 0);
+  state.proceed_result = 0;
+  call.execution = "asynchronous";
+  CHECK(!qa_qvm_primary_pickup_grant_eligible(&captured, eligibility));
+  CHECK(state.proceed_calls == 1 && state.proceed_async_calls == 1);
+  /* NULL ctx is the no-override closure (builtin grants). */
+  state.proceed_result = 1;
+  call.execution = "synchronous";
+  CHECK(qa_qvm_primary_pickup_grant_eligible(NULL, eligibility));
+  CHECK(state.branch_count == 0);
+}
+/* ----- end qvmy-retire-3 ----- */
+
 static void test_reject_syscall(void) {
   qa_qvm_host_call call;
   memset(&call, 0, sizeof call);
@@ -1404,6 +1570,7 @@ int main(void) {
   test_reject_syscall();
   test_mirror_retirement(); /* mirrors-qvm-q3 */
   test_qvmy_retire_2(); /* qvmy-retire-2 */
+  test_qvmy_retire_3(); /* qvmy-retire-3 */
   if (failures != 0) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);
     return 1;

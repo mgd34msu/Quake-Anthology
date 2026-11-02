@@ -68,10 +68,10 @@ static qa_save_reader field(const qa_save_reader *reader, const char *name) {
   return out;
 }
 
-static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *reader) {
+static int64_t read_entry(const qa_resolved_qvm_artifact *artifact, qa_save_reader *reader) {
   int64_t index = (int64_t)qa_save_reader_integer_min(reader, 1);
-  if (index < 0 || (uint64_t)index >= artifact->instruction_count ||
-      artifact->instructions[index].opcode != QA_QVMY_OP_ENTER)
+  if (index < 0 || (uint64_t)index >= artifact->image.instruction_count ||
+      artifact->image.instructions[index].opcode != QA_QVMY_OP_ENTER)
     qa_save_reader_fail(reader, "callback is not a QVM function entry");
   return index;
 }
@@ -87,7 +87,7 @@ static bool valid_id(const char *id) {
   return id[0] != '\0';
 }
 
-void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_qvmy_artifact *artifact,
+void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_resolved_qvm_artifact *artifact,
                                 qa_qvm_weapon_profile *out) {
   memset(out, 0, sizeof *out);
   qa_save_reader reader;
@@ -148,7 +148,7 @@ void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_qvmy_artifa
   int64_t minimum = qa_qvm_shared_entity_bytes(abi_profile);
   qa_save_reader stride_reader = field(&reader, "entityStride");
   out->entity_stride = (int64_t)qa_save_reader_integer_min(&stride_reader, (double)minimum);
-  if (out->entity_stride % 4 != 0 || out->entity_stride > artifact->allocated_data_length)
+  if (out->entity_stride % 4 != 0 || out->entity_stride > artifact->image.allocated_data_length)
     qa_save_reader_fail(&stride_reader, "invalid entity stride");
   qa_save_reader_destroy(&stride_reader);
   qa_save_reader fields_reader = field(&reader, "fields");
@@ -162,7 +162,7 @@ void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_qvmy_artifa
   qa_save_reader level_reader = field(&reader, "levelTime");
   out->level_time = (int64_t)qa_save_reader_integer_min(&level_reader, 4);
   if (out->level_time % 4 != 0 ||
-      out->level_time > artifact->data_length + artifact->literal_length + artifact->bss_length - 4)
+      out->level_time > artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length - 4)
     qa_save_reader_fail(&level_reader, "level clock is outside declared guest data");
   qa_save_reader_destroy(&level_reader);
   qa_save_reader allocate_reader = field(&reader, "allocateFunction");
@@ -190,7 +190,7 @@ void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_qvmy_artifa
 }
 
 void qa_qvm_validate_weapon_profile(const qa_qvm_weapon_profile *profile,
-                                    const qa_qvmy_artifact *artifact, qa_qvm_weapon_profile *out) {
+                                    const qa_resolved_qvm_artifact *artifact, qa_qvm_weapon_profile *out) {
   const char *abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
   qa_save_value *declaration = qa_qvm_weapon_profile_declaration(profile, abi_profile);
   qa_qvm_read_weapon_profile(declaration, artifact, out);

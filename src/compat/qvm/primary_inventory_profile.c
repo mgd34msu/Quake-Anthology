@@ -72,12 +72,12 @@ static void private_field_validator(void *ctx, qa_qvm_item_field field, const ch
   private_field_check(ctx, &field, usage == NULL ? "storage" : usage);
 }
 
-static const qa_qvm_instruction *instruction_at(const qa_qvmy_artifact *artifact, int64_t index) {
-  if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
-  return &artifact->instructions[index];
+static const qa_qvm_instruction *instruction_at(const qa_resolved_qvm_artifact *artifact, int64_t index) {
+  if (index < 0 || (uint64_t)index >= artifact->image.instruction_count) return NULL;
+  return &artifact->image.instructions[index];
 }
 
-static int64_t read_constant(const qa_qvmy_artifact *artifact, qa_save_reader *at) {
+static int64_t read_constant(const qa_resolved_qvm_artifact *artifact, qa_save_reader *at) {
   int64_t index = (int64_t)qa_save_reader_integer_min(at, 0);
   const qa_qvm_instruction *instruction = instruction_at(artifact, index);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_CONST)
@@ -85,7 +85,7 @@ static int64_t read_constant(const qa_qvmy_artifact *artifact, qa_save_reader *a
   return instruction->operand;
 }
 
-static qa_qvm_source_word read_word(const qa_qvmy_artifact *artifact, qa_save_reader *at) {
+static qa_qvm_source_word read_word(const qa_resolved_qvm_artifact *artifact, qa_save_reader *at) {
   qa_save_reader kind_reader = field(at, "kind");
   static const char *const kinds[] = {"constant", "weapon", "client", "entity", "client-number"};
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 5);
@@ -99,6 +99,25 @@ static qa_qvm_source_word read_word(const qa_qvmy_artifact *artifact, qa_save_re
   return result;
 }
 
+/* Parsed public capacity declaration captured by the landed
+ * qa_qvm_public_inventory_profile capacity closure. */
+typedef struct capacity_state {
+  const char *kind; /* constant|global|region|counter */
+  int64_t constant;
+  int64_t address;
+  int64_t function;
+  int64_t *functions; /* owned */
+  size_t function_count;
+  qa_qvm_source_word *arguments; /* owned */
+  size_t argument_count;
+  qa_qvm_region_evaluation region;
+  qa_qvm_source_word *inputs; /* owned */
+  size_t input_count;
+  bool has_stack;
+  qa_qvm_evaluation_stack stack;
+  int64_t ammo_offset;
+} capacity_state;
+
 static int32_t word_value(qa_qvm_source_word source, int32_t weapon, const qa_qvm_capacity_context *context) {
   if (strcmp(source.kind, "constant") == 0) return (int32_t)source.value;
   if (strcmp(source.kind, "weapon") == 0) return weapon;
@@ -107,12 +126,15 @@ static int32_t word_value(qa_qvm_source_word source, int32_t weapon, const qa_qv
   return (int32_t)context->client_number;
 }
 
-void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
+static double capacity_of(void *ctx, qa_qvm_memory *memory, double weapon_value,
+                          qa_qvm_capacity_context context);
+
+void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact,
                                            const qa_qvm_inventory_records *records,
-                                           qa_qvmy_inventory_profile *out) {
+                                           qa_qvm_inventory_profile *out) {
   memset(out, 0, sizeof *out);
-  out->module = artifact->module;
-  out->abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
+  qa_module_identity module = artifact->module;
+  qa_qvm_abi_profile abi_profile = artifact->has_abi_profile ? artifact->abi_profile : "q3-modern";
   if (strcmp(artifact->role, "qagame") != 0)
     qa_save_reader_fail(reader, "primary inventory declarations require a qagame ABI");
   qa_save_reader storage_reader = field(reader, "storage");
@@ -120,23 +142,22 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     if (records == NULL)
       qa_save_reader_fail(reader, "private inventory requires its qualified primary source records");
     size_t count = qa_save_reader_list_count(&storage_reader);
-    out->storage = xmalloc(count * sizeof *out->storage);
-    out->storage_count = count;
+    qa_qvm_item_storage *storage = xmalloc(count * sizeof *storage);
     qa_item_id *items = NULL;
     size_t item_count = 0;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&storage_reader, i);
-      out->storage[i] = qa_read_qvm_item_storage(&entry);
+      storage[i] = qa_read_qvm_item_storage(&entry);
       qa_save_reader_destroy(&entry);
-      if (strcmp(out->storage[i].kind, "counter") == 0) {
+      if (strcmp(storage[i].kind, "counter") == 0) {
         items = realloc(items, (item_count + 1) * sizeof *items);
         if (items == NULL) qa_range_error("QVM memory allocation failed");
-        items[item_count++] = out->storage[i].item;
+        items[item_count++] = storage[i].item;
       } else {
-        for (size_t j = 0; j < out->storage[i].item_count; j++) {
+        for (size_t j = 0; j < storage[i].item_count; j++) {
           items = realloc(items, (item_count + 1) * sizeof *items);
           if (items == NULL) qa_range_error("QVM memory allocation failed");
-          items[item_count++] = out->storage[i].items[j].item;
+          items[item_count++] = storage[i].items[j].item;
         }
       }
     }
@@ -150,29 +171,38 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     private_field_state state = {reader, records, NULL, NULL, NULL, 0, 0};
     qa_qvm_image image;
     memset(&image, 0, sizeof image);
-    image.instructions = (qa_qvm_instruction *)artifact->instructions;
-    image.instruction_count = artifact->instruction_count;
-    image.initialized_length = artifact->initialized_data_length;
-    image.bss_length = artifact->bss_length;
+    image.instructions = (qa_qvm_instruction *)artifact->image.instructions;
+    image.instruction_count = artifact->image.instruction_count;
+    image.initialized_length = artifact->image.initialized_length;
+    image.bss_length = artifact->image.bss_length;
     qa_qvm_item_field_validator validator = {&state, private_field_validator};
-    qa_qvm_validate_item_storage(out->storage, count, items, unique, &image, validator);
+    qa_qvm_validate_item_storage(storage, count, items, unique, &image, validator);
     free(state.key_records);
     free(state.key_offsets);
     free(state.usages);
     free(items);
     qa_save_reader_destroy(&storage_reader);
-    out->is_private = true;
-    out->client_stride = records->client_stride;
-    out->entity_stride = records->entity_stride;
+    qa_qvm_private_inventory_profile *private_profile = xmalloc(sizeof *private_profile);
+    memset(private_profile, 0, sizeof *private_profile);
+    private_profile->module = module;
+    private_profile->abi_profile = abi_profile;
+    private_profile->entity_stride = (double)records->entity_stride;
+    private_profile->client_stride = (double)records->client_stride;
+    private_profile->image = &artifact->image;
+    private_profile->storage = storage;
+    private_profile->storage_count = count;
+    out->private_profile = private_profile;
     return;
   }
   qa_save_reader_destroy(&storage_reader);
+  capacity_state *state = xmalloc(sizeof *state);
+  memset(state, 0, sizeof *state);
   qa_save_reader capacity = field(reader, "capacity");
   qa_save_reader kind_reader = field(&capacity, "kind");
   static const char *const kinds[] = {"constant", "global", "region", "counter"};
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 4);
   qa_save_reader_destroy(&kind_reader);
-  out->capacity_kind = kind;
+  state->kind = kind;
   qa_save_reader stack_reader = field(&capacity, "stack");
   if (!qa_save_reader_is_undefined(&stack_reader)) {
     qa_save_reader start = field(&stack_reader, "start");
@@ -181,35 +211,35 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     qa_save_reader end = field(&stack_reader, "end");
     int64_t end_value = (int64_t)qa_save_reader_integer_min(&end, 0);
     qa_save_reader_destroy(&end);
-    out->has_stack = true;
-    out->stack.start = start_value;
-    out->stack.end = end_value;
+    state->has_stack = true;
+    state->stack.start = (double)start_value;
+    state->stack.end = (double)end_value;
     if ((strcmp(kind, "counter") != 0 && strcmp(kind, "region") != 0) || start_value % 4 != 0 ||
-        end_value % 4 != 0 || start_value < artifact->data_length + artifact->literal_length ||
-        start_value >= end_value || end_value > artifact->allocated_data_length)
+        end_value % 4 != 0 || start_value < artifact->image.data_length + artifact->image.literal_length ||
+        start_value >= end_value || end_value > artifact->image.allocated_data_length)
       qa_save_reader_fail(&stack_reader, "capacity stack must declare an aligned original BSS reservation for a source query");
   }
   qa_save_reader_destroy(&stack_reader);
   if (strcmp(kind, "constant") == 0) {
     qa_save_reader instruction = field(&capacity, "instruction");
-    out->capacity_constant = read_constant(artifact, &instruction);
+    state->constant = read_constant(artifact, &instruction);
     qa_save_reader_destroy(&instruction);
-    if (out->capacity_constant < 0) qa_save_reader_fail(&capacity, "source ammo capacity cannot be negative");
+    if (state->constant < 0) qa_save_reader_fail(&capacity, "source ammo capacity cannot be negative");
   } else if (strcmp(kind, "global") == 0) {
     qa_save_reader instruction = field(&capacity, "addressInstruction");
-    out->capacity_address = read_constant(artifact, &instruction);
+    state->address = read_constant(artifact, &instruction);
     qa_save_reader_destroy(&instruction);
-    if (out->capacity_address < 0 || out->capacity_address % 4 != 0 ||
-        out->capacity_address + 4 > artifact->allocated_data_length)
+    if (state->address < 0 || state->address % 4 != 0 ||
+        state->address + 4 > artifact->image.allocated_data_length)
       qa_save_reader_fail(&capacity, "source capacity word is outside aligned module data");
   } else if (strcmp(kind, "counter") == 0) {
     qa_save_reader function_reader = field(&capacity, "function");
-    out->capacity_function = (int64_t)qa_save_reader_integer_min(&function_reader, 0);
+    state->function = (int64_t)qa_save_reader_integer_min(&function_reader, 0);
     qa_save_reader_destroy(&function_reader);
     qa_save_reader functions_reader = field(&capacity, "functions");
     size_t function_count = qa_save_reader_list_count(&functions_reader);
-    out->capacity_functions = xmalloc(function_count * sizeof *out->capacity_functions);
-    out->capacity_function_count = function_count;
+    state->functions = xmalloc(function_count * sizeof *state->functions);
+    state->function_count = function_count;
     bool includes_owner = false;
     for (size_t i = 0; i < function_count; i++) {
       qa_save_reader entry = item(&functions_reader, i);
@@ -217,21 +247,21 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       const qa_qvm_instruction *instruction = instruction_at(artifact, index);
       if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
         qa_save_reader_fail(&entry, "counter operation requires original function entries");
-      out->capacity_functions[i] = index;
-      if (index == out->capacity_function) includes_owner = true;
+      state->functions[i] = index;
+      if (index == state->function) includes_owner = true;
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&functions_reader);
     bool distinct = true;
     for (size_t i = 0; i < function_count; i++)
       for (size_t j = i + 1; j < function_count; j++)
-        if (out->capacity_functions[i] == out->capacity_functions[j]) distinct = false;
+        if (state->functions[i] == state->functions[j]) distinct = false;
     if (!includes_owner || !distinct)
       qa_save_reader_fail(&capacity, "counter operation must include its entry and distinct helpers");
     qa_save_reader arguments_reader = field(&capacity, "arguments");
     size_t argument_count = qa_save_reader_list_count(&arguments_reader);
-    out->capacity_arguments = xmalloc(argument_count * sizeof *out->capacity_arguments);
-    out->capacity_argument_count = argument_count;
+    state->arguments = xmalloc(argument_count * sizeof *state->arguments);
+    state->argument_count = argument_count;
     for (size_t i = 0; i < argument_count; i++) {
       qa_save_reader entry = item(&arguments_reader, i);
       qa_save_reader entry_kind = field(&entry, "kind");
@@ -243,9 +273,9 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
         qa_save_reader literal = field(&entry, "kind");
         (void)qa_save_reader_literal_string(&literal, "maximum-grant");
         qa_save_reader_destroy(&literal);
-        out->capacity_arguments[i] = (qa_qvm_source_word){"maximum-grant", 0};
+        state->arguments[i] = (qa_qvm_source_word){"maximum-grant", 0};
       } else {
-        out->capacity_arguments[i] = read_word(artifact, &entry);
+        state->arguments[i] = read_word(artifact, &entry);
       }
       qa_save_reader_destroy(&entry);
     }
@@ -254,54 +284,54 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       qa_save_reader_fail(&capacity, "counter arguments exceed the private source invocation");
     /* TS reads ammoOffset here, inside the counter branch only. */
     qa_save_reader ammo_reader = field(reader, "ammoOffset");
-    out->ammo_offset = (int64_t)qa_save_reader_integer_min(&ammo_reader, 0);
+    state->ammo_offset = (int64_t)qa_save_reader_integer_min(&ammo_reader, 0);
     qa_save_reader_destroy(&ammo_reader);
   } else {
     qa_save_reader function_reader = field(&capacity, "function");
-    out->capacity_function = (int64_t)qa_save_reader_integer_min(&function_reader, 0);
+    state->function = (int64_t)qa_save_reader_integer_min(&function_reader, 0);
     qa_save_reader_destroy(&function_reader);
     qa_save_reader source = field(&capacity, "region");
     qa_save_reader entry_reader = field(&source, "entry");
-    out->capacity_region.entry = (int64_t)qa_save_reader_integer_min(&entry_reader, 0);
+    state->region.entry = (int64_t)qa_save_reader_integer_min(&entry_reader, 0);
     qa_save_reader_destroy(&entry_reader);
     qa_save_reader join_reader = field(&source, "join");
-    out->capacity_region.join = (int64_t)qa_save_reader_integer_min(&join_reader, 0);
+    state->region.join = (int64_t)qa_save_reader_integer_min(&join_reader, 0);
     qa_save_reader_destroy(&join_reader);
     qa_save_reader inputs_reader = field(&source, "inputs");
     size_t input_count = qa_save_reader_list_count(&inputs_reader);
-    out->capacity_region_inputs = xmalloc(input_count * sizeof *out->capacity_region_inputs);
-    out->capacity_region.inputs = out->capacity_region_inputs;
-    out->capacity_region.input_count = input_count;
+    int64_t *region_inputs = xmalloc(input_count * sizeof *region_inputs);
+    state->region.inputs = region_inputs;
+    state->region.input_count = input_count;
     for (size_t i = 0; i < input_count; i++) {
       qa_save_reader entry = item(&inputs_reader, i);
-      out->capacity_region_inputs[i] = (int64_t)qa_save_reader_integer_min(&entry, 8);
+      region_inputs[i] = (int64_t)qa_save_reader_integer_min(&entry, 8);
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&inputs_reader);
     qa_save_reader result_reader = field(&source, "result");
-    out->capacity_region.has_result = true;
-    out->capacity_region.result = (int64_t)qa_save_reader_integer_min(&result_reader, 8);
+    state->region.has_result = true;
+    state->region.result = (int64_t)qa_save_reader_integer_min(&result_reader, 8);
     qa_save_reader_destroy(&result_reader);
     qa_save_reader_destroy(&source);
-    qa_qvm_qualify_region_evaluation(artifact->instructions, artifact->instruction_count,
-                                     out->capacity_function, &out->capacity_region, "read-only");
+    qa_qvm_qualify_region_evaluation(artifact->image.instructions, artifact->image.instruction_count,
+                                     state->function, &state->region, "read-only");
     qa_save_reader arguments_reader = field(&capacity, "arguments");
     size_t argument_count = qa_save_reader_list_count(&arguments_reader);
-    out->capacity_arguments = xmalloc(argument_count * sizeof *out->capacity_arguments);
-    out->capacity_argument_count = argument_count;
+    state->arguments = xmalloc(argument_count * sizeof *state->arguments);
+    state->argument_count = argument_count;
     for (size_t i = 0; i < argument_count; i++) {
       qa_save_reader entry = item(&arguments_reader, i);
-      out->capacity_arguments[i] = read_word(artifact, &entry);
+      state->arguments[i] = read_word(artifact, &entry);
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&arguments_reader);
     qa_save_reader live_ins = field(&capacity, "inputs");
     size_t live_count = qa_save_reader_list_count(&live_ins);
-    out->capacity_inputs = xmalloc(live_count * sizeof *out->capacity_inputs);
-    out->capacity_input_count = live_count;
+    state->inputs = xmalloc(live_count * sizeof *state->inputs);
+    state->input_count = live_count;
     for (size_t i = 0; i < live_count; i++) {
       qa_save_reader entry = item(&live_ins, i);
-      out->capacity_inputs[i] = read_word(artifact, &entry);
+      state->inputs[i] = read_word(artifact, &entry);
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&live_ins);
@@ -314,52 +344,92 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
   for (int i = 0; i < 2; i++) {
     qa_save_reader at = field(reader, names[i]);
     int64_t result = (int64_t)qa_save_reader_integer_min(&at, 0);
-    if (result % 4 != 0 || result + (i == 1 ? 64 : 4) > qa_qvm_player_state_bytes(out->abi_profile))
+    if (result % 4 != 0 || result + (i == 1 ? 64 : 4) > qa_qvm_player_state_bytes(abi_profile))
       qa_save_reader_fail(&at, "inventory field exceeds its aligned public player record");
     offsets[i] = result;
     qa_save_reader_destroy(&at);
   }
-  out->weapons_offset = offsets[0];
-  out->ammo_offset = offsets[1];
+  state->ammo_offset = offsets[1];
+  qa_qvm_public_inventory_profile *public_profile = xmalloc(sizeof *public_profile);
+  memset(public_profile, 0, sizeof *public_profile);
+  public_profile->module = module;
+  public_profile->abi_profile = abi_profile;
+  public_profile->weapons_offset = (double)offsets[0];
+  public_profile->ammo_offset = (double)offsets[1];
+  public_profile->ctx = state;
+  public_profile->capacity = capacity_of;
+  out->public_profile = public_profile;
 }
 
-int32_t qa_qvmy_inventory_capacity(const qa_qvmy_inventory_profile *profile, qa_qvm_memory *memory,
-                                   int32_t weapon, const qa_qvm_capacity_context *context) {
-  if (strcmp(profile->capacity_kind, "constant") == 0) return (int32_t)profile->capacity_constant;
-  if (strcmp(profile->capacity_kind, "global") == 0) {
+static double capacity_of(void *ctx, qa_qvm_memory *memory, double weapon_value,
+                          qa_qvm_capacity_context context_value) {
+  const capacity_state *state = ctx;
+  const qa_qvm_capacity_context *context = &context_value;
+  int32_t weapon = (int32_t)weapon_value;
+  if (strcmp(state->kind, "constant") == 0) return (double)(int32_t)state->constant;
+  if (strcmp(state->kind, "global") == 0) {
     qa_qvm_writable_view view;
-    qa_qvm_memory_data_view(memory, profile->capacity_address, 4, &view);
-    return qa_qvm_writable_view_get_int32(&view, 0, true);
+    qa_qvm_memory_data_view(memory, state->address, 4, &view);
+    return (double)qa_qvm_writable_view_get_int32(&view, 0, true);
   }
-  int32_t *args = xmalloc(profile->capacity_argument_count * sizeof *args);
-  for (size_t i = 0; i < profile->capacity_argument_count; i++) {
-    args[i] = strcmp(profile->capacity_arguments[i].kind, "maximum-grant") == 0
-        ? 0x7fffffff : word_value(profile->capacity_arguments[i], weapon, context);
+  int32_t *args = xmalloc(state->argument_count * sizeof *args);
+  for (size_t i = 0; i < state->argument_count; i++) {
+    args[i] = strcmp(state->arguments[i].kind, "maximum-grant") == 0
+        ? 0x7fffffff : word_value(state->arguments[i], weapon, context);
   }
   int32_t result;
-  if (strcmp(profile->capacity_kind, "counter") == 0) {
-    result = qa_qvm_module_evaluate_counter(context->module, args, profile->capacity_argument_count,
-        profile->capacity_function, context->client + profile->ammo_offset + (int64_t)weapon * 4,
-        profile->capacity_functions, profile->capacity_function_count,
-        profile->has_stack ? &profile->stack : NULL);
+  if (strcmp(state->kind, "counter") == 0) {
+    result = qa_qvm_module_evaluate_counter(context->module, args, state->argument_count,
+        state->function, (int64_t)context->client + state->ammo_offset + (int64_t)weapon * 4,
+        state->functions, state->function_count,
+        state->has_stack ? &state->stack : NULL);
   } else {
-    int64_t *inputs = xmalloc(profile->capacity_input_count * sizeof *inputs);
-    for (size_t i = 0; i < profile->capacity_input_count; i++)
-      inputs[i] = word_value(profile->capacity_inputs[i], weapon, context);
-    result = qa_qvm_module_evaluate_region(context->module, args, profile->capacity_argument_count,
-        profile->capacity_function, &profile->capacity_region, inputs, profile->capacity_input_count,
-        profile->has_stack ? &profile->stack : NULL);
+    int64_t *inputs = xmalloc(state->input_count * sizeof *inputs);
+    for (size_t i = 0; i < state->input_count; i++)
+      inputs[i] = word_value(state->inputs[i], weapon, context);
+    result = qa_qvm_module_evaluate_region(context->module, args, state->argument_count,
+        state->function, &state->region, inputs, state->input_count,
+        state->has_stack ? &state->stack : NULL);
     free(inputs);
   }
   free(args);
-  return result;
+  return (double)result;
 }
 
-void qa_qvmy_inventory_profile_free(qa_qvmy_inventory_profile *profile) {
-  free(profile->capacity_functions);
-  free(profile->capacity_arguments);
-  free(profile->capacity_region_inputs);
-  free(profile->capacity_inputs);
-  free(profile->storage);
+void qa_qvm_primary_inventory_profile_constant(qa_module_identity module, qa_qvm_abi_profile abi_profile,
+                                               double weapons_offset, double ammo_offset, int32_t constant,
+                                               qa_qvm_inventory_profile *out) {
+  memset(out, 0, sizeof *out);
+  capacity_state *state = xmalloc(sizeof *state);
+  memset(state, 0, sizeof *state);
+  state->kind = "constant";
+  state->constant = constant;
+  qa_qvm_public_inventory_profile *public_profile = xmalloc(sizeof *public_profile);
+  memset(public_profile, 0, sizeof *public_profile);
+  public_profile->module = module;
+  public_profile->abi_profile = abi_profile;
+  public_profile->weapons_offset = weapons_offset;
+  public_profile->ammo_offset = ammo_offset;
+  public_profile->ctx = state;
+  public_profile->capacity = capacity_of;
+  out->public_profile = public_profile;
+}
+
+void qa_qvm_primary_inventory_profile_free(qa_qvm_inventory_profile *profile) {
+  if (profile->public_profile != NULL) {
+    capacity_state *state = profile->public_profile->ctx;
+    if (state != NULL) {
+      free(state->functions);
+      free(state->arguments);
+      free((void *)state->region.inputs);
+      free(state->inputs);
+      free(state);
+    }
+    free((void *)profile->public_profile);
+  }
+  if (profile->private_profile != NULL) {
+    free((void *)profile->private_profile->storage);
+    free((void *)profile->private_profile);
+  }
   memset(profile, 0, sizeof *profile);
 }

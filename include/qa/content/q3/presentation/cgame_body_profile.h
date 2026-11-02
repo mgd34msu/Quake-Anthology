@@ -16,7 +16,7 @@ typedef enum qa_q3_pres_body_profile_result {
 /** Entries verified from each artifact's CG_AddCEntity dispatch and local
  * refEntity allocations. On OK, *out is a malloc'd array freed with
  * qa_q3_pres_body_profile_free (mesh part rows are included). */
-qa_q3_pres_body_profile_result qa_q3_pres_read_cgame_body_profile(const qa_qvmy_artifact *artifact,
+qa_q3_pres_body_profile_result qa_q3_pres_read_cgame_body_profile(const qa_resolved_qvm_artifact *artifact,
                                                                   qa_content_mounted *mounts,
                                                                   qa_qvm_body_submission **out, size_t *out_count);
 void qa_q3_pres_body_profile_free(qa_qvm_body_submission *submissions, size_t count);

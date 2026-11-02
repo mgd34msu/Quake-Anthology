@@ -77,7 +77,7 @@ static void live(qa_qvm_module *module) {
 static void init_common(qa_qvm_module *module, const qa_qvm_module_options *options) {
   memset(module, 0, sizeof *module);
   module->options = *options;
-  const qa_qvmy_artifact *artifact = options->artifact;
+  const qa_resolved_qvm_artifact *artifact = options->artifact;
   memset(&module->profile, 0, sizeof module->profile);
   module->profile.kind = QA_EXECUTION_QVM;
   module->profile.module = artifact->module;

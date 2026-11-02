@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/content/q3/base/game/format.h"
+#include "qa/content/q3/base/game/numeric.h"
+#include "qa/content/q3/team_arena/client_admission.h"
 #include "qa/content/q3/base/shared/definitions.h"
 #include "qa/core/info_string.h"
 #include "qa/core/numeric.h"
@@ -566,4 +568,187 @@ void qa_app_q3_source_runtime_adjust_area_portal_state(qa_app_q3_source_runtime 
   /* Bounds/leaf walk runs through the guest-world host seam. */
   (void)open;
   qa_range_error("Area portal mover must be linked");
+}
+
+/* ---- Bootstrap construction: TS itemLifecycle/createCommands/load ---- */
+static qa_app_q3_item_lifecycle_host *item_host(void *ctx) { return ctx; }
+static qa_q3_base_server_trace_result ilhost_trace(void *ctx, qa_q3_base_server_trace_query query) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.trace(host->services.ctx, query);
+}
+static qa_q3_base_actor_trace_result ilhost_trace_actor(void *ctx, qa_q3_base_actor_trace_query query) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.trace_actor(host->services.ctx, query);
+}
+static const char *ilhost_handicap(void *ctx, double client) {
+  /* TS: number => this.userinfo(number, "handicap"). */
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  char *info = host->services.get_userinfo ? host->services.get_userinfo(host->services.ctx, client) : NULL;
+  char *value = qa_q3_ta_client_info_value(info ? info : "", "handicap");
+  free(info);
+  free(host->handicap);
+  host->handicap = value;
+  return host->handicap ? host->handicap : "";
+}
+static double ilhost_team_pickup(void *ctx, qa_q3_game_entity *item, qa_q3_game_entity *player) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.team_pickup(host->services.ctx, item, player);
+}
+static void ilhost_use_targets(void *ctx, qa_q3_game_entity *item, qa_q3_game_entity *activator) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  host->services.use_targets(host->services.ctx, item, activator);
+}
+static double ilhost_sound_index(void *ctx, const char *path) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.sound_index(host->services.ctx, path);
+}
+static double ilhost_rand_value(void *ctx) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.rand_value(host->services.ctx);
+}
+static double ilhost_random(void *ctx) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  return host->services.random(host->services.ctx);
+}
+static void ilhost_log(void *ctx, const char *message) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  host->services.log(host->services.ctx, message);
+}
+static void ilhost_warn(void *ctx, const char *message) {
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  host->services.warn(host->services.ctx, message);
+}
+static qa_q3_source_pickup_preview ilhost_preview(void *ctx, qa_q3_source_pickup_descriptor descriptor) {
+  /* TS: item => host.previewPickup?.(item) ?? { kind: "native" }. */
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  qa_q3_source_pickup_preview preview; memset(&preview, 0, sizeof preview);
+  preview.kind = QA_Q3_SOURCE_PREVIEW_NATIVE;
+  if (host->services.preview_pickup
+      && !host->services.preview_pickup(host->services.ctx, &descriptor, &preview)) {
+    memset(&preview, 0, sizeof preview);
+    preview.kind = QA_Q3_SOURCE_PREVIEW_NATIVE;
+  }
+  return preview;
+}
+static qa_q3_source_pickup_admission ilhost_admit(void *ctx, qa_q3_source_pickup_descriptor descriptor) {
+  /* TS: item => host.admitPickup?.(item) ?? { kind: "native" }. */
+  qa_app_q3_item_lifecycle_host *host = item_host(ctx);
+  qa_q3_source_pickup_admission admission; memset(&admission, 0, sizeof admission);
+  admission.kind = QA_Q3_SOURCE_PICKUP_NATIVE;
+  if (host->services.admit_pickup
+      && !host->services.admit_pickup(host->services.ctx, &descriptor, &admission)) {
+    memset(&admission, 0, sizeof admission);
+    admission.kind = QA_Q3_SOURCE_PICKUP_NATIVE;
+  }
+  return admission;
+}
+static void ilhost_touch_cb(void *ctx, qa_q3_game_entity *entity, qa_q3_damage_participant other,
+    qa_touch_contact contact) {
+  qa_q3_touch_item(entity, other, contact, qa_app_q3_item_lifecycle_host_context(item_host(ctx)));
+}
+static void ilhost_respawn_cb(void *ctx, qa_q3_game_entity *entity) {
+  qa_q3_respawn_item(entity, qa_app_q3_item_lifecycle_host_context(item_host(ctx)));
+}
+static qa_q3_entity_callback ilhost_callback(const void *fn, void *ctx) {
+  qa_q3_entity_callback cb; memcpy(&cb.fn, fn, sizeof cb.fn); cb.ctx = ctx; return cb;
+}
+qa_q3_item_lifecycle_context qa_app_q3_item_lifecycle_host_context(qa_app_q3_item_lifecycle_host *host) {
+  if (host->services.settings_integer) {
+    void *ctx = host->services.ctx;
+    host->context.game_type = host->services.settings_integer(ctx, "g_gametype");
+    host->context.weapon_respawn_seconds = host->services.settings_integer(ctx, "g_weaponrespawn");
+    host->context.team_weapon_respawn_seconds = host->services.settings_integer(ctx, "g_weaponTeamRespawn");
+  }
+  return host->context;
+}
+void qa_app_q3_item_lifecycle_host_init(qa_app_q3_item_lifecycle_host *host,
+    qa_q3_entity_pool *entities, qa_q3_game_product product,
+    const qa_q3_game_item_definition_mirror *items, size_t item_count,
+    qa_app_q3_item_lifecycle_services services) {
+  memset(host, 0, sizeof *host);
+  host->services = services;
+  qa_q3_item_lifecycle_context *context = &host->context;
+  context->ctx = host;
+  context->registry.product = product; /* TS new ItemRegistry(options.product) */
+  qa_q3_item_registry_init(&context->registry, items, item_count);
+  context->entities = entities;
+  context->product = product;
+  context->has_callbacks = true;
+  qa_q3_entity_touch_fn touch = ilhost_touch_cb;
+  qa_q3_entity_think_fn respawn = ilhost_respawn_cb;
+  context->touch_callback = qa_q3_callback_family_register(&entities->callbacks.touch,
+      "q3.item.touch", ilhost_callback(&touch, host));
+  context->respawn_callback = qa_q3_callback_family_register(&entities->callbacks.think,
+      "q3.item.respawn", ilhost_callback(&respawn, host));
+  context->has_original_pickups = services.has_original_pickups;
+  context->original_pickups = services.original_pickups;
+  context->preview_pickup = ilhost_preview;
+  context->admit_pickup = ilhost_admit;
+  context->trace = ilhost_trace;
+  context->trace_actor = ilhost_trace_actor;
+  context->handicap_for_client = ilhost_handicap;
+  context->team_pickup = ilhost_team_pickup;
+  context->use_targets = ilhost_use_targets;
+  context->sound_index = ilhost_sound_index;
+  context->rand_value = ilhost_rand_value;
+  context->random = ilhost_random;
+  context->log = ilhost_log;
+  context->warn = ilhost_warn;
+  (void)qa_app_q3_item_lifecycle_host_context(host);
+  qa_q3_bind_item_save_callbacks(host->context);
+}
+void qa_app_q3_item_lifecycle_host_destroy(qa_app_q3_item_lifecycle_host *host) {
+  if (!host) return;
+  qa_q3_item_registry_destroy(&host->context.registry);
+  free(host->handicap);
+  memset(host, 0, sizeof *host);
+}
+
+typedef struct spawn_disabled { qa_cvar_registry *cvars; const char *cvar_name; } spawn_disabled;
+static bool spawn_is_disabled(void *ctx) {
+  /* TS: () => gameAtoi(this.engineCvar(`disable_${item.className}`)) !== 0. */
+  spawn_disabled *check = ctx;
+  if (!check->cvars) return false;
+  char *value = qa_cvar_registry_variable_string(check->cvars, check->cvar_name);
+  bool disabled = value && qa_game_atoi(value) != 0;
+  free(value);
+  return disabled;
+}
+static void spawn_item_hook(void *ctx, qa_q3_game_entity *entity,
+    const qa_q3_game_item_definition_mirror *item, const qa_q3_spawn_variables *variables) {
+  qa_app_q3_spawn_item_host *host = ctx;
+  const char *classname = item && item->classname ? item->classname : "";
+  size_t length = strlen("disable_") + strlen(classname) + 1;
+  char *cvar_name = malloc(length);
+  if (!cvar_name) qa_range_error("Out of memory");
+  (void)snprintf(cvar_name, length, "disable_%s", classname);
+  spawn_disabled check = {host->cvars, cvar_name};
+  qa_q3_spawn_item(entity, item, variables, spawn_is_disabled, &check,
+      qa_app_q3_item_lifecycle_host_context(host->items));
+  free(cvar_name);
+}
+void qa_app_q3_wire_spawn_item(qa_q3_spawn_context *spawn, qa_app_q3_spawn_item_host *host) {
+  spawn->ctx = host;
+  spawn->spawn_item = spawn_item_hook;
+}
+
+qa_q3_ta_game_command_host qa_app_q3_build_game_command_host(qa_app_q3_game_command_host_parts parts) {
+  qa_q3_ta_game_command_host host; memset(&host, 0, sizeof host);
+  host.pool = parts.pool;
+  host.state = parts.state;
+  host.team_scores = parts.team_scores;
+  host.settings = parts.settings;
+  host.imports = parts.imports;
+  host.team = parts.team;
+  host.spawn = parts.spawn;
+  host.admission = parts.admission;
+  host.match = parts.match;
+  host.items = qa_app_q3_item_lifecycle_host_context(parts.items);
+  host.teleport = parts.teleport;
+  host.ctx = parts.ctx;
+  host.grant_selected_arsenal = parts.grant_selected_arsenal;
+  host.give_selected_item = parts.give_selected_item;
+  host.player_die = parts.player_die;
+  /* host.spawn_item stays NULL: TS GameCommandHost has no such member. */
+  return host;
 }

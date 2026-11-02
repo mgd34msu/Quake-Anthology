@@ -360,13 +360,9 @@ static bool qvm_read_profile(void *ctx, const qa_save_value *declaration,
   (void)ctx;
   const qa_resolved_qvm_artifact *resolved =
       (const qa_resolved_qvm_artifact *)artifact->service_value;
-  qa_qvm_artifact_bridge *bridge = xcalloc(1, sizeof *bridge);
-  if (!qa_qvm_artifact_bridge_init(bridge, resolved)) {
-    free(bridge);
-    return false;
-  }
+  if (resolved->is_typescript) return false;
   qa_qvm_weapon_profile *profile = xcalloc(1, sizeof *profile);
-  qa_qvm_read_weapon_profile(declaration, &bridge->view, profile);
+  qa_qvm_read_weapon_profile(declaration, resolved, profile);
   out->definition = profile->definition;
   out->service_value = profile;
   return true;

@@ -22,7 +22,7 @@
 #include "qa/contracts/qvm_mod_presentation.h"
 #include "qa/persistence/value.h"
 
-void qa_qvm_validate_mod_presentation(const qa_qvmy_artifact *artifact, qa_module_identity source,
+void qa_qvm_validate_mod_presentation(const qa_resolved_qvm_artifact *artifact, qa_module_identity source,
                                       const qa_qvm_mod_presentation_declaration *declaration);
 
 /* TS QvmBodyMesh / QvmBodyPresentation. */

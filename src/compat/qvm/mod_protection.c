@@ -8,6 +8,15 @@
 
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/world/actors/registry.h"
+
+/* ModHostServices.clients.clients() projected to actor ids. */
+static size_t client_actors(qa_mod_host_services *services, qa_actor_id *out, size_t capacity) {
+  size_t count = 0;
+  const qa_mod_client_identity *identities = services->clients->clients(services->clients->ctx, &count);
+  for (size_t i = 0; i < count && i < capacity; i++) out[i] = identities[i].actor;
+  return count;
+}
 
 static size_t definition_fields(const qa_qvm_mod_protection *definition, const qa_qvm_mod_protection_scalar *out[2]) {
   if (strcmp(definition->channel, "regular") == 0) {
@@ -103,7 +112,7 @@ void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *decla
 
 typedef struct entry {
   qa_client_id client;
-  size_t reservation;
+  qa_protection_reservation reservation;
   bool bound;
 } entry;
 
@@ -130,10 +139,10 @@ static entry *require_entry(qa_qvm_mod_protection_runtime *protection, qa_actor_
   actor_entry *found = find_entry(protection, actor);
   qa_client_id current;
   qa_actor_id resolved;
-  if (found == NULL || !protection->services->is_live(protection->services->ctx, actor) ||
-      !protection->services->for_actor(protection->services->ctx, actor, &current) ||
+  if (found == NULL || !qa_session_actor_registry_is_live(protection->services->actors, actor) ||
+      !protection->services->clients->for_actor(protection->services->clients->ctx, actor, &current) ||
       !qa_same_client(current, found->value.client) ||
-      !protection->services->actor(protection->services->ctx, found->value.client, &resolved) ||
+      !protection->services->clients->actor(protection->services->clients->ctx, found->value.client, &resolved) ||
       !qa_same_actor(resolved, actor))
     qa_range_error("QVM protection client is no longer live");
   return &found->value;
@@ -356,7 +365,7 @@ void qa_qvm_mod_protection_create(qa_qvm_mod_protection_component *component,
                                   qa_qvm_mod_protection_runtime *storage,
                                   qa_qvm_mod_protection_runtime **channels,
                                   const qa_qvm_mod_protection *definitions, size_t definition_count,
-                                  qa_qvm_memory *memory, const qa_qvmy_protection_services *services,
+                                  qa_qvm_memory *memory, qa_mod_host_services *services,
                                   qa_provider_id owner, const qa_qvm_mod_protection_operations *operations) {
   memset(component, 0, sizeof *component);
   component->channels = channels;
@@ -388,15 +397,15 @@ bool qa_qvm_mod_protection_runtime_get_is_active(const qa_qvm_mod_protection_run
 }
 
 void qa_qvm_mod_protection_reserve(qa_qvm_mod_protection_runtime *protection) {
-  if (!protection->services->has_clients) qa_range_error("QVM protection requires canonical clients");
+  if (protection->services->clients == NULL) qa_range_error("QVM protection requires canonical clients");
   size_t capacity = 64;
   qa_actor_id *clients = malloc(capacity * sizeof *clients);
   if (clients == NULL) qa_range_error("QVM memory allocation failed");
-  size_t count = protection->services->clients(protection->services->ctx, clients, capacity);
+  size_t count = client_actors(protection->services, clients, capacity);
   if (count > capacity) {
     clients = realloc(clients, count * sizeof *clients);
     if (clients == NULL) qa_range_error("QVM memory allocation failed");
-    count = protection->services->clients(protection->services->ctx, clients, count);
+    count = client_actors(protection->services, clients, count);
   }
   for (size_t i = 0; i < count; i++) qa_qvm_mod_protection_reserve_actor(protection, clients[i]);
   free(clients);
@@ -411,17 +420,17 @@ void qa_qvm_mod_protection_reserve_actor(qa_qvm_mod_protection_runtime *protecti
   qa_client_id client;
   qa_owned_actor owned;
   qa_actor_id resolved;
-  if (!protection->services->has_clients ||
-      !protection->services->for_actor(protection->services->ctx, actor, &client) ||
-      !protection->services->resolve_owned(protection->services->ctx, actor, &owned) ||
-      !protection->services->actor(protection->services->ctx, client, &resolved) ||
+  if (protection->services->clients == NULL ||
+      !protection->services->clients->for_actor(protection->services->clients->ctx, actor, &client) ||
+      !qa_session_actor_registry_resolve_owned(protection->services->actors, actor, &owned) ||
+      !protection->services->clients->actor(protection->services->clients->ctx, client, &resolved) ||
       !qa_same_actor(resolved, actor))
     qa_range_error("QVM protection requires a live canonical client");
   qa_protection_binding claim = claim_of(protection);
-  size_t reservation = protection->services->reserve_protection(
-      protection->services->ctx, owned,
-      strcmp(protection->definition->channel, "regular") == 0 ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED,
-      &claim);
+  qa_protection_channel channel =
+      strcmp(protection->definition->channel, "regular") == 0 ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED;
+  qa_protection_reservation reservation =
+      qa_gameplay_authority_reserve_protection(protection->services->combat, owned, channel, claim.claim);
   if (protection->entry_count == protection->entry_capacity) {
     protection->entry_capacity = protection->entry_capacity == 0 ? 8 : protection->entry_capacity * 2;
     protection->entries = realloc(protection->entries, protection->entry_capacity * sizeof(actor_entry));
@@ -471,10 +480,15 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
     binding.pickups = flat;
     binding.pickup_count = pickup_count;
   }
-  protection->services->bind_reservation(protection->services->ctx, found->reservation, &binding);
+  qa_protection_reservation reservation = found->reservation;
+  qa_protection_binding converted = binding;
+  converted.channel = reservation.channel;
+  converted.inventory_items = NULL;
+  converted.inventory_item_count = 0;
+  (void)reservation.bind(reservation.ctx, converted);
   free(pickup_ptrs);
   free(flat);
-  /* Re-find: bind_reservation may reenter and realloc the entries. */
+  /* Re-find: reservation.bind may reenter and realloc the entries. */
   found = require_entry(protection, actor);
   found->bound = true;
 }
@@ -515,7 +529,7 @@ static void observe_write(void *ctx, const qa_qvm_committed_write *event) {
   observe_state *state = ctx;
   qa_qvm_mod_protection_runtime *self = state->self;
   qa_actor_id actor = state->actor;
-  if (!self->services->is_live(self->services->ctx, actor) || find_entry(self, actor) == NULL) return;
+  if (!qa_session_actor_registry_is_live(self->services->actors, actor) || find_entry(self, actor) == NULL) return;
   qa_regular_armor_state after_regular;
   qa_powered_protection_state after_powered;
   memset(&after_regular, 0, sizeof after_regular);
@@ -613,7 +627,7 @@ qa_armor_stage_result qa_qvm_mod_protection_observe(qa_qvm_mod_protection_runtim
   created->watch_id = qa_qvm_memory_observe_writes(protection->memory, ranges, range_count,
                                                     observe_write, &state, NULL, NULL);
   qa_armor_stage_result result = execute(execute_ctx);
-  if (find_entry(protection, actor) != NULL && protection->services->is_live(protection->services->ctx, actor))
+  if (find_entry(protection, actor) != NULL && qa_session_actor_registry_is_live(protection->services->actors, actor))
     (void)require_entry(protection, actor);
   /* Re-find by generation: nested observes may realloc the array. */
   stage *stages = component->stages;
@@ -643,10 +657,10 @@ void qa_qvm_mod_protection_release(qa_qvm_mod_protection_runtime *protection, qa
   actor_entry *entries = protection->entries;
   for (size_t i = 0; i < protection->entry_count; i++) {
     if (!qa_same_actor(entries[i].actor, actor)) continue;
-    size_t reservation = entries[i].value.reservation;
+    qa_protection_reservation reservation = entries[i].value.reservation;
     memmove(&entries[i], &entries[i + 1], (protection->entry_count - i - 1) * sizeof *entries);
     protection->entry_count--;
-    protection->services->close_reservation(protection->services->ctx, reservation);
+    reservation.close(reservation.ctx);
     return;
   }
 }

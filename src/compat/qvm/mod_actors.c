@@ -168,7 +168,7 @@ static bool valid_team_name(const char *team) {
   return strchr(colon + 1, '\n') == NULL && strchr(colon + 1, '\r') == NULL;
 }
 
-void qa_qvm_validate_mod_actors(const qa_qvmy_artifact *artifact,
+void qa_qvm_validate_mod_actors(const qa_resolved_qvm_artifact *artifact,
                                 const qa_qvm_mod_callback_declaration *declaration) {
   const qa_qvm_mod_source_callbacks *callbacks =
       declaration->source_actors != NULL ? declaration->source_actors->callbacks : NULL;
@@ -186,8 +186,8 @@ void qa_qvm_validate_mod_actors(const qa_qvmy_artifact *artifact,
   if (combat == NULL) return;
   const qa_qvm_mod_combat_fields *fields = &combat->fields;
   bool entry_is_function = is_integer(fields->entry) && fields->entry >= 0 &&
-                           artifact != NULL && fields->entry < (double)artifact->instruction_count &&
-                           artifact->instructions[(size_t)fields->entry].opcode == QA_QVMY_OP_ENTER;
+                           artifact != NULL && fields->entry < (double)artifact->image.instruction_count &&
+                           artifact->image.instructions[(size_t)fields->entry].opcode == QA_QVMY_OP_ENTER;
   if (!entry_is_function) qa_range_error("QVM damage entry is not a source function");
   validate_field(record, fields->health);
   validate_field(record, fields->takedamage);
@@ -200,8 +200,8 @@ void qa_qvm_validate_mod_actors(const qa_qvmy_artifact *artifact,
   if (callbacks == NULL) qa_range_error("QVM source damage requires declared reaction fields");
   if (str_eq(combat->abi, "declared")) {
     double data_bytes = artifact != NULL
-                            ? (double)(artifact->data_length + artifact->literal_length +
-                                       artifact->bss_length)
+                            ? (double)(artifact->image.data_length + artifact->image.literal_length +
+                                       artifact->image.bss_length)
                             : 0;
     qa_qvm_validate_combat_call(combat->calls.damage, data_bytes);
     qa_qvm_validate_combat_call(combat->calls.touch, data_bytes);

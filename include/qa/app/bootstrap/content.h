@@ -157,4 +157,61 @@ qa_app_main_mount_lease qa_app_loaded_content_retain_main_mounts(qa_app_loaded_c
 qa_app_options qa_app_application_options_for_recipe(const qa_app_options *options, const qa_content_catalog *catalog,
                                                      const qa_executable_recipe *recipe);
 void qa_app_options_for_recipe_free(qa_app_options *options);
+/* --- Concrete remote/configuration forms (TS openRemoteContent /
+ * openRemoteApplicationContent / remoteConfigurationContent /
+ * openApplicationConfigurationContent over the landed catalog,
+ * mounts/paths and user-data ports). Returns are NULL only on OOM;
+ * TS validation errors abort with the exact messages. --- */
+/* TS assertCurrent closure: returns the caller's cancellation error
+ * text, or NULL when the selection is still current. */
+typedef const char *(*qa_app_assert_current_fn)(void *ctx);
+/* TS RemoteContentMounts. String/selection/catalog/mounts owned;
+ * release with qa_app_remote_content_mounts_destroy (close() first
+ * mirrors mounts.close() without releasing the catalog). */
+typedef struct qa_app_remote_content_mounts {
+  qa_remote_content_selection selection;
+  qa_content_catalog *catalog; /* effective (possibly Q3-restricted) */
+  const qa_catalog_discovered_product *product;
+  qa_content_mounted *mounts;
+  char *write_root, *base_write_root; /* owned */
+  bool has_q3_product;                /* false mirrors TS null */
+  qa_q3_application_product q3_product;
+  void *backing; /* owned plan/discovery/Q3 backing */
+} qa_app_remote_content_mounts;
+/* TS openRemoteContent. `roots` contributes corpusRoot /
+ * userContentRoot / q3Product / startupCommands only; it is
+ * borrowed for the call. assert_current may be NULL. */
+qa_app_remote_content_mounts *qa_app_open_remote_content_native(const qa_app_options *roots,
+    const qa_remote_content_selection *requested, qa_app_assert_current_fn assert_current,
+    void *assert_ctx, int64_t generation);
+void qa_app_remote_content_mounts_close(qa_app_remote_content_mounts *mounts);
+void qa_app_remote_content_mounts_destroy(qa_app_remote_content_mounts *mounts);
+/* TS openRemoteApplicationContent (MountedApplicationContent rides
+ * qa_app_configuration_content). Options borrowed for the call. */
+qa_app_configuration_content *qa_app_open_remote_application_content_native(const qa_app_options *options);
+/* TS remoteConfigurationContent: shares content's catalog/mounts;
+ * closing the result closes content. Options borrowed. */
+qa_app_configuration_content *qa_app_remote_configuration_content_native(const qa_app_options *options,
+    qa_app_configuration_content *content);
+/* TS ApplicationConfigurationRequest (native form; the host-shaped
+ * qa_app_configuration_request above is unchanged). */
+typedef struct qa_app_configuration_request_native {
+  const char *kind; /* "launch" | "recipe" */
+  const qa_launch_preset *preset;  /* launch */
+  qa_launch_choice choice;         /* launch */
+  const qa_executable_recipe *recipe; /* recipe */
+} qa_app_configuration_request_native;
+/* TS openApplicationConfigurationContent. catalog borrowed;
+ * q3_product NULL mirrors TS undefined. */
+qa_app_configuration_content *qa_app_open_application_configuration_content_native(
+    qa_content_catalog *catalog, qa_app_configuration_request_native request,
+    const qa_q3_application_product *q3_product);
+/* Full TS selection.timing list (the single `timing` field above
+ * carries the movement entry, as qa_app_configuration_movement_
+ * dialect expects). Borrowed; count 0 when unset. */
+const qa_provider_timing *qa_app_configuration_content_timing(const qa_app_configuration_content *content,
+    size_t *out_count);
+/* Concrete Q3 product value; false mirrors an absent q3Product. */
+bool qa_app_configuration_content_q3_value(const qa_app_configuration_content *content,
+    qa_q3_application_product *out);
 #endif

@@ -70,7 +70,7 @@ static const char *part_literal(const char *part) {
   if (strcmp(part, "upper") == 0) return "upper";
   return "head";
 }
-static qa_q3_pres_body_profile_result read_declaration(const qa_qvmy_artifact *artifact, const uint8_t *bytes,
+static qa_q3_pres_body_profile_result read_declaration(const qa_resolved_qvm_artifact *artifact, const uint8_t *bytes,
                                                        size_t length, qa_qvm_body_submission **out, size_t *out_count) {
   qa_save_value *value = qa_parse_json_value(bytes, length, false);
   if (value == NULL) return QA_Q3_PRES_BODY_PROFILE_OOM;
@@ -218,7 +218,7 @@ done:
   qa_save_value_free(value);
   return result;
 }
-qa_q3_pres_body_profile_result qa_q3_pres_read_cgame_body_profile(const qa_qvmy_artifact *artifact,
+qa_q3_pres_body_profile_result qa_q3_pres_read_cgame_body_profile(const qa_resolved_qvm_artifact *artifact,
                                                                   qa_content_mounted *mounts,
                                                                   qa_qvm_body_submission **out, size_t *out_count) {
   *out = NULL;

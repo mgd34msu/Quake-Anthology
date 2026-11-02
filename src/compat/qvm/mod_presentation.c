@@ -46,13 +46,13 @@ static bool safe_integer(double value) {
   return isfinite(value) && value == trunc(value) && value >= -9007199254740991.0 && value <= 9007199254740991.0;
 }
 
-static const qa_qvm_instruction *insn_at(const qa_qvmy_artifact *artifact, double index) {
+static const qa_qvm_instruction *insn_at(const qa_resolved_qvm_artifact *artifact, double index) {
   int64_t at = (int64_t)index;
-  if (index != trunc(index) || at < 0 || (uint64_t)at >= artifact->instruction_count) return NULL;
-  return &artifact->instructions[at];
+  if (index != trunc(index) || at < 0 || (uint64_t)at >= artifact->image.instruction_count) return NULL;
+  return &artifact->image.instructions[at];
 }
 
-void qa_qvm_validate_mod_presentation(const qa_qvmy_artifact *artifact, qa_module_identity source,
+void qa_qvm_validate_mod_presentation(const qa_resolved_qvm_artifact *artifact, qa_module_identity source,
                                       const qa_qvm_mod_presentation_declaration *declaration) {
   const qa_qvm_presentation_base *base = declaration->is_scene ? &declaration->as.scene->base
                                                               : &declaration->as.player_events->base;
@@ -65,7 +65,7 @@ void qa_qvm_validate_mod_presentation(const qa_qvmy_artifact *artifact, qa_modul
     qa_range_error("Source presentation differs from its declared gameplay/cgame artifacts");
   if (strcmp(gameplay->abi_profile, cgame->abi_profile) != 0)
     qa_range_error("Source presentation requires matching player-state ABI profiles");
-  int64_t end = artifact->data_length + artifact->literal_length + artifact->bss_length;
+  int64_t end = artifact->image.data_length + artifact->image.literal_length + artifact->image.bss_length;
   struct range_check { double address; double size; };
   /* Common storage checks, branching on the storage variant. */
   double game_state = 0, centity_address = 0, centity_stride = 0, centity_capacity = 0, centity_state = 0;
@@ -1280,12 +1280,12 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
 /* qualifyQvmBodyCalls over the artifact's instruction list (the
  * landed qa_qvm_qualify_body_calls reads only instructions/count).
  * Fills up to capacity (site, part) pairs; returns the filled count. */
-static size_t qualify_body_calls(const qa_qvmy_artifact *artifact, const qa_qvm_scene_body *body,
+static size_t qualify_body_calls(const qa_resolved_qvm_artifact *artifact, const qa_qvm_scene_body *body,
                                  double *out_sites, const char **out_parts, size_t capacity) {
   qa_qvm_image image;
   memset(&image, 0, sizeof image);
-  image.instructions = (qa_qvm_instruction *)artifact->instructions;
-  image.instruction_count = artifact->instruction_count;
+  image.instructions = (qa_qvm_instruction *)artifact->image.instructions;
+  image.instruction_count = artifact->image.instruction_count;
   qa_qvm_body_calls calls;
   if (!qa_qvm_qualify_body_calls(&image, *body, &calls)) qa_range_error("QVM memory allocation failed");
   size_t filled = calls.count < capacity ? calls.count : capacity;

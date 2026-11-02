@@ -103,8 +103,19 @@ static void sound_event(qa_app_sim_simulation_events *e, qa_content_id content, 
 static void q1_event(qa_app_sim_simulation_events *e, qa_content_id content, const qa_q1_event *event,
     double sequence, bool has_recipient, qa_actor_id recipient) {
   if (is(event->kind, "sound")) {
-    double channel = is(event->sound_channel, "auto") ? 0 : is(event->sound_channel, "weapon") ? 1
-        : is(event->sound_channel, "voice") ? 2 : is(event->sound_channel, "item") ? 3 : 4;
+    /* TS: typeof channel === "number" passes through (Q1SoundChannel
+     * -1|5|6|7, encoded by C producers as decimal strings); named
+     * channels map auto/weapon/voice/item, anything else is body (4). */
+    double channel = 4;
+    if (is(event->sound_channel, "auto")) channel = 0;
+    else if (is(event->sound_channel, "weapon")) channel = 1;
+    else if (is(event->sound_channel, "voice")) channel = 2;
+    else if (is(event->sound_channel, "item")) channel = 3;
+    else if (event->sound_channel != NULL) {
+      char *end = NULL;
+      long numeric = strtol(event->sound_channel, &end, 10);
+      if (end != event->sound_channel && end != NULL && *end == '\0') channel = (double)numeric;
+    }
     qa_body_state_result body = qa_shared_body_table_read(e->options.bodies, event->actor);
     qa_vec3 center = {0, 0, 0};
     if (body.has_value) {

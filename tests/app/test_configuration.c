@@ -299,6 +299,355 @@ static void test_client_bootstrap(void) {
   CHECK(lifetime_len == 3 && lifetime_order[0] == 1 && lifetime_order[1] == 2 && lifetime_order[2] == 3);
   CHECK(text_eq(qa_app_client_source_capture_map(&lifetime), "e1m1"));
 }
+/* --- prepared-startup slice cases --- */
+static char captured_print[8192];
+static void capture_print_source(void *ctx, const char *text, const qa_command_context *source) {
+  (void)ctx; (void)source;
+  size_t used = strlen(captured_print);
+  (void)snprintf(captured_print + used, sizeof captured_print - used, "%s", text);
+}
+static void capture_print_text(void *ctx, const char *text) { capture_print_source(ctx, text, NULL); }
+static char forwarded_name[128], forwarded_arg[128];
+static int forwarded_count;
+static void capture_forward(void *ctx, const char *name, const char *const *args, size_t arg_count, qa_command_context source) {
+  (void)ctx; (void)source;
+  forwarded_count++;
+  (void)snprintf(forwarded_name, sizeof forwarded_name, "%s", name);
+  (void)snprintf(forwarded_arg, sizeof forwarded_arg, "%s", arg_count > 0 ? args[0] : "");
+}
+static qa_cvar_registry *make_registry(qa_command_dialect dialect, qa_command_context context) {
+  qa_cvar_registry_options options = {0};
+  options.dialect = dialect;
+  options.context = context;
+  qa_cvar_registry *registry = qa_cvar_registry_create(&options);
+  CHECK(registry != NULL);
+  return registry;
+}
+static char *fake_scoped_read(void *ctx, const char *name, qa_command_context source, qa_app_startup_script_scope scope) {
+  (void)ctx; (void)source; (void)scope;
+  if (strcmp(name, "quake.rc") == 0) return strdup("exec default.cfg\nexec config.cfg\n");
+  if (strcmp(name, "default.cfg") == 0) return strdup("");
+  if (strcmp(name, "config.cfg") == 0) return strdup("bind x +attack\n");
+  return NULL;
+}
+static int launch_count, frame_count;
+static void count_launch(void *ctx) { (void)ctx; launch_count++; }
+static void count_frame(void *ctx) { (void)ctx; frame_count++; }
+static qa_cvar_registry *fixed_owner(void *ctx, const char *name, qa_command_context source) {
+  (void)name; (void)source;
+  return ctx;
+}
+static void test_prepared_startup(void) {
+  qa_identity_owner identity = {0};
+  CHECK(qa_identity_owner_create(&identity, "prepared-test"));
+  qa_seat_id seat_id = qa_identity_owner_seat(&identity, 0);
+  qa_client_id client_id = qa_identity_owner_client(&identity, 0, 0);
+  qa_command_context server_context = {0};
+  server_context.session = identity.session;
+  server_context.origin.kind = QA_COMMAND_ORIGIN_SERVER_CONSOLE;
+  qa_command_context seat_context = {0};
+  seat_context.session = identity.session;
+  seat_context.origin.kind = QA_COMMAND_ORIGIN_LOCAL_SEAT;
+  seat_context.origin.seat = seat_id;
+  seat_context.origin.client = client_id;
+  qa_cvar_registry *source = make_registry(QA_COMMAND_DIALECT_Q1_NETQUAKE, server_context);
+  qa_cvar_registry *movement = make_registry(QA_COMMAND_DIALECT_Q1_NETQUAKE, server_context);
+  qa_cvar_registry *seat_cvars = make_registry(QA_COMMAND_DIALECT_Q1_NETQUAKE, seat_context);
+  qa_cvar_registry *mouse_cvars = make_registry(QA_COMMAND_DIALECT_Q1_NETQUAKE, seat_context);
+  qa_mouse_settings mouse = {NULL};
+  qa_mouse_settings_init(&mouse, mouse_cvars);
+  qa_cvar_archive_entry mouse_archive[] = {{(char *)"sensitivity", (char *)"9"}};
+  qa_app_prepared_seat_configuration seat_config = {0};
+  seat_config.context = seat_context;
+  seat_config.id = seat_id;
+  seat_config.cvars = seat_cvars;
+  seat_config.mouse = mouse;
+  seat_config.mouse_archive = mouse_archive;
+  seat_config.mouse_archive_count = 1;
+  forwarded_count = 0;
+  captured_print[0] = '\0';
+  qa_app_prepared_startup_options options = {0};
+  options.dialect = QA_COMMAND_DIALECT_Q1_NETQUAKE;
+  options.movement_dialect = QA_COMMAND_DIALECT_Q1_NETQUAKE;
+  options.seats = &seat_config;
+  options.seat_count = 1;
+  options.print = capture_print_source;
+  options.forward = capture_forward;
+  qa_app_prepared_startup *prepared = qa_app_prepared_startup_create_concrete(source, movement, NULL, &options);
+  CHECK(prepared != NULL);
+  CHECK(qa_app_prepared_startup_commands(prepared) != NULL);
+  /* Same-dialect movement is the fallback (TS constructor). */
+  CHECK(qa_app_prepared_startup_fallback(prepared) == movement);
+  CHECK(qa_app_prepared_startup_shared_cvars(prepared) == NULL);
+  CHECK(qa_app_prepared_startup_console_bindings(prepared) == NULL);
+  size_t seat_count = 0;
+  const qa_app_prepared_seat *seats = qa_app_prepared_startup_seats(prepared, &seat_count);
+  CHECK(seat_count == 1 && seats[0].input != NULL && qa_same_seat(seats[0].id, seat_id));
+  CHECK(!qa_app_prepared_startup_pending(prepared));
+  CHECK(qa_app_prepared_startup_configuration_can_continue(prepared));
+  /* Deferred world command forwards through the host closure. */
+  qa_command_buffer *commands = qa_app_prepared_startup_commands(prepared);
+  qa_command_buffer_append(commands, "map e1m1\n", &seat_context, -1);
+  (void)qa_command_buffer_execute(commands);
+  CHECK(forwarded_count == 1 && text_eq(forwarded_name, "map") && text_eq(forwarded_arg, "e1m1"));
+  /* Execute: quake.rc -> default.cfg (defaults+authored) -> config.cfg
+   * (archive + binding collection) over the fake scoped reader. */
+  qa_cvar_snapshot registered = {0};
+  CHECK(qa_cvar_registry_register(source, "test_source", "0", 0, &registered));
+  qa_cvar_read_free(&registered);
+  qa_cvar_archive_entry source_archive[] = {{(char *)"test_source", (char *)"5"}};
+  launch_count = 0; frame_count = 0;
+  qa_app_prepared_execute_options execute = {0};
+  execute.read = fake_scoped_read;
+  execute.apply_launch_options = count_launch;
+  execute.next_frame = count_frame;
+  execute.source_archive = source_archive;
+  execute.source_archive_count = 1;
+  qa_app_prepared_startup_execute(prepared, &execute);
+  CHECK(!qa_app_prepared_startup_pending(prepared));
+  CHECK(launch_count == 1);
+  char *value = qa_cvar_registry_variable_string(source, "test_source");
+  CHECK(text_eq(value, "5"));
+  free(value);
+  value = qa_cvar_registry_variable_string(mouse_cvars, "sensitivity");
+  CHECK(text_eq(value, "9"));
+  free(value);
+  bool all_chosen = false, has_selected = true;
+  size_t overridden = 0, authored_count = 0;
+  CHECK(qa_app_prepared_startup_seat_choices(prepared, seat_id, &all_chosen, NULL, &overridden,
+      &has_selected, NULL, NULL, NULL, &authored_count));
+  CHECK(authored_count > 0);
+  CHECK(overridden >= 1); /* config.cfg "bind x ..." was collected */
+  CHECK(!has_selected);
+  /* SeatInput binding publication: preview, bind, reset. */
+  qa_physical_input physical = {0};
+  CHECK(qa_named_physical_input("b", 0, &physical));
+  qa_input_binding extra = {physical, {false, NULL, "say staged"}};
+  size_t binding_count = 0;
+  qa_input_binding *preview = qa_app_prepared_startup_preview_bindings(prepared, seat_id, &extra, 1, &binding_count);
+  CHECK(binding_count > 0);
+  free(preview);
+  CHECK(qa_seat_input_binding(seats[0].input, &physical) == NULL);
+  qa_input_binding *bound = qa_app_prepared_startup_bindings(prepared, seat_id, &extra, 1, &binding_count);
+  CHECK(bound != NULL && binding_count > 0);
+  free(bound);
+  const qa_input_binding_target *target = qa_seat_input_binding(seats[0].input, &physical);
+  CHECK(target != NULL && !target->is_action && text_eq(target->text, "say staged"));
+  qa_app_prepared_startup_reset_bindings(prepared, seat_id);
+  CHECK(qa_app_prepared_startup_seat_choices(prepared, seat_id, &all_chosen, NULL, &overridden,
+      NULL, NULL, NULL, NULL, NULL));
+  CHECK(all_chosen && overridden == 0);
+  /* Retired-seat validation aborts with the TS Error. */
+  qa_seat_id retired = qa_identity_owner_seat(&identity, 9);
+  CHECK_ABORTS(qa_app_prepared_startup_set_active_seats(prepared, &retired, 1));
+  CHECK_ABORTS(qa_app_prepared_startup_reset_bindings(prepared, retired));
+  /* PreparedClientCommands staging: edits stay staged until publish. */
+  qa_cvar_registry *candidate_cvars = make_registry(QA_COMMAND_DIALECT_Q1_NETQUAKE, server_context);
+  qa_command_buffer_options candidate = {0};
+  candidate.dialect = QA_COMMAND_DIALECT_Q1_NETQUAKE;
+  candidate.context = server_context;
+  candidate.cvars = candidate_cvars;
+  candidate.print = capture_print_source;
+  qa_app_prepared_client_commands *client =
+      qa_app_prepared_startup_prepare_client_commands(prepared, &candidate, NULL, 0, false);
+  CHECK(client != NULL && qa_app_prepared_client_commands_buffer(client) != NULL);
+  qa_binding_command_seat staged = {0};
+  CHECK(qa_app_prepared_client_commands_input(client, seat_id, &staged));
+  qa_physical_input staged_physical = {0};
+  CHECK(qa_named_physical_input("c", 0, &staged_physical));
+  qa_input_binding staged_binding = {staged_physical, {false, NULL, "say candidate"}};
+  CHECK(staged.bind(staged.ctx, &staged_binding));
+  CHECK(qa_seat_input_binding(seats[0].input, &staged_physical) == NULL);
+  qa_app_prepared_client_commands_validate_publication(client);
+  qa_app_prepared_client_commands_publish(client);
+  target = qa_seat_input_binding(seats[0].input, &staged_physical);
+  CHECK(target != NULL && text_eq(target->text, "say candidate"));
+  qa_app_prepared_client_commands_destroy(client);
+  qa_cvar_registry_destroy(candidate_cvars);
+  /* A candidate over a live registry is rejected (TS isolation Error). */
+  qa_command_buffer_options live_candidate = candidate;
+  live_candidate.cvars = movement;
+  CHECK_ABORTS((void)qa_app_prepared_startup_prepare_client_commands(prepared, &live_candidate, NULL, 0, false));
+  /* allowSeatConfigurationCommand over a fixed-owner routing view. */
+  qa_command_cvar_routing routing = {source, fixed_owner, NULL};
+  qa_command_origin seat_origin = {0};
+  seat_origin.kind = QA_COMMAND_ORIGIN_LOCAL_SEAT;
+  seat_origin.seat = seat_id;
+  seat_origin.client = client_id;
+  qa_command_origin script_origin = {0};
+  script_origin.kind = QA_COMMAND_ORIGIN_SCRIPT;
+  script_origin.name = "config.cfg";
+  script_origin.caller = &seat_origin;
+  char *set_argv[] = {(char *)"set", (char *)"sensitivity", (char *)"3"};
+  qa_command_invocation invocation = {0};
+  invocation.source.session = identity.session;
+  invocation.source.origin = script_origin;
+  invocation.argv = set_argv;
+  invocation.argc = 3;
+  qa_app_prepared_seat allow_seats[] = {{seat_context, seat_id, seat_cvars, mouse, seats[0].input, false, false}};
+  captured_print[0] = '\0';
+  CHECK(!qa_app_allow_seat_configuration_command_for(&invocation, routing, allow_seats, 1, capture_print_source, NULL));
+  CHECK(strstr(captured_print, "Ignoring shared cvar sensitivity in saved secondary-seat configuration") != NULL);
+  routing.ctx = mouse_cvars;
+  CHECK(qa_app_allow_seat_configuration_command_for(&invocation, routing, allow_seats, 1, capture_print_source, NULL));
+  char *restart_argv[] = {(char *)"cvar_restart"};
+  invocation.argv = restart_argv;
+  invocation.argc = 1;
+  captured_print[0] = '\0';
+  CHECK(!qa_app_allow_seat_configuration_command_for(&invocation, routing, allow_seats, 1, capture_print_source, NULL));
+  CHECK(strstr(captured_print, "Ignoring shared cvar restart") != NULL);
+  script_origin.name = "autoexec.cfg";
+  invocation.source.origin = script_origin;
+  invocation.argv = set_argv;
+  invocation.argc = 3;
+  CHECK(qa_app_allow_seat_configuration_command_for(&invocation, routing, allow_seats, 1, capture_print_source, NULL));
+  qa_app_prepared_startup_close(prepared);
+  /* Dedicated form: console bindings exist; a created fallback takes
+   * the console dialect; readConfiguration without a reader aborts. */
+  qa_cvar_registry *dedicated_source = make_registry(QA_COMMAND_DIALECT_Q2_CLASSIC, server_context);
+  qa_cvar_registry *q3_movement = make_registry(QA_COMMAND_DIALECT_Q3, server_context);
+  qa_app_prepared_startup_options dedicated_options = {0};
+  dedicated_options.dialect = QA_COMMAND_DIALECT_Q2_CLASSIC;
+  dedicated_options.movement_dialect = QA_COMMAND_DIALECT_Q3;
+  dedicated_options.print = capture_print_source;
+  dedicated_options.forward = capture_forward;
+  qa_app_prepared_startup *dedicated =
+      qa_app_prepared_startup_create_concrete(dedicated_source, q3_movement, NULL, &dedicated_options);
+  CHECK(qa_app_prepared_startup_console_bindings(dedicated) != NULL);
+  CHECK(qa_app_prepared_startup_fallback(dedicated) != q3_movement);
+  CHECK(qa_cvar_registry_dialect(qa_app_prepared_startup_fallback(dedicated)) == QA_COMMAND_DIALECT_Q2_CLASSIC);
+  CHECK_ABORTS((void)qa_app_prepared_startup_read_configuration(dedicated, "x.cfg", server_context, "user"));
+  qa_app_prepared_startup_close(dedicated);
+  qa_cvar_registry_destroy(dedicated_source);
+  qa_cvar_registry_destroy(q3_movement);
+  qa_cvar_registry_destroy(mouse_cvars);
+  qa_cvar_registry_destroy(seat_cvars);
+  qa_cvar_registry_destroy(movement);
+  qa_cvar_registry_destroy(source);
+  qa_identity_owner_destroy(&identity);
+}
+static bool fake_mounted_open(void *ctx, const char *name, uint8_t **out_bytes, size_t *out_count) {
+  (void)ctx;
+  const char *text = NULL;
+  if (strcmp(name, "quake.rc") == 0) text = "exec default.cfg\nexec config.cfg\n";
+  else if (strcmp(name, "default.cfg") == 0 || strcmp(name, "config.cfg") == 0) text = "";
+  if (text == NULL) return false;
+  *out_count = strlen(text);
+  *out_bytes = (uint8_t *)strdup(text);
+  return *out_bytes != NULL;
+}
+static void fake_register_shared(void *ctx, qa_cvar_registry *cvars, bool has_format, qa_audio_output_format format) {
+  (void)ctx; (void)has_format; (void)format;
+  qa_cvar_snapshot volume = {0};
+  if (qa_cvar_registry_register(cvars, "volume", "1", 0, &volume)) qa_cvar_read_free(&volume);
+}
+static bool fake_load_text(void *ctx, const char *name, char **out_text) {
+  (void)ctx; (void)name;
+  *out_text = NULL;
+  return false;
+}
+static const char *fake_dump_text(void *ctx, const char *name, const char *text) {
+  (void)ctx; (void)name; (void)text;
+  return NULL;
+}
+static int on_prepared_count;
+static void count_on_prepared(void *ctx, qa_app_prepared_startup *prepared) {
+  (void)ctx; (void)prepared;
+  on_prepared_count++;
+}
+static void test_prepare_initial(void) {
+  qa_app_content_host host = {0};
+  host.product = fake_product;
+  host.require_product = fake_require;
+  host.open_configuration = fake_open_configuration;
+  host.preset = fake_preset;
+  qa_app_options open_options = {0};
+  open_options.product = "q1-classic-id1";
+  qa_app_configuration_content *content = qa_app_open_initial_configuration_content_for_catalog(
+      host, &catalog, &open_options, NULL, false, NULL);
+  CHECK(content != NULL);
+  qa_app_application_configuration_selection selection = {0};
+  selection.source.content = "q1-classic-id1";
+  selection.source.provider = "q1:official";
+  selection.engine_behavior.content = "q1-classic-id1";
+  selection.engine_behavior.provider = "q1:official";
+  selection.movement.provider = "q1:official";
+  selection.timing.provider = "q1:official";
+  selection.timing.clock.kind = QA_CLOCK_Q1_NETQUAKE;
+  qa_app_configuration_content_set_selection(content, selection);
+  qa_identity_owner identity = {0};
+  CHECK(qa_identity_owner_create(&identity, "initial-test"));
+  qa_session_mode mode = {QA_SESSION_MODE_LOCAL};
+  qa_engine_session *session = qa_engine_session_create(&identity, mode);
+  CHECK(session != NULL);
+  char root_template[] = "/tmp/qa-initial-XXXXXX";
+  char *root = mkdtemp(root_template);
+  CHECK(root != NULL);
+  qa_config_store settings;
+  CHECK(qa_config_store_init(&settings, root));
+  qa_app_console_script_files_options script_options = {0};
+  script_options.console_root = root;
+  script_options.settings = &settings;
+  script_options.has_mounted_script = true;
+  script_options.mounted_script.ctx = NULL;
+  script_options.mounted_script.open = fake_mounted_open;
+  qa_app_console_script_files *scripts = qa_app_console_script_files_create(script_options);
+  CHECK(scripts != NULL);
+  qa_app_options options = {0};
+  options.product = "q1-classic-id1";
+  options.seats = 1;
+  options.character = QA_GAME_FAMILY_Q1;
+  options.character_model = (char *)"male";
+  options.user_content_root = root;
+  options.mode = "singleplayer";
+  qa_app_prepare_initial_args args = {0};
+  args.catalog = &catalog;
+  args.content = content;
+  args.session = session;
+  args.identity = &identity;
+  args.settings = &settings;
+  args.scripts = scripts;
+  args.image_host.register_shared = fake_register_shared;
+  args.image_host.load_text = fake_load_text;
+  args.image_host.dump_text = fake_dump_text;
+  args.print = capture_print_text;
+  args.default_capacity = 4;
+  args.on_prepared = count_on_prepared;
+  on_prepared_count = 0;
+  captured_print[0] = '\0';
+  qa_app_prepared_initial *initial = qa_app_prepare_initial_configuration(&options, &args);
+  CHECK(initial != NULL);
+  CHECK(on_prepared_count == 1);
+  qa_app_prepared_startup *prepared = qa_app_prepared_initial_startup(initial);
+  CHECK(prepared != NULL && !qa_app_prepared_startup_pending(prepared));
+  size_t seat_count = 0;
+  const qa_app_prepared_seat *seats = qa_app_prepared_startup_seats(prepared, &seat_count);
+  CHECK(seat_count == 1 && seats[0].input != NULL);
+  /* The EngineSession seat created for the local client is in the map. */
+  qa_client_id seat_client = seats[0].context.origin.client;
+  CHECK(qa_app_prepared_initial_local_seat(initial, seat_client) != NULL);
+  CHECK(qa_app_prepared_initial_image(initial) != NULL);
+  CHECK(qa_app_prepared_startup_shared_cvars(prepared) == qa_app_image_settings_cvars(qa_app_prepared_initial_image(initial)));
+  CHECK(qa_app_prepared_initial_max_clients(initial) > 0);
+  CHECK(qa_app_prepared_initial_scripts(initial) == scripts);
+  /* A forwarded world command becomes an application request row. */
+  size_t request_count = 99;
+  (void)qa_app_prepared_initial_requests(initial, &request_count);
+  CHECK(request_count == 0);
+  qa_command_buffer *commands = qa_app_prepared_startup_commands(prepared);
+  qa_command_context seat_context = seats[0].context;
+  qa_command_buffer_append(commands, "connect example.test\n", &seat_context, -1);
+  (void)qa_command_buffer_execute(commands);
+  const qa_app_configuration_command_request *requests = qa_app_prepared_initial_requests(initial, &request_count);
+  CHECK(request_count == 1 && text_eq(requests[0].name, "connect") && requests[0].has_seat
+      && requests[0].argument_count == 1 && text_eq(requests[0].arguments[0], "example.test"));
+  qa_app_prepared_initial_destroy(initial);
+  qa_engine_session_destroy(session);
+  qa_app_console_script_files_destroy(scripts);
+  qa_app_configuration_content_destroy(content);
+  qa_config_store_destroy(&settings);
+  qa_identity_owner_destroy(&identity);
+}
 int main(void) {
   qa_content_catalog_init(&catalog, "/corpus", products, sizeof products / sizeof products[0],
                           NULL, 0, 1, "/tmp/qa-cfg-user", NULL, 0);
@@ -308,6 +657,8 @@ int main(void) {
   test_make_request();
   test_open_initial();
   test_client_bootstrap();
+  test_prepared_startup();
+  test_prepare_initial();
   qa_content_catalog_destroy(&catalog);
   printf("%d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

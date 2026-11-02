@@ -28,10 +28,10 @@ typedef struct qa_qvm_weapon_profile {
 
 qa_save_value *qa_qvm_weapon_profile_declaration(const qa_qvm_weapon_profile *profile,
                                                  qa_qvm_abi_profile abi_profile);
-void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_qvmy_artifact *artifact,
+void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_resolved_qvm_artifact *artifact,
                                 qa_qvm_weapon_profile *out);
 void qa_qvm_validate_weapon_profile(const qa_qvm_weapon_profile *profile,
-                                    const qa_qvmy_artifact *artifact, qa_qvm_weapon_profile *out);
+                                    const qa_resolved_qvm_artifact *artifact, qa_qvm_weapon_profile *out);
 void qa_qvm_weapon_profile_free(qa_qvm_weapon_profile *profile);
 
 #endif

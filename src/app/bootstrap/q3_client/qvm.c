@@ -22,7 +22,7 @@ struct qa_app_application_qvm_client {
   double generation;
   bool retired, ready;
   bool has_ui_artifact, has_cgame_artifact;
-  qa_qvmy_artifact ui_artifact, cgame_artifact;
+  qa_resolved_qvm_artifact ui_artifact, cgame_artifact;
   qa_qvm_ui ui;
   bool ui_created;
   qa_qvm_cgame cgame;
@@ -125,8 +125,8 @@ static bool status_visible_bridge(void *ctx) {
   return client->options.session.status_visible(client->options.session.ctx) != false;
 }
 static qa_qvm_module_options module_options(qa_app_application_qvm_client *client, const char *role,
-                                            qa_qvmy_artifact *artifact_out) {
-  qa_qvmy_artifact artifact;
+                                            qa_resolved_qvm_artifact *artifact_out) {
+  qa_resolved_qvm_artifact artifact;
   bool retained = false;
   if (client->options.has_artifacts) {
     artifact = is(role, "ui") ? client->options.artifacts.ui : client->options.artifacts.cgame;
@@ -168,13 +168,13 @@ qa_app_application_qvm_client *qa_app_application_qvm_client_create(qa_app_appli
     if (i == 0) client->ui_commands = made; else client->cgame_commands = made;
   }
   client->generation = options.connection.generation(options.connection.ctx);
-  qa_qvmy_artifact *ui_artifact = NULL;
+  qa_resolved_qvm_artifact *ui_artifact = NULL;
   qa_qvm_module_options ui_options = module_options(client, "ui", ui_artifact);
   (void)ui_artifact;
   qa_qvm_ui_create(&client->ui, options.seat, &ui_options, assert_current_void, client);
   client->ui_created = true;
   qa_qvm_ui_init_export(&client->ui, true);
-  qa_qvmy_artifact *cgame_artifact = NULL;
+  qa_resolved_qvm_artifact *cgame_artifact = NULL;
   qa_qvm_module_options cgame_options = module_options(client, "cgame", cgame_artifact);
   (void)cgame_artifact;
   qa_qvm_cgame_lifetime lifetime = {client, assert_current_void, lifetime_current, lifetime_begin_loading, lifetime_prime};

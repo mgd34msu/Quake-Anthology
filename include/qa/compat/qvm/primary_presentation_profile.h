@@ -17,7 +17,7 @@
 #include "qa/content/mounts.h"
 #include "qa/content/q3/equipment/cgame_weapon_hud.h"
 
-bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_content_mounted *mounts,
+bool qa_qvm_read_equipment_presentation(const qa_resolved_qvm_artifact *artifact, qa_content_mounted *mounts,
                                         qa_q3_equipment_qvm_presentation_profile *out, bool *out_owned);
 void qa_qvm_equipment_presentation_free(qa_q3_equipment_qvm_presentation_profile *profile);
 

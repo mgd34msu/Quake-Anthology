@@ -29,7 +29,7 @@
 #include "qa/world/session/mods.h"
 
 /* artifact is QvmModuleOptions["artifact"] (module.h mirror). */
-void qa_qvm_validate_mod_actors(const qa_qvmy_artifact *artifact,
+void qa_qvm_validate_mod_actors(const qa_resolved_qvm_artifact *artifact,
                                 const qa_qvm_mod_callback_declaration *declaration);
 
 /* One invoke() input (TS ReadonlyMap<ModCallbackInput, ModRuntimeValue>). */

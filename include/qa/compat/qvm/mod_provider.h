@@ -67,12 +67,12 @@ typedef struct qa_qvm_mod_provider_presentation_context {
 } qa_qvm_mod_provider_presentation_context;
 
 /* TS validateQvmMod. Aborts with the TS Error message on failure. */
-void qa_qvm_validate_mod(const qa_qvmy_artifact *artifact,
+void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
                          const qa_qvm_mod_callback_declaration *declaration);
 /* TS validateQvmModCheckpoint (QvmCheckpoint is the qvm kind of
  * qa_guest_checkpoint). */
 void qa_qvm_validate_mod_checkpoint(
-    const qa_qvmy_artifact *artifact,
+    const qa_resolved_qvm_artifact *artifact,
     const qa_qvm_mod_callback_declaration *declaration,
     const qa_guest_checkpoint *checkpoint);
 
@@ -85,7 +85,7 @@ typedef void (*qa_qvm_mod_provider_current_fn)(void *ctx);
 
 typedef struct qa_qvm_mod_provider qa_qvm_mod_provider;
 struct qa_qvm_mod_provider {
-  const qa_qvmy_artifact *artifact;
+  const qa_resolved_qvm_artifact *artifact;
   const qa_qvm_mod_callback_declaration *declaration;
   qa_mod_host_services *services;
   qa_qvm_mod_provider_current_fn assert_current;
@@ -112,10 +112,7 @@ struct qa_qvm_mod_provider {
   qa_qvm_mod_protection_runtime *protection_storage;
   qa_qvm_mod_protection_runtime **protection_channels;
   size_t protection_count;
-  qa_qvmy_protection_services protection_services;
-  qa_qvmy_pickup_services pickup_services;
   qa_qvm_mod_pickups pickups;
-  qa_qvmy_item_services item_services;
   qa_qvm_mod_items_runtime items;
   bool has_items;
   qa_qvm_mod_actor_frame_runtime actor_frame;
@@ -200,7 +197,7 @@ struct qa_qvm_mod_provider {
  * (module.h accommodation). False only on allocation failure;
  * invalid declarations abort. */
 bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p,
-                              const qa_qvmy_artifact *artifact,
+                              const qa_resolved_qvm_artifact *artifact,
                               const qa_qvm_mod_callback_declaration *declaration,
                               qa_mod_host_services *services,
                               qa_qvm_mod_provider_current_fn assert_current,

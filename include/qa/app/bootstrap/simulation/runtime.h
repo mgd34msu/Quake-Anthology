@@ -55,4 +55,74 @@ void qa_app_sim_ordered_actor_turns_destroy(qa_app_sim_ordered_actor_turns *turn
  * owned identity: id + owner). */
 typedef struct qa_app_sim_actor_visited { qa_owned_actor *actors; size_t count, capacity; } qa_app_sim_actor_visited;
 bool qa_app_sim_ordered_actor_turns_next(qa_app_sim_ordered_actor_turns *turns, qa_app_sim_actor_visited *visited, qa_owned_actor *out);
+/* TS SharedSimulation.step() deadline/boundary planning (runtime.ts
+ * step: fixed interval, mapRun, elapsed clamp, map/Q2-weapon/Q3
+ * deadline sets merged and sorted). Pure stage body: the host bundle
+ * accumulates scheduling/selected milliseconds exactly as TS does
+ * before the plan, then executes one boundary turn per entry.
+ * extra_clocks are the monster/foreign Q2 clocks: first due is
+ * round(seconds(clock.time)*1000)+interval in TS. A non-positive
+ * interval contributes its first due once (TS profiles are > 0). */
+typedef struct qa_app_sim_frame_clock { double first_due, interval; } qa_app_sim_frame_clock;
+typedef struct qa_app_sim_frame_boundary { double milliseconds; bool map, q2, q3; } qa_app_sim_frame_boundary;
+typedef struct qa_app_sim_frame_plan_input {
+  qa_clock_profile profile;
+  bool settlement_active, paused;
+  double elapsed_milliseconds, time_seconds, source_scheduling_milliseconds;
+  bool has_selected_q2;
+  double selected_q2_map_milliseconds, selected_q2_next_milliseconds, selected_q2_interval_milliseconds;
+  bool has_selected_q3;
+  double selected_q3_next, selected_milliseconds, selected_q3_server_frame_milliseconds;
+  const qa_app_sim_frame_clock *extra_clocks; size_t extra_clock_count;
+} qa_app_sim_frame_plan_input;
+typedef struct qa_app_sim_frame_plan {
+  bool has_fixed; double fixed_milliseconds;
+  bool map_run; double elapsed_seconds;
+  double map_start_milliseconds, map_end_milliseconds;
+  qa_app_sim_frame_boundary *boundaries; size_t boundary_count;
+} qa_app_sim_frame_plan;
+qa_app_sim_frame_plan qa_app_sim_frame_plan_compute(qa_app_sim_frame_plan_input input);
+void qa_app_sim_frame_plan_free(qa_app_sim_frame_plan *plan);
+/* --- Concrete SharedSimulation assembly (TS loadSimulation over the
+ * landed sibling modules: scene queries, shared physics, simulation
+ * events, gameplay authority, inventory, frame scheduler, movement
+ * players). options.world, when set, is a borrowed
+ * qa_app_application_world (content.h); when NULL the map geometry is
+ * read from options.mounts (a qa_content_mounted) through
+ * recipe.map.geometry and decoded here (Q1 BSP; Q2/Q3 require the
+ * decoded world from content). The returned host's close destroys the
+ * concrete state; qa_app_sim_shared_simulation_destroy after close is
+ * safe. Source-game runtimes (TS createSource q1/q2/q3 games, QuakeC,
+ * QVM and native guests, selected monsters/arsenals, mods) are not
+ * constructed: execution modules of those kinds abort at build. --- */
+#include "qa/app/bootstrap/simulation/events.h"
+#include "qa/app/bootstrap/simulation/physics.h"
+#include "qa/world/collision/index.h"
+typedef struct qa_app_sim_concrete_simulation qa_app_sim_concrete_simulation;
+qa_app_sim_shared_simulation_host qa_app_sim_shared_simulation_concrete_host(
+    qa_app_simulation_options options, qa_session_actor_registry *actors, qa_session_id session,
+    qa_app_sim_concrete_simulation **out_state);
+/* Bind the owning simulation (its SourceRandom becomes the concrete
+ * random stream). Called by the create/load wrappers below. */
+void qa_app_sim_concrete_simulation_bind(qa_app_sim_concrete_simulation *state,
+                                         qa_app_sim_shared_simulation *simulation);
+qa_app_sim_shared_simulation *qa_app_sim_shared_simulation_create_concrete(
+    qa_app_simulation_options options, qa_session_actor_registry *actors, qa_session_id session);
+qa_app_sim_shared_simulation *qa_app_sim_load_simulation_concrete(
+    qa_app_simulation_options options, qa_session_actor_registry *actors, qa_session_id session,
+    void (*next_frame)(void *frame_ctx), void *frame_ctx);
+/* NULL when the simulation was not built by the concrete builder. */
+qa_app_sim_concrete_simulation *qa_app_sim_shared_simulation_concrete(
+    qa_app_sim_shared_simulation *simulation);
+qa_app_sim_shared_physics *qa_app_sim_concrete_simulation_physics(qa_app_sim_concrete_simulation *state);
+qa_app_sim_simulation_events *qa_app_sim_concrete_simulation_events(qa_app_sim_concrete_simulation *state);
+qa_shared_scene_queries *qa_app_sim_concrete_simulation_scene(qa_app_sim_concrete_simulation *state);
+qa_frame_context qa_app_sim_concrete_simulation_frame(const qa_app_sim_concrete_simulation *state);
+bool qa_app_sim_concrete_simulation_world_actor(const qa_app_sim_concrete_simulation *state, qa_actor_id *out);
+/* TS admitPlayer for the shared (non-guest) source: allocates the
+ * client actor at the map's info_player_start when the decoded Q1
+ * entity list is available (origin zero otherwise), creates its body,
+ * combat (health 100) and inventory, and binds a MovementPlayer. */
+qa_app_sim_player_admission qa_app_sim_concrete_simulation_admit_player(
+    qa_app_sim_concrete_simulation *state, qa_client_id client);
 #endif
