@@ -3,6 +3,53 @@
 #include "qa/content/q1/missionpacks/obituaries.h"
 #include "missionpacks_internal.h"
 #include "qa/content/q1/base/messages.h"
+#include "qa/content/q1/base/rules.h"
+
+/* TS q1Obituary (src/content/q1/base/rules.ts) via the landed
+ * qa_q1_obituary_compute. The mission person mirror carries no
+ * health/quad/invulnerable/killString, so those read 0/"". */
+static qa_q1_obituary_actor obituary_actor(const qa_q1mp_obituary_person *person) {
+  qa_q1_obituary_actor actor = {0};
+  actor.actor = person->actor;
+  actor.name = person->name != NULL ? person->name : "";
+  actor.classname = person->classname != NULL ? person->classname : "";
+  actor.is_player = person->is_player;
+  actor.is_monster = person->is_monster;
+  actor.team = person->team;
+  actor.water_type = person->water_type != NULL ? person->water_type : "";
+  actor.water_level = person->water_level;
+  actor.weapon = person->weapon;
+  actor.brush = person->brush;
+  actor.kill_string = "";
+  return actor;
+}
+qa_q1mp_obituary qa_q1mp_ext_q1_obituary(const qa_q1mp_obituary_input *input,
+                                         bool has_attacker_override, bool attacker_null) {
+  bool has_attacker = has_attacker_override ? !attacker_null : input->has_attacker;
+  qa_q1_obituary_actor victim = obituary_actor(&input->victim);
+  qa_q1_obituary_actor attacker = obituary_actor(&input->attacker);
+  qa_q1_obituary_actor telefrag_owner = obituary_actor(&input->telefrag_owner);
+  qa_q1_obituary_input base = {0};
+  base.edition = input->edition;
+  base.victim = victim;
+  base.attacker = has_attacker ? &attacker : NULL;
+  base.telefrag_owner = input->has_telefrag_owner ? &telefrag_owner : NULL;
+  base.teamplay = input->teamplay;
+  base.death_type = input->death_type;
+  base.random_ctx = input->random_ctx;
+  base.random = input->random;
+  qa_q1_obituary result = qa_q1_obituary_compute(&base);
+  qa_q1mp_obituary out = {0};
+  out.has_message = result.has_message;
+  (void)snprintf(out.text, sizeof out.text, "%s", result.text);
+  for (size_t i = 0; i < result.argument_count && i < 4; i++) out.args[i] = result.arguments[i];
+  out.arg_count = result.argument_count < 4 ? result.argument_count : 4;
+  out.has_score = result.has_score;
+  out.score_actor = result.score_actor;
+  out.score_delta = result.score_delta;
+  out.achievement = result.has_achievement ? result.achievement_id : NULL;
+  return out;
+}
 #include <stdio.h>
 #include <string.h>
 

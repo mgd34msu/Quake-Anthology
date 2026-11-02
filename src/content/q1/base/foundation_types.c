@@ -11,6 +11,19 @@
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
 
+qa_q1b_opt_actor qa_q1b_some_actor(qa_actor_id id) {
+  qa_q1b_opt_actor value = {true, id};
+  return value;
+}
+qa_q1b_channel qa_q1b_channel_named(const char *name) {
+  qa_q1b_channel value = {name, 0};
+  return value;
+}
+qa_q1b_channel qa_q1b_channel_numeric(double numeric) {
+  qa_q1b_channel value = {NULL, numeric};
+  return value;
+}
+
 bool qa_q1b_owned_equal(qa_owned_actor a, qa_owned_actor b) {
   if (!qa_same_actor(a.id, b.id)) return false;
   if (a.token != b.token) return false;

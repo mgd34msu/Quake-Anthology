@@ -5,147 +5,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/q1/foundation/types.h"
+#include "qa/content/q1/foundation/weapon_names.h"
+#include "qa/content/q1/missionpacks/types.h"
+#include "qa/content/q2/foundation/items.h"
+#include "qa/content/q2/foundation/weapons/definitions.h"
+#include "qa/content/q2/missionpacks/items.h"
+#include "qa/content/q2/missionpacks/weapons/definitions.h"
+#include "qa/content/q3/base/shared/items.h"
+#include "qa/content/q3/foundation/arsenal.h"
 #include "qa/input/support.h"
 
 /*
- * Weapon catalog data mirrored from the unported content module
- * (its C port has not landed): TS owners src/content/q1/foundation
- * (types.ts WEAPONS/weaponItem, weapon-names.ts display names),
- * src/content/q1/missionpacks/types.ts (missionWeapons),
- * src/content/q2/foundation/weapons/definitions.ts and items.ts,
- * src/content/q2/missionpacks (weapons/definitions.ts, items.ts),
- * src/content/q3/foundation/arsenal.ts and
- * src/content/q3/base/shared/items.ts (pickup names). Only the
- * name/item/label fields this module reads are mirrored.
+ * Weapon catalog data comes from the landed content ports (TS
+ * owners noted per use): Q1 WEAPONS/weaponItem and
+ * q1WeaponDisplayName, missionWeapons, Q2 base/mission weapon
+ * definitions and display names, Q3_WEAPON_ITEMS and itemList
+ * pickup names. Only name/item/label fields are read here.
  */
-static const char *const q1_weapons[8] = {"axe", "shotgun", "supershotgun",
-                                          "nailgun", "supernailgun",
-                                          "grenadelauncher", "rocketlauncher",
-                                          "lightning"};
-static const char *const q1_display[8] = {"Axe", "Shotgun",
-                                          "Double-barrelled Shotgun", "Nailgun",
-                                          "Super Nailgun", "Grenade Launcher",
-                                          "Rocket Launcher", "Thunderbolt"};
-static const char *const q1_mission_weapons[8] = {
-    "hipnotic:laser", "hipnotic:mjolnir", "hipnotic:proximity",
-    "rogue:lava-nailgun", "rogue:lava-supernailgun", "rogue:multi-grenade",
-    "rogue:multi-rocket", "rogue:plasma"};
-
-typedef struct q2_weapon {
-  const char *name;
-  const char *item;
-} q2_weapon;
-
-static const q2_weapon q2_base[11] = {
-    {"blaster", "q2:weapon_blaster"}, {"shotgun", "q2:weapon_shotgun"},
-    {"supershotgun", "q2:weapon_supershotgun"},
-    {"machinegun", "q2:weapon_machinegun"}, {"chaingun", "q2:weapon_chaingun"},
-    {"grenades", "q2:ammo_grenades"},
-    {"grenadelauncher", "q2:weapon_grenadelauncher"},
-    {"rocketlauncher", "q2:weapon_rocketlauncher"},
-    {"hyperblaster", "q2:weapon_hyperblaster"}, {"railgun", "q2:weapon_railgun"},
-    {"bfg", "q2:weapon_bfg"}};
-static const char *const q2_base_display[11] = {
-    "Blaster", "Shotgun", "Super Shotgun", "Machinegun", "Chaingun",
-    "Grenades", "Grenade Launcher", "Rocket Launcher", "HyperBlaster",
-    "Railgun", "BFG10K"};
-static const q2_weapon q2_xatrix[3] = {{"trap", "q2:ammo_trap"},
-                                       {"ionripper", "q2:weapon_boomer"},
-                                       {"phalanx", "q2:weapon_phalanx"}};
-static const q2_weapon q2_rogue[6] = {
-    {"tesla", "q2:ammo_tesla"}, {"proxlauncher", "q2:weapon_proxlauncher"},
-    {"chainfist", "q2:weapon_chainfist"},
-    {"disintegrator", "q2:weapon_disintegrator"},
-    {"etf_rifle", "q2:weapon_etf_rifle"}, {"heatbeam", "q2:weapon_plasmabeam"}};
-static const struct {
-  const char *name;
-  const char *display;
-} q2_mission_display[7] = {{"ionripper", "Ionripper"}, {"phalanx", "Phalanx"},
-                           {"etf_rifle", "ETF Rifle"}, {"heatbeam", "Plasma Beam"},
-                           {"chainfist", "Chainfist"},
-                           {"disintegrator", "Disruptor"},
-                           {"proxlauncher", "Prox Launcher"}};
-static const struct {
-  const char *classname;
-  const char *display;
-} q2_mission_ammo[6] = {{"ammo_magslug", "Mag Slug"}, {"ammo_trap", "Trap"},
-                        {"ammo_flechettes", "Flechettes"}, {"ammo_prox", "Prox"},
-                        {"ammo_tesla", "Tesla"}, {"ammo_disruptor", "Rounds"}};
-
-typedef struct q3_weapon {
-  double weapon;
-  const char *item;
-  const char *label;
-} q3_weapon;
-
-static const q3_weapon q3_weapons[13] = {
-    {1, "q3:weapon/gauntlet", "Gauntlet"},
-    {2, "q3:weapon/machinegun", "Machinegun"},
-    {3, "q3:weapon/shotgun", "Shotgun"},
-    {4, "q3:weapon/grenadelauncher", "Grenade Launcher"},
-    {5, "q3:weapon/rocketlauncher", "Rocket Launcher"},
-    {6, "q3:weapon/lightning", "Lightning Gun"},
-    {7, "q3:weapon/railgun", "Railgun"},
-    {8, "q3:weapon/plasmagun", "Plasma Gun"},
-    {9, "q3:weapon/bfg", "BFG10K"},
-    {10, "q3:weapon/grapple", "Grappling Hook"},
-    {11, "q3:weapon/nailgun", "Nailgun"},
-    {12, "q3:weapon/proxlauncher", "Prox Launcher"},
-    {13, "q3:weapon/chaingun", "Chaingun"}};
-
-/* TS q1WeaponDisplayName over an arbitrary Q1Weapon string. */
-static char *q1_weapon_display_name(const char *weapon) {
-  for (int i = 0; i < 8; i++) {
-    if (strcmp(weapon, q1_weapons[i]) == 0) return qa_input_dup(q1_display[i]);
-  }
-  if (strcmp(weapon, "hipnotic:laser") == 0) return qa_input_dup("Laser Cannon");
-  if (strcmp(weapon, "hipnotic:mjolnir") == 0) return qa_input_dup("Mjolnir");
-  if (strcmp(weapon, "hipnotic:proximity") == 0) return qa_input_dup("Proximity Gun");
-  const char *name = strrchr(weapon, ':');
-  name = name != NULL ? name + 1 : weapon;
-  char *out = qa_input_dup(name);
-  if (out == NULL) return NULL;
-  for (size_t i = 0; out[i] != '\0'; i++) {
-    if (out[i] == '_' || out[i] == '-') out[i] = ' ';
-  }
-  /* \b\w uppercasing under ASCII word characters. */
-  for (size_t i = 0; out[i] != '\0'; i++) {
-    unsigned char c = (unsigned char)out[i];
-    bool word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                (c >= '0' && c <= '9') || c == '_';
-    bool before = false;
-    if (i > 0) {
-      unsigned char p = (unsigned char)out[i - 1];
-      before = (p >= 'A' && p <= 'Z') || (p >= 'a' && p <= 'z') ||
-               (p >= '0' && p <= '9') || p == '_';
-    }
-    if (word && !before && c >= 'a' && c <= 'z') out[i] = (char)(c - 32);
-  }
-  return out;
-}
-
-static const char *q2_base_display_name(const char *item) {
-  for (int i = 0; i < 11; i++) {
-    if (strcmp(item, q2_base[i].item) == 0) return q2_base_display[i];
-  }
-  return NULL;
-}
-
-static const char *q2_mission_display_name(const char *name) {
-  for (int i = 0; i < 7; i++) {
-    if (strcmp(name, q2_mission_display[i].name) == 0) {
-      return q2_mission_display[i].display;
-    }
-  }
-  char classname[64];
-  snprintf(classname, sizeof classname, "ammo_%s", name);
-  for (int i = 0; i < 6; i++) {
-    if (strcmp(classname, q2_mission_ammo[i].classname) == 0) {
-      return q2_mission_ammo[i].display;
-    }
-  }
-  return NULL;
-}
 
 typedef struct item_list {
   qa_weapon_binding_item *items;
@@ -177,13 +54,10 @@ static bool push_item(item_list *list, const char *id, const char *label) {
 }
 
 static bool push_q1_weapon(item_list *list, const char *weapon) {
-  char id[128];
-  snprintf(id, sizeof id, "q1:weapon/%s", weapon);
-  char *label = q1_weapon_display_name(weapon);
-  if (label == NULL) return false;
-  bool ok = push_item(list, id, label);
-  free(label);
-  return ok;
+  char label[128];
+  const char *display =
+      qa_q1_weapon_display_name(weapon, label, sizeof label);
+  return push_item(list, qa_q1_weapon_item(weapon), display);
 }
 
 qa_weapon_binding_item *qa_base_weapon_binding_items(qa_game_family family,
@@ -196,52 +70,52 @@ qa_weapon_binding_item *qa_base_weapon_binding_items(qa_game_family family,
   bool ok = true;
   switch (family) {
     case QA_GAME_FAMILY_Q1: {
-      for (int i = 0; i < 8 && ok; i++) ok = push_q1_weapon(&list, q1_weapons[i]);
+      for (int i = 0; i < 8 && ok; i++) ok = push_q1_weapon(&list, QA_Q1_WEAPONS[i]);
       if (ok && strcmp(campaign, "mg3") == 0) {
         ok = push_q1_weapon(&list, "mg3:laser") && push_q1_weapon(&list, "mg3:mjolnir");
       }
       for (int i = 0; i < 8 && ok; i++) {
         if ((strcmp(campaign, "hipnotic") == 0 || strcmp(campaign, "rogue") == 0) &&
-            strncmp(q1_mission_weapons[i], campaign, strlen(campaign)) == 0 &&
-            q1_mission_weapons[i][strlen(campaign)] == ':') {
-          ok = push_q1_weapon(&list, q1_mission_weapons[i]);
+            strncmp(qa_q1mp_mission_weapons[i].id, campaign, strlen(campaign)) == 0 &&
+            qa_q1mp_mission_weapons[i].id[strlen(campaign)] == ':') {
+          ok = push_q1_weapon(&list, qa_q1mp_mission_weapons[i].id);
         }
       }
       break;
     }
     case QA_GAME_FAMILY_Q2: {
-      const q2_weapon *extra = NULL;
+      const qa_q2w_definition *extra = NULL;
       size_t extra_count = 0;
       bool rerelease_all = strcmp(edition, "rerelease") == 0 &&
                            (strcmp(campaign, "baseq2") == 0 ||
                             strcmp(campaign, "xatrix") == 0 ||
                             strcmp(campaign, "rogue") == 0 ||
                             strcmp(campaign, "mg2") == 0);
-      for (int i = 0; i < 11 && ok; i++) {
-        const char *label = q2_base_display_name(q2_base[i].item);
-        if (label == NULL) label = q2_mission_display_name(q2_base[i].name);
-        if (label == NULL) label = q2_base[i].name;
-        ok = push_item(&list, q2_base[i].item, label);
+      for (size_t i = 0; i < qa_q2w_base_weapon_count && ok; i++) {
+        const char *label = qa_q2_base_weapon_display_name(qa_q2w_base_weapons[i].item);
+        if (label == NULL) label = qa_q2mp_mission_weapon_display_name(qa_q2w_base_weapons[i].name);
+        if (label == NULL) label = qa_q2w_base_weapons[i].name;
+        ok = push_item(&list, qa_q2w_base_weapons[i].item, label);
       }
       if (rerelease_all) {
-        for (int i = 0; i < 3 && ok; i++) {
-          const char *label = q2_base_display_name(q2_xatrix[i].item);
-          if (label == NULL) label = q2_mission_display_name(q2_xatrix[i].name);
-          if (label == NULL) label = q2_xatrix[i].name;
-          ok = push_item(&list, q2_xatrix[i].item, label);
+        for (size_t i = 0; i < qa_q2mp_xatrix_weapon_definition_count && ok; i++) {
+          const char *label = qa_q2_base_weapon_display_name(qa_q2mp_xatrix_weapon_definitions[i].item);
+          if (label == NULL) label = qa_q2mp_mission_weapon_display_name(qa_q2mp_xatrix_weapon_definitions[i].name);
+          if (label == NULL) label = qa_q2mp_xatrix_weapon_definitions[i].name;
+          ok = push_item(&list, qa_q2mp_xatrix_weapon_definitions[i].item, label);
         }
-        extra = q2_rogue;
-        extra_count = 6;
+        extra = qa_q2mp_rogue_weapon_definitions;
+        extra_count = qa_q2mp_rogue_weapon_definition_count;
       } else if (strcmp(campaign, "xatrix") == 0) {
-        extra = q2_xatrix;
-        extra_count = 3;
+        extra = qa_q2mp_xatrix_weapon_definitions;
+        extra_count = qa_q2mp_xatrix_weapon_definition_count;
       } else if (strcmp(campaign, "rogue") == 0) {
-        extra = q2_rogue;
-        extra_count = 6;
+        extra = qa_q2mp_rogue_weapon_definitions;
+        extra_count = qa_q2mp_rogue_weapon_definition_count;
       }
       for (size_t i = 0; i < extra_count && ok; i++) {
-        const char *label = q2_base_display_name(extra[i].item);
-        if (label == NULL) label = q2_mission_display_name(extra[i].name);
+        const char *label = qa_q2_base_weapon_display_name(extra[i].item);
+        if (label == NULL) label = qa_q2mp_mission_weapon_display_name(extra[i].name);
         if (label == NULL) label = extra[i].name;
         ok = push_item(&list, extra[i].item, label);
       }
@@ -249,9 +123,25 @@ qa_weapon_binding_item *qa_base_weapon_binding_items(qa_game_family family,
     }
     case QA_GAME_FAMILY_Q3: {
       bool missionpack = strcmp(campaign, "missionpack") == 0;
-      for (int i = 0; i < 13 && ok; i++) {
-        if (!missionpack && q3_weapons[i].weapon > 10) continue;
-        ok = push_item(&list, q3_weapons[i].item, q3_weapons[i].label);
+      qa_q3_base_product product = missionpack
+          ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
+      for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT && ok; i++) {
+        if (!missionpack && qa_q3_weapon_items[i].weapon > 10) continue;
+        /* itemList(product).find(IT_WEAPON, tag)?.pickupName. */
+        const char *label = "Grappling Hook";
+        {
+          size_t row_count = 0;
+          const qa_q3_base_item_definition *rows =
+              qa_q3_base_item_list(product, &row_count);
+          for (size_t r = 0; r < row_count; r++) {
+            if (rows[r].type == QA_Q3_BASE_IT_WEAPON &&
+                rows[r].tag == qa_q3_weapon_items[i].weapon) {
+              if (rows[r].pickup_name != NULL) label = rows[r].pickup_name;
+              break;
+            }
+          }
+        }
+        ok = push_item(&list, qa_q3_weapon_items[i].item, label);
       }
       break;
     }
@@ -320,29 +210,29 @@ qa_weapon_key_binding *qa_default_weapon_bindings(const qa_weapon_binding_item *
                                                   size_t *out_count) {
   pair_list list = {NULL, 0, 0};
   bool ok = true;
-  char key[16], id[128];
+  char key[16];
   for (int i = 0; i < 8 && ok; i++) {
-    snprintf(id, sizeof id, "q1:weapon/%s", q1_weapons[i]);
     snprintf(key, sizeof key, "%d", i + 1);
-    ok = append_binding(&list, items, item_count, id, key);
+    ok = append_binding(&list, items, item_count,
+                        qa_q1_weapon_item(QA_Q1_WEAPONS[i]), key);
   }
-  if (ok) ok = append_binding(&list, items, item_count, "q1:weapon/hipnotic:laser", "9");
-  if (ok) ok = append_binding(&list, items, item_count, "q1:weapon/hipnotic:mjolnir", "0");
-  if (ok) ok = append_binding(&list, items, item_count, "q1:weapon/mg3:laser", "9");
+  if (ok) ok = append_binding(&list, items, item_count, qa_q1_weapon_item("hipnotic:laser"), "9");
+  if (ok) ok = append_binding(&list, items, item_count, qa_q1_weapon_item("hipnotic:mjolnir"), "0");
+  if (ok) ok = append_binding(&list, items, item_count, qa_q1_weapon_item("mg3:laser"), "9");
   int slot = 1;
-  for (int i = 0; i < 11 && ok; i++) {
-    if (strcmp(q2_base[i].name, "grenades") == 0) {
-      ok = append_binding(&list, items, item_count, q2_base[i].item, "g");
+  for (size_t i = 0; i < qa_q2w_base_weapon_count && ok; i++) {
+    if (strcmp(qa_q2w_base_weapons[i].name, "grenades") == 0) {
+      ok = append_binding(&list, items, item_count, qa_q2w_base_weapons[i].item, "g");
     } else {
       snprintf(key, sizeof key, "%d", slot % 10);
       slot++;
-      ok = append_binding(&list, items, item_count, q2_base[i].item, key);
+      ok = append_binding(&list, items, item_count, qa_q2w_base_weapons[i].item, key);
     }
   }
-  for (int i = 0; i < 13 && ok; i++) {
-    if (q3_weapons[i].weapon <= 10) {
-      snprintf(key, sizeof key, "%d", (int)q3_weapons[i].weapon % 10);
-      ok = append_binding(&list, items, item_count, q3_weapons[i].item, key);
+  for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT && ok; i++) {
+    if (qa_q3_weapon_items[i].weapon <= 10) {
+      snprintf(key, sizeof key, "%d", (int)qa_q3_weapon_items[i].weapon % 10);
+      ok = append_binding(&list, items, item_count, qa_q3_weapon_items[i].item, key);
     }
   }
   if (!ok) {
@@ -404,38 +294,41 @@ static bool item_matches_use(const qa_weapon_binding_item *item,
   if (strncmp(item->id, "q1:weapon/", 10) == 0) {
     const char *weapon = item->id + 10;
     bool known = false;
-    for (int i = 0; i < 8; i++) known = known || strcmp(weapon, q1_weapons[i]) == 0;
-    for (int i = 0; i < 8; i++) {
-      known = known || strcmp(weapon, q1_mission_weapons[i]) == 0;
+    for (int i = 0; i < 8; i++) known = known || strcmp(weapon, QA_Q1_WEAPONS[i]) == 0;
+    for (int i = 0; i < QA_Q1MP_MISSION_WEAPONS_COUNT; i++) {
+      known = known || strcmp(weapon, qa_q1mp_mission_weapons[i].id) == 0;
     }
     if (known) {
       if (normalized_equals(weapon, requested)) return true;
-      char *display = q1_weapon_display_name(weapon);
-      bool equal = display != NULL && normalized_equals(display, requested);
-      free(display);
-      if (equal) return true;
+      char display[128];
+      const char *name =
+          qa_q1_weapon_display_name(weapon, display, sizeof display);
+      if (normalized_equals(name, requested)) return true;
     }
   }
   /* Q3: the item suffix after "q3:weapon/". */
-  for (int i = 0; i < 13; i++) {
-    if (strcmp(item->id, q3_weapons[i].item) == 0 &&
+  for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++) {
+    if (strcmp(item->id, qa_q3_weapon_items[i].item) == 0 &&
         normalized_equals(item->id + 10, requested)) {
       return true;
     }
   }
   /* Q2: definition name or its display label. */
-  const q2_weapon *found = NULL;
-  const q2_weapon *tables[3] = {q2_base, q2_xatrix, q2_rogue};
-  const int counts[3] = {11, 3, 6};
+  const qa_q2w_definition *found = NULL;
+  const qa_q2w_definition *tables[3] = {qa_q2w_base_weapons,
+      qa_q2mp_xatrix_weapon_definitions, qa_q2mp_rogue_weapon_definitions};
+  const size_t counts[3] = {qa_q2w_base_weapon_count,
+      qa_q2mp_xatrix_weapon_definition_count,
+      qa_q2mp_rogue_weapon_definition_count};
   for (int t = 0; t < 3 && found == NULL; t++) {
-    for (int i = 0; i < counts[t]; i++) {
+    for (size_t i = 0; i < counts[t]; i++) {
       if (strcmp(item->id, tables[t][i].item) == 0) found = &tables[t][i];
     }
   }
   const char *label = NULL;
   if (found != NULL) {
-    label = q2_base_display_name(found->item);
-    if (label == NULL) label = q2_mission_display_name(found->name);
+    label = qa_q2_base_weapon_display_name(found->item);
+    if (label == NULL) label = qa_q2mp_mission_weapon_display_name(found->name);
   }
   return (found != NULL && normalized_equals(found->name, requested)) ||
          (label != NULL && normalized_equals(label, requested));
@@ -505,7 +398,7 @@ bool qa_resolve_weapon_selection(const char *command, const char *const *args,
       bool base_q1 = false;
       for (int w = 0; w < 8; w++) {
         char id[128];
-        snprintf(id, sizeof id, "q1:weapon/%s", q1_weapons[w]);
+        snprintf(id, sizeof id, "q1:weapon/%s", QA_Q1_WEAPONS[w]);
         if (strcmp(items[i].id, id) == 0) base_q1 = true;
       }
       if (!base_q1) return false;
@@ -514,11 +407,11 @@ bool qa_resolve_weapon_selection(const char *command, const char *const *args,
   const char *id = NULL;
   char id_buffer[128];
   if (is_weapon) {
-    for (int i = 0; i < 13; i++) {
-      if (q3_weapons[i].weapon == number) id = q3_weapons[i].item;
+    for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++) {
+      if (qa_q3_weapon_items[i].weapon == number) id = qa_q3_weapon_items[i].item;
     }
   } else if (number >= 1 && number <= 8 && number == (double)(int)number) {
-    snprintf(id_buffer, sizeof id_buffer, "q1:weapon/%s", q1_weapons[(int)number - 1]);
+    snprintf(id_buffer, sizeof id_buffer, "q1:weapon/%s", QA_Q1_WEAPONS[(int)number - 1]);
     id = id_buffer;
   }
   if (id == NULL) return false;

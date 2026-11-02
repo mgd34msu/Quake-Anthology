@@ -7,7 +7,7 @@
 static float as_float(int32_t word) { return qa_bits_to_float32((uint32_t)word); }
 static int32_t as_word(double value) { return (int32_t)qa_float32_to_bits(value); }
 
-int32_t qa_qvm_evaluate_unary(qa_qvmy_op_opcode opcode, int32_t word) {
+int32_t qa_qvm_evaluate_unary(qa_qvm_opcode opcode, int32_t word) {
   switch (opcode) {
     case QA_QVMY_OP_SEX8: return (int32_t)((uint32_t)word << 24) >> 24;
     case QA_QVMY_OP_SEX16: return (int32_t)((uint32_t)word << 16) >> 16;
@@ -24,7 +24,7 @@ static int shift_count(int32_t word) {
   return (int)word;
 }
 
-int32_t qa_qvm_evaluate_binary(qa_qvmy_op_opcode opcode, int32_t left, int32_t right) {
+int32_t qa_qvm_evaluate_binary(qa_qvm_opcode opcode, int32_t left, int32_t right) {
   switch (opcode) {
     case QA_QVMY_OP_ADD: return (int32_t)((uint32_t)left + (uint32_t)right);
     case QA_QVMY_OP_SUB: return (int32_t)((uint32_t)left - (uint32_t)right);
@@ -54,7 +54,7 @@ int32_t qa_qvm_evaluate_binary(qa_qvmy_op_opcode opcode, int32_t left, int32_t r
   }
 }
 
-bool qa_qvm_evaluate_branch(qa_qvmy_op_opcode opcode, int32_t left, int32_t right) {
+bool qa_qvm_evaluate_branch(qa_qvm_opcode opcode, int32_t left, int32_t right) {
   switch (opcode) {
     case QA_QVMY_OP_EQ: return left == right;
     case QA_QVMY_OP_NE: return left != right;

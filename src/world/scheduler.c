@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/world/session/clocks.h"
 
 static noreturn void qa_error(const char *message) {
   fprintf(stderr, "Error: %s\n", message);
@@ -23,15 +24,9 @@ static void *xrealloc(void *ptr, size_t size) {
   return next;
 }
 
-/* Mirrored from src/world/session/clocks.ts (unported): copyTime is a
- * value copy under C semantics; validate/same-unit keep the messages. */
-static void validate_time(qa_source_time time) {
-  if (!isfinite(time.value)) qa_range_error("Source time must be finite");
-}
-static void same_time_unit(qa_source_time left, qa_source_time right) {
-  if (left.kind != right.kind)
-    qa_range_error("Source clocks need an explicit unit conversion");
-}
+/* validateTime/sameTimeUnit are qa_validate_time/qa_same_time_unit
+ * (TS owner: src/world/session/clocks.ts); copyTime is a value copy
+ * under C semantics. */
 
 double qa_compare_invocation_order(qa_frame_ordering ordering, qa_invocation_order left,
                                    qa_invocation_order right, qa_source_slot_fn source_slot,
@@ -54,11 +49,11 @@ double qa_compare_invocation_order(qa_frame_ordering ordering, qa_invocation_ord
 
 qa_source_time_result qa_think_callback_time(qa_clock_profile profile, qa_source_time due,
                                              qa_frame_context frame) {
-  validate_time(due);
-  validate_time(frame.time);
-  validate_time(frame.elapsed);
-  same_time_unit(due, frame.time);
-  same_time_unit(frame.time, frame.elapsed);
+  qa_validate_time(due);
+  qa_validate_time(frame.time);
+  qa_validate_time(frame.elapsed);
+  qa_same_time_unit(due, frame.time);
+  qa_same_time_unit(frame.time, frame.elapsed);
   if (frame.elapsed.value < 0) qa_range_error("Frame elapsed time cannot be negative");
   bool seconds = profile.kind == QA_CLOCK_Q1_NETQUAKE || profile.kind == QA_CLOCK_Q1_QUAKEWORLD ||
                  profile.kind == QA_CLOCK_Q2_CLASSIC;
@@ -231,7 +226,7 @@ void qa_frame_scheduler_schedule(qa_frame_scheduler *scheduler, qa_owned_actor a
   if (!str_eq(execution_provider, actor.owner) && find_profile(scheduler, execution_provider) == NULL)
     qa_range_error("Selected execution requires its registered source clock");
   (void)profile_for(scheduler, execution_provider);
-  validate_time(timing.due);
+  qa_validate_time(timing.due);
   if (!qa_same_actor(actor.id, timing.order.actor) || !str_eq(actor.owner, timing.order.provider))
     qa_range_error("Think order must name its owning actor and provider");
   if (!(timing.order.sequence >= 0) || timing.order.sequence > 9007199254740991.0 ||

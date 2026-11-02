@@ -75,9 +75,9 @@ void qa_q3_pres_client_hud_draw_status_bar(qa_q3_pres_client_hud *hud) {
   double armor = qa_q3_base_player_state_slots_get(&hud->state->snap->player_state.stats, schema->armor);
   qa_vec4 color = qa_q3_pres_color_for_health(hud->state);
   qa_draw2d_set_color(&tools_of(hud)->draw, &color);
-  qa_q3_pres_client_hud_corners_draw_field(hud->host.corners, 200, 432, 32, health, 3);
+  qa_q3_pres_client_hud_corners_draw_field(hud->host.corners, 185, 432, 3, health);
   qa_draw2d_set_color(&tools_of(hud)->draw, NULL);
-  if (armor > 0) qa_q3_pres_client_hud_corners_draw_field(hud->host.corners, 380, 432, 32, armor, 3);
+  if (armor > 0) qa_q3_pres_client_hud_corners_draw_field(hud->host.corners, 370, 432, 3, armor);
 }
 void qa_q3_pres_client_hud_draw_crosshair(qa_q3_pres_client_hud *hud) {
   if (hud_cvar_int(hud, QA_Q3_PRES_HUD_CVAR_DRAW_CROSSHAIR) == 0) return;

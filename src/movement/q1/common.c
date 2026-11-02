@@ -15,6 +15,40 @@ static bool kind_is(const char *kind, const char *name) {
   return kind != NULL && strcmp(kind, name) == 0;
 }
 
+double qa_q1_js_max(double a, double b) {
+  if (isnan(a) || isnan(b)) return NAN;
+  if (a == b) return a == 0.0 && signbit(a) && !signbit(b) ? b : a;
+  return a > b ? a : b;
+}
+double qa_q1_js_min(double a, double b) {
+  if (isnan(a) || isnan(b)) return NAN;
+  if (a == b) return a == 0.0 && !signbit(a) && signbit(b) ? b : a;
+  return a < b ? a : b;
+}
+bool qa_q1_flag_test(double flags, int mask) { return (qa_int32(flags) & mask) != 0; }
+double qa_q1_flag_set(double flags, int mask) { return (double)(qa_int32(flags) | mask); }
+double qa_q1_flag_clear(double flags, int mask) { return (double)(qa_int32(flags) & ~mask); }
+
+double qa_q1_n_store(const qa_numeric_operations *n, double v) { return n->store(n->ctx, v); }
+double qa_q1_n_add(const qa_numeric_operations *n, double a, double b) { return n->add(n->ctx, a, b); }
+double qa_q1_n_subtract(const qa_numeric_operations *n, double a, double b) {
+  return n->subtract(n->ctx, a, b);
+}
+double qa_q1_n_multiply(const qa_numeric_operations *n, double a, double b) {
+  return n->multiply(n->ctx, a, b);
+}
+double qa_q1_n_divide(const qa_numeric_operations *n, double a, double b) {
+  return n->divide(n->ctx, a, b);
+}
+double qa_q1_n_square_root(const qa_numeric_operations *n, double v) {
+  return n->square_root(n->ctx, v);
+}
+double qa_q1_n_to_int32(const qa_numeric_operations *n, double v) { return n->to_int32(n->ctx, v); }
+
+qa_trace_result qa_q1_context_trace(qa_q1_movement_context *context, qa_vec3 start, qa_vec3 end) {
+  return qa_q1_context_trace_ex(context, start, end, NULL, NULL);
+}
+
 qa_bounds qa_q1_shape_bounds(qa_trace_shape shape) {
   if (kind_is(shape.kind, "point")) {
     const qa_bounds bounds = {qa_q1_zero, qa_q1_zero};

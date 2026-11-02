@@ -26,7 +26,12 @@
 #include "qa/compat/qvm/registry.h"
 #include "qa/compat/qvm/script_record.h"
 #include "qa/compat/qvm/abi.h"
+#include "qa/compat/qvm/game_data.h"
+#include "qa/compat/qvm/image.h"
+#include "qa/compat/qvm/interpreter.h"
+#include "qa/compat/qvm/raw_entities.h"
 #include "qa/compat/qvm/server_game_syscalls.h"
+#include "qa/compat/qvm/shared_entity_record.h"
 #include "qa/compat/qvm/snap_vector_syscalls.h"
 #include "qa/compat/qvm/symbols.h"
 #include "qa/compat/qvm/syscalls.h"
@@ -731,6 +736,366 @@ static void test_server_game_entities_in_box(void) {
 }
 /* --- end w8-qvmb-01 --- */
 
+/* --- undef-qvm-q3-items: qa_qvmx_view_* + Q3 item lifecycle --- */
+#include "qa/compat/qvm/interpreter.h"
+#include "qa/content/q3/base/game/item_lifecycle.h"
+
+static void test_qvmx_views(void) {
+  uint8_t bytes[8] = {0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0};
+  qa_qvmx_view view = {bytes, sizeof bytes};
+  CHECK(qa_qvmx_view_i32(&view, 0) == 0x12345678);
+  CHECK(qa_qvmx_view_u16(&view, 0) == 0x5678);
+  CHECK(qa_qvmx_view_u16(&view, 2) == 0x1234);
+  CHECK(qa_qvmx_view_u8(&view, 3) == 0x12);
+  qa_qvmx_view_set_f32(&view, 4, 1.5f);
+  CHECK(qa_qvmx_view_f32(&view, 4) == 1.5f);
+  CHECK(bytes[4] == 0 && bytes[5] == 0 && bytes[6] == 0xc0 && bytes[7] == 0x3f);
+  qa_qvmx_view_set_i32(&view, 0, -2);
+  CHECK(qa_qvmx_view_i32(&view, 0) == -2);
+  CHECK(bytes[0] == 0xfe && bytes[1] == 0xff && bytes[2] == 0xff && bytes[3] == 0xff);
+  qa_qvmx_view_set_u16(&view, 2, 0xabcd);
+  CHECK(bytes[2] == 0xcd && bytes[3] == 0xab && qa_qvmx_view_u16(&view, 2) == 0xabcd);
+  qa_qvmx_view_set_u8(&view, 7, 0x5a);
+  CHECK(bytes[7] == 0x5a && qa_qvmx_view_u8(&view, 7) == 0x5a);
+  qa_qvmx_view_check(&view, 8, 0); /* in bounds: offset == length, width 0 */
+  CHECK_ABORTS((void)qa_qvmx_view_i32(&view, 5));
+  CHECK_ABORTS((void)qa_qvmx_view_i32(&view, -1));
+  CHECK_ABORTS((void)qa_qvmx_view_u16(&view, 7));
+  CHECK_ABORTS((void)qa_qvmx_view_u8(&view, 8));
+  CHECK_ABORTS(qa_qvmx_view_set_f32(&view, 6, 0.0f));
+  CHECK_ABORTS(qa_qvmx_view_check(&view, 0, -1));
+  qa_qvmx_view empty = {bytes, 0};
+  CHECK_ABORTS((void)qa_qvmx_view_u8(&empty, 0));
+}
+
+static qa_q3_game_entity il_entities[160];
+static qa_q3_game_client il_clients[64];
+static bool il_active[160];
+static qa_q3_entity_pool il_pool;
+static struct {
+  int links, logs, warns, sounds, uses, ranks;
+  char log_text[128], warn_text[256];
+  qa_q3_base_actor_trace_result trace_result;
+} il_host;
+static bool il_is_active(void *ctx) { return *(bool *)ctx; }
+static qa_owned_actor il_actor(void *ctx) { (void)ctx; qa_owned_actor a; memset(&a, 0, sizeof a); return a; }
+static qa_q3_game_entity *il_get(void *ctx, double slot) {
+  (void)ctx; return slot >= 0 && slot < 160 ? &il_entities[(int)slot] : NULL;
+}
+static qa_q3_game_entity *il_activate(void *ctx, double slot) {
+  (void)ctx; int i = (int)slot; qa_q3_game_entity_binding b; memset(&b, 0, sizeof b);
+  b.ctx = &il_active[i]; b.active = il_is_active; b.actor = il_actor;
+  qa_q3_game_entity_init(&il_entities[i], slot, b); il_active[i] = true; return &il_entities[i];
+}
+static qa_q3_game_client *il_client(void *ctx, double slot) { (void)ctx; return &il_clients[(int)slot]; }
+static void il_release(void *ctx, qa_q3_game_entity *e) { (void)ctx; il_active[(int)e->slot] = false; }
+static void il_noop_client(void *ctx, double slot) { (void)ctx; (void)slot; }
+static double il_time(void *ctx) { (void)ctx; return 1000; }
+static void il_print(void *ctx, const char *m) { (void)ctx; (void)m; }
+static void il_link(void *ctx, qa_q3_game_entity *e) { (void)ctx; (void)e; il_host.links++; }
+static void il_unlink(void *ctx, qa_q3_game_entity *e) { (void)ctx; (void)e; }
+static void il_log(void *ctx, const char *m) {
+  (void)ctx; il_host.logs++; snprintf(il_host.log_text, sizeof il_host.log_text, "%s", m);
+}
+static void il_warn(void *ctx, const char *m) {
+  (void)ctx; il_host.warns++; snprintf(il_host.warn_text, sizeof il_host.warn_text, "%s", m);
+}
+static double il_sound(void *ctx, const char *path) { (void)ctx; (void)path; il_host.sounds++; return 7; }
+static double il_rand(void *ctx) { (void)ctx; return 0; }
+static double il_random(void *ctx) { (void)ctx; return 0.5; }
+static const char *il_handicap(void *ctx, double n) { (void)ctx; (void)n; return "100"; }
+static double il_team_pickup(void *ctx, qa_q3_game_entity *i, qa_q3_game_entity *p) {
+  (void)ctx; (void)i; (void)p; return 9;
+}
+static void il_use_targets(void *ctx, qa_q3_game_entity *i, qa_q3_game_entity *a) {
+  (void)ctx; (void)i; (void)a; il_host.uses++;
+}
+static qa_q3_base_server_trace_result il_trace(void *ctx, qa_q3_base_server_trace_query q) {
+  (void)ctx; (void)q; qa_q3_base_server_trace_result r; memset(&r, 0, sizeof r); r.fraction = 1; return r;
+}
+static qa_q3_base_actor_trace_result il_trace_actor(void *ctx, qa_q3_base_actor_trace_query q) {
+  (void)ctx; (void)q; return il_host.trace_result;
+}
+static void il_rank_sink(void *ctx, qa_q3_ranking_report report) {
+  (void)ctx; (void)report; il_host.ranks++;
+}
+static bool il_warmup(void *ctx) { (void)ctx; return false; }
+
+static qa_q3_game_item_definition_mirror il_items[29];
+static qa_q3_item_lifecycle_context il_context;
+static void il_setup(void) {
+  static bool done; if (done) return; done = true;
+  for (int i = 0; i < 64; i++) qa_q3_game_client_init(&il_clients[i], QA_Q3_GAME_PRODUCT_BASEQ3);
+  qa_q3_entity_pool_options o; memset(&o, 0, sizeof o);
+  o.records.get = il_get; o.records.activate = il_activate; o.records.client = il_client;
+  o.records.release = il_release; o.records.deactivate_client = il_noop_client;
+  o.product = QA_Q3_GAME_PRODUCT_BASEQ3; o.max_clients = 8; o.time = il_time; o.print = il_print;
+  o.link = il_link; o.unlink = il_unlink;
+  qa_q3_entity_pool_init(&il_pool, o);
+  qa_q3_ranking_reports_attach(&il_pool.rankings, NULL, il_rank_sink, il_warmup);
+  /* Mirror rows at the real shared/items indices (5=item_health, 28=item_quad). */
+  il_items[5] = (qa_q3_game_item_definition_mirror){"item_health", "25 Health", 4, 0, 25, NULL};
+  il_items[28] = (qa_q3_game_item_definition_mirror){"item_quad", "Quad Damage", 5, 1, 30, NULL};
+  qa_q3_item_pickup_set_item_list_mirror(QA_Q3_GAME_PRODUCT_BASEQ3, il_items, 29);
+  memset(&il_context, 0, sizeof il_context);
+  il_context.registry.product = QA_Q3_GAME_PRODUCT_BASEQ3;
+  qa_q3_item_registry_init(&il_context.registry, il_items, 29);
+  il_context.entities = &il_pool;
+  il_context.product = QA_Q3_GAME_PRODUCT_BASEQ3;
+  il_context.weapon_respawn_seconds = 5;
+  il_context.team_weapon_respawn_seconds = 30;
+  il_context.trace = il_trace; il_context.trace_actor = il_trace_actor;
+  il_context.handicap_for_client = il_handicap; il_context.team_pickup = il_team_pickup;
+  il_context.use_targets = il_use_targets; il_context.sound_index = il_sound;
+  il_context.rand_value = il_rand; il_context.random = il_random;
+  il_context.log = il_log; il_context.warn = il_warn;
+}
+
+static void test_item_lifecycle(void) {
+  il_setup();
+  qa_q3_game_entity *player = qa_q3_entity_pool_activate_client(&il_pool, 0);
+  qa_q3_game_client *client = player->client;
+  qa_q3_game_slots_set_mirror(&client->ps.stats, 6, 100); /* max health */
+  client->pers.predict_item_pickup = true;
+
+  qa_q3_game_entity *item = qa_q3_entity_pool_spawn(&il_pool);
+  item->item = &il_items[5];
+  item->spawnflags = 1; /* suspended: no drop trace */
+  item->s.origin = (qa_vec3){4, 5, 6};
+  int links_before = il_host.links;
+  qa_q3_finish_spawning_item(item, il_context);
+  CHECK(item->s.e_type == 2 && item->s.modelindex == 5 && item->s.modelindex2 == 0);
+  CHECK(item->r.contents == (double)(int32_t)0x40000000);
+  CHECK(item->r.mins.x == -15 && item->r.maxs.z == 15);
+  CHECK(item->touch.fn != NULL && item->use.fn != NULL);
+  CHECK(item->r.current_origin.x == 4 && item->r.current_origin.z == 6);
+  CHECK(il_host.links == links_before + 1);
+
+  qa_touch_contact contact; memset(&contact, 0, sizeof contact);
+  qa_q3_damage_participant other = qa_q3_participant_entity(player);
+  /* Full health: canItemBeGrabbed rejects, item stays live. */
+  qa_q3_game_entity_set_health(player, 100);
+  qa_q3_game_slots_set_mirror(&client->ps.stats, 0, 100);
+  qa_q3_touch_item(item, other, contact, il_context);
+  CHECK(item->r.contents == (double)(int32_t)0x40000000 && item->nextthink == 0);
+  CHECK(qa_q3_game_entity_health(player) == 100 && il_host.logs == 0);
+
+  /* Hurt player: pickup runs, item hides and schedules respawn in 35s. */
+  qa_q3_game_entity_set_health(player, 50);
+  qa_q3_game_slots_set_mirror(&client->ps.stats, 0, 50);
+  qa_q3_touch_item(item, other, contact, il_context);
+  CHECK(qa_q3_game_entity_health(player) == 75);
+  CHECK(il_host.logs == 1 && strcmp(il_host.log_text, "Item: 0 item_health\n") == 0);
+  CHECK(il_host.ranks > 0 && il_host.uses == 1);
+  CHECK(item->r.contents == 0);
+  CHECK(((int)item->s.e_flags & 0x80) != 0 && ((int)item->r.sv_flags & 1) != 0);
+  CHECK(item->nextthink == 36000 && item->think.fn != NULL);
+
+  /* Respawn restores visibility and clears the timer. */
+  qa_q3_respawn_item(item, il_context);
+  CHECK(item->r.contents == (double)(int32_t)0x40000000);
+  CHECK(((int)item->s.e_flags & 0x80) == 0 && ((int)item->r.sv_flags & 1) == 0);
+  CHECK(item->nextthink == 0);
+  CHECK(((int)item->s.event & ~0x300) == 40); /* EV_ITEM_RESPAWN */
+
+  /* Powerup spawn finish hides for 45s (crandom 0 at random()==0.5). */
+  qa_q3_game_entity *quad = qa_q3_entity_pool_spawn(&il_pool);
+  quad->item = &il_items[28];
+  quad->spawnflags = 1;
+  qa_q3_finish_spawning_item(quad, il_context);
+  CHECK(quad->r.contents == 0 && ((int)quad->s.e_flags & 0x80) != 0);
+  CHECK(quad->nextthink == 46000 && quad->think.fn != NULL);
+
+  /* Startsolid drop trace warns and frees the item. */
+  qa_q3_game_entity *stuck = qa_q3_entity_pool_spawn(&il_pool);
+  stuck->item = &il_items[5];
+  qa_q3_game_entity_set_classname(stuck, "item_health");
+  il_host.trace_result.solidity = QA_Q3_BASE_SOLID_START_SOLID;
+  qa_q3_finish_spawning_item(stuck, il_context);
+  il_host.trace_result.solidity = QA_Q3_BASE_SOLID_CLEAR;
+  CHECK(il_host.warns == 1);
+  CHECK(strstr(il_host.warn_text, "FinishSpawningItem: item_health startsolid at") != NULL);
+  CHECK(!qa_q3_game_entity_inuse(stuck));
+
+  /* Error paths abort: itemless entity, product mismatch. */
+  qa_q3_game_entity *bare = qa_q3_entity_pool_spawn(&il_pool);
+  CHECK_ABORTS(qa_q3_respawn_item(bare, il_context));
+  qa_q3_item_lifecycle_context mismatched = il_context;
+  mismatched.product = QA_Q3_GAME_PRODUCT_MISSIONPACK;
+  CHECK_ABORTS(qa_q3_respawn_item(item, mismatched));
+  CHECK_ABORTS(qa_q3_touch_item(bare, other, contact, il_context));
+}
+/* --- end undef-qvm-q3-items --- */
+
+/* ----- mirrors-qvm-q3: retired mirror types use landed owners ----- */
+static int32_t mirror_link_slot = -1;
+static void mirror_link(void *ctx, int32_t slot) { (void)ctx; mirror_link_slot = slot; }
+static void mirror_unlink(void *ctx, int32_t slot) { (void)ctx; mirror_link_slot = -100 - slot; }
+
+static qa_guest_address_result mirror_guest_pointer(void *ctx, int64_t raw) {
+  qa_guest_address_result result;
+  memset(&result, 0, sizeof result);
+  if (raw == 0) return result;
+  result.has_value = true;
+  result.value.address_space = ctx;
+  result.value.byte_offset = raw & 16383;
+  return result;
+}
+static qa_guest_address mirror_guest_offset(void *ctx, qa_guest_address address, int64_t displacement) {
+  (void)ctx;
+  address.byte_offset += displacement;
+  return address;
+}
+static qa_byte_view mirror_guest_borrow(void *ctx, qa_guest_address address, double byte_length) {
+  qa_byte_view view = {(const uint8_t *)ctx + address.byte_offset, (size_t)byte_length};
+  return view;
+}
+static qa_actor_id_result mirror_current_actor(void *ctx, int64_t slot, int64_t byte_offset) {
+  (void)ctx;
+  (void)byte_offset;
+  qa_actor_id_result result;
+  memset(&result, 0, sizeof result);
+  result.has_value = true;
+  result.value.slot = slot;
+  return result;
+}
+
+static char mirror_print_buffer[1024];
+static void mirror_print(void *ctx, const char *text) {
+  (void)ctx;
+  strncat(mirror_print_buffer, text, sizeof mirror_print_buffer - strlen(mirror_print_buffer) - 1);
+}
+static double mirror_trap(void *ctx, qa_qvm_syscall *call) { (void)ctx; (void)call; return 0; }
+
+typedef struct mirror_op { qa_qvm_opcode opcode; bool has_operand; int32_t operand; } mirror_op;
+static size_t mirror_build_qvm(uint8_t *out, const mirror_op *ops, size_t op_count) {
+  uint8_t code[256];
+  size_t code_length = 0;
+  for (size_t i = 0; i < op_count; i++) {
+    code[code_length++] = (uint8_t)ops[i].opcode;
+    if (ops[i].has_operand) { put_i32(code, code_length, ops[i].operand); code_length += 4; }
+  }
+  int32_t header[8] = {0x12721444, (int32_t)op_count, 32, (int32_t)code_length,
+                       32 + (int32_t)code_length, 0, 0, 4096};
+  for (size_t i = 0; i < 8; i++) put_i32(out, i * 4, header[i]);
+  memcpy(out + 32, code, code_length);
+  return 32 + code_length;
+}
+
+static void test_mirror_retirement(void) {
+  /* Shared entity: nested s is the landed qa_qvm_entity_state. */
+  static uint8_t bytes[16384];
+  memset(bytes, 0, sizeof bytes);
+  qa_qvm_memory memory;
+  qa_qvm_memory_init(&memory, bytes, sizeof bytes, NULL, NULL);
+  qa_qvm_writable_view view;
+  qa_qvm_memory_data_view(&memory, 0, 516, &view);
+  qa_qvm_shared_entity entity;
+  qa_qvm_borrow_shared_entity(&view, NULL, &entity);
+  qa_qvm_entity_collision_model inline_model = {"inline", 42};
+  qa_qvm_shared_entity_set_model(&entity, inline_model);
+  qa_qvm_entity_collision_model back = qa_qvm_shared_entity_get_model(&entity);
+  CHECK(strcmp(back.kind, "inline") == 0 && back.index == 42);
+  CHECK(qa_qvm_entity_state_get_modelindex(&entity.s) == 42);
+  int32_t word160;
+  memcpy(&word160, bytes + 160, 4);
+  CHECK(word160 == 42);
+  qa_qvm_entity_state_set_modelindex(&entity.s, 7);
+  CHECK(qa_qvm_shared_entity_get_model(&entity).index == 7);
+  qa_qvm_entity_collision_model capsule = {"capsule", 0};
+  qa_qvm_shared_entity_set_model(&entity, capsule);
+  CHECK(strcmp(qa_qvm_shared_entity_get_model(&entity).kind, "capsule") == 0);
+
+  /* Game data: raw table and server-game slots over qa_qvm_game_data. */
+  qa_qvm_game_data data;
+  qa_qvm_game_data_init(&data, &memory, NULL);
+  qa_qvm_game_data_locate(&data, 1024, 4, 516, 8192, 1024);
+  CHECK(qa_qvm_game_data_number_from_pointer(&data, 1024 + 2 * 516) == 2);
+  CHECK_ABORTS((void)qa_qvm_game_data_number_from_pointer(&data, 1024 + 2 * 516 + 4));
+
+  qa_qvm_server_spatial_operations spatial;
+  memset(&spatial, 0, sizeof spatial);
+  spatial.link = mirror_link;
+  spatial.unlink = mirror_unlink;
+  qa_qvm_server_game_services services;
+  memset(&services, 0, sizeof services);
+  services.data = &data;
+  services.spatial = &spatial;
+  uint8_t words[16];
+  memset(words, 0, sizeof words);
+  put_i32(words, 4, 1024 + 3 * 516);
+  qa_qvm_host_call call;
+  memset(&call, 0, sizeof call);
+  call.kind = "engine";
+  call.role = "qagame";
+  call.code = QA_QVM_GAME_IMPORT_G_LINKENTITY;
+  call.guest = &memory;
+  call.base.words = words;
+  call.base.words_length = sizeof words;
+  call.base.guest = &memory;
+  int32_t out = -1;
+  mirror_link_slot = -1;
+  CHECK(qa_qvm_server_game_syscall(&call, &services, &out) && out == 0);
+  CHECK(mirror_link_slot == 3);
+
+  qa_guest_memory guest;
+  memset(&guest, 0, sizeof guest);
+  guest.ctx = bytes;
+  guest.address_space = bytes;
+  guest.pointer_bytes = 4;
+  guest.pointer = mirror_guest_pointer;
+  guest.offset = mirror_guest_offset;
+  guest.borrow = mirror_guest_borrow;
+  qa_raw_entity_table table;
+  qa_qvm_raw_entity_table_context context;
+  qa_qvm_raw_entity_table_init(&table, &context, &data, &memory, &guest, 4, mirror_current_actor, NULL);
+  CHECK(table.count == 4 && table.stride_bytes == 516 && table.base.byte_offset == 1024);
+  qa_raw_entity_view at = table.at_slot(table.ctx, 2);
+  CHECK(at.slot == 2 && at.address.byte_offset == 1024 + 2 * 516);
+  CHECK(at.bytes.bytes == bytes + 1024 + 2 * 516 && at.bytes.length == 516);
+  qa_actor_id_result actor = at.current_actor(at.ctx);
+  CHECK(actor.has_value && actor.value.slot == 2);
+  free(at.ctx);
+  qa_guest_address pointer = {bytes, 1024 + 516};
+  qa_raw_entity_view from = table.from_pointer(table.ctx, pointer);
+  CHECK(from.slot == 1);
+  free(from.ctx);
+  CHECK_ABORTS((void)table.at_slot(table.ctx, 4));
+
+  /* Registry: interpreted binding holds the landed interpreter. */
+  const mirror_op ops[] = {{QA_QVM_OP_ENTER, true, 16}, {QA_QVM_OP_CONST, true, 7}, {QA_QVM_OP_LEAVE, true, 16}};
+  uint8_t source[512];
+  size_t length = mirror_build_qvm(source, ops, sizeof ops / sizeof ops[0]);
+  qa_qvm_image image;
+  CHECK(qa_qvm_parse(source, length, "mirror.qvm", &image));
+  qa_qvm_vm_registry registry;
+  qa_qvm_vm_registry_init(&registry, mirror_print, NULL, NULL, NULL);
+  qa_qvm_vm_registration registration = qa_qvm_vm_registry_reserve(&registry, "qagame");
+  qa_qvm_interpreter_system_call system_call = {NULL, mirror_trap};
+  qa_qvm_interpreter *interp = qa_qvm_interpreter_create(&image, system_call, NULL, &registration, NULL, NULL);
+  CHECK(interp != NULL);
+  qa_qvm_vm_binding binding = qa_qvm_vm_registration_get_binding(&registration);
+  CHECK(strcmp(binding.kind, "interpreted") == 0 && binding.interpreter == interp);
+  mirror_print_buffer[0] = '\0';
+  qa_qvm_vm_registry_print_info(&registry, mirror_print, NULL);
+  char needle[64];
+  snprintf(needle, sizeof needle, "code length : %7lld",
+           (long long)qa_qvm_interpreter_get_code_length(interp));
+  CHECK(strstr(mirror_print_buffer, needle) != NULL);
+  size_t memory_length = 0;
+  (void)qa_qvm_interpreter_get_memory(interp, &memory_length);
+  snprintf(needle, sizeof needle, "data length : %7lld", (long long)memory_length);
+  CHECK(strstr(mirror_print_buffer, needle) != NULL);
+  snprintf(needle, sizeof needle, "table length: %7lld",
+           (long long)qa_qvm_interpreter_get_instruction_pointers_length(interp));
+  CHECK(strstr(mirror_print_buffer, needle) != NULL);
+  qa_qvm_interpreter_destroy(interp);
+  qa_qvm_image_destroy(&image);
+  qa_qvm_vm_registry_destroy(&registry);
+  qa_qvm_memory_destroy(&memory);
+}
+/* ----- end mirrors-qvm-q3 ----- */
+
 static void test_reject_syscall(void) {
   qa_qvm_host_call call;
   memset(&call, 0, sizeof call);
@@ -754,7 +1119,10 @@ int main(void) {
   test_memory_observe_unobserve_in_publish(); /* w8-qvmb-00 */
   test_player_state_roundtrip();
   test_server_game_entities_in_box(); /* w8-qvmb-01 */
+  test_qvmx_views(); /* undef-qvm-q3-items */
+  test_item_lifecycle(); /* undef-qvm-q3-items */
   test_reject_syscall();
+  test_mirror_retirement(); /* mirrors-qvm-q3 */
   if (failures != 0) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);
     return 1;

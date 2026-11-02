@@ -1,8 +1,7 @@
 /*
- * Port of src/compat/qvm/server-game-syscalls.ts. Mirrored types
- * (parallel slice): qa_qvmy_game_data mirrors QvmGameData (TS owner
- * src/compat/qvm/game-data.ts, only numberFromPointer/abiProfile);
- * the client-game and entity-token delegates mirror
+ * Port of src/compat/qvm/server-game-syscalls.ts. The TS
+ * QvmGameData is the landed qa_qvm_game_data (game_data.h); the
+ * client-game and entity-token delegates mirror
  * qvmClientGameSyscall (TS owner client-game-syscalls.ts) and
  * qvmEntityTokenSyscall (TS owner entity-tokens.ts) as callbacks the
  * caller binds to the owning slice. False = another trap owner.
@@ -14,17 +13,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/game_data.h"
 #include "qa/compat/qvm/server_info_syscalls.h"
 #include "qa/compat/qvm/syscalls.h"
 #include "qa/compat/qvm/trace_record.h"
 #include "qa/contracts/math.h"
 #include "qa/network/q3/message.h"
-
-typedef struct qa_qvmy_game_data {
-  void *ctx;
-  qa_qvm_abi_profile abi_profile;
-  int32_t (*number_from_pointer)(void *ctx, int32_t word);
-} qa_qvmy_game_data;
 
 /* TS QvmServerTraceQuery: shape kind "box" | "capsule" (exact). */
 typedef struct qa_qvm_server_trace_query {
@@ -71,7 +65,7 @@ typedef bool (*qa_qvmy_entity_token_syscall_fn)(void *ctx, const qa_qvm_host_cal
 
 /* TS QvmServerGameServices. entity_token writes a borrowed token. */
 typedef struct qa_qvm_server_game_services {
-  const qa_qvmy_game_data *data;
+  qa_qvm_game_data *data;
   qa_cvar_registry *cvars;
   void *configstrings_ctx;
   const char *(*configstring_get)(void *ctx, int32_t index);

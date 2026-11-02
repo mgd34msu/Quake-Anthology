@@ -95,7 +95,7 @@ bool qa_app_q3_guest_bots_syscall(qa_app_q3_guest_bots *bots, const qa_qvm_host_
       bots->options.structure(ctx, call, 1, QA_QVM_BOT_ENTITY_STATE_BYTES, &state, "bot entity state");
       double entity = word(call, 0);
       qa_qvm_shared_entity *shared = qa_app_q3_guest_records_entity(bots->options.records, entity);
-      qa_qvmx_view view = {shared->s.view.bytes + shared->s.view.start, (size_t)shared->s.view.length};
+      qa_qvmx_view view = shared->s.view;
       qa_qvm_entity_state record_state = qa_qvm_borrow_entity_state(view, shared->profile);
       qa_app_q3_bot_entity_snapshot snapshot; memset(&snapshot, 0, sizeof snapshot);
       snapshot.state = state; snapshot.slot = entity;

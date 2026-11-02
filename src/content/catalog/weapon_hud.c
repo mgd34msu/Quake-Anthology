@@ -2,7 +2,13 @@
 #include "qa/content/catalog/weapon_hud.h"
 
 #include "catalog_internal.h"
-#include "q2_weapon_data.h"
+#include "qa/content/catalog/weapons.h"
+#include "qa/content/q2/foundation/items.h"
+#include "qa/content/q2/foundation/weapons/definitions.h"
+#include "qa/content/q2/missionpacks/items.h"
+#include "qa/content/q2/missionpacks/weapons/definitions.h"
+#include "qa/content/q3/base/shared/items.h"
+#include "qa/content/q3/foundation/arsenal.h"
 
 typedef struct q1_picture {
   const char *item;
@@ -82,26 +88,34 @@ static qa_weapon_hud_icon wad_icon(qa_provider_reference source, const char *lum
   return icon;
 }
 
+/* TS q2WeaponDefinitions(product): base weapons, plus the
+ * mission definitions the product selects (owner arrays). */
 static const qa_catalog_q2_weapon_definition *find_q2_weapon(
     const qa_catalog_product_expectation *product, qa_item_id item) {
-  for (size_t i = 0; i < sizeof Q2_BASE_DATA / sizeof Q2_BASE_DATA[0]; i++)
-    if (strcmp(Q2_BASE_DATA[i].item, item) == 0) return &Q2_BASE_DATA[i];
+  for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
+    if (strcmp(qa_q2w_base_weapons[i].item, item) == 0) return &qa_q2w_base_weapons[i];
   if (strcmp(product->edition, "rerelease") == 0 ||
       strcmp(product->campaign, "xatrix") == 0)
-    for (size_t i = 0; i < sizeof Q2_XATRIX_DATA / sizeof Q2_XATRIX_DATA[0]; i++)
-      if (strcmp(Q2_XATRIX_DATA[i].item, item) == 0) return &Q2_XATRIX_DATA[i];
+    for (size_t i = 0; i < qa_q2mp_xatrix_weapon_definition_count; i++)
+      if (strcmp(qa_q2mp_xatrix_weapon_definitions[i].item, item) == 0)
+        return &qa_q2mp_xatrix_weapon_definitions[i];
   if (strcmp(product->edition, "rerelease") == 0 ||
       strcmp(product->campaign, "rogue") == 0)
-    for (size_t i = 0; i < sizeof Q2_ROGUE_DATA / sizeof Q2_ROGUE_DATA[0]; i++)
-      if (strcmp(Q2_ROGUE_DATA[i].item, item) == 0) return &Q2_ROGUE_DATA[i];
+    for (size_t i = 0; i < qa_q2mp_rogue_weapon_definition_count; i++)
+      if (strcmp(qa_q2mp_rogue_weapon_definitions[i].item, item) == 0)
+        return &qa_q2mp_rogue_weapon_definitions[i];
   return NULL;
 }
 
+/* TS [...q2BaseItemIcons(), ...q2MissionWeaponIcons()] lookup. */
 static const char *find_q2_icon(qa_item_id item) {
-  for (size_t i = 0; i < sizeof Q2_BASE_ICONS / sizeof Q2_BASE_ICONS[0]; i++)
-    if (strcmp(Q2_BASE_ICONS[i].item, item) == 0) return Q2_BASE_ICONS[i].icon;
-  for (size_t i = 0; i < sizeof Q2_MISSION_ICONS / sizeof Q2_MISSION_ICONS[0]; i++)
-    if (strcmp(Q2_MISSION_ICONS[i].item, item) == 0) return Q2_MISSION_ICONS[i].icon;
+  size_t count = 0;
+  const qa_q2_base_item_icon *base = qa_q2_base_item_icons(&count);
+  for (size_t i = 0; i < count; i++)
+    if (strcmp(base[i].item, item) == 0) return base[i].icon;
+  const qa_q2mp_weapon_icon *mission = qa_q2mp_mission_weapon_icons(&count);
+  for (size_t i = 0; i < count; i++)
+    if (strcmp(mission[i].item, item) == 0) return mission[i].icon;
   return NULL;
 }
 
@@ -198,27 +212,50 @@ bool qa_weapon_hud_icons_for(qa_provider_reference source,
   if (product->family == QA_GAME_FAMILY_Q3 &&
       (strcmp(product->campaign, "baseq3") == 0 ||
        strcmp(product->campaign, "missionpack") == 0)) {
-    const q3_weapon_icon_entry *definition = NULL;
-    for (size_t i = 0; i < sizeof Q3_WEAPON_ICONS / sizeof Q3_WEAPON_ICONS[0]; i++)
-      if (strcmp(Q3_WEAPON_ICONS[i].item, item) == 0) definition = &Q3_WEAPON_ICONS[i];
+    /* TS: Q3_WEAPON_ITEMS entry + itemList(product) IT_WEAPON /
+     * IT_AMMO rows with its tag (base list lacks the missionpack
+     * weapons, so those resolve to null there). */
+    const qa_q3_weapon_item *definition = NULL;
+    for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++)
+      if (strcmp(qa_q3_weapon_items[i].item, item) == 0) definition = &qa_q3_weapon_items[i];
     if (definition == NULL) return true;
-    if (definition->missionpack_only &&
-        strcmp(product->campaign, "missionpack") != 0) return true;
-    if (definition->weapon_icon != NULL) {
+    qa_q3_base_product q3_product = strcmp(product->campaign, "missionpack") == 0
+        ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
+    /* itemList(product).find(...): undefined (not findItemForWeapon's
+     * throw) when the product list lacks the weapon. */
+    const char *weapon_icon = NULL;
+    const char *ammo_icon = NULL;
+    bool have_weapon_row = false;
+    {
+      size_t row_count = 0;
+      const qa_q3_base_item_definition *rows =
+          qa_q3_base_item_list(q3_product, &row_count);
+      for (size_t i = 0; i < row_count; i++) {
+        if (rows[i].tag != definition->weapon) continue;
+        if (rows[i].type == QA_Q3_BASE_IT_WEAPON && !have_weapon_row) {
+          weapon_icon = rows[i].icon;
+          have_weapon_row = true;
+        } else if (rows[i].type == QA_Q3_BASE_IT_AMMO && ammo_icon == NULL) {
+          ammo_icon = rows[i].icon;
+        }
+      }
+    }
+    if (!have_weapon_row) return true;
+    if (weapon_icon != NULL) {
       qa_weapon_hud_icon icon = {0};
       icon.kind = QA_WEAPON_HUD_ICON_SHADER;
       icon.content = source.content;
-      icon.name = definition->weapon_icon;
+      icon.name = weapon_icon;
       out->weapon = icon;
       out->has_weapon = true;
       out->selected_weapon = icon;
       out->has_selected_weapon = true;
     }
-    if (definition->ammo_icon != NULL) {
+    if (ammo_icon != NULL) {
       qa_weapon_hud_icon icon = {0};
       icon.kind = QA_WEAPON_HUD_ICON_SHADER;
       icon.content = source.content;
-      icon.name = definition->ammo_icon;
+      icon.name = ammo_icon;
       out->ammo = icon;
       out->has_ammo = true;
     }
@@ -278,19 +315,19 @@ bool qa_weapon_hud_resources(qa_provider_reference source,
     else if (strcmp(product->campaign, "mg3") == 0) { extra = MG3_PICTURES; extra_count = 2; }
     for (size_t i = 0; i < extra_count; i++) items[item_count++] = extra[i].item;
   } else if (product->family == QA_GAME_FAMILY_Q2) {
-    for (size_t i = 0; i < sizeof Q2_BASE_DATA / sizeof Q2_BASE_DATA[0]; i++)
-      items[item_count++] = Q2_BASE_DATA[i].item;
+    for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
+      items[item_count++] = qa_q2w_base_weapons[i].item;
     if (strcmp(product->edition, "rerelease") == 0 ||
         strcmp(product->campaign, "xatrix") == 0)
-      for (size_t i = 0; i < sizeof Q2_XATRIX_DATA / sizeof Q2_XATRIX_DATA[0]; i++)
-        items[item_count++] = Q2_XATRIX_DATA[i].item;
+      for (size_t i = 0; i < qa_q2mp_xatrix_weapon_definition_count; i++)
+        items[item_count++] = qa_q2mp_xatrix_weapon_definitions[i].item;
     if (strcmp(product->edition, "rerelease") == 0 ||
         strcmp(product->campaign, "rogue") == 0)
-      for (size_t i = 0; i < sizeof Q2_ROGUE_DATA / sizeof Q2_ROGUE_DATA[0]; i++)
-        items[item_count++] = Q2_ROGUE_DATA[i].item;
+      for (size_t i = 0; i < qa_q2mp_rogue_weapon_definition_count; i++)
+        items[item_count++] = qa_q2mp_rogue_weapon_definitions[i].item;
   } else {
-    for (size_t i = 0; i < sizeof Q3_WEAPON_ICONS / sizeof Q3_WEAPON_ICONS[0]; i++)
-      items[item_count++] = Q3_WEAPON_ICONS[i].item;
+    for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++)
+      items[item_count++] = qa_q3_weapon_items[i].item;
   }
   for (size_t i = 0; i < item_count; i++) {
     qa_weapon_hud_icons icons = {0};

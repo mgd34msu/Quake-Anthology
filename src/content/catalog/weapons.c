@@ -1,12 +1,14 @@
-/* Port of src/content/catalog/weapons.ts. Mirrored data in
- * q2_weapon_data.h. The Q1 base list is precacheQ1World filtered
+/* Port of src/content/catalog/weapons.ts. Q2 weapon data comes
+ * from the landed foundation/missionpacks definitions ports.
+ * The Q1 base list is precacheQ1World filtered
  * exactly as q1BaseWeaponPaths filters it (weapons/ sounds plus
  * player/axhit*, v_* models plus missile/grenade/spike/s_spike/
  * bolt2). GPL-2.0-or-later. */
 #include "qa/content/catalog/weapons.h"
 
 #include "catalog_internal.h"
-#include "q2_weapon_data.h"
+#include "qa/content/q2/foundation/weapons/definitions.h"
+#include "qa/content/q2/missionpacks/weapons/definitions.h"
 #include "qa/content/catalog/timing.h"
 #include "qa/content/catalog/weapon_hud.h"
 
@@ -16,19 +18,6 @@ const qa_classic_rerelease_providers qa_q1_hipnotic_weapon_providers = {
     "q1:weapons/classic/hipnotic", "q1:weapons/rerelease/hipnotic"};
 const qa_classic_rerelease_providers qa_q2_weapon_providers = {
     "q2:weapons/classic/baseq2", "q2:weapons/rerelease/baseq2"};
-
-const qa_catalog_q2_weapon_definition *const qa_q2_base_weapons_catalog =
-    Q2_BASE_DATA;
-const size_t qa_q2_base_weapon_catalog_count =
-    sizeof Q2_BASE_DATA / sizeof Q2_BASE_DATA[0];
-const qa_catalog_q2_weapon_definition *const qa_xatrix_weapon_definitions_catalog =
-    Q2_XATRIX_DATA;
-const size_t qa_xatrix_weapon_definition_catalog_count =
-    sizeof Q2_XATRIX_DATA / sizeof Q2_XATRIX_DATA[0];
-const qa_catalog_q2_weapon_definition *const qa_rogue_weapon_definitions_catalog =
-    Q2_ROGUE_DATA;
-const size_t qa_rogue_weapon_definition_catalog_count =
-    sizeof Q2_ROGUE_DATA / sizeof Q2_ROGUE_DATA[0];
 
 static bool in_list(const char *text, const char *const *values, size_t count) {
   return qa_catalog_string_contains(values, count, text);
@@ -160,12 +149,12 @@ static bool path_push(qa_catalog_string_list *list, const char *path) {
 /* q2BaseWeaponPaths. */
 static bool q2_base_paths(bool rerelease, qa_catalog_string_list *out) {
   qa_catalog_string_list models = {0};
-  for (size_t i = 0; i < sizeof Q2_BASE_DATA / sizeof Q2_BASE_DATA[0]; i++) {
-    if (Q2_BASE_DATA[i].view_model[0] != '\0' &&
-        !qa_catalog_string_push(&models, qa_catalog_dup(Q2_BASE_DATA[i].view_model)))
+  for (size_t i = 0; i < qa_q2w_base_weapon_count; i++) {
+    if (qa_q2w_base_weapons[i].view_model[0] != '\0' &&
+        !qa_catalog_string_push(&models, qa_catalog_dup(qa_q2w_base_weapons[i].view_model)))
       goto fail;
-    if (Q2_BASE_DATA[i].world_model[0] != '\0' &&
-        !qa_catalog_string_push(&models, qa_catalog_dup(Q2_BASE_DATA[i].world_model)))
+    if (qa_q2w_base_weapons[i].world_model[0] != '\0' &&
+        !qa_catalog_string_push(&models, qa_catalog_dup(qa_q2w_base_weapons[i].world_model)))
       goto fail;
   }
   {
@@ -379,16 +368,16 @@ static bool weapon_resources_one(qa_provider_reference map,
          strcmp(product->edition, "rerelease") == 0)) {
       qa_catalog_q2_weapon_definition definitions[32];
       size_t count = 0;
-      for (size_t i = 0; i < sizeof Q2_BASE_DATA / sizeof Q2_BASE_DATA[0]; i++)
-        definitions[count++] = Q2_BASE_DATA[i];
+      for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
+        definitions[count++] = qa_q2w_base_weapons[i];
       if (strcmp(product->edition, "rerelease") == 0 ||
           strcmp(product->campaign, "xatrix") == 0)
-        for (size_t i = 0; i < sizeof Q2_XATRIX_DATA / sizeof Q2_XATRIX_DATA[0]; i++)
-          definitions[count++] = Q2_XATRIX_DATA[i];
+        for (size_t i = 0; i < qa_q2mp_xatrix_weapon_definition_count; i++)
+          definitions[count++] = qa_q2mp_xatrix_weapon_definitions[i];
       if (strcmp(product->edition, "rerelease") == 0 ||
           strcmp(product->campaign, "rogue") == 0)
-        for (size_t i = 0; i < sizeof Q2_ROGUE_DATA / sizeof Q2_ROGUE_DATA[0]; i++)
-          definitions[count++] = Q2_ROGUE_DATA[i];
+        for (size_t i = 0; i < qa_q2mp_rogue_weapon_definition_count; i++)
+          definitions[count++] = qa_q2mp_rogue_weapon_definitions[i];
       qa_catalog_path_list paths = {0};
       ok = qa_q2_registered_weapon_resources(
           definitions, count, strcmp(product->edition, "rerelease") == 0, &paths);

@@ -1180,6 +1180,217 @@ static void test_draw_stack_tools_and_weapons(void) {
   qa_q3_pres_client_game_state_destroy(&state);
 }
 
+/* ---- presentation-fill: scoreboard.ts / hud-corners.ts draw logic ---- */
+typedef struct fill_probe {
+  qa_rect rects[512];
+  char names[512][24];
+  int count;
+  double corner_cvars[7];
+  double board_cvars[2];
+  char sent[64];
+  int sent_count;
+  double now_ms;
+} fill_probe;
+static void fill_set_color(void *ctx, const qa_vec4 *color) { (void)ctx; (void)color; }
+static void fill_stretch(void *ctx, qa_rect rect, qa_text_texture_rect uv, const qa_picture_asset *picture) {
+  (void)uv;
+  fill_probe *probe = ctx;
+  if (probe->count >= 512) return;
+  probe->rects[probe->count] = rect;
+  const char *name = picture && picture->kind == QA_PICTURE_MATERIAL ? picture->material.name : NULL;
+  snprintf(probe->names[probe->count], sizeof probe->names[0], "%s", name ? name : "");
+  probe->count++;
+}
+static qa_material_picture fill_picture(void *ctx, const qa_q3_pres_scene_shader *shader) {
+  (void)ctx;
+  qa_material_picture picture;
+  memset(&picture, 0, sizeof picture);
+  picture.name = shader ? shader->name : "null-shader";
+  return picture;
+}
+static qa_q3_pres_client_draw_icon_settings fill_icon_settings(void *ctx) {
+  (void)ctx;
+  qa_q3_pres_client_draw_icon_settings settings = {false, false};
+  return settings;
+}
+static qa_cvar_snapshot fill_corner_cvar(void *ctx, qa_q3_pres_hud_corner_cvar name) {
+  fill_probe *probe = ctx;
+  qa_cvar_snapshot snapshot;
+  memset(&snapshot, 0, sizeof snapshot);
+  snapshot.integer_value = probe->corner_cvars[name];
+  return snapshot;
+}
+static qa_cvar_snapshot fill_board_cvar(void *ctx, qa_q3_pres_scoreboard_cvar name) {
+  fill_probe *probe = ctx;
+  qa_cvar_snapshot snapshot;
+  memset(&snapshot, 0, sizeof snapshot);
+  snapshot.integer_value = probe->board_cvars[name];
+  return snapshot;
+}
+static const char *fill_config(void *ctx, double index) { (void)ctx; (void)index; return ""; }
+static double fill_ms(void *ctx) { return ((fill_probe *)ctx)->now_ms; }
+static void fill_send(void *ctx, const char *text) {
+  fill_probe *probe = ctx;
+  snprintf(probe->sent, sizeof probe->sent, "%s", text);
+  probe->sent_count++;
+}
+static void fill_print(void *ctx, const char *text) { (void)ctx; (void)text; }
+static bool fill_rect_seen(fill_probe *probe, double x, double y, double w, double h, const char *name) {
+  for (int i = 0; i < probe->count; i++)
+    if (probe->rects[i].x == x && probe->rects[i].y == y && probe->rects[i].width == w &&
+        probe->rects[i].height == h && (name == NULL || strcmp(probe->names[i], name) == 0)) return true;
+  return false;
+}
+static void test_presentation_fill(void) {
+  static qa_q3_pres_scene_shader num_shaders[11];
+  static char num_names[11][8];
+  for (int i = 0; i < 11; i++) { snprintf(num_names[i], 8, "num%d", i); num_shaders[i].name = num_names[i]; }
+  static qa_q3_pres_scene_shader sb_score = {"sb-score"}, sb_ping = {"sb-ping"}, sb_time = {"sb-time"},
+                                 sb_name = {"sb-name"}, white_shader = {"white"}, charset = {"charset"};
+  qa_q3_pres_client_media_graphics graphics;
+  memset(&graphics, 0, sizeof graphics);
+  for (int i = 0; i < 11; i++) graphics.number_shaders[i] = &num_shaders[i];
+  graphics.scoreboard_score = &sb_score;
+  graphics.scoreboard_ping = &sb_ping;
+  graphics.scoreboard_time = &sb_time;
+  graphics.scoreboard_name = &sb_name;
+
+  fill_probe probe;
+  memset(&probe, 0, sizeof probe);
+  qa_text_draw_sink sink;
+  memset(&sink, 0, sizeof sink);
+  sink.ctx = &probe;
+  sink.target = (qa_rect){0, 0, 640, 480};
+  sink.set_color = fill_set_color;
+  sink.stretch_pixels = fill_stretch;
+  qa_draw2d draw = {sink, QA_COORD_STRETCH_640};
+  qa_q3_pres_draw_tools_media media;
+  memset(&media, 0, sizeof media);
+  media.picture = fill_picture;
+  media.charset_shader = &charset;
+  media.white_shader = &white_shader;
+  qa_q3_pres_client_draw_tools tools;
+  qa_q3_pres_client_draw_tools_init(&tools, draw, media);
+
+  qa_q3_pres_client_game_state state;
+  qa_q3_pres_client_game_static_state static_state;
+  CHECK(qa_q3_pres_client_game_state_init(&state, QA_Q3_BASE_PRODUCT_BASEQ3, 0, 0));
+  qa_q3_pres_client_game_static_state_init(&static_state, QA_Q3_BASE_PRODUCT_BASEQ3);
+  static_state.maxclients = 64;
+  qa_q3_pres_client_draw_icons icons;
+  memset(&icons, 0, sizeof icons);
+  icons.state = &state;
+  icons.tools = &tools;
+  icons.media.static_state = &static_state;
+  icons.settings = fill_icon_settings;
+
+  /* Snapshot with local client 0. */
+  qa_q3_wire_snapshot input;
+  memset(&input, 0, sizeof input);
+  qa_q3_player_state_record_init(&input.player_state, QA_Q3_PRODUCT_BASEQ3, 0, 0, 0);
+  input.area_mask_len = 32;
+  qa_q3_pres_retail_snapshot snap;
+  CHECK(qa_q3_pres_retail_snapshot_from_wire(&snap, &input));
+  state.snap = &snap;
+
+  /* hud-corners drawField: clamps and right-alignment (CHAR 32x48, x+2). */
+  qa_q3_pres_client_hud_corners corners;
+  qa_q3_pres_hud_corners_host corner_host;
+  memset(&corner_host, 0, sizeof corner_host);
+  corner_host.ctx = &probe;
+  corner_host.read_vm_cvar = fill_corner_cvar;
+  corner_host.config_string = fill_config;
+  corner_host.milliseconds = fill_ms;
+  corner_host.graphics = &graphics;
+  qa_q3_pres_client_hud_corners_init(&corners, &state, &static_state, &icons, corner_host);
+  probe.count = 0;
+  qa_q3_pres_client_hud_corners_draw_field(&corners, 100, 432, 3, 5);
+  CHECK(probe.count == 1 && fill_rect_seen(&probe, 166, 432, 32, 48, "num5"));
+  probe.count = 0;
+  qa_q3_pres_client_hud_corners_draw_field(&corners, 100, 432, 2, -123); /* clamps to -9 */
+  CHECK(probe.count == 2 && fill_rect_seen(&probe, 102, 432, 32, 48, "num10") &&
+        fill_rect_seen(&probe, 134, 432, 32, 48, "num9"));
+  probe.count = 0;
+  qa_q3_pres_client_hud_corners_draw_field(&corners, 100, 432, 1, 42); /* clamps to 9 */
+  CHECK(probe.count == 1 && fill_rect_seen(&probe, 102, 432, 32, 48, "num9"));
+  probe.count = 0;
+  qa_q3_pres_client_hud_corners_draw_field(&corners, 100, 432, 0, 5); /* width < 1: nothing */
+  CHECK(probe.count == 0);
+
+  /* Upper-right snapshot line draws big chars at y=2. */
+  probe.corner_cvars[QA_Q3_PRES_CORNER_CVAR_SNAPSHOT] = 1;
+  probe.count = 0;
+  qa_q3_pres_client_hud_corners_draw_upper_right(&corners);
+  bool at_y2 = false;
+  for (int i = 0; i < probe.count; i++) if (probe.rects[i].y == 2) at_y2 = true;
+  CHECK(probe.count > 0 && at_y2);
+  probe.corner_cvars[QA_Q3_PRES_CORNER_CVAR_SNAPSHOT] = 0;
+
+  /* Scoreboard gates + rows. Board assigned directly (init needs a store). */
+  qa_q3_pres_base_scoreboard board;
+  memset(&board, 0, sizeof board);
+  board.state = &state;
+  board.static_state = &static_state;
+  board.host.graphics = &graphics;
+  board.host.icons = &icons;
+  board.host.ctx = &probe;
+  board.host.read_vm_cvar = fill_board_cvar;
+  board.host.config_string = fill_config;
+  board.host.send_client_command = fill_send;
+  board.host.print = fill_print;
+  state.time = 5000;
+  /* paused: false and deferred reset. */
+  probe.board_cvars[QA_Q3_PRES_SCOREBOARD_CVAR_PAUSED] = 1;
+  state.deferred_player_loading = 7;
+  CHECK(!qa_q3_pres_base_scoreboard_draw(&board) && state.deferred_player_loading == 0);
+  probe.board_cvars[QA_Q3_PRES_SCOREBOARD_CVAR_PAUSED] = 0;
+  /* warmup without +scores: false. */
+  state.warmup = 1;
+  state.show_scores = false;
+  CHECK(!qa_q3_pres_base_scoreboard_draw(&board));
+  state.warmup = 0;
+  /* fade expired (200ms window): false and killer cleared. */
+  state.score_fade_time = 1000;
+  state.time = 2000;
+  CHECK(qa_q3_pres_set_string(&state.killer_name, "Bob"));
+  CHECK(!qa_q3_pres_base_scoreboard_draw(&board) && state.killer_name == NULL);
+  /* Happy path: one local free-team row + header pics + deferred++. */
+  CHECK(qa_q3_pres_set_string(&static_state.client_info[0].name, "Alice"));
+  static_state.client_info[0].info_valid = true;
+  static_state.client_info[0].team = QA_Q3_BASE_TEAM_FREE;
+  static_state.client_info[0].handicap = 100;
+  state.num_scores = 1;
+  state.scores[0].client = 0;
+  state.scores[0].score = 12;
+  state.scores[0].ping = 34;
+  state.scores[0].time = 56;
+  state.show_scores = true;
+  state.deferred_player_loading = 0;
+  probe.count = 0;
+  CHECK(qa_q3_pres_base_scoreboard_draw(&board));
+  CHECK(state.deferred_player_loading == 1);
+  CHECK(fill_rect_seen(&probe, 176, 86, 64, 32, "sb-score"));
+  CHECK(fill_rect_seen(&probe, 264, 86, 64, 32, "sb-ping"));
+  CHECK(fill_rect_seen(&probe, 344, 86, 64, 32, "sb-time"));
+  CHECK(fill_rect_seen(&probe, 416, 86, 64, 32, "sb-name"));
+  CHECK(fill_rect_seen(&probe, 176, 118, 512, 17, "white")); /* local rank highlight */
+
+  /* Tourney board requests scores every 2s with exactly "score". */
+  state.scores_request_time = 0;
+  state.time = 5000;
+  probe.sent_count = 0;
+  probe.sent[0] = '\0';
+  CHECK(qa_q3_pres_base_scoreboard_draw_tourney(&board));
+  CHECK(probe.sent_count == 1 && strcmp(probe.sent, "score") == 0 && state.scores_request_time == 5000);
+  CHECK(qa_q3_pres_base_scoreboard_draw_tourney(&board));
+  CHECK(probe.sent_count == 1);
+
+  state.snap = NULL;
+  qa_q3_pres_retail_snapshot_destroy(&snap);
+  qa_q3_pres_client_game_static_state_destroy(&static_state);
+  qa_q3_pres_client_game_state_destroy(&state);
+}
+
 int main(void) {
   test_character_resources();
   test_refdef();
@@ -1197,6 +1408,7 @@ int main(void) {
   test_draw_stack_marks();
   test_draw_stack_scene();
   test_draw_stack_tools_and_weapons();
+  test_presentation_fill();
   printf("q3-presentation: %d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;
 }

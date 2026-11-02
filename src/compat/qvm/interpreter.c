@@ -20,6 +20,57 @@
 
 /* ---------- mirrors of memory.ts (qvm-b) ---------- */
 
+/* DataView scalar access over a qa_qvmx_view (TS DataView over guest
+ * bytes; bounds via memory-writes.ts index(), little-endian). */
+void qa_qvmx_view_check(const qa_qvmx_view *view, int64_t offset, int64_t width) {
+  if (offset < 0 || width < 0 || offset > (int64_t)view->length - width)
+    qa_range_error("Offset is outside the bounds of the DataView");
+}
+int32_t qa_qvmx_view_i32(const qa_qvmx_view *view, int64_t offset) {
+  qa_qvmx_view_check(view, offset, 4);
+  const uint8_t *p = view->bytes + offset;
+  uint32_t v = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+  int32_t out;
+  memcpy(&out, &v, sizeof out);
+  return out;
+}
+void qa_qvmx_view_set_i32(qa_qvmx_view *view, int64_t offset, int32_t value) {
+  qa_qvmx_view_check(view, offset, 4);
+  uint8_t *p = view->bytes + offset;
+  uint32_t v;
+  memcpy(&v, &value, sizeof v);
+  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+float qa_qvmx_view_f32(const qa_qvmx_view *view, int64_t offset) {
+  int32_t bits = qa_qvmx_view_i32(view, offset);
+  float out;
+  memcpy(&out, &bits, sizeof out);
+  return out;
+}
+void qa_qvmx_view_set_f32(qa_qvmx_view *view, int64_t offset, float value) {
+  int32_t bits;
+  memcpy(&bits, &value, sizeof bits);
+  qa_qvmx_view_set_i32(view, offset, bits);
+}
+uint8_t qa_qvmx_view_u8(const qa_qvmx_view *view, int64_t offset) {
+  qa_qvmx_view_check(view, offset, 1);
+  return view->bytes[offset];
+}
+void qa_qvmx_view_set_u8(qa_qvmx_view *view, int64_t offset, uint8_t value) {
+  qa_qvmx_view_check(view, offset, 1);
+  view->bytes[offset] = value;
+}
+uint16_t qa_qvmx_view_u16(const qa_qvmx_view *view, int64_t offset) {
+  qa_qvmx_view_check(view, offset, 2);
+  const uint8_t *p = view->bytes + offset;
+  return (uint16_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8));
+}
+void qa_qvmx_view_set_u16(qa_qvmx_view *view, int64_t offset, uint16_t value) {
+  qa_qvmx_view_check(view, offset, 2);
+  view->bytes[offset] = (uint8_t)value;
+  view->bytes[offset + 1] = (uint8_t)(value >> 8);
+}
+
 static bool is_safe_integer(double v) {
   return isfinite(v) && v == trunc(v) && v >= -9007199254740991.0 && v <= 9007199254740991.0;
 }
@@ -386,7 +437,6 @@ struct qa_qvm_interpreter {
   bool has_resolver;
   qa_qvm_function_resolver resolver;
   const qa_qvm_vm_registration *registration;
-  qa_qvmy_interpreter registry_view; /* snapshot bound into the registry */
   const qa_qvm_allocation_profile *allocation_profile; /* borrowed, for symbols */
   qa_qvm_symbols symbols;
   /* cancellation scopes: token pointer -> source_call */
@@ -1015,7 +1065,6 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
   if (evaluation_floor >= 0 && sp < evaluation_floor)
     qa_range_error("QVM evaluation stack would overlap source data");
   interp->debug = debug;
-  interp->registry_view.debug_enabled = debug;
   int64_t evaluation_stack = sp;
   invocation frame;
   memset(&frame, 0, sizeof frame);
@@ -1434,7 +1483,6 @@ static double execute(qa_qvm_interpreter *interp, const double *args, size_t arg
   interp->active = frame.previous;
   if (frame.previous != NULL) {
     interp->debug = previous_debug;
-    interp->registry_view.debug_enabled = previous_debug;
     interp->call_level = previous_call_level;
   }
   return final_result;
@@ -1535,15 +1583,7 @@ qa_qvm_interpreter *qa_qvm_interpreter_create(const qa_qvm_image *image,
               ? (int32_t)target_pc(interp, instruction->operand)
               : instruction->operand;
   }
-  if (registration != NULL) {
-    interp->registry_view.ctx = interp;
-    interp->registry_view.code_length = (int64_t)interp->code_length;
-    interp->registry_view.instruction_pointers_length = (int64_t)interp->instruction_count * 4;
-    interp->registry_view.memory_length = (int64_t)interp->memory_length;
-    interp->registry_view.debug_enabled = interp->debug;
-    interp->registry_view.symbols = &interp->symbols;
-    qa_qvm_vm_registration_bind_interpreter(registration, &interp->registry_view);
-  }
+  if (registration != NULL) qa_qvm_vm_registration_bind_interpreter(registration, interp);
   return interp;
 }
 

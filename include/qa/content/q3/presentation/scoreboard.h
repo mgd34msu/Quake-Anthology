@@ -4,6 +4,7 @@
 #define QA_CONTENT_Q3_PRESENTATION_SCOREBOARD_H
 #include <stdbool.h>
 #include "qa/content/q3/presentation/draw_icons.h"
+#include "qa/content/q3/presentation/media.h"
 #include "qa/content/q3/presentation/players.h"
 #include "qa/content/q3/presentation/state.h"
 #include "qa/core/cvars/index.h"
@@ -12,6 +13,8 @@ typedef enum qa_q3_pres_scoreboard_cvar {
 } qa_q3_pres_scoreboard_cvar;
 const char *qa_q3_pres_scoreboard_cvar_name(qa_q3_pres_scoreboard_cvar cvar);
 typedef struct qa_q3_pres_base_scoreboard_host {
+  /* TS tools.media.graphics (ClientMedia graphics pick). */
+  const qa_q3_pres_client_media_graphics *graphics;
   qa_q3_pres_client_draw_icons *icons;
   qa_q3_pres_client_info_store *clients;
   qa_q3_pres_player_presenter *players;

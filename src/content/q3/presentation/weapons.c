@@ -744,58 +744,280 @@ void qa_q3_pres_client_weapon_runtime_tracer(qa_q3_pres_client_weapon_runtime *r
   qa_vec3 midpoint = qa_scale3(qa_add3(start, finish), 0.5);
   rt->host.start_sound(rt->host.ctx, &midpoint, 1022, 0, rt->host.media.sounds.tracer);
 }
+static void lightning_bolt(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client_entity *cent, qa_vec3 origin) {
+  if (cent->current_state.weapon != QA_Q3_WP_LIGHTNING) return;
+  qa_q3_pres_client_game_state *state = rt_state(rt);
+  qa_vec3 angles = cent->lerp_angles;
+  double true_lightning = rt->host.settings(rt->host.ctx).true_lightning;
+  if (cent->current_state.number == state->predicted_player_state.client_num && true_lightning != 0) {
+    qa_vec3 view = state->refdef_view_angles;
+    double actual[3] = {angles.x, angles.y, angles.z}, views[3] = {view.x, view.y, view.z}, blended[3];
+    for (int i = 0; i < 3; i++) {
+      double a = f32(actual[i] - views[i]);
+      if (a > 180) a = f32(a - 360);
+      if (a < -180) a = f32(a + 360);
+      double angle = f32(views[i] + f32(a * f32(1 - true_lightning)));
+      if (angle < 0) angle = f32(angle + 360);
+      if (angle > 360) angle = f32(angle - 360);
+      blended[i] = angle;
+    }
+    angles = (qa_vec3){blended[0], blended[1], blended[2]};
+  }
+  qa_vec3 forward = qa_qvm_angle_vectors(angles).forward;
+  qa_vec3 muzzle = ma3(qa_add3(cent->lerp_origin, (qa_vec3){0, 0, 26}), 14, forward);
+  qa_bounds point = {{0, 0, 0}, {0, 0, 0}};
+  qa_q3_pres_movement_trace trace = rt->host.trace(rt->host.prediction_ctx, muzzle, ma3(muzzle, 768, forward),
+                                                   point, cent->current_state.number, MASK_SHOT);
+  qa_q3_pres_ref_entity beam = qa_q3_pres_ref_entity_from_rail(QA_Q3_PRES_REF_LIGHTNING,
+                                                               qa_q3_pres_create_lightning_entity());
+  beam.as.rail.origin = origin;
+  beam.as.rail.old_origin = trace.result.end;
+  beam.as.rail.shading.custom_shader = rt->registry->effects.lightning_shader;
+  rt->host.add_ref_entity(rt->host.ctx, &beam);
+  if (trace.result.fraction < 1) {
+    qa_q3_pres_ref_model_entity ref =
+        qa_q3_pres_create_model_entity(rt->registry->effects.lightning_explosion_model);
+    ref.origin = ma3(trace.result.end, -16, qa_normalize3(qa_sub3(beam.as.rail.old_origin, beam.as.rail.origin)));
+    qa_vec3 random_angles = {(double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360),
+                             (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360),
+                             (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360)};
+    ref.axis = qa_angles_to_axis(random_angles);
+    qa_q3_pres_ref_entity ref_entity = qa_q3_pres_ref_entity_from_model(ref);
+    rt->host.add_ref_entity(rt->host.ctx, &ref_entity);
+  }
+}
+static double spin_angle(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client_entity *cent) {
+  qa_q3_pres_client_player_entity *player = &cent->player;
+  qa_q3_pres_client_game_state *state = rt_state(rt);
+  int32_t delta = qa_int32(state->time - player->barrel_time);
+  double angle;
+  if (player->barrel_spinning) angle = f32(player->barrel_angle + f32(f32((double)delta) * f32(0.9)));
+  else {
+    if (delta > 1000) delta = 1000;
+    double speed = f32(f32(0.5) * f32(f32(0.9) + f32(f32((double)qa_int32(1000 - (double)delta)) / 1000)));
+    angle = f32(player->barrel_angle + f32(f32((double)delta) * speed));
+  }
+  bool firing = ((int64_t)cent->current_state.e_flags & 256) != 0;
+  if (player->barrel_spinning != firing) {
+    player->barrel_time = state->time;
+    player->barrel_angle = qa_qvm_angle_mod(angle);
+    player->barrel_spinning = firing;
+    if (state->product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
+        cent->current_state.weapon == QA_Q3_WP_CHAINGUN && !firing)
+      rt->host.start_sound(rt->host.ctx, NULL, cent->current_state.number, 2,
+                           rt->host.sound(rt->host.ctx, "sound/weapons/vulcan/wvulwind.wav"));
+  }
+  return angle;
+}
+static void add_weapon_with_powerups(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_ref_model_entity gun,
+                                     double powerups) {
+  int64_t bits = (int64_t)powerups;
+  if ((bits & (1LL << QA_Q3_PW_INVIS)) != 0) {
+    gun.shading.custom_shader = rt->host.media.shaders.invis;
+    qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(gun);
+    rt->host.add_ref_entity(rt->host.ctx, &ref);
+    return;
+  }
+  qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(gun);
+  rt->host.add_ref_entity(rt->host.ctx, &ref);
+  if ((bits & (1LL << QA_Q3_PW_BATTLESUIT)) != 0) {
+    gun.shading.custom_shader = rt->host.media.shaders.battle_weapon;
+    ref = qa_q3_pres_ref_entity_from_model(gun);
+    rt->host.add_ref_entity(rt->host.ctx, &ref);
+  }
+  if ((bits & (1LL << QA_Q3_PW_QUAD)) != 0) {
+    gun.shading.custom_shader = rt->host.media.shaders.quad_weapon;
+    ref = qa_q3_pres_ref_entity_from_model(gun);
+    rt->host.add_ref_entity(rt->host.ctx, &ref);
+  }
+}
+static qa_q3_pres_ref_model_entity attached_model(qa_q3_pres_scene_model model,
+                                                  const qa_q3_pres_ref_model_entity *parent) {
+  qa_q3_pres_ref_model_entity ref = qa_q3_pres_create_model_entity(model);
+  ref.lighting_origin = parent->lighting_origin;
+  ref.shadow_plane = parent->shadow_plane;
+  ref.shading.render_flags = parent->shading.render_flags;
+  return ref;
+}
 void qa_q3_pres_client_weapon_runtime_add_player_weapon(qa_q3_pres_client_weapon_runtime *rt,
     const qa_q3_pres_ref_model_entity *parent, qa_q3_base_source_player_state *player_state,
     qa_q3_pres_client_entity *entity, qa_q3_base_team team) {
   (void)team;
+  qa_q3_pres_client_game_state *state = rt_state(rt);
+  double weapon_num = entity->current_state.weapon;
   qa_q3_pres_client_weapon_info *weapon =
-      qa_q3_pres_client_weapon_media_registry_require_weapon(rt->registry, player_state->weapon);
-  qa_q3_pres_ref_model_entity gun = qa_q3_pres_create_model_entity(weapon->base.weapon_model);
+      qa_q3_pres_client_weapon_media_registry_require_weapon(rt->registry, weapon_num);
+  qa_q3_pres_ref_model_entity gun = attached_model(weapon->base.weapon_model, parent);
+  if (player_state != NULL) {
+    if (state->predicted_player_state.weapon == QA_Q3_WP_RAILGUN &&
+        state->predicted_player_state.weapon_state == QA_Q3_WEAPON_FIRING) {
+      double fraction = f32(f32(state->predicted_player_state.weapon_time) / 1500);
+      double color = (double)(qa_qvm_float_to_int(f32(255 * f32(1 - fraction))) & 255);
+      gun.shading.shader_rgba = (qa_vec4){color, 0, color, 0};
+    } else gun.shading.shader_rgba = (qa_vec4){255, 255, 255, 255};
+  }
+  if (gun.model.kind == QA_Q3_PRES_SCENE_MODEL_DEFAULT) return;
+  if (player_state == NULL) {
+    entity->player.lightning_firing = 0;
+    if (((int64_t)entity->current_state.e_flags & 256) != 0 && weapon->firing_sound != NULL) {
+      rt->host.add_loop_sound(rt->host.ctx, entity->current_state.number, entity->lerp_origin, (qa_vec3){0, 0, 0},
+                              weapon->firing_sound, false);
+      entity->player.lightning_firing = 1;
+    } else if (weapon->ready_sound != NULL)
+      rt->host.add_loop_sound(rt->host.ctx, entity->current_state.number, entity->lerp_origin, (qa_vec3){0, 0, 0},
+                              weapon->ready_sound, false);
+  }
   qa_q3_pres_position_entity_on_tag(&gun, parent, &parent->model, "tag_weapon");
-  if (entity->muzzle_flash_time == rt_state(rt)->time) gun.shading.render_flags =
-      (double)(qa_int32(gun.shading.render_flags) | QA_Q3_PRES_RF_MINLIGHT);
-  qa_q3_pres_ref_entity entity_ref = qa_q3_pres_ref_entity_from_model(gun);
-  rt->host.add_ref_entity(rt->host.ctx, &entity_ref);
+  add_weapon_with_powerups(rt, gun, entity->current_state.powerups);
+  if (weapon->base.has_barrel_model) {
+    qa_q3_pres_ref_model_entity barrel = attached_model(weapon->base.barrel_model, parent);
+    barrel.axis = qa_angles_to_axis((qa_vec3){0, 0, spin_angle(rt, entity)});
+    qa_q3_pres_position_rotated_entity_on_tag(&barrel, &gun, &weapon->base.weapon_model, "tag_barrel");
+    add_weapon_with_powerups(rt, barrel, entity->current_state.powerups);
+  }
+  qa_q3_pres_client_entity *non_predicted =
+      qa_q3_pres_client_game_state_entity_at(state, entity->current_state.client_num);
+  bool continuous = (weapon_num == QA_Q3_WP_LIGHTNING || weapon_num == QA_Q3_WP_GAUNTLET ||
+                     weapon_num == QA_Q3_WP_GRAPPLING_HOOK) &&
+                    ((int64_t)non_predicted->current_state.e_flags & 256) != 0;
+  if (!continuous) {
+    if (qa_int32(state->time - entity->muzzle_flash_time) > 20 && !entity->player.railgun_flash) return;
+  }
+  qa_q3_pres_ref_model_entity flash = attached_model(weapon->flash_model, parent);
+  if (flash.model.kind == QA_Q3_PRES_SCENE_MODEL_DEFAULT) return;
+  flash.axis = qa_angles_to_axis((qa_vec3){0, 0, f32(rt->host.crandom(rt->host.random_ctx) * 10)});
+  if (weapon_num == QA_Q3_WP_RAILGUN) {
+    qa_q3_pres_client_info *info = rt->host.client_info(rt->host.ctx, entity->current_state.client_num);
+    flash.shading.shader_rgba = (qa_vec4){
+        (double)(qa_qvm_float_to_int(f32(info->color1.x * 255)) & 255),
+        (double)(qa_qvm_float_to_int(f32(info->color1.y * 255)) & 255),
+        (double)(qa_qvm_float_to_int(f32(info->color1.z * 255)) & 255), 255};
+  }
+  qa_q3_pres_position_rotated_entity_on_tag(&flash, &gun, &weapon->base.weapon_model, "tag_flash");
+  qa_q3_pres_ref_entity flash_ref = qa_q3_pres_ref_entity_from_model(flash);
+  rt->host.add_ref_entity(rt->host.ctx, &flash_ref);
+  if (player_state != NULL || state->rendering_third_person ||
+      entity->current_state.number != state->predicted_player_state.client_num) {
+    lightning_bolt(rt, non_predicted, flash.origin);
+    if (weapon_num == QA_Q3_WP_RAILGUN && entity->player.railgun_flash) {
+      entity->player.railgun_flash = true;
+      qa_vec3 start = flash.origin;
+      qa_q3_pres_client_weapon_runtime_rail_trail(rt, entity->current_state.client_num, &start,
+                                                  entity->player.railgun_impact);
+    }
+    qa_vec3 color = weapon->flash_dlight_color;
+    if (color.x != 0 || color.y != 0 || color.z != 0) {
+      qa_q3_pres_dynamic_light light = {flash.origin,
+                                        300 + (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) & 31), color,
+                                        false};
+      rt->host.add_light(rt->host.ctx, light);
+    }
+  }
+}
+static void weapon_position(qa_q3_pres_client_game_state *state, qa_vec3 *out_origin, qa_vec3 *out_angles) {
+  double scale = ((int64_t)state->bob_cycle & 1) != 0 ? -state->xyspeed : state->xyspeed;
+  double roll = f32(f32(scale * state->bob_frac_sin) * f32(0.005));
+  double yaw = f32(f32(scale * state->bob_frac_sin) * f32(0.01));
+  double pitch = f32(f32(state->xyspeed * state->bob_frac_sin) * f32(0.005));
+  qa_vec3 origin = state->refdef.view_origin;
+  qa_vec3 angles = qa_add3(state->refdef_view_angles, (qa_vec3){pitch, yaw, roll});
+  int32_t delta = qa_int32(state->time - state->land_time);
+  if (delta < 150)
+    origin = qa_add3(origin, (qa_vec3){0, 0, f32(f32(f32(state->land_change * f32(0.25)) * f32((double)delta)) / 150)});
+  else if (delta < 450)
+    origin = qa_add3(origin,
+                     (qa_vec3){0, 0, f32(f32(f32(state->land_change * f32(0.25)) * f32((double)qa_int32(450 - (double)delta))) / 300)});
+  double drift = f32(f32(f32(state->xyspeed + 40) * f32(sin(f32(f32(state->time) * f32(0.001))))) * f32(0.01));
+  angles = qa_add3(angles, (qa_vec3){drift, drift, drift});
+  *out_origin = origin;
+  *out_angles = angles;
+}
+static double map_torso_frame(qa_q3_pres_client_weapon_runtime *rt, double client_num, double frame) {
+  qa_q3_pres_client_info *info = rt->host.client_info(rt->host.ctx, client_num);
+  static const int indices[3] = {9, 7, 8}; /* TORSO_DROP, TORSO_ATTACK, TORSO_ATTACK2 */
+  for (int i = 0; i < 3; i++) {
+    int index = indices[i];
+    qa_q3_animation_cell animation = info->animations[index];
+    bool drop = index == 9;
+    if (frame >= animation.first_frame && frame < animation.first_frame + (drop ? 9 : 6))
+      return frame - animation.first_frame + (drop ? 6 : 1);
+  }
+  return 0;
 }
 void qa_q3_pres_client_weapon_runtime_add_view_weapon(qa_q3_pres_client_weapon_runtime *rt,
                                                       qa_q3_base_source_player_state *player_state) {
+  qa_q3_pres_client_game_state *state = rt_state(rt);
+  if (qa_q3_base_player_state_slots_get(&player_state->persistant, QA_Q3_BASE_PERS_TEAM) ==
+          QA_Q3_BASE_TEAM_SPECTATOR ||
+      player_state->pm_type == QA_Q3_PM_INTERMISSION || state->rendering_third_person) return;
   qa_q3_pres_weapon_presentation_settings settings = rt->host.settings(rt->host.ctx);
-  if (!settings.draw_gun) return;
+  if (!settings.draw_gun) {
+    if (((int64_t)state->predicted_player_state.e_flags & 256) != 0)
+      lightning_bolt(rt, qa_q3_pres_client_game_state_entity_at(state, player_state->client_num),
+                     ma3(state->refdef.view_origin, -8, state->refdef.view_axis.vectors[2]));
+    return;
+  }
+  if (state->test_gun) return;
+  double offset = settings.fov > 90 ? f32(f32(-0.2) * f32((double)qa_int32(settings.fov - 90))) : 0;
+  qa_q3_pres_client_entity *cent = &state->predicted_player_entity;
   qa_q3_pres_client_weapon_info *weapon =
       qa_q3_pres_client_weapon_media_registry_require_weapon(rt->registry, player_state->weapon);
-  qa_q3_pres_client_game_state *state = rt_state(rt);
-  qa_q3_pres_ref_model_entity gun = qa_q3_pres_create_model_entity(weapon->base.weapon_model);
-  gun.shading.render_flags = QA_Q3_PRES_RF_DEPTHHACK | QA_Q3_PRES_RF_FIRST_PERSON | QA_Q3_PRES_RF_MINLIGHT;
-  gun.axis = state->refdef.view_axis;
-  gun.origin = ma3(state->refdef.view_origin, f32(settings.gun_x), state->refdef.view_axis.vectors[0]);
-  gun.origin = ma3(gun.origin, f32(settings.gun_y), state->refdef.view_axis.vectors[1]);
-  gun.origin = ma3(gun.origin, f32(settings.gun_z), state->refdef.view_axis.vectors[2]);
-  qa_q3_pres_ref_entity entity_ref = qa_q3_pres_ref_entity_from_model(gun);
-  rt->host.add_ref_entity(rt->host.ctx, &entity_ref);
+  qa_q3_pres_ref_model_entity hand = qa_q3_pres_create_model_entity(weapon->hands_model);
+  qa_vec3 position_origin, position_angles;
+  weapon_position(state, &position_origin, &position_angles);
+  hand.origin = ma3(ma3(ma3(position_origin, settings.gun_x, state->refdef.view_axis.vectors[0]),
+                        settings.gun_y, state->refdef.view_axis.vectors[1]),
+                    f32(settings.gun_z + offset), state->refdef.view_axis.vectors[2]);
+  hand.axis = qa_angles_to_axis(position_angles);
+  if (settings.gun_frame != 0) {
+    hand.frame = settings.gun_frame;
+    hand.old_frame = settings.gun_frame;
+    hand.back_lerp = 0;
+  } else {
+    hand.frame = map_torso_frame(rt, cent->current_state.client_num, cent->player.pose.torso.base.frame);
+    hand.old_frame = map_torso_frame(rt, cent->current_state.client_num, cent->player.pose.torso.base.old_frame);
+    hand.back_lerp = cent->player.pose.torso.base.back_lerp;
+  }
+  hand.shading.render_flags = QA_Q3_PRES_RF_DEPTHHACK | QA_Q3_PRES_RF_FIRST_PERSON | QA_Q3_PRES_RF_MINLIGHT;
+  double team = qa_q3_base_player_state_slots_get(&player_state->persistant, QA_Q3_BASE_PERS_TEAM);
+  if (team != QA_Q3_BASE_TEAM_FREE && team != QA_Q3_BASE_TEAM_RED && team != QA_Q3_BASE_TEAM_BLUE &&
+      team != QA_Q3_BASE_TEAM_SPECTATOR)
+    qa_range_error("Invalid view weapon team");
+  qa_q3_pres_client_weapon_runtime_add_player_weapon(rt, &hand, player_state, cent, (qa_q3_base_team)team);
 }
 void qa_q3_pres_client_weapon_runtime_draw_weapon_select(qa_q3_pres_client_weapon_runtime *rt) {
   qa_q3_pres_client_game_state *state = rt_state(rt);
+  if (qa_q3_base_player_state_record_health(
+          (const qa_q3_base_player_state_record *)&state->predicted_player_state) <= 0) return;
   qa_q3_pres_weapon_selection_drawing *drawing = &rt->host.drawing;
   qa_vec4 color;
-  if (!drawing->fade_color(drawing->ctx, state->weapon_select_time, 2000, &color)) return;
-  if (!state->snap) return;
-  double weapons = qa_q3_base_player_state_slots_get(&state->snap->player_state.stats,
+  if (!drawing->fade_color(drawing->ctx, state->weapon_select_time, 1400, &color)) return;
+  drawing->set_color(drawing->ctx, &color);
+  state->item_pickup_time = 0;
+  if (!state->snap) qa_range_error("CG_DrawWeaponSelect: cg.snap == NULL");
+  qa_q3_base_source_player_state *snap_ps = &state->snap->player_state;
+  double weapons = qa_q3_base_player_state_slots_get(&snap_ps->stats,
       qa_q3_base_stat_schema_for(state->product)->weapons);
   int count = 0;
   for (int i = 1; i < 16; i++) if (((int64_t)weapons & (1LL << i)) != 0) count++;
   double x = 320 - count * 20;
   for (int i = 1; i < 16; i++) {
     if (((int64_t)weapons & (1LL << i)) == 0) continue;
-    qa_q3_pres_client_weapon_info *weapon = qa_q3_pres_client_weapon_media_registry_weapon(rt->registry, i);
-    bool selected = i == (int)state->weapon_select;
-    drawing->set_color(drawing->ctx, &color);
-    drawing->draw_pic(drawing->ctx, x, 410, 32, 32, weapon->weapon_icon);
-    if (selected) drawing->draw_pic(drawing->ctx, x - 4, 406, 40, 40, rt->host.media.shaders.select);
-    if (weapon->item && weapon->item->pickup_name && selected) {
-      double width = drawing->draw_string_length(drawing->ctx, weapon->item->pickup_name);
-      drawing->draw_big_string_color(drawing->ctx, 320 - width * 8, 450, weapon->item->pickup_name, color);
-    }
+    qa_q3_pres_client_weapon_info *weapon =
+        qa_q3_pres_client_weapon_media_registry_require_weapon(rt->registry, i);
+    drawing->draw_pic(drawing->ctx, x, 380, 32, 32, weapon->weapon_icon);
+    if (i == (int)state->weapon_select)
+      drawing->draw_pic(drawing->ctx, x - 4, 376, 40, 40, rt->host.media.shaders.select);
+    if (qa_q3_base_player_state_slots_get(&snap_ps->ammo, i) == 0)
+      drawing->draw_pic(drawing->ctx, x, 380, 32, 32, rt->host.media.shaders.noammo);
     x += 40;
+  }
+  qa_q3_pres_client_weapon_info *selected =
+      qa_q3_pres_client_weapon_media_registry_weapon(rt->registry, state->weapon_select);
+  if (selected->item && selected->item->pickup_name) {
+    double width = drawing->draw_string_length(drawing->ctx, selected->item->pickup_name) * 16;
+    drawing->draw_big_string_color(drawing->ctx, trunc((640 - width) / 2), 358, selected->item->pickup_name,
+                                   color);
   }
   drawing->set_color(drawing->ctx, NULL);
 }

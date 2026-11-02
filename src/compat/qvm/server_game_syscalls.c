@@ -45,7 +45,8 @@ static qa_vec3 vector(const qa_qvm_host_call *call, int32_t pointer) {
 }
 
 static int32_t slot(const qa_qvm_host_call *call, const qa_qvm_server_game_services *services, size_t index) {
-  return services->data->number_from_pointer(services->data->ctx, qa_qvm_host_call_word(call, index));
+  return (int32_t)qa_qvm_game_data_number_from_pointer(services->data,
+                                                        (double)qa_qvm_host_call_word(call, index));
 }
 
 bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,

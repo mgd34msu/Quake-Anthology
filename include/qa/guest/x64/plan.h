@@ -1,9 +1,10 @@
 /*
  * Port of src/guest/x64/plan.ts: semantic x64 plan construction/execution.
- * X64Operand shapes and the operand/address helpers come from
- * src/guest/x64/decoder.ts (unported) and are mirrored here/in plan.c.
- * TS X64ProcessorFault/X64Unsupported throws are caught by the CPU runner
- * (unported); here they abort with the same detail via qa_range_error
+ * X64Operand shapes come from src/guest/x64/decoder.ts and are
+ * declared here (qa/guest/x64/decoder.h includes this header);
+ * plan.c's operand/address helpers run over qa_mapped_guest_memory
+ * (see plan.c). TS X64ProcessorFault/X64Unsupported throws abort
+ * with the same detail via qa_range_error
  * (partial: no exception result channel yet). TS bigint operand values are
  * uint64_t bit patterns. GPL-2.0-or-later.
  */

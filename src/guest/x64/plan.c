@@ -3,6 +3,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/guest/floating_point/sse.h"
+#include "qa/guest/x64/decoder.h"
 
 const qa_x64_flow qa_x64_advance = {QA_X64_ADVANCE, 0, 0};
 const char *qa_x64_plan_kind_name(qa_x64_plan_kind kind) {
@@ -36,7 +37,13 @@ const char *qa_x64_flow_kind_name(qa_x64_flow_kind kind) {
     default: return "trap";
   }
 }
-/* --- decoder.ts mirrors (unported module) --- */
+/* --- decoder.ts helpers (qa/guest/x64/decoder.h) over this
+ * function's qa_mapped_guest_memory vtable: the decoder port's
+ * operand-access entry points take the concrete
+ * qa_sparse_guest_memory and its throw channel, while
+ * qa_execute_x64_plan serves mapped-memory callers, so the
+ * memory-touching helpers stay local; the pure offset
+ * computation delegates to qa_x64_effective_operand_offset. --- */
 static uint64_t as_uint_n(int width, uint64_t v) { return width >= 64 ? v : v & ((1ull << width) - 1ull); }
 static uint64_t canonical_address(uint64_t value) {
   /* TS compares the signed bigint first; plans carry uint64 bit patterns,
@@ -55,12 +62,7 @@ static qa_guest_core_address guest_address(qa_mapped_guest_memory *memory, uint6
   return a;
 }
 static uint64_t effective_operand_offset(const qa_guest_processor_state *state, const qa_x64_operand *operand, uint64_t next_ip) {
-  uint64_t base = operand->rip_relative ? next_ip
-    : !operand->has_base ? 0
-    : qa_integer_register_file_read(&state->registers, operand->base, operand->address_bits, false);
-  uint64_t index = !operand->has_index ? 0
-    : qa_integer_register_file_read(&state->registers, operand->index, operand->address_bits, false) * operand->scale;
-  return as_uint_n(operand->address_bits, base + index + (uint64_t)operand->displacement);
+  return qa_x64_effective_operand_offset(state, operand, next_ip);
 }
 static qa_guest_core_address operand_address(qa_mapped_guest_memory *memory, const qa_guest_processor_state *state,
                                         const qa_x64_operand *operand, uint64_t next_ip) {

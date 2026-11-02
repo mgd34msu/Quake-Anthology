@@ -31,7 +31,7 @@ struct qa_app_q3_guest_records {
 };
 
 static qa_qvm_entity_state state_of(qa_qvm_shared_entity *entity) {
-  qa_qvmx_view view = {entity->s.view.bytes + entity->s.view.start, (size_t)entity->s.view.length};
+  qa_qvmx_view view = entity->s.view;
   return qa_qvm_borrow_entity_state(view, entity->profile);
 }
 static actor_entry *find_actor(qa_app_q3_guest_records *records, double slot) {

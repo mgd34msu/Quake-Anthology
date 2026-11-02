@@ -1,11 +1,9 @@
 /*
  * Port of src/content/catalog/weapons.ts. Weapon definition data
- * (names/items/models) is mirrored privately in
- * src/content/catalog/q2_weapon_data.h from its TS owners
- * (content/q2 foundation + missionpacks, content/q1
- * missionpacks/precache), which are unported. The
- * qa_q2_registered_weapon_resources input is the definition list
- * the TS reads through Q2Weapons.registeredDefinitions().
+ * (names/items/models) comes from the landed TS-owner ports
+ * (content/q2 foundation + missionpacks weapon definitions).
+ * The qa_q2_registered_weapon_resources input is the definition
+ * list the TS reads through Q2Weapons.registeredDefinitions().
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_CATALOG_WEAPONS_H
@@ -16,6 +14,7 @@
 
 #include "qa/content/catalog/equipment.h"
 #include "qa/content/catalog/index.h"
+#include "qa/content/q2/foundation/weapons/types.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/gameplay.h"
 
@@ -27,23 +26,11 @@ extern const qa_classic_rerelease_providers qa_q1_weapon_providers;
 extern const qa_classic_rerelease_providers qa_q1_hipnotic_weapon_providers;
 extern const qa_classic_rerelease_providers qa_q2_weapon_providers;
 
-/* Mirrored Q2 weapon definition fields this module reads (TS
- * owners: src/content/q2/foundation/weapons/definitions.ts and
- * src/content/q2/missionpacks/weapons/definitions.ts). */
-typedef struct qa_catalog_q2_weapon_definition {
-  const char *name;
-  qa_item_id item;
-  qa_item_id ammo; /* nullable */
-  const char *view_model;
-  const char *world_model;
-} qa_catalog_q2_weapon_definition;
-
-extern const qa_catalog_q2_weapon_definition *const qa_q2_base_weapons_catalog;
-extern const size_t qa_q2_base_weapon_catalog_count;
-extern const qa_catalog_q2_weapon_definition *const qa_xatrix_weapon_definitions_catalog;
-extern const size_t qa_xatrix_weapon_definition_catalog_count;
-extern const qa_catalog_q2_weapon_definition *const qa_rogue_weapon_definitions_catalog;
-extern const size_t qa_rogue_weapon_definition_catalog_count;
+/* Q2 weapon definitions are the owner type (TS owners:
+ * src/content/q2/foundation/weapons/definitions.ts and
+ * src/content/q2/missionpacks/weapons/definitions.ts; arrays
+ * qa_q2w_base_weapons / qa_q2mp_*_weapon_definitions). */
+typedef qa_q2w_definition qa_catalog_q2_weapon_definition;
 
 /* TS supportsSelectedWeaponProduct. */
 bool qa_supports_selected_weapon_product(

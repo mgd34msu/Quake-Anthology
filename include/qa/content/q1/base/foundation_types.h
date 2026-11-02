@@ -41,22 +41,13 @@
 typedef struct qa_q1b_opt_actor { bool has; qa_actor_id id; } qa_q1b_opt_actor;
 typedef struct qa_q1b_opt_owned { bool has; qa_owned_actor actor; } qa_q1b_opt_owned;
 #define QA_Q1B_NO_ACTOR ((qa_q1b_opt_actor){0})
-static inline qa_q1b_opt_actor qa_q1b_some_actor(qa_actor_id id) {
-  qa_q1b_opt_actor value = {true, id};
-  return value;
-}
+qa_q1b_opt_actor qa_q1b_some_actor(qa_actor_id id);
 bool qa_q1b_owned_equal(qa_owned_actor a, qa_owned_actor b);
 
 /* TS Q1SoundChannel: name, or NULL name + numeric (-1|5|6|7). */
 typedef struct qa_q1b_channel { const char *name; double numeric; } qa_q1b_channel;
-static inline qa_q1b_channel qa_q1b_channel_named(const char *name) {
-  qa_q1b_channel value = {name, 0};
-  return value;
-}
-static inline qa_q1b_channel qa_q1b_channel_numeric(double numeric) {
-  qa_q1b_channel value = {NULL, numeric};
-  return value;
-}
+qa_q1b_channel qa_q1b_channel_named(const char *name);
+qa_q1b_channel qa_q1b_channel_numeric(double numeric);
 
 /* TS BodyState subset (origin/angles/velocity/bounds/ground). */
 typedef struct qa_q1b_body {

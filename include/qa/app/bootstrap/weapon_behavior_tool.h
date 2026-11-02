@@ -1,8 +1,11 @@
-/* Port of src/app/bootstrap/weapon-behavior-tool.ts. Catalog/mount/QC/
- * QVM/PE work (landed content+compat modules) runs through the host;
- * dispatch order and guard errors are kept here. The atomic document
- * write is real (temp + rename, 0600). Async -> synchronous.
- * GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/weapon-behavior-tool.ts. Only catalog
+ * discovery + mount-plan opening runs through the host: open_product
+ * must return the product's qa_content_mounted* (content/mounts.h).
+ * The QC/QVM/native bodies call the landed content/compat/guest
+ * services directly in weapon_behavior_tool.c; the run_* fields are
+ * retained for source compatibility and are no longer called (main
+ * may leave them NULL). The atomic document write is real (temp +
+ * rename, 0600). Async -> synchronous. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_WEAPON_BEHAVIOR_TOOL_H
 #define QA_APP_BOOTSTRAP_WEAPON_BEHAVIOR_TOOL_H
 #include "qa/app/bootstrap/weapon_behavior_tool_options.h"

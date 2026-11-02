@@ -28,7 +28,13 @@
 #include "qa/app/bootstrap/simulation/save.h"
 #include "qa/app/bootstrap/simulation/source_transition.h"
 #include "qa/app/bootstrap/simulation/weapon_slot.h"
+#include "qa/app/bootstrap/simulation/events.h"
+#include "qa/app/bootstrap/simulation/physics.h"
 #include "qa/core/cvars/index.h"
+#include "qa/core/numeric.h"
+#include "qa/world/actors/body.h"
+#include "qa/world/actors/callbacks.h"
+#include "qa/world/collision/index.h"
 #include "qa/world/actors/registry.h"
 #include "qa/contracts/identity.h"
 
@@ -288,13 +294,436 @@ static void test_jump(void) {
   CHECK(qa_app_sim_publish_q3_character_movement_event(QA_GAME_FAMILY_Q1, 7));
 }
 
-static void test_gravity_validation(void) {
+/* --- SharedPhysics pipeline cases (port of tests/first-playable/
+ * simulation/physics.test.ts setup() with an empty Q1 world). --- */
+static qa_q1_leaf phys_leaves[2];
+static qa_q1_world_model phys_models[1];
+static double phys_headnodes[4] = {-2, -1, -1, -1};
+static qa_q1_world_geometry phys_geo;
+static void build_empty_world(void) {
+  qa_bounds b = {{-256, -256, -256}, {256, 256, 256}};
+  phys_leaves[0] = (qa_q1_leaf){-2, b, {0, 0}, false, 0, {0, 0, 0, 0}};
+  phys_leaves[1] = (qa_q1_leaf){-1, b, {0, 0}, false, 0, {0, 0, 0, 0}};
+  memset(&phys_models, 0, sizeof phys_models);
+  phys_models[0].bounds = b;
+  phys_models[0].headnodes = (qa_double_view){phys_headnodes, 4};
+  phys_models[0].visible_leaves = 1;
+  memset(&phys_geo, 0, sizeof phys_geo);
+  phys_geo.format = "bsp29"; phys_geo.entities = "";
+  phys_geo.leaves = phys_leaves; phys_geo.leaf_count = 2;
+  phys_geo.models = phys_models; phys_geo.model_count = 1;
+}
+typedef struct phys_fixture {
+  qa_identity_owner identity;
+  qa_session_actor_registry *actors;
+  qa_actor_callback_table *callbacks;
+  qa_shared_scene_queries *scene;
+  qa_app_sim_shared_physics *physics;
+  qa_owned_actor world;
+  double blocked_positions[2];
+  int blocked_calls;
+} phys_fixture;
+static bool phys_world_actor(void *ctx, qa_actor_id *out) {
+  *out = ((phys_fixture *)ctx)->world.id; return true;
+}
+static double phys_source_order(void *ctx, qa_actor_id a, qa_actor_id b) {
+  (void)ctx; return (double)(a.slot - b.slot);
+}
+static void phys_on_blocked(void *ctx, qa_owned_actor pusher, qa_actor_id other) {
+  phys_fixture *f = ctx;
+  qa_body_state_result p = qa_shared_body_table_read(qa_app_sim_shared_physics_bodies(f->physics), pusher.id);
+  qa_body_state_result o = qa_shared_body_table_read(qa_app_sim_shared_physics_bodies(f->physics), other);
+  f->blocked_positions[0] = p.has_value ? p.value.origin.x : -999;
+  f->blocked_positions[1] = o.has_value ? o.value.origin.x : -999;
+  f->blocked_calls++;
+}
+static void phys_setup(phys_fixture *f) {
+  memset(f, 0, sizeof *f);
+  CHECK(qa_identity_owner_create(&f->identity, "physics-test"));
+  f->actors = qa_session_actor_registry_create(&f->identity, 1024);
+  CHECK(f->actors != NULL);
+  f->callbacks = qa_actor_callback_table_create(f->actors);
+  f->world = qa_session_actor_registry_allocate(f->actors, "world:scene", "world:world");
+  build_empty_world();
+  qa_decoded_world world_geo; memset(&world_geo, 0, sizeof world_geo);
+  world_geo.kind = QA_DECODED_WORLD_Q1; world_geo.as.q1 = &phys_geo;
+  f->scene = qa_create_scene_queries(world_geo);
+  CHECK(f->scene != NULL);
+  qa_app_sim_shared_physics_options options; memset(&options, 0, sizeof options);
+  options.ctx = f;
+  options.actors = f->actors;
+  options.callbacks = f->callbacks;
+  options.scene = f->scene;
+  options.numeric = qa_q2_donor_profile;
+  options.source_order = phys_source_order;
+  options.world_actor = phys_world_actor;
+  options.on_blocked = phys_on_blocked;
+  options.q2_edition = "classic";
+  f->physics = qa_app_sim_shared_physics_create(options);
+  CHECK(f->physics != NULL);
+}
+static void phys_teardown(phys_fixture *f) {
+  qa_app_sim_shared_physics_destroy(f->physics);
+  qa_shared_scene_queries_destroy(f->scene);
+  qa_actor_callback_table_destroy(f->callbacks);
+  qa_session_actor_registry_destroy(f->actors);
+}
+static qa_owned_actor phys_actor(phys_fixture *f, const char *name, qa_vec3 origin, const char *kind, qa_bounds bounds) {
+  qa_owned_actor actor = qa_session_actor_registry_allocate(f->actors, "test:actors", name);
+  qa_body_state body; memset(&body, 0, sizeof body);
+  body.origin = origin; body.bounds = bounds;
+  qa_shared_body_table_create_body(qa_app_sim_shared_physics_bodies(f->physics), actor, body);
+  qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
+  solid.solid = "box"; solid.family = "q2";
+  qa_app_sim_shared_physics_set_solid(f->physics, actor, solid);
+  qa_q2_motion motion; memset(&motion, 0, sizeof motion);
+  motion.kind = kind; motion.gravity = 1;
+  motion.gravity_vector = (qa_vec3){0, 0, -1}; motion.clip_mask = 0x6000003;
+  qa_app_sim_shared_physics_set_motion(f->physics, actor, motion);
+  qa_shared_body_table_link(qa_app_sim_shared_physics_bodies(f->physics), actor, NULL);
+  return actor;
+}
+static qa_bounds unit_bounds(void) { return (qa_bounds){{-1, -1, -1}, {1, 1, 1}}; }
+static void phys_set_kind_solid(phys_fixture *f, qa_owned_actor actor, const char *solid_kind) {
+  qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
+  solid.solid = solid_kind; solid.family = "q2";
+  qa_app_sim_shared_physics_set_solid(f->physics, actor, solid);
+}
+static void phys_set_motion(phys_fixture *f, qa_owned_actor actor, const char *kind, qa_vec3 velocity, qa_vec3 angular, double clip_mask) {
+  qa_q2_motion motion; memset(&motion, 0, sizeof motion);
+  motion.kind = kind; motion.velocity = velocity; motion.angular_velocity = angular;
+  motion.gravity = 1; motion.gravity_vector = (qa_vec3){0, 0, -1}; motion.clip_mask = clip_mask;
+  qa_app_sim_shared_physics_set_motion(f->physics, actor, motion);
+}
+static qa_body_state phys_read(phys_fixture *f, qa_actor_id actor) {
+  qa_body_state_result r = qa_shared_body_table_read(qa_app_sim_shared_physics_bodies(f->physics), actor);
+  CHECK(r.has_value);
+  return r.value;
+}
+typedef struct touch_counter { int count; } touch_counter;
+static void count_touch(void *ctx, qa_touch_contact contact) {
+  (void)contact; ((touch_counter *)ctx)->count++;
+}
+static void bind_touch(phys_fixture *f, qa_owned_actor actor, void (*touch)(void *, qa_touch_contact), void *ctx) {
+  qa_actor_callbacks callbacks; memset(&callbacks, 0, sizeof callbacks);
+  callbacks.ctx = ctx; callbacks.touch = touch;
+  qa_actor_callback_table_bind(f->callbacks, actor, callbacks);
+}
+static void test_physics_step_support(void) {
+  for (int speed = 0; speed <= 10; speed += 10) {
+    phys_fixture f; phys_setup(&f);
+    qa_owned_actor actor = phys_actor(&f, "test:walker", (qa_vec3){0, 0, 0}, "step", unit_bounds());
+    qa_owned_actor trigger = phys_actor(&f, "test:trigger", (qa_vec3){0, 0, 0}, "stationary", unit_bounds());
+    phys_set_kind_solid(&f, trigger, "trigger");
+    touch_counter counter = {0};
+    bind_touch(&f, trigger, count_touch, &counter);
+    qa_body_state body = phys_read(&f, actor.id);
+    body.ground = &f.world.id; body.velocity = (qa_vec3){speed, 0, 0};
+    qa_shared_body_table_write(qa_app_sim_shared_physics_bodies(f.physics), actor, body);
+    phys_set_motion(&f, actor, "step", (qa_vec3){speed, 0, 0}, (qa_vec3){0, 100, 0}, 0x2000003);
+    qa_linked_body_result linked = qa_shared_body_table_linked(qa_app_sim_shared_physics_bodies(f.physics), actor.id);
+    double links = linked.has_value ? linked.value.link_count : -1;
+    (void)qa_app_sim_shared_physics_step(f.physics, actor, 0.1);
+    qa_body_state after = phys_read(&f, actor.id);
+    CHECK(after.velocity.x == 0 && after.velocity.y == 0 && after.velocity.z == 0);
+    CHECK(fabs(after.angles.y - 10) < 1e-9);
+    if (speed == 0) CHECK(after.ground != NULL && qa_same_actor(*after.ground, f.world.id));
+    else CHECK(after.ground == NULL);
+    qa_linked_body_result after_linked = qa_shared_body_table_linked(qa_app_sim_shared_physics_bodies(f.physics), actor.id);
+    CHECK(after_linked.has_value);
+    CHECK(after_linked.value.link_count == (speed == 0 ? links : links + 1));
+    CHECK(counter.count == (speed == 0 ? 0 : 1));
+    phys_teardown(&f);
+  }
+}
+static void test_physics_attachments(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor anchor = phys_actor(&f, "test:anchor", (qa_vec3){0, 0, 0}, "stationary", unit_bounds());
+  qa_owned_actor hook = phys_actor(&f, "test:hook", (qa_vec3){20, 0, 0}, "fly-missile", unit_bounds());
+  qa_shared_body_table *bodies = qa_app_sim_shared_physics_bodies(f.physics);
+  qa_body_attachment attachment; memset(&attachment, 0, sizeof attachment);
+  attachment.anchor = anchor.id; attachment.follow_kind = QA_BODY_FOLLOW_TRANSLATION;
+  attachment.follow_offset = (qa_vec3){20, 0, 0};
+  qa_shared_body_table_attach(bodies, hook, attachment);
+  qa_body_state body = phys_read(&f, hook.id);
+  body.velocity = (qa_vec3){400, 0, 0};
+  qa_shared_body_table_write(bodies, hook, body);
+  phys_set_motion(&f, hook, "fly-missile", (qa_vec3){400, 0, 0}, (qa_vec3){0, 0, -500}, 0x6000003);
+  (void)qa_app_sim_shared_physics_step(f.physics, hook, 0.1);
+  qa_body_state after = phys_read(&f, hook.id);
+  CHECK(after.origin.x == 20 && after.origin.y == 0 && after.origin.z == 0);
+  CHECK(fabs(after.angles.z - (-50)) < 1e-9);
+  qa_body_state anchor_body = phys_read(&f, anchor.id);
+  anchor_body.origin = (qa_vec3){94, 0, 0}; anchor_body.velocity = (qa_vec3){0, 0, 0};
+  qa_shared_body_table_write(bodies, anchor, anchor_body);
+  CHECK(phys_read(&f, hook.id).origin.x == 20);
+  qa_app_sim_shared_physics_commit_attachments(f.physics);
+  CHECK(phys_read(&f, hook.id).origin.x == 114);
+  (void)qa_app_sim_shared_physics_step(f.physics, hook, 0.1);
+  qa_app_sim_shared_physics_commit_attachments(f.physics);
+  CHECK(phys_read(&f, hook.id).origin.x == 114);
+  phys_teardown(&f);
+}
+typedef struct retry_env { phys_fixture *f; qa_owned_actor obstacle; double seen; int seen_count; } retry_env;
+static void retry_mover_touch(void *ctx, qa_touch_contact contact) {
+  retry_env *e = ctx;
+  if (qa_same_actor(contact.other, e->obstacle.id))
+    qa_session_actor_registry_release(e->f->actors, e->obstacle);
+}
+static void retry_trigger_touch(void *ctx, qa_touch_contact contact) {
+  retry_env *e = ctx;
+  qa_linked_body_result linked = qa_shared_body_table_linked(qa_app_sim_shared_physics_bodies(e->f->physics), contact.other);
+  e->seen = linked.has_value ? linked.value.state.origin.x : -999;
+  e->seen_count++;
+}
+static void test_physics_push_retry(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor mover = phys_actor(&f, "test:missile", (qa_vec3){0, 0, 0}, "fly-missile", unit_bounds());
+  qa_owned_actor obstacle = phys_actor(&f, "test:obstacle", (qa_vec3){5, 0, 0}, "stationary", unit_bounds());
+  qa_owned_actor trigger = phys_actor(&f, "test:trigger", (qa_vec3){10, 0, 0}, "stationary", unit_bounds());
+  phys_set_kind_solid(&f, trigger, "trigger");
+  retry_env env = {&f, obstacle, 0, 0};
+  bind_touch(&f, mover, retry_mover_touch, &env);
+  bind_touch(&f, trigger, retry_trigger_touch, &env);
+  phys_set_motion(&f, mover, "fly-missile", (qa_vec3){100, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  (void)qa_app_sim_shared_physics_step(f.physics, mover, 0.1);
+  CHECK(!qa_session_actor_registry_is_live(f.actors, obstacle.id));
+  CHECK(phys_read(&f, mover.id).origin.x == 10);
+  CHECK(env.seen_count == 1 && env.seen == 10);
+  phys_teardown(&f);
+}
+static void test_physics_blocked_rollback(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor platform = phys_actor(&f, "test:pusher", (qa_vec3){0, 0, 0}, "push",
+      (qa_bounds){{-5, -5, -1}, {5, 5, 1}});
+  qa_owned_actor rider = phys_actor(&f, "test:rider", (qa_vec3){3, 0, 1.5}, "step", unit_bounds());
+  qa_shared_body_table *bodies = qa_app_sim_shared_physics_bodies(f.physics);
+  qa_body_state body = phys_read(&f, rider.id);
+  body.ground = &platform.id;
+  qa_shared_body_table_write(bodies, rider, body);
+  qa_shared_body_table_link(bodies, rider, NULL);
+  (void)phys_actor(&f, "test:wall", (qa_vec3){7, 0, 1.5}, "stationary", unit_bounds());
+  qa_actor_id blocked;
+  CHECK(qa_app_sim_shared_physics_push_move(f.physics, platform, (qa_vec3){4, 0, 0}, (qa_vec3){0, 0, 0}, &blocked));
+  CHECK(qa_same_actor(blocked, rider.id));
+  CHECK(f.blocked_calls == 1);
+  CHECK(f.blocked_positions[0] == 0 && f.blocked_positions[1] == 3);
+  phys_teardown(&f);
+}
+static void test_physics_push_team(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor first = phys_actor(&f, "test:first-pusher", (qa_vec3){-30, 0, 0}, "push", unit_bounds());
+  qa_owned_actor second = phys_actor(&f, "test:second-pusher", (qa_vec3){0, 0, 0}, "push",
+      (qa_bounds){{-5, -5, -1}, {5, 5, 1}});
+  qa_owned_actor rider = phys_actor(&f, "test:rider", (qa_vec3){3, 0, 1.5}, "step", unit_bounds());
+  qa_shared_body_table *bodies = qa_app_sim_shared_physics_bodies(f.physics);
+  qa_body_state body = phys_read(&f, rider.id);
+  body.ground = &second.id;
+  qa_shared_body_table_write(bodies, rider, body);
+  qa_shared_body_table_link(bodies, rider, NULL);
+  (void)phys_actor(&f, "test:wall", (qa_vec3){7, 0, 1.5}, "stationary", unit_bounds());
+  phys_set_motion(&f, first, "push", (qa_vec3){40, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  phys_set_motion(&f, second, "push", (qa_vec3){40, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  /* TS records the first pusher position inside onBlocked; the shared
+   * fixture records the second pusher (0 after rollback). The first
+   * pusher must also be back at -30 after the call. */
+  qa_owned_actor team[2] = {first, second};
+  qa_actor_id blocked;
+  CHECK(qa_app_sim_shared_physics_push_team(f.physics, team, 2, 0.1, &blocked));
+  CHECK(qa_same_actor(blocked, rider.id));
+  CHECK(phys_read(&f, first.id).origin.x == -30);
+  CHECK(phys_read(&f, second.id).origin.x == 0);
+  phys_teardown(&f);
+}
+static void test_physics_validation(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor actor = phys_actor(&f, "test:walker", (qa_vec3){0, 0, 0}, "step", unit_bounds());
+  CHECK(qa_app_sim_shared_physics_gravity(f.physics) == 800);
+  CHECK_ABORTS(qa_app_sim_shared_physics_set_world_gravity(f.physics, INFINITY));
+  CHECK_ABORTS((void)qa_app_sim_shared_physics_step(f.physics, actor, -0.1));
   CHECK_ABORTS({
-    /* World gravity finiteness is enforced by SharedPhysics; exercise
-     * through a NULL-registry-free direct check via INFINITY. */
-    volatile double value = INFINITY;
-    if (!isfinite(value)) abort();
+    qa_app_sim_shared_solid brush; memset(&brush, 0, sizeof brush);
+    brush.solid = "brush"; brush.family = "q2"; /* no model */
+    qa_app_sim_shared_physics_set_solid(f.physics, actor, brush);
   });
+  CHECK_ABORTS({
+    qa_app_sim_source_body_physics source; memset(&source, 0, sizeof source);
+    (void)qa_app_sim_shared_physics_bind_source(f.physics, actor, source);
+    (void)qa_app_sim_shared_physics_bind_source(f.physics, actor, source);
+  });
+  /* With the child binds discarded, capture succeeds at an event
+   * boundary and reports the stored solid/motion. */
+  qa_app_sim_physics_capture capture = qa_app_sim_shared_physics_capture(f.physics);
+  CHECK(capture.gravity == 800 && capture.solid_count == 1 && capture.motion_count == 1);
+  CHECK(qa_app_sim_shared_physics_is_brush(f.physics, actor.id) == false);
+  qa_q2_motion motion;
+  CHECK(qa_app_sim_shared_physics_motion_of_actor(f.physics, actor.id, &motion)
+      && strcmp(motion.kind, "step") == 0);
+  qa_app_sim_physics_capture_free(&capture);
+  phys_teardown(&f);
+}
+/* --- Runtime frame-entry guards (TS SharedSimulation step/close). --- */
+typedef struct host_env { qa_app_sim_shared_simulation *sim; int steps; bool recurse; } host_env;
+static qa_simulation_output host_step(void *ctx, qa_input_batch input) {
+  host_env *e = ctx;
+  e->steps++;
+  if (e->recurse) (void)qa_app_sim_shared_simulation_step(e->sim, input);
+  qa_simulation_output out; memset(&out, 0, sizeof out); return out;
+}
+static qa_save_image host_checkpoint(void *ctx) {
+  (void)ctx; qa_save_image image; memset(&image, 0, sizeof image); return image;
+}
+static void test_runtime_guards(void) {
+  qa_identity_owner identity;
+  CHECK(qa_identity_owner_create(&identity, "runtime-guards"));
+  qa_session_actor_registry *registry = qa_session_actor_registry_create(&identity, 64);
+  CHECK(registry != NULL);
+  host_env env; memset(&env, 0, sizeof env);
+  qa_app_sim_shared_simulation_host host; memset(&host, 0, sizeof host);
+  host.ctx = &env; host.step = host_step; host.checkpoint = host_checkpoint;
+  qa_app_simulation_options options; memset(&options, 0, sizeof options);
+  qa_session_id session; memset(&session, 0, sizeof session);
+  qa_app_sim_shared_simulation *sim = qa_app_sim_shared_simulation_create(options, host, registry, session);
+  env.sim = sim;
+  qa_input_batch input; memset(&input, 0, sizeof input);
+  input.elapsed_milliseconds = 100;
+  (void)qa_app_sim_shared_simulation_step(sim, input);
+  CHECK(env.steps == 1);
+  input.elapsed_milliseconds = -1;
+  CHECK_ABORTS((void)qa_app_sim_shared_simulation_step(sim, input));
+  input.elapsed_milliseconds = 100;
+  env.recurse = true;
+  CHECK_ABORTS((void)qa_app_sim_shared_simulation_step(sim, input));
+  env.recurse = false;
+  qa_app_sim_shared_simulation_close(sim);
+  CHECK_ABORTS((void)qa_app_sim_shared_simulation_step(sim, input));
+  qa_app_sim_shared_simulation_destroy(sim);
+  /* Prepared mods require the async load path (TS constructor). */
+  const void *mods[1] = {NULL};
+  options.prepared_mods = mods; options.prepared_mod_count = 1;
+  CHECK_ABORTS((void)qa_app_sim_shared_simulation_create(options, host, registry, session));
+  qa_app_sim_shared_simulation *loaded = qa_app_sim_load_simulation(options, host, registry, session, NULL, NULL);
+  CHECK(loaded != NULL);
+  qa_app_sim_shared_simulation_destroy(loaded);
+  qa_session_actor_registry_destroy(registry);
+}
+/* --- SimulationEvents ring + source mapping (events.ts). --- */
+typedef struct events_env {
+  qa_actor_id player; qa_client_id client; double sequence;
+  const char *last_resource_path; char resource_paths[256];
+} events_env;
+static qa_source_time events_now(void *ctx) {
+  (void)ctx; return (qa_source_time){QA_SOURCE_TIME_SECONDS, 2.5};
+}
+static bool events_client_for(void *ctx, qa_actor_id actor, qa_client_id *out) {
+  events_env *e = ctx;
+  if (!qa_same_actor(actor, e->player)) return false;
+  *out = e->client; return true;
+}
+static bool events_source_slot(void *ctx, qa_actor_id actor, double *out) {
+  events_env *e = ctx;
+  if (!qa_same_actor(actor, e->player)) return false;
+  *out = 7; return true;
+}
+static bool events_resource_for(void *ctx, qa_content_id content, const char *path, qa_resource_id *out) {
+  events_env *e = ctx; (void)content;
+  snprintf(e->resource_paths + strlen(e->resource_paths), sizeof e->resource_paths - strlen(e->resource_paths), "%s;", path);
+  if (strcmp(path, "sound/misc/beep.wav") != 0) return false;
+  *out = "resource:beep"; return true;
+}
+static void events_emit_super(void *ctx, bool has_owner, qa_presentation_owner owner, qa_content_id content,
+    qa_app_sim_source_event_input source, qa_source_time time, bool has_recipient, qa_actor_id recipient,
+    qa_app_sim_presentation_event *out) {
+  events_env *e = ctx;
+  (void)has_owner; (void)owner; (void)content; (void)source; (void)time; (void)has_recipient; (void)recipient;
+  memset(out, 0, sizeof *out);
+  out->sequence = e->sequence;
+}
+static void test_simulation_events(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_owned_actor player = phys_actor(&f, "test:player", (qa_vec3){10, 0, 0}, "stationary", unit_bounds());
+  events_env env; memset(&env, 0, sizeof env);
+  env.player = player.id; env.client.slot = 3; env.sequence = 41;
+  qa_app_sim_simulation_events_options options; memset(&options, 0, sizeof options);
+  options.ctx = &env;
+  options.bodies = qa_app_sim_shared_physics_bodies(f.physics);
+  options.now = events_now;
+  options.client_for = events_client_for;
+  options.source_slot = events_source_slot;
+  options.resource_for = events_resource_for;
+  options.emit_super = events_emit_super;
+  qa_app_sim_simulation_events *events = qa_app_sim_simulation_events_create(options);
+  CHECK(qa_app_sim_simulation_events_next_sequence(events) == 0);
+  qa_network_event print; memset(&print, 0, sizeof print);
+  print.kind = QA_NETWORK_EVENT_PRINT; print.level = 2; print.text = "hello";
+  qa_app_sim_simulation_events_message(events, print, false, player.id, false, 0);
+  qa_app_sim_simulation_events_message(events, print, true, player.id, false, 0);
+  qa_actor_id nobody = player.id; nobody.slot += 90;
+  qa_app_sim_simulation_events_message(events, print, true, nobody, false, 0); /* no client: dropped */
+  CHECK(qa_app_sim_simulation_events_next_sequence(events) == 2);
+  CHECK_ABORTS(qa_app_sim_simulation_events_assert_output_consumed(events));
+  size_t count = 0;
+  const qa_simulation_event *taken = qa_app_sim_simulation_events_take(events, &count);
+  CHECK(count == 2 && taken[0].sequence == 0 && taken[1].sequence == 1);
+  CHECK(strcmp(taken[0].audience.kind, "world") == 0);
+  CHECK(strcmp(taken[1].audience.kind, "client") == 0 && taken[1].audience.client.slot == 3);
+  CHECK(taken[0].time.value == 2.5);
+  qa_app_sim_simulation_events_assert_output_consumed(events);
+  /* Q1 sound: resource resolves only via the sound/ fallback. */
+  qa_q1_event sound; memset(&sound, 0, sizeof sound);
+  sound.kind = "sound"; sound.has_actor = true; sound.actor = player.id;
+  sound.path = "misc/beep.wav"; sound.sound_channel = "voice";
+  sound.volume = 0.5; sound.attenuation = 1;
+  qa_app_sim_source_event_input source; memset(&source, 0, sizeof source);
+  source.kind = "q1"; source.q1 = &sound;
+  qa_presentation_owner owner; memset(&owner, 0, sizeof owner);
+  qa_app_sim_presentation_event presented = qa_app_sim_simulation_events_emit_owned(
+      events, false, owner, "q1:base", source, false, (qa_source_time){0, 0}, false, player.id);
+  CHECK(presented.sequence == 41);
+  CHECK(strcmp(env.resource_paths, "misc/beep.wav;sound/misc/beep.wav;") == 0);
+  taken = qa_app_sim_simulation_events_take(events, &count);
+  CHECK(count == 1 && taken[0].payload.kind == QA_SIM_EVENT_SOUND);
+  CHECK(strcmp(taken[0].payload.resource, "resource:beep") == 0);
+  CHECK(taken[0].payload.channel == 2 && taken[0].payload.volume == 0.5);
+  CHECK(taken[0].payload.actor != NULL && qa_same_actor(*taken[0].payload.actor, player.id));
+  CHECK(taken[0].payload.origin.x == 10);
+  /* Q1 center print carries the presentation sequence. */
+  qa_q1_event message; memset(&message, 0, sizeof message);
+  message.kind = "message"; message.center = true; message.text = "centered";
+  message.has_player = true; message.player = player.id;
+  memset(&source, 0, sizeof source); source.kind = "q1"; source.q1 = &message;
+  (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q1:base", source,
+      false, (qa_source_time){0, 0}, false, player.id);
+  taken = qa_app_sim_simulation_events_take(events, &count);
+  CHECK(count == 1 && taken[0].payload.event.kind == QA_NETWORK_EVENT_CENTER_PRINT);
+  CHECK(taken[0].payload.has_source_presentation_sequence
+      && taken[0].payload.source_presentation_sequence == 41);
+  /* Q2 weapon muzzleflash and composition match-status mapping. */
+  memset(&source, 0, sizeof source);
+  source.kind = "q2-weapon"; source.weapon_kind = "muzzleflash";
+  source.weapon_actor = player.id; source.weapon_flash = 9;
+  (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q2:base", source,
+      false, (qa_source_time){0, 0}, false, player.id);
+  memset(&source, 0, sizeof source);
+  source.kind = "q2-composition"; source.composition_kind = "ctf";
+  source.composition_event_kind = "match-status"; source.composition_text = " tied";
+  (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q2:base", source,
+      false, (qa_source_time){0, 0}, false, player.id);
+  taken = qa_app_sim_simulation_events_take(events, &count);
+  CHECK(count == 2);
+  CHECK(taken[0].payload.event.kind == QA_NETWORK_EVENT_Q2_MUZZLE_FLASH
+      && taken[0].payload.event.entity_number == 7 && taken[0].payload.event.flash == 9);
+  CHECK(taken[1].payload.event.kind == QA_NETWORK_EVENT_PRINT
+      && strcmp(taken[1].payload.event.text, " tied") == 0);
+  qa_app_sim_simulation_events_destroy(events);
+  phys_teardown(&f);
+}
+static void test_gravity_validation(void) {
+  phys_fixture f; phys_setup(&f);
+  qa_app_sim_shared_physics_set_world_gravity(f.physics, 400);
+  CHECK(qa_app_sim_shared_physics_gravity(f.physics) == 400);
+  CHECK_ABORTS(qa_app_sim_shared_physics_set_world_gravity(f.physics, NAN));
+  phys_teardown(&f);
 }
 
 int main(void) {
@@ -316,6 +745,14 @@ int main(void) {
   test_save_provider_missing();
   test_jump();
   test_gravity_validation();
+  test_physics_step_support();
+  test_physics_attachments();
+  test_physics_push_retry();
+  test_physics_blocked_rollback();
+  test_physics_push_team();
+  test_physics_validation();
+  test_runtime_guards();
+  test_simulation_events();
   if (failures == 0) printf("test_sim_c: %d checks passed\n", checks);
   else fprintf(stderr, "test_sim_c: %d/%d checks failed\n", failures, checks);
   return failures == 0 ? 0 : 1;

@@ -224,8 +224,7 @@ void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hi
     qa_qvm_shared_entity_set_mins(entity, hit.inflictor_body.bounds.min);
     qa_qvm_shared_entity_set_maxs(entity, hit.inflictor_body.bounds.max);
     /* entity.s.pos with base/delta replaced (entity-record.ts surface). */
-    qa_qvmx_view state_view = {entity->s.view.bytes + entity->s.view.start,
-                               (size_t)entity->s.view.length};
+    qa_qvmx_view state_view = entity->s.view;
     qa_qvm_entity_state borrowed = qa_qvm_borrow_entity_state(state_view, entity->profile);
     qa_qvm_trajectory pos = qa_qvm_entity_state_get_pos(&borrowed);
     pos.base = hit.inflictor_body.origin;

@@ -7,6 +7,7 @@
 #include "mp_internal.h"
 #include "qa/content/q2/base/monsters/berserk.h"
 #include "qa/content/q2/base/monsters/common.h"
+#include "qa/content/q2/base/monsters/mutant.h"
 #include "qa/content/q2/base/monsters/parasite.h"
 #include "qa/content/q2/foundation/monsters/ai.h"
 #include "qa/content/q2/foundation/monsters/perception.h"
@@ -125,6 +126,17 @@ IMPULSE_FN(parasite_up_fn, 200, 450, true)
 IMPULSE_FN(parasite_down_fn, 100, 300, true)
 static void wait_timed_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_wait(c, true); }
 static void wait_plain_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_wait(c, false); }
+
+/* TS createMutantDefinition(monsters, source) via the landed base
+ * port; the wrapper storage (callbacks/touch the definition points
+ * into) is heap-held for the definition's lifetime. */
+qa_q2m_definition qa_q2mpm_base_create_mutant_definition(qa_q2m_monsters *monsters,
+                                                         const char *edition) {
+  qa_q2bm_mutant_definition *wrapper = malloc(sizeof *wrapper);
+  if (!wrapper) qa_q2f_error("Out of memory creating rogue jumping monsters");
+  qa_q2bm_create_mutant_definition_source(wrapper, monsters, edition);
+  return wrapper->definition;
+}
 
 size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                               qa_q2mpm_monster_state *source) {

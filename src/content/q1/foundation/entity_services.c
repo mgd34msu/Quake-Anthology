@@ -4,15 +4,12 @@
  * renamed qa_q1_get_*; a qa_q1_entity() function would collide
  * with the qa_q1_entity typedef), dropQ1Punch/ammoItem, the
  * registration family, attachExisting/attachPlayer, weapon
- * selection, inventory, scheduling, and the emit/host forwards.
- * Still declared-but-undefined (they need the weapons.ts fire
- * paths and pusher/projectile physics, which have no landed C
- * definitions yet): qa_q1_attack, qa_q1_weapon_input,
- * qa_q1_player_frame (needs fireWeapon-adjacent hazard damage
- * through qa_q1_damage's full combat authority), qa_q1_physics_*,
- * qa_q1_launch_projectile_behavior. qa_q1_services_init registers
- * the landed module callbacks; registerWeaponCallbacks joins when
- * the fire paths land. GPL-2.0-or-later.
+ * selection, inventory, scheduling, and the emit/host forwards,
+ * plus attack/weaponInput/playerFrame/physicsStep/physicsEntity
+ * (with applyProjectileBehavior/projectilePhysics) on the landed
+ * weapons.ts fire paths and the host weapon-behavior/pusher
+ * ports. qa_q1_services_init registers the landed module
+ * callbacks including registerWeaponCallbacks. GPL-2.0-or-later.
  *
  * TS resolves actors through host.actors.resolveOwned and the
  * entities/players OwnedActor maps; the C qa_q1_host mirror keeps
@@ -656,6 +653,146 @@ void qa_q1_launch_projectile_behavior(qa_q1_services *game, qa_q1_actor *entity,
   qa_q1_set_body_patch(game, entity, &patch, true, true, true, false, false);
   qa_q1_link(game, entity);
 }
+/* TS applyProjectileBehavior: weaponBehavior?.step(actor, body, seconds);
+ * the optional chain does not evaluate body() when the port is absent. */
+static void apply_projectile_behavior(qa_q1_services *game, qa_owned_actor actor,
+                                      double seconds) {
+  qa_q1_actor *entity = entity_any(game, actor.id);
+  if (entity == NULL || !qa_q1_live(game, entity)) return;
+  const qa_weapon_behavior_projectile_port *port = game->host.weapon_behavior;
+  if (port == NULL || port->step == NULL) return;
+  qa_q1_body body = qa_q1_get_body(game, entity);
+  qa_actor_id ground = body.ground;
+  qa_body_state state;
+  memset(&state, 0, sizeof state);
+  state.origin = body.origin;
+  state.angles = body.angles;
+  state.velocity = body.velocity;
+  state.bounds = body.bounds;
+  state.ground = body.has_ground ? &ground : NULL;
+  qa_weapon_trajectory_update_result update = port->step(port->ctx, actor, state, seconds);
+  if (!update.has_value) return;
+  qa_q1_callback_registry_project_trajectory(game->named, entity, update.value);
+  qa_q1_body patch;
+  memset(&patch, 0, sizeof patch);
+  patch.origin = update.value.origin;
+  patch.angles = update.value.angles;
+  patch.velocity = update.value.velocity;
+  qa_q1_set_body_patch(game, entity, &patch, true, true, true, false, false);
+  qa_q1_link(game, entity);
+}
+/* TS private projectilePhysics(entity, elapsed). */
+static void projectile_physics(qa_q1_services *game, qa_q1_actor *entity, double elapsed) {
+  bool gib = same(entity->movement, "gib");
+  const char *physics_edition = game->options.physics_edition != NULL
+                                    ? game->options.physics_edition
+                                    : game->options.edition;
+  if (gib && !same(physics_edition, "rerelease"))
+    qa_range_error("Gib movement requires the rerelease physics profile");
+  double gravity = game->options.gravity;
+  if (gib) {
+    double scale = qa_q1_actor_number(entity, "gravity");
+    if (scale == 0 || scale != scale) scale = 1; /* TS || 1 (0/NaN falsy) */
+    gravity = scale * game->options.gravity;
+  }
+  qa_q1_body body = qa_q1_get_body(game, entity);
+  if (body.has_ground) return;
+  qa_vec3 velocity = body.velocity;
+  if (!same(entity->movement, "flymissile") && !same(entity->movement, "fly"))
+    velocity.z = (float)(velocity.z - gravity * elapsed); /* TS Math.fround */
+  qa_q1_trace_request request;
+  memset(&request, 0, sizeof request);
+  request.start = body.origin;
+  request.end = qa_q1_vadd(body.origin, qa_q1_vscale(velocity, elapsed));
+  request.bounds = body.bounds;
+  request.has_ignore = true;
+  request.ignore = entity->actor.id;
+  request.monsters = !same(entity->solid, "none") && !same(entity->solid, "trigger");
+  request.has_missile = true;
+  request.missile = same(entity->movement, "flymissile");
+  qa_q1_trace trace = qa_q1_host_trace(game, request);
+  qa_q1_body patch;
+  memset(&patch, 0, sizeof patch);
+  patch.origin = trace.end;
+  patch.velocity = velocity;
+  patch.angles = qa_q1_vadd(body.angles, qa_q1_vscale(entity->angular_velocity, elapsed));
+  qa_q1_set_body_patch(game, entity, &patch, true, true, true, false, false);
+  qa_q1_link(game, entity);
+  if (trace.fraction == 1) return;
+  if (trace.sky && entity->projectile != NULL && !same(entity->projectile, "grenade")) {
+    qa_q1_remove(game, entity);
+    return;
+  }
+  if (entity->projectile != NULL) {
+    qa_q1_projectile_touch(game, entity, trace.has_actor ? &trace.actor : NULL,
+                           trace.normal, NULL);
+  } else {
+    bool has_hit = trace.has_actor || game->world != NULL;
+    qa_actor_id hit = trace.has_actor ? trace.actor
+                      : game->world != NULL ? game->world->actor.id : trace.actor;
+    if (has_hit && entity->touch.fn != NULL)
+      qa_q1_call_touch(game, entity, entity->touch, hit, &trace.normal, NULL);
+  }
+  if (!qa_q1_live(game, entity)) return;
+  body = qa_q1_get_body(game, entity);
+  bool bounces = same(entity->movement, "bounce") ||
+                 (gib && same(physics_edition, "rerelease"));
+  double overbounce = bounces ? 1.5 : 1;
+  velocity = qa_q1_vsub(body.velocity,
+                        qa_q1_vscale(trace.normal,
+                                     qa_q1_dot(body.velocity, trace.normal) * overbounce));
+  /* TS ground is set only when velocity is the shared ZERO object,
+   * i.e. exactly when the stop branch above assigns it. */
+  bool stopped = false;
+  if (trace.normal.z > 0.7 && (velocity.z < 60 || !bounces)) {
+    velocity = QA_Q1_ZERO;
+    entity->angular_velocity = QA_Q1_ZERO;
+    stopped = true;
+  }
+  memset(&patch, 0, sizeof patch);
+  patch.velocity = velocity;
+  patch.has_ground = stopped && trace.has_actor;
+  patch.ground = trace.actor;
+  qa_q1_set_body_patch(game, entity, &patch, false, false, true, false, true);
+  qa_q1_check_water_transition(game, entity);
+}
+void qa_q1_physics_entity(qa_q1_services *game, qa_owned_actor actor, double seconds,
+                          double elapsed_seconds) {
+  qa_q1_services_set_time(game, seconds);
+  game->frame_seconds = elapsed_seconds;
+  qa_q1_actor *entity = entity_any(game, actor.id);
+  if (entity == NULL || !qa_q1_live(game, entity)) return;
+  apply_projectile_behavior(game, actor, seconds);
+  if (same(entity->movement, "push")) {
+    /* TS stepQ1Pusher({actor, elapsedSeconds, "translate"},
+     * host.pusherServices(this)); the mirror host seam is pusher_step. */
+    if (game->host.pusher_step != NULL)
+      (void)game->host.pusher_step(game->host.ctx, game, entity, elapsed_seconds);
+  } else if (same(entity->movement, "toss") || same(entity->movement, "bounce") ||
+             same(entity->movement, "gib") || same(entity->movement, "fly") ||
+             same(entity->movement, "flymissile")) {
+    projectile_physics(game, entity, elapsed_seconds);
+  }
+}
+void qa_q1_physics_step(qa_q1_services *game, double seconds, double elapsed_seconds) {
+  /* TS iterates a spread copy of the entities map. */
+  size_t count = game->entity_count;
+  qa_q1_actor **snapshot = NULL;
+  if (count > 0) {
+    snapshot = xmalloc(count * sizeof *snapshot);
+    memcpy(snapshot, game->entities, count * sizeof *snapshot);
+  }
+  for (size_t i = 0; i < count; i++)
+    if (snapshot[i] != NULL) qa_q1_physics_entity(game, snapshot[i]->actor, seconds, elapsed_seconds);
+  free(snapshot);
+  for (size_t i = 0; i < game->player_count; i++) {
+    qa_q1_player_state *player = game->players[i];
+    if (player == NULL) continue;
+    qa_q1_player_frame(game, player->actor, seconds, NULL);
+    /* playerFrame may splice this player out; do not skip the next. */
+    if (i < game->player_count && game->players[i] != player) i--;
+  }
+}
 void qa_q1_link(qa_q1_services *game, qa_q1_actor *entity) {
   /* TS host.bodies.link recomputes shared-table links; the
    * actor-local mirror body needs none. */
@@ -1150,6 +1287,115 @@ void qa_q1_player_after_physics(qa_q1_services *game, qa_owned_actor actor,
       game->player_extensions[i]->after_physics(
           game->player_extensions[i]->ctx, game, player, seconds);
 }
+void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double seconds,
+                        const double *water_level) {
+  qa_q1_services_set_time(game, seconds);
+  qa_q1_player_state *player = player_owned(game, actor);
+  if (player == NULL) return;
+  if (water_level != NULL) player->water_level = *water_level;
+  for (size_t i = 0; i < game->player_extension_count; i++)
+    if (game->player_extensions[i]->frame != NULL)
+      game->player_extensions[i]->frame(game->player_extensions[i]->ctx, game,
+                                        player, seconds);
+  qa_q1_weapon_frame(game, actor, seconds);
+  if (player->mega_rot_at >= 0 && player->mega_rot_at <= seconds) {
+    double health = qa_q1_health(game, actor.id);
+    if (health > player->max_health) {
+      qa_q1_set_health(game, actor, health - 1);
+      player->mega_rot_at = seconds + 1;
+    } else {
+      player->mega_rot_at = -1;
+    }
+  }
+  /* Copy kinds first: delete splices the array TS iterates as a Map. */
+  qa_q1_powerup kinds[16];
+  double expiries[16];
+  size_t kind_count = player->powerup_count;
+  for (size_t i = 0; i < kind_count; i++) {
+    kinds[i] = player->powerups[i].kind;
+    expiries[i] = player->powerups[i].expires;
+  }
+  for (size_t i = 0; i < kind_count; i++) {
+    if (expiries[i] > seconds) continue;
+    qa_q1_player_powerup_delete(player, kinds[i]);
+    if (game->host.powerup != NULL)
+      game->host.powerup(game->host.ctx, actor, kinds[i], 0);
+    if (same(kinds[i], "q3:flight") && game->host.set_gravity != NULL)
+      qa_q1_set_gravity(game, actor.id, 1);
+  }
+  if (qa_q1_player_powerup_get(player, "q3:regen") > seconds &&
+      game->frame_seconds > 0) {
+    double health = qa_q1_health(game, actor.id);
+    if (health > 0 && health < 200) {
+      double healed = health + 5 * game->frame_seconds;
+      qa_q1_set_health(game, actor, healed < 200 ? healed : 200);
+    }
+  }
+  if (qa_q1_player_powerup_get(player, "q3:haste") > seconds &&
+      game->frame_seconds > 0 && player->attack_finished > seconds) {
+    double reduced = player->attack_finished - 0.3 * game->frame_seconds;
+    player->attack_finished = reduced > seconds ? reduced : seconds;
+  }
+  if (game->has_intermission || qa_q1_health(game, actor.id) < 0) return;
+  bool suit = qa_q1_player_powerup_get(player, "suit") > seconds;
+  bool lava_suit = qa_q1_player_powerup_get(player, "mg3:lavasuit") > seconds;
+  qa_actor_id world_id = game->world != NULL ? game->world->actor.id : actor.id;
+  const qa_actor_id *world_attacker = game->world != NULL ? &world_id : NULL;
+  if (player->water_level != 3 || suit || lava_suit) {
+    player->air_finished = seconds + 12;
+    player->drown_damage = 2;
+  } else if (player->air_finished < seconds && player->drown_at < seconds) {
+    player->drown_damage += 2;
+    if (player->drown_damage > 15) player->drown_damage = 10;
+    qa_q1_damage(game, actor.id, world_id, world_attacker, player->drown_damage,
+                 NULL, "direct", "drown");
+    player->drown_at = seconds + 1;
+  }
+  qa_q1_actor *entity = qa_q1_get_entity(game, &actor.id);
+  if (entity != NULL && player->water_level > 0 && player->hazard_at < seconds &&
+      game->host.contents != NULL) {
+    qa_q1_body body = entity->body;
+    qa_vec3 point = body.origin;
+    point.z += body.bounds.min.z + 1;
+    const char *contents = game->host.contents(game->host.ctx, point);
+    if (same(contents, "lava") && !lava_suit) {
+      player->hazard_at = seconds + (suit ? 1 : 0.2);
+      qa_q1_damage(game, actor.id, world_id, world_attacker,
+                   10 * player->water_level, NULL, "direct", "lava");
+    } else if (same(contents, "slime") && !suit && !lava_suit) {
+      player->hazard_at = seconds + 1;
+      qa_q1_damage(game, actor.id, world_id, world_attacker,
+                   4 * player->water_level, NULL, "direct", "slime");
+    }
+  }
+}
+bool qa_q1_attack(qa_q1_services *game, qa_owned_actor actor, qa_vec3 view_angles,
+                  double seconds, double water_level) {
+  qa_q1_services_set_time(game, seconds);
+  qa_q1_player_state *player = player_owned(game, actor);
+  if (player == NULL) qa_range_error("Player has no Q1 weapon state");
+  player->view_angles = view_angles;
+  player->water_level = water_level;
+  return qa_q1_fire_weapon(game, player);
+}
+bool qa_q1_weapon_input(qa_q1_services *game, qa_owned_actor actor, bool pressed,
+                        qa_vec3 view_angles, double seconds, double water_level) {
+  qa_q1_player_state *player = player_owned(game, actor);
+  if (player == NULL) qa_range_error("Player has no Q1 weapon state");
+  qa_q1_services_set_time(game, seconds);
+  player->view_angles = view_angles;
+  player->water_level = water_level;
+  player->attack_held = pressed;
+  if (!pressed) {
+    if (player->continuous_firing) {
+      player->continuous_firing = false;
+      player->weapon_animation_at = -1;
+      player->weapon_frame = 0;
+    }
+    return false;
+  }
+  return qa_q1_attack(game, actor, view_angles, seconds, water_level);
+}
 
 /* --- construction / precache / spawn --- */
 const char *qa_q1_services_precache_model(qa_q1_services *game, const char *path) {
@@ -1203,7 +1449,7 @@ bool qa_q1_services_init(qa_q1_services *game, qa_q1_host host,
   qa_q1_register_mover_callbacks(game);
   qa_q1_register_spawn_callbacks(game);
   qa_q1_register_pickup_callbacks(game);
-  /* registerWeaponCallbacks: weapons.ts fire paths not landed yet. */
+  qa_q1_register_weapon_callbacks(game);
   qa_q1_foundation_register_monster_callbacks(game);
   /* TS also installs host.actors.onRelease cleanup; the mirror
    * host has no release hook, so qa_q1_remove performs it. */

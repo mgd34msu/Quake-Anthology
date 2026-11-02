@@ -3,19 +3,14 @@
 
 #include <string.h>
 
+#include "qa/content/q2/foundation/weapons/definitions.h"
 #include "qa/foundation/support.h"
 
-/* Mirrored item order of Q2_BASE_WEAPONS (TS owner:
- * src/content/q2/foundation/weapons/definitions.ts, unported); only the
- * item sequence is observable through q1Q2PickupSelect. */
-static const qa_item_id Q2_BASE_WEAPON_ITEMS[] = {
-    "q2:weapon_blaster", "q2:weapon_shotgun", "q2:weapon_supershotgun", "q2:weapon_machinegun",
-    "q2:weapon_chaingun", "q2:ammo_grenades", "q2:weapon_grenadelauncher", "q2:weapon_rocketlauncher",
-    "q2:weapon_hyperblaster", "q2:weapon_railgun", "q2:weapon_bfg"};
-
+/* TS Q2_BASE_WEAPONS.findIndex(weapon => weapon.item === item)
+ * (owner: src/content/q2/foundation/weapons/definitions.ts). */
 static long weapon_index(qa_item_id item) {
-  for (size_t i = 0; i < sizeof Q2_BASE_WEAPON_ITEMS / sizeof *Q2_BASE_WEAPON_ITEMS; i++)
-    if (strcmp(Q2_BASE_WEAPON_ITEMS[i], item) == 0) return (long)i;
+  for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
+    if (strcmp(qa_q2w_base_weapons[i].item, item) == 0) return (long)i;
   return -1;
 }
 

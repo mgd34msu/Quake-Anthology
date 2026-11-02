@@ -2,7 +2,7 @@
  * Port of src/compat/qvm/regions.ts.
  * Mirrored types (TS owner src/compat/qvm/image.ts, parallel slice):
  * qa_qvmy_region_instruction mirrors QvmInstruction (opcode values
- * from qa_qvmy_op_opcode in operations.h); the instruction list is
+ * from qa_qvm_opcode in image.h); the instruction list is
  * QvmImage["instructions"] as pointer + count.
  * The TS access union "source" | "read-only" keeps its exact strings.
  * GPL-2.0-or-later.
@@ -15,7 +15,7 @@
 #include <stdint.h>
 
 typedef struct qa_qvmy_region_instruction {
-  int32_t opcode; /* qa_qvmy_op_opcode value */
+  int32_t opcode; /* qa_qvm_opcode value */
   int32_t operand_width; /* 0, 1 or 4 */
   int64_t operand;
   int64_t byte_offset;

@@ -1,10 +1,9 @@
 /*
  * Port of src/content/catalog/weapon-hud.ts. Icon name strings
  * for image icons are malloc'd into the result's owned list.
- * Q2/Q3 icon tables are mirrored from their TS owners
+ * Q2/Q3 icon tables come from their landed TS-owner ports
  * (content/q2 foundation/missionpacks items, content/q3
- * foundation arsenal + base shared items), which are unported;
- * only the item/icon fields this file reads are mirrored.
+ * foundation arsenal + base shared items).
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_CATALOG_WEAPON_HUD_H

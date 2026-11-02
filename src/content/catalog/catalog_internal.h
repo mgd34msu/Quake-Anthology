@@ -1,8 +1,7 @@
 /* Shared helpers for the content/catalog port (no TS counterpart).
- * normalize/contained mirrors name their TS owners
- * (src/content/mounts/paths.ts, src/platform/files/contained.ts);
- * those modules are unported, so collision-proof catalog-private
- * copies live here. GPL-2.0-or-later. */
+ * normalize/contained delegate to their TS owners' ports
+ * (src/content/mounts/paths.ts, src/platform/files/contained.ts)
+ * under collision-proof catalog-private names. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_CATALOG_INTERNAL_H
 #define QA_CONTENT_CATALOG_INTERNAL_H
 
@@ -16,7 +15,9 @@
 #include <string.h>
 #include <stdnoreturn.h>
 
+#include "qa/content/mounts/paths.h"
 #include "qa/foundation/support.h"
+#include "qa/platform/files/contained.h"
 
 /* TS `throw new Error(msg)`: prints "Error: msg" and aborts. */
 static inline noreturn void qa_catalog_error(const char *format, ...) {
@@ -114,57 +115,23 @@ static inline char *qa_catalog_dirname(const char *path) {
   return out;
 }
 
-/*
- * Mirror of normalizeResourcePath (TS owner:
- * src/content/mounts/paths.ts, unported). Malloc'd; NULL only on
- * OOM. Invalid paths abort with the exact TS RangeError.
- */
+/* normalizeResourcePath (TS owner: src/content/mounts/paths.ts).
+ * Malloc'd; NULL only on OOM. Invalid paths abort with the exact
+ * TS RangeError. */
 static inline char *qa_catalog_normalize_resource_path(const char *path) {
-  if (path == NULL) qa_range_error("Invalid relative resource path: %s", "");
-  char *normalized = qa_catalog_dup(path);
-  if (normalized == NULL) return NULL;
-  for (size_t i = 0; normalized[i] != '\0'; i++)
-    if (normalized[i] == '\\') normalized[i] = '/';
-  bool drive = normalized[0] != '\0' && normalized[1] == ':' &&
-               isalpha((unsigned char)normalized[0]);
-  bool bad = normalized[0] == '\0' || drive;
-  const char *part = normalized;
-  while (!bad) {
-    const char *slash = strchr(part, '/');
-    size_t length = slash != NULL ? (size_t)(slash - part) : strlen(part);
-    if (length == 0 || (length == 1 && part[0] == '.') ||
-        (length == 2 && part[0] == '.' && part[1] == '.')) bad = true;
-    if (slash == NULL) break;
-    part = slash + 1;
-  }
-  if (bad) {
-    char *message = qa_catalog_format("Invalid relative resource path: %s", path);
-    free(normalized);
-    qa_range_error("%s", message != NULL ? message : "Invalid relative resource path");
-  }
-  return normalized;
+  return qa_normalize_resource_path(path);
 }
 
-/*
- * Mirror of containedFileParts validation (TS owner:
- * src/platform/files/contained.ts; C port exists as
- * qa_contained_file_parts -- callers here only need validation).
- * Aborts exactly as the C port does on unsafe names.
- */
+/* containedFileParts validation (TS owner:
+ * src/platform/files/contained.ts): callers here only need the
+ * validation, so the parts are freed immediately. Aborts exactly
+ * as the owner does on unsafe names. */
 static inline void qa_catalog_contained_check(const char *name) {
-  if (name == NULL || name[0] == '\0' || strchr(name, '\\') != NULL ||
-      strchr(name, ':') != NULL)
+  if (name == NULL)
     qa_range_error("File path must be relative and stay inside its storage directory");
-  const char *part = name;
-  for (;;) {
-    const char *slash = strchr(part, '/');
-    size_t length = slash != NULL ? (size_t)(slash - part) : strlen(part);
-    if (length == 0 || (length == 1 && part[0] == '.') ||
-        (length == 2 && part[0] == '.' && part[1] == '.'))
-      qa_range_error("File path must be relative and stay inside its storage directory");
-    if (slash == NULL) break;
-    part = slash + 1;
-  }
+  size_t count = 0;
+  char **parts = qa_contained_file_parts(name, &count);
+  qa_contained_file_parts_free(parts, count);
 }
 
 /* Growable string list. */

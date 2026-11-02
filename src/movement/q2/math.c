@@ -6,6 +6,37 @@
 /* JS Math.PI (the nearest double). */
 static const double q2_pi = 3.141592653589793;
 
+double qa_q2_n_store(const qa_numeric_operations *n, double v) {
+  return n->store(n->ctx, v);
+}
+double qa_q2_n_add(const qa_numeric_operations *n, double a, double b) {
+  return n->add(n->ctx, a, b);
+}
+double qa_q2_n_subtract(const qa_numeric_operations *n, double a, double b) {
+  return n->subtract(n->ctx, a, b);
+}
+double qa_q2_n_multiply(const qa_numeric_operations *n, double a, double b) {
+  return n->multiply(n->ctx, a, b);
+}
+double qa_q2_n_divide(const qa_numeric_operations *n, double a, double b) {
+  return n->divide(n->ctx, a, b);
+}
+double qa_q2_n_square_root(const qa_numeric_operations *n, double v) {
+  return n->square_root(n->ctx, v);
+}
+
+double qa_q2_js_max(double a, double b) {
+  if (isnan(a) || isnan(b)) return NAN;
+  if (a == b) return a == 0.0 && signbit(a) && !signbit(b) ? b : a;
+  return a > b ? a : b;
+}
+double qa_q2_js_min(double a, double b) {
+  if (isnan(a) || isnan(b)) return NAN;
+  if (a == b) return a == 0.0 && !signbit(a) && signbit(b) ? b : a;
+  return a < b ? a : b;
+}
+bool qa_q2_js_truthy(double value) { return value != 0.0 && value == value; }
+
 void qa_q2_movement_math_init(qa_q2_movement_math *math, const qa_numeric_operations *operations,
                               qa_q2_movement_math_edition edition) {
   math->n = operations;

@@ -31,6 +31,8 @@ struct qa_app_sim_shared_simulation {
   qa_app_sim_source_random *random;
   qa_app_sim_shared_simulation_host host;
   bool closed;
+  bool stepping;
+  bool checkpoint_in_progress;
 };
 /* TS SharedSimulation statics + loadSimulation: async pumped through
  * next_frame. The host bundle supplies the constructed pipeline. */

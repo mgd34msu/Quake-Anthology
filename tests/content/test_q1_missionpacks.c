@@ -42,22 +42,21 @@ static bool streq(const char *a, const char *b) { return a && b && strcmp(a, b) 
 /* --- ext stubs (TS owners: foundation/weapons.ts aim,
  * base/rules.ts q1Obituary, base/travel.ts travel) --- */
 qa_vec3 qa_q1mp_ext_aim(qa_q1mp_game *game, qa_owned_actor actor, qa_vec3 forward) { (void)game; (void)actor; return forward; }
-qa_q1mp_obituary qa_q1mp_ext_q1_obituary(const qa_q1mp_obituary_input *input, bool has_override, bool attacker_null) {
-  (void)input; (void)has_override; (void)attacker_null;
-  qa_q1mp_obituary out = {0}; out.has_message = true; (void)snprintf(out.text, sizeof out.text, "fallback"); return out;
+/* qa_q1mp_ext_q1_obituary / *_q1_travel are defined for real in
+ * src/content/q1/missionpacks/{obituaries,travel}.c (Wave 8b); the
+ * admit path is observed through the host stubs below. */
+static size_t created_count;
+static char created_items[40][96];
+static double created_health;
+static void stub_set_health(void *ctx, qa_owned_actor actor, double health) { (void)ctx; (void)actor; created_health = health; }
+static void stub_set_armor(void *ctx, qa_owned_actor actor, qa_armor_state armor) { (void)ctx; (void)actor; (void)armor; }
+static bool stub_inventory_has(void *ctx, qa_actor_id actor) { (void)ctx; (void)actor; return false; }
+static void stub_inventory_create(void *ctx, qa_owned_actor actor, const qa_inventory_entry *entries, size_t count) {
+  (void)ctx; (void)actor; created_count = count;
+  for (size_t i = 0; i < count && i < 40; i++) (void)snprintf(created_items[i], 96, "%s", entries[i].item);
 }
-qa_q1mp_travel_state qa_q1mp_ext_new_q1_travel(const qa_q1b_options *options) {
-  (void)options; qa_q1mp_travel_state s = {0};
-  s.health = 100; s.max_health = 100; s.weapon = "shotgun";
-  s.inventory[0] = (qa_inventory_entry){"q1:weapon/shotgun", 1, 1, false, {NULL, NULL}};
-  s.inventory_count = 1; return s;
-}
-qa_q1mp_travel_state qa_q1mp_ext_capture_q1_travel(qa_q1mp_game *game, qa_owned_actor actor, const char *weapon, double max_health, bool reset) {
-  (void)game; (void)actor; (void)reset;
-  qa_q1mp_travel_state s = qa_q1mp_ext_new_q1_travel(NULL); s.weapon = weapon; s.max_health = max_health; return s;
-}
-static qa_q1mp_travel_state admitted;
-void qa_q1mp_ext_admit_q1_travel(qa_q1mp_game *game, qa_owned_actor actor, const qa_q1mp_travel_state *state) { (void)game; (void)actor; admitted = *state; }
+static void stub_inventory_configure(void *ctx, qa_owned_actor actor, const qa_inventory_entry *entry) { (void)ctx; (void)actor; (void)entry; }
+static void stub_powerup(void *ctx, qa_owned_actor actor, const char *powerup, double expires) { (void)ctx; (void)actor; (void)powerup; (void)expires; }
 
 /* --- minimal game/host stub --- */
 static struct { const char *item; double count; } inventory[64];
@@ -102,15 +101,25 @@ static qa_q1b_host host;
 static qa_q1b_game base_game;
 static qa_q1mp_game game;
 static qa_q1b_player_state player;
+static qa_q1b_player_state *stub_player(qa_q1b_game *g, qa_actor_id actor) { (void)g; (void)actor; return &player; }
+static const qa_q1b_player_extension *stub_no_extension(qa_q1b_game *g, const char *id) { (void)g; (void)id; return NULL; }
 static void setup_game(const char *edition, double deathmatch) {
   memset(&host, 0, sizeof host); memset(&base_game, 0, sizeof base_game); memset(&game, 0, sizeof game);
   memset(&player, 0, sizeof player); inventory_count_entries = 0; last_message = NULL; selected_weapon = NULL;
   host.inventory_count = stub_inventory_count;
+  host.combat_set_health = stub_set_health;
+  host.combat_set_armor = stub_set_armor;
+  host.inventory_has = stub_inventory_has;
+  host.inventory_create = stub_inventory_create;
+  host.inventory_configure = stub_inventory_configure;
+  host.powerup = stub_powerup;
+  created_count = 0; created_health = -1;
   host.actors_is_live = stub_is_live;
   host.actors_resolve_owned = stub_resolve_owned;
   base_game.host = &host;
   base_game.options.edition = edition; base_game.options.deathmatch = deathmatch;
   base_game.message = stub_message; base_game.select_weapon = stub_select; base_game.weapon_ammo = stub_weapon_ammo;
+  base_game.player = stub_player; base_game.player_extension_get = stub_no_extension;
   base_game.named.register_named = stub_register_named;
   base_game.sound_owned = stub_sound_owned;
   base_game.time = 10;
@@ -192,9 +201,10 @@ static void test_selection(void) {
 static void test_travel(void) {
   setup_game("classic", 0);
   qa_q1mp_travel_state hip = qa_q1mp_new_mission_pack_travel(&game, "hipnotic");
-  CHECK(hip.inventory_count == 1 + 3);
+  CHECK(hip.inventory_count == 14 + 3); /* real newQ1Travel: 8 weapons + 4 ammo + 2 keys */
+  CHECK(streq(hip.weapon, "shotgun") && hip.health == 100);
   qa_q1mp_travel_state rog = qa_q1mp_new_mission_pack_travel(&game, "rogue");
-  CHECK(rog.inventory_count == 1 + 5 + 5);
+  CHECK(rog.inventory_count == 14 + 5 + 5);
   /* decode: hipnotic start map resets */
   (void)snprintf(base_game.map_name, sizeof base_game.map_name, "%s", "hip1m1");
   rog.weapon = "rocketlauncher";
@@ -206,10 +216,12 @@ static void test_travel(void) {
   decoded = qa_q1mp_decode_mission_pack_travel(&game, rog, 0, "rogue");
   CHECK(streq(decoded.weapon, "axe"));
   /* admit merges missing pack inventory ahead of supplied entries */
-  qa_q1mp_travel_state supplied = qa_q1mp_ext_new_q1_travel(NULL);
+  qa_q1mp_travel_state supplied = qa_q1mp_ext_new_q1_travel(&base_game.options);
   qa_owned_actor actor = {0}; actor.id.slot = 1;
   qa_q1mp_admit_mission_pack_travel(&game, actor, supplied, "hipnotic");
-  CHECK(admitted.inventory_count == 3 + 1);
+  CHECK(created_count == 3 + supplied.inventory_count);
+  CHECK(created_health == 100);
+  CHECK(streq(created_items[0], "q1:weapon/hipnotic:laser") || strstr(created_items[0], "hipnotic") != NULL);
 }
 
 static qa_q1mp_obituary_person person(int slot, const char *name, const char *classname, const char *weapon, bool is_player, bool is_monster) {

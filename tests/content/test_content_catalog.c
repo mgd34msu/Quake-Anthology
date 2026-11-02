@@ -387,6 +387,56 @@ static void test_discovery_and_weapons(void) {
   (void)rmdir(root);
 }
 
+/* Rebound catalog weapon data: Q2/Q3 HUD icons resolve through the
+ * landed owner tables (q2 foundation/missionpacks definitions and
+ * item icons; q3 arsenal + shared itemList), not private copies. */
+static const qa_catalog_product_expectation *expectation_by_id(
+    const char *id) {
+  for (size_t i = 0; i < qa_expected_product_count; i++)
+    if (strcmp(qa_expected_products[i].id, id) == 0)
+      return &qa_expected_products[i];
+  return NULL;
+}
+
+static void test_weapon_hud_rebind(void) {
+  const qa_catalog_product_expectation *q2 =
+      expectation_by_id("q2-classic-baseq2");
+  CHECK(q2 != NULL);
+  qa_provider_reference source = {"q2:official", "q2-classic-baseq2"};
+  qa_weapon_hud_icons icons = {0};
+  bool found = false;
+  CHECK(qa_weapon_hud_icons_for(source, q2, "q2:weapon_rocketlauncher",
+                                &icons, &found));
+  CHECK(found && icons.has_weapon);
+  CHECK(icons.weapon.kind == QA_WEAPON_HUD_ICON_IMAGE);
+  CHECK(strcmp(icons.weapon.resource.path, "pics/w_rlauncher.pcx") == 0);
+  CHECK(icons.has_ammo);
+  CHECK(strcmp(icons.ammo.resource.path, "pics/a_rockets.pcx") == 0);
+  qa_weapon_hud_icons_free(&icons);
+
+  const qa_catalog_product_expectation *q3 =
+      expectation_by_id("q3-baseq3");
+  CHECK(q3 != NULL);
+  qa_provider_reference q3_source = {"q3:official", "q3-baseq3"};
+  memset(&icons, 0, sizeof icons);
+  found = false;
+  CHECK(qa_weapon_hud_icons_for(q3_source, q3, "q3:weapon/railgun",
+                                &icons, &found));
+  CHECK(found && icons.has_weapon);
+  CHECK(icons.weapon.kind == QA_WEAPON_HUD_ICON_SHADER);
+  CHECK(strcmp(icons.weapon.name, "icons/iconw_railgun") == 0);
+  CHECK(icons.has_ammo);
+  CHECK(strcmp(icons.ammo.name, "icons/icona_railgun") == 0);
+  qa_weapon_hud_icons_free(&icons);
+  /* The baseq3 itemList has no nailgun row: TS returns null. */
+  memset(&icons, 0, sizeof icons);
+  found = true;
+  CHECK(qa_weapon_hud_icons_for(q3_source, q3, "q3:weapon/nailgun",
+                                &icons, &found));
+  CHECK(!found);
+  qa_weapon_hud_icons_free(&icons);
+}
+
 static void test_launch_and_source_program(void) {
   qa_launch_preset preset = {0};
   preset.id = "recipe:preset:1";
@@ -484,6 +534,7 @@ int main(void) {
   test_documents();
   test_timing_equipment();
   test_discovery_and_weapons();
+  test_weapon_hud_rebind();
   test_launch_and_source_program();
   test_monsters_and_behaviors();
   printf("content catalog: %d checks, %d failures\n", checks, failures);

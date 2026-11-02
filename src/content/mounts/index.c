@@ -19,8 +19,8 @@
 #include "qa/content/archive/source.h"
 #include "qa/content/roots.h"
 #include "qa/content/user_data.h"
-#include "qa/core/md4.h"
 #include "qa/foundation/support.h"
+#include "qa/network/q3/pure.h"
 #include "qa/persistence/value.h"
 
 static noreturn void plain_error(const char *format, const char *argument) {
@@ -2072,33 +2072,12 @@ void qa_mounted_content_reader_destroy(qa_mounted_content_reader *reader) {
 
 /* ---- opening plans ----------------------------------------------- */
 
-/* q3ArchiveChecksums from src/network/q3/pure.ts (unported): nonzero
- * entries contribute CRC words in central-directory order. */
+/* TS q3ArchiveChecksums(archive, 0).checksum >>> 0 (owner:
+ * src/network/q3/pure.ts, qa_q3_archive_checksums). */
 static uint32_t q3_archive_checksum(qa_archive_handle *archive) {
-  if (archive->format == QA_ARCHIVE_FORMAT_PAK)
-    qa_range_error("Q3 pak checksums require a ZIP/PK3 central directory");
-  size_t nonzero = 0;
-  for (size_t i = 0; i < archive->entry_count; i++)
-    if (archive->entries[i].byte_length > 0) nonzero++;
-  uint8_t *bytes = (uint8_t *)malloc(nonzero ? nonzero * 4 : 1);
-  if (bytes == NULL) oom_error();
-  size_t at = 0;
-  for (size_t i = 0; i < archive->entry_count; i++) {
-    const qa_archive_entry *entry = &archive->entries[i];
-    if (entry->byte_length <= 0) continue;
-    if (entry->format == QA_ARCHIVE_FORMAT_PAK) {
-      free(bytes);
-      qa_range_error("Q3 ZIP directory contains a PAK entry");
-    }
-    uint32_t crc = entry->crc32;
-    bytes[at++] = (uint8_t)(crc & 0xffu);
-    bytes[at++] = (uint8_t)((crc >> 8) & 0xffu);
-    bytes[at++] = (uint8_t)((crc >> 16) & 0xffu);
-    bytes[at++] = (uint8_t)((crc >> 24) & 0xffu);
-  }
-  uint32_t checksum = qa_block_checksum(bytes, at);
-  free(bytes);
-  return checksum;
+  int64_t checksum = 0, pure_checksum = 0;
+  qa_q3_archive_checksums(archive, 0, &checksum, &pure_checksum);
+  return (uint32_t)checksum;
 }
 
 static void check_demo_archive(qa_archive_handle *archive,

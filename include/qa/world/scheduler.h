@@ -1,8 +1,8 @@
 /*
  * Port of src/world/scheduler.ts: the frame think scheduler.
  * The clocks helpers (copyTime/validateTime/sameTimeUnit/copyFrame,
- * TS owner src/world/session/clocks.ts, unported) are mirrored as
- * static helpers in the .c. Implements contracts qa_actor_schedule
+ * TS owner src/world/session/clocks.ts) are qa_* in
+ * qa/world/session/clocks.h. Implements contracts qa_actor_schedule
  * through the adapter. TS Error throws abort identically.
  * GPL-2.0-or-later.
  */

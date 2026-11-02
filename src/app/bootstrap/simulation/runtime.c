@@ -1,33 +1,69 @@
-/* Port of src/app/bootstrap/simulation/runtime.ts (public surface + ordered turns). GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/simulation/runtime.ts (public surface,
+ * frame-entry guards + ordered turns). The 8.5k-line TS composition
+ * root's per-source frame pipeline stages live in the sibling
+ * simulation modules; the host bundle runs the constructed pipeline
+ * while this module owns the TS step/checkpoint/close guards.
+ * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/runtime.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 static void assert_open(qa_app_sim_shared_simulation *s) {
   if (s->closed) qa_range_error("Simulation is closed");
 }
+static void begin_step(qa_app_sim_shared_simulation *s, qa_input_batch input) {
+  assert_open(s);
+  if (s->stepping || s->checkpoint_in_progress)
+    qa_range_error("Simulation step is already running or a checkpoint is active");
+  if (!isfinite(input.elapsed_milliseconds) || input.elapsed_milliseconds < 0)
+    qa_range_error("Host elapsed time must be finite and nonnegative");
+  s->stepping = true;
+}
 static qa_simulation_output sim_step(void *ctx, qa_input_batch input) {
-  qa_app_sim_shared_simulation *s = ctx; assert_open(s);
-  return s->host.step(s->host.ctx, input);
+  qa_app_sim_shared_simulation *s = ctx;
+  begin_step(s, input);
+  qa_simulation_output output = s->host.step(s->host.ctx, input);
+  s->stepping = false;
+  return output;
 }
 static qa_simulation_output sim_step_async(void *ctx, qa_input_batch input,
     void (*progress)(void *progress_ctx, qa_simulation_progress frame), void *progress_ctx) {
-  qa_app_sim_shared_simulation *s = ctx; assert_open(s);
-  if (s->host.step_async) return s->host.step_async(s->host.ctx, input, progress, progress_ctx);
-  return s->host.step(s->host.ctx, input);
+  qa_app_sim_shared_simulation *s = ctx;
+  /* TS stepAsync falls through to step() for non-Q3-QVM sources,
+   * which re-checks the same guards; the host bundle selects. */
+  if (s->host.step_async) {
+    begin_step(s, input);
+    qa_simulation_output output = s->host.step_async(s->host.ctx, input, progress, progress_ctx);
+    s->stepping = false;
+    return output;
+  }
+  return sim_step(ctx, input);
 }
 static qa_save_image sim_checkpoint(void *ctx) {
-  qa_app_sim_shared_simulation *s = ctx; assert_open(s);
-  return s->host.checkpoint(s->host.ctx);
+  qa_app_sim_shared_simulation *s = ctx;
+  assert_open(s);
+  if (s->stepping || s->checkpoint_in_progress)
+    qa_range_error("Save requires a completed frame without pending world travel");
+  s->checkpoint_in_progress = true;
+  qa_save_image image = s->host.checkpoint(s->host.ctx);
+  s->checkpoint_in_progress = false;
+  return image;
 }
 static void sim_close(void *ctx) {
   qa_app_sim_shared_simulation *s = ctx;
+  if (s->checkpoint_in_progress)
+    qa_range_error("Await checkpoint completion before closing the simulation");
   if (s->closed) return;
   s->closed = true;
   if (s->host.close) s->host.close(s->host.ctx);
 }
-qa_app_sim_shared_simulation *qa_app_sim_shared_simulation_create(qa_app_simulation_options options,
-    qa_app_sim_shared_simulation_host host, qa_session_actor_registry *actors, qa_session_id session) {
+static qa_app_sim_shared_simulation *create_internal(qa_app_simulation_options options,
+    qa_app_sim_shared_simulation_host host, qa_session_actor_registry *actors, qa_session_id session, bool loading) {
+  /* TS constructor: selected mods require the async load path. Only
+   * the preparedMods length is representable in the C options. */
+  if (!loading && options.prepared_mod_count != 0)
+    qa_range_error("Selected gameplay mods require asynchronous loadSimulation");
   qa_app_sim_shared_simulation *s = calloc(1, sizeof *s);
   if (!s) qa_range_error("Out of memory");
   s->session = session; s->recipe = options.recipe; s->options = options;
@@ -37,10 +73,14 @@ qa_app_sim_shared_simulation *qa_app_sim_shared_simulation_create(qa_app_simulat
           ? "q2-rerelease" : "classic");
   return s;
 }
+qa_app_sim_shared_simulation *qa_app_sim_shared_simulation_create(qa_app_simulation_options options,
+    qa_app_sim_shared_simulation_host host, qa_session_actor_registry *actors, qa_session_id session) {
+  return create_internal(options, host, actors, session, false);
+}
 qa_app_sim_shared_simulation *qa_app_sim_load_simulation(qa_app_simulation_options options,
     qa_app_sim_shared_simulation_host host, qa_session_actor_registry *actors, qa_session_id session,
     void (*next_frame)(void *frame_ctx), void *frame_ctx) {
-  qa_app_sim_shared_simulation *s = qa_app_sim_shared_simulation_create(options, host, actors, session);
+  qa_app_sim_shared_simulation *s = create_internal(options, host, actors, session, true);
   if (options.prepare_rerelease_navigation) {
     bool rerelease = false;
     if (options.has_q2_guest && options.q2_guest.edition && strcmp(options.q2_guest.edition, "rerelease") == 0) rerelease = true;

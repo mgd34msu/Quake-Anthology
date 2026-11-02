@@ -1,7 +1,7 @@
 /*
  * Port of src/compat/qvm/operations.ts. Operands and results are
  * signed int32 words, including binary32 payloads.
- * qa_qvmy_op_opcode is the landed qa_qvm_opcode (TS owner
+ * Opcodes are the landed qa_qvm_opcode (TS owner
  * src/compat/qvm/image.ts); the QA_QVMY_OP_* spellings are aliases
  * kept for this slice's existing call sites.
  * GPL-2.0-or-later.
@@ -14,7 +14,6 @@
 
 #include "qa/compat/qvm/image.h"
 
-typedef qa_qvm_opcode qa_qvmy_op_opcode;
 #define QA_QVMY_OP_UNDEF QA_QVM_OP_UNDEF
 #define QA_QVMY_OP_IGNORE QA_QVM_OP_IGNORE
 #define QA_QVMY_OP_BREAK QA_QVM_OP_BREAK
@@ -79,8 +78,8 @@ typedef qa_qvm_opcode qa_qvmy_op_opcode;
 /* TS QvmUnaryOpcode / QvmBinaryOpcode / QvmBranchOpcode narrow the
  * enum at compile time only; unsupported values abort like the TS
  * exhaustiveness throw. */
-int32_t qa_qvm_evaluate_unary(qa_qvmy_op_opcode opcode, int32_t word);
-int32_t qa_qvm_evaluate_binary(qa_qvmy_op_opcode opcode, int32_t left, int32_t right);
-bool qa_qvm_evaluate_branch(qa_qvmy_op_opcode opcode, int32_t left, int32_t right);
+int32_t qa_qvm_evaluate_unary(qa_qvm_opcode opcode, int32_t word);
+int32_t qa_qvm_evaluate_binary(qa_qvm_opcode opcode, int32_t left, int32_t right);
+bool qa_qvm_evaluate_branch(qa_qvm_opcode opcode, int32_t left, int32_t right);
 
 #endif

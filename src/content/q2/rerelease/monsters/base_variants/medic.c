@@ -12,6 +12,7 @@
 #include "qa/content/q2/foundation/monsters/gibs.h"
 #include "qa/content/q2/foundation/monsters/perception.h"
 #include "qa/content/q2/missionpacks/monsters/combat.h"
+#include "qa/content/q2/missionpacks/monsters/medic.h"
 #include "qa/content/q2/missionpacks/monsters/power_armor.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/spawn.h"
@@ -527,25 +528,8 @@ static void each_spawn(medic_ctx *box, qa_q2m_context *c, bool behind, void *vis
   }
   free_reinforcement_list(list, list_count);
 }
-/* Mirrored unported surface (TS owner: src/content/q2/missionpacks/
- * monsters/medic.ts pickRogueCoopTarget; no C port landed). */
-static bool pick_coop_target(qa_q2m_context *c, qa_actor_id *out) {
-  qa_q2f_game *game = c->game;
-  if (strcmp(game->options.mode, "coop") != 0) return false;
-  size_t count = 0;
-  const qa_actor_id *players = game->host->players(game->host->ctx, &count);
-  qa_actor_id visible_players[64];
-  size_t visible_count = 0;
-  for (size_t i = 0; i < count; i++) {
-    if (!q2rm_live(game, players[i]) || !game->host->is_player(game->host->ctx, players[i])) continue;
-    if (!qa_q2m_visible(c, &players[i])) continue;
-    if (visible_count < 64) visible_players[visible_count++] = players[i];
-  }
-  if (visible_count == 0) return false;
-  double index = fmin((double)visible_count - 1, floor(q2rm_rnd(game) * (double)visible_count));
-  *out = visible_players[qa_q2m_record_at(visible_count, index)];
-  return true;
-}
+/* pickRogueCoopTarget (TS owner: src/content/q2/missionpacks/
+ * monsters/medic.ts) is qa_q2mpm_pick_rogue_coop_target. */
 
 static void dead_cb_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -664,9 +648,9 @@ static bool finish_visit(void *ctx, qa_vec3 point, const reinforcement *entry) {
   if (state->medic) { has_enemy = state->has_old_enemy; if (has_enemy) enemy = state->old_enemy; }
   else { has_enemy = entity->has_enemy; if (has_enemy) enemy = entity->enemy; }
   if (strcmp(game->options.mode, "coop") == 0) {
-    has_enemy = pick_coop_target(child_context, &enemy);
+    has_enemy = qa_q2mpm_pick_rogue_coop_target(child_context, &enemy);
     if (has_enemy && entity->has_enemy && qa_same_actor(enemy, entity->enemy))
-      has_enemy = pick_coop_target(child_context, &enemy);
+      has_enemy = qa_q2mpm_pick_rogue_coop_target(child_context, &enemy);
     if (!has_enemy && entity->has_enemy) { enemy = entity->enemy; has_enemy = true; }
   }
   if (has_enemy && q2rm_live(game, enemy) && qa_q2m_health(game, &enemy) > 0) {

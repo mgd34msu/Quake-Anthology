@@ -921,7 +921,7 @@ void qa_qvm_combat_bindings_sync_proxy_entity(qa_qvm_combat_bindings *bindings, 
                     body.origin.z + body.bounds.max.z};
   qa_qvm_shared_entity_set_absmin(entity, absmin);
   qa_qvm_shared_entity_set_absmax(entity, absmax);
-  qa_qvmx_view state_view = {entity->s.view.bytes + entity->s.view.start, (size_t)entity->s.view.length};
+  qa_qvmx_view state_view = entity->s.view;
   qa_qvm_entity_state borrowed = qa_qvm_borrow_entity_state(state_view, entity->profile);
   qa_qvm_trajectory pos = qa_qvm_entity_state_get_pos(&borrowed);
   pos.base = body.origin;

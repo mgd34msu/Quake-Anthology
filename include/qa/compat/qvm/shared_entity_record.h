@@ -1,10 +1,9 @@
 /*
  * Port of src/compat/qvm/shared-entity-record.ts. The TS borrowed
  * object with getters/setters becomes a view handle plus get/set
- * functions operating on the same live bytes. Mirrored type (TS owner
- * src/compat/qvm/entity-record.ts, parallel slice):
- * qa_qvmy_entity_state mirrors the borrowed QvmEntityState surface
- * this module uses (its live view and modelindex at byte 160).
+ * functions operating on the same live bytes. The nested `s` is the
+ * landed qa_qvm_entity_state (entity_record.h, TS QvmEntityState)
+ * borrowed over the same live bytes.
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_SHARED_ENTITY_RECORD_H
@@ -13,19 +12,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/entity_record.h"
 #include "qa/compat/qvm/memory_writes.h"
 #include "qa/contracts/execution.h"
 #include "qa/contracts/math.h"
 
 #define QA_QVM_SHARED_ENTITY_BYTES 516
-
-typedef struct qa_qvmy_entity_state {
-  qa_qvm_writable_view view;
-  qa_qvm_abi_profile profile;
-} qa_qvmy_entity_state;
-
-int32_t qa_qvmy_entity_state_get_modelindex(qa_qvmy_entity_state *state);
-void qa_qvmy_entity_state_set_modelindex(qa_qvmy_entity_state *state, int32_t value);
 
 /* TS QvmEntityCollisionModel: kind "inline" | "box" | "capsule". */
 typedef struct qa_qvm_entity_collision_model {
@@ -35,7 +27,7 @@ typedef struct qa_qvm_entity_collision_model {
 
 /* TS QvmSharedEntity borrowed handle. */
 typedef struct qa_qvm_shared_entity {
-  qa_qvmy_entity_state s;
+  qa_qvm_entity_state s;
   qa_qvm_writable_view view;
   qa_qvm_abi_profile profile;
 } qa_qvm_shared_entity;

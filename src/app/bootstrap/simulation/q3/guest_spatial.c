@@ -19,7 +19,7 @@ struct qa_app_q3_guest_spatial {
 };
 
 static qa_qvm_entity_state state_of(qa_qvm_shared_entity *entity) {
-  qa_qvmx_view view = {entity->s.view.bytes + entity->s.view.start, (size_t)entity->s.view.length};
+  qa_qvmx_view view = entity->s.view;
   return qa_qvm_borrow_entity_state(view, entity->profile);
 }
 static bool passes(qa_app_q3_guest_spatial *spatial, double entity_num, int32_t pass_entity_num) {
@@ -111,7 +111,8 @@ size_t qa_app_q3_guest_spatial_area_entities(qa_app_q3_guest_spatial *spatial, q
     if (!qa_bounds_intersect(found[i].body.absolute_bounds, bounds)) continue;
     double slot;
     if (!qa_app_q3_guest_records_slot(spatial->dependencies.records, found[i].body.actor, &slot)) continue;
-    if ((int64_t)total >= maximum) break;
+    /* TS areaEntities: a negative maximum returns the full list. */
+    if (maximum >= 0 && (int64_t)total >= maximum) break;
     if (total < capacity) out[total] = (int32_t)slot;
     total++;
   }

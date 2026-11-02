@@ -38,35 +38,19 @@ double qa_q1_seconds(qa_source_time time);
 /* TS trace.sourcePlane.normal across the trace union. */
 qa_vec3 qa_q1_trace_source_normal(const qa_trace_result *trace);
 
-static inline double qa_q1_js_max(double a, double b) {
-  if (isnan(a) || isnan(b)) return NAN;
-  if (a == b) return a == 0.0 && signbit(a) && !signbit(b) ? b : a;
-  return a > b ? a : b;
-}
-static inline double qa_q1_js_min(double a, double b) {
-  if (isnan(a) || isnan(b)) return NAN;
-  if (a == b) return a == 0.0 && !signbit(a) && signbit(b) ? b : a;
-  return a < b ? a : b;
-}
-static inline bool qa_q1_flag_test(double flags, int mask) { return (qa_int32(flags) & mask) != 0; }
-static inline double qa_q1_flag_set(double flags, int mask) { return (double)(qa_int32(flags) | mask); }
-static inline double qa_q1_flag_clear(double flags, int mask) { return (double)(qa_int32(flags) & ~mask); }
+double qa_q1_js_max(double a, double b);
+double qa_q1_js_min(double a, double b);
+bool qa_q1_flag_test(double flags, int mask);
+double qa_q1_flag_set(double flags, int mask);
+double qa_q1_flag_clear(double flags, int mask);
 
-static inline double qa_q1_n_store(const qa_numeric_operations *n, double v) { return n->store(n->ctx, v); }
-static inline double qa_q1_n_add(const qa_numeric_operations *n, double a, double b) { return n->add(n->ctx, a, b); }
-static inline double qa_q1_n_subtract(const qa_numeric_operations *n, double a, double b) {
-  return n->subtract(n->ctx, a, b);
-}
-static inline double qa_q1_n_multiply(const qa_numeric_operations *n, double a, double b) {
-  return n->multiply(n->ctx, a, b);
-}
-static inline double qa_q1_n_divide(const qa_numeric_operations *n, double a, double b) {
-  return n->divide(n->ctx, a, b);
-}
-static inline double qa_q1_n_square_root(const qa_numeric_operations *n, double v) {
-  return n->square_root(n->ctx, v);
-}
-static inline double qa_q1_n_to_int32(const qa_numeric_operations *n, double v) { return n->to_int32(n->ctx, v); }
+double qa_q1_n_store(const qa_numeric_operations *n, double v);
+double qa_q1_n_add(const qa_numeric_operations *n, double a, double b);
+double qa_q1_n_subtract(const qa_numeric_operations *n, double a, double b);
+double qa_q1_n_multiply(const qa_numeric_operations *n, double a, double b);
+double qa_q1_n_divide(const qa_numeric_operations *n, double a, double b);
+double qa_q1_n_square_root(const qa_numeric_operations *n, double v);
+double qa_q1_n_to_int32(const qa_numeric_operations *n, double v);
 
 /** TS MovementMath (TS field `n` is math.n here). */
 typedef struct qa_q1_movement_math {
@@ -130,9 +114,7 @@ qa_bounds qa_q1_context_bounds(qa_q1_movement_context *context);
  * ("normal" | "no-monsters" | "missile"). */
 qa_trace_result qa_q1_context_trace_ex(qa_q1_movement_context *context, qa_vec3 start, qa_vec3 end,
                                        const qa_trace_shape *shape, const char *move);
-static inline qa_trace_result qa_q1_context_trace(qa_q1_movement_context *context, qa_vec3 start, qa_vec3 end) {
-  return qa_q1_context_trace_ex(context, start, end, NULL, NULL);
-}
+qa_trace_result qa_q1_context_trace(qa_q1_movement_context *context, qa_vec3 start, qa_vec3 end);
 double qa_q1_context_contents(qa_q1_movement_context *context, qa_vec3 point);
 bool qa_q1_context_position_free(qa_q1_movement_context *context, qa_vec3 origin);
 bool qa_q1_context_ladder_ahead(qa_q1_movement_context *context, qa_vec3 origin, qa_vec3 forward);

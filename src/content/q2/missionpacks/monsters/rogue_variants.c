@@ -11,6 +11,8 @@
 #include "qa/content/q2/base/monsters/common.h"
 #include "qa/content/q2/base/monsters/floater.h"
 #include "qa/content/q2/base/monsters/gladiator.h"
+#include "qa/content/q2/base/monsters/jorg.h"
+#include "qa/content/q2/base/monsters/makron.h"
 #include "qa/content/q2/base/monsters/supertank.h"
 #include "qa/content/q2/base/monsters/tables/supertank.h"
 #include "qa/content/q2/foundation/monsters/ai.h"
@@ -20,6 +22,26 @@
 #include "qa/content/q2/missionpacks/monsters/rogue_soldier.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_brain.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_float.h"
+
+/* TS makronDefinition/jorg createJorgDefinition/makron
+ * withMakronSpawnCallbacks via the landed base ports. The makron
+ * mirror names the same const definition object; jorg wrapper
+ * storage (callbacks the definition points into) is heap-held for
+ * the definition's lifetime. The with-makron helper appends only
+ * think source callbacks in TS, so use_storage is unused beyond
+ * the *definition copy the base helper performs. */
+qa_q2m_definition qa_q2mpm_base_create_jorg_definition(qa_q2m_monsters *monsters) {
+  qa_q2bm_jorg_definition *wrapper = malloc(sizeof *wrapper);
+  if (!wrapper) qa_q2f_error("Out of memory creating rogue base variants");
+  qa_q2bm_create_jorg_definition(wrapper, monsters);
+  return wrapper->definition;
+}
+void qa_q2mpm_with_makron_spawn_callbacks(qa_q2m_definition *out, const qa_q2m_definition *definition,
+                                          qa_q2m_monsters *monsters, qa_q2f_named_think *think_storage,
+                                          qa_q2f_named_use *use_storage) {
+  (void)use_storage;
+  qa_q2bm_with_makron_spawn_callbacks(out, definition, monsters, think_storage);
+}
 
 typedef struct variants_bundle {
   qa_q2m_monsters *monsters;

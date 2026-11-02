@@ -9,16 +9,15 @@
  *    is already a mirror in persistence/q1_selection.h). Products
  *    own their strings/archives/maps; init borrows the caller's
  *    arrays, discovery allocates and destroy frees them.
- *  - TS async filesystem work is synchronous POSIX. openArchive
- *    (content/archive/index.ts), openMountPlan/digestFile
+ *  - TS async filesystem work is synchronous POSIX. digestFile
  *    (content/mounts/index.ts), game roots (content/roots.ts),
  *    findContentPath/normalizeResourcePath (content/mounts/
  *    paths.ts) and userProductDirectory (content/user-data.ts)
- *    are unported: archive inspection and mount-plan opening are
- *    injected services (fn + ctx), file digests use a private
- *    SHA-256, and root/path logic is mirrored privately in
- *    index.c. MountedContent is the minimal open() service shape
- *    (qa_catalog_mounted_opener).
+ *    delegate to their landed ports. openArchive
+ *    (content/archive/index.ts) and openMountPlan
+ *    (content/mounts/index.ts) stay injected services (fn + ctx)
+ *    in this header's public options; MountedContent is the
+ *    minimal open() service shape (qa_catalog_mounted_opener).
  *  - TS plain Errors abort printing "Error: ..."; RangeErrors use
  *    qa_range_error, matching earlier ports.
  * GPL-2.0-or-later.
@@ -119,14 +118,15 @@ char *qa_remote_content_product(const qa_remote_content_selection *selection,
                                 const qa_catalog_product_expectation *products,
                                 size_t product_count);
 
-/* Mirror of NightdiveAddonRoot (TS owner: src/content/roots.ts). */
+/* NightdiveAddonRoot input shape (TS owner: src/content/roots.ts;
+ * qa_nightdive_addon_root in qa/content/roots.h owns its root). */
 typedef struct qa_catalog_nightdive_addon_root {
   qa_game_family family;
   const char *root;
 } qa_catalog_nightdive_addon_root;
 
 /* Archive inspection service (TS openArchive in
- * src/content/archive/index.ts, unported). inspect fills *out
+ * src/content/archive/index.ts; injected here). inspect fills *out
  * (owned by caller on success); on failure returns false and may
  * set *error_out to a malloc'd message (caller frees). */
 typedef struct qa_catalog_archive_inspector {
@@ -164,7 +164,8 @@ typedef struct qa_catalog_mount_plan_selection {
 } qa_catalog_mount_plan_selection;
 
 /* Minimal MountedContent open() shape (TS owner:
- * src/content/mounts/index.ts, unported), as in text/mounted.h. */
+ * src/content/mounts/index.ts; injected here), as in
+ * text/mounted.h. */
 typedef struct qa_catalog_opened_resource {
   qa_resolved_resource_reference reference;
   const uint8_t *bytes; /* borrowed from the service */

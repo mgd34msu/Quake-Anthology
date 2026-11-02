@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "qa/content/q1/addons/ctf/runes.h"
+#include "qa/content/q1/base/provider.h"
 #include "qa/foundation/support.h"
 
 static qa_q1ad_ctf_state *state_of(qa_q1ad_context *context) { return context->slice; }
@@ -206,9 +207,14 @@ void qa_q1ad_ctf_register_maps(qa_q1ad_ctf_state *state) {
       "monster_ogre_marksman", "monster_knight", "monster_hell_knight", "monster_wizard",
       "monster_demon1", "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
       "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
-  /* Q1_BASE_CLASSNAMES membership decides replace vs register in TS;
-   * the base list is unported, so all register as spawns (host notice
-   * carries replace=false). */
-  for (size_t i = 0; i < sizeof MONSTERS / sizeof MONSTERS[0]; i++)
-    qa_q1ad_register_spawn(context, MONSTERS[i], false, spawn_remove);
+  /* TS: Q1_BASE_CLASSNAMES.includes(classname) decides replaceSpawn
+   * vs registerSpawn (owner: src/content/q1/base/provider.ts). */
+  const char *const *base_classnames = NULL;
+  size_t base_count = qa_q1_base_classnames(&base_classnames);
+  for (size_t i = 0; i < sizeof MONSTERS / sizeof MONSTERS[0]; i++) {
+    bool replace = false;
+    for (size_t j = 0; j < base_count; j++)
+      if (strcmp(base_classnames[j], MONSTERS[i]) == 0) replace = true;
+    qa_q1ad_register_spawn(context, MONSTERS[i], replace, spawn_remove);
+  }
 }

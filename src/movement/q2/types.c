@@ -31,3 +31,20 @@ qa_q2_cplane qa_q2_plane(void) {
   memset(&plane, 0, sizeof plane);
   return plane;
 }
+
+bool qa_q2_flag_test(double flags, int mask) {
+  return (qa_int32(flags) & mask) != 0;
+}
+double qa_q2_flag_set(double flags, int mask) {
+  return (double)(qa_int32(flags) | mask);
+}
+double qa_q2_flag_clear(double flags, int mask) {
+  return (double)(qa_int32(flags) & ~mask);
+}
+
+bool qa_q2_same_hit(qa_trace_hit first, qa_trace_hit second) {
+  if (first.kind != second.kind) return false;
+  if (first.kind == QA_TRACE_HIT_WORLD) return first.model == second.model;
+  if (first.kind == QA_TRACE_HIT_ACTOR) return qa_same_actor(first.actor, second.actor);
+  return true;
+}

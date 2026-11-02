@@ -7,7 +7,7 @@
  * qa/contracts/execution.h and qa/guest/abi/values.h define
  * struct qa_guest_call_context). The fn+ctx seam below is filled
  * from the landed host by qa_compat_q3_native_host_adapter_init
- * (src/compat/q3/native/imports_host.c, the TU that sees types.h).
+ * (defined once in src/compat/q3/native/imports.c).
  * GPL-2.0-or-later. */
 #ifndef QA_COMPAT_Q3_NATIVE_ENGINE_SERVICES_H
 #define QA_COMPAT_Q3_NATIVE_ENGINE_SERVICES_H

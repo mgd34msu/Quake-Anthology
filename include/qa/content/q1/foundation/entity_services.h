@@ -73,8 +73,7 @@ struct qa_q1_services {
 };
 
 /* False only on OOM. Registers SUB_Remove/SUB_Null/DelayThink +
- * mover/spawn/pickup/monster module callbacks (weapon callbacks
- * join with the weapons.ts fire paths). */
+ * mover/spawn/pickup/weapon/monster module callbacks. */
 bool qa_q1_services_init(qa_q1_services *game, qa_q1_host host, qa_q1_options options);
 void qa_q1_services_free(qa_q1_services *game);
 qa_provider_id qa_q1_services_provider(const qa_q1_services *game);

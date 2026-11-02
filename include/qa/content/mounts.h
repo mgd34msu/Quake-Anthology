@@ -16,8 +16,8 @@
  *  - The digest disk cache saves synchronously (best-effort) where
  *    the TS defers 250 ms on a timer; cache contents and hit rules
  *    are identical. QTS_NO_DIGEST_CACHE is read per call.
- *  - q3ArchiveChecksums (src/network/q3/pure.ts, unported) is the
- *    file-local helper in mounts/index.c over qa_block_checksum.
+ *  - q3ArchiveChecksums (src/network/q3/pure.ts) is
+ *    qa_q3_archive_checksums in qa/network/q3/pure.h.
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_MOUNTS_H

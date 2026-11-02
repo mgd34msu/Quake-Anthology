@@ -67,14 +67,18 @@ static qa_raw_entity_view from_pointer(void *ctx, qa_guest_address address) {
 }
 
 void qa_qvm_raw_entity_table_init(qa_raw_entity_table *out, qa_qvm_raw_entity_table_context *context,
-                                  const qa_qvmy_raw_game_data *data, qa_qvm_memory *memory,
+                                  qa_qvm_game_data *data, qa_qvm_memory *memory,
                                   const qa_guest_memory *guest, int64_t capacity,
                                   qa_qvm_current_actor_fn current_actor, void *current_actor_ctx) {
-  int64_t start = data->entity_byte_offset(data->ctx, 0);
-  int64_t stride_bytes = data->entity_stride_bytes;
+  /* TS: first = data.entityBytes(0); start = first.byteOffset -
+   * memory.bytes.byteOffset, which is the view's start here. */
+  qa_qvm_writable_view first;
+  qa_qvm_game_data_entity_bytes(data, 0, &first);
+  int64_t start = first.start;
+  int64_t stride_bytes = (int64_t)qa_qvm_game_data_get_entity_stride_bytes(data);
   qa_guest_address_result base = guest->pointer(guest->ctx, start == 0 ? (int64_t)memory->length : start);
   if (!base.has_value) qa_range_error("Located QVM entity table has a null base");
-  int64_t count = data->num_entities;
+  int64_t count = (int64_t)qa_qvm_game_data_get_num_entities(data);
   if (capacity < count || count < 0 || stride_bytes < 516 ||
       start + capacity * stride_bytes > (int64_t)memory->length)
     qa_range_error("Invalid QVM entity table capacity or stride");

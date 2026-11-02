@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/q3/base/game/grapple.h"
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
@@ -58,13 +59,8 @@ static double snap_value(double value) {
   if (fraction > 0.5) return floor_v + 1;
   return fmod(floor_v, 2) == 0 ? floor_v : floor_v + 1;
 }
-/* q3GrappleVelocity (TS src/content/q3/base/game/grapple.ts, unported
- * module; mirrored here — see unresolved list). */
-static qa_vec3 grapple_velocity(qa_vec3 origin, qa_vec3 point, qa_vec3 forward) {
-  qa_vec3 pull = qa_sub3(qa_add3(point, qa_scale3(forward, -16)), origin);
-  double distance = f32(qa_length3(pull));
-  return qa_scale3(qa_normalize3(pull), distance <= 100 ? f32(10 * distance) : 800);
-}
+/* q3GrappleVelocity is qa_q3_grapple_velocity (TS owner:
+ * src/content/q3/base/game/grapple.ts). */
 
 typedef struct move_step {
   qa_q3_slide_move_context slide;
@@ -275,7 +271,7 @@ static void ladder_move(move_step *s) {
   qa_q3_step_slide_move(&s->slide, false);
 }
 static void grapple_move(move_step *s) {
-  s->state->velocity = grapple_velocity(s->state->origin, s->state->grapple_point, s->forward);
+  s->state->velocity = qa_q3_grapple_velocity(s->state->origin, s->state->grapple_point, s->forward);
   s->slide.has_ground_normal = false;
 }
 static void walk_move(move_step *s) {

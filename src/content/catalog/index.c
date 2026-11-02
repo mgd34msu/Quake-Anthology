@@ -1,9 +1,8 @@
 /* Port of src/content/catalog/index.ts. See index.h for the
- * mirrored unported services (archive inspector and mount-plan
- * opener, private SHA-256 for digestFile (TS owner:
- * src/content/mounts/index.ts), private game-root and path logic
- * (TS owners: src/content/roots.ts, src/content/mounts/paths.ts,
- * src/content/user-data.ts)). GPL-2.0-or-later. */
+ * injected services (archive inspector and mount-plan opener);
+ * digestFile, game roots, and path lookup delegate to their
+ * landed owners (src/content/mounts/index.ts, roots.ts,
+ * mounts/paths.ts, user-data.ts). GPL-2.0-or-later. */
 #include "qa/content/catalog/index.h"
 
 #include <strings.h>
@@ -15,6 +14,9 @@
 
 #include "catalog_internal.h"
 #include "qa/content/catalog/addons.h"
+#include "qa/content/mounts.h"
+#include "qa/content/roots.h"
+#include "qa/content/user_data.h"
 
 /* ------------------------------------------------------------------ */
 /* Path and filesystem helpers (Node path/fs mirrors).                 */
@@ -157,9 +159,9 @@ static uint8_t *read_file_prefix(const char *path, size_t limit, size_t *out_len
   return bytes;
 }
 
-/* findContentPath mirror (TS owner: src/content/mounts/paths.ts):
- * case-insensitive walk rejecting ambiguous case collisions and
- * symlink escapes; malloc'd path or NULL when missing. */
+/* findContentPath (TS owner: src/content/mounts/paths.ts) with the
+ * TS default case-insensitive comparison; malloc'd path or NULL
+ * when missing. */
 static char *find_content_path(const char *root, const char *path) {
   if (path == NULL || path[0] == '\0') {
     /* TS anchoredPath handles "" before calling; readdir of root
@@ -171,297 +173,38 @@ static char *find_content_path(const char *root, const char *path) {
     }
     return absolute;
   }
-  char *normalized = qa_catalog_normalize_resource_path(path);
-  if (normalized == NULL) return NULL;
-  char *current = resolve_path(NULL, root);
-  char canonical_root[PATH_MAX];
-  if (current == NULL || realpath(current, canonical_root) == NULL) {
-    free(normalized); free(current);
-    return NULL; /* missing root: TS isMissingFile -> null */
-  }
-  char *cursor = normalized;
-  bool ok = true;
-  while (ok) {
-    char *slash = strchr(cursor, '/');
-    if (slash != NULL) *slash = '\0';
-    dir_list entries = {0};
-    int error = 0;
-    if (!read_directory(current, &entries, &error)) { ok = false; break; }
-    const char *exact = NULL, *match = NULL;
-    size_t matches = 0;
-    for (size_t i = 0; i < entries.count; i++) {
-      if (strcmp(entries.values[i].name, cursor) == 0) exact = entries.values[i].name;
-      if (qa_catalog_ieq(entries.values[i].name, cursor)) { match = entries.values[i].name; matches++; }
-    }
-    const char *chosen = exact != NULL ? exact : match;
-    if (exact == NULL && matches > 1) {
-      dir_list_free(&entries);
-      free(normalized); free(current);
-      qa_catalog_error("Ambiguous content path: %s", path);
-    }
-    if (chosen == NULL) { dir_list_free(&entries); ok = false; break; }
-    char *next = qa_catalog_join(current, chosen);
-    dir_list_free(&entries);
-    free(current);
-    current = next;
-    if (current == NULL) { ok = false; break; }
-    if (slash == NULL) break;
-    cursor = slash + 1;
-  }
-  free(normalized);
-  if (!ok) { free(current); return NULL; }
-  char canonical[PATH_MAX];
-  if (realpath(current, canonical) == NULL) { free(current); return NULL; }
-  size_t root_length = strlen(canonical_root);
-  if (strncmp(canonical, canonical_root, root_length) != 0 ||
-      (canonical[root_length] != '/' && canonical[root_length] != '\0')) {
-    free(current);
-    qa_catalog_error("Content symlink escapes root: %s", path);
-  }
-  return current;
-}
-
-/* ------------------------------------------------------------------ */
-/* Game roots mirror (TS owner: src/content/roots.ts).                */
-
-typedef struct game_roots {
-  char *roots[3]; /* qa_game_family order; nullable, owned */
-} game_roots;
-
-static void game_roots_free(game_roots *roots) {
-  for (size_t i = 0; i < 3; i++) { free(roots->roots[i]); roots->roots[i] = NULL; }
-}
-
-static const char *family_anchor(qa_game_family family) {
-  return family == QA_GAME_FAMILY_Q1 ? "id1"
-         : family == QA_GAME_FAMILY_Q2 ? "baseq2" : "baseq3";
-}
-static const char *family_canonical(qa_game_family family) {
-  return family == QA_GAME_FAMILY_Q1 ? "q1"
-         : family == QA_GAME_FAMILY_Q2 ? "q2" : "q3a";
-}
-
-static bool family_for_directory(const char *name, qa_game_family *out) {
-  for (int i = 0; i < 3; i++) {
-    if (qa_catalog_ieq(name, family_canonical((qa_game_family)i))) {
-      *out = (qa_game_family)i;
-      return true;
-    }
-  }
-  return false;
-}
-
-static char *game_relative_path(const char *canonical_path, qa_game_family family) {
-  const char *slash = strchr(canonical_path, '/');
-  size_t first = slash != NULL ? (size_t)(slash - canonical_path) : strlen(canonical_path);
-  const char *canonical = family_canonical(family);
-  if (strlen(canonical) == first) {
-    bool same = true;
-    for (size_t i = 0; i < first; i++)
-      if (tolower((unsigned char)canonical_path[i]) != canonical[i]) same = false;
-    if (same) return qa_catalog_dup(slash != NULL ? slash + 1 : "");
-  }
-  return qa_catalog_dup(canonical_path);
-}
-
-static int compare_directory_names(const void *left, const void *right) {
-  const char *a = *(char *const *)left, *b = *(char *const *)right;
-  char *la = qa_catalog_lower_dup(a), *lb = qa_catalog_lower_dup(b);
-  int result = qa_catalog_source_compare(la, lb);
-  free(la); free(lb);
-  return result != 0 ? result : qa_catalog_source_compare(a, b);
-}
-
-static bool child_directories(const char *directory, qa_catalog_string_list *out) {
-  memset(out, 0, sizeof *out);
-  dir_list entries = {0};
-  if (!read_directory(directory, &entries, NULL)) return true;
-  for (size_t i = 0; i < entries.count; i++) {
-    bool directory_entry = entries.values[i].is_directory;
-    if (!directory_entry && entries.values[i].is_symlink) {
-      char *full = qa_catalog_join(directory, entries.values[i].name);
-      directory_entry = path_is_directory(full);
-      free(full);
-    }
-    if (!directory_entry) continue;
-    char *name = qa_catalog_dup(entries.values[i].name);
-    if (name == NULL || !qa_catalog_string_push(out, name)) {
-      free(name); dir_list_free(&entries); return false;
-    }
-  }
-  dir_list_free(&entries);
-  if (out->count > 1) qsort(out->values, out->count, sizeof(char *), compare_directory_names);
-  return true;
-}
-
-static char *child_directory(const char *directory, const char *lowered_name) {
-  qa_catalog_string_list children = {0};
-  (void)child_directories(directory, &children);
   char *found = NULL;
-  for (size_t i = 0; i < children.count; i++) {
-    if (strcmp(children.values[i], lowered_name) == 0) {
-      free(found);
-      found = qa_catalog_dup(children.values[i]);
-      break;
-    }
-    if (found == NULL && qa_catalog_ieq(children.values[i], lowered_name))
-      found = qa_catalog_dup(children.values[i]);
-  }
-  qa_catalog_string_list_free(&children);
+  if (!qa_find_content_path(root, path, QA_CONTENT_PATH_CASE_INSENSITIVE,
+                            &found))
+    return NULL;
   return found;
 }
 
-static char *anchored_game_root(const char *root, qa_game_family family) {
-  char *absolute = resolve_path(NULL, root);
-  if (absolute == NULL) return NULL;
-  const char *anchor = family_anchor(family);
-  char *canonical = child_directory(absolute, family_canonical(family));
-  if (canonical != NULL) {
-    char *candidate = qa_catalog_join(absolute, canonical);
-    char *hit = child_directory(candidate, anchor);
-    bool anchored = hit != NULL;
-    free(hit); free(canonical);
-    if (anchored) { free(absolute); return candidate; }
-    free(candidate);
-  }
-  char *direct = child_directory(absolute, anchor);
-  if (direct != NULL) { free(direct); return absolute; }
-  qa_catalog_string_list children = {0};
-  (void)child_directories(absolute, &children);
-  for (size_t i = 0; i < children.count; i++) {
-    if (qa_catalog_ieq(children.values[i], family_canonical(family))) continue;
-    char *candidate = qa_catalog_join(absolute, children.values[i]);
-    char *hit = child_directory(candidate, anchor);
-    bool anchored = hit != NULL;
-    free(hit);
-    if (anchored) {
-      qa_catalog_string_list_free(&children);
-      free(absolute);
-      return candidate;
-    }
-    free(candidate);
-  }
-  qa_catalog_string_list_free(&children);
-  free(absolute);
-  return NULL;
-}
+/* ------------------------------------------------------------------ */
+/* Game roots (TS owner: src/content/roots.ts, qa/content/roots.h).   */
 
-static char *game_root_in(const char *root, qa_game_family family) {
-  char *anchored = anchored_game_root(root, family);
-  if (anchored != NULL) return anchored;
-  char *absolute = resolve_path(NULL, root);
-  if (absolute == NULL) return NULL;
-  char *canonical = child_directory(absolute, family_canonical(family));
-  if (canonical == NULL) { free(absolute); return NULL; }
-  char *result = qa_catalog_join(absolute, canonical);
-  free(canonical); free(absolute);
-  return result;
-}
+typedef qa_game_roots game_roots;
 
 static void resolve_game_roots(const char *root, game_roots *out) {
-  memset(out, 0, sizeof *out);
-  for (int i = 0; i < 3; i++) out->roots[i] = game_root_in(root, (qa_game_family)i);
+  *out = qa_resolve_game_roots(root);
 }
 
-/* userProductDirectory mirror (TS owner: src/content/user-data.ts):
+/* userProductDirectory (TS owner: src/content/user-data.ts):
  * pathWithinRoot(userContentRoot, contentDirectory). */
 static char *user_product_directory(const char *user_root, const char *content_directory) {
-  char *normalized = qa_catalog_normalize_resource_path(content_directory);
-  if (normalized == NULL) return NULL;
-  char *joined = qa_catalog_join(user_root, normalized);
-  free(normalized);
-  if (joined == NULL) return NULL;
-  char *result = resolve_path(NULL, joined);
-  free(joined);
-  return result;
+  return qa_user_product_directory(user_root, content_directory);
 }
+
 
 /* ------------------------------------------------------------------ */
-/* SHA-256 for digestFile (TS owner: src/content/mounts/index.ts).     */
-
-typedef struct sha256 {
-  uint32_t state[8];
-  uint64_t length;
-  uint8_t buffer[64];
-  size_t buffered;
-} sha256;
-
-static const uint32_t SHA_K[64] = {
-  0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
-  0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
-  0xe49b69c1u,0xefbe4786u,0x0fc19dc6u,0x240ca1ccu,0x2de92c6fu,0x4a7484aau,0x5cb0a9dcu,0x76f988dau,
-  0x983e5152u,0xa831c66du,0xb00327c8u,0xbf597fc7u,0xc6e00bf3u,0xd5a79147u,0x06ca6351u,0x14292967u,
-  0x27b70a85u,0x2e1b2138u,0x4d2c6dfcu,0x53380d13u,0x650a7354u,0x766a0abbu,0x81c2c92eu,0x92722c85u,
-  0xa2bfe8a1u,0xa81a664bu,0xc24b8b70u,0xc76c51a3u,0xd192e819u,0xd6990624u,0xf40e3585u,0x106aa070u,
-  0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,0x5b9cca4fu,0x682e6ff3u,
-  0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u};
-
-static uint32_t rotr32(uint32_t value, unsigned bits) {
-  return (value >> bits) | (value << (32 - bits));
-}
-
-static void sha256_block(sha256 *hash, const uint8_t *block) {
-  uint32_t w[64];
-  for (size_t i = 0; i < 16; i++)
-    w[i] = ((uint32_t)block[i * 4] << 24) | ((uint32_t)block[i * 4 + 1] << 16) |
-           ((uint32_t)block[i * 4 + 2] << 8) | (uint32_t)block[i * 4 + 3];
-  for (size_t i = 16; i < 64; i++) {
-    uint32_t s0 = rotr32(w[i - 15], 7) ^ rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3);
-    uint32_t s1 = rotr32(w[i - 2], 17) ^ rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10);
-    w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-  }
-  uint32_t a = hash->state[0], b = hash->state[1], c = hash->state[2],
-           d = hash->state[3], e = hash->state[4], f = hash->state[5],
-           g = hash->state[6], h = hash->state[7];
-  for (size_t i = 0; i < 64; i++) {
-    uint32_t s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);
-    uint32_t choice = (e & f) ^ (~e & g);
-    uint32_t temp1 = h + s1 + choice + SHA_K[i] + w[i];
-    uint32_t s0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);
-    uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
-    uint32_t temp2 = s0 + majority;
-    h = g; g = f; f = e; e = d + temp1; d = c; c = b; b = a; a = temp1 + temp2;
-  }
-  hash->state[0] += a; hash->state[1] += b; hash->state[2] += c; hash->state[3] += d;
-  hash->state[4] += e; hash->state[5] += f; hash->state[6] += g; hash->state[7] += h;
-}
-
-static void sha256_update(sha256 *hash, const uint8_t *data, size_t length) {
-  hash->length += length;
-  while (length > 0) {
-    size_t take = 64 - hash->buffered;
-    if (take > length) take = length;
-    memcpy(hash->buffer + hash->buffered, data, take);
-    hash->buffered += take; data += take; length -= take;
-    if (hash->buffered == 64) { sha256_block(hash, hash->buffer); hash->buffered = 0; }
-  }
-}
+/* digestFile (TS owner: src/content/mounts/index.ts) is qa_digest_file
+ * in qa/content/mounts.h; the catalog keeps its per-instance cache. */
 
 static char *digest_file(qa_content_catalog *catalog, const char *path) {
   for (size_t i = 0; i < catalog->digest_count; i++)
     if (strcmp(catalog->digests[i].path, path) == 0)
       return qa_catalog_dup(catalog->digests[i].digest);
-  FILE *file = fopen(path, "rb");
-  if (file == NULL) qa_catalog_error("%s", strerror(errno));
-  sha256 hash = {{0x6a09e667u,0xbb67ae85u,0x3c6ef372u,0xa54ff53au,
-                  0x510e527fu,0x9b05688cu,0x1f83d9abu,0x5be0cd19u}, 0, {0}, 0};
-  uint8_t chunk[8192];
-  size_t read;
-  while ((read = fread(chunk, 1, sizeof chunk, file)) > 0)
-    sha256_update(&hash, chunk, read);
-  (void)fclose(file);
-  uint64_t bit_length = hash.length * 8;
-  uint8_t pad = 0x80;
-  sha256_update(&hash, &pad, 1);
-  uint8_t zero = 0;
-  while (hash.buffered != 56) sha256_update(&hash, &zero, 1);
-  uint8_t length_bytes[8];
-  for (size_t i = 0; i < 8; i++) length_bytes[i] = (uint8_t)(bit_length >> (56 - i * 8));
-  sha256_update(&hash, length_bytes, 8);
-  char hex[65];
-  for (size_t i = 0; i < 8; i++)
-    (void)snprintf(hex + i * 8, 9, "%08x", hash.state[i]);
-  char *digest = qa_create_content_digest(hex);
+  char *digest = qa_digest_file(path);
   if (digest == NULL) return NULL;
   if (catalog->digest_count == catalog->digest_capacity) {
     size_t next = catalog->digest_capacity != 0 ? catalog->digest_capacity * 2 : 8;
@@ -1545,7 +1288,7 @@ static char *anchored_path(const game_roots *roots, const char *corpus_root,
                            qa_game_family family, const char *canonical_path) {
   const char *game_root = roots->roots[family];
   if (game_root != NULL) {
-    char *relative = game_relative_path(canonical_path, family);
+    char *relative = qa_game_relative_path(canonical_path, family);
     if (relative != NULL && relative[0] == '\0') {
       free(relative);
       return qa_catalog_dup(game_root);
@@ -2023,7 +1766,7 @@ static bool discover_sibling_directories(
       qa_game_family family = (qa_game_family)f;
       const char *game_root = root_sets[r]->roots[family];
       if (game_root == NULL) continue;
-      const char *canonical = family_canonical(family);
+      const char *canonical = qa_game_family_directory(family);
       char *rerelease_root = find_content_path(game_root, "rerelease");
       const char *trees[2] = {game_root, rerelease_root};
       for (size_t t = 0; t < 2; t++) {
@@ -2548,7 +2291,7 @@ bool qa_discover_installed_content(const qa_discover_content_options *options,
         char *slash = first != NULL ? strchr(first, '/') : NULL;
         if (slash != NULL) *slash = '\0';
         qa_game_family archive_family = expectation->family;
-        (void)family_for_directory(first != NULL ? first : "", &archive_family);
+        (void)qa_game_family_for_directory(first != NULL ? first : "", &archive_family);
         char *path = anchored_path(&corpus_roots, corpus_root, archive_family, archive);
         if (path == NULL && is_user_mod && user_root != NULL)
           path = anchored_path(&user_roots, user_root, archive_family, archive);
@@ -2714,8 +2457,8 @@ bool qa_discover_installed_content(const qa_discover_content_options *options,
       }
     }
   }
-  game_roots_free(&corpus_roots);
-  game_roots_free(&user_roots);
+  qa_game_roots_free(&corpus_roots);
+  qa_game_roots_free(&user_roots);
   return products != NULL || product_count == 0;
 }
 

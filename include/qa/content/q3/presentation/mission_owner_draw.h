@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "qa/content/q3/presentation/config.h"
 #include "qa/content/q3/presentation/draw_icons.h"
+#include "qa/content/q3/presentation/media.h"
 #include "qa/content/q3/presentation/state.h"
 #include "qa/contracts/math.h"
 #include "qa/text/q3_font.h"
@@ -57,6 +58,12 @@ typedef struct qa_q3_pres_mission_owner_draw_host {
   const qa_q3_pres_scene_shader *armor_icon; /* nullable */
   const qa_q3_pres_scene_shader *(*weapon_icon)(void *ctx, double weapon);
   const qa_q3_pres_scene_shader *(*item_icon)(void *ctx, double item_index);
+  /* TS media.graphics + media.resources.registerShader (nullable). */
+  const qa_q3_pres_client_media_graphics *graphics;
+  const qa_q3_pres_scene_shader *(*register_shader)(void *ctx, const char *path);
+  /* TS host.random (playerHead). */
+  double (*crandom)(void *ctx);
+  double (*random_value)(void *ctx);
 } qa_q3_pres_mission_owner_draw_host;
 typedef struct qa_q3_pres_mission_owner_draw {
   qa_q3_pres_client_game_state *state;

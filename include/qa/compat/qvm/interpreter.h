@@ -50,54 +50,17 @@ typedef struct qa_qvmx_view {
   size_t length;
 } qa_qvmx_view;
 
-static inline void qa_qvmx_view_check(const qa_qvmx_view *view, int64_t offset, int64_t width) {
-  if (offset < 0 || width < 0 || offset > (int64_t)view->length - width)
-    qa_range_error("Offset is outside the bounds of the DataView");
-}
-static inline int32_t qa_qvmx_view_i32(const qa_qvmx_view *view, int64_t offset) {
-  qa_qvmx_view_check(view, offset, 4);
-  const uint8_t *p = view->bytes + offset;
-  uint32_t v = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-  int32_t out;
-  __builtin_memcpy(&out, &v, sizeof out);
-  return out;
-}
-static inline void qa_qvmx_view_set_i32(qa_qvmx_view *view, int64_t offset, int32_t value) {
-  qa_qvmx_view_check(view, offset, 4);
-  uint8_t *p = view->bytes + offset;
-  uint32_t v;
-  __builtin_memcpy(&v, &value, sizeof v);
-  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-}
-static inline float qa_qvmx_view_f32(const qa_qvmx_view *view, int64_t offset) {
-  int32_t bits = qa_qvmx_view_i32(view, offset);
-  float out;
-  __builtin_memcpy(&out, &bits, sizeof out);
-  return out;
-}
-static inline void qa_qvmx_view_set_f32(qa_qvmx_view *view, int64_t offset, float value) {
-  int32_t bits;
-  __builtin_memcpy(&bits, &value, sizeof bits);
-  qa_qvmx_view_set_i32(view, offset, bits);
-}
-static inline uint8_t qa_qvmx_view_u8(const qa_qvmx_view *view, int64_t offset) {
-  qa_qvmx_view_check(view, offset, 1);
-  return view->bytes[offset];
-}
-static inline void qa_qvmx_view_set_u8(qa_qvmx_view *view, int64_t offset, uint8_t value) {
-  qa_qvmx_view_check(view, offset, 1);
-  view->bytes[offset] = value;
-}
-static inline uint16_t qa_qvmx_view_u16(const qa_qvmx_view *view, int64_t offset) {
-  qa_qvmx_view_check(view, offset, 2);
-  const uint8_t *p = view->bytes + offset;
-  return (uint16_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8));
-}
-static inline void qa_qvmx_view_set_u16(qa_qvmx_view *view, int64_t offset, uint16_t value) {
-  qa_qvmx_view_check(view, offset, 2);
-  view->bytes[offset] = (uint8_t)value;
-  view->bytes[offset + 1] = (uint8_t)(value >> 8);
-}
+/* DataView bounds rule (memory-writes.ts index()): aborts on OOB. */
+void qa_qvmx_view_check(const qa_qvmx_view *view, int64_t offset, int64_t width);
+/* Little-endian DataView scalar reads/writes; each checks bounds first. */
+int32_t qa_qvmx_view_i32(const qa_qvmx_view *view, int64_t offset);
+void qa_qvmx_view_set_i32(qa_qvmx_view *view, int64_t offset, int32_t value);
+float qa_qvmx_view_f32(const qa_qvmx_view *view, int64_t offset);
+void qa_qvmx_view_set_f32(qa_qvmx_view *view, int64_t offset, float value);
+uint8_t qa_qvmx_view_u8(const qa_qvmx_view *view, int64_t offset);
+void qa_qvmx_view_set_u8(qa_qvmx_view *view, int64_t offset, uint8_t value);
+uint16_t qa_qvmx_view_u16(const qa_qvmx_view *view, int64_t offset);
+void qa_qvmx_view_set_u16(qa_qvmx_view *view, int64_t offset, uint16_t value);
 
 typedef struct qa_qvmx_memory {
   uint8_t *bytes; /* borrowed allocation */

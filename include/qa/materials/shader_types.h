@@ -20,21 +20,11 @@
 #include "qa/foundation/support.h"
 #include "qa/materials/cinematic.h"
 
-/* JS ToInt32/ToUint32 for bitwise operators. */
-static inline int32_t qa_mat_to_int32(double value) {
-  if (!isfinite(value)) return 0;
-  double m = fmod(trunc(value), 4294967296.0);
-  if (m < 0) m += 4294967296.0;
-  if (m >= 2147483648.0) m -= 4294967296.0;
-  return (int32_t)m;
-}
-static inline uint32_t qa_mat_to_uint32(double value) {
-  return (uint32_t)qa_mat_to_int32(value);
-}
-static inline float qa_mat_f(double value) { return (float)value; }
-static inline bool qa_mat_kind_is(const char *kind, const char *name) {
-  return kind != NULL && strcmp(kind, name) == 0;
-}
+/* JS ToInt32/ToUint32 for bitwise operators (src/materials/shader_types.c). */
+int32_t qa_mat_to_int32(double value);
+uint32_t qa_mat_to_uint32(double value);
+float qa_mat_f(double value);
+bool qa_mat_kind_is(const char *kind, const char *name);
 
 /* TS SourceWaveFunction (material.ts), exact numeric values. */
 enum {
@@ -332,29 +322,9 @@ typedef struct qa_mat_compiled_material {
   qa_render_material material; /* the "q3" RenderMaterial */
 } qa_mat_compiled_material;
 
-/* Mirrored evaluateWaveform (TS owner: material.ts), inlined until the
- * material port lands. Exact Math.fround staging. */
-static inline int32_t qa_mat_shader_table_index(double value) {
-  double integer = trunc(value);
-  if (!isfinite(integer) || integer < -2147483648.0 || integer > 2147483647.0)
-    qa_range_error("Shader table index reaches undefined source float-to-int conversion");
-  return (int32_t)integer & 1023;
-}
-static inline double qa_mat_evaluate_waveform(qa_waveform wave, double time) {
-  int32_t index = qa_mat_shader_table_index(
-      (double)qa_mat_f((double)qa_mat_f(wave.phase + (double)qa_mat_f(time * wave.frequency)) * 1024.0));
-  double value;
-  if (qa_mat_kind_is(wave.kind, "none"))
-    qa_range_error("EvalWaveForm does not support GF_NONE");
-  else if (qa_mat_kind_is(wave.kind, "sin")) value = qa_renderer_sine(index);
-  else if (qa_mat_kind_is(wave.kind, "square")) value = index < 512 ? 1 : -1;
-  else if (qa_mat_kind_is(wave.kind, "sawtooth")) value = index / 1024.0;
-  else if (qa_mat_kind_is(wave.kind, "inversesawtooth")) value = 1 - index / 1024.0;
-  else if (qa_mat_kind_is(wave.kind, "triangle"))
-    value = index < 256 ? index / 256.0 : index < 768 ? 2 - index / 256.0 : index / 256.0 - 4;
-  else /* "noise" */
-    qa_range_error("Noise waveforms require the renderer's seeded R_NoiseGet4f context; EvalWaveForm does not support GF_NOISE");
-  return qa_mat_f(wave.base + (double)qa_mat_f(value * wave.amplitude));
-}
+/* Mirrored evaluateWaveform (TS owner: material.ts). Exact Math.fround
+ * staging; definitions in src/materials/shader_types.c. */
+int32_t qa_mat_shader_table_index(double value);
+double qa_mat_evaluate_waveform(qa_waveform wave, double time);
 
 #endif

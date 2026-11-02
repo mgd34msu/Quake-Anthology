@@ -3,8 +3,10 @@
 #define QA_CONTENT_Q1_MISSIONPACKS_OBITUARIES_H
 #include "qa/content/q1/missionpacks/types.h"
 
-/* Mirrors (TS owner: src/content/q1/base/rules.ts, unlanded):
- * q1Obituary input/result. Strings are borrowed. */
+/* Mirrors (TS owner: src/content/q1/base/rules.ts; landed form is
+ * qa/content/q1/base/rules.h): q1Obituary input/result. Strings
+ * are borrowed. The person mirror has no health/powerup/killString
+ * fields, so the ext adapter reads those as 0/"". */
 typedef struct qa_q1mp_obituary_person {
   qa_actor_id actor; bool has_actor; const char *name; const char *classname; const char *weapon;
   bool is_player; bool is_monster; bool brush; double team; double water_level; const char *water_type;
@@ -19,7 +21,7 @@ typedef struct qa_q1mp_obituary {
   bool has_message; char text[512]; const char *args[4]; size_t arg_count;
   bool has_score; qa_actor_id score_actor; double score_delta; const char *achievement;
 } qa_q1mp_obituary;
-/* Mirrored q1Obituary (same TS owner; ext until base/rules lands).
+/* q1Obituary (same TS owner) via the landed base/rules port.
  * The port replays firstRoll exactly as the TS fallback closure. */
 qa_q1mp_obituary qa_q1mp_ext_q1_obituary(const qa_q1mp_obituary_input *input, bool has_attacker_override, bool attacker_null);
 typedef struct qa_q1mp_obituary_context {

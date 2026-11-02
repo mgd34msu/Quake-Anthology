@@ -1,6 +1,64 @@
-/* Port of src/content/q1/missionpacks/travel.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/travel.ts. The qa_q1mp_ext_*
+ * mirrors are src/content/q1/base/travel.ts (landed as qa/content/
+ * q1/base/travel.h); they convert between the fixed-array mission
+ * state and the base owned-list state. Item/extension byte storage
+ * of a converted base state is transferred (not freed), matching
+ * pack_inventory's borrowed buffers. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/travel.h"
+
 #include "missionpacks_internal.h"
+#include "qa/content/q1/base/travel.h"
+
+static qa_q1mp_travel_state travel_from_base(qa_q1_travel_state base) {
+  qa_q1mp_travel_state state = {0};
+  state.health = base.health;
+  state.max_health = base.max_health;
+  state.armor = base.armor;
+  state.weapon = base.weapon;
+  size_t items = base.inventory_count < QA_Q1MP_TRAVEL_ITEMS
+                     ? base.inventory_count : QA_Q1MP_TRAVEL_ITEMS;
+  for (size_t i = 0; i < items; i++) state.inventory[i] = base.inventory[i];
+  state.inventory_count = items;
+  size_t exts = base.extension_count < QA_Q1MP_TRAVEL_EXTS
+                    ? base.extension_count : QA_Q1MP_TRAVEL_EXTS;
+  for (size_t i = 0; i < exts; i++) {
+    state.extensions[i].id = base.extensions[i].id;
+    state.extensions[i].bytes = base.extensions[i].bytes;
+    state.extensions[i].length = base.extensions[i].length;
+  }
+  state.extension_count = exts;
+  return state;
+}
+qa_q1mp_travel_state qa_q1mp_ext_new_q1_travel(const qa_q1b_options *options) {
+  return travel_from_base(qa_q1_new_travel(options));
+}
+qa_q1mp_travel_state qa_q1mp_ext_capture_q1_travel(qa_q1mp_game *game, qa_owned_actor actor,
+                                                   const char *weapon, double max_health,
+                                                   bool reset_in_deathmatch) {
+  qa_q1_travel_policy policy = {true, reset_in_deathmatch};
+  return travel_from_base(qa_q1_capture_travel(game->base, actor, weapon, &max_health, policy));
+}
+void qa_q1mp_ext_admit_q1_travel(qa_q1mp_game *game, qa_owned_actor actor,
+                                 const qa_q1mp_travel_state *state) {
+  /* admit only reads the entries/extensions, so a borrowed view of
+   * the fixed arrays is sound (inventory_items is destroy-only). */
+  qa_q1_travel_extension extensions[QA_Q1MP_TRAVEL_EXTS];
+  for (size_t i = 0; i < state->extension_count; i++) {
+    extensions[i].id = (char *)state->extensions[i].id;
+    extensions[i].bytes = (uint8_t *)state->extensions[i].bytes;
+    extensions[i].length = state->extensions[i].length;
+  }
+  qa_q1_travel_state base = {0};
+  base.health = state->health;
+  base.max_health = state->max_health;
+  base.armor = state->armor;
+  base.inventory = (qa_inventory_entry *)state->inventory;
+  base.inventory_count = state->inventory_count;
+  base.weapon = state->weapon;
+  base.extensions = extensions;
+  base.extension_count = state->extension_count;
+  qa_q1_admit_travel(game->base, actor, &base);
+}
 
 static void pack_inventory(qa_q1mp_game *game, qa_q1mp_pack pack, qa_inventory_entry *out, size_t *count) {
   size_t n = 0; char prefix[32]; (void)snprintf(prefix, sizeof prefix, "%s:", pack);

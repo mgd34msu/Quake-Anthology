@@ -21,14 +21,6 @@ static int64_t field_offset(const qa_qvm_shared_entity *entity, int64_t modern) 
   return modern < 428 ? modern - 8 : modern - 12;
 }
 
-int32_t qa_qvmy_entity_state_get_modelindex(qa_qvmy_entity_state *state) {
-  return qa_qvm_writable_view_get_int32(&state->view, 160, true);
-}
-
-void qa_qvmy_entity_state_set_modelindex(qa_qvmy_entity_state *state, int32_t value) {
-  qa_qvm_writable_view_set_int32(&state->view, 160, value, true);
-}
-
 void qa_qvm_borrow_shared_entity(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile,
                                  qa_qvm_shared_entity *out) {
   if (profile == NULL) profile = "q3-modern";
@@ -38,8 +30,8 @@ void qa_qvm_borrow_shared_entity(const qa_qvm_writable_view *view, qa_qvm_abi_pr
                     bytes, (long long)view->length);
   out->view = *view;
   out->profile = profile;
-  out->s.view = *view;
-  out->s.profile = profile;
+  qa_qvmx_view state_view = {view->bytes + view->start, (size_t)view->length};
+  out->s = qa_qvm_borrow_entity_state(state_view, profile);
 }
 
 static int32_t get_word(qa_qvm_shared_entity *entity, int64_t modern) {
@@ -102,7 +94,7 @@ qa_qvm_entity_collision_model qa_qvm_shared_entity_get_model(qa_qvm_shared_entit
   qa_qvm_entity_collision_model result;
   if (get_word(e, 432) != 0) {
     result.kind = "inline";
-    result.index = qa_qvmy_entity_state_get_modelindex(&e->s);
+    result.index = (int32_t)qa_qvm_entity_state_get_modelindex(&e->s);
     return result;
   }
   result.kind = (get_word(e, 424) & SVF_CAPSULE) != 0 ? "capsule" : "box";
@@ -112,7 +104,7 @@ qa_qvm_entity_collision_model qa_qvm_shared_entity_get_model(qa_qvm_shared_entit
 
 void qa_qvm_shared_entity_set_model(qa_qvm_shared_entity *e, qa_qvm_entity_collision_model value) {
   if (strcmp(value.kind, "inline") == 0) {
-    qa_qvmy_entity_state_set_modelindex(&e->s, value.index);
+    qa_qvm_entity_state_set_modelindex(&e->s, (double)value.index);
     set_word(e, 432, 1);
   } else if (strcmp(value.kind, "box") == 0) {
     set_word(e, 432, 0);

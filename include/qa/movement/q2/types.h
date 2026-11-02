@@ -285,22 +285,11 @@ double qa_q2_element(const double *values, size_t length, double index);
 qa_q2_cplane qa_q2_plane(void);
 
 /* TS ToInt32 flag edits on number fields, as in q1/types. */
-static inline bool qa_q2_flag_test(double flags, int mask) {
-  return (qa_int32(flags) & mask) != 0;
-}
-static inline double qa_q2_flag_set(double flags, int mask) {
-  return (double)(qa_int32(flags) | mask);
-}
-static inline double qa_q2_flag_clear(double flags, int mask) {
-  return (double)(qa_int32(flags) & ~mask);
-}
+bool qa_q2_flag_test(double flags, int mask);
+double qa_q2_flag_set(double flags, int mask);
+double qa_q2_flag_clear(double flags, int mask);
 
 /** MovementEntity identity (TS === after index.ts canonicalization). */
-static inline bool qa_q2_same_hit(qa_trace_hit first, qa_trace_hit second) {
-  if (first.kind != second.kind) return false;
-  if (first.kind == QA_TRACE_HIT_WORLD) return first.model == second.model;
-  if (first.kind == QA_TRACE_HIT_ACTOR) return qa_same_actor(first.actor, second.actor);
-  return true;
-}
+bool qa_q2_same_hit(qa_trace_hit first, qa_trace_hit second);
 
 #endif

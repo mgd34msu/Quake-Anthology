@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/interpreter.h"
 #include "qa/core/common_error.h"
 #include "qa/foundation/support.h"
 
@@ -16,7 +17,7 @@ typedef struct slot {
   int64_t data_length;
   int64_t instruction_pointers_length;
   int64_t code_length;
-  const qa_qvmy_interpreter *interpreter;
+  qa_qvm_interpreter *interpreter;
 } slot;
 
 static slot *slots_of(qa_qvm_vm_registry *registry) { return registry->slots; }
@@ -126,19 +127,25 @@ void qa_qvm_vm_registry_clear(qa_qvm_vm_registry *registry) {
 }
 
 static int64_t slot_code_length(const slot *entry) {
-  if (strcmp(entry->kind, "interpreted") == 0) return entry->interpreter->code_length;
+  if (strcmp(entry->kind, "interpreted") == 0)
+    return (int64_t)qa_qvm_interpreter_get_code_length(entry->interpreter);
   if (strcmp(entry->kind, "initializing") == 0) return entry->code_length;
   return 0;
 }
 
 static int64_t slot_table_length(const slot *entry) {
-  if (strcmp(entry->kind, "interpreted") == 0) return entry->interpreter->instruction_pointers_length;
+  if (strcmp(entry->kind, "interpreted") == 0)
+    return (int64_t)qa_qvm_interpreter_get_instruction_pointers_length(entry->interpreter);
   if (strcmp(entry->kind, "initializing") == 0) return entry->instruction_pointers_length;
   return 0;
 }
 
 static int64_t slot_data_length(const slot *entry) {
-  if (strcmp(entry->kind, "interpreted") == 0) return entry->interpreter->memory_length;
+  if (strcmp(entry->kind, "interpreted") == 0) {
+    size_t length = 0;
+    (void)qa_qvm_interpreter_get_memory(entry->interpreter, &length);
+    return (int64_t)length;
+  }
   if (strcmp(entry->kind, "initializing") == 0) return entry->data_length;
   return 1;
 }
@@ -171,7 +178,8 @@ void qa_qvm_vm_registry_print_profile(qa_qvm_vm_registry *registry, qa_qvm_regis
   slot *entry = &slots[registry->last_called_slot];
   if (!entry->occupied || entry->generation != registry->last_called_generation) return;
   if (strcmp(entry->kind, "interpreted") != 0) return;
-  qa_qvm_symbols_print_profile(entry->interpreter->symbols, print, print_ctx, entry->interpreter->debug_enabled);
+  qa_qvm_symbols_print_profile(qa_qvm_interpreter_get_symbols(entry->interpreter), print, print_ctx,
+                               qa_qvm_interpreter_get_debug_enabled(entry->interpreter));
 }
 
 qa_qvm_vm_binding qa_qvm_vm_registration_get_binding(const qa_qvm_vm_registration *registration) {
@@ -203,7 +211,7 @@ void qa_qvm_vm_registration_bind_code_length(const qa_qvm_vm_registration *regis
   preparing(registration)->code_length = length;
 }
 
-void qa_qvm_vm_registration_bind_interpreter(const qa_qvm_vm_registration *registration, const qa_qvmy_interpreter *interpreter) {
+void qa_qvm_vm_registration_bind_interpreter(const qa_qvm_vm_registration *registration, qa_qvm_interpreter *interpreter) {
   slot *entry = preparing(registration);
   entry->kind = "interpreted";
   entry->interpreter = interpreter;
