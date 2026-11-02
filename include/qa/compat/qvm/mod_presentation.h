@@ -1,7 +1,7 @@
 /*
  * Port of src/compat/qvm/mod-presentation.ts. Async flattened.
- * Mirrored: qualifyQvmBodyCalls (TS owner src/compat/qvm/body-scope.ts,
- * parallel slice) is a caller callback filling (site, part) pairs.
+ * Body calls are qualified with the landed qa_qvm_qualify_body_calls
+ * (TS owner src/compat/qvm/body-scope.ts, body_scope.h).
  * The owned module is built from the supplied module options with a
  * host wrapper reproducing sceneSyscall. Save/restore of host state
  * uses the landed checkpoint value codec.
@@ -60,10 +60,6 @@ typedef struct qa_qvm_presentation_context {
   const qa_qvm_scene_context *scene; /* borrowed, nullable */
 } qa_qvm_presentation_context;
 
-typedef size_t (*qa_qvmy_qualify_body_calls_fn)(void *ctx, const qa_qvmy_artifact *artifact,
-                                                const qa_qvm_scene_body *body,
-                                                double *out_sites, const char **out_parts, size_t capacity);
-
 typedef struct qa_qvm_mod_presentation_options {
   qa_qvm_module_options module_options; /* host is wrapped as in the TS */
   qa_module_identity source;
@@ -73,8 +69,6 @@ typedef struct qa_qvm_mod_presentation_options {
   bool (*actor)(void *ctx, int64_t source_slot, qa_actor_id *out);
   bool (*live)(void *ctx, qa_actor_id actor);
   void (*assert_current)(void *ctx);
-  qa_qvmy_qualify_body_calls_fn qualify_body_calls;
-  void *qualify_ctx;
 } qa_qvm_mod_presentation_options;
 
 typedef struct qa_qvm_mod_presentation {
@@ -92,7 +86,7 @@ typedef struct qa_qvm_mod_presentation {
   size_t player_capacity;
   uint8_t *defaults;
   size_t defaults_length;
-  const qa_qvmy_source_player_event *active_event;
+  const qa_app_q3_source_player_event *active_event;
   size_t removal_ids[4];
   size_t removal_count;
   void *snapshots; /* opaque */
@@ -132,7 +126,7 @@ const char *const *qa_qvm_mod_presentation_arguments(qa_qvm_mod_presentation *pr
 int64_t qa_qvm_mod_presentation_last_sequence(const qa_qvm_mod_presentation *presentation);
 void qa_qvm_mod_presentation_initialize(qa_qvm_mod_presentation *presentation, int64_t baseline_sequence);
 void qa_qvm_mod_presentation_consume(qa_qvm_mod_presentation *presentation,
-                                     const qa_qvmy_source_player_event *event, int64_t sequence);
+                                     const qa_app_q3_source_player_event *event, int64_t sequence);
 void qa_qvm_mod_presentation_advance(qa_qvm_mod_presentation *presentation, int64_t frame_sequence);
 bool qa_qvm_mod_presentation_console_command(qa_qvm_mod_presentation *presentation,
                                              const char *const *arguments, size_t argument_count);

@@ -103,56 +103,6 @@ static void writes_clear(void *ctx, qa_qvmx_chat_span destination, int64_t start
                            destination.byte_length - start, 0);
 }
 
-/* Legacy adapters onto the qa_qvmx_bot_library mirror. */
-typedef struct legacy_ctx { qa_qvm_bot_library_services *services; } legacy_ctx;
-static void legacy_use_item(void *ctx, int32_t client, const char *item) {
-  legacy_ctx *l = ctx;
-  l->services->library.actions_use_item(l->services->library.ctx, client, item);
-}
-static void legacy_drop_item(void *ctx, int32_t client, const char *item) {
-  legacy_ctx *l = ctx;
-  l->services->library.actions_drop_item(l->services->library.ctx, client, item);
-}
-static void legacy_use_inventory(void *ctx, int32_t client, const char *item) {
-  legacy_ctx *l = ctx;
-  l->services->library.actions_use_inventory(l->services->library.ctx, client, item);
-}
-static void legacy_drop_inventory(void *ctx, int32_t client, const char *item) {
-  legacy_ctx *l = ctx;
-  l->services->library.actions_drop_inventory(l->services->library.ctx, client, item);
-}
-static void legacy_get_input(void *ctx, int32_t client, float think_time, uint8_t out[40]) {
-  legacy_ctx *l = ctx;
-  l->services->library.actions_get_input_bytes(l->services->library.ctx, client, think_time, out);
-}
-static int32_t legacy_character_load(void *ctx, const char *name, int32_t skill) {
-  legacy_ctx *l = ctx;
-  return (int32_t)l->services->library.characters_load(l->services->library.ctx, name, (float)skill);
-}
-static void legacy_set_name(void *ctx, int32_t state, const char *name) {
-  legacy_ctx *l = ctx;
-  /* legacy arity lacks the client argument; pass 0 as the TS overload does. */
-  l->services->library.chat_set_name(l->services->library.ctx, state, name, 0);
-}
-static void legacy_enter_chat(void *ctx, int32_t state, int32_t type, int32_t team, int32_t subtype) {
-  legacy_ctx *l = ctx;
-  l->services->library.chat_enter_chat_legacy(l->services->library.ctx, state, type, team, subtype);
-}
-static void legacy_user_command(void *ctx, int32_t client, const qa_q3_wire_user_command *command) {
-  legacy_ctx *l = ctx;
-  qa_qvmx_wire_user_command converted;
-  converted.server_time = command->server_time;
-  converted.angles[0] = command->angles[0];
-  converted.angles[1] = command->angles[1];
-  converted.angles[2] = command->angles[2];
-  converted.forwardmove = command->forwardmove;
-  converted.rightmove = command->rightmove;
-  converted.upmove = command->upmove;
-  converted.buttons = command->buttons;
-  converted.weapon = command->weapon;
-  l->services->user_command(l->services->ctx, client, converted);
-}
-
 typedef struct dispatch {
   const qa_qvm_host_call *call;
   qa_qvm_bot_library_services *services;
@@ -256,21 +206,8 @@ static qa_qvmx_view goal_view(dispatch *d, size_t index, qa_qvm_writable_view *s
 
 bool qa_qvm_bot_library_syscall(const qa_qvm_host_call *call, qa_qvm_bot_library_services *services,
                                 qa_qvm_host_result *out) {
-  legacy_ctx lctx = {services};
-  qa_qvmy_bot_library legacy_library;
-  memset(&legacy_library, 0, sizeof legacy_library);
-  legacy_library.ctx = &lctx;
-  legacy_library.actions_use_item = legacy_use_item;
-  legacy_library.actions_drop_item = legacy_drop_item;
-  legacy_library.actions_use_inventory = legacy_use_inventory;
-  legacy_library.actions_drop_inventory = legacy_drop_inventory;
-  legacy_library.actions_get_input_bytes = legacy_get_input;
-  legacy_library.characters_load = legacy_character_load;
-  legacy_library.chat_set_name = legacy_set_name;
-  legacy_library.chat_enter_chat = legacy_enter_chat;
-  qa_qvmy_bot_library_services legacy_services = {&legacy_library, &lctx, legacy_user_command};
   int32_t legacy_out = 0;
-  if (qa_qvm_legacy_bot_library_syscall(call, &legacy_services, &legacy_out)) {
+  if (qa_qvm_legacy_bot_library_syscall(call, services, &legacy_out)) {
     *out = legacy_out;
     return true;
   }

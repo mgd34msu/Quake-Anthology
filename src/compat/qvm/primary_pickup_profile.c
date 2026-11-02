@@ -34,14 +34,14 @@ static int64_t integer_field(const qa_save_reader *reader, const char *name, dou
   return value;
 }
 
-static const qa_qvmy_region_instruction *at_insn(const qa_qvmy_artifact *artifact, int64_t index) {
+static const qa_qvm_instruction *at_insn(const qa_qvmy_artifact *artifact, int64_t index) {
   if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
   return &artifact->instructions[index];
 }
 
 static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *reader) {
   int64_t value = (int64_t)qa_save_reader_integer_min(reader, 0);
-  const qa_qvmy_region_instruction *instruction = at_insn(artifact, value);
+  const qa_qvm_instruction *instruction = at_insn(artifact, value);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
     qa_save_reader_fail(reader, "pickup requires an original function entry");
   return value;
@@ -50,7 +50,7 @@ static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *read
 static int64_t owner_end(const qa_qvmy_artifact *artifact, int64_t owner) {
   int64_t end = owner + 1;
   while (end < (int64_t)artifact->instruction_count) {
-    const qa_qvmy_region_instruction *instruction = at_insn(artifact, end);
+    const qa_qvm_instruction *instruction = at_insn(artifact, end);
     if (instruction != NULL && instruction->opcode == QA_QVMY_OP_ENTER) break;
     end++;
   }
@@ -63,8 +63,8 @@ static int64_t *read_calls(const qa_qvmy_artifact *artifact, qa_save_reader *rea
   for (size_t i = 0; i < count; i++) {
     qa_save_reader value = item(reader, i);
     int64_t index = (int64_t)qa_save_reader_integer_min(&value, 1);
-    const qa_qvmy_region_instruction *call = at_insn(artifact, index);
-    const qa_qvmy_region_instruction *target = at_insn(artifact, index - 1);
+    const qa_qvm_instruction *call = at_insn(artifact, index);
+    const qa_qvm_instruction *target = at_insn(artifact, index - 1);
     if (call == NULL || call->opcode != QA_QVMY_OP_CALL || target == NULL ||
         target->opcode != QA_QVMY_OP_CONST || target->operand != owner)
       qa_save_reader_fail(&value, "pickup call differs from its declared original target");
@@ -240,8 +240,8 @@ void qa_qvm_read_primary_pickup_profile(const qa_save_reader *reader, const qa_q
     grant->operation_kind = kind;
     if (strcmp(kind, "return") == 0) {
       grant->accepted_return = integer_field(&op, "acceptedReturn", (double)(grant->entry + 1));
-      const qa_qvmy_region_instruction *value = at_insn(artifact, grant->accepted_return);
-      const qa_qvmy_region_instruction *leave = at_insn(artifact, grant->accepted_return + 1);
+      const qa_qvm_instruction *value = at_insn(artifact, grant->accepted_return);
+      const qa_qvm_instruction *leave = at_insn(artifact, grant->accepted_return + 1);
       if (grant->accepted_return + 1 >= owner_end(artifact, grant->entry) || value == NULL ||
           value->opcode != QA_QVMY_OP_CONST || value->operand == 0 || leave == NULL ||
           leave->opcode != QA_QVMY_OP_LEAVE)
@@ -281,7 +281,7 @@ void qa_qvm_read_primary_pickup_profile(const qa_save_reader *reader, const qa_q
     for (size_t b = 0; b < branch_count; b++) {
       qa_save_reader value = item(&branches_reader, b);
       int64_t instruction_index = integer_field(&value, "instructionIndex", (double)(out->gate_entry + 1));
-      const qa_qvmy_region_instruction *instruction = at_insn(artifact, instruction_index);
+      const qa_qvm_instruction *instruction = at_insn(artifact, instruction_index);
       bool seen = false;
       for (size_t j = 0; j < b; j++) if (grant->branches[j].instruction_index == instruction_index) seen = true;
       if (instruction_index >= owner_end(artifact, out->gate_entry) || instruction == NULL ||

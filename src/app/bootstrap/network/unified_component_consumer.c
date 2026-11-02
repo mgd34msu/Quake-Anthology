@@ -175,7 +175,7 @@ static void entry_free(qa_app_unified_component_consumers *c, entry *e) {
   free(e->commands);
   if (e->has_frame) {
     free(e->frame.bindings);
-    free(e->frame.scene.snapshot.entities);
+    if (e->frame.has_scene) qa_qvm_source_snapshot_free(&e->frame.scene.snapshot);
   }
   if (e->scene) {
     /* scene aliases baseline via scene->baseline; free both once. */
@@ -406,15 +406,36 @@ bool qa_app_unified_component_consumers_accept(qa_app_unified_component_consumer
     if (source->binding_count)
       memcpy(frame.bindings, source->bindings, source->binding_count * sizeof *frame.bindings);
     if (source->has_scene) {
-      frame.scene.snapshot.entities = xmalloc(
-          source->scene.snapshot.entity_count * sizeof *frame.scene.snapshot.entities);
+      qa_qvm_entity_state_fields *entities_copy = xmalloc(
+          source->scene.snapshot.entity_count * sizeof *entities_copy);
       if (source->scene.snapshot.entity_count)
-        memcpy(frame.scene.snapshot.entities, source->scene.snapshot.entities,
-            source->scene.snapshot.entity_count * sizeof *frame.scene.snapshot.entities);
+        memcpy(entities_copy, source->scene.snapshot.entities,
+            source->scene.snapshot.entity_count * sizeof *entities_copy);
+      frame.scene.snapshot.entities = entities_copy;
+      if (source->scene.snapshot.area_mask != NULL) {
+        uint8_t *mask_copy = xmalloc(source->scene.snapshot.area_mask_length);
+        memcpy(mask_copy, source->scene.snapshot.area_mask,
+               source->scene.snapshot.area_mask_length);
+        frame.scene.snapshot.area_mask = mask_copy;
+      }
+      double *slots_copy = xmalloc(64 * sizeof *slots_copy);
+      memset(slots_copy, 0, 64 * sizeof *slots_copy);
+      if (source->scene.snapshot.player_state.stats.values != NULL)
+        memcpy(slots_copy, source->scene.snapshot.player_state.stats.values, 16 * sizeof(double));
+      if (source->scene.snapshot.player_state.persistent.values != NULL)
+        memcpy(slots_copy + 16, source->scene.snapshot.player_state.persistent.values, 16 * sizeof(double));
+      if (source->scene.snapshot.player_state.powerups.values != NULL)
+        memcpy(slots_copy + 32, source->scene.snapshot.player_state.powerups.values, 16 * sizeof(double));
+      if (source->scene.snapshot.player_state.ammo.values != NULL)
+        memcpy(slots_copy + 48, source->scene.snapshot.player_state.ammo.values, 16 * sizeof(double));
+      frame.scene.snapshot.player_state.stats.values = slots_copy;
+      frame.scene.snapshot.player_state.persistent.values = slots_copy + 16;
+      frame.scene.snapshot.player_state.powerups.values = slots_copy + 32;
+      frame.scene.snapshot.player_state.ammo.values = slots_copy + 48;
     }
     if (e->has_frame) {
       free(e->frame.bindings);
-      free(e->frame.scene.snapshot.entities);
+      if (e->frame.has_scene) qa_qvm_source_snapshot_free(&e->frame.scene.snapshot);
     }
     e->frame = frame;
     e->has_frame = true;

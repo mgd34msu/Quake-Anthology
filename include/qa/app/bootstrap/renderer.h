@@ -50,7 +50,23 @@ typedef struct qa_app_native_backend_bundle {
   void (*resize)(void *ctx, double width, double height);
   void (*close_backend)(void *ctx);
   void (*close_window)(void *ctx);
+  /* Added for the concrete factory: the backend after a resize that
+   * replaced it (serial CPU), else the opened backend. */
+  qa_renderer_backend (*current_backend)(void *ctx);
+  /* Added for worker bundles: installs the renderer's capture
+   * completion/failure hooks (TS WorkerRenderer swap/failed callbacks
+   * calling FrameCaptures). Hook args carry the bundle ctx so the
+   * renderer can apply the TS current-backend check. */
+  void (*set_capture_hooks)(void *ctx,
+      void (*complete)(void *hook_ctx, void *bundle_ctx, const qa_image_level *image, const double *ids, size_t count),
+      void (*fail)(void *hook_ctx, void *bundle_ctx, const char *error), void *hook_ctx);
 } qa_app_native_backend_bundle;
+/* Concrete bundle factory (TS SdlWindow.open + openBackend over the
+ * landed cpu/gl/worker backends). Used by qa_app_native_renderer_open
+ * and prepare_restart when host.open_bundle is NULL. False only on
+ * OOM/backend-open failure; invalid arguments abort. */
+bool qa_app_open_native_backend_bundle(void *unused, const char *kind, double width, double height, bool hidden, bool worker,
+                                       qa_renderer_resource_owner owner, double gamma, qa_app_native_backend_bundle *out);
 typedef struct qa_app_native_renderer_host {
   void *ctx;
   /* Opens window+backend of kind ("cpu"|"gl"); hidden/size as given.

@@ -150,7 +150,7 @@ int32_t qa_qvm_module_system_call(qa_qvm_module *module, const qa_qvmy_syscall *
   return result;
 }
 
-void qa_qvm_module_cancel_function(qa_qvm_module *module, qa_qvmy_cancellation_scope scope) {
+void qa_qvm_module_cancel_function(qa_qvm_module *module, qa_qvm_cancellation_scope scope) {
   if (!module->has_current_entry)
     qa_range_error("QVM cancellation requires the current source invocation");
   module->current_entry.cancel_function(module->current_entry.call_ctx, scope);
@@ -472,7 +472,7 @@ int32_t qa_qvm_module_invoke_source_callback(qa_qvm_module *module, qa_qvmy_func
 int32_t qa_qvm_module_evaluate_region(qa_qvm_module *module, const int32_t *words, size_t count,
                                       int64_t instruction_index, const qa_qvm_region_evaluation *region,
                                       const int64_t *inputs, size_t input_count,
-                                      const qa_qvmy_evaluation_stack *stack) {
+                                      const qa_qvm_evaluation_stack *stack) {
   live(module);
   qa_qvm_arguments arguments;
   const int32_t *args = words;
@@ -482,19 +482,26 @@ int32_t qa_qvm_module_evaluate_region(qa_qvm_module *module, const int32_t *word
     args = arguments.words;
     arg_count = 10;
   }
-  qa_qvmy_evaluation evaluation;
+  qa_qvm_read_only_evaluation evaluation;
   memset(&evaluation, 0, sizeof evaluation);
   evaluation.region = *region;
-  evaluation.inputs = inputs;
+  /* The landed evaluation carries TS number inputs as doubles. */
+  double *input_words = malloc((input_count == 0 ? 1 : input_count) * sizeof *input_words);
+  if (input_words == NULL) qa_range_error("QVM memory allocation failed");
+  for (size_t i = 0; i < input_count; i++) input_words[i] = (double)inputs[i];
+  evaluation.inputs = input_words;
   evaluation.input_count = input_count;
   if (stack != NULL) {
     evaluation.has_stack = true;
     evaluation.stack = *stack;
   }
-  qa_qvmy_read_only_evaluation readonly = {&evaluation};
+  int32_t result;
   if (!module->has_current_entry)
-    return module->interpreter->invoke(module->interpreter->ctx, args, arg_count, instruction_index, &evaluation);
-  return module->current_entry.invoke(module->current_entry.call_ctx, args, arg_count, instruction_index, &readonly);
+    result = module->interpreter->invoke(module->interpreter->ctx, args, arg_count, instruction_index, &evaluation);
+  else
+    result = module->current_entry.invoke(module->current_entry.call_ctx, args, arg_count, instruction_index, &evaluation);
+  free(input_words);
+  return result;
 }
 
 typedef struct counter_job {
@@ -512,7 +519,7 @@ static int32_t run_counter(void *ctx) {
 int32_t qa_qvm_module_evaluate_counter(qa_qvm_module *module, const int32_t *words, size_t count,
                                        int64_t instruction_index, int64_t address,
                                        const int64_t *functions, size_t function_count,
-                                       const qa_qvmy_evaluation_stack *stack) {
+                                       const qa_qvm_evaluation_stack *stack) {
   live(module);
   bool found = false;
   for (size_t i = 0; i < function_count; i++) if (functions[i] == instruction_index) found = true;

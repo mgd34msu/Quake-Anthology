@@ -36,13 +36,13 @@ void qa_app_unified_component_projection_free(qa_app_unified_component_projectio
      * publications; free only the shells (not update_free, which
      * would destroy borrowed records). */
     for (size_t i = 0; i < projection->update.source_count; i++)
-      free(projection->update.sources[i].commands);
+      free((void *)projection->update.sources[i].commands);
     free(projection->update.sources);
     free(projection->update.native);
   }
   for (size_t i = 0; i < projection->frame.source_count; i++) {
     free(projection->frame.sources[i].bindings);
-    free(projection->frame.sources[i].scene.snapshot.entities);
+    free((void *)projection->frame.sources[i].scene.snapshot.entities);
   }
   free(projection->frame.sources);
   qa_app_unified_native_frames_free(projection->frame.native, projection->frame.native_count);
@@ -181,7 +181,7 @@ qa_app_unified_component_projection qa_app_unified_component_publisher_project(
       frame->scene.snapshot.entities = xmalloc(
           source->scene->snapshot.entity_count * sizeof *frame->scene.snapshot.entities);
       if (source->scene->snapshot.entity_count)
-        memcpy(frame->scene.snapshot.entities, source->scene->snapshot.entities,
+        memcpy((void *)frame->scene.snapshot.entities, source->scene->snapshot.entities,
             source->scene->snapshot.entity_count * sizeof *frame->scene.snapshot.entities);
     }
   }

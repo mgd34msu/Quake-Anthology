@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/item_storage.h"
 #include "qa/compat/qvm/operations.h"
 #include "qa/compat/qvm/player_record.h"
 #include "qa/content/mods/qvm_items.h"
@@ -29,85 +30,9 @@ static qa_save_reader item(const qa_save_reader *reader, size_t index) {
   return out;
 }
 
-static bool is_int32(double value) {
-  return isfinite(value) && value == trunc(value) && value >= -2147483648.0 && value <= 2147483647.0;
-}
-
-static int64_t storage_constant(const qa_qvmy_region_instruction *instructions, size_t count, double instruction) {
-  int64_t index = (int64_t)instruction;
-  if (index < 0 || (uint64_t)index >= count || instructions[index].opcode != QA_QVMY_OP_CONST ||
-      instructions[index].operand < 0)
-    qa_range_error("QVM item capacity is not its declared original constant");
-  return instructions[index].operand;
-}
-
-void qa_qvmy_validate_item_storage(const qa_qvm_item_storage *storage, size_t storage_count,
-                                   const qa_item_id *items, size_t item_count,
-                                   const qa_qvmy_region_instruction *instructions, size_t instruction_count,
-                                   int64_t initialized_data_length, int64_t bss_length,
-                                   qa_qvmy_item_field_check_fn field_check, void *field_ctx) {
-  bool *bound = calloc(item_count == 0 ? 1 : item_count, sizeof *bound);
-  if (bound == NULL) qa_range_error("QVM memory allocation failed");
-  size_t bound_count = 0;
-  for (size_t s = 0; s < storage_count; s++) {
-    const qa_qvm_item_storage *value = &storage[s];
-    field_check(field_ctx, &value->field, "storage");
-    if (strcmp(value->kind, "counter") == 0) {
-      bool found = false;
-      for (size_t i = 0; i < item_count; i++) {
-        if (strcmp(items[i], value->item) == 0 && !bound[i]) {
-          bound[i] = true;
-          bound_count++;
-          found = true;
-        }
-      }
-      if (!found) qa_range_error("QVM item lacks distinct declared storage");
-      const qa_qvm_item_capacity *capacity = &value->capacity;
-      if (strcmp(capacity->kind, "field") == 0) field_check(field_ctx, &capacity->field, "capacity");
-      if (strcmp(capacity->kind, "constant") == 0 && (!is_int32(capacity->value) || capacity->value < 0))
-        qa_range_error("QVM item capacity exceeds its source ABI");
-      if (strcmp(capacity->kind, "source") == 0) {
-        (void)storage_constant(instructions, instruction_count, capacity->instruction);
-        for (size_t o = 0; o < capacity->override_count; o++) {
-          const qa_qvm_item_capacity_override *override = &capacity->overrides[o];
-          (void)storage_constant(instructions, instruction_count, override->instruction);
-          if (!is_int32(override->value) || override->address != trunc(override->address) ||
-              override->address < 0 || (int64_t)override->address % 4 != 0 ||
-              override->address + 4 > (double)(initialized_data_length + bss_length))
-            qa_range_error("QVM capacity selector exceeds original source storage");
-        }
-      }
-    } else {
-      if (!isfinite(value->private_mask) || value->private_mask != trunc(value->private_mask) ||
-          value->private_mask < 0 || value->private_mask > 4294967295.0 || value->item_count == 0)
-        qa_range_error("Invalid QVM private inventory mask");
-      uint32_t mask = (uint32_t)value->private_mask;
-      for (size_t i = 0; i < value->item_count; i++) {
-        bool found = false;
-        for (size_t j = 0; j < item_count; j++) {
-          if (strcmp(items[j], value->items[i].item) == 0 && !bound[j]) {
-            bound[j] = true;
-            bound_count++;
-            found = true;
-          }
-        }
-        if (!found) qa_range_error("QVM item lacks distinct declared storage");
-        double item_mask = value->items[i].mask;
-        if (!isfinite(item_mask) || item_mask != trunc(item_mask) || item_mask < 1 ||
-            item_mask > 2147483648.0 || ((uint32_t)item_mask & ((uint32_t)item_mask - 1)) != 0 ||
-            (mask & (uint32_t)item_mask) != 0)
-          qa_range_error("QVM packed item masks overlap");
-        mask |= (uint32_t)item_mask;
-      }
-    }
-  }
-  free(bound);
-  if (bound_count != item_count) qa_range_error("QVM item definition has no source storage");
-}
-
 typedef struct private_field_state {
   const qa_save_reader *reader;
-  const qa_qvmy_inventory_records *records;
+  const qa_qvm_inventory_records *records;
   /* Occupied (record, offset) pairs; TS keys are full strings. */
   const char **key_records;
   double *key_offsets;
@@ -141,25 +66,31 @@ static void private_field_check(void *ctx, const qa_qvm_item_field *field, const
   state->usages[state->count++] = usage;
 }
 
-static const qa_qvmy_region_instruction *instruction_at(const qa_qvmy_artifact *artifact, int64_t index) {
+/* Adapter onto the landed qa_qvm_validate_item_storage validator
+ * shape: usage NULL is the TS undefined, defaulted to "storage". */
+static void private_field_validator(void *ctx, qa_qvm_item_field field, const char *usage) {
+  private_field_check(ctx, &field, usage == NULL ? "storage" : usage);
+}
+
+static const qa_qvm_instruction *instruction_at(const qa_qvmy_artifact *artifact, int64_t index) {
   if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
   return &artifact->instructions[index];
 }
 
 static int64_t read_constant(const qa_qvmy_artifact *artifact, qa_save_reader *at) {
   int64_t index = (int64_t)qa_save_reader_integer_min(at, 0);
-  const qa_qvmy_region_instruction *instruction = instruction_at(artifact, index);
+  const qa_qvm_instruction *instruction = instruction_at(artifact, index);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_CONST)
     qa_save_reader_fail(at, "capacity operand must be an original OP_CONST");
   return instruction->operand;
 }
 
-static qa_qvmy_source_word read_word(const qa_qvmy_artifact *artifact, qa_save_reader *at) {
+static qa_qvm_source_word read_word(const qa_qvmy_artifact *artifact, qa_save_reader *at) {
   qa_save_reader kind_reader = field(at, "kind");
   static const char *const kinds[] = {"constant", "weapon", "client", "entity", "client-number"};
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 5);
   qa_save_reader_destroy(&kind_reader);
-  qa_qvmy_source_word result = {kind, 0};
+  qa_qvm_source_word result = {kind, 0};
   if (strcmp(kind, "constant") == 0) {
     qa_save_reader instruction = field(at, "instruction");
     result.value = read_constant(artifact, &instruction);
@@ -168,7 +99,7 @@ static qa_qvmy_source_word read_word(const qa_qvmy_artifact *artifact, qa_save_r
   return result;
 }
 
-static int32_t word_value(qa_qvmy_source_word source, int32_t weapon, const qa_qvmy_capacity_context *context) {
+static int32_t word_value(qa_qvm_source_word source, int32_t weapon, const qa_qvm_capacity_context *context) {
   if (strcmp(source.kind, "constant") == 0) return (int32_t)source.value;
   if (strcmp(source.kind, "weapon") == 0) return weapon;
   if (strcmp(source.kind, "client") == 0) return (int32_t)context->client;
@@ -177,7 +108,7 @@ static int32_t word_value(qa_qvmy_source_word source, int32_t weapon, const qa_q
 }
 
 void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                           const qa_qvmy_inventory_records *records,
+                                           const qa_qvm_inventory_records *records,
                                            qa_qvmy_inventory_profile *out) {
   memset(out, 0, sizeof *out);
   out->module = artifact->module;
@@ -217,9 +148,14 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       if (!seen) items[unique++] = items[i];
     }
     private_field_state state = {reader, records, NULL, NULL, NULL, 0, 0};
-    qa_qvmy_validate_item_storage(out->storage, count, items, unique, artifact->instructions,
-                                  artifact->instruction_count, (int64_t)artifact->initialized_data_length,
-                                  artifact->bss_length, private_field_check, &state);
+    qa_qvm_image image;
+    memset(&image, 0, sizeof image);
+    image.instructions = (qa_qvm_instruction *)artifact->instructions;
+    image.instruction_count = artifact->instruction_count;
+    image.initialized_length = artifact->initialized_data_length;
+    image.bss_length = artifact->bss_length;
+    qa_qvm_item_field_validator validator = {&state, private_field_validator};
+    qa_qvm_validate_item_storage(out->storage, count, items, unique, &image, validator);
     free(state.key_records);
     free(state.key_offsets);
     free(state.usages);
@@ -278,7 +214,7 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
     for (size_t i = 0; i < function_count; i++) {
       qa_save_reader entry = item(&functions_reader, i);
       int64_t index = (int64_t)qa_save_reader_integer_min(&entry, 0);
-      const qa_qvmy_region_instruction *instruction = instruction_at(artifact, index);
+      const qa_qvm_instruction *instruction = instruction_at(artifact, index);
       if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
         qa_save_reader_fail(&entry, "counter operation requires original function entries");
       out->capacity_functions[i] = index;
@@ -307,7 +243,7 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
         qa_save_reader literal = field(&entry, "kind");
         (void)qa_save_reader_literal_string(&literal, "maximum-grant");
         qa_save_reader_destroy(&literal);
-        out->capacity_arguments[i] = (qa_qvmy_source_word){"maximum-grant", 0};
+        out->capacity_arguments[i] = (qa_qvm_source_word){"maximum-grant", 0};
       } else {
         out->capacity_arguments[i] = read_word(artifact, &entry);
       }
@@ -388,7 +324,7 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
 }
 
 int32_t qa_qvmy_inventory_capacity(const qa_qvmy_inventory_profile *profile, qa_qvm_memory *memory,
-                                   int32_t weapon, const qa_qvmy_capacity_context *context) {
+                                   int32_t weapon, const qa_qvm_capacity_context *context) {
   if (strcmp(profile->capacity_kind, "constant") == 0) return (int32_t)profile->capacity_constant;
   if (strcmp(profile->capacity_kind, "global") == 0) {
     qa_qvm_writable_view view;

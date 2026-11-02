@@ -21,23 +21,23 @@
 #include "qa/persistence/value.h"
 
 /* TS QvmPrimaryProfile. Sub-profiles are NULL for TS null. */
-typedef struct qa_qvmy_primary_profile {
+typedef struct qa_qvm_primary_profile {
   const qa_resolved_resource_reference *declaration;
   qa_qvmy_input_definition *input;
   qa_qvmy_primary_weapon_profile *weapons;
   qa_qvmy_inventory_profile *inventory;
   qa_qvmy_pickup_profile *pickups;
   qa_qvmy_primary_combat_profile *combat;
-} qa_qvmy_primary_profile;
+} qa_qvm_primary_profile;
 
 void qa_qvm_builtin_primary_profile(const qa_qvmy_artifact *artifact,
                                     const qa_q3_guest_weapon *catalog, size_t catalog_count,
-                                    qa_qvmy_primary_profile *out);
+                                    qa_qvm_primary_profile *out);
 void qa_qvm_read_primary_profile(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                 const qa_qvmy_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
+                                 const qa_qvm_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
                                  const qa_qvmy_item_layout *items,
                                  const qa_resolved_resource_reference *declaration,
-                                 qa_qvmy_primary_profile *out);
-void qa_qvmy_primary_profile_free(qa_qvmy_primary_profile *profile);
+                                 qa_qvm_primary_profile *out);
+void qa_qvm_primary_profile_free(qa_qvm_primary_profile *profile);
 
 #endif

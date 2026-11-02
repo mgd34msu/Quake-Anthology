@@ -25,7 +25,7 @@ struct pickup_frame {
   qa_pickup_supply_offer supply_offer;
   qa_pickup_ammo_grant supply_ammo;
   bool supply_has_quantity;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   qa_owned_actor item, recipient;
   double item_slot, recipient_slot;
   int32_t item_pointer, player_pointer, recipient_pointer;
@@ -173,7 +173,7 @@ static bool frame_live(qa_qvm_primary_pickups *p, pickup_frame *frame) {
 /* TS cancel(): the C cancel_function longjmps (or aborts), so frame
  * cleanup runs first, matching the TS catch/finally outcome of 0. */
 static void cancel_call(qa_qvm_primary_pickups *p, pickup_frame *frame, qa_qvmy_function_call *call) {
-  qa_qvmy_cancellation_scope scope = frame->cancellation;
+  qa_qvm_cancellation_scope scope = frame->cancellation;
   frame->cancelled = true;
   remove_frame(p, frame->sequence);
   call->cancel_function(call->call_ctx, scope);
@@ -479,7 +479,7 @@ typedef struct execute_ctx {
   qa_qvm_primary_pickups *pickups;
   qa_qvmy_function_call *call;
   qa_original_pickup_offer offer;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   qa_owned_actor item, recipient;
   double item_slot, recipient_slot;
   int32_t item_pointer, player_pointer, recipient_pointer;
@@ -683,8 +683,8 @@ static void require_calls(qa_qvm_primary_pickups *p, const qa_qvm_image *image, 
   }
 }
 
-static qa_qvmy_region_instruction *region_instructions(const qa_qvm_image *image) {
-  qa_qvmy_region_instruction *list =
+static qa_qvm_instruction *region_instructions(const qa_qvm_image *image) {
+  qa_qvm_instruction *list =
       malloc((image->instruction_count == 0 ? 1 : image->instruction_count) * sizeof *list);
   if (list == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i < image->instruction_count; i++) {
@@ -742,7 +742,7 @@ qa_qvm_primary_pickups *qa_qvm_primary_pickups_create(qa_qvm_primary_pickups_opt
   require_entry(image, profile->free_entry);
   require_calls(p, image, profile->gate_entry, profile->gate_calls, profile->gate_call_count);
   require_calls(p, image, profile->targets_entry, profile->targets_calls, profile->targets_call_count);
-  qa_qvmy_region_instruction *list = NULL;
+  qa_qvm_instruction *list = NULL;
   for (size_t g = 0; g < profile->grant_count; g++) {
     const qa_qvm_pickup_grant *grant = &profile->grants[g];
     for (size_t j = 0; j < g; j++)

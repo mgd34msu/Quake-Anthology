@@ -3,7 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/platform/gl.h"
+#include "qa/render/cpu/rasterizer.h"
 #include "qa/render/execution.h"
+#include "qa/render/gl/renderer.h"
+#include "qa/render/worker.h"
 /* FrameCaptures */
 typedef struct capture_entry { double id; qa_app_frame_capture_request request; } capture_entry;
 typedef struct captures {
@@ -78,6 +82,24 @@ struct qa_app_prepared_renderer_restart {
   int phase; /* 0 prepared, 1 published, 2 discarded */
   bool retired_done;
 };
+/* TS WorkerRenderer swap/failed callbacks into FrameCaptures, gated on
+ * the bundle still being the current backend. */
+static void capture_hook_complete(void *hook_ctx, void *bundle_ctx, const qa_image_level *image, const double *ids, size_t count) {
+  qa_app_native_renderer *r = hook_ctx;
+  if (r->current.ctx != bundle_ctx) return;
+  captures_complete(&r->caps, image, ids, count);
+}
+static void capture_hook_fail(void *hook_ctx, void *bundle_ctx, const char *error) {
+  qa_app_native_renderer *r = hook_ctx;
+  if (r->current.ctx != bundle_ctx) return;
+  captures_fail(&r->caps, error);
+}
+static void install_capture_hooks(qa_app_native_renderer *r, qa_app_native_backend_bundle *bundle) {
+  if (bundle->set_capture_hooks) bundle->set_capture_hooks(bundle->ctx, capture_hook_complete, capture_hook_fail, r);
+}
+static void journal_record_apply(void *ctx, qa_image_resource_operation operation) {
+  qa_render_image_journal_record((qa_render_image_journal *)ctx, operation);
+}
 static void journal_record_cb(void *ctx, qa_image_resource_operation operation) {
   qa_app_native_renderer *r = ctx;
   qa_render_image_journal_record(&r->journal, operation);
@@ -85,6 +107,194 @@ static void journal_record_cb(void *ctx, qa_image_resource_operation operation) 
 static void renderer_swap(qa_app_native_renderer *r, const double *ids, size_t count);
 static void swap_cb(void *ctx, const double *captures_, size_t capture_count) {
   renderer_swap((qa_app_native_renderer *)ctx, captures_, capture_count);
+}
+/* Concrete bundle factory: TS SdlWindow.open + openBackend. */
+typedef struct native_impl {
+  qa_sdl_window *window;
+  bool is_gl, is_cpu, is_worker;
+  qa_renderer_resource_owner owner;
+  double gamma;
+  qa_software_renderer cpu; bool has_cpu;
+  qa_gl_renderer gl; bool has_gl;
+  qa_worker_renderer worker; bool has_worker;
+  qa_sdl_worker_render_context worker_ctx; bool has_worker_ctx;
+  qa_gl_renderer worker_gl; bool has_worker_gl;
+  qa_renderer_backend backend;
+  qa_app_gl_driver driver; qa_app_gl_config config;
+  qa_gl_driver_info worker_driver; qa_worker_gl_config worker_config;
+  void *hook_ctx;
+  void (*hook_complete)(void *hook_ctx, void *bundle_ctx, const qa_image_level *image, const double *ids, size_t count);
+  void (*hook_fail)(void *hook_ctx, void *bundle_ctx, const char *error);
+} native_impl;
+static void glctx_make_current(void *ctx) { qa_sdl_window_make_current((qa_sdl_window *)ctx); }
+static void glctx_drawable_size(void *ctx, double *width, double *height) {
+  qa_sdl_size size = qa_sdl_window_drawable_size((qa_sdl_window *)ctx);
+  *width = size.width; *height = size.height;
+}
+static void glctx_set_rendering(void *ctx, bool enabled) { qa_sdl_window_set_rendering_enabled((qa_sdl_window *)ctx, enabled); }
+static void wglctx_make_current(void *ctx) { qa_sdl_worker_render_context_make_current((qa_sdl_worker_render_context *)ctx); }
+static void wglctx_drawable_size(void *ctx, double *width, double *height) {
+  int32_t w = 0, h = 0;
+  qa_sdl_worker_render_context_drawable_size((qa_sdl_worker_render_context *)ctx, &w, &h);
+  *width = w; *height = h;
+}
+static void wglctx_set_rendering(void *ctx, bool enabled) { qa_sdl_worker_render_context_set_rendering_enabled((qa_sdl_worker_render_context *)ctx, enabled); }
+static void native_worker_swap(void *ctx, const qa_image_level *image, const double *ids, size_t count) {
+  native_impl *impl = ctx;
+  if (impl->hook_complete) impl->hook_complete(impl->hook_ctx, impl, image, ids, count);
+  if (qa_sdl_window_backend(impl->window) == QA_SDL_BACKEND_CPU) {
+    if (image == NULL) qa_range_error("CPU renderer presentation has no pixels");
+    qa_sdl_window_present(impl->window, image->pixels.bytes, image->pixels.length);
+  }
+}
+static void native_worker_failed(void *ctx, const char *message) {
+  native_impl *impl = ctx;
+  if (impl->hook_fail) impl->hook_fail(impl->hook_ctx, impl, message);
+}
+static void native_set_gamma(void *ctx, double gamma) {
+  native_impl *impl = ctx; impl->gamma = gamma;
+  if (impl->is_worker) qa_worker_renderer_set_output_gamma(&impl->worker, gamma);
+  else if (impl->is_gl) qa_gl_renderer_set_output_gamma(&impl->gl, gamma);
+  else qa_software_renderer_set_output_gamma(&impl->cpu, gamma);
+}
+static void native_apply_image(void *ctx, qa_image_resource_operation operation) {
+  native_impl *impl = ctx;
+  if (impl->is_worker) impl->backend.apply_image_resource(impl->backend.ctx, operation);
+  else if (impl->is_gl) qa_gl_renderer_apply_image_resource(&impl->gl, operation);
+  else qa_software_renderer_apply_image_resource(&impl->cpu, operation);
+}
+static void native_execute_commands(void *ctx, const qa_render_command *commands, size_t count, const double *ids, size_t id_count) {
+  native_impl *impl = ctx;
+  qa_render_frame frame; memset(&frame, 0, sizeof frame);
+  frame.owner = impl->owner; frame.commands = commands; frame.command_count = count;
+  qa_worker_renderer_execute(&impl->worker, frame, ids, id_count);
+}
+static void native_execute_set_color(void *ctx, qa_vec4 color) {
+  qa_render_command command; memset(&command, 0, sizeof command);
+  command.kind = QA_RENDER_COMMAND_SET_COLOR; command.color = color;
+  native_execute_commands(ctx, &command, 1, NULL, 0);
+}
+static void native_finish(void *ctx) {
+  native_impl *impl = ctx;
+  if (impl->is_gl && !impl->is_worker) qa_gl_renderer_finish(&impl->gl);
+  else if (!impl->is_worker) qa_software_renderer_finish(&impl->cpu);
+}
+static const uint8_t *native_pixels(void *ctx, size_t *out_length) {
+  return qa_software_renderer_pixels(&((native_impl *)ctx)->cpu, out_length);
+}
+static uint8_t *native_read_pixels_gl(void *ctx, size_t *out_length) {
+  return qa_gl_renderer_read_pixels(&((native_impl *)ctx)->gl, out_length);
+}
+static void native_present_gl(void *ctx) { qa_sdl_window_swap(((native_impl *)ctx)->window); }
+static void native_resize_cpu(void *ctx, double width, double height) {
+  native_impl *impl = ctx;
+  qa_software_renderer replacement; memset(&replacement, 0, sizeof replacement);
+  if (!qa_software_renderer_init_default(&replacement, width, height, impl->owner)) return;
+  qa_software_renderer_set_output_gamma(&replacement, impl->gamma);
+  qa_software_renderer_close(&impl->cpu);
+  impl->cpu = replacement;
+  impl->backend = qa_software_renderer_backend(&impl->cpu);
+}
+static qa_renderer_backend native_current_backend(void *ctx) { return ((native_impl *)ctx)->backend; }
+static void native_set_hooks(void *ctx,
+    void (*complete)(void *, void *, const qa_image_level *, const double *, size_t),
+    void (*fail)(void *, void *, const char *), void *hook_ctx) {
+  native_impl *impl = ctx;
+  impl->hook_complete = complete; impl->hook_fail = fail; impl->hook_ctx = hook_ctx;
+}
+static void native_close_backend(void *ctx) {
+  native_impl *impl = ctx;
+  if (impl->has_worker) { qa_worker_renderer_close(&impl->worker); impl->has_worker = false; }
+  if (impl->has_worker_gl) { qa_gl_renderer_close(&impl->worker_gl); impl->has_worker_gl = false; }
+  if (impl->has_worker_ctx) { qa_sdl_worker_render_context_release(&impl->worker_ctx); impl->has_worker_ctx = false; }
+  if (impl->has_gl) { qa_gl_renderer_close(&impl->gl); impl->has_gl = false; }
+  if (impl->has_cpu) { qa_software_renderer_close(&impl->cpu); impl->has_cpu = false; }
+}
+static void native_close_window(void *ctx) {
+  native_impl *impl = ctx;
+  if (impl->window) { qa_sdl_window_close(impl->window); free(impl->window); impl->window = NULL; }
+  free(impl);
+}
+bool qa_app_open_native_backend_bundle(void *unused, const char *kind, double width, double height, bool hidden, bool worker,
+                                       qa_renderer_resource_owner owner, double gamma, qa_app_native_backend_bundle *out) {
+  (void)unused;
+  memset(out, 0, sizeof *out);
+  bool is_gl = kind != NULL && strcmp(kind, "gl") == 0;
+  if (kind == NULL || (!is_gl && strcmp(kind, "cpu") != 0)) qa_range_error("Unknown renderer backend");
+  native_impl *impl = calloc(1, sizeof *impl);
+  if (!impl) return false;
+  impl->is_gl = is_gl; impl->is_cpu = !is_gl; impl->is_worker = worker;
+  impl->owner = owner; impl->gamma = gamma;
+  impl->window = calloc(1, sizeof *impl->window);
+  if (!impl->window) { free(impl); return false; }
+  qa_sdl_window_options options; memset(&options, 0, sizeof options);
+  options.title = "Quake"; options.width = width; options.height = height;
+  options.hidden = hidden; options.resizable = true;
+  options.backend = is_gl ? QA_SDL_BACKEND_GL : QA_SDL_BACKEND_CPU;
+  options.display_index = -1;
+  if (!qa_sdl_window_open(&options, impl->window)) { free(impl->window); free(impl); return false; }
+  qa_sdl_size drawable = qa_sdl_window_drawable_size(impl->window);
+  if (worker) {
+    qa_render_worker_init init; memset(&init, 0, sizeof init);
+    init.backend = kind; init.width = drawable.width; init.height = drawable.height; init.gamma = gamma;
+    init.swap_interval = is_gl ? 1 : 0;
+    if (is_gl) {
+      qa_sdl_render_context_transfer transfer = qa_sdl_window_detach_render_context(impl->window);
+      if (!qa_sdl_worker_render_context_adopt(&transfer, &impl->worker_ctx)) { native_close_window(impl); return false; }
+      impl->has_worker_ctx = true;
+      qa_gl_render_context context; memset(&context, 0, sizeof context);
+      context.ctx = &impl->worker_ctx; context.gl_context = qa_gl_context_from_worker(&impl->worker_ctx);
+      context.make_current = wglctx_make_current; context.drawable_size = wglctx_drawable_size; context.set_rendering_enabled = wglctx_set_rendering;
+      if (!qa_gl_renderer_init(&impl->worker_gl, context, owner)) { native_close_backend(impl); native_close_window(impl); return false; }
+      impl->has_worker_gl = true;
+      init.gl_backend = qa_gl_renderer_backend(&impl->worker_gl); init.has_gl_backend = true;
+    }
+    if (!qa_worker_renderer_open(&impl->worker, init, owner, native_worker_swap, impl, native_worker_failed, impl)) {
+      native_close_backend(impl); native_close_window(impl); return false;
+    }
+    impl->has_worker = true;
+    impl->backend = qa_worker_renderer_backend(&impl->worker);
+    qa_worker_description description = qa_worker_renderer_description(&impl->worker, &impl->worker_driver, &impl->worker_config);
+    out->worker_swap_interval = description.swap_interval;
+    if (description.driver) {
+      impl->driver = (qa_app_gl_driver){description.driver->vendor, description.driver->renderer, description.driver->version, description.driver->shading_language};
+      out->driver = &impl->driver;
+    }
+    if (description.gl_config) {
+      impl->config = (qa_app_gl_config){description.gl_config->max_texture_size, description.gl_config->texture_units,
+          description.gl_config->color_bits, description.gl_config->depth_bits, description.gl_config->stereo_enabled};
+      out->gl_config = &impl->config;
+    }
+    out->execute_commands = native_execute_commands;
+    out->execute_set_color = native_execute_set_color;
+  } else if (is_gl) {
+    qa_gl_render_context context; memset(&context, 0, sizeof context);
+    context.ctx = impl->window; context.gl_context = qa_gl_context_from_window(impl->window);
+    context.make_current = glctx_make_current; context.drawable_size = glctx_drawable_size; context.set_rendering_enabled = glctx_set_rendering;
+    if (!qa_gl_renderer_init(&impl->gl, context, owner)) { native_close_window(impl); return false; }
+    impl->has_gl = true;
+    qa_gl_renderer_set_output_gamma(&impl->gl, gamma);
+    impl->backend = qa_gl_renderer_backend(&impl->gl);
+    impl->driver = (qa_app_gl_driver){impl->gl.driver.vendor, impl->gl.driver.renderer, impl->gl.driver.version, impl->gl.driver.shading_language};
+    impl->config = (qa_app_gl_config){impl->gl.max_texture_size, impl->gl.texture_units, impl->gl.color_bits, impl->gl.depth_bits, impl->gl.stereo_enabled};
+    out->driver = &impl->driver; out->gl_config = &impl->config;
+    out->finish = native_finish; out->read_pixels = native_read_pixels_gl; out->present = native_present_gl;
+  } else {
+    if (!qa_software_renderer_init_default(&impl->cpu, drawable.width, drawable.height, owner)) { native_close_window(impl); return false; }
+    impl->has_cpu = true;
+    qa_software_renderer_set_output_gamma(&impl->cpu, gamma);
+    impl->backend = qa_software_renderer_backend(&impl->cpu);
+    out->finish = native_finish; out->pixels = native_pixels; out->resize = native_resize_cpu;
+  }
+  out->ctx = impl; out->window = impl->window; out->backend = impl->backend;
+  out->is_worker = worker; out->is_gl = is_gl; out->is_cpu = !is_gl;
+  out->set_output_gamma = native_set_gamma;
+  out->apply_image_resource = native_apply_image;
+  out->close_backend = native_close_backend;
+  out->close_window = native_close_window;
+  out->current_backend = native_current_backend;
+  out->set_capture_hooks = native_set_hooks;
+  return true;
 }
 static bool owner_same(qa_renderer_resource_owner a, qa_renderer_resource_owner b) {
   return a.identity == b.identity && a.session.token == b.session.token && a.generation == b.generation;
@@ -109,13 +319,16 @@ qa_app_native_renderer *qa_app_native_renderer_open(qa_app_native_renderer_host 
   if (!qa_render_image_journal_init(&r->journal)) { if (r->owns_images) { qa_scene_image_registry_destroy(r->images); free(r->images); } free(r); return NULL; }
   r->journal_live = true;
   qa_app_native_backend_bundle bundle; memset(&bundle, 0, sizeof bundle);
-  if (!host.open_bundle(host.ctx, renderer_kind, width, height, hidden, render_worker, owner, gamma, &bundle)) {
+  bool (*open_bundle)(void *, const char *, double, double, bool, bool, qa_renderer_resource_owner, double, qa_app_native_backend_bundle *) =
+      host.open_bundle ? host.open_bundle : qa_app_open_native_backend_bundle;
+  if (!open_bundle(host.ctx, renderer_kind, width, height, hidden, render_worker, owner, gamma, &bundle)) {
     qa_render_image_journal_destroy(&r->journal);
     if (r->owns_images) { qa_scene_image_registry_destroy(r->images); free(r->images); }
     free(r);
     return NULL;
   }
   r->current = bundle;
+  install_capture_hooks(r, &r->current);
   if (strcmp(renderer_kind, "gl") == 0 && r->current.window) qa_sdl_window_set_swap_interval(r->current.window, 1);
   qa_execution_services services = {r, journal_record_cb, swap_cb};
   qa_render_executor_init(&r->executor, r->current.backend, services);
@@ -202,15 +415,20 @@ qa_app_prepared_renderer_restart *qa_app_native_renderer_prepare_restart(qa_app_
   p->renderer = r;
   if (!qa_render_image_journal_init(&p->journal)) { r->preparing = false; free(p); return NULL; }
   qa_app_native_backend_bundle candidate; memset(&candidate, 0, sizeof candidate);
-  bool opened = r->host.open_bundle(r->host.ctx, kind, presentation.size.width, presentation.size.height, true, worker, r->owner, r->gamma, &candidate);
+  bool (*open_bundle)(void *, const char *, double, double, bool, bool, qa_renderer_resource_owner, double, qa_app_native_backend_bundle *) =
+      r->host.open_bundle ? r->host.open_bundle : qa_app_open_native_backend_bundle;
+  bool opened = open_bundle(r->host.ctx, kind, presentation.size.width, presentation.size.height, true, worker, r->owner, r->gamma, &candidate);
   if (!opened) { qa_render_image_journal_destroy(&p->journal); r->preparing = false; free(p); return NULL; }
   p->candidate = candidate;
+  install_capture_hooks(r, &p->candidate);
   if (strcmp(kind, "gl") == 0 && candidate.window) qa_sdl_window_set_swap_interval(candidate.window, (int32_t)r->interval);
   qa_journal_backend jb = {candidate.ctx, candidate.apply_image_resource};
   if (candidate.apply_image_resource) qa_render_image_journal_replay(&r->journal, jb);
   if (!candidate.is_worker) {
-    /* Serial backend: p->journal starts empty for post-publish operations;
-     * the candidate already received the replay above. */
+    /* TS: serial backends have no transport acknowledgment; retain the
+     * same successful journal by recording the replay into the new one. */
+    qa_journal_backend record = {&p->journal, journal_record_apply};
+    qa_render_image_journal_replay(&r->journal, record);
   } else {
     if (candidate.execute_set_color) candidate.execute_set_color(candidate.ctx, r->color);
     if (candidate.synchronize) candidate.synchronize(candidate.ctx);
@@ -318,8 +536,20 @@ static void renderer_resize(qa_app_native_renderer *r) {
   qa_sdl_size size = qa_sdl_window_drawable_size(r->current.window);
   if (r->current.is_worker) { if (r->current.resize) r->current.resize(r->current.ctx, size.width, size.height); return; }
   if (size.width == r->current.backend.width && size.height == r->current.backend.height) return;
-  /* CPU replacement backend construction is host work. */
+  /* TS: serial CPU resize builds a replacement SoftwareRenderer, replays
+   * the journal into it, and swaps the executor backend. The concrete
+   * bundle's resize performs the replacement; current_backend then
+   * reports it so the journal replay + executor swap happen here. */
   if (r->current.resize) r->current.resize(r->current.ctx, size.width, size.height);
+  if (r->current.current_backend) {
+    qa_renderer_backend replacement = r->current.current_backend(r->current.ctx);
+    if (replacement.width != r->current.backend.width || replacement.height != r->current.backend.height) {
+      qa_journal_backend jb = {r->current.ctx, r->current.apply_image_resource};
+      if (r->current.apply_image_resource) qa_render_image_journal_replay(&r->journal, jb);
+      r->current.backend = replacement;
+      qa_render_executor_replace_backend(&r->executor, replacement);
+    }
+  }
 }
 static void renderer_swap(qa_app_native_renderer *r, const double *ids, size_t count) {
   if (r->current.is_worker) qa_range_error("Worker swaps execute on their owning thread");

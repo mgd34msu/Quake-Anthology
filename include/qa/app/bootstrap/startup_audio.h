@@ -38,6 +38,8 @@ typedef struct qa_app_startup_audio_host {
   /* SoundBank register(menuSoundPath(family,event)): NULL = missing. */
   const void *(*bank_register)(void *ctx, const char *family, const char *event);
   void (*bank_clear)(void *ctx);
+  /* Optional: TS close() also clear()s each candidate bank (theme). */
+  void (*bank_clear_bank)(void *ctx, qa_sound_bank *bank);
 } qa_app_startup_audio_host;
 typedef struct qa_app_startup_audio qa_app_startup_audio;
 typedef struct qa_app_startup_audio_options {

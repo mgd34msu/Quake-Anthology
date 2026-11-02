@@ -37,4 +37,18 @@ typedef struct qa_app_client_source_lifetime {
   void (*release_settings)(void *ctx);
   const char *(*retire)(void *ctx);
 } qa_app_client_source_lifetime;
+/* OS-random registry (TS node:crypto randomBytes(16)); NULL on OOM. */
+qa_app_local_accounts *qa_app_local_accounts_create_os_random(void);
+/* ClientSourceLifetime forwarding (TS `source?.method()` sites): a
+ * NULL lifetime or NULL fn is a no-op returning NULL (no error), so
+ * shrunk lifetime rows stay callable. Borrowed error text. */
+const char *qa_app_client_source_prepare_recording(const qa_app_client_source_lifetime *lifetime,
+    qa_command_context source, qa_app_client_recording_feed *out);
+const char *qa_app_client_source_prepare_video_restart(const qa_app_client_source_lifetime *lifetime,
+    const void **out_prepared);
+const char *qa_app_client_source_prepare_retirement(const qa_app_client_source_lifetime *lifetime);
+void qa_app_client_source_release_settings(const qa_app_client_source_lifetime *lifetime);
+const char *qa_app_client_source_retire(const qa_app_client_source_lifetime *lifetime);
+/* TS capture map fallback: lifetime->capture_map ?? "menu". */
+const char *qa_app_client_source_capture_map(const qa_app_client_source_lifetime *lifetime);
 #endif

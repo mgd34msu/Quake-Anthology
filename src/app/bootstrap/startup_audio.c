@@ -253,5 +253,9 @@ void qa_app_startup_audio_close(qa_app_startup_audio *a) {
   qa_app_application_music_stop(a->music);
   a->host.engine_close(a->host.ctx, a->engine);
   a->host.bank_clear(a->host.ctx);
+  /* TS close(): for (const candidate of this.candidates) candidate.bank.clear() */
+  if (a->host.bank_clear_bank)
+    for (size_t i = 0; i < a->candidate_count; i++)
+      a->host.bank_clear_bank(a->host.ctx, a->candidates[i].bank);
   a->sound_count = 0;
 }

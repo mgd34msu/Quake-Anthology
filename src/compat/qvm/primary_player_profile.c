@@ -62,14 +62,14 @@ static int64_t aligned_field(const qa_save_reader *reader, const char *name, int
   return value;
 }
 
-static const qa_qvmy_region_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
+static const qa_qvm_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
   if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
   return &artifact->instructions[index];
 }
 
 static int64_t read_entry(qa_save_reader *reader, const qa_qvmy_artifact *artifact) {
   int64_t value = (int64_t)qa_save_reader_integer_min(reader, 0);
-  const qa_qvmy_region_instruction *instruction = insn(artifact, value);
+  const qa_qvm_instruction *instruction = insn(artifact, value);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
     qa_save_reader_fail(reader, "not an original function entry");
   return value;
@@ -104,8 +104,8 @@ static layout read_layout(const qa_save_reader *reader, const qa_qvmy_artifact *
   return result;
 }
 
-static qa_qvmy_primary_region read_region(const qa_save_reader *reader) {
-  qa_qvmy_primary_region result = {integer_field(reader, "entry", 0, 9007199254740991.0),
+static qa_qvm_primary_region read_region(const qa_save_reader *reader) {
+  qa_qvm_primary_region result = {integer_field(reader, "entry", 0, 9007199254740991.0),
                                    integer_field(reader, "join", 0, 9007199254740991.0)};
   return result;
 }
@@ -248,7 +248,7 @@ static qa_qvm_item_test *read_tests(const qa_save_reader *reader, int64_t client
 }
 
 void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                 const qa_qvmy_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
+                                 const qa_qvm_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
                                  qa_qvmy_primary_weapon_profile *out) {
   memset(out, 0, sizeof *out);
   layout common = read_layout(reader, artifact);
@@ -268,10 +268,8 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
     qa_save_reader_destroy(&provider);
     qa_save_reader item_reader = field(&value, "item");
     if (qa_save_reader_is_null(&item_reader)) {
-      out->equipment_contexts[i].has_item = false;
       out->equipment_contexts[i].item = NULL;
     } else {
-      out->equipment_contexts[i].has_item = true;
       out->equipment_contexts[i].item = qa_namespaced(&item_reader);
     }
     qa_save_reader_destroy(&item_reader);
@@ -519,7 +517,7 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
   if (out->delay.input_count != 1 || !out->delay.has_result || out->teleport_region.input_count != 0 ||
       out->teleport_objectives.input_count != 0)
     qa_save_reader_fail(reader, "source effect region inputs differ from the primary player ABI");
-  const qa_qvmy_region_instruction *give_entry = insn(artifact, out->give_entry);
+  const qa_qvm_instruction *give_entry = insn(artifact, out->give_entry);
   if (give_entry == NULL || give_entry->opcode != QA_QVMY_OP_ENTER) {
     qa_save_reader at = field(reader, "give");
     qa_save_reader_fail(&at, "give entry disappeared");
@@ -541,10 +539,10 @@ void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_art
   int64_t completions[] = {out->give_weapons, out->give_ammo};
   for (int i = 0; i < 2; i++) {
     int64_t pc = completions[i];
-    const qa_qvmy_region_instruction *instruction = insn(artifact, pc);
+    const qa_qvm_instruction *instruction = insn(artifact, pc);
     int64_t owner = pc;
     while (owner >= 0) {
-      const qa_qvmy_region_instruction *candidate = insn(artifact, owner);
+      const qa_qvm_instruction *candidate = insn(artifact, owner);
       if (candidate != NULL && candidate->opcode == QA_QVMY_OP_ENTER) break;
       owner--;
     }

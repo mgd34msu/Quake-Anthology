@@ -8,11 +8,15 @@
 #define QA_CONTENT_Q3_BASE_GAME_ITEM_LIFECYCLE_H
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "qa/content/q3/base/game/entities.h"
 #include "qa/content/q3/base/game/item_pickup.h"
+#include "qa/content/q3/base/game/spawn.h"
 #include "qa/content/q3/base/game/state.h"
 #include "qa/content/q3/base/world.h"
 #include "qa/contracts/original_pickups.h"
+#include "qa/contracts/pickups.h"
+#include "qa/persistence/value.h"
 /* Mirror of shared/items.ts PlayerInventory (TS owner unported). */
 typedef struct qa_q3_player_inventory_mirror {
   qa_q3_game_player_slots_mirror stats, ammo, powerups; double health;
@@ -22,8 +26,20 @@ qa_q3_player_inventory_mirror qa_q3_item_inventory(qa_q3_game_client *client);
  * caller (init preserves it). */
 typedef struct qa_q3_item_registry {
   const qa_q3_game_item_definition_mirror *items; size_t count; qa_q3_game_product product;
+  uint8_t *registered; /* owned, count bytes of 0/1 (TS #registered) */
 } qa_q3_item_registry;
 void qa_q3_item_registry_init(qa_q3_item_registry *registry, const qa_q3_game_item_definition_mirror *items, size_t count);
+void qa_q3_item_registry_destroy(qa_q3_item_registry *registry);
+void qa_q3_item_registry_register(qa_q3_item_registry *registry, const qa_q3_game_item_definition_mirror *item);
+bool qa_q3_item_registry_is_registered(qa_q3_item_registry *registry, const qa_q3_game_item_definition_mirror *item);
+void qa_q3_item_registry_clear(qa_q3_item_registry *registry, double game_type);
+/* TS save(): returns the registered count; index is always 27 (CS_ITEMS). */
+double qa_q3_item_registry_save(qa_q3_item_registry *registry, void *ctx,
+    void (*set_configstring)(void *ctx, double index, const char *value),
+    void (*log)(void *ctx, const char *message));
+/* Bytes save value (NULL only on OOM); caller frees with qa_save_value_free. */
+qa_save_value *qa_q3_item_registry_capture_save_state(qa_q3_item_registry *registry);
+void qa_q3_item_registry_restore_save_state(qa_q3_item_registry *registry, const qa_save_value *value);
 /* TS SourcePickupDescriptor. */
 typedef struct qa_q3_source_pickup_descriptor {
   qa_actor_id item_actor, player_actor;
@@ -38,6 +54,18 @@ typedef enum qa_q3_source_pickup_admission_kind {
 typedef struct qa_q3_source_pickup_admission {
   qa_q3_source_pickup_admission_kind kind; double respawn_seconds;
 } qa_q3_source_pickup_admission;
+/* TS SourcePickupPreview: offer/preview only for the "selected" kind. */
+typedef enum qa_q3_source_pickup_preview_kind {
+  QA_Q3_SOURCE_PREVIEW_NATIVE, QA_Q3_SOURCE_PREVIEW_REJECTED, QA_Q3_SOURCE_PREVIEW_SELECTED
+} qa_q3_source_pickup_preview_kind;
+typedef struct qa_q3_source_pickup_preview {
+  qa_q3_source_pickup_preview_kind kind;
+  qa_pickup_supply_offer offer; qa_pickup_supply_preview preview;
+} qa_q3_source_pickup_preview;
+/* TS observeQ3Supply non-null result. */
+typedef struct qa_q3_supply_observation {
+  qa_pickup_supply_observation observation; qa_pickup_supply_preview preview;
+} qa_q3_supply_observation;
 /* TS ItemLifecycleContext. All host fns share ctx. */
 typedef struct qa_q3_item_lifecycle_context {
   void *ctx; qa_q3_item_registry registry;
@@ -49,6 +77,8 @@ typedef struct qa_q3_item_lifecycle_context {
   bool has_original_pickups;
   qa_original_pickup_admission original_pickups;
   qa_q3_source_pickup_admission (*admit_pickup)(void *ctx, qa_q3_source_pickup_descriptor descriptor);
+  /* TS previewPickup (optional; NULL = undefined). */
+  qa_q3_source_pickup_preview (*preview_pickup)(void *ctx, qa_q3_source_pickup_descriptor descriptor);
   qa_q3_base_server_trace_result (*trace)(void *ctx, qa_q3_base_server_trace_query query);
   qa_q3_base_actor_trace_result (*trace_actor)(void *ctx, qa_q3_base_actor_trace_query query);
   const char *(*handicap_for_client)(void *ctx, double client_num);
@@ -63,5 +93,12 @@ typedef struct qa_q3_item_lifecycle_context {
 void qa_q3_respawn_item(qa_q3_game_entity *entity, qa_q3_item_lifecycle_context context);
 void qa_q3_touch_item(qa_q3_game_entity *entity, qa_q3_damage_participant other, qa_touch_contact contact, qa_q3_item_lifecycle_context context);
 void qa_q3_finish_spawning_item(qa_q3_game_entity *entity, qa_q3_item_lifecycle_context context);
+/* Returns false for TS null; *out is written only on true. */
+bool qa_q3_observe_q3_supply(qa_q3_game_entity *entity, qa_q3_game_entity *recipient,
+    qa_q3_item_lifecycle_context context, qa_q3_supply_observation *out);
+/* TS spawnItem; is_disabled is the TS () => boolean closure (fn+ctx). */
+void qa_q3_spawn_item(qa_q3_game_entity *entity, const qa_q3_game_item_definition_mirror *item,
+    const qa_q3_spawn_variables *variables, bool (*is_disabled)(void *ctx), void *is_disabled_ctx,
+    qa_q3_item_lifecycle_context context);
 void qa_q3_bind_item_save_callbacks(qa_q3_item_lifecycle_context context);
 #endif

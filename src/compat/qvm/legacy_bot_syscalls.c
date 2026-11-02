@@ -49,12 +49,12 @@ static char *text(const qa_qvm_host_call *call, size_t index) {
 }
 
 bool qa_qvm_legacy_bot_library_syscall(const qa_qvm_host_call *call,
-                                       const qa_qvmy_bot_library_services *services, int32_t *out) {
+                                       qa_qvm_bot_library_services *services, int32_t *out) {
   if (strcmp(call->role, "qagame") != 0) return false;
   if (!call->has_abi_profile || call->abi_profile == NULL ||
       strcmp(call->abi_profile, "q3-1.16n-base") != 0)
     return false;
-  const qa_qvmy_bot_library *library = services->library;
+  const qa_qvmx_bot_library *library = &services->library;
   void *ctx = library->ctx;
   if (strcmp(call->kind, "extension") == 0) {
     char *item = NULL;
@@ -72,21 +72,23 @@ bool qa_qvm_legacy_bot_library_syscall(const qa_qvm_host_call *call,
   switch (call->code) {
     case BOTLIB_AI_LOAD_CHARACTER: {
       char *name = text(call, 1);
-      int32_t result = library->characters_load(ctx, name, qa_qvm_host_call_word(call, 2));
+      double result = library->characters_load(ctx, name, (float)qa_qvm_host_call_word(call, 2));
       free(name);
-      *out = result;
+      *out = (int32_t)result;
       return true;
     }
     case BOTLIB_AI_SET_CHAT_NAME: {
       char *name = text(call, 2);
-      library->chat_set_name(ctx, qa_qvm_host_call_word(call, 1), name);
+      /* Legacy arity lacks the client argument; pass 0 as the TS
+       * overload default does. */
+      library->chat_set_name(ctx, qa_qvm_host_call_word(call, 1), name, 0);
       free(name);
       *out = 0;
       return true;
     }
     case BOTLIB_AI_ENTER_CHAT:
-      library->chat_enter_chat(ctx, qa_qvm_host_call_word(call, 1), qa_qvm_host_call_word(call, 2),
-                               qa_qvm_host_call_word(call, 3) == 1 ? 1 : 0, qa_qvm_host_call_word(call, 2));
+      library->chat_enter_chat_legacy(ctx, qa_qvm_host_call_word(call, 1), qa_qvm_host_call_word(call, 2),
+                                      qa_qvm_host_call_word(call, 3) == 1 ? 1 : 0, qa_qvm_host_call_word(call, 2));
       *out = 0;
       return true;
     case BOTLIB_EA_GET_INPUT: {
@@ -106,7 +108,7 @@ bool qa_qvm_legacy_bot_library_syscall(const qa_qvm_host_call *call,
       qa_qvm_writable_view view;
       qa_qvm_memory_view(call->guest, qa_qvm_host_call_word(call, 2), 24, 0, &view);
       uint8_t buttons = qa_qvm_writable_view_get_uint8(&view, 4);
-      qa_q3_wire_user_command command;
+      qa_qvmx_wire_user_command command;
       command.server_time = qa_qvm_writable_view_get_int32(&view, 0, true);
       command.angles[0] = qa_qvm_writable_view_get_int32(&view, 8, true);
       command.angles[1] = qa_qvm_writable_view_get_int32(&view, 12, true);
@@ -116,7 +118,7 @@ bool qa_qvm_legacy_bot_library_syscall(const qa_qvm_host_call *call,
       command.forwardmove = qa_qvm_writable_view_get_int8(&view, 20);
       command.rightmove = qa_qvm_writable_view_get_int8(&view, 21);
       command.upmove = qa_qvm_writable_view_get_int8(&view, 22);
-      services->user_command(services->ctx, qa_qvm_host_call_word(call, 1), &command);
+      services->user_command(services->ctx, qa_qvm_host_call_word(call, 1), command);
       *out = 0;
       return true;
     }

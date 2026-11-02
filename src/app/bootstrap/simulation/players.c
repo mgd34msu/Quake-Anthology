@@ -303,7 +303,7 @@ bool qa_app_sim_movement_player_set_flight(qa_app_sim_movement_player *player, b
   return player->flight;
 }
 void qa_app_sim_movement_player_set_source_view_roll(qa_app_sim_movement_player *player, double roll) {
-  (void)qa_session_actor_registry_is_live(player->host.actors, player->actor.id);
+  qa_session_actor_registry_assert_owned(player->host.actors, player->actor);
   player->view_angles.z = (float)roll;
   qa_movement_state *state = &player->state;
   if (state->kind == QA_MOVEMENT_STATE_Q1) state->as.q1.view_angles.z = player->view_angles.z;
@@ -418,10 +418,12 @@ static void accept_arsenal_intent(qa_app_sim_movement_player *p, const qa_arsena
 void qa_app_sim_movement_player_receive_netquake(qa_app_sim_movement_player *player, qa_actor_command input) {
   if (input.command.kind != QA_USER_COMMAND_Q1) qa_range_error("NetQuake client requires a NetQuake command");
   if (input.sequence <= player->last_sequence) return;
+  /* TS: impulse: input.command.impulse || this.netQuakeCommand?.impulse || 0 */
+  double previous_impulse = player->has_netquake_command ? player->netquake_command.impulse : 0;
   player->has_netquake_command = true;
   player->netquake_command = input.command.as.q1;
-  if (player->netquake_command.impulse == 0 && player->has_netquake_command)
-    player->netquake_command.impulse = input.command.as.q1.impulse;
+  if (player->netquake_command.impulse == 0)
+    player->netquake_command.impulse = previous_impulse;
   accept_arsenal_intent(player, input.arsenal, input.arsenal != NULL);
   player->previous_buttons = player->buttons; player->buttons = input.command.as.q1.buttons;
   player->command_angles = input.command.as.q1.view_angles; player->view_angles = input.command.as.q1.view_angles;
@@ -596,6 +598,26 @@ static void move_player_action(void *ctx, qa_owned_actor actor, const char *acti
   (void)state; move_jump_env *e = ctx; qa_app_sim_movement_player *p = e->base.player;
   if ((!is(action, "jump") || !e->source_jump) && p->host.jump) p->host.jump(p->host.ctx, actor, action);
 }
+/* TS moveCommand: q3 weapon hook first records motion viewangles.
+ * The C hooks share one ctx, so every hook is wrapped and delegates
+ * with the inner ctx (TS spread keeps the other closures as-is). */
+static qa_q3_weapon_phase_result q3_weapon_wrap_fn(void *ctx, qa_q3_hook_context context) {
+  qa_app_sim_q3_weapon_wrap *wrap = ctx;
+  wrap->player->view_angles = context.motion->viewangles;
+  return wrap->inner.weapon(wrap->inner.ctx, context);
+}
+static bool q3_firing_wrap_fn(void *ctx, qa_q3_hook_context context) {
+  qa_app_sim_q3_weapon_wrap *wrap = ctx;
+  return wrap->inner.firing(wrap->inner.ctx, context);
+}
+static qa_animation_step_result q3_animation_wrap_fn(void *ctx, qa_q3_animation_request request, qa_q3_hook_context context) {
+  qa_app_sim_q3_weapon_wrap *wrap = ctx;
+  return wrap->inner.animation(wrap->inner.ctx, request, context);
+}
+static qa_animation_step_result q3_torso_wrap_fn(void *ctx, qa_q3_hook_context context) {
+  qa_app_sim_q3_weapon_wrap *wrap = ctx;
+  return wrap->inner.torso(wrap->inner.ctx, context);
+}
 static qa_movement_result wrong_family(void) {
   qa_range_error("Source callback changed a player's movement provider");
 }
@@ -670,6 +692,15 @@ qa_movement_result qa_app_sim_movement_player_move_command(qa_app_sim_movement_p
   phooks.native_quakeworld = player->host.has_quakeworld;
   phooks.publish_ctx = player; phooks.publish_posture = publish_player_posture;
   phooks.q1 = q1_options; phooks.q2 = player->host.rerelease_movement; phooks.q3 = player->host.q3_hooks;
+  if (phooks.q3.weapon != NULL) {
+    player->q3_weapon_wrap.player = player;
+    player->q3_weapon_wrap.inner = player->host.q3_hooks;
+    phooks.q3.ctx = &player->q3_weapon_wrap;
+    phooks.q3.weapon = q3_weapon_wrap_fn;
+    if (phooks.q3.firing != NULL) phooks.q3.firing = q3_firing_wrap_fn;
+    if (phooks.q3.animation != NULL) phooks.q3.animation = q3_animation_wrap_fn;
+    if (phooks.q3.torso != NULL) phooks.q3.torso = q3_torso_wrap_fn;
+  }
   phooks.q3_options_storage = &player->q3_provider_options;
   qa_movement_provider provider = qa_app_sim_create_player_movement_provider(prov, phooks);
   qa_movement_input base; memset(&base, 0, sizeof base);

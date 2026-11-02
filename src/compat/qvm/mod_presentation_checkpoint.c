@@ -19,116 +19,23 @@ static void *xmalloc(size_t size) {
   return result;
 }
 
-static bool is_modern(qa_qvm_abi_profile profile) {
-  return profile == NULL || strcmp(profile, "q3-modern") == 0;
+/* Source entity read/write are the landed entity_record.h
+ * functions; adapt this module's writable views to qa_qvmx_view. */
+static qa_qvmx_view raw_view(const qa_qvm_writable_view *view) {
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  return raw;
 }
 
-int qa_qvmy_entity_state_bytes(qa_qvm_abi_profile profile) { return is_modern(profile) ? 208 : 204; }
-int qa_qvmy_snapshot_bytes(qa_qvm_abi_profile profile) { return is_modern(profile) ? 53772 : 52724; }
-
-static void require_entity(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile) {
-  int bytes = qa_qvmy_entity_state_bytes(profile);
-  if (view->length < bytes)
-    qa_binary_error("QVM entityState_t", 0, "record requires %d bytes, received %lld",
-                    bytes, (long long)view->length);
+static void read_entity_fields(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile,
+                               qa_qvm_entity_state_fields *out) {
+  qa_qvm_entity_state state = qa_qvm_read_source_entity_state(raw_view(view), profile);
+  qa_qvm_get_entity_state_fields(&state, out);
+  qa_qvm_entity_state_destroy(&state);
 }
 
-static qa_vec3 read_vector(const qa_qvm_writable_view *view, int64_t offset) {
-  qa_vec3 result = {(double)qa_qvm_writable_view_get_float32(view, offset, true),
-                    (double)qa_qvm_writable_view_get_float32(view, offset + 4, true),
-                    (double)qa_qvm_writable_view_get_float32(view, offset + 8, true)};
-  return result;
-}
-
-static void write_vector(qa_qvm_writable_view *view, int64_t offset, qa_vec3 value) {
-  qa_qvm_writable_view_set_float32(view, offset, value.x, true);
-  qa_qvm_writable_view_set_float32(view, offset + 4, value.y, true);
-  qa_qvm_writable_view_set_float32(view, offset + 8, value.z, true);
-}
-
-static qa_qvmy_trajectory read_trajectory(const qa_qvm_writable_view *view, int64_t offset) {
-  qa_qvmy_trajectory result;
-  result.type = qa_qvm_writable_view_get_int32(view, offset, true);
-  result.time = qa_qvm_writable_view_get_int32(view, offset + 4, true);
-  result.duration = qa_qvm_writable_view_get_int32(view, offset + 8, true);
-  result.base = read_vector(view, offset + 12);
-  result.delta = read_vector(view, offset + 24);
-  return result;
-}
-
-static void write_trajectory(qa_qvm_writable_view *view, int64_t offset, qa_qvmy_trajectory value) {
-  qa_qvm_writable_view_set_int32(view, offset, value.type, true);
-  qa_qvm_writable_view_set_int32(view, offset + 4, value.time, true);
-  qa_qvm_writable_view_set_int32(view, offset + 8, value.duration, true);
-  write_vector(view, offset + 12, value.base);
-  write_vector(view, offset + 24, value.delta);
-}
-
-void qa_qvmy_read_source_entity_state(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile,
-                                      qa_qvmy_entity_state_fields *out) {
-  require_entity(view, profile);
-  out->number = qa_qvm_writable_view_get_int32(view, 0, true);
-  out->e_type = qa_qvm_writable_view_get_int32(view, 4, true);
-  out->e_flags = qa_qvm_writable_view_get_int32(view, 8, true);
-  out->pos = read_trajectory(view, 12);
-  out->apos = read_trajectory(view, 48);
-  out->time = qa_qvm_writable_view_get_int32(view, 84, true);
-  out->time2 = qa_qvm_writable_view_get_int32(view, 88, true);
-  out->origin = read_vector(view, 92);
-  out->origin2 = read_vector(view, 104);
-  out->angles = read_vector(view, 116);
-  out->angles2 = read_vector(view, 128);
-  out->other_entity_num = qa_qvm_writable_view_get_int32(view, 140, true);
-  out->other_entity_num2 = qa_qvm_writable_view_get_int32(view, 144, true);
-  out->ground_entity_num = qa_qvm_writable_view_get_int32(view, 148, true);
-  out->constant_light = qa_qvm_writable_view_get_int32(view, 152, true);
-  out->loop_sound = qa_qvm_writable_view_get_int32(view, 156, true);
-  out->modelindex = qa_qvm_writable_view_get_int32(view, 160, true);
-  out->modelindex2 = qa_qvm_writable_view_get_int32(view, 164, true);
-  out->client_num = qa_qvm_writable_view_get_int32(view, 168, true);
-  out->frame = qa_qvm_writable_view_get_int32(view, 172, true);
-  out->solid = qa_qvm_writable_view_get_int32(view, 176, true);
-  out->event = qa_qvm_writable_view_get_int32(view, 180, true);
-  out->event_parm = qa_qvm_writable_view_get_int32(view, 184, true);
-  out->powerups = qa_qvm_writable_view_get_int32(view, 188, true);
-  out->weapon = qa_qvm_writable_view_get_int32(view, 192, true);
-  out->legs_anim = qa_qvm_writable_view_get_int32(view, 196, true);
-  out->torso_anim = qa_qvm_writable_view_get_int32(view, 200, true);
-  out->generic1 = is_modern(profile) ? qa_qvm_writable_view_get_int32(view, 204, true) : 0;
-}
-
-void qa_qvmy_write_source_entity_state(qa_qvm_writable_view *view, const qa_qvmy_entity_state_fields *state,
-                                       qa_qvm_abi_profile profile) {
-  require_entity(view, profile);
-  qa_qvm_writable_view_set_int32(view, 0, state->number, true);
-  qa_qvm_writable_view_set_int32(view, 4, state->e_type, true);
-  qa_qvm_writable_view_set_int32(view, 8, state->e_flags, true);
-  write_trajectory(view, 12, state->pos);
-  write_trajectory(view, 48, state->apos);
-  qa_qvm_writable_view_set_int32(view, 84, state->time, true);
-  qa_qvm_writable_view_set_int32(view, 88, state->time2, true);
-  write_vector(view, 92, state->origin);
-  write_vector(view, 104, state->origin2);
-  write_vector(view, 116, state->angles);
-  write_vector(view, 128, state->angles2);
-  qa_qvm_writable_view_set_int32(view, 140, state->other_entity_num, true);
-  qa_qvm_writable_view_set_int32(view, 144, state->other_entity_num2, true);
-  qa_qvm_writable_view_set_int32(view, 148, state->ground_entity_num, true);
-  qa_qvm_writable_view_set_int32(view, 152, state->constant_light, true);
-  qa_qvm_writable_view_set_int32(view, 156, state->loop_sound, true);
-  qa_qvm_writable_view_set_int32(view, 160, state->modelindex, true);
-  qa_qvm_writable_view_set_int32(view, 164, state->modelindex2, true);
-  qa_qvm_writable_view_set_int32(view, 168, state->client_num, true);
-  qa_qvm_writable_view_set_int32(view, 172, state->frame, true);
-  qa_qvm_writable_view_set_int32(view, 176, state->solid, true);
-  qa_qvm_writable_view_set_int32(view, 180, state->event, true);
-  qa_qvm_writable_view_set_int32(view, 184, state->event_parm, true);
-  qa_qvm_writable_view_set_int32(view, 188, state->powerups, true);
-  qa_qvm_writable_view_set_int32(view, 192, state->weapon, true);
-  qa_qvm_writable_view_set_int32(view, 196, state->legs_anim, true);
-  qa_qvm_writable_view_set_int32(view, 200, state->torso_anim, true);
-  if (is_modern(profile)) qa_qvm_writable_view_set_int32(view, 204, state->generic1, true);
-  else if (state->generic1 != 0) qa_range_error("Legacy QVM entity has no generic1 field");
+static void write_entity_fields(qa_qvm_writable_view *view, const qa_qvm_entity_state_fields *state,
+                                qa_qvm_abi_profile profile) {
+  qa_qvm_write_source_entity_state(raw_view(view), state, profile);
 }
 
 static qa_save_reader field(const qa_save_reader *reader, const char *name) {
@@ -193,16 +100,17 @@ void qa_qvm_read_presentation_game_state(const qa_save_reader *reader, qa_q3_sou
 
 /* Mirrored writeSourceQvmSnapshot (TS client-state-record.ts). */
 static void write_source_snapshot(qa_qvm_memory *memory, qa_qvm_writable_view *view,
-                                  const qa_qvmy_source_snapshot *snapshot, qa_qvm_abi_profile profile) {
-  int size = qa_qvmy_snapshot_bytes(profile);
+                                  const qa_qvm_source_snapshot *snapshot, qa_qvm_abi_profile profile) {
+  int size = (int)qa_qvm_snapshot_bytes_for(profile);
   if (view->length < size) qa_range_error("QVM client record requires %d bytes", size);
-  if (snapshot->entity_count > 256) qa_range_error("Invalid source snapshot_t extent");
+  if (snapshot->area_mask_length != 32 || snapshot->entity_count > 256)
+    qa_range_error("Invalid source snapshot_t extent");
   int ps_bytes = qa_qvm_player_state_bytes(profile);
-  int entity_bytes = qa_qvmy_entity_state_bytes(profile);
+  int entity_bytes = (int)qa_qvm_entity_state_bytes_for(profile);
   int64_t offset = view->start;
-  qa_qvm_writable_view_set_int32(view, 0, snapshot->flags, true);
+  qa_qvm_writable_view_set_int32(view, 0, qa_int32(snapshot->flags), true);
   qa_qvm_writable_view_set_int32(view, 4, (int32_t)snapshot->player_state.ping_milliseconds, true);
-  qa_qvm_writable_view_set_int32(view, 8, snapshot->server_time, true);
+  qa_qvm_writable_view_set_int32(view, 8, qa_int32(snapshot->server_time), true);
   qa_qvm_memory_write_bytes(memory, offset + 12, snapshot->area_mask, 32);
   qa_qvm_writable_view player_view;
   qa_qvm_memory_data_view(memory, offset + 44, ps_bytes, &player_view);
@@ -211,14 +119,14 @@ static void write_source_snapshot(qa_qvm_memory *memory, qa_qvm_writable_view *v
   for (size_t i = 0; i < snapshot->entity_count; i++) {
     qa_qvm_writable_view entity_view;
     qa_qvm_memory_data_view(memory, offset + 48 + ps_bytes + (int64_t)i * entity_bytes, entity_bytes, &entity_view);
-    qa_qvmy_write_source_entity_state(&entity_view, &snapshot->entities[i], profile);
+    write_entity_fields(&entity_view, &snapshot->entities[i], profile);
   }
-  qa_qvm_writable_view_set_int32(view, size - 4, snapshot->server_command_sequence, true);
+  qa_qvm_writable_view_set_int32(view, size - 4, qa_int32(snapshot->server_command_sequence), true);
 }
 
-void qa_qvm_capture_presentation_snapshot(const qa_qvmy_source_snapshot *snapshot, qa_qvm_abi_profile profile,
+void qa_qvm_capture_presentation_snapshot(const qa_qvm_source_snapshot *snapshot, qa_qvm_abi_profile profile,
                                           qa_qvm_presentation_snapshot *out) {
-  int size = qa_qvmy_snapshot_bytes(profile);
+  int size = (int)qa_qvm_snapshot_bytes_for(profile);
   size_t allocation = 1;
   while (allocation < (size_t)size) allocation <<= 1;
   uint8_t *bytes = xmalloc(allocation);
@@ -229,7 +137,7 @@ void qa_qvm_capture_presentation_snapshot(const qa_qvmy_source_snapshot *snapsho
   qa_qvm_memory_data_view(&memory, 0, size, &view);
   write_source_snapshot(&memory, &view, snapshot, profile);
   qa_qvm_memory_destroy(&memory);
-  out->number = snapshot->number;
+  out->number = (int64_t)snapshot->number;
   out->bytes = xmalloc((size_t)size);
   memcpy(out->bytes, bytes, (size_t)size);
   out->byte_length = (size_t)size;
@@ -255,10 +163,10 @@ static void prepare_player_slots(qa_q3_player_state *state, double slots[64]) {
 }
 
 void qa_qvm_read_presentation_snapshot(const qa_save_reader *reader, qa_qvm_abi_profile profile,
-                                       qa_qvmy_source_snapshot *out) {
+                                       qa_qvm_source_snapshot *out) {
   memset(out, 0, sizeof *out);
   qa_save_reader number = field(reader, "number");
-  out->number = (int64_t)qa_save_reader_integer_min(&number, 0);
+  out->number = qa_save_reader_integer_min(&number, 0);
   qa_save_reader_destroy(&number);
   qa_save_reader bytes_reader = field(reader, "bytes");
   size_t length = 0;
@@ -266,35 +174,43 @@ void qa_qvm_read_presentation_snapshot(const qa_save_reader *reader, qa_qvm_abi_
   uint8_t *bytes = xmalloc(length);
   memcpy(bytes, borrowed, length);
   qa_save_reader_destroy(&bytes_reader);
-  if ((int64_t)length != qa_qvmy_snapshot_bytes(profile))
+  if ((int64_t)length != (int64_t)qa_qvm_snapshot_bytes_for(profile))
     qa_save_reader_fail(reader, "invalid source snapshot extent");
   int player_size = qa_qvm_player_state_bytes(profile);
-  int entity_size = qa_qvmy_entity_state_bytes(profile);
+  int entity_size = (int)qa_qvm_entity_state_bytes_for(profile);
   int32_t count = bytes_i32(bytes, (size_t)(44 + player_size));
   if (count < 0 || count > 256) qa_save_reader_fail(reader, "invalid source snapshot entity count");
   out->server_time = bytes_i32(bytes, 8);
   out->flags = bytes_i32(bytes, 0);
-  memcpy(out->area_mask, bytes + 12, 32);
+  uint8_t *area_mask = xmalloc(32);
+  memcpy(area_mask, bytes + 12, 32);
+  out->area_mask = area_mask;
+  out->area_mask_length = 32;
   qa_qvm_memory_writes writes;
   qa_qvm_memory_writes_init(&writes, bytes, length, NULL, NULL);
-  prepare_player_slots(&out->player_state, out->player_slots);
+  double *player_slots = xmalloc(64 * sizeof *player_slots);
+  memset(player_slots, 0, 64 * sizeof *player_slots);
+  prepare_player_slots(&out->player_state, player_slots);
   qa_qvm_writable_view player_view;
   qa_qvm_writable_view_init(&player_view, bytes, length, 44, player_size, &writes);
   qa_qvm_read_source_player_state(&player_view, profile, &out->player_state);
-  out->entities = xmalloc((size_t)count * sizeof *out->entities);
+  qa_qvm_entity_state_fields *entities = xmalloc((size_t)count * sizeof *entities);
+  out->entities = entities;
   out->entity_count = (size_t)count;
   for (int32_t i = 0; i < count; i++) {
     qa_qvm_writable_view entity_view;
     qa_qvm_writable_view_init(&entity_view, bytes, length, 48 + player_size + i * entity_size, entity_size, &writes);
-    qa_qvmy_read_source_entity_state(&entity_view, profile, &out->entities[i]);
+    read_entity_fields(&entity_view, profile, &entities[i]);
   }
   out->server_command_sequence = bytes_i32(bytes, length - 4);
   qa_qvm_memory_writes_destroy(&writes);
   free(bytes);
 }
 
-void qa_qvmy_source_snapshot_free(qa_qvmy_source_snapshot *snapshot) {
-  free(snapshot->entities);
+void qa_qvm_source_snapshot_free(qa_qvm_source_snapshot *snapshot) {
+  free((void *)snapshot->entities);
+  free((void *)snapshot->area_mask);
+  free((void *)snapshot->player_state.stats.values);
   memset(snapshot, 0, sizeof *snapshot);
 }
 
@@ -341,7 +257,7 @@ qa_save_value *qa_qvm_capture_scene_context(const qa_qvm_scene_context *scene, q
   set_number(result, "revision", (double)scene->revision);
   set_child(result, "gameState", capture_game_state_value(&scene->game_state));
   set_number(result, "gameStateRevision", (double)scene->game_state_revision);
-  qa_qvmy_source_snapshot numbered = scene->snapshot;
+  qa_qvm_source_snapshot numbered = scene->snapshot;
   numbered.number = 0;
   qa_qvm_presentation_snapshot captured;
   qa_qvm_capture_presentation_snapshot(&numbered, profile, &captured);
@@ -464,7 +380,7 @@ void qa_qvm_scene_context_free(qa_qvm_scene_context *scene) {
     free(scene->baseline);
   }
   qa_q3_source_game_state_record_destroy(&scene->game_state);
-  qa_qvmy_source_snapshot_free(&scene->snapshot);
+  qa_qvm_source_snapshot_free(&scene->snapshot);
   free(scene->actors);
   for (size_t i = 0; i < scene->command_count; i++) free((void *)scene->commands[i].arguments);
   free(scene->commands);
@@ -488,7 +404,7 @@ qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_cp_mod_scene_pu
   set_child(result, "gameState", capture_game_state_value(&scene->game_state));
   qa_save_value *clients = make_array();
   int player_bytes = qa_qvm_player_state_bytes(profile);
-  int entity_bytes = qa_qvmy_entity_state_bytes(profile);
+  int entity_bytes = (int)qa_qvm_entity_state_bytes_for(profile);
   for (size_t i = 0; i < scene->client_count; i++) {
     uint8_t *state = xmalloc((size_t)player_bytes);
     memset(state, 0, (size_t)player_bytes);
@@ -514,7 +430,7 @@ qa_save_value *qa_qvm_capture_mod_scene_publication(const qa_qvm_cp_mod_scene_pu
     qa_qvm_memory_writes_init(&writes, state, (size_t)entity_bytes, NULL, NULL);
     qa_qvm_writable_view view;
     qa_qvm_writable_view_init(&view, state, (size_t)entity_bytes, 0, entity_bytes, &writes);
-    qa_qvmy_write_source_entity_state(&view, &scene->entities[i].state, profile);
+    write_entity_fields(&view, &scene->entities[i].state, profile);
     qa_qvm_memory_writes_destroy(&writes);
     qa_save_value *row = make_object();
     set_child(row, "actor", saved_actor_value(scene->entities[i].actor));
@@ -568,7 +484,7 @@ void qa_qvm_read_mod_scene_publication(const qa_save_reader *reader, qa_qvm_abi_
   qa_qvm_read_presentation_game_state(&game_state, &out->game_state);
   qa_save_reader_destroy(&game_state);
   int player_bytes = qa_qvm_player_state_bytes(profile);
-  int entity_bytes = qa_qvmy_entity_state_bytes(profile);
+  int entity_bytes = (int)qa_qvm_entity_state_bytes_for(profile);
   qa_save_reader clients = field(reader, "clients");
   size_t client_count = qa_save_reader_list_count(&clients);
   out->clients = xmalloc(client_count * sizeof *out->clients);
@@ -635,7 +551,7 @@ void qa_qvm_read_mod_scene_publication(const qa_save_reader *reader, qa_qvm_abi_
     qa_qvm_memory_writes_init(&writes, bytes, length, NULL, NULL);
     qa_qvm_writable_view view;
     qa_qvm_writable_view_init(&view, bytes, length, 0, (int64_t)length, &writes);
-    qa_qvmy_read_source_entity_state(&view, profile, &out->entities[i].state);
+    read_entity_fields(&view, profile, &out->entities[i].state);
     qa_qvm_memory_writes_destroy(&writes);
     free(bytes);
     qa_save_reader_destroy(&row);

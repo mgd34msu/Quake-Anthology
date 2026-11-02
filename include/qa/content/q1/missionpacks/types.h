@@ -168,6 +168,9 @@ struct qa_q1mp_game {
                               bool (*touch)(void *hook_ctx, qa_q1mp_actor *corner, qa_q1mp_actor *mover));
   void (*replace_spawn)(void *ctx, const char *classname, qa_q1b_spawn_fn fn, void *fn_ctx);
   bool (*controls_trajectory)(void *ctx, qa_actor_id actor);
+  /* TS options.aimThreshold (the qa_q1b options mirror predates it;
+   * carried on the wrapper). has=false = TS undefined (0.93). */
+  bool has_aim_threshold; double aim_threshold;
 };
 
 /* Convenience: the wrapped q1b game (never NULL in ported calls). */

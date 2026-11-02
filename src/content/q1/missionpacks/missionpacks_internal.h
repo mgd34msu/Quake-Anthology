@@ -135,7 +135,8 @@ static inline void qa_q1mp_set_angles_b(qa_q1mp_game *g, qa_q1mp_actor *e, qa_ve
 }
 /* Wraps a qa_q1b_game* callback runtime back to the wrapper stored in ctx. */
 #define QA_Q1MP_WRAP(ctx) ((qa_q1mp_game *)(ctx))
-/* Mirrored aim() (TS owner: foundation/weapons.ts, unlanded). */
+/* aim() adapter (TS owner: foundation/weapons.ts; defined in types.c
+ * over qa_aim_q1, world/gameplay/q1-aim.ts). */
 qa_vec3 qa_q1mp_ext_aim(qa_q1mp_game *game, qa_owned_actor actor, qa_vec3 forward);
 /* Mirrored fireBullets() (same owner). */
 void qa_q1mp_ext_fire_bullets(qa_q1mp_game *game, qa_owned_actor shooter, qa_vec3 direction,

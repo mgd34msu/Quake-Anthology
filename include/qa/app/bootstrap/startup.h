@@ -40,8 +40,16 @@ typedef struct qa_app_startup_host {
   int (*frame_count)(void *ctx);
   const char *(*close_services)(void *ctx);
   double (*frame_index)(void *ctx);
+  /* Platform services (all optional): system URL/path opener,
+   * pending SDL event source, capture bundle and renderer backend
+   * tokens for the matching StartupApplication accessors. */
+  bool (*open_path)(void *ctx, const char *path);
+  bool (*poll_event)(void *ctx, qa_sdl_event *out);
+  const void *(*captures)(void *ctx);
+  const char *(*backend)(void *ctx);
 } qa_app_startup_host;
 typedef struct qa_app_startup_application qa_app_startup_application;
+typedef struct qa_engine_session qa_engine_session;
 /* TS StartupApplication.open(options, host, saveDirectory?, entry?). */
 qa_app_startup_application *qa_app_startup_application_open(qa_app_startup_host host, qa_app_options options,
                                                              const char *save_directory, const char *entry);
@@ -61,4 +69,10 @@ double qa_app_startup_application_frame_count(qa_app_startup_application *app);
 void qa_app_startup_application_capture(qa_app_startup_application *app, const void *request);
 qa_render_frame qa_app_startup_application_prepare_frame(qa_app_startup_application *app, qa_render_frame frame);
 void qa_app_startup_application_close(qa_app_startup_application *app);
+/* TS requestQuit / run loop condition / owned frontend session. */
+void qa_app_startup_application_request_quit(qa_app_startup_application *app);
+bool qa_app_startup_application_stopping(const qa_app_startup_application *app);
+bool qa_app_startup_application_finished(const qa_app_startup_application *app);
+void qa_app_startup_application_run(qa_app_startup_application *app);
+qa_engine_session *qa_app_startup_application_session(qa_app_startup_application *app);
 #endif

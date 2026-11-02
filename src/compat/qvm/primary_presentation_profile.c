@@ -30,14 +30,14 @@ static qa_save_reader item_at(const qa_save_reader *reader, size_t index) {
 }
 
 
-static const qa_qvmy_region_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
+static const qa_qvm_instruction *insn(const qa_qvmy_artifact *artifact, int64_t index) {
   if (index < 0 || (uint64_t)index >= artifact->instruction_count) return NULL;
   return &artifact->instructions[index];
 }
 
 static int64_t read_entry(const qa_qvmy_artifact *artifact, qa_save_reader *reader) {
   int64_t pc = (int64_t)qa_save_reader_integer_min(reader, 0);
-  const qa_qvmy_region_instruction *instruction = insn(artifact, pc);
+  const qa_qvm_instruction *instruction = insn(artifact, pc);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
     qa_save_reader_fail(reader, "not an original function entry");
   return pc;
@@ -52,10 +52,10 @@ static int64_t entry_field(const qa_qvmy_artifact *artifact, const qa_save_reade
 
 static int64_t read_decision(const qa_qvmy_artifact *artifact, qa_save_reader *reader, int64_t owner) {
   int64_t pc = (int64_t)qa_save_reader_integer_min(reader, 0);
-  const qa_qvmy_region_instruction *instruction = insn(artifact, pc);
+  const qa_qvm_instruction *instruction = insn(artifact, pc);
   int64_t function_entry = pc;
   while (function_entry >= 0) {
-    const qa_qvmy_region_instruction *candidate = insn(artifact, function_entry);
+    const qa_qvm_instruction *candidate = insn(artifact, function_entry);
     if (candidate != NULL && candidate->opcode == QA_QVMY_OP_ENTER) break;
     function_entry--;
   }
@@ -153,7 +153,7 @@ bool qa_qvm_read_equipment_presentation(const qa_qvmy_artifact *artifact, qa_con
   qa_save_reader states = field(&warning, "states");
   qa_save_reader held = field(&equipment_reader, "held");
   int64_t held_entry = entry_field(artifact, &held, "entry");
-  const qa_qvmy_region_instruction *held_instruction = insn(artifact, held_entry);
+  const qa_qvm_instruction *held_instruction = insn(artifact, held_entry);
   if (held_instruction == NULL || held_instruction->opcode != QA_QVMY_OP_ENTER)
     qa_save_reader_fail(&held, "held weapon entry disappeared");
   int64_t frame = held_instruction->operand;

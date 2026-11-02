@@ -2,11 +2,12 @@
  * Port of src/compat/qvm/mod-protection.ts. The TS class name
  * collides with the landed contract type qa_qvm_mod_protection (the
  * definition), so the runtime class is qa_qvm_mod_protection_runtime.
- * Mirrored surface (TS owners src/world/session/mods.ts and
- * src/world/gameplay/authority.ts): qa_qvmy_protection_services
- * carries the clients/actors/combat members used; reservations and
- * their bind payloads are fn + ctx bundles. create() fills a shared
- * component of channels.
+ * Mirrored surface (TS owner src/world/session/mods.ts):
+ * qa_qvmy_protection_services carries the clients/actors/combat
+ * members used; reservations are fn + ctx bundles. Bind payloads
+ * are the landed qa_protection_binding (TS owner
+ * src/world/gameplay/authority.ts, authority.h). create() fills a
+ * shared component of channels.
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MOD_PROTECTION_H
@@ -22,6 +23,7 @@
 #include "qa/contracts/original_pickups.h"
 #include "qa/contracts/qvm_mod_callbacks.h"
 #include "qa/contracts/time.h"
+#include "qa/world/gameplay/authority.h"
 
 void qa_qvm_validate_mod_protection(const qa_qvm_mod_callback_declaration *declaration);
 
@@ -36,23 +38,7 @@ typedef qa_armor_stage_result (*qa_qvm_protection_absorb_fn)(void *ctx, qa_armor
                                                              qa_protection_observer observer);
 typedef qa_armor_stage_result (*qa_qvm_protection_execute_fn)(void *ctx);
 
-/* Mirrored ProtectionBinding payload bound into a reservation. */
-typedef struct qa_qvmy_protection_binding {
-  qa_provider_id owner;
-  const char *rule;
-  qa_mod_protection_admission admission;
-  const char *channel;
-  const qa_original_pickup_rule *pickups;
-  size_t pickup_count;
-  void *ctx;
-  qa_regular_armor_state (*read_regular)(void *ctx);
-  void (*validate_regular)(void *ctx, qa_regular_armor_state next);
-  void (*write_regular)(void *ctx, qa_regular_armor_state next);
-  qa_powered_protection_state (*read_powered)(void *ctx);
-  void (*validate_powered)(void *ctx, qa_powered_protection_state next);
-  void (*write_powered)(void *ctx, qa_powered_protection_state next);
-  qa_qvm_protection_absorb_fn absorb;
-} qa_qvmy_protection_binding;
+/* Bind payloads are qa_protection_binding (authority.h). */
 
 typedef struct qa_qvmy_protection_services {
   void *ctx;
@@ -63,8 +49,8 @@ typedef struct qa_qvmy_protection_services {
   bool (*resolve_owned)(void *ctx, qa_actor_id actor, qa_owned_actor *out);
   bool (*is_live)(void *ctx, qa_actor_id actor);
   size_t (*reserve_protection)(void *ctx, qa_owned_actor owned, qa_protection_channel channel,
-                               const qa_qvmy_protection_binding *claim);
-  void (*bind_reservation)(void *ctx, size_t reservation, const qa_qvmy_protection_binding *binding);
+                               const qa_protection_binding *claim);
+  void (*bind_reservation)(void *ctx, size_t reservation, const qa_protection_binding *binding);
   void (*close_reservation)(void *ctx, size_t reservation);
   qa_source_time (*time)(void *ctx);
 } qa_qvmy_protection_services;

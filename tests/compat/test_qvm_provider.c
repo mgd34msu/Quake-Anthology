@@ -55,10 +55,10 @@ static int checks = 0;
 #define DIGEST \
   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-static qa_qvmy_region_instruction instructions[] = {
-    {QA_QVM_OP_ENTER, 4, 0, 0},
-    {QA_QVM_OP_LEAVE, 4, 0, 0},
-    {QA_QVM_OP_ENTER, 4, 0, 0},
+static qa_qvm_instruction instructions[] = {
+    {.opcode = QA_QVM_OP_ENTER, .operand_width = 4, .operand = 0},
+    {.opcode = QA_QVM_OP_LEAVE, .operand_width = 4, .operand = 0},
+    {.opcode = QA_QVM_OP_ENTER, .operand_width = 4, .operand = 0},
 };
 
 static qa_qvmy_artifact make_artifact(void) {

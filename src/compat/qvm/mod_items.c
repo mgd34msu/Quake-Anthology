@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/compat/qvm/item_storage.h"
 #include "qa/compat/qvm/operations.h"
 #include "qa/compat/qvm/primary_inventory_profile.h"
 #include "qa/content/item_icon.h"
@@ -84,13 +85,19 @@ static void validate_field(void *ctx, const qa_qvm_item_field *field, const char
   }
 }
 
-static const qa_qvmy_region_instruction *insn(const qa_qvmy_region_instruction *instructions, size_t count, int64_t index) {
+static const qa_qvm_instruction *insn(const qa_qvm_instruction *instructions, size_t count, int64_t index) {
   if (index < 0 || (uint64_t)index >= count) return NULL;
   return &instructions[index];
 }
 
+/* Adapter onto the landed validator shape: usage NULL is the TS
+ * undefined, defaulted to "storage" by the TS field callback. */
+static void validate_field_validator(void *ctx, qa_qvm_item_field field, const char *usage) {
+  validate_field(ctx, &field, usage == NULL ? "storage" : usage);
+}
+
 void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_callback_declaration *declaration,
-                               const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                               const qa_qvm_instruction *instructions, size_t instruction_count,
                                int64_t initialized_data_length, int64_t bss_length) {
   if (declaration->clients == NULL || items->definition_count == 0)
     qa_range_error("QVM items require source client admission");
@@ -101,9 +108,15 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
   validate_state state = {declaration, NULL, NULL, NULL, 0, 0};
   qa_item_id *ids = xmalloc(items->definition_count * sizeof *ids);
   for (size_t i = 0; i < items->definition_count; i++) ids[i] = items->definitions[i].item;
-  qa_qvmy_validate_item_storage(items->storage, items->storage_count, ids, items->definition_count,
-                                instructions, instruction_count, initialized_data_length, bss_length,
-                                validate_field, &state);
+  qa_qvm_image image;
+  memset(&image, 0, sizeof image);
+  image.instructions = (qa_qvm_instruction *)instructions;
+  image.instruction_count = instruction_count;
+  image.initialized_length = (size_t)initialized_data_length;
+  image.bss_length = bss_length;
+  qa_qvm_item_field_validator validator = {&state, validate_field_validator};
+  qa_qvm_validate_item_storage(items->storage, items->storage_count, ids, items->definition_count,
+                               &image, validator);
   free(ids);
   size_t weapon_count = 0;
   for (size_t i = 0; i < items->definition_count; i++)
@@ -165,7 +178,7 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
         }
       }
     }
-    const qa_qvmy_region_instruction *instruction = insn(instructions, instruction_count, (int64_t)entry);
+    const qa_qvm_instruction *instruction = insn(instructions, instruction_count, (int64_t)entry);
     if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER || input_matches != 1 ||
         matched == NULL || strcmp(matched->scope, "movement-slice") != 0 || strcmp(matched->phase, "after") != 0)
       qa_range_error("QVM weapon input requires one declared original callback after authoritative movement");
@@ -214,7 +227,7 @@ void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_c
 
 /* Mirrored item-storage access (TS item-storage.ts). */
 static int32_t capacity_constant(const qa_qvm_mod_items_runtime *items, double instruction) {
-  const qa_qvmy_region_instruction *value = insn(items->image->instructions, items->image->instruction_count,
+  const qa_qvm_instruction *value = insn(items->image->instructions, items->image->instruction_count,
                                                  (int64_t)instruction);
   if (value == NULL || value->opcode != QA_QVMY_OP_CONST || value->operand < 0)
     qa_range_error("QVM item capacity is not its declared original constant");
@@ -235,7 +248,7 @@ typedef struct item_entry {
   size_t address_capacity;
   void *observe_state; /* owned */
   void *lease_state;   /* owned */
-  qa_qvmy_item_lease lease;
+  qa_source_item_lease lease;
   size_t watch_id;
   bool has_remove_weapon;
   qa_source_weapon_unbind remove_weapon;

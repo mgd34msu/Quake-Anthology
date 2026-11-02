@@ -85,6 +85,13 @@ qa_movement_profile qa_app_sim_movement_profile(qa_executable_recipe recipe);
 qa_vec3 qa_app_sim_movement_origin(qa_movement_state state);
 qa_vec3 qa_app_sim_movement_velocity(qa_movement_state state);
 
+/* TS moveCommand q3 weapon-hook wrapper state: records motion
+ * viewangles on the player, then delegates to host.q3_hooks. */
+typedef struct qa_app_sim_q3_weapon_wrap {
+  qa_app_sim_movement_player *player;
+  qa_q3_movement_hooks inner;
+} qa_app_sim_q3_weapon_wrap;
+
 struct qa_app_sim_movement_player {
   qa_owned_actor actor; qa_client_id client; qa_executable_recipe recipe;
   qa_game_family character;
@@ -118,6 +125,7 @@ struct qa_app_sim_movement_player {
   bool netquake_application_open, netquake_slice_open;
   bool has_netquake_slice_command; qa_q1_user_command netquake_slice_command;
   qa_q3_movement_provider_options q3_provider_options;
+  qa_app_sim_q3_weapon_wrap q3_weapon_wrap;
 };
 /* character_definition/appearance NULL use recipe.character. */
 qa_app_sim_movement_player *qa_app_sim_movement_player_create(qa_owned_actor actor, qa_client_id client,

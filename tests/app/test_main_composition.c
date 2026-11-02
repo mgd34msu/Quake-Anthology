@@ -49,23 +49,52 @@ int main(void) {
   free(comp.error);
   comp.error = NULL;
 
-  /* Named missing-service phases: menu vs run vs lobby. */
-  (void)comp_phase_menu_or_game(&comp, false);
-  CHECK(comp.error != NULL && strstr(comp.error, "configuration.ts") != NULL &&
-        strstr(comp.error, "startup-menu.ts") != NULL);
-  (void)comp_phase_lobby(&comp); /* skipped: first error kept */
-  CHECK(strstr(comp.error, "local-lobby.ts") == NULL);
-  free(comp.error);
-  comp.error = NULL;
+  /* Run entry stops at the named Application game gap. */
   (void)comp_phase_menu_or_game(&comp, true);
   CHECK(comp.error != NULL && strstr(comp.error, "application.ts") != NULL &&
-        strstr(comp.error, "loadApplicationContent") != NULL);
+        strstr(comp.error, "world/session/simulation") != NULL);
+  (void)comp_phase_lobby(&comp); /* skipped: first error kept */
+  CHECK(strstr(comp.error, "online.h") == NULL);
   free(comp.error);
   comp.error = NULL;
-  (void)comp_phase_lobby(&comp);
-  CHECK(comp.error != NULL && strstr(comp.error, "online.ts") != NULL);
-  free(comp.error);
-  comp.error = NULL;
+
+  /* Menu entry constructs StartupMenu + NativeUiController +
+   * StartupSaves for real (no SDL needed for these owners). */
+  composition menu_phase = {0};
+  char save_template[] = "/tmp/qa-main-menu-XXXXXX";
+  char *save_dir = mkdtemp(save_template);
+  CHECK(save_dir != NULL);
+  menu_phase.save_directory = dup_text(save_dir != NULL ? save_dir : "/tmp");
+  CHECK(qa_identity_owner_create(&menu_phase.identity, "test"));
+  menu_phase.identity_open = true;
+  menu_phase.seat = qa_identity_owner_seat(&menu_phase.identity, 0);
+  (void)comp_phase_menu_or_game(&menu_phase, false);
+  CHECK(menu_phase.error == NULL);
+  CHECK(menu_phase.menu != NULL);
+  CHECK(menu_phase.ui != NULL);
+  CHECK(menu_phase.saves != NULL);
+  composition_close(&menu_phase);
+  CHECK(menu_phase.menu == NULL && menu_phase.ui == NULL &&
+        menu_phase.saves == NULL && !menu_phase.identity_open);
+
+  /* Lobby phase builds the account registry + lobby, then stops
+   * at the named LocalLobbyService allocator gap. */
+  composition lobby_comp = {0};
+  lobby_comp.random_state = 0x9e3779b9u;
+  CHECK(qa_identity_owner_create(&lobby_comp.identity, "test"));
+  lobby_comp.identity_open = true;
+  (void)comp_phase_lobby(&lobby_comp);
+  CHECK(lobby_comp.accounts != NULL);
+  CHECK(lobby_comp.lobby_account.id != NULL &&
+        strncmp(lobby_comp.lobby_account.id, "account:", 8) == 0);
+  CHECK(lobby_comp.lobby_open);
+  CHECK(lobby_comp.error != NULL &&
+        strstr(lobby_comp.error, "online.h") != NULL &&
+        strstr(lobby_comp.error, "local-lobby.ts") != NULL);
+  free(lobby_comp.error);
+  lobby_comp.error = NULL;
+  composition_close(&lobby_comp);
+  CHECK(lobby_comp.accounts == NULL && !lobby_comp.lobby_open);
 
   /* Catalog selection over a borrowed two-product catalog. */
   qa_catalog_discovered_product products[2] = {0};
@@ -114,6 +143,26 @@ int main(void) {
         strcmp(unknown_comp.error,
                "Unknown requested content or mod: unknown-product") == 0);
   free(unknown_comp.error);
+
+  /* openInitialConfigurationContent publishes catalog + source
+   * selection through the concrete content/configuration hosts. */
+  options.product = (char *)"q1-classic-id1";
+  composition config_comp = {0};
+  config_comp.options = &options;
+  config_comp.catalog = catalog;
+  config_comp.installed = &products[1];
+  composition_open_configuration(&config_comp);
+  CHECK(config_comp.error == NULL);
+  CHECK(config_comp.configuration != NULL);
+  CHECK(qa_app_configuration_content_catalog(config_comp.configuration) ==
+        &config_comp.catalog);
+  qa_app_application_configuration_selection selection =
+      qa_app_configuration_content_selection(config_comp.configuration);
+  CHECK(selection.source.provider != NULL &&
+        strcmp(selection.source.provider, "q1:official") == 0);
+  composition_close(&config_comp);
+  CHECK(config_comp.configuration == NULL);
+
   qa_content_catalog_destroy(&catalog); /* borrowed: frees nothing owned */
 
   /* TS Buffer.from(product.id).toString("hex") for the mount plan. */

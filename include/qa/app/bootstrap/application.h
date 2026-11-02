@@ -1,10 +1,13 @@
-/* Port of src/app/bootstrap/application.ts. The full composition
- * graph (world/session/input/audio/effects/lobby/rankings/save)
- * is wired by the host through the phase and service callbacks
- * below, as in landed startup.c; lifecycle state (finished/
- * frameCount/stopping/closed), ranking-menu request bookkeeping
- * and command queue guards are kept here. Async flows become
- * synchronous or pumped through step(). GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/application.ts. Application.open owns
+ * the owned-path composition here: loaded content (content.ts via
+ * the host content bundle), identity owner, EngineSession with
+ * local clients/seats, and the SharedSimulation loaded through
+ * loadSimulation over the host simulation bundle, attached to the
+ * session. step/run/close drive that world with the TS guards and
+ * ordering; the legacy phase callbacks remain for the graphical
+ * wiring (renderer/input/audio/effects) the platform host still
+ * supplies. Async flows become synchronous or pumped through
+ * step(). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_APPLICATION_H
 #define QA_APP_BOOTSTRAP_APPLICATION_H
 #include <stdbool.h>
@@ -14,9 +17,11 @@
 #include "qa/app/bootstrap/content.h"
 #include "qa/app/bootstrap/frontend_preferences.h"
 #include "qa/app/bootstrap/options.h"
+#include "qa/app/bootstrap/simulation/runtime.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/ui.h"
 typedef struct qa_app_application qa_app_application;
+typedef struct qa_engine_session qa_engine_session;
 /* TS ApplicationHost (services the graphical host provides). */
 typedef struct qa_app_application_host {
   void *ctx;
@@ -42,6 +47,24 @@ typedef struct qa_app_application_host {
   bool (*capture_blocks_transition)(void *ctx);
   bool (*video_restart_pending)(void *ctx);
   const char *(*read_pixels)(void *ctx, uint8_t **out_bytes, size_t *out_count);
+  /* Owned-path composition bundles (TS loadApplicationContent +
+   * loadSimulation inputs). When has_content, open loads content
+   * through content.c; when has_simulation, open loads the shared
+   * simulation over this bundle and attaches it to the new
+   * EngineSession, and step drives the session instead of host.step.
+   * actors is borrowed (host destroys); NULL = the application
+   * creates its own registry at the TS default capacity. */
+  bool has_content;
+  qa_app_content_host content;
+  bool has_simulation;
+  qa_app_sim_shared_simulation_host simulation;
+  qa_session_actor_registry *actors;
+  /* TS commands() dispatch for queued application requests; NULL
+   * keeps them queued (except "quit", which requests quit). */
+  const char *(*execute_command)(void *ctx, const char *name,
+                                 const char *const *arguments, size_t argument_count,
+                                 bool has_seat, qa_seat_id seat,
+                                 bool has_source, qa_command_context source);
 } qa_app_application_host;
 /* TS Application.open / openApplication. */
 qa_app_application *qa_app_application_open(qa_app_options options, qa_app_application_host host,
@@ -82,4 +105,18 @@ void qa_app_application_request_ranking_menu(qa_app_application *application, qa
 bool qa_app_application_take_ranking_menu_request(qa_app_application *application, qa_seat_id seat);
 void qa_app_application_release_settings(qa_app_application *application);
 const char *qa_app_application_retire(qa_app_application *application);
+/* Owned composition accessors (borrowed; NULL when not composed). */
+qa_engine_session *qa_app_application_session(qa_app_application *application);
+qa_app_sim_shared_simulation *qa_app_application_simulation(qa_app_application *application);
+qa_app_loaded_content *qa_app_application_content(qa_app_application *application);
+/* TS maxClients resolved at open; local seat count from the session. */
+double qa_app_application_max_clients(const qa_app_application *application);
+size_t qa_app_application_local_seat_count(const qa_app_application *application);
+bool qa_app_application_stopping(const qa_app_application *application);
+/* Last simulation output (TS step result); NULL before any step. */
+const qa_simulation_output *qa_app_application_last_output(const qa_app_application *application);
+/* Queued request inspection (borrowed strings; TS requestedCommands). */
+const char *qa_app_application_queued_command_name(const qa_app_application *application, size_t index);
+size_t qa_app_application_queued_command_argument_count(const qa_app_application *application, size_t index);
+const char *qa_app_application_queued_command_argument(const qa_app_application *application, size_t index, size_t argument);
 #endif

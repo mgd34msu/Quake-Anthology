@@ -39,12 +39,13 @@ static int checks = 0;
 } while (0)
 static bool streq(const char *a, const char *b) { return a && b && strcmp(a, b) == 0; }
 
-/* --- ext stubs (TS owners: foundation/weapons.ts aim,
- * base/rules.ts q1Obituary, base/travel.ts travel) --- */
-qa_vec3 qa_q1mp_ext_aim(qa_q1mp_game *game, qa_owned_actor actor, qa_vec3 forward) { (void)game; (void)actor; return forward; }
-/* qa_q1mp_ext_q1_obituary / *_q1_travel are defined for real in
+/* qa_q1mp_ext_aim is defined for real in
+ * src/content/q1/missionpacks/types.c (TS owner:
+ * foundation/weapons.ts aim over world/gameplay/q1-aim.ts);
+ * qa_q1mp_ext_q1_obituary / *_q1_travel are defined for real in
  * src/content/q1/missionpacks/{obituaries,travel}.c (Wave 8b); the
  * admit path is observed through the host stubs below. */
+qa_vec3 qa_q1mp_ext_aim(qa_q1mp_game *game, qa_owned_actor actor, qa_vec3 forward);
 static size_t created_count;
 static char created_items[40][96];
 static double created_health;
@@ -287,12 +288,104 @@ static void test_runes(void) {
   free(runes.players);
 }
 
+/* --- ext aim (TS foundation/weapons.ts aim + q1-aim.ts) --- */
+static qa_q1mp_actor aim_actors[2];
+static bool aim_no_shooter_body, aim_straight_hit, aim_target_damageable;
+static bool aim_target_is_player;
+static const char *aim_target_team;
+static bool aim_bodies_read(void *ctx, qa_actor_id actor, qa_q1b_body *out) {
+  (void)ctx; memset(out, 0, sizeof *out);
+  if (actor.slot == 1) { if (aim_no_shooter_body) return false; out->origin = (qa_vec3){0, 0, 0}; return true; }
+  if (actor.slot == 2) {
+    out->origin = (qa_vec3){100, 0, -10};
+    out->bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
+    return true;
+  }
+  return false;
+}
+static bool aim_combat_read(void *ctx, qa_actor_id actor, qa_combat_state *out) {
+  (void)ctx; memset(out, 0, sizeof *out);
+  if (actor.slot == 1) { out->can_take_damage = true; out->team = "red"; return true; }
+  if (actor.slot == 2) { out->can_take_damage = aim_target_damageable; out->team = aim_target_team; return true; }
+  return false;
+}
+static qa_q1b_trace aim_trace(void *ctx, const qa_q1b_trace_request *request) {
+  (void)ctx; qa_q1b_trace out; memset(&out, 0, sizeof out); out.fraction = 1;
+  /* Straight ray ends at x=2048; the target-center probe at x=100. */
+  if ((request->end.x > 1000 && aim_straight_hit) || request->end.x < 1000) {
+    out.actor.has = true; out.actor.id.slot = 2; out.fraction = 0.5;
+  }
+  return out;
+}
+static size_t aim_entities(qa_q1b_game *g, qa_q1b_actor **out, size_t capacity) {
+  (void)g; size_t n = 0;
+  for (size_t i = 0; i < 2 && n < capacity; i++) out[n++] = &aim_actors[i];
+  return n;
+}
+static qa_q1b_actor *aim_entity(qa_q1b_game *g, qa_q1b_opt_actor actor) {
+  (void)g; if (!actor.has) return NULL;
+  for (size_t i = 0; i < 2; i++) if (aim_actors[i].actor.id.slot == actor.id.slot) return &aim_actors[i];
+  return NULL;
+}
+static bool aim_is_player(qa_q1b_game *g, qa_q1b_opt_actor actor) {
+  (void)g; return actor.has && actor.id.slot == 2 && aim_target_is_player;
+}
+static void test_aim(void) {
+  setup_game("classic", 0);
+  memset(aim_actors, 0, sizeof aim_actors);
+  aim_actors[0].actor.id.slot = 1;
+  aim_actors[1].actor.id.slot = 2; aim_actors[1].aimed_damage = true;
+  host.bodies_read = aim_bodies_read; host.combat_read = aim_combat_read; host.trace = aim_trace;
+  base_game.entities = aim_entities; base_game.entity = aim_entity; base_game.is_player = aim_is_player;
+  aim_no_shooter_body = false; aim_straight_hit = false;
+  aim_target_damageable = true; aim_target_is_player = false; aim_target_team = "blue";
+  qa_owned_actor shooter = {0}; shooter.id.slot = 1;
+  qa_vec3 forward = {1, 0, 0};
+  /* Visible DAMAGE_AIM target below the ray: z is corrected toward
+   * normalize(100,0,-10) while horizontal aim is preserved. */
+  qa_vec3 aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(fabs(aimed.x - 0.9950371902099892) < 1e-4 && aimed.y == 0);
+  CHECK(fabs(aimed.z - (-0.09950371902099892)) < 1e-4);
+  /* No shooter body: forward unchanged. */
+  aim_no_shooter_body = true;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.y == 0 && aimed.z == 0);
+  aim_no_shooter_body = false;
+  /* Straight ray already hits an eligible target: unchanged. */
+  aim_straight_hit = true;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.z == 0);
+  aim_straight_hit = false;
+  /* Teamplay excludes a same-team target. */
+  base_game.options.has_teamplay = true; base_game.options.teamplay = 1; aim_target_team = "red";
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.z == 0);
+  aim_target_team = "blue";
+  /* Not damageable: excluded. */
+  aim_target_damageable = false;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.z == 0);
+  aim_target_damageable = true;
+  /* Neither aimedDamage nor player: excluded; player re-enables. */
+  aim_actors[1].aimed_damage = false;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.z == 0);
+  aim_target_is_player = true;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(fabs(aimed.z - (-0.09950371902099892)) < 1e-4);
+  /* Alignment 0.9677 is below an explicit aimThreshold of 0.99. */
+  game.has_aim_threshold = true; game.aim_threshold = 0.99;
+  aimed = qa_q1mp_ext_aim(&game, shooter, forward);
+  CHECK(aimed.x == 1 && aimed.z == 0);
+}
+
 int main(void) {
   test_tables_and_math();
   test_selection();
   test_travel();
   test_obituaries();
   test_runes();
+  test_aim();
   if (failures != 0) { fprintf(stderr, "%d/%d checks failed\n", failures, checks); return 1; }
   printf("test_q1_missionpacks: %d checks passed\n", checks);
   return 0;

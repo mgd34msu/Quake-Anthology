@@ -28,18 +28,16 @@
 #include "qa/world/session/mod_clients.h"
 
 void qa_qvm_validate_mod_items(const qa_qvm_mod_items *items, const qa_qvm_mod_callback_declaration *declaration,
-                               const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                               const qa_qvm_instruction *instructions, size_t instruction_count,
                                int64_t initialized_data_length, int64_t bss_length);
 
-typedef struct qa_qvmy_item_admission {
-  qa_source_item_definition definition;
-  const char *admission;
-} qa_qvmy_item_admission;
+/* Admissions are the landed qa_source_item_admission and leases
+ * the landed qa_source_item_lease (contracts/source_items.h). */
 
 /* Lease bundle mirrored onto SourceItemLease call sites. */
 typedef struct qa_qvmy_item_lease_binding {
   qa_provider_id owner;
-  const qa_qvmy_item_admission *items;
+  const qa_source_item_admission *items;
   size_t item_count;
   void *ctx;
   void (*invoke)(void *ctx, qa_item_id item, qa_source_item_action action);
@@ -49,18 +47,11 @@ typedef struct qa_qvmy_item_lease_binding {
   bool (*mutable_capacity)(void *ctx, qa_item_id item);
 } qa_qvmy_item_lease_binding;
 
-typedef struct qa_qvmy_item_lease {
-  void *ctx;
-  bool (*current)(void *ctx);
-  void (*stored)(void *ctx, const qa_source_item_store *changes, size_t count);
-  void (*close)(void *ctx);
-} qa_qvmy_item_lease;
-
 typedef struct qa_qvmy_item_services {
   void *ctx;
   bool (*resolve_owned)(void *ctx, qa_actor_id actor, qa_owned_actor *out);
   qa_actor_id (*reference_saved)(void *ctx, qa_saved_actor_id saved);
-  qa_qvmy_item_lease (*bind_items)(void *ctx, qa_owned_actor owner, const qa_qvmy_item_lease_binding *binding);
+  qa_source_item_lease (*bind_items)(void *ctx, qa_owned_actor owner, const qa_qvmy_item_lease_binding *binding);
   double (*inventory_count)(void *ctx, qa_actor_id actor, qa_item_id item);
   bool (*has_weapons)(void *ctx);
   bool (*weapon_selected)(void *ctx, qa_actor_id actor, qa_provider_id provider);
@@ -87,7 +78,7 @@ typedef struct qa_qvm_mod_items_runtime {
   qa_provider_id provider;
   qa_content_id content;
   const qa_qvm_mod_item_operations *operations;
-  qa_qvmy_item_admission *admissions; /* owned */
+  qa_source_item_admission *admissions; /* owned */
   size_t admission_count;
   qa_source_item_action *admission_actions; /* owned */
   qa_weapon_hud_icon *admission_icons;      /* owned */

@@ -6,9 +6,10 @@
  * holds the owned qa_qvm_image) and qa_qvmy_artifact (module.h:
  * the same bytecode artifact flattened to borrowed image extents).
  * qa_qvm_artifact_bridge is the lossless bytecode view of the
- * former in the latter shape: every extent/instruction field maps
- * 1:1 (operands widen int32 -> int64), data borrows the resolved
- * image, and the converted instruction array is bridge-owned.
+ * former in the latter shape: every extent field maps 1:1 and
+ * instructions are the shared qa_qvm_instruction type, data
+ * borrows the resolved image, and the copied instruction array
+ * is bridge-owned.
  * The "typescript" kind has no image and cannot bridge (TS
  * qvm-mod.ts rejects it before validateQvmMod).
  * GPL-2.0-or-later.
@@ -86,7 +87,7 @@ void qa_resolved_qvm_artifact_destroy(qa_resolved_qvm_artifact *artifact);
  * resolved artifact's image data; keep the resolved artifact alive
  * while the bridge is in use. */
 typedef struct qa_qvm_artifact_bridge {
-  qa_qvmy_region_instruction *instructions; /* owned conversion */
+  qa_qvm_instruction *instructions; /* owned conversion */
   qa_qvmy_artifact view;
 } qa_qvm_artifact_bridge;
 /* False for the typescript kind or on OOM. */

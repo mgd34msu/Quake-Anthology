@@ -17,7 +17,8 @@
 #include "qa/network/q3/message.h"
 #include "qa/world/session/mod_clients.h"
 
-qa_q3_wire_user_command qa_qvmy_read_user_command(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile);
+/* User commands are read with the landed qa_qvm_read_user_command
+ * (client_state_record.h) and converted in mod_input.c. */
 
 typedef struct qa_qvm_mod_input_operations {
   qa_qvm_module *module;

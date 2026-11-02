@@ -45,7 +45,7 @@ typedef struct qa_app_unified_component_state {
   qa_qvm_cp_scene_command *commands; size_t command_count; /* owned */
 } qa_app_unified_component_state;
 typedef struct qa_app_unified_component_frame_scene {
-  double revision; qa_qvmy_source_snapshot snapshot;
+  double revision; qa_qvm_source_snapshot snapshot;
 } qa_app_unified_component_frame_scene;
 typedef struct qa_app_unified_component_frame {
   qa_presentation_owner owner; double generation; qa_qvm_abi_profile abi;

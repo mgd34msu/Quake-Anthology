@@ -202,6 +202,25 @@ static void pred_runtime_write(void *ctx, qa_owned_actor actor, const char *exec
   ((qa_app_sim_player_movement_prediction *)ctx)->runtime = state;
 }
 static bool pred_gauntlet(void *ctx, qa_q3_hook_context context) { (void)ctx; (void)context; return false; }
+/* TS createPlayerMovementPrediction non-Q3-arsenal q3Hooks. */
+static bool pred_q3_firing(void *ctx, qa_q3_hook_context context) { (void)ctx; (void)context; return false; }
+static qa_animation_step_result pred_q3_animation(void *ctx, qa_q3_animation_request request, qa_q3_hook_context context) {
+  (void)ctx;
+  if (is(context.animation.state.kind, "q3")) return qa_q3_source_animation(request, &context);
+  qa_animation_step_result out; memset(&out, 0, sizeof out); out.animation = context.animation; return out;
+}
+static qa_animation_step_result pred_q3_torso(void *ctx, qa_q3_hook_context context) {
+  (void)ctx;
+  if (is(context.animation.state.kind, "q3")) return qa_q3_source_torso(QA_Q3_ANIM_TORSO_STAND, &context, true);
+  qa_animation_step_result out; memset(&out, 0, sizeof out); out.animation = context.animation; return out;
+}
+static qa_q3_weapon_phase_result pred_q3_weapon(void *ctx, qa_q3_hook_context context) {
+  (void)ctx;
+  qa_q3_weapon_phase_result out; memset(&out, 0, sizeof out);
+  out.base.arsenal = context.arsenal; out.base.animation = context.animation;
+  out.movement_flags = context.motion->pm_flags;
+  return out;
+}
 static qa_animation_step_result pred_anim(void *ctx, qa_animation_step_input input) {
   (void)ctx;
   qa_animation_step_result out; memset(&out, 0, sizeof out); out.animation = input.animation; return out;
@@ -247,6 +266,11 @@ qa_app_sim_player_movement_prediction *qa_app_sim_create_player_movement_predict
     access.ctx = p; access.read = pred_runtime_read; access.write = pred_runtime_write; access.gauntlet_hit = pred_gauntlet;
     q3_hooks = qa_q3_create_source_movement_hooks(access);
     (void)product;
+  } else {
+    q3_hooks.firing = pred_q3_firing;
+    q3_hooks.animation = pred_q3_animation;
+    q3_hooks.torso = pred_q3_torso;
+    q3_hooks.weapon = pred_q3_weapon;
   }
   p->native_quakeworld = simulation.native_quakeworld;
   qa_app_sim_provider_player prov; memset(&prov, 0, sizeof prov);

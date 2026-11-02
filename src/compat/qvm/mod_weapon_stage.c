@@ -14,19 +14,19 @@ static void *xmalloc(size_t size) {
   return result;
 }
 
-static const qa_qvmy_region_instruction *at(const qa_qvmy_region_instruction *instructions,
+static const qa_qvm_instruction *at(const qa_qvm_instruction *instructions,
                                             size_t count, int64_t pc) {
   if (pc < 0 || (uint64_t)pc >= count) return NULL;
   return &instructions[pc];
 }
 
-static int64_t function_end(const qa_qvmy_region_instruction *instructions, size_t count, int64_t entry) {
-  const qa_qvmy_region_instruction *instruction = at(instructions, count, entry);
+static int64_t function_end(const qa_qvm_instruction *instructions, size_t count, int64_t entry) {
+  const qa_qvm_instruction *instruction = at(instructions, count, entry);
   if (instruction == NULL || instruction->opcode != QA_QVMY_OP_ENTER)
     qa_range_error("QVM weapon entry is not an original function");
   int64_t end = entry + 1;
   while (end < (int64_t)count) {
-    const qa_qvmy_region_instruction *next = at(instructions, count, end);
+    const qa_qvm_instruction *next = at(instructions, count, end);
     if (next != NULL && next->opcode == QA_QVMY_OP_ENTER) break;
     end++;
   }
@@ -34,12 +34,12 @@ static int64_t function_end(const qa_qvmy_region_instruction *instructions, size
 }
 
 void qa_qvm_validate_weapon_dispatcher(const qa_qvm_weapon_stage *stage,
-                                       const qa_qvmy_region_instruction *instructions, size_t instruction_count) {
+                                       const qa_qvm_instruction *instructions, size_t instruction_count) {
   int64_t entry = (int64_t)stage->dispatcher.entry;
   int64_t end = function_end(instructions, instruction_count, entry);
   for (size_t i = 0; i < stage->predicate_count; i++) {
     int64_t pc = (int64_t)stage->predicates[i].instruction;
-    const qa_qvmy_region_instruction *instruction = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *instruction = at(instructions, instruction_count, pc);
     bool seen = false;
     for (size_t j = 0; j < i; j++) if ((int64_t)stage->predicates[j].instruction == pc) seen = true;
     if (pc <= entry || pc >= end || seen || instruction == NULL ||
@@ -54,18 +54,18 @@ void qa_qvm_validate_weapon_dispatcher(const qa_qvm_weapon_stage *stage,
 }
 
 void qa_qvm_validate_weapon_stage(const qa_qvm_weapon_stage *stage,
-                                  const qa_qvmy_region_instruction *instructions, size_t instruction_count) {
+                                  const qa_qvm_instruction *instructions, size_t instruction_count) {
   qa_qvm_validate_weapon_dispatcher(stage, instructions, instruction_count);
   const qa_qvm_weapon_continuation *continuation = &stage->continuation;
   int64_t entry = (int64_t)continuation->entry;
   int64_t limit = function_end(instructions, instruction_count, entry);
   int64_t instruction_index = (int64_t)continuation->instruction;
-  const qa_qvmy_region_instruction *branch = at(instructions, instruction_count, instruction_index);
+  const qa_qvm_instruction *branch = at(instructions, instruction_count, instruction_index);
   if (continuation->when_count == 0)
     qa_range_error("QVM weapon continuation lacks its source mode conditions");
   for (size_t i = 0; i < continuation->predicate_count; i++) {
     int64_t pc = (int64_t)continuation->predicates[i].instruction;
-    const qa_qvmy_region_instruction *instruction = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *instruction = at(instructions, instruction_count, pc);
     bool seen = pc == instruction_index;
     for (size_t j = 0; j < i; j++) if ((int64_t)continuation->predicates[j].instruction == pc) seen = true;
     if (pc <= entry || pc >= limit || seen || instruction == NULL ||
@@ -88,13 +88,13 @@ void qa_qvm_validate_weapon_stage(const qa_qvm_weapon_stage *stage,
     visited = realloc(visited, (visited_count + 1) * sizeof *visited);
     if (visited == NULL) qa_range_error("QVM memory allocation failed");
     visited[visited_count++] = pc;
-    const qa_qvmy_region_instruction *instruction = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *instruction = at(instructions, instruction_count, pc);
     if (instruction != NULL && instruction->opcode == QA_QVMY_OP_LEAVE) break;
     if (instruction != NULL && instruction->opcode == QA_QVMY_OP_PUSH) {
       pc++;
       continue;
     }
-    const qa_qvmy_region_instruction *next = at(instructions, instruction_count, pc + 1);
+    const qa_qvm_instruction *next = at(instructions, instruction_count, pc + 1);
     if (instruction != NULL && instruction->opcode == QA_QVMY_OP_CONST && next != NULL &&
         next->opcode == QA_QVMY_OP_JUMP) {
       pc = instruction->operand;
@@ -108,8 +108,8 @@ void qa_qvm_validate_weapon_stage(const qa_qvm_weapon_stage *stage,
   for (size_t i = 0; i < continuation->call_count; i++) {
     int64_t at_index = (int64_t)continuation->calls[i].instruction;
     const qa_qvm_mod_source_call *call = &continuation->calls[i].call;
-    const qa_qvmy_region_instruction *target = at(instructions, instruction_count, at_index - 1);
-    const qa_qvmy_region_instruction *instruction = at(instructions, instruction_count, at_index);
+    const qa_qvm_instruction *target = at(instructions, instruction_count, at_index - 1);
+    const qa_qvm_instruction *instruction = at(instructions, instruction_count, at_index);
     if (at_index <= previous || at_index >= limit || instruction == NULL ||
         instruction->opcode != QA_QVMY_OP_CALL || target == NULL ||
         target->opcode != QA_QVMY_OP_CONST || target->operand != (int64_t)call->entry ||
@@ -190,7 +190,7 @@ qa_item_id qa_qvm_weapon_dispatcher_runtime_active(qa_qvm_weapon_dispatcher_runt
 typedef struct predicate_state {
   qa_qvm_weapon_dispatcher_runtime *dispatcher;
   qa_actor_id actor;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   bool unselected;
   bool *reached;
 } predicate_state;
@@ -244,7 +244,7 @@ static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
     return call->evaluate_region(call->call_ctx, &region, inputs, input_count);
   }
   if (!has_actor) return proceed_call(call);
-  qa_qvmy_cancellation_scope cancellation =
+  qa_qvm_cancellation_scope cancellation =
       dispatcher->operations.cancellation(dispatcher->operations.ctx, actor, call);
   bool reached = false;
   push_scope(dispatcher, (dispatch_scope){actor, call});
@@ -352,7 +352,7 @@ void qa_qvm_weapon_dispatcher_runtime_close(qa_qvm_weapon_dispatcher_runtime *di
 typedef struct stage_input {
   qa_actor_id actor;
   bool has_cancellation;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   bool entered;
 } stage_input;
 
@@ -387,7 +387,7 @@ static bool stage_actor_lookup(qa_qvm_mod_weapon_stage *stage, const qa_qvm_weap
   return true;
 }
 
-static qa_qvmy_cancellation_scope stage_cancellation(qa_qvm_mod_weapon_stage *stage, qa_actor_id actor,
+static qa_qvm_cancellation_scope stage_cancellation(qa_qvm_mod_weapon_stage *stage, qa_actor_id actor,
                                                      qa_qvmy_function_call *call) {
   stage_input *inputs = stage->inputs;
   for (size_t i = stage->input_count; i-- > 0;) {
@@ -405,7 +405,7 @@ static bool adapter_actor(void *ctx, const qa_qvm_weapon_actor *source, qa_qvmy_
   return stage_actor_lookup(((stage_adapter *)ctx)->stage, source, call, out);
 }
 
-static qa_qvmy_cancellation_scope adapter_cancellation(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call) {
+static qa_qvm_cancellation_scope adapter_cancellation(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call) {
   return stage_cancellation(((stage_adapter *)ctx)->stage, actor, call);
 }
 
@@ -421,7 +421,7 @@ static int32_t input_hook(void *ctx, qa_qvmy_function_call *call) {
   input->cancellation = call->cancellation_scope(call->call_ctx);
   /* Copy out: nested applies may realloc the inputs array. */
   qa_actor_id actor = input->actor;
-  qa_qvmy_cancellation_scope cancellation = input->cancellation;
+  qa_qvm_cancellation_scope cancellation = input->cancellation;
   if (!stage->operations.live(stage->operations.ctx, actor)) {
     call->cancel_function(call->call_ctx, cancellation);
     qa_range_error("QVM cancellation requires the current source invocation");
@@ -437,7 +437,7 @@ static int32_t input_hook(void *ctx, qa_qvmy_function_call *call) {
 typedef struct continuation_state {
   qa_qvm_mod_weapon_stage *stage;
   qa_actor_id actor;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   bool unselected;
   bool *continued;
 } continuation_state;
@@ -482,7 +482,7 @@ static int32_t continue_hook(void *ctx, qa_qvmy_function_call *call) {
   qa_actor_id actor;
   if (!stage_actor_lookup(stage, &stage->definition->continuation.actor, call, &actor))
     return proceed_call(call);
-  qa_qvmy_cancellation_scope cancellation = stage_cancellation(stage, actor, call);
+  qa_qvm_cancellation_scope cancellation = stage_cancellation(stage, actor, call);
   int64_t movement = resolve_address(stage->operations.module->memory,
                                      &stage->definition->continuation.projection.movement, call);
   bool continued = false;

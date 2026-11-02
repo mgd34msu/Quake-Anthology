@@ -40,7 +40,7 @@ static qa_q3_equipment_qvm_artifact equipment_artifact(const qa_qvmy_artifact *a
 
 void qa_qvm_builtin_primary_profile(const qa_qvmy_artifact *artifact,
                                     const qa_q3_guest_weapon *catalog, size_t catalog_count,
-                                    qa_qvmy_primary_profile *out) {
+                                    qa_qvm_primary_profile *out) {
   memset(out, 0, sizeof *out);
   qa_q3_equipment_qvm_artifact equipment = equipment_artifact(artifact);
   qa_q3_qvm_input_definition input;
@@ -136,7 +136,6 @@ void qa_qvm_builtin_primary_profile(const qa_qvmy_artifact *artifact,
     target->equipment_context_count = weapons.equipment_context_count;
     for (size_t i = 0; i < weapons.equipment_context_count; i++) {
       target->equipment_contexts[i].provider = weapons.equipment_contexts[i].provider;
-      target->equipment_contexts[i].has_item = weapons.equipment_contexts[i].item != NULL;
       target->equipment_contexts[i].item = weapons.equipment_contexts[i].item;
     }
     target->delay.entry = (int64_t)weapons.delay.entry;
@@ -343,10 +342,10 @@ void qa_qvm_builtin_primary_profile(const qa_qvmy_artifact *artifact,
 }
 
 void qa_qvm_read_primary_profile(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                 const qa_qvmy_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
+                                 const qa_qvm_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
                                  const qa_qvmy_item_layout *items,
                                  const qa_resolved_resource_reference *declaration,
-                                 qa_qvmy_primary_profile *out) {
+                                 qa_qvm_primary_profile *out) {
   memset(out, 0, sizeof *out);
   out->declaration = declaration;
   out->input = xmalloc(sizeof *out->input);
@@ -357,7 +356,7 @@ void qa_qvm_read_primary_profile(const qa_save_reader *reader, const qa_qvmy_art
   qa_save_reader weapons_reader = field(reader, "weapons");
   qa_qvm_read_primary_weapons(&weapons_reader, artifact, catalog, catalog_count, has_catalog, out->weapons);
   qa_save_reader_destroy(&weapons_reader);
-  qa_qvmy_inventory_records records = {out->weapons->client_stride, out->weapons->entity_stride};
+  qa_qvm_inventory_records records = {out->weapons->client_stride, out->weapons->entity_stride};
   out->inventory = xmalloc(sizeof *out->inventory);
   qa_save_reader inventory_reader = field(reader, "inventory");
   qa_qvm_read_primary_inventory_profile(&inventory_reader, artifact, &records, out->inventory);
@@ -423,7 +422,7 @@ void qa_qvm_read_primary_profile(const qa_save_reader *reader, const qa_qvmy_art
   }
 }
 
-void qa_qvmy_primary_profile_free(qa_qvmy_primary_profile *profile) {
+void qa_qvm_primary_profile_free(qa_qvm_primary_profile *profile) {
   if (profile->input != NULL) {
     qa_qvmy_input_definition_free(profile->input);
     free(profile->input);

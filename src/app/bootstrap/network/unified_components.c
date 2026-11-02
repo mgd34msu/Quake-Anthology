@@ -9,6 +9,21 @@
 #include "qa/compat/qvm/player_record.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/mods.h"
+
+/* Source entity read/write are the landed entity_record.h
+ * functions; adapt writable views to qa_qvmx_view. */
+static void read_entity_fields(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile,
+                               qa_qvm_entity_state_fields *out) {
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  qa_qvm_entity_state state = qa_qvm_read_source_entity_state(raw, profile);
+  qa_qvm_get_entity_state_fields(&state, out);
+  qa_qvm_entity_state_destroy(&state);
+}
+static void write_entity_fields(qa_qvm_writable_view *view, const qa_qvm_entity_state_fields *state,
+                                qa_qvm_abi_profile profile) {
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  qa_qvm_write_source_entity_state(raw, state, profile);
+}
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -398,19 +413,21 @@ qa_save_value *qa_app_unified_write_component_frames(const qa_app_unified_compon
       qa_save_value *scene = object();
       set(scene, "revision", qa_save_value_number(source->scene.revision));
       qa_save_value *scene_snapshot = object();
-      const qa_qvmy_source_snapshot *snap = &source->scene.snapshot;
+      const qa_qvm_source_snapshot *snap = &source->scene.snapshot;
       set(scene_snapshot, "serverTime", qa_save_value_number(snap->server_time));
       set(scene_snapshot, "flags", qa_save_value_number(snap->flags));
-      set(scene_snapshot, "areaMask", qa_save_value_bytes(snap->area_mask, 32));
+      static const uint8_t zero_mask[32] = {0};
+      set(scene_snapshot, "areaMask",
+          qa_save_value_bytes(snap->area_mask != NULL ? snap->area_mask : zero_mask, 32));
       set(scene_snapshot, "playerState", qa_save_value_bytes(state_bytes, state_length));
       qa_save_value *entities = qa_save_value_array();
       if (!entities) qa_range_error("out of memory");
-      int entity_length = qa_qvmy_entity_state_bytes(source->abi);
+      int entity_length = qa_qvm_entity_state_bytes_for(source->abi);
       for (size_t j = 0; j < snap->entity_count; j++) {
         uint8_t *record = xmalloc((size_t)entity_length);
         memset(record, 0, (size_t)entity_length);
         qa_qvm_writable_view view = record_view(record, (size_t)entity_length);
-        qa_qvmy_write_source_entity_state(&view, &snap->entities[j], source->abi);
+        write_entity_fields(&view, &snap->entities[j], source->abi);
         push(entities, qa_save_value_bytes(record, (size_t)entity_length));
         free(record);
       }
@@ -475,8 +492,8 @@ qa_app_unified_component_frames qa_app_unified_read_component_frames(
       qa_save_reader state = field_of(&scene_reader, "snapshot");
       qa_save_reader entities_reader = field_of(&state, "entities");
       size_t entity_count = qa_save_reader_list_count(&entities_reader);
-      qa_qvmy_entity_state_fields *entities = xmalloc(entity_count * sizeof *entities);
-      int entity_length = qa_qvmy_entity_state_bytes(sources[i].abi);
+      qa_qvm_entity_state_fields *entities = xmalloc(entity_count * sizeof *entities);
+      int entity_length = qa_qvm_entity_state_bytes_for(sources[i].abi);
       for (size_t j = 0; j < entity_count; j++) {
         qa_save_reader item;
         if (!qa_save_reader_item(&entities_reader, j, &item)) qa_range_error("out of memory");
@@ -484,7 +501,7 @@ qa_app_unified_component_frames qa_app_unified_read_component_frames(
         uint8_t *copy = xmalloc((size_t)entity_length);
         memcpy(copy, bytes, (size_t)entity_length);
         qa_qvm_writable_view view = record_view(copy, (size_t)entity_length);
-        qa_qvmy_read_source_entity_state(&view, sources[i].abi, &entities[j]);
+        read_entity_fields(&view, sources[i].abi, &entities[j]);
         free(copy);
         qa_save_reader_destroy(&item);
       }
@@ -494,7 +511,7 @@ qa_app_unified_component_frames qa_app_unified_read_component_frames(
           if (entities[a].number == entities[b].number)
             qa_save_reader_fail(&scene_reader, "invalid visible source entity set");
       qa_save_reader_destroy(&entities_reader);
-      qa_qvmy_source_snapshot *snap = &sources[i].scene.snapshot;
+      qa_qvm_source_snapshot *snap = &sources[i].scene.snapshot;
       memset(snap, 0, sizeof *snap);
       qa_save_reader v = field_of(&scene_reader, "revision");
       sources[i].scene.revision = bounded_int(&v, 0, 9007199254740991.0);
@@ -506,11 +523,15 @@ qa_app_unified_component_frames qa_app_unified_read_component_frames(
       snap->flags = (int32_t)bounded_int(&v, 0, 255);
       qa_save_reader_destroy(&v);
       v = field_of(&state, "areaMask");
-      memcpy(snap->area_mask, exact_bytes(&v, 32), 32);
+      uint8_t *area_mask = xmalloc(32);
+      memcpy(area_mask, exact_bytes(&v, 32), 32);
+      snap->area_mask = area_mask;
+      snap->area_mask_length = 32;
       qa_save_reader_destroy(&v);
       snap->player_state = sources[i].snapshot.player_state;
-      memcpy(snap->player_slots, sources[i].snapshot.player_slots, sizeof snap->player_slots);
-      bind_slots(&snap->player_state, snap->player_slots);
+      double *snap_slots = xmalloc(64 * sizeof *snap_slots);
+      memcpy(snap_slots, sources[i].snapshot.player_slots, 64 * sizeof *snap_slots);
+      bind_slots(&snap->player_state, snap_slots);
       snap->entities = entities;
       snap->entity_count = entity_count;
       v = field_of(&state, "serverCommandSequence");
@@ -562,7 +583,7 @@ qa_app_unified_component_frames qa_app_unified_read_component_frames(
 void qa_app_unified_component_frames_free(qa_app_unified_component_frames *frames) {
   for (size_t i = 0; i < frames->source_count; i++) {
     free(frames->sources[i].bindings);
-    free(frames->sources[i].scene.snapshot.entities);
+    qa_qvm_source_snapshot_free(&frames->sources[i].scene.snapshot);
   }
   free(frames->sources);
   qa_app_unified_native_frames_free(frames->native, frames->native_count);

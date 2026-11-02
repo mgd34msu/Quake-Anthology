@@ -31,6 +31,114 @@ qa_q3_player_inventory_mirror qa_q3_item_inventory(qa_q3_game_client *client) {
 }
 void qa_q3_item_registry_init(qa_q3_item_registry *registry, const qa_q3_game_item_definition_mirror *items, size_t count) {
   registry->items = items; registry->count = count;
+  free(registry->registered);
+  registry->registered = calloc(count ? count : 1, 1);
+  if (registry->registered == NULL) qa_range_error("out of memory");
+}
+void qa_q3_item_registry_destroy(qa_q3_item_registry *registry) {
+  free(registry->registered);
+  registry->registered = NULL; registry->items = NULL; registry->count = 0;
+}
+/* TS constructor always allocates; struct copies before init stay zeroed. */
+static uint8_t *registry_bytes(qa_q3_item_registry *registry) {
+  if (registry->registered == NULL) {
+    registry->registered = calloc(registry->count ? registry->count : 1, 1);
+    if (registry->registered == NULL) qa_range_error("out of memory");
+  }
+  return registry->registered;
+}
+static long registry_index(qa_q3_item_registry *registry,
+                           const qa_q3_game_item_definition_mirror *item) {
+  for (size_t i = 0; i < registry->count; i++)
+    if (&registry->items[i] == item) return (long)i;
+  return -1;
+}
+void qa_q3_item_registry_register(qa_q3_item_registry *registry,
+                                  const qa_q3_game_item_definition_mirror *item) {
+  long index = registry_index(registry, item);
+  if (index < 0)
+    qa_range_error("Registered item does not belong to %s",
+                   qa_q3_game_product_name(registry->product));
+  registry_bytes(registry)[(size_t)index] = 1;
+}
+bool qa_q3_item_registry_is_registered(qa_q3_item_registry *registry,
+                                       const qa_q3_game_item_definition_mirror *item) {
+  long index = registry_index(registry, item);
+  if (index < 0)
+    qa_range_error("Registered item does not belong to %s",
+                   qa_q3_game_product_name(registry->product));
+  return registry_bytes(registry)[(size_t)index] != 0;
+}
+static bool folded_equal(const char *a, const char *b) {
+  for (;; a++, b++) {
+    unsigned char ca = (unsigned char)*a, cb = (unsigned char)*b;
+    if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca + 32);
+    if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb + 32);
+    if (ca != cb) return false;
+    if (ca == 0) return true;
+  }
+}
+static const qa_q3_game_item_definition_mirror *registry_find_for_weapon(
+    qa_q3_item_registry *registry, double weapon) {
+  for (size_t i = 0; i < registry->count; i++)
+    if (registry->items[i].type == QA_Q3_BASE_IT_WEAPON && registry->items[i].tag == weapon)
+      return &registry->items[i];
+  qa_range_error("Couldn't find item for weapon %d", (int)weapon);
+}
+static const qa_q3_game_item_definition_mirror *registry_find_item(
+    qa_q3_item_registry *registry, const char *pickup_name) {
+  for (size_t i = 0; i < registry->count; i++)
+    if (registry->items[i].pickup_name != NULL
+        && folded_equal(registry->items[i].pickup_name, pickup_name))
+      return &registry->items[i];
+  return NULL;
+}
+void qa_q3_item_registry_clear(qa_q3_item_registry *registry, double game_type) {
+  memset(registry_bytes(registry), 0, registry->count);
+  qa_q3_item_registry_register(registry, registry_find_for_weapon(registry, QA_Q3_WP_MACHINEGUN));
+  qa_q3_item_registry_register(registry, registry_find_for_weapon(registry, QA_Q3_WP_GAUNTLET));
+  if (registry->product != QA_Q3_GAME_PRODUCT_MISSIONPACK
+      || game_type != QA_Q3_BASE_GT_HARVESTER) return;
+  static const char *const cubes[] = {"Red Cube", "Blue Cube"};
+  for (size_t i = 0; i < sizeof cubes / sizeof *cubes; i++) {
+    const qa_q3_game_item_definition_mirror *item = registry_find_item(registry, cubes[i]);
+    if (item == NULL) qa_range_error("Required item %s is missing", cubes[i]);
+    qa_q3_item_registry_register(registry, item);
+  }
+}
+double qa_q3_item_registry_save(qa_q3_item_registry *registry, void *ctx,
+    void (*set_configstring)(void *ctx, double index, const char *value),
+    void (*log)(void *ctx, const char *message)) {
+  char *value = malloc(registry->count + 1);
+  if (value == NULL) qa_range_error("out of memory");
+  const uint8_t *bytes = registry_bytes(registry);
+  double count = 0;
+  for (size_t i = 0; i < registry->count; i++) {
+    if (bytes[i] != 0) count++;
+    value[i] = bytes[i] != 0 ? '1' : '0';
+  }
+  value[registry->count] = '\0';
+  char message[64];
+  (void)snprintf(message, sizeof message, "%lld items registered\n", (long long)count);
+  log(ctx, message);
+  set_configstring(ctx, 27, value);
+  free(value);
+  return count;
+}
+qa_save_value *qa_q3_item_registry_capture_save_state(qa_q3_item_registry *registry) {
+  return qa_save_value_bytes(registry_bytes(registry), registry->count);
+}
+void qa_q3_item_registry_restore_save_state(qa_q3_item_registry *registry,
+                                            const qa_save_value *value) {
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, value, "q3.items")) qa_range_error("out of memory");
+  size_t length = 0;
+  const uint8_t *bytes = qa_save_reader_bytes(&reader, &length);
+  bool valid = length == registry->count;
+  for (size_t i = 0; valid && i < length; i++) valid = bytes[i] == 0 || bytes[i] == 1;
+  if (!valid) qa_save_reader_fail(&reader, "invalid registered item table");
+  memcpy(registry_bytes(registry), bytes, length);
+  qa_save_reader_destroy(&reader);
 }
 
 static float f32(double v) { return (float)v; }
@@ -172,6 +280,53 @@ static qa_q3_source_pickup_descriptor pickup_descriptor(
   descriptor.weapon_respawn_seconds = context.weapon_respawn_seconds;
   descriptor.team_weapon_respawn_seconds = context.team_weapon_respawn_seconds;
   return descriptor;
+}
+
+static bool callback_equal(qa_q3_entity_callback a, qa_q3_entity_callback b) {
+  return a.fn == b.fn && a.ctx == b.ctx;
+}
+
+bool qa_q3_observe_q3_supply(qa_q3_game_entity *entity, qa_q3_game_entity *recipient,
+    qa_q3_item_lifecycle_context context, qa_q3_supply_observation *out) {
+  if (context.product != QA_Q3_GAME_PRODUCT_BASEQ3
+      || !qa_q3_game_entity_inuse(entity) || !qa_q3_game_entity_inuse(recipient)
+      || qa_q3_entity_pool_get(context.entities, entity->slot) != entity
+      || qa_q3_entity_pool_get(context.entities, recipient->slot) != recipient
+      || recipient->client == NULL || !context.has_callbacks
+      || !callback_equal(entity->touch, context.touch_callback)
+      || entity->item == NULL
+      || (entity->item->type != QA_Q3_BASE_IT_WEAPON
+          && entity->item->type != QA_Q3_BASE_IT_AMMO))
+    return false;
+  const qa_q3_game_item_definition_mirror *item = require_published_item(context, entity);
+  if (context.preview_pickup == NULL) return false;
+  qa_q3_source_pickup_preview supplied =
+      context.preview_pickup(context.ctx, pickup_descriptor(entity, recipient, item, context));
+  if (supplied.kind != QA_Q3_SOURCE_PREVIEW_SELECTED) return false;
+  bool ready = (qa_int32(entity->r.contents) & (int32_t)CONTENTS_TRIGGER) != 0
+      && (qa_int32(entity->s.e_flags) & EF_NODRAW) == 0
+      && (qa_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_NOCLIENT) == 0
+      && !entity->free_after_event && !entity->unlink_after_event;
+  bool respawning = entity->team == NULL && entity->teammaster == NULL
+      && entity->teamchain == NULL
+      && (qa_int32(entity->flags) & (QA_Q3_GAME_FLAG_DROPPED_ITEM | QA_Q3_GAME_FLAG_TEAMSLAVE)) == 0
+      && !entity->free_after_event && !entity->unlink_after_event
+      && callback_equal(entity->think, context.respawn_callback)
+      && entity->nextthink > 0;
+  memset(out, 0, sizeof *out);
+  out->observation.actor = qa_q3_game_entity_actor(entity).id;
+  out->observation.offer = supplied.offer;
+  if (ready) {
+    out->observation.availability_kind = "ready";
+    out->observation.eligible = qa_q3_game_entity_health(recipient) >= 1;
+  } else if (respawning) {
+    out->observation.availability_kind = "respawning";
+    out->observation.at_seconds = entity->nextthink / 1000;
+  } else {
+    out->observation.availability_kind = "inactive";
+  }
+  out->preview = supplied.preview;
+  return true;
 }
 
 static qa_q3_powerup_sight_trace trace_solid_line(void *ctx, qa_vec3 start, qa_vec3 end) {
@@ -546,6 +701,33 @@ void qa_q3_finish_spawning_item(qa_q3_game_entity *entity,
     return;
   }
   pool_link(context, entity);
+}
+
+enum { FRAME_TIME = 100 };
+
+void qa_q3_spawn_item(qa_q3_game_entity *entity, const qa_q3_game_item_definition_mirror *item,
+    const qa_q3_spawn_variables *variables, bool (*is_disabled)(void *ctx), void *is_disabled_ctx,
+    qa_q3_item_lifecycle_context context) {
+  qa_q3_bind_item_save_callbacks(context);
+  check_context(context);
+  require_owned(context, entity);
+  (void)table_index(context, item);
+  entity->random = qa_q3_spawn_variables_float(variables, "random", "0").value;
+  entity->wait = qa_q3_spawn_variables_float(variables, "wait", "0").value;
+  qa_q3_item_registry_register(&context.registry, item);
+  if (is_disabled != NULL && is_disabled(is_disabled_ctx)) return;
+  entity->item = item;
+  qa_q3_game_entity_set_nextthink(entity, qa_int32(game_time(context) + FRAME_TIME * 2));
+  entity->think = qa_q3_callback_family_resolve(
+      &context.entities->callbacks.think, "q3.base.game.item-lifecycle.spawnItem.think");
+  entity->physics_bounce = f32(0.5);
+  if (item->type == QA_Q3_BASE_IT_POWERUP) {
+    (void)context.sound_index(context.ctx, "sound/items/poweruprespawn.wav");
+    entity->speed = qa_q3_spawn_variables_float(variables, "noglobalsound", "0").value;
+  }
+  if (context.product == QA_Q3_GAME_PRODUCT_MISSIONPACK
+      && item->type == QA_Q3_BASE_IT_PERSISTANT_POWERUP)
+    entity->s.generic1 = entity->spawnflags;
 }
 
 static void cb_respawn(void *ctx, qa_q3_game_entity *self) {

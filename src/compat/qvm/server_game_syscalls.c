@@ -59,7 +59,7 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
     case G_GET_USERINFO:
     case G_SET_USERINFO:
     case G_GET_USERCMD: {
-      qa_qvmy_client_game_services bundle;
+      qa_qvm_client_game_services bundle;
       bundle.abi_profile = services->data->abi_profile;
       bundle.max_clients = services->max_clients;
       bundle.ctx = services->ctx;
@@ -68,7 +68,7 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
       bundle.get_user_command = services->get_user_command;
       bundle.drop_client = services->drop_client;
       bundle.send_server_command = services->send_server_command;
-      return services->client_game_syscall(services->client_game_ctx, call, &bundle, out);
+      return qa_qvm_client_game_syscall(call, bundle, out);
     }
     case G_SET_CONFIGSTRING:
     case G_GET_CONFIGSTRING:
@@ -184,12 +184,8 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
                                      call->code == G_ENTITY_CONTACTCAPSULE) ? 1 : 0;
       return true;
     }
-    case G_GET_ENTITY_TOKEN: {
-      const char *token = NULL;
-      bool ended = false;
-      services->entity_token(services->ctx, &token, &ended);
-      return services->entity_token_syscall(services->entity_token_ctx, call, token, ended, out);
-    }
+    case G_GET_ENTITY_TOKEN:
+      return qa_qvm_entity_token_syscall(call, services->entity_tokens, out);
     default: return false;
   }
 }

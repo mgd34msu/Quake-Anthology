@@ -104,7 +104,7 @@ static const qa_actor_id *q2_nearby(void *ctx, qa_vec3 origin, double radius, si
     qa_body_state body;
     if (!env->world.body_read(env->world.ctx, all[i], &body)) continue;
     double dx = body.origin.x - origin.x, dy = body.origin.y - origin.y, dz = body.origin.z - origin.z;
-    if (sqrt(dx * dx + dy * dy + dz * dz) <= radius && env->nearby_count < 256)
+    if (hypot(hypot(dx, dy), dz) <= radius && env->nearby_count < 256)
       env->nearby_storage[env->nearby_count++] = all[i];
   }
   sort_world = &env->world;

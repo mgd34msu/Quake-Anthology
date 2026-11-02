@@ -18,10 +18,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/game_combat.h"
 #include "qa/compat/qvm/module.h"
 #include "qa/content/mods/match.h"
 #include "qa/contracts/qvm_combat.h"
 #include "qa/contracts/qvm_mod_items.h"
+#include "qa/contracts/source_items.h"
 #include "qa/persistence/value.h"
 
 typedef struct qa_qvmy_input_definition {
@@ -37,21 +39,18 @@ typedef struct qa_qvmy_input_definition {
   int64_t entry_client_think, entry_run_client, entry_client_spawn, entry_move, entry_slice;
 } qa_qvmy_input_definition;
 
-typedef struct qa_qvmy_catalog_entry {
+typedef struct qa_qvm_catalog_entry {
   int64_t weapon;
   qa_item_id item;
-} qa_qvmy_catalog_entry;
+} qa_qvm_catalog_entry;
 
-typedef struct qa_qvmy_equipment_context {
-  qa_provider_id provider;
-  bool has_item;
-  qa_item_id item;
-} qa_qvmy_equipment_context;
+/* Equipment contexts are the landed qa_source_equipment_context
+ * (contracts/source_items.h); item NULL is the TS null. */
 
-typedef struct qa_qvmy_primary_region {
+typedef struct qa_qvm_primary_region {
   int64_t entry;
   int64_t join;
-} qa_qvmy_primary_region;
+} qa_qvm_primary_region;
 
 typedef struct qa_qvmy_primary_weapon_profile {
   qa_module_identity module;
@@ -82,7 +81,7 @@ typedef struct qa_qvmy_primary_weapon_profile {
   int64_t body_trace_callback, body_trace_mask;
   int64_t move_entry, slice_entry, duck_entry;
   int64_t movement_global;
-  qa_qvmy_primary_region locomotion;
+  qa_qvm_primary_region locomotion;
   int64_t mins_offset, maxs_offset;
   /* availability / powerups / torso */
   int64_t availability_movement_type;
@@ -94,8 +93,8 @@ typedef struct qa_qvmy_primary_weapon_profile {
   int64_t torso_entry, torso_attack, torso_melee;
   int64_t water_entity_offset, water_movement_offset;
   int64_t damage_entry, damage_result;
-  qa_qvmy_primary_region damage_stop;
-  qa_qvmy_equipment_context *equipment_contexts; /* owned */
+  qa_qvm_primary_region damage_stop;
+  qa_source_equipment_context *equipment_contexts; /* owned */
   size_t equipment_context_count;
   qa_qvm_region_evaluation delay;
   int64_t *delay_inputs; /* owned */
@@ -109,28 +108,15 @@ typedef struct qa_qvmy_primary_weapon_profile {
   int64_t drop_entry, drop_argument, drop_weapon;
   bool drop_ammo_inventory;
   int64_t drop_ammo_offset;
-  qa_qvmy_primary_region drop_region;
+  qa_qvm_primary_region drop_region;
   int64_t give_entry, give_argument, give_weapons, give_ammo;
-  qa_qvmy_primary_region give_named_region;
+  qa_qvm_primary_region give_named_region;
   int64_t give_named_name, give_named_item;
 } qa_qvmy_primary_weapon_profile;
 
-typedef struct qa_qvmy_team_value {
-  int64_t value;
-  const char *team;
-} qa_qvmy_team_value;
-
-typedef struct qa_qvmy_armor_when {
-  int64_t offset;
-  const char *comparison;
-  int64_t value;
-} qa_qvmy_armor_when;
-
-typedef struct qa_qvmy_armor_tier_value {
-  int64_t tier;
-  double protection;
-} qa_qvmy_armor_tier_value;
-
+/* Team values are qa_qvm_combat_team (contracts/qvm_combat.h);
+ * armor tiers are qa_qvm_armor_tier_test / qa_qvm_armor_tier_value
+ * (game_combat.h). */
 typedef struct qa_qvmy_primary_combat_profile {
   qa_module_identity module;
   qa_qvm_abi_profile abi_profile;
@@ -141,7 +127,7 @@ typedef struct qa_qvmy_primary_combat_profile {
   size_t damage_extra_count;
   int64_t state_health_stat;
   int64_t team_persistent_stat;
-  qa_qvmy_team_value *team_values; /* owned */
+  qa_qvm_combat_team *team_values; /* owned */
   size_t team_value_count;
   int64_t flag_notarget, flag_invulnerable, flag_no_knockback;
   bool mass_is_constant;
@@ -162,9 +148,9 @@ typedef struct qa_qvmy_primary_combat_profile {
   double armor_protection;
   bool has_tiers;
   int64_t tier_stat;
-  qa_qvmy_armor_when *tier_when; /* owned */
+  qa_qvm_armor_tier_test *tier_when; /* owned */
   size_t tier_when_count;
-  qa_qvmy_armor_tier_value *tier_values; /* owned */
+  qa_qvm_armor_tier_value *tier_values; /* owned */
   size_t tier_value_count;
   double tier_fallback;
 } qa_qvmy_primary_combat_profile;
@@ -172,7 +158,7 @@ typedef struct qa_qvmy_primary_combat_profile {
 void qa_qvm_read_primary_input(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
                                qa_qvmy_input_definition *out);
 void qa_qvm_read_primary_weapons(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
-                                 const qa_qvmy_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
+                                 const qa_qvm_catalog_entry *catalog, size_t catalog_count, bool has_catalog,
                                  qa_qvmy_primary_weapon_profile *out);
 void qa_qvm_read_primary_combat(const qa_save_reader *reader, const qa_qvmy_artifact *artifact,
                                 qa_qvmy_primary_combat_profile *out);

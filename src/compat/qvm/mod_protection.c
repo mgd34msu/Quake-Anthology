@@ -342,12 +342,13 @@ static qa_armor_stage_result binding_absorb(void *ctx, qa_armor_stage_input inpu
   return absorb(state->protection, state->actor, input, observer);
 }
 
-static qa_qvmy_protection_binding claim_of(qa_qvm_mod_protection_runtime *protection) {
-  qa_qvmy_protection_binding claim;
+static qa_protection_binding claim_of(qa_qvm_mod_protection_runtime *protection) {
+  qa_protection_binding claim;
   memset(&claim, 0, sizeof claim);
-  claim.owner = protection->owner;
-  claim.rule = protection->definition->id;
-  claim.admission = protection->definition->admission;
+  claim.claim.owner = protection->owner;
+  claim.claim.rule = protection->definition->id;
+  claim.claim.admission.kind = protection->definition->admission.kind;
+  claim.claim.admission.owner = protection->definition->admission.owner;
   return claim;
 }
 
@@ -416,7 +417,7 @@ void qa_qvm_mod_protection_reserve_actor(qa_qvm_mod_protection_runtime *protecti
       !protection->services->actor(protection->services->ctx, client, &resolved) ||
       !qa_same_actor(resolved, actor))
     qa_range_error("QVM protection requires a live canonical client");
-  qa_qvmy_protection_binding claim = claim_of(protection);
+  qa_protection_binding claim = claim_of(protection);
   size_t reservation = protection->services->reserve_protection(
       protection->services->ctx, owned,
       strcmp(protection->definition->channel, "regular") == 0 ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED,
@@ -441,17 +442,18 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   if (state == NULL) qa_range_error("QVM memory allocation failed");
   state->protection = protection;
   state->actor = actor;
-  qa_qvmy_protection_binding binding = claim_of(protection);
-  binding.channel = protection->definition->channel;
+  qa_protection_binding binding = claim_of(protection);
+  binding.channel = strcmp(protection->definition->channel, "regular") == 0
+      ? QA_PROTECTION_REGULAR : QA_PROTECTION_POWERED;
   binding.ctx = state;
   binding.absorb = binding_absorb;
   const qa_original_pickup_rule **pickup_ptrs = NULL;
   qa_original_pickup_rule *flat = NULL;
   binding.read_regular = binding_read_regular;
-  binding.validate_regular = binding_validate_regular;
+  binding.validate_write_regular = binding_validate_regular;
   binding.write_regular = binding_write_regular;
   binding.read_powered = binding_read_powered;
-  binding.validate_powered = binding_validate_powered;
+  binding.validate_write_powered = binding_validate_powered;
   binding.write_powered = binding_write_powered;
   /* TS reads the current state before evaluating pickups for bind. */
   if (strcmp(protection->definition->channel, "regular") == 0) (void)regular_state(protection, actor);

@@ -37,6 +37,21 @@ typedef qa_qvm_cp_mod_scene_publication CpScene;
 #include "qa/world/gameplay/inventory.h"
 #include "qa/world/session/mod_clients.h"
 
+/* Source entity read/write are the landed entity_record.h
+ * functions; adapt writable views to qa_qvmx_view. */
+static void read_entity_fields(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile,
+                               qa_qvm_entity_state_fields *out) {
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  qa_qvm_entity_state state = qa_qvm_read_source_entity_state(raw, profile);
+  qa_qvm_get_entity_state_fields(&state, out);
+  qa_qvm_entity_state_destroy(&state);
+}
+static void write_entity_fields(qa_qvm_writable_view *view, const qa_qvm_entity_state_fields *state,
+                                qa_qvm_abi_profile profile) {
+  qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
+  qa_qvm_write_source_entity_state(raw, state, profile);
+}
+
 typedef qa_qvm_mod_provider P;
 
 static bool text_eq(const char *a, const char *b) {
@@ -1984,8 +1999,8 @@ static CpScene *scene_publication(P *p) {
     memset(entry, 0, sizeof *entry);
     entry->actor = actor;
     qa_qvm_writable_view view;
-    view_of(p, entity_address(p, slot), qa_qvmy_entity_state_bytes(p->declaration->abi_profile), &view);
-    qa_qvmy_read_source_entity_state(&view, p->declaration->abi_profile, &entry->state);
+    view_of(p, entity_address(p, slot), qa_qvm_entity_state_bytes_for(p->declaration->abi_profile), &view);
+    read_entity_fields(&view, p->declaration->abi_profile, &entry->state);
     qa_qvm_shared_entity entity;
     entity_of(p, slot, &entity);
     entry->owned = owned_has(p, actor);
@@ -2208,22 +2223,22 @@ typedef struct {
   int64_t slot;
   qa_actor_id ground;
 } BodyCell;
-static void entity_fields(P *p, int64_t slot, qa_qvmy_entity_state_fields *out) {
+static void entity_fields(P *p, int64_t slot, qa_qvm_entity_state_fields *out) {
   qa_qvm_writable_view view;
-  view_of(p, entity_address(p, slot), qa_qvmy_entity_state_bytes(p->declaration->abi_profile), &view);
-  qa_qvmy_read_source_entity_state(&view, p->declaration->abi_profile, out);
+  view_of(p, entity_address(p, slot), qa_qvm_entity_state_bytes_for(p->declaration->abi_profile), &view);
+  read_entity_fields(&view, p->declaration->abi_profile, out);
 }
-static void set_entity_fields(P *p, int64_t slot, const qa_qvmy_entity_state_fields *fields) {
+static void set_entity_fields(P *p, int64_t slot, const qa_qvm_entity_state_fields *fields) {
   qa_qvm_writable_view view;
-  view_of(p, entity_address(p, slot), qa_qvmy_entity_state_bytes(p->declaration->abi_profile), &view);
-  qa_qvmy_write_source_entity_state(&view, fields, p->declaration->abi_profile);
+  view_of(p, entity_address(p, slot), qa_qvm_entity_state_bytes_for(p->declaration->abi_profile), &view);
+  write_entity_fields(&view, fields, p->declaration->abi_profile);
 }
 static qa_body_state body_read(void *ctx) {
   BodyCell *cell = ctx;
   P *p = cell->provider;
   qa_qvm_shared_entity entity;
   entity_of(p, cell->slot, &entity);
-  qa_qvmy_entity_state_fields fields;
+  qa_qvm_entity_state_fields fields;
   entity_fields(p, cell->slot, &fields);
   qa_body_state state;
   state.origin = qa_qvm_shared_entity_get_current_origin(&entity);
@@ -2241,7 +2256,7 @@ static void body_write(void *ctx, qa_body_state body) {
   entity_of(p, cell->slot, &entity);
   qa_qvm_shared_entity_set_current_origin(&entity, body.origin);
   qa_qvm_shared_entity_set_current_angles(&entity, body.angles);
-  qa_qvmy_entity_state_fields fields;
+  qa_qvm_entity_state_fields fields;
   entity_fields(p, cell->slot, &fields);
   fields.pos.delta = body.velocity;
   fields.ground_entity_num = body.ground == NULL ? 1023 : (int32_t)entity_slot(p, *body.ground);
@@ -2282,7 +2297,7 @@ static void bind_owned(P *p, qa_owned_actor actor, int64_t slot) {
   qa_qvm_shared_entity entity;
   entity_of(p, slot, &entity);
   if (qa_qvm_shared_entity_get_linked(&entity)) {
-    qa_qvmy_entity_state_fields fields;
+    qa_qvm_entity_state_fields fields;
     entity_fields(p, slot, &fields);
     qa_body_state_result read = qa_shared_body_table_read(p->services->bodies, actor.id);
     qa_body_state state;
@@ -2422,7 +2437,7 @@ static void link_entity(P *p, int64_t slot) {
     qa_range_error("QVM entity links require destination collision services");
   qa_qvm_entity_collision_model model = qa_qvm_shared_entity_get_model(&entity);
   if (text_eq(model.kind, "inline")) (void)inline_model_of(p, model.index, NULL, NULL, NULL);
-  qa_qvmy_entity_state_fields fields;
+  qa_qvm_entity_state_fields fields;
   entity_fields(p, slot, &fields);
   qa_vec3 mins = qa_qvm_shared_entity_get_mins(&entity);
   qa_vec3 maxs = qa_qvm_shared_entity_get_maxs(&entity);
@@ -2462,14 +2477,14 @@ static void publish(P *p) {
     qa_qvm_shared_entity entity;
     entity_of(p, slot, &entity);
     if (!qa_qvm_shared_entity_get_linked(&entity)) continue;
-    qa_qvmy_entity_state_fields fields;
+    qa_qvm_entity_state_fields fields;
     entity_fields(p, slot, &fields);
     if (fields.event == 0 && (double)fields.e_type < event_type_limit) {
       event_key_delete(p, actor);
       continue;
     }
     char key[64];
-    snprintf(key, sizeof key, "%d:%d", fields.event, fields.e_type);
+    snprintf(key, sizeof key, "%d:%d", qa_int32(fields.event), qa_int32(fields.e_type));
     if (text_eq(event_key_get(p, actor), key)) continue;
     event_key_set(p, actor, key);
     if (p->services->engine == NULL) emit_source_event(p);
@@ -3090,13 +3105,13 @@ const qa_session_simulation_presentation *qa_qvm_mod_provider_presentations(
     qa_qvm_shared_entity entity;
     entity_of(p, slot, &entity);
     qa_qvm_entity_collision_model model = qa_qvm_shared_entity_get_model(&entity);
-    qa_qvmy_entity_state_fields fields;
+    qa_qvm_entity_state_fields fields;
     entity_fields(p, slot, &fields);
     const char *path = NULL;
     char inline_path[32];
     if (text_eq(model.kind, "inline")) {
       (void)inline_model_of(p, model.index, NULL, NULL, NULL);
-      snprintf(inline_path, sizeof inline_path, "*%d", fields.modelindex);
+      snprintf(inline_path, sizeof inline_path, "*%d", qa_int32(fields.modelindex));
       path = inline_path;
     } else {
       path = configstring_of(p, 32 + fields.modelindex);
@@ -3506,7 +3521,7 @@ static qa_vec3 events_origin(void *ctx, qa_actor_id actor) {
 static double events_time(void *ctx) {
   return trunc(seconds_of(((P *)ctx)->services) * 1000);
 }
-static void events_emit(void *ctx, const qa_qvmy_source_player_event *event) {
+static void events_emit(void *ctx, const qa_app_q3_source_player_event *event) {
   (void)event;
   emit_source_event(ctx);
 }
@@ -3552,27 +3567,14 @@ static qa_source_time service_time(void *ctx) {
   P *p = ctx;
   return p->services->time(p->services->ctx);
 }
-static qa_protection_binding protection_binding_of(const qa_qvmy_protection_binding *binding,
+static qa_protection_binding protection_binding_of(const qa_protection_binding *binding,
                                                    qa_protection_channel channel,
                                                    const qa_item_id **items_out,
                                                    size_t *item_count_out) {
-  qa_protection_binding result;
-  memset(&result, 0, sizeof result);
-  result.ctx = binding->ctx;
-  result.claim.owner = binding->owner;
-  result.claim.rule = binding->rule;
-  result.claim.admission.kind = binding->admission.kind;
-  result.claim.admission.owner = binding->admission.owner;
+  qa_protection_binding result = *binding;
   result.channel = channel;
-  result.pickups = binding->pickups;
-  result.pickup_count = binding->pickup_count;
-  result.read_regular = binding->read_regular;
-  result.read_powered = binding->read_powered;
-  result.validate_write_regular = binding->validate_regular;
-  result.validate_write_powered = binding->validate_powered;
-  result.write_regular = binding->write_regular;
-  result.write_powered = binding->write_powered;
-  result.absorb = binding->absorb;
+  result.inventory_items = NULL;
+  result.inventory_item_count = 0;
   *items_out = NULL;
   *item_count_out = 0;
   (void)items_out;
@@ -3580,7 +3582,7 @@ static qa_protection_binding protection_binding_of(const qa_qvmy_protection_bind
 }
 static size_t service_reserve_protection(void *ctx, qa_owned_actor owned,
                                          qa_protection_channel channel,
-                                         const qa_qvmy_protection_binding *claim_binding) {
+                                         const qa_protection_binding *claim_binding) {
   P *p = ctx;
   const qa_item_id *items;
   size_t item_count;
@@ -3605,7 +3607,7 @@ static size_t service_reserve_protection(void *ctx, qa_owned_actor owned,
   return id;
 }
 static void service_bind_reservation(void *ctx, size_t id,
-                                     const qa_qvmy_protection_binding *binding) {
+                                     const qa_protection_binding *binding) {
   P *p = ctx;
   ReservationCell *cells = p->reservations;
   qa_protection_reservation *reservation = &cells[id].reservation;
@@ -3683,7 +3685,7 @@ static bool item_state_capacity(void *ctx, qa_item_id item) {
   ItemStateCell *cell = ctx;
   return cell->binding->mutable_capacity(cell->binding->ctx, item);
 }
-static qa_qvmy_item_lease service_bind_items(void *ctx, qa_owned_actor owner,
+static qa_source_item_lease service_bind_items(void *ctx, qa_owned_actor owner,
                                              const qa_qvmy_item_lease_binding *binding) {
   P *p = ctx;
   ItemStateCell *cell = xrealloc(NULL, sizeof *cell);
@@ -3703,7 +3705,7 @@ static qa_qvmy_item_lease service_bind_items(void *ctx, qa_owned_actor owner,
   converted.invoke = binding->invoke;
   qa_source_item_lease lease =
       qa_shared_inventory_table_bind_items(p->services->inventory, owner, converted);
-  qa_qvmy_item_lease result = {lease.ctx, lease.current, lease.stored, lease.close};
+  qa_source_item_lease result = {lease.ctx, lease.current, lease.stored, lease.close};
   return result;
 }
 static double service_inventory_count(void *ctx, qa_actor_id actor, qa_item_id item) {

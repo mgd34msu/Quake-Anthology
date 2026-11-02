@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdnoreturn.h>
 
+#include "qa/compat/qvm/interpreter.h"
 #include "qa/compat/qvm/memory.h"
 #include "qa/contracts/execution.h"
 
@@ -30,26 +31,20 @@ typedef const char *qa_qvm_role;
 /* TS QvmHostResult. */
 typedef int32_t qa_qvm_host_result;
 
-/* Mirrored QvmCancellationScope: an opaque capability token. */
-typedef struct qa_qvmy_cancellation_scope {
-  void *token;
-} qa_qvmy_cancellation_scope;
-
-/* Mirrored QvmReadOnlyEvaluation (opaque to this module). */
-typedef struct qa_qvmy_read_only_evaluation {
-  void *data;
-} qa_qvmy_read_only_evaluation;
+/* TS QvmCancellationScope / QvmReadOnlyEvaluation are the landed
+ * qa_qvm_cancellation_scope / qa_qvm_read_only_evaluation
+ * (interpreter.h, TS owner src/compat/qvm/interpreter.ts). */
 
 typedef int32_t (*qa_qvmy_invoke_fn)(void *ctx, const int32_t *args, size_t arg_count,
                                      int64_t instruction_index,
-                                     const qa_qvmy_read_only_evaluation *evaluation);
+                                     const qa_qvm_read_only_evaluation *evaluation);
 typedef void (*qa_qvmy_validate_fn)(void *ctx);
 typedef int32_t (*qa_qvmy_invoke_async_fn)(void *ctx, const int32_t *args, size_t arg_count,
                                            int64_t instruction_index,
                                            qa_qvmy_validate_fn validate, void *validate_ctx);
 /* The TS cancelFunction never returns; noreturn cannot ride a
  * function-pointer typedef portably, so implementations abort. */
-typedef void (*qa_qvmy_cancel_fn)(void *ctx, qa_qvmy_cancellation_scope scope);
+typedef void (*qa_qvmy_cancel_fn)(void *ctx, qa_qvm_cancellation_scope scope);
 
 /* Mirrored QvmSyscall. `words` are live little-endian syscall words;
  * `memory` is the raw allocation the guest view must borrow. */

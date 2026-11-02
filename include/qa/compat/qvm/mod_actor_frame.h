@@ -24,12 +24,12 @@ typedef struct qa_qvm_actor_store {
 
 /* Fills out[0..store_count). */
 void qa_qvm_actor_bootstrap(const int64_t *stores, size_t store_count,
-                            const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                            const qa_qvm_instruction *instructions, size_t instruction_count,
                             int64_t initialized_data_length, int64_t data_length, int64_t bss_length,
                             const qa_qvm_mod_actor_record *records, size_t record_count,
                             qa_qvm_actor_store *out);
 void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
-                                     const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                                     const qa_qvm_instruction *instructions, size_t instruction_count,
                                      int64_t initialized_data_length, int64_t bss_length,
                                      const qa_qvm_mod_actor_record *record, int64_t inuse);
 
@@ -51,7 +51,7 @@ typedef struct qa_qvm_mod_actor_frame_runtime {
 
 void qa_qvm_mod_actor_frame_runtime_init(qa_qvm_mod_actor_frame_runtime *frame,
                                          const qa_qvm_mod_actor_frame *definition, qa_qvm_module *module,
-                                         const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                                         const qa_qvm_instruction *instructions, size_t instruction_count,
                                          qa_qvm_actor_owned_fn owned, void *owned_ctx);
 bool qa_qvm_mod_actor_frame_runtime_run(qa_qvm_mod_actor_frame_runtime *frame,
                                         qa_qvm_actor_invoke_fn invoke, void *invoke_ctx);

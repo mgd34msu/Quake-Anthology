@@ -693,8 +693,8 @@ static int64_t to_region_word(double value) {
   return is_safe_integer(value) ? (int64_t)value : INT64_MIN;
 }
 
-static qa_qvmy_region_instruction *region_instructions(qa_qvm_interpreter *interp) {
-  qa_qvmy_region_instruction *list =
+static qa_qvm_instruction *region_instructions(qa_qvm_interpreter *interp) {
+  qa_qvm_instruction *list =
       malloc((interp->instruction_count == 0 ? 1 : interp->instruction_count) * sizeof *list);
   if (list == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i < interp->instruction_count; i++) {
@@ -707,7 +707,7 @@ static qa_qvmy_region_instruction *region_instructions(qa_qvm_interpreter *inter
 }
 
 static int64_t qualify_region(qa_qvm_interpreter *interp, int64_t owner, double entry, double join) {
-  qa_qvmy_region_instruction *list = region_instructions(interp);
+  qa_qvm_instruction *list = region_instructions(interp);
   int64_t frame = qa_qvm_qualify_region(list, interp->instruction_count, owner,
                                          to_region_word(entry), to_region_word(join));
   free(list);
@@ -716,7 +716,7 @@ static int64_t qualify_region(qa_qvm_interpreter *interp, int64_t owner, double 
 
 static int64_t qualify_evaluation(qa_qvm_interpreter *interp, int64_t owner,
                                    const qa_qvm_region_evaluation *region, const char *access) {
-  qa_qvmy_region_instruction *list = region_instructions(interp);
+  qa_qvm_instruction *list = region_instructions(interp);
   int64_t frame = qa_qvm_qualify_region_evaluation(list, interp->instruction_count, owner, region,
                                                     access);
   free(list);

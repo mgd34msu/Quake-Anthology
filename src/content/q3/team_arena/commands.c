@@ -235,6 +235,14 @@ bool qa_q3_ta_game_command_runtime_client_number_from_string(qa_q3_ta_game_comma
   return false;
 }
 
+/* TS give's isDisabled closure over the disable_<classname> cvar. */
+typedef struct give_disabled { qa_q3_ta_game_command_runtime *runtime; const char *cvar_name; } give_disabled;
+static bool give_is_disabled(void *ctx) {
+  give_disabled *check = ctx;
+  return qa_game_atoi(check->runtime->host.imports.get_cvar(
+             check->runtime->host.imports.ctx, check->cvar_name)) != 0;
+}
+
 static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, arguments *args) {
   if (!qa_q3_ta_game_command_runtime_cheats_ok(r, entity)) return;
   char *name = arguments_concat(args, 1);
@@ -293,8 +301,21 @@ static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
       qa_q3_game_entity_set_classname(temporary, item->class_name);
       char cvar_name[300];
       (void)snprintf(cvar_name, sizeof cvar_name, "disable_%s", item->class_name ? item->class_name : "");
-      bool disabled = qa_game_atoi(r->host.imports.get_cvar(r->host.imports.ctx, cvar_name)) != 0;
-      r->host.spawn_item(r->host.ctx, temporary, item, disabled);
+      /* TS calls spawnItem directly with host.items; the mirror row is
+       * index-aligned with the shared item list findItem searched. */
+      size_t base_count = 0;
+      const qa_q3_base_item_definition *base_list =
+          qa_q3_base_item_list(base_product(client->ps.product), &base_count);
+      size_t item_index = (size_t)(item - base_list);
+      const qa_q3_game_item_definition_mirror *mirror_item =
+          r->host.items.registry.items != NULL && item_index < r->host.items.registry.count
+              ? &r->host.items.registry.items[item_index] : NULL;
+      qa_q3_spawn_variables give_vars;
+      qa_q3_spawn_variables_init(&give_vars, NULL, 0);
+      give_disabled give_check = {r, cvar_name};
+      qa_q3_spawn_item(temporary, mirror_item, &give_vars, give_is_disabled, &give_check,
+                       r->host.items);
+      qa_q3_spawn_variables_destroy(&give_vars);
       qa_q3_finish_spawning_item(temporary, r->host.items);
       qa_touch_contact contact;
       memset(&contact, 0, sizeof contact);

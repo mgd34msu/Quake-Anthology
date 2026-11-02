@@ -394,7 +394,7 @@ qa_qvm_equipment_movement *qa_qvm_equipment_movement_create(
       qa_range_error("Selected equipment movement requires an original function boundary");
   }
   {
-    qa_qvmy_region_instruction *list =
+    qa_qvm_instruction *list =
         malloc((image->instruction_count == 0 ? 1 : image->instruction_count) * sizeof *list);
     if (list == NULL) return NULL;
     for (size_t i = 0; i < image->instruction_count; i++) {

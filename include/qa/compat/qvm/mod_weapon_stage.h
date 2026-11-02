@@ -21,9 +21,9 @@
 typedef qa_qvm_weapon_stage qa_qvm_weapon_dispatcher_definition;
 
 void qa_qvm_validate_weapon_dispatcher(const qa_qvm_weapon_stage *stage,
-                                       const qa_qvmy_region_instruction *instructions, size_t instruction_count);
+                                       const qa_qvm_instruction *instructions, size_t instruction_count);
 void qa_qvm_validate_weapon_stage(const qa_qvm_weapon_stage *stage,
-                                  const qa_qvmy_region_instruction *instructions, size_t instruction_count);
+                                  const qa_qvm_instruction *instructions, size_t instruction_count);
 
 typedef struct qa_qvm_posture {
   qa_bounds bounds;
@@ -39,7 +39,7 @@ typedef struct qa_qvm_weapon_dispatcher_ops {
   int64_t (*pointer)(void *ctx, qa_actor_id actor, const char *record);
   bool (*live)(void *ctx, qa_actor_id actor);
   bool (*selected)(void *ctx, qa_actor_id actor);
-  qa_qvmy_cancellation_scope (*cancellation)(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call);
+  qa_qvm_cancellation_scope (*cancellation)(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call);
   void (*attempted)(void *ctx, qa_actor_id actor, int32_t value);
   void (*accepted)(void *ctx, qa_actor_id actor, int32_t value);
   void (*completed)(void *ctx, qa_actor_id actor, bool reached_attack_decision);

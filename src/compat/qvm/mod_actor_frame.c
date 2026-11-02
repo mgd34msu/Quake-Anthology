@@ -10,22 +10,22 @@
 
 #define QVM_MAX_PRIVATE_ARGUMENT_WORDS QA_QVM_MAX_PRIVATE_ARGUMENT_WORDS
 
-static const qa_qvmy_region_instruction *at(const qa_qvmy_region_instruction *instructions,
+static const qa_qvm_instruction *at(const qa_qvm_instruction *instructions,
                                             size_t count, int64_t pc) {
   if (pc < 0 || (uint64_t)pc >= count) return NULL;
   return &instructions[pc];
 }
 
 void qa_qvm_actor_bootstrap(const int64_t *stores, size_t store_count,
-                            const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                            const qa_qvm_instruction *instructions, size_t instruction_count,
                             int64_t initialized_data_length, int64_t data_length, int64_t bss_length,
                             const qa_qvm_mod_actor_record *records, size_t record_count,
                             qa_qvm_actor_store *out) {
   for (size_t i = 0; i < store_count; i++) {
     int64_t pc = stores[i];
-    const qa_qvmy_region_instruction *store = at(instructions, instruction_count, pc);
-    const qa_qvmy_region_instruction *address = at(instructions, instruction_count, pc - 2);
-    const qa_qvmy_region_instruction *value = at(instructions, instruction_count, pc - 1);
+    const qa_qvm_instruction *store = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *address = at(instructions, instruction_count, pc - 2);
+    const qa_qvm_instruction *value = at(instructions, instruction_count, pc - 1);
     if (store == NULL || store->opcode != QA_QVMY_OP_STORE4 || address == NULL ||
         address->opcode != QA_QVMY_OP_CONST || value == NULL || value->opcode != QA_QVMY_OP_CONST)
       qa_range_error("QVM source bootstrap is not an original constant store");
@@ -47,17 +47,17 @@ void qa_qvm_actor_bootstrap(const int64_t *stores, size_t store_count,
 }
 
 void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
-                                     const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                                     const qa_qvm_instruction *instructions, size_t instruction_count,
                                      int64_t initialized_data_length, int64_t bss_length,
                                      const qa_qvm_mod_actor_record *record, int64_t inuse) {
   int64_t entry = (int64_t)definition->call.entry;
-  const qa_qvmy_region_instruction *enter = at(instructions, instruction_count, entry);
+  const qa_qvm_instruction *enter = at(instructions, instruction_count, entry);
   if (enter == NULL || enter->opcode != QA_QVMY_OP_ENTER ||
       strcmp(definition->call.returns, "void") != 0 || definition->owned_count == 0)
     qa_range_error("QVM actor frame requires its original void caller and entity loops");
   int64_t end = entry + 1;
   while (end < (int64_t)instruction_count) {
-    const qa_qvmy_region_instruction *ins = at(instructions, instruction_count, end);
+    const qa_qvm_instruction *ins = at(instructions, instruction_count, end);
     if (ins != NULL && ins->opcode == QA_QVMY_OP_ENTER) break;
     end++;
   }
@@ -68,7 +68,7 @@ void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
   size_t decision_count = 0;
   {
     int64_t pc = (int64_t)definition->end.instruction;
-    const qa_qvmy_region_instruction *ins = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *ins = at(instructions, instruction_count, pc);
     if (pc <= entry || pc >= end || ins == NULL || ins->opcode < QA_QVMY_OP_EQ || ins->opcode > QA_QVMY_OP_GEF) {
       free(decisions);
       qa_range_error("QVM actor frame predicate is not a distinct original conditional");
@@ -78,7 +78,7 @@ void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
   for (size_t f = 0; f < definition->owned_count; f++) {
     const qa_qvm_mod_actor_frame_owned *filter = &definition->owned[f];
     int64_t pc = (int64_t)filter->instruction;
-    const qa_qvmy_region_instruction *ins = at(instructions, instruction_count, pc);
+    const qa_qvm_instruction *ins = at(instructions, instruction_count, pc);
     bool seen = false;
     for (size_t d = 0; d < decision_count; d++) if (decisions[d] == pc) seen = true;
     if (pc <= entry || pc >= end || seen || ins == NULL || ins->opcode < QA_QVMY_OP_EQ || ins->opcode > QA_QVMY_OP_GEF) {
@@ -87,12 +87,12 @@ void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
     }
     decisions[decision_count++] = pc;
     int64_t local_pc = (int64_t)filter->local_instruction;
-    const qa_qvmy_region_instruction *local = at(instructions, instruction_count, local_pc);
-    const qa_qvmy_region_instruction *offset = at(instructions, instruction_count, local_pc + 2);
-    const qa_qvmy_region_instruction *zero = at(instructions, instruction_count, local_pc + 5);
-    const qa_qvmy_region_instruction *load1 = at(instructions, instruction_count, local_pc + 1);
-    const qa_qvmy_region_instruction *add = at(instructions, instruction_count, local_pc + 3);
-    const qa_qvmy_region_instruction *load2 = at(instructions, instruction_count, local_pc + 4);
+    const qa_qvm_instruction *local = at(instructions, instruction_count, local_pc);
+    const qa_qvm_instruction *offset = at(instructions, instruction_count, local_pc + 2);
+    const qa_qvm_instruction *zero = at(instructions, instruction_count, local_pc + 5);
+    const qa_qvm_instruction *load1 = at(instructions, instruction_count, local_pc + 1);
+    const qa_qvm_instruction *add = at(instructions, instruction_count, local_pc + 3);
+    const qa_qvm_instruction *load2 = at(instructions, instruction_count, local_pc + 4);
     if (local_pc != pc - 6 || local == NULL || local->opcode != QA_QVMY_OP_LOCAL ||
         local->operand < 8 || local->operand + 4 > enter->operand ||
         load1 == NULL || load1->opcode != QA_QVMY_OP_LOAD4 ||
@@ -112,10 +112,10 @@ void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
   if (argument_index >= 0 && (uint64_t)argument_index < definition->call.argument_count)
     argument = &definition->call.arguments[argument_index];
   int64_t store = (int64_t)clock->store;
-  const qa_qvmy_region_instruction *address = at(instructions, instruction_count, store - 3);
-  const qa_qvmy_region_instruction *local = at(instructions, instruction_count, store - 2);
-  const qa_qvmy_region_instruction *load = at(instructions, instruction_count, store - 1);
-  const qa_qvmy_region_instruction *store_ins = at(instructions, instruction_count, store);
+  const qa_qvm_instruction *address = at(instructions, instruction_count, store - 3);
+  const qa_qvm_instruction *local = at(instructions, instruction_count, store - 2);
+  const qa_qvm_instruction *load = at(instructions, instruction_count, store - 1);
+  const qa_qvm_instruction *store_ins = at(instructions, instruction_count, store);
   bool global_matches = false;
   for (size_t g = 0; g < definition->call.global_count; g++)
     if (definition->call.globals[g].address == clock->address) global_matches = true;
@@ -140,7 +140,7 @@ typedef struct branch_state {
   int64_t stack;
   size_t filter_index;
   bool is_end;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
 } branch_state;
 
 static bool decide_owned(void *ctx, bool taken, void *call_ctx, qa_qvmy_cancel_fn cancel) {
@@ -169,7 +169,7 @@ static int32_t frame_hook(void *ctx, qa_qvmy_function_call *call) {
   if (!frame->has_active)
     return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                        : call->proceed_async(call->call_ctx);
-  qa_qvmy_cancellation_scope cancellation = call->cancellation_scope(call->call_ctx);
+  qa_qvm_cancellation_scope cancellation = call->cancellation_scope(call->call_ctx);
   int64_t stack = call->words_offset - 8 - frame->enter_operand;
   size_t count = frame->local_count + 1;
   qa_qvmy_branch_binding *bindings = malloc(count * sizeof *bindings);
@@ -195,10 +195,10 @@ static int32_t frame_hook(void *ctx, qa_qvmy_function_call *call) {
 
 void qa_qvm_mod_actor_frame_runtime_init(qa_qvm_mod_actor_frame_runtime *frame,
                                          const qa_qvm_mod_actor_frame *definition, qa_qvm_module *module,
-                                         const qa_qvmy_region_instruction *instructions, size_t instruction_count,
+                                         const qa_qvm_instruction *instructions, size_t instruction_count,
                                          qa_qvm_actor_owned_fn owned, void *owned_ctx) {
   memset(frame, 0, sizeof *frame);
-  const qa_qvmy_region_instruction *enter = at(instructions, instruction_count, (int64_t)definition->call.entry);
+  const qa_qvm_instruction *enter = at(instructions, instruction_count, (int64_t)definition->call.entry);
   if (enter == NULL || enter->opcode != QA_QVMY_OP_ENTER) qa_range_error("Missing original actor frame");
   frame->definition = definition;
   frame->module = module;
@@ -209,7 +209,7 @@ void qa_qvm_mod_actor_frame_runtime_init(qa_qvm_mod_actor_frame_runtime *frame,
   frame->local_offsets = malloc((frame->local_count == 0 ? 1 : frame->local_count) * sizeof *frame->local_offsets);
   if (frame->local_offsets == NULL) qa_range_error("QVM memory allocation failed");
   for (size_t i = 0; i < frame->local_count; i++) {
-    const qa_qvmy_region_instruction *local =
+    const qa_qvm_instruction *local =
         at(instructions, instruction_count, (int64_t)definition->owned[i].local_instruction);
     if (local == NULL || local->opcode != QA_QVMY_OP_LOCAL) qa_range_error("Missing original actor loop local");
     frame->local_offsets[i] = local->operand;

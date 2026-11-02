@@ -1,8 +1,7 @@
 /*
  * Port of src/compat/qvm/mod-player-events.ts. Q3SourcePlayerEvent
  * is the landed qa_app_q3_source_player_event (TS owner
- * src/app/bootstrap/simulation/q3/types.ts); the old mirror name
- * qa_qvmy_source_player_event remains as a typedef alias. Checkpoint
+ * src/app/bootstrap/simulation/q3/types.ts). Checkpoint
  * clients/predictable lists are malloc'd arrays freed by
  * qa_qvm_player_events_checkpoint_free (the read function's result)
  * or owned by the events object (checkpoint method result storage
@@ -53,10 +52,10 @@ typedef struct qa_qvm_player_events_checkpoint {
 bool qa_qvm_read_player_events(const qa_save_reader *reader, qa_qvm_player_events_checkpoint *out);
 void qa_qvm_player_events_checkpoint_free(qa_qvm_player_events_checkpoint *checkpoint);
 
-/* TS Q3SourcePlayerEvent: landed owner type. sequence_is_predictable
+/* TS Q3SourcePlayerEvent is qa_app_q3_source_player_event
+ * (app/bootstrap/simulation/q3/types.h): sequence_is_predictable
  * selects sequence_number (predictable) vs sequence_time (external);
  * event/parameter are TS numbers (double). */
-typedef qa_app_q3_source_player_event qa_qvmy_source_player_event;
 
 typedef struct qa_qvm_mod_player_events_operations {
   qa_qvm_memory *memory;

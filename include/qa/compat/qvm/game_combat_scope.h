@@ -26,7 +26,7 @@ typedef struct qa_qvm_damage_frame {
   double pointer;
   qa_damage_request request;
   qa_qvmy_function_call *call; /* borrowed */
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
   bool cancelled;
   bool reacting;
 } qa_qvm_damage_frame;

@@ -15,7 +15,7 @@ typedef struct client_scope {
   uint64_t sequence;
   double slot;
   qa_mod_client_identity identity;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
 } client_scope;
 
 typedef struct command_frame {
@@ -167,7 +167,7 @@ static int32_t run_client_hook(void *ctx, qa_qvmy_function_call *call) {
                                                        (double)call_word(call, 0)));
 }
 
-static qa_qvmy_cancellation_scope cancellation_of(qa_qvm_input_binding *b,
+static qa_qvm_cancellation_scope cancellation_of(qa_qvm_input_binding *b,
                                                   const client_scope *scope) {
   for (size_t i = 0; i < b->client_count; i++)
     if (actor_id_equal(b->clients[i].identity.actor, scope->identity.actor))

@@ -13,7 +13,8 @@
  * src/compat/qvm/artifacts.ts, image.ts); qa_qvmy_interpreter_runtime
  * and qa_qvmy_function_call mirror QvmInterpreter/QvmFunctionCall and
  * friends (TS owner src/compat/qvm/interpreter.ts);
- * qa_qvmy_allocation_profile is opaque (TS owner allocation.ts).
+ * The allocation profile is the landed qa_qvm_allocation_profile
+ * (TS owner allocation.ts, allocation.h).
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_MODULE_H
@@ -23,6 +24,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/allocation.h"
 #include "qa/compat/qvm/regions.h"
 #include "qa/compat/qvm/registry.h"
 #include "qa/compat/qvm/syscalls.h"
@@ -39,7 +41,7 @@ typedef struct qa_qvmy_artifact {
   qa_qvm_role role;
   bool has_abi_profile;
   qa_qvm_abi_profile abi_profile;
-  const qa_qvmy_region_instruction *instructions;
+  const qa_qvm_instruction *instructions;
   size_t instruction_count;
   const uint8_t *initialized_data;
   size_t initialized_data_length;
@@ -49,19 +51,9 @@ typedef struct qa_qvmy_artifact {
   int64_t allocated_data_length;
 } qa_qvmy_artifact;
 
-/* Mirrored QvmEvaluationStack / QvmReadOnlyEvaluation. */
-typedef struct qa_qvmy_evaluation_stack {
-  int64_t start;
-  int64_t end;
-} qa_qvmy_evaluation_stack;
-
-typedef struct qa_qvmy_evaluation {
-  qa_qvm_region_evaluation region;
-  const int64_t *inputs;
-  size_t input_count;
-  bool has_stack;
-  qa_qvmy_evaluation_stack stack;
-} qa_qvmy_evaluation;
+/* TS QvmEvaluationStack / QvmReadOnlyEvaluation are the landed
+ * qa_qvm_evaluation_stack / qa_qvm_read_only_evaluation
+ * (interpreter.h via syscalls.h). */
 
 /* Mirrored QvmBranchBinding decide control + binding. */
 typedef struct qa_qvmy_branch_binding {
@@ -97,7 +89,7 @@ typedef struct qa_qvmy_function_call {
   qa_qvmy_invoke_fn invoke;
   qa_qvmy_invoke_async_fn invoke_async;
   qa_qvmy_cancel_fn cancel_function;
-  qa_qvmy_cancellation_scope (*cancellation_scope)(void *ctx);
+  qa_qvm_cancellation_scope (*cancellation_scope)(void *ctx);
   void (*branches)(void *ctx, const qa_qvmy_branch_binding *bindings, size_t count);
   void (*regions)(void *ctx, const qa_qvmy_region_binding *bindings, size_t count);
   int32_t (*evaluate_region)(void *ctx, const qa_qvm_region_evaluation *region,
@@ -123,12 +115,12 @@ typedef struct qa_qvmy_interpreter_runtime {
   bool (*is_active)(void *ctx);
   int64_t (*stack_pointer)(void *ctx);
   int32_t (*invoke)(void *ctx, const int32_t *args, size_t arg_count, int64_t instruction_index,
-                    const qa_qvmy_evaluation *evaluation);
+                    const qa_qvm_read_only_evaluation *evaluation);
   int32_t (*invoke_async)(void *ctx, const int32_t *args, size_t arg_count, int64_t instruction_index,
                           qa_qvmy_validate_fn validate, void *validate_ctx);
   int32_t (*evaluate_counter)(void *ctx, int64_t address, const int64_t *functions, size_t function_count,
                               int32_t (*run)(void *run_ctx), void *run_ctx,
-                              const qa_qvmy_evaluation_stack *stack);
+                              const qa_qvm_evaluation_stack *stack);
   size_t (*bind_function)(void *ctx, int64_t instruction_index, qa_qvmy_function_hook_fn hook, void *hook_ctx);
   size_t (*bind_invocation)(void *ctx, int64_t instruction_index, qa_qvmy_function_hook_fn hook, void *hook_ctx);
   size_t (*bind_function_resolver)(void *ctx, qa_qvmy_function_resolver_fn resolve, void *resolve_ctx);
@@ -158,7 +150,7 @@ typedef struct qa_qvm_module_options {
   const qa_qvmy_artifact *artifact;
   qa_qvm_host_fn host;
   void *host_ctx;
-  const void *allocation; /* mirrored opaque QvmAllocationProfile */
+  const qa_qvm_allocation_profile *allocation; /* TS QvmAllocationProfile */
   const qa_qvm_vm_registration *registration; /* optional */
   const qa_qvm_host_state *host_state;         /* optional */
   qa_qvmy_interpreter_runtime *interpreter;
@@ -200,7 +192,7 @@ void qa_qvm_module_create(qa_qvm_module *module, const qa_qvm_module_options *op
                           qa_qvmy_validate_fn validate, void *validate_ctx);
 /* The system call the owning interpreter must route traps through. */
 int32_t qa_qvm_module_system_call(qa_qvm_module *module, const qa_qvmy_syscall *call);
-void qa_qvm_module_cancel_function(qa_qvm_module *module, qa_qvmy_cancellation_scope scope);
+void qa_qvm_module_cancel_function(qa_qvm_module *module, qa_qvm_cancellation_scope scope);
 size_t qa_qvm_module_bind_function(qa_qvm_module *module, const qa_guest_callback_reference *reference,
                                    qa_qvmy_function_hook_fn hook, void *hook_ctx);
 size_t qa_qvm_module_bind_invocation(qa_qvm_module *module, const qa_guest_callback_reference *reference,
@@ -222,11 +214,11 @@ int32_t qa_qvm_module_invoke_source_callback(qa_qvm_module *module, qa_qvmy_func
 int32_t qa_qvm_module_evaluate_region(qa_qvm_module *module, const int32_t *words, size_t count,
                                       int64_t instruction_index, const qa_qvm_region_evaluation *region,
                                       const int64_t *inputs, size_t input_count,
-                                      const qa_qvmy_evaluation_stack *stack);
+                                      const qa_qvm_evaluation_stack *stack);
 int32_t qa_qvm_module_evaluate_counter(qa_qvm_module *module, const int32_t *words, size_t count,
                                        int64_t instruction_index, int64_t address,
                                        const int64_t *functions, size_t function_count,
-                                       const qa_qvmy_evaluation_stack *stack);
+                                       const qa_qvm_evaluation_stack *stack);
 qa_guest_call_result qa_qvm_module_invoke(qa_qvm_module *module, const qa_guest_call_context *context,
                                           const qa_guest_call_value *arguments, size_t argument_count);
 void qa_qvm_module_restart(qa_qvm_module *module, const uint8_t *bytes, size_t length);

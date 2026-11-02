@@ -284,7 +284,7 @@ typedef struct give_region_ctx {
   qa_qvm_primary_weapons *weapons;
   qa_actor_id actor;
   qa_qvm_memory *guest;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
 } give_region_ctx;
 static const char *give_region_run(void *ctx, void *control_ctx) {
   (void)ctx;
@@ -332,7 +332,7 @@ typedef struct eval_ctx {
   qa_qvm_primary_weapons *weapons;
   effect_kind kind;
   evaluation_frame *frame;
-  qa_qvmy_cancellation_scope cancellation;
+  qa_qvm_cancellation_scope cancellation;
 } eval_ctx;
 static const char *damage_stop_run(void *ctx, void *control_ctx) {
   eval_ctx *e = ctx;
@@ -632,7 +632,7 @@ static bool ops_selected(void *ctx, qa_actor_id actor) {
   qa_qvm_primary_weapons *w = ctx;
   return w->services.selected(w->services.ctx, actor);
 }
-static qa_qvmy_cancellation_scope ops_cancellation(void *ctx, qa_actor_id actor,
+static qa_qvm_cancellation_scope ops_cancellation(void *ctx, qa_actor_id actor,
                                                    qa_qvmy_function_call *call) {
   (void)ctx;
   (void)actor;
@@ -682,8 +682,8 @@ static bool equipment_motion(void *ctx, qa_actor_id actor, qa_qvm_equipment_moti
   return w->services.equipment_movement(w->services.ctx, actor, out);
 }
 
-static qa_qvmy_region_instruction *region_instructions(const qa_qvm_image *image) {
-  qa_qvmy_region_instruction *list =
+static qa_qvm_instruction *region_instructions(const qa_qvm_image *image) {
+  qa_qvm_instruction *list =
       malloc((image->instruction_count == 0 ? 1 : image->instruction_count) * sizeof *list);
   if (list == NULL) qa_range_error("QVM memory allocation failed");
   for (size_t i = 0; i < image->instruction_count; i++) {
@@ -728,7 +728,7 @@ qa_qvm_primary_weapons *qa_qvm_primary_weapons_create(qa_qvm_game *game,
                             (int64_t)profile.match.score % 4 != 0 ||
                             profile.match.score + 4 > profile.client_stride))
     qa_range_error("Original QVM score exceeds its declared client record");
-  qa_qvmy_region_instruction *list = region_instructions(image);
+  qa_qvm_instruction *list = region_instructions(image);
   qa_qvm_validate_weapon_dispatcher(&profile.stage, list, image->instruction_count);
   (void)qa_qvm_qualify_region(list, image->instruction_count, (int64_t)profile.damage_factor.entry,
                               (int64_t)profile.damage_factor.stop.entry,

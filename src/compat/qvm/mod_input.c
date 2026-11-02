@@ -20,7 +20,8 @@ static void *xmalloc(size_t size) {
 
 /* Delegates to the landed owner (TS client-state-record.ts
  * readQvmUserCommand in qa/compat/qvm/client_state_record.h). */
-qa_q3_wire_user_command qa_qvmy_read_user_command(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile) {
+static qa_q3_wire_user_command read_wire_user_command(const qa_qvm_writable_view *view,
+                                                      qa_qvm_abi_profile profile) {
   qa_qvmx_view raw = {view->bytes + view->start, (size_t)view->length};
   qa_qvmx_wire_user_command read = qa_qvm_read_user_command(raw, profile);
   qa_q3_wire_user_command result;
@@ -186,7 +187,7 @@ static void process_commands(qa_qvm_mod_input *input, capture *capture, command_
     qa_qvm_writable_view view;
     qa_qvm_memory_view(input->operations.module->memory, command->address, QVM_USER_COMMAND_BYTES, 0, &view);
     qa_q3_wire_user_command before = command->before;
-    qa_q3_wire_user_command after = qa_qvmy_read_user_command(&view, input->operations.abi_profile);
+    qa_q3_wire_user_command after = read_wire_user_command(&view, input->operations.abi_profile);
     command->before = after;
     if (!publish) continue;
     for (size_t i = 0; i < command->output->input_count; i++) {
@@ -297,7 +298,7 @@ static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
     qa_qvm_memory_view(call->guest, address, QVM_USER_COMMAND_BYTES, 0, &view);
     local[local_count].output = selected[i];
     local[local_count].address = address;
-    local[local_count].before = qa_qvmy_read_user_command(&view, input->operations.abi_profile);
+    local[local_count].before = read_wire_user_command(&view, input->operations.abi_profile);
     if (capture->command_count == capture->command_capacity) {
       capture->command_capacity = capture->command_capacity == 0 ? 8 : capture->command_capacity * 2;
       capture->commands = realloc(capture->commands, capture->command_capacity * sizeof *capture->commands);

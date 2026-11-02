@@ -36,10 +36,10 @@ typedef struct qa_qvmy_item_layout {
 
 bool qa_qvmy_item_layout_equal(const qa_qvmy_item_layout *left, const qa_qvmy_item_layout *right);
 
-typedef struct qa_qvmy_pickup_branch {
+typedef struct qa_qvm_pickup_branch {
   int64_t instruction_index;
   bool taken;
-} qa_qvmy_pickup_branch;
+} qa_qvm_pickup_branch;
 
 typedef struct qa_qvmy_pickup_grant {
   int64_t item_type;
@@ -57,7 +57,7 @@ typedef struct qa_qvmy_pickup_grant {
   int64_t weapon_ammo_offset;
   qa_qvm_region_evaluation weapon_quantity;
   int64_t *weapon_quantity_inputs; /* owned */
-  qa_qvmy_pickup_branch *branches; /* owned */
+  qa_qvm_pickup_branch *branches; /* owned */
   size_t branch_count;
 } qa_qvmy_pickup_grant;
 

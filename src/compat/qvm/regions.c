@@ -13,20 +13,20 @@ static void *xrealloc(void *ptr, size_t size) {
   return result;
 }
 
-static const qa_qvmy_region_instruction *at(const qa_qvmy_region_instruction *instructions,
+static const qa_qvm_instruction *at(const qa_qvm_instruction *instructions,
                                             size_t count, int64_t pc) {
   if (pc < 0 || (uint64_t)pc >= count) return NULL;
   return &instructions[pc];
 }
 
-int64_t qa_qvm_qualify_region(const qa_qvmy_region_instruction *instructions, size_t count,
+int64_t qa_qvm_qualify_region(const qa_qvm_instruction *instructions, size_t count,
                               int64_t owner, int64_t entry, int64_t join) {
-  const qa_qvmy_region_instruction *first = at(instructions, count, owner);
+  const qa_qvm_instruction *first = at(instructions, count, owner);
   if (first == NULL || first->opcode != QA_QVMY_OP_ENTER)
     qa_range_error("QVM region owner is not a function");
   int64_t end = owner + 1;
   while (end < (int64_t)count) {
-    const qa_qvmy_region_instruction *ins = at(instructions, count, end);
+    const qa_qvm_instruction *ins = at(instructions, count, end);
     if (ins != NULL && ins->opcode == QA_QVMY_OP_ENTER) break;
     end++;
   }
@@ -64,7 +64,7 @@ int64_t qa_qvm_qualify_region(const qa_qvmy_region_instruction *instructions, si
       joined = true;
       continue;
     }
-    const qa_qvmy_region_instruction *instruction = at(instructions, count, next.pc);
+    const qa_qvm_instruction *instruction = at(instructions, count, next.pc);
     if (instruction == NULL) qa_range_error("QVM region has no original instruction");
     int32_t opcode = instruction->opcode;
     int64_t required = 0, change = 0;
@@ -84,7 +84,7 @@ int64_t qa_qvm_qualify_region(const qa_qvmy_region_instruction *instructions, si
     if (next.depth < required) qa_range_error("QVM region requires operands from outside its boundary");
     int64_t result = next.depth + change;
     if (opcode == QA_QVMY_OP_JUMP) {
-      const qa_qvmy_region_instruction *target = at(instructions, count, next.pc - 1);
+      const qa_qvm_instruction *target = at(instructions, count, next.pc - 1);
       if (target == NULL || target->opcode != QA_QVMY_OP_CONST)
         qa_range_error("QVM region has an indirect jump");
       if (target->operand <= next.pc || target->operand > join)
@@ -109,7 +109,7 @@ int64_t qa_qvm_qualify_region(const qa_qvmy_region_instruction *instructions, si
   if (!joined) qa_range_error("QVM region does not reach its original join");
   for (int64_t pc = owner + 1; pc < end; pc++) {
     if (pc >= entry && pc < join) continue;
-    const qa_qvmy_region_instruction *instruction = at(instructions, count, pc);
+    const qa_qvm_instruction *instruction = at(instructions, count, pc);
     bool has_destination = false;
     int64_t destination = 0;
     if (instruction != NULL && instruction->opcode >= QA_QVMY_OP_EQ && instruction->opcode <= QA_QVMY_OP_GEF &&
@@ -117,7 +117,7 @@ int64_t qa_qvm_qualify_region(const qa_qvmy_region_instruction *instructions, si
       has_destination = true;
       destination = instruction->operand;
     } else if (instruction != NULL && instruction->opcode == QA_QVMY_OP_JUMP) {
-      const qa_qvmy_region_instruction *target = at(instructions, count, pc - 1);
+      const qa_qvm_instruction *target = at(instructions, count, pc - 1);
       if (target != NULL && target->opcode == QA_QVMY_OP_CONST) {
         has_destination = true;
         destination = target->operand;
@@ -206,7 +206,7 @@ static int64_t *copy_set(const int64_t *set, size_t count) {
   return result;
 }
 
-int64_t qa_qvm_qualify_region_evaluation(const qa_qvmy_region_instruction *instructions, size_t count,
+int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions, size_t count,
                                          int64_t owner, const qa_qvm_region_evaluation *region,
                                          const char *access) {
   if (access == NULL) access = "source";
@@ -242,7 +242,7 @@ int64_t qa_qvm_qualify_region_evaluation(const qa_qvmy_region_instruction *instr
       free(current.initialized);
       continue;
     }
-    const qa_qvmy_region_instruction *instruction = at(instructions, count, pc);
+    const qa_qvm_instruction *instruction = at(instructions, count, pc);
     if (instruction == NULL) qa_range_error("Missing QVM region instruction");
     operand *stack = current.stack;
     size_t stack_count = current.stack_count;
